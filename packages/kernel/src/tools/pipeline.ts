@@ -126,6 +126,7 @@ import { type ConnectorAuth, CredentialMissing, Credentials } from "./credential
 import { ToolDrift } from "./drift.js";
 import { ElicitationSession } from "./elicitation.js";
 import {
+  addressEscalationHint,
   blockedEventHosts,
   clipKept,
   NETWORK_ASK_KEPT_MAX_BYTES,
@@ -1631,6 +1632,7 @@ export class ToolPipeline {
           // with `network_blocked` below when the ask was created)
           ...(loginCode !== undefined && { loginCode }),
         },
+        reviewedRoots.escalation,
       );
       if (handled.kind === "wait") {
         if (hooks && hookBase) {
@@ -2381,6 +2383,8 @@ export class ToolPipeline {
     pre: readonly AppendEvent[],
     callAudit: CallAudit,
     result: NetworkAskDetail["result"] & { text: string; review?: ReviewRecord },
+    /** Admission's verdict for this call: `available` when it may run outside the sandbox. */
+    escalation?: "available" | "escalated",
   ): Promise<
     | { kind: "wait"; wait: WaitingFor; content: string }
     | { kind: "write"; event: AppendEvent | null; notes: string[] }
@@ -2412,7 +2416,9 @@ export class ToolPipeline {
       outsideCeiling: (h) => orgHostOutsideCeiling(limits, h),
       ...(sandbox !== undefined && {
         refusal: sandbox.refusal,
-        escalation: sandbox.box.networkMode === "open" && sandbox.box.outsideSandbox,
+        // the hint follows admission's verdict for this call (never a recomputation), and only
+        // the open network makes a private address the one thing escalation adds
+        escalation: addressEscalationHint(escalation, sandbox.box.networkMode),
       }),
     });
     if (ctx.unattended != null) {

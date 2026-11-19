@@ -191,6 +191,31 @@ describe("ceiling writers reached from a tool step lock in the ordered prelude",
     expect(row.deleted_at).not.toBeNull();
   });
 
+  it("devices.set-network: the device write lock precedes the run's root row", async () => {
+    const f = await seed();
+    const devices = k.app.get(DevicesService);
+    // the precheck takes no lock and writes nothing, inside the run's fence too
+    await k.app.get(RunExecution).withClaim(
+      f.claim,
+      () => true,
+      () =>
+        withExclusiveAdmission(() =>
+          devices.checkNetwork(f.orgId, f.accountId, f.deviceId, { mode: "none" }, true),
+        ),
+    );
+    await againstReader(f, treeSubject(f, true), () =>
+      devices.update(f.orgId, f.accountId, f.deviceId, { network: { mode: "none" } }, undefined, {
+        narrowOnly: true,
+      }),
+    );
+    const row = await f.db
+      .selectFrom("devices")
+      .select("network_mode")
+      .where("id", "=", f.deviceId)
+      .executeTakeFirstOrThrow();
+    expect(row.network_mode).toBe("none");
+  });
+
   it("devices.add-project: the device write lock precedes the run's root row", async () => {
     const f = await seed();
     const projects = k.app.get(DeviceProjectsService);

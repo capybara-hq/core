@@ -1,5 +1,9 @@
 import { describe, expect, it } from "vitest";
-import { sandboxViewOf } from "../../src/devices/devices.service.js";
+import {
+  networkNarrowingRevokes,
+  sandboxViewOf,
+  storedNetworkWidens,
+} from "../../src/devices/devices.service.js";
 import { ownerFactsOf } from "../../src/local-devices/owner-report.js";
 import {
   type DeviceSandboxDeviceLayer,
@@ -97,5 +101,58 @@ describe("sandboxViewOf", () => {
       outsideSandbox: false,
       layer: { outsideSandbox: "device" },
     });
+  });
+});
+
+describe("storedNetworkWidens (narrow only checks the stored setting too)", () => {
+  const set = (mode: "open" | "allowlist" | "none" | null, hosts: string[] = []) => ({
+    mode,
+    hosts,
+  });
+  it("following the org is wider than any explicit mode; none < allowlist < open", () => {
+    expect(storedNetworkWidens(set("allowlist"), set(null))).toBe(true);
+    expect(storedNetworkWidens(set("open"), set(null))).toBe(true);
+    expect(storedNetworkWidens(set("none"), set("allowlist"))).toBe(true);
+    expect(storedNetworkWidens(set(null), set("open"))).toBe(false);
+    expect(storedNetworkWidens(set("open"), set("none"))).toBe(false);
+  });
+  it("an explicit host list dropped or gaining a host widens; a shorter one narrows", () => {
+    expect(storedNetworkWidens(set("allowlist", ["a.com"]), set("allowlist"))).toBe(true);
+    expect(
+      storedNetworkWidens(set("allowlist", ["a.com"]), set("allowlist", ["a.com", "b.com"])),
+    ).toBe(true);
+    expect(
+      storedNetworkWidens(set("allowlist", ["a.com", "b.com"]), set("allowlist", ["a.com"])),
+    ).toBe(false);
+    expect(storedNetworkWidens(set("allowlist"), set("allowlist", ["a.com"]))).toBe(false);
+  });
+});
+
+describe("networkNarrowingRevokes", () => {
+  const scope = (network: Record<string, unknown>) =>
+    ({ profile: "full-access", filesystem: { kind: "scoped" }, network }) as never;
+  const row = (granted: string[]) => ({ method: "exec" as const, granted_hosts: granted });
+  it("allowlist to a smaller allowlist revokes work naming a removed host; a still-grantable granted host survives", () => {
+    const next = {
+      box: { networkMode: "allowlist" as const, hosts: ["a.com"] },
+      hostCeiling: { kind: "any" as const, excluded: [] },
+    };
+    const removed = scope({ kind: "allowlist", hosts: ["a.com", "b.com"] });
+    expect(networkNarrowingRevokes(next, removed, row([]))).toBe(true);
+    expect(networkNarrowingRevokes(next, removed, row(["b.com"]))).toBe(false);
+    // a granted host the new per-call ceiling no longer allows goes too
+    const hard = { ...next, hostCeiling: { kind: "hosts" as const, hosts: ["a.com"] } };
+    expect(networkNarrowingRevokes(hard, removed, row(["b.com"]))).toBe(true);
+    expect(
+      networkNarrowingRevokes(next, scope({ kind: "allowlist", hosts: ["a.com"] }), row([])),
+    ).toBe(false);
+    expect(networkNarrowingRevokes(next, scope({ kind: "open-public" }), row([]))).toBe(true);
+  });
+  it("an open network revokes nothing", () => {
+    const open = {
+      box: { networkMode: "open" as const, hosts: [] },
+      hostCeiling: { kind: "any" as const, excluded: [] },
+    };
+    expect(networkNarrowingRevokes(open, scope({ kind: "open-public" }), row([]))).toBe(false);
   });
 });

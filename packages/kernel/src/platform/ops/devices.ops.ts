@@ -379,7 +379,7 @@ export class DevicesOperations implements OnModuleInit {
       defineOperation({
         id: "devices.set-network",
         description:
-          "Narrow the sandbox network of one of your cloud devices: mode allowlist (its organization's allowed hosts, optionally narrowed to hosts: a device's list never adds a host) or none (no network). Only narrowing is allowed here: opening the network, adding a host or following the organization again where that widens is refused and needs the person on the device's page. A local device's network is kept on its machine. Takes the id from devices.list; devices.get shows the network in effect.",
+          "Narrow the sandbox network of one of your cloud devices: mode allowlist (its organization's allowed hosts, optionally narrowed to hosts: a device's list never adds a host) or none (no network). Only narrowing is allowed here, in its stored setting and in effect: opening the network, adding a host, dropping its own host list or following the organization again (mode null) is refused and needs the person on the device's page. A local device's network is kept on its machine. Takes the id from devices.list; devices.get shows the network in effect.",
         input: DeviceId.extend({ network: DeviceNetworkBody }).strict(),
         example: {
           deviceId: "4e8a0c1d-6b2f-4a37-8d19-3c5e7f9a1b20",
@@ -431,9 +431,10 @@ export class DevicesOperations implements OnModuleInit {
                 : i.network.mode === "open"
                   ? "the open internet"
                   : "follow the organization";
+          // neutral wording: the precheck and the run refuse anything but a narrowing
           return {
-            zh: `将设备「${name}」的沙箱网络收窄为：${zh}`,
-            en: `Narrow the sandbox network of device "${name}" to ${en}`,
+            zh: `将设备「${name}」的沙箱网络设为：${zh}`,
+            en: `Set the sandbox network of device "${name}" to ${en}`,
           };
         },
         run: async (input, ctx) => {

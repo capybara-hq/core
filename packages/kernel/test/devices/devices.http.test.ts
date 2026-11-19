@@ -722,7 +722,11 @@ describe("a cloud device's sandbox network (approval-only profiles design)", () 
     }
     const renamed = await viaPat({ name: "By token" });
     expect(renamed.statusCode, renamed.body).toBe(200);
-    expect(await networkAudits(env.id)).toHaveLength(1);
+    // an API token's change is recorded and listed as the token's
+    expect((await networkAudits(env.id)).map((a) => a.detail)).toEqual([
+      expect.objectContaining({ to: { mode: "allowlist", hosts: [] }, via: "token" }),
+    ]);
+    expect(viewOf(renamed).sandbox.recent[0]).toMatchObject({ kind: "network", via: "token" });
 
     for (const payload of [
       {},

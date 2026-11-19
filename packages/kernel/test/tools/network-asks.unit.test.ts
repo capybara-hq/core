@@ -8,6 +8,7 @@ import {
   NETWORK_ASK_CANCELLED_NOTE,
 } from "../../src/tools/approvals.service.js";
 import {
+  addressEscalationHint,
   allowedOnceNote,
   clipKept,
   deniedNote,
@@ -106,6 +107,17 @@ describe("planNetworkAsk", () => {
         `[network] c.com was blocked by this device's network policy and cannot be allowed from this conversation: ${why}. Continue without it or tell the user.`,
       ]);
     }
+  });
+
+  it("the escalation hint follows admission's verdict and the open network only", () => {
+    expect(addressEscalationHint("available", "open")).toBe(true);
+    // a withheld runtime (or any escalation refusal): admission gives no `available`
+    expect(addressEscalationHint(undefined, "open")).toBe(false);
+    // an already escalated call has nothing to retry with
+    expect(addressEscalationHint("escalated", "open")).toBe(false);
+    // under an allowlist or a closed network a host grant (or nothing) is the remedy
+    expect(addressEscalationHint("available", "allowlist")).toBe(false);
+    expect(addressEscalationHint("available", "none")).toBe(false);
   });
 
   it("a private address under the open network gets the escalation hint, never an ask", () => {

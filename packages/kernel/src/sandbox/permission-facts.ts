@@ -35,6 +35,7 @@ import {
   type HostGrantCeiling,
   hostGrantCeiling,
   hostGrantRefusal,
+  orgHostsOf,
   providerLayerOf,
   reachWithin,
 } from "./device-sandbox.js";
@@ -167,7 +168,13 @@ export class PermissionFacts {
    * ({@link hostGrantCeiling}), why a host is unavailable ({@link hostGrantRefusal}) and the
    * crossing ceilings a Full access consent covers ({@link ConsentReach}).
    */
-  async deviceSandboxFacts(orgId: string, deviceId: string, availability?: PermissionAvailability) {
+  async deviceSandboxFacts(
+    orgId: string,
+    deviceId: string,
+    availability?: PermissionAvailability,
+    /** A cloud device's network as it would be stored (a change checked before it is written). */
+    cloudNetwork?: { networkMode: "open" | "allowlist" | "none" | null; networkHosts: string[] },
+  ) {
     const [settings, org, row] = await Promise.all([
       readDeviceSandboxSettings(this.db.db, this.config),
       readOrgSettings(this.db.db, orgId),
@@ -195,7 +202,7 @@ export class PermissionFacts {
         allowedDomains: facts.allowedDomains,
         restrictedProjectReach: facts.restrictedProjectReach,
       };
-    } else device = { location, ...cloudOwnNetwork(row) };
+    } else device = { location, ...(cloudNetwork ?? cloudOwnNetwork(row)) };
     const current = availability ?? (await this.availability(orgId, deviceId));
     const report = current.state === "supported" ? current.report : null;
     const platform = {
@@ -218,6 +225,8 @@ export class PermissionFacts {
     return {
       box,
       hostCeiling,
+      /** The org's effective hosts: what a device's own host list may narrow, never add to. */
+      orgHosts: orgHostsOf(platform, orgLayer),
       refusal: (host: string) => hostGrantRefusal(host, box, platform, orgLayer, owner),
       reach: {
         outsideSandbox: box.outsideSandbox,
@@ -538,7 +547,6 @@ export class PermissionFacts {
             ? "os-user"
             : "workspace",
         // an authenticated report bounds browsing by scope: never wider than the device allows
-        widerThanAllowed: false,
         workspace: row.machine_workspace ?? DEFAULT_SANDBOX_ROOTS.workspace,
         home: row.home,
         supported: deviceFeaturesOf(row.features).includes("projects"),
@@ -551,7 +559,6 @@ export class PermissionFacts {
       mode,
       // cloud projects stay within their provisioned files
       reach: "workspace",
-      widerThanAllowed: false,
       workspace: handle === null ? DEFAULT_SANDBOX_ROOTS.workspace : rootsOf(handle).workspace,
       home: null,
       supported: typeof impl?.list === "function" && typeof impl.scan === "function",

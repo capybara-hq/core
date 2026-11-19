@@ -9,8 +9,10 @@ change and the recent setting changes); a local device's `ownerCeiling` reports 
 `network` and `allowedDomains`, and a cloud device has none. `PATCH /devices/:id` takes a cloud
 device's `network` (`open`, `allowlist` with optional hosts that only narrow its org's, `none`, or
 `null` to follow the org) within the org's and the platform's ceilings (`device.network_not_allowed`
-above them); an API token and the new Platform operation `devices.set-network` may only narrow it. A
-narrowing revokes open-network work through the outbox and keeps Full consent; a widening resets it.
+above them); an API token and the new Platform operation `devices.set-network` may only narrow it,
+in the stored setting as well as in effect (following the org again counts as a widening), and a
+token's change is recorded `via: "token"`. A narrowing revokes open-network work through the outbox
+and keeps Full consent; a widening resets it.
 The cloud `mode` switch and Full ceiling are gone, with `device.mode_on_device`,
 `device.mode_requires_session`, `device.full_access_not_allowed`,
 `device.owner_ceiling_confirmation_required` and `device.permission_not_migrated`; a local device's

@@ -379,6 +379,23 @@ describe("the ask and its outcomes", () => {
     expect(called).toHaveLength(2);
   });
 
+  it("an ask made before the org narrowed its ceiling is approved, but the next exec does not carry the host", async () => {
+    await post([curl(["files.example.com"]), curl(["files.example.com"])]);
+    const ask = await nextAsk();
+    // meanwhile the org's ceiling becomes a hard allowlist that leaves the host out
+    await sql`UPDATE capybara.orgs SET settings = ${JSON.stringify({
+      deviceNetwork: { ceiling: "allowlist", excludedHosts: ["*.example.com"] },
+    })}::jsonb WHERE id = ${orgId}`.execute(raw);
+    onTestFinished(async () => {
+      await sql`UPDATE capybara.orgs SET settings = '{}'::jsonb WHERE id = ${orgId}`.execute(raw);
+    });
+    expect((await decide(ask.id, { decision: "approve", scope: "once" })).statusCode).toBe(200);
+    await waitForTerminal(db, s.conversationId, 1, 20_000);
+    // whatever the second call became, no exec carried the host past the new ceiling
+    for (const exec of curlExecs())
+      expect((exec.args as DeviceExecArgs).grants?.hosts ?? []).not.toContain("files.example.com");
+  });
+
   // Device protocol 4: the deployment never adds a host to a local device, so an ask offers a run
   // grant only and "Always allow" is refused, nothing sent to the device
   it("Always allow is not offered: refused, nothing is sent to the device", async () => {

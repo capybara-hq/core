@@ -113,6 +113,19 @@ export const addressEscalationNote = (hosts: readonly string[]) =>
   } If the command must reach ${pron(hosts)}, retry the same Bash call with sandbox: "escalated" and justification: one sentence saying why; this conversation's permission profile decides whether it may run outside the sandbox for this call only.`;
 
 /**
+ * Whether a private-address block gets {@link addressEscalationNote}: admission's verdict for the
+ * call allows escalation (`available`, the source of the Bash tool's own hint: no
+ * `escalationRefusal`), and the device runs the open sandbox network (under an allowlist, a host
+ * grant is the remedy, not escalation).
+ */
+export function addressEscalationHint(
+  escalation: "available" | "escalated" | undefined,
+  networkMode: "open" | "allowlist" | "none",
+): boolean {
+  return escalation === "available" && networkMode === "open";
+}
+
+/**
  * Not asked: a per-call grant for the host is unavailable on this device (approval-only profiles
  * design, "Per-call host grant"), so asking would change nothing; `why` names who can add it
  * (`hostGrantRefusal`): the device owner on the machine, an organization admin or a super admin.
@@ -149,8 +162,8 @@ export interface NetworkPlanContext {
    */
   refusal?: (host: string) => string | null;
   /**
-   * The device runs the open sandbox network and allows running outside the sandbox, and the run
-   * is attended: a private-address block answers with the escalation hint.
+   * {@link addressEscalationHint}: a private-address block of an attended run answers with the
+   * escalation hint.
    */
   escalation?: boolean;
 }

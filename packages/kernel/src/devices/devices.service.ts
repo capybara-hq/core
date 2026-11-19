@@ -3,10 +3,13 @@ import type {
   DeviceLocalPolicySummary,
   DeviceOwnerCeilingNarrowing,
   LocalizedName,
+  SandboxBrowseScope,
   SandboxLimits,
+  SandboxOperationScope,
 } from "@capybara-hq/plugin-sdk";
 import { Inject, Injectable } from "@nestjs/common";
-import { sql } from "kysely";
+import { type Selectable, sql } from "kysely";
+import type { SandboxOperationIntentsTable } from "../db/kernel-schema.js";
 import { ApiError } from "../errors.js";
 import { ExtensionDisplayNames } from "../extensions/display-name.js";
 import { audit } from "../identity/audit.js";
@@ -26,7 +29,11 @@ import { MachinesService } from "../local-devices/machines.js";
 import { type OwnerFacts, ownerFactsOf } from "../local-devices/owner-report.js";
 import { deviceFeaturesOf, localPolicyOf } from "../local-devices/policy-summary.js";
 import type { DeviceModeLevel } from "../runtime/context/device-paths.js";
-import type { DeviceSandbox, DeviceSandboxLayer } from "../sandbox/device-sandbox.js";
+import type {
+  DeviceSandbox,
+  DeviceSandboxLayer,
+  HostGrantCeiling,
+} from "../sandbox/device-sandbox.js";
 import { hostGrantable } from "../sandbox/device-sandbox.js";
 import { oweDeviceDestroy, SandboxJobs } from "../sandbox/jobs.js";
 import {
@@ -149,12 +156,12 @@ export interface DeviceSandboxView {
   layer: { network: DeviceSandboxLayer | null; outsideSandbox: DeviceSandboxLayer | null };
   /**
    * A cloud device's instance runs another network: its next use updates or recreates it, files
-   * kept (「下次使用时生效，文件保留」).
+   * kept (the page says it applies on next use).
    */
   pendingNextUse: boolean;
   /**
    * Its provider applies limits at its file system (`limitsApplyAt: "fileSystem"`) and the instance
-   * runs another network: only a file reset applies it (「重置文件后生效」).
+   * runs another network: only a file reset applies it (the page says it applies after a reset).
    */
   pendingFilesReset: boolean;
   /** Its last {@link RECENT_POLICY_CHANGES} setting changes, newest first. */
@@ -189,7 +196,7 @@ export const RECENT_POLICY_CHANGES = 10;
  * - `ceiling` (`device.owner_ceiling_changed`): a machine's owner ceiling changed, narrowed from the
  *   device page (`web`) or on the machine (`device`);
  * - `network` (`device.network_changed`): a cloud device's sandbox network changed on its device
- *   page or through the API (`web`), or by an agent's Platform tool call (`agent`).
+ *   page (`web`), through an API token (`token`), or by an agent's Platform tool call (`agent`).
  */
 export interface DeviceSettingChangeView {
   at: string;
@@ -203,8 +210,11 @@ export interface DeviceSettingChangeView {
   network: { from: DeviceNetworkSetting; to: DeviceNetworkSetting } | null;
   /** The deciding account's display name (null when the account is gone). */
   by: string | null;
-  /** `device`: made or reported on the machine itself; `agent`: an agent's Platform tool call. */
-  via: "web" | "im" | "device" | "agent";
+  /**
+   * `device`: made or reported on the machine itself; `token`: through an API token; `agent`: an
+   * agent's Platform tool call.
+   */
+  via: "web" | "im" | "device" | "token" | "agent";
   /**
    * What became of a `policy` change sent to the machine: `applied` (also every change made or
    * reported on the machine, and every other row); `unknown`, its answer never came, `failed`, the
@@ -547,9 +557,12 @@ export class DevicesService {
 
   /**
    * `PATCH /devices/:id`: renames one of the person's live devices ({@link rename}) and sets a
-   * cloud device's sandbox network ({@link networkLocked}), in one transaction. A local device's
-   * network lives on its machine (`device.ceiling_on_machine`). `narrowOnly` (an API token, the
-   * Platform tool): the network may only narrow.
+   * cloud device's sandbox network ({@link networkLocked}), in one transaction. A network change
+   * takes the membership, the device row and the device's permission write lock as the ordered
+   * prelude (`withOrderedLocks`): inside a run's fence (`devices.set-network`) they follow the org
+   * row and precede the conversation rows. A local device's network lives on its machine
+   * (`device.ceiling_on_machine`). `narrowOnly` (an API token, the Platform tool): the network may
+   * only narrow, stored and effective.
    */
   async update(
     orgId: string,
@@ -559,8 +572,20 @@ export class DevicesService {
     actorTokenId?: string,
     opts: { narrowOnly?: boolean; auditDetail?: Record<string, unknown> } = {},
   ): Promise<DeviceView> {
-    await this.updateIn(orgId, accountId, id, patch, actorTokenId, opts);
+    if (patch.network !== undefined)
+      await withOrderedLocks(
+        () => this.lockNetworkSubject(orgId, accountId, id),
+        () => this.updateIn(orgId, accountId, id, patch, actorTokenId, opts),
+      );
+    else await this.updateIn(orgId, accountId, id, patch, actorTokenId, opts);
     return this.get(orgId, accountId, id);
+  }
+
+  /** The prelude of a network change: the membership, the device row, the device's write lock. */
+  @Transactional({ propagation: "mandatory" })
+  private async lockNetworkSubject(orgId: string, accountId: string, id: string): Promise<void> {
+    await this.lockOwn(orgId, accountId, id);
+    await this.ceilings.lock({ orgId, deviceId: id }, "device");
   }
 
   @Transactional()
@@ -572,6 +597,7 @@ export class DevicesService {
     actorTokenId: string | undefined,
     opts: { narrowOnly?: boolean; auditDetail?: Record<string, unknown> },
   ): Promise<void> {
+    // held since the prelude for a network change (naming them again re-checks)
     const before = await this.lockOwn(orgId, accountId, id);
     if (patch.network !== undefined)
       await this.networkLocked(orgId, accountId, id, before, patch.network, actorTokenId, opts);
@@ -589,9 +615,10 @@ export class DevicesService {
   }
 
   /**
-   * Checks a cloud network change without writing it (the Platform tool's precheck): the device is
-   * the person's, cloud, and the change stays within the ceilings and, with `narrowOnly`, only
-   * narrows. Throws what {@link update} would.
+   * Checks a cloud network change without writing anything and without locks (the Platform
+   * tool's precheck): the device is the person's live cloud device, and the change stays within
+   * the ceilings and, with `narrowOnly`, only narrows. Throws what {@link update} would; the
+   * write re-checks under its locks.
    */
   async checkNetwork(
     orgId: string,
@@ -600,50 +627,34 @@ export class DevicesService {
     network: NonNullable<DevicePatch["network"]>,
     narrowOnly: boolean,
   ): Promise<void> {
-    try {
-      await this.checkNetworkIn(orgId, accountId, id, network, narrowOnly);
-    } catch (e) {
-      if (e instanceof CheckedOnly) return;
-      throw e;
-    }
-  }
-
-  @Transactional()
-  private async checkNetworkIn(
-    orgId: string,
-    accountId: string,
-    id: string,
-    network: NonNullable<DevicePatch["network"]>,
-    narrowOnly: boolean,
-  ): Promise<void> {
-    const before = await this.lockOwn(orgId, accountId, id);
-    await this.networkLocked(orgId, accountId, id, before, network, undefined, { narrowOnly });
-    // roll the checked write back
-    throw new CheckedOnly();
+    const row = await this.db
+      .selectFrom("devices")
+      .select(["source"])
+      .where("id", "=", id)
+      .where("org_id", "=", orgId)
+      .where("owner_kind", "=", "personal")
+      .where("owner_account_id", "=", accountId)
+      .where("deleted_at", "is", null)
+      .executeTakeFirst();
+    if (!row) throw deviceNotFound();
+    await this.planNetwork(orgId, id, row, network, narrowOnly);
   }
 
   /**
-   * A cloud device's sandbox network (approval-only profiles design, "Settings model"), under the
-   * device authority writer: its owner chooses `open`, `allowlist` (its org's hosts, narrowed by
-   * its own list: a device list never adds a host; an empty one follows the org's hosts), `none`
-   * (closed) or null (follow the org), in both directions within the org's and the platform's
-   * ceilings (`device.network_not_allowed` above them, and for a host outside the org's list).
-   * `narrowOnly` refuses a widening with the same code. The write and its publication are one
-   * transaction: a narrowing bumps the device epoch and revokes the admitted or started work it
-   * takes (open-network work, allowlist work naming a host no longer covered; the revocations are
-   * owed through the outbox) and keeps Full consent; a widening resets Full consent with a
-   * `permission_profile_changed` event. Audited `device.network_changed`.
+   * Decides a cloud network change (read only): the stored setting before and after, the
+   * effective device sandbox before and after (computed in memory from the patched setting), and
+   * whether it widens. Refuses, without writing: a local device (`device.ceiling_on_machine`),
+   * the open network above the ceilings or a host outside the org's list
+   * (`device.network_not_allowed`), and with `narrowOnly` a widening of the stored setting or of
+   * the effective network (`device.network_not_allowed`). Null when nothing changes.
    */
-  private async networkLocked(
+  private async planNetwork(
     orgId: string,
-    accountId: string,
     id: string,
     before: { source: string },
     want: NonNullable<DevicePatch["network"]>,
-    actorTokenId: string | undefined,
-    opts: { narrowOnly?: boolean; auditDetail?: Record<string, unknown> },
-  ): Promise<void> {
-    await this.ceilings.lock({ orgId, deviceId: id }, "device");
+    narrowOnly: boolean,
+  ) {
     if (before.source !== "cloud")
       throw new ApiError(
         "device.ceiling_on_machine",
@@ -663,8 +674,61 @@ export class DevicesService {
           ? [...new Set((want.hosts ?? []).map((h) => h.toLowerCase()))].sort()
           : [],
     };
-    if (from.mode === to.mode && sameHosts(from.hosts, to.hosts)) return;
-    const prev = await this.facts.deviceSandboxFacts(orgId, id);
+    if (from.mode === to.mode && sameHosts(from.hosts, to.hosts)) return null;
+    const [prev, next] = await Promise.all([
+      this.facts.deviceSandboxFacts(orgId, id),
+      this.facts.deviceSandboxFacts(orgId, id, undefined, {
+        networkMode: to.mode,
+        networkHosts: to.hosts,
+      }),
+    ]);
+    if (to.mode === "open" && next.box.networkMode !== "open")
+      throw new ApiError(
+        "device.network_not_allowed",
+        `The open network is not allowed for this device: ${networkLayerText(next.box.layer.network)} limits it to ${next.box.networkCeiling === "none" ? "no network" : "the allowlist"}`,
+      );
+    // a device's own list only narrows its org's hosts, whatever the network in effect now
+    const outside = to.hosts.filter(
+      (h) => !next.orgHosts.some((p) => coversHost(p.toLowerCase(), h)),
+    );
+    if (outside.length > 0)
+      throw new ApiError(
+        "device.network_not_allowed",
+        `A device's host list only narrows its organization's hosts; an organization admin adds ${outside.join(", ")} to the organization's device network list`,
+      );
+    const widened = networkWidens(prev.box, next.box);
+    if (narrowOnly && (widened || storedNetworkWidens(from, to)))
+      throw new ApiError(
+        "device.network_not_allowed",
+        "Through an API token or the Platform tool a device's network may only narrow (to allowlist, its own shorter host list, or none; never back to following the organization); its owner widens it on the device page",
+      );
+    return { from, to, next, widened };
+  }
+
+  /**
+   * A cloud device's sandbox network (approval-only profiles design, "Settings model"), under the
+   * device authority writer held since the prelude: its owner chooses `open`, `allowlist` (its
+   * org's hosts, narrowed by its own list: a device list never adds a host; an empty one follows
+   * the org's hosts), `none` (closed) or null (follow the org), in both directions within the
+   * org's and the platform's ceilings ({@link planNetwork}). The write and its publication are one
+   * transaction: a narrowing bumps the device epoch and revokes the admitted or started work it
+   * takes ({@link networkNarrowingRevokes}; the revocations are owed through the outbox) and keeps
+   * Full consent; a widening resets Full consent with a `permission_profile_changed` event.
+   * Audited `device.network_changed` (`via`: `web`, `token` for an API token, or the agent's).
+   */
+  private async networkLocked(
+    orgId: string,
+    accountId: string,
+    id: string,
+    before: { source: string },
+    want: NonNullable<DevicePatch["network"]>,
+    actorTokenId: string | undefined,
+    opts: { narrowOnly?: boolean; auditDetail?: Record<string, unknown> },
+  ): Promise<void> {
+    await this.ceilings.lock({ orgId, deviceId: id }, "device");
+    const plan = await this.planNetwork(orgId, id, before, want, opts.narrowOnly === true);
+    if (plan === null) return;
+    const { from, to, next, widened } = plan;
     await this.db
       .updateTable("devices")
       .set({
@@ -674,33 +738,10 @@ export class DevicesService {
       })
       .where("id", "=", id)
       .execute();
-    const next = await this.facts.deviceSandboxFacts(orgId, id);
-    if (to.mode === "open" && next.box.networkMode !== "open")
-      throw new ApiError(
-        "device.network_not_allowed",
-        `The open network is not allowed for this device: ${networkLayerText(next.box.layer.network)} limits it to ${next.box.networkCeiling === "none" ? "no network" : "the allowlist"}`,
-      );
-    if (next.box.networkMode === "allowlist") {
-      const outside = to.hosts.filter((h) => !next.box.hosts.some((p) => coversHost(p, h)));
-      if (outside.length > 0)
-        throw new ApiError(
-          "device.network_not_allowed",
-          `A device's host list only narrows its organization's hosts; an organization admin adds ${outside.join(", ")} to the organization's device network list`,
-        );
-    }
-    const widened = networkWidens(prev.box, next.box);
-    if (widened && opts.narrowOnly === true)
-      throw new ApiError(
-        "device.network_not_allowed",
-        "Through an API token or the Platform tool a device's network may only narrow; its owner opens it on the device page",
-      );
-    const grantable = (host: string) => hostGrantable(next.hostCeiling, host);
     await this.ceilings.publishLocked(
       { orgId, deviceId: id },
       "device",
-      (scope, intent) =>
-        next.box.networkMode !== "open" &&
-        (needsOpenNetwork(scope) || hostsNarrowed(scope, intent, next.box.hosts, grantable)),
+      (scope, intent) => networkNarrowingRevokes(next, scope, intent),
       widened,
     );
     await audit(this.db.db, {
@@ -709,7 +750,13 @@ export class DevicesService {
       orgId,
       action: "device.network_changed",
       target: id,
-      detail: { from, to, by: accountId, via: "web", ...opts.auditDetail },
+      detail: {
+        from,
+        to,
+        by: accountId,
+        via: actorTokenId !== undefined ? "token" : "web",
+        ...opts.auditDetail,
+      },
     });
   }
 
@@ -1545,9 +1592,6 @@ const limitsView = (l: DeviceLimits): SandboxLimits => {
   return { ...rest, network: { kind: l.network.kind, hosts: [...l.network.hosts] } };
 };
 
-/** Thrown inside a check-only transaction so that its writes roll back. */
-class CheckedOnly extends Error {}
-
 const sameHosts = (a: readonly string[], b: readonly string[]) =>
   a.length === b.length && a.every((h, i) => h === b[i]);
 
@@ -1566,6 +1610,40 @@ function networkWidens(
   return (
     b.networkMode === "allowlist" &&
     b.hosts.some((h) => !a.hosts.some((p) => coversHost(p.toLowerCase(), h.toLowerCase())))
+  );
+}
+
+const STORED_RANK = { none: 0, allowlist: 1, open: 2 } as const;
+
+/**
+ * Whether a cloud device's stored network setting widens from `a` to `b`, whatever the network in
+ * effect now (a stored widening takes effect when a ceiling opens later): a wider mode, where
+ * following the org (null) counts as wider than any explicit mode; or an explicit host list
+ * replaced by none of its own (follow the org's hosts) or gaining a host.
+ */
+export function storedNetworkWidens(a: DeviceNetworkSetting, b: DeviceNetworkSetting): boolean {
+  const rank = (m: DeviceNetworkSetting["mode"]) => (m === null ? 3 : STORED_RANK[m]);
+  if (rank(b.mode) !== rank(a.mode)) return rank(b.mode) > rank(a.mode);
+  if (b.mode !== "allowlist" || a.hosts.length === 0) return false;
+  if (b.hosts.length === 0) return true;
+  return b.hosts.some((h) => !a.hosts.some((p) => coversHost(p.toLowerCase(), h.toLowerCase())));
+}
+
+/**
+ * What a cloud device's new network takes from admitted or started work (`next`: its sandbox
+ * after the change): open-network work once it is no longer open, and allowlist work naming a host
+ * its new hosts no longer cover, unless an independent grant the new per-call ceiling still allows
+ * holds it (`hostsNarrowed`).
+ */
+export function networkNarrowingRevokes(
+  next: { box: Pick<DeviceSandbox, "networkMode" | "hosts">; hostCeiling: HostGrantCeiling },
+  scope: SandboxOperationScope | SandboxBrowseScope,
+  intent: Pick<Selectable<SandboxOperationIntentsTable>, "method" | "granted_hosts">,
+): boolean {
+  if (next.box.networkMode === "open") return false;
+  return (
+    needsOpenNetwork(scope) ||
+    hostsNarrowed(scope, intent, next.box.hosts, (host) => hostGrantable(next.hostCeiling, host))
   );
 }
 
@@ -1627,7 +1705,15 @@ function settingChangeOf(
   const hosts = (v: unknown) =>
     Array.isArray(v) ? v.filter((h): h is string => typeof h === "string") : [];
   const via: DeviceSettingChangeView["via"] =
-    d.via === "im" ? "im" : d.via === "device" ? "device" : d.via === "agent" ? "agent" : "web";
+    d.via === "im"
+      ? "im"
+      : d.via === "device"
+        ? "device"
+        : d.via === "token"
+          ? "token"
+          : d.via === "agent"
+            ? "agent"
+            : "web";
   const base = { at: at.toISOString(), add: [], remove: [], ceiling: null, network: null, by, via };
   if (action === "device.owner_ceiling_changed") {
     const to = ceilingFactsOf(d.to);

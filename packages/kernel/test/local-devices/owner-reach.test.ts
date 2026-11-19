@@ -8,6 +8,7 @@ import { PermissionProfilesService } from "../../src/conversations/permission-pr
 import { createDb } from "../../src/db/pool.js";
 import { DevicesService } from "../../src/devices/devices.service.js";
 import { DevicePatchBody, DevicePolicyBody } from "../../src/devices/dto.js";
+import { KernelConfigService } from "../../src/infra/config/kernel-config.service.js";
 import { TransactionHost } from "../../src/infra/database/transaction-host.js";
 import { DevicePolicyService } from "../../src/local-devices/device-policy.service.js";
 import { MachinesService } from "../../src/local-devices/machines.js";
@@ -611,6 +612,75 @@ describe("cloud network PATCH (service)", () => {
     expect(await c.row()).toEqual({ network_mode: "none", network_hosts: [] });
     // the owner in a web session may widen again within the ceilings
     expect((await c.patch({ network: { mode: null } })).sandbox.network).toBe("open");
+  });
+
+  it("narrow only refuses a stored widening the network in effect does not show yet", async () => {
+    const config = k.app.get(KernelConfigService);
+    const [a, b] = config.get().sandbox.limits.allowHosts;
+    if (a === undefined || b === undefined) throw new Error("the default allowHosts has two hosts");
+    const refused = { code: "device.network_not_allowed" };
+    // the org's default is the allowlist: back to following the org changes nothing in effect,
+    // but a later org default `open` would open it
+    const c1 = await cloud();
+    await k.app
+      .get(OrgSettingsService)
+      .update(c1.f.orgId, { deviceNetwork: { default: "allowlist" } }, c1.f.accountId);
+    await c1.patch({ network: { mode: "allowlist" } });
+    await expect(c1.patch({ network: { mode: null } }, { narrowOnly: true })).rejects.toMatchObject(
+      refused,
+    );
+    // an explicit host list dropped for the org's hosts
+    const c2 = await cloud();
+    await c2.patch({ network: { mode: "allowlist", hosts: [a] } });
+    await expect(
+      c2.patch({ network: { mode: "allowlist", hosts: [] } }, { narrowOnly: true }),
+    ).rejects.toMatchObject(refused);
+    await expect(
+      c2.patch({ network: { mode: "allowlist", hosts: [a, b] } }, { narrowOnly: true }),
+    ).rejects.toMatchObject(refused);
+    expect(await c2.row()).toEqual({ network_mode: "allowlist", network_hosts: [a] });
+    // the kill switch closes every network: none → allowlist or null is still a stored widening
+    const c3 = await cloud();
+    await c3.patch({ network: { mode: "none" } });
+    const real = config.get();
+    vi.spyOn(config, "get").mockReturnValue({
+      ...real,
+      sandbox: { ...real.sandbox, limits: { ...real.sandbox.limits, egress: "none" } },
+    });
+    for (const network of [{ mode: "allowlist" as const }, { mode: null }])
+      await expect(c3.patch({ network }, { narrowOnly: true })).rejects.toMatchObject(refused);
+    expect(await c3.row()).toEqual({ network_mode: "none", network_hosts: [] });
+  });
+
+  it("a PATCH on a deleted device is not found and writes nothing", async () => {
+    const c = await cloud();
+    await k.app.get(DevicesService).remove(c.f.orgId, c.f.accountId, c.id);
+    await expect(c.patch({ network: { mode: "none" } })).rejects.toMatchObject({
+      code: "device.not_found",
+    });
+    await expect(
+      k.app
+        .get(DevicesService)
+        .checkNetwork(c.f.orgId, c.f.accountId, c.id, { mode: "none" }, true),
+    ).rejects.toMatchObject({ code: "device.not_found" });
+    expect(await c.row()).toEqual({ network_mode: null, network_hosts: [] });
+  });
+
+  it("a device PATCH racing an org ceiling narrowing: both commit or the PATCH is refused, never wider", async () => {
+    const c = await cloud();
+    await c.patch({ network: { mode: "allowlist" } });
+    const [patched, narrowed] = await Promise.allSettled([
+      c.patch({ network: { mode: "open" } }),
+      k.app
+        .get(OrgSettingsService)
+        .update(c.f.orgId, { deviceNetwork: { ceiling: "allowlist" } }, c.f.accountId),
+    ]);
+    expect(narrowed.status).toBe("fulfilled");
+    if (patched.status === "rejected")
+      expect(patched.reason).toMatchObject({ code: "device.network_not_allowed" });
+    // whichever came first, the network in effect is within the org's new ceiling
+    const view = await k.app.get(DevicesService).get(c.f.orgId, c.f.accountId, c.id);
+    expect(view.sandbox).toMatchObject({ network: "allowlist", networkCeiling: "allowlist" });
   });
 
   it("a cloud device has no owner ceiling and never runs outside; the view reports the reconcile marker", async () => {
