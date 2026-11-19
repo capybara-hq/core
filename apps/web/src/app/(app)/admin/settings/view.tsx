@@ -21,6 +21,7 @@ import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useLocale, useTranslations } from "next-intl";
 import { useState } from "react";
 import { platformOwned } from "../../../../components/AdminComponents";
+import { AppIconSection } from "../../../../components/AppIconSection";
 import { ErrorFrame } from "../../../../components/ErrorFrame";
 import { NoAccess } from "../../../../components/NoAccess";
 import { CompactionSection } from "../../../../components/settings/CompactionSection";
@@ -78,7 +79,8 @@ import NotFound from "../../not-found";
  * `/admin/settings`：部署设置（超级管理员，SettingsPage）——谁能建组织、价格币种、
  * 组织能否自建连接器 / 技能（`deny` 时只能从平台目录安装）, and 外观: the platform default theme
  * (themes spec §7, §10), 内置主题 or a platform-owned theme whose scope is `all` and that is not
- * disabled; the kernel refuses one off in some org with the orgs (shown). 插件界面代码: the client
+ * disabled; the kernel refuses one off in some org with the orgs (shown). 应用图标: the platform
+ * icon (mobile layout spec §10.2.1, `AppIconSection`), saved per action. 插件界面代码: the client
  * code kill switch and the plugins whose client code alone is stopped (client extensions spec
  * §10.2); a save that changes it marks every cached client set stale. Full access: the
  * platform's switch (`devicesFullAccess`), read with where it comes from; a value set in the startup
@@ -458,6 +460,7 @@ function AdminSettings({
           onChange={(v) => setThemeDraft(v === BUILTIN ? null : v)}
         />
       </FormSection>
+      <AppIconSection />
       <ClientCodeSection value={client} onChange={setClientDraft} />
       <UiReplacementsSection scope={{ kind: "platform" }} canEdit />
       <UiPlacementSection scope={{ kind: "platform" }} canEdit />

@@ -42,6 +42,7 @@ import {
   marketplacesQuery,
   pendingPluginsQuery,
   platformAuditQuery,
+  platformIconsQuery,
   stagedImportQuery,
 } from "./admin";
 import {
@@ -558,13 +559,15 @@ export const ROUTES: readonly RouteEntry[] = [
   },
   {
     pattern: "/admin/settings",
-    // The settings, the themes (外观's eligible ones, with their names and swatches), the platform
-    // arrangement and the extensions (插件界面代码 lists those with client code).
+    // The settings, the themes (外观's eligible ones, with their names and swatches), the uploaded
+    // platform icons (应用图标), the platform arrangement and the extensions (插件界面代码 lists
+    // those with client code).
     queries: ({ me }) =>
       superAdmin(me)
         ? [
             q(deploymentSettingsQuery()),
             q(adminComponentsQuery("theme")),
+            q(platformIconsQuery()),
             q(adminUiArrangementQuery()),
             q(adminExtensionsQuery()),
           ]
