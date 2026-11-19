@@ -950,8 +950,11 @@ export interface AttachmentsTable {
   agent_id: ColumnType<string | null, string | null | undefined, string | null>;
 }
 
-/** 预签名上传的用途：对话附件 / 技能包 zip / agent avatar image. */
-export type AttachmentPurpose = "chat" | "skill-package" | "agent-avatar";
+/**
+ * What an attachment row is for: a chat attachment, a skill package zip, an agent avatar image, or
+ * (0163) an image the builtin Read stored with the calling conversation.
+ */
+export type AttachmentPurpose = "chat" | "skill-package" | "agent-avatar" | "read";
 
 /** 技能版本的清单（`skill_versions.manifest`）。 */
 export interface SkillManifest {

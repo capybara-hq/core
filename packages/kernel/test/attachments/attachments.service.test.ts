@@ -168,7 +168,7 @@ describe("AttachmentsService", () => {
     expect(ok([])).toBe(false);
   });
 
-  it("默认配置：20 MiB、13 种类型、每条消息 10 个、24 小时、单次请求 20 MiB 媒体", () => {
+  it("defaults: 20 MiB, 13 types, 10 per message, 24 hours, 20 MiB of media per request, read copies", () => {
     expect(config.attachments).toEqual({
       maxBytes: 20_971_520,
       allowedTypes: [
@@ -190,6 +190,9 @@ describe("AttachmentsService", () => {
       maxPerMessage: 10,
       unboundTtlHours: 24,
       requestMediaBytes: 20_971_520,
+      readImagesPerRequest: 6,
+      readMaxBytesPerConversation: 536_870_912,
+      readPurgeAfterHours: 24,
     });
   });
 });
