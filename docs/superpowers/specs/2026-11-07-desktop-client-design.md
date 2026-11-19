@@ -310,21 +310,21 @@ values:
 | `kind` | `"desktop"` |
 | `platform` | `"macos"` (later `"windows"`, `"linux"`) |
 | `shellVersion` | The app's version |
-| `insets` | macOS with `titleBarStyle: "hiddenInset"`: `top` 28 (the title bar band holding the traffic lights at their default position), `right` / `bottom` / `left` 0. In fullscreen the traffic lights hide: `top` 0, announced with `change` |
+| `insets` | macOS with `titleBarStyle: "hiddenInset"`: `top` 28 (the title bar band holding the traffic lights at their default position), `right` / `bottom` / `left` 0. In fullscreen: `top` 0, announced with `change` |
+| `controls` | macOS: the traffic lights' rectangle at the app's fixed `trafficLightPosition`, including their margins: `{ x: 0, y: 0, width: 80, height: 28 }` (exact values measured once on the built window, **designer's call**); `null` in fullscreen, announced with `change`. Later Windows / Linux builds report their title-bar overlay buttons the same way |
 | `capabilities` | `notify@1` and `openExternal@1` always; `chrome@1` (mobile layout §9.2: window background and title bar follow the theme); `device@1` when 「连接本机」 is available: macOS or Linux, not turned off by managed configuration, and the deployment's `/api/v1/meta` says `localDevices` with a `device` range the bundled program speaks |
 
-Desktop choices that §9.3 leaves to this spec, realized in design CSS under
-`[data-shell="desktop"][data-shell-platform="macos"]` **(designer's call)**: the sidebar head and,
-on compact and medium widths, the top bar clear about 80 px at the leading edge of the top band
-for the traffic lights; the sidebar head, the top bar and the conversation title bar are drag
+The AppShell clears the window controls from `--cb-shell-controls-*` (mobile layout §9.3); no
+geometry is keyed on `data-shell-platform`. The desktop's remaining choice, realized in design CSS
+**(designer's call)**: the sidebar head, the top bar and the conversation title bar are drag
 regions, every interactive element in them `no-drag`. The shell adds no drag regions of its own.
 
 ## 8. The desktop's capabilities
 
 Offered on `window.capybaraShell.capabilities` under the rules of mobile layout §9.2 and §9.4: the
-web uses them only through `lib/shell.ts`, detects them by key
-(`capybaraShell?.capabilities["device@1"]`), and treats an absent one as the browser. Every call
-returns plain data, never a credential.
+web reads them only through `lib/shell.ts` (`useShellCapability("device@1")`, reactive: `device@1`
+can appear after the page loaded, once discovery answered), and treats an absent one as the
+browser. Every call returns plain data, never a credential.
 
 | Capability · function | Does |
 |---|---|
@@ -344,15 +344,14 @@ Deliberately absent: the credential, file access, command execution, `policy add
 operations through the device protocol), and logging the device out (revoking is the device page's
 existing kernel action, which stops the runner through the protocol).
 
-Abuse limits: `connect`, `resume` and widening `requestCeiling` need a user activation in the
-page (checked in the preload with `navigator.userActivation.isActive`), and only one native
-dialog is open per profile at a time; further requests fail with `busy`.
+The confirming calls (`connect`, `resume`, a widening `requestCeiling`) follow the confirmation
+rule of mobile layout §9.4: a user activation, one native dialog at a time, `busy` otherwise.
 
 ## 9. 「连接本机」
 
 ### 9.1 The flow
 
-1. On the 设备 page, 新建设备 → 本地设备 shows, when `device@1` is present, a
+1. On the 设备 page, 新建设备 → 本地设备 shows, when `useShellCapability("device@1")` returns it, a
    primary 「连接本机」 above the terminal steps (which stay, for other machines). If this machine
    is already connected to this deployment, the dialog shows that device's state and a link to its
    page instead; if it is connected to another deployment, it says so and offers nothing but the
@@ -451,7 +450,7 @@ Latin word `agent`. The language follows the OS; everything else is the deployme
 
 | Threat | Measure |
 |---|---|
-| A malicious or compromised page drives the machine | No execution, files or credential in the bridge; connect, resume and widening need a native confirmation and a user activation; the Shell environment security rule (mobile layout §9.4) |
+| A malicious or compromised page drives the machine | No execution, files or credential in the bridge; connect, resume and widening need a native confirmation under the rule of mobile layout §9.4; the Shell environment security rule (mobile layout §9.4) |
 | A page connects the machine silently | Native dialog naming the platform and host before any login (§9.1) |
 | A page loosens the local policy | Only narrowing applies directly; widening shows the program's risk text natively (§9.5) |
 | A misled agent runs harmful commands | Unchanged: the permission profile, the owner ceiling, the restricted runtime, the deployment's command review; plus one-click pause and disconnect from the tray |
@@ -465,8 +464,8 @@ Latin word `agent`. The language follows the OS; everything else is the deployme
 | Where | Change |
 |---|---|
 | `packages/kernel` | `GET /api/v1/meta` (§6.2), `@Public`, no-store, tested through the web proxy; a Platform-tool exclusion (`transport`); the name source per open question 1 |
-| `packages/design` | Shell environment support comes with the mobile layout design (§9.3 there); this spec adds the desktop CSS choices of §7.3 (traffic-light clearance, which regions drag) |
-| `apps/web` | Typed accessors for `device@1` and `notify@1` in the shell adapter `lib/shell.ts` (the adapter itself, the plugin-sdk types and the no-flash script come with the mobile layout design), `defineQuery` for `device@1.status` / `device@1.running`, `useAppMutation` for the actions); `DeviceCreateDialog` local branch: 「连接本机」 or this machine's state (§9.1); the device page's 本机 section and widen-through-bridge action (§9.6); 本机 marks in the device list and picker; `notify@1` for attention signals (§10); zh / en messages (`check:i18n`) |
+| `packages/design` | Shell environment support comes with the mobile layout design (§9.3 there); this spec adds only the desktop's drag regions (§7.3); controls clearance comes from `--cb-shell-controls-*` |
+| `apps/web` | Typed accessors for `device@1` and `notify@1` on `useShellCapability` in the shell adapter `lib/shell.ts` (the adapter itself, the plugin-sdk types and the no-flash script come with the mobile layout design), `defineQuery` for `device@1.status` / `device@1.running`, `useAppMutation` for the actions); `DeviceCreateDialog` local branch: 「连接本机」 or this machine's state (§9.1); the device page's 本机 section and widen-through-bridge action (§9.6); 本机 marks in the device list and picker; `notify@1` for attention signals (§10); zh / en messages (`check:i18n`) |
 | `apps/web` `/devices/link` | Honour `org=<orgId>`: preselect the org and 新建设备 named after the machine (§9.2) |
 | `packages/device` | The gaps of §4.2: the control socket and live `status --json`; `login --json`; `ceiling show --json`; `service status --json`; README and tests; a changeset |
 | `docs/architecture.md` | `capybara-hq/clients` (desktop, later mobile) as an external app in its own repository |
