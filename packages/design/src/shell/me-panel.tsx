@@ -104,7 +104,11 @@ export function MePanel({
   );
 }
 
-/** The choices of a menu in a bottom sheet's body: radios for a set, buttons for the rest. */
+/**
+ * The choices of a menu in a bottom sheet's body: radios for a set, buttons for the rest, links for
+ * the items with an `href` (the navigation leaves the page, and the sheet with it); a `disabled` item cannot be chosen and a `danger` one (Leave
+ * organization) is drawn as such, as in the menu the sheet stands for.
+ */
 function MenuChoices({
   label,
   items,
@@ -114,10 +118,13 @@ function MenuChoices({
   items: MenuItem[];
   onDone(): void;
 }) {
+  const Link = useDesignLink();
   const choices = items.filter((i): i is Exclude<MenuItem, "separator"> => i !== "separator");
-  const radios = choices.filter((i) => i.checked !== undefined && i.submenu === undefined);
-  const others = choices.filter((i) => i.checked === undefined && i.submenu === undefined);
+  const plain = choices.filter((i) => i.submenu === undefined);
+  const radios = plain.filter((i) => i.checked !== undefined && i.href === undefined);
+  const others = plain.filter((i) => i.checked === undefined || i.href !== undefined);
   const run = (item: Exclude<MenuItem, "separator">) => {
+    if (item.disabled) return;
     item.onSelect?.();
     onDone();
   };
@@ -129,17 +136,36 @@ function MenuChoices({
           id: String(i),
           label: r.label,
           checked: r.checked === true,
+          ...(r.disabled ? { disabled: true } : {}),
         }))}
         onPick={(id) => {
           const r = radios[Number(id)];
           if (r) run(r);
         }}
       />
-      {others.map((o) => (
-        <Button key={o.label} variant="ghost" onClick={() => run(o)}>
-          {o.label}
-        </Button>
-      ))}
+      {others.map((o) =>
+        o.href !== undefined && !o.disabled ? (
+          <Link
+            key={o.label}
+            href={o.href}
+            className="cb-btn cb-btn-link"
+            data-part="button"
+            data-variant={o.danger ? "danger" : "ghost"}
+            {...(o.current || o.checked ? { "aria-current": "page" as const } : {})}
+          >
+            <span className="cb-btn-body">{o.label}</span>
+          </Link>
+        ) : (
+          <Button
+            key={o.label}
+            variant={o.danger ? "danger" : "ghost"}
+            disabled={o.disabled === true}
+            onClick={() => run(o)}
+          >
+            {o.label}
+          </Button>
+        ),
+      )}
     </>
   );
 }

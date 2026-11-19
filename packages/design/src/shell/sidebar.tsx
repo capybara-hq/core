@@ -372,8 +372,8 @@ function SidebarPanel({
             {ctx.kind === "work" ? <BrandTools p={p} rail={false} /> : null}
             {variant === "full" && p.onCollapsedChange ? (
               <IconButton
-                label={t("sidebar.collapse")}
-                title={`${t("sidebar.collapse")} ${COLLAPSE_SHORTCUT}`}
+                label={t("shell.railCollapse")}
+                title={`${t("shell.railCollapse")} ${COLLAPSE_SHORTCUT}`}
                 icon={<Icon name="panel-left" />}
                 part="collapse-toggle"
                 onClick={() => p.onCollapsedChange?.(true)}

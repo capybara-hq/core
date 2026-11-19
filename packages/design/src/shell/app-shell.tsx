@@ -159,11 +159,19 @@ export function AppShell({
   // The setup frame's steps are a page of their own on compact (spec §5.5): the setup home is the
   // tab root, the steps button pushes them (the URL hash `#steps`, so the system back closes them).
   const setup = sidebar.context.kind === "setup" ? sidebar.context : null;
+  const inSetup = setup !== null;
   const [stepsOpen, setStepsOpen] = useState(false);
+  // Whether the steps button pushed the `#steps` entry (closing steps back out of it), reset once
+  // the steps page is left any other way (the system back, a link)
+  const stepsPushed = useRef(false);
   // biome-ignore lint/correctness/useExhaustiveDependencies: `pathname` re-reads the hash after a link left the steps page (a client navigation fires no hashchange)
   useEffect(() => {
-    if (!setup) return;
-    const read = () => setStepsOpen(window.location.hash === "#steps");
+    if (!inSetup) return;
+    const read = () => {
+      const open = window.location.hash === "#steps";
+      if (!open) stepsPushed.current = false;
+      setStepsOpen(open);
+    };
     read();
     window.addEventListener("hashchange", read);
     window.addEventListener("popstate", read);
@@ -171,7 +179,7 @@ export function AppShell({
       window.removeEventListener("hashchange", read);
       window.removeEventListener("popstate", read);
     };
-  }, [setup, pathname]);
+  }, [inSetup, pathname]);
   // The route: a tab root shows the bottom navigation, every other route is pushed (spec §4.6).
   // Back goes to the previous in-app entry while one lies behind, else up the path.
   const items = bottomNav ?? [];
@@ -209,7 +217,6 @@ export function AppShell({
   }, [pathname, tabRoot]);
   const tabLabel = items.find((i) => i.id === currentTab && tabRoot)?.label;
 
-  const stepsPushed = useRef(false);
   const openSteps = useCallback(() => {
     stepsPushed.current = true;
     window.history.pushState(window.history.state, "", "#steps");

@@ -105,12 +105,12 @@
 @media (max-width: 599px) {
   .cb-shell-topbar {
     display: block;
-    padding-top: var(--cb-inset-top, env(safe-area-inset-top, 0px));
+    padding-top: var(--cb-inset-top);
     background: var(--cb-bg);
   }
   .cb-shell-bottomnav {
     display: block;
-    padding-bottom: var(--cb-inset-bottom, env(safe-area-inset-bottom, 0px));
+    padding-bottom: var(--cb-inset-bottom);
     background: var(--cb-sidebar);
   }
   /* The keyboard hides the bottom navigation (spec §4.3). */

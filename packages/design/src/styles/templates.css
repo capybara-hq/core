@@ -1301,11 +1301,7 @@ a.cb-object-name:hover {
     /* the buttons span the row: no gutter kept for a scrollbar the row never has */
     scrollbar-gutter: auto;
     padding: var(--cb-space-2) var(--cb-space-4)
-      calc(
-        var(--cb-space-2) +
-        var(--cb-inset-bottom, env(safe-area-inset-bottom, 0px)) +
-        var(--cb-keyboard-inset, 0px)
-      );
+      calc(var(--cb-space-2) + var(--cb-inset-bottom) + var(--cb-keyboard-inset, 0px));
   }
   .cb-actionrow .cb-actionrow-frame {
     flex-direction: column;

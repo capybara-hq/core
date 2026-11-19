@@ -156,6 +156,39 @@ describe("MePanel", () => {
     expect(await screen.findByRole("dialog", { name: "语言" })).toBeTruthy();
     expect(screen.queryByRole("menu")).toBeNull();
   });
+
+  it("the org sheet keeps the menu's disabled, danger and link items", async () => {
+    const pick = vi.fn();
+    const leave = vi.fn();
+    zh(
+      <MePanel
+        {...base({
+          org: {
+            ...org,
+            menu: [
+              { label: "另一个组织", checked: false, disabled: true, onSelect: pick },
+              "separator",
+              { label: "新建组织", href: "/orgs/new" },
+              { label: "退出组织…", danger: true, onSelect: leave },
+            ],
+          },
+        })}
+      />,
+    );
+    await userEvent.click(screen.getByRole("button", { name: "当前组织：示例组织，切换组织" }));
+    const sheet = await screen.findByRole("dialog");
+    const radio = within(sheet).getByRole("radio", { name: "另一个组织" });
+    expect((radio as HTMLInputElement).disabled).toBe(true);
+    await userEvent.click(radio);
+    expect(pick).not.toHaveBeenCalled();
+    expect(within(sheet).getByRole("link", { name: "新建组织" }).getAttribute("href")).toBe(
+      "/orgs/new",
+    );
+    const danger = within(sheet).getByRole("button", { name: "退出组织…" });
+    expect(danger.getAttribute("data-variant")).toBe("danger");
+    await userEvent.click(danger);
+    expect(leave).toHaveBeenCalledTimes(1);
+  });
 });
 
 describe("MePanel styles", () => {

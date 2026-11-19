@@ -196,6 +196,8 @@ export type SheetOption = {
   /** A count after the label (a filter's matches). */
   count?: number;
   checked?: boolean;
+  /** Not choosable now (an org switch in flight). */
+  disabled?: boolean;
 };
 
 /**
@@ -220,6 +222,7 @@ export function SheetOptionList({
           className="cb-sheet-option"
           data-part="option"
           data-checked={o.checked ? "true" : undefined}
+          data-disabled={o.disabled ? "true" : undefined}
         >
           <input
             type="radio"
@@ -227,6 +230,7 @@ export function SheetOptionList({
             name={name}
             value={o.id}
             checked={o.checked === true}
+            disabled={o.disabled === true}
             onChange={() => onPick?.(o.id)}
           />
           <span className="cb-sheet-option-check">

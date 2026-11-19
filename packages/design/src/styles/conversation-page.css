@@ -1641,8 +1641,8 @@ button.cb-property-row {
   display: flex;
   flex-direction: column;
   min-width: 0;
-  padding-top: var(--cb-inset-top, env(safe-area-inset-top, 0px));
-  padding-bottom: var(--cb-inset-bottom, env(safe-area-inset-bottom, 0px));
+  padding-top: var(--cb-inset-top);
+  padding-bottom: var(--cb-inset-bottom);
   background: var(--cb-panel-2);
 }
 /* Inside an AppShell the shell's top bar is the back: the page sits in the content area. */

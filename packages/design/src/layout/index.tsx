@@ -46,7 +46,7 @@ export type GridProps = {
   gap?: Gap;
   children?: ReactNode;
 } & (
-  | {
+  | ({
       columns: "list-detail";
       /**
        * A `line-soft` column divider between the list and the detail, `space.4` from each (a list
@@ -54,17 +54,21 @@ export type GridProps = {
        * they stack below 600. Only for `list-detail`: its two children make one row.
        */
       divided?: boolean;
-      /**
-       * The list-detail region's open state (spec §6.47): with it the grid is a `ListDetail`, so
-       * a frame narrower than the 220 list plus a 360 detail shows the list as the page and the
-       * open item pushed over it (`onBack` closes it). Without it the two children stack, the
-       * list above the detail.
-       */
-      open?: boolean;
-      onBack?: () => void;
-      /** The region's accessible name (with `open`). */
-      label?: string;
-    }
+    } & (
+      | {
+          /**
+           * The list-detail region's open state (spec §6.47): with it the grid is a `ListDetail`,
+           * so a frame narrower than the 220 list plus a 360 detail shows the list as the page and
+           * the open item pushed over it (`onBack` closes it). Without it the two children stack,
+           * the list above the detail.
+           */
+          open: boolean;
+          onBack?: () => void;
+          /** The region's accessible name: required with `open` (a region is always named). */
+          label: string;
+        }
+      | { open?: undefined; onBack?: never; label?: never }
+    ))
   | {
       columns: Exclude<GridColumns, "list-detail">;
       divided?: never;
@@ -100,7 +104,7 @@ export function Grid({ columns, gap = 16, divided, open, onBack, label, children
         onBack={onBack ?? (() => {})}
         listMin={GRID_LIST}
         detailMin={GRID_DETAIL}
-        label={label ?? ""}
+        label={label}
         divided={divided === true}
         columns="list-detail"
       />

@@ -199,7 +199,7 @@ describe("the compact forms of the templates", () => {
     expect(decl(tabRoot, "padding-bottom")).not.toContain("inset-bottom");
   });
 
-  it("WizardPage's compact step bar reads 2 / 4", () => {
+  it("WizardPage's compact step bar reads 2 / 4 and names the step", () => {
     render(
       <DesignProvider locale="zh">
         <WizardPage
@@ -212,7 +212,10 @@ describe("the compact forms of the templates", () => {
         </WizardPage>
       </DesignProvider>,
     );
-    expect(part("step-count")?.textContent).toBe("2 / 4");
+    const count = part("step-count") as HTMLElement;
+    expect(count.querySelector('[aria-hidden="true"]')?.textContent).toBe("2 / 4");
+    // the step list is hidden on compact: the count names the step for assistive technology
+    expect(count.querySelector(".cb-sr-only")?.textContent).toBe("第 2 步，共 4 步：二");
   });
 });
 
