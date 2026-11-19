@@ -3,7 +3,7 @@ import { mkdir, mkdtemp, realpath, rm, symlink, writeFile } from "node:fs/promis
 import { createServer, type Server } from "node:http";
 import { connect } from "node:net";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import type { ExecResult, SandboxOperationScope } from "@capybara-hq/plugin-sdk";
 import { afterAll, beforeAll, expect, it } from "vitest";
 import {
@@ -279,6 +279,95 @@ it.runIf(darwin)(
     if (!internet) context.skip("no internet: https://1.1.1.1 is unreachable from this process");
     const result = await run(probes({ name: "https://one.one.one.one/" }));
     expect(statuses(result.stdout).name, result.stderr).toMatch(/^[23]\d\d$/);
+  },
+);
+
+// A command's private, link-local or loopback destination goes to the operation's proxy too, so
+// the client gets the proxy's refusal (a 403), never a bare "Couldn't connect to server" from a
+// direct connect Seatbelt refused (R3 Mac acceptance, B3).
+it.runIf(darwin)(
+  "a private destination goes to the proxy and gets its refusal, with the default proxy settings",
+  async () => {
+    receipts.length = 0;
+    const result = await run(
+      [
+        `printf 'no_proxy:%s|%s\\n' "\${NO_PROXY-}" "\${no_proxy-}"`,
+        `printf 'lan:%s\\n' "$(/usr/bin/curl --silent --output /dev/null --max-time 8 --write-out '%{http_code}' http://192.168.1.1/)"`,
+        `printf 'link:%s\\n' "$(/usr/bin/curl --silent --output /dev/null --max-time 8 --write-out '%{http_code}' http://169.254.169.254/)"`,
+        `printf 'loopback:%s\\n' "$(/usr/bin/curl --silent --output /dev/null --max-time 8 --write-out '%{http_code}' http://127.0.0.1:${port}/default)"`,
+        `/usr/bin/curl --silent --show-error --output /dev/null --max-time 8 https://10.0.0.1/ 2>&1; printf '\\ntunnel:%s\\n' "$?"`,
+      ].join("; "),
+    );
+    const seen = statuses(
+      result.stdout
+        .split("\n")
+        .filter((l) => /^(no_proxy|lan|link|loopback|tunnel):/.test(l))
+        .join("\n"),
+    );
+    expect(seen.no_proxy, result.stdout).toBe("|");
+    expect(seen, result.stdout).toMatchObject({ lan: "403", link: "403", loopback: "403" });
+    // curl 8's wording of the proxy refusing a tunnel, which the kernel reads as a sandbox signal
+    expect(result.stdout).toContain("CONNECT tunnel failed, response 403");
+    expect(seen.tunnel).toBe("56");
+    expect(receipts).toEqual([]);
+  },
+);
+
+/**
+ * Each client's verdict on one URL, one line each: `ok` (the chain verified), `untrusted <why>`
+ * (certificate verification failed) or `error <why>` (anything else: a timeout, a reset), so a
+ * slow network never reads as a trust failure.
+ */
+const PYTHON_VERDICT = `import ssl, sys, urllib.error, urllib.request
+try:
+    urllib.request.urlopen(sys.argv[1], timeout=15).close(); print("ok")
+except urllib.error.HTTPError:
+    print("ok")
+except Exception as e:
+    reason = getattr(e, "reason", e)
+    print("untrusted" if isinstance(reason, ssl.SSLCertVerificationError) else "error", reason)`;
+const NODE_VERDICT = `fetch(process.argv[1]).then(() => console.log("ok"), (e) => {
+  const code = String(e.cause?.code ?? e.message);
+  console.log(/CERT|ISSUER|SELF_SIGNED/.test(code) ? "untrusted" : "error", code);
+})`;
+const verdicts = (url: string, i: number, node: string) =>
+  [
+    // curl exits 60 when it cannot verify the peer's certificate
+    `/usr/bin/curl --silent --output /dev/null --max-time 15 '${url}'; c=$?; case $c in 0) printf 'curl${i}:ok\\n';; 60) printf 'curl${i}:untrusted 60\\n';; *) printf 'curl${i}:error %s\\n' "$c";; esac`,
+    `printf 'python${i}:%s\\n' "$(/usr/bin/python3 -I -c '${PYTHON_VERDICT.replaceAll("'", "'\\''")}' '${url}')"`,
+    `printf 'node${i}:%s\\n' "$(NODE_USE_ENV_PROXY=1 '${node}' -e '${NODE_VERDICT}' '${url}')"`,
+  ].join("; ");
+
+// TLS trust inside the sandbox (R3 Mac acceptance): Apple's LibreSSL in /usr/bin/curl and the
+// Command Line Tools' python3 checks a server chain against /etc/ssl/cert.pem first and, when that
+// stale bundle lacks the anchor, asks the per-user TrustEvaluationAgent (the system keychain's
+// roots and the admin's trust settings). Without that one Mach service a site anchored at a newer
+// root (example.com's SSL.com 2022 chain) fails with "unable to get local issuer certificate".
+// Node's fetch carries its own CA store; it is checked for the same result.
+it.runIf(darwin)(
+  "a restricted HTTPS fetch trusts what the system trusts (curl, python3, node)",
+  async (context) => {
+    if (!internet) context.skip("no internet: https://1.1.1.1 is unreachable from this process");
+    const sites = ["https://example.com/", "https://github.com/"];
+    const result = await run(sites.map((url, i) => verdicts(url, i, process.execPath)).join("; "), {
+      readRoots: [dirname(dirname(process.execPath))],
+    });
+    const seen = Object.fromEntries(
+      result.stdout
+        .trim()
+        .split("\n")
+        .map((line) => [line.slice(0, line.indexOf(":")), line.slice(line.indexOf(":") + 1)]),
+    );
+    sites.forEach((url, i) => {
+      const of = (client: string) => String(seen[`${client}${i}`]);
+      for (const client of ["curl", "python", "node"])
+        expect(of(client), `${url}: ${result.stdout}${result.stderr}`).not.toMatch(/^untrusted/);
+      // the site was reached and verified by at least one client (a network error is not proof)
+      expect(
+        ["curl", "python", "node"].some((c) => of(c) === "ok"),
+        `${url}: ${result.stdout}`,
+      ).toBe(true);
+    });
   },
 );
 

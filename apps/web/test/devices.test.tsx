@@ -751,7 +751,8 @@ describe("a local machine's allowlist (approval-only profiles design)", () => {
     expect(bodyOf(calls.find((c) => c.method === "POST"))).toEqual({
       remove: ["files.example.com"],
     });
-    expect(await screen.findByText(S.hostsEmpty)).toBeTruthy();
+    // read again: the host is gone (and with it the open network's host list)
+    await vi.waitFor(() => expect(screen.queryByText("files.example.com")).toBeNull());
     expect(client.getQueryState(["org", "o1", "devices"])?.isInvalidated).toBe(true);
   });
 

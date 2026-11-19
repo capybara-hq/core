@@ -424,6 +424,10 @@ describe("the macOS worker's network configuration", () => {
     fakeIpDoh: { ...SANDBOX_FAKE_IP_DNS, endpoints: [...SANDBOX_FAKE_IP_DNS.endpoints] },
   };
 
+  // Apple's LibreSSL (/usr/bin/curl, the Command Line Tools' python3) falls back to this agent
+  // when /etc/ssl/cert.pem lacks a chain's anchor: the one Mach service TLS trust needs
+  const trust = { allowMachLookup: ["com.apple.TrustEvaluationAgent"] };
+
   it("opens the network through the address guard only", async () => {
     const open = macNetworkConfig({ hosts: ["a.example.com"], openNetwork: true });
     expect(open).toEqual({
@@ -434,6 +438,7 @@ describe("the macOS worker's network configuration", () => {
         ...closed,
         ...doh,
         allowLocalBinding: false,
+        ...trust,
       },
     });
     // the runtime's own schema accepts every closed range and the DNS settings as written
@@ -451,6 +456,7 @@ describe("the macOS worker's network configuration", () => {
         ...closed,
         ...doh,
         allowLocalBinding: false,
+        ...trust,
       },
     });
     const { NetworkConfigSchema } = await load("sandbox-config.js");

@@ -31,6 +31,7 @@ import { MachinesService } from "../../src/local-devices/machines.js";
 import { assistantIdemKey } from "../../src/runtime/model-call.js";
 import { RunExecution } from "../../src/runtime/run-execution.js";
 import { Waits } from "../../src/runtime/waits.js";
+import { ESCALATION_DEVICE_OFF_WHY } from "../../src/sandbox/review/permission-candidate.js";
 import { ScheduledTaskStore } from "../../src/schedules/store.js";
 import { NETWORK_ASK_CANCELLED_NOTE } from "../../src/tools/approvals.service.js";
 import {
@@ -486,10 +487,11 @@ describe("not asked", () => {
     await post([curl(["api.foo.com", "10.0.0.5"])]);
     await waitForTerminal(db, s.conversationId, 1, 20_000);
     const [r] = await results();
-    // the reply names who adds the host (the per-call host ceiling's refusal)
+    // the reply names who adds the host (the per-call host ceiling's refusal), and who could
+    // allow running outside the sandbox, the one way to a private address (off on this device)
     expect(
       r?.content.endsWith(
-        `\n\n${unavailableHostNote("api.foo.com", "an organization admin adds api.foo.com to the organization's device network list")}\n${addressLayerNote(["10.0.0.5"])}`,
+        `\n\n${unavailableHostNote("api.foo.com", "an organization admin adds api.foo.com to the organization's device network list")}\n${addressLayerNote(["10.0.0.5"], ESCALATION_DEVICE_OFF_WHY)}`,
       ),
     ).toBe(true);
     expect(await asks()).toEqual([]);

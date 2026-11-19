@@ -522,6 +522,48 @@ describe("ToolGroup (§6.16.8)", () => {
     expect(running.container.querySelector('[data-part="auto-granted-word"]')).toBeNull();
   });
 
+  // R3 Mac acceptance (03c-auto-granted-row-2): a long command's ellipsis cut the marker off
+  it("the status words are the row's meta: outside the truncated label, never shrunk or wrapped", () => {
+    const long = `curl -sS -m 5 -o /dev/null -w "HTTP %{http_code}" ${"http://192.168.3.1/".repeat(8)}`;
+    const data = builtin("Bash", {
+      kind: "command",
+      description: long,
+      autoGranted: "outside-sandbox",
+      outsideSandbox: true,
+    });
+    for (const ui of [
+      <ToolRow key="row" row={data} />,
+      <ToolGroup key="line" rows={[data]} />,
+      <ToolRow key="linked" row={{ ...data, link: { label: "View", onOpen: () => {} } }} />,
+    ]) {
+      const { container } = wrap(ui);
+      const label = container.querySelector('[data-part="tool-label"]') as HTMLElement;
+      const meta = container.querySelector('[data-part="tool-meta"]') as HTMLElement;
+      expect(meta).not.toBeNull();
+      // the meta follows the label as its sibling: the label's ellipsis never reaches it
+      expect(label.contains(meta)).toBe(false);
+      expect(label.nextElementSibling).toBe(meta);
+      expect(meta.querySelector('[data-part="auto-granted-word"]')?.textContent).toBe(
+        " · 已自动批准：在沙箱外运行",
+      );
+      expect(meta.querySelector('[data-part="sandbox-word"]')).not.toBeNull();
+      expect(label.textContent).toContain(long.slice(0, 20));
+      cleanup();
+    }
+    const body = rule(css, ".cb-tool-meta");
+    expect(body).toMatch(/flex:\s*none/);
+    expect(body).toMatch(/white-space:\s*nowrap/);
+    // the label yields beside it (it is not stretched over the row)
+    expect(css).not.toMatch(/\n\.cb-tool-row > \.cb-tool-label \{\s*flex: 1;/);
+  });
+
+  it("a row without a status word draws no meta", () => {
+    const { container } = wrap(
+      <ToolRow row={builtin("Bash", { kind: "command", keyArg: "ls" })} />,
+    );
+    expect(container.querySelector('[data-part="tool-meta"]')).toBeNull();
+  });
+
   it("a failed group marks the failures in fail", () => {
     const { container } = wrap(<ToolGroup rows={[row(), row({ status: "failed" })]} />);
     expect(container.querySelector('[data-part="fail-word"]')?.textContent).toBe("（1 个失败）");

@@ -147,6 +147,10 @@ export function mandatoryDenyPatterns(root: string): string[] {
     ]),
   ];
 }
+
+/** The Mach services a restricted macOS command may look up for TLS trust ({@link macNetworkConfig}). */
+const MAC_TLS_TRUST_SERVICES: readonly string[] = Object.freeze(["com.apple.TrustEvaluationAgent"]);
+
 /**
  * The sandbox runtime's network configuration for one restricted grant (approval-only profiles
  * design, "Open network"), and whether the worker answers the runtime's ask callback with allow.
@@ -176,6 +180,15 @@ export function mandatoryDenyPatterns(root: string): string[] {
  * bind to loopback (spec "Known limitations"), and with it the command could reach every local
  * port. `allowPrivate` is a trusted test seam (like the Linux forwarder's): it lifts the address
  * rules so a fixture on loopback can be granted; nothing in production sets it.
+ *
+ * TLS trust needs one Mach service, `com.apple.TrustEvaluationAgent` (the per-user agent, not its
+ * `.system` sibling): Apple's LibreSSL in `/usr/bin/curl`, `/usr/bin/openssl` and the Command
+ * Line Tools' `python3` checks a chain against `/etc/ssl/cert.pem` (readable) and, when that
+ * bundle lacks the anchor (a newer root, such as example.com's SSL.com 2022 chain), asks this
+ * agent, which evaluates it against the system keychain and the admin's trust settings. Without
+ * it such a site fails with "unable to get local issuer certificate". The agent only evaluates
+ * the chain the client hands it: it fetched no issuer named in a certificate (checked on macOS
+ * 26 with a leaf whose AIA URL pointed at a local listener). `trustd` stays closed.
  */
 export function macNetworkConfig(
   grant: Pick<LocalOperationGrant, "hosts" | "openNetwork">,
@@ -198,6 +211,7 @@ export function macNetworkConfig(
       ...closed,
       ...doh,
       allowLocalBinding: false,
+      allowMachLookup: [...MAC_TLS_TRUST_SERVICES],
     },
   };
 }
@@ -923,8 +937,14 @@ export async function startMacOperationWorker(
       const exports = Object.entries(args.env ?? {})
         .map(([key, value]) => `export ${key}=${shellQuote(value)}`)
         .join("; ");
+      // The runtime's NO_PROXY sends loopback, link-local and the private ranges direct, where
+      // Seatbelt refuses the connect and the client prints only "Couldn't connect to server".
+      // Every one of them is closed here (no own listener exists: listening is refused), so a
+      // restricted command sends them to the operation's proxy, whose refusal names the reason.
+      // The call's own environment comes after, so a NO_PROXY it sets still applies.
+      const direct = request.grant.full ? "" : "unset NO_PROXY no_proxy; ";
       const script = await wrap(
-        `${temp}${!request.grant.full && exports ? `${exports}; ` : ""}exec /bin/bash -c ${shellQuote(args.command)}${request.managedOutput ? " 2>&1" : ""}`,
+        `${temp}${direct}${!request.grant.full && exports ? `${exports}; ` : ""}exec /bin/bash -c ${shellQuote(args.command)}${request.managedOutput ? " 2>&1" : ""}`,
       );
       await request.beforeLaunch();
       controller.signal.throwIfAborted();

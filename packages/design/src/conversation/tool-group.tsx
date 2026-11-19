@@ -13,6 +13,7 @@ import {
   ToolDetail,
   ToolLabel,
   ToolLink,
+  ToolMeta,
   ToolRow,
   type ToolRowData,
   WaitingWord,
@@ -76,6 +77,7 @@ export function ToolGroup({
       <>
         {running ? <Spinner size={16} /> : null}
         <ToolLabel row={single} />
+        <ToolMeta row={single} />
         {running && single.startedAt !== undefined ? (
           <span className="cb-faint" data-part="tool-time" aria-hidden="true">
             {` · ${formatDuration(clock - single.startedAt, locale, { live: true })}`}

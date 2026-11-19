@@ -116,7 +116,19 @@ window.__CB_EXTRA__ = ({ F, esc, icon, state, stamp, sidebar }) => {
           ? ` <span class="r-faint">· ${esc(t.extra)}</span>`
           : "";
     const fail = t.status === "failed" ? ` ${failWord}<span class="r-muted"> · ${esc(t.error)}</span>` : "";
-    return `<span class="r-tlabel"${t.tooltip ? ` title="${esc(t.tooltip)}"` : ""}>${name}${key}${extra}${fail}</span>`;
+    return `<span class="r-tlabel"${t.tooltip ? ` title="${esc(t.tooltip)}"` : ""}>${name}${key}${extra}${fail}</span>${toolMeta(t)}`;
+  }
+
+  const CROSSING = { directory: "目录", host: "主机", "outside-sandbox": "在沙箱外运行", sensitive: "敏感命令" };
+
+  /** The row's meta (§6.16.9): the status words after the label, never shrunk or cut. */
+  function toolMeta(t) {
+    if (t.status !== "done" && t.status !== "failed") return "";
+    const words = [
+      ...(t.outsideSandbox ? ["在沙箱外运行"] : []),
+      ...(t.autoGranted ? [`已自动批准：${CROSSING[t.autoGranted]}`] : []),
+    ];
+    return words.length ? `<span class="r-tmeta r-muted">${words.map((w) => ` · ${esc(w)}`).join("")}</span>` : "";
   }
 
   function toolDetail(t, o = {}) {
@@ -1130,6 +1142,7 @@ window.__CB_EXTRA__ = ({ F, esc, icon, state, stamp, sidebar }) => {
         "large-output": [T.largeOutput[0], { open: true }],
         "hook-denied": [T.hookDenied[0], { open: true }],
         waiting: [T.waiting[0], {}],
+        "auto-granted": [T.autoGranted[0], {}],
       }[o.state];
       return col(`<div class="r-tbox">${toolRow(pick[0], pick[1])}</div>`);
     },

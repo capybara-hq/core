@@ -420,6 +420,8 @@ export function toRow(
     ...(t.durationMs !== undefined ? { durationMs: t.durationMs } : {}),
     ...(t.added !== undefined ? { added: t.added, removed: t.removed ?? 0 } : {}),
     ...(o.blockedBy ? { blockedBy: o.blockedBy } : t.error ? { error: t.error } : {}),
+    ...(t.outsideSandbox ? { outsideSandbox: true } : {}),
+    ...(t.autoGranted ? { autoGranted: t.autoGranted } : {}),
     ...(Object.keys(detail).length > 0 ? { detail } : {}),
   };
 }
@@ -538,6 +540,7 @@ function toolRowBlocks(): ReactNode {
       />
       <RowBlock id="tool-row-waiting" row={toRow(pick(T.waiting, 0))} />
       <RowBlock id="tool-row-linked" row={BACKGROUND_ROW} />
+      <RowBlock id="tool-row-auto-granted" row={toRow(pick(T.autoGranted, 0))} />
     </>
   );
 }

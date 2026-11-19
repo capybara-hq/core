@@ -1848,7 +1848,12 @@ textarea {
   transition: background-color var(--cb-motion-hover);
 }
 .r-trow > .r-tlabel {
-  flex: 1;
+  flex: 0 1 auto;
+}
+/* The row's meta (§6.16.9): the status words after the label stay whole. */
+.r-tmeta {
+  flex: none;
+  white-space: nowrap;
 }
 .r-tbox > .r-trow + .r-trow,
 .r-tbox > .r-tdetail + .r-trow {
