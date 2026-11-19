@@ -25,8 +25,8 @@ export type LocalOperationBackend = MacOperationBackend;
 export interface LinuxBackendDependencies {
   /** How agents start: on this host (default) or in the device's local container. */
   transport?: LinuxAgentTransport;
-  /** The environment a command starts from; see {@link hostBaseEnv}. */
-  baseEnv?: (full: boolean) => Record<string, string>;
+  /** The environment a command starts from; see {@link hostCommandEnv}. */
+  baseEnv?: (escalated: boolean) => Record<string, string>;
   /** Where restricted commands find version managers (default: this process's home and env). */
   toolHome?: { home: string; env: Record<string, string | undefined> };
   /** The runtime support probe (default: the launcher's own probe through the agent). */
@@ -47,11 +47,20 @@ export interface LinuxBackendDependencies {
   onReapError?: (error: unknown) => void;
 }
 
-/** A host command's starting environment: Full keeps this process's, restricted a fixed set. */
-export function hostBaseEnv(full: boolean): Record<string, string> {
-  if (full)
+/**
+ * A host command's starting environment (approval-only profiles design, "Fixed denies and the
+ * minimal environment"): every sandboxed command, whatever its profile, starts from a fixed set
+ * (the worker adds HOME, TMPDIR, the tool homes, the proxy and the call's own variables). An
+ * escalated call runs as the owner: this process's environment without the device's own
+ * variables (every `CAPYBARA_*`; the device credential lives in its state directory, never in
+ * the environment).
+ */
+export function hostCommandEnv(escalated: boolean): Record<string, string> {
+  if (escalated)
     return Object.fromEntries(
-      Object.entries(process.env).filter((e): e is [string, string] => e[1] !== undefined),
+      Object.entries(process.env).filter(
+        (e): e is [string, string] => e[1] !== undefined && !e[0].startsWith("CAPYBARA_"),
+      ),
     );
   return {
     PATH: process.env.PATH ?? "/usr/local/bin:/usr/bin:/bin",
@@ -81,8 +90,9 @@ export function checkLinuxRestrictedGrant(
 /**
  * The Linux local operation backend (permission activation W2-S): the same functions as the macOS
  * backend on the SDK's restricted Linux runtime. Restricted exec runs through the launcher on
- * pinned root descriptors (Landlock, the seccomp broker), with network none or an allowlist served
- * by an operation-owned proxy; native work uses the SDK helper on the same kind of pinned
+ * pinned root descriptors (Landlock, the seccomp broker), with network none, an allowlist or the
+ * open public network served by an operation-owned proxy (and the command's own loopback
+ * listeners); native work uses the SDK helper on the same kind of pinned
  * descriptors; Full access runs as the OS user without restricted filters. Background work,
  * retained output and exact cancellation share the macOS supervisor. Restricted support is what
  * the launcher's probe reports (an unsupported kernel, ABI or architecture fails closed while Full
@@ -107,7 +117,7 @@ export async function createLinuxOperationBackend(
     dependencies.startWorker ??
     linuxOperationWorker({
       transport,
-      baseEnv: dependencies.baseEnv ?? hostBaseEnv,
+      baseEnv: dependencies.baseEnv ?? hostCommandEnv,
       toolHome: dependencies.toolHome ?? { home: homedir(), env: process.env },
       ...(dependencies.allowPrivateProxyTargets ? { allowPrivateProxyTargets: true } : {}),
       ...(dependencies.acquireRuntime ? { acquireRuntime: dependencies.acquireRuntime } : {}),
@@ -121,6 +131,8 @@ export async function createLinuxOperationBackend(
     {
       restricted: unavailableReason === undefined,
       ...(unavailableReason ? { unavailableReason } : {}),
+      // the operation's forwarder enforces the open public network on the resolved address
+      openPublic: true,
       outsideSandbox: probe.agentAvailable !== false,
       background: probe.agentAvailable !== false,
       pending: unavailableReason ?? "Restricted Linux execution is unavailable",

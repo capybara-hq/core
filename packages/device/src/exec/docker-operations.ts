@@ -49,9 +49,12 @@ export interface OperationContainerHost {
 const CONTAINER_PYTHON = "/usr/bin/python3";
 const CONTAINER_PATH = "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin";
 
-/** A container command's starting environment: the image's ordinary one, never this host's. */
-export function containerBaseEnv(full: boolean): Record<string, string> {
-  return full
+/**
+ * A container command's starting environment: the image's ordinary one, never this host's (so an
+ * escalated call carries none of the device's variables either).
+ */
+export function containerBaseEnv(escalated: boolean): Record<string, string> {
+  return escalated
     ? {
         PATH: CONTAINER_PATH,
         LANG: "C.UTF-8",
@@ -356,6 +359,8 @@ export async function createDockerOperationBackend(
     {
       restricted: unavailableReason === undefined,
       ...(unavailableReason ? { unavailableReason } : {}),
+      // the operation's forwarder enforces the open public network on the resolved address
+      openPublic: true,
       outsideSandbox: probe.agentAvailable !== false,
       background: probe.agentAvailable !== false,
       pending: unavailableReason ?? "Restricted execution in the device container is unavailable",

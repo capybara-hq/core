@@ -118,6 +118,11 @@ export interface LocalBackendHost {
   restricted: boolean;
   /** Why restricted operations are unavailable, when they are. */
   unavailableReason?: string;
+  /**
+   * Restricted operations enforce the open public network (the closed address classes refused on
+   * the resolved address); reported only while restricted operations run.
+   */
+  openPublic?: boolean;
   /** Escalated calls (outside the sandbox) and background work run on this platform. */
   outsideSandbox: boolean;
   background: boolean;
@@ -481,14 +486,18 @@ export async function createLocalOperationBackend(
       const c = await read();
       const restricted = restrictedNow();
       // an operation boundary: the sandbox network (the allowlist, with per-operation hosts) only
-      // with restricted support; the open public network is not enforced by these workers yet
+      // with restricted support; the open public network where the platform enforces it
       return {
         version: 2,
         boundary: "operation",
         restricted: restricted
           ? { filesystem: true, network: true, native: true, concurrentScopes: true }
           : null,
-        network: { openPublic: false, allowlist: restricted, perOperationHosts: restricted },
+        network: {
+          openPublic: restricted && host.openPublic === true,
+          allowlist: restricted,
+          perOperationHosts: restricted,
+        },
         outsideSandbox: host.outsideSandbox && c.outsideSandbox,
         background: host.background,
         ...(!restricted

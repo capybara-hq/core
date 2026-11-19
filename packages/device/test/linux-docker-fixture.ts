@@ -1,5 +1,6 @@
 import { spawn, spawnSync } from "node:child_process";
 import { randomUUID } from "node:crypto";
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -78,6 +79,69 @@ export interface LinuxDevice {
   readonly name: string;
   run(command: string, user?: string): string;
   remove(): void;
+  /** The open-network fixture, when the device was started with `networks: true`. */
+  readonly networks?: FixtureNetworks;
+}
+
+/**
+ * The open-network fixture: two internal Docker networks (no route anywhere else), one with a
+ * globally routable subnet standing in for the public internet and one private, and a server
+ * container on both that counts its connections per address. Names in the device's hosts file
+ * resolve to these and to the closed address classes.
+ */
+export interface FixtureNetworks {
+  /** The server's public-class and private addresses, and the device's own public-class one. */
+  readonly server: { readonly public: string; readonly private: string };
+  readonly self: string;
+  /** The port the server listens on at both addresses, and its web port (public only). */
+  readonly port: number;
+  /** Connections the server accepted at an address (receipts the device cannot write). */
+  accepted(name: "public" | "public80" | "private"): number;
+  /** Names the device resolves: each to the address in its key. */
+  readonly names: Readonly<Record<string, string>>;
+}
+
+const NETWORK_PORT = 18090;
+const SERVER_RECEIPTS = "/opt/capybara-receipts";
+
+function createNetworks(prefix: string): {
+  publicNet: string;
+  privateNet: string;
+  publicBase: string;
+  privateBase: string;
+} {
+  // a random third octet: concurrent runs on one Docker host take different subnets
+  for (let attempt = 0; attempt < 8; attempt++) {
+    const n = 1 + Math.floor(Math.random() * 250);
+    const publicNet = `${prefix}-pub`;
+    const privateNet = `${prefix}-priv`;
+    const publicBase = `11.88.${n}`;
+    const privateBase = `10.233.${n}`;
+    const made = spawnSync("docker", [
+      "network",
+      "create",
+      "--internal",
+      "--label",
+      "capybara.test=device-linux-operations",
+      "--subnet",
+      `${publicBase}.0/24`,
+      publicNet,
+    ]);
+    if (made.status !== 0) continue;
+    const other = spawnSync("docker", [
+      "network",
+      "create",
+      "--internal",
+      "--label",
+      "capybara.test=device-linux-operations",
+      "--subnet",
+      `${privateBase}.0/24`,
+      privateNet,
+    ]);
+    if (other.status === 0) return { publicNet, privateNet, publicBase, privateBase };
+    spawnSync("docker", ["network", "rm", publicNet], { stdio: "ignore" });
+  }
+  throw new Error("No free fixture subnet for the open-network device");
 }
 
 /** Starts the hardened device container, stages the runtime and starts the endpoints. */
@@ -86,9 +150,76 @@ export async function startLinuxDevice(
     seccompProfile?: string;
     /** Bind-mount this host directory at /workspace and /tmp, as the device's executor does. */
     bindWorkspace?: string;
+    /** The open-network fixture ({@link FixtureNetworks}) instead of no network at all. */
+    networks?: boolean;
+    /** Extra writable tmpfs mounts owned by the device user (a system path's stand-in). */
+    tmpfs?: string[];
   } = {},
 ): Promise<LinuxDevice> {
   const name = `capybara-w2s-${randomUUID().slice(0, 12)}`;
+  const net = options.networks ? createNetworks(name) : undefined;
+  const server = net ? `${name}-server` : undefined;
+  const cleanupNetworks = () => {
+    if (hostsDir) rmSync(hostsDir, { recursive: true, force: true });
+    if (!net) return;
+    if (server) spawnSync("docker", ["rm", "-f", server], { stdio: "ignore" });
+    spawnSync("docker", ["network", "rm", net.publicNet, net.privateNet], { stdio: "ignore" });
+  };
+  const names: Record<string, string> = net
+    ? {
+        "public.permission.test": `${net.publicBase}.10`,
+        "allowed.permission.test": `${net.publicBase}.10`,
+        "private.permission.test": `${net.privateBase}.10`,
+        "self.permission.test": `${net.publicBase}.20`,
+        "metadata.permission.test": "169.254.169.254",
+        "azure.permission.test": "168.63.129.16",
+        "loop.permission.test": "127.0.0.1",
+        "cgnat.permission.test": "100.64.0.1",
+        "nat64.permission.test": `64:ff9b::${net.privateBase}.10`,
+        "mapped.permission.test": `::ffff:${net.privateBase}.10`,
+      }
+    : {};
+  // Docker rewrites an IPv4-mapped --add-host entry as plain IPv4 and the root is read only, so
+  // the open-network device gets its whole hosts file as a read-only mount
+  const hostsDir = net ? mkdtempSync(join(tmpdir(), "cap-hosts-")) : undefined;
+  if (hostsDir) {
+    const lines = [
+      "127.0.0.1 localhost",
+      "::1 localhost ip6-localhost ip6-loopback",
+      ...Object.entries(NAMES).map(
+        ([key, host]) => `${ENDPOINTS[key as keyof typeof ENDPOINTS][0]} ${host}`,
+      ),
+      ...Object.entries(names).map(([host, address]) => `${address} ${host}`),
+    ];
+    writeFileSync(join(hostsDir, "hosts"), `${lines.join("\n")}\n`, { mode: 0o644 });
+  }
+  if (net && server) {
+    try {
+      docker([
+        "run",
+        "-d",
+        "--name",
+        server,
+        "--label",
+        "capybara.test=device-linux-operations",
+        "--network",
+        net.publicNet,
+        "--ip",
+        `${net.publicBase}.10`,
+        "--tmpfs",
+        `${SERVER_RECEIPTS}:mode=755`,
+        "--user",
+        "0",
+        IMAGE,
+        "sleep",
+        "infinity",
+      ]);
+      docker(["network", "connect", "--ip", `${net.privateBase}.10`, net.privateNet, server]);
+    } catch (error) {
+      cleanupNetworks();
+      throw error;
+    }
+  }
   docker([
     "run",
     "-d",
@@ -105,12 +236,17 @@ export async function startLinuxDevice(
     "--read-only",
     ...(options.seccompProfile ? ["--security-opt", `seccomp=${options.seccompProfile}`] : []),
     "--network",
-    "none",
+    net ? net.publicNet : "none",
+    ...(net ? ["--ip", `${net.publicBase}.20`] : []),
     // the agent's allowlist proxy resolves names like any client would
     ...Object.entries(NAMES).flatMap(([key, host]) => [
       "--add-host",
       `${host}:${ENDPOINTS[key as keyof typeof ENDPOINTS][0]}`,
     ]),
+    ...(hostsDir
+      ? ["--mount", `type=bind,source=${hostsDir}/hosts,target=/etc/hosts,readonly`]
+      : []),
+    ...(options.tmpfs ?? []).flatMap((path) => ["--tmpfs", `${path}:uid=1000,gid=1000,mode=755`]),
     ...(options.bindWorkspace
       ? ["--mount", `type=bind,source=${options.bindWorkspace}/tmp,target=/tmp`]
       : ["--tmpfs", "/tmp:size=64m"]),
@@ -127,7 +263,60 @@ export async function startLinuxDevice(
   ]);
   const run = (command: string, user = USER) =>
     docker(["exec", "-i", "-u", user, name, "sh", "-c", command]);
+  let networks: FixtureNetworks | undefined;
   try {
+    if (net && server) {
+      docker(["network", "connect", net.privateNet, name]);
+      docker(
+        ["exec", "-i", "-u", "0", server, "sh", "-c", `cat > ${SERVER_RECEIPTS}/listen.py`],
+        await import("node:fs").then((fs) => fs.readFileSync(LISTEN, "utf8")),
+      );
+      const endpoints = {
+        public: [`${net.publicBase}.10`, NETWORK_PORT],
+        public80: [`${net.publicBase}.10`, 80],
+        private: [`${net.privateBase}.10`, NETWORK_PORT],
+      };
+      spawn("docker", [
+        "exec",
+        server,
+        "python3",
+        "-I",
+        `${SERVER_RECEIPTS}/listen.py`,
+        SERVER_RECEIPTS,
+        JSON.stringify(endpoints),
+      ]).unref();
+      docker([
+        "exec",
+        server,
+        "python3",
+        "-c",
+        `import socket
+for host, port in ${JSON.stringify(Object.values(endpoints))}:
+    while True:
+        try:
+            socket.create_connection((host, port)).close()
+            break
+        except OSError:
+            pass`,
+      ]);
+      const counted = (key: string) => {
+        const out = spawnSync("docker", ["exec", server, "cat", `${SERVER_RECEIPTS}/${key}`], {
+          encoding: "utf8",
+        });
+        return out.status === 0 ? Number(out.stdout) : 0;
+      };
+      // the readiness probes above were counted: report connections after them
+      const baseline = Object.fromEntries(
+        Object.keys(endpoints).map((key) => [key, counted(key)]),
+      ) as Record<string, number>;
+      networks = {
+        server: { public: `${net.publicBase}.10`, private: `${net.privateBase}.10` },
+        self: `${net.publicBase}.20`,
+        port: NETWORK_PORT,
+        accepted: (key) => counted(key) - (baseline[key] ?? 0),
+        names,
+      };
+    }
     docker(
       ["exec", "-i", "-u", "0", name, "sh", "-c", `cat > ${RECEIPTS}/listen.py`],
       await import("node:fs").then((fs) => fs.readFileSync(LISTEN, "utf8")),
@@ -160,11 +349,13 @@ for host, port in (("127.0.0.1", 18080), ("127.0.0.1", 18081), ("::1", 18082)):
     ]);
   } catch (error) {
     spawnSync("docker", ["rm", "-f", name], { stdio: "ignore" });
+    cleanupNetworks();
     throw error;
   }
   return {
     name,
     run,
+    ...(networks ? { networks } : {}),
     remove: () => {
       for (const [key, inspector] of inspectors)
         if (key.startsWith(`${name}/`)) {
@@ -172,6 +363,7 @@ for host, port in (("127.0.0.1", 18080), ("127.0.0.1", 18081), ("::1", 18082)):
           inspectors.delete(key);
         }
       spawnSync("docker", ["rm", "-f", name], { stdio: "ignore" });
+      cleanupNetworks();
     },
   };
 }

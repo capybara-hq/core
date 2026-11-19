@@ -6,6 +6,7 @@ import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { shellQuote } from "../src/exec/shared.js";
 import {
   dockerUnavailable,
+  type FixtureNetworks,
   inspect,
   type LinuxDevice,
   NAMES,
@@ -18,6 +19,7 @@ import {
   HostServer,
   hostBackend,
   installServer,
+  openAuthorityFor,
 } from "./linux-host-fixture.js";
 
 const unavailable = dockerUnavailable();
@@ -475,7 +477,7 @@ print(get(80), ask(("CONNECT NAME:18080 HTTP/1.1" + CRLF + auth + CRLF + CRLF).e
       });
     };
     // production rules: no token 407, CONNECT to another port 403, plain request to another port
-    // 403, and the loopback the name resolves to is refused (502)
+    // 403, and the loopback the name resolves to is refused before any connect (403)
     device.run("mkdir -m 700 /home/sandbox/state-private");
     const strict = new HostServer(device);
     servers.push(strict);
@@ -485,7 +487,7 @@ print(get(80), ask(("CONNECT NAME:18080 HTTP/1.1" + CRLF + auth + CRLF + CRLF).e
       privateProxyTargets: false,
     });
     const refused = await ask(production);
-    expect(refused.stdout.trim(), refused.stderr).toBe("407 403 403 502");
+    expect(refused.stdout.trim(), refused.stderr).toBe("407 403 403 403");
     // the fixture seam lifts only the address and port rules: the same target is then reached
     const seamed = await ask(backend);
     expect(seamed.stdout.trim(), seamed.stderr).toBe("407 200 200 200");
@@ -640,5 +642,460 @@ describe.skipIf(unavailable !== null)("Linux host operation backend without pidf
     abort.abort();
     await running;
     expect(await inspect(device, { what: "alive", pids: [child] })).toEqual([]);
+  });
+});
+
+/** Asks the operation's proxy for each request line; prints a JSON map of status codes. */
+const PROXY_PROBE = String.raw`
+import base64, json, os, socket, sys, urllib.parse
+proxy = urllib.parse.urlsplit(os.environ["https_proxy"])
+auth = "Proxy-Authorization: Basic " + base64.b64encode(
+    ("%s:%s" % (proxy.username, proxy.password)).encode()).decode()
+def status(line):
+    try:
+        s = socket.create_connection((proxy.hostname, proxy.port), 10)
+        s.sendall((line + "\r\n" + auth + "\r\n\r\n").encode())
+        reply = b""
+        while b"\r\n" not in reply:
+            chunk = s.recv(256)
+            if not chunk:
+                break
+            reply += chunk
+        s.close()
+        return reply.split(b" ")[1].decode()
+    except (OSError, IndexError) as error:
+        return "error:%s" % getattr(error, "errno", error)
+out = {line: status(line) for line in json.loads(sys.argv[1])}
+try:
+    socket.create_connection((sys.argv[2], int(sys.argv[3])), 5).close()
+    out["direct"] = "ok"
+except OSError as error:
+    out["direct"] = "denied:%d" % error.errno
+print(json.dumps(out))
+`;
+
+/** Connects to each address; prints a JSON map of ok / denied:<errno>. */
+const CONNECT_PROBE = String.raw`
+import json, socket, sys
+def attempt(host, port):
+    family = socket.AF_INET6 if ":" in host else socket.AF_INET
+    s = socket.socket(family, socket.SOCK_STREAM)
+    s.settimeout(5)
+    try:
+        s.connect((host, port))
+        return "ok"
+    except OSError as error:
+        return "denied:%s" % error.errno
+    finally:
+        s.close()
+out = {}
+for host, port in json.loads(sys.argv[1]):
+    out["%s:%d" % (host, port)] = attempt(host, port)
+print(json.dumps(out))
+`;
+
+/** The command's own loopback listeners, then other listeners, closing and rebinding. */
+const OWN_LISTENER = String.raw`
+import json, os, socket, sys
+def attempt(host, port):
+    family = socket.AF_INET6 if ":" in host else socket.AF_INET
+    s = socket.socket(family, socket.SOCK_STREAM)
+    s.settimeout(5)
+    try:
+        s.connect((host, port))
+        return "ok"
+    except OSError as error:
+        return "denied:%s" % error.errno
+    finally:
+        s.close()
+def roundtrip(family, host, port=0):
+    server = socket.socket(family, socket.SOCK_STREAM)
+    server.bind((host, port))
+    server.listen(4)
+    port = server.getsockname()[1]
+    client = socket.create_connection((host, port), 5)
+    peer, _ = server.accept()
+    client.sendall(b"ping")
+    ok = peer.recv(4) == b"ping"
+    client.close()
+    peer.close()
+    return server, port, ok
+out = {}
+s4, p4, out["own4"] = roundtrip(socket.AF_INET, "127.0.0.1")
+s6, p6, out["own6"] = roundtrip(socket.AF_INET6, "::1")
+out["crossFamily"] = attempt("::1", p4)
+for name, port in json.loads(sys.argv[1]).items():
+    out[name] = attempt("127.0.0.1", port)
+out["other6"] = attempt("::1", 18082)
+# a listener of a forked child is the operation's own too
+r, w = os.pipe()
+child = os.fork()
+if child == 0:
+    server = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    server.bind(("127.0.0.1", 0))
+    server.listen(4)
+    os.write(w, str(server.getsockname()[1]).encode())
+    server.accept()[0].close()
+    os._exit(0)
+port = int(os.read(r, 16))
+out["child"] = attempt("127.0.0.1", port)
+os.waitpid(child, 0)
+# a closed own listener refuses, and its port binds again at once
+s4.close()
+out["closed"] = attempt("127.0.0.1", p4)
+again, _, out["rebound"] = roundtrip(socket.AF_INET, "127.0.0.1", p4)
+print(json.dumps(out))
+`;
+
+// The open public network (approval-only profiles design, "Open network") under the production
+// forwarder rules, and the fixed denies around it. The device sits on two internal Docker
+// networks, a globally routable subnet standing in for the internet and a private one.
+describe.skipIf(unavailable !== null)("Linux host operation backend: open network", () => {
+  let device: LinuxDevice;
+  let backend: HostBackend;
+  let net: FixtureNetworks;
+  const servers: HostServer[] = [];
+  const signal = () => new AbortController().signal;
+  const read = async (path: string) => {
+    const value = (await inspect(device, { what: "read", path })) as string | null;
+    return value === null ? null : Buffer.from(value, "base64").toString();
+  };
+  const project = (name: string) => {
+    const root = `/workspace/${name}-${Math.random().toString(36).slice(2, 8)}`;
+    device.run(`mkdir -p ${root}`);
+    return root;
+  };
+  type Network =
+    | { kind: "open-public" }
+    | { kind: "allowlist"; hosts: string[] }
+    | { kind: "none" };
+  const exec = async (
+    root: string,
+    command: string,
+    network: Network = { kind: "open-public" },
+  ) => {
+    const scope = scopeFor(backend.deviceId, {
+      profile: "approve-for-me",
+      filesystem: { kind: "scoped", readRoots: [], writeRoots: [root] },
+      network,
+    });
+    return backend.operation(scope, openAuthorityFor(scope.operationId)).exec({
+      command,
+      cwd: root,
+      timeoutMs: 60_000,
+      maxOutputBytes: 1 << 16,
+      signal: signal(),
+    });
+  };
+  const python = (program: string, ...args: string[]) =>
+    `python3 -c ${shellQuote(program)} ${args.map(shellQuote).join(" ")}`;
+  /** Starts a background command (Full: outside the sandbox) and waits for its ready file. */
+  const background = async (root: string, command: string, outside: boolean) => {
+    const scope = scopeFor(
+      backend.deviceId,
+      outside
+        ? {
+            profile: "full-access",
+            filesystem: { kind: "device" },
+            network: { kind: "environment" },
+          }
+        : {
+            profile: "approve-for-me",
+            filesystem: { kind: "scoped", readRoots: [], writeRoots: [root] },
+            network: { kind: "none" },
+          },
+    );
+    await backend.background("start", {
+      scope,
+      authority: openAuthorityFor(scope.operationId),
+      args: {
+        command: `cd ${root} && ${command}`,
+        cwd: root,
+        timeoutMs: 600_000,
+        maxOutputBytes: 1024,
+        taskId: `task-${scope.operationId}`,
+        outputPath: `${root}/out-${scope.operationId}.log`,
+        retainUntilMs: Date.now() + 3_600_000,
+      },
+    });
+    while ((await read(`${root}/ready`)) === null)
+      await new Promise((resolve) => setImmediate(resolve));
+  };
+
+  beforeAll(async () => {
+    device = await startLinuxDevice({ networks: true, tmpfs: ["/var/spool"] });
+    net = device.networks as FixtureNetworks;
+    await installServer(device);
+    device.run("mkdir -m 700 /home/sandbox/state");
+    const server = new HostServer(device);
+    servers.push(server);
+    backend = await hostBackend(server, {
+      stateDir: "/home/sandbox/state",
+      network: "open",
+      allowedDomains: [],
+      // production forwarder rules: the fixture's local addresses are closed like any other
+      privateProxyTargets: false,
+      // a write root outside the workspace (the crontab spool's stand-in)
+      restrictedProjectReach: "os-user",
+    });
+  });
+  afterAll(() => {
+    for (const s of servers) s.close();
+    device?.remove();
+  });
+
+  it("reports the open public network as enforced", async () => {
+    expect((await backend.support()).network).toEqual({
+      openPublic: true,
+      allowlist: true,
+      perOperationHosts: true,
+    });
+  });
+
+  it("reaches public addresses through its proxy on any port; every closed class is refused", async () => {
+    const root = project("open");
+    const receipts = async () =>
+      Promise.all(["ungranted4", "ungranted6"].map((n) => read(`/opt/capybara-receipts/${n}`)));
+    const before = await receipts();
+    // a service on this device's own (public-class) interface address, outside the sandbox
+    await background(
+      root,
+      `printf r > ready; exec python3 -m http.server 18083 --bind ${net.self}`,
+      true,
+    );
+    const s = net.server;
+    const connect = (target: string) => `CONNECT ${target} HTTP/1.1`;
+    const open = [
+      connect(`public.permission.test:${net.port}`),
+      `GET http://public.permission.test:${net.port}/ HTTP/1.1`,
+      connect(`${s.public}:${net.port}`),
+    ];
+    const closed = [
+      connect(`private.permission.test:${net.port}`),
+      connect(`${s.private}:${net.port}`),
+      connect(`[::ffff:${s.private}]:${net.port}`),
+      connect(`mapped.permission.test:${net.port}`),
+      connect(`nat64.permission.test:${net.port}`),
+      connect(`[64:ff9b::${s.private}]:${net.port}`),
+      connect("metadata.permission.test:80"),
+      connect("169.254.169.254:80"),
+      connect("[::ffff:169.254.169.254]:80"),
+      connect("azure.permission.test:80"),
+      connect("168.63.129.16:80"),
+      connect("cgnat.permission.test:80"),
+      connect("100.64.0.1:80"),
+      connect("192.0.2.1:80"),
+      connect("loop.permission.test:18081"),
+      connect("localhost:18081"),
+      connect("127.0.0.1:18081"),
+      connect("[::1]:18082"),
+      connect("0.0.0.0:18081"),
+      connect("self.permission.test:18083"),
+      connect(`${net.self}:18083`),
+      `GET http://${s.private}:${net.port}/ HTTP/1.1`,
+    ];
+    const result = await exec(
+      root,
+      python(PROXY_PROBE, JSON.stringify([...open, ...closed]), s.public, String(net.port)),
+    );
+    expect(result.exitCode, result.stderr).toBe(0);
+    const statuses = JSON.parse(result.stdout) as Record<string, string>;
+    expect(Object.fromEntries(open.map((line) => [line, statuses[line]]))).toEqual(
+      Object.fromEntries(open.map((line) => [line, "200"])),
+    );
+    // refused by the forwarder before any connect (403), never a failed dial (502)
+    expect(Object.fromEntries(closed.map((line) => [line, statuses[line]]))).toEqual(
+      Object.fromEntries(closed.map((line) => [line, "403"])),
+    );
+    // only the proxy dials: the command's own connect to a public address is refused
+    expect(statuses.direct).toBe("denied:13");
+    expect(net.accepted("public")).toBe(3);
+    expect(net.accepted("private")).toBe(0);
+    // the device's own loopback services saw no connection (only the fixture's readiness probe)
+    expect(await receipts()).toEqual(before);
+  });
+
+  it("an allowlist grant still reaches exactly its names, on web ports, at public addresses", async () => {
+    const root = project("allow");
+    const lines = [
+      "GET http://allowed.permission.test/ HTTP/1.1",
+      "CONNECT allowed.permission.test:80 HTTP/1.1",
+      "CONNECT public.permission.test:80 HTTP/1.1",
+      `CONNECT allowed.permission.test:${net.port} HTTP/1.1`,
+      "GET http://private.permission.test/ HTTP/1.1",
+      `CONNECT ${net.server.public}:80 HTTP/1.1`,
+    ];
+    const result = await exec(
+      root,
+      python(PROXY_PROBE, JSON.stringify(lines), net.server.public, "80"),
+      { kind: "allowlist", hosts: ["allowed.permission.test", "private.permission.test"] },
+    );
+    expect(result.exitCode, result.stderr).toBe(0);
+    expect(JSON.parse(result.stdout)).toEqual({
+      [lines[0] as string]: "200",
+      [lines[1] as string]: "200",
+      [lines[2] as string]: "403",
+      [lines[3] as string]: "403",
+      [lines[4] as string]: "403",
+      [lines[5] as string]: "403",
+      direct: "denied:13",
+    });
+    expect(net.accepted("public80")).toBe(2);
+  });
+
+  it("the command reaches its own loopback listeners; other processes' listeners stay closed", async () => {
+    const root = project("listen");
+    const before = await read("/opt/capybara-receipts/ungranted4");
+    // another process outside the sandbox (a TCP service such as a Docker daemon on 2375) and
+    // another restricted operation, both listening on loopback
+    await background(
+      root,
+      `${python(
+        "import socket\nfor port in (2375, 18084):\n    s = socket.socket(); s.bind(('127.0.0.1', port)); s.listen(8); globals()['k%d' % port] = s\nopen('ready', 'w').close()\nimport time\ntime.sleep(1000)",
+      )}`,
+      true,
+    );
+    const otherRoot = project("listen-other");
+    await background(
+      otherRoot,
+      python(
+        "import socket, time\ns = socket.socket(); s.bind(('127.0.0.1', 0)); s.listen(8)\nopen('port', 'w').write(str(s.getsockname()[1]))\nopen('ready', 'w').close()\ntime.sleep(1000)",
+      ),
+      false,
+    );
+    const otherPort = Number(await read(`${otherRoot}/port`));
+    const result = await exec(
+      root,
+      python(
+        OWN_LISTENER,
+        JSON.stringify({ outside: 2375, outside2: 18084, otherOperation: otherPort, root4: 18081 }),
+      ),
+      { kind: "none" },
+    );
+    expect(result.exitCode, result.stderr).toBe(0);
+    const out = JSON.parse(result.stdout) as Record<string, unknown>;
+    expect(out).toMatchObject({ own4: true, own6: true, child: "ok", rebound: true });
+    for (const key of [
+      "crossFamily",
+      "outside",
+      "outside2",
+      "otherOperation",
+      "root4",
+      "other6",
+      "closed",
+    ])
+      expect(out[key], key).toMatch(/^denied:/);
+    expect(await read("/opt/capybara-receipts/ungranted4")).toBe(before);
+    // the same holds in open mode
+    const open = await exec(
+      root,
+      python(
+        CONNECT_PROBE,
+        JSON.stringify([
+          ["127.0.0.1", 2375],
+          ["127.0.0.1", otherPort],
+        ]),
+      ),
+    );
+    expect(Object.values(JSON.parse(open.stdout))).toEqual([
+      expect.stringMatching(/^denied:/),
+      expect.stringMatching(/^denied:/),
+    ]);
+  });
+
+  it("refuses the Docker socket and any UNIX socket outside its roots", async () => {
+    const root = project("docker-sock");
+    const daemon = project("daemon");
+    await background(
+      daemon,
+      python(
+        "import socket, time\ns = socket.socket(socket.AF_UNIX); s.bind('docker.sock'); s.listen(8)\nopen('ready', 'w').close()\ntime.sleep(1000)",
+      ),
+      true,
+    );
+    const probe = String.raw`
+import json, socket, sys
+out = {}
+for path in sys.argv[1:]:
+    s = socket.socket(socket.AF_UNIX)
+    try:
+        s.connect(path)
+        out[path] = "ok"
+    except OSError as error:
+        out[path] = "denied:%d" % error.errno
+print(json.dumps(out))
+`;
+    const result = await exec(
+      root,
+      python(
+        probe,
+        `${daemon}/docker.sock`,
+        "/var/run/docker.sock",
+        "/run/containerd/containerd.sock",
+      ),
+    );
+    expect(result.exitCode, result.stderr).toBe(0);
+    for (const value of Object.values(JSON.parse(result.stdout) as Record<string, string>))
+      expect(value).toMatch(/^denied:/);
+  });
+
+  it("refuses links and moves that would redirect a protected path, and the system spools", async () => {
+    const root = project("links");
+    const script = [
+      "ln -s /tmp .claude 2>/dev/null && echo claude-link",
+      "ln -s /tmp .config 2>/dev/null && echo config-link",
+      "ln -s /tmp Library 2>/dev/null && echo library-link",
+      "ln -s /tmp notes && echo notes-link",
+      "mkdir -p d/commands && touch d/commands/x.md",
+      "mv d .claude 2>/dev/null && echo moved-prepared",
+      "mkdir e && touch e/readme && mv e .claude && echo moved-plain",
+      "mkdir /var/spool/cron 2>/dev/null && echo cron",
+      "mkdir /var/spool/at 2>/dev/null && echo at",
+      "mkdir -p /var/spool/stage/crontabs && mv /var/spool/stage /var/spool/cron 2>/dev/null && echo cron-move",
+      "mkdir /var/spool/mail && printf m > /var/spool/mail/x && echo mail",
+      "true",
+    ].join("; ");
+    const scope = scopeFor(backend.deviceId, {
+      profile: "approve-for-me",
+      filesystem: { kind: "scoped", readRoots: [], writeRoots: [root, "/var/spool"] },
+      network: { kind: "none" },
+    });
+    const result = await backend.operation(scope, openAuthorityFor(scope.operationId)).exec({
+      command: script,
+      cwd: root,
+      timeoutMs: 30_000,
+      maxOutputBytes: 4096,
+      signal: signal(),
+    });
+    expect(result.exitCode, result.stderr).toBe(0);
+    expect(result.stdout.trim().split("\n")).toEqual(["notes-link", "moved-plain", "mail"]);
+    expect(await read(`${root}/.claude/readme`)).toBe("");
+    expect(await read(`${root}/d/commands/x.md`)).toBe("");
+  });
+
+  it("denies writes at a protected home location's resolved target (a dotfile manager's links)", async () => {
+    const home = device.run(`node -e "process.stdout.write(require('os').homedir())"`).trim();
+    const dotfiles = project("dotfiles");
+    device.run(
+      `mkdir -p ${dotfiles}/config && printf rc > ${dotfiles}/bashrc && ln -s ${dotfiles}/config ${home}/.config && ln -s ${dotfiles}/bashrc ${home}/.bashrc`,
+    );
+    try {
+      const result = await exec(
+        dotfiles,
+        [
+          "mkdir -p config/systemd/user 2>/dev/null && echo systemd",
+          "mkdir -p config/autostart 2>/dev/null && echo autostart",
+          "(printf x >> bashrc) 2>/dev/null && echo bashrc",
+          "printf ok > config/app.conf && echo app",
+          "true",
+        ].join("; "),
+        { kind: "none" },
+      );
+      expect(result.exitCode, result.stderr).toBe(0);
+      expect(result.stdout.trim()).toBe("app");
+      expect(await read(`${dotfiles}/bashrc`)).toBe("rc");
+    } finally {
+      device.run(`rm -f ${home}/.config ${home}/.bashrc`);
+    }
   });
 });

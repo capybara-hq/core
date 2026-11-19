@@ -1,5 +1,5 @@
 import { spawn } from "node:child_process";
-import { mkdir, mkdtemp, readFile, realpath, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, realpath, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { type ExecResult, SANDBOX_RUNTIME_SOURCE } from "@capybara-hq/plugin-sdk";
@@ -232,6 +232,45 @@ describe("Linux operation worker", () => {
     expect(containerSent).toMatchObject({ readRoots: [] });
     expect(containerSent).not.toHaveProperty("readFiles");
     expect(containerSent?.env).not.toHaveProperty("ASDF_DATA_DIR");
+  });
+
+  it("an open-network grant asks for the open forwarder and denies the protected home targets", async () => {
+    // a dotfile manager's links: ~/.config and ~/.bashrc resolve into a project directory
+    const home = await realpath(await mkdtemp(join(tmpdir(), "cap-dotfiles-")));
+    dirs.push(home);
+    await mkdir(join(home, "dotfiles", "config"), { recursive: true });
+    await writeFile(join(home, "dotfiles", "bashrc"), "");
+    await symlink(join(home, "dotfiles", "config"), join(home, ".config"));
+    await symlink(join(home, "dotfiles", "bashrc"), join(home, ".bashrc"));
+    const fake = await fakeTransport("exit");
+    const request = execRequest(false, { grant: { ...grant(false), openNetwork: true } });
+    await (
+      await linuxOperationWorker({
+        ...fake,
+        baseEnv: env,
+        acquireRuntime: gate,
+        toolHome: { home, env: {} },
+      })(request, new AbortController().signal)
+    ).completion;
+    const [sent] = await fake.lines();
+    expect(sent).toMatchObject({ network: { kind: "open", hosts: [] } });
+    const denies = sent?.writeDenies as string[];
+    for (const target of ["config/systemd", "config/autostart", "config/git/config", "bashrc"])
+      expect(denies).toContain(join(home, "dotfiles", target));
+    // the literal locations are the policy's own denies; only differing targets are added
+    expect(denies).not.toContain(join(home, ".config", "systemd"));
+    expect(denies).not.toContain(join(home, ".zshrc"));
+    // an allowlist grant keeps the allowlist; Full has the escalated call's own network
+    const allow = await fakeTransport("exit");
+    await (
+      await linuxOperationWorker({ ...allow, baseEnv: env, acquireRuntime: gate })(
+        execRequest(false, { grant: { ...grant(false), hosts: ["a.example"] } }),
+        new AbortController().signal,
+      )
+    ).completion;
+    const [allowSent] = await allow.lines();
+    expect(allowSent).toMatchObject({ network: { kind: "allowlist", hosts: ["a.example"] } });
+    expect(allowSent).not.toHaveProperty("writeDenies");
   });
 
   it("an abort sends one immediate cancel; a second cancel is coalesced", async () => {

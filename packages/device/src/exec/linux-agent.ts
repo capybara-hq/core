@@ -12,9 +12,14 @@
  * base64, at most 64 KiB), `native`, `probe`, `reaped`, `refused`, `exit`.
  *
  * - restricted exec: pins every granted root once (no-follow, canonical), runs the SDK launcher on
- *   those descriptors (Landlock rules, the seccomp broker), and for an allowlist gives it exactly
- *   one endpoint, a loopback proxy owned by this operation that tunnels only the allowlisted names.
- *   Whatever ends the launcher, the agent then reaps its closed session (exact SID plus start time).
+ *   those descriptors (Landlock rules, the seccomp broker), and for an allowlist or the open
+ *   network gives it exactly one endpoint, a loopback proxy owned by this operation: it tunnels
+ *   only the allowlisted names, or (open) any name and address literal on any port, and dials only
+ *   resolved addresses the SDK's address-class table calls public (a copy kept equal by a test),
+ *   never this host's own. The command's own loopback listeners are the launcher's broker's
+ *   business. Whatever ends the launcher, the agent then reaps its closed session (exact SID plus
+ *   start time). Write denies the device resolved for this operation (protected home locations
+ *   reached through links) go to the launcher and to native work.
  * - Full exec: no restricted filters; the command runs as the OS user in a session of its own, and
  *   the agent ends that session (exact SID plus start time) when it exits, is cancelled or times out.
  * - native: the SDK native helper on pinned descriptors (descriptor-relative, no-follow), in this
@@ -60,7 +65,6 @@ import threading
 import time
 
 CHUNK = 65536
-NAT64 = ipaddress.ip_network("64:ff9b::/96")
 RUNTIME_FILES = ("linux-sandbox.py", "native-files.py")
 NR_PIDFD_OPEN = 434
 NR_PIDFD_SEND_SIGNAL = 424
@@ -330,7 +334,100 @@ def pin_roots(request, create_for=None):
     return read, write, missing
 
 
-# ---- per-operation allowlist proxy --------------------------------------------------------
+# ---- address classes (a copy of the SDK's network-classes.ts) ------------------------------
+# ADDRESS_CLASS_RANGES is the SDK's table, copied exactly, and classify_address its lookup: an
+# address has the class of the first (most specific) range containing it; an embedded range
+# classifies the IPv4 address at its bit offset. A device test (linux-agent-network.test.ts)
+# compares this copy with the SDK's table and this lookup with classifyAddress, so the classes
+# cannot drift between the SDK, the macOS worker, the cloud proxies and this forwarder.
+ADDRESS_CLASS_RANGES = json.loads(r'''
+[
+    {"family":"ipv4","cidr":"100.100.100.200/32","class":"metadata"},
+    {"family":"ipv4","cidr":"168.63.129.16/32","class":"metadata"},
+    {"family":"ipv4","cidr":"169.254.169.254/32","class":"metadata"},
+    {"family":"ipv4","cidr":"255.255.255.255/32","class":"broadcast"},
+    {"family":"ipv4","cidr":"192.0.0.0/24","class":"reserved"},
+    {"family":"ipv4","cidr":"192.0.2.0/24","class":"reserved"},
+    {"family":"ipv4","cidr":"192.88.99.0/24","class":"reserved"},
+    {"family":"ipv4","cidr":"198.51.100.0/24","class":"reserved"},
+    {"family":"ipv4","cidr":"203.0.113.0/24","class":"reserved"},
+    {"family":"ipv4","cidr":"169.254.0.0/16","class":"link-local"},
+    {"family":"ipv4","cidr":"192.168.0.0/16","class":"private"},
+    {"family":"ipv4","cidr":"198.18.0.0/15","class":"reserved"},
+    {"family":"ipv4","cidr":"172.16.0.0/12","class":"private"},
+    {"family":"ipv4","cidr":"100.64.0.0/10","class":"cgnat"},
+    {"family":"ipv4","cidr":"0.0.0.0/8","class":"unspecified"},
+    {"family":"ipv4","cidr":"10.0.0.0/8","class":"private"},
+    {"family":"ipv4","cidr":"127.0.0.0/8","class":"loopback"},
+    {"family":"ipv4","cidr":"224.0.0.0/4","class":"multicast"},
+    {"family":"ipv4","cidr":"240.0.0.0/4","class":"reserved"},
+    {"family":"ipv4","cidr":"0.0.0.0/0","class":"public"},
+    {"family":"ipv6","cidr":"::/128","class":"unspecified"},
+    {"family":"ipv6","cidr":"::1/128","class":"loopback"},
+    {"family":"ipv6","cidr":"fd00:ec2::254/128","class":"metadata"},
+    {"family":"ipv6","cidr":"::ffff:0:0/96","embeddedIpv4At":96},
+    {"family":"ipv6","cidr":"::ffff:0:0:0/96","embeddedIpv4At":96},
+    {"family":"ipv6","cidr":"64:ff9b::/96","class":"nat64"},
+    {"family":"ipv6","cidr":"::/96","embeddedIpv4At":96},
+    {"family":"ipv6","cidr":"100::/64","class":"reserved"},
+    {"family":"ipv6","cidr":"64:ff9b:1::/48","class":"nat64"},
+    {"family":"ipv6","cidr":"2001:db8::/32","class":"reserved"},
+    {"family":"ipv6","cidr":"2001::/23","class":"reserved"},
+    {"family":"ipv6","cidr":"3fff::/20","class":"reserved"},
+    {"family":"ipv6","cidr":"2002::/16","embeddedIpv4At":16},
+    {"family":"ipv6","cidr":"fe80::/10","class":"link-local"},
+    {"family":"ipv6","cidr":"fec0::/10","class":"reserved"},
+    {"family":"ipv6","cidr":"ff00::/8","class":"multicast"},
+    {"family":"ipv6","cidr":"fc00::/7","class":"ula"},
+    {"family":"ipv6","cidr":"2000::/3","class":"public"},
+    {"family":"ipv6","cidr":"::/0","class":"reserved"}
+]
+''')
+_CLASS_RANGES = [(ipaddress.ip_network(r["cidr"]), r.get("class"), r.get("embeddedIpv4At"))
+                 for r in ADDRESS_CLASS_RANGES]
+
+
+def classify_address(address):
+    """The class of an IPv4 or IPv6 address (a string, optionally with a zone, or an address)."""
+    if isinstance(address, str):
+        address = ipaddress.ip_address(address.split("%")[0])
+    for network, cls, at in _CLASS_RANGES:
+        if network.version != address.version or address not in network:
+            continue
+        if cls is not None:
+            return cls
+        return classify_address(ipaddress.IPv4Address((int(address) >> (96 - at)) & 0xFFFFFFFF))
+    raise ValueError("The address-class table is not total")
+# ---- end of address classes ----------------------------------------------------------------
+
+
+def local_address(address):
+    """Whether address is one of this host's own (a socket can bind to it). Any answer but "not
+    available" counts as own, so a host that allows binding any address (ip_nonlocal_bind) closes
+    every address instead of opening its own."""
+    probe = socket.socket(socket.AF_INET6 if ":" in address else socket.AF_INET,
+                          socket.SOCK_STREAM)
+    try:
+        probe.bind((address, 0))
+        return True
+    except OSError as error:
+        return error.errno != errno.EADDRNOTAVAIL
+    finally:
+        probe.close()
+
+
+def public_address(address):
+    """Whether the forwarder may dial a resolved address: the class table calls it public,
+    Python's own registry calls it global too (a stricter second opinion: Python versions differ
+    at the edges, which can only refuse more), and it is not this host's own."""
+    ip = ipaddress.ip_address(address.split("%")[0])
+    if classify_address(ip) != "public":
+        return False
+    plain = ip.ipv4_mapped if ip.version == 6 and ip.ipv4_mapped else ip
+    return plain.is_global and not local_address(str(ip))
+
+
+# ---- per-operation proxy (allowlist or open) ----------------------------------------------
 
 def host_allowed(host, hosts):
     host = host.lower().rstrip(".")
@@ -343,10 +440,21 @@ def host_allowed(host, hosts):
     return False
 
 
-def split_target(target, default_port):
+def split_target(target, default_port, literals=False):
+    """(host, port) of a request target; an IPv6 literal in brackets only when literals is set
+    (allowlist hosts are names, never address literals)."""
     if target.startswith("["):
-        return None, None  # allowlist hosts are names, never address literals
-    host, _, port = target.partition(":")
+        end = target.find("]")
+        if not literals or end < 0 or (len(target) > end + 1 and target[end + 1] != ":"):
+            return None, None
+        host, port = target[1:end], target[end + 2:]
+        try:
+            if ipaddress.ip_address(host).version != 6:
+                return None, None
+        except ValueError:
+            return None, None
+    else:
+        host, _, port = target.partition(":")
     try:
         number = int(port) if port else default_port
     except ValueError:
@@ -357,16 +465,21 @@ def split_target(target, default_port):
 
 
 class Forwarder:
-    """A loopback HTTP proxy owned by one operation: CONNECT and absolute http:// requests for the
-    operation's allowlisted names are tunnelled; every other name is refused without connecting.
-    The launcher's broker grants the restricted command this endpoint and nothing else. Clients
-    authenticate with the operation's token; CONNECT reaches ports 80 and 443 and plain requests
-    port 80 only (allowlist entries name no port); a name is reached only at a globally routable
-    address. A test fixture's seam (allow_private) lifts the address and port rules."""
+    """A loopback HTTP proxy owned by one operation. Allowlist: CONNECT and absolute http://
+    requests for the operation's allowlisted names are tunnelled, CONNECT to ports 80 and 443 and
+    plain requests to port 80 only (allowlist entries name no port); every other name is refused
+    without connecting. Open (the open public network): any name or address literal, on any
+    port. Either way a connection is made only to a resolved address public_address allows,
+    checked on the address dialled, which is never resolved again (so never rebound); when every
+    address is refused the answer is 403, before any connect. The launcher's broker grants the
+    restricted command this endpoint (and its own loopback listeners) and nothing else. Clients
+    authenticate with the operation's token. A test fixture's seam (allow_private) lifts the
+    address and port rules."""
 
-    def __init__(self, hosts, allow_private=False):
+    def __init__(self, hosts, allow_private=False, open_network=False):
         self.hosts = hosts
         self.allow_private = allow_private
+        self.open = open_network
         # Only this operation knows the token: another local process cannot use the proxy.
         self.token = os.urandom(16).hex()
         self.authorization = "Basic " + base64.b64encode(
@@ -429,15 +542,17 @@ class Forwarder:
                 client.close()
                 return
             rewritten = None
+            any_port = self.open or self.allow_private
             if method == "CONNECT":
-                host, port = split_target(target, 443)
-                # allowlist entries name no port: web ports only (any port for a test fixture)
-                if port not in (80, 443) and not self.allow_private:
+                host, port = split_target(target, 443, self.open)
+                # allowlist entries name no port: web ports only (any port when open, or for a
+                # test fixture)
+                if port not in (80, 443) and not any_port:
                     host = None
             elif target.startswith("http://"):
                 authority, _, path = target[7:].partition("/")
-                host, port = split_target(authority, 80)
-                if port != 80 and not self.allow_private:
+                host, port = split_target(authority, 80, self.open)
+                if port != 80 and not any_port:
                     host = None
                 headers = [line for line in lines[1:]
                            if not line.lower().startswith((b"proxy-", b"connection:"))]
@@ -445,13 +560,19 @@ class Forwarder:
                     headers + [b"Connection: close"]) + b"\r\n\r\n"
             else:
                 host, port = None, None
-            if host is None or not host_allowed(host, self.hosts):
+            if host is None or not (self.open or host_allowed(host, self.hosts)):
                 client.sendall(b"HTTP/1.1 403 Forbidden\r\nContent-Length: 0\r\n"
                                b"Connection: close\r\n\r\n")
                 client.close()
                 return
             try:
                 up = self.connect(host, port)
+            except PermissionError:
+                # every address of the name is closed: refused before any connect
+                client.sendall(b"HTTP/1.1 403 Forbidden\r\nContent-Length: 0\r\n"
+                               b"Connection: close\r\n\r\n")
+                client.close()
+                return
             except OSError:
                 client.sendall(b"HTTP/1.1 502 Bad Gateway\r\nContent-Length: 0\r\n"
                                b"Connection: close\r\n\r\n")
@@ -473,16 +594,13 @@ class Forwarder:
                 pass
 
     def connect(self, host, port):
-        """Connects to a vetted address of host (never resolved again, so never rebound)."""
-        for family, kind, proto, _, address in socket.getaddrinfo(host, port, 0,
-                                                                  socket.SOCK_STREAM):
-            ip = ipaddress.ip_address(address[0].split("%")[0])
-            if getattr(ip, "ipv4_mapped", None):
-                ip = ip.ipv4_mapped
-            # only globally routable addresses (not loopback, private, link-local, shared
-            # 100.64/10, unique-local or NAT64) unless a test fixture allows its local endpoints
-            if not self.allow_private and (not ip.is_global or ip in NAT64):
-                continue
+        """Connects to a vetted address of host (never resolved again, so never rebound). Raises
+        PermissionError when public_address refuses every address (none is dialled)."""
+        candidates = [c for c in socket.getaddrinfo(host, port, 0, socket.SOCK_STREAM)
+                      if self.allow_private or public_address(c[4][0])]
+        if not candidates:
+            raise PermissionError(errno.EACCES, "No permitted address")
+        for family, kind, proto, _, address in candidates:
             sock = socket.socket(family, kind, proto)
             try:
                 sock.settimeout(30)
@@ -634,20 +752,32 @@ def run_restricted(request, control):
         close_fds(runtime.values())
 
 
+def write_denies(request):
+    """The write denies the device resolved for this operation: absolute, normalized paths."""
+    paths = request.get("writeDenies", [])
+    if not isinstance(paths, list) or not all(
+            isinstance(p, str) and p.startswith("/") and os.path.normpath(p) == p for p in paths):
+        raise Refused("INVALID_REQUEST", "Supply absolute normalized write denies")
+    return list(paths)
+
+
 def run_sealed(request, control, runtime):
     env = dict(validated_env(request["env"]))
     for key in PROXY_KEYS:
         env.pop(key, None)
+    denies = write_denies(request)
     read, write, _ = pin_roots(request)
     forwarder = None
     try:
         if not write:
             raise Refused("SCOPE_DENIED", "Restricted execution needs an existing writable root")
         network = request["network"]
-        if network.get("kind") != "allowlist" or not network.get("hosts"):
+        kind = network.get("kind")
+        if kind != "open" and (kind != "allowlist" or not network.get("hosts")):
             launcher_network = {"kind": "none"}
         else:
-            forwarder = Forwarder(list(network["hosts"]), request.get("allowPrivate") is True)
+            forwarder = Forwarder(list(network["hosts"]) if kind == "allowlist" else [],
+                                  request.get("allowPrivate") is True, kind == "open")
             proxy = "http://capybara:%s@127.0.0.1:%d" % (forwarder.token, forwarder.port)
             for key in ("HTTP_PROXY", "HTTPS_PROXY", "http_proxy", "https_proxy", "ALL_PROXY",
                         "all_proxy"):
@@ -660,7 +790,8 @@ def run_sealed(request, control, runtime):
         body = {"mode": "exec", "roots": {"read": read, "write": write},
                 "network": launcher_network, "reportFd": report_w, "env": env,
                 "cwd": request["cwd"], "argv": ["/bin/bash", "-c", request["command"]],
-                "timeoutMs": request["timeoutMs"], "nativeFd": runtime["native-files.py"]}
+                "timeoutMs": request["timeoutMs"], "nativeFd": runtime["native-files.py"],
+                "writeDenies": denies}
         if files:
             body["systemRoots"] = list(LAUNCHER_SYSTEM_ROOTS) + files
         if control.cancel is not None:
@@ -789,7 +920,11 @@ def run_native(request):
                 # The permitted root does not exist yet, so neither does anything below it.
                 send({"event": "native", "response": {"result": [] if body["method"] == "scan" else None}})
                 return
-            # restricted native writes honour the mandatory write denies (as the broker does)
+            # restricted native writes honour the mandatory write denies (as the broker does) and
+            # the operation's resolved ones (this agent serves one operation)
+            folded = [native._fold_parts(p) for p in write_denies(request)]
+            native.SYSTEM_WRITE_DENIES.extend(folded)
+            native.PREFIX_GUARDED.extend((names, True) for names in folded)
             roots = {"read": [{"path": e["path"], "fd": e["fd"]} for e in read],
                      "write": [{"path": e["path"], "fd": e["fd"]} for e in write],
                      "denyWrites": True}
