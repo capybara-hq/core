@@ -121,6 +121,11 @@ export interface LocalBackendHost {
   /** Escalated calls (outside the sandbox) and background work run on this platform. */
   outsideSandbox: boolean;
   background: boolean;
+  /**
+   * The platform's restricted worker enforces the open public network (a grant's `openNetwork`,
+   * decided on the resolved address). Absent: only the allowlist is reported.
+   */
+  openPublic?: boolean;
   /** The message a refused restricted operation carries. */
   pending: string;
   startWorker?: (request: MacWorkerRequest, signal: AbortSignal) => Promise<MacWorkerHandle>;
@@ -163,6 +168,8 @@ export async function createMacOperationBackend(
       : {}),
     outsideSandbox: platform === "darwin",
     background: platform === "darwin",
+    // the macOS worker's proxy decides the open network on the resolved address (operation-worker)
+    openPublic: platform === "darwin",
     pending: (!restricted && dependencies.unavailableReason) || PENDING,
     ...(dependencies.startWorker ? { startWorker: dependencies.startWorker } : {}),
     ...(restricted && dependencies.restrictedProof ? { proof: dependencies.restrictedProof } : {}),
@@ -480,15 +487,19 @@ export async function createLocalOperationBackend(
       await host.proof?.refresh();
       const c = await read();
       const restricted = restrictedNow();
-      // an operation boundary: the sandbox network (the allowlist, with per-operation hosts) only
-      // with restricted support; the open public network is not enforced by these workers yet
+      // an operation boundary: the sandbox network (the open public internet decided on the
+      // resolved address, or the allowlist with per-operation hosts) only with restricted support
       return {
         version: 2,
         boundary: "operation",
         restricted: restricted
           ? { filesystem: true, network: true, native: true, concurrentScopes: true }
           : null,
-        network: { openPublic: false, allowlist: restricted, perOperationHosts: restricted },
+        network: {
+          openPublic: restricted && host.openPublic === true,
+          allowlist: restricted,
+          perOperationHosts: restricted,
+        },
         outsideSandbox: host.outsideSandbox && c.outsideSandbox,
         background: host.background,
         ...(!restricted

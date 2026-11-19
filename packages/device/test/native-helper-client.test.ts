@@ -168,8 +168,13 @@ it
         profile: "approve-for-me" as const,
         actor: { accountId: "a", conversationId: "r" },
         tag: "fixture",
-        filesystem: { kind: "scoped" as const, readRoots: [project], writeRoots: [project] },
-        network: { kind: "none" as const },
+        // only the escalated pair runs unwrapped
+        ...(full
+          ? { filesystem: { kind: "device" as const }, network: { kind: "environment" as const } }
+          : {
+              filesystem: { kind: "scoped" as const, readRoots: [project], writeRoots: [project] },
+              network: { kind: "none" as const },
+            }),
       };
       const worker = await startMacOperationWorker(
         {

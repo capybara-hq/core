@@ -3215,6 +3215,9 @@ export const SANDBOX_RUNTIME_SOURCE: {
 };
 
 // @public
+export const SANDBOX_SYSTEM_WRITE_DENIES: readonly string[];
+
+// @public
 export const SANDBOX_TAG_RE: RegExp;
 
 // @public

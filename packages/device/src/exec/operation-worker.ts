@@ -1,13 +1,15 @@
 import { type ChildProcess, fork, spawn, spawnSync } from "node:child_process";
 import { randomUUID } from "node:crypto";
-import { constants, realpathSync } from "node:fs";
+import { constants, lstatSync, readlinkSync, realpathSync } from "node:fs";
 import { type FileHandle, mkdtemp, open, readdir, realpath, rm, stat } from "node:fs/promises";
 import { homedir, tmpdir } from "node:os";
-import { basename, dirname, join } from "node:path";
+import { basename, dirname, join, resolve } from "node:path";
 import {
   type ExecResult,
+  OPEN_PUBLIC_DENIED_CIDRS,
   SANDBOX_GIT_DENIED_INTERNALS,
   SANDBOX_MANDATORY_WRITE_DENIES,
+  SANDBOX_SYSTEM_WRITE_DENIES,
   type SandboxBrowseScope,
   type SandboxExecOptions,
   type SandboxOperationScope,
@@ -17,7 +19,12 @@ import {
 } from "@capybara-hq/plugin-sdk";
 import { implicitWritePaths } from "../policy.js";
 import { macReadAllows } from "./mac-read-policy.js";
-import { macWriteRegexRules, macWriteRootSpellings } from "./mac-write-policy.js";
+import {
+  ci,
+  type MacWriteRegexRule,
+  macWriteRegexRules,
+  macWriteRootSpellings,
+} from "./mac-write-policy.js";
 import {
   type NativeHelperRequest,
   type NativeHelperResult,
@@ -129,6 +136,127 @@ export function mandatoryDenyPatterns(root: string): string[] {
     ]),
   ];
 }
+/**
+ * The sandbox runtime's network configuration for one restricted grant (approval-only profiles
+ * design, "Open network"), and whether the worker answers the runtime's ask callback with allow.
+ *
+ * - The allowlist (no `openNetwork`): exactly the grant's hosts, the runtime's own matching; an
+ *   allow-listed name keeps the runtime's built-in resolved-address guard.
+ * - The open network: no host list, an allow-all ask callback, so every destination is decided by
+ *   the resolved-address guard in the operation's own proxy, which dials the address it checked (no
+ *   second resolution: DNS rebinding cannot swap it). `deniedResolvedAddresses` is the SDK's whole
+ *   closed set ({@link OPEN_PUBLIC_DENIED_CIDRS}: private, CGNAT, ULA, link-local, metadata,
+ *   loopback, NAT64, multicast, reserved, embedded forms expanded); the runtime adds loopback,
+ *   link-local, the cloud metadata endpoints and this host's own interface addresses itself. The
+ *   patched runtime's `resolvedAddressStrict` judges an IP literal by the same rules (upstream skips
+ *   literals) and gives `localhost` no loopback carve-out.
+ *
+ * Listening stays refused (`allowLocalBinding: false`) under every profile: Seatbelt cannot limit a
+ * bind to loopback (spec "Known limitations"), and with it the command could reach every local
+ * port. The grant's hosts are not used in the open network: a private destination needs the
+ * escalation, never a host grant.
+ */
+export function macNetworkConfig(grant: Pick<LocalOperationGrant, "hosts" | "openNetwork">): {
+  askAll: boolean;
+  network: Record<string, unknown>;
+} {
+  if (!grant.openNetwork)
+    return {
+      askAll: false,
+      network: { allowedDomains: [...grant.hosts], deniedDomains: [], allowLocalBinding: false },
+    };
+  return {
+    askAll: true,
+    network: {
+      allowedDomains: [],
+      deniedDomains: [],
+      deniedResolvedAddresses: [...OPEN_PUBLIC_DENIED_CIDRS],
+      resolvedAddressStrict: true,
+      allowLocalBinding: false,
+    },
+  };
+}
+
+/**
+ * Where `path` resolves: the real path of its nearest existing ancestor in on-disk form, the missing
+ * names appended; a dangling symbolic link on the way is followed to the location it names (a
+ * command could create that location, and so write through the link).
+ */
+function resolvedTarget(path: string, depth = 0): string | undefined {
+  const missing: string[] = [];
+  for (let anchor = path; ; anchor = dirname(anchor)) {
+    try {
+      return join(realpathSync.native(anchor), ...missing);
+    } catch {
+      try {
+        if (depth < 32 && lstatSync(anchor).isSymbolicLink())
+          return resolvedTarget(
+            join(resolve(dirname(anchor), readlinkSync(anchor)), ...missing),
+            depth + 1,
+          );
+      } catch {}
+      if (anchor === dirname(anchor)) return undefined;
+      missing.unshift(basename(anchor));
+    }
+  }
+}
+
+/**
+ * Absolute write denies a restricted macOS operation gets besides each write root's policy:
+ *
+ * - the system persistence paths ({@link SANDBOX_SYSTEM_WRITE_DENIES}: the crontab and at spools),
+ *   in each spelling Seatbelt may see;
+ * - the resolved target of every protected location under `home` (the
+ *   {@link SANDBOX_MANDATORY_WRITE_DENIES} entries: `~/Library/LaunchAgents`, `~/.config/systemd`,
+ *   the shell startup files, …) where it differs from the path itself. A dotfile manager links
+ *   `~/.config`, `~/.zshrc` or `~/.config/systemd/user` into a repository; the per-root policy
+ *   judges the path it sees, so a write root holding that repository would otherwise write the
+ *   linked location (SDK `sandbox-write-denies.ts`, constraint on consumers). Resolved at
+ *   operation start: a link changed later is seen by the next operation.
+ */
+export function macProtectedWriteDenies(home: string): string[] {
+  const out = new Set<string>();
+  for (const path of SANDBOX_SYSTEM_WRITE_DENIES)
+    for (const spelling of macWriteRootSpellings(path)) out.add(spelling);
+  for (const entry of SANDBOX_MANDATORY_WRITE_DENIES) {
+    const path = join(home, ...entry);
+    const target = resolvedTarget(path);
+    // APFS folds case: a target differing only in case is the location itself
+    if (target && target.toLowerCase() !== path.toLowerCase()) out.add(target);
+  }
+  return [...out];
+}
+
+/**
+ * {@link macProtectedWriteDenies} as ordered write rules the patched runtime appends after every
+ * other rule, so they decide last (over the per-root git allowlist too), case-insensitively. Fails
+ * closed when a path is too long for a Seatbelt rule.
+ */
+function protectedWriteRules(paths: readonly string[]): MacWriteRegexRule[] {
+  return paths.map((path) => {
+    if ([...path].some((ch) => (ch.codePointAt(0) as number) < 0x20 || ch === "\u007f"))
+      throw new Error("A protected path with a control character cannot be expressed as a policy");
+    const regex = `^${ci(path)}(/.*)?$`;
+    if (regex.length > 1000) throw new Error("A protected path is too long for the macOS policy");
+    return {
+      action: "deny",
+      operations: ["file-write*", "file-write-create", "file-write-unlink"],
+      regex,
+    };
+  });
+}
+
+/** The environment of an escalated call: the device program's, minus every `CAPYBARA_` variable. */
+export function escalatedEnvironment(
+  env: NodeJS.ProcessEnv,
+  own: Record<string, string> | undefined,
+): Record<string, string> {
+  const out: Record<string, string> = {};
+  for (const [key, value] of Object.entries(env))
+    if (value !== undefined && !/^CAPYBARA_/i.test(key)) out[key] = value;
+  return { ...out, ...own };
+}
+
 /**
  * Removes empty git sequencer directories (`.git/sequencer`, and those of the gitdirs below
  * `.git/modules`) under each write root, descriptor-relative and never following a link, after a
@@ -279,7 +407,7 @@ process.on('message',async message=>{try{
   if(credit && credit.seq===message.seq){const pending=credit;credit=undefined;if(message.ok)pending.resolve();else{outputFailed=true;pending.reject(Error('Managed sink failed'));child?.stdout.resume();}}
  }else if(message.type==='init'){
   if(initialized)throw Error('Worker initialization is immutable');initialized=true;full=message.full;
-  if(!full){({SandboxManager:manager}=await import(pathToFileURL(message.runtime)));const deps=manager.checkDependencies();if(!manager.isSupportedPlatform()||deps.errors?.length)throw Error('Unsupported macOS sandbox runtime');await manager.initialize(message.config,undefined,false);}
+  if(!full){({SandboxManager:manager}=await import(pathToFileURL(message.runtime)));const deps=manager.checkDependencies();if(!manager.isSupportedPlatform()||deps.errors?.length)throw Error('Unsupported macOS sandbox runtime');await manager.initialize(message.config,message.askAll?async()=>true:undefined,false);}
   send({event:'ready',proxyUrl:full?'':'http://srt:'+manager.getProxyAuthToken()+'@127.0.0.1:'+manager.getProxyPort()});
  }else if(message.type==='wrap'){
   if(!initialized||wrapped)throw Error('One command per worker');wrapped=true;
@@ -452,6 +580,18 @@ export async function startMacOperationWorker(
   let privateTmp: string | undefined;
   const completion = (async () => {
     try {
+      // only an escalated call (the device filesystem with the environment network) is unwrapped
+      if (
+        request.grant.full &&
+        !(
+          "profile" in request.scope &&
+          request.scope.filesystem.kind === "device" &&
+          request.scope.network.kind === "environment"
+        )
+      )
+        throw new SandboxScopeDeniedError(
+          "Only an escalated call (the device filesystem with the environment network) runs outside the sandbox",
+        );
       // Restricted workers import only the sealed private copy of the verified runtime closure
       // the binding attested; anything else is refused here, before anything is spawned.
       if (!request.grant.full) sealed = await acquireSealedRuntime(request.runtimeHash);
@@ -506,7 +646,8 @@ export async function startMacOperationWorker(
       // Version managers (asdf, nvm, pyenv, ...) read their data under the real home, while HOME
       // is the working directory: this trusted process has the real home and the device's own
       // environment (the forked worker runs with a reduced one), so it picks the variables and
-      // grants their directories read only. Full access inherits this process's environment.
+      // grants their directories read only. An escalated call inherits this process's environment
+      // minus every CAPYBARA_ variable (escalatedEnvironment).
       const toolHomes =
         request.kind === "exec" && !request.grant.full
           ? restrictedToolHomes(
@@ -591,6 +732,11 @@ export async function startMacOperationWorker(
                   return firstMissing;
                 })
             : [];
+        // the protected locations as they resolve now, and the system persistence paths
+        const protectedDenies = request.grant.full
+          ? []
+          : macProtectedWriteDenies(request.toolHome?.home ?? homedir());
+        const network = macNetworkConfig(request.grant);
         const config = {
           filesystem: {
             denyRead: ["/", ...request.grant.deniedReadRoots],
@@ -608,6 +754,7 @@ export async function startMacOperationWorker(
               // approved `cd ~`), and the runtime turns each deny into write, move and creation
               // denies on the path and moves of its ancestors.
               ...withCanonicalForms(request.grant.deniedReadRoots),
+              ...protectedDenies,
               // Per-root deny entries pin every ancestor against creation in SRT.
               // The fixed helper has no rename API; retain global Git content denies
               // while it establishes a missing root without those ancestor pins.
@@ -618,15 +765,14 @@ export async function startMacOperationWorker(
             ],
             // the shared policy exactly (case-insensitive, gitdir allowlist, HEAD rules), as
             // ordered regex rules the patched runtime appends last (mac-write-policy.ts)
-            writeRegexRules: establishmentRoots.length
-              ? macWriteRegexRules("")
-              : writeRoots.flatMap((r) => macWriteRootSpellings(r).flatMap(macWriteRegexRules)),
+            writeRegexRules: [
+              ...(establishmentRoots.length
+                ? macWriteRegexRules("")
+                : writeRoots.flatMap((r) => macWriteRootSpellings(r).flatMap(macWriteRegexRules))),
+              ...protectedWriteRules(protectedDenies),
+            ],
           },
-          network: {
-            allowedDomains: [...request.grant.hosts],
-            deniedDomains: [],
-            allowLocalBinding: false,
-          },
+          network: network.network,
           ...(javaAgent ? { javaAgentJarPath: javaAgent } : {}),
         };
         const initialized = message(runtime, "ready");
@@ -635,6 +781,7 @@ export async function startMacOperationWorker(
           full: request.grant.full,
           runtime: runtimeEntry,
           config,
+          askAll: network.askAll,
         });
         const initializedInfo = await initialized;
         // the worker has imported the runtime: the copy may be pruned from now on
@@ -797,7 +944,7 @@ export async function startMacOperationWorker(
         type: "execute",
         script,
         cwd: args.cwd,
-        env: request.grant.full ? { ...process.env, ...args.env } : outerEnv,
+        env: request.grant.full ? escalatedEnvironment(process.env, args.env) : outerEnv,
         timeoutMs: args.timeoutMs,
         managed: request.managedOutput !== undefined,
       });

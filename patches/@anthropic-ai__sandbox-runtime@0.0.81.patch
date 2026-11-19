@@ -60,11 +60,68 @@ index 0e598b612d84d24b09ec2ab0d7ccc9b009c9457b..10c4bd0b6518f6b968a105b0ed70838b
          '  (sysctl-name "hw.memsize")',
          '  (sysctl-name "hw.ncpu")',
          '  (sysctl-name "hw.nperflevels")',
+diff --git a/dist/sandbox/resolved-address-guard.js b/dist/sandbox/resolved-address-guard.js
+index 54970f754e71188fb6ab98971b39560b0b8f8724..4ee3cee6dde61363d97ff1ca77818102eb7a269f 100644
+--- a/dist/sandbox/resolved-address-guard.js
++++ b/dist/sandbox/resolved-address-guard.js
+@@ -131,6 +131,10 @@ export function createResolvedAddressGuard(opts = {}) {
+         ['a listed address', buildRuleSet(opts.deniedResolvedAddresses ?? [])],
+     ];
+     const resolve = opts.resolve ?? dnsLookup;
++    // capybara patch: `resolvedAddressStrict` judges every destination by its address: an IP
++    // literal by the same rules as a resolved name (see `literalDenial`), and the reserved
++    // loopback names without their loopback carve-out
++    const strict = opts.resolvedAddressStrict === true;
+     /** This host's addresses right now; a malformed entry from the seam is skipped. */
+     const localSet = () => {
+         const list = new BlockList();
+@@ -140,8 +144,8 @@ export function createResolvedAddressGuard(opts = {}) {
+         return list;
+     };
+     /** Why `hostname:port` may not use resolved `address`, or undefined if it may. */
+-    const denial = (hostname, address, port, local) => {
+-        if (isIP(hostname))
++    const denial = (hostname, address, port, local, literal = false) => {
++        if (isIP(hostname) && !literal)
+             return undefined;
+         if (!isIP(address))
+             return 'an unparsable address';
+@@ -159,7 +163,7 @@ export function createResolvedAddressGuard(opts = {}) {
+             return 'a deny-listed address';
+         if (inRuleSet(allowed, address, port))
+             return undefined;
+-        if (isLoopbackName(hostname)) {
++        if (!strict && isLoopbackName(hostname)) {
+             return isLoopbackAddress(address) ? undefined : 'a non-loopback address';
+         }
+         const why = denied.find(([, set]) => denies(set))?.[0];
+@@ -215,6 +219,9 @@ export function createResolvedAddressGuard(opts = {}) {
+     };
+     return {
+         permits: (hostname, address, port) => denial(hostname, address, port, localSet()) === undefined,
++        // capybara patch: why an IP-literal destination is refused in strict mode, or undefined
++        // when it may be dialed (always undefined without `resolvedAddressStrict`)
++        literalDenial: (address, port) => strict ? denial(address, address, port, localSet(), true) : undefined,
+         lookupFor,
+     };
+ }
 diff --git a/dist/sandbox/sandbox-config.js b/dist/sandbox/sandbox-config.js
-index 76b00b1dc82a2d42a451a9f58068cbbd5e68da75..25ea77fe4259ddeb8578262fffd2021c7c06aa0d 100644
+index 76b00b1dc82a2d42a451a9f58068cbbd5e68da75..863561d2847efcd218114453899bb9e001477e54 100644
 --- a/dist/sandbox/sandbox-config.js
 +++ b/dist/sandbox/sandbox-config.js
-@@ -832,6 +832,22 @@ export const FilesystemConfigSchema = z.object({
+@@ -608,6 +608,11 @@ export const NetworkConfigSchema = z.object({
+         'deniedDomains. A permitted name that resolves only into these is refused instead of dialed. A name may ' +
+         'resolve to a denied address only if that IP literal (and port) is itself in allowedDomains. Not evaluated ' +
+         'for connections routed through parentProxy (including one taken from HTTP_PROXY/HTTPS_PROXY) or mitmProxy (that hop resolves the name).'),
++    // capybara patch: judge IP literals and the loopback names by their address too
++    resolvedAddressStrict: z
++        .boolean()
++        .optional()
++        .describe('If true, an IP-literal destination is judged by the resolved-address rules like a resolved name (the built-in classes, deniedResolvedAddresses, deniedDomains literals, this host\'s addresses), and localhost names get no loopback carve-out.'),
+     allowUnixSockets: z
+         .array(z.string())
+         .optional()
+@@ -832,6 +837,22 @@ export const FilesystemConfigSchema = z.object({
          .boolean()
          .optional()
          .describe('Allow writes to .git/config files (default: false). Enables git remote URL updates while keeping .git/hooks protected.'),
@@ -88,10 +145,35 @@ index 76b00b1dc82a2d42a451a9f58068cbbd5e68da75..25ea77fe4259ddeb8578262fffd2021c
  /**
   * Configuration schema for ignoring specific sandbox violations
 diff --git a/dist/sandbox/sandbox-manager.js b/dist/sandbox/sandbox-manager.js
-index d475e55977bf54a2fe00a0c6aba38313761d55aa..d60dab574bca5a1071e55dae7c597c6a2c86a4a6 100644
+index d475e55977bf54a2fe00a0c6aba38313761d55aa..b9a0f9920dbb3fab60c6f48e40956304295478c4 100644
 --- a/dist/sandbox/sandbox-manager.js
 +++ b/dist/sandbox/sandbox-manager.js
-@@ -1493,6 +1493,8 @@ function getFsReadConfig() {
+@@ -26,6 +26,8 @@ import { canonicalizeHost, isValidHost, redactUrl, resolveParentProxy, } from '.
+ import { ALLOWED_DOMAIN_ENTRY_MESSAGE, isValidAllowedDomainEntry, matchesDomainPattern, matchesDomainPatternWithPort, stripDomainPatternPort, } from './domain-pattern.js';
+ import { createResolvedAddressGuard, isResolvedAddressDenied, } from './resolved-address-guard.js';
+ import { EOL } from 'node:os';
++// capybara patch: the strict literal check
++import { isIP } from 'node:net';
+ import { dirname } from 'node:path';
+ import { getJavaProxyAgentJarPathAsync } from './java-proxy-agent.js';
+ import { getApplySeccompBinaryPathAsync } from './generate-seccomp-filter.js';
+@@ -522,6 +524,15 @@ async function filterNetworkRequest(port, host, sandboxAskCallback, encodedComma
+             return denied(deniedDomainReason(deniedDomain));
+         }
+     }
++    // capybara patch: in strict mode an IP-literal destination is judged by the resolved-address
++    // rules (upstream judges only names there), so a literal reaches nothing a name could not
++    const literalWhy = isIP(canonicalHost)
++        ? resolvedAddressGuard.literalDenial(canonicalHost, port)
++        : undefined;
++    if (literalWhy) {
++        logForDebugging(`Denied address literal: ${host}:${port} (${literalWhy})`);
++        return denied(`address is ${literalWhy}`);
++    }
+     // Check allowed domains
+     for (const allowedDomain of config.network.allowedDomains) {
+         if (matchesDomainPatternWithPort(canonicalHost, port, allowedDomain)) {
+@@ -1493,6 +1504,8 @@ function getFsReadConfig() {
          allowWithinDeny: allowPaths,
          unlistableDenyDirs: [...unlistableDenyDirs],
          ...literalReadLists(config.filesystem.denyRead, config.filesystem.allowRead),
@@ -100,7 +182,7 @@ index d475e55977bf54a2fe00a0c6aba38313761d55aa..d60dab574bca5a1071e55dae7c597c6a
      };
  }
  function getFsWriteConfig() {
-@@ -1516,6 +1518,8 @@ function getFsWriteConfig() {
+@@ -1516,6 +1529,8 @@ function getFsWriteConfig() {
          allowOnly,
          denyWithinAllow: denyPaths,
          ...literalWriteLists(config.filesystem.allowWrite, config.filesystem.denyWrite),
@@ -109,7 +191,7 @@ index d475e55977bf54a2fe00a0c6aba38313761d55aa..d60dab574bca5a1071e55dae7c597c6a
      };
  }
  /**
-@@ -1866,6 +1870,8 @@ async function wrapWithSandboxOnce(walkEnded, restarts, command, binShell, custo
+@@ -1866,6 +1881,8 @@ async function wrapWithSandboxOnce(walkEnded, restarts, command, binShell, custo
                  config?.filesystem.denyWrite ??
                  []),
              ...literalWriteLists(customConfig?.filesystem?.allowWrite ?? config?.filesystem.allowWrite, customConfig?.filesystem?.denyWrite ?? config?.filesystem.denyWrite),
@@ -118,7 +200,7 @@ index d475e55977bf54a2fe00a0c6aba38313761d55aa..d60dab574bca5a1071e55dae7c597c6a
          };
          // For a caller that never reads checkDependencies(), the CLI among them.
          if (!ownInstallLogged) {
-@@ -1917,6 +1923,8 @@ async function wrapWithSandboxOnce(walkEnded, restarts, command, binShell, custo
+@@ -1917,6 +1934,8 @@ async function wrapWithSandboxOnce(walkEnded, restarts, command, binShell, custo
              ...(ownAllowWithinDeny.length > 0 && { ownAllowWithinDeny }),
              unlistableDenyDirs: [...unlistableDenyDirs],
              ...literalReadLists(customConfig?.filesystem?.denyRead ?? config?.filesystem.denyRead, customConfig?.filesystem?.allowRead ?? config?.filesystem.allowRead),

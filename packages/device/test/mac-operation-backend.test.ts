@@ -191,7 +191,7 @@ it("rejects wrong device handles before creating a worker", async () => {
 });
 
 it.runIf(process.platform === "darwin")(
-  "real Full preserves the OS environment while restricted exec excludes ambient secrets",
+  "real Full preserves the OS environment (minus CAPYBARA_) while restricted exec excludes ambient secrets",
   async () => {
     const { startMacOperationWorker } = await import("../src/exec/operation-worker.js");
     const { mkdir, realpath } = await import("node:fs/promises");
@@ -201,8 +201,8 @@ it.runIf(process.platform === "darwin")(
     const project = join(root, "project");
     await mkdir(stateDir, { mode: 0o700 });
     await mkdir(project);
-    const prior = process.env.CAPYBARA_OWNED_TEST_SECRET;
-    process.env.CAPYBARA_OWNED_TEST_SECRET = "synthetic-owned-value";
+    const prior = process.env.OWNED_TEST_SECRET;
+    process.env.OWNED_TEST_SECRET = "synthetic-owned-value";
     const workers: MacWorkerHandle[] = [];
     try {
       for (const full of [true, false]) {
@@ -224,7 +224,7 @@ it.runIf(process.platform === "darwin")(
             kind: "exec",
             scope,
             args: {
-              command: 'printf %s "$CAPYBARA_OWNED_TEST_SECRET"',
+              command: 'printf %s "$OWNED_TEST_SECRET"',
               cwd: project,
               timeoutMs: 5000,
               maxOutputBytes: 100,
@@ -251,8 +251,8 @@ it.runIf(process.platform === "darwin")(
         expect(output).toMatchObject({ exitCode: 0, stdout: full ? "synthetic-owned-value" : "" });
       }
     } finally {
-      if (prior === undefined) delete process.env.CAPYBARA_OWNED_TEST_SECRET;
-      else process.env.CAPYBARA_OWNED_TEST_SECRET = prior;
+      if (prior === undefined) delete process.env.OWNED_TEST_SECRET;
+      else process.env.OWNED_TEST_SECRET = prior;
       await Promise.all(workers.map((w) => w.cancel("fixture cleanup")));
     }
   },
