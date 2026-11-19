@@ -2,10 +2,8 @@
 "@capybara-hq/web": minor
 ---
 
-Safe areas, foreground resume and the Shell environment: the root layout declares the viewport
-(`viewport-fit=cover`, `interactive-widget=resizes-content`, a theme color per scheme) and renders
-the Shell environment script first in `<head>` with the request's CSP nonce; the design's
-`--cb-inset-*` tokens combine the OS safe areas with a native shell's insets; the AppShell follows
-the shell's `change`, adds the `shell=` state token and tells `chrome@1` the theme; `lib/shell.ts`
-reads shell capabilities by `name@major` (event-handler accessor refused during a render); a
-conversation stream dropped in the background reopens from the cached last seq on return.
+Phones and native shells: pages extend under the notch and the home indicator with the right
+padding, the on-screen keyboard resizes the page instead of covering it, and the browser bar takes
+the theme's color in light and dark. Inside the desktop or mobile app the layout follows the app's
+own window chrome and theme. A conversation whose live stream dropped while the app was in the
+background picks up where it left off when you come back.
