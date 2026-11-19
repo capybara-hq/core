@@ -299,8 +299,9 @@ it("publishes config by CAS and rejects stale replicas and stale publication ord
     .selectAll()
     .executeTakeFirstOrThrow();
   expect(active).toHaveProperty("projection", {
-    version: 2,
-    fullAccess: { kind: "deployment-setting" },
+    version: 3,
+    outsideSandbox: { kind: "deployment-setting" },
+    network: { default: { kind: "deployment-setting" }, ceiling: { kind: "deployment-setting" } },
     egress: config.sandbox.limits.egress,
     orgHosts: config.sandbox.limits.orgHosts,
     allowHosts: [...new Set(config.sandbox.limits.allowHosts)].sort(),
