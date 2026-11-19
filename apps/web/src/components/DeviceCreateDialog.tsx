@@ -41,8 +41,8 @@ type Kind = "cloud" | "local";
  *   device is ready at once (its files and instance are made on first use): the dialog
  *   invalidates the list and opens the detail page. A kernel refusal (name taken, limit reached,
  *   no provider) keeps the dialog open with its copy.
- * - 本地设备: in the desktop shell (`device@1`) a primary 连接本机 first (the shell asks the person
- *   natively); the commands to run on the machine (install, `capybara-device login` with
+ * - Local device: in the desktop shell (`device@1`) a primary "connect this machine" button first (the
+ *   shell asks the person natively); the commands to run on the machine (install, `capybara-device login` with
  *   this deployment's address), each with a copy button; the dialog then reads the devices
  *   until a local device it had not seen appears, and opens its page.
  */
