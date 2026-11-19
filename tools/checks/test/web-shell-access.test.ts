@@ -16,6 +16,7 @@ describe("web-shell-access", () => {
     expect(f.map((x) => [x.file.split("/").pop(), x.line])).toEqual([
       ["view.tsx", 2],
       ["view.tsx", 3],
+      ["view.tsx", 7],
     ]);
   });
 
