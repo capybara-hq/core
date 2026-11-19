@@ -23,6 +23,11 @@ const nextConfig = {
   poweredByHeader: false,
   // The dev indicator would cover the sidebar's account row.
   devIndicators: false,
+  // Dev only: keep every compiled page for the whole `next dev` session. Next's default disposes a
+  // page after 60 s without a visit (beyond the 5 most recent), so a later visit compiles it again,
+  // and a client navigation that lands on such a recompile can hang without an answer (an e2e
+  // flake: the nav click to /agents never left /). Each route now compiles once, on its first visit.
+  onDemandEntries: { maxInactiveAge: 24 * 60 * 60 * 1000, pagesBufferLength: 1000 },
   ...(devOrigins.length > 0 && { allowedDevOrigins: devOrigins }),
   transpilePackages: ["@capybara-hq/design"],
   webpack(config, { dev }) {
