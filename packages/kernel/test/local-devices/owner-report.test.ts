@@ -126,10 +126,11 @@ describe("owner report ordering (B2)", () => {
     expect(ownerReportRevokes(facts({ outsideSandbox: false }), op(), "exec", [], roots)).toBe(
       false,
     );
-    expect(ownerReportRevokes(facts({ allowedDomains: [] }), op(), "exec", [], roots)).toBe(true);
-    expect(ownerReportRevokes(facts({ allowedDomains: [] }), op(), "exec", ["a.test"], roots)).toBe(
-      false,
-    );
+    const allowlist = facts({ network: "allowlist", allowedDomains: [] });
+    expect(ownerReportRevokes(allowlist, op(), "exec", [], roots)).toBe(true);
+    expect(ownerReportRevokes(allowlist, op(), "exec", ["a.test"], roots)).toBe(false);
+    // an owner who keeps the open network bounds no host
+    expect(ownerReportRevokes(facts({ allowedDomains: [] }), op(), "exec", [], roots)).toBe(false);
     const outside = op({
       filesystem: { kind: "scoped", readRoots: ["/home/o/p"], writeRoots: ["/home/o/p"] },
     } as never);

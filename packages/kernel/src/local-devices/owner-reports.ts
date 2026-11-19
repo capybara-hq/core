@@ -4,6 +4,7 @@ import { audit } from "../identity/audit.js";
 import { KernelDb } from "../infra/database/kernel-db.js";
 import { TransactionHost } from "../infra/database/transaction-host.js";
 import { Transactional } from "../infra/database/transactional.decorator.js";
+import { coversHost } from "../sandbox/modes.js";
 import { PermissionCeilingWrites } from "../sandbox/permission-ceiling-writes.js";
 import {
   decideOwnerReport,
@@ -143,9 +144,23 @@ export class OwnerReports {
     const domainsChanged =
       JSON.stringify([...before.restrictedAllowedDomains].sort()) !==
       JSON.stringify([...after.restrictedAllowedDomains].sort());
-    // the owner's sandbox network: narrowing it to the allowlist takes open-network work, and
-    // any change moves the crossing ceilings Full access consented to
+    // the owner's sandbox network: narrowing it to the allowlist takes open-network work
     const networkChanged = before.network !== after.network;
+    // only a widening resets Full consent (Full access would auto-approve more): running outside
+    // allowed again, the open network, the os-user reach, or a host added to an allowlist the
+    // owner keeps; a narrowing keeps what the consent covered. A machine's first report is no
+    // network widening (the missing state's allowlist is only failing closed)
+    const reported = before.state !== "missing";
+    const widened =
+      (!before.fullAccess && after.fullAccess) ||
+      (before.restrictedProjectReach === "workspace" &&
+        after.restrictedProjectReach === "os-user") ||
+      (reported && before.network === "allowlist" && after.network === "open") ||
+      (reported &&
+        after.network === "allowlist" &&
+        after.restrictedAllowedDomains.some(
+          (h) => !before.restrictedAllowedDomains.some((p) => coversHost(p, h)),
+        ));
     const roots = machineRootList(row.roots);
     // a new revision with the same visible facts is no new authority: nothing is published
     if (fullChanged || reachChanged || domainsChanged || networkChanged || meta.rootsChanged)
@@ -155,7 +170,7 @@ export class OwnerReports {
         (scope, intent) =>
           meta.rootsChanged === true ||
           ownerReportRevokes(after, scope, intent.method, intent.granted_hosts, roots),
-        fullChanged || networkChanged || meta.rootsChanged === true,
+        widened || meta.rootsChanged === true,
       );
     // the op whose change this is: its answer names it, else (the machine's own report of it, a
     // policy frame or a reconnect hello, landing first) a live pending op of the platform's that

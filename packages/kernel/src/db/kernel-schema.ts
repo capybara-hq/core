@@ -1210,11 +1210,11 @@ export interface DevicesTable {
   permission_migration: ColumnType<unknown, string | null | undefined, string | null>;
   /** 0154: the applied limits must be established before any operation is admitted. */
   permission_reconcile_required: ColumnType<boolean, boolean | undefined, boolean>;
-  /** 0163: a cloud device's sandbox network choice; null follows the org. */
+  /** 0163: a cloud device's sandbox network choice; null follows the org, `none` is closed. */
   network_mode: ColumnType<
-    "open" | "allowlist" | null,
-    "open" | "allowlist" | null | undefined,
-    "open" | "allowlist" | null
+    "open" | "allowlist" | "none" | null,
+    "open" | "allowlist" | "none" | null | undefined,
+    "open" | "allowlist" | "none" | null
   >;
   /** 0163: a cloud device's allowlist hosts (a JSON array), used while the mode is `allowlist`. */
   network_hosts: ColumnType<string[], string | undefined, string>;

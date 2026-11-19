@@ -27,10 +27,15 @@ import { ownerFactsOf, ownerModeOf } from "../local-devices/owner-report.js";
 import { deviceFeaturesOf } from "../local-devices/policy-summary.js";
 import { readOrgSettings } from "../orgs/settings.service.js";
 import {
+  type ConsentReach,
+  canonicalHostCeiling,
   type DeviceSandbox,
   type DeviceSandboxDeviceLayer,
   effectiveDeviceSandbox,
+  hostGrantCeiling,
+  hostGrantRefusal,
   providerLayerOf,
+  reachWithin,
 } from "./device-sandbox.js";
 import { readDeviceSandboxSettings } from "./device-sandbox-settings.js";
 import {
@@ -128,12 +133,15 @@ export class PermissionFacts {
             network: facts.network,
             allowedDomains: facts.restrictedAllowedDomains,
           };
+    const sandbox = await this.deviceSandboxFacts(orgId, deviceId, availability);
     return {
       policy,
       // the owner's authenticated facts (B2); null when the machine reported nothing readable
       owner,
-      sandbox: await this.deviceSandbox(orgId, deviceId, availability),
-      limits: this.config.get().sandbox.limits,
+      sandbox: sandbox.box,
+      hostCeiling: sandbox.hostCeiling,
+      hostRefusal: sandbox.refusal,
+      reach: sandbox.reach,
       roots: machine?.roots ?? null,
       home: machine?.home ?? null,
     };
@@ -150,6 +158,15 @@ export class PermissionFacts {
     deviceId: string,
     availability?: PermissionAvailability,
   ): Promise<DeviceSandbox> {
+    return (await this.deviceSandboxFacts(orgId, deviceId, availability)).box;
+  }
+
+  /**
+   * {@link deviceSandbox} with the layers a per-call host grant is checked against: its ceiling
+   * ({@link hostGrantCeiling}), why a host is unavailable ({@link hostGrantRefusal}) and the
+   * crossing ceilings a Full access consent covers ({@link ConsentReach}).
+   */
+  async deviceSandboxFacts(orgId: string, deviceId: string, availability?: PermissionAvailability) {
     const [settings, org, row] = await Promise.all([
       readDeviceSandboxSettings(this.db.db, this.config),
       readOrgSettings(this.db.db, orgId),
@@ -166,37 +183,49 @@ export class PermissionFacts {
     const location = row?.source === "local" ? "local" : "cloud";
     const limits = this.config.get().sandbox.limits;
     let device: DeviceSandboxDeviceLayer;
+    let owner: { network: "open" | "allowlist"; allowedDomains: readonly string[] } | null = null;
     if (location === "local") {
-      const owner = ownerFactsOf(row ?? {});
+      const facts = ownerFactsOf(row ?? {});
+      owner = { network: facts.network, allowedDomains: facts.restrictedAllowedDomains };
       device = {
         location,
-        outsideSandbox: owner.fullAccess,
-        network: owner.network,
-        allowedDomains: owner.restrictedAllowedDomains,
-        restrictedProjectReach: owner.restrictedProjectReach,
+        outsideSandbox: facts.fullAccess,
+        network: facts.network,
+        allowedDomains: facts.restrictedAllowedDomains,
+        restrictedProjectReach: facts.restrictedProjectReach,
       };
-    } else
-      device = {
-        location,
-        networkMode:
-          row?.network_mode === "open" || row?.network_mode === "allowlist"
-            ? row.network_mode
-            : null,
-        networkHosts: Array.isArray(row?.network_hosts)
-          ? (row.network_hosts as unknown[]).filter((h): h is string => typeof h === "string")
-          : [],
-      };
+    } else device = { location, ...cloudOwnNetwork(row) };
     const current = availability ?? (await this.availability(orgId, deviceId));
     const report = current.state === "supported" ? current.report : null;
-    return effectiveDeviceSandbox(
-      { settings, allowHosts: limits.allowHosts, orgHosts: limits.orgHosts, egress: limits.egress },
-      {
-        ...(org.outsideSandbox !== undefined && { outsideSandbox: org.outsideSandbox }),
-        ...(org.deviceNetwork !== undefined && { deviceNetwork: org.deviceNetwork }),
-      },
+    const platform = {
+      settings,
+      allowHosts: limits.allowHosts,
+      orgHosts: limits.orgHosts,
+      egress: limits.egress,
+    };
+    const orgLayer = {
+      ...(org.outsideSandbox !== undefined && { outsideSandbox: org.outsideSandbox }),
+      ...(org.deviceNetwork !== undefined && { deviceNetwork: org.deviceNetwork }),
+    };
+    const box = effectiveDeviceSandbox(
+      platform,
+      orgLayer,
       device,
       providerLayerOf(report, location),
     );
+    const hostCeiling = hostGrantCeiling(box, platform, orgLayer, owner);
+    return {
+      box,
+      hostCeiling,
+      refusal: (host: string) => hostGrantRefusal(host, box, platform, orgLayer, owner),
+      reach: {
+        outsideSandbox: box.outsideSandbox,
+        networkCeiling: box.networkCeiling,
+        networkMode: box.networkMode,
+        restrictedProjectReach: box.restrictedProjectReach,
+        hostCeiling: canonicalHostCeiling(hostCeiling),
+      } satisfies ConsentReach,
+    };
   }
 
   /** Stored binding only; projectScope supplies the live owner and deletion checks. */
@@ -230,7 +259,9 @@ export class PermissionFacts {
     ]);
     const policy = effectiveDevicePolicy(deployment, settings, chosen.mode);
     if (chosen.source !== "cloud" || device.deviceId === undefined) return policy;
-    // a cloud instance's outer network is its sandbox network (its provider enforces it)
+    // a cloud instance's outer network is its sandbox network (its provider enforces it, read
+    // under the provider layer assumed before a report); a local device's commands carry its
+    // sandbox network in their limits (`SandboxService.deviceLimits`)
     const box = await this.deviceSandbox(device.orgId, device.deviceId, {
       state: "unprobed",
       reason: "lifecycle",
@@ -556,11 +587,12 @@ export class PermissionFacts {
     // access auto-approves within (approval-only profiles design, "Consent fingerprint"), from
     // the settings layers under the provider layer assumed before a report: a runtime report
     // arriving or changing only narrows what the consent covers, so it never resets it
-    const ceilings = await this.deviceSandbox(orgId, deviceId, {
-      state: "unprobed",
-      reason: "consent",
-    });
-    const scopeRevision = permissionScopeHash({
+    const consentReach = (
+      await this.deviceSandboxFacts(orgId, deviceId, { state: "unprobed", reason: "consent" })
+    ).reach;
+    // what a consent is bound to besides the reach: the device, the project binding and the
+    // epochs a widening writer bumps (a ceiling restored to the same values still resets)
+    const consentIdentity = permissionScopeHash({
       authority,
       deviceId,
       projectPath,
@@ -568,17 +600,18 @@ export class PermissionFacts {
         projectPath ??
         (ownerRoots as { workspace?: string } | null)?.workspace ??
         rootsOf(instanceRoots?.handle ?? { id: deviceId }).workspace,
-      sandbox: {
-        outsideSandbox: ceilings.outsideSandbox,
-        networkCeiling: ceilings.networkCeiling,
-        networkMode: ceilings.networkMode,
-        restrictedProjectReach: ceilings.restrictedProjectReach,
-      },
+    });
+    const scopeRevision = permissionScopeHash({
+      identity: consentIdentity,
+      orgHosts: this.config.get().sandbox.limits.orgHosts,
+      sandbox: consentReach,
     });
     return {
       deviceId,
       project,
       scopeRevision,
+      consentIdentity,
+      consentReach,
       availability,
       sandbox,
       outsideSandboxCeiling: sandbox.outsideSandbox,
@@ -628,13 +661,12 @@ export class PermissionFacts {
         access = error.code === "device.not_found" ? "actor-device-access" : "provider-unavailable";
       }
     }
-    const consent = row.permission_consent as { deviceId: string; scopeRevision: string } | null;
+    const consent = row.permission_consent as StoredConsent | null;
     const profile: PermissionProfile =
       row.permission_profile === "full-access" &&
       (!preview ||
         preview.availability.state === "unsupported" ||
-        consent?.deviceId !== row.device_id ||
-        consent?.scopeRevision !== preview.scopeRevision)
+        !consentHolds(consent, row.device_id, preview))
         ? "approve-for-me"
         : row.permission_profile;
     return {
@@ -644,7 +676,10 @@ export class PermissionFacts {
         revision: row.permission_revision,
         rootConversationId: row.id,
         deviceId: row.device_id,
-        consentScope: profile === "full-access" ? consent : null,
+        consentScope:
+          profile === "full-access" && consent
+            ? { deviceId: consent.deviceId, scopeRevision: consent.scopeRevision }
+            : null,
         scopeRevision: preview?.scopeRevision ?? null,
         availability: preview?.availability ?? {
           state: "unsupported" as const,
@@ -868,59 +903,52 @@ export function networkOfSandbox(box: DeviceSandbox): DeviceNetwork {
 }
 
 /**
- * The ceiling of a per-call host grant (approval-only profiles design, "Per-call host grant"), as
- * a network: `open-public` when grants are bounded by the kernel only (`orgHosts: extend`), else
- * the hosts a grant may name. Under `within` only hosts the platform list covers; on a local device
- * whose owner network is `allowlist`, only hosts the owner's `allowedDomains` cover; none on an
- * instance-boundary device (its provider's network covers the whole instance) or under the kill
- * switch. Admission, the candidate builder and grant issuance read this one rule.
+ * A cloud device's own sandbox network: its stored choice (`network_mode`, `network_hosts`; null
+ * follows the org). A B1 snapshot is copied into it by migrations 0163 and 0165, the snapshot
+ * writer and every publication (`copyCloudSnapshotNetworks`), never read here.
  */
-export function hostGrantCeiling(
-  box: DeviceSandbox,
-  limits: { egress: string; allowHosts: readonly string[]; orgHosts: "extend" | "within" },
-  owner: { network: "open" | "allowlist"; allowedDomains: readonly string[] } | null,
-): DeviceNetwork {
-  if (box.boundary === "instance" || box.networkMode === "none" || limits.egress === "none")
-    return { kind: "allowlist", hosts: [] };
-  let ceiling: DeviceNetwork =
-    limits.orgHosts === "within"
-      ? { kind: "allowlist", hosts: [...limits.allowHosts] }
-      : { kind: "open-public", hosts: [] };
-  if (owner?.network === "allowlist") {
-    const own = { kind: "allowlist" as const, hosts: [...owner.allowedDomains] };
-    ceiling =
-      ceiling.kind === "open-public"
-        ? own
-        : {
-            kind: "allowlist",
-            hosts: ceiling.hosts.filter((h) => own.hosts.some((p) => coversHost(p, h))),
-          };
-  }
-  return ceiling;
+export function cloudOwnNetwork(
+  row: { network_mode?: unknown; network_hosts?: unknown } | undefined,
+): { networkMode: "open" | "allowlist" | "none" | null; networkHosts: string[] } {
+  const hosts = row?.network_hosts;
+  const mode = row?.network_mode;
+  if (mode === "open" || mode === "allowlist" || mode === "none")
+    return {
+      networkMode: mode,
+      networkHosts: Array.isArray(hosts) && hosts.every((h) => typeof h === "string") ? hosts : [],
+    };
+  return { networkMode: null, networkHosts: [] };
 }
 
 /**
- * Why a per-call grant for `host` is unavailable on this device, naming who can add it, or null
- * when the grant ceiling covers it ({@link hostGrantCeiling}).
+ * A stored Full access consent (`conversations.permission_consent`): the displayed scope revision
+ * the person confirmed, and what it covered, so a narrowing keeps it and only a widening needs a new
+ * one (approval-only profiles design, "Profiles" and "Consent fingerprint").
  */
-export function hostGrantRefusal(
-  host: string,
-  box: DeviceSandbox,
-  limits: { egress: string; allowHosts: readonly string[]; orgHosts: "extend" | "within" },
-  owner: { network: "open" | "allowlist"; allowedDomains: readonly string[] } | null,
-  location: "local" | "cloud",
-): string | null {
-  const ceiling = hostGrantCeiling(box, limits, owner);
-  if (ceiling.kind === "open-public" || ceiling.hosts.some((p) => coversHost(p, host))) return null;
-  if (box.networkMode === "none" || limits.egress === "none")
-    return "network access is turned off for this device's sandbox";
-  if (box.boundary === "instance")
-    return `a host cannot be granted per call on this device; add ${host} to the device's network list`;
-  if (
-    location === "local" &&
-    owner?.network === "allowlist" &&
-    !owner.allowedDomains.some((p) => coversHost(p, host))
-  )
-    return `the device owner adds it on the machine: capybara-device policy add allowedDomains ${host}`;
-  return `${host} is outside the platform's host list; an admin adds the host`;
+export interface StoredConsent {
+  deviceId: string;
+  scopeRevision: string;
+  /** The device, project binding and widening epochs it is bound to. */
+  identity?: string;
+  /** The crossing ceilings it covered. */
+  reach?: ConsentReach;
+}
+
+/**
+ * Whether a stored consent still covers the device's current crossing ceilings: the same device,
+ * and either the exact scope it confirmed or the same identity with every ceiling within what it
+ * covered (a narrowing never drops Full access to Approve for me).
+ */
+export function consentHolds(
+  consent: StoredConsent | null,
+  deviceId: string | null,
+  preview: { scopeRevision: string; consentIdentity: string; consentReach: ConsentReach },
+): boolean {
+  if (consent === null || consent.deviceId !== deviceId) return false;
+  if (consent.scopeRevision === preview.scopeRevision) return true;
+  return (
+    consent.identity === preview.consentIdentity &&
+    consent.reach !== undefined &&
+    reachWithin(preview.consentReach, consent.reach)
+  );
 }

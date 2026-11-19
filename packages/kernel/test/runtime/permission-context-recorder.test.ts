@@ -1280,10 +1280,7 @@ describe("permission context projection", () => {
     const readDevice = facts.readDevice.bind(facts);
     vi.spyOn(facts, "readDevice").mockImplementation(async (orgId, deviceId) => {
       const device = await readDevice(orgId, deviceId);
-      return {
-        ...device,
-        limits: { ...device.limits, orgHosts: "within", allowHosts: ["api.example.com"] },
-      };
+      return { ...device, hostCeiling: { kind: "hosts", hosts: ["api.example.com"] } };
     });
     await recordUnder(k, run.claim, { ...inputOf(f), runId: run.runId });
     const admitted = await k.app.get(SandboxOperationAuthority).resolve(

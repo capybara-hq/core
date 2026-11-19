@@ -24,6 +24,7 @@ import {
 import { LocalDeviceRelay } from "../../src/local-devices/relay.js";
 import type { DeviceTargets } from "../../src/local-devices/targets.js";
 import { createLogger } from "../../src/log.js";
+import { hostGrantCeiling } from "../../src/sandbox/device-sandbox.js";
 import {
   type DeploymentDevicePolicy,
   effectiveDevicePolicy,
@@ -152,6 +153,20 @@ beforeAll(async () => {
     },
     {
       devicePolicy: async () => effectiveDevicePolicy(deployment, orgSettings, null),
+      // the per-call host ceiling of a device whose owner keeps the open network
+      hostGrantCeiling: async () =>
+        hostGrantCeiling(
+          {
+            boundary: "operation",
+            networkMode: "allowlist",
+            networkCeiling: orgSettings.deviceNetwork?.ceiling ?? "open",
+          },
+          deployment.limits,
+          orgSettings.deviceNetwork === undefined
+            ? {}
+            : { deviceNetwork: orgSettings.deviceNetwork },
+          null,
+        ),
       deviceLimits: async (_d, o = {}) => {
         const p = o.policy ?? effectiveDevicePolicy(deployment, orgSettings, null);
         return {
@@ -162,7 +177,7 @@ beforeAll(async () => {
           network: { kind: "allowlist", hosts: [...p.localAllowedDomains] },
         };
       },
-    } as Pick<SandboxService, "devicePolicy" | "deviceLimits">,
+    } as Pick<SandboxService, "devicePolicy" | "deviceLimits" | "hostGrantCeiling">,
     {
       get: () => ({ devices: { local: { maxFrameBytes } } }),
     } as unknown as KernelConfigService,
@@ -496,6 +511,8 @@ it("staged exec re-layers the machine's refused hosts against the limits it carr
     network: { kind: "none" as const },
   };
   admittedGrants = undefined;
+  // the org's allowlist network ceiling is hard: a host beyond its list only an admin can lift
+  orgSettings = { deviceNetwork: { ceiling: "allowlist", extraHosts: [], excludedHosts: [] } };
   const operation = await staged.operation({ id: "device" }, scope, signal);
   const r = await operation.exec({ command: "curl", timeoutMs: 100, maxOutputBytes: 100, signal });
   expect(r.network?.blocked).toEqual([

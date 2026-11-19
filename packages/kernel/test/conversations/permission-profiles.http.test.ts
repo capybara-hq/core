@@ -540,8 +540,9 @@ describe("Conversation permission profiles", () => {
       .set({ owner_report: storedOwnerReport({ outsideSandbox: false, sequence: 1 }) })
       .where("device_id", "=", deviceId)
       .execute();
+    // running outside removed is a narrowing: the consent still covers the device
     expect((await req({ method: "GET", url })).json()).toMatchObject({
-      profile: "approve-for-me",
+      profile: "full-access",
       outsideSandboxCeiling: false,
     });
     expect(

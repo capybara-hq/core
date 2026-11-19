@@ -172,7 +172,8 @@ export function ownerReportRevokes(
   if (!isExecutionMethod(method)) return false;
   // the open public network goes when the owner narrows the sandbox network to the allowlist
   if (scope.network.kind === "open-public") return next.network === "allowlist";
-  if (scope.network.kind !== "allowlist") return false;
+  // the owner's list bounds hosts only while its network is the allowlist
+  if (scope.network.kind !== "allowlist" || next.network !== "allowlist") return false;
   return scope.network.hosts.some(
     (host) =>
       !next.restrictedAllowedDomains.some((pattern) => coversHost(pattern, host)) &&

@@ -134,7 +134,7 @@ async function fixture(clientCap = 69632, serverCap = 100000) {
   const provider = new LocalDeviceProvider(
     relay,
     { orgOf: forbidden, machineRoots: forbidden },
-    { devicePolicy: forbidden, deviceLimits: forbidden },
+    { devicePolicy: forbidden, deviceLimits: forbidden, hostGrantCeiling: forbidden },
     config,
   );
   const staged = provider.stagedOperations({

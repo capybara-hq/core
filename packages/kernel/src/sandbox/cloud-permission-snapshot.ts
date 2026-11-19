@@ -488,13 +488,15 @@ export class CloudPermissionSnapshots {
 }
 
 /**
- * The device's own sandbox network columns for an allowlist snapshot (`network_mode: allowlist`,
- * its hosts as `network_hosts`), as migrations 0163 and 0165 copy them; nothing for an open one,
- * which follows the org.
+ * The device's own sandbox network columns for an allowlist snapshot, as migrations 0163 and 0165
+ * copy them: its hosts as an allowlist, or `none` (closed) for an empty one; nothing for an open
+ * one, which follows the org.
  */
 function ownNetworkOf(
   outer: DeviceNetwork,
-): { network_mode: "allowlist"; network_hosts: string } | Record<string, never> {
+): { network_mode: "allowlist" | "none"; network_hosts: string } | Record<string, never> {
   if (outer.kind !== "allowlist") return {};
-  return { network_mode: "allowlist", network_hosts: JSON.stringify([...outer.hosts]) };
+  return outer.hosts.length === 0
+    ? { network_mode: "none", network_hosts: "[]" }
+    : { network_mode: "allowlist", network_hosts: JSON.stringify([...outer.hosts]) };
 }

@@ -195,16 +195,29 @@ provider)`, in the new `packages/kernel/src/sandbox/device-sandbox.ts`. The devi
   than `open`. It is `allowlist` with an empty list when the kill switch is `none`.
 - **Network mode:** the device's choice, else the org default, else the platform default. It is then
   clamped to the ceiling, and for a cloud device also to the provider's outer network.
-- **Allowlist hosts:** the org's effective hosts (`orgEffectiveHosts`), intersected with the
-  device's own list when it has one: a local owner's `allowedDomains` or a cloud device's
-  `network_hosts`. **A device-level host list only narrows; it never adds a host.** An empty device
-  list adds no narrowing of its own (the device follows its org's hosts). Hosts widen only through
-  the org and platform lists, or through per-call host grants within the ceilings.
-- **Per-call host grant:** possible under `orgHosts: extend`. Under `within`, only for hosts the list
-  covers; otherwise it is unavailable ("an admin adds the host"). On a local device whose owner
-  network is `allowlist`, only for hosts the owner's `allowedDomains` cover; otherwise it is
-  unavailable ("the device owner adds it on the machine: capybara-device policy add allowedDomains
-  <host>").
+- **Allowlist hosts:** the org's effective hosts (`orgEffectiveHosts`: the platform list minus the
+  org's `excludedHosts` plus its `extraHosts`, or the extras alone under `base: none`), intersected
+  with the device's own list: a local owner's `allowedDomains` while its network is `allowlist`, or
+  a cloud device's `network_hosts`. **A device-level host list only narrows; it never adds a
+  host.** A local owner's allowlist is the machine's ceiling, so an empty one allows no host (the
+  device enforces exactly that). A cloud device's `allowlist` with an empty list follows its org's
+  hosts; a closed cloud network is `network_mode: none` (what an empty or unreadable B1 snapshot
+  allowlist becomes). Hosts widen only through the org and platform lists, or through per-call host
+  grants within the ceilings.
+- **Per-call host grant** (`hostGrantCeiling`, `hostGrantRefusal` in `sandbox/device-sandbox.ts`;
+  admission, the candidate builder and grant issuance read this one rule, under every profile:
+  Full access never auto-grants beyond it, and nothing beyond it is proposed):
+  - The org's `excludedHosts` are never grantable.
+  - **An allowlist network ceiling (platform or org) is a hard ceiling:** only the org's effective
+    hosts. Beyond them the crossing is unavailable: "an organization admin adds <host> to the
+    organization's device network list".
+  - Under an open ceiling, `orgHosts: extend` bounds grants by the kernel only; `within` keeps them
+    within the org's effective hosts ("<host> is outside the platform's host list; a super admin
+    adds the host").
+  - On a local device whose owner network is `allowlist`, only hosts the owner's `allowedDomains`
+    cover (a two-sided intersection with the above); otherwise it is unavailable ("the device owner
+    adds it on the machine: capybara-device policy add allowedDomains <host>").
+  - Nothing on an instance-boundary device or on a closed network.
 
 The local device intersects every request with its on-disk ceiling even when the kernel's view is
 stale; that rule is unchanged.
@@ -350,15 +363,23 @@ ceilings:
 `hosts-removed`; the existing Full-ceiling kind becomes `outside-sandbox-off`. Each narrowing bumps
 its epoch and, in the same transaction, revokes the affected admitted or started work:
 
-- open-network work on `network-allowlist`;
+- open-network work on `network-allowlist`, and on a default narrowed to `allowlist` for the cloud
+  devices that follow it;
 - escalated work on `outside-sandbox-off`, as the merged predicate already does.
 
 Widening any of them resets Full consent, because Full access would then auto-approve more. A
 profile change alone still never revokes started work.
 
 **Consent fingerprint.** `scopeRevision` (`permission-facts.ts`) hashes the device identity, the
-project binding and the crossing ceilings: `outsideSandbox`, the network ceiling and mode,
-`restrictedProjectReach`, and the epochs. It no longer hashes `mode` / `allowedMode`.
+project binding, the epochs, `orgHosts` and the crossing ceilings: `outsideSandbox`, the network
+ceiling and mode, `restrictedProjectReach` and a canonical form of the per-call host ceiling. It no
+longer hashes `mode` / `allowedMode`. The ceilings are read under the provider layer assumed before
+a runtime report, so a report arriving only narrows. The stored consent keeps what it covered: a
+later narrowing in any dimension keeps Full access (`reachWithin`), and only a widening needs a new
+consent. The writers reset Full consent with a `permission_profile_changed` event on a widening
+only (running outside allowed again, a network opening, the kill switch lifted, `within` to
+`extend`, the platform or org host list growing, an owner adding `allowedDomains` under its
+allowlist).
 
 ## Replay and permission context
 
@@ -480,9 +501,12 @@ The migration never widens.
   - New installs get the open default.
 - **Cloud devices:** a kernel migration, expand then contract.
   - Add `network_mode` and `network_hosts`.
-  - Copy the snapshot's `outer_network` where it was an allowlist (`network_mode: allowlist`, its
-    hosts as `network_hosts` when they are an array of strings, else `[]`). Since a device list only
-    narrows, this is exact and never widens.
+  - Copy the snapshot's `outer_network` where it was an allowlist (`network_mode: allowlist` with its
+    hosts as `network_hosts` when they are a non-empty array of strings; an empty or unreadable list
+    ran closed and becomes `network_mode: none`). Since a device list only narrows, this is exact and
+    never widens. Migration `0165` repeats the copy, the B1 snapshot writer copies new snapshots, and
+    the device sandbox reads `outer_network` while a device has no `network_mode` (a snapshot an
+    older replica writes later).
   - **`sandbox.limits.orgHosts: within` and other allowlist devices:** at the publication's version
     conversion (it has the config), a cloud device still following its org (`network_mode` NULL)
     whose old effective network was the allowlist (`effectiveDevicePolicy(...).network.kind ===

@@ -33,6 +33,7 @@ import {
 import { Transactional } from "../infra/database/transactional.decorator.js";
 import { NetworkGrants } from "../local-devices/network-grants.js";
 import type { DeviceSandbox } from "./device-sandbox.js";
+import { hostGrantable } from "./device-sandbox.js";
 import {
   type KernelReadInvocation,
   type KernelReadMethod,
@@ -58,12 +59,7 @@ import {
   type PermissionContextSubject,
   PermissionContextSubjectChanged,
 } from "./permission-context-types.js";
-import {
-  hostGrantCeiling,
-  hostsWithinOuter,
-  PermissionFacts,
-  permissionScopeHash,
-} from "./permission-facts.js";
+import { hostsWithinOuter, PermissionFacts, permissionScopeHash } from "./permission-facts.js";
 import {
   ESCALATION_CEILING_WHY,
   ESCALATION_UNATTENDED_WHY,
@@ -447,10 +443,11 @@ export class SandboxOperationAuthority {
       if (
         (!f.broadProjectReach &&
           (grant.expansion.readDirectories.length || grant.expansion.writeDirectories.length)) ||
-        grant.expansion.hosts.some(
-          (host) =>
-            f.policy.network.kind !== "open-public" &&
-            !f.policy.network.hosts.some((pattern) => coversHost(pattern, host)),
+        grant.expansion.hosts.some((host) =>
+          f.hostCeiling
+            ? !hostGrantable(f.hostCeiling, host)
+            : f.policy.network.kind !== "open-public" &&
+              !f.policy.network.hosts.some((pattern) => coversHost(pattern, host)),
         )
       )
         throw new ApiError("forbidden", "Permission expansion exceeds the current ceiling");
@@ -719,10 +716,11 @@ export class SandboxOperationAuthority {
     // admission's hosts, as the recorded context names them: within a cloud instance's applied
     // outer boundary
     const allowedHosts = hostsWithinOuter(base.allowedHosts, applied?.outerNetwork);
+    const grantHosts = hostsWithinOuter(base.grantHosts, applied?.outerNetwork);
     captureGrant?.(
       grant
         ? {
-            hosts: grant.hosts.filter((host) => allowedHosts.includes(host)).sort(),
+            hosts: grant.hosts.filter((host) => grantHosts.includes(host)).sort(),
             source: { ...grant.source },
           }
         : undefined,
@@ -773,17 +771,26 @@ export class SandboxOperationAuthority {
       boundary: sandbox.boundary,
       outsideSandboxCeiling: view.outsideSandboxCeiling,
       broadProjectReach: view.broadProjectReach,
-      fullConsent:
-        view.profile === "full-access" && view.consentScope?.scopeRevision === view.scopeRevision,
+      // the view keeps Full access only while its consent covers the device's ceilings
+      fullConsent: view.profile === "full-access",
       unattended,
       // the review and admission see the recorded context's verdict, never a wider one
       availability: withheld ?? view.availability,
       admissionRefusal: withheld?.reason ?? null,
       outerNetwork: applied?.outerNetwork ?? null,
       escalationRefusal,
-      // the host ceiling a per-call grant is checked against (`open-public`: the kernel's bounds
-      // only), the one rule the candidate builder, grant issuance and admission read
-      policy: { ...policy, network: base.hostCeiling },
+      // the host ceiling a per-call grant is checked against, the one rule the candidate builder,
+      // grant issuance and admission read (`policy.network` is its network form: `open-public`
+      // for the kernel's bounds; `hostCeiling` keeps the org's exclusions, `hostRefusal` the text)
+      policy: {
+        ...policy,
+        network:
+          base.hostCeiling.kind === "any"
+            ? { kind: "open-public", hosts: [] }
+            : { kind: "allowlist", hosts: [...base.hostCeiling.hosts] },
+      },
+      hostCeiling: base.hostCeiling,
+      hostRefusal: base.hostRefusal,
     };
   }
 
@@ -829,7 +836,10 @@ export class SandboxOperationAuthority {
     projectUsable?: true;
   }) {
     const { orgId, deviceId } = input;
-    const { policy, owner, sandbox, limits } = await this.facts.readDevice(orgId, deviceId);
+    const { policy, owner, sandbox, hostCeiling, hostRefusal } = await this.facts.readDevice(
+      orgId,
+      deviceId,
+    );
     const device = await this.db
       .selectFrom("devices")
       .select("source")
@@ -843,23 +853,24 @@ export class SandboxOperationAuthority {
     const grant = input.runId
       ? await this.grants.forExec({ orgId, deviceId, runId: input.runId })
       : undefined;
-    const hostCeiling = hostGrantCeiling(sandbox, limits, device.source === "local" ? owner : null);
-    // the device sandbox's allowlist, plus the run's or task's explicit host grants within the
-    // per-call ceiling; an open or closed network names no hosts
+    // the run's or task's explicit host grants within the per-call ceiling: carried as the exec's
+    // grants under any open network too (redundant there, so a later narrowing keeps them working)
+    const grantHosts = (grant?.hosts ?? []).filter((host) => hostGrantable(hostCeiling, host));
+    // the device sandbox's allowlist plus those grants; an open or closed network names no hosts
     const allowedHosts =
-      sandbox.networkMode !== "allowlist"
-        ? []
-        : [
-            ...new Set([
-              ...sandbox.hosts,
-              ...(grant?.hosts ?? []).filter(
-                (host) =>
-                  hostCeiling.kind === "open-public" ||
-                  hostCeiling.hosts.some((pattern) => coversHost(pattern, host)),
-              ),
-            ]),
-          ];
-    return { policy, device, workingRoot, projectRoot, grant, allowedHosts, sandbox, hostCeiling };
+      sandbox.networkMode !== "allowlist" ? [] : [...new Set([...sandbox.hosts, ...grantHosts])];
+    return {
+      policy,
+      device,
+      workingRoot,
+      projectRoot,
+      grant,
+      grantHosts,
+      allowedHosts,
+      sandbox,
+      hostCeiling,
+      hostRefusal,
+    };
   }
 
   /**
@@ -1142,11 +1153,7 @@ export class SandboxOperationAuthority {
     });
     if (withheld) return without(withheld.state, withheld.reason);
     if (applied === null) throw new Error("A supported context needs its applied environment");
-    if (
-      effectiveProfile === "full-access" &&
-      (view.consentScope?.deviceId !== deviceId ||
-        view.consentScope.scopeRevision !== scopeRevision)
-    )
+    if (effectiveProfile === "full-access" && view.consentScope?.deviceId !== deviceId)
       throw new Error("Full access lost its consent inside one authority read");
     const box = base.sandbox;
     const kind = sandboxNetworkOf(box, applied.outerNetwork);

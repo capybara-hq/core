@@ -1395,15 +1395,9 @@ describe("exact background revocation through the outbox and the worker", () => 
       .get(OrgSettingsService)
       .update(f.orgId, { outsideSandbox: "off" }, ownerAccount().id);
     // Full access never removed the sandbox: running outside it going off takes no sandboxed
-    // work, under any profile (only an escalated call needs it), and the Full consent resets
+    // work, under any profile (only an escalated call needs it)
     expect((await intentOf(fullTask)).state).toBe("background-running");
     expect((await intentOf(restrictedTask)).state).toBe("background-running");
-    const root = await f.db
-      .selectFrom("conversations")
-      .select("permission_profile")
-      .where("id", "=", f.conversationId)
-      .executeTakeFirstOrThrow();
-    expect(root.permission_profile).toBe("approve-for-me");
     expect(f.provider.calls.stop).toEqual([]);
   });
 });

@@ -107,7 +107,13 @@ export class PermissionProfilesService {
         "conflict",
         "Device authority changed; refresh the permission preview and confirm Full access again",
       );
-    return { deviceId, scopeRevision: preview.scopeRevision };
+    // what the consent covers: a later narrowing keeps it, a widening needs a new one
+    return {
+      deviceId,
+      scopeRevision: preview.scopeRevision,
+      identity: preview.consentIdentity,
+      reach: preview.consentReach,
+    };
   }
   async set(
     orgId: string,

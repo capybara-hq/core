@@ -69,8 +69,11 @@ export type DeviceSandboxDeviceLayer =
     }
   | {
       location: "cloud";
-      /** Null follows the org. */
-      networkMode: DeviceNetworkMode | null;
+      /**
+       * Null follows the org; `none` is a closed network (a snapshot that ran on an empty or
+       * unreadable allowlist). An `allowlist` with no hosts of its own follows its org's hosts.
+       */
+      networkMode: DeviceNetworkMode | "none" | null;
       networkHosts: readonly string[];
     };
 
@@ -110,6 +113,23 @@ export function intersectHosts(a: readonly string[], b: readonly string[]): stri
       ...y.filter((h) => x.some((p) => coversHost(p, h))),
     ]),
   ].sort();
+}
+
+/** The org's effective allowlist: the platform's list minus its exclusions, plus its extras. */
+export function orgHostsOf(
+  platform: Pick<DeviceSandboxPlatformLayer, "egress" | "allowHosts" | "orgHosts">,
+  org: DeviceSandboxOrgLayer,
+): string[] {
+  return orgEffectiveHosts(
+    { egress: platform.egress, allowHosts: [...platform.allowHosts], orgHosts: platform.orgHosts },
+    org.deviceNetwork === undefined
+      ? undefined
+      : {
+          ...(org.deviceNetwork.base !== undefined && { base: org.deviceNetwork.base }),
+          extraHosts: [...(org.deviceNetwork.extraHosts ?? [])],
+          excludedHosts: [...(org.deviceNetwork.excludedHosts ?? [])],
+        },
+  );
 }
 
 /**
@@ -164,32 +184,23 @@ export function effectiveDeviceSandbox(
     networkLayer = "provider";
   }
   // the device's choice, else the org default, else the platform default; then the ceiling
-  const chosen: DeviceNetworkMode =
+  const chosen: DeviceNetworkMode | "none" =
     device.location === "local"
       ? device.network
       : (device.networkMode ?? org.deviceNetwork?.default ?? platform.settings.network.default);
   let networkMode: DeviceNetworkMode | "none" =
-    ceiling === "none" ? "none" : ceiling === "allowlist" ? "allowlist" : chosen;
+    ceiling === "none" || chosen === "none"
+      ? "none"
+      : ceiling === "allowlist"
+        ? "allowlist"
+        : chosen;
   if (networkMode === "allowlist" && !provider.network.allowlist) networkMode = "none";
   // a local owner's allowlist is a ceiling only the machine widens
   if (networkLayer === null && device.location === "local" && device.network === "allowlist")
     networkLayer = "device";
   let hosts: string[] = [];
   if (networkMode === "allowlist") {
-    const orgHosts = orgEffectiveHosts(
-      {
-        egress: platform.egress,
-        allowHosts: [...platform.allowHosts],
-        orgHosts: platform.orgHosts,
-      },
-      org.deviceNetwork === undefined
-        ? undefined
-        : {
-            ...(org.deviceNetwork.base !== undefined && { base: org.deviceNetwork.base }),
-            extraHosts: [...(org.deviceNetwork.extraHosts ?? [])],
-            excludedHosts: [...(org.deviceNetwork.excludedHosts ?? [])],
-          },
-    );
+    const orgHosts = orgHostsOf(platform, org);
     // a local owner's allowlist is the machine's own ceiling, which the device enforces on every
     // request (an empty one allows nothing); a cloud device's empty list follows its org's hosts
     // (an owner whose network is open narrows nothing: the device takes the kernel's hosts)
@@ -250,4 +261,135 @@ export function providerLayerOf(
         network: { openPublic: true, allowlist: true, perOperationHosts: false },
         outsideSandbox: false,
       };
+}
+
+/**
+ * The ceiling of a per-call host grant (approval-only profiles design, "Per-call host grant"):
+ * `any` (bounded by the kernel only, minus the org's exclusions) or exactly the `hosts` a grant may
+ * name.
+ * - Nothing on an instance-boundary device (its provider's network covers the whole instance) or
+ *   on a closed network.
+ * - An allowlist network ceiling (platform or org) is a hard ceiling: only the org's effective
+ *   hosts.
+ * - Under an open ceiling, `orgHosts: within` keeps grants within the org's effective hosts (the
+ *   platform list minus exclusions, or only the extras the platform list covers under `base:
+ *   none`); `extend` allows any host the org does not exclude.
+ * - A local owner's allowlist is the machine's ceiling: intersected with the owner's list.
+ */
+export type HostGrantCeiling =
+  | { kind: "any"; excluded: readonly string[] }
+  | { kind: "hosts"; hosts: readonly string[] };
+
+export function hostGrantCeiling(
+  box: Pick<DeviceSandbox, "boundary" | "networkMode" | "networkCeiling"> & {
+    layer?: Pick<DeviceSandbox["layer"], "network">;
+  },
+  platform: Pick<DeviceSandboxPlatformLayer, "egress" | "allowHosts" | "orgHosts">,
+  org: DeviceSandboxOrgLayer,
+  owner: { network: DeviceNetworkMode; allowedDomains: readonly string[] } | null,
+): HostGrantCeiling {
+  if (box.boundary === "instance" || box.networkMode === "none" || platform.egress === "none")
+    return { kind: "hosts", hosts: [] };
+  // the platform's or org's allowlist ceiling is hard; a provider that cannot enforce the open
+  // network clamps the sandbox network, not what an org allows per call
+  const hard = box.networkCeiling === "allowlist" && box.layer?.network !== "provider";
+  let ceiling: HostGrantCeiling =
+    hard || platform.orgHosts === "within"
+      ? { kind: "hosts", hosts: orgHostsOf(platform, org) }
+      : {
+          kind: "any",
+          excluded: [...(org.deviceNetwork?.excludedHosts ?? [])].map((h) => h.toLowerCase()),
+        };
+  if (owner?.network === "allowlist") {
+    const own = owner.allowedDomains;
+    ceiling =
+      ceiling.kind === "any"
+        ? {
+            kind: "hosts",
+            hosts: own
+              .map((h) => h.toLowerCase())
+              .filter((h) => !(ceiling as { excluded: readonly string[] }).excluded.includes(h)),
+          }
+        : { kind: "hosts", hosts: intersectHosts(ceiling.hosts, own) };
+  }
+  return ceiling;
+}
+
+/** Whether a per-call grant may name `host` under `ceiling`. */
+export function hostGrantable(ceiling: HostGrantCeiling, host: string): boolean {
+  const h = host.toLowerCase();
+  if (ceiling.kind === "any") return !ceiling.excluded.includes(h);
+  return ceiling.hosts.some((p) => coversHost(p.toLowerCase(), h));
+}
+
+/** A canonical form of a ceiling (sorted, deduplicated, lowercased) for the consent fingerprint. */
+export function canonicalHostCeiling(ceiling: HostGrantCeiling): HostGrantCeiling {
+  const norm = (l: readonly string[]) => [...new Set(l.map((h) => h.toLowerCase()))].sort();
+  return ceiling.kind === "any"
+    ? { kind: "any", excluded: norm(ceiling.excluded) }
+    : { kind: "hosts", hosts: norm(ceiling.hosts) };
+}
+
+/**
+ * Why a per-call grant for `host` is unavailable on this device, naming who can add it, or null
+ * when the grant ceiling covers it ({@link hostGrantCeiling}). The org's and platform's layers are
+ * named first: the machine's owner can widen only within them.
+ */
+export function hostGrantRefusal(
+  host: string,
+  box: Pick<DeviceSandbox, "boundary" | "networkMode" | "networkCeiling"> & {
+    layer?: Pick<DeviceSandbox["layer"], "network">;
+  },
+  platform: Pick<DeviceSandboxPlatformLayer, "egress" | "allowHosts" | "orgHosts">,
+  org: DeviceSandboxOrgLayer,
+  owner: { network: DeviceNetworkMode; allowedDomains: readonly string[] } | null,
+): string | null {
+  if (hostGrantable(hostGrantCeiling(box, platform, org, owner), host)) return null;
+  if (box.networkMode === "none" || platform.egress === "none")
+    return "network access is turned off for this device's sandbox";
+  if (box.boundary === "instance")
+    return `a host cannot be granted per call on this device; add ${host} to the device's network list`;
+  const orgLevel = hostGrantCeiling(box, platform, org, null);
+  if (!hostGrantable(orgLevel, host))
+    return (box.networkCeiling === "allowlist" && box.layer?.network !== "provider") ||
+      orgLevel.kind === "any"
+      ? `an organization admin adds ${host} to the organization's device network list`
+      : `${host} is outside the platform's host list; a super admin adds the host`;
+  return `the device owner adds it on the machine: capybara-device policy add allowedDomains ${host}`;
+}
+
+const MODE_RANK = { none: 0, allowlist: 1, open: 2 } as const;
+
+/**
+ * The crossing ceilings a Full access consent covers (approval-only profiles design, "Consent
+ * fingerprint"): running outside, the network ceiling and mode, the project reach and the per-call
+ * host ceiling.
+ */
+export interface ConsentReach {
+  outsideSandbox: boolean;
+  networkCeiling: DeviceNetworkMode | "none";
+  networkMode: DeviceNetworkMode | "none";
+  restrictedProjectReach: "workspace" | "os-user";
+  hostCeiling: HostGrantCeiling;
+}
+
+/**
+ * Whether `now` is within `consented` in every dimension: a narrowing keeps the consent, a widening
+ * of any dimension needs a new one (Full access would otherwise auto-approve more).
+ */
+export function reachWithin(now: ConsentReach, consented: ConsentReach): boolean {
+  if (now.outsideSandbox && !consented.outsideSandbox) return false;
+  if (MODE_RANK[now.networkCeiling] > MODE_RANK[consented.networkCeiling]) return false;
+  if (MODE_RANK[now.networkMode] > MODE_RANK[consented.networkMode]) return false;
+  if (now.restrictedProjectReach === "os-user" && consented.restrictedProjectReach !== "os-user")
+    return false;
+  const a = now.hostCeiling,
+    b = consented.hostCeiling;
+  if (b.kind === "any")
+    return a.kind === "any"
+      ? b.excluded.every((h) => a.excluded.includes(h))
+      : a.hosts.every(
+          (h) => hostGrantable(b, h) && !b.excluded.some((x) => coversHost(h.toLowerCase(), x)),
+        );
+  return a.kind === "hosts" && a.hosts.every((h) => hostGrantable(b, h));
 }

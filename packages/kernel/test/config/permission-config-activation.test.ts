@@ -350,7 +350,7 @@ it("unrelated-config-preserves-full-consent", async () => {
 
 it("restricted-network-activation-preserves-full-consent", async () => {
   const f = await consentFixture();
-  const b = readers(config("allowed", ["b.example"]));
+  const b = readers(config("allowed", []));
   const before = await f.row();
   const fullScope = await f.a.facts.scope(f.orgId, f.deviceId, null, null);
   expect((await f.a.facts.readDevice(f.orgId, f.deviceId)).policy.network).toEqual({
@@ -544,7 +544,7 @@ it.each(["exec", "backgroundStart"] as const)(
       .selectAll()
       .where("kind", "=", "platform")
       .executeTakeFirstOrThrow();
-    await publisher(config("allowed", ["b.example"])).initialize({
+    await publisher(config("allowed", [])).initialize({
       activation: { expectedActiveHash: permissionConfigFingerprint(config()) },
     });
     const after = await db
@@ -728,3 +728,23 @@ it.each(["exec", "backgroundStart"] as const)(
     expect(rows.find((r) => r.operation_id === revokedId)?.state).toBe("revoked");
   },
 );
+
+it("a platform host list that grows resets Full consent; one that only shrinks keeps it", async () => {
+  const f = await consentFixture();
+  await publisher(config("allowed", [])).initialize({
+    activation: { expectedActiveHash: permissionConfigFingerprint(config()) },
+  });
+  expect((await f.row()).permission_profile).toBe("full-access");
+  expect((await f.view()).profile).toBe("full-access");
+  await publisher(config("allowed", ["b.example"])).initialize({
+    activation: { expectedActiveHash: permissionConfigFingerprint(config("allowed", [])) },
+  });
+  expect((await f.row()).permission_profile).toBe("approve-for-me");
+  const changed = await db
+    .selectFrom("conversation_events")
+    .select("payload")
+    .where("conversation_id", "=", f.conversationId)
+    .where("type", "=", "permission_profile_changed")
+    .execute();
+  expect(changed.at(-1)?.payload).toMatchObject({ newProfile: "approve-for-me" });
+});

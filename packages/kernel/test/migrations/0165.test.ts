@@ -78,7 +78,7 @@ describe("0165 device network backfill", () => {
       network_mode: "allowlist",
       network_hosts: ["github.com"],
     });
-    expect(await rowOf("d_bad")).toEqual({ network_mode: "allowlist", network_hosts: [] });
+    expect(await rowOf("d_bad")).toEqual({ network_mode: "none", network_hosts: [] });
   });
 
   it("an open snapshot, a later choice and a local device are left alone", async () => {

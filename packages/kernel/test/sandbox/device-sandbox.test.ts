@@ -1,18 +1,24 @@
 import type { PermissionProfile } from "@capybara-hq/plugin-sdk";
 import { describe, expect, it } from "vitest";
 import {
+  type ConsentReach,
   type DeviceSandboxDeviceLayer,
   type DeviceSandboxOrgLayer,
   type DeviceSandboxPlatformLayer,
   type DeviceSandboxProviderLayer,
   effectiveDeviceSandbox,
+  hostGrantable,
+  hostGrantCeiling,
+  hostGrantRefusal,
   providerLayerOf,
+  reachWithin,
 } from "../../src/sandbox/device-sandbox.js";
 import {
   intersectPermissionScope,
   type PermissionScopeFacts,
   sandboxNetworkOf,
 } from "../../src/sandbox/operation-authority.js";
+import { cloudOwnNetwork } from "../../src/sandbox/permission-facts.js";
 
 const HOSTS = ["example.com", "registry.npmjs.org"];
 
@@ -318,5 +324,142 @@ describe("a local owner's allowlist", () => {
       operation,
     );
     expect([box.networkMode, box.hosts]).toEqual(["allowlist", []]);
+  });
+});
+
+describe("the per-call host grant ceiling", () => {
+  const box = (networkCeiling: "open" | "allowlist" = "open") => ({
+    boundary: "operation" as const,
+    networkMode: "allowlist" as const,
+    networkCeiling,
+  });
+  const lim = (orgHosts: "extend" | "within" = "extend") => ({
+    egress: "allowlist" as const,
+    allowHosts: HOSTS,
+    orgHosts,
+  });
+
+  it("an allowlist network ceiling is hard: only the org's effective hosts, under every profile", () => {
+    const org = {
+      deviceNetwork: { ceiling: "allowlist" as const, excludedHosts: ["example.com"] },
+    };
+    const ceiling = hostGrantCeiling(box("allowlist"), lim(), org, null);
+    expect(ceiling).toEqual({ kind: "hosts", hosts: ["registry.npmjs.org"] });
+    expect(hostGrantRefusal("api.test", box("allowlist"), lim(), org, null)).toBe(
+      "an organization admin adds api.test to the organization's device network list",
+    );
+    expect(hostGrantRefusal("registry.npmjs.org", box("allowlist"), lim(), org, null)).toBeNull();
+  });
+
+  it("an open ceiling bounds grants by the kernel only, minus the org's exclusions", () => {
+    const org = { deviceNetwork: { excludedHosts: ["example.com"] } };
+    expect(hostGrantable(hostGrantCeiling(box(), lim(), org, null), "api.test")).toBe(true);
+    expect(hostGrantable(hostGrantCeiling(box(), lim(), org, null), "example.com")).toBe(false);
+    expect(hostGrantRefusal("example.com", box(), lim(), org, null)).toMatch(
+      /organization admin adds example.com/,
+    );
+  });
+
+  it("within keeps grants inside the org's effective hosts; base none removes the platform list", () => {
+    expect(hostGrantRefusal("api.test", box(), lim("within"), {}, null)).toBe(
+      "api.test is outside the platform's host list; a super admin adds the host",
+    );
+    const none = { deviceNetwork: { base: "none" as const, extraHosts: ["example.com"] } };
+    expect(hostGrantCeiling(box(), lim("within"), none, null)).toEqual({
+      kind: "hosts",
+      hosts: ["example.com"],
+    });
+  });
+
+  it("a local owner's allowlist intersects both ways and names the machine", () => {
+    const owner = { network: "allowlist" as const, allowedDomains: ["*.npmjs.org"] };
+    // the two-sided intersection keeps the narrower entry of each pair
+    expect(hostGrantCeiling(box(), lim("within"), {}, owner)).toEqual({
+      kind: "hosts",
+      hosts: ["registry.npmjs.org"],
+    });
+    expect(hostGrantRefusal("api.test", box(), lim(), {}, owner)).toBe(
+      "the device owner adds it on the machine: capybara-device policy add allowedDomains api.test",
+    );
+  });
+
+  it("an instance boundary or a closed network grants nothing", () => {
+    expect(hostGrantCeiling({ ...box(), boundary: "instance" }, lim(), {}, null)).toEqual({
+      kind: "hosts",
+      hosts: [],
+    });
+    expect(hostGrantCeiling({ ...box(), networkMode: "none" }, lim(), {}, null)).toEqual({
+      kind: "hosts",
+      hosts: [],
+    });
+  });
+});
+
+describe("a closed cloud network", () => {
+  it("network_mode none is no network; a device without a choice follows its org", () => {
+    expect(
+      effectiveDeviceSandbox(platform(), NO_ORG, cloud({ networkMode: "none" }), instance)
+        .networkMode,
+    ).toBe("none");
+    expect(cloudOwnNetwork({ network_mode: "none", network_hosts: [] })).toEqual({
+      networkMode: "none",
+      networkHosts: [],
+    });
+    expect(cloudOwnNetwork({ network_mode: null, network_hosts: [] })).toEqual({
+      networkMode: null,
+      networkHosts: [],
+    });
+  });
+});
+
+describe("the Full access consent reach", () => {
+  const reach = (over: Partial<ConsentReach> = {}): ConsentReach => ({
+    outsideSandbox: true,
+    networkCeiling: "open",
+    networkMode: "open",
+    restrictedProjectReach: "os-user",
+    hostCeiling: { kind: "any", excluded: [] },
+    ...over,
+  });
+  it("a narrowing stays within the consent; a widening of any dimension does not", () => {
+    const wide = reach();
+    for (const narrow of [
+      reach({ outsideSandbox: false }),
+      reach({ networkMode: "allowlist" }),
+      reach({ networkCeiling: "allowlist", networkMode: "allowlist" }),
+      reach({ restrictedProjectReach: "workspace" }),
+      reach({ hostCeiling: { kind: "any", excluded: ["a.test"] } }),
+      reach({ hostCeiling: { kind: "hosts", hosts: ["a.test"] } }),
+    ])
+      expect(reachWithin(narrow, wide)).toBe(true);
+    const narrowest = reach({
+      outsideSandbox: false,
+      networkMode: "allowlist",
+      hostCeiling: { kind: "hosts", hosts: ["a.test"] },
+    });
+    for (const widened of [
+      reach({ networkMode: "allowlist", hostCeiling: { kind: "hosts", hosts: ["a.test"] } }),
+      reach({ outsideSandbox: false, hostCeiling: { kind: "hosts", hosts: ["a.test"] } }),
+      reach({
+        outsideSandbox: false,
+        networkMode: "allowlist",
+        hostCeiling: { kind: "hosts", hosts: ["a.test", "b.test"] },
+      }),
+      reach({ outsideSandbox: false, networkMode: "allowlist" }),
+    ])
+      expect(reachWithin(widened, narrowest)).toBe(false);
+    // an exclusion removed widens; a wildcard covering an excluded host is wider
+    expect(
+      reachWithin(
+        reach({ hostCeiling: { kind: "any", excluded: [] } }),
+        reach({ hostCeiling: { kind: "any", excluded: ["a.test"] } }),
+      ),
+    ).toBe(false);
+    expect(
+      reachWithin(
+        reach({ hostCeiling: { kind: "hosts", hosts: ["*.test"] } }),
+        reach({ hostCeiling: { kind: "any", excluded: ["a.test"] } }),
+      ),
+    ).toBe(false);
   });
 });

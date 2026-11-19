@@ -335,10 +335,11 @@ it("a semantic difference stays a mismatch until activated against the exact old
   );
   expect((await row()).fingerprint).toBe(candidateHash);
   expect(await setting("devicesOutsideSandbox")).toEqual({ permission: "allowed" });
-  // outside turned off: the semantic change goes through the ceiling writer (epoch + Full revision)
+  // outside turned off: the semantic change goes through the ceiling writer (its epoch); a
+  // narrowing keeps Full consent (only a widening bumps the Full revision)
   const after = await platform();
   expect(after?.revision).toBe((epoch?.revision ?? 0) + 1);
-  expect(after?.full_revision).toBe((epoch?.full_revision ?? 0) + 1);
+  expect(after?.full_revision).toBe(epoch?.full_revision ?? 0);
   expect((await b.initialize({ activation: { expectedActiveHash: sha(old) } })).outcome).toBe(
     "already-active",
   );

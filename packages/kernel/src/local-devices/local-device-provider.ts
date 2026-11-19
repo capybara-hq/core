@@ -23,10 +23,11 @@ import {
 } from "@capybara-hq/plugin-sdk";
 import { Inject, Injectable, Optional } from "@nestjs/common";
 import { KernelConfigService } from "../infra/config/kernel-config.service.js";
+import { hostGrantable } from "../sandbox/device-sandbox.js";
 import { providerLimits } from "../sandbox/modes.js";
 import { PermissionCallGrants } from "../sandbox/permission-call-grants.js";
 import { deviceNotFound, SandboxService } from "../sandbox/sandbox.service.js";
-import { grantsWithin, relayer } from "./network-grants.js";
+import { relayer } from "./network-grants.js";
 import { deviceOffline, LocalDeviceRelay } from "./relay.js";
 import { DeviceTargets, sameRoots } from "./targets.js";
 
@@ -119,7 +120,10 @@ export class LocalDeviceProvider implements SandboxProvider {
     @Inject(DeviceTargets)
     private readonly targets: Pick<DeviceTargets, "orgOf" | "machineRoots">,
     @Inject(SandboxService)
-    private readonly sandbox: Pick<SandboxService, "devicePolicy" | "deviceLimits">,
+    private readonly sandbox: Pick<
+      SandboxService,
+      "devicePolicy" | "deviceLimits" | "hostGrantCeiling"
+    >,
     @Inject(KernelConfigService) private readonly config: Pick<KernelConfigService, "get">,
     @Optional() @Inject(PermissionCallGrants) private readonly callGrants?: PermissionCallGrants,
   ) {}
@@ -253,13 +257,25 @@ export class LocalDeviceProvider implements SandboxProvider {
         scope,
         input,
       );
-      const grants = grantsWithin(original, limits);
+      // explicit hosts are checked against the per-call host ceiling (the org's hard allowlist
+      // ceiling and exclusions, the owner's list), never against the sandbox's own allowlist
+      const ceiling = await this.sandbox.hostGrantCeiling({ orgId, deviceId });
+      const ceilingNetwork: SandboxLimits["network"] =
+        ceiling.kind === "any"
+          ? { kind: "open-public", hosts: [] }
+          : { kind: "allowlist", hosts: [...ceiling.hosts] };
+      const kept = original?.hosts.filter((host) => hostGrantable(ceiling, host)) ?? [];
+      const grants = original && kept.length ? { ...original, hosts: kept } : undefined;
       if (original?.hosts.some((host) => !grants?.hosts.includes(host)))
         throw new Error(
           "Current organization limits refuse the admitted explicit hosts; review the operation again",
         );
-      // the wire carries resources and the outer network only: the mode tier is kernel-internal
-      return { limits: providerLimits(limits), ...(grants === undefined ? {} : { grants }) };
+      // the wire carries resources and the device sandbox network only: the mode tier is
+      // kernel-internal
+      return {
+        wire: { limits: providerLimits(limits), ...(grants === undefined ? {} : { grants }) },
+        ceiling: { network: ceilingNetwork },
+      };
     };
     const background: SandboxBackground = {
       start: async (h, input, args) => {
@@ -273,7 +289,7 @@ export class LocalDeviceProvider implements SandboxProvider {
           await transport.call(
             h.id,
             "backgroundStart",
-            { scope, ...rest, ...authority },
+            { scope, ...rest, ...authority.wire },
             { deadlineMs: args.timeoutMs + EXEC_DEADLINE_MARGIN_MS, signal },
           ),
         ) as Awaited<ReturnType<SandboxBackground["start"]>>;
@@ -366,7 +382,7 @@ export class LocalDeviceProvider implements SandboxProvider {
               await transport.call(
                 h.id,
                 "exec",
-                { scope, ...rest, ...authority },
+                { scope, ...rest, ...authority.wire },
                 { deadlineMs: args.timeoutMs + EXEC_DEADLINE_MARGIN_MS, signal: combined },
               ),
             ) as ExecResult;
@@ -375,7 +391,7 @@ export class LocalDeviceProvider implements SandboxProvider {
             if (result.network?.blocked === undefined) return result;
             return {
               ...result,
-              network: { blocked: relayer(result.network.blocked, authority.limits) },
+              network: { blocked: relayer(result.network.blocked, authority.ceiling) },
             };
           },
         };

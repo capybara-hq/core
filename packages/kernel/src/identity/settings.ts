@@ -39,11 +39,13 @@ import {
   legacyPermissionFor,
   legacyPlatformKeysStored,
   legacyPlatformValue,
+  orgDeviceSandboxOf,
   readDeviceSandboxSettingsView,
   readStoredDeviceSandbox,
   resolveDeviceSandboxSettings,
 } from "../sandbox/device-sandbox-settings.js";
 import {
+  cloudDevicesFollowingDefault,
   localMachineRoots,
   needsOpenNetwork,
   needsWiderDeviceCeiling,
@@ -696,6 +698,18 @@ export class SettingsService {
     return { ...resolvePlatformAttribution(config, stored), sources };
   }
 
+  /** The cloud devices following the platform's network default (their org sets none). */
+  private async devicesFollowingPlatformDefault(): Promise<Set<string>> {
+    const devices = await cloudDevicesFollowingDefault(this.db.db);
+    const orgs = await this.db.selectFrom("orgs").select(["id", "settings"]).execute();
+    const ownDefault = new Set(
+      orgs
+        .filter((o) => orgDeviceSandboxOf(o.settings).deviceNetwork?.default !== undefined)
+        .map((o) => o.id),
+    );
+    return new Set([...devices].filter(([, org]) => !ownDefault.has(org)).map(([id]) => id));
+  }
+
   /**
    * The refusals of a `devicesOutsideSandbox` / `devicesNetwork` change against the stored choice
    * and the startup config: a field set in the startup config (`deployment.setting_readonly`); a
@@ -1060,16 +1074,29 @@ export class SettingsService {
         // a network ceiling narrowed to the allowlist takes running open-network work
         const networkNarrowed =
           r.before.network.ceiling === "open" && r.after.network.ceiling === "allowlist";
+        // a default narrowed to the allowlist takes it from the cloud devices that follow it
+        // (their org sets no default of its own)
+        const following =
+          !networkNarrowed &&
+          r.before.network.default === "open" &&
+          r.after.network.default === "allowlist"
+            ? await this.devicesFollowingPlatformDefault()
+            : null;
+        const narrows = machineRoots !== null || networkNarrowed || following !== null;
         await this.ceilings.publishLocked(
           {},
           "platform",
-          machineRoots === null && !networkNarrowed
+          !narrows
             ? false
             : (scope, row) =>
-                (networkNarrowed && needsOpenNetwork(scope)) ||
+                (needsOpenNetwork(scope) &&
+                  (networkNarrowed || following?.has(row.device_id) === true)) ||
                 (machineRoots !== null &&
                   needsWiderDeviceCeiling(scope, machineRoots.get(row.device_id))),
-          outsideChanged || widened(r.before.network, r.after.network),
+          // only a widening resets Full consent: a narrowing keeps what it covered
+          (r.before.outsideSandbox.permission === "off" &&
+            r.after.outsideSandbox.permission === "allowed") ||
+            widened(r.before.network, r.after.network),
         );
       }
     }

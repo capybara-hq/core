@@ -8,7 +8,16 @@ import type {
 import { startTestPostgres, startTestRedis, type TestContainer } from "@capybara-hq/testing";
 import { Redis } from "ioredis";
 import { sql } from "kysely";
-import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from "vitest";
+import {
+  afterAll,
+  afterEach,
+  beforeAll,
+  beforeEach,
+  describe,
+  expect,
+  it,
+  onTestFinished,
+} from "vitest";
 import type { AgentDefinition } from "../../src/agents/definition.js";
 import { EventLog } from "../../src/conversations/event-log.js";
 import type { ConversationEvent } from "../../src/conversations/events.js";
@@ -466,6 +475,14 @@ describe("the ask and its outcomes", () => {
 describe("not asked", () => {
   it("org and address layers: immediate notes and network_blocked, no ask (the org layer is the kernel's)", async () => {
     s = await setup();
+    // the org's allowlist network ceiling is hard: a host beyond its list is the org's layer
+    // (under an open ceiling the kernel's bounds alone would let the person grant it)
+    await sql`UPDATE capybara.orgs SET settings = ${JSON.stringify({
+      deviceNetwork: { ceiling: "allowlist" },
+    })}::jsonb WHERE id = ${orgId}`.execute(raw);
+    onTestFinished(async () => {
+      await sql`UPDATE capybara.orgs SET settings = '{}'::jsonb WHERE id = ${orgId}`.execute(raw);
+    });
     // the device calls api.foo.com `device`: the org does not allow it, so it is `org`
     s.dev.blocking.set("api.foo.com", "device");
     s.dev.blocking.set("10.0.0.5", "address");
@@ -569,6 +586,14 @@ describe("sub-agents and unattended runs", () => {
 
   it("unattended, fail: no ask, the §8.3 note, missing_grants recorded (device and org layers)", async () => {
     s = await setup();
+    // the org's allowlist network ceiling is hard: a host beyond its list is the org's layer
+    // (under an open ceiling the kernel's bounds alone would let the person grant it)
+    await sql`UPDATE capybara.orgs SET settings = ${JSON.stringify({
+      deviceNetwork: { ceiling: "allowlist" },
+    })}::jsonb WHERE id = ${orgId}`.execute(raw);
+    onTestFinished(async () => {
+      await sql`UPDATE capybara.orgs SET settings = '{}'::jsonb WHERE id = ${orgId}`.execute(raw);
+    });
     s.dev.blocking.set("files.example.com", "device");
     s.dev.blocking.set("api.foo.com", "device");
     const store = new ScheduledTaskStore();
