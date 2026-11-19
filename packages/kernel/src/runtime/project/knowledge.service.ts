@@ -1,4 +1,4 @@
-import { DeviceProtocolError } from "@capybara-hq/plugin-sdk";
+import { DeviceProtocolError, isSandboxPermissionUnsupportedError } from "@capybara-hq/plugin-sdk";
 import { Inject, Injectable, Optional } from "@nestjs/common";
 import { EventLog } from "../../conversations/event-log.js";
 import { ConversationDevices } from "../../devices/conversation-devices.js";
@@ -268,9 +268,26 @@ export class ProjectKnowledgeService {
           try {
             return await readProjectKnowledge(files, target, {
               log: (msg, detail) => this.log.info(msg, { ...where, ...detail }),
-              isDeviceFailure: (e) => sig.aborted || isDeviceFailure(e),
+              // a runtime refusing the read's scope refuses every read of it: thrown, so no
+              // half-read snapshot is recorded
+              isDeviceFailure: (e) =>
+                sig.aborted || isDeviceFailure(e) || isSandboxPermissionUnsupportedError(e),
             });
           } catch (e) {
+            // the device's runtime refused the kernel read's scope: the project is recorded
+            // unreadable (the provider's text is logged, never recorded) and the run goes on
+            if (isSandboxPermissionUnsupportedError(e) && !sig.aborted) {
+              this.log.warn("project knowledge not read: the device refused the read's scope", {
+                ...where,
+                deviceId,
+                reason: e.message,
+              });
+              return unavailableProject(
+                bound.project,
+                bound.root,
+                projectUnavailable.refused(bound.root),
+              );
+            }
             // gate on: a host runtime without restricted enforcement gets no kernel read; the
             // project is recorded unreadable with the reason and the run goes on
             if (!(e instanceof KernelReadUnsupported)) throw e;

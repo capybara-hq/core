@@ -44,6 +44,7 @@ import {
   type SandboxOperation,
   SandboxOperationOutcomeUnknownError,
   type SandboxPermissionSupport,
+  SandboxPermissionUnsupportedError,
   type SandboxProvider,
   SandboxScopeDeniedError,
   type SandboxStopResult,
@@ -113,6 +114,9 @@ import { z } from "zod";
  *   `list`, `revokeOperation`, `background`; see {@link managedSurface}): restricted and Full
  *   access with background ownership by default ({@link FAKE_PERMISSION_SUPPORT};
  *   `root/permission-support.json` overrides it, {@link setFakeSandboxPermissionSupport}).
+ *   While it reports `boundary: "instance"`, `operation` runs only the instance scope, as
+ *   sandbox-docker and sandbox-e2b do: a scoped filesystem must name `/` in both its read and
+ *   write roots, else `SandboxPermissionUnsupportedError`.
  *   Operation records live in `root/operation-records`, revocation tombstones in
  *   `root/operation-revoked`, background executions in `root/instances/<id>/executions/<hash>`
  *   (`ref.json`, `pgid`, `exit`, `claim`, `lost`); `ops.log` adds `bg-start <id> <operationId>
@@ -1465,20 +1469,29 @@ function managedSurface(
     },
   };
 
+  const support = async (): Promise<SandboxPermissionSupport> => {
+    const text = await readFile(join(f.root, "permission-support.json"), "utf8").catch(() => null);
+    return text === null ? FAKE_PERMISSION_SUPPORT : (JSON.parse(text) as SandboxPermissionSupport);
+  };
+
   return {
     async permissionSupport(_h, signal) {
       signal.throwIfAborted();
-      const text = await readFile(join(f.root, "permission-support.json"), "utf8").catch(
-        () => null,
-      );
-      return text === null
-        ? FAKE_PERMISSION_SUPPORT
-        : (JSON.parse(text) as SandboxPermissionSupport);
+      return support();
     },
 
     async operation(h, given, signal) {
       const scope = parseSandboxOperationScope(given);
       signal.throwIfAborted();
+      // an instance boundary runs the whole instance, never a narrower scope (the cloud providers)
+      if (
+        scope.filesystem.kind === "scoped" &&
+        (await support()).boundary === "instance" &&
+        !(scope.filesystem.readRoots.includes("/") && scope.filesystem.writeRoots.includes("/"))
+      )
+        throw new SandboxPermissionUnsupportedError(
+          "sandbox-fake's instance boundary runs only the instance scope: / readable and writable",
+        );
       const once = <T>(input: unknown, work: () => Promise<T>) =>
         consume(scope.operationId, { scope, ...(input as object) }, work);
       await mkdir(join(f.root, "operation-tags"), { recursive: true });

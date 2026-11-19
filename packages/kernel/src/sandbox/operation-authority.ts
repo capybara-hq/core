@@ -575,11 +575,20 @@ export class SandboxOperationAuthority {
       throw new ApiError("forbidden", "The kernel read is outside the conversation's profile");
     // a restricted read-only scope whenever the runtime enforces it, whatever the conversation's
     // profile: a runtime keyed on Full access may follow a symlinked AGENTS.md or SKILL.md out of
-    // the project, and a kernel read has no tool call or review to show for it
+    // the project, and a kernel read has no tool call or review to show for it. An instance
+    // boundary runs only its instance scope (the instance is the sandbox, a narrower scope is
+    // refused by the provider); the covering-path check above confines the read's path
+    const instance = availability.state === "supported" && instanceSupported(availability.report);
     return parseSandboxOperationScope({
       ...profile,
       profile: route === "full" ? profile.profile : KERNEL_READ_PROFILE,
-      filesystem: { kind: "scoped", readRoots: [covering], writeRoots: [] },
+      filesystem: instance
+        ? {
+            kind: "scoped",
+            readRoots: instanceRoots(f.workingRoot),
+            writeRoots: instanceRoots(f.workingRoot),
+          }
+        : { kind: "scoped", readRoots: [covering], writeRoots: [] },
       network: { kind: "none" },
     });
   }
