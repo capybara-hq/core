@@ -42,30 +42,93 @@ export type FixtureMeItem = {
   label: string;
   href: string;
   icon: string;
+  /** Who sees the row, as the sidebar's `audience` for the same item (nav.tsx). */
   audience: "all" | "member" | "admin";
+  group: "workspace" | "manage";
 };
 
-/** The Me page: what the sidebar's More group holds plus the primary items the bottom nav has no room for. */
+/**
+ * The Me page (design spec §6.48): the workspace group (the primary items the bottom nav has no
+ * room for, and devices) and the manage group (the sidebar's other More items, then the admin
+ * console entry for super admins).
+ */
 export const ME_PANEL_FIXTURE = {
   title: "我",
-  more: "更多",
+  groups: { workspace: "工作区", manage: "管理" } as Record<"workspace" | "manage", string>,
   account: { name: "grant", initial: "G" },
   org: { name: "示例组织", initial: "示", slug: "demo", role: "组织所有者" },
   items: [
-    { id: "skills", label: "技能", href: "/skills", icon: "skills", audience: "member" },
-    { id: "connectors", label: "连接器", href: "/connectors", icon: "connector", audience: "all" },
-    { id: "schedules", label: "定时任务", href: "/schedules", icon: "clock", audience: "member" },
-    { id: "devices", label: "设备", href: "/devices", icon: "cpu", audience: "all" },
-    { id: "plugins", label: "插件", href: "/plugins", icon: "catalog", audience: "member" },
-    { id: "extensions", label: "扩展", href: "/extensions", icon: "extension", audience: "member" },
-    { id: "channels", label: "渠道", href: "/channels", icon: "channel", audience: "admin" },
-    { id: "evals", label: "评测与运行", href: "/evals", icon: "evals", audience: "admin" },
+    {
+      id: "skills",
+      label: "技能",
+      href: "/skills",
+      icon: "skills",
+      audience: "member",
+      group: "workspace",
+    },
+    {
+      id: "connectors",
+      label: "连接器",
+      href: "/connectors",
+      icon: "connector",
+      audience: "all",
+      group: "workspace",
+    },
+    {
+      id: "schedules",
+      label: "定时任务",
+      href: "/schedules",
+      icon: "clock",
+      audience: "member",
+      group: "workspace",
+    },
+    {
+      id: "devices",
+      label: "设备",
+      href: "/devices",
+      icon: "cpu",
+      audience: "all",
+      group: "workspace",
+    },
+    {
+      id: "plugins",
+      label: "插件",
+      href: "/plugins",
+      icon: "catalog",
+      audience: "member",
+      group: "manage",
+    },
+    {
+      id: "extensions",
+      label: "扩展",
+      href: "/extensions",
+      icon: "extension",
+      audience: "member",
+      group: "manage",
+    },
+    {
+      id: "channels",
+      label: "渠道",
+      href: "/channels",
+      icon: "channel",
+      audience: "admin",
+      group: "manage",
+    },
+    {
+      id: "evals",
+      label: "评测与运行",
+      href: "/evals",
+      icon: "evals",
+      audience: "admin",
+      group: "manage",
+    },
     {
       id: "settings",
       label: "组织设置",
       href: "/settings/organization",
       icon: "settings",
       audience: "member",
+      group: "manage",
     },
   ] as FixtureMeItem[],
   adminEntry: { label: "管理后台", href: "/admin", icon: "admin" },
@@ -117,14 +180,16 @@ export const LIST_DETAIL_FIXTURE = {
   /** The open item (the first). */
   detail: {
     title: "需要你批准",
+    /** Translated labels only (Channel / Content, never the payload keys `channel` / `text`). */
     facts: [
-      ["工具", "Acme 工单: 发送消息"],
-      ["键", "mcp__acme_tickets__send_message"],
-      ["会话", "检索近三年的行业报告"],
-      ["智能体", "研究助手"],
-      ["channel", "#示例-支持"],
-      ["text", "15 条流程已逐条核对完，可以交给你试运行……"],
-    ] as [string, string][],
+      { label: "工具", value: "Acme 工单: 发送消息" },
+      { label: "键", value: "mcp__acme_tickets__send_message", mono: true },
+      { label: "会话", value: "检索近三年的行业报告" },
+      { label: "智能体", value: "研究助手" },
+      { label: "频道", value: "#示例-支持" },
+      { label: "内容", value: "15 条流程已逐条核对完，可以交给你试运行……" },
+    ] as { label: string; value: string; mono?: boolean }[],
+    /** The primary last: on compact it takes the bottom line alone (§4.4). */
     decisions: [
       { label: "拒绝", variant: "default" },
       { label: "本次会话允许", variant: "default" },

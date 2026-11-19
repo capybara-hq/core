@@ -978,6 +978,7 @@ textarea {
   border: 0;
   background: transparent;
 }
+/* The full brand row's inset inbox badge (the rail uses the nav badge below). */
 .r-rail-badge {
   position: absolute;
   top: 2px;
@@ -987,6 +988,29 @@ textarea {
   border-radius: var(--cb-radius-sm);
   background: var(--cb-selected);
   color: var(--cb-ink);
+  font-size: var(--cb-type-micro-size);
+  line-height: var(--cb-type-micro-line);
+  text-align: center;
+}
+/* Nav badge (spec §6.13): the rail's and the bottom navigation's count, one size, outside the
+   icon's top-right corner (left edge 2px past the icon, vertical center on its top edge), with a
+   2px ring in the rail or bar ground. .r-badged wraps the icon so the badge is placed from it. */
+.r-badged {
+  position: relative;
+  display: inline-flex;
+}
+.r-nav-badge {
+  position: absolute;
+  left: calc(100% + 2px);
+  top: calc(-1 * var(--cb-type-micro-line) / 2);
+  min-width: 14px;
+  height: var(--cb-type-micro-line);
+  padding: 0 3px;
+  border-radius: var(--cb-radius-sm);
+  background: var(--cb-selected);
+  box-shadow: 0 0 0 2px var(--cb-sidebar);
+  color: var(--cb-ink);
+  font-family: var(--cb-font);
   font-size: var(--cb-type-micro-size);
   line-height: var(--cb-type-micro-line);
   text-align: center;
@@ -6668,15 +6692,10 @@ span.r-scal-daynum {
   text-decoration: none;
 }
 .r-bn-item[aria-current="page"] {
-  background: var(--cb-sidebar-active);
   color: var(--cb-ink);
 }
 .r-bn-item[aria-current="page"] .r-bn-label {
-  font-weight: 600;
-}
-.r-bn-icon {
-  position: relative;
-  display: inline-flex;
+  font-weight: 500;
 }
 .r-bn-label {
   max-width: 100%;
@@ -6687,32 +6706,20 @@ span.r-scal-daynum {
   text-overflow: ellipsis;
   white-space: nowrap;
 }
-.r-bn-badge {
-  position: absolute;
-  top: calc(-1 * var(--cb-space-2));
-  left: calc(100% - var(--cb-space-1));
-  min-width: 14px;
-  padding: 0 3px;
-  border-radius: var(--cb-radius-sm);
-  background: var(--cb-selected);
-  color: var(--cb-ink);
-  font-size: var(--cb-type-micro-size);
-  line-height: var(--cb-type-micro-line);
-  text-align: center;
-}
 
 /* TopBar: layout.top-bar high, back (pushed), the title, search and the overflow menu. */
 .r-tb {
   flex: none;
   display: flex;
   align-items: center;
+  gap: var(--cb-space-3);
   height: var(--cb-layout-top-bar);
-  padding: 0 var(--cb-space-1) 0 var(--cb-space-4);
+  padding: 0 var(--cb-space-2) 0 var(--cb-space-4);
   border-bottom: 1px solid var(--cb-line-soft);
   background: var(--cb-bg);
 }
 .r-tb[data-pushed="true"] {
-  padding-left: var(--cb-space-1);
+  padding-left: var(--cb-space-2);
 }
 .r-tb-title {
   flex: 1;
@@ -6723,18 +6730,27 @@ span.r-scal-daynum {
   line-height: var(--cb-type-body-line);
   font-weight: 600;
 }
+/* The ordinary icon button (control.default, radius sm); the 40 x 40 tap target is a ring. */
 .r-tb-btn {
+  position: relative;
   flex: none;
-  width: 40px;
-  height: 40px;
+}
+.r-tb-btn::after {
+  content: "";
+  position: absolute;
+  inset: -6px;
+}
+.r-tb-btn[aria-pressed="true"] {
+  background: var(--cb-selected);
+  color: var(--cb-ink);
 }
 .r-tb-stage {
   position: relative;
   height: 100%;
 }
 .r-tb-menu {
-  top: calc(var(--cb-layout-top-bar) - var(--cb-space-1));
-  right: var(--cb-space-1);
+  top: calc(var(--cb-layout-top-bar) / 2 + var(--cb-control-default) / 2 + 2px);
+  right: var(--cb-space-2);
 }
 .r-tb-menu .r-menu-item {
   height: 40px;
@@ -6810,22 +6826,35 @@ span.r-scal-daynum {
 }
 .r-ld-k {
   color: var(--cb-muted);
+  font-family: var(--cb-font);
 }
 .r-ld-v {
   margin: 0;
   color: var(--cb-ink);
+  font-family: var(--cb-font-prose);
+  word-break: break-word;
+}
+.r-ld-v[data-mono] {
+  font-family: var(--cb-font);
   word-break: break-all;
 }
-.r-ld-actions {
-  justify-content: flex-end;
+/* The compact ActionRow (spec §4.4): the primary a full-width line at the bottom, the other
+   actions side by side in equal widths on the line above, every button 40 high. */
+.r-ld-actions[data-compact] {
+  flex-direction: column;
+  align-items: stretch;
+  gap: var(--cb-space-2);
+  height: auto;
+  padding: var(--cb-space-2) var(--cb-space-4);
 }
-.r-ld-actions .r-btn {
-  position: relative;
+.r-ld-actions-line {
+  display: flex;
+  gap: var(--cb-space-2);
 }
-.r-ld-actions .r-btn::after {
-  content: "";
-  position: absolute;
-  inset: -6px -2px;
+.r-ld-actions[data-compact] .r-btn {
+  flex: 1 1 0;
+  min-width: 0;
+  height: 40px;
 }
 .r-ld-panes {
   display: flex;

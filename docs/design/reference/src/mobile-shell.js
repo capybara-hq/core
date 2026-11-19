@@ -20,9 +20,9 @@ window.__CB_EXTRA__ = ({ F, esc, icon, table }) => {
         const text = count > B.countMax ? `${B.countMax}+` : count;
         const label = count !== undefined ? `${n.label}，${text} 项待处理` : n.label;
         const badge =
-          count !== undefined ? `<span class="r-bn-badge" data-part="item-badge">${text}</span>` : "";
+          count !== undefined ? `<span class="r-nav-badge" data-part="item-badge">${text}</span>` : "";
         const name = o.short ? ` aria-label="${esc(label)}"` : "";
-        return `<a class="r-bn-item" data-part="item" href="#"${name}${n.id === current ? ' aria-current="page"' : ""}><span class="r-bn-icon">${icon(n.icon)}${badge}</span>${o.short ? "" : `<span class="r-bn-label" data-part="item-label">${esc(n.label)}</span>`}</a>`;
+        return `<a class="r-bn-item" data-part="item" href="#"${name}${n.id === current ? ' aria-current="page"' : ""}><span class="r-badged">${icon(n.icon)}${badge}</span>${o.short ? "" : `<span class="r-bn-label" data-part="item-label">${esc(n.label)}</span>`}</a>`;
       })
       .join("");
     return `<nav class="r-bn" data-part="bottom-nav" aria-label="${esc(B.label)}"${o.short ? ' data-short="true"' : ""}>${items}</nav>`;
@@ -65,14 +65,31 @@ window.__CB_EXTRA__ = ({ F, esc, icon, table }) => {
   function detailBody() {
     const D = L.detail;
     return `<div class="r-ld-body"><h2 class="r-ld-h">${esc(D.title)}</h2><dl class="r-ld-facts" data-part="facts">${D.facts
-      .map(([k, v]) => `<dt class="r-ld-k">${esc(k)}</dt><dd class="r-ld-v">${esc(v)}</dd>`)
+      .map(
+        (f) =>
+          `<dt class="r-ld-k" data-part="fact-key">${esc(f.label)}</dt><dd class="r-ld-v"${f.mono ? " data-mono" : ""}>${esc(f.value)}</dd>`,
+      )
       .join("")}</dl></div>`;
   }
 
-  function decisionRow() {
-    return `<div class="r-actionrow r-ld-actions" data-part="decision-row">${L.detail.decisions
-      .map((d) => `<button class="r-btn" data-variant="${d.variant}">${esc(d.label)}</button>`)
-      .join("")}</div>`;
+  function decisionButton(d, part) {
+    return `<button class="r-btn" data-variant="${d.variant}" data-part="${part}">${esc(d.label)}</button>`;
+  }
+
+  // Compact (§4.4): the secondary decisions side by side on one line, the primary alone on the
+  // full-width line under them. Two panes keep the ordinary ActionRow (primary rightmost).
+  function decisionRow(o = {}) {
+    const ds = L.detail.decisions;
+    if (!o.compact) {
+      return `<div class="r-actionrow r-ld-actions" data-part="decision-row"><span class="r-actionrow-text"></span>${ds
+        .map((d) => decisionButton(d, d.variant === "primary" ? "decision-primary" : "decision-secondary"))
+        .join("")}</div>`;
+    }
+    const primary = ds.filter((d) => d.variant === "primary");
+    const others = ds.filter((d) => d.variant !== "primary");
+    const line = (list, part) =>
+      list.length ? `<div class="r-ld-actions-line">${list.map((d) => decisionButton(d, part)).join("")}</div>` : "";
+    return `<div class="r-actionrow r-ld-actions" data-part="decision-row" data-compact>${line(others, "decision-secondary")}${line(primary, "decision-primary")}</div>`;
   }
 
   function listDetail(o) {
@@ -82,7 +99,7 @@ window.__CB_EXTRA__ = ({ F, esc, icon, table }) => {
     if (o.mode === "compact-detail") {
       // The detail is a pushed page: the top bar's back returns to the list, the bottom
       // navigation is hidden and the decision row is sticky at the bottom.
-      return `<div class="r-screen" data-part="screen">${topBar({ pushed: true, title: L.detail.title })}<div class="r-ld-scroll">${detailBody()}</div>${decisionRow()}</div>`;
+      return `<div class="r-screen" data-part="screen">${topBar({ pushed: true, title: L.detail.title })}<div class="r-ld-scroll">${detailBody()}</div>${decisionRow({ compact: true })}</div>`;
     }
     // two-pane: the list column (320) beside the detail (at least 360)
     return `<div class="r-ld-panes" data-part="list-detail" data-mode="two-pane"><div class="r-ld-listcol" data-part="list-pane">${listRows({ current: "ib1" })}</div><div class="r-ld-detailcol" data-part="detail-pane"><div class="r-ld-scroll">${detailBody()}</div>${decisionRow()}</div></div>`;
@@ -109,12 +126,20 @@ window.__CB_EXTRA__ = ({ F, esc, icon, table }) => {
     const role = o.role || "member";
     const visible = M.visible[role];
     const items = M.items.filter((n) => visible.includes(n.audience));
+    // The admin console entry closes the manage group for super admins (whatever the org role).
     const admin =
       role === "super-admin"
-        ? `<div class="r-me-group" data-part="group"><a class="r-me-row" data-part="admin-entry" data-id="admin" href="#">${icon(M.adminEntry.icon)}<span class="r-ellipsis">${esc(M.adminEntry.label)}</span>${icon("arrow-up-right", 14)}</a></div>`
+        ? `<a class="r-me-row" data-part="admin-entry" data-id="admin" href="#">${icon(M.adminEntry.icon)}<span class="r-ellipsis">${esc(M.adminEntry.label)}</span>${icon("arrow-up-right", 14)}</a>`
         : "";
+    // A group with no row draws nothing (a guest has no manage group).
+    const group = (id, extra = "") => {
+      const rows = items.filter((n) => n.group === id).map((n) => meRow(n)).join("") + extra;
+      return rows
+        ? `<section class="r-me-group" data-part="group" aria-label="${esc(M.groups[id])}"><h2 class="r-me-label" data-part="group-label">${esc(M.groups[id])}</h2>${rows}</section>`
+        : "";
+    };
     const org = `<button class="r-sb-org r-me-org" data-part="org-switcher" aria-label="当前组织：${esc(M.org.name)}，切换组织"><span class="r-sb-org-initial">${esc(M.org.initial)}</span><span class="r-sb-org-text"><span class="r-sb-org-name">${esc(M.org.name)}</span><span class="r-sb-org-meta">~/${esc(M.org.slug)} · ${esc(role === "member" ? "组织成员" : role === "admin" ? "组织管理员" : "超级管理员")}</span></span>${icon("chevrons-up-down", 14)}</button>`;
-    const body = `<div class="r-me" data-part="me-panel" data-role="${role}"><div class="r-me-head"><div class="r-me-account" data-part="account"><span class="r-avatar">${esc(M.account.initial)}</span><span class="r-ellipsis">${esc(M.account.name)}</span></div>${org}</div><section class="r-me-group" data-part="group" aria-label="${esc(M.more)}"><h2 class="r-me-label" data-part="group-label">${esc(M.more)}</h2>${items.map((n) => meRow(n)).join("")}</section>${admin}<section class="r-me-group" data-part="group" aria-label="${esc(M.accountGroup)}"><h2 class="r-me-label" data-part="group-label">${esc(M.accountGroup)}</h2>${M.accountItems.map((n) => meRow(n)).join("")}</section><p class="r-me-system" data-part="system-status">${esc(M.system)}</p></div>`;
+    const body = `<div class="r-me" data-part="me-panel" data-role="${role}"><div class="r-me-head"><div class="r-me-account" data-part="account"><span class="r-avatar">${esc(M.account.initial)}</span><span class="r-ellipsis">${esc(M.account.name)}</span></div>${org}</div>${group("workspace")}${group("manage", admin)}<section class="r-me-group" data-part="group" aria-label="${esc(M.accountGroup)}"><h2 class="r-me-label" data-part="group-label">${esc(M.accountGroup)}</h2>${M.accountItems.map((n) => meRow(n)).join("")}</section><p class="r-me-system" data-part="system-status">${esc(M.system)}</p></div>`;
     return `<div class="r-screen" data-part="screen" data-auto>${topBar({ title: M.title })}<div class="r-ld-scroll">${body}</div>${bottomNav({ current: "me", badge: true })}</div>`;
   }
 

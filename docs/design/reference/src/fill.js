@@ -55,8 +55,12 @@
     const label = n.count !== undefined ? `${n.label}，${n.count} 项待处理` : n.label;
     const size = extra.includes("r-nav-sub") ? 14 : 16;
     if (o.mode === "rail") {
-      const badge = n.count !== undefined ? `<span class="r-rail-badge">${n.count}</span>` : "";
-      return `<a class="r-nav-item r-rail-item${extra}" href="#" aria-label="${esc(label)}"${current}${state(st)}>${icon(n.icon)}${badge}</a>`;
+      // The nav badge (spec §6.13): placed from the icon, outside its top-right corner.
+      const glyph =
+        n.count !== undefined
+          ? `<span class="r-badged">${icon(n.icon)}<span class="r-nav-badge" data-part="rail-badge">${n.count}</span></span>`
+          : icon(n.icon);
+      return `<a class="r-nav-item r-rail-item${extra}" href="#" aria-label="${esc(label)}"${current}${state(st)}>${glyph}</a>`;
     }
     return `<a class="r-nav-item${extra}" href="#" aria-label="${esc(label)}"${current}${state(st)}>${icon(n.icon, size)}<span class="r-ellipsis">${esc(n.label)}</span>${count}</a>`;
   }
@@ -238,12 +242,18 @@
         ? `${inboxItem.label}，${inboxItem.count} 项待处理`
         : inboxItem.label
       : "";
-    const inboxBadge = inboxItem?.count ? `<span class="r-rail-badge">${inboxItem.count}</span>` : "";
+    // The rail's inbox takes the nav badge outside the icon's corner; the full brand row keeps
+    // the inset badge (its icon buttons sit 2 apart, spec §6.13).
+    const inboxGlyph = !inboxItem?.count
+      ? icon("inbox")
+      : rail
+        ? `<span class="r-badged">${icon("inbox")}<span class="r-nav-badge" data-part="inbox-badge">${inboxItem.count}</span></span>`
+        : `${icon("inbox")}<span class="r-rail-badge" data-part="inbox-badge">${inboxItem.count}</span>`;
     const tools = admin || setup
       ? ""
       : `<button class="r-icon-btn${rail ? " r-rail-item" : ""}" aria-label="${esc(C.search)} ${esc(C.searchShortcut)}">${icon("search")}</button>${
           inboxItem
-            ? `<a class="r-icon-btn r-sb-inbox${rail ? " r-rail-item" : ""}" href="#" aria-label="${esc(inboxLabel)}"${o.active === "inbox" ? ' aria-current="page"' : ""}>${icon("inbox")}${inboxBadge}</a>`
+            ? `<a class="r-icon-btn r-sb-inbox${rail ? " r-rail-item" : ""}" href="#" aria-label="${esc(inboxLabel)}"${o.active === "inbox" ? ' aria-current="page"' : ""}>${inboxGlyph}</a>`
             : ""
         }`;
     // The collapse toggle (spec §3.3, §6.13): the full sidebar's head ends with it, the collapsed
@@ -274,7 +284,7 @@
       const moreToggle = rail
         ? `<button class="r-nav-item r-rail-item r-nav-more" aria-label="${esc(F.MORE_LABEL)}" aria-haspopup="menu"${active}>${icon("more-horizontal")}</button>`
         : `<button class="r-nav-item r-nav-more" aria-haspopup="menu" aria-expanded="${o.moreOpen === true}"${active}>${icon("more-horizontal")}<span class="r-ellipsis">${esc(F.MORE_LABEL)}</span>${icon("chevron-right", 12)}</button>`;
-      // 更多 opens a flyout menu to the right of the sidebar, extension pages after a separator.
+      // More opens a flyout menu to the right of the sidebar, extension pages after a separator.
       const flyItem = (n) =>
         `<a class="r-menu-item" href="#"${n.id === o.active ? ' aria-current="page"' : ""}><span class="r-menu-label">${esc(n.label)}</span></a>`;
       const flyout = o.moreOpen

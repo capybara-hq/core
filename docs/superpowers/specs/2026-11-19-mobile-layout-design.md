@@ -121,7 +121,7 @@ reload and without losing state (the URL hash keeps the right area, §5.4).
 Width decides the class; height only trims chrome. A window **shorter than 480 px** (a phone in
 landscape, the iPhone Duo at its shortest reported height, 368) sets `data-short` on the shell:
 the StatusBar hides, the PageHeader drops its path row (the back button keeps the way up, §4.1),
-and the bottom navigation (compact only) shows icons without labels. This is not orientation:
+and the bottom navigation (compact only) shows icons without labels at its full 56 height. This is not orientation:
 a short desktop window gets the same.
 
 ### 3.3 Two width rules (decided)
@@ -136,7 +136,9 @@ The whole width layout is two rules beside the classes:
    panel) sits beside the thread from 1280; below that, in every class, it opens as a sheet (a
    side sheet on medium and expanded, a pushed page on compact, §5.4). 1280 is the one fit
    threshold left in the design CSS. Between 841 and 1279 the thread keeps the width the sidebar
-   leaves it (585 at 841 with the full sidebar, above `layout.chat-min` 480).
+   leaves it (585 at 841 with the full sidebar, above `layout.chat-min` 480). A body's side
+   column (facet rail, label column, settings sub-nav, inbox list) is inline only while its
+   template frame leaves `layout.content-min` beside it (a container query; design spec §4.3).
 
 Compared with today: 640 becomes 600, the 960 drawer becomes the medium rail and the compact
 bottom navigation, and below 1280 the sidebar no longer turns into the rail by itself (only by
@@ -148,11 +150,11 @@ the person's toggle).
 |---|---|---|---|
 | Navigation | **Bottom navigation** (4 items, §4.2) | **Navigation rail**: today's icon rail (`layout.sidebar-rail`, 48), the conversations behind a rail button (§4.3) | **The full sidebar**, collapsible to the rail by the person (§3.3) |
 | Page | Full screen; deeper pages are **pushed** (bottom nav hidden, back in the bar) | One pane, or list-detail two panes when both fit (§5.2) | Today's layouts (§4.3 of the design spec) |
-| Sidebar content (org switcher, more, account, admin entry) | The **Me** tab (a full page) and bottom sheets | Rail popovers, as today's rail | As today |
+| Sidebar content (org switcher, more, account, admin entry) | The **Me** tab (a full page: 工作区 and 管理 groups) and bottom sheets | Rail popovers, as today's rail | As today |
 | Right area (conversation) | A full-screen page pushed over the conversation (§5.4) | A side sheet with a follow-finger dismiss | Inline from 1280, a side sheet below (§3.3) |
 | Drawer menu bar | Replaced by the **top bar** (§4.1) | None (the rail holds the menu) | None |
 | StatusBar | Hidden (its system status moves to the Me page) | Shown | Shown |
-| ActionRow | Sticky at the bottom, above the safe area | As today | As today |
+| ActionRow | Sticky at the bottom, above the safe area: the primary a full-width line, the other actions side by side above it | As today | As today |
 
 ### 4.1 Compact: top bar and push model (designer's call)
 
@@ -162,7 +164,8 @@ the person's toggle).
   button** in the top bar.
 - **The top bar** (one row, `row.roomy`, today's drawer bar's place): back (pushed pages) or
   nothing (tab roots), the page title, and at the end search (the command palette) and the page's
-  overflow menu. Back goes to the previous in-app history entry when there is one, else to the
+  overflow menu; its icon buttons are ordinary `control.default` rounded squares (pressed ground
+  included) with a 40 × 40 tap ring, and the title is `body` 600. Back goes to the previous in-app history entry when there is one, else to the
   **last linked segment of the page's `path`** (every page head has a path, `web-ui-page-path`
   enforces it), so a deep link opened from a notification still has a way up.
 - **Transitions.** A push slides in from the end edge, a pop slides back (CSS view transitions
@@ -184,11 +187,14 @@ settings under 更多), the inbox is where approvals and notices wait:
 |---|---|---|
 | 会话 / Chats | `/conversations` (new compact list route, §5.4) | The conversations grouped by agent, as the sidebar's section; a "new" action to `/` |
 | 智能体 / Agents | `/agents` | The cards page as today |
-| 收件箱 / Inbox | `/inbox` | With the pending count badge (the brand row's count today) |
-| 我 / Me | `/me` (new compact page) | Account, org switcher, the 更多 items the role sees, personal settings, the admin entry for super admins, system status, sign out; drawn by the shell from the sidebar's data |
+| 收件箱 / Inbox | `/inbox` | With the pending count badge (the rail's nav badge: outside the icon's top-right corner, 2px gap, a ring in the bar ground) |
+| 我 / Me | `/me` (new compact page) | Account, org switcher, 工作区 (技能, 连接器, 定时任务, 设备) and 管理 (插件, 扩展, 渠道, 评测与运行, 组织设置, 管理后台 for super admins) rows the role sees as on the sidebar, personal settings, system status, sign out; drawn by the shell from the sidebar's data |
 
 技能 / 连接器 / 定时任务 are reached from
-Me (and from the agents' pages), as 更多 items are on the sidebar.
+Me (and from the agents' pages), as 更多 items are on the sidebar. The current item has no ground
+of its own: icon and label in `ink`, the label weight 500, the others `muted`; icons are 16.
+The **compact admin navigation is the Me page's 管理 group** (maintainer decision 2026-11-20):
+there is no admin overview page for it; design spec §6.48 lists which role sees which row.
 
 `/me` is built on the `OverviewPage` template with a design `MePanel` component, so it passes
 `web-ui-template` **(decided)**.
@@ -196,16 +202,17 @@ Me (and from the agents' pages), as 更多 items are on the sidebar.
 ### 4.3 Medium: the rail (designer's call)
 
 Today's rail, unchanged in look, gains one button: **conversations**, which opens the
-conversations list as a side sheet over the content (a pane beside a conversation when the
+conversations list as a side sheet over the content (`layout.sidebar` wide, no scrim) (a pane beside a conversation when the
 window has two segments, §8). The account row's popover holds the org switcher and 更多, as the
 rail's does today. The content minimum width (`560`, design spec §4.3) drops to **552**
-(600 − the 48 rail), so the narrowest medium window fits; at 841 the full sidebar leaves 585, so
-expanded needs nothing more. The conversation's `layout.chat-min` (480) fits both.
+(600 − the 48 rail), so the narrowest medium window fits; at 841 the full sidebar leaves 585, and
+side columns that do not fit beside it take their narrow form by container (§3.3). The conversation's `layout.chat-min` (480) fits both.
 
 ### 4.4 Expanded
 
 Today's shell with the full sidebar from 841 and the person's collapse toggle (§3.3), and the
-shell environment insets (§9.3).
+shell environment insets (§9.3). "As today" in §5.1 means as today while the side column fits
+its frame (§3.3), else its narrow form.
 
 ## 5. Templates per class (decided: templates declare it, pages do not change)
 
@@ -217,18 +224,21 @@ target.
 
 | Template | compact | medium | expanded |
 |---|---|---|---|
-| `ListPage` (objects / cards / records) | Single column; rows compact (§4.3 today), cards one per row, records stacked; facet rail behind a "Filter" button and bottom sheet | Cards two per row; facet rail as a Filter sheet | As today |
+| `ListPage` (objects / cards / records) | Single column; rows compact (§4.3 today), cards one per row, records stacked; facet rail behind a "Filter" button and bottom sheet | Cards two per row once two `layout.card-min` columns fit, else one; facet rail as a Filter sheet | As today (facet rail inline while it fits, §3.3) |
 | `DetailPage` | Pushed; facts first, PageTabs scroll; band head stacks | As today, one column | As today |
-| `FormPage` | Single column (labels above fields), **sticky ActionRow** above the safe area | Labels above fields | As today (label column) |
-| `SettingsPage` | Sub-nav as the sticky sideways row (maintainer decision 2026-11-09, kept) | Sub-nav stacked above content (today's < 960 form) | As today |
+| `FormPage` | Single column (labels above fields), **sticky ActionRow** above the safe area | Labels above fields | As today (label column while it fits, §3.3) |
+| `SettingsPage` | Sub-nav as the sticky sideways row (maintainer decision 2026-11-09, kept) | Sub-nav stacked above content (today's < 960 form) | As today (sub-nav inline while it fits, §3.3) |
 | `WizardPage` | Single column, step bar as "2 / 4" text, sticky previous / next | As today | As today |
-| `InboxPage` | **Two-level stack**: the list is the page, an item is pushed full screen with its decision buttons sticky at the bottom | **List-detail**: two panes when both fit (list 320 + detail ≥ 360), else the stack | Rail + content + inspector, as today |
+| `InboxPage` | **Two-level stack**: the list is the page, an item is pushed full screen with its decision buttons sticky at the bottom (the primary a full-width line, the others side by side above; facts with translated labels, never raw payload keys) | **List-detail**: two panes when both fit (list 320 + detail ≥ 360), else the stack | Rail + content + inspector, as today |
 | `ConversationPage` | §5.4 | §5.4 | As today |
 | `TracePage` | Waterfall full width; a span is pushed as its own screen | Waterfall, detail below | As today |
 | `OverviewPage` | StatCards 2 × 2, sections stacked | StatCards in a row of up to 4 | As today |
 | `AuthPage`, `StatusPage`, `OnboardingPage` | Full width with 16 gutters, safe areas | Centered | As today |
 | `SetupPage` | Bottom navigation replaced by the steps as a pushed list (the setup home is the tab root) | Rail with the steps | As today |
 | `SharedFilePage` | Top bar compact (name, download), the file full screen | As today | As today |
+
+The scheduled-task calendar shows its week grid from a 580 template frame, else the agenda (a
+container query; design spec §6.40), so a 600 window beside the rail gets the agenda.
 
 ### 5.2 List-detail (decided: collapses to a two-level stack on compact)
 
