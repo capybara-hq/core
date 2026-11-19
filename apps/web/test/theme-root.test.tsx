@@ -164,4 +164,17 @@ describe("themeIcons", () => {
     expect(themeIcons(NEON_GRID)).toEqual({});
     expect(themeIcons(null)).toEqual({});
   });
+
+  it("a theme's favicon replaces the parent's icon and keeps its apple-touch-icon", () => {
+    const favicon = "/api/v1/themes/t-night/1.0.0/assets/favicon.png";
+    const logo = { markUrl: null, wordmark: null, faviconUrl: favicon };
+    const parent = {
+      icon: [{ url: "/icon.svg", type: "image/svg+xml" }],
+      apple: [{ url: "/icon-512.png", sizes: "512x512", type: "image/png" }],
+    };
+    expect(themeIcons({ ...NEON_GRID, logo }, parent)).toEqual({
+      icons: { icon: favicon, apple: parent.apple },
+    });
+    expect(themeIcons(NEON_GRID, parent)).toEqual({});
+  });
 });

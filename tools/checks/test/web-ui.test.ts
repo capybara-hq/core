@@ -76,7 +76,7 @@ describe("checkWebUi", () => {
     expect(f[0]?.message).toContain("ListPage");
   });
 
-  it("design-color -> design-color-literal（tokens.css 豁免）", () => {
+  it("design-color -> design-color-literal (the generated tokens.css and tokens.ts are exempt)", () => {
     const f = run("design-color");
     expect(f.map((x) => x.rule)).toEqual(["design-color-literal"]);
     expect(f[0]?.file).toMatch(/button\.tsx$/);

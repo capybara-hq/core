@@ -138,6 +138,23 @@ describe("AppIconSection", () => {
     expect(calls.filter((c) => c.url === "/api/v1/admin/platform/icons").length).toBe(2);
   });
 
+  it("a failed icons read shows the failure with a retry, never 默认 rows or actions", async () => {
+    let fail = true;
+    calls = stubApi({
+      "GET /api/v1/admin/platform/icons": () =>
+        fail
+          ? json(403, { error: { code: "forbidden", message: "no" } })
+          : json(200, { icons: [] }),
+    });
+    renderPage(<AppIconSection />);
+    expect(await screen.findByText(en.errors.forbidden)).toBeTruthy();
+    expect(screen.queryByText(new RegExp(T.default))).toBeNull();
+    expect(screen.queryByRole("button", { name: T.upload })).toBeNull();
+    fail = false;
+    await userEvent.setup().click(screen.getByRole("button", { name: en.common.retry }));
+    expect(await rowOf(T.app.title)).toBeTruthy();
+  });
+
   it("the favicon row takes an SVG", async () => {
     routes();
     renderPage(<AppIconSection />);

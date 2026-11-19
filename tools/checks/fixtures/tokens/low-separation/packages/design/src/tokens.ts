@@ -31,3 +31,6 @@ export const SIZES = {
   type: { body: [13, 20] },
   layout: { sidebar: 256 },
 } as const;
+
+/** The page background (`bg`) per theme, for what cannot read `--cb-bg` (the PWA manifest). */
+export const PAGE_BACKGROUND = { dark: "#0A0A0A", light: "#F7F6F2" } as const;

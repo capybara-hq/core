@@ -1,6 +1,6 @@
 "use client";
 
-import { Button, FormSection, ItemList, useToast } from "@capybara-hq/design";
+import { Button, Callout, FormSection, ItemList, useToast } from "@capybara-hq/design";
 import { useQuery } from "@tanstack/react-query";
 import { useTranslations } from "next-intl";
 import { type ChangeEvent, useRef } from "react";
@@ -31,6 +31,9 @@ const iconKeys = (): (readonly unknown[])[] => [
   keys.deployment().platformAuditAll(),
 ];
 
+/** A row placeholder: the title and meta lines, the upload button. */
+const ROW = { lines: 2, buttons: 1 } as const;
+
 /**
  * 应用图标 (mobile layout spec §10.2.1): the installed app's icon for the whole deployment, on the
  * super admin's `/admin/settings` (the page is the super admin's alone, so nobody else sees it). A
@@ -41,6 +44,7 @@ const iconKeys = (): (readonly unknown[])[] => [
  */
 export function AppIconSection() {
   const t = useTranslations("appIcon");
+  const tc = useTranslations("common");
   const toast = useToast();
   const errorMessage = useErrorMessage();
   const iq = platformIconsQuery();
@@ -70,8 +74,24 @@ export function AppIconSection() {
     if (file !== undefined) upload.mutate({ purpose, file });
   };
 
+  const head = { id: "app-icon", title: t("title"), description: t("description") };
+  // Never claim 默认 for an icon whose state is unknown: placeholders while reading, the failure
+  // with a retry (and no actions) when the read failed.
+  if (read.isPending) {
+    return <FormSection {...head} loading={{ items: PLATFORM_ICON_PURPOSES.map(() => ROW) }} />;
+  }
+  if (read.isError) {
+    return (
+      <FormSection {...head}>
+        <Callout tone="fail" action={{ label: tc("retry"), onSelect: () => void read.refetch() }}>
+          {errorMessage(read.error)}
+        </Callout>
+      </FormSection>
+    );
+  }
+
   return (
-    <FormSection id="app-icon" flush title={t("title")} description={t("description")}>
+    <FormSection {...head} flush>
       <ItemList
         label={t("title")}
         inset="flush"
@@ -87,7 +107,7 @@ export function AppIconSection() {
               <>
                 <Button
                   variant="default"
-                  disabled={busy || read.isPending}
+                  disabled={busy}
                   onClick={() => inputs.current[purpose]?.click()}
                 >
                   {t("upload")}
