@@ -185,6 +185,9 @@ function Section({ cap, status }: { cap: DeviceCapabilityV1; status: Connected }
  * confirmation with the program's risk text; applied only on yes) replaces the
  * `capybara-device ceiling set` line; in a browser, and on any other device, the line stays.
  * The request carries both fields, so what is not widened keeps its current value.
+ * Known gap: both fields come from the kernel's last owner report; a stale report (the machine
+ * changed the other field since) can make this request narrow it. The shell's confirmation shows
+ * what is requested, but not the machine's live values.
  */
 export function WidenCeiling({
   orgId,

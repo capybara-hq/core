@@ -10,17 +10,21 @@ import { useNotifyCapability } from "./shell";
 /** How often the inbox is read while the shell can notify (also while the window is hidden). */
 const INBOX_POLL_MS = 30_000;
 const SEEN_KEY = "capybara.shell.notified";
+/** More fresh items than this in one read collapse into a single notification. */
+const BURST = 3;
+const seenKey = (orgId: string) => `${SEEN_KEY}.${orgId}`;
 
 /**
- * The item ids already handled in this browser session, in `sessionStorage`: a reload of the same
- * window does not notify an item again, while a new session (the app restarted, a new window) does
- * remind of what still waits. The set is per window and dies with it, so it never grows without
- * bound. `null` when nothing was recorded yet (the first read of the session) or storage is
- * blocked (then the module's own set below carries the session until the page reloads).
+ * The item ids already handled for `orgId` in this window's `sessionStorage`: a reload of the same
+ * window does not notify an item again. At launch (an empty store) the first read only records
+ * what already waits and notifies nothing, so opening the app never bursts. The set is per window
+ * and per org and dies with the window, so it never grows without bound (and two shell windows
+ * each notify, each with its own store). `null` when nothing was recorded yet or storage is
+ * blocked (then the in-memory set carries the session until the page reloads).
  */
-function readSeen(): Set<string> | null {
+function readSeen(orgId: string): Set<string> | null {
   try {
-    const raw = window.sessionStorage.getItem(SEEN_KEY);
+    const raw = window.sessionStorage.getItem(seenKey(orgId));
     if (raw === null) return null;
     const ids: unknown = JSON.parse(raw);
     return new Set(Array.isArray(ids) ? ids.filter((i): i is string => typeof i === "string") : []);
@@ -29,9 +33,9 @@ function readSeen(): Set<string> | null {
   }
 }
 
-function writeSeen(seen: Set<string>): void {
+function writeSeen(orgId: string, seen: Set<string>): void {
   try {
-    window.sessionStorage.setItem(SEEN_KEY, JSON.stringify([...seen]));
+    window.sessionStorage.setItem(seenKey(orgId), JSON.stringify([...seen]));
   } catch {
     // blocked: the in-memory set still stops a second notification until a reload
   }
@@ -55,32 +59,35 @@ export function useShellNotifications(orgId: string): void {
     refetchIntervalInBackground: true,
   });
   const items = q.data?.items;
-  const memory = useRef<Set<string> | null>(null);
+  // the handled ids of one org: another org starts again from its own store
+  const memory = useRef<{ orgId: string; seen: Set<string> } | null>(null);
   useEffect(() => {
     if (cap === undefined || items === undefined) return;
-    const seen = memory.current ?? readSeen();
+    const seen = (memory.current?.orgId === orgId ? memory.current.seen : null) ?? readSeen(orgId);
     const showable = items.filter(isShowable);
     if (seen === null) {
       // the first read of the session: what already waits is not new
       const first = new Set(showable.map((i) => i.id));
-      memory.current = first;
-      writeSeen(first);
+      memory.current = { orgId, seen: first };
+      writeSeen(orgId, first);
       return;
     }
     const fresh = showable.filter((i) => !seen.has(i.id));
-    memory.current = seen;
+    memory.current = { orgId, seen };
     if (fresh.length === 0) return;
     const hidden = document.visibilityState === "hidden";
-    for (const i of fresh) {
-      seen.add(i.id);
-      if (hidden) {
-        const sent = cap.notify({ title: t("title"), body: t(bodyKey(i)), path: "/inbox" });
+    for (const i of fresh) seen.add(i.id);
+    if (hidden) {
+      // a burst is one notification with the neutral body, not one per item
+      const bodies = fresh.length > BURST ? [t("other")] : fresh.map((i) => t(bodyKey(i)));
+      for (const body of bodies) {
+        const sent = cap.notify({ title: t("title"), body, path: "/inbox" });
         // a refused notification is no error worth showing
         void Promise.resolve(sent).catch(() => {});
       }
     }
-    writeSeen(seen);
-  }, [cap, items, t]);
+    writeSeen(orgId, seen);
+  }, [cap, items, orgId, t]);
 }
 
 const BODY_TYPES = [

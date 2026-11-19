@@ -56,7 +56,7 @@ describe("shell notifications", () => {
     const { qc } = mount();
     // the first read only records what already waits
     await waitFor(() =>
-      expect(window.sessionStorage.getItem("capybara.shell.notified")).toBe('["a"]'),
+      expect(window.sessionStorage.getItem("capybara.shell.notified.o1")).toBe('["a"]'),
     );
     expect(notify).not.toHaveBeenCalled();
     setVisibility("hidden");
@@ -80,7 +80,7 @@ describe("shell notifications", () => {
     inbox = [item("a")];
     const first = mount();
     await waitFor(() =>
-      expect(window.sessionStorage.getItem("capybara.shell.notified")).not.toBeNull(),
+      expect(window.sessionStorage.getItem("capybara.shell.notified.o1")).not.toBeNull(),
     );
     setVisibility("hidden");
     inbox = [item("b"), item("a")];
@@ -89,7 +89,7 @@ describe("shell notifications", () => {
     first.unmount();
     mount();
     await waitFor(() =>
-      expect(window.sessionStorage.getItem("capybara.shell.notified")).toContain("b"),
+      expect(window.sessionStorage.getItem("capybara.shell.notified.o1")).toContain("b"),
     );
     await refetch(client());
     expect(notify).toHaveBeenCalledTimes(1);
@@ -100,12 +100,12 @@ describe("shell notifications", () => {
     installNotify(notify);
     const { qc } = mount();
     await waitFor(() =>
-      expect(window.sessionStorage.getItem("capybara.shell.notified")).toBe("[]"),
+      expect(window.sessionStorage.getItem("capybara.shell.notified.o1")).toBe("[]"),
     );
     inbox = [item("c")];
     await refetch(qc);
     await waitFor(() =>
-      expect(window.sessionStorage.getItem("capybara.shell.notified")).toBe('["c"]'),
+      expect(window.sessionStorage.getItem("capybara.shell.notified.o1")).toBe('["c"]'),
     );
     expect(notify).not.toHaveBeenCalled();
   });
@@ -116,5 +116,34 @@ describe("shell notifications", () => {
     mount();
     await new Promise((r) => setTimeout(r, 0));
     expect(calls.filter((c) => c.url.includes("/inbox"))).toHaveLength(0);
+  });
+
+  it("more than three fresh items in one read collapse into one notification", async () => {
+    const notify = vi.fn().mockResolvedValue(undefined);
+    installNotify(notify);
+    const { qc } = mount();
+    await waitFor(() =>
+      expect(window.sessionStorage.getItem("capybara.shell.notified.o1")).toBe("[]"),
+    );
+    setVisibility("hidden");
+    inbox = [item("a"), item("b"), item("c"), item("d")];
+    await refetch(qc);
+    await waitFor(() => expect(notify).toHaveBeenCalledTimes(1));
+    expect(notify).toHaveBeenCalledWith({
+      title: en.shellNotify.title,
+      body: en.shellNotify.other,
+      path: "/inbox",
+    });
+  });
+
+  it("keeps its handled ids per org", async () => {
+    installNotify(vi.fn().mockResolvedValue(undefined));
+    inbox = [item("a")];
+    mount();
+    await waitFor(() =>
+      expect(window.sessionStorage.getItem("capybara.shell.notified.o1")).toBe('["a"]'),
+    );
+    expect(window.sessionStorage.getItem("capybara.shell.notified.o2")).toBeNull();
+    expect(window.sessionStorage.getItem("capybara.shell.notified")).toBeNull();
   });
 });
