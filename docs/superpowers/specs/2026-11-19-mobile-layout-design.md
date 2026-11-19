@@ -29,10 +29,10 @@ native shells fill in, so that no shell ever draws UI of its own beyond its star
 ### 1.1 Three lines of work (decided)
 
 1. **This spec: the core layout.** Size classes, the App Shell per class, templates that adapt,
-   slots that declare their compact form, mobile specifics, foldables, PWA and push.
+   slots that declare their compact form, mobile specifics, foldables and an installable PWA.
 2. **The desktop client** (Electron): draws nothing but an address entry page, loads the
    deployment's web, and offers native capabilities through the Shell environment (§9).
-3. **A mobile app later** (Capacitor): the same, on iOS and Android, adding native push.
+3. **A mobile app later** (Capacitor): the same, on iOS and Android.
 
 **No React Native (decided).** Self-hosted deployments run different kernel versions; a UI
 bundled in a store build would skew against them, while a web loaded from the deployment never
@@ -56,8 +56,9 @@ Goals:
   (§7).
 - Foldables, including the iPhone Duo, by progressive enhancement (§8).
 - A **Shell environment** contract for native shells (§9), shared with the desktop spec.
-- An installable PWA with Web Push, on a generic **notification target** model in the kernel
-  (§10), built into the kernel, with a seam for native push in an enterprise's own app build.
+- An installable PWA with a per-deployment name and icon (§10). Push notifications are
+  **deferred to a later design** (decided 2026-11-19); §10.3 records what is already decided as
+  its input.
 - Verification per class and per template, with real-device widths (§11).
 
 Non-goals:
@@ -65,8 +66,8 @@ Non-goals:
 - A native UI of any kind (React Native, SwiftUI, Compose). The shells' only own page is the
   address entry page.
 - Specially designed admin pages for phones. They work through the templates.
-- Offline use. The web needs its deployment; a service worker exists for push, not for caching
-  (§10.2).
+- Offline use. The web needs its deployment.
+- Push notifications (deferred, §10.3).
 - The desktop shell's own behavior (connecting the machine as a device, the tray, updates): the
   desktop spec.
 - Layout by device model, user agent or orientation.
@@ -77,8 +78,6 @@ Anti-goals (a failure even if it works):
   is the design package's.
 - User-agent sniffing anywhere in the web, for layout or for shell detection.
 - A first paint that draws the wrong class and then jumps after hydration.
-- A notification that tells a person something they may no longer see (an org they left, an
-  approval that is not theirs).
 - A shell that grants a page a native capability it did not declare, or performs a dangerous one
   without a native confirmation.
 
@@ -285,9 +284,9 @@ conversation's greeting and agents row.
 
 - **Inbox / approvals**: the InboxPage compact stack (§5.1); an item's screen puts the decision
   (allow once / allow for the session / deny, the scope picker) in the sticky bottom row; a
-  decision pops back to the list and the next item is one tap. A push notification for an
-  approval opens the conversation at the approval card (`/chat/<id>#approval=<id>`, scrolled
-  into view), because the approval reads best in its context; the inbox lists it too.
+  decision pops back to the list and the next item is one tap. A link to an approval
+  (`/chat/<id>#approval=<id>`, from the inbox, an IM card or later a notification) opens the
+  conversation scrolled to the approval card, because the approval reads best in its context.
 - **Files**: a file opened from a conversation is the pushed right-area page (§5.4) with the
   previewer full screen and share / download in its top bar; the file preview plugin's embeds
   get the full width; the HTML render (`HtmlDocumentFrame`) keeps its sandbox. The properties
@@ -392,7 +391,7 @@ tokens, `--cb-inset-top|right|bottom|left` =
 `max(env(safe-area-inset-*), var(--cb-shell-inset-*, 0px))`, so a native shell's own chrome
 (§9.3) and the OS insets combine in one place. Nothing hardcodes a device's inset.
 
-### 7.6 Background stream loss: push and resume
+### 7.6 Background stream loss: resume from the event log
 
 Mobile browsers suspend background pages and drop their EventSource. The event log is the
 single source of truth, so resuming is reading it:
@@ -403,7 +402,8 @@ single source of truth, so resuming is reading it:
   `lib/live-drafts.ts`), and invalidates the `live` freshness class (inbox, conversation groups,
   files). Today the web has no visibility handling at all (no `visibilitychange` listener in
   `apps/web/src`); this is new.
-- What happens while the page is away reaches the person by **push** (§10).
+- Telling the person about what happened while the page was away is the job of notifications,
+  deferred to a later design (§10.3); IM channels do it today for conversations bound to them.
 
 ## 8. Foldables, including the iPhone Duo (decided)
 
@@ -528,7 +528,6 @@ declare global {
   | `notify@1` | Desktop spec | OS notifications while the shell runs; a click focuses the conversation |
   | `openExternal@1` | Desktop spec | Open an http(s) URL in the system browser |
   | `signIn@1` | Desktop spec (§6.5 there) | `start()`: sign in through the system browser (`/apps/authorize`, PKCE, back through the app's `capybara://auth/callback` scheme; `features.appSignIn` in `/api/v1/meta`). Offered by the desktop shell and by the later mobile app shell, which reuses the same flow (an `ASWebAuthenticationSession` / Custom Tabs style browser session returning through its scheme) |
-  | `push@1` | Mobile app spec (later) | Only in an enterprise's own fork of the mobile app (§10.9): register its native push token (APNs, a vendor channel) as a notification target. The official app does not offer it |
   | `chrome@1` | This spec | The web tells the shell its scheme and background token so native chrome (status bar, window background, title bar overlay) matches the theme: `setAppearance({ scheme, background })` |
 
   Which shells offer `chrome@1`: the **desktop shell** always (window background and title bar
@@ -580,24 +579,22 @@ declare global {
 - A remote page gets **only the declared capabilities**. Nothing generic (no `invoke(name)`,
   no file system, no shell commands, no credentials).
 - **Anything dangerous is confirmed natively** by the shell, in UI the page cannot draw or click:
-  connecting the machine as a device, registering for push, opening a file, anything that widens
-  what the machine allows. A capability never returns a secret (a device credential, a push
-  token is registered with the kernel by the shell's call, not handed back to the page; see
-  §10.4).
+  connecting the machine as a device, opening a file, anything that widens what the machine
+  allows. A capability never returns a secret (a device credential, a sign-in token).
 - **User activation and one dialog at a time.** A capability call that needs a native
   confirmation is refused unless the page has a transient user activation at the moment of the
   call (`navigator.userActivation.isActive`, checked by the shell's injected code before it
   forwards the call), so a page cannot raise native dialogs on its own. A shell shows **at most
   one native dialog at a time per profile and origin**; further confirming calls fail with
-  `busy` until it is answered. This applies to every confirming capability alike: the desktop's
-  `device@1` (connect, resume, a widening ceiling request) and the mobile app's `push@1`
-  (register).
+  `busy` until it is answered. This applies to every confirming capability alike, in the desktop
+  and the mobile shell; the desktop's `device@1` (connect, resume, a widening ceiling request) is
+  the first.
 - Client extensions (L2 / L3) run in the page with full trust (client extensions spec §9.6), so
   they can reach the global like the web can. This is accepted: approval is governance, and the
   native confirmation is the barrier for anything dangerous. `@capybara-hq/plugin-client` does
   not re-export the shell.
 
-## 10. PWA and notifications (decided: PWA, Web Push, a notification target model)
+## 10. PWA and notifications (decided: an installable PWA now, push deferred)
 
 ### 10.1 What exists today
 
@@ -607,8 +604,7 @@ declare global {
 - **IM channels are the mobile notification path today**: a conversation bound to a channel
   thread gets its approval and question cards and its results in the chat
   (`channels/outbound.ts`, `channels/cards.ts`), and scheduled tasks deliver to a chat. A
-  conversation started on the web notifies nobody; the scheduled tasks spec listed "e-mail or
-  push notifications" as a non-goal.
+  conversation started on the web notifies nobody.
 
 ### 10.2 The PWA (decided; details designer's call)
 
@@ -621,12 +617,13 @@ declare global {
   `<title>` default and the `apple-mobile-web-app-title` follow the same name.
 - iOS: `appleWebApp` metadata (capable, `black-translucent` status bar with the safe areas of
   §7.5).
-- **Service worker** `/sw.js` (scope `/`), served by the web with `Cache-Control: no-cache`:
-  `push` and `notificationclick` handlers only. **No fetch handler and no caching** (designer's
-  call): a cached UI would skew against the deployment's kernel, exactly what loading from the
-  deployment avoids. The CSP gains `worker-src 'self'`, reviewed with the other script sources.
+- **No service worker in this design** (designer's call): installability rests on the manifest
+  (Safari's Add to Home Screen needs none). If a browser's install criteria require one, a worker
+  with no fetch handler and no caching is added; a cached UI would skew against the
+  deployment's kernel, exactly what loading from the deployment avoids. Push will bring its own
+  worker with its later design.
 - **Install** is the browser's own (Chrome's install prompt, Safari's Add to Home Screen); the
-  Me page offers a short how-to on iOS, where Web Push needs the home-screen app (iOS 16.4+).
+  Me page offers a short how-to on iOS.
 
 #### 10.2.1 The platform icon (designer's call)
 
@@ -649,152 +646,34 @@ declare global {
   the Dock icon at runtime; the desktop spec decides).
 - **Default**: the Capybara icon set shipped with the web (app, maskable, monochrome SVG).
 
-### 10.3 The notification target model (kernel)
+### 10.3 Notifications (deferred)
 
-A **notification target** is one place a person's notifications can be delivered. **The kernel
-ships Web Push built in (decided)**; native push (APNs, Chinese Android vendor channels: Huawei,
-Xiaomi, OPPO, vivo, Honor; there is no FCM in China) exists only for an enterprise's own build of
-the mobile app, configured with its own credentials on its own deployment (§10.9). **There is no
-official push relay** run by Capybara (decided). IM channels stay what they are.
+Push notifications get their own later design (maintainer decision 2026-11-19). What is already
+decided, as its input (one line each, no mechanism):
 
-- **Table** `capybara.notification_targets` (designer's call): `id`, `account_id`, `kind`
-  (`web_push` | later `apns` | `vendor:<name>`), `data` (the subscription: endpoint, `p256dh`,
-  `auth` for Web Push; stored encrypted like other secrets), `label` (what the person named it or
-  the shell reported, e.g. "iPhone"; shown in settings, never used for layout), `locale`,
-  `created_at`, `last_ok_at`, `failures`, `disabled_at`. Per **account**, not per org: one phone
-  serves every org the person belongs to; every notification is for one (account, org) pair and
-  rechecked at send time (below).
-- **Preferences** `capybara.notification_preferences`: per account, per category (§10.5), push
-  on / off (§10.6 for where they live and the defaults).
-- **Senders** (designer's call): an internal kernel registry, one `NotificationSender` provider
-  per target `kind`, each `send(target, payload)` with an org-free, kernel-built payload and no
-  retries of its own (the queue retries). Web Push (VAPID, RFC 8030 / 8291 encryption) is the one
-  sender now, in the kernel's `notifications` module. **No extension point**: Web Push is a
-  standard protocol with no vendor SDK, and the native senders of §10.9 are deployment-credential
-  integrations an enterprise turns on in config, not something org admins install; an extension
-  point would be a contract nobody implements yet. If a vendor channel ever needs an SDK the
-  kernel should not carry, that is the time to introduce one.
-- **Egress**: a push endpoint is a URL a browser supplied. The kernel accepts a Web Push target
-  only when the endpoint's host is on a configurable allowlist of push services
-  (`fcm.googleapis.com`, `updates.push.services.mozilla.com`, `web.push.apple.com`,
-  `*.notify.windows.com` by default) and the sender goes through `packages/kernel/src/net`
-  (private addresses refused).
-- **Keys**: one VAPID key pair **per deployment**: kernel config
-  `notifications.webPush.vapidPublicKey` / `vapidPrivateKey` (secret,
-  `CAPYBARA_NOTIFICATIONS__WEB_PUSH__…`); when unset the kernel generates a pair once (under
-  `LockService`) and stores the private key **through the kernel's existing secret storage**:
-  `capybara.secrets`, envelope-encrypted under the deployment master key (`masterKey`, rotated
-  with `masterKeyPrevious` and `rewrapToCurrentMasterKey`), in the kernel namespace and the
-  deployment pseudo-org `_deployment`, as extension deployment-config secrets are stored today
-  (`extensions/deployment-config-store.ts`, `ctx/secrets.ts`). Never plaintext in PG; the public
-  key may sit beside it in the clear. Every replica signs with the same key. Changing
-  the key invalidates every browser subscription (the settings page then asks to re-enable).
+- **Four categories**: *waiting for you* (an approval, question or connect request awaiting the
+  person: `approval_requested`, `question_asked`); *agent replies* (a run ends completed or
+  failed in a conversation the person is not viewing: `RunFinish.finishIn`); *task status* (a
+  background task or background sub-agent finishes or fails: `background_task_finished`,
+  `subagent_finished`); *scheduled tasks* (a task run finishes or fails:
+  `ScheduleRunTracker.onRunFinished`).
+- **Per-category opt-out per person**: each person chooses, per category, whether to receive
+  push.
+- **No deduplication with IM**: a channel card and a push may both arrive for the same event.
+- **No official push relay** run by Capybara.
+- **The official mobile app has no native push**; native push exists only in an enterprise's own
+  fork of the clients repository, with its own credentials (§10.4).
 
-### 10.4 Registering a target
-
-- **Browser**: on `/account/notifications` (a personal `SettingsPage`, new) the person taps
-  "Notify me on this device"; the web asks for permission (a user gesture, required by iOS),
-  subscribes with the deployment's VAPID public key and sends the subscription
-  (`POST /api/v1/me/notification-targets`). The page lists the person's targets with their
-  labels and last success, each removable, and the per-category preferences (§10.6).
-- **An enterprise's own mobile app build** (later, §10.9): the web calls `push@1.register()`; the
-  shell confirms natively (the OS permission prompt), obtains the native token and registers it
-  **itself** with the kernel using the page's session (so the token never passes through page JS,
-  §9.4).
-- A sender's "gone" answer (Web Push 404 / 410, APNs `Unregistered`) deletes the target;
-  repeated other failures disable it after a threshold, shown on the settings page.
-
-### 10.5 What notifies (decided: the categories; their mapping to events is designer's call)
-
-Four **categories** (maintainer decision 2026-11-19, approvals kept from the first draft), each
-triggered by an event the kernel already writes in one transaction, so the outbox row of §10.7
-joins that transaction:
-
-| Category | Triggering write (existing) | Notifies when | Recipient |
-|---|---|---|---|
-| `waiting` 等你处理 / Waiting for you | `ApprovalsService` appending `approval_requested` (sub-agents' included); `question_asked` and a connect request for the person (designer's call: these also block the run on the person, so they ride in this category instead of a fifth one) | Always (presence below still applies) | Each account that can decide the approval; the conversation's owner for a question or connect request |
-| `replies` 智能体回复 / Agent replies | `RunFinish.finishIn` (`runtime/run-finish.ts`, the one writer of a run's terminal state) with `completed` (the final `assistant_message`) or `failed` | The owner is not viewing that conversation (presence below). Not for `aborted` (the person stopped it), not for a sub-agent's run (the parent's reply covers it), not for a scheduled task's run (the `schedules` category covers it) | The conversation's owner |
-| `tasks` 任务状态 / Task status | `BackgroundFinish.finish` (`background/finish.ts`) appending `background_task_finished` (finished, failed, or `lost`, which reads as failed); a background sub-agent's `subagent_finished` | A background task or background sub-agent finishes or fails. Not when the person stopped it (`stoppedBy` the person) | The conversation's owner |
-| `schedules` 定时任务 / Scheduled tasks | `ScheduleRunTracker.onRunFinished` (`schedules/run-tracker.ts`, in the same transaction as `finishIn`) with `completed` or `failed`, trial runs included | A task run finishes or fails (a run the person aborted counts as completed and does not notify, as the tracker already treats it). A task paused after repeated failures says so in the failed run's notification | The task's owner |
-
-Not notified: anything the person did themselves, org notices and members' requests for admins
-(they wait in the inbox). **No deduplication with IM channels (decided)**: a conversation bound to
-a channel thread may deliver its card in the chat *and* a push; the person controls push per
-category (§10.6).
-
-- **Presence suppression**: a person watching the conversation is not pushed for it. The web
-  reports `PUT /api/v1/me/presence { conversationId, visible }` on visibility changes and every
-  20 s while visible; the kernel keeps it in Redis with a 45 s TTL (never process memory). A
-  notification is skipped when a visible presence exists for that account and conversation.
-- **Payload** (designer's call, proposed for the lock-screen question): the category, the org
-  slug, the conversation id, a title in the account's locale ("研究助手 等待你的批准" / "Research assistant needs your
-  approval") and the conversation's title. Never tool arguments, message text, file names or
-  secrets: the lock screen is public. The click target is a same-origin URL
-  (`/chat/<id>#approval=<id>`, `/inbox`); the service worker focuses an open window on it or
-  opens one.
-
-### 10.6 Roles, orgs and governance
-
-- Every send rechecks, at send time, that the account is an **active member of the org** and
-  still **can see the item** (decide the approval, own the conversation or task, be an org
-  admin for `admin_request`); otherwise the notification is dropped. A target is never shared
-  between accounts.
-- The super admin switches push on the platform (`/admin/settings`, on by default); an org admin
-  can switch it off for the org (`/settings`); the person chooses categories (below).
-- **Per-person preferences (decided: categories × push on/off; place and defaults designer's
-  call).** Each person sets, per category, whether to receive push: four switches on
-  **我的 → 通知 / Me → Notifications** (`/account/notifications`, the personal `SettingsPage` of
-  §10.4, reached from the compact Me tab and from the account menu on medium and expanded),
-  under the list of their devices. They are per **account** and apply in every org the person
-  belongs to (one phone, one set of choices; a per-org override is not added). **Default: all
-  four on** once the person has registered a device (registering is already the opt-in; a
-  person who registered wants to hear about their work). The preferences govern push only; IM
-  delivery stays the channel binding's. Read and written through `GET` / `PUT
-  /api/v1/me/notification-preferences`.
-- Payloads carry no org data beyond the slug and titles; a person in two orgs sees which org a
-  notification is from.
-
-### 10.7 Multi-replica
-
-- The event that triggers a notification (the approval row, the run's end, the background task's
-  finish) writes an outbox row **in the same transaction** (`OutboxService.add`,
-  `notification.dispatch`), never an `afterCommit` hint: losing it would lose the notification.
-- The outbox handler resolves recipients, rechecks access, applies presence and preferences, and
-  enqueues one BullMQ job per target on queue `cap-kernel-notifications` with the deterministic
-  id `notify-<kind>-<sourceId>-<targetId>` (no `:`), so a retried dispatch never sends twice.
-  The consumer and the outbox handler are provided only under `WorkerModule`.
-- Retries with backoff are the queue's; a sender error with a "gone" kind deletes the target
-  in a transaction.
-- Presence lives in Redis with a TTL; nothing is in process memory.
-
-### 10.8 Desktop and channels
-
-The desktop shell has no Web Push (Electron has no push service); while it runs it gets
-notifications through the same stream data via `notify@1` (desktop spec). IM channels are
-unchanged. A person can have all three and may get the same event on several (decided: no
-deduplication); the per-category preferences of §10.6 are the person's control over push.
-
-### 10.9 Official apps, forks and native push (decided)
+### 10.4 Official apps and forks (decided)
 
 - **Capybara publishes only the official desktop app and the official mobile app shell**, with
   the fixed Capybara name and icon. There is no supported white-label product. The clients
-  repository is open source; an enterprise that wants its own name, icon or native push forks it
-  and publishes its own build in the stores itself. The fork keeps the brand (app name, icons,
-  bundle id / application id, push entitlements and vendor app ids) in one place in the clients
-  repository (`packages/shell` brand config, designer's call), so a fork changes one file and its
-  assets.
+  repository is open source; an enterprise that wants its own brand forks it and publishes its
+  own build in the stores itself. The fork keeps the brand (app name, icons, bundle id /
+  application id) in one place in the clients repository (`packages/shell` brand config,
+  designer's call), so a fork changes one file and its assets.
 - **Sign-in in the mobile app shell** reuses the desktop's system-browser flow (`signIn@1`,
   §9.2): the same kernel routes, PKCE and an app scheme registered in `auth.appRedirectUris`.
-- **The official mobile app has no native push**: there is no relay, and Web Push is not
-  available inside the app's WebView. In the official app, notifications come from IM channels;
-  the installed PWA (§10.2) keeps Web Push. Native push exists only in an enterprise's own fork,
-  with its own credentials.
-- **The kernel seam, just enough for such a fork later** (not designed now): a new target `kind`
-  per native channel (`apns`, `vendor:<name>`), carrying the app id it was registered from; the
-  matching `NotificationSender` in the kernel; and the enterprise's own credentials (an APNs key,
-  a vendor app secret) as kernel deployment config, keyed by app id, so the deployment sends only
-  for the apps it is configured for. A target whose kind or app id has no configured credentials
-  is refused at registration. Nothing else (triggers, preferences, presence, the outbox) changes.
 
 ## 11. Verification (decided)
 
@@ -858,9 +737,8 @@ state lists, size tables, reference blocks, the blind side-by-side review, `ACCE
   manifest narrowing, `useSizeClass` / `useViewportSegments` in plugin-client, the `size=` and
   `shell=` state tokens, the segment-aware split, the Shell environment (`ShellEnvironmentScript`,
   insets, drag regions, `chrome@1`, `lib/shell.ts`) in time for the desktop client.
-- **P3: PWA and notifications.** Manifest with `platform.name` and the platform icon, service
-  worker, the notification target model and the built-in Web Push sender, presence, triggers, the
-  settings page. Native senders are not planned: only the seam of §10.9 exists.
+- **P3: PWA.** The manifest with `platform.name` and the platform icon setting. Push
+  notifications follow in their own design (§10.3).
 
 ## 13. Changes by package
 
@@ -868,15 +746,13 @@ state lists, size tables, reference blocks, the blind side-by-side review, `ACCE
   top bar, push transitions, `ListDetail`, follow-finger sheets, per-class template forms,
   `ShellEnvironmentScript`, inset tokens, drag regions, `findCompactViolations`; the design spec
   §4, §5, §6.13, §6.16 and §7.3 updated first.
-- `apps/web`: the viewport export, `/conversations`, `/me`, `/account/notifications`, the nav
-  data for the bottom navigation, `lib/shell.ts`, foreground resume and presence, the manifest
-  and service worker, i18n (zh and en).
+- `apps/web`: the viewport export, `/conversations`, `/me`, the nav data for the bottom
+  navigation, `lib/shell.ts`, foreground resume, the manifest, the 应用图标 settings section,
+  i18n (zh and en).
 - `packages/plugin-sdk`: `compact` on `UiSlotSpec`, the manifest narrowing, the
   `CapybaraShell` types.
 - `packages/plugin-client`: `useSizeClass`, `useViewportSegments`.
-- `packages/kernel`: a `notifications` module (targets, preferences, presence, dispatch, the
-  outbox handler and queue, the Web Push sender), the platform icon (table, upload and public
-  routes), VAPID config, its migrations and routes.
+- `packages/kernel`: the platform icon (table, upload and public routes) and its migration.
 - `tools/checks`: `design-breakpoint`, `web-shell-access`, the slot field in `check:ui-slots`.
 
 ## 14. Facts in the code that differ from the decisions
@@ -901,8 +777,8 @@ Recorded so review sees them; the design above resolves each.
    list-detail stack; kept.
 7. **No viewport meta** beyond Next's default and **no visibility handling** in the web; safe
    areas are used only by the composer's bottom sheet.
-8. **No push or notification model** in the kernel; the scheduled tasks spec listed push as a
-   non-goal.
+8. **No push or notification model** in the kernel; this design keeps it so (push deferred,
+   §10.3).
 9. **The desktop draft on `origin/docs/desktop-client`** still names its bridge
    `window.capybaraDesktop` with `notify` and `openExternal` as plain functions; the rewrite
    adopts `window.capybaraShell` and the capability keys of §9.2.
@@ -913,18 +789,16 @@ Recorded so review sees them; the design above resolves each.
    unknown until Apple says; the design degrades to one screen without them.
 2. **`viewport-fit=cover` on the iPhone Duo outer display**: Apple has not decided; we follow
    `env()`. Revisit when Safari ships the behavior.
-3. **Lock-screen content** (proposed in §10.5: agent name and conversation title, never tool
-   arguments, message text or file names; no setting): confirm, or prefer generic text or an
-   org setting?
-4. **Thread windowing**: accept the CSS-only step first and windowing only on measurement?
-5. **Short windows** (§3.2): accept the height trim, or keep height out entirely?
+3. **Thread windowing**: accept the CSS-only step first and windowing only on measurement?
+4. **Short windows** (§3.2): accept the height trim, or keep height out entirely?
+
+The lock-screen text question moved to the later push design with the rest of push (§10.3).
 
 ## AGENTS.md rules touched
 
 - **Web UI.** Kept and extended: pages still write no styles; every per-class form lives in
-  `packages/design` templates and the shell; new pages (`/conversations`, `/me`,
-  `/account/notifications`) use templates, `defineQuery` reads and `useAppMutation` writes;
-  first paint follows the window through CSS. New checks `design-breakpoint` and
+  `packages/design` templates and the shell; new pages (`/conversations`, `/me`) use templates,
+  `defineQuery` reads and `useAppMutation` writes; first paint follows the window through CSS. New checks `design-breakpoint` and
   `web-shell-access` join `check:web-ui` / `tools/checks/README.md`.
 - **Extension UI.** `UI_SLOTS` gains `compact` per slot (`pnpm gen:ui-slots`, `check:ui-slots`);
   embeds and the HTML render never get the shell global; embed tokens unchanged.
@@ -934,34 +808,23 @@ Recorded so review sees them; the design above resolves each.
   `check:plugin-client-api`.
 - **Dependency direction.** apps/web still depends only on `@capybara-hq/design` and implements
   plugin-client's interface; the shell contract types live in plugin-sdk, which imports nothing.
-- **Multi-replica discipline.** Notifications are owed work: an outbox row in the triggering
-  transaction, a BullMQ queue and job ids without `:`, consumers under `WorkerModule`, presence in
-  Redis with a TTL, VAPID key generation under `LockService` (the private key in the encrypted
-  `capybara.secrets`); the sidebar choice is a cookie,
-  not server state.
-- **Migrations.** New expand-only tables in schema `capybara` (`notification_targets`,
-  `notification_preferences`, `platform_icons`).
-- **Kernel.** A new `notifications` module with `@Injectable` providers, `createZodDto` DTOs,
-  registered error codes.
-- **Platform tool.** The new routes get Platform operations (preferences, listing and removing
-  targets) or exclusions with a reason (registering a browser subscription and presence need a
-  browser).
-- **Extensions / plugins.** Untouched: Web Push is built into the kernel and no extension point
-  is added (§10.3).
-- **Plugins and the catalog: URLs through `packages/kernel/src/net`.** Push endpoints are
-  browser-supplied URLs: host allowlist plus the kernel's `net`.
-- **Config.** New kernel config `notifications.webPush.vapidPublicKey` / `vapidPrivateKey`
-  (secret; generated into PG when unset), `notifications.webPush.allowedHosts`, and later the
-  native senders' credentials keyed by app id; `platform.name` comes from the desktop spec.
-  `adding-config`: schema meta and `docs/config.md` regenerated.
+- **Multi-replica discipline.** Nothing new lives in process memory: the sidebar choice is a
+  cookie, the platform icon is in object storage and PG; push, the one owed-work feature, is
+  deferred.
+- **Migrations.** One new expand-only table in schema `capybara` (`platform_icons`).
+- **Kernel.** The platform icon routes (upload for super admins, public read) with
+  `createZodDto` DTOs and registered error codes, in an existing or a small new module.
+- **Platform tool.** The icon upload route gets a Platform operation or an exclusion with a reason
+  (a file upload from the settings page); the public read route is `@Public` and excluded.
+- **Extensions / plugins.** Untouched.
+- **Config.** No new kernel config; `platform.name` comes from the desktop spec.
 - **Object storage.** The platform icon lives under the kernel's `deployment/` prefix.
-- **Language / i18n.** New UI text in zh and en (平台 / 超级管理员 / 智能体); notification titles in
-  the account's locale; model-facing text untouched.
-- **Tests.** New visual and Playwright specs, design jsdom tests and kernel integration tests for
-  dispatch; a dual-replica test for dispatch dedupe joins the `container` list.
-- **CSP.** `ShellEnvironmentScript` carries the request nonce; `worker-src 'self'` is a CSP change
-  reviewed on its own.
+- **Language / i18n.** New UI text in zh and en (平台 / 超级管理员 / 智能体); model-facing text
+  untouched.
+- **Tests.** New visual and Playwright specs, design jsdom tests, and kernel integration tests for
+  the platform icon routes (integration, the default list).
+- **CSP.** `ShellEnvironmentScript` carries the request nonce; no new script source.
 - New area rule to add to AGENTS.md: "**Mobile and shells:** layout follows size classes by window
-  width only (compact < 600, medium 600–840, expanded > 840), adapted in design templates and the
+  width only (compact < 600, medium 600–840, expanded ≥ 841), adapted in design templates and the
   shell, never in pages; native shells are detected only through `window.capybaraShell`
   capabilities, never the user agent; dangerous shell capabilities are confirmed natively."
