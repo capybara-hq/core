@@ -222,6 +222,11 @@ serving" sleep infinity` on Linux. If it cannot start or ends early, the status 
 sleep (a wall-clock jump of over 30 s): it writes `{ "op": "wake" }` to `commands.log` and sets
 `lastWakeAt` in the live status.
 
+A holder that cannot start or ends early is not started again while the same mode still wants it;
+it is tried again after nothing is wanted for one check, or when the mode changes. On Linux a runner
+killed with SIGKILL leaves `sleep infinity` holding the inhibitor until that process is killed (on
+macOS `caffeinate -w` ends with the runner).
+
 What this cannot prevent: closing the lid of a Mac on battery without an external display
 (clamshell) still sleeps; so do choosing Sleep, a critically low battery and thermal emergencies;
 on Linux, the lid switch as logind handles it (taking `handle-lid-switch` needs privileges the user
