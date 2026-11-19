@@ -65,7 +65,7 @@ beforeAll(async () => {
 
 afterEach(async () => {
   vi.restoreAllMocks();
-  await sql`UPDATE capybara.orgs SET settings = settings - 'fullAccess' - 'cloudNetwork' WHERE id = ${orgId}`.execute(
+  await sql`UPDATE capybara.orgs SET settings = settings - 'outsideSandbox' - 'deviceNetwork' WHERE id = ${orgId}`.execute(
     raw,
   );
 });
@@ -173,7 +173,7 @@ describe("DevicesService.modeLevel", () => {
 
   it("an unsandboxed old program is refused where auto mode is not allowed (one derivation)", async () => {
     const deviceId = await legacyLocalDevice("none");
-    await sql`UPDATE capybara.orgs SET settings = ${JSON.stringify({ fullAccess: "off" })}::jsonb
+    await sql`UPDATE capybara.orgs SET settings = ${JSON.stringify({ outsideSandbox: "off" })}::jsonb
       WHERE id = ${orgId}`.execute(raw);
     // the machine reports auto mode while the policy's ceiling is sandbox
     expect(await k.app.get(NetworkGrants).reportedMode(deviceId)).toBe("auto");
@@ -186,7 +186,7 @@ describe("DevicesService.modeLevel", () => {
 
   it("the org turning auto mode off cuts a device that reports auto to sandbox", async () => {
     const deviceId = await localDevice();
-    await sql`UPDATE capybara.orgs SET settings = ${JSON.stringify({ fullAccess: "off" })}::jsonb
+    await sql`UPDATE capybara.orgs SET settings = ${JSON.stringify({ outsideSandbox: "off" })}::jsonb
       WHERE id = ${orgId}`.execute(raw);
     expect(await devices.modeLevel(orgId, deviceId)).toMatchObject({
       mode: "sandbox",

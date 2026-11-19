@@ -1272,7 +1272,9 @@ describe("exact background revocation through the outbox and the worker", () => 
       filesystem: { kind: "scoped", readRoots: [outside, "/skills"], writeRoots: [outside] },
     });
     await f.db.updateTable("runs").set({ status: "completed" }).where("id", "=", f.runId).execute();
-    await k.app.get(OrgSettingsService).update(f.orgId, { fullAccess: "off" }, ownerAccount().id);
+    await k.app
+      .get(OrgSettingsService)
+      .update(f.orgId, { outsideSandbox: "off" }, ownerAccount().id);
     expect((await intentOf(task)).state).toBe("revoked");
     await drainOutbox(k.app, { jobName: "sandbox-operation-revoke" });
     await waitFor(
@@ -1353,7 +1355,7 @@ describe("exact background revocation through the outbox and the worker", () => 
       .get(OrgSettingsService)
       .update(
         f.orgId,
-        { cloudNetwork: { mode: "allowlist", excludedHosts: [HOST] } },
+        { deviceNetwork: { ceiling: "allowlist", excludedHosts: [HOST] } },
         ownerAccount().id,
       );
     expect((await intentOf(task)).state).toBe("revoked");
@@ -1400,7 +1402,9 @@ describe("exact background revocation through the outbox and the worker", () => 
     expect((await intentOf(fullTask)).scope).toMatchObject({ profile: "full-access" });
     expect((await intentOf(restrictedTask)).scope).toMatchObject({ profile: "approve-for-me" });
     await f.db.updateTable("runs").set({ status: "completed" }).where("id", "=", f.runId).execute();
-    await k.app.get(OrgSettingsService).update(f.orgId, { fullAccess: "off" }, ownerAccount().id);
+    await k.app
+      .get(OrgSettingsService)
+      .update(f.orgId, { outsideSandbox: "off" }, ownerAccount().id);
     expect((await intentOf(fullTask)).state).toBe("revoked");
     expect((await intentOf(restrictedTask)).state).toBe("background-running");
     await drainOutbox(k.app, { jobName: "sandbox-operation-revoke" });

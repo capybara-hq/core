@@ -220,7 +220,7 @@ describe("file tool paths in the device's mode", () => {
     const off = await owner({
       method: "PATCH",
       url: `/api/v1/orgs/${orgId}/settings`,
-      payload: { fullAccess: "off" },
+      payload: { outsideSandbox: "off" },
     });
     expect(off.statusCode, off.body).toBe(200);
     const conv = await createConv(owner, orgId, agentId);
@@ -310,7 +310,7 @@ async function followPlatformMode(): Promise<void> {
   const res = await owner({
     method: "PATCH",
     url: `/api/v1/orgs/${orgId}/settings`,
-    payload: { fullAccess: null },
+    payload: { outsideSandbox: null },
   });
   expect(res.statusCode, res.body).toBe(200);
 }
@@ -523,7 +523,7 @@ describe("a bound conversation works in its project's root", () => {
     const off = await owner({
       method: "PATCH",
       url: `/api/v1/orgs/${orgId}/settings`,
-      payload: { fullAccess: "off" },
+      payload: { outsideSandbox: "off" },
     });
     expect(off.statusCode, off.body).toBe(200);
     try {

@@ -131,7 +131,8 @@
       "owner_required": "只有组织所有者可以执行这个操作。",
       "creation_disabled": "本部署关闭了新建组织。",
       "slug_taken": "该 slug 已被其他组织使用。",
-      "full_access_not_allowed": "无法允许完全访问：平台已关闭它，或者需要组织管理员在网页的组织设置中允许。",
+      "outside_sandbox_not_allowed": "无法允许在沙箱外运行：平台已关闭它，或者需要组织管理员在网页的组织设置中允许。",
+      "network_not_allowed": "组织的设备网络不能比平台允许的更宽，通过 API 令牌或平台工具只能收窄；要放开，请组织管理员在网页的组织设置中修改。",
       "network_allowance_invalid": "内部端点无效：请填写主机名、*.domain 通配符、IP 地址或 CIDR，或 http://host:8080 这样的源。链路本地、回环（包括 localhost）和未指定地址始终不允许，覆盖整个公共后缀的通配符也不允许。",
       "network_allowance_not_found": "该组织没有这个内部端点（可能已被移除）。",
       "network_allowance_widen_not_allowed": "只有超级管理员能在 Web 上的管理控制台里放行内部端点，API 令牌或 Platform 工具不可以。",
@@ -376,6 +377,8 @@
       "owner_report_stale": "这台电脑发来的权限报告已过期，新的工作已暂停。请在电脑上重新运行 capybara-device login。",
       "owner_ceiling_confirmation_required": "为该设备开启完全访问需要你确认。请确认后再试。",
       "full_access_not_allowed": "平台、你的组织或该设备的提供方不允许该设备使用完全访问。",
+      "network_not_allowed": "该网络比你的组织或平台对此设备允许的更宽。",
+      "outside_sandbox_not_allowed": "平台、你的组织、设备所有者或该设备的提供方不允许此设备在沙箱外运行。",
       "restart_required": "旧版本启动的后台任务可能仍在这台电脑上运行。请重启这台电脑以完成升级，然后再试。",
       "replace_required": "旧版本启动的后台任务可能仍在这台电脑上运行，且这台电脑无法证明已重启。请删除这台设备，再把这台电脑作为新设备重新连接。",
       "recreate_required": "旧版本启动的后台任务可能仍在这台设备之前的实例上运行，且已无法确认该实例已被销毁。请删除这台设备后重新创建。"
@@ -555,7 +558,8 @@
     },
     "deployment": {
       "setting_readonly": "这项设置由部署的启动配置（环境变量、配置文件或 Nacos）设定，只能在那里修改。",
-      "full_access_not_allowed": "通过 API 令牌或平台工具只能关闭平台的完全访问；要重新允许，请超级管理员在管理后台设置。",
+      "outside_sandbox_not_allowed": "通过 API 令牌或平台工具只能关闭平台的沙箱外运行；要重新允许，请超级管理员在管理后台设置。",
+      "network_not_allowed": "平台的默认网络不能比上限更宽，通过 API 令牌或平台工具只能收窄网络；要放开，请超级管理员在管理后台设置。",
       "external_sharing_not_allowed": "通过 API 令牌或平台工具只能关闭对外分享；要允许，请超级管理员在后台设置。",
       "sharing_widen_not_allowed": "通过 API 令牌或平台工具只能调低分享有效期上限、移除 CDN 来源；要调高或添加，请超级管理员在后台设置。"
     },

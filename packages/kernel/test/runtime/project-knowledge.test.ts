@@ -634,7 +634,7 @@ describe("project knowledge at run start", () => {
       .executeTakeFirstOrThrow();
     await db
       .updateTable("orgs")
-      .set({ settings: JSON.stringify({ ...(settings as object), fullAccess: "off" }) })
+      .set({ settings: JSON.stringify({ ...(settings as object), outsideSandbox: "off" }) })
       .where("id", "=", orgId)
       .execute();
     let roots: ProjectRootEvent[];

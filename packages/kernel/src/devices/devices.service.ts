@@ -1730,7 +1730,12 @@ export function deviceModeViewOf(
   const copy = (n: DeviceNetwork | null) =>
     local || n === null ? null : { kind: n.kind, hosts: [...n.hosts] };
   const networkKind = local ? "allowlist" : policy.network.kind;
-  const org = settings.cloudNetwork;
+  const org = settings.deviceNetwork;
+  // the mode the org chose (its default or ceiling; the narrower), until T10 reworks this view
+  const orgMode =
+    org?.ceiling === "allowlist" || org?.default === "allowlist"
+      ? "allowlist"
+      : (org?.ceiling ?? org?.default);
   // "org" only when the org supplied what is in effect: the kill switch always wins; auto mode
   // ignores the org's network; a local device's list is the org's only when the org changed the
   // platform's (its own base or a delta); a sandbox cloud device's kind is the org's when it
@@ -1746,8 +1751,8 @@ export function deviceModeViewOf(
         ? "org"
         : "platform"
       : policy.mode === "sandbox" &&
-          org?.mode !== undefined &&
-          (org.mode === "open" ? networkKind === "open-public" : networkKind === "allowlist")
+          orgMode !== undefined &&
+          (orgMode === "open" ? networkKind === "open-public" : networkKind === "allowlist")
         ? "org"
         : "platform";
   const network = local
@@ -1759,7 +1764,7 @@ export function deviceModeViewOf(
     allowedBy:
       policy.allowedMode === "sandbox"
         ? null
-        : settings.fullAccess === "allowed"
+        : settings.outsideSandbox === "allowed"
           ? "org"
           : "platform",
     network,

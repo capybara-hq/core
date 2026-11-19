@@ -311,7 +311,7 @@ it.each(["request-approval", "approve-for-me"] as const)(
   "%s: a ceiling that forbids Full access refuses the escalation with what to do instead",
   async (profile) => {
     const f = await escalated(profile);
-    await k.app.get(OrgSettingsService).update(f.orgId, { fullAccess: "off" }, f.accountId);
+    await k.app.get(OrgSettingsService).update(f.orgId, { outsideSandbox: "off" }, f.accountId);
     const review = vi.spyOn(k.app.get(CommandReviewService), "review");
     await f.step();
     expect(f.effects()).toBe(0);
@@ -394,7 +394,7 @@ async function platformFull(permission: "off" | "allowed") {
     displayName: "Admin",
     superAdmin: true,
   });
-  await k.app.get(SettingsService).update({ devicesFullAccess: { permission } }, admin.id);
+  await k.app.get(SettingsService).update({ devicesOutsideSandbox: { permission } }, admin.id);
 }
 
 it("a background escalation discloses that it keeps running outside the sandbox, at most its deadline", async () => {
@@ -552,7 +552,7 @@ it.each(["org", "platform"] as const)(
     f.setEffectHook(async (scope, method) => {
       if (method !== "exec" || scope.filesystem.kind !== "device") return;
       if (writer === "org")
-        await k.app.get(OrgSettingsService).update(f.orgId, { fullAccess: "off" }, f.accountId);
+        await k.app.get(OrgSettingsService).update(f.orgId, { outsideSandbox: "off" }, f.accountId);
       else await platformFull("off");
       revokedWhileRunning = (await intentsOf(f)).map((i) => i.state);
     });

@@ -251,7 +251,7 @@ describe("org settings", () => {
     expect(a?.detail).toMatchObject({ via: "agent", operation: "org-settings.update" });
     expect(() => op("org-settings.update").input.parse({})).toThrow();
     const pre = await op("org-settings.update").precheck?.(
-      { cloudNetwork: { mode: "allowlist", base: "none" } },
+      { deviceNetwork: { ceiling: "allowlist", base: "none" } },
       ctxOf(ownerId),
     );
     // following the deployment (open), an allowlist narrows: the shared check passes
@@ -281,25 +281,25 @@ describe("org settings", () => {
     expect(got.deployment.promptSuggestions).toBe("on");
   });
 
-  it("fullAccess may only be turned off through the tool; a person allows it", async () => {
+  it("outsideSandbox may only be turned off through the tool; a person allows it", async () => {
     const o = op("org-settings.update");
     const pre = (input: unknown) => o.precheck?.(o.input.parse(input), ctxOf(ownerId));
     // the old name is no longer an input
     expect(o.input.safeParse({ autoMode: "off" }).success).toBe(false);
     // the platform allows Full: turning it off narrows
-    expect(await pre({ fullAccess: "off" })).toEqual({ ok: true });
-    const r = (await run("org-settings.update", { fullAccess: "off" })) as {
-      settings: { fullAccess?: unknown };
+    expect(await pre({ outsideSandbox: "off" })).toEqual({ ok: true });
+    const r = (await run("org-settings.update", { outsideSandbox: "off" })) as {
+      settings: { outsideSandbox?: unknown };
     };
-    expect(r.settings.fullAccess).toBe("off");
+    expect(r.settings.outsideSandbox).toBe("off");
     expect(r.settings).not.toHaveProperty("autoMode");
     // back on, or clearing it back to the (allowed) deployment, widens: a person does that
-    for (const input of [{ fullAccess: "allowed" }, { fullAccess: null }]) {
+    for (const input of [{ outsideSandbox: "allowed" }, { outsideSandbox: null }]) {
       expect(await pre(input), JSON.stringify(input)).toMatchObject({
         ok: false,
-        code: "org.full_access_not_allowed",
+        code: "org.outside_sandbox_not_allowed",
         message: expect.stringMatching(
-          /^Allowing Full permission needs a person in the organization settings\./,
+          /^Allowing devices to run outside the sandbox needs a person in the organization settings\./,
         ),
       });
       await expect(run("org-settings.update", input)).rejects.toThrow(/needs a person/);
@@ -308,55 +308,64 @@ describe("org settings", () => {
     const back = await owner({
       method: "PATCH",
       url: `/api/v1/orgs/${orgId}/settings`,
-      payload: { fullAccess: "allowed" },
+      payload: { outsideSandbox: "allowed" },
     });
     expect(back.statusCode, back.body).toBe(200);
-    expect(back.json().settings.fullAccess).toBe("allowed");
+    expect(back.json().settings.outsideSandbox).toBe("allowed");
   });
 
-  it("cloudNetwork may only narrow through the tool; a person widens it", async () => {
+  it("deviceNetwork may only narrow through the tool; a person widens it", async () => {
     const o = op("org-settings.update");
     const pre = (input: unknown) => o.precheck?.(o.input.parse(input), ctxOf(ownerId));
-    const refused = async (input: unknown) => {
+    const refused = async (
+      input: unknown,
+      code: "org.sandbox_egress_not_allowed" | "org.network_not_allowed",
+    ) => {
       expect(await pre(input), JSON.stringify(input)).toMatchObject({
         ok: false,
-        code: "org.sandbox_egress_not_allowed",
-        message: "Widening the cloud network needs a person in the organization settings.",
+        code,
+        message: expect.stringMatching(/needs a person in the organization settings\.$/),
       });
       await expect(run("org-settings.update", input)).rejects.toThrow(/needs a person/);
     };
     // following the deployment (open): an allowlist narrows
-    expect(await pre({ cloudNetwork: { mode: "allowlist", base: "none" } })).toEqual({
+    expect(await pre({ deviceNetwork: { ceiling: "allowlist", base: "none" } })).toEqual({
       ok: true,
     });
     const r = (await run("org-settings.update", {
-      cloudNetwork: { mode: "allowlist", excludedHosts: ["pypi.org"] },
-    })) as { settings: { cloudNetwork?: unknown }; effectiveNetwork: unknown };
-    expect(r.settings.cloudNetwork).toEqual({ mode: "allowlist", excludedHosts: ["pypi.org"] });
+      deviceNetwork: { ceiling: "allowlist", excludedHosts: ["pypi.org"] },
+    })) as { settings: { deviceNetwork?: unknown }; effectiveNetwork: unknown };
+    expect(r.settings.deviceNetwork).toEqual({ ceiling: "allowlist", excludedHosts: ["pypi.org"] });
     expect(r.effectiveNetwork).toEqual({ mode: "allowlist", hosts: WITHOUT_PYPI });
     // from an allowlist: open, a new extra host, dropping an exclusion or clearing widens
-    await refused({ cloudNetwork: { mode: "open", excludedHosts: ["pypi.org"] } });
-    await refused({
-      cloudNetwork: { mode: "allowlist", excludedHosts: ["pypi.org"], extraHosts: ["x.com"] },
-    });
-    await refused({ cloudNetwork: { mode: "allowlist" } });
-    await refused({ cloudNetwork: null });
+    await refused(
+      { deviceNetwork: { default: "open", excludedHosts: ["pypi.org"] } },
+      "org.network_not_allowed",
+    );
+    await refused(
+      {
+        deviceNetwork: { ceiling: "allowlist", excludedHosts: ["pypi.org"], extraHosts: ["x.com"] },
+      },
+      "org.sandbox_egress_not_allowed",
+    );
+    await refused({ deviceNetwork: { ceiling: "allowlist" } }, "org.sandbox_egress_not_allowed");
+    await refused({ deviceNetwork: null }, "org.network_not_allowed");
     // dropping more hosts stays fine
-    await run("org-settings.update", { cloudNetwork: { mode: "allowlist", base: "none" } });
+    await run("org-settings.update", { deviceNetwork: { ceiling: "allowlist", base: "none" } });
     // an org admin widens it in the web settings
     const back = await owner({
       method: "PATCH",
       url: `/api/v1/orgs/${orgId}/settings`,
-      payload: { cloudNetwork: { mode: "open" } },
+      payload: { deviceNetwork: { default: "open" } },
     });
     expect(back.statusCode, back.body).toBe(200);
-    expect(back.json().settings.cloudNetwork).toEqual({ mode: "open" });
+    expect(back.json().settings.deviceNetwork).toEqual({ default: "open" });
     expect(
       (
         await owner({
           method: "PATCH",
           url: `/api/v1/orgs/${orgId}/settings`,
-          payload: { cloudNetwork: null },
+          payload: { deviceNetwork: null },
         })
       ).statusCode,
     ).toBe(200);
@@ -377,28 +386,32 @@ describe("org settings", () => {
         headers: { authorization: `Bearer ${token}` },
         payload: payload as object,
       });
-    const off = await viaToken({ fullAccess: "off" });
+    const off = await viaToken({ outsideSandbox: "off" });
     expect(off.statusCode, off.body).toBe(200);
-    const on = await viaToken({ fullAccess: "allowed" });
+    const on = await viaToken({ outsideSandbox: "allowed" });
     expect(on.statusCode).toBe(400);
-    expect(on.json().error.code).toBe("org.full_access_not_allowed");
+    expect(on.json().error.code).toBe("org.outside_sandbox_not_allowed");
     // an extra host widens under either mode (the hosts are the local ceiling whatever the mode)
-    const openOutside = await viaToken({ cloudNetwork: { mode: "open", extraHosts: ["x.com"] } });
+    const openOutside = await viaToken({
+      deviceNetwork: { default: "open", extraHosts: ["x.com"] },
+    });
     expect(openOutside.statusCode).toBe(400);
     expect(openOutside.json().error.code).toBe("org.sandbox_egress_not_allowed");
     // the org follows the deployment (open): a token may exclude platform hosts and move it to
     // the allowlist
     const narrowed = await viaToken({
-      cloudNetwork: { mode: "allowlist", excludedHosts: ["pypi.org"] },
+      deviceNetwork: { ceiling: "allowlist", excludedHosts: ["pypi.org"] },
     });
     expect(narrowed.statusCode, narrowed.body).toBe(200);
     expect(narrowed.json().effectiveNetwork).toEqual({ mode: "allowlist", hosts: WITHOUT_PYPI });
     // but never back to open, nor to a new host
-    const opened = await viaToken({ cloudNetwork: { mode: "open", excludedHosts: ["pypi.org"] } });
+    const opened = await viaToken({
+      deviceNetwork: { default: "open", excludedHosts: ["pypi.org"] },
+    });
     expect(opened.statusCode).toBe(400);
-    expect(opened.json().error.code).toBe("org.sandbox_egress_not_allowed");
+    expect(opened.json().error.code).toBe("org.network_not_allowed");
     const added = await viaToken({
-      cloudNetwork: { mode: "allowlist", excludedHosts: ["pypi.org"], extraHosts: ["x.com"] },
+      deviceNetwork: { ceiling: "allowlist", excludedHosts: ["pypi.org"], extraHosts: ["x.com"] },
     });
     expect(added.statusCode).toBe(400);
     expect(added.json().error.code).toBe("org.sandbox_egress_not_allowed");
@@ -408,7 +421,7 @@ describe("org settings", () => {
     const bySession = await owner({
       method: "PATCH",
       url: `/api/v1/orgs/${orgId}/settings`,
-      payload: { fullAccess: "allowed", cloudNetwork: { mode: "open" } },
+      payload: { outsideSandbox: "allowed", deviceNetwork: { default: "open" } },
     });
     expect(bySession.statusCode, bySession.body).toBe(200);
     expect(
@@ -416,7 +429,7 @@ describe("org settings", () => {
         await owner({
           method: "PATCH",
           url: `/api/v1/orgs/${orgId}/settings`,
-          payload: { cloudNetwork: null },
+          payload: { deviceNetwork: null },
         })
       ).statusCode,
     ).toBe(200);

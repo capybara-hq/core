@@ -310,21 +310,35 @@ describe("SettingsService", () => {
   });
 });
 
-describe("SettingsService devicesFullAccess (B1)", () => {
-  /** The settings service over a config whose `devices.fullAccess` comes from `source`. */
-  const serviceWith = (
-    fullAccess: "allowed" | "off" | undefined,
-    source: "env" | "file" | "nacos" | undefined,
-  ) => {
+describe("SettingsService devicesOutsideSandbox and devicesNetwork", () => {
+  type Devices = {
+    outsideSandbox?: "allowed" | "off";
+    network?: { default?: "open" | "allowlist"; ceiling?: "open" | "allowlist" };
+  };
+  /** The settings service over a config whose device sandbox fields come from `source`. */
+  const serviceWith = (devices: Devices, source: "env" | "file" | "nacos" | undefined) => {
     const h = handlesFor(db);
+    const valueAt = (path: string) =>
+      path === "devices.outsideSandbox"
+        ? devices.outsideSandbox
+        : path === "devices.network.default"
+          ? devices.network?.default
+          : path === "devices.network.ceiling"
+            ? devices.network?.ceiling
+            : undefined;
     return new SettingsService(
       h.db,
       h.txHost,
       adminLockFor(db),
       { warn: () => {} },
       {
-        get: () => ({ devices: { fullAccess }, attribution: {}, sharing: {} }) as never,
-        fieldSource: () => source,
+        get: () =>
+          ({
+            devices: { outsideSandbox: devices.outsideSandbox, network: { ...devices.network } },
+            attribution: {},
+            sharing: {},
+          }) as never,
+        fieldSource: (path: string) => (valueAt(path) === undefined ? undefined : source),
       },
       ceilingWritesFor(db),
     );
@@ -340,67 +354,158 @@ describe("SettingsService devicesFullAccess (B1)", () => {
 
   it("view reports the startup source; a write to a startup-config value is read-only", async () => {
     await db.deleteFrom("deployment_settings").execute();
-    const admin = await adminFor("full-access-readonly");
+    const admin = await adminFor("outside-readonly");
     for (const source of ["env", "file", "nacos"] as const) {
-      const s = serviceWith("off", source);
+      const s = serviceWith({ outsideSandbox: "off", network: { ceiling: "allowlist" } }, source);
       expect(await s.view()).toMatchObject({
-        devicesFullAccess: { permission: "off", source },
+        devicesOutsideSandbox: { permission: "off", source },
+        devicesNetwork: {
+          default: "allowlist",
+          ceiling: "allowlist",
+          sources: { default: "default", ceiling: source },
+        },
       });
-      for (const patch of [
-        { devicesFullAccess: { permission: "allowed" as const } },
-        { devicesFullAccess: { permission: null } },
-      ]) {
+      for (const [patch, path] of [
+        [
+          { devicesOutsideSandbox: { permission: "allowed" as const } },
+          "devicesOutsideSandbox.permission",
+        ],
+        [{ devicesOutsideSandbox: { permission: null } }, "devicesOutsideSandbox.permission"],
+        [{ devicesNetwork: { ceiling: "open" as const } }, "devicesNetwork.ceiling"],
+      ] as const) {
         const err = await s.update(patch, admin.id).catch((e: unknown) => e);
         expect(err).toMatchObject({ code: "deployment.setting_readonly" });
-        expect((err as ApiError).details).toEqual([
-          { path: "devicesFullAccess.permission", source },
-        ]);
+        expect((err as ApiError).details).toEqual([{ path, source }]);
       }
     }
   });
 
   it("the stored choice applies with source db; a token may turn it off, never allow it", async () => {
     await db.deleteFrom("deployment_settings").execute();
-    const admin = await adminFor("full-access-token");
-    const s = serviceWith(undefined, undefined);
-    expect((await s.view()).devicesFullAccess).toEqual({
+    const admin = await adminFor("outside-token");
+    const s = serviceWith({}, undefined);
+    expect((await s.view()).devicesOutsideSandbox).toEqual({
       permission: "allowed",
       source: "default",
     });
-    expect(await s.update({ devicesFullAccess: { permission: "off" } }, admin.id)).toMatchObject({
-      devicesFullAccess: { permission: "off", source: "db" },
-    });
+    expect(
+      await s.update({ devicesOutsideSandbox: { permission: "off" } }, admin.id),
+    ).toMatchObject({ devicesOutsideSandbox: { permission: "off", source: "db" } });
     for (const patch of [
-      { devicesFullAccess: { permission: "allowed" as const } },
-      { devicesFullAccess: { permission: null } },
+      { devicesOutsideSandbox: { permission: "allowed" as const } },
+      { devicesOutsideSandbox: { permission: null } },
     ]) {
       const widened = await s
         .update(patch, admin.id, "tok", undefined, { onlyNarrows: true })
         .catch((e: unknown) => e);
-      expect(widened).toMatchObject({ code: "deployment.full_access_not_allowed" });
+      expect(widened).toMatchObject({ code: "deployment.outside_sandbox_not_allowed" });
     }
     // a person in a session may allow it again; null clears back to the default
     expect(
-      await s.update({ devicesFullAccess: { permission: "allowed" } }, admin.id),
-    ).toMatchObject({ devicesFullAccess: { permission: "allowed", source: "db" } });
-    expect(await s.update({ devicesFullAccess: { permission: null } }, admin.id)).toMatchObject({
-      devicesFullAccess: { permission: "allowed", source: "default" },
-    });
+      await s.update({ devicesOutsideSandbox: { permission: "allowed" } }, admin.id),
+    ).toMatchObject({ devicesOutsideSandbox: { permission: "allowed", source: "db" } });
+    expect(await s.update({ devicesOutsideSandbox: { permission: null } }, admin.id)).toMatchObject(
+      { devicesOutsideSandbox: { permission: "allowed", source: "default" } },
+    );
     const row = await db
       .selectFrom("deployment_settings")
       .select(["key", "value"])
-      .where("key", "in", ["devicesFullAccess", "devicesAutoMode"])
+      .where("key", "in", ["devicesOutsideSandbox", "devicesFullAccess", "devicesAutoMode"])
       .execute();
-    expect(row).toEqual([{ key: "devicesFullAccess", value: {} }]);
+    expect(row).toEqual([{ key: "devicesOutsideSandbox", value: {} }]);
   });
 
-  it("the old name devicesAutoMode is refused and never answered (W5-P3b)", async () => {
+  it("the network: a default above the ceiling is refused; a token may only narrow", async () => {
     await db.deleteFrom("deployment_settings").execute();
-    const admin = await adminFor("full-access-legacy");
-    const s = serviceWith(undefined, undefined);
+    const admin = await adminFor("network-token");
+    const s = serviceWith({}, undefined);
+    expect(
+      await s.update({ devicesNetwork: { ceiling: "allowlist", default: "allowlist" } }, admin.id),
+    ).toMatchObject({
+      devicesNetwork: {
+        default: "allowlist",
+        ceiling: "allowlist",
+        sources: { default: "db", ceiling: "db" },
+      },
+    });
+    // the default above the ceiling, by a person too
+    const above = await s
+      .update({ devicesNetwork: { default: "open" } }, admin.id)
+      .catch((e: unknown) => e);
+    expect(above).toMatchObject({ code: "deployment.network_not_allowed", status: 400 });
+    // a narrowing is never refused: the ceiling under a stored open default (the reader clamps)
+    await s.update({ devicesNetwork: { default: null, ceiling: null } }, admin.id);
+    await s.update({ devicesNetwork: { default: "open" } }, admin.id);
+    expect(await s.update({ devicesNetwork: { ceiling: "allowlist" } }, admin.id)).toMatchObject({
+      devicesNetwork: { default: "allowlist", ceiling: "allowlist" },
+    });
+    // across sources the reader clamps too: an open stored default under a configured ceiling
+    await s.update({ devicesNetwork: { default: null, ceiling: null } }, admin.id);
+    const configured = serviceWith({ network: { ceiling: "allowlist" } }, "file");
+    expect(
+      await configured.update({ devicesNetwork: { default: "open" } }, admin.id),
+    ).toMatchObject({ devicesNetwork: { default: "allowlist", ceiling: "allowlist" } });
+    await s.update({ devicesNetwork: { default: "allowlist", ceiling: "allowlist" } }, admin.id);
+    // a token may not open either field, nor clear it back to open
+    for (const devicesNetwork of [
+      { ceiling: "open" as const },
+      { ceiling: null },
+      { ceiling: "open" as const, default: "open" as const },
+    ]) {
+      const widened = await s
+        .update({ devicesNetwork }, admin.id, "tok", undefined, { onlyNarrows: true })
+        .catch((e: unknown) => e);
+      expect(widened).toMatchObject({ code: "deployment.network_not_allowed" });
+    }
+    // a person opens both in one change
+    expect(
+      await s.update({ devicesNetwork: { ceiling: "open", default: "open" } }, admin.id),
+    ).toMatchObject({ devicesNetwork: { default: "open", ceiling: "open" } });
+    // and a token narrows
+    expect(
+      await s.update({ devicesNetwork: { default: "allowlist" } }, admin.id, "tok", undefined, {
+        onlyNarrows: true,
+      }),
+    ).toMatchObject({ devicesNetwork: { default: "allowlist", ceiling: "open" } });
+  });
+
+  it("a change the startup config hides is no widening: no consent reset, the audit says so", async () => {
+    await db.deleteFrom("deployment_settings").execute();
+    const admin = await adminFor("network-hidden");
+    const s = serviceWith({ network: { ceiling: "allowlist" } }, "file");
+    const epoch = async () => {
+      const row = await db
+        .selectFrom("permission_authority_epochs")
+        .select(["revision", "full_revision"])
+        .where("kind", "=", "platform")
+        .executeTakeFirst();
+      return { revision: row?.revision ?? 0, full: row?.full_revision ?? 0 };
+    };
+    const before = await epoch();
+    await s.update({ devicesNetwork: { default: "open" } }, admin.id);
+    expect(await epoch()).toEqual(before);
+    const audit = await db
+      .selectFrom("audit_events")
+      .select("detail")
+      .where("action", "=", "deployment.settings.updated")
+      .orderBy("at", "desc")
+      .executeTakeFirstOrThrow();
+    expect(audit.detail).toMatchObject({
+      deviceSandboxEffective: {
+        before: { network: { default: "allowlist", ceiling: "allowlist" } },
+        after: { network: { default: "allowlist", ceiling: "allowlist" } },
+      },
+    });
+  });
+
+  it("the old names are refused and never answered", async () => {
+    await db.deleteFrom("deployment_settings").execute();
+    const admin = await adminFor("outside-legacy");
+    const s = serviceWith({}, undefined);
     for (const patch of [
       { devicesAutoMode: { mode: "off" } },
-      { devicesAutoMode: { mode: "off" }, devicesFullAccess: { permission: "off" } },
+      { devicesFullAccess: { permission: "off" } },
+      { devicesFullAccess: { permission: "off" }, devicesOutsideSandbox: { permission: "off" } },
     ]) {
       const err = await s
         .update(patch as unknown as DeploymentSettingsPatch, admin.id)
@@ -411,9 +516,10 @@ describe("SettingsService devicesFullAccess (B1)", () => {
       await db
         .selectFrom("deployment_settings")
         .select("key")
-        .where("key", "in", ["devicesFullAccess", "devicesAutoMode"])
+        .where("key", "in", ["devicesOutsideSandbox", "devicesFullAccess", "devicesAutoMode"])
         .execute(),
     ).toEqual([]);
     expect(await s.view()).not.toHaveProperty("devicesAutoMode");
+    expect(await s.view()).not.toHaveProperty("devicesFullAccess");
   });
 });

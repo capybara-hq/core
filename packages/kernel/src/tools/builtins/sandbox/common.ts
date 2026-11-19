@@ -501,8 +501,8 @@ export const FULL_ACCESS_CEILING_TOOL_TEXT =
   "This device's owner ceiling does not allow Full access, so nothing ran. Ask the device's owner to raise it with `capybara-device ceiling set` on that machine, or continue with the Request approval or Approve for me permission profile.";
 /** The full-access refusal codes off by policy (organization and platform). */
 const FULL_ACCESS_OFF_BY_POLICY_CODES: ReadonlySet<string> = new Set([
-  "org.full_access_not_allowed",
-  "deployment.full_access_not_allowed",
+  "org.outside_sandbox_not_allowed",
+  "deployment.outside_sandbox_not_allowed",
 ]);
 /**
  * The legacy retirement gate's refusals (`RetirementPendingError`, permission runtime cutover

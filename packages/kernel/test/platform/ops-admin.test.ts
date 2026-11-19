@@ -580,7 +580,7 @@ describe("admin and models", () => {
 
   it("admin.update-settings turns the platform's Full access off but never on; the old name is refused", async () => {
     expect(await run("admin.settings", {})).toMatchObject({
-      devicesFullAccess: { permission: "allowed", source: "default" },
+      devicesOutsideSandbox: { permission: "allowed", source: "default" },
     });
     expect(await run("admin.settings", {})).not.toHaveProperty("devicesAutoMode");
     // the old name is no longer an input
@@ -589,22 +589,24 @@ describe("admin and models", () => {
     ).toBe(false);
     // an agent may turn it off
     expect(
-      await precheck("admin.update-settings", { devicesFullAccess: { permission: "off" } }),
+      await precheck("admin.update-settings", { devicesOutsideSandbox: { permission: "off" } }),
     ).toEqual({
       ok: true,
     });
-    const out = await run("admin.update-settings", { devicesFullAccess: { permission: "off" } });
-    expect(out).toMatchObject({ devicesFullAccess: { permission: "off", source: "db" } });
+    const out = await run("admin.update-settings", {
+      devicesOutsideSandbox: { permission: "off" },
+    });
+    expect(out).toMatchObject({ devicesOutsideSandbox: { permission: "off", source: "db" } });
     // but never on again, nor cleared back to the default (allowed)
-    for (const devicesFullAccess of [{ permission: "allowed" }, { permission: null }]) {
+    for (const devicesOutsideSandbox of [{ permission: "allowed" }, { permission: null }]) {
       expect(
-        await precheck("admin.update-settings", { devicesFullAccess }),
-        JSON.stringify(devicesFullAccess),
+        await precheck("admin.update-settings", { devicesOutsideSandbox }),
+        JSON.stringify(devicesOutsideSandbox),
       ).toMatchObject({
         ok: false,
-        code: "deployment.full_access_not_allowed",
+        code: "deployment.outside_sandbox_not_allowed",
       });
-      await expect(run("admin.update-settings", { devicesFullAccess })).rejects.toThrow(
+      await expect(run("admin.update-settings", { devicesOutsideSandbox })).rejects.toThrow(
         /only turn it off/,
       );
     }
@@ -620,27 +622,30 @@ describe("admin and models", () => {
       method: "PUT",
       url: "/api/v1/admin/settings",
       headers: { authorization: `Bearer ${token}` },
-      payload: { devicesFullAccess: { permission: "allowed" } },
+      payload: { devicesOutsideSandbox: { permission: "allowed" } },
     });
     expect(viaToken.statusCode).toBe(400);
-    expect(viaToken.json().error.code).toBe("deployment.full_access_not_allowed");
+    expect(viaToken.json().error.code).toBe("deployment.outside_sandbox_not_allowed");
     // a person (super admin) turns it back on in the admin console, then the agent may turn it off
     const back = await root({
       method: "PUT",
       url: "/api/v1/admin/settings",
-      payload: { devicesFullAccess: { permission: "allowed" } },
+      payload: { devicesOutsideSandbox: { permission: "allowed" } },
     });
     expect(back.statusCode, back.body).toBe(200);
-    expect(back.json().devicesFullAccess).toMatchObject({ permission: "allowed", source: "db" });
-    await run("admin.update-settings", { devicesFullAccess: { permission: "off" } });
+    expect(back.json().devicesOutsideSandbox).toMatchObject({
+      permission: "allowed",
+      source: "db",
+    });
+    await run("admin.update-settings", { devicesOutsideSandbox: { permission: "off" } });
     // a person may also clear the stored choice, back to the default
     const cleared = await root({
       method: "PUT",
       url: "/api/v1/admin/settings",
-      payload: { devicesFullAccess: { permission: null } },
+      payload: { devicesOutsideSandbox: { permission: null } },
     });
     expect(cleared.statusCode, cleared.body).toBe(200);
-    expect(cleared.json().devicesFullAccess).toMatchObject({
+    expect(cleared.json().devicesOutsideSandbox).toMatchObject({
       permission: "allowed",
       source: "default",
     });

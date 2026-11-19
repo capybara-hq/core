@@ -73,18 +73,34 @@ export function deepMerge(base: unknown, override: unknown): unknown {
 }
 
 /**
- * The permission keys B1 replaced, each with its replacement. The old keys are no longer read:
- * {@link refuseLegacyPermissionKeys} refuses them with the conversion message, and
- * `capybara config migrate-permissions` (`permission-migration.ts`) converts a config file.
+ * The permission keys the approval-only profiles design replaced, each with its replacement (B1's
+ * `devices.autoMode` and its successor `devices.fullAccess`, both now `devices.outsideSandbox`).
+ * The old keys are no longer read: {@link refuseLegacyPermissionKeys} refuses them with the
+ * conversion message, and `capybara config migrate-permissions` (`permission-migration.ts`)
+ * converts a config file. The values are the same (`allowed` / `off`); an old `off` also kept every
+ * device on the allowlist, so its conversion adds `devices.network.ceiling: allowlist` (never wider).
  */
 export const LEGACY_PERMISSION_KEYS = [
   {
     path: ["devices", "autoMode"],
-    replacement: ["devices", "fullAccess"],
+    replacement: ["devices", "outsideSandbox"],
     env: "CAPYBARA_DEVICES__AUTO_MODE",
-    replacementEnv: "CAPYBARA_DEVICES__FULL_ACCESS",
+    replacementEnv: "CAPYBARA_DEVICES__OUTSIDE_SANDBOX",
+  },
+  {
+    path: ["devices", "fullAccess"],
+    replacement: ["devices", "outsideSandbox"],
+    env: "CAPYBARA_DEVICES__FULL_ACCESS",
+    replacementEnv: "CAPYBARA_DEVICES__OUTSIDE_SANDBOX",
   },
 ] as const;
+
+/** The key and variable an old `off` adds, so a converted deployment never widens a device. */
+export const LEGACY_OFF_NETWORK_CEILING = {
+  path: ["devices", "network", "ceiling"],
+  env: "CAPYBARA_DEVICES__NETWORK__CEILING",
+  value: "allowlist",
+} as const;
 
 /**
  * The conversion message of every old permission key in ONE config source (the file / Nacos
@@ -103,8 +119,8 @@ function legacyPermissionKeyProblems(
     if (!isPlainObject(parent) || !(old in parent)) continue;
     problems.push(
       label === "env"
-        ? `  - ${key.env} is no longer read: set ${key.replacementEnv} instead (the same values, allowed or off)`
-        : `  - ${key.path.join(".")} is no longer read: rename it to ${key.replacement.join(".")} (the same values, allowed or off); capybara config migrate-permissions --in <file> --out <file> converts a config file or Nacos document`,
+        ? `  - ${key.env} is no longer read: set ${key.replacementEnv} instead (the same values, allowed or off; with off, also set ${LEGACY_OFF_NETWORK_CEILING.env}=${LEGACY_OFF_NETWORK_CEILING.value} so no device widens)`
+        : `  - ${key.path.join(".")} is no longer read: rename it to ${key.replacement.join(".")} (the same values, allowed or off; with off, also set ${LEGACY_OFF_NETWORK_CEILING.path.join(".")}: ${LEGACY_OFF_NETWORK_CEILING.value} so no device widens); capybara config migrate-permissions --in <file> --out <file> converts a config file or Nacos document`,
     );
   }
   return problems;
@@ -122,8 +138,61 @@ function refuseLegacyPermissionKeys(
   if (problems.length > 0) throw new ConfigError(`invalid configuration:\n${problems.join("\n")}`);
 }
 
-/** 原始配置深合并环境变量覆盖（优先级最高）后校验；热更新与启动共用。错误只列路径不列值。 */
-export function resolveConfig(raw: unknown, env: NodeJS.ProcessEnv): KernelConfig {
+type NetworkMode = "open" | "allowlist";
+const modeAt = (source: Record<string, unknown>, field: "default" | "ceiling") => {
+  const devices = source.devices;
+  const network = isPlainObject(devices) ? devices.network : undefined;
+  const v = isPlainObject(network) ? network[field] : undefined;
+  return v === "open" || v === "allowlist" ? (v as NetworkMode) : undefined;
+};
+/** Whether the mode opens from `was` to `now` (absent reads as open, the default). */
+const opens = (was: NetworkMode | undefined, now: NetworkMode | undefined) =>
+  (was ?? "open") === "allowlist" && (now ?? "open") === "open";
+
+/**
+ * Refuses a `devices.network.default` of `open` under a `ceiling` of `allowlist` set in the SAME
+ * source (the file / Nacos document, or the environment); across sources the reader clamps the
+ * default to the ceiling. A hot reload that only narrows the network (`previous`: the applied
+ * config) is never refused, even when it leaves such a pair: the reader clamps it.
+ */
+function refuseDefaultAboveCeiling(
+  raw: Record<string, unknown>,
+  env: Record<string, unknown>,
+  previous: KernelConfig | undefined,
+  merged: KernelConfig,
+): void {
+  if (previous !== undefined) {
+    const was = previous.devices.network;
+    const now = merged.devices.network;
+    if (!opens(was.default, now.default) && !opens(was.ceiling, now.ceiling)) return;
+  }
+  const problems = (
+    [
+      ["file", raw],
+      ["env", env],
+    ] as const
+  )
+    .filter(
+      ([, source]) =>
+        modeAt(source, "default") === "open" && modeAt(source, "ceiling") === "allowlist",
+    )
+    .map(
+      ([label]) =>
+        `  - devices.network.default: open is above devices.network.ceiling allowlist in the same ${label === "env" ? "environment" : "config source"}; choose a default no wider than the ceiling`,
+    );
+  if (problems.length > 0) throw new ConfigError(`invalid configuration:\n${problems.join("\n")}`);
+}
+
+/**
+ * 原始配置深合并环境变量覆盖（优先级最高）后校验；热更新与启动共用。错误只列路径不列值。
+ * `previous` (a hot reload: the applied config) lets a change that only narrows the device network
+ * through ({@link refuseDefaultAboveCeiling}).
+ */
+export function resolveConfig(
+  raw: unknown,
+  env: NodeJS.ProcessEnv,
+  previous?: KernelConfig,
+): KernelConfig {
   if (!isPlainObject(raw)) throw new ConfigError("config file root must be a mapping");
   const overrides = envOverrides(env);
   refuseLegacyPermissionKeys(raw, overrides);
@@ -140,6 +209,7 @@ export function resolveConfig(raw: unknown, env: NodeJS.ProcessEnv): KernelConfi
     });
     throw new ConfigError(`invalid configuration:\n${lines.join("\n")}`);
   }
+  refuseDefaultAboveCeiling(raw, overrides, previous, result.data);
   // Cross-section rule (the loopback exception lives under `tools`)
   const webhookProblem = webhookBaseUrlProblem(result.data);
   if (webhookProblem !== null) {

@@ -33,7 +33,7 @@ const cfg = (mode: "allowed" | "off", hosts = ["a.example"]) =>
     http: { port: 0 },
     log: { level: "error" },
     marketplaces: { official: { enabled: false } },
-    devices: { fullAccess: mode },
+    devices: { outsideSandbox: mode },
     sandbox: { limits: { egress: "allowlist", allowHosts: hosts } },
   });
 const pub = (replica: TestKernel) => replica.app.get(PermissionConfigPublication);
@@ -84,7 +84,7 @@ beforeEach(async () => {
   await db.deleteFrom("sandbox_operation_intents").execute();
   await db.deleteFrom("outbox").where("job_name", "=", "sandbox-operation-revoke").execute();
   await db.deleteFrom("permission_config_publication").execute();
-  await db.deleteFrom("deployment_settings").where("key", "=", "devicesFullAccess").execute();
+  await db.deleteFrom("deployment_settings").where("key", "=", "devicesOutsideSandbox").execute();
   await pub(a).initialize();
   await a.app
     .get(KernelConfigService)
@@ -596,7 +596,7 @@ it("delegated DB writer serializes before frozen startup activation using curren
   await pub(a).initialize();
   const config = a.app.get(KernelConfigService);
   const delegated = cfg("allowed");
-  delete delegated.devices.fullAccess;
+  delete delegated.devices.outsideSandbox;
   await config.apply(delegated, (old, next) => pub(a).publish(old, next));
   const f = await consent();
   await db
@@ -616,7 +616,7 @@ it("delegated DB writer serializes before frozen startup activation using curren
   });
   const setting = a.app
     .get(SettingsService)
-    .update({ devicesFullAccess: { permission: "off" } }, f.accountId);
+    .update({ devicesOutsideSandbox: { permission: "off" } }, f.accountId);
   const settingResult = setting.catch((e: unknown) => e);
   try {
     await entered.promise;

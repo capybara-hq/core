@@ -76,7 +76,7 @@ describe("运行时限与命令超时（纯函数）", () => {
     ).toEqual([]);
   });
 
-  it("warns when the platform ceiling is on but auto mode is not turned off (it limits sandbox mode only)", () => {
+  it("warns when orgHosts is within but the network ceiling is open (it limits the hosts only)", () => {
     const within = {
       ...cfg,
       sandbox: { ...cfg.sandbox, limits: { ...cfg.sandbox.limits, orgHosts: "within" as const } },
@@ -84,10 +84,13 @@ describe("运行时限与命令超时（纯函数）", () => {
     const [w, ...rest] = sandboxConfigWarnings(within);
     expect(rest).toEqual([]);
     expect(w?.message).toMatch(
-      /^sandbox\.limits\.orgHosts is within but devices\.fullAccess is not off/,
+      /^sandbox\.limits\.orgHosts is within but devices\.network\.ceiling is not allowlist/,
     );
     expect(
-      sandboxConfigWarnings({ ...within, devices: { ...cfg.devices, fullAccess: "off" } }),
+      sandboxConfigWarnings({
+        ...within,
+        devices: { ...cfg.devices, network: { ceiling: "allowlist" } },
+      }),
     ).toEqual([]);
     // the kill switch already cuts everything
     expect(
@@ -106,14 +109,14 @@ describe("运行时限与命令超时（纯函数）", () => {
       ...long,
       extensionConfig: { "sandbox-docker": { refuseOpenNetwork: true } },
     };
-    for (const fullAccess of [undefined, "allowed", "off"] as const) {
-      // the whole config, whatever its devices.fullAccess says
-      const whole = { ...refusing, devices: { ...refusing.devices, fullAccess } };
+    for (const outsideSandbox of [undefined, "allowed", "off"] as const) {
+      // the whole config, whatever its devices.outsideSandbox says
+      const whole = { ...refusing, devices: { ...refusing.devices, outsideSandbox } };
       const [w, ...rest] = sandboxConfigWarnings(whole, "sandbox-docker");
       expect(rest).toEqual([]);
       expect(w?.level).toBe("warn");
       expect(w?.message).toContain('extensionConfig."sandbox-docker".refuseOpenNetwork');
-      expect(w?.message).toContain("cloudNetwork");
+      expect(w?.message).toContain("deviceNetwork");
       expect(w?.message).not.toContain("openEgress");
     }
     // the kill switch: no org reaches the open network

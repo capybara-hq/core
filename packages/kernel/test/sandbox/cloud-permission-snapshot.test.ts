@@ -60,7 +60,7 @@ beforeAll(async () => {
   });
 });
 beforeEach(async () => {
-  await db.deleteFrom("deployment_settings").where("key", "=", "devicesFullAccess").execute();
+  await db.deleteFrom("deployment_settings").where("key", "=", "devicesOutsideSandbox").execute();
 });
 afterAll(async () => {
   await k?.close();
@@ -231,7 +231,7 @@ it("exactly applied limits bind the snapshot to the instance generation", async 
     network: { kind: "allowlist", hosts: ["b.example", "a.example"] },
   };
   const f = await fixture({
-    settings: { cloudNetwork: { mode: "allowlist" } },
+    settings: { deviceNetwork: { ceiling: "allowlist" } },
     mode: "sandbox",
     instance: applied,
   });
@@ -242,7 +242,7 @@ it("exactly applied limits bind the snapshot to the instance generation", async 
     permission_reconcile_required: false,
   });
   // false stays explicit after the org widens later: no Full, the snapshot network caps it
-  await k.app.get(OrgSettingsService).update(f.orgId, { cloudNetwork: null }, f.accountId);
+  await k.app.get(OrgSettingsService).update(f.orgId, { deviceNetwork: null }, f.accountId);
   expect(await policy(f)).toMatchObject({
     mode: "sandbox",
     network: { kind: "allowlist", hosts: ["a.example", "b.example"] },
@@ -267,7 +267,7 @@ it.each([
   "%s applied limits block admission until a lifecycle action establishes them",
   async (_, instance) => {
     const f = await fixture({
-      settings: { cloudNetwork: { mode: "allowlist" } },
+      settings: { deviceNetwork: { ceiling: "allowlist" } },
       mode: "sandbox",
       instance,
     });
@@ -329,7 +329,7 @@ it("a stricter applied instance is never widened to the inferred default", async
 it("the snapshot is written once; a later run keeps it whatever changed since", async () => {
   const f = await fixture();
   await snapshots().snapshot(f.orgId, f.deviceId);
-  await k.app.get(OrgSettingsService).update(f.orgId, { fullAccess: "off" }, f.accountId);
+  await k.app.get(OrgSettingsService).update(f.orgId, { outsideSandbox: "off" }, f.accountId);
   expect(await snapshots().snapshot(f.orgId, f.deviceId)).toMatchObject({ state: "existing" });
   expect((await f.device()).owner_full_access).toBe(true);
   // the org's off still cuts the effective mode; the owner ceiling is independent of it
@@ -339,7 +339,7 @@ it("the snapshot is written once; a later run keeps it whatever changed since", 
 it("a stored platform off over the default is part of the old effective authority", async () => {
   await db
     .insertInto("deployment_settings")
-    .values({ key: "devicesFullAccess", value: JSON.stringify({ permission: "off" }) })
+    .values({ key: "devicesOutsideSandbox", value: JSON.stringify({ permission: "off" }) })
     .execute();
   const f = await fixture();
   await snapshots().snapshot(f.orgId, f.deviceId);

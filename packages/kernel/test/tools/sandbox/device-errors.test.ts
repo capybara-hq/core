@@ -74,7 +74,7 @@ describe("sandbox tool errors", () => {
   });
 
   // B-13: the full-access refusals are actionable English tool errors, never the kernel's message
-  it.each(["org.full_access_not_allowed", "deployment.full_access_not_allowed"] as const)(
+  it.each(["org.outside_sandbox_not_allowed", "deployment.outside_sandbox_not_allowed"] as const)(
     "Full access off by policy (%s) names the profiles and who can allow it",
     (code) => {
       const mapped = mapSandboxError(new ApiError(code, "internal detail"), undefined);

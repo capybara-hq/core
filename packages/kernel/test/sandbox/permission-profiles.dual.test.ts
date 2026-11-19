@@ -842,7 +842,7 @@ describe("a per-call sandbox escalation across replicas", () => {
     const off = await ownerB({
       method: "PATCH",
       url: `/api/v1/orgs/${orgId}/settings`,
-      payload: { fullAccess: "off" },
+      payload: { outsideSandbox: "off" },
     });
     expect(off.statusCode, off.body).toBe(200);
     try {
@@ -868,7 +868,7 @@ describe("a per-call sandbox escalation across replicas", () => {
       const on = await ownerB({
         method: "PATCH",
         url: `/api/v1/orgs/${orgId}/settings`,
-        payload: { fullAccess: "allowed" },
+        payload: { outsideSandbox: "allowed" },
       });
       expect(on.statusCode, on.body).toBe(200);
     }

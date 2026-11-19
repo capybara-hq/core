@@ -59,7 +59,7 @@ describe("effectiveDevicePolicy", () => {
     [
       "the org turned auto mode off",
       deployment(),
-      { fullAccess: "off" },
+      { outsideSandbox: "off" },
       "auto",
       {
         mode: "sandbox",
@@ -71,7 +71,7 @@ describe("effectiveDevicePolicy", () => {
     [
       "the org has auto mode explicitly allowed",
       deployment(),
-      { fullAccess: "allowed" },
+      { outsideSandbox: "allowed" },
       null,
       {
         mode: "auto",
@@ -95,7 +95,7 @@ describe("effectiveDevicePolicy", () => {
     [
       "the device reports auto mode while the org allows only sandbox",
       deployment(),
-      { fullAccess: "off" },
+      { outsideSandbox: "off" },
       "auto",
       {
         mode: "sandbox",
@@ -107,7 +107,7 @@ describe("effectiveDevicePolicy", () => {
     [
       "the org's cloud network is the allowlist",
       deployment(),
-      { cloudNetwork: { mode: "allowlist" } },
+      { deviceNetwork: { ceiling: "allowlist" } },
       null,
       {
         mode: "auto",
@@ -120,8 +120,8 @@ describe("effectiveDevicePolicy", () => {
       "the org's cloud allowlist is its delta over the deployment's",
       deployment(),
       {
-        cloudNetwork: {
-          mode: "allowlist",
+        deviceNetwork: {
+          ceiling: "allowlist",
           extraHosts: ["a.com"],
           excludedHosts: ["example.com"],
         },
@@ -137,7 +137,7 @@ describe("effectiveDevicePolicy", () => {
     [
       "the org lists only its own hosts",
       deployment(),
-      { cloudNetwork: { mode: "allowlist", base: "none", extraHosts: ["a.com"] } },
+      { deviceNetwork: { ceiling: "allowlist", base: "none", extraHosts: ["a.com"] } },
       "sandbox",
       {
         mode: "sandbox",
@@ -159,7 +159,7 @@ describe("effectiveDevicePolicy", () => {
       effectiveDevicePolicy(
         deployment("allowed", "none"),
         {
-          cloudNetwork: { mode: "open", extraHosts: ["a.com"] },
+          deviceNetwork: { default: "open", extraHosts: ["a.com"] },
         },
         null,
       ).network,
@@ -175,13 +175,13 @@ describe("effectiveDevicePolicy", () => {
       kind: "open-public",
       hosts: [],
     });
-    expect(deviceNetwork(deployment(), { cloudNetwork: { mode: "allowlist" } }, "sandbox")).toEqual(
-      { kind: "allowlist", hosts: L },
-    );
+    expect(
+      deviceNetwork(deployment(), { deviceNetwork: { ceiling: "allowlist" } }, "sandbox"),
+    ).toEqual({ kind: "allowlist", hosts: L });
     expect(
       deviceNetwork(
         deployment(),
-        { cloudNetwork: { mode: "open", extraHosts: ["a.com"] } },
+        { deviceNetwork: { default: "open", extraHosts: ["a.com"] } },
         "auto",
       ),
     ).toEqual({ kind: "open-public", hosts: [] });
@@ -265,12 +265,12 @@ describe("orgEffectiveHosts", () => {
 describe("orgCloudMode", () => {
   it("the org's mode, open by default", () => {
     expect(orgCloudMode(limits(), undefined)).toBe("open");
-    expect(orgCloudMode(limits(), { mode: "allowlist" })).toBe("allowlist");
+    expect(orgCloudMode(limits(), { ceiling: "allowlist" })).toBe("allowlist");
   });
 
   it("the allowlist under the kill switch or the platform ceiling", () => {
-    expect(orgCloudMode(limits("extend", "none"), { mode: "open" })).toBe("allowlist");
-    expect(orgCloudMode(limits("within"), { mode: "open" })).toBe("allowlist");
+    expect(orgCloudMode(limits("extend", "none"), { default: "open" })).toBe("allowlist");
+    expect(orgCloudMode(limits("within"), { default: "open" })).toBe("allowlist");
     expect(orgCloudMode(limits("within"), undefined)).toBe("allowlist");
   });
 });

@@ -283,6 +283,19 @@ One mechanical commit on `perm/r3-int`, behaviour kept wherever a later task own
 - An instance-boundary provider gives a whole-instance scope with no outside and no per-call hosts.
 - The context (`readContextLocked`, producing T4's v2) and admission agree on every row of the table.
 
+**Checklist (from the T2 review):**
+
+- Narrowing revocation lives here: a platform or org network ceiling narrowed to `allowlist`
+  (`network-allowlist`) revokes open-network work. T2's ceiling writers bump the epoch and reset
+  Full consent on a widening, but revoke no open-network work (`revoke: false` for network-only
+  changes in `identity/settings.ts`, `orgs/settings.service.ts` and the publication).
+- When this task stops reading `owner_full_access` / `outer_network`, repeat 0163's backfill in
+  the same change (a new migration): every cloud device snapshotted after 0163 whose
+  `outer_network` is an allowlist and whose `network_mode` is NULL gets `network_mode: allowlist`
+  and its hosts as `network_hosts` when they are an array of strings, else `[]`.
+- A device-level host list (a local owner's `allowedDomains`, a cloud device's `network_hosts`)
+  intersects the org/platform effective hosts and never adds one; an empty list adds no narrowing.
+
 **Gates:**
 
 - `test/sandbox/{operation-authority,operation-scopes,permission-wiring,modes,

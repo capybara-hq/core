@@ -23,6 +23,15 @@ import { TransactionHost, withOrderedLocks } from "../infra/database/transaction
 import { Transactional } from "../infra/database/transactional.decorator.js";
 import { KERNEL_LOGGER } from "../infra/tokens.js";
 import type { KernelLogger } from "../log.js";
+import type { DeviceNetworkMode } from "../sandbox/device-sandbox.js";
+import {
+  type DevicesNetworkView,
+  type DevicesOutsideSandboxView,
+  keepOrgLegacyKeysInStep,
+  type OutsideSandboxPermission,
+  orgDeviceSandboxOf,
+  readDeviceSandboxSettingsView,
+} from "../sandbox/device-sandbox-settings.js";
 import {
   coversHost,
   orgCloudMode,
@@ -38,12 +47,6 @@ import {
   PermissionCeilingWrites,
 } from "../sandbox/permission-ceiling-writes.js";
 import {
-  type DevicesFullAccessView,
-  type FullAccessPermission,
-  narrowedOrgFullAccess,
-  readDevicesFullAccess,
-} from "../sandbox/platform-full-access.js";
-import {
   type ExternalSharingView,
   readExternalSharing,
   readShareMaxExpiry,
@@ -56,10 +59,10 @@ import {
   UiArrangementSchema,
 } from "../ui/arrangement.js";
 import {
-  type CloudNetworkSetting,
-  CloudNetworkSettingSchema,
-  invalidCloudNetwork,
-} from "./cloud-network-setting.js";
+  type DeviceNetworkSetting,
+  DeviceNetworkSettingSchema,
+  invalidDeviceNetwork,
+} from "./device-network-setting.js";
 import { OrgLock, OrgLockModule } from "./org-lock.js";
 
 /**
@@ -75,13 +78,16 @@ import { OrgLock, OrgLockModule } from "./org-lock.js";
  *   execution). An invalid stored value reads as `ask` (narrower, never wider) and is logged.
  * - `wakeOnBackgroundTask`: the org's override of `runtime.wakeOnBackgroundTask` (absent follows
  *   the deployment), see {@link effectiveWakeOnBackgroundTask}.
- * - `fullAccess`: whether devices of the org may run with Full permission (permission runtime
- *   cutover B1, replacing `autoMode`); absent follows the platform's `devices.fullAccess`, and an
- *   invalid stored value reads as `off` (narrower, never wider). Setting `allowed` while the
- *   platform is `off` is refused.
- * - `cloudNetwork`: the org's sandbox-mode network as a delta over the platform's allowlist (org
- *   egress ceiling spec §D1, {@link CloudNetworkSettingSchema}). An invalid stored value reads as
- *   `{ mode: "allowlist", base: "none" }`, the empty allowlist (narrower, never wider).
+ * - `outsideSandbox`: whether devices of the org may be granted running a call outside their
+ *   sandbox (approval-only profiles design, replacing `fullAccess`); absent follows the platform's
+ *   `devices.outsideSandbox`, and an invalid stored value reads as `off` (narrower, never wider).
+ *   Setting `allowed` while the platform is `off` is refused.
+ * - `deviceNetwork`: the org's device sandbox network, its default and ceiling and its hosts as a
+ *   delta over the platform's allowlist ({@link DeviceNetworkSettingSchema}, replacing
+ *   `cloudNetwork`). An invalid stored value reads as the empty allowlist (narrower, never wider);
+ *   a default or ceiling above the platform's ceiling is refused.
+ *   Old keys are read and kept in step until the permission configuration publication converts
+ *   them ({@link orgDeviceSandboxOf}).
  * - `platformTool`: the `Platform` builtin for the whole org (Platform tool spec §3): `on`,
  *   `read-only` (writes listed as unavailable) or `off` (default `on`).
  * - `timeZone`: the org's default time zone (IANA; absent = UTC) for senders without one of their
@@ -95,19 +101,19 @@ import { OrgLock, OrgLockModule } from "./org-lock.js";
  */
 
 export {
-  type CloudNetworkSetting,
-  CloudNetworkSettingSchema,
-  invalidCloudNetwork,
+  type DeviceNetworkSetting,
+  DeviceNetworkSettingSchema,
+  invalidDeviceNetwork,
   ORG_SANDBOX_ALLOW_HOSTS_MAX,
-} from "./cloud-network-setting.js";
+} from "./device-network-setting.js";
 /**
- * The org's Full permission switch (B1): `allowed` or `off`; absent follows the platform's
- * `devices.fullAccess`. An invalid stored value reads as `off` (narrower, never wider).
+ * The org's outside-sandbox ceiling: `allowed` or `off`; absent follows the platform's
+ * `devices.outsideSandbox`. An invalid stored value reads as `off` (narrower, never wider).
  */
-export const FullAccessSetting = z.enum([
+export const OutsideSandboxSetting = z.enum([
   "allowed",
   "off",
-]) satisfies z.ZodType<FullAccessPermission>;
+]) satisfies z.ZodType<OutsideSandboxPermission>;
 
 /**
  * The org's theme setting (themes spec §7): `id` a theme on in the org (a `platform_themes` id),
@@ -214,10 +220,10 @@ export const OrgSettingsSchema = z.object({
   /** Absent = `allow`; an invalid stored value reads as `ask` (narrower, never wider). */
   sandboxToolPolicy: z.enum(["allow", "ask"]).default("allow").catch("ask"),
   platformTool: z.enum(["on", "read-only", "off"]).default("on").catch("on"),
-  /** The org's Full permission switch (B1); absent follows the platform. */
-  fullAccess: FullAccessSetting.optional().catch("off"),
-  /** The org's network for cloud devices (auto mode spec §4.3); absent = open (the default). */
-  cloudNetwork: CloudNetworkSettingSchema.optional().catch(invalidCloudNetwork),
+  /** The org's outside-sandbox ceiling; absent follows the platform. */
+  outsideSandbox: OutsideSandboxSetting.optional().catch("off"),
+  /** The org's device sandbox network; absent follows the platform. */
+  deviceNetwork: DeviceNetworkSettingSchema.optional().catch(invalidDeviceNetwork),
   /** Overrides `runtime.wakeOnBackgroundTask`; absent follows the deployment. */
   wakeOnBackgroundTask: z.boolean().optional().catch(undefined),
   /** The org's default time zone (run context spec §3.3); absent = UTC. */
@@ -280,15 +286,16 @@ export const OrgSettingsPatchSchema = z
     /** null clears (follow the deployment again). */
     wakeOnBackgroundTask: z.boolean().nullable().optional(),
     /**
-     * The org's Full permission switch; null clears it (follow the platform). `allowed` while the
-     * platform is `off` -> 400 `org.full_access_not_allowed`.
+     * The org's outside-sandbox ceiling; null clears it (follow the platform). `allowed` while the
+     * platform is `off` -> 400 `org.outside_sandbox_not_allowed`.
      */
-    fullAccess: FullAccessSetting.nullable().optional(),
+    outsideSandbox: OutsideSandboxSetting.nullable().optional(),
     /**
-     * The org's network for cloud devices, replaced whole (hosts left out follow the deployment);
-     * null clears it (open). Through the Platform tool or an API token it may only narrow.
+     * The org's device sandbox network, replaced whole (fields left out follow the platform); null
+     * clears it. A default or ceiling above the platform's ceiling -> 400 `org.network_not_allowed`.
+     * Through the Platform tool or an API token it may only narrow.
      */
-    cloudNetwork: CloudNetworkSettingSchema.nullable().optional(),
+    deviceNetwork: DeviceNetworkSettingSchema.nullable().optional(),
     /** The org's default time zone (IANA); null clears it (UTC). */
     timeZone: IanaTimeZone.nullable().optional(),
     /**
@@ -362,14 +369,18 @@ export interface OrgEffectiveNetwork {
 
 /** The deployment defaults the settings page shows for "follow the platform" (`GET` returns them). */
 export interface OrgSettingsDeployment {
-  /** The platform's Full permission switch and where it comes from. */
-  fullAccess: DevicesFullAccessView;
+  /** The platform's outside-sandbox ceiling and where it comes from. */
+  outsideSandbox: DevicesOutsideSandboxView;
   /**
-   * The platform's network: its allowlist (what an org's delta applies to), whether orgs may go
-   * beyond it (`sandbox.limits.orgHosts`) and the kill switch (`off`: `sandbox.limits.egress` is
-   * `none`).
+   * The platform's device network: its default and ceiling with their sources, its allowlist
+   * (what an org's delta applies to), whether orgs may go beyond it (`sandbox.limits.orgHosts`)
+   * and the kill switch (`off`: `sandbox.limits.egress` is `none`).
    */
-  cloudNetwork: { allowHosts: string[]; orgHosts: "extend" | "within"; off: boolean };
+  deviceNetwork: DevicesNetworkView & {
+    allowHosts: string[];
+    orgHosts: "extend" | "within";
+    off: boolean;
+  };
   /** The platform's effective attribution defaults for agent-created commits and pull requests. */
   attribution: PlatformAttribution;
   /**
@@ -387,7 +398,7 @@ export interface OrgSettingsDeployment {
   promptSuggestions: "on" | "off";
 }
 
-/** Compare by value (`cloudNetwork` is an object); the schema fixes the key order. */
+/** Compare by value (`deviceNetwork` is an object); the schema fixes the key order. */
 const sameSettings = (a: OrgSettings, b: OrgSettings): boolean =>
   JSON.stringify(OrgSettingsSchema.parse(a)) === JSON.stringify(OrgSettingsSchema.parse(b));
 
@@ -395,16 +406,18 @@ const asObject = (v: unknown): Record<string, unknown> =>
   v !== null && typeof v === "object" && !Array.isArray(v) ? (v as Record<string, unknown>) : {};
 
 /**
- * Parses the stored jsonb into settings (leniently, see {@link OrgSettingsSchema}). `fullAccess` is
- * read over both keys, the narrower of it and an old `autoMode` the permission configuration
- * publication has not converted yet ({@link narrowedOrgFullAccess}; fail closed).
+ * Parses the stored jsonb into settings (leniently, see {@link OrgSettingsSchema}).
+ * `outsideSandbox` and `deviceNetwork` are read over the new and the old keys the permission
+ * configuration publication has not converted yet ({@link orgDeviceSandboxOf}; fail closed).
  */
 export function parseOrgSettings(raw: unknown): OrgSettings {
   const stored = asObject(raw);
   const settings = OrgSettingsSchema.parse(stored);
-  const fullAccess = narrowedOrgFullAccess(settings.fullAccess, stored.autoMode);
-  if (fullAccess === undefined) delete settings.fullAccess;
-  else settings.fullAccess = fullAccess;
+  const { outsideSandbox, deviceNetwork } = orgDeviceSandboxOf(stored);
+  if (outsideSandbox === undefined) delete settings.outsideSandbox;
+  else settings.outsideSandbox = outsideSandbox;
+  if (deviceNetwork === undefined) delete settings.deviceNetwork;
+  else settings.deviceNetwork = deviceNetwork;
   return settings;
 }
 
@@ -485,8 +498,11 @@ export function logUnreadableSecuritySettings(
   }
 }
 
-const fullAccessNotAllowed = (message: string): ApiError =>
-  new ApiError("org.full_access_not_allowed", message);
+const outsideSandboxNotAllowed = (message: string): ApiError =>
+  new ApiError("org.outside_sandbox_not_allowed", message);
+
+const networkNotAllowed = (message: string, field: "default" | "ceiling"): ApiError =>
+  new ApiError("org.network_not_allowed", message, [{ path: `deviceNetwork.${field}` }]);
 
 const externalSharingNotAllowed = (message: string): ApiError =>
   new ApiError("org.external_sharing_not_allowed", message);
@@ -503,32 +519,65 @@ export function invalidStoredPromptSuggestions(raw: unknown): boolean {
   return v !== undefined && !PromptSuggestionsSetting.safeParse(v).success;
 }
 
-/** Whether a stored settings object holds a `fullAccess` this version reads as `off`. */
-export function invalidStoredFullAccess(raw: unknown): boolean {
-  const v = asObject(raw).fullAccess;
-  return v !== undefined && !FullAccessSetting.safeParse(v).success;
+/** Whether a stored settings object holds an `outsideSandbox` this version reads as `off`. */
+export function invalidStoredOutsideSandbox(raw: unknown): boolean {
+  const v = asObject(raw).outsideSandbox;
+  return v !== undefined && !OutsideSandboxSetting.safeParse(v).success;
 }
 
-/** Whether a stored settings object holds a `cloudNetwork` this version reads as an empty allowlist. */
-export function invalidStoredCloudNetwork(raw: unknown): boolean {
-  const v = asObject(raw).cloudNetwork;
-  return v !== undefined && !CloudNetworkSettingSchema.safeParse(v).success;
+/** Whether a stored settings object holds a `deviceNetwork` this version reads as an empty allowlist. */
+export function invalidStoredDeviceNetwork(raw: unknown): boolean {
+  const v = asObject(raw).deviceNetwork;
+  return v !== undefined && !DeviceNetworkSettingSchema.safeParse(v).success;
 }
 
 /**
- * Whether `next` (absent: follow the platform) widens `prev` (spec §D3), both normalized (mode
- * open, base platform, empty lists): the open mode where it was the allowlist; base none to
- * platform; with base platform, dropping one of the stored exclusions; an extra host no stored
- * extra covers. Over-strict on purpose: moving to base none with a platform entry as an extra is a
- * narrowing these rules refuse (a token cannot pin a platform host the platform may drop later).
+ * Whether `next`'s default or ceiling (absent: follow the platform, read as open, the widest the
+ * platform may relax to) opens where `prev`'s is the allowlist.
  */
-export function cloudNetworkWidens(
-  prev: CloudNetworkSetting | undefined,
-  next: CloudNetworkSetting | undefined,
+export function deviceNetworkModeWidens(
+  prev: DeviceNetworkSetting | undefined,
+  next: DeviceNetworkSetting | undefined,
+): "default" | "ceiling" | null {
+  const mode = (v: DeviceNetworkMode | undefined) => v ?? "open";
+  if (mode(next?.ceiling) === "open" && mode(prev?.ceiling) !== "open") return "ceiling";
+  if (mode(next?.default) === "open" && mode(prev?.default) !== "open") return "default";
+  return null;
+}
+
+/** The org's effective network default and ceiling: its own, within the platform's. */
+export function effectiveOrgNetwork(
+  platform: { default: DeviceNetworkMode; ceiling: DeviceNetworkMode },
+  org: DeviceNetworkSetting | undefined,
+): { default: DeviceNetworkMode; ceiling: DeviceNetworkMode } {
+  const ceiling =
+    platform.ceiling === "allowlist" || org?.ceiling === "allowlist" ? "allowlist" : "open";
+  const def = ceiling === "allowlist" ? "allowlist" : (org?.default ?? platform.default);
+  return { default: def, ceiling };
+}
+
+/** Which effective field opens from `a` to `b`, if any. */
+export function effectiveNetworkWidens(
+  a: { default: DeviceNetworkMode; ceiling: DeviceNetworkMode },
+  b: { default: DeviceNetworkMode; ceiling: DeviceNetworkMode },
+): "default" | "ceiling" | null {
+  if (a.ceiling === "allowlist" && b.ceiling === "open") return "ceiling";
+  if (a.default === "allowlist" && b.default === "open") return "default";
+  return null;
+}
+
+/**
+ * Whether `next`'s hosts (absent: follow the platform) widen `prev`'s (org egress ceiling spec
+ * §D3), both normalized (base platform, empty lists): base none to platform; with base platform,
+ * dropping one of the stored exclusions; an extra host no stored extra covers. Over-strict on
+ * purpose: moving to base none with a platform entry as an extra is a narrowing these rules refuse
+ * (a token cannot pin a platform host the platform may drop later).
+ */
+export function deviceNetworkHostsWiden(
+  prev: DeviceNetworkSetting | undefined,
+  next: DeviceNetworkSetting | undefined,
 ): boolean {
-  const mode = (v: CloudNetworkSetting | undefined) => v?.mode ?? "open";
-  const base = (v: CloudNetworkSetting | undefined) => v?.base ?? "platform";
-  if (mode(next) === "open" && mode(prev) !== "open") return true;
+  const base = (v: DeviceNetworkSetting | undefined) => v?.base ?? "platform";
   if (base(next) === "platform" && base(prev) === "none") return true;
   if (base(next) === "platform") {
     const kept = new Set(next?.excludedHosts ?? []);
@@ -540,7 +589,7 @@ export function cloudNetworkWidens(
   );
 }
 
-/** 组织设置服务：读取与修改（修改需 `org.update`，锁内实时复核角色，写审计）。 */
+/** Org settings: read and update (an update needs `org.update`, re-checks the role under the lock and is audited). */
 @Injectable()
 export class OrgSettingsService {
   constructor(
@@ -548,8 +597,8 @@ export class OrgSettingsService {
     @Inject(TransactionHost) readonly txHost: TransactionHost,
     @Inject(OrgLock) private readonly orgLock: OrgLock,
     /**
-     * The deployment config: `sandbox.limits` and the platform's Full switch
-     * (`devices.fullAccess`; the org may follow it, never exceed it).
+     * The deployment config: `sandbox.limits` and the platform's device sandbox settings
+     * (`devices.outsideSandbox`, `devices.network`; the org may follow them, never exceed them).
      */
     @Inject(KernelConfigService)
     private readonly config: Pick<KernelConfigService, "get" | "fieldSource">,
@@ -557,12 +606,12 @@ export class OrgSettingsService {
     @Optional() @Inject(KERNEL_LOGGER) private readonly log?: KernelLogger,
   ) {}
 
-  /** Parses stored settings, warning when an invalid `fullAccess` narrows to `off`, an invalid
-   * `cloudNetwork` to an empty allowlist, or a security setting reads narrower
+  /** Parses stored settings, warning when an invalid `outsideSandbox` narrows to `off`, an
+   * invalid `deviceNetwork` to an empty allowlist, or a security setting reads narrower
    * ({@link logUnreadableSecuritySettings}, warn). */
   private parseStored(orgId: string, raw: unknown): OrgSettings {
-    if (invalidStoredFullAccess(raw)) {
-      this.log?.warn("org settings: stored fullAccess is invalid; it reads as off", { orgId });
+    if (invalidStoredOutsideSandbox(raw)) {
+      this.log?.warn("org settings: stored outsideSandbox is invalid; it reads as off", { orgId });
     }
     if (invalidStoredExternalSharing(raw)) {
       this.log?.warn("org settings: stored externalSharing is invalid; it reads as off", { orgId });
@@ -572,9 +621,9 @@ export class OrgSettingsService {
         orgId,
       });
     }
-    if (invalidStoredCloudNetwork(raw)) {
+    if (invalidStoredDeviceNetwork(raw)) {
       this.log?.warn(
-        "org settings: stored cloudNetwork is invalid; it reads as an empty allowlist",
+        "org settings: stored deviceNetwork is invalid; it reads as an empty allowlist",
         {
           orgId,
         },
@@ -585,18 +634,18 @@ export class OrgSettingsService {
     return parseOrgSettings(raw);
   }
 
-  /** 部署默认值（设置页展示「跟随部署」时的实际取值）。 */
+  /** The deployment defaults (what "follow the platform" means on the settings page). */
   async deployment(): Promise<OrgSettingsDeployment> {
     const lim = this.config.get().sandbox.limits;
     const [
-      fullAccess,
+      deviceSandbox,
       attribution,
       compaction,
       externalSharing,
       shareMaxExpiry,
       promptSuggestions,
     ] = await Promise.all([
-      readDevicesFullAccess(this.db.db, this.config, this.log),
+      readDeviceSandboxSettingsView(this.db.db, this.config, this.log),
       readPlatformAttribution(this.db.db, this.config, this.log),
       readPlatformCompactionSettings(this.db.db),
       readExternalSharing(this.db.db, this.config, this.log),
@@ -604,8 +653,9 @@ export class OrgSettingsService {
       readPromptSuggestions(this.db.db, this.log),
     ]);
     return {
-      fullAccess,
-      cloudNetwork: {
+      outsideSandbox: deviceSandbox.outsideSandbox,
+      deviceNetwork: {
+        ...deviceSandbox.network,
         allowHosts: [...lim.allowHosts],
         orgHosts: lim.orgHosts,
         off: lim.egress === "none",
@@ -635,14 +685,14 @@ export class OrgSettingsService {
   }
 
   /**
-   * The org's effective sandbox-mode network (spec §D3): the cloud network's mode and the hosts,
-   * from the platform's `sandbox.limits` and the org's stored delta.
+   * The org's effective sandbox network (spec §D3): its mode and the hosts, from the platform's
+   * `sandbox.limits` and the org's stored delta.
    */
-  effectiveNetwork(settings: Pick<OrgSettings, "cloudNetwork">): OrgEffectiveNetwork {
+  effectiveNetwork(settings: Pick<OrgSettings, "deviceNetwork">): OrgEffectiveNetwork {
     const lim = this.config.get().sandbox.limits;
     return {
-      mode: orgCloudMode(lim, settings.cloudNetwork),
-      hosts: orgEffectiveHosts(lim, settings.cloudNetwork),
+      mode: orgCloudMode(lim, settings.deviceNetwork),
+      hosts: orgEffectiveHosts(lim, settings.deviceNetwork),
     };
   }
 
@@ -673,14 +723,26 @@ export class OrgSettingsService {
 
   /**
    * The refusals of {@link update} that need no read of the org (the Platform tool's precheck):
-   * auto mode where the platform turned it off, external sharing where the platform denies it.
+   * running outside the sandbox where the platform turned it off, a network default or ceiling
+   * above the platform's ceiling, external sharing where the platform denies it.
    */
   async check(patch: OrgSettingsPatch): Promise<void> {
-    // allowing Full where the platform turned it off is wider than the platform allows
-    if (patch.fullAccess === "allowed") {
-      const platform = await readDevicesFullAccess(this.db.db, this.config, this.log);
-      if (platform.permission === "off") {
-        throw fullAccessNotAllowed("The platform does not allow Full permission");
+    if (patch.outsideSandbox === "allowed" || patch.deviceNetwork != null) {
+      const platform = await readDeviceSandboxSettingsView(this.db.db, this.config, this.log);
+      // allowing outside-sandbox runs where the platform turned them off is wider than it allows
+      if (patch.outsideSandbox === "allowed" && platform.outsideSandbox.permission === "off") {
+        throw outsideSandboxNotAllowed(
+          "The platform does not allow running outside the sandbox; a super admin must allow it in the admin console settings first",
+        );
+      }
+      const net = patch.deviceNetwork;
+      if (net != null && platform.network.ceiling === "allowlist") {
+        for (const field of ["ceiling", "default"] as const)
+          if (net[field] === "open")
+            throw networkNotAllowed(
+              `The platform limits device networks to the allowlist, so the organization's network ${field} cannot be open; a super admin sets devices.network.ceiling`,
+              field,
+            );
       }
     }
     if (patch.externalSharing === "on") {
@@ -694,25 +756,18 @@ export class OrgSettingsService {
   }
 
   /**
-   * Under `sandbox.limits.orgHosts: within` (spec §D2), refuses what would widen past the platform
-   * ceiling compared with the stored value `before`: the open cloud network where the org did not
-   * store it, or an extra host outside the platform's allowlist that the org did not store. Stored
-   * values are sent back as they are (the PATCH replaces `cloudNetwork` whole) and have no effect
-   * under the ceiling (they are filtered on read), so they never block a write.
+   * Under `sandbox.limits.orgHosts: within` (spec §D2), refuses an extra host outside the
+   * platform's allowlist that the org did not store. Stored values are sent back as they are (the
+   * PATCH replaces `deviceNetwork` whole) and have no effect under the ceiling (they are filtered on
+   * read), so they never block a write. Whether the network may be open is the network ceiling's
+   * (`devices.network.ceiling`, {@link check}), not `orgHosts`'.
    */
   assertWithinCeiling(before: OrgSettings, patch: OrgSettingsPatch): void {
-    const cn = patch.cloudNetwork;
+    const cn = patch.deviceNetwork;
     if (cn == null) return;
     const lim = this.config.get().sandbox.limits;
     if (lim.orgHosts !== "within") return;
-    if (cn.mode === "open" && before.cloudNetwork?.mode !== "open") {
-      throw new ApiError(
-        "org.sandbox_egress_not_allowed",
-        "The platform limits sandbox networks to its allowlist; the open cloud network is not available",
-        [{ reason: "open_not_allowed" }],
-      );
-    }
-    const stored = new Set(before.cloudNetwork?.extraHosts ?? []);
+    const stored = new Set(before.deviceNetwork?.extraHosts ?? []);
     const outside = (cn.extraHosts ?? []).filter(
       (h) => !stored.has(h) && orgHostOutsideCeiling(lim, h),
     );
@@ -733,14 +788,14 @@ export class OrgSettingsService {
     /** Merged into the audit detail (the Platform tool's `via: "agent"`). */
     auditDetail?: Record<string, unknown>,
     /**
-     * `onlyNarrows` (the Platform tool, API tokens): refuse a `fullAccess`, `cloudNetwork` or
+     * `onlyNarrows` (the Platform tool, API tokens): refuse an `outsideSandbox`, `deviceNetwork` or
      * `externalSharing` change that widens (see {@link assertOnlyNarrows}); only a person in a
      * session widens.
      */
     opts?: { onlyNarrows?: boolean },
   ): Promise<OrgSettingsView> {
     await this.check(patch);
-    // the org row, then (for a Full or cloud network change) the org's permission authority lock:
+    // the org row, then (for a device sandbox change) the org's permission authority lock:
     // the ordered prelude, so inside a run's fence (the Platform tool's `org-settings.update`) they
     // precede the conversation rows; the patch decides the lock, so nothing can change it
     return withOrderedLocks(
@@ -756,38 +811,56 @@ export class OrgSettingsService {
     actorAccountId: string,
   ): Promise<void> {
     await this.orgLock.lockAndAuthorize(orgId, actorAccountId, "org.update");
-    if (patch.fullAccess !== undefined || patch.cloudNetwork !== undefined)
+    if (patch.outsideSandbox !== undefined || patch.deviceNetwork !== undefined)
       await this.ceilings.lock({ orgId }, "org");
   }
 
   /**
-   * Refuses a patch that widens the org's sandbox (auto mode spec §4.3: only a person widens it,
-   * never the Platform tool or an API token):
-   * - `fullAccess`: `allowed` where the organization runs `off` (an absent value follows the
-   *   platform); clearing it follows the platform too, never wider than the platform allows;
-   * - `cloudNetwork`: compared as stored deltas ({@link cloudNetworkWidens}), never as effective
-   *   values: under the kill switch or the platform ceiling the effective values hide a widening
-   *   that takes effect when the platform relaxes (org egress ceiling spec §D3);
+   * Refuses a patch that widens the org's sandbox (only a person widens it, never the Platform tool
+   * or an API token):
+   * - `outsideSandbox`: `allowed` where the organization runs `off` (an absent value follows the
+   *   platform); clearing it follows the platform too, never wider than the platform allows
+   *   (`org.outside_sandbox_not_allowed`);
+   * - `deviceNetwork`: compared as stored deltas, never as effective values (under the kill switch
+   *   or a platform ceiling the effective values hide a widening that takes effect when the
+   *   platform relaxes, org egress ceiling spec §D3): a default or ceiling opened
+   *   ({@link deviceNetworkModeWidens}, `org.network_not_allowed`) or wider hosts
+   *   ({@link deviceNetworkHostsWiden}, `org.sandbox_egress_not_allowed`);
    * - `externalSharing`: `on` where the org is off (absent = off).
    */
   async assertOnlyNarrows(before: OrgSettings, patch: OrgSettingsPatch): Promise<void> {
-    if (patch.fullAccess !== undefined) {
-      const platform = await readDevicesFullAccess(this.db.db, this.config, this.log);
-      const next = patch.fullAccess === null ? platform.permission : patch.fullAccess;
-      if ((before.fullAccess ?? platform.permission) !== "allowed" && next === "allowed") {
-        throw fullAccessNotAllowed(
-          "Allowing Full permission needs a person in the organization settings.",
+    if (patch.outsideSandbox !== undefined) {
+      const platform = await readDeviceSandboxSettingsView(this.db.db, this.config, this.log);
+      const was = before.outsideSandbox ?? platform.outsideSandbox.permission;
+      const next =
+        patch.outsideSandbox === null ? platform.outsideSandbox.permission : patch.outsideSandbox;
+      if (was !== "allowed" && next === "allowed") {
+        throw outsideSandboxNotAllowed(
+          "Allowing devices to run outside the sandbox needs a person in the organization settings.",
         );
       }
     }
-    if (
-      patch.cloudNetwork !== undefined &&
-      cloudNetworkWidens(before.cloudNetwork, patch.cloudNetwork ?? undefined)
-    ) {
-      throw new ApiError(
-        "org.sandbox_egress_not_allowed",
-        "Widening the cloud network needs a person in the organization settings.",
-      );
+    if (patch.deviceNetwork !== undefined) {
+      const next = patch.deviceNetwork ?? undefined;
+      // the stored delta (a widening that takes effect when the platform relaxes) and the
+      // effective value (an absent field follows the platform's) must both not open
+      const platform = await readDeviceSandboxSettingsView(this.db.db, this.config, this.log);
+      const field =
+        deviceNetworkModeWidens(before.deviceNetwork, next) ??
+        effectiveNetworkWidens(
+          effectiveOrgNetwork(platform.network, before.deviceNetwork),
+          effectiveOrgNetwork(platform.network, next),
+        );
+      if (field !== null)
+        throw networkNotAllowed(
+          `Opening the organization's network ${field} needs a person in the organization settings.`,
+          field,
+        );
+      if (deviceNetworkHostsWiden(before.deviceNetwork, next))
+        throw new ApiError(
+          "org.sandbox_egress_not_allowed",
+          "Widening the organization's device network hosts needs a person in the organization settings.",
+        );
     }
     if (patch.externalSharing === "on" && before.externalSharing !== "on") {
       throw externalSharingNotAllowed(
@@ -822,7 +895,7 @@ export class OrgSettingsService {
     const changes = Object.fromEntries(
       Object.entries(patch)
         .filter(([, v]) => v !== undefined)
-        // null clears fullAccess / cloudNetwork / wakeOnBackgroundTask (follow the deployment
+        // null clears outsideSandbox / deviceNetwork / wakeOnBackgroundTask (follow the deployment
         // again), externalSharing (off) and promptSuggestions (follow the platform)
         .map(([k, v]) => [k, v === null ? undefined : v]),
     ) as Partial<OrgSettings>;
@@ -849,15 +922,13 @@ export class OrgSettingsService {
       after.uiArrangement = mergeArrangement(before.uiArrangement, arrangementPatch);
       if (Object.keys(after.uiArrangement).length === 0) delete after.uiArrangement;
     }
-    // A stored old `autoMode` is never dropped here: only the permission configuration
-    // publication converts it (a mismatch window before activation keeps it). It is carried in
-    // step with `fullAccess`; a write that does not choose the value stores what every reader
-    // already sees: the narrower of the two (never refused, never wider).
-    const legacy = "autoMode" in stored;
-    if (legacy && patch.fullAccess === undefined)
-      after.fullAccess = narrowedOrgFullAccess(before.fullAccess, stored.autoMode);
-    if (after.fullAccess === undefined) delete after.fullAccess;
-    if (after.cloudNetwork === undefined) delete after.cloudNetwork;
+    // Stored old keys (`autoMode`, `fullAccess`, `cloudNetwork`) are never dropped here: only the
+    // permission configuration publication converts them (a mismatch window before activation
+    // keeps them). `before` already reads them narrowed (orgDeviceSandboxOf), so a write that does
+    // not choose a value stores what every reader already sees (never refused, never wider), and
+    // the old keys are carried in step below.
+    if (after.outsideSandbox === undefined) delete after.outsideSandbox;
+    if (after.deviceNetwork === undefined) delete after.deviceNetwork;
     if (after.wakeOnBackgroundTask === undefined) delete after.wakeOnBackgroundTask;
     if (after.timeZone === undefined) delete after.timeZone;
     if (after.theme === undefined) delete after.theme;
@@ -880,12 +951,14 @@ export class OrgSettingsService {
     if (patch.theme?.id != null && patch.theme.id !== before.theme?.id) {
       await assertThemeOnIn(this.db.db, orgId, patch.theme.id);
     }
-    // Merge with the stored value: keep the keys this version does not know (a cleared fullAccess /
-    // cloudNetwork is not kept, nor the old name autoMode)
+    // Merge with the stored value: keep the keys this version does not know (a cleared
+    // outsideSandbox / deviceNetwork is not kept; the old keys are rewritten in step)
     const {
       autoMode: _legacyAutoMode,
-      fullAccess: _oldFullAccess,
-      cloudNetwork: _oldNetwork,
+      fullAccess: _legacyFullAccess,
+      cloudNetwork: _legacyNetwork,
+      outsideSandbox: _oldOutside,
+      deviceNetwork: _oldNetwork,
       wakeOnBackgroundTask: _oldWake,
       timeZone: _oldZone,
       theme: _oldTheme,
@@ -896,11 +969,8 @@ export class OrgSettingsService {
       promptSuggestions: _oldPromptSuggestions,
       ...rest
     } = stored;
-    const written: Record<string, unknown> = {
-      ...rest,
-      ...after,
-      ...(legacy && after.fullAccess !== undefined && { autoMode: after.fullAccess }),
-    };
+    const written: Record<string, unknown> = { ...rest, ...after };
+    keepOrgLegacyKeysInStep(written, stored);
     // An unreadable forbiddenTools reads as [] for display only: a write that does not replace the
     // list keeps it unreadable (never healed to "nothing forbidden"); saving the list fixes it
     if (invalidStoredForbiddenTools(stored) && patch.scheduledTasks?.forbiddenTools === undefined) {
@@ -923,20 +993,32 @@ export class OrgSettingsService {
       target: orgId,
       detail: { before, after, ...(repairs && { repaired: true }), ...auditDetail },
     });
-    if (patch.fullAccess !== undefined || patch.cloudNetwork !== undefined) {
+    if (patch.outsideSandbox !== undefined || patch.deviceNetwork !== undefined) {
+      // the consent reset follows the effective values as every reader sees them (re-read from
+      // what was written, within the platform), so a widening the platform hides resets nothing
+      const platform = await readDeviceSandboxSettingsView(this.db.db, this.config, this.log);
+      const effOutside = (o: OrgSettings) =>
+        platform.outsideSandbox.permission === "off" ? "off" : (o.outsideSandbox ?? "allowed");
+      const reread = parseOrgSettings(written);
+      const resetConsent =
+        effOutside(before) !== effOutside(reread) ||
+        effectiveNetworkWidens(
+          effectiveOrgNetwork(platform.network, before.deviceNetwork),
+          effectiveOrgNetwork(platform.network, reread.deviceNetwork),
+        ) !== null;
       const machineRoots = await localMachineRoots(this.db.db, orgId);
       await this.ceilings.publishLocked(
         { orgId },
         "org",
         (scope, row) => {
-          // Full off takes Full work and restricted work outside the machine's roots; anything
-          // else (Full on) still goes through the host check below
+          // outside off takes escalated work and restricted work outside the machine's roots;
+          // anything else still goes through the host check below
           if (
-            after.fullAccess === "off" &&
+            after.outsideSandbox === "off" &&
             needsWiderDeviceCeiling(scope, machineRoots.get(row.device_id))
           )
             return true;
-          if (needsFullCeiling(scope)) return after.fullAccess === "off";
+          if (needsFullCeiling(scope)) return after.outsideSandbox === "off";
           if (
             !("network" in scope) ||
             !isExecutionMethod(row.method) ||
@@ -950,7 +1032,7 @@ export class OrgSettingsService {
               !(this.effectiveNetwork(after).mode === "open" && row.granted_hosts.includes(host)),
           );
         },
-        before.fullAccess !== after.fullAccess,
+        resetConsent,
       );
     }
     return viewOf(after, written);
@@ -959,7 +1041,7 @@ export class OrgSettingsService {
 
 /**
  * The one {@link OrgSettingsService}: the orgs module re-exports it, and the catalog imports it
- * directly (approving a network request writes the org's cloud network) without a cycle through
+ * directly (approving a network request writes the org's device network) without a cycle through
  * OrgsModule.
  */
 @Module({
