@@ -5,7 +5,7 @@ import { BOOTSTRAP_COMPOSE_FILES, checkBootstrap } from "../bootstrap.js";
 import { checkComposeHaproxy } from "../compose-haproxy.js";
 import { checkConfigDocs } from "../config-docs.js";
 import { checkSdkComments } from "../english-comments.js";
-import { checkDesignI18n, checkI18n } from "../i18n.js";
+import { checkDesignI18n, checkI18n, checkWebI18nKeys } from "../i18n.js";
 import { checkKernelConventions } from "../kernel-conventions.js";
 import { checkOutboxRegistry } from "../outbox-registry.js";
 import { checkPackageSchemas } from "../package-schemas.js";
@@ -42,6 +42,7 @@ export const RUNNERS: Record<string, NamedCheck> = {
     name: "UI copy",
     run: () => [
       ...checkI18n(join(root, "apps/web/messages")),
+      ...checkWebI18nKeys(join(root, "apps/web/src"), join(root, "apps/web/messages")),
       ...checkDesignI18n(join(root, "packages/design/src/i18n.ts")),
     ],
   },

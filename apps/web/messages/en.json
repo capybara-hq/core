@@ -621,6 +621,7 @@
         "Glob": "Find files by name",
         "Grep": "Search file contents",
         "Deliver": "Deliver files",
+        "FetchAttachment": "Copy attachments into the device",
         "WebSearch": "Search the web",
         "WebFetch": "Read web pages",
         "GenerateImage": "Generate images",
@@ -629,6 +630,7 @@
         "ScheduleCreate": "Create scheduled tasks",
         "ScheduleUpdate": "Change scheduled tasks",
         "ScheduleList": "List scheduled tasks",
+        "ScheduleTargets": "List chats scheduled tasks can send to",
         "ScheduleDelete": "Delete scheduled tasks"
       },
       "connectorsLabel": "Connectors",
@@ -2362,6 +2364,7 @@
     },
     "tools": {
       "title": "Tools",
+      "columns": { "name": "Tool", "policy": "Default policy" },
       "hintManage": "Each tool shows its default policy and its switch on the right. Hover a tool's name to see its full name and description.",
       "hintRead": "Each tool shows its default policy on the right. Hover a tool's name to see its full name and description.",
       "search": "Search tools",
