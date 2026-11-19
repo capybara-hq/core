@@ -2,12 +2,13 @@ import { randomBytes } from "node:crypto";
 import { mkdir, mkdtemp, readFile, realpath, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import type { KernelRequest } from "@capybara-hq/plugin-sdk";
 import { afterAll, beforeAll, expect, it } from "vitest";
 import { createMacOperationBackend } from "../src/exec/mac-operation-backend.js";
 import type { DeviceOwnerCeiling } from "../src/exec/operation-types.js";
 import { startMacOperationWorker } from "../src/exec/operation-worker.js";
 import { observeTransferTimings, type TransferTiming } from "../src/exec/transfer-timing.js";
-import { type KernelRequest, serveOperationV3 } from "../src/server-ops.js";
+import { serveOperationV3 } from "../src/server-ops.js";
 import { sealWorkspaceRuntime } from "./runtime-seal.js";
 
 const workspace = { runtimeHash: "", cleanup: async () => {} };
