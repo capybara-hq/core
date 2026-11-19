@@ -1,6 +1,7 @@
 /*
- * App Shell (spec §4): Sidebar | content column. The content column holds the drawer menu bar
- * (below 600), the page (template) and the StatusBar; the ActionRow sits at the template's bottom.
+ * App Shell (spec §4): Sidebar | content column. The content column holds the top bar (below 600),
+ * the page (template), the StatusBar and the bottom navigation (below 600); the ActionRow sits at
+ * the template's bottom.
  */
 
 /* 以链接渲染的按钮（Link 组件不能带 data-*） */
@@ -58,7 +59,7 @@
 /* A shell-wide banner (safe mode) is the shell's first row, across both columns; the sidebar and
    the content column share the second row, so the shell keeps the window height and nothing at its
    bottom (the status bar, the composer) is clipped. The content column keeps the second column
-   when no sidebar panel is drawn (the drawer below 600). */
+   when no sidebar panel is drawn (below 600). */
 .cb-shell[data-banner="true"] {
   display: grid;
   grid-template-columns: auto minmax(0, 1fr);
@@ -90,44 +91,341 @@
   min-height: 0;
 }
 
-/* Drawer menu bar: below 600 only (spec §4). */
-.cb-shell-drawerbar {
+/* Compact chrome (spec §4, §4.6, §4.7): the top bar above the page and the bottom navigation
+   under it, both drawn always and shown below 600 by these rules, so the server render is right at
+   every width. The OS insets (`--cb-inset-*`, §4.7) pad them; the bars keep their token heights. */
+.cb-shell-topbar,
+.cb-shell-bottomnav {
+  display: none;
+  flex: none;
+}
+@media (max-width: 599px) {
+  .cb-shell-topbar {
+    display: block;
+    padding-top: var(--cb-inset-top, env(safe-area-inset-top, 0px));
+    background: var(--cb-bg);
+  }
+  .cb-shell-bottomnav {
+    display: block;
+    padding-bottom: var(--cb-inset-bottom, env(safe-area-inset-bottom, 0px));
+    background: var(--cb-sidebar);
+  }
+  /* The keyboard hides the bottom navigation (spec §4.3). */
+  .cb-shell[data-keyboard="open"] .cb-shell-bottomnav {
+    display: none;
+  }
+  /* The compact class has no StatusBar: its system status is on the Me page (spec §4). */
+  .cb-shell-column > .cb-statusbar {
+    display: none;
+  }
+}
+
+/* A push slides in from the end edge and a pop slides back over motion.expand (spec §4.6): a CSS
+   animation named by direction and parity, so two pushes in a row both run; a browser with view
+   transitions animates the back button instead (view-transition.ts), and reduced motion has none. */
+@media (max-width: 599px) and (prefers-reduced-motion: no-preference) {
+  .cb-shell-main[data-nav="push-0"] {
+    animation: cb-push-0 var(--cb-motion-expand) ease-out;
+  }
+  .cb-shell-main[data-nav="push-1"] {
+    animation: cb-push-1 var(--cb-motion-expand) ease-out;
+  }
+  .cb-shell-main[data-nav="pop-0"] {
+    animation: cb-pop-0 var(--cb-motion-expand) ease-out;
+  }
+  .cb-shell-main[data-nav="pop-1"] {
+    animation: cb-pop-1 var(--cb-motion-expand) ease-out;
+  }
+  :root[data-cb-transition] .cb-shell-main[data-nav] {
+    animation: none;
+  }
+  :root[data-cb-transition="pop"]::view-transition-old(root) {
+    animation: cb-pop-out var(--cb-motion-expand) ease-out both;
+  }
+  :root[data-cb-transition="pop"]::view-transition-new(root) {
+    animation: cb-pop-0 var(--cb-motion-expand) ease-out both;
+  }
+}
+@keyframes cb-push-0 {
+  from {
+    transform: translateX(24px);
+    opacity: 0;
+  }
+}
+@keyframes cb-push-1 {
+  from {
+    transform: translateX(24px);
+    opacity: 0;
+  }
+}
+@keyframes cb-pop-0 {
+  from {
+    transform: translateX(-24px);
+    opacity: 0;
+  }
+}
+@keyframes cb-pop-1 {
+  from {
+    transform: translateX(-24px);
+    opacity: 0;
+  }
+}
+@keyframes cb-pop-out {
+  to {
+    transform: translateX(24px);
+    opacity: 0;
+  }
+}
+
+/* ClassSwap: the compact variant below 600, the other above; the wrappers have no box. */
+.cb-class-swap {
+  display: contents;
+}
+.cb-class-swap[data-for="compact"] {
+  display: none;
+}
+@media (max-width: 599px) {
+  .cb-class-swap[data-for="compact"] {
+    display: contents;
+  }
+  .cb-class-swap[data-for="regular"] {
+    display: none;
+  }
+}
+
+/* TopBar (spec §6.46): layout.top-bar high, back (pushed pages), the page's name, search and the
+   overflow menu. Padded 0 space.2 at the end and, on a tab root, space.4 at the start (the title
+   on the 16 px content edge). The buttons are the ordinary ghost icon buttons (control.default
+   squares, radius sm); each reaches a 40 x 40 tap target through an invisible ring that does not
+   change the box, so a hover or pressed ground fills the rounded square only. */
+.cb-topbar {
   display: flex;
   flex: none;
   align-items: center;
+  gap: var(--cb-space-3);
+  box-sizing: border-box;
+  height: var(--cb-layout-top-bar);
+  padding: 0 var(--cb-space-2) 0 var(--cb-space-4);
+  border-bottom: 1px solid var(--cb-line-soft);
+  background: var(--cb-bg);
+}
+.cb-topbar[data-pushed="true"] {
+  padding-left: var(--cb-space-2);
+}
+.cb-topbar-title {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  color: var(--cb-ink);
+  font-size: var(--cb-type-body-size);
+  font-weight: 600;
+  line-height: var(--cb-type-body-line);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.cb-topbar .cb-icon-btn {
+  position: relative;
+  flex: none;
+  color: var(--cb-muted);
+  text-decoration: none;
+}
+.cb-topbar .cb-icon-btn::after {
+  content: "";
+  position: absolute;
+  inset: -6px;
+}
+.cb-topbar .cb-icon-btn[aria-pressed="true"] {
+  background: var(--cb-selected);
+  color: var(--cb-ink);
+}
+
+/* BottomNav (spec §6.45): four items of layout.bottom-nav on the sidebar ground with a line-soft
+   top line (a pseudo-element, so the bar stays 56); no box, shadow or radius. An item is a quarter
+   of the width, an icon 16 over a micro label; the current one has no ground of its own: ink, the
+   label weight 500. */
+.cb-bottomnav {
+  position: relative;
+  display: flex;
+  height: var(--cb-layout-bottom-nav);
+  background: var(--cb-sidebar);
+}
+.cb-bottomnav::before {
+  content: "";
+  position: absolute;
+  inset: 0 0 auto 0;
+  z-index: 1;
+  height: 1px;
+  background: var(--cb-line-soft);
+}
+.cb-bottomnav-item {
+  position: relative;
+  display: flex;
+  flex: 1 1 0;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: var(--cb-space-1);
+  min-width: 40px;
+  height: var(--cb-layout-bottom-nav);
+  min-height: 40px;
+  color: var(--cb-muted);
+  text-decoration: none;
+  -webkit-tap-highlight-color: transparent;
+}
+.cb-bottomnav-item:active {
+  background: var(--cb-hover);
+}
+.cb-bottomnav-item:focus-visible {
+  outline: 1px solid var(--cb-accent);
+  outline-offset: -1px;
+}
+.cb-bottomnav-label {
+  max-width: 100%;
+  padding: 0 var(--cb-space-1);
+  overflow: hidden;
+  font-size: var(--cb-type-micro-size);
+  line-height: var(--cb-type-micro-line);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.cb-bottomnav-item[aria-current="page"] {
+  color: var(--cb-ink);
+}
+.cb-bottomnav-item[aria-current="page"] .cb-bottomnav-label {
+  font-weight: 500;
+}
+.cb-bottomnav-icon {
+  position: relative;
+  display: inline-flex;
+}
+/* A short window (height below 480) keeps the icons and the 56 height; the names stay as
+   accessible names (spec §4.7). */
+.cb-shell[data-short="true"] .cb-bottomnav-label,
+.cb-bottomnav[data-short="true"] .cb-bottomnav-label {
+  display: none;
+}
+/* The nav badge outside the icon's top-right corner (spec §6.13 "Nav badge"): its left edge 2px
+   past the icon's right edge, its vertical center on the icon's top edge, a 2px ring in the
+   bar's ground filling the gap. Same size and look as the rail's. */
+.cb-bottomnav-badge {
+  position: absolute;
+  top: 0;
+  left: calc(100% + 2px);
+  min-width: 14px;
+  padding: 0 3px;
+  border-radius: var(--cb-radius-sm);
+  background-color: var(--cb-selected);
+  background-image:
+    linear-gradient(var(--cb-selected), var(--cb-selected)),
+    linear-gradient(var(--cb-sidebar), var(--cb-sidebar));
+  box-shadow: 0 0 0 2px var(--cb-sidebar);
+  color: var(--cb-ink);
+  font-size: var(--cb-type-micro-size);
+  line-height: var(--cb-type-micro-line);
+  text-align: center;
+  transform: translateY(-50%);
+}
+
+/* MePanel (spec §6.48): the account and org head, groups of row.roomy rows split by line-soft
+   hairlines, in no box. */
+.cb-me {
+  display: flex;
+  flex-direction: column;
+  gap: var(--cb-space-4);
+  box-sizing: border-box;
+  width: 100%;
+  padding: 0 0 var(--cb-space-6);
+}
+.cb-me-head {
+  display: flex;
+  flex-direction: column;
+  gap: var(--cb-space-2);
+}
+.cb-me-account {
+  display: flex;
+  align-items: center;
   gap: var(--cb-space-2);
   height: var(--cb-row-roomy);
-  padding: 0 var(--cb-space-3);
-  border-bottom: 1px solid var(--cb-line-soft);
+  font-weight: 600;
 }
-.cb-shell-drawerbar .cb-icon-btn {
-  color: var(--cb-muted);
-}
-/* Phones: 40 px tap targets, the icons' glyphs on the 16 px content edge. */
-@media (max-width: 599px) {
-  .cb-shell-drawerbar {
-    padding: 0 var(--cb-space-1);
-  }
-  .cb-shell-drawerbar .cb-icon-btn {
-    min-width: 40px;
-    min-height: 40px;
-  }
-}
-.cb-shell-drawerbar-end {
-  display: flex;
+.cb-me-avatar {
+  display: inline-grid;
   flex: none;
-  margin-left: auto;
+  place-items: center;
+  width: var(--cb-control-dense);
+  height: var(--cb-control-dense);
+  border-radius: 50%;
+  background: var(--cb-selected);
+  color: var(--cb-ink);
+  font-size: var(--cb-type-small-size);
+  font-weight: 600;
+  line-height: 1;
 }
-.cb-shell-drawerbar-title {
+.cb-me-ellipsis {
   min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
-@media (min-width: 600px) {
-  .cb-shell-drawerbar[data-responsive="true"] {
-    display: none;
-  }
+.cb-me-group {
+  display: flex;
+  flex-direction: column;
+}
+.cb-me-label {
+  display: flex;
+  align-items: flex-end;
+  height: var(--cb-row-dense);
+  margin: 0;
+  color: var(--cb-faint);
+  font-size: var(--cb-type-micro-size);
+  font-weight: 400;
+  letter-spacing: 0.06em;
+  line-height: var(--cb-type-micro-line);
+}
+.cb-me-row {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: var(--cb-space-3);
+  box-sizing: border-box;
+  width: 100%;
+  height: var(--cb-row-roomy);
+  padding: 0;
+  border: 0;
+  border-top: 1px solid var(--cb-line-soft);
+  background: transparent;
+  color: var(--cb-ink);
+  font: inherit;
+  font-size: var(--cb-type-body-size);
+  text-align: left;
+  text-decoration: none;
+  cursor: pointer;
+}
+.cb-me-label + .cb-me-row {
+  border-top: 0;
+}
+.cb-me-row > .cb-icon {
+  flex: none;
+  color: var(--cb-muted);
+}
+.cb-me-row > .cb-icon:last-child:not(:first-child) {
+  color: var(--cb-faint);
+}
+.cb-me-row > .cb-me-ellipsis {
+  flex: 1;
+}
+.cb-me-row:focus-visible {
+  outline: 1px solid var(--cb-accent);
+  outline-offset: -1px;
+}
+.cb-me-value {
+  color: var(--cb-muted);
+}
+.cb-me-system {
+  margin: 0;
+  color: var(--cb-muted);
+  font-size: var(--cb-type-micro-size);
+  line-height: var(--cb-type-micro-line);
 }
 
 /* The tabs row (spec §2.4): the views with counts, the search at the right end. */

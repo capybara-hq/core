@@ -1,19 +1,35 @@
-import { type ReactNode, useEffect, useId, useRef, useState } from "react";
-import { IconButton } from "../controls/index";
-import { Icon } from "../icons/icon";
-import { type CommandGroup, CommandPalette } from "../overlays/index";
+import { type ReactNode, useCallback, useEffect, useId, useMemo, useRef, useState } from "react";
+import type { ConvMenuEntry } from "../conversation/menu";
+import { type CommandGroup, CommandPalette, type MenuItem } from "../overlays/index";
 import { useDesignT } from "../provider";
+import { BottomNav, type BottomNavItem, bottomNavCurrent, isTabRoot } from "./bottom-nav";
 import { keyboardInset } from "./pointer";
+import { type ShellPage, ShellPageContext } from "./shell-page";
 import { Sidebar, type SidebarProps, useSidebarWidthMode } from "./sidebar";
 import { useShortWindow, useSizeClass } from "./size-class";
 import { StatusBar, type StatusBarProps, StatusBarSetterContext } from "./status-bar";
+import { backTarget, TopBar } from "./top-bar";
 import { useHydrated } from "./use-media-query";
 
 export type AppShellProps = {
-  sidebar: Omit<
-    SidebarProps,
-    "onOpenCommands" | "mode" | "drawer" | "drawerInline" | "collapsed" | "onCollapsedChange"
-  >;
+  sidebar: Omit<SidebarProps, "onOpenCommands" | "mode" | "collapsed" | "onCollapsedChange">;
+  /**
+   * The compact class's four navigation items (design spec §6.45), from the same `useNav` data the
+   * sidebar takes; drawn on tab roots only. Without them the compact shell has no bottom
+   * navigation (the setup frame, the catalog).
+   */
+  bottomNav?: BottomNavItem[];
+  /**
+   * The route (`usePathname()`, without the locale): a route that is the target of a bottom
+   * navigation item is a tab root, every other route is pushed (design spec §4.6); the item
+   * whose root or pushed pages hold it is current.
+   */
+  pathname?: string;
+  /**
+   * The compact top bar's overflow menu for pages that do not register their own
+   * ({@link useRegisterShellPage}); empty or absent: no button.
+   */
+  menu?: ConvMenuEntry[];
   /**
    * The person's choice of the rail on the expanded class (the `cb-sidebar` cookie, spec §4.1).
    * Controlled with `onCollapsedChange`; without `collapsed` the shell keeps its own state.
@@ -21,18 +37,18 @@ export type AppShellProps = {
   collapsed?: boolean;
   onCollapsedChange?(collapsed: boolean): void;
   /**
-   * The command palette's groups (⌘K, the sidebar's and the drawer bar's search). Without them
+   * The command palette's groups (⌘K, the sidebar's and the compact top bar's search). Without them
    * there is no palette and no search (the setup frame, T13).
    */
   commands?: CommandGroup[];
   status: Pick<StatusBarProps, "context" | "version" | "timeZone" | "system">;
-  /** The page title in the drawer menu bar (below 600); defaults to none. */
-  title?: string;
   /**
-   * Draw the shell as below 600 whatever the window width, with the drawer open in place (the
-   * reference set and the catalog only).
+   * The compact top bar's title for a page that has not registered its name yet (the PageHeader
+   * registers the h1 text); a tab root shows its item's label first.
    */
-  reference?: { drawer: true } | { rail: true };
+  title?: string;
+  /** Draw the shell as the rail of the medium class whatever the window width (reference set only). */
+  reference?: { rail: true };
   /**
    * The page draws its own status bar (the conversation page: under its middle column only, so a
    * full-height right panel sits beside it); the shell then draws none.
@@ -41,8 +57,8 @@ export type AppShellProps = {
   /**
    * The state tokens for plugin CSS (`run=idle`, `motion=full`, `theme=builtin`, space-separated),
    * rendered as `data-cap-state` on the shell element. The shell appends its own `sidebar=rail`
-   * or `sidebar=full` after hydration (the drawer below 600 counts as `full`: it is the full
-   * panel), then `size=compact|medium|expanded`.
+   * or `sidebar=full` after hydration (none below 600: the compact class has no sidebar), then
+   * `size=compact|medium|expanded`.
    */
   capState?: string;
   /**
@@ -56,11 +72,14 @@ export type AppShellProps = {
 
 /**
  * The App Shell (spec §4): Sidebar | content column. The content column holds, top to bottom,
- * the drawer menu bar (below 600 only), the page (a template, with its ActionRow at its bottom)
- * and the StatusBar. ⌘K opens the command palette.
+ * the top bar (compact only), the page (a template, with its ActionRow at its bottom), the
+ * StatusBar and the bottom navigation (compact tab roots only). ⌘K opens the command palette.
  */
 export function AppShell({
   sidebar,
+  bottomNav,
+  pathname,
+  menu,
   collapsed: collapsedProp,
   onCollapsedChange,
   commands,
@@ -75,9 +94,7 @@ export function AppShell({
   const t = useDesignT();
   const mainId = `cb-main-${useId().replace(/[^\w-]/g, "")}`;
   const [paletteOpen, setPaletteOpen] = useState(false);
-  const drawerRef = reference !== undefined && "drawer" in reference;
   const railRef = reference !== undefined && "rail" in reference;
-  const [drawerOpen, setDrawerOpen] = useState(drawerRef);
   const [pageStatus, setPageStatus] = useState<ReactNode>(null);
   const hydrated = useHydrated();
   const sizeClass = useSizeClass();
@@ -90,15 +107,16 @@ export function AppShell({
   };
   // the sidebar's mode by size class (one place: sidebar.tsx)
   const widthMode = useSidebarWidthMode(collapsed);
-  const narrow = widthMode === "drawer";
   const railWidth = widthMode === "rail";
   // Public mirror of the sidebar's mode (`data-mode` is internal); none before hydration, when
-  // both panels are drawn and CSS picks one.
+  // both panels are drawn and CSS picks one, and none on compact, which has no sidebar.
   const sidebarMode = !hydrated
     ? null
     : railRef || (reference === undefined && railWidth)
       ? "rail"
-      : "full";
+      : reference === undefined && widthMode === "none"
+        ? null
+        : "full";
   const stateTokens = !hydrated
     ? capState
     : [
@@ -108,6 +126,81 @@ export function AppShell({
       ]
         .filter(Boolean)
         .join(" ");
+
+  // What the page tells the shell about itself (name, path, overflow menu): the compact top bar's.
+  const [pages, setPages] = useState<ReadonlyMap<symbol, ShellPage>>(() => new Map());
+  const registerPage = useCallback((id: symbol, page: ShellPage | null) => {
+    setPages((prev) => {
+      const next = new Map(prev);
+      if (page === null) next.delete(id);
+      else next.set(id, page);
+      return next;
+    });
+  }, []);
+  const page = useMemo(() => {
+    const merged: ShellPage = {};
+    for (const p of pages.values()) {
+      if (p.title !== undefined) merged.title = p.title;
+      if (p.path !== undefined) merged.path = p.path;
+      if (p.menu !== undefined) merged.menu = p.menu;
+    }
+    return merged;
+  }, [pages]);
+
+  // The route: a tab root shows the bottom navigation, every other route is pushed (spec §4.6).
+  // Back goes to the previous in-app entry once the shell has seen a navigation, else up the path.
+  const items = bottomNav ?? [];
+  const tabRoot = pathname === undefined || items.length === 0 || isTabRoot(items, pathname);
+  const pushed = !tabRoot;
+  const currentTab = pathname === undefined ? null : bottomNavCurrent(items, pathname);
+  const [navigated, setNavigated] = useState(false);
+  // The slide of the last route change: its direction and a parity that restarts the animation
+  // when two pushes follow each other (the CSS animations are named by both).
+  const [slide, setSlide] = useState<{ direction: "push" | "pop"; n: number } | null>(null);
+  const lastRoute = useRef({ pathname, tabRoot });
+  useEffect(() => {
+    const last = lastRoute.current;
+    if (last.pathname === pathname) return;
+    lastRoute.current = { pathname, tabRoot };
+    setNavigated(true);
+    // A pushed page slides in from the end edge; the way back to a root slides back.
+    setSlide((prev) =>
+      tabRoot && last.tabRoot
+        ? null
+        : { direction: tabRoot ? "pop" : "push", n: ((prev?.n ?? 0) + 1) % 2 },
+    );
+  }, [pathname, tabRoot]);
+  const tabLabel = items.find((i) => i.id === currentTab && tabRoot)?.label;
+
+  // The setup frame's steps are a list in the compact top bar (the sidebar's setup context has no
+  // drawer any more): a menu of the setup home and the steps, current one marked.
+  const setupSteps: MenuItem[] | undefined =
+    sidebar.context.kind === "setup"
+      ? [
+          {
+            label: t("sidebar.setupHome"),
+            href: sidebar.context.home.href,
+            ...(sidebar.activeNav === "home" ? { current: true } : {}),
+          },
+          ...sidebar.context.steps.map(
+            (step): MenuItem =>
+              step.state === "waiting" || step.href === undefined
+                ? {
+                    label: step.label,
+                    description: step.reason ?? t("sidebar.stepWaiting"),
+                    icon: "clock",
+                    disabled: true,
+                    onSelect: () => {},
+                  }
+                : {
+                    label: step.label,
+                    href: step.href,
+                    icon: step.state === "done" ? "check" : "circle",
+                    ...(sidebar.activeNav === step.id ? { current: true } : {}),
+                  },
+          ),
+        ]
+      : undefined;
 
   const searchable = commands !== undefined;
   // ⌘K opens the palette; ⌘\ / Ctrl+\ collapses or expands the sidebar (the expanded class only:
@@ -182,73 +275,65 @@ export function AppShell({
     };
   }, [reference]);
 
-  // Before hydration the bar is drawn and CSS shows it below 600 only.
-  const bar = drawerRef || (!railRef && (!hydrated || narrow));
-
   return (
-    <StatusBarSetterContext.Provider value={setPageStatus}>
-      <div
-        ref={shellRef}
-        className="cb-shell"
-        data-cap-part="shell"
-        data-cap-state={stateTokens}
-        data-banner={banner ? "true" : undefined}
-        data-short={short ? "true" : undefined}
-      >
-        {/* The first tab stop: past the sidebar to the page (m9); visible only when focused. */}
-        <a className="cb-skip-link" href={`#${mainId}`}>
-          {t("shell.skipToContent")}
-        </a>
-        {banner ? (
-          <div className="cb-shell-banner" data-part="shell-banner">
-            {banner}
-          </div>
-        ) : null}
-        <Sidebar
-          {...sidebar}
-          collapsed={collapsed}
-          onCollapsedChange={setCollapsed}
-          onOpenCommands={() => setPaletteOpen(true)}
-          // A drawn-in-place reference drawer stays open (Esc closes the topmost real overlay only).
-          drawer={{ open: drawerOpen, onOpenChange: drawerRef ? () => {} : setDrawerOpen }}
-          {...(drawerRef ? { mode: "drawer" as const, drawerInline: true } : {})}
-          {...(railRef ? { mode: "rail" as const } : {})}
-        />
-        <div className="cb-shell-column" data-part="shell-content">
-          {bar ? (
-            <div
-              className="cb-shell-drawerbar"
-              data-part="drawer-bar"
-              data-responsive={hydrated || reference ? undefined : "true"}
-            >
-              <IconButton
-                label={t("sidebar.menu")}
-                icon={<Icon name="menu" />}
-                aria-expanded={drawerOpen}
-                onClick={() => setDrawerOpen(true)}
-              />
-              {title ? <span className="cb-shell-drawerbar-title">{title}</span> : null}
-              {/* Search stays reachable by pointer below 960 (the drawer swaps it for close). */}
-              {searchable ? (
-                <span className="cb-shell-drawerbar-end">
-                  <IconButton
-                    label={`${t("shell.searchShort")} ⌘K`}
-                    icon={<Icon name="search" />}
-                    onClick={() => setPaletteOpen(true)}
-                  />
-                </span>
-              ) : null}
+    <ShellPageContext.Provider value={registerPage}>
+      <StatusBarSetterContext.Provider value={setPageStatus}>
+        <div
+          ref={shellRef}
+          className="cb-shell"
+          data-cap-part="shell"
+          data-cap-state={stateTokens}
+          data-banner={banner ? "true" : undefined}
+          data-short={short ? "true" : undefined}
+        >
+          {/* The first tab stop: past the sidebar to the page (m9); visible only when focused. */}
+          <a className="cb-skip-link" href={`#${mainId}`}>
+            {t("shell.skipToContent")}
+          </a>
+          {banner ? (
+            <div className="cb-shell-banner" data-part="shell-banner">
+              {banner}
             </div>
           ) : null}
-          <main className="cb-shell-main" id={mainId} tabIndex={-1}>
-            {children}
-          </main>
-          {ownStatusBar ? null : <StatusBar {...status} pageStatus={pageStatus} />}
+          <Sidebar
+            {...sidebar}
+            collapsed={collapsed}
+            onCollapsedChange={setCollapsed}
+            onOpenCommands={() => setPaletteOpen(true)}
+            {...(railRef ? { mode: "rail" as const } : {})}
+          />
+          <div className="cb-shell-column" data-part="shell-content">
+            {/* Drawn always, shown below 600 by CSS: the server render is right at every width. */}
+            <div className="cb-shell-topbar" data-part="top-bar-slot">
+              <TopBar
+                title={page.title ?? tabLabel ?? title}
+                back={pushed ? backTarget(page.path ?? [], navigated) : undefined}
+                onSearch={searchable ? () => setPaletteOpen(true) : undefined}
+                menu={page.menu ?? menu}
+                steps={setupSteps}
+              />
+            </div>
+            <main
+              className="cb-shell-main"
+              id={mainId}
+              tabIndex={-1}
+              // The slide of the last push or pop (compact only, none under reduced motion).
+              data-nav={slide ? `${slide.direction}-${slide.n}` : undefined}
+            >
+              {children}
+            </main>
+            {ownStatusBar ? null : <StatusBar {...status} pageStatus={pageStatus} />}
+            {items.length > 0 && tabRoot ? (
+              <div className="cb-shell-bottomnav" data-part="bottom-nav-slot">
+                <BottomNav items={items} current={currentTab} />
+              </div>
+            ) : null}
+          </div>
         </div>
-      </div>
-      {commands ? (
-        <CommandPalette open={paletteOpen} onOpenChange={setPaletteOpen} groups={commands} />
-      ) : null}
-    </StatusBarSetterContext.Provider>
+        {commands ? (
+          <CommandPalette open={paletteOpen} onOpenChange={setPaletteOpen} groups={commands} />
+        ) : null}
+      </StatusBarSetterContext.Provider>
+    </ShellPageContext.Provider>
   );
 }

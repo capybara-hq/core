@@ -161,6 +161,10 @@ export const REFERENCE_COMPONENTS = [
   "theme-swatch-group",
   // a device's head and its two modes (auto mode design §4, plan Task 10)
   "device-nameplate",
+  // the compact shell (mobile layout spec §4; design spec §6.45–§6.48)
+  "bottom-nav",
+  "top-bar",
+  "me-panel",
 ] as const;
 
 export type ReferenceComponent = (typeof REFERENCE_COMPONENTS)[number];

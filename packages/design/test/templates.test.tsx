@@ -1,7 +1,7 @@
 // biome-ignore-all lint/correctness/useJsxKeyInIterable: 用例表是 [名称, 元素] 元组，不是渲染列表
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
-import { act, cleanup, render, screen } from "@testing-library/react";
+import { act, cleanup, render, screen, within } from "@testing-library/react";
 import { userEvent } from "@testing-library/user-event";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import * as design from "../src/index";
@@ -801,14 +801,16 @@ describe("SetupPage (the guided setup layout)", () => {
     expect(screen.queryByRole("dialog")).toBeNull();
   });
 
-  it("the drawer bar below 960 has the menu button and no search", () => {
-    zh(
-      <SetupPage sidebar={sidebar} status={status} reference={{ drawer: true }} title="开始之前" />,
-    );
-    const bar = document.querySelector('[data-part="drawer-bar"]') as HTMLElement;
-    expect(bar.querySelector('[aria-label="打开导航"]')).not.toBeNull();
+  it("the compact top bar has the steps menu and no search or drawer", async () => {
+    zh(<SetupPage sidebar={sidebar} status={status} title="开始之前" />);
+    const bar = document.querySelector('[data-part="top-bar"]') as HTMLElement;
+    expect(bar.querySelector('[aria-label="打开导航"]')).toBeNull();
     expect(bar.querySelector('[aria-label^="搜索"]')).toBeNull();
     expect(bar.textContent).toContain("开始之前");
+    await userEvent.click(within(bar).getByRole("button", { name: "步骤" }));
+    const menu = await screen.findByRole("menu");
+    expect(within(menu).getByRole("menuitem", { name: "开始之前" })).toBeTruthy();
+    expect(within(menu).getAllByRole("menuitem").length).toBeGreaterThan(1);
   });
 });
 

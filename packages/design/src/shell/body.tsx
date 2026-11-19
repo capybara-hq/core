@@ -102,9 +102,13 @@ export function Body({
   return (
     <div className="cb-body" data-layout={layout}>
       {railButton || inspectorButton ? (
+        // With a rail the container carries no width rule: the Filter button follows the container
+        // query (`data-rail-fit`) and only the inspector's own tool follows the window
+        // (`below-1280`). Without a rail the inspector's tool is the container's only content, so
+        // the container itself goes with it at 1280 and up.
         <div
           className="cb-body-tools"
-          data-responsive={hasInspector ? resp("below-1280") : undefined}
+          data-responsive={hasInspector && !railButton ? resp("below-1280") : undefined}
           data-rail-fit={hasInspector ? undefined : "button"}
         >
           {railButton ? (

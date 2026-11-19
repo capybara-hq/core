@@ -189,32 +189,22 @@ describe("AppShell", () => {
 
   it("the sidebar's search button opens the command palette", async () => {
     zh(shell(<div />));
-    await userEvent.click(screen.getByRole("button", { name: /搜索/ }));
+    const sidebarEl = document.querySelector('[data-part="sidebar"]') as HTMLElement;
+    await userEvent.click(within(sidebarEl).getByRole("button", { name: /搜索/ }));
     expect(screen.getByRole("dialog")).toBeTruthy();
   });
 
-  it("below 600: the drawer bar's menu button opens the drawer; Esc closes it, focus returns", async () => {
+  it("below 600 there is no sidebar and no drawer: the top bar has a search button that opens the palette", async () => {
     stubWidth(500);
     zh(shell());
-    expect(screen.queryByRole("navigation", { name: "主导航" })).toBeNull();
-    const menu = screen.getByRole("button", { name: "打开导航" });
-    await userEvent.click(menu);
-    const drawer = screen.getByRole("dialog");
-    expect(within(drawer).getByRole("navigation", { name: "主导航" })).toBeTruthy();
-    expect(menu.getAttribute("aria-expanded")).toBe("true");
-    await userEvent.keyboard("{Escape}");
-    expect(screen.queryByRole("dialog")).toBeNull();
-    expect(document.activeElement).toBe(menu);
-  });
-
-  it("below 600: the drawer bar has a search button that opens the command palette (m2)", async () => {
-    stubWidth(500);
-    zh(shell());
-    const bar = document.querySelector('[data-part="drawer-bar"]') as HTMLElement;
-    const search = within(bar).getByRole("button", { name: /搜索/ });
+    expect(document.querySelector('[data-part="sidebar"]')).toBeNull();
+    expect(screen.queryByRole("button", { name: "打开导航" })).toBeNull();
+    const bar = document.querySelector('[data-part="top-bar"]') as HTMLElement;
+    const search = within(bar).getByRole("button", { name: "搜索" });
     expect(search.querySelector('[data-icon="search"]')).not.toBeNull();
-    // it is the bar's last control, at the right end
-    expect(bar.lastElementChild?.contains(search)).toBe(true);
+    // the bar's controls are search, then the overflow menu when the page has one: search is last
+    // here (no page menu)
+    expect(bar.lastElementChild).toBe(search);
     await userEvent.click(search);
     expect(screen.getByRole("dialog", { name: "命令面板" })).toBeTruthy();
   });
@@ -230,9 +220,12 @@ describe("AppShell", () => {
     expect(main.getAttribute("tabindex")).toBe("-1");
   });
 
-  it("at 600 and wider there is no drawer bar", () => {
-    zh(shell());
-    expect(screen.queryByRole("button", { name: "打开导航" })).toBeNull();
+  it("draws the top bar in every render and lets CSS show it below 600 only", () => {
+    const html = renderToString(<DesignProvider locale="zh">{shell()}</DesignProvider>);
+    expect(html).toContain('data-part="top-bar"');
+    const css = readFileSync(resolve(import.meta.dirname, "../src/styles/shell.css"), "utf8");
+    expect(css).toMatch(/\.cb-shell-topbar,\s*\.cb-shell-bottomnav \{\s*display: none;/);
+    expect(css).toMatch(/@media \(max-width: 599px\) \{\s*\.cb-shell-topbar \{\s*display: block;/);
   });
 });
 
@@ -728,6 +721,27 @@ describe("Body", () => {
     // the rail and its Filter button are both drawn; the container query shows one
     expect(html).toContain('data-rail-fit="inline"');
     expect(html).toContain('data-rail-fit="button"');
+  });
+
+  it("only the inspector's tool follows the window width; the tools container and the Filter button do not", () => {
+    const html = renderToString(
+      <DesignProvider locale="zh">
+        <Body layout="rail-inspector" rail={<div>r</div>} inspector={<div>i</div>}>
+          <div>c</div>
+        </Body>
+      </DesignProvider>,
+    );
+    const doc = new DOMParser().parseFromString(html, "text/html");
+    const tools = doc.querySelector(".cb-body-tools") as HTMLElement;
+    expect(tools.hasAttribute("data-responsive")).toBe(false);
+    const filter = [...tools.querySelectorAll(".cb-body-tool")].find((el) =>
+      el.textContent?.includes("筛选"),
+    ) as HTMLElement;
+    expect(filter.closest("[data-responsive]")).toBeNull();
+    const details = [...tools.querySelectorAll(".cb-body-tool")].find((el) =>
+      el.textContent?.includes("详情"),
+    ) as HTMLElement;
+    expect(details.getAttribute("data-responsive")).toBe("below-1280");
   });
 
   it("a body is the whole width unless a frame template asks for the content width", () => {

@@ -32,7 +32,7 @@ const noSubscribe = () => () => {};
 
 /**
  * A `RefPending` marker until the page has hydrated. Before hydration the app shell draws both
- * sidebar panels and the drawer bar and lets CSS pick one (`data-responsive`); a busy runner can
+ * sidebar panels and the compact top bar and lets CSS pick one (`data-responsive`); a busy runner can
  * still be hydrating at `networkidle`, and a spec measuring then counted the sidebar twice.
  */
 export function RefHydrating() {

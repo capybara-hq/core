@@ -1,7 +1,16 @@
 export { ActionRow, type ActionRowProps, type ButtonSpec } from "./action-row";
 export { AppShell, type AppShellProps } from "./app-shell";
 export { Body, type BodyProps } from "./body";
+export {
+  BottomNav,
+  type BottomNavItem,
+  type BottomNavProps,
+  bottomNavCurrent,
+  isTabRoot,
+} from "./bottom-nav";
+export { ClassSwap } from "./class-swap";
 export { DecorationLayer } from "./decoration-layer";
+export { MePanel, type MePanelProps, type MeRow } from "./me-panel";
 export {
   assertHeader,
   type HeaderAction,
@@ -12,6 +21,7 @@ export { isTouchPointer, keyboardInset } from "./pointer";
 export { PreferenceBar, type PreferenceBarProps, ThemeToggle } from "./preference-bar";
 export { ReplaceableFrame } from "./replaceable-frame";
 export { SafeModeBanner } from "./safe-mode-banner";
+export { type ShellPage, useRegisterShellPage } from "./shell-page";
 export {
   initialOf,
   type SetupStep,
@@ -40,3 +50,5 @@ export {
   useSizeClass,
 } from "./size-class";
 export { StatusBar, type StatusBarProps, useStatusBar } from "./status-bar";
+export { backTarget, TopBar, type TopBarProps } from "./top-bar";
+export { withViewTransition } from "./view-transition";

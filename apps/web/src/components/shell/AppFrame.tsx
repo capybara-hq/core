@@ -2,14 +2,17 @@
 
 import {
   AppShell,
+  ClassSwap,
   initialOf,
   Logo,
   type MenuItem,
+  type MeRow,
   OverviewPage,
   SetupPage,
   type SidebarBrandVariant,
   type SidebarContext,
   type SidebarConversations,
+  type SidebarNavItem,
   useToast,
 } from "@capybara-hq/design";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
@@ -54,6 +57,7 @@ import { LeaveOrgDialog } from "../LeaveOrgDialog";
 import { usePluginPendingCount } from "../PluginsHead";
 import { useResolvedTheme } from "../theme-root";
 import { noOrgConversations, useConversationGroups } from "./conversations";
+import { AdminMePage, type MePanels, MePanelsContext } from "./me";
 import {
   activeAdminOf,
   activeNavOf,
@@ -327,12 +331,15 @@ function ShellFrame({
   const brandReplaced = brandCode || brandWinner.status !== "none";
   const conversations = sections?.conversations ?? noOrgConversations(pathname);
   const pending = sections?.pending ?? NO_PENDING;
-  const { primary, more, inbox, adminHref, commands } = useNav(
-    pending.count,
-    navLevelOf(me),
-    pending.more,
-    me.account.isSuperAdmin,
-  );
+  const {
+    primary,
+    more,
+    inbox,
+    adminHref,
+    commands,
+    bottom,
+    me: meNav,
+  } = useNav(pending.count, navLevelOf(me), pending.more, me.account.isSuperAdmin);
   const extensions = sections?.extensions ?? [];
   // Under /admin (super admins only) the 收件箱 item shows what waits on the platform and the 插件
   // item what waits in its 待确认 tab; the persistent sidebar refetches the stale counts on each
@@ -542,6 +549,79 @@ function ShellFrame({
     ...(timeZone === "" ? {} : { timeZone }),
   };
 
+  // The Me page's panels (design spec §6.48): the same nav, org and account data as the sidebar.
+  const toRow = (n: SidebarNavItem): MeRow => ({
+    id: n.id,
+    label: n.label,
+    icon: n.icon,
+    href: n.href,
+  });
+  const languageValue = preferences.language.options.find(
+    (o) => o.value === preferences.language.value,
+  )?.label;
+  const accountRows: MeRow[] = [
+    {
+      id: "account",
+      label: t("shell.accountSettings"),
+      icon: "user",
+      href: "/account/preferences",
+    },
+    {
+      id: "language",
+      label: t("common.language"),
+      icon: "languages",
+      menu: languageMenu.submenu ?? [],
+      ...(languageValue === undefined ? {} : { value: languageValue }),
+    },
+    ...(preferences.theme
+      ? [{ id: "theme", label: t("common.theme"), icon: "sun" as const, theme: preferences.theme }]
+      : []),
+    { id: "sign-out", label: t("common.logout"), icon: "log-out", onSelect: () => void onLogout() },
+  ];
+  const system = [version, timeZone].filter((v) => v !== "").join(" · ");
+  const mePanels: MePanels = {
+    work: {
+      account: { name: me.account.displayName },
+      org: sidebarOrg(orgItems),
+      workspace: [
+        ...meNav.workspace.map(toRow),
+        ...extensions.map((x) => ({
+          id: `ext:${x.id}`,
+          label: x.label,
+          icon: "extension" as const,
+          href: x.href,
+        })),
+      ],
+      manage: [
+        ...meNav.manage.map(toRow),
+        ...(adminHref === undefined
+          ? []
+          : [
+              {
+                id: "admin",
+                label: t("nav.admin"),
+                icon: "admin" as const,
+                href: adminHref,
+                external: true,
+              },
+            ]),
+      ],
+      accountRows,
+      system,
+    },
+    admin: me.account.isSuperAdmin
+      ? {
+          account: { name: me.account.displayName },
+          org: null,
+          adminContext: true,
+          manage: adminItems.map(toRow),
+          back: { id: "back", label: t("me.back"), icon: "arrow-left", href: HOME_PATH },
+          accountRows,
+          system,
+        }
+      : null,
+  };
+
   const dialogs = (
     <>
       {me.canCreateOrg ? (
@@ -677,15 +757,25 @@ function ShellFrame({
         ...(brand === undefined ? {} : { brand }),
       }}
       commands={commands}
+      bottomNav={bottom}
+      pathname={pathname}
       status={status}
       ownStatusBar={pathname === HOME_PATH || under(pathname, "/chat")}
       capState={capState}
       {...(banner === null ? {} : { banner })}
     >
       <SessionContext.Provider value={session}>
-        <SetupContext.Provider value={{ active: false, readiness: setupState, recheck: reload }}>
-          {children}
-        </SetupContext.Provider>
+        <MePanelsContext.Provider value={mePanels}>
+          <SetupContext.Provider value={{ active: false, readiness: setupState, recheck: reload }}>
+            {/* The admin console has no overview page of its own on the compact class: the Me
+                page in the admin context takes `/admin`'s place (design spec §6.48). */}
+            {inAdmin && pathname === "/admin" ? (
+              <ClassSwap compact={<AdminMePage />}>{children}</ClassSwap>
+            ) : (
+              children
+            )}
+          </SetupContext.Provider>
+        </MePanelsContext.Provider>
         {dialogs}
       </SessionContext.Provider>
       {workspaceOrg === null ? null : (

@@ -1999,7 +1999,25 @@
     "admin": "Admin console",
     "plugins": "Plugins",
     "extensions": "Extensions",
-    "schedules": "Scheduled tasks"
+    "schedules": "Scheduled tasks",
+    "chats": "Conversations",
+    "me": "Me"
+  },
+  "conversations": {
+    "title": "Conversations",
+    "description": "Your conversations, grouped by agent.",
+    "list": "Conversations",
+    "new": "New conversation",
+    "empty": "No conversations yet",
+    "loadMore": "Load more",
+    "moreOf": "More with {agent}",
+    "running": "Running",
+    "waiting": "Waiting for you"
+  },
+  "me": {
+    "title": "Me",
+    "adminTitle": "Admin console",
+    "back": "Back to workspace"
   },
   "shell": {
     "noOrg": "Select organization",

@@ -1,3 +1,5 @@
+import { readFileSync } from "node:fs";
+import { resolve } from "node:path";
 import { cleanup, fireEvent, render, screen, within } from "@testing-library/react";
 import { userEvent } from "@testing-library/user-event";
 import { type ReactElement, StrictMode, useState } from "react";
@@ -134,6 +136,41 @@ describe("Sidebar navigation (work context)", () => {
     expect(inbox.getAttribute("href")).toBe("/inbox");
     expect(inbox.querySelector('[data-part="inbox-badge"]')?.textContent).toBe("99+");
     expect(search.compareDocumentPosition(inbox) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+  });
+
+  it("the rail's nav badge is capped at 9+ while the accessible name keeps the count; the full sidebar's stays 99+", () => {
+    const p = props();
+    const ctx = { ...workOf(p), inbox: { href: "/inbox", count: 42 } };
+    zh(<Sidebar {...p} context={ctx} mode="rail" />);
+    const inbox = screen.getByRole("link", { name: "收件箱，42 项待处理" });
+    expect(inbox.querySelector('[data-part="inbox-badge"]')?.textContent).toBe("9+");
+    cleanup();
+    zh(<Sidebar {...p} context={{ ...ctx, inbox: { href: "/inbox", count: 7 } }} mode="rail" />);
+    expect(
+      screen
+        .getByRole("link", { name: "收件箱，7 项待处理" })
+        .querySelector('[data-part="inbox-badge"]')?.textContent,
+    ).toBe("7");
+    cleanup();
+    zh(<Sidebar {...p} context={{ ...ctx, inbox: { href: "/inbox", count: 120 } }} mode="full" />);
+    expect(
+      screen
+        .getByRole("link", { name: "收件箱，99+ 项待处理" })
+        .querySelector('[data-part="inbox-badge"]')?.textContent,
+    ).toBe("99+");
+  });
+
+  it("the rail badge sits above the icon's corner, 4px inside the rail; the sidebar's own stays inset", () => {
+    const css = readFileSync(resolve(import.meta.dirname, "../src/styles/sidebar.css"), "utf8");
+    const rule = (sel: string) =>
+      css.match(new RegExp(`${sel.replace(/[[\]().*]/g, "\\$&")} \\{([^}]*)\\}`))?.[1] ?? "";
+    const inset = rule(".cb-sidebar-badge");
+    expect(inset).toContain("top: 2px;");
+    expect(inset).toContain("right: 2px;");
+    const rail = rule('.cb-sidebar[data-mode="rail"] .cb-sidebar-badge');
+    expect(rail).toContain("right: calc(50% - 20px);");
+    expect(rail).toContain("bottom: calc(50% + 10px);");
+    expect(rail).toContain("box-shadow: 0 0 0 2px var(--cb-sidebar);");
   });
 
   it("inbox: a badge only with pending items; n+ when truncated; current on /inbox", () => {
@@ -989,7 +1026,7 @@ describe("Sidebar rail", () => {
     const sw = screen.getByRole("button", { name: "当前组织：示例组织，切换组织" });
     expect(sw.textContent).toBe("示");
     expect(screen.getByRole("link", { name: "管理后台" })).toBeTruthy();
-    // 更多 opens the same flyout
+    // More opens the same flyout
     await userEvent.click(within(nav).getByRole("button", { name: "更多" }));
     expect((await screen.findByRole("menu")).getAttribute("data-side")).toBe("right");
     expect(screen.getAllByRole("menuitem").map((i) => i.textContent)).toEqual(["插件", "组织设置"]);
@@ -1002,7 +1039,7 @@ describe("Sidebar rail", () => {
     expect(expand.getAttribute("data-part")).toBe("expand-toggle");
     await userEvent.click(expand);
     expect(onCollapsedChange).toHaveBeenCalledWith(false);
-    // the rail holds no conversation list: 会话 opens it, and nothing is open yet
+    // the rail holds no conversation list: its Conversations button opens it, and nothing is open yet
     expect(screen.getByRole("button", { name: "会话" })).toBeTruthy();
     expect(screen.queryByRole("dialog")).toBeNull();
   });
@@ -1029,7 +1066,7 @@ describe("Sidebar rail", () => {
     zh(<Sidebar {...props()} mode="rail" railMedium />);
     expect(screen.queryByRole("button", { name: "展开侧栏" })).toBeNull();
     const chats = within(mainNav()).getByRole("button", { name: "会话" });
-    // under 新会话, before the primary items
+    // under New conversation, before the primary items
     const labels = [...mainNav().querySelectorAll(".cb-sidebar-item")].map(
       (e) => e.getAttribute("aria-label") ?? e.textContent,
     );
@@ -1062,129 +1099,13 @@ describe("Sidebar rail", () => {
     await user.click(within(sheet).getByRole("button", { name: "关闭导航" }));
     expect(screen.queryByRole("dialog")).toBeNull();
   });
-
-  it("Esc in the drawer's rename or filter input stays with the input", async () => {
-    const user = userEvent.setup();
-    const onOpenChange = vi.fn();
-    zh(<Sidebar {...props()} mode="drawer" drawer={{ open: true, onOpenChange }} />);
-    const drawer = await screen.findByRole("dialog");
-    await user.click(within(drawer).getByRole("button", { name: "会话操作：研究助手 会话 1" }));
-    await user.click(await screen.findByRole("menuitem", { name: "重命名" }));
-    const input = await within(drawer).findByRole("textbox", { name: "会话标题" });
-    await vi.waitFor(() => expect(document.activeElement).toBe(input));
-    await user.keyboard("{Escape}");
-    expect(within(drawer).queryByRole("textbox", { name: "会话标题" })).toBeNull();
-    await user.click(within(drawer).getByRole("button", { name: "筛选会话" }));
-    await user.click(within(drawer).getByRole("textbox", { name: "按标题搜索" }));
-    await user.keyboard("{Escape}");
-    expect(within(drawer).queryByRole("textbox", { name: "按标题搜索" })).toBeNull();
-    expect(onOpenChange).not.toHaveBeenCalledWith(false);
-    // elsewhere Esc still closes it
-    await user.keyboard("{Escape}");
-    expect(onOpenChange).toHaveBeenCalledWith(false);
-  });
-
-  it("drawer mode is controlled through `drawer`; its close button closes it", async () => {
-    const onOpenChange = vi.fn();
-    zh(<Sidebar {...props()} mode="drawer" drawer={{ open: true, onOpenChange }} />);
-    const drawer = await screen.findByRole("dialog");
-    await userEvent.click(within(drawer).getByRole("button", { name: "关闭导航" }));
-    expect(onOpenChange).toHaveBeenCalledWith(false);
-  });
 });
 
-describe("Sidebar drawer: 更多 is a disclosure", () => {
-  const withExtensions = (): WorkProps => {
-    const p = props();
-    if (p.context.kind === "work") {
-      p.context.moreExtensions = [
-        { id: "ext-todo", label: "待办", href: "/x/todo", icon: "extension" },
-      ];
-    }
-    return p;
-  };
-
-  it("lists its items in place, one level in, with aria-expanded; no flyout menu", async () => {
-    zh(
-      <Sidebar
-        {...withExtensions()}
-        mode="drawer"
-        drawer={{ open: true, onOpenChange: vi.fn() }}
-      />,
-    );
-    const drawer = await screen.findByRole("dialog");
-    const more = within(drawer).getByRole("button", { name: "更多" });
-    expect(more.getAttribute("aria-expanded")).toBe("false");
-    expect(within(drawer).queryByRole("link", { name: "插件" })).toBeNull();
-    await userEvent.click(more);
-    expect(more.getAttribute("aria-expanded")).toBe("true");
-    expect(screen.queryByRole("menu")).toBeNull();
-    const group = within(drawer).getByRole("group", { name: "更多" });
-    expect(more.getAttribute("aria-controls")).toBe(group.id);
-    const links = within(group).getAllByRole("link");
-    expect(links.map((l) => l.textContent)).toEqual(["插件", "组织设置", "待办"]);
-    for (const l of links) expect(l.getAttribute("data-depth")).toBe("1");
-    // the fixed items and the extension pages are split as in the flyout
-    expect(within(group).getByRole("separator")).toBeTruthy();
-    // the sub-list follows its toggle in the nav (DOM and tab order)
-    expect(more.nextElementSibling).toBe(group);
-    expect(more.querySelector('[data-part="more-chevron"]')).not.toBeNull();
-    await userEvent.click(more);
-    expect(more.getAttribute("aria-expanded")).toBe("false");
-    expect(within(drawer).queryByRole("group", { name: "更多" })).toBeNull();
-  });
-
-  it("opens expanded when the current page is one of its items, marked current", async () => {
-    zh(
-      <Sidebar
-        {...props({ activeNav: "plugins" })}
-        mode="drawer"
-        drawer={{ open: true, onOpenChange: vi.fn() }}
-      />,
-    );
-    const drawer = await screen.findByRole("dialog");
-    expect(within(drawer).getByRole("button", { name: "更多" }).getAttribute("aria-expanded")).toBe(
-      "true",
-    );
-    const current = within(drawer).getByRole("link", { name: "插件" });
-    expect(current.getAttribute("aria-current")).toBe("page");
-  });
-
-  it("an item navigates and closes the drawer like the other nav items", async () => {
-    const onOpenChange = vi.fn();
-    zh(<Sidebar {...props()} mode="drawer" drawer={{ open: true, onOpenChange }} />);
-    const drawer = await screen.findByRole("dialog");
-    await userEvent.click(within(drawer).getByRole("button", { name: "更多" }));
-    const link = within(drawer).getByRole("link", { name: "插件" });
-    expect(link.getAttribute("href")).toBe("/plugins");
-    link.addEventListener("click", (e) => e.preventDefault());
-    await userEvent.click(link);
-    expect(onOpenChange).toHaveBeenCalledWith(false);
-  });
-
-  it("the drawer scrolls its middle as one region between the fixed top row and bottom block", async () => {
-    const p = props();
-    if (p.context.kind === "work") p.context.adminHref = "/admin";
-    zh(<Sidebar {...p} mode="drawer" drawer={{ open: true, onOpenChange: vi.fn() }} />);
-    const drawer = await screen.findByRole("dialog");
-    const aside = drawer.querySelector('[data-part="sidebar"]') as HTMLElement;
-    const scroll = aside.querySelector('[data-part="drawer-scroll"]') as HTMLElement;
-    expect(scroll.parentElement).toBe(aside);
-    // the brand row before it, the admin entry and the account after it, outside the region
-    const kids = [...aside.children];
-    const at = kids.indexOf(scroll);
-    expect(kids.indexOf(aside.querySelector('[data-part="brand-row"]') as Element)).toBeLessThan(
-      at,
-    );
-    const foot = aside.querySelector(".cb-sidebar-foot") as Element;
-    expect(kids.indexOf(foot)).toBeGreaterThan(at);
-    expect(scroll.contains(within(drawer).getByRole("link", { name: "管理后台" }))).toBe(false);
-    // inside: the org switcher, the nav (with the 更多 group) and the conversations
-    expect(scroll.querySelector('[data-part="org-switcher"]')).not.toBeNull();
-    expect(scroll.querySelector('[data-part="more-toggle"]')).not.toBeNull();
-    const convs = within(scroll).getByRole("region", { name: "会话" });
-    // the conversations keep their 显示更多 inside the shared scroll
-    expect(within(convs).getAllByRole("button", { name: "显示更多" }).length).toBeGreaterThan(0);
+describe("Sidebar has no drawer form", () => {
+  it("below 600 the sidebar draws nothing (the bottom navigation and the Me page hold its content)", () => {
+    zh(<Sidebar {...props()} mode="none" />);
+    expect(document.querySelector('[data-part="sidebar"]')).toBeNull();
+    expect(screen.queryByRole("dialog")).toBeNull();
   });
 
   it("the full sidebar and the rail have no shared scroll region", () => {
@@ -1438,16 +1359,6 @@ describe("Sidebar setup context", () => {
     cleanup();
     zh(<Sidebar {...setupProps()} mode="rail" railTooltip="model" />);
     expect((await screen.findByRole("tooltip")).textContent).toContain("配置模型，已完成");
-  });
-
-  it("drawer: the full setup sidebar with its close button", async () => {
-    const onOpenChange = vi.fn();
-    zh(<Sidebar {...setupProps()} mode="drawer" drawer={{ open: true, onOpenChange }} />);
-    const drawer = await screen.findByRole("dialog");
-    expect(within(drawer).getByText("可以稍后再做")).toBeTruthy();
-    expect(within(drawer).getByText("等待管理员配置模型")).toBeTruthy();
-    await userEvent.click(within(drawer).getByRole("button", { name: "关闭导航" }));
-    expect(onOpenChange).toHaveBeenCalledWith(false);
   });
 
   it("roving focus walks every step, the waiting one included", async () => {

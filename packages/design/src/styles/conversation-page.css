@@ -155,6 +155,16 @@ span.cb-title-btn {
 .cb-cmenu[data-size="narrow"] {
   min-width: 160px;
 }
+/* The compact top bar's overflow menu: 40 high items (tap targets), their icons `muted`. */
+.cb-cmenu[data-size="touch"] .cb-cmenu-item {
+  height: 40px;
+}
+.cb-cmenu[data-size="touch"] .cb-cmenu-item > .cb-icon {
+  color: var(--cb-muted);
+}
+.cb-cmenu[data-size="touch"] .cb-cmenu-item[data-tone="fail"] > .cb-icon {
+  color: var(--cb-fail);
+}
 .cb-cmenu[data-size="wide"] {
   min-width: 260px;
 }

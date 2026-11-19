@@ -75,7 +75,7 @@ const catalogHref = (id: string) => `/dev/ui/templates/${TEMPLATE_OF[id] ?? "det
 
 /**
  * The App Shell of the template routes (not the auth page): the fixture sidebar with `nav` current,
- * the drawer bar titled `title`, and the status bar at `/<context>`.
+ * the compact top bar titled `title`, and the status bar at `/<context>`.
  */
 export function FixtureShell({
   nav,

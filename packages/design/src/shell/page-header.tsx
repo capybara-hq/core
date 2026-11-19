@@ -12,6 +12,7 @@ import { Icon } from "../icons/icon";
 import type { IconName } from "../icons/paths";
 import { Menu, type MenuItem, menuActions, menuLone } from "../overlays/index";
 import { LinkPendingMark, useDesignLink, useDesignT } from "../provider";
+import { useRegisterShellPage } from "./shell-page";
 import { SIZE_CLASS_QUERIES } from "./size-class";
 import { useHydrated, useMediaQuery } from "./use-media-query";
 
@@ -119,6 +120,8 @@ export function hasTabRow(p: PageHeaderProps): boolean {
  */
 export function PageHeader(p: PageHeaderProps) {
   assertHeader(p);
+  // The compact top bar shows the page's name and goes up its path (design spec §4.6, §6.46).
+  useRegisterShellPage({ ...(p.title ? { title: p.title } : {}), path: p.path });
   const t = useDesignT();
   const Link = useDesignLink();
   const narrow = useMediaQuery(SIZE_CLASS_QUERIES.compact);

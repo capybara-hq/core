@@ -172,41 +172,18 @@ describe("size-class widths in the stylesheets", () => {
     }
   });
 
-  it("the phone rules end at 599 and the drawer bar is for compact only", () => {
+  it("the compact chrome (top bar, bottom navigation) is shown below 600 only", () => {
     const shell = css("shell.css");
-    expect(media(shell, "(min-width: 600px)")).toContain(
-      '.cb-shell-drawerbar[data-responsive="true"]',
-    );
+    expect(decls(shell, ".cb-shell-topbar")).toContain("display: none;");
+    const compact = media(shell, "(max-width: 599px)");
+    expect(decls(compact, ".cb-shell-topbar")).toContain("display: block;");
+    expect(decls(compact, ".cb-shell-bottomnav")).toContain("display: block;");
   });
 
   it("a short window hides the status bar and the path row", () => {
     const hidden = media(css("shell.css"), "(max-height: 479px)");
     expect(decls(hidden, ".cb-statusbar")).toContain("display: none;");
     expect(decls(hidden, ".cb-pageheader-path")).toContain("display: none;");
-  });
-});
-
-describe("the sidebar drawer", () => {
-  const sidebar = css("sidebar.css");
-
-  it("scrolls its middle as one region; the conversations inside it do not scroll on their own", () => {
-    const region = decls(sidebar, ".cb-sidebar-scroll");
-    expect(region).toContain("overflow-y: auto;");
-    expect(region).toContain("min-height: 0;");
-    expect(region).toContain("flex: 1;");
-    const convs = decls(sidebar, ".cb-sidebar-scroll > .cb-sidebar-convs");
-    expect(convs).toContain("flex: none;");
-    expect(convs).toContain("overflow: visible;");
-  });
-
-  it("indents the 更多 items one level and turns the chevron while open", () => {
-    expect(decls(sidebar, '.cb-sidebar-item[data-depth="1"]')).toContain("padding-left:");
-    expect(
-      decls(
-        sidebar,
-        '.cb-sidebar-item[data-part="more-toggle"][aria-expanded="true"] .cb-sidebar-chevron',
-      ),
-    ).toContain("transform: rotate(90deg);");
   });
 });
 
@@ -286,7 +263,6 @@ describe("tap targets below 640 are at least 40 px", () => {
     .join("\n");
 
   for (const sel of [
-    ".cb-shell-drawerbar .cb-icon-btn",
     ".cb-title-bar .cb-icon-btn",
     ".cb-pageheader-tabs .cb-tab",
     ".cb-table-menu .cb-btn",
@@ -313,22 +289,6 @@ describe("tap targets below 640 are at least 40 px", () => {
 
   it("the conversation title button", () => {
     expect(decls(narrow, ".cb-title-btn")).toContain("height: 40px;");
-  });
-
-  it("sidebar rows in the drawer (the drawer is the touch form, below 960)", () => {
-    const sidebar = css("sidebar.css");
-    for (const sel of [
-      ".cb-sidebar-drawer .cb-sidebar .cb-sidebar-item",
-      ".cb-sidebar-drawer .cb-sidebar .cb-sidebar-row",
-      ".cb-sidebar-drawer .cb-sidebar .cb-sidebar-back",
-      ".cb-sidebar-drawer .cb-sidebar .cb-sidebar-group-head",
-      ".cb-sidebar-drawer .cb-sidebar .cb-sidebar-archived",
-    ]) {
-      expect(decls(sidebar, sel), sel).toContain("height: 40px;");
-    }
-    const menu = decls(sidebar, ".cb-sidebar-drawer .cb-sidebar .cb-sidebar-row-menu");
-    expect(menu).toContain("width: 40px;");
-    expect(menu).toContain("height: 40px;");
   });
 });
 

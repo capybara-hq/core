@@ -104,26 +104,6 @@ describe("data-cap-part (client extensions spec §7.1)", () => {
     expect(new Set(seen)).toEqual(new Set(["full:false"]));
   });
 
-  it("Sidebar's drawer draws brand uncollapsed", () => {
-    const brand = (v: { collapsed: boolean; panel: string }) => (
-      <b data-testid={`brand-${v.panel}`}>{String(v.collapsed)}</b>
-    );
-    render(
-      <DesignProvider locale="zh">
-        <Sidebar
-          {...sidebarProps({
-            brand,
-            mode: "drawer",
-            drawer: { open: true, onOpenChange: () => {} },
-          })}
-          drawerInline
-        />
-      </DesignProvider>,
-    );
-    expect(screen.queryByTestId("brand-rail")).toBeNull();
-    expect(screen.getByTestId("brand-drawer").textContent).toBe("false");
-  });
-
   it("AppShell renders capState as data-cap-state on the shell element", () => {
     const { container } = render(
       <DesignProvider locale="zh">
@@ -164,8 +144,8 @@ describe("data-cap-part (client extensions spec §7.1)", () => {
       expect(stateAt(1100)).toBe("sidebar=full size=expanded");
       expect(stateAt(1100, true)).toBe("sidebar=rail size=expanded");
       expect(stateAt(700)).toBe("sidebar=rail size=medium");
-      // the drawer (until the compact shell) counts as full
-      expect(stateAt(500)).toBe("sidebar=full size=compact");
+      // the compact class has no sidebar: no token
+      expect(stateAt(500)).toBe("size=compact");
       // the shell reads the class queries from one place
       expect(SIZE_CLASS_QUERIES.compact).toBe("(max-width: 599px)");
       const shellSrc = readFileSync(
