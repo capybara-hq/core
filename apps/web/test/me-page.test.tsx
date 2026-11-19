@@ -1,7 +1,7 @@
 // `/me` (the compact class's Me tab): the MePanel from the sidebar's own nav, org and account data,
 // by role (design spec §6.48: members see only Workspace, org admins add Manage, super admins the admin
 // entry), and the admin context `/admin` draws in place of the console's overview on compact.
-import { cleanup, screen, within } from "@testing-library/react";
+import { act, cleanup, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import zh from "../messages/zh.json";
@@ -98,7 +98,11 @@ describe("/me", () => {
     const browser = expectNoFirstPaintFetch();
     renderFrame(shellOf(as("owner", true)), <MeView />);
     expect(screen.getByRole("heading", { level: 1, name: zh.me.title })).toBeTruthy();
-    await new Promise((r) => setTimeout(r, 20));
+    // let pending effects and reads run: a read after mount would show up in the calls
+    await act(async () => {
+      await Promise.resolve();
+    });
+    await vi.waitFor(() => expect(panel()).not.toBeNull());
     expect(browser).toEqual([]);
   });
 
@@ -112,12 +116,18 @@ describe("/me", () => {
     expect(panel().querySelector('[data-part="system-status"]')?.textContent).toContain("v9.9.9");
   });
 
-  it("sign out is a button and the language row opens a menu of the languages", async () => {
+  it("sign out is a button; the language row and the org switcher open bottom sheets", async () => {
     renderFrame(shellOf(as("owner")), <MeView />);
     const user = userEvent.setup();
     expect(within(panel()).getByRole("button", { name: "退出登录" })).toBeTruthy();
     await user.click(within(panel()).getByRole("button", { name: /语言/ }));
-    expect(await screen.findByRole("menuitemradio", { name: "中文" })).toBeTruthy();
+    const sheet = await screen.findByRole("dialog", { name: "语言" });
+    expect(within(sheet).getByRole("radio", { name: "中文" })).toBeTruthy();
+    expect(screen.queryByRole("menu")).toBeNull();
+    await user.keyboard("{Escape}");
+    await user.click(within(panel()).getByRole("button", { name: "当前组织：Acme，切换组织" }));
+    const orgs = await screen.findByRole("dialog");
+    expect(within(orgs).getByRole("radio", { name: "Acme" })).toBeTruthy();
   });
 });
 

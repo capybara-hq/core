@@ -290,7 +290,7 @@ describe("ClientHost", () => {
     await flush();
     expect(registryText()).toBe("fake-client:ready[hud]");
     // one contribution's crash counts once per document, however many places draw it (the
-    // brand in the rail and in the open drawer)
+    // brand in the rail and in the full sidebar)
     await act(async () => {
       for (let i = 0; i < 3; i++)
         controls?.reportError("fake-client", "hud", "render", new Error("boom"));

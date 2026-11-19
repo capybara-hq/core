@@ -5,7 +5,7 @@ const ORIGIN = `http://localhost:${process.env.CAPYBARA_VISUAL_PORT ?? "3100"}`;
 
 /**
  * `openReference` returns only once the page has hydrated. Before hydration the app shell draws
- * both sidebar panels and the drawer bar (`data-responsive`) and lets CSS pick; a spec that
+ * both sidebar panels and the compact top bar (`data-responsive`) and lets CSS pick; a spec that
  * measured then counted the sidebar twice (skeleton-alignment, template-conversation, under load
  * in CI). Each of React's scheduler yields is held back here, so hydration outlasts `networkidle`
  * as it does on a busy runner, without slowing the rest of the page.

@@ -14,6 +14,7 @@ import { Logo } from "../display/logo";
 import { Tooltip } from "../display/tooltip";
 import { Icon } from "../icons/icon";
 import type { IconName } from "../icons/paths";
+import { useDragDismiss } from "../overlays/drag";
 import { useFocusReturn } from "../overlays/focus-return";
 import { Menu, type MenuItem } from "../overlays/index";
 import { LinkPendingMark, useDesignLink, useDesignT } from "../provider";
@@ -266,14 +267,25 @@ export function Sidebar(p: SidebarProps) {
 function SheetLayer({ p, onClose }: { p: SidebarProps; onClose(): void }) {
   const t = useDesignT();
   const focusReturn = useFocusReturn();
+  const panel = useRef<HTMLDivElement | null>(null);
+  // A drag toward the rail dismisses it (spec §6.7, §6.13).
+  const drag = useDragDismiss({
+    axis: "x",
+    size: () => panel.current?.offsetWidth ?? 0,
+    onDismiss: onClose,
+    direction: -1,
+  });
   const conversations = p.conversations;
   if (conversations === undefined) return null;
   return (
     <div className="cb-sidebar-layer" data-sheet="true">
       <RD.Content
+        ref={panel}
         className="cb-sidebar-sheet"
         data-part="conversations-sheet"
         aria-describedby={undefined}
+        {...drag.handleProps}
+        {...drag.panelProps}
         onOpenAutoFocus={focusReturn.capture}
         onCloseAutoFocus={focusReturn.restore}
         onInteractOutside={(e) => {
@@ -482,7 +494,16 @@ function RailTip({
 }
 
 /** The org switcher: a 40 block on `bg`, the initial on `ink`, name and `~/<slug> · <role>`. */
-export function OrgSwitcher({ org, rail }: { org: SidebarOrg; rail: boolean }) {
+export function OrgSwitcher({
+  org,
+  rail,
+  onOpen,
+}: {
+  org: SidebarOrg;
+  rail: boolean;
+  /** Opens the org list another way than the popover menu (the Me page's bottom sheet). */
+  onOpen?: () => void;
+}) {
   const t = useDesignT();
   const label = t("sidebar.orgSwitch").replace("{org}", org.name);
   const initial = (
@@ -509,6 +530,21 @@ export function OrgSwitcher({ org, rail }: { org: SidebarOrg; rail: boolean }) {
       {org.menu.length > 0 ? <Icon name="chevrons-up-down" size={14} /> : null}
     </>
   );
+  if (onOpen !== undefined && org.menu.length > 0) {
+    return (
+      <button
+        type="button"
+        className="cb-sidebar-org"
+        data-part="org-switcher"
+        aria-label={label}
+        aria-haspopup="dialog"
+        title={org.name}
+        onClick={onOpen}
+      >
+        {content}
+      </button>
+    );
+  }
   if (org.menu.length === 0) {
     return (
       <div className="cb-sidebar-org" data-part="org-switcher" data-static="true" title={org.name}>

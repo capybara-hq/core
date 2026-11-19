@@ -283,7 +283,7 @@ export interface SlotComponentProps {
     "shell.brand": {
         builtin: ReactNode;
         collapsed: boolean;
-        panel: "full" | "rail" | "drawer";
+        panel: "full" | "rail";
     };
     "shell.overlay": Record<string, never>;
 }

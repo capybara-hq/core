@@ -143,17 +143,29 @@ export function AppShell({
       if (p.title !== undefined) merged.title = p.title;
       if (p.path !== undefined) merged.path = p.path;
       if (p.menu !== undefined) merged.menu = p.menu;
+      if (p.onBack !== undefined) merged.onBack = p.onBack;
     }
     return merged;
   }, [pages]);
 
   // The route: a tab root shows the bottom navigation, every other route is pushed (spec §4.6).
-  // Back goes to the previous in-app entry once the shell has seen a navigation, else up the path.
+  // Back goes to the previous in-app entry while one lies behind, else up the path.
   const items = bottomNav ?? [];
   const tabRoot = pathname === undefined || items.length === 0 || isTabRoot(items, pathname);
-  const pushed = !tabRoot;
+  // An open list-detail item is a pushed page too, keyed by its URL state (spec §4.6, §6.47).
+  const pushed = !tabRoot || page.onBack !== undefined;
   const currentTab = pathname === undefined ? null : bottomNavCurrent(items, pathname);
-  const [navigated, setNavigated] = useState(false);
+  // How many in-app history entries lie behind this one: a push adds one, a pop (the browser's
+  // popstate, our own back button included) takes one, so back never leaves the app.
+  const [depth, setDepth] = useState(0);
+  const popping = useRef(false);
+  useEffect(() => {
+    const onPop = () => {
+      popping.current = true;
+    };
+    window.addEventListener("popstate", onPop);
+    return () => window.removeEventListener("popstate", onPop);
+  }, []);
   // The slide of the last route change: its direction and a parity that restarts the animation
   // when two pushes follow each other (the CSS animations are named by both).
   const [slide, setSlide] = useState<{ direction: "push" | "pop"; n: number } | null>(null);
@@ -162,7 +174,9 @@ export function AppShell({
     const last = lastRoute.current;
     if (last.pathname === pathname) return;
     lastRoute.current = { pathname, tabRoot };
-    setNavigated(true);
+    const wasPop = popping.current;
+    popping.current = false;
+    setDepth((d) => Math.max(0, d + (wasPop ? -1 : 1)));
     // A pushed page slides in from the end edge; the way back to a root slides back.
     setSlide((prev) =>
       tabRoot && last.tabRoot
@@ -307,7 +321,7 @@ export function AppShell({
             <div className="cb-shell-topbar" data-part="top-bar-slot">
               <TopBar
                 title={page.title ?? tabLabel ?? title}
-                back={pushed ? backTarget(page.path ?? [], navigated) : undefined}
+                back={page.onBack ?? (pushed ? backTarget(page.path ?? [], depth > 0) : undefined)}
                 onSearch={searchable ? () => setPaletteOpen(true) : undefined}
                 menu={page.menu ?? menu}
                 steps={setupSteps}
@@ -323,7 +337,7 @@ export function AppShell({
               {children}
             </main>
             {ownStatusBar ? null : <StatusBar {...status} pageStatus={pageStatus} />}
-            {items.length > 0 && tabRoot ? (
+            {items.length > 0 && !pushed ? (
               <div className="cb-shell-bottomnav" data-part="bottom-nav-slot">
                 <BottomNav items={items} current={currentTab} />
               </div>

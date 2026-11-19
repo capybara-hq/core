@@ -1,8 +1,9 @@
-import type { ReactNode } from "react";
+import { type ReactNode, useState } from "react";
+import { Button } from "../controls/index";
 import { initialOf } from "../display/initial";
 import { Icon } from "../icons/icon";
 import type { IconName } from "../icons/paths";
-import { Menu, type MenuItem } from "../overlays/index";
+import { BottomSheet, type MenuItem, SheetOptionList } from "../overlays/index";
 import { LinkPendingMark, useDesignLink, useDesignT } from "../provider";
 import { type PreferenceBarProps, ThemeToggle } from "./preference-bar";
 import { ContextBlock, OrgSwitcher, type SidebarOrg } from "./sidebar";
@@ -86,11 +87,7 @@ export function MePanel({
           </span>
           <span className="cb-me-ellipsis">{account.name}</span>
         </div>
-        {adminContext ? (
-          <ContextBlock rail={false} />
-        ) : org ? (
-          <OrgSwitcher org={org} rail={false} />
-        ) : null}
+        {adminContext ? <ContextBlock rail={false} /> : org ? <OrgSheet org={org} /> : null}
       </div>
       {adminContext ? null : group("workspace", t("me.workspace"), workspace.map(row))}
       {group("manage", t("me.manage"), [
@@ -104,6 +101,60 @@ export function MePanel({
         </p>
       ) : null}
     </div>
+  );
+}
+
+/** The choices of a menu in a bottom sheet's body: radios for a set, buttons for the rest. */
+function MenuChoices({
+  label,
+  items,
+  onDone,
+}: {
+  label: string;
+  items: MenuItem[];
+  onDone(): void;
+}) {
+  const choices = items.filter((i): i is Exclude<MenuItem, "separator"> => i !== "separator");
+  const radios = choices.filter((i) => i.checked !== undefined && i.submenu === undefined);
+  const others = choices.filter((i) => i.checked === undefined && i.submenu === undefined);
+  const run = (item: Exclude<MenuItem, "separator">) => {
+    item.onSelect?.();
+    onDone();
+  };
+  return (
+    <>
+      <SheetOptionList
+        label={label}
+        options={radios.map((r, i) => ({
+          id: String(i),
+          label: r.label,
+          checked: r.checked === true,
+        }))}
+        onPick={(id) => {
+          const r = radios[Number(id)];
+          if (r) run(r);
+        }}
+      />
+      {others.map((o) => (
+        <Button key={o.label} variant="ghost" onClick={() => run(o)}>
+          {o.label}
+        </Button>
+      ))}
+    </>
+  );
+}
+
+/** The org switcher; it opens the org list in a bottom sheet (design spec §6.48, §6.7). */
+function OrgSheet({ org }: { org: SidebarOrg }) {
+  const t = useDesignT();
+  const [open, setOpen] = useState(false);
+  return (
+    <>
+      <OrgSwitcher org={org} rail={false} onOpen={() => setOpen(true)} />
+      <BottomSheet open={open} onOpenChange={setOpen} title={t("shell.org")}>
+        <MenuChoices label={t("shell.org")} items={org.menu} onDone={() => setOpen(false)} />
+      </BottomSheet>
+    </>
   );
 }
 
@@ -123,21 +174,7 @@ function MeRowView({ row }: { row: MeRow }) {
       </div>
     );
   }
-  if (row.menu !== undefined) {
-    return (
-      <Menu
-        items={row.menu}
-        label={row.label}
-        trigger={
-          <button type="button" {...common}>
-            {lead}
-            {label}
-            {row.value ? <span className="cb-me-value">{row.value}</span> : null}
-          </button>
-        }
-      />
-    );
-  }
+  if (row.menu !== undefined) return <MenuRow row={row} lead={lead} label={label} />;
   if (row.href !== undefined) {
     return (
       <Link href={row.href} {...common}>
@@ -158,5 +195,29 @@ function MeRowView({ row }: { row: MeRow }) {
       {label}
       {row.value ? <span className="cb-me-value">{row.value}</span> : null}
     </button>
+  );
+}
+
+/** A row that opens its choices (the languages) in a bottom sheet. */
+function MenuRow({ row, lead, label }: { row: MeRow; lead: ReactNode; label: ReactNode }) {
+  const [open, setOpen] = useState(false);
+  return (
+    <>
+      <button
+        type="button"
+        className="cb-me-row"
+        data-part="row"
+        data-id={row.id}
+        aria-haspopup="dialog"
+        onClick={() => setOpen(true)}
+      >
+        {lead}
+        {label}
+        {row.value ? <span className="cb-me-value">{row.value}</span> : null}
+      </button>
+      <BottomSheet open={open} onOpenChange={setOpen} title={row.label}>
+        <MenuChoices label={row.label} items={row.menu ?? []} onDone={() => setOpen(false)} />
+      </BottomSheet>
+    </>
   );
 }

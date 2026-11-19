@@ -20,7 +20,7 @@ export async function openReference(page: Page, component: string, theme: Theme,
   // out as blob URLs) must be there before states are forced or anything is measured: under load
   // the image block was still empty and its force selector matched nothing.
   // Hydration likewise (`RefHydrating`): before it the app shell draws both sidebar panels and the
-  // drawer bar (CSS picks one), and a busy runner can still be hydrating at networkidle.
+  // compact top bar (CSS picks one), and a busy runner can still be hydrating at networkidle.
   await page.waitForFunction(() => document.querySelector("[data-ref-pending]") === null);
   await forceStates(page);
   return res;

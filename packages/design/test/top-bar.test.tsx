@@ -160,7 +160,7 @@ describe("withViewTransition", () => {
 
   it("runs the update at once without view transitions (an instant swap)", () => {
     const update = vi.fn();
-    withViewTransition(update, "push");
+    withViewTransition(update, "pop");
     expect(update).toHaveBeenCalledTimes(1);
   });
 
@@ -192,7 +192,7 @@ describe("withViewTransition", () => {
     const start = vi.fn();
     doc.startViewTransition = start;
     const update = vi.fn();
-    withViewTransition(update, "push");
+    withViewTransition(update, "pop");
     expect(start).not.toHaveBeenCalled();
     expect(update).toHaveBeenCalledTimes(1);
   });
@@ -244,5 +244,50 @@ describe("push and pop in the shell", () => {
     rerender(shell("/agents/new/step"));
     expect(main().getAttribute("data-nav")).not.toBe(first);
     expect(main().getAttribute("data-nav")).toMatch(/^push-/);
+  });
+});
+
+describe("back never leaves the app", () => {
+  const sidebar = {
+    context: { kind: "work" as const, org: null, primary: [], more: [] },
+    activeNav: "",
+    account: { name: "grant", menu: [] },
+  };
+  const status = { context: "demo", version: "0.1.0", timeZone: "UTC" };
+  const nav = [
+    { id: "chats" as const, label: "会话", href: "/conversations", icon: "chats" as const },
+    { id: "agents" as const, label: "智能体", href: "/agents", icon: "agent" as const },
+    { id: "inbox" as const, label: "收件箱", href: "/inbox", icon: "inbox" as const },
+    { id: "me" as const, label: "我", href: "/me", icon: "user" as const },
+  ];
+  const shell = (pathname: string) => (
+    <DesignProvider locale="zh">
+      <AppShell sidebar={sidebar} status={status} bottomNav={nav} pathname={pathname}>
+        <PageHeader
+          path={[
+            { label: "demo", href: "/" },
+            { label: "智能体", href: "/agents" },
+            { label: "新建" },
+          ]}
+          title="新建"
+        />
+      </AppShell>
+    </DesignProvider>
+  );
+  const back = () =>
+    document.querySelector('[data-part="top-bar"] [data-part="back"]') as HTMLElement;
+
+  it("a deep link, one push, a pop: the second back goes up the path, not out through the history", () => {
+    window.matchMedia = matchMediaFor(390).matchMedia;
+    const { rerender } = render(shell("/agents/new"));
+    // deep link: nothing behind it in the app
+    expect(back().tagName).toBe("A");
+    expect(back().getAttribute("href")).toBe("/agents");
+    rerender(shell("/agents/new/step"));
+    expect(back().tagName).toBe("BUTTON"); // one in-app entry behind: history back
+    window.dispatchEvent(new PopStateEvent("popstate"));
+    rerender(shell("/agents/new"));
+    expect(back().tagName).toBe("A"); // back at the deep link: up the path
+    expect(back().getAttribute("href")).toBe("/agents");
   });
 });

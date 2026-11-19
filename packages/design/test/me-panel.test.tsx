@@ -136,4 +136,24 @@ describe("MePanel", () => {
     );
     expect(labels()).toEqual(["Workspace", "Manage", "Account"]);
   });
+
+  it("the org switcher and the language row open bottom sheets, not popover menus; a choice runs and closes", async () => {
+    const pick = vi.fn();
+    zh(
+      <MePanel
+        {...base({
+          org: { ...org, menu: [{ label: "另一个组织", checked: false, onSelect: pick }] },
+        })}
+      />,
+    );
+    await userEvent.click(screen.getByRole("button", { name: "当前组织：示例组织，切换组织" }));
+    const sheet = await screen.findByRole("dialog");
+    expect(screen.queryByRole("menu")).toBeNull();
+    await userEvent.click(within(sheet).getByRole("radio", { name: "另一个组织" }));
+    expect(pick).toHaveBeenCalledTimes(1);
+    expect(screen.queryByRole("dialog")).toBeNull();
+    await userEvent.click(screen.getByRole("button", { name: /语言/ }));
+    expect(await screen.findByRole("dialog", { name: "语言" })).toBeTruthy();
+    expect(screen.queryByRole("menu")).toBeNull();
+  });
 });
