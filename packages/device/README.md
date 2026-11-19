@@ -178,12 +178,13 @@ serving without the socket and says why once.
 The protocol is JSON lines. A request is `{"id":<positive integer>,"op":"<op>"}`; each answer
 carries the request's id: `{"id":1,"ok":true,"result":...}` or
 `{"id":1,"ok":false,"error":{"code":"...","message":"..."}}` (`bad_request`, with id 0 for a line
-without a usable id, `unknown_op`). A malformed line keeps the connection open.
+without a usable id, `unknown_op`). A malformed line keeps the connection open; a line over 64 KiB,
+or more than 1 MiB of answers a peer leaves unread, closes it.
 
 | Op | Result |
 |---|---|
 | `status` | The live status: `pid`, `version`, `url`, `orgId`, `deviceId`, `mode` (`os` or `docker`), `connection` (`starting`, `online`, `offline` or `draining`), `offlineReason` (while offline), `since` (when `connection` last changed) |
-| `running` | The operations executing now: `tag`, `conversationId`, `accountId`, `isolation` (`restricted` or `full`), `startedAt`; never a command's text, environment or output |
+| `running` | The operations executing now (an exec while it runs, a background task until it completes or is killed): `tag`, `conversationId`, `accountId`, `isolation` (`restricted` or `full`), `startedAt`; never a command's text, environment or output |
 | `subscribe` | The live status now; afterwards the connection receives `{"event":"status","status":{...}}` after each change |
 | `drain` | `null`; drains as `capybara-device drain` does |
 | `stop` | `null`; stops as `capybara-device stop` does |

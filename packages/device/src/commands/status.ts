@@ -18,6 +18,18 @@ type Control =
   | { control: "absent"; live: null }
   | { control: "unavailable"; controlReason: string; live: null };
 
+/** A light shape check of the runner's answer before it is printed. */
+function isLiveStatus(v: unknown): v is LiveStatus {
+  if (v === null || typeof v !== "object") return false;
+  const s = v as Record<string, unknown>;
+  return (
+    typeof s.pid === "number" &&
+    typeof s.connection === "string" &&
+    typeof s.deviceId === "string" &&
+    typeof s.since === "string"
+  );
+}
+
 async function controlState(stateDir: string, opts: StatusOptions): Promise<Control> {
   let answer: unknown;
   try {
@@ -25,7 +37,8 @@ async function controlState(stateDir: string, opts: StatusOptions): Promise<Cont
   } catch (e) {
     return { control: "unavailable", controlReason: (e as Error).message, live: null };
   }
-  if (answer !== undefined) return { control: "ok", live: answer as LiveStatus };
+  if (isLiveStatus(answer)) return { control: "ok", live: answer };
+  // an answer of another shape is treated as no answer
   const pid = (opts.running ?? (() => readRunningPid(stateDir, opts)))();
   if (pid === undefined) return { control: "absent", live: null };
   // a program runs but does not answer: say why when it is visible from here (decision 3)

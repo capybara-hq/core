@@ -217,6 +217,41 @@ describe("control socket: the protocol", () => {
     ]);
   });
 
+  it("the line limit counts bytes: a line of fewer characters but more bytes ends the connection", async () => {
+    await serve();
+    const c = await connect();
+    const closed = new Promise<void>((r) => c.sock.once("close", () => r()));
+    // 40000 characters, 80000 bytes in UTF-8: under the limit in characters, over it in bytes
+    c.send(`${JSON.stringify({ id: 1, op: "status", pad: "é".repeat(40_000) })}\n`);
+    await closed;
+    expect(c.lines).toEqual([
+      {
+        id: 0,
+        ok: false,
+        error: { code: "bad_request", message: expect.stringContaining("bytes") },
+      },
+    ]);
+  });
+
+  it("a subscriber that stops reading is disconnected once its unread answers pass 1 MiB", async () => {
+    const server = await serve();
+    if (!("publish" in server)) throw new Error("unavailable");
+    const c = await connect();
+    c.send(`${JSON.stringify({ id: 1, op: "subscribe" })}\n`);
+    await c.next(1);
+    c.sock.pause();
+    const closed = new Promise<void>((r) => c.sock.once("close", () => r()));
+    const big: LiveStatus = { ...STATUS, connection: "offline", offlineReason: "x".repeat(8192) };
+    // 4 MiB of events while the peer reads nothing
+    for (let i = 0; i < 512; i++) server.publish(big);
+    c.sock.resume();
+    await closed;
+    // it never received all of them: the server closed the connection
+    expect(c.lines.length).toBeLessThan(513);
+    // the server keeps answering others
+    expect(await queryControl(dir, "status")).toEqual(STATUS);
+  });
+
   it("queryControl answers undefined when no runner listens", async () => {
     expect(await queryControl(dir, "status")).toBeUndefined();
     expect(await queryControl(join(dir, "missing"), "status")).toBeUndefined();

@@ -11,6 +11,9 @@ export const CONTROL_PATH_MAX_BYTES = 103;
 /** The longest line a peer may send; a longer one ends that connection. */
 export const CONTROL_LINE_MAX_BYTES = 64 * 1024;
 
+/** The most unread answer bytes a connection may queue; past it the connection is closed. */
+export const CONTROL_WRITE_MAX_BYTES = 1024 * 1024;
+
 /** `<stateDir>/control.sock`. */
 export function controlSocketPath(stateDir: string): string {
   return join(stateDir, "control.sock");
