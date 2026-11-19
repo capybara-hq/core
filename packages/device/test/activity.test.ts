@@ -160,7 +160,13 @@ describe("background tasks in the running operations", () => {
   /** A supervisor whose workers are fakes: each launch waits for `finish` (or a kill). */
   function supervisor(running: RunningOperations) {
     const finishes: (() => void)[] = [];
-    const result = { exitCode: 0, stdout: "", stderr: "", truncated: false, timedOut: false };
+    const result = {
+      exitCode: 0 as number | null,
+      stdout: "",
+      stderr: "",
+      truncated: false,
+      timedOut: false,
+    };
     const sup = new MacOperationSupervisor({
       stateDir: dir,
       deviceId: "d",
