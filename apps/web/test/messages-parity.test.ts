@@ -1,5 +1,6 @@
 import { readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
+import { BUILTIN_TOOLS } from "../src/lib/agents";
 import type { CatalogItemVersion } from "../src/lib/catalog";
 import { PLATFORM_COMPONENT_KINDS } from "../src/lib/components";
 
@@ -123,6 +124,22 @@ describe("every platform component kind has its labels", () => {
             `${locale} ${path}.${kind}`,
           ).toEqual(expect.any(String));
         }
+      }
+    });
+  }
+});
+
+describe("every builtin tool the Tools section lists has its label", () => {
+  // The section labels each name of BUILTIN_TOOLS through `form.builtin.<name>`, a template key
+  // the static check cannot follow: a tool added there without a label threw MISSING_MESSAGE on
+  // every agent page (FetchAttachment, ScheduleTargets).
+  for (const locale of ["zh", "en"]) {
+    it(locale, () => {
+      const messages = load(locale) as { agents: { form: { builtin: Record<string, unknown> } } };
+      for (const name of BUILTIN_TOOLS) {
+        expect(messages.agents.form.builtin[name], `${locale} agents.form.builtin.${name}`).toEqual(
+          expect.any(String),
+        );
       }
     });
   }

@@ -1,5 +1,37 @@
 # @capybara-hq/kernel
 
+## 0.1.0-rc.54
+
+### Minor Changes
+
+- 6b3e60e: Add the platform icon setting: super admins upload the app icon (512 × 512 PNG), its maskable
+  variant and an SVG favicon as JSON base64 (`/api/v1/admin/platform/icons*`, Platform operations
+  `admin.icons`, `admin.set-icon`, `admin.clear-icon`); the public
+  `GET /api/v1/platform/icon/:purpose?v=<sha256>` serves them for the manifest, favicons and native
+  clients. Migration 0164 adds `capybara.platform_icons`.
+
+### Patch Changes
+
+- 872d26b: Native apps sign in through the browser: `POST /api/v1/app-auth/authorize` (a signed-in person's
+  consent) issues a one-time code bound to a PKCE S256 challenge and a redirect URI from the new
+  `auth.appRedirectUris` (default `["capybara://auth/callback"]`), and `POST /api/v1/app-auth/token`
+  exchanges it once, within 60 s, for an ordinary web session of the app's own.
+- 0d10b80: `GET /api/v1/meta` returns the platform icon URL when one is uploaded, and reports
+  `features.appSignIn` only when `http.publicUrl` is set.
+- ddc2f3c: Add the `platform.name` config field and the public `GET /api/v1/meta` discovery route (platform
+  name, icon, device protocol range, features) for native clients and the installed web app.
+- Updated dependencies [d4fbc1f]
+- Updated dependencies [091cd08]
+  - @capybara-hq/plugin-sdk@0.1.0-rc.38
+
+## 0.1.0-rc.53
+
+### Patch Changes
+
+- 5bfad28: Images sent to a model are scaled to at most 2048 px and re-encoded (JPEG, or WebP with
+  transparency) when over 1 MiB, and the copy is cached between steps, so a conversation holding
+  several large images no longer re-uploads tens of megabytes on every step.
+
 ## 0.1.0-rc.52
 
 ### Patch Changes

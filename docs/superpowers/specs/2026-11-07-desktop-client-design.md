@@ -134,7 +134,7 @@ fight it (§5.2). State of `@capybara-hq/device` at `b9c01fe0` (`0.1.0-rc.16`):
 
 | Gap | Why | Proposed change in `packages/device` |
 |---|---|---|
-| Live status and running operations (required: the app attaches to a service it does not host) | The bridge's `device@1.status` / `device@1.running` (§8) and the tray need the connection state (connecting, online, offline with the last error, draining), the bound device and what runs now. `status --json` reads files only; `Connection` has only `done`, `drain()`, `stop()`; there is no event stream | The runner opens a **control socket** `<stateDir>/control.sock` (Unix socket, 0600 in the 0700 state directory; checked like `credential.json`), JSON lines: `status`, `running` (tag, conversation id, account id, `restricted` / `full`, started at; never command text, like the command log), `subscribe` (status changes), `drain`, `stop`. `status --json` adds the live fields when a runner answers **(designer's call)** |
+| Live status and running operations (required: the app attaches to a service it does not host) | The bridge's `device@1.status` / `device@1.running` (§8) and the tray need the connection state (connecting, online, offline with the last error, draining), the bound device and what runs now. `status --json` reads files only; `Connection` has only `done`, `drain()`, `stop()`; there is no event stream | The runner opens a **control socket** `<stateDir>/control.sock` (Unix socket, 0600 in the 0700 state directory; checked like `credential.json`), JSON lines: `status`, `running` (tag, conversation id, account id, `restricted` / `full`, started at; never command text, like the command log), `subscribe` (status changes), `drain`, `stop`. `status --json` adds the live fields when a runner answers **(designer's call)**. A socket path over 103 bytes (the macOS `sun_path` limit) or a state directory other users can read leaves the runner serving without the socket, and `status --json` reports `control: "unavailable"` with the reason **(decided)** |
 | Machine-readable login | The app must open the verification URL in the profile's own window and know when login ends; scraping the "Open … and confirm the code …" line is fragile | `login --json`: JSON lines `{ "event": "verification", "url", "userCode", "expiresIn" }`, then `{ "event": "done", "deviceId", "orgId" }` or `{ "event": "error", "code" }`; implies `--no-browser` |
 | Keep-awake | §9.7: the CLI and headless servers need it too, so it belongs to the program, not the app | `policy.json` field `keepAwake: "off" \| "while-busy" \| "connected"` (default `while-busy`) and `capybara-device keep-awake off\|while-busy\|connected [--yes]`; the runner holds the OS assertion (§9.7) and reports its state on the control socket |
 | Machine-readable ceiling and service state | The device page shows the ceiling from the kernel's owner report, but the app must decide whether a requested change widens it, and whether a service is installed | `ceiling show --json` and `service status --json` (the facts `service status` prints today) |
@@ -299,6 +299,9 @@ security keys already are, and the app only receives a one-time code.
    needed (password or SSO, unchanged), then shows one confirmation: 「在 <机器名> 上的 Capybara
    桌面端登录 <平台名称>？」 with the account and 「登录」/「取消」. Confirming calls
    `POST /api/v1/app-auth/authorize`; the page then navigates to the returned redirect.
+   Cancelling posts the same route with `deny: true`: the kernel validates the redirect URI and
+   answers the `error=access_denied` redirect, with no code issued and no extra route
+   **(decided)**.
 3. The browser hands `capybara://auth/callback?code=…&state=…&iss=<public URL>` to the app. The
    main process accepts it only for a pending `state`, checks `iss` equals the profile's origin
    (mix-up defence, RFC 9207), and drops the pending entry (one use).
@@ -317,7 +320,7 @@ process. The callback page in the browser says 「已返回 Capybara，可以关
 
 | Route | Access | Does |
 |---|---|---|
-| `POST /api/v1/app-auth/authorize` | Signed-in person, human only (`HUMAN_ONLY`), CSRF header | Body `{ client, redirectUri, codeChallenge, codeChallengeMethod: "S256", state, name }`. Refuses a `redirectUri` not in `auth.appRedirectUris` and any method but S256. Issues `code` (`cap_ac_` + 32 random bytes), stores its sha256 in Redis for 60 s with the account, the browser session id, `client`, `redirectUri`, `codeChallenge` and `name`; answers `{ redirect }` (the URI with `code`, `state`, `iss`). Audit `auth.app_authorized` (client, name) |
+| `POST /api/v1/app-auth/authorize` | Signed-in person, human only (`HUMAN_ONLY`), CSRF header | Body `{ client, redirectUri, codeChallenge, codeChallengeMethod: "S256", state, name, appVersion }` (`appVersion` feeds the session's user agent **(decided)**; `deny: true` for a cancel). Refuses a `redirectUri` not in `auth.appRedirectUris` and any method but S256. Issues `code` (`cap_ac_` + 32 random bytes), stores its sha256 in Redis for 60 s with the account, the browser session id, `client`, `redirectUri`, `codeChallenge` and `name`; answers `{ redirect }` (the URI with `code`, `state`, `iss`). Audit `auth.app_authorized` (client, name) |
 | `POST /api/v1/app-auth/token` | `@Public`, rate-limited per IP like `/auth/login` | Body `{ code, codeVerifier, redirectUri }`. `GETDEL` of the code (one use; a second try is `app_auth.code_invalid`), checks expiry, `redirectUri` and `S256(codeVerifier)`; refuses a disabled account; creates a session with `SessionService.create` and sets `cap_at` / `cap_rt` like `/auth/login`; answers `{ account }`. Audit `auth.app_signed_in` (client, name, session id) |
 
 - **Binding**: the code is bound to its PKCE challenge, to the redirect URI, to this deployment
@@ -531,7 +534,8 @@ and headless servers have it too; the desktop surfaces it through `device@1`.
   mode at once; a higher mode needs the native confirmation of mobile layout §9.4. Raising it
   changes the machine's power behaviour and battery life and lengthens the time the machine is
   reachable for remote commands, which is a widening in the sense of §9.5; lowering only narrows
-  both. The deployment's policy operations do not touch `keepAwake`.
+  both. The deployment's policy operations do not touch `keepAwake`. Raising it from the CLI
+  asks on a TTY and needs `--yes` otherwise, like `ceiling set` **(decided)**.
 
 
 

@@ -129,6 +129,18 @@ describe("buildModelRequest 解析媒体引用", () => {
     ]);
   });
 
+  it("an image fetched as its re-encoded copy goes out with the copy's media type", () => {
+    const jpeg = new Uint8Array([0xff, 0xd8, 0xff, 1, 2]);
+    const m = media([[IMG, { mediaType: "image/jpeg", data: jpeg }]]);
+    const { request } = build(SEE, logWith(content.slice(0, 2)), m);
+    expect(userContent(request.messages)[1]).toEqual({
+      type: "image",
+      mediaType: "image/jpeg",
+      name: "cat.png",
+      source: { kind: "base64", data: Buffer.from(jpeg).toString("base64") },
+    });
+  });
+
   it("模型不支持：只有文字占位，绝不带字节；文本文件内联", () => {
     const { request } = build(BLIND, logWith(content));
     const blocks = userContent(request.messages);

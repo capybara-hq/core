@@ -4,6 +4,7 @@ import { Inject, Injectable } from "@nestjs/common";
 import { sql } from "kysely";
 import type { AttachmentPurpose } from "../db/kernel-schema.js";
 import { ApiError } from "../errors.js";
+import { CacheService } from "../infra/cache/cache.service.js";
 import { KernelConfigService } from "../infra/config/kernel-config.service.js";
 import { KernelDb } from "../infra/database/kernel-db.js";
 import { TransactionHost } from "../infra/database/transaction-host.js";
@@ -17,6 +18,13 @@ import { StorageService } from "../storage/storage.service.js";
 import { ConversationAccess } from "./access.js";
 import type { LogContentBlock } from "./events.js";
 import { acceptedContent, isImageContentType, isMediaContentType } from "./media-types.js";
+import {
+  fitImageForModel,
+  MODEL_IMAGE_CACHE_SECONDS,
+  modelImageKey,
+  parseModelImage,
+  serializeModelImage,
+} from "./model-image.js";
 
 /** 预签名上传的有效期（秒）。尽量短：表单在有效期内可被再次使用（内容替换由 etag 核对兜底）。 */
 export const ATTACHMENT_UPLOAD_TTL_SECONDS = 300;
@@ -236,6 +244,8 @@ export class AttachmentsService {
     @Inject(ConversationAccess) private readonly access: Pick<ConversationAccess, "isAccessible">,
     @Inject(KERNEL_LOGGER) private readonly log: Pick<KernelLogger, "info" | "warn">,
     @Inject(TransactionHost) readonly txHost: TransactionHost,
+    /** where the model-sized copies of images are kept between steps ({@link fetchMedia}) */
+    @Inject(CacheService) private readonly cache: Pick<CacheService, "get" | "set">,
   ) {}
 
   /** 单个附件的大小上限：配置的 `maxBytes`，图片再受 `MEDIA_LIMITS.imageBytes` 限制。 */
@@ -726,6 +736,9 @@ export class AttachmentsService {
    * not the recorded one (content replaced, logged as a warning). Every other error (storage
    * unavailable, network) throws (Ruling M4) for the caller to treat as retryable, never a
    * placeholder. An id in `caps` is read by range up to that many leading bytes (the `text/*` cap).
+   * A whole image comes back as its model-sized copy ({@link fitImageForModel}), whose media type
+   * may differ from the row's; the copy is cached for {@link MODEL_IMAGE_CACHE_SECONDS} under the
+   * attachment's id and etag, so later steps of the conversation only check the object's head.
    */
   async fetchMedia(
     orgId: string,
@@ -751,13 +764,34 @@ export class AttachmentsService {
         const r = byId.get(id);
         if (!r) return out.set(id, null);
         const cap = caps?.get(id);
+        const where = { orgId, conversationId, attachmentId: id };
+        // a whole image already scaled for the model: the cached copy, once the object checks out
+        const cacheKey =
+          cap === undefined && isImageContentType(r.content_type)
+            ? modelImageKey(orgId, r)
+            : undefined;
+        const cached =
+          cacheKey === undefined ? null : parseModelImage(await this.cache.get(cacheKey));
+        if (cached) {
+          const head = await store.head(r.object_key);
+          if (!head) return out.set(id, null);
+          if (head.size !== Number(r.size) || !this.sameContent(r.etag, head.etag, where)) {
+            if (head.size !== Number(r.size)) {
+              this.log.warn(
+                "attachment size changed after finalize; treating it as unavailable",
+                where,
+              );
+            }
+            return out.set(id, null);
+          }
+          return out.set(id, cached);
+        }
         const want = cap !== undefined && cap < Number(r.size) ? Math.max(1, cap) : Number(r.size);
         const got = await store.get(
           r.object_key,
           want < Number(r.size) ? { range: { start: 0, end: want - 1 } } : undefined,
         );
         if (!got) return out.set(id, null);
-        const where = { orgId, conversationId, attachmentId: id };
         if (got.head.size !== Number(r.size) || !this.sameContent(r.etag, got.head.etag, where)) {
           if (got.head.size !== Number(r.size)) {
             this.log.warn(
@@ -771,7 +805,17 @@ export class AttachmentsService {
         // 提供方没按范围读、给了整个对象时只留开头
         const all = await readAll(got.body);
         const data = all.byteLength === Number(r.size) ? all.subarray(0, want) : all;
-        out.set(id, data.byteLength === want ? { mediaType: r.content_type, data } : null);
+        if (data.byteLength !== want) return out.set(id, null);
+        const media = { mediaType: r.content_type, data };
+        if (cacheKey === undefined) {
+          return out.set(id, media);
+        }
+        // a whole image goes out as the model-sized copy (the stored object stays unchanged)
+        const fitted = await fitImageForModel(media);
+        if (fitted !== media) {
+          await this.cache.set(cacheKey, serializeModelImage(fitted), MODEL_IMAGE_CACHE_SECONDS);
+        }
+        out.set(id, fitted);
       }),
     );
     return out;
