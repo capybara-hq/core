@@ -443,12 +443,28 @@ type ScriptedBreak =
   | "outside-off"
   | "reserved-name"
   | "link-chain"
-  | "denylist";
+  | "denylist"
+  | "foreign-unix";
 
 /** Runs a command on this machine in its own process group (a stand-in has no isolation). */
-function hostRun(command: string, cwd: string, env: Record<string, string>): Promise<ExecResult> {
+function hostRun(
+  command: string,
+  cwd: string,
+  env: Record<string, string>,
+  signal?: AbortSignal,
+): Promise<ExecResult> {
   return new Promise<ExecResult>((resolve) => {
     const child = spawn("/bin/sh", ["-c", command], { cwd, detached: true, env });
+    // cancellation ends the whole process group (a long-running service the harness started)
+    const kill = () => {
+      try {
+        if (child.pid !== undefined) process.kill(-child.pid, "SIGKILL");
+      } catch {
+        // already gone
+      }
+    };
+    if (signal?.aborted) kill();
+    signal?.addEventListener("abort", kill, { once: true });
     let stdout = "";
     let stderr = "";
     child.stdout.on("data", (b: Buffer) => {
@@ -571,6 +587,10 @@ async function scriptedFixture(
       return "";
     }
     if (command.startsWith("cd dotfiles") && broken !== "link-chain") return "";
+    // a conforming runtime refuses every connect to the foreign socket in the root; the broken
+    // one runs the client for real, which reaches the escalated service
+    if (command.includes("foreign-unix-client") && !escalated && broken !== "foreign-unix")
+      return "foreign-unix-client stream=denied stream-absolute=denied seqpacket=denied seqpacket-absolute=denied\n";
     return undefined;
   };
   let sequence = 0;
@@ -601,9 +621,12 @@ async function scriptedFixture(
         if (answer !== undefined)
           return { exitCode: 0, stdout: answer, stderr: "", truncated: false, timedOut: false };
         // not a probe: run it here (the setup and positive controls; the host's own tools)
-        return hostRun(args.command, args.cwd ?? root, {
-          ...(process.env as Record<string, string>),
-        });
+        return hostRun(
+          args.command,
+          args.cwd ?? root,
+          { ...(process.env as Record<string, string>) },
+          args.signal,
+        );
       },
       readFile: async (path, { maxBytes }) => {
         const data = await readFile(path).catch(() => null);
@@ -692,6 +715,7 @@ const ALL_CHECKS = [
   "closed-granted",
   "loopback",
   "open-network",
+  "foreign-unix",
 ] as const;
 
 describe("permission conformance harness: approval-only predicates", () => {
@@ -716,6 +740,7 @@ describe("permission conformance harness: approval-only predicates", () => {
     ["proxy-502", "open-network", /must be refused by the proxy \(403\)/],
     ["closed-receipt", "open-network", /loopback must see no connection/],
     ["own-connect", "loopback", /no loopback connect, no SO_REUSEPORT/],
+    ["foreign-unix", "foreign-unix", /must not connect to a socket another process made/],
     ["escalated-capybara", "environment", /minus every CAPYBARA_ variable/],
     ["outside-off", "outside-switch", /outside-sandbox setting is off/],
     ["reserved-name", "reserved-names", /reserved name/],

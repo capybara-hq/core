@@ -6,6 +6,7 @@ import { describe, expect, it } from "vitest";
 import { LINUX_SANDBOX_SOURCE } from "../src/sandbox-linux-runtime-source.js";
 import { NATIVE_FILES_SOURCE } from "../src/sandbox-native-runtime-source.js";
 import {
+  isSandboxHomeWriteDenied,
   isSandboxMoveDenied,
   isSandboxWriteDenied,
   SANDBOX_MANDATORY_WRITE_DENIES,
@@ -14,6 +15,7 @@ import {
   SANDBOX_SYSTEM_WRITE_DENIES,
   SANDBOX_WRITE_POLICY_PYTHON,
   sandboxFoldName,
+  sandboxRuntimeDirectoryOf,
 } from "../src/sandbox-write-denies.js";
 
 /**
@@ -68,6 +70,12 @@ const PERSISTENCE_DENIED = [
   "/home/u/.config/fish/config.fish",
   "/home/u/.config/fish/conf.d/evil.fish",
   "/home/u/.config/fish/conf.d",
+  // PATH-shim directories a later shell runs programs from
+  "/home/u/.local/bin",
+  "/home/u/.local/bin/ls",
+  "/Users/u/.LOCAL/Bin/git",
+  "/home/u/.cargo/bin",
+  "/home/u/.cargo/bin/cargo-evil",
   "/private/var/at/tabs/u",
   "/private/var/at/tabs",
   "/private/var/at/jobs/x",
@@ -92,6 +100,10 @@ const PERSISTENCE_ALLOWED = [
   "/home/u/.config/plasma-workspace/shutdown/x.sh",
   "/home/u/.config/fish/functions/f.fish",
   "/home/u/.local/share/other/x",
+  "/home/u/.local/lib/x",
+  "/home/u/.cargo/registry/x",
+  "/w/bin/run.sh",
+  "/w/node_modules/pkg/bin/cli.js",
   "/home/u/.config/git/ignore",
   "/var/spool/mail/u",
   "/var/spool",
@@ -253,6 +265,63 @@ const MOVES: [string, string, boolean, boolean, string[]?][] = [
   ["/tmp/prep", "/var", true, true, ["at"]],
   ["/var/at", "/var/at2", true, true, ["tabs"]],
 ];
+
+describe("home-anchored write denies", () => {
+  it("denies ~/bin and beneath it under the home only, folded", () => {
+    for (const path of ["/home/u/bin", "/home/u/bin/ls", "/Users/u/BIN/git"])
+      expect(
+        isSandboxHomeWriteDenied(path, path.startsWith("/Users") ? "/Users/u" : "/home/u"),
+        path,
+      ).toBe(true);
+    for (const path of ["/home/u/binx", "/home/u/w/bin/x", "/home/u", "/home/v/bin/x"])
+      expect(isSandboxHomeWriteDenied(path, "/home/u"), path).toBe(false);
+    // a project's own bin/ stays writable everywhere
+    expect(isSandboxWriteDenied("/home/u/bin/x")).toBe(false);
+  });
+});
+
+describe("system runtime and socket directories", () => {
+  it("names the runtime directory a write root is, lies in or contains", () => {
+    const refused: [string, string][] = [
+      ["/run", "/run"],
+      ["/run/user/1000", "/run"],
+      ["/run/user/1000/bus", "/run"],
+      ["/var/run", "/var/run"],
+      ["/var/run/docker", "/var/run"],
+      ["/private/var/run", "/private/var/run"],
+      ["/dev", "/dev"],
+      ["/dev/shm", "/dev"],
+      ["/proc/self", "/proc"],
+      ["/sys/fs", "/sys"],
+      ["/tmp", "/tmp"],
+      ["/private/tmp", "/private/tmp"],
+      ["/TMP", "/tmp"],
+      ["/tmp/.X11-unix", "/tmp/.x11-unix"],
+      ["/tmp/tmux-1000", "/tmp/tmux-1000"],
+      ["/tmp/tmux-1000/x", "/tmp/tmux-1000"],
+      ["/tmp/ssh-AbC123", "/tmp/ssh-abc123"],
+      ["/private/tmp/com.apple.launchd.x1/y", "/private/tmp/com.apple.launchd.x1"],
+      // an ancestor of one
+      ["/var", "/var/run"],
+      ["/private", "/private/var/run"],
+      ["/private/var", "/private/var/run"],
+    ];
+    for (const [root, hit] of refused) expect(sandboxRuntimeDirectoryOf(root), root).toBe(hit);
+    for (const root of [
+      "/tmp/build",
+      "/tmp/build/x",
+      "/private/tmp/cap-1",
+      "/var/tmp",
+      "/var/lib/x",
+      "/runner/work",
+      "/home/u",
+      "/home/u/project",
+      "/workspace/project",
+      "/private/var/folders/xy/T/x",
+    ])
+      expect(sandboxRuntimeDirectoryOf(root), root).toBeNull();
+  });
+});
 
 describe("restricted write policy", () => {
   it("denies git internals beyond the allowlist, rc and editor files, bare lookalikes", () => {

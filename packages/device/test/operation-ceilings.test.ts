@@ -145,6 +145,37 @@ describe("independent owner ceiling", () => {
     const narrowed = await f.read();
     expect(() => intersectOperation(s, narrowed, a)).toThrow();
   });
+  // R3 final review M1: another process's socket in a write root reaches outside the sandbox
+  it("refuses a write root that is a system runtime or socket directory, as the kernel does", async () => {
+    const f = await fixture();
+    const a = { operationId: "op", orgNetwork: { kind: "open-public" as const, hosts: [] } };
+    const c = await f.read();
+    for (const root of [
+      "/tmp",
+      "/private/tmp",
+      "/tmp/tmux-1000",
+      "/tmp/.X11-unix",
+      "/run/user/1000",
+      "/var/run",
+      "/private/var/run/x",
+      "/dev/shm",
+      "/proc/self",
+      "/sys",
+    ]) {
+      const s = scope(f.roots);
+      s.filesystem.writeRoots = [root];
+      expect(() => intersectOperation(s, c, a), root).toThrow(
+        /is a system runtime or socket directory .*grant a directory of its own/,
+      );
+    }
+    const own = scope(f.roots);
+    own.filesystem.writeRoots = ["/tmp/build"];
+    expect(intersectOperation(own, c, a).writeRoots).toEqual(["/tmp/build"]);
+    // reading one is no write
+    const read = scope(f.roots);
+    read.filesystem.readRoots = ["/run/user/1000"];
+    expect(intersectOperation(read, c, a).readRoots).toEqual(["/run/user/1000"]);
+  });
   it("an escalated Full access call ignores the host baseline; the owner ceiling denies it", async () => {
     const f = await fixture();
     const s = {

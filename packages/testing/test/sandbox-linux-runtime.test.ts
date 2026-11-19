@@ -373,6 +373,113 @@ attempt("clone3", lambda: raw(435, 0, 0))
         expect(device.run(`cat ${readOnly}/file ${sibling}/secret`)).toBe(`ro${SECRET}`);
       });
 
+      it("connects only to the UNIX sockets the operation bound itself", async (context) => {
+        requireSupport(context);
+        // services another process runs inside the write root: a socket there (a user D-Bus, a
+        // rootless docker.sock, ssh-agent, tmux) is code execution outside the sandbox. `home` is
+        // a project bound at the owner's home, with its ~/.docker/run/docker.sock.
+        const home = `${root}/home-root`;
+        const server = `
+import os, socket, sys, threading
+counter = sys.argv[1]
+count = [0]
+lock = threading.Lock()
+def serve(path):
+    s = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+    s.bind(path)
+    s.listen(8)
+    while True:
+        s.accept()[0].close()
+        with lock:
+            count[0] += 1
+            with open(counter, "w") as handle:
+                handle.write(str(count[0]))
+for path in sys.argv[2:]:
+    threading.Thread(target=serve, args=(path,), daemon=True).start()
+threading.Event().wait()
+`;
+        device.run(
+          `mkdir -p ${home}/.docker/run && cat > /tmp/foreign-unix.py <<'EOF'\n${server}\nEOF`,
+        );
+        device.run(
+          `nohup python3 /tmp/foreign-unix.py ${root}/foreign.count ${root}/foreign.sock ` +
+            `${home}/.docker/run/docker.sock > /dev/null 2>&1 &`,
+        );
+        device.run(
+          `for i in $(seq 200); do [ -S ${root}/foreign.sock ] && ` +
+            `[ -S ${home}/.docker/run/docker.sock ] && exit 0; sleep 0.05; done; exit 1`,
+        );
+        try {
+          const probe = `
+import errno, os, socket, sys
+def attempt(name, action):
+    try:
+        action()
+        print(name, "ALLOWED")
+    except OSError as error:
+        print(name, errno.errorcode.get(error.errno, error.errno))
+def connect(path):
+    socket.socket(socket.AF_UNIX).connect(path)
+attempt("foreign", lambda: connect(sys.argv[1] + "/foreign.sock"))
+attempt("foreign-relative", lambda: connect("foreign.sock"))
+attempt("foreign-seqpacket", lambda: socket.socket(socket.AF_UNIX, socket.SOCK_SEQPACKET).connect("foreign.sock"))
+attempt("home-docker", lambda: connect(sys.argv[2] + "/.docker/run/docker.sock"))
+attempt("foreign-hardlink", lambda: (os.link("foreign.sock", "linked.sock"), connect("linked.sock")))
+attempt("foreign-renamed", lambda: (os.rename("linked.sock", "renamed.sock"), connect("renamed.sock")))
+def own():
+    server = socket.socket(socket.AF_UNIX)
+    server.bind("own.sock")
+    server.listen(1)
+    client = socket.socket(socket.AF_UNIX)
+    client.connect(os.getcwd() + "/own.sock")
+    peer = server.accept()[0]
+    client.sendall(b"ping")
+    if peer.recv(4) != b"ping":
+        raise OSError(errno.EIO, "")
+attempt("own", own)
+def own_moved():
+    server = socket.socket(socket.AF_UNIX)
+    server.bind("own2.sock")
+    server.listen(1)
+    os.rename("own2.sock", "own2-moved.sock")
+    socket.socket(socket.AF_UNIX).connect("own2-moved.sock")
+attempt("own-moved", own_moved)
+`;
+          const result = await run(
+            restricted({ kind: "none" }),
+            `python3 - ${root} ${home} <<'EOF'\n${probe}\nEOF`,
+          );
+          const lines = Object.fromEntries(
+            decode(result.stdout)
+              .trim()
+              .split("\n")
+              .map((line) => line.split(" ")),
+          );
+          expect(lines).toEqual({
+            foreign: "EACCES",
+            "foreign-relative": "EACCES",
+            "foreign-seqpacket": "EACCES",
+            "home-docker": "EACCES",
+            "foreign-hardlink": "EACCES",
+            "foreign-renamed": "EACCES",
+            own: "ALLOWED",
+            "own-moved": "ALLOWED",
+          });
+          expect(device.run(`cat ${root}/foreign.count 2>/dev/null || echo 0`).trim()).toBe("0");
+          // the same connect outside the sandbox reaches the service: the probe is real
+          device.run(
+            `python3 -c 'import socket; socket.socket(socket.AF_UNIX).connect("${root}/foreign.sock")'`,
+          );
+          device.run(
+            `for i in $(seq 200); do [ "$(cat ${root}/foreign.count 2>/dev/null)" = 1 ] && exit 0; ` +
+              "sleep 0.05; done; exit 1",
+          );
+        } finally {
+          device.run("pkill -f '[f]oreign-unix.py'; true");
+          device.run(`rm -rf ${home} ${root}/*.sock ${root}/foreign.count`);
+        }
+      });
+
       it("kills every restricted survivor when the main command exits", async (context) => {
         requireSupport(context);
         const result = await run(restricted(), "(sleep 1000 & echo $! > survivor); true");
@@ -589,6 +696,26 @@ attempt("clone3", lambda: raw(435, 0, 0))
         } finally {
           mutant.close();
           device.run(`rm -rf ${root}/hooked`);
+        }
+      });
+
+      it("a broker that connects to any socket in the roots reaches a foreign service", async (context) => {
+        requireSupport(context);
+        const runtime = stageMutant(
+          device,
+          "foreign-unix",
+          "                if not own_socket:\n                    return None, errno.EACCES\n",
+          "",
+        );
+        const mutant = new Agent(device, { runtime, candidateArch: true });
+        await mutant.ready;
+        try {
+          const fixture = await dockerPermissionFixture(device, mutant, async () => {});
+          await expect(
+            runSandboxPermissionConformance(fixture, { checks: ["foreign-unix"] }),
+          ).rejects.toThrow(/must not connect to a socket another process made in the root/);
+        } finally {
+          mutant.close();
         }
       });
 

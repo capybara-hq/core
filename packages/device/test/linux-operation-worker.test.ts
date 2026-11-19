@@ -308,6 +308,13 @@ describe("Linux operation worker", () => {
     );
     // a location reached without a link adds nothing
     expect(denies).not.toContain(join(home, ".bashrc"));
+    // the home-anchored ~/bin is always denied, also where it is missing
+    expect(denies).toContain(join(home, "bin"));
+    // and at its target when it is a link
+    await symlink(join(root, "w", "v1"), join(home, "bin"));
+    expect(protectedWriteTargets(home)).toEqual(
+      expect.arrayContaining([join(home, "bin"), join(root, "w", "v1")]),
+    );
   });
 
   it("a container's worker closes the host's own addresses to the forwarder", async () => {

@@ -9,6 +9,7 @@ import {
   type SandboxOperationScope,
   type SandboxRoots,
   SandboxScopeDeniedError,
+  sandboxRuntimeDirectoryOf,
   validateAllowHost,
 } from "@capybara-hq/plugin-sdk";
 import { covers, deniedSecretPaths, effectiveEgress } from "../policy.js";
@@ -158,6 +159,15 @@ export function checkRoots(
     write.some((r) => within(r, ceiling.roots.skills) || within(ceiling.roots.skills, r))
   )
     throw new SandboxScopeDeniedError("Skills remain read only");
+  // the kernel's candidate builder and admission refuse the same roots: another process's socket
+  // there would let a sandboxed command act outside the sandbox
+  for (const root of write) {
+    const runtime = sandboxRuntimeDirectoryOf(root);
+    if (runtime !== null)
+      throw new SandboxScopeDeniedError(
+        `Write root ${root} is a system runtime or socket directory (${runtime}), where other programs keep their sockets; grant a directory of its own (such as /tmp/<name>) or one inside the project instead`,
+      );
+  }
 }
 export function freezeAuthority(a: LocalExecAuthority): LocalExecAuthority {
   if (

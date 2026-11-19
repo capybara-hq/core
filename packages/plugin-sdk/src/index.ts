@@ -33,15 +33,19 @@ export * from "./sandbox.js";
 export * from "./sandbox-operation.js";
 export { SANDBOX_RUNTIME_SOURCE } from "./sandbox-runtime-source.js";
 export {
+  isSandboxHomeWriteDenied,
   isSandboxMoveDenied,
   isSandboxWriteDenied,
   SANDBOX_GIT_ALLOWED_DIRECTORIES,
   SANDBOX_GIT_ALLOWED_FILES,
   SANDBOX_GIT_DENIED_INTERNALS,
+  SANDBOX_HOME_WRITE_DENIES,
   SANDBOX_MANDATORY_WRITE_DENIES,
   SANDBOX_PROTECTED_PATH_NAMES,
   SANDBOX_RESERVED_NAME_PREFIX,
+  SANDBOX_RUNTIME_DIRECTORIES,
   SANDBOX_SYSTEM_WRITE_DENIES,
+  sandboxRuntimeDirectoryOf,
 } from "./sandbox-write-denies.js";
 export * from "./secret.js";
 export * from "./setup-check.js";

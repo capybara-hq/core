@@ -605,6 +605,12 @@ describe("candidate building under every profile", () => {
         ["Write", { file_path: "/home/u/.config/autostart/evil.desktop" }],
         ["Write", { file_path: "/outside/repo/.git/hooks/pre-commit" }],
         ["Bash", { command: "cd /home/u/Library/LaunchAgents && ls" }],
+        // the PATH-shim directories a later shell runs programs from
+        ["Write", { file_path: "/home/u/.local/bin/ls" }],
+        ["Write", { file_path: "/home/u/.cargo/bin/cargo-x" }],
+        ["Write", { file_path: "/home/u/bin/git" }],
+        ["Bash", { command: "cd /home/u/.local/bin && ls" }],
+        ["Bash", { command: "cd /home/u/bin && ls" }],
       ].map(([tool, input]) => [profile, tool, input] as const),
     ),
   )("%s: a protected location (%s %j) is unsupported before any review", (profile, tool, input) => {
@@ -614,6 +620,42 @@ describe("candidate building under every profile", () => {
     const message = (result as { message: string }).message;
     expect(message).toMatch(/sandbox: "escalated"/);
     expect(message).not.toMatch(/choose Full access/);
+  });
+
+  // R3 final review M1: a socket another process made in a write root reaches outside the sandbox
+  it.each([
+    ["Write", { file_path: "/tmp/notes.txt" }, "/tmp"],
+    ["Write", { file_path: "/private/tmp/notes.txt" }, "/private/tmp"],
+    ["Bash", { command: "cd /tmp && ls" }, "/tmp"],
+    ["Write", { file_path: "/tmp/.X11-unix/X1" }, "/tmp/.x11-unix"],
+    ["Write", { file_path: "/tmp/tmux-1000/default" }, "/tmp/tmux-1000"],
+    ["Write", { file_path: "/run/user/1000/bus" }, "/run"],
+    ["Bash", { command: "cd /var/run && ls" }, "/var/run"],
+    ["Write", { file_path: "/private/var/run/x" }, "/private/var/run"],
+    ["Write", { file_path: "/dev/shm/x" }, "/dev"],
+    ["Bash", { command: "cd /proc/self && ls" }, "/proc"],
+    ["Bash", { command: "cd /sys/fs && ls" }, "/sys"],
+    ["Bash", { command: "cd /var && ls" }, "/var/run"],
+  ] as const)(
+    "a runtime or socket directory (%s %j) is never proposed as a write root",
+    (tool, input, hit) => {
+      const result = build(tool, input, facts);
+      expect(result).toMatchObject({ kind: "unsupported", code: "protected-path" });
+      const message = (result as { message: string }).message;
+      expect(message).toContain(`system runtime or socket directory (${hit})`);
+      expect(message).toMatch(/a directory of its own such as \/tmp\/<name>\//);
+    },
+  );
+
+  it("a directory of its own under /tmp is still proposed; reading a runtime directory is no write", () => {
+    expect(build("Write", { file_path: "/tmp/build/out.txt" }, facts)).toMatchObject({
+      kind: "proposal",
+      candidate: { permissionScope: { writeDirectories: ["/tmp/build"] } },
+    });
+    expect(build("Read", { file_path: "/run/user/1000/x" }, facts)).toMatchObject({
+      kind: "proposal",
+      candidate: { permissionScope: { readDirectories: ["/run/user/1000"], writeDirectories: [] } },
+    });
   });
 
   it("a protected location where escalation is refused says why instead", () => {

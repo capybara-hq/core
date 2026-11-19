@@ -98,8 +98,11 @@ import time
 #   a socket with SO_REUSEPORT set never binds or listens: joining a foreign service's reuseport
 #   group would receive that service's connections. Environment lifts that filter.
 # - UNIX sockets in every network kind: stream/seqpacket only (datagram and raw are refused);
-#   pathname connect/bind only to sockets inside the write roots, resolved through the pinned
-#   descriptors; abstract and unnamed addresses are refused. socketpair() is unaffected.
+#   a pathname bind only inside the write roots, resolved through the pinned descriptors, and a
+#   pathname connect only to a socket this operation bound itself (its dev and inode recorded at
+#   the brokered bind), never to one another process made, even inside a write root (a user
+#   D-Bus, a rootless docker.sock, ssh-agent, tmux); abstract and unnamed addresses are refused.
+#   socketpair() is unaffected.
 # - The launcher makes itself non-dumpable before anything else (protect_self), so a same-uid
 #   process outside the operation cannot ptrace it or read its mem, environ or fd afterwards.
 #   The window between the interpreter's exec and that first statement remains: only a tracer
@@ -683,6 +686,11 @@ class Broker:
         self.endpoints = endpoints
         self.listener = listener
         self.sockets = {}
+        # (st_dev, st_ino) of every pathname UNIX socket this operation bound through the broker:
+        # the only sockets a pathname connect may reach. A socket another process made, even one
+        # inside a write root (a user D-Bus, a rootless docker.sock, ssh-agent, tmux), stays
+        # unreachable, as no sandboxed client connects to a foreign loopback listener either.
+        self.unix_bound = set()
         self.lock = threading.Lock()
         # Every mutating file operation holds this shared; a directory move into a guarded prefix
         # holds it exclusively (staging, listing and the final rename). With the consumer's
@@ -1617,6 +1625,10 @@ class Broker:
                 buffer, length = self.unix_address(target)
                 if libc.bind(own, buffer, ctypes.c_uint32(length)) < 0:
                     return None, ctypes.get_errno()
+                # the socket file bind created, through the same pinned parent descriptor
+                created = os.lstat(target)
+                with self.lock:
+                    self.unix_bound.add((created.st_dev, created.st_ino))
                 return 0, 0
             finally:
                 os.close(handle)
@@ -1669,6 +1681,13 @@ class Broker:
         if socket_domain(own) == AF_UNIX:
             handle, target = self.unix_target(pid, ident, raw, False)
             try:
+                # only a socket this operation bound itself: the descriptor pins the inode, and
+                # the connect goes through it, so a swapped path cannot change what is reached
+                found = os.fstat(handle)
+                with self.lock:
+                    own_socket = (found.st_dev, found.st_ino) in self.unix_bound
+                if not own_socket:
+                    return None, errno.EACCES
                 buffer, length = self.unix_address(target)
                 result = libc.connect(own, buffer, ctypes.c_uint32(length))
                 code = ctypes.get_errno() if result < 0 else 0

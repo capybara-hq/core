@@ -2124,6 +2124,9 @@ export function isSafePackagePath(p: string): boolean;
 export function isSandboxGoneError(e: unknown): e is SandboxGoneError;
 
 // @public
+export function isSandboxHomeWriteDenied(path: string, home: string): boolean;
+
+// @public
 export function isSandboxMoveDenied(source: string, destination: string, sourceIsDirectory: boolean, sourceEntries?: readonly string[]): boolean;
 
 // @public
@@ -3287,6 +3290,9 @@ export const SANDBOX_GIT_ALLOWED_FILES: readonly string[];
 export const SANDBOX_GIT_DENIED_INTERNALS: readonly string[];
 
 // @public
+export const SANDBOX_HOME_WRITE_DENIES: readonly (readonly string[])[];
+
+// @public
 export const SANDBOX_MANDATORY_WRITE_DENIES: readonly (readonly string[])[];
 
 // @public
@@ -3297,6 +3303,9 @@ export const SANDBOX_RESERVED_NAME_PREFIX = ".capybara-staging-";
 
 // @public
 export const SANDBOX_ROOTS: readonly ["/workspace", "/skills", "/tmp"];
+
+// @public
+export const SANDBOX_RUNTIME_DIRECTORIES: readonly string[];
 
 // @public
 export const SANDBOX_RUNTIME_SOURCE: {
@@ -3621,6 +3630,9 @@ export interface SandboxRoots {
     tmp: string;
     workspace: string;
 }
+
+// @public
+export function sandboxRuntimeDirectoryOf(root: string): string | null;
 
 // @public
 export class SandboxScopeDeniedError extends Error {

@@ -4,6 +4,7 @@ import { basename, dirname, join } from "node:path";
 import type { Readable } from "node:stream";
 import {
   type ExecResult,
+  SANDBOX_HOME_WRITE_DENIES,
   SANDBOX_MANDATORY_WRITE_DENIES,
   SandboxPermissionUnsupportedError,
   SandboxScopeDeniedError,
@@ -97,8 +98,9 @@ export interface LinuxFaultInjection {
 }
 
 /**
- * The anchored write denies of the protected home locations (each
- * {@link SANDBOX_MANDATORY_WRITE_DENIES} entry under `home`) reached through a symbolic link,
+ * The anchored write denies of the protected home locations: each
+ * {@link SANDBOX_MANDATORY_WRITE_DENIES} entry under `home` reached through a symbolic link, and
+ * each {@link SANDBOX_HOME_WRITE_DENIES} entry (`~/bin`) always, with the target of its link,
  * resolved with the workers' shared {@link protectedChain}: every link on the chain (also with its
  * parent in on-disk form) and each final target. They go to the launcher as absolute denies,
  * resolved once at operation start; the write policy then refuses moving an ancestor of one away,
@@ -107,15 +109,19 @@ export interface LinuxFaultInjection {
  */
 export function protectedWriteTargets(home: string): string[] {
   const out = new Set<string>();
-  for (const entry of SANDBOX_MANDATORY_WRITE_DENIES) {
-    const chain = protectedChain(join(home, ...entry));
-    if (!chain.links.length) continue;
+  const add = (location: string, always: boolean) => {
+    const chain = protectedChain(location);
+    if (always) out.add(location);
+    if (!always && !chain.links.length) return;
     out.add(chain.target);
     for (const link of chain.links) {
       out.add(link);
       out.add(join(onDisk(dirname(link)), basename(link)));
     }
-  }
+  };
+  for (const entry of SANDBOX_MANDATORY_WRITE_DENIES) add(join(home, ...entry), false);
+  // the home-anchored entries (`~/bin`) exist nowhere else in the policy: always denied here
+  for (const entry of SANDBOX_HOME_WRITE_DENIES) add(join(home, ...entry), true);
   return [...out];
 }
 

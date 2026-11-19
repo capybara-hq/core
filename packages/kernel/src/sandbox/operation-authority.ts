@@ -66,6 +66,7 @@ import {
   ESCALATION_UNATTENDED_WHY,
   escalationRuntimeWhy,
   normalizePermissionExpansion,
+  runtimeWriteRootRefusal,
   withinDirectory,
 } from "./review/permission-candidate.js";
 import type { SandboxUseContext } from "./use-context.js";
@@ -441,6 +442,11 @@ export class SandboxOperationAuthority {
       );
     if (!escalated && grant && grant.scopeKind !== "sandbox-escalation") {
       normalizePermissionExpansion(grant.expansion, f);
+      // never a system runtime or socket directory as a write root, whatever approved it
+      const runtime = grant.expansion.writeDirectories
+        .map((root) => runtimeWriteRootRefusal(root))
+        .find((refusal) => refusal !== null);
+      if (runtime) throw new ApiError("forbidden", runtime);
       if (
         (!f.broadProjectReach &&
           (grant.expansion.readDirectories.length || grant.expansion.writeDirectories.length)) ||

@@ -9,6 +9,7 @@ import {
   OPEN_PUBLIC_DENIED_CIDRS,
   SANDBOX_FAKE_IP_DNS,
   SANDBOX_GIT_DENIED_INTERNALS,
+  SANDBOX_HOME_WRITE_DENIES,
   SANDBOX_MANDATORY_WRITE_DENIES,
   SANDBOX_RESERVED_NAME_PREFIX,
   SANDBOX_SYSTEM_WRITE_DENIES,
@@ -208,7 +209,8 @@ export function macNetworkConfig(
  *   ({@link SANDBOX_SYSTEM_WRITE_DENIES}: the crontab and at spools) in each spelling Seatbelt may
  *   see, and the final target of every protected location under `home` (the
  *   {@link SANDBOX_MANDATORY_WRITE_DENIES} entries: `~/Library/LaunchAgents`, `~/.config/systemd`,
- *   the shell startup files, …) reached through a symbolic link;
+ *   the shell startup files, …) reached through a symbolic link, and each
+ *   {@link SANDBOX_HOME_WRITE_DENIES} entry (`~/bin`) always, with the target of its link;
  * - `links`, denied exactly (the link itself cannot be removed, renamed or replaced): every
  *   symbolic link on the way to such a location. A dotfile manager links `~/.zshrc` to
  *   `~/code/dotfiles-current/zshrc`, and `dotfiles-current` may itself be a link inside a write
@@ -224,16 +226,20 @@ export function macProtectedWriteDenies(home: string): { subtrees: string[]; lin
   const links = new Set<string>();
   for (const path of SANDBOX_SYSTEM_WRITE_DENIES)
     for (const spelling of macWriteRootSpellings(path)) subtrees.add(spelling);
-  for (const entry of SANDBOX_MANDATORY_WRITE_DENIES) {
-    const chain = protectedChain(join(home, ...entry));
-    if (!chain.links.length) continue;
+  const add = (location: string, always: boolean) => {
+    const chain = protectedChain(location);
+    if (always) subtrees.add(location);
+    if (!always && !chain.links.length) return;
     subtrees.add(chain.target);
     for (const link of chain.links) {
       links.add(link);
       // the link's location with its parent in on-disk form
       links.add(join(onDisk(dirname(link)), basename(link)));
     }
-  }
+  };
+  for (const entry of SANDBOX_MANDATORY_WRITE_DENIES) add(join(home, ...entry), false);
+  // the home-anchored entries (`~/bin`) exist nowhere else in the policy: always denied here
+  for (const entry of SANDBOX_HOME_WRITE_DENIES) add(join(home, ...entry), true);
   return { subtrees: [...subtrees], links: [...links] };
 }
 

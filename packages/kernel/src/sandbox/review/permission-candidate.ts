@@ -3,8 +3,10 @@ import path from "node:path";
 import {
   DEVICE_DEFAULT_STATE_PATH,
   DEVICE_DENIED_SECRET_PATHS,
+  isSandboxHomeWriteDenied,
   isSandboxWriteDenied,
   type PermissionProfile,
+  sandboxRuntimeDirectoryOf,
   validateAllowHost,
 } from "@capybara-hq/plugin-sdk";
 import { ApiError } from "../../errors.js";
@@ -235,6 +237,21 @@ const ownerDeniedText = (denied: string, target: string, escalationRefusal?: str
   `${target} is under ${denied}, which the device never opens to sandboxed work (a credential location or the device's own state), so this call cannot be approved and did not run. Ask the user to provide what is needed from it.${protectedReach(escalationRefusal)}`;
 const protectedWriteText = (target: string, escalationRefusal?: string | null) =>
   `${target} is a protected location the sandbox never writes (shell startup files, git hooks and configuration, and the places the system runs programs from later), so no directory approval covers it and this call did not run. Keep the change inside the project, or ask the user to make it.${protectedReach(escalationRefusal)}`;
+const runtimeDirectoryText = (target: string, hit: string, escalationRefusal?: string | null) =>
+  `${target} is a system runtime or socket directory (${hit}), where other programs keep their sockets, so no directory approval covers it and this call did not run. Use a path inside the project, or a directory of its own such as /tmp/<name>/ (never /tmp itself).${protectedReach(escalationRefusal)}`;
+/**
+ * Why a write root is refused because it is, lies in or contains a system runtime or socket
+ * directory (`sandboxRuntimeDirectoryOf`: `/run`, `/var/run`, `/tmp` itself, `/dev`, ...), or null.
+ * The candidate builder never proposes such a root and admission refuses one in a grant: a socket
+ * another process made there would let a sandboxed command act outside the sandbox.
+ */
+export function runtimeWriteRootRefusal(
+  root: string,
+  escalationRefusal?: string | null,
+): string | null {
+  const hit = sandboxRuntimeDirectoryOf(root);
+  return hit === null ? null : runtimeDirectoryText(root, hit, escalationRefusal);
+}
 /** A refusal of a protected location: never proposed, and its text already names the escalation. */
 class ProtectedPathError extends Error {}
 /**
@@ -325,7 +342,10 @@ export function buildPermissionCandidate(
   // a write proposal never covers a location the sandbox refuses to write (the persistence
   // vectors, git internals): no approval could make it run inside the sandbox
   const refuseWriteDenied = (target: string) => {
-    if (isSandboxWriteDenied(target))
+    if (
+      isSandboxWriteDenied(target) ||
+      homeRoots.some((home) => isSandboxHomeWriteDenied(target, home))
+    )
       throw new ProtectedPathError(protectedWriteText(target, facts.escalationRefusal));
   };
   const input = call.validatedInput as { file_path?: unknown; command?: unknown } | null;
@@ -375,7 +395,11 @@ export function buildPermissionCandidate(
     refuseDenied(normalized);
     const base = write ? facts.baseWriteDirectories : facts.baseReadDirectories;
     if (!base.some((root) => withinDirectory(normalized, root))) {
-      if (write) refuseWriteDenied(normalized);
+      if (write) {
+        refuseWriteDenied(normalized);
+        const runtime = runtimeWriteRootRefusal(normalized, facts.escalationRefusal);
+        if (runtime) throw new ProtectedPathError(runtime);
+      }
       (write ? writes : reads).push(normalized);
     }
   };

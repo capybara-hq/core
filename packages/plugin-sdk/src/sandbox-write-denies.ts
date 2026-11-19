@@ -139,8 +139,46 @@ export const SANDBOX_MANDATORY_WRITE_DENIES: readonly (readonly string[])[] = Ob
     [".config", "plasma-workspace", "env"],
     [".xprofile"],
     [".xsessionrc"],
+    // PATH-shim persistence: programs placed here shadow system ones in the owner's later shells
+    // (`~/bin` is home-anchored: SANDBOX_HOME_WRITE_DENIES)
+    [".local", "bin"],
+    [".cargo", "bin"],
   ].map((entry) => Object.freeze(entry)),
 );
+
+/**
+ * Locations denied only directly under the device owner's home, with everything beneath them, never
+ * elsewhere: `~/bin`, a directory many shells put on `PATH`, where a planted program would shadow a
+ * system one in the owner's later unsandboxed shell (a project's own `bin/` stays writable).
+ * Consumers anchor each entry at the home they protect: the device workers add it, and the target
+ * of a link it is, as absolute denies; the kernel never proposes it as a write directory
+ * ({@link isSandboxHomeWriteDenied}). `~/.local/bin` and `~/.cargo/bin` are
+ * {@link SANDBOX_MANDATORY_WRITE_DENIES} entries.
+ */
+export const SANDBOX_HOME_WRITE_DENIES: readonly (readonly string[])[] = Object.freeze([
+  Object.freeze(["bin"]),
+]);
+
+/**
+ * System runtime and socket directories (compared folded, anchored at `/`): other programs keep
+ * their UNIX sockets and device nodes there (`/run/user/<uid>/bus`, `/var/run/docker.sock`,
+ * `/dev`, `/proc`), so a restricted write root never is one, lies inside one or contains one
+ * ({@link sandboxRuntimeDirectoryOf}).
+ */
+export const SANDBOX_RUNTIME_DIRECTORIES: readonly string[] = Object.freeze([
+  "/run",
+  "/var/run",
+  "/private/var/run",
+  "/dev",
+  "/proc",
+  "/sys",
+]);
+
+/** The shared temporary directories: never a write root themselves (sockets sit directly in them). */
+const TEMP_DIRECTORIES = ["/tmp", "/private/tmp"];
+/** Socket directories other programs create directly in a temporary directory (folded names). */
+const TEMP_SOCKET_DIRECTORY =
+  /^(?:\.x11-unix|\.ice-unix|\.xim-unix|\.font-unix|\.test-unix|tmux-.*|ssh-.*|com\.apple\.launchd\..*|dbus-.*|systemd-private-.*|zellij-.*|emacs[0-9]+|screen.*|vscode-.*|nvim.*)$/;
 
 /**
  * Absolute system paths denied with everything beneath them, compared folded and anchored at `/`:
@@ -623,6 +661,49 @@ function gitInternalAllowed(rel: readonly string[]): boolean {
   return (
     head === "info" && rel.length === 2 && ["exclude", "exclude.lock"].includes(rel[1] as string)
   );
+}
+
+/**
+ * The system runtime or socket directory a restricted write root `root` (absolute, normalized) is,
+ * lies inside or contains, or null: {@link SANDBOX_RUNTIME_DIRECTORIES} with everything beneath
+ * them; `/tmp` and `/private/tmp` themselves (a subdirectory is fine unless it is a known socket
+ * directory such as `/tmp/.X11-unix`, `/tmp/tmux-<uid>` or `/tmp/ssh-*`, or lies inside one); and
+ * every ancestor of one (`/var`, `/private`). The kernel's candidate builder and admission and the
+ * device's root check refuse such a root: a socket there may belong to a process outside the
+ * sandbox (the Linux broker also refuses every pathname UNIX connect to a socket the operation did
+ * not bind itself).
+ */
+export function sandboxRuntimeDirectoryOf(root: string): string | null {
+  const names = parts(root);
+  const within = (anchor: readonly string[]) =>
+    anchor.length <= names.length && anchor.every((name, j) => names[j] === name);
+  const above = (anchor: readonly string[]) =>
+    names.length < anchor.length && names.every((name, j) => anchor[j] === name);
+  for (const directory of SANDBOX_RUNTIME_DIRECTORIES) {
+    const anchor = parts(directory);
+    if (within(anchor) || above(anchor)) return directory;
+  }
+  for (const directory of TEMP_DIRECTORIES) {
+    const anchor = parts(directory);
+    if (above(anchor) || (within(anchor) && names.length === anchor.length)) return directory;
+    const next = names[anchor.length];
+    if (within(anchor) && next !== undefined && TEMP_SOCKET_DIRECTORY.test(next))
+      return `${directory}/${next}`;
+  }
+  return null;
+}
+
+/**
+ * Whether `path` (absolute, normalized) is a {@link SANDBOX_HOME_WRITE_DENIES} location under
+ * `home`, or beneath one (names compared folded).
+ */
+export function isSandboxHomeWriteDenied(path: string, home: string): boolean {
+  const names = parts(path);
+  const base = parts(home);
+  return SANDBOX_HOME_WRITE_DENIES.some((entry) => {
+    const anchor = [...base, ...entry.map(fold)];
+    return anchor.length <= names.length && anchor.every((name, j) => names[j] === name);
+  });
 }
 
 /** Whether restricted execution may never write `path` (an absolute, normalized path). */

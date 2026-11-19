@@ -511,8 +511,9 @@ describe("the macOS worker's protected write denies", () => {
     for (const link of [".zshrc", ".config", ".vscode", ".bashrc"])
       expect(lower(links)).toContain(join(home, link).toLowerCase());
     expect(links).toContain(join(code, "dotfiles-current"));
-    // links are exact denies, never subtrees; nothing unlinked under home is listed
-    expect(subtrees.some((d) => d.startsWith(`${home}/`))).toBe(false);
+    // links are exact denies, never subtrees; nothing unlinked under home is listed but the
+    // home-anchored ~/bin, which is always denied
+    expect(subtrees.filter((d) => d.startsWith(`${home}/`))).toEqual([join(home, "bin")]);
   });
 });
 

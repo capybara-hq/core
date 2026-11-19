@@ -147,7 +147,20 @@ These hold under every profile, Full access included.
   `.git/hooks`, `.git/config` and the rest of that list;
 - the persistence vectors this change adds: `~/Library/LaunchAgents`, `~/Library/LaunchDaemons`,
   `~/.config/systemd/user`, `~/.config/autostart` and the user crontab spool. `crontab` itself needs
-  a setuid helper, which the sandbox refuses.
+  a setuid helper, which the sandbox refuses;
+- the PATH-shim directories a later shell runs programs from (R3 final review): `~/.local/bin` and
+  `~/.cargo/bin` (`SANDBOX_MANDATORY_WRITE_DENIES`) and `~/bin` (`SANDBOX_HOME_WRITE_DENIES`, anchored
+  at the owner's home only, so a project's own `bin/` stays writable).
+
+**No write root in a system runtime or socket directory** (R3 final review): the candidate builder,
+admission and the device's root check refuse a write root that is, lies in or contains `/run`,
+`/var/run`, `/private/var/run`, `/dev`, `/proc` or `/sys`, that is `/tmp` or `/private/tmp` itself,
+or that is a known socket directory in them (`/tmp/.X11-unix`, `/tmp/tmux-<uid>`, `/tmp/ssh-*`, …;
+SDK `sandboxRuntimeDirectoryOf`), with a refusal that names a directory of its own instead. On
+Linux the broker also connects a pathname UNIX socket only when the operation bound it itself (its
+dev and inode recorded at the brokered bind), so a socket another process made inside a write root
+(a user D-Bus, a rootless `docker.sock`, ssh-agent, tmux, a project bound at `~` with its
+`~/.docker/run/docker.sock`) stays unreachable.
 
 No directory grant covers a protected path. A proposal that would cover one returns `unsupported`,
 with a message offering the outside-sandbox escalation.
@@ -596,6 +609,16 @@ The migration never widens.
   an operator NAT64 prefix (a network-specific prefix announced by DNS64, which embeds private IPv4
   addresses in ordinary global unicast). A machine on such a network that must keep those closed
   needs an owner allowlist instead of the open network.
+- **Installing into the PATH-shim directories needs an escalation.** `cargo install`, `pipx`,
+  `uv tool install`, `npm install -g` with a prefix under `~/.local`, and anything else that writes
+  `~/.local/bin`, `~/.cargo/bin` or `~/bin` is refused in the sandbox; such a call runs through the
+  per-call outside-sandbox escalation.
+- **Only the operation's own UNIX sockets (Linux).** A sandboxed client connects only to a pathname
+  socket its own operation bound; a service another operation of the device started (a background
+  dev server's socket) is reachable only from outside the sandbox, as with loopback TCP.
+- **mise's global configuration is not read in the sandbox.** `~/.config/mise` may hold tokens and
+  is never granted: a mise-managed tool runs from its data directory with a project pin or the
+  global `~/.tool-versions`; a global pin kept only in `~/.config/mise/config.toml` is not seen.
 - **Hard links.** The write rules judge paths: a hard link to a protected file that already exists
   inside a write root (under an ordinary name) is the same file and is not caught. A restricted
   command cannot create one to a file outside its write roots, and the protected link chains are

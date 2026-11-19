@@ -915,3 +915,31 @@ it("Full access: issuance refuses an auto-grant of a credential escalation the p
       .execute(),
   ).toEqual([]);
 });
+
+// R3 final review M1: admission never runs a grant whose write root is a runtime or socket
+// directory, whatever approved it (the candidate builder never proposes one)
+it("admission refuses a granted write root that is a system runtime or socket directory", async () => {
+  const f = await escalated("request-approval", { command: "ls" });
+  vi.spyOn(k.app.get(PermissionCallGrants), "findForAdmission").mockResolvedValue({
+    id: randomUUID(),
+    expansion: {
+      readDirectories: ["/run/user/1000"],
+      writeDirectories: ["/run/user/1000"],
+      hosts: [],
+    },
+    scopeKind: "directories-and-hosts",
+    source: "human",
+  });
+  const admit = vi.spyOn(k.app.get(SandboxOperationAuthority), "resolveInvocation");
+  await f.step().catch(() => undefined);
+  expect(f.effects()).toBe(0);
+  const [result] = await f.results();
+  expect(result?.isError).toBe(true);
+  const admission = admit.mock.results[0];
+  if (!admission) throw new Error("The call was never admitted");
+  const refusal = await (admission.value as Promise<unknown>).then(
+    () => "admitted",
+    (error: Error) => error.message,
+  );
+  expect(refusal).toMatch(/^\/run\/user\/1000 is a system runtime or socket directory \(\/run\)/);
+});

@@ -421,6 +421,31 @@ print(" ".join([
 ]))
 `;
 
+/**
+ * Connects to a UNIX service another process made inside the root (stream, and seqpacket where the
+ * OS has it), by the relative path and by `argv[2]` (absolute); prints ok/denied/unsupported.
+ */
+const FOREIGN_UNIX_CLIENT = `
+import errno, socket, sys
+UNSUPPORTED = (errno.EPROTONOSUPPORT, errno.ESOCKTNOSUPPORT, errno.EPROTOTYPE, errno.EOPNOTSUPP)
+out = []
+for name, kind, suffix in (("stream", socket.SOCK_STREAM, ""), ("seqpacket", socket.SOCK_SEQPACKET, ".seq")):
+    for spelling, path in (("", sys.argv[1]), ("-absolute", sys.argv[2])):
+        try:
+            s = socket.socket(socket.AF_UNIX, kind)
+        except OSError as error:
+            out.append(name + spelling + ("=unsupported" if error.errno in UNSUPPORTED else "=denied"))
+            continue
+        try:
+            s.settimeout(10)
+            s.connect(path + suffix)
+            out.append(name + spelling + "=ok")
+        except OSError:
+            out.append(name + spelling + "=denied")
+        s.close()
+print("foreign-unix-client " + " ".join(out))
+`;
+
 /** A UNIX stream server and client inside the root talk to each other. */
 const UNIX_ROUNDTRIP = `
 import socket, sys
@@ -559,7 +584,7 @@ export type SandboxPermissionConformancePart = "filesystem" | "network" | "proce
  * The approval-only checks of the operation-boundary conformance, for a focused rerun or a harness
  * self-test (`checks`: only these, after the setup, positive controls and the scope contract):
  * `outside-switch` (processes), `environment`, `reserved-names` and `link-chain` (filesystem),
- * `closed-granted`, `loopback` and `open-network` (network).
+ * `closed-granted`, `loopback`, `open-network` and `foreign-unix` (network).
  */
 export type SandboxPermissionConformanceCheck =
   | "outside-switch"
@@ -568,7 +593,8 @@ export type SandboxPermissionConformanceCheck =
   | "link-chain"
   | "closed-granted"
   | "loopback"
-  | "open-network";
+  | "open-network"
+  | "foreign-unix";
 
 const CHECK_PART: Readonly<
   Record<SandboxPermissionConformanceCheck, SandboxPermissionConformancePart>
@@ -580,6 +606,7 @@ const CHECK_PART: Readonly<
   "closed-granted": "network",
   loopback: "network",
   "open-network": "network",
+  "foreign-unix": "network",
 };
 
 export interface SandboxPermissionConformanceOptions {
@@ -626,7 +653,8 @@ const MINIMAL_ENVIRONMENT = new Set([
  * controls outside the sandbox; both overlap orders; component/root swaps and mutable syscall
  * pointers during access; exact cancellation; a supervisor closed to same-uid outsiders (when the
  * fixture can run one) and fresh narrowed scopes. Pathname UNIX services outside the roots stay
- * unreachable under every sandbox network. A provider that reports restricted unsupported must
+ * unreachable under every sandbox network, and so does one another process made inside a write
+ * root (only the operation's own sockets are reachable). A provider that reports restricted unsupported must
  * refuse restricted operations (fail closed); nothing here substitutes a fixture flag for support.
  *
  * An instance-boundary provider (a cloud device: the container or microVM is the sandbox) is
@@ -1842,6 +1870,50 @@ export async function runSandboxPermissionConformance(
       }
 
       if (want("open-network") && support.network.openPublic) await proveOpenNetwork([root]);
+
+      // A UNIX socket another process made inside a write root (a user D-Bus, a rootless
+      // docker.sock, ssh-agent or tmux in a granted directory) is code execution outside the
+      // sandbox: no sandboxed command connects to it, under any sandbox network. An escalated call
+      // stands in for that process; the same client there proves the probe is real.
+      if (want("foreign-unix") && support.outsideSandbox) {
+        const server = new AbortController();
+        const outside = exec(
+          escalated,
+          `python3 -c ${quote(UNIX_SERVER)} foreign.sock foreign.count`,
+          server.signal,
+        );
+        try {
+          await waitFor(at(root, "foreign.count"), outside);
+          const client = `python3 -c ${quote(FOREIGN_UNIX_CLIENT)} foreign.sock ${quote(at(root, "foreign.sock"))}`;
+          for (const network of [{ kind: "none" } as const, allowlisted]) {
+            const probe = await exec(restricted(network), client);
+            const reached = probe.stdout
+              .trim()
+              .split(" ")
+              .slice(1)
+              .filter((entry) => entry.endsWith("=ok"));
+            assert.equal(
+              probe.stdout.trim().startsWith("foreign-unix-client stream=") && reached.length === 0,
+              true,
+              `restricted ${network.kind} must not connect to a socket another process made in the root: ${probe.stdout} ${probe.stderr}`,
+            );
+          }
+          assert.equal(
+            text(await fixture.inspect.readFile(at(root, "foreign.count"))),
+            "0",
+            "the foreign UNIX service in the root must see no sandboxed client",
+          );
+          const control = await exec(escalated, client);
+          assert.match(
+            control.stdout,
+            /^foreign-unix-client stream=ok /,
+            `the escalated control reaches the foreign UNIX service: ${control.stderr}`,
+          );
+        } finally {
+          server.abort();
+          await outside.catch(() => undefined);
+        }
+      }
 
       // Pathname UNIX sockets: a service outside the roots (run by an escalated call) is unreachable
       // under every sandbox network; one inside the root works.
