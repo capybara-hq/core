@@ -1,5 +1,6 @@
 import { createHash } from "node:crypto";
-import { sanitizeThemeSvg } from "@capybara-hq/plugin-sdk";
+import { crc32 } from "node:zlib";
+import { sanitizeThemeSvg, THEME_LIMITS } from "@capybara-hq/plugin-sdk";
 import { Inject, Injectable } from "@nestjs/common";
 import { ApiError } from "../errors.js";
 import { audit } from "../identity/audit.js";
@@ -33,6 +34,10 @@ const CONTENT_TYPE: Record<PlatformIconPurpose, "image/png" | "image/svg+xml"> =
 
 const PNG_SIG = [0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a];
 const IHDR = [0x49, 0x48, 0x44, 0x52];
+/** The IEND chunk every complete PNG ends with: length 0, type, CRC-32. */
+const IEND = [0, 0, 0, 0, 0x49, 0x45, 0x4e, 0x44, 0xae, 0x42, 0x60, 0x82];
+/** The largest SVG favicon: the theme logo sanitizer's limit (128 KiB). */
+const SVG_MAX_BYTES = THEME_LIMITS.svgBytes;
 
 /** A validated icon, ready to store: the bytes to write and their SHA-256. */
 export interface PlatformIconFile {
@@ -48,7 +53,8 @@ export const platformIconUrl = (purpose: PlatformIconPurpose, sha256: string): s
 
 /**
  * Checks an upload (nothing is rendered or resized): at most 1 MiB; `app` and `maskable` a PNG
- * (signature, an `IHDR` first chunk) of exactly 512 × 512; `favicon` an SVG, parsed with the theme
+ * (signature, an `IHDR` first chunk with a valid CRC-32, ending with `IEND`) of exactly 512 × 512;
+ * `favicon` an SVG of at most 128 KiB, parsed with the theme
  * logo sanitizer (a strict XML parser, an `<svg>` root in the SVG namespace with a viewBox, no
  * script, style element, event handler or external reference) and stored as its sanitized output.
  * Throws the refusal as `platform_icon.*`.
@@ -78,6 +84,12 @@ export function checkPlatformIcon(
   if (expected === "image/png") {
     checkPng(purpose, data);
   } else {
+    if (data.byteLength > SVG_MAX_BYTES) {
+      throw new ApiError(
+        "platform_icon.too_large",
+        `The favicon is ${data.byteLength} bytes; an SVG favicon is at most 128 KiB (${SVG_MAX_BYTES} bytes)`,
+      );
+    }
     const r = sanitizeThemeSvg(data);
     if ("error" in r) {
       throw new ApiError(
@@ -91,10 +103,13 @@ export function checkPlatformIcon(
   return { purpose, contentType: expected, bytes, sha256 };
 }
 
-/** A PNG of exactly 512 × 512 by its signature and `IHDR` width and height; throws the refusal. */
+/**
+ * A PNG of exactly 512 × 512 by its signature, its `IHDR` first chunk (with a valid CRC-32) and
+ * its width and height, ending with the `IEND` chunk; throws the refusal.
+ */
 function checkPng(purpose: PlatformIconPurpose, data: Buffer): void {
   const isPng =
-    data.byteLength >= 24 &&
+    data.byteLength >= 33 &&
     PNG_SIG.every((b, i) => data[i] === b) &&
     data.readUInt32BE(8) === 13 &&
     IHDR.every((b, i) => data[12 + i] === b);
@@ -102,6 +117,17 @@ function checkPng(purpose: PlatformIconPurpose, data: Buffer): void {
     throw new ApiError(
       "platform_icon.invalid_type",
       `The ${purpose} icon is not a PNG file (no PNG signature and IHDR header); upload a ${PLATFORM_ICON_PNG_SIZE} × ${PLATFORM_ICON_PNG_SIZE} PNG`,
+    );
+  }
+  // the IHDR CRC covers its type and data (bytes 12..28); a complete PNG ends with IEND
+  const ihdrIntact = crc32(data.subarray(12, 29)) === data.readUInt32BE(29);
+  const ended =
+    data.byteLength >= 33 + IEND.length &&
+    IEND.every((b, i) => data[data.byteLength - IEND.length + i] === b);
+  if (!ihdrIntact || !ended) {
+    throw new ApiError(
+      "platform_icon.invalid_type",
+      `The ${purpose} PNG is truncated or damaged (no intact IHDR chunk or no IEND chunk at the end); export it again as a ${PLATFORM_ICON_PNG_SIZE} × ${PLATFORM_ICON_PNG_SIZE} PNG`,
     );
   }
   const width = data.readUInt32BE(16);
