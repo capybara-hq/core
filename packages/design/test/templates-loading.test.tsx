@@ -1,7 +1,7 @@
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { cleanup, render, screen } from "@testing-library/react";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   AuthPage,
   type Column,
@@ -23,7 +23,12 @@ import {
   WizardPage,
 } from "../src/index";
 
-afterEach(cleanup);
+afterEach(() => {
+  cleanup();
+  vi.restoreAllMocks();
+});
+/** jsdom measures nothing: give every element a width, so a ListDetail draws its two panes. */
+const widePanes = () => vi.spyOn(HTMLElement.prototype, "clientWidth", "get").mockReturnValue(1000);
 const zh = (ui: React.ReactElement) => render(<DesignProvider locale="zh">{ui}</DesignProvider>);
 
 const header = { path: [{ label: "capybara" }, { label: "agents" }], title: "研究助手" };
@@ -287,6 +292,7 @@ describe("DataTable loading announcement", () => {
 
 describe("InboxPage loading", () => {
   it("InboxPage loading draws the frame and no children", () => {
+    widePanes();
     zh(
       <InboxPage header={header} list={<p>REAL LIST</p>} filters={<p>REAL FILTERS</p>} loading={{}}>
         <p>REAL CONTENT</p>
@@ -297,7 +303,7 @@ describe("InboxPage loading", () => {
     expect(document.querySelector('[data-template="InboxPage"]')).not.toBeNull();
     // The rail's filters are static: they stay; the list is four 64 px rows by default.
     expect(screen.getByText("REAL FILTERS")).toBeTruthy();
-    expect(count(".cb-body-rail")).toBe(1);
+    expect(count('[data-part="list-pane"]')).toBe(1);
     expect(count('[data-part="loading-row"]')).toBe(4);
     expect(screen.getAllByRole("status")).toHaveLength(1);
   });
@@ -344,6 +350,7 @@ describe("InboxPage loading", () => {
   });
 
   it("inspector draws KeyValue placeholders in the inspector column; the action row stays disabled", () => {
+    widePanes();
     zh(
       <InboxPage
         header={header}

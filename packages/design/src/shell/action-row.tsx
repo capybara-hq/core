@@ -32,7 +32,9 @@ function optional(b: ButtonSpec) {
  * unsaved changes";
  * right: cancel · secondary · primary (rightmost), all `default` density. Inside a template its
  * row lies in the content frame (the page's one width and side padding), so the primary ends where
- * the content ends.
+ * the content ends. On compact (CSS, §4.4) the row is sticky above the bottom inset and the
+ * keyboard (`data-sticky`) and stacks: the primary fills the bottom line, the other actions share
+ * the line above it.
  */
 export function ActionRow({ unsaved, errors = 0, cancel, secondary, primary }: ActionRowProps) {
   const t = useDesignT();
@@ -40,7 +42,12 @@ export function ActionRow({ unsaved, errors = 0, cancel, secondary, primary }: A
     t(key).replace("{n}", () => String(n));
   const dirty = (unsaved ?? 0) > 0;
   return (
-    <section className="cb-actionrow" data-part="action-row" aria-label={t("shell.pending")}>
+    <section
+      className="cb-actionrow"
+      data-part="action-row"
+      data-sticky="true"
+      aria-label={t("shell.pending")}
+    >
       <div className="cb-actionrow-frame" data-part="action-row-frame">
         <span className="cb-actionrow-info">
           {dirty ? <span className="cb-actionrow-dot" aria-hidden="true" /> : null}
@@ -60,34 +67,40 @@ export function ActionRow({ unsaved, errors = 0, cancel, secondary, primary }: A
           {unsaved === 0 && errors === 0 ? <span>{t("shell.clean")}</span> : null}
         </span>
         <span className="cb-actionrow-actions">
-          {cancel ? (
-            <Button
-              variant="default"
-              density="default"
-              {...(cancel.disabled ? { disabled: true } : {})}
-              onClick={cancel.onSelect}
-            >
-              {cancel.label}
-            </Button>
+          {cancel || secondary ? (
+            <span className="cb-actionrow-others" data-part="action-secondary">
+              {cancel ? (
+                <Button
+                  variant="default"
+                  density="default"
+                  {...(cancel.disabled ? { disabled: true } : {})}
+                  onClick={cancel.onSelect}
+                >
+                  {cancel.label}
+                </Button>
+              ) : null}
+              {secondary ? (
+                <Button
+                  variant="default"
+                  density="default"
+                  {...optional(secondary)}
+                  onClick={secondary.onSelect}
+                >
+                  {secondary.label}
+                </Button>
+              ) : null}
+            </span>
           ) : null}
-          {secondary ? (
+          <span className="cb-actionrow-primary" data-part="action-primary">
             <Button
-              variant="default"
+              variant="primary"
               density="default"
-              {...optional(secondary)}
-              onClick={secondary.onSelect}
+              {...optional(primary)}
+              onClick={primary.onSelect}
             >
-              {secondary.label}
+              {primary.label}
             </Button>
-          ) : null}
-          <Button
-            variant="primary"
-            density="default"
-            {...optional(primary)}
-            onClick={primary.onSelect}
-          >
-            {primary.label}
-          </Button>
+          </span>
         </span>
       </div>
     </section>

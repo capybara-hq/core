@@ -6,6 +6,7 @@ import zh from "../messages/zh.json";
 import { keys } from "../src/lib/query/keys";
 import { bodyOf, json, lastStubRoutes, noContent, stubApi } from "./support/api";
 import { resetNavigation, router } from "./support/navigation";
+import { widePanes } from "./support/panes";
 import { renderRouteEmptyCache, renderRouteWithCache } from "./support/query";
 import type { renderPage } from "./support/render";
 import { expectNoFirstPaintFetch } from "./support/server";
@@ -116,11 +117,13 @@ const skillChange = (id: string, over: Record<string, unknown> = {}) => ({
 });
 
 beforeEach(() => {
+  widePanes();
   resetNavigation("/inbox");
   statusBar.mockClear();
 });
 afterEach(() => {
   cleanup();
+  vi.restoreAllMocks();
   vi.unstubAllGlobals();
 });
 
@@ -164,6 +167,21 @@ describe("收件箱（InboxPage）", () => {
       expect(router.push).toHaveBeenCalledWith("/chat/c-a");
     },
   );
+
+  it("narrower than list + detail the list is the page: an item opens full screen, back returns", async () => {
+    widePanes(500);
+    const { container } = await renderInbox({
+      [LIST]: () => json(200, inbox([approval("a"), approval("b")])),
+    });
+    const table = await screen.findByRole("table", { name: msgs.en.inbox.listLabel });
+    expect(container.querySelector('[data-approval-id="a"]')).toBeNull();
+    const user = userEvent.setup();
+    await user.click(within(table).getByText("Fixture [tool_b]"));
+    expect(container.querySelector('[data-approval-id="b"]')).not.toBeNull();
+    expect(screen.getByRole("region", { name: "Pending changes" })).toBeTruthy();
+    await user.click(screen.getByRole("button", { name: "Back" }));
+    expect(container.querySelector('[data-approval-id="b"]')).toBeNull();
+  });
 
   it.each(LOCALES)("选中第二条、选「以后都允许」批准 → POST 后重读列表（%s）", async (locale) => {
     const m = msgs[locale];

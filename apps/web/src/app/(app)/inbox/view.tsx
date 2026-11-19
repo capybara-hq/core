@@ -114,6 +114,8 @@ function Inbox({
   const rows = (inbox?.items ?? []).filter((i) => isShowable(i) && !decided.has(subjectOf(i)));
   const truncated = inbox?.truncated === true;
   const [activeId, setActiveId] = useState<string>();
+  // The two-level stack (spec §6.47): the list is the page until an item is opened.
+  const [open, setOpen] = useState(false);
   const active = rows.find((a) => a.id === activeId) ?? rows[0];
   const [scope, setScope] = useState<ApprovalScope>("once");
   const approvals = useDecide(orgId);
@@ -235,6 +237,7 @@ function Inbox({
     if (message !== null) toast.success(message);
     setDecided((s) => new Set(s).add(id));
     setActiveId(undefined);
+    setOpen(false);
     if (message === null) {
       for (const queryKey of inboxChangeKeys(orgId)) void qc.invalidateQueries({ queryKey });
     }
@@ -450,6 +453,8 @@ function Inbox({
           count: `${rows.length}${truncated ? "+" : ""}`,
         }}
         {...(rows.length === 0 ? { empty: { text: t("empty"), hint: t("emptyHint") } } : {})}
+        open={open && active !== undefined}
+        onBack={() => setOpen(false)}
         list={
           <DataTable<InboxItem>
             label={t("listLabel")}
@@ -460,7 +465,10 @@ function Inbox({
             rowKey={(a) => a.id}
             rowLabel={(a) => rowOf(a, labels, locale).title}
             {...(active ? { activeKey: active.id } : {})}
-            onOpen={(a) => setActiveId(a.id)}
+            onOpen={(a) => {
+              setActiveId(a.id);
+              setOpen(true);
+            }}
             state="ready"
             empty={{ title: t("empty"), hint: t("emptyHint") }}
           />

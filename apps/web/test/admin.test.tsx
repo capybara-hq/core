@@ -11,6 +11,7 @@ import { adminUsageQuery } from "../src/lib/query/admin";
 import type { Me } from "../src/lib/session";
 import { bodyOf, json, lastStubRoutes, noContent, stubApi } from "./support/api";
 import { resetNavigation } from "./support/navigation";
+import { widePanes } from "./support/panes";
 import { renderRouteWithCache } from "./support/query";
 import { ME, renderPage } from "./support/render";
 
@@ -33,7 +34,10 @@ const SETTINGS = {
   customSkills: "allow",
 };
 
-beforeEach(() => resetNavigation("/admin"));
+beforeEach(() => {
+  widePanes();
+  resetNavigation("/admin");
+});
 afterEach(() => {
   cleanup();
   vi.unstubAllGlobals();

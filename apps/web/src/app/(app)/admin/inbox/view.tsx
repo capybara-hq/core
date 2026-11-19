@@ -92,6 +92,8 @@ function AdminInbox({
     [inbox, type],
   );
   const [activeId, setActiveId] = useState<string>();
+  // The two-level stack (spec §6.47): the list is the page until an item is opened.
+  const [opened, setOpened] = useState(false);
   const active = rows.find((i) => i.id === activeId) ?? rows[0];
   // Nothing while the inbox loads (not "0 pending")
   // The total, not the shown rows: the list stops at 100
@@ -173,6 +175,8 @@ function AdminInbox({
         count: `${type === null ? inbox.total : (inbox.byType[type] ?? rows.length)}`,
       }}
       {...(rows.length === 0 ? { empty: { text: t("empty"), hint: t("emptyHint") } } : {})}
+      open={opened && active !== undefined}
+      onBack={() => setOpened(false)}
       list={
         <DataTable<PlatformInboxItem>
           label={t("listLabel")}
@@ -183,7 +187,10 @@ function AdminInbox({
           rowKey={(i) => i.id}
           rowLabel={(i) => rowOf(i, t, locale).title}
           {...(active ? { activeKey: active.id } : {})}
-          onOpen={(i) => setActiveId(i.id)}
+          onOpen={(i) => {
+            setActiveId(i.id);
+            setOpened(true);
+          }}
           state="ready"
           empty={{ title: t("empty"), hint: t("emptyHint") }}
         />

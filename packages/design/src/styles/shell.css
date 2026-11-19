@@ -777,34 +777,11 @@ a.cb-stat-card:focus-visible {
   flex: 1;
   min-height: 0;
 }
-/* InboxPage: the rail + content + inspector split is capped at the content width inside the
-   content padding, like every frame, and reserves the same scrollbar gutter as the head (overflow:
-   hidden makes it a scroll container; the columns scroll on their own), so its left edge is the
-   head's. */
-.cb-template[data-template="InboxPage"] .cb-body:not([data-layout="single"]) {
-  box-sizing: border-box;
-  padding: 0 var(--cb-content-pad);
-  overflow: hidden;
-  scrollbar-gutter: stable;
-}
-.cb-template[data-template="InboxPage"] .cb-body-row {
-  width: 100%;
-  max-width: var(--cb-layout-content);
-  margin: 0 auto;
-}
-.cb-template[data-template="InboxPage"] .cb-body-tools {
-  padding-inline: 0;
-}
 .cb-body-rail {
   flex: none;
   width: 240px;
   overflow: auto;
   border-right: 1px solid var(--cb-line-soft);
-}
-/* The inbox's rail is its list column: a row leads with the item's name and keeps its version
-   whole, so it is wider than a filter rail (spec §5.7). */
-.cb-template[data-template="InboxPage"] .cb-body-rail {
-  width: 320px;
 }
 .cb-body-inspector {
   flex: none;
@@ -847,10 +824,6 @@ a.cb-stat-card:focus-visible {
 }
 .cb-body-frame[data-width="full"] {
   height: 100%;
-}
-/* InboxPage's middle column: the split already sits inside the content padding. */
-.cb-template[data-template="InboxPage"] .cb-body-content[data-padded="true"] {
-  padding: var(--cb-space-4);
 }
 .cb-body-frame[data-width="content"] {
   display: flex;

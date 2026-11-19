@@ -249,11 +249,6 @@ const BODY_ALLOWED: Record<string, { prop: string; value: string; why: string }>
     value: "var(--cb-space-4) var(--cb-layout-gutter)",
     why: "a full-width padded body; no template uses it (they are content width)",
   },
-  '.cb-template[data-template="InboxPage"] .cb-body-content[data-padded="true"]': {
-    prop: "padding",
-    value: "var(--cb-space-4)",
-    why: "the inbox's middle column inside its split; the split itself (the rail) starts at the gap",
-  },
   ".cb-template-head-frame > .cb-stat-cards": {
     prop: "margin-top",
     value: "var(--cb-layout-head-content)",

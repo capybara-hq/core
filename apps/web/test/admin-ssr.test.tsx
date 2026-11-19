@@ -8,6 +8,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import en from "../messages/en.json";
 import { bodyOf, json, stubApi } from "./support/api";
 import { resetNavigation, router } from "./support/navigation";
+import { widePanes } from "./support/panes";
 import {
   hydrateRouteWithCache,
   renderRouteEmptyCache,
@@ -364,7 +365,10 @@ const ROUTES: Routes = {
   "GET /api/v1/admin/model-purposes": () => json(200, { purposes: [] }),
 };
 
-beforeEach(() => resetNavigation("/admin"));
+beforeEach(() => {
+  widePanes();
+  resetNavigation("/admin");
+});
 afterEach(cleanup);
 
 const settle = () => act(() => new Promise((r) => setTimeout(r, 20)));

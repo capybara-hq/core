@@ -1,15 +1,20 @@
 import {
+  ActionRow,
   Card,
   type Column,
   DataTable,
   InboxPage,
+  KeyValue,
+  ListDetail,
   Stack,
   StatusMark,
   Text,
   useStatusBar,
 } from "@capybara-hq/design";
-import { useState } from "react";
+import { LIST_DETAIL_FIXTURE as F } from "@capybara-hq/design/fixtures";
+import { type ReactNode, useState } from "react";
 import { FixtureShell } from "../frame";
+import { RefBlock } from "../ref-block";
 import { TraceSummary } from "../table";
 import { DetailInspector } from "./detail";
 
@@ -92,5 +97,94 @@ export function InboxTemplate() {
     <FixtureShell nav="approvals" context="approvals">
       <InboxBody />
     </FixtureShell>
+  );
+}
+
+// ListDetail (spec §6.47): the region in its three states, with the ids and boxes of
+// docs/design/reference/src/list-detail.html (the shell's top bar and bottom navigation around the
+// compact ones are the shell blocks' own; the region draws its own back bar here).
+type ListItem = (typeof F.items)[number];
+
+const LD_COLUMNS: Column<ListItem>[] = [
+  {
+    key: "title",
+    header: F.listTitle,
+    cell: (i) => (
+      <Stack gap={0}>
+        <Text>{i.title}</Text>
+        <Text variant="small" tone="muted">
+          {i.meta}
+        </Text>
+      </Stack>
+    ),
+  },
+  { key: "at", header: "", tone: "muted", cell: (i) => i.at },
+];
+
+function ldList(current?: string): ReactNode {
+  return (
+    <DataTable<ListItem>
+      label={F.listTitle}
+      rowHeight="roomy"
+      framed={false}
+      columns={LD_COLUMNS}
+      rows={F.items}
+      rowKey={(i) => i.id}
+      rowLabel={(i) => i.title}
+      {...(current ? { activeKey: current } : {})}
+      onOpen={noop}
+    />
+  );
+}
+
+function ldDetail(): ReactNode {
+  const [primary, ...others] = [...F.detail.decisions].reverse();
+  return (
+    <>
+      <Stack gap={12}>
+        <Text variant="h2">{F.detail.title}</Text>
+        <KeyValue
+          rows={F.detail.facts.map((f) => ({
+            k: f.label,
+            v: f.mono ? <Text variant="body">{f.value}</Text> : f.value,
+          }))}
+        />
+      </Stack>
+      <ActionRow
+        cancel={{ label: others[1]?.label ?? "", onSelect: noop }}
+        secondary={{ label: others[0]?.label ?? "", onSelect: noop }}
+        primary={{ label: primary?.label ?? "", onSelect: noop }}
+      />
+    </>
+  );
+}
+
+function LdRegion({ open, current }: { open: boolean; current?: string }) {
+  const [opened, setOpened] = useState(open);
+  return (
+    <ListDetail
+      list={ldList(current)}
+      detail={opened ? ldDetail() : null}
+      onBack={() => setOpened(false)}
+      listMin={320}
+      detailMin={360}
+      label={F.listTitle}
+    />
+  );
+}
+
+export function listDetailBlocks(): ReactNode {
+  return (
+    <>
+      <RefBlock id="list-detail-compact-list" width={390} height={844}>
+        <LdRegion open={false} />
+      </RefBlock>
+      <RefBlock id="list-detail-compact-detail" width={390} height={844}>
+        <LdRegion open />
+      </RefBlock>
+      <RefBlock id="list-detail-two-pane" width={720} height={560}>
+        <LdRegion open current="ib1" />
+      </RefBlock>
+    </>
   );
 }

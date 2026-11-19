@@ -83,6 +83,7 @@ import { SCHEDULE_CALENDAR_BLOCKS } from "./schedule-calendar-blocks";
 import { SHARE_BLOCKS } from "./share-blocks";
 import { type SidebarFixture, sidebarProps, statusFixture } from "./shell-fixture";
 import { listLoadingBlocks, TEMPLATE_LOADING_BLOCKS } from "./template-loading-blocks";
+import { listDetailBlocks } from "./templates/inbox";
 import { THEME_SWATCH_BLOCKS } from "./theme-swatch-blocks";
 import { TREND_CHART_BLOCKS } from "./trend-chart-blocks";
 
@@ -829,6 +830,10 @@ function actionRowBlocks(): ReactNode {
       <RefBlock id="action-row-clean" width={LIST}>
         <FormActionRow clean />
       </RefBlock>
+      {/* the compact form (§4.4): sticky, the primary on its own full-width line */}
+      <RefBlock id="action-row-compact" width={390}>
+        <FormActionRow />
+      </RefBlock>
     </>
   );
 }
@@ -1309,4 +1314,5 @@ export const REFERENCE_BLOCKS = {
   ...DEVICE_BLOCKS,
   ...COMPACT_SHELL_BLOCKS,
   ...SHARE_BLOCKS,
+  "list-detail": listDetailBlocks,
 } as const;

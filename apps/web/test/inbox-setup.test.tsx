@@ -6,6 +6,7 @@ import en from "../messages/en.json";
 import type { Me } from "../src/lib/session";
 import { bodyOf, type Call, json, stubApi } from "./support/api";
 import { resetNavigation } from "./support/navigation";
+import { widePanes } from "./support/panes";
 import { renderRouteWithCache } from "./support/query";
 import { ME } from "./support/render";
 import { pickOption } from "./support/select";
@@ -97,7 +98,10 @@ const binds = (calls: Call[]) =>
     .filter((c) => c.method === "POST" && c.url.includes("/pending-connectors/"))
     .map((c) => ({ url: c.url, body: bodyOf(c) }));
 
-beforeEach(() => resetNavigation("/inbox"));
+beforeEach(() => {
+  widePanes();
+  resetNavigation("/inbox");
+});
 afterEach(() => {
   cleanup();
   vi.unstubAllGlobals();

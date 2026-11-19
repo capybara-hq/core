@@ -46,7 +46,9 @@ test("the reference route answers", async ({ page }) => {
 /** The phone window a `narrow` state is drawn and measured in (spec §9.3); others at 1440. */
 const NARROW = "narrow";
 /** `narrow` and the `narrow-<x>` states (page-header `narrow-loading`) are phone-window states. */
-const isNarrow = (state: string) => state === NARROW || state.startsWith(`${NARROW}-`);
+// `compact` states (the size class's own forms, mobile layout spec §3) are phone-window states too.
+const isNarrow = (state: string) =>
+  state === NARROW || state.startsWith(`${NARROW}-`) || state.startsWith("compact");
 const PHONE = { width: 390, height: 844 };
 
 type Row = (typeof tables)[number]["rows"][number];

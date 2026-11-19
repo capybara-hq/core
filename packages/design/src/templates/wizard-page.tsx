@@ -44,6 +44,9 @@ export function WizardPage({
     <>
       <TemplateHead header={loading ? loadingHeader(header) : header} />
       <Body layout="centered" loose width="content">
+        <p className="cb-steps-count" data-part="step-count">
+          {`${Math.min(current + 1, steps.length)} / ${steps.length}`}
+        </p>
         <ol className="cb-steps" aria-label={t("shell.steps")}>
           {steps.map((label, i) => {
             const state = i < current ? "done" : i === current ? "current" : "todo";

@@ -165,6 +165,8 @@ export const REFERENCE_COMPONENTS = [
   "bottom-nav",
   "top-bar",
   "me-panel",
+  // the two-level stack and the two panes (mobile layout spec §5.2, design spec §6.47)
+  "list-detail",
 ] as const;
 
 export type ReferenceComponent = (typeof REFERENCE_COMPONENTS)[number];

@@ -312,6 +312,7 @@ describe("widths, stat cards and the form without anchors", () => {
   ];
   for (const [name, el, w] of widths) {
     it(`${name} is data-width="${w}" (frame templates share the content width)`, () => {
+      widePanes();
       zh(el);
       expect(width()).toBe(w);
     });
@@ -420,8 +421,12 @@ describe("WizardPage", () => {
   });
 });
 
+/** jsdom measures nothing: give every element a width, so a ListDetail draws its two panes. */
+const widePanes = () => vi.spyOn(HTMLElement.prototype, "clientWidth", "get").mockReturnValue(1000);
+
 describe("其他模板行为", () => {
   it("InboxPage passes onInspectorClose through", async () => {
+    widePanes();
     const onClose = vi.fn();
     zh(
       <InboxPage
@@ -453,13 +458,13 @@ describe("其他模板行为", () => {
     expect(document.querySelector(".cb-body")?.getAttribute("data-layout")).toBe("single");
   });
 
-  it("InboxPage: the split is capped at the content width, inside the content padding", () => {
-    const css = readFileSync(resolve(import.meta.dirname, "../src/styles/shell.css"), "utf8");
+  it("InboxPage: the pane pair is capped at the content width, inside the content padding", () => {
+    const css = readFileSync(resolve(import.meta.dirname, "../src/styles/templates.css"), "utf8");
     expect(css).toMatch(
-      /\.cb-template\[data-template="InboxPage"\] \.cb-body:not\(\[data-layout="single"\]\) \{[^}]*padding: 0 var\(--cb-content-pad\);[^}]*scrollbar-gutter: stable;/,
+      /\.cb-inbox-frame \{[^}]*padding: 0 var\(--cb-content-pad\);[^}]*scrollbar-gutter: stable;/,
     );
     expect(css).toMatch(
-      /\.cb-template\[data-template="InboxPage"\] \.cb-body-row \{[^}]*max-width: var\(--cb-layout-content\);[^}]*margin: 0 auto;/,
+      /\.cb-inbox-content \{[^}]*max-width: var\(--cb-layout-content\);[^}]*margin: 0 auto;/,
     );
   });
 
@@ -830,8 +835,9 @@ describe("PendingState (the neutral loading state)", () => {
   });
 });
 
-describe("InboxPage list column (plugin acceptance fix batch 1)", () => {
-  it("the rail is the list column, 320 wide on the inbox (wider than a filter rail's 240)", () => {
+describe("InboxPage list column", () => {
+  it("the list is a 320 column beside a detail of at least 360 (ListDetail)", () => {
+    widePanes();
     render(
       <DesignProvider locale="zh">
         <InboxPage header={{ path: [{ label: "admin" }], title: "收件箱" }} list={<div>l</div>}>
@@ -839,10 +845,9 @@ describe("InboxPage list column (plugin acceptance fix batch 1)", () => {
         </InboxPage>
       </DesignProvider>,
     );
-    expect(document.querySelector(".cb-body-rail")?.getAttribute("data-part")).toBe("rail");
-    const css = readFileSync(resolve(import.meta.dirname, "../src/styles/shell.css"), "utf8");
-    const at = css.indexOf('.cb-template[data-template="InboxPage"] .cb-body-rail {');
-    expect(at).toBeGreaterThanOrEqual(0);
-    expect(css.slice(at, css.indexOf("}", at))).toContain("width: 320px");
+    const list = document.querySelector('[data-part="list-detail"]') as HTMLElement;
+    expect(list.getAttribute("data-mode")).toBe("two-pane");
+    expect(list.style.getPropertyValue("--cb-ld-list")).toBe("320px");
+    expect(document.querySelector('[data-part="list-pane"]')?.textContent).toBe("l");
   });
 });

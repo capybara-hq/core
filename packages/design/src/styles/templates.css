@@ -1270,3 +1270,146 @@ a.cb-object-name:hover {
 .cb-loading-slot {
   display: inline-flex;
 }
+
+/* Wizard step bar on compact (spec §5.1): "2 / 4" text instead of the bar. */
+.cb-steps-count {
+  display: none;
+  margin: 0 0 var(--cb-space-4);
+  color: var(--cb-muted);
+  font-size: var(--cb-type-small-size);
+  line-height: var(--cb-type-small-line);
+}
+@media (max-width: 599px) {
+  .cb-steps-count {
+    display: block;
+  }
+  .cb-steps {
+    display: none;
+  }
+}
+
+/* ActionRow, compact form (spec §4.4, maintainer decision 2026-11-20): sticky above the bottom inset
+   and the keyboard; the primary fills the bottom line, the other actions share the line above it in
+   equal widths, every button 40 high, the row growing to fit. */
+@media (max-width: 599px) {
+  .cb-actionrow[data-sticky="true"] {
+    position: sticky;
+    bottom: 0;
+    z-index: 1;
+    height: auto;
+    padding: var(--cb-space-2) var(--cb-space-4)
+      calc(
+        var(--cb-space-2) +
+        var(--cb-inset-bottom, env(safe-area-inset-bottom, 0px)) +
+        var(--cb-keyboard-inset, 0px)
+      );
+  }
+  .cb-actionrow[data-sticky="true"] .cb-actionrow-frame {
+    flex-direction: column;
+    align-items: stretch;
+    gap: var(--cb-space-2);
+    max-width: none;
+  }
+  .cb-actionrow[data-sticky="true"] .cb-actionrow-info {
+    flex: none;
+    font-size: var(--cb-type-small-size);
+    line-height: var(--cb-type-small-line);
+  }
+  .cb-actionrow[data-sticky="true"] .cb-actionrow-actions {
+    flex-direction: column;
+    align-items: stretch;
+    gap: var(--cb-space-2);
+  }
+  .cb-actionrow[data-sticky="true"] .cb-actionrow-others {
+    display: flex;
+    gap: var(--cb-space-2);
+  }
+  .cb-actionrow[data-sticky="true"] .cb-actionrow-others > *,
+  .cb-actionrow[data-sticky="true"] .cb-actionrow-primary > * {
+    flex: 1 1 0;
+    min-width: 0;
+    width: 100%;
+    height: 40px;
+  }
+}
+.cb-actionrow-others,
+.cb-actionrow-primary {
+  display: contents;
+}
+@media (max-width: 599px) {
+  .cb-actionrow[data-sticky="true"] .cb-actionrow-primary {
+    display: flex;
+  }
+}
+
+/* ListDetail (spec §6.47): two panes while the frame fits list + detail, else the two-level stack. */
+.cb-listdetail {
+  display: flex;
+  flex: 1;
+  min-height: 0;
+  width: 100%;
+}
+.cb-listdetail-list {
+  flex: 1;
+  min-width: 0;
+  overflow: auto;
+}
+.cb-listdetail-list[hidden] {
+  display: none;
+}
+.cb-listdetail[data-mode="two-pane"] .cb-listdetail-list {
+  flex: none;
+  width: var(--cb-ld-list);
+  border-right: 1px solid var(--cb-line-soft);
+}
+.cb-listdetail-detail {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  min-width: 0;
+  min-height: 0;
+}
+.cb-listdetail-bar {
+  display: flex;
+  flex: none;
+  align-items: center;
+  height: var(--cb-row-roomy);
+  padding: 0 var(--cb-space-2);
+  border-bottom: 1px solid var(--cb-line-soft);
+}
+.cb-listdetail-body {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  min-height: 0;
+}
+.cb-listdetail-empty {
+  padding: var(--cb-space-4);
+}
+/* InboxPage: the pane pair is capped at the content width inside the content padding, like every
+   frame, and reserves the head's scrollbar gutter, so its left edge is the head's. */
+.cb-inbox-frame {
+  display: flex;
+  flex: 1;
+  box-sizing: border-box;
+  min-height: 0;
+  padding: 0 var(--cb-content-pad);
+  overflow: hidden;
+  scrollbar-gutter: stable;
+}
+.cb-inbox-content {
+  display: flex;
+  flex: 1;
+  min-width: 0;
+  max-width: var(--cb-layout-content);
+  margin: 0 auto;
+}
+.cb-inbox-detail {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  gap: var(--cb-space-3);
+  min-height: 0;
+  padding: var(--cb-space-4);
+  overflow: auto;
+}
