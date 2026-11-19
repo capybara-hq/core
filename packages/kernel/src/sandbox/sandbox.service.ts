@@ -932,7 +932,7 @@ export class SandboxService {
 
   /**
    * Whether the running instance of `row` must get `want` before use (auto mode spec §4.2): a
-   * cloud instance whose recorded mode or network kind differs, or whose recorded limits are more
+   * cloud instance whose recorded network kind differs (never the mode alone), or whose recorded limits are more
    * permissive than `want` in any dimension (a host-only narrowing too, spec §124; a host-only
    * widening still reaches instances created afterwards), unless only a file reset could apply it
    * ({@link fsBound}). A provider bound to its file system still goes through the exclusive lease
