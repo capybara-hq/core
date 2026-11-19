@@ -10,6 +10,7 @@ import {
   outdatedMessage,
   REPLACED_MESSAGE,
 } from "./client.js";
+import type { LiveStatus } from "./control/protocol.js";
 import { policySummary } from "./server-ops.js";
 import { type OwnedStop, type StagedDevice, unconfirmedStops } from "./staged-device.js";
 import {
@@ -47,6 +48,11 @@ export interface StagedConnectOptions {
    * with exit 1, so the service manager (or the owner) starts it again with the new credential.
    */
   credential?: () => Credential | undefined;
+  /**
+   * The connection state for the local control socket: online once a socket opened, offline with
+   * the reason after it failed or closed, draining (for good) once a drain began.
+   */
+  onState?: (s: { connection: LiveStatus["connection"]; reason?: string }) => void;
 }
 
 type SessionEnd = { exit: number; message?: string } | { reconnect: true };
@@ -93,6 +99,16 @@ export function connectStaged(device: StagedDevice, opts: StagedConnectOptions =
   let exitAfterStop: { exit: number; message?: string } | undefined;
   let session: ((end: SessionEnd) => void) | undefined;
   let state: StagedSessionState = device.states.for(started);
+
+  /** Reports the connection state; a drain is final, so later socket changes are not reported. */
+  const setState = (connection: LiveStatus["connection"], reason?: string): void => {
+    if (draining && connection !== "draining") return;
+    try {
+      opts.onState?.({ connection, ...(reason !== undefined && { reason }) });
+    } catch {
+      // an observer never affects the connection
+    }
+  };
 
   const endSession = (end: SessionEnd): void => {
     const s = session;
@@ -200,6 +216,8 @@ export function connectStaged(device: StagedDevice, opts: StagedConnectOptions =
       let policyCheck: ReturnType<typeof setInterval> | undefined;
       let opened = false;
       let answered = false;
+      // why this socket failed, for the offline state its close reports
+      let failure: string | undefined;
       const heard = (): void => {
         clearTimeout(liveness);
         liveness = setTimeout(() => sock.terminate(), livenessMs);
@@ -208,6 +226,7 @@ export function connectStaged(device: StagedDevice, opts: StagedConnectOptions =
       sock.on("message", heard);
       sock.on("open", () => {
         opened = true;
+        setState("online");
         heard();
         stable = setTimeout(() => {
           attempt = 0;
@@ -275,19 +294,29 @@ export function connectStaged(device: StagedDevice, opts: StagedConnectOptions =
         }
         res.resume();
         sock.terminate();
+        failure = `Connecting to ${cred.connectUrl} failed: HTTP ${status}.`;
         if (status === 401) return endSession({ exit: 0, message: DISCONNECTED_MESSAGE });
         reportFailure(`Connecting to ${cred.connectUrl} failed: HTTP ${status}.`);
         endSession({ reconnect: true });
       });
       sock.on("error", (e) => {
-        if (!opened && !answered && !stopping)
-          reportFailure(`Cannot reach ${cred.connectUrl}: ${e.message}.`);
+        if (!opened && !answered && !stopping) {
+          failure = `Cannot reach ${cred.connectUrl}: ${e.message}.`;
+          reportFailure(failure);
+        }
       });
       sock.on("close", (code, reason) => {
         clearTimeout(liveness);
         clearTimeout(stable);
         clearInterval(policyCheck);
         if (ws === sock) ws = undefined;
+        if (!stopping && !exitAfterStop) {
+          const why = reason.toString("utf8");
+          setState(
+            "offline",
+            failure ?? `The connection closed (${code}${why === "" ? "" : ` ${why}`}).`,
+          );
+        }
         if (exitAfterStop) return endSession(exitAfterStop);
         if (code === 4002) return endSession({ exit: 0, message: REPLACED_MESSAGE });
         if (code === 4003) return endSession({ exit: 0, message: DISCONNECTED_MESSAGE });
@@ -336,6 +365,7 @@ export function connectStaged(device: StagedDevice, opts: StagedConnectOptions =
     done,
     drain() {
       if (draining) return;
+      setState("draining");
       draining = true;
       // no new admission at once; ends when the requests and the owned work settled
       void drainStagedSession(state, device.drainTarget(), new AbortController().signal)

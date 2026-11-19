@@ -13,6 +13,8 @@ import { KERNEL_CONFIG_INPUT, KERNEL_LOGGER } from "../tokens.js";
  * takes effect" cannot happen.
  */
 const HOT_APPLIERS: Record<string, (k: { log: KernelLogger }, value: unknown) => void> = {
+  // GET /api/v1/meta reads the platform name on every request.
+  "platform.name": () => {},
   "log.level": (k, v) => k.log.setLevel(String(v)),
   // The runtime reads the concurrency cap through the config service on every quota request.
   "runtime.orgConcurrency": () => {},
@@ -32,6 +34,14 @@ const HOT_APPLIERS: Record<string, (k: { log: KernelLogger }, value: unknown) =>
   "models.imageTimeoutMs": () => {},
   "models.imageMaxPerCall": () => {},
   "models.imagePromptMaxChars": () => {},
+  // Read and the image pipeline read the standard size and the vision call limits on every use.
+  "models.imageStandardPixels": () => {},
+  "models.visionTimeoutMs": () => {},
+  "models.visionMaxOutputTokens": () => {},
+  // Read reads its per-request and per-conversation image limits and the purge age on every use.
+  "attachments.readImagesPerRequest": () => {},
+  "attachments.readMaxBytesPerConversation": () => {},
+  "attachments.readPurgeAfterHours": () => {},
   // SandboxService reads the shared-lease cap at every acquisition.
   "sandbox.maxConcurrentCommands": () => {},
   // The command-review service reads the classifier's bounds at every classifier call.

@@ -410,7 +410,7 @@ export interface ModelInfo {
   };
   /** The context window (tokens). */
   contextWindow: number;
-  capabilities: { reasoning: boolean };
+  capabilities: { reasoning: boolean; vision?: boolean };
   parameters: ModelParameter[];
 }
 

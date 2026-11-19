@@ -13,6 +13,7 @@ import {
   type SandboxStopResult,
   validateSandboxPathShape,
 } from "@capybara-hq/plugin-sdk";
+import { RunningOperations } from "./activity.js";
 import { CommandLog } from "./command-log.js";
 import type { OperationContainerHost } from "./exec/docker-operations.js";
 import { credentialIdentity, InstanceBinder, type StoredBinding } from "./exec/instance-binding.js";
@@ -209,6 +210,8 @@ export function createStagedDevice(o: StagedDeviceOptions): StagedDevice {
     return verifyInstalledRuntime(environment, undefined, { stageIn: stateDir });
   };
 
+  // the operations executing now, for the local control socket
+  const running = new RunningOperations();
   const createBackend = async (
     _generation: string,
     binding: StoredBinding,
@@ -223,6 +226,8 @@ export function createStagedDevice(o: StagedDeviceOptions): StagedDevice {
       // restricted launches run only the sealed runtime this binding attested
       runtimeHash,
       readOwnerCeiling,
+      // a background task stays in the running operations until its worker is gone
+      onOperationEnded: (operationId) => running.endOperation(operationId),
     };
     const deps = o.backendDependencies ?? {};
     if (mode === "docker") {
@@ -273,6 +278,7 @@ export function createStagedDevice(o: StagedDeviceOptions): StagedDevice {
     store: policy,
     // operations and policy changes are recorded in the owner's local command log
     log: new CommandLog(stateDir),
+    running,
     report: () => issueOwnerReport({ stateDir, deviceId: cred.deviceId, dir: cred.dir, home }),
     reconcile: async (signal) => {
       await binder.current()?.backend.reconcileOwnerCeiling(signal);

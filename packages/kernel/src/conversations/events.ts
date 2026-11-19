@@ -1064,8 +1064,9 @@ export const ConversationEventSchema = z.discriminatedUnion("type", [
            * reference line only (`reference`: a `file` block, or text over the inline cap), a
            * placeholder for an unsupported kind, left out for the request's media budget
            * (`omitted`), too many images (`too_many_images`), one over the provider's limit
-           * (`too_large`), no longer available, too many PDF pages, or excluded by
-           * `media_excluded`. Absent without media; written together with `mediaBudgetBytes`.
+           * (`too_large`), no longer available, too many PDF pages, excluded by `media_excluded`,
+           * or an image from Read left out by the Read-image window (`not_included`). Absent without
+           * media; written together with `mediaBudgetBytes`.
            */
           media: z
             .array(
@@ -1082,6 +1083,7 @@ export const ConversationEventSchema = z.discriminatedUnion("type", [
                   "unavailable",
                   "too_many_pages",
                   "excluded",
+                  "not_included",
                 ]),
                 etag: z.string().max(1024).optional(),
               }),
@@ -1093,6 +1095,12 @@ export const ConversationEventSchema = z.discriminatedUnion("type", [
            * it to repeat the same omissions.
            */
           mediaBudgetBytes: count.optional(),
+          /**
+           * The Read-image window (`attachments.readImagesPerRequest`, see planMedia) the request was
+           * built with: written only when the request renders an image from Read
+           * (`tool_result.media`); reconstruction uses it to repeat the same evictions.
+           */
+          readImagesPerRequest: count.optional(),
           /**
            * The hard fit guard's plan (context compaction spec §4.3): indexes into the assembled
            * request's message list that were dropped, and text / tool_result blocks replaced by the
@@ -1143,7 +1151,7 @@ export const ConversationEventSchema = z.discriminatedUnion("type", [
       model: z.string(),
       ...ModelUsageShape,
       purpose: z
-        .enum(["compaction", "title", "web_fetch", "review", "image", "suggestion"])
+        .enum(["compaction", "title", "web_fetch", "review", "image", "vision", "suggestion"])
         .optional(),
       /**
        * The chunk a chunked compaction call summarised (1-based), with the number of calls the
@@ -1357,6 +1365,23 @@ export const ConversationEventSchema = z.discriminatedUnion("type", [
           view: z.string().min(1).max(100),
           key: z.string().min(1).max(200).optional(),
         })
+        .optional(),
+      /**
+       * The images the builtin Read stored for the call (vision-read design §1.2): `read`
+       * attachments bound to this conversation, one per image. Model-visible: request building
+       * renders each after the step's tool results (`Image from Read (file_id <id>):` and the image,
+       * or the no-vision text), inside the Read-image window. Only the builtin Read sets it.
+       */
+      media: z
+        .array(
+          z.object({
+            attachmentId: AttachmentIdSchema,
+            name: z.string().min(1).max(1000),
+            mediaType: z.string().min(1).max(200),
+            size: count,
+          }),
+        )
+        .min(1)
         .optional(),
     }),
   ),

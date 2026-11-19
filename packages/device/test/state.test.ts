@@ -115,6 +115,7 @@ describe("state", () => {
       memoryMb: null,
       // a new install: no running outside the sandbox, the open network, the workspace reach
       ownerCeiling: { outsideSandbox: false, network: "open", restrictedProjectReach: "workspace" },
+      keepAwake: "while-busy",
     });
     writePolicy(dir, {
       allowedDomains: ["a.test"],
@@ -126,6 +127,7 @@ describe("state", () => {
         network: "allowlist",
         restrictedProjectReach: "os-user",
       },
+      keepAwake: "connected",
     });
     expect(readPolicy(dir)).toEqual({
       allowedDomains: ["a.test"],
@@ -137,6 +139,7 @@ describe("state", () => {
         network: "allowlist",
         restrictedProjectReach: "os-user",
       },
+      keepAwake: "connected",
     });
     expect(readPolicyFile(dir).legacy).toBe(false);
     expect(JSON.parse(readFileSync(join(dir, "policy.json"), "utf8")).version).toBe(3);

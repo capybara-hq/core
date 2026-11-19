@@ -1,4 +1,4 @@
-import { randomUUID } from "node:crypto";
+import { randomBytes, randomUUID } from "node:crypto";
 import { type KernelReq, type SandboxRoots, ToolError } from "@capybara-hq/plugin-sdk";
 import { startTestPostgres, startTestRedis, type TestContainer } from "@capybara-hq/testing";
 import { Redis } from "ioredis";
@@ -169,6 +169,7 @@ async function signIn(
   roots: SandboxRoots,
   dir: MachineDir = { files: new Map(), gone: false, hold: new Set() },
   name = "box",
+  hello: Record<string, unknown> = {},
 ) {
   const issued = await txHost.run(() =>
     machines.issue({
@@ -184,7 +185,7 @@ async function signIn(
   const machine = new FakeMachine(url, issued.credential, answerer(dir, roots), { hello: false });
   open.push(machine);
   await machine.opened;
-  machine.hello({ roots });
+  machine.hello({ roots, ...hello });
   await waitFor(
     async () => (await redis.get(deviceLeaseKey(deviceId))) !== null,
     10_000,
@@ -409,6 +410,44 @@ describe("local devices through the sandbox tools", () => {
       }
     },
   );
+
+  it("moves 5 MB through Write and Read and reports where the kernel spends the time", async () => {
+    const m = await member();
+    const dir: MachineDir = { files: new Map(), gone: false, hold: new Set() };
+    // a real device offers frames of up to 16 MiB (the deployment's default cap)
+    const { machine } = await signIn(m.deviceId, m.accountId, ROOTS_A, dir, "box", {
+      transport: { maxFrameBytes: 16 * 1024 * 1024 },
+    });
+    // when each request reached the machine (it answers at once: the rest is the kernel's)
+    const arrivals: { op: string; at: number }[] = [];
+    machine.ws.on("message", (d) => {
+      const f = JSON.parse(String(d)) as { type: string; op?: string };
+      if (f.type === "req") arrivals.push({ op: f.op as string, at: performance.now() });
+    });
+    const content = randomBytes(3_932_160).toString("base64"); // 5 MiB of ASCII text
+    const path = `${ROOTS_A.workspace}/big.txt`;
+    const report: string[] = [];
+    const timed = async (label: string, call: () => Promise<unknown>) => {
+      arrivals.length = 0;
+      const started = performance.now();
+      const result = await call();
+      const ms = performance.now() - started;
+      report.push(
+        `${label}: total=${ms.toFixed(0)}ms ${arrivals
+          .map((a) => `${a.op}@${(a.at - started).toFixed(0)}`)
+          .join(" ")}`,
+      );
+      return result;
+    };
+    for (const round of [1, 2]) {
+      const file = `${path}.${round}`;
+      await timed(`Write #${round}`, () => m.run("Write", { file_path: file, content }));
+      expect(Buffer.from(dir.files.get(file) as string, "base64").toString()).toBe(content);
+      await timed(`Read #${round}`, () => m.run("Read", { file_path: file }));
+    }
+    if (process.env.CAPYBARA_DEVICE_DEBUG_TIMINGS === "1")
+      console.log(`kernel 5 MB transfer timings\n${report.join("\n")}`);
+  });
 
   it("every exec carries the org's sandbox allowlist of the moment (R27)", async () => {
     const m = await member();

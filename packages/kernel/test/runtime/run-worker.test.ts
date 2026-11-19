@@ -194,7 +194,12 @@ describe.each(LOOPS)("RunWorker（%s）", (_name, loopFactory) => {
     const { orgId, convId } = await setup();
     const seq = await postMessage(req, orgId, convId, "echo:hi");
     await waitForTerminal(db, convId);
-    const evs = await eventsOf(db, convId);
+    // The title job of the completed run logs a `usage` event (purpose "title", no run) of its
+    // own, which lands after run_finished whenever the title worker is quick: it is not part of
+    // the run's events, so the list is the run's events only.
+    const evs = (await eventsOf(db, convId)).filter(
+      (e) => !(e.type === "usage" && e.payload.purpose === "title"),
+    );
     expect(types(evs)).toEqual([
       "user_message",
       "run_started",

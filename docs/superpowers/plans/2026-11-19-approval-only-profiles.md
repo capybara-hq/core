@@ -42,7 +42,7 @@ adds the new shapes next to the old ones, and step W1.M swaps them:
 | `SandboxPermissionSupportV2` (`sandbox-operation.ts`) | `SandboxPermissionSupport` |
 | `DeviceOwnerCeilingV3` (`device-protocol.ts`) | `DeviceOwnerCeiling` |
 | `DeviceOwnerCeilingNarrowingV3` (`device-protocol.ts`) | `DeviceOwnerCeilingNarrowing` |
-| `PermissionFullAccessGrantDecision` (`sandbox/permission-call-types.ts`) | a member of `PermissionGrantDecision` (T6, with migration `0164`) |
+| `PermissionFullAccessGrantDecision` (`sandbox/permission-call-types.ts`) | a member of `PermissionGrantDecision` (T6, with migration `0166`) |
 | `parseSandboxPermissionSupportV2` (`device-protocol.ts`, T1) | `parseSandboxPermissionSupport` |
 | `parseOwnerCeilingReportV3` (`device-protocol.ts`, T1) | `parseOwnerCeilingReport` (replaces the protocol 3 one) |
 | `parseOwnerCeilingNarrowingV3` (`device-protocol.ts`, T1) | `parseOwnerCeilingNarrowing` |
@@ -77,9 +77,10 @@ its web labels.
   - DriftReason `device_sandbox_changed`.
   - The settings reader `readDeviceSandboxSettings(): { outsideSandbox, network: { default,
     ceiling } }`.
-- **Migration numbers:** `0163` for T2 (cloud device network columns) and `0164` for T6 (the
-  grant source). Checked in W0: `main` ends at `0162`, so both are free. The controller renumbers
-  them at merge if `main` takes these numbers before then.
+- **Migration numbers:** `0165` for T2 (cloud device network columns), `0166` for T6 (the grant
+  source) and `0167` for the backfill repeat. W0 planned `0163` and `0164`, but `main` shipped its
+  own `0163_read_attachments` and `0164_platform_icons` (rc.60 to rc.62), so the W4 merge of
+  `origin/main` renumbered the three R3 migrations after them, in order.
 
 ## Wave overview
 
@@ -160,7 +161,7 @@ tests.
 - the permission config fingerprint inputs
 - the converter for `apps/capybara` `config migrate-permissions`
   (`apps/capybara/src/commands/config.ts`, `apps/capybara/test/config-migrate.test.ts`)
-- migration `0163` (add `devices.network_mode` and `network_hosts`, copy the allowlist outer
+- migration `0165` (add `devices.network_mode` and `network_hosts`, copy the allowlist outer
   networks) and `db/kernel-schema.ts` (those columns only)
 - `docs/config.md` (regenerated)
 - the error keys only in `apps/web/messages/{en,zh}.json`
@@ -289,8 +290,8 @@ One mechanical commit on `perm/r3-int`, behaviour kept wherever a later task own
   (`network-allowlist`) revokes open-network work. T2's ceiling writers bump the epoch and reset
   Full consent on a widening, but revoke no open-network work (`revoke: false` for network-only
   changes in `identity/settings.ts`, `orgs/settings.service.ts` and the publication).
-- When this task stops reading `owner_full_access` / `outer_network`, repeat 0163's backfill in
-  the same change (a new migration): every cloud device snapshotted after 0163 whose
+- When this task stops reading `owner_full_access` / `outer_network`, repeat 0165's backfill in
+  the same change (a new migration): every cloud device snapshotted after 0165 whose
   `outer_network` is an allowlist and whose `network_mode` is NULL gets `network_mode: allowlist`
   and its hosts as `network_hosts` when they are an array of strings, else `[]`.
 - A device-level host list (a local owner's `allowedDomains`, a cloud device's `network_hosts`)
@@ -326,7 +327,7 @@ One mechanical commit on `perm/r3-int`, behaviour kept wherever a later task own
 - the audit action registration, with its label in `apps/web/src/lib/audit-actions.ts` and the
   `admin.audit.actions` keys in `apps/web/messages/{en,zh}.json` (`audit-actions.test.ts` requires
   every kernel audit literal there)
-- migration `0164` (`full-access` added to the grant `source` check), and `db/kernel-schema.ts`
+- migration `0166` (`full-access` added to the grant `source` check), and `db/kernel-schema.ts`
   (that check only; the T2 columns are already merged)
 - `tools/builtins/sandbox/bash.ts` (the description: proxy-aware traffic, the escalation wording)
 - the tests: `test/tools/{pipeline,call-policy,permission-policy,permission-escalation,

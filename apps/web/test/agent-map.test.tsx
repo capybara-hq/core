@@ -254,10 +254,10 @@ describe("agentTreeNodes", () => {
     );
     expect(root.status).toBe("completed");
     expect(root.description).toBe("Untitled");
-    expect(root.model).toBe("model-fake / fake-1");
+    expect(root.model).toBe("fake-1");
     expect(root.children.map((c) => [c.id, c.status, c.model])).toEqual([
       ["a", "running", "—"],
-      ["b", "aborted", "model-fake / fake-1"],
+      ["b", "aborted", "fake-1"],
     ]);
   });
 });

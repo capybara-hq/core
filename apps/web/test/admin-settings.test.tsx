@@ -62,6 +62,7 @@ const routeMap = (
   outside: Outside = SETTINGS.devicesOutsideSandbox,
   network: Network = NETWORK,
 ) => ({
+  "GET /api/v1/admin/platform/icons": () => json(200, { icons: [] }),
   "GET /api/v1/admin/settings": () =>
     json(200, { ...SETTINGS, devicesOutsideSandbox: outside, devicesNetwork: network }),
   "GET /api/v1/admin/components?kind=theme": () => json(200, { components: [] }),
@@ -230,6 +231,7 @@ describe("External sharing on /admin/settings", () => {
   const stubSharing = (source: Src = "default") =>
     stubApi({
       ...routeMap(),
+      "GET /api/v1/admin/platform/icons": () => json(200, { icons: [] }),
       "GET /api/v1/admin/settings": () =>
         json(200, {
           ...SETTINGS,

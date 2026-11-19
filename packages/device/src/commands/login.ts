@@ -153,8 +153,20 @@ export async function login(
   cmd: Extract<Command, { command: "login" }>,
   deps: LoginDeps,
 ): Promise<number> {
-  const out = deps.out ?? ((l) => console.log(l));
+  const stdout = deps.out ?? ((l) => console.log(l));
   const err = deps.err ?? ((l) => console.error(l));
+  const json = cmd.json === true;
+  // With --json stdout carries only JSON events; the human lines go to stderr.
+  const out = json ? err : stdout;
+  const emit = (event: Record<string, unknown>): void => {
+    if (json) stdout(JSON.stringify(event));
+  };
+  /** A failed login: the human line, plus the JSON error event. */
+  const fail = (code: string, message: string, exit: number): number => {
+    err(message);
+    emit({ event: "error", code, message });
+    return exit;
+  };
   const fetchFn = deps.fetch ?? fetch;
   const sleep = deps.sleep ?? ((ms) => new Promise<void>((r) => setTimeout(r, ms)));
   const platform = deps.platform ?? process.platform;
@@ -164,17 +176,22 @@ export async function login(
   try {
     baseUrl = normalizeUrl(cmd.url);
   } catch (e) {
-    err((e as Error).message);
-    return 2;
+    return fail("invalid_url", (e as Error).message, 2);
   }
   if (platform !== "darwin" && platform !== "linux") {
-    err("capybara-device runs on macOS and Linux. On Windows use WSL or Docker.");
-    return 1;
+    return fail(
+      "unsupported_platform",
+      "capybara-device runs on macOS and Linux. On Windows use WSL or Docker.",
+      1,
+    );
   }
   try {
     if (readCredential(deps.stateDir) !== undefined) {
-      err("This machine is already logged in. Run `capybara-device logout` first.");
-      return 1;
+      return fail(
+        "already_logged_in",
+        "This machine is already logged in. Run `capybara-device logout` first.",
+        1,
+      );
     }
   } catch (e) {
     err(`Replacing the unusable credential file: ${(e as Error).message}`);
@@ -188,7 +205,14 @@ export async function login(
       programVersion: programVersion(),
     });
     out(`Open ${auth.verificationUriComplete} and confirm the code ${auth.userCode}`);
-    if (cmd.browser) (deps.openBrowser ?? defaultOpen(platform))(auth.verificationUriComplete);
+    emit({
+      event: "verification",
+      url: auth.verificationUriComplete,
+      userCode: auth.userCode,
+      expiresIn: auth.expiresIn,
+    });
+    if (cmd.browser && !json)
+      (deps.openBrowser ?? defaultOpen(platform))(auth.verificationUriComplete);
 
     let interval = Number.isFinite(auth.interval) && auth.interval >= 1 ? auth.interval : 5;
     const expiresIn = Number.isFinite(auth.expiresIn) && auth.expiresIn > 0 ? auth.expiresIn : 600;
@@ -250,6 +274,7 @@ export async function login(
           reconnectGraceSeconds: granted.reconnectGraceSeconds,
           maxFrameBytes: granted.maxFrameBytes ?? DEFAULT_MAX_FRAME_BYTES,
         });
+        emit({ event: "done", deviceId: granted.deviceId, orgId: granted.orgId, dir });
         out(`Logged in. Device ${granted.deviceId}, working directory ${dir}`);
         if (ceiling.outsideSandbox) {
           out(OUTSIDE_SANDBOX_LOGIN_LINE);
@@ -281,20 +306,28 @@ export async function login(
         ) {
           // Keep polling at the normal interval: pending, a network blip or a server error.
         } else if (e.code === "device_sign_in.expired") {
-          err("The code expired before it was approved. Run `capybara-device login` again.");
-          return 1;
+          return fail(
+            "device_sign_in.expired",
+            "The code expired before it was approved. Run `capybara-device login` again.",
+            1,
+          );
         } else if (e.code === "device_sign_in.denied") {
-          err("The login was denied in the browser.");
-          return 1;
+          return fail("device_sign_in.denied", "The login was denied in the browser.", 1);
         } else throw e;
         if (waited >= expiresIn) {
-          err("The code expired before it was approved. Run `capybara-device login` again.");
-          return 1;
+          return fail(
+            "device_sign_in.expired",
+            "The code expired before it was approved. Run `capybara-device login` again.",
+            1,
+          );
         }
       }
     }
   } catch (e) {
-    err(`login failed: ${(e as Error).message}`);
-    return 1;
+    return fail(
+      e instanceof ApiError ? e.code : "login_failed",
+      `login failed: ${(e as Error).message}`,
+      1,
+    );
   }
 }

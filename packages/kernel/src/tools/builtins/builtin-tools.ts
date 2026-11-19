@@ -8,6 +8,7 @@ import { AttachmentsService } from "../../conversations/attachments.service.js";
 import { EventLog } from "../../conversations/event-log.js";
 import { conversationAncestors } from "../../conversations/tree.js";
 import { ConversationDevices } from "../../devices/conversation-devices.js";
+import { ApiError } from "../../errors.js";
 import { ExtensionHost } from "../../extensions/host.js";
 import { ExtensionPointDefaults } from "../../extensions/point-defaults.js";
 import { KernelConfigService } from "../../infra/config/kernel-config.service.js";
@@ -20,7 +21,7 @@ import { PlatformActor } from "../../platform/actor.js";
 import { AgentDocs } from "../../platform/agent-docs.js";
 import { PlatformOperations } from "../../platform/registry.js";
 import type { HookRunner } from "../../runtime/hook-calls.js";
-import { ProviderRegistry } from "../../runtime/providers.js";
+import { ProviderListError, ProviderRegistry } from "../../runtime/providers.js";
 import { conversationTimeZone, RUN_CONTEXT_CLOCK } from "../../runtime/run-context.service.js";
 import { StepLog } from "../../runtime/step-log.js";
 import {
@@ -35,7 +36,7 @@ import { SandboxService } from "../../sandbox/sandbox.service.js";
 import { ScheduledTaskStore } from "../../schedules/store.js";
 import { StorageService } from "../../storage/storage.service.js";
 import { ToolOutputs } from "../outputs.js";
-import type { BuiltinTool } from "../registry.js";
+import type { BuiltinCallContext, BuiltinTool } from "../registry.js";
 import { agentTool } from "./agent.js";
 import { askUserTool } from "./ask-user.js";
 import { currentTimeTool } from "./current-time.js";
@@ -45,6 +46,7 @@ import { platformTool } from "./platform.js";
 import { readToolOutputTool } from "./read-tool-output.js";
 import type { SandboxToolDeps } from "./sandbox/common.js";
 import { sandboxTools } from "./sandbox/index.js";
+import type { ReadFileDeps } from "./sandbox/read.js";
 import { ScheduleToolsPort, ScheduleUpdates, scheduleTools } from "./schedules.js";
 import { sendMessageTool } from "./send-message.js";
 import { skillLoadTool } from "./skill-load.js";
@@ -102,6 +104,21 @@ export class BuiltinTools {
     // dormant: the builtins keep the legacy route until the paired activation turns the gate on;
     // then every builtin entering a device (the skill tool too) takes the managed route
     const managed = managedSandboxDeps(managedDeviceContext, activation);
+    // `Read` beyond the device (vision-read design §1): files by id, the vision read with its
+    // hooks (as the WebFetch extraction), the stored copies and the chat model's capabilities
+    const vision = { purposes, eventLog, stepLog, config, log, hooks: host?.hooks };
+    const read: ReadFileDeps = {
+      files: {
+        get db() {
+          return db.db;
+        },
+        attachments,
+        storage,
+      },
+      reads: attachments,
+      vision,
+      chatModelSeesImages: (ctx) => chatModelSeesImages(db, providers, ctx),
+    };
     const sandboxDeps: SandboxToolDeps = {
       sandbox,
       devices,
@@ -118,6 +135,7 @@ export class BuiltinTools {
       config,
       log,
       ...managed,
+      read,
     };
     this.tools = [
       askUserTool({ config }),
@@ -150,13 +168,7 @@ export class BuiltinTools {
         points,
         config,
         cache: webPages,
-        extract: (ctx, page, prompt) =>
-          extractAnswer(
-            { purposes, eventLog, stepLog, config, log, hooks: host?.hooks },
-            ctx,
-            page,
-            prompt,
-          ),
+        extract: (ctx, page, prompt) => extractAnswer(vision, ctx, page, prompt),
       }),
       // images from the org's `image` purpose model, delivered as artifacts (image generation
       // spec §5.3); written into the device too with `file_path`
@@ -170,7 +182,7 @@ export class BuiltinTools {
         config,
         log,
         hooks: host?.hooks,
-        db: () => db.db,
+        db,
         attachments,
         sandbox: sandboxDeps,
       }),
@@ -218,4 +230,39 @@ export function managedSandboxDeps(
 ): Pick<SandboxToolDeps, "managedDeviceContext" | "managedDeviceContextRequired"> {
   if (!permissionContextActive(activation)) return {};
   return { managedDeviceContext: recorder, managedDeviceContextRequired: true };
+}
+
+/**
+ * Whether "the chat model" of a `Read` call can view images (vision-read design §1.2): the model
+ * of the latest `model_call` of the call's run (a fallback step's model when the step fell back),
+ * its capabilities from the model list cache. A run with no model call yet, or a model the org can
+ * no longer resolve, counts as one that cannot: the vision purpose reads the image then.
+ */
+export async function chatModelSeesImages(
+  db: KernelDb,
+  providers: Pick<ProviderRegistry, "resolve">,
+  ctx: BuiltinCallContext,
+): Promise<boolean> {
+  if (ctx.runId === undefined) return false;
+  const row = await db.db
+    .selectFrom("conversation_events")
+    .select("payload")
+    .where("conversation_id", "=", ctx.conversationId)
+    .where("run_id", "=", ctx.runId)
+    .where("type", "=", "model_call")
+    .orderBy("seq", "desc")
+    .limit(1)
+    .executeTakeFirst();
+  if (!row) return false;
+  const call = row.payload as { provider: string; model: string };
+  try {
+    const { info } = await providers.resolve(ctx.orgId, {
+      provider: call.provider,
+      model: call.model,
+    });
+    return info.capabilities.vision;
+  } catch (e) {
+    if (e instanceof ApiError || e instanceof ProviderListError) return false;
+    throw e;
+  }
 }

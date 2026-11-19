@@ -13,6 +13,7 @@ import {
   type RunSystem,
   type ServiceWhere,
   serviceBinPath,
+  serviceNodePath,
 } from "../service/manager.js";
 import { SYSTEMD_UNIT, unitContent, unitPath } from "../service/systemd.js";
 
@@ -68,7 +69,11 @@ export const BOOTSTRAP_BACKOFF_MS = [500, 1000, 2000] as const;
  * `service install|uninstall|status`: runs `capybara-device start` at login (launchd) or boot
  * (systemd user), removes it, or reports whether it is loaded and running.
  */
-export async function serviceCommand(action: ServiceAction, deps: ServiceDeps): Promise<number> {
+export async function serviceCommand(
+  action: ServiceAction,
+  deps: ServiceDeps,
+  options: { json?: boolean } = {},
+): Promise<number> {
   const run = deps.run ?? defaultRunSystem;
   const spec: ServiceSpec = {
     nodePath: deps.nodePath ?? process.execPath,
@@ -77,6 +82,10 @@ export async function serviceCommand(action: ServiceAction, deps: ServiceDeps): 
     env: serviceEnv(deps.env),
   };
   try {
+    const jsonStatus = action === "status" && options.json === true;
+    if (deps.platform === "darwin" || deps.platform === "linux") {
+      if (jsonStatus) return statusJson(deps, run);
+    }
     if (deps.platform === "darwin") return await launchd(action, spec, deps, run);
     if (deps.platform === "linux") return await systemd(action, spec, deps, run);
   } catch (e) {
@@ -162,6 +171,37 @@ function reportStatus(deps: ServiceDeps, run: RunSystem): number {
     deps.out(`installed ${installed} — restart it: capybara-device service restart`);
   }
   return 0;
+}
+
+/**
+ * `service status --json`: one object on stdout, the same facts as the human report. Exit code 0
+ * only when running, like the human report. `binExists` is false when the service file's `bin`
+ * path is gone (the app that installed it moved).
+ */
+function statusJson(deps: ServiceDeps, run: RunSystem): number {
+  const at = where(deps);
+  const installed = hasLoginService(at.home, at.platform);
+  const state = installed ? managerState(at, run) : { loaded: false as const };
+  const pid = "pid" in state ? state.pid : undefined;
+  const bin = installed ? serviceBinPath(at) : undefined;
+  const program = pid === undefined ? undefined : running(deps);
+  const runningVersion = program?.pid === pid ? program?.version : undefined;
+  const installedVersion = bin === undefined ? undefined : packageVersionAt(bin);
+  const nodePath = installed ? serviceNodePath(at) : undefined;
+  deps.out(
+    JSON.stringify({
+      installed,
+      loaded: state.loaded,
+      running: pid !== undefined,
+      ...(pid !== undefined && { pid }),
+      ...(runningVersion !== undefined && { runningVersion }),
+      ...(installedVersion !== undefined && { installedVersion }),
+      ...(nodePath !== undefined && { nodePath }),
+      ...(bin !== undefined && { binPath: bin }),
+      binExists: bin !== undefined && existsSync(bin),
+    }),
+  );
+  return pid !== undefined ? 0 : 1;
 }
 
 /**

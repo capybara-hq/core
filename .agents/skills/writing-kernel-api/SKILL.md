@@ -422,3 +422,5 @@ the real pipeline; the log replays with zero drift).
 4. A new `@Public()` route -> update `public-routes.test.ts`.
 5. New config items follow `.agents/skills/adding-config`; new tables follow `.agents/skills/writing-migrations`.
 6. `pnpm lint && pnpm typecheck && pnpm check && pnpm test` (`check:kernel-conventions` is part of `pnpm check`); changes that affect publishing add a changeset.
+
+- **App sign-in** (native apps such as the desktop client, `identity/app-auth.ts`): the code exchange issues an ordinary session through the same session service as password sign-in, so revocation, CSRF and account-status checks need no special case; it needs `http.publicUrl` (`app_auth.unavailable` otherwise).

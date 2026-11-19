@@ -21,6 +21,14 @@ describe("checkTerms", () => {
     expect(checkTerms(fixture("clean"))).toEqual([]);
   });
 
+  it("a shell capability name is allowlisted; other names containing Capability still fail", () => {
+    expect(checkTerms(fixture("clean"))).toEqual([]);
+    const f = checkTerms(fixture("violations")).filter((x) => x.message.includes("Capability"));
+    expect(f.map((x) => x.message)).toEqual(
+      expect.arrayContaining([expect.stringContaining('"ShellExtensionCapability"')]),
+    );
+  });
+
   it("reports each old term once, with its file and line", () => {
     const root = fixture("violations");
     const at = (rel: string, needle: string) => {
@@ -36,6 +44,10 @@ describe("checkTerms", () => {
       ],
       ["terms-sdk-api", ...at("packages/plugin-sdk/api/plugin-sdk.api.md", "CapabilityRef")],
       ["terms-sdk-api", ...at("packages/plugin-sdk/api/plugin-sdk.api.md", "PluginPackageSection")],
+      [
+        "terms-sdk-api",
+        ...at("packages/plugin-sdk/api/plugin-sdk.api.md", "type ShellExtensionCapability"),
+      ],
       ["terms-error-code", ...at("packages/kernel/src/errors.ts", "directory.item_not_found")],
       ["terms-config-key", ...at("packages/kernel/src/config/schema.ts", "pluginHost")],
       [
@@ -65,11 +77,11 @@ describe("checkTerms", () => {
     ]);
     expect(f[0]?.message).toContain('"definePlugin"');
     expect(f[3]?.message).toContain('"PluginPackageSection"');
-    expect(f[6]?.message).toContain("/marketplaces");
-    expect(f[8]?.message).toContain("CAPYBARA_PLUGIN_CONFIG__OBJECT_STORE_S3__BUCKET");
-    expect(f[12]?.message).toContain('"writing-apps"');
-    expect(f[13]?.message).toContain("an old package format name");
-    expect(f[13]?.message).toContain('"app.yaml"');
+    expect(f[7]?.message).toContain("/marketplaces");
+    expect(f[9]?.message).toContain("CAPYBARA_PLUGIN_CONFIG__OBJECT_STORE_S3__BUCKET");
+    expect(f[13]?.message).toContain('"writing-apps"');
+    expect(f[14]?.message).toContain("an old package format name");
+    expect(f[14]?.message).toContain('"app.yaml"');
   });
 
   it("an old builtin tool key is reported with the new names; exempt homes and the word agent pass", () => {

@@ -370,8 +370,8 @@ export class PermissionConfigPublication {
     pinDevices: boolean,
   ): Promise<void> {
     const configuredCeiling = configuredOf(projection.network.ceiling);
-    // a B1 snapshot an older replica wrote after migration 0165 becomes the device's own network
-    // at every activation, before anything reads it (as 0163 and 0165 copy it: never wider)
+    // a B1 snapshot an older replica wrote after migration 0167 becomes the device's own network
+    // at every activation, before anything reads it (as 0165 and 0167 copy it: never wider)
     await copyCloudSnapshotNetworks(this.db.db);
     if (pinDevices) {
       const stored = await readStoredDeviceSandbox(this.db.db, this.log, configuredCeiling);
@@ -571,7 +571,7 @@ export class PermissionConfigPublication {
 
 /**
  * Copies a cloud device's B1 snapshot network into its own sandbox network while it has none
- * (migrations 0163 and 0165, the snapshot writer): an allowlist with a non-empty list of strings
+ * (migrations 0165 and 0167, the snapshot writer): an allowlist with a non-empty list of strings
  * stays that allowlist, an empty or unreadable one ran closed and becomes `none`; an open snapshot
  * follows the org. Idempotent: only rows still following the org are written.
  */

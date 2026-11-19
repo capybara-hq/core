@@ -1,4 +1,4 @@
-export const SDK_VERSION = "0.1.0-rc.36";
+export const SDK_VERSION = "0.1.0-rc.38";
 export * from "./agent-template.js";
 export * from "./bootstrap.js";
 export * from "./cards.js";
@@ -55,6 +55,8 @@ export {
   type SetupGuideSection,
 } from "./setup-guide-parse.js";
 export * from "./setup-guide-render.js";
+export * from "./shell-capabilities.js";
+export * from "./shell-environment.js";
 export * from "./skill.js";
 export * from "./skill-invocation.js";
 export * from "./storage.js";

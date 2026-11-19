@@ -13,7 +13,7 @@ Approval-only profiles: review, grants and the Full access auto-grant audit.
   allowlist, running one call outside the sandbox) is granted within the device's ceilings and
   recorded exactly once: a grant with source `full-access`, a `permission_reviewed` event and the
   audit row `permission.crossing_auto_granted` with its kind, in one fenced transaction (migration
-  `0164`), and announced after the commit. Sensitive consents an auto-grant skipped are recorded
+  `0166`), and announced after the commit. Sensitive consents an auto-grant skipped are recorded
   on it (`sensitive`); a skipped consent without a crossing is recorded as crossing `sensitive`.
   An escalated call without its matching grant is refused at admission under every profile.
 - The fixed denies stay before the review model under every profile. A directory proposal at a

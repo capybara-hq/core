@@ -634,4 +634,23 @@ describe("model-fake image generation", () => {
     expect(info?.maxImages).toBe(2);
     expect(info?.maxReferenceImages).toBe(0);
   });
+
+  it("honours imageSizes config: the first size is the default", async () => {
+    const imageSizes = [
+      { width: 1024, height: 1024 },
+      { width: 2048, height: 2048 },
+    ];
+    const p = createFakeProvider({
+      kv: memKv(),
+      models: [{ id: "img-3", kind: "image_generation", imageSizes }],
+    });
+    const info = (await p.listModels())[0]?.imageGeneration;
+    expect(info?.sizes).toEqual(imageSizes);
+    expect(info?.defaultSize).toEqual({ width: 1024, height: 1024 });
+    const res = await p.generateImage?.(
+      { ...imgReq("x"), model: "img-3", size: { width: 2048, height: 2048 } },
+      sig(),
+    );
+    expect(res?.images).toHaveLength(1);
+  });
 });

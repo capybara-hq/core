@@ -2509,18 +2509,20 @@ level or agent, `view`) it moves to the new head's back button, else its title.
   it away from them when scrolled); standard elbow connectors (1px `line-strong`) meet every node
   at its vertical centre (half of `row.roomy` below its top: from the parent a `space.2` stub
   straight across to the first child, the vertical line down to the last child's centre, a
-  `space.3` stub into each child); siblings `space.1` apart, newest first (the agent dispatched last on top; the
+  `space.3` stub into each child); siblings `space.2` apart, newest first (the agent dispatched last on top; the
   page passes them in dispatch order, as the kernel's tree gives them). No "main agent" or "level N" labels: position and lines
   show the hierarchy. Four columns (three levels below the root) are wider than the dialog: the
   tree scrolls inside it.
-- **Node**: a compact row-button 336 wide and `row.roomy` (44) high, the same for every node: no
-  box of its own (padding 0 `space.2`, transparent ground, a transparent 1px border, radius `sm`;
-  hover the `hover` ground); line 1 the status dot and the description (`body`, 500, `ink`); line 2
-  exactly "model · time · tokens" (`small`, `muted`, "opus 5.5 · 42分18秒 · 392.7k tokens"),
-  indented past the dot. Both lines are one line; the description ends with an ellipsis, and on
-  line 2 only the model gives way (its own ellipsis) while " · time · tokens" always stays whole.
-  The node's tooltip is the full text. The root (the conversation itself) is a quiet card: 1px
-  `line` on `raised`, no hover, and not a button: it has no summary to open and is never selected.
+- **Node**: a compact card-button 336 wide and `row.roomy` (44) high, the same for the root and
+  every sub-agent (padding 0 `space.2`, 1px `line` border on `raised`, radius `sm`; hover the
+  `hover` ground); line 1 the status dot and the description (`body`, 500, `ink`); line 2
+  exactly "model · time · tokens" (`small`, `muted`, "opus 5.5 · 42分18秒 · 392.7k tokens"; the
+  model is its display name alone, no provider prefix: the map is about the agents, and the
+  prefix would push the model name into an ellipsis), indented past the dot. Both lines are one
+  line; the description ends with an ellipsis, and on line 2 only the model gives way (its own
+  ellipsis) while " · time · tokens" always stays whole. The node's tooltip is the full text.
+  The root (the conversation itself) has no hover and is not a button: it has no summary to open
+  and is never selected.
   The node open at level 2 has the `selected` ground and an `accent` border
   (`aria-current="true"`). Activating a node opens it
   (`onOpen`).
@@ -2529,8 +2531,9 @@ level or agent, `view`) it moves to the new head's back button, else its title.
   `ok`; limit reached `warn` ("已达上限" / "Limit reached": the run ended on its step or time limit
   or its tree's token budget after handing back what it had, not a failure); failed `fail`; stopped
   `faint`. No status words in the tree (the exception to §2.4's icon and text rule): the **legend**
-  at the bottom (`small`, `faint`, `space.2` below the tree, items `space.3` apart) names the six
-  statuses.
+  names the six statuses in a tooltip (one per line, `space.1` apart) on the count line's
+  "图例" / "Legend" trigger at its right end (prose `small`, `faint`, dotted underline; hover or
+  focus opens it); every dot also carries its word as its accessible label.
 - **Background tasks**: the root's own background tasks under the root column (336 wide, `space.3`
   below the tree): a heading "后台任务 · N" / "Background tasks · N" (`small`, `faint`, aligned
   with the rows' dots) and one compact row per task, the nodes' way (`row.dense`, padding 0
@@ -2613,6 +2616,8 @@ States: `tree`, `deep`, `loading`, `failed`, `detail`, `finished`, `stopping`, `
 | agent-node | tree | border-radius | radius.sm |
 | agent-node[data-root=true] | tree | background-color | color.raised |
 | agent-node[data-root=true] | tree | border-top-color | color.line |
+| agent-node[data-depth=2] | tree | background-color | color.raised |
+| agent-node[data-depth=2] | tree | border-top-color | color.line |
 | agent-node[aria-current=true] | tree | border-top-color | color.accent |
 | agent-node[aria-current=true] | tree | background-color | color.selected |
 | agent-node-name | tree | font-size | type.body |
@@ -2626,7 +2631,7 @@ States: `tree`, `deep`, `loading`, `failed`, `detail`, `finished`, `stopping`, `
 | agent-task-tag | tree | font-size | type.micro |
 | agent-task-tag | tree | background-color | color.selected |
 | agent-task-time | tree | color | color.faint |
-| agent-legend | tree | color | color.faint |
+| agent-legend-trigger | tree | color | color.faint |
 | agent-node | deep | height | row.roomy |
 | agent-node[data-depth=3] | deep | width | 336 |
 | agent-map-head | loading | border-bottom-color | color.line-soft |

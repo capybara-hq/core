@@ -28,6 +28,15 @@ export const ERROR_CODES = {
   "auth.rate_limited": 429,
   "auth.session_required": 403,
   "auth.password_change_required": 403,
+  /** Native-app sign-in: the redirect URI is not one of `auth.appRedirectUris` (exact match). */
+  "app_auth.redirect_uri_invalid": 400,
+  /**
+   * Native-app sign-in: the code is unknown, used, expired, for another redirect URI or verifier,
+   * or its account or browser session is no longer valid; start the sign-in again.
+   */
+  "app_auth.code_invalid": 400,
+  /** Native-app sign-in needs `http.publicUrl` (the issuer the app checks). */
+  "app_auth.unavailable": 503,
   "token.not_found": 404,
   "org.not_found": 404,
   "org.creation_disabled": 403,
@@ -177,6 +186,16 @@ export const ERROR_CODES = {
    * a removed theme's versions are still served.
    */
   "theme.not_found": 404,
+  /** A platform icon upload of the wrong type for its purpose (mobile layout spec §10.2.1). */
+  "platform_icon.invalid_type": 400,
+  /** A PNG platform icon that is not exactly 512 × 512 (§10.2.1). */
+  "platform_icon.invalid_size": 400,
+  /** A platform icon file over 1 MiB (§10.2.1). */
+  "platform_icon.too_large": 413,
+  /** No object store to keep or serve the platform icon in (§10.2.1). */
+  "platform_icon.storage_unavailable": 503,
+  /** No platform icon of that purpose is uploaded, or the URL's hash is not the current one. */
+  "platform_icon.not_found": 404,
   /**
    * An `extension.client` section whose extension manifest lacks `permissions.client: true`
    * (client extensions spec §5.4: client code is always declared and reviewed).

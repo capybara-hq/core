@@ -9,12 +9,11 @@ import { createDb } from "../../src/db/pool.js";
 import { KERNEL_MIGRATIONS_DIR } from "../../src/kernel.js";
 
 /**
- * 0163_device_network_columns.sql (approval-only profiles design, "Migration"): a cloud device gets
- * its own sandbox network choice (`network_mode`, `network_hosts`), copied from the B1 snapshot's
- * outer network where that was an allowlist (never wider); an open or missing snapshot follows the
- * org (null). Migrates to the migration before it, seeds devices, runs 0163, then again by hand.
+ * 0163_read_attachments.sql: the attachments purpose check gains 'read', and conversations get a
+ * partial index on deleted_at for the read purge. Migrates up to the file (where 'read' is
+ * refused), applies it, then runs it again (idempotent).
  */
-const FILE = "0163_device_network_columns.sql";
+const FILE = "0163_read_attachments.sql";
 
 let pg: Awaited<ReturnType<typeof startTestPostgres>>;
 let db: ReturnType<typeof createDb>;
@@ -29,47 +28,25 @@ const copyMigrations = (pred: (f: string) => boolean) => {
   return dir;
 };
 
-const runFile = async () => {
-  const text = readFileSync(join(KERNEL_MIGRATIONS_DIR, FILE), "utf8");
-  await sql.raw(`set search_path to capybara; ${text}`).execute(db);
-};
+const insert = (id: string, purpose: string) =>
+  sql`insert into capybara.attachments
+    (id, org_id, account_id, name, content_type, size, object_key, status, purpose)
+    values (${id}, 'o1', 'a1', 'x.png', 'image/png', 1, ${`k/${id}`}, 'ready', ${purpose})`.execute(
+    db,
+  );
 
-/** Seeds: the outer network snapshot (null: not snapshotted) and the source. */
-const SEEDS: Record<string, { source: "cloud" | "local"; outer: unknown }> = {
-  d_allow: {
-    source: "cloud",
-    outer: { kind: "allowlist", hosts: ["github.com", "*.npmjs.org"] },
-  },
-  d_empty: { source: "cloud", outer: { kind: "allowlist", hosts: [] } },
-  d_open: { source: "cloud", outer: { kind: "open-public", hosts: [] } },
-  d_none: { source: "cloud", outer: null },
-  d_badhosts: { source: "cloud", outer: { kind: "allowlist", hosts: "github.com" } },
-  d_mixedhosts: { source: "cloud", outer: { kind: "allowlist", hosts: ["github.com", 7] } },
-  d_local: { source: "local", outer: null },
-};
-
-const rowOf = async (id: string) =>
+const deletedIndex = async () =>
   (
-    await sql<{
-      network_mode: string | null;
-      network_hosts: unknown;
-    }>`select network_mode, network_hosts from capybara.devices where id = ${id}`.execute(db)
-  ).rows[0];
+    await sql<{ indexdef: string }>`select indexdef from pg_indexes
+      where schemaname = 'capybara' and indexname = 'conversations_deleted_idx'`.execute(db)
+  ).rows;
 
 beforeAll(async () => {
   pg = await startTestPostgres();
   db = createDb(pg.url, 3);
   await migrate(pg.url, { schema: "capybara", dir: copyMigrations((f) => f < FILE) });
   await sql`insert into capybara.accounts (id, display_name) values ('a1', 'A')`.execute(db);
-  await sql`insert into capybara.orgs (id, slug, name, created_by) values ('o1', 'o1', 'O', 'a1')`.execute(
-    db,
-  );
-  for (const [id, seed] of Object.entries(SEEDS)) {
-    await sql`insert into capybara.devices (id, org_id, owner_kind, owner_account_id, source, outer_network)
-      values (${id}, 'o1', 'personal', 'a1', ${seed.source},
-        ${seed.outer === null ? null : JSON.stringify(seed.outer)}::jsonb)`.execute(db);
-  }
-  await migrate(pg.url, { schema: "capybara", dir: copyMigrations((f) => f <= FILE) });
+  await sql`insert into capybara.orgs (id, slug, name) values ('o1', 'o1', 'O')`.execute(db);
 });
 
 afterAll(async () => {
@@ -78,40 +55,25 @@ afterAll(async () => {
   for (const d of dirs) rmSync(d, { recursive: true, force: true });
 });
 
-describe("0163 device network columns", () => {
-  it("copies an allowlist outer network with its hosts", async () => {
-    expect(await rowOf("d_allow")).toEqual({
-      network_mode: "allowlist",
-      network_hosts: ["github.com", "*.npmjs.org"],
-    });
-    // an empty allowlist ran with the network closed
-    expect(await rowOf("d_empty")).toEqual({ network_mode: "none", network_hosts: [] });
+describe("0163_read_attachments", () => {
+  it("refuses 'read' before the file and accepts it after", async () => {
+    await expect(insert("r0", "read")).rejects.toThrow(/attachments_purpose_check/);
+    expect(await deletedIndex()).toEqual([]);
+    await migrate(pg.url, { schema: "capybara", dir: copyMigrations((f) => f <= FILE) });
+    await insert("r1", "read");
+    for (const p of ["chat", "skill-package", "agent-avatar"]) await insert(`p-${p}`, p);
+    await expect(insert("bad", "other")).rejects.toThrow(/attachments_purpose_check/);
+    const [idx] = await deletedIndex();
+    expect(idx?.indexdef).toMatch(/\(deleted_at\) WHERE \(deleted_at IS NOT NULL\)/);
   });
 
-  it("an allowlist whose hosts are unreadable becomes a closed network (never wider)", async () => {
-    expect(await rowOf("d_badhosts")).toEqual({ network_mode: "none", network_hosts: [] });
-    expect(await rowOf("d_mixedhosts")).toEqual({ network_mode: "none", network_hosts: [] });
-  });
-
-  it("an open, missing or local snapshot follows the org", async () => {
-    for (const id of ["d_open", "d_none", "d_local"])
-      expect(await rowOf(id)).toEqual({ network_mode: null, network_hosts: [] });
-  });
-
-  it("refuses an unknown mode or a non-array host list", async () => {
-    await expect(
-      sql`update capybara.devices set network_mode = 'wide' where id = 'd_none'`.execute(db),
-    ).rejects.toThrow();
-    await expect(
-      sql`update capybara.devices set network_hosts = '"x"'::jsonb where id = 'd_none'`.execute(db),
-    ).rejects.toThrow();
-  });
-
-  it("is idempotent and never overwrites a later choice", async () => {
-    await sql`update capybara.devices set network_mode = 'open' where id = 'd_allow'`.execute(db);
-    const before = await Promise.all(Object.keys(SEEDS).map(rowOf));
-    await runFile();
-    expect(await Promise.all(Object.keys(SEEDS).map(rowOf))).toEqual(before);
-    expect((await rowOf("d_allow"))?.network_mode).toBe("open");
+  it("is idempotent", async () => {
+    const text = readFileSync(join(KERNEL_MIGRATIONS_DIR, FILE), "utf8");
+    await sql.raw(`set search_path to capybara; ${text}`).execute(db);
+    await insert("r2", "read");
+    const n = await sql<{ n: string }>`select count(*) as n from capybara.attachments
+      where purpose = 'read'`.execute(db);
+    expect(Number(n.rows[0]?.n)).toBe(2);
+    expect(await deletedIndex()).toHaveLength(1);
   });
 });

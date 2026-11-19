@@ -63,6 +63,7 @@ beforeAll(async () => {
           "model-fake": {
             models: [
               { id: "fake-1" },
+              { id: "fake-vision", vision: true },
               { id: "fake-embed", kind: "embedding", dimensions: [4] },
               { id: "fake-image", kind: "image_generation" },
               { id: "fake-image-1", kind: "image_generation", maxImages: 1, maxReferenceImages: 0 },
@@ -158,6 +159,7 @@ const KERNEL = [
   "subagent_standard",
   "subagent_capable",
   "image",
+  "vision",
 ];
 
 describe("purpose list", () => {
@@ -186,6 +188,12 @@ describe("purpose list", () => {
         purpose: "image",
         kind: "image_generation",
         label: { zh: "图片生成", en: "Image generation" },
+      },
+      {
+        purpose: "vision",
+        kind: "chat",
+        requires: { vision: true },
+        label: { zh: "识图", en: "Vision" },
       },
     ]);
     const views = await list(ent, adminUrl());
@@ -449,6 +457,54 @@ describe("kinds and disabled models (spec B §5.3)", () => {
     await expect(purposes.resolve(other, "title")).rejects.toMatchObject({
       code: "model.unconfigured",
     });
+  });
+});
+
+describe("vision purpose", () => {
+  const FAKE_1 = { model: { provider: "model-fake", model: "fake-1" }, params: {} };
+  const VISION = { model: { provider: "model-fake", model: "fake-vision" }, params: {} };
+
+  it("vision purpose refuses a chat model without vision on save", async () => {
+    for (const [req, url] of [
+      [ent, adminUrl("vision")],
+      [admin, orgUrl("vision")],
+    ] as const) {
+      const res = await req({ method: "PUT", url, payload: { target: FAKE_1 } });
+      expect(res.statusCode, res.body).toBe(400);
+      expect(errCode(res)).toBe("validation_failed");
+      expect(res.body).toContain("target.model");
+    }
+  });
+
+  it("vision purpose resolves a vision model", async () => {
+    expect(await put(ent, adminUrl("vision"), VISION)).toMatchObject({
+      requires: { vision: true },
+      effective: VISION,
+    });
+    expect(await k.app.get(ModelPurposesService).resolve(orgId, "vision")).toEqual(VISION);
+  });
+
+  it("a vision target that loses vision is unusable", async () => {
+    await put(ent, adminUrl("vision"), VISION);
+    const purposes = k.app.get(ModelPurposesService);
+    const availability = async () =>
+      (await purposes.availability(orgId)).find((a) => a.purpose === "vision");
+    expect(await availability()).toEqual({ purpose: "vision", available: true });
+    // the org keeps its own copy of model-fake's config, which re-declares the model without vision
+    for (const [url, payload] of [
+      [`/api/v1/orgs/${orgId}/extensions/model-fake`, { enabled: true }],
+      [
+        `/api/v1/orgs/${orgId}/extensions/model-fake/overrides`,
+        { values: { models: [{ id: "fake-vision", vision: false }] } },
+      ],
+    ] as const) {
+      const res = await owner({ method: "PUT", url, payload });
+      expect(res.statusCode, res.body).toBe(200);
+    }
+    await expect(purposes.resolve(orgId, "vision")).rejects.toMatchObject({
+      code: "model.unconfigured",
+    });
+    expect(await availability()).toEqual({ purpose: "vision", available: false });
   });
 });
 

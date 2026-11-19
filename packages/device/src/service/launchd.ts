@@ -77,12 +77,20 @@ function unxml(s: string): string {
   return s.replaceAll("&lt;", "<").replaceAll("&gt;", ">").replaceAll("&amp;", "&");
 }
 
-/** The bin script a plist runs (the second `ProgramArguments` string), or undefined. */
-export function plistBinPath(content: string): string | undefined {
+function plistProgramArguments(content: string): string[] | undefined {
   const args = /<key>ProgramArguments<\/key>\s*<array>([\s\S]*?)<\/array>/.exec(content)?.[1];
   if (args === undefined) return undefined;
-  const strings = [...args.matchAll(/<string>([\s\S]*?)<\/string>/g)].map((m) => unxml(m[1] ?? ""));
-  return strings[1];
+  return [...args.matchAll(/<string>([\s\S]*?)<\/string>/g)].map((m) => unxml(m[1] ?? ""));
+}
+
+/** The bin script a plist runs (the second `ProgramArguments` string), or undefined. */
+export function plistBinPath(content: string): string | undefined {
+  return plistProgramArguments(content)?.[1];
+}
+
+/** The node binary a plist runs (the first `ProgramArguments` string), or undefined. */
+export function plistNodePath(content: string): string | undefined {
+  return plistProgramArguments(content)?.[0];
 }
 
 export const SERVICE_LOG_MAX_BYTES = 10 * 1024 * 1024;

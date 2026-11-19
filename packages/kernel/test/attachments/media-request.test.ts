@@ -129,12 +129,27 @@ describe("buildModelRequest 解析媒体引用", () => {
     ]);
   });
 
+  it("an image fetched as its re-encoded copy goes out with the copy's media type", () => {
+    const jpeg = new Uint8Array([0xff, 0xd8, 0xff, 1, 2]);
+    const m = media([[IMG, { mediaType: "image/jpeg", data: jpeg }]]);
+    const { request } = build(SEE, logWith(content.slice(0, 2)), m);
+    expect(userContent(request.messages)[1]).toEqual({
+      type: "image",
+      mediaType: "image/jpeg",
+      name: "cat.png",
+      source: { kind: "base64", data: Buffer.from(jpeg).toString("base64") },
+    });
+  });
+
   it("模型不支持：只有文字占位，绝不带字节；文本文件内联", () => {
     const { request } = build(BLIND, logWith(content));
     const blocks = userContent(request.messages);
     expect(blocks).toEqual([
       { type: "text", text: "see these" },
-      { type: "text", text: '[Attached image "cat.png" — this model cannot view images.]' },
+      {
+        type: "text",
+        text: `[Attached image "cat.png" — this model cannot view images. Read with file_id ${IMG} sends it to the organization's vision model, if one is set.]`,
+      },
       {
         type: "text",
         text: '[Attached document "spec.pdf" — this model cannot read PDF documents.]',
@@ -250,7 +265,7 @@ describe("占位与内联的细节", () => {
     const [b] = userContent(build(BLIND, log).request.messages);
     expect(b).toEqual({
       type: "text",
-      text: `[Attached image ${JSON.stringify(name)} — this model cannot view images.]`,
+      text: `[Attached image ${JSON.stringify(name)} — this model cannot view images. Read with file_id ${IMG} sends it to the organization's vision model, if one is set.]`,
     });
   });
 
@@ -513,6 +528,42 @@ describe("供应商限制（Ruling M8 / I1）", () => {
     });
     expect(blocks[2]?.type).toBe("document");
     expect(meta.media?.find((m) => m.attachmentId === IMG)?.outcome).toBe("excluded");
+  });
+
+  it("a provider rejection of a Read image writes media_excluded and the next request renders it as rejected", () => {
+    const READ = randomUUID();
+    const log = new Log();
+    log.user("look");
+    log.assistant([{ type: "tool_call", id: "c1", name: "Read", input: {} }], "tool_use", 1);
+    log.add({
+      type: "tool_result",
+      payload: {
+        step: 1,
+        callId: "c1",
+        toolKey: "Read",
+        content: "Read image shot.png",
+        isError: false,
+        media: [{ attachmentId: READ, name: "shot.png", mediaType: "image/png", size: 7 }],
+      },
+    });
+    const m = new Map<string, MediaBytes | null>([
+      [READ, { mediaType: "image/png", data: PNG_BYTES }],
+    ]);
+    // the request sends the bytes and records them: what the runtime excludes on a rejection
+    const sent = build(SEE, log, m);
+    expect(sent.meta.media).toEqual([{ attachmentId: READ, outcome: "bytes" }]);
+    log.add({
+      type: "media_excluded",
+      payload: { attachmentIds: [READ], reason: "provider_rejected" },
+    });
+    expect(planMedia(log.events, SEE, infoOf(m), undefined, 6).fetch).not.toContain(READ);
+    const { request, meta } = build(SEE, log, m);
+    expect(request.messages.at(-1)?.content).toEqual([
+      { type: "tool_result", callId: "c1", content: "Read image shot.png", isError: false },
+      { type: "text", text: `Image from Read (file_id ${READ}):` },
+      { type: "text", text: '[Attachment "shot.png" was rejected by the model provider.]' },
+    ]);
+    expect(meta.media).toEqual([{ attachmentId: READ, outcome: "excluded" }]);
   });
 });
 

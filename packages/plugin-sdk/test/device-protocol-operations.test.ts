@@ -528,3 +528,33 @@ describe("owner reports (B2)", () => {
     );
   });
 });
+describe("writeFile payload check", () => {
+  const write = (dataB64: string) => () =>
+    parseDeviceFrame(frame("writeFile", { scope, path: "/work/f", dataB64 }), "kernel");
+  it("accepts a valid base64 payload larger than 5 MB", () => {
+    const bytes = Buffer.alloc(6 * 1024 * 1024 + 1, 7);
+    // repeated parses: the check must not depend on a regex engine's backtracking stack
+    for (let i = 0; i < 3; i++) expect(write(bytes.toString("base64"))).not.toThrow();
+  });
+  it("accepts canonical padding and the empty payload", () => {
+    for (const ok of ["", "YWJj", "YWI=", "YQ==", "YWJjZA==", "+/+/"])
+      expect(write(ok)).not.toThrow();
+  });
+  it("refuses invalid characters, bad lengths and misplaced padding", () => {
+    for (const bad of [
+      "YWJ",
+      "YWJjZ",
+      "Y===",
+      "====",
+      "YW=j",
+      "=YWJ",
+      "YQ==YWJj",
+      "YW J",
+      "YW-j",
+      "YW_j",
+      "YWJj\n",
+      `${"A".repeat(6 * 1024 * 1024)}*AAA`,
+    ])
+      expect(write(bad), JSON.stringify(bad.slice(0, 20))).toThrow(DeviceProtocolError);
+  });
+});

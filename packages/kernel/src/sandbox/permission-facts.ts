@@ -290,8 +290,8 @@ export class PermissionFacts {
    * The device's lifecycle policy: the kernel-internal mode tier (`auto` / `sandbox`, recorded with
    * a cloud instance's applied limits and deciding the working root's reach) and the network a
    * cloud instance is created with. A cloud device's network is its device sandbox network
-   * ({@link deviceSandbox}); the B1 snapshot's `outer_network` is no longer read: migrations 0163
-   * and 0165 and the snapshot writer copy an allowlist snapshot into the device's own network
+   * ({@link deviceSandbox}); the B1 snapshot's `outer_network` is no longer read: migrations 0165
+   * and 0167 and the snapshot writer copy an allowlist snapshot into the device's own network
    * choice (`network_mode`, `network_hosts`).
    */
   async devicePolicy(device: { orgId: string; deviceId?: string }): Promise<EffectiveDevicePolicy> {
@@ -947,7 +947,7 @@ export function networkOfSandbox(box: DeviceSandbox): DeviceNetwork {
 
 /**
  * A cloud device's own sandbox network: its stored choice (`network_mode`, `network_hosts`; null
- * follows the org). A B1 snapshot is copied into it by migrations 0163 and 0165, the snapshot
+ * follows the org). A B1 snapshot is copied into it by migrations 0165 and 0167, the snapshot
  * writer and every publication (`copyCloudSnapshotNetworks`), never read here.
  */
 export function cloudOwnNetwork(

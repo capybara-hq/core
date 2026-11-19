@@ -190,6 +190,19 @@ async function startAndWait(
   return { runId, event };
 }
 
+/**
+ * Puts a waiting run back to `running`, the moment a worker has paused but not yet set `waiting`.
+ * The time it already waited is credited to `waited_ms` as a resume does: dropping it would count
+ * that time against `maxRunSeconds` (3 s here), and a slow machine would fail the resumed run on
+ * its deadline before the tool runs again.
+ */
+async function backToRunning(runId: string): Promise<void> {
+  await sql`UPDATE capybara.runs SET status = 'running',
+      waited_ms = waited_ms + COALESCE(floor(extract(epoch FROM now() - waiting_since) * 1000), 0)::bigint,
+      waiting_since = NULL
+    WHERE id = ${runId}`.execute(raw);
+}
+
 const approvalIdOf = (e: ConversationEvent) =>
   (e as Extract<ConversationEvent, { type: "approval_requested" }>).payload.approvalId;
 const questionIdOf = (e: ConversationEvent) =>
@@ -385,10 +398,8 @@ describe("审批等待", () => {
     const convId = await createConv(req, orgId, agentId);
     const { runId, event } = await startAndWait(convId, ECHO, "approval_requested");
     const id = approvalIdOf(event);
-    // 构造「worker 刚暂停、尚未置 waiting」的时刻：运行退回 running
-    await sql`UPDATE capybara.runs SET status = 'running', waiting_since = NULL WHERE id = ${runId}`.execute(
-      raw,
-    );
+    // the moment a worker has paused but not yet set `waiting`: the run is back to running
+    await backToRunning(runId);
     expect((await decide(id, "approve")).statusCode).toBe(200);
     await sleep(200);
     // 决定的续跑落空：运行仍是 running，没有续跑
@@ -414,9 +425,7 @@ describe("审批等待", () => {
       "question_asked",
     );
     const qid = questionIdOf(event);
-    await sql`UPDATE capybara.runs SET status = 'running', waiting_since = NULL WHERE id = ${runId}`.execute(
-      raw,
-    );
+    await backToRunning(runId);
     await k.app.get(QuestionsService).answer(qid, ownerId, { color: "blue" });
     await sleep(200);
     expect(await runStatus(runId)).toBe("running");

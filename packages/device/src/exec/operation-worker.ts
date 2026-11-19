@@ -43,6 +43,7 @@ import {
   stageRuntimeSource,
 } from "./runtime-source.js";
 import { ENV_NAME_RE, OutputCap, restrictedToolHomes, shellQuote } from "./shared.js";
+import { recordTransferTiming } from "./transfer-timing.js";
 export interface TrustedLaunchIdentity {
   pid: number;
   token: string;
@@ -616,6 +617,7 @@ export async function startMacOperationWorker(
   if (signal.aborted) abort();
   let sealed: SealedRuntime | undefined;
   let privateTmp: string | undefined;
+  const preparedAt = performance.now();
   const completion = (async () => {
     try {
       // only an escalated call (the device filesystem with the environment network) is unwrapped
@@ -860,6 +862,7 @@ export async function startMacOperationWorker(
         const transport = await import("./native-helper-client.js");
         const invocation = transport.nativeHelperInvocation(roots, launch);
         prepared = await wrap([invocation.command, ...invocation.args].map(shellQuote).join(" "));
+        recordTransferTiming(request.native.method, "prepare", performance.now() - preparedAt);
         return await runNativeHelper(
           {
             ...request.native,

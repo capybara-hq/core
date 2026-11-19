@@ -488,7 +488,7 @@ export class CloudPermissionSnapshots {
 }
 
 /**
- * The device's own sandbox network columns for an allowlist snapshot, as migrations 0163 and 0165
+ * The device's own sandbox network columns for an allowlist snapshot, as migrations 0165 and 0167
  * copy them: its hosts as an allowlist, or `none` (closed) for an empty one; nothing for an open
  * one, which follows the org.
  */

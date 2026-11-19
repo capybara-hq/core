@@ -22,6 +22,7 @@ const PUBLIC_ROUTES = new Set([
   "POST /api/v1/auth/logout",
   "GET /api/v1/invitations/:token",
   "POST /api/v1/invitations/:token/accept",
+  "GET /api/v1/meta",
   "GET /api/v1/setup",
   "POST /api/v1/setup",
   "GET /api/v1/oauth/callback",
@@ -32,9 +33,14 @@ const PUBLIC_ROUTES = new Set([
   "GET /api/v1/themes/:id/:version/:revision/theme.css",
   "GET /api/v1/themes/:id/:version/assets/:file",
   "GET /api/v1/platform/theme",
+  // Mobile layout spec §10.2.1: the platform icon for the manifest, favicons and native clients,
+  // before sign-in; an icon is not sensitive
+  "GET /api/v1/platform/icon/:purpose",
   // Device sign-in (environments spec §13.3): the program has no credential yet
   "POST /api/v1/device/authorize",
   "POST /api/v1/device/token",
+  // Native-app sign-in (desktop client spec §6.5): the app has only its one-time code
+  "POST /api/v1/app-auth/token",
   // Gateway role: raw Fastify route outside Nest (P-4); the channel plugin verifies signatures
   "POST /channels/webhook/:connectionId",
   // Gateway role: the device WebSocket checks its machine credential itself (environments §13.4)

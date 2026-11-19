@@ -1,5 +1,5 @@
 -- The device sandbox no longer reads a cloud device's B1 snapshot network (`outer_network`), so
--- the copy 0163 made runs once more for cloud devices snapshotted after it (approval-only profiles
+-- the copy 0165 made runs once more for cloud devices snapshotted after it (approval-only profiles
 -- design, "Migration"): a device still following its org whose snapshot ran on an allowlist gets
 -- `network_mode = 'allowlist'` and the snapshot's hosts as `network_hosts` when they are a
 -- non-empty array of strings; an empty or unreadable allowlist ran closed and becomes `none`.

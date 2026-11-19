@@ -11,6 +11,7 @@ import {
 } from "react";
 import { Button, IconButton } from "../controls/button";
 import { formatDuration } from "../display/duration";
+import { Tooltip } from "../display/tooltip";
 import { Icon } from "../icons/icon";
 import { BoxScope } from "../layout/box";
 import { useFocusReturn } from "../overlays/focus-return";
@@ -23,7 +24,7 @@ import { fillCopy } from "./tool-copy";
 
 // The agent map (spec §6.16.28, agent map spec §9): a dialog over the conversation page whose
 // level 1 is the tree of agents, columns by depth with elbow connectors, every node one compact
-// row of a fixed height, status only as a dot (with a legend), and the root's background tasks
+// row of a fixed height, status only as a dot (the legend in a tooltip), and the root's background tasks
 // under its column; level 2 is one agent's summary (AgentDetail), level 3 its transcript
 // (TranscriptFrame).
 
@@ -285,7 +286,7 @@ const depthOf = (n: AgentMapNode): number => 1 + Math.max(0, ...n.children.map(d
 /**
  * Level 1 of the agent map (§6.16.28): the count line, the tree (columns by depth, compact rows,
  * the parent level with its first child, elbow connectors), the root's background tasks under
- * the root column and the status legend.
+ * the root column; the status legend is a tooltip on the count line.
  */
 export function AgentMapTree({
   root,
@@ -383,9 +384,33 @@ export function AgentMapTree({
   const backgroundLabel = fillCopy(t("agentMap.background"), { n: background.length });
   return (
     <div className="cb-amap" data-part="agent-map-body">
-      <p className="cb-amap-count" data-part="agent-map-count">
-        {count}
-      </p>
+      <div className="cb-amap-count-line">
+        <p className="cb-amap-count" data-part="agent-map-count">
+          {count}
+        </p>
+        {/* the status colours, on demand: every dot also carries its word as its label */}
+        <Tooltip
+          side="bottom"
+          content={
+            <ul
+              className="cb-amap-legend"
+              data-part="agent-legend"
+              aria-label={t("agentMap.legend")}
+            >
+              {STATUSES.map((s) => (
+                <li key={s} className="cb-amap-legend-item">
+                  <span className="cb-amap-dot" data-status={s} aria-hidden="true" />
+                  {t(`agentMap.status.${s}`)}
+                </li>
+              ))}
+            </ul>
+          }
+        >
+          <button type="button" className="cb-amap-legend-trigger" data-part="agent-legend-trigger">
+            {t("agentMap.legend")}
+          </button>
+        </Tooltip>
+      </div>
       <section
         className="cb-amap-canvas"
         data-part="agent-map"
@@ -408,14 +433,6 @@ export function AgentMapTree({
           </section>
         ) : null}
       </section>
-      <ul className="cb-amap-legend" data-part="agent-legend" aria-label={t("agentMap.legend")}>
-        {STATUSES.map((s) => (
-          <li key={s} className="cb-amap-legend-item">
-            <span className="cb-amap-dot" data-status={s} aria-hidden="true" />
-            {t(`agentMap.status.${s}`)}
-          </li>
-        ))}
-      </ul>
     </div>
   );
 }

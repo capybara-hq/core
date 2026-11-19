@@ -3,7 +3,7 @@
   "schemaVersion": 1,
   "marketplace": {
     "url": "https://github.com/capybara-hq/plugins.git",
-    "commit": "a9719690e38ef72258b3dd571f5c48f173c6b05e"
+    "commit": "fa745394ab347eeb1d59d2ba185328c2088a7e8b"
   },
   "plugins": [
     {
@@ -58,8 +58,8 @@
       "name": "ark",
       "source": "npm",
       "npm": "@capybara-hq/plugin-ark",
-      "version": "0.1.0-rc.10",
-      "integrity": "sha512-8SRYcBBb/wROJX8ByBisL/SKNg7z4RvWFq8X7L+944QBzSed4YHwNATLRDTL4pW1l6VIC2rr+0DeSBCjmsF4Qw==",
+      "version": "0.1.0-rc.11",
+      "integrity": "sha512-rE0tPudbL0AjY9f6cTdM0wSFtyhWsKOaEFy6GOZ79wISw9F5Y0ap3RVaiaeW9c0lZPxKdhqIzi18xARu/A1jVQ==",
       "required": false
     },
     {

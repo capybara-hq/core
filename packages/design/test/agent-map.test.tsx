@@ -77,7 +77,7 @@ describe("AgentMapTree (§6.16.28)", () => {
     );
   });
 
-  it("status is a dot with an accessible label, no status word", () => {
+  it("status is a dot with an accessible label, no status word", async () => {
     wrap(<AgentMapTree root={root} background={[]} onOpen={() => {}} now={NOW} />);
     const words = ["运行中", "等待", "完成", "已达上限", "失败", "已停止"];
     for (const n of nodes()) {
@@ -91,10 +91,12 @@ describe("AgentMapTree (§6.16.28)", () => {
     expect(waiting?.querySelector('[data-part="agent-dot"]')?.getAttribute("data-status")).toBe(
       "waiting",
     );
-    // The legend names every colour once.
-    const legend = screen.getByRole("list", { name: "图例" });
+    // The legend is a tooltip on the count line's trigger and names every colour once.
+    expect(screen.queryByRole("list", { name: "图例" })).toBeNull();
+    await userEvent.hover(screen.getByRole("button", { name: "图例" }));
+    const [legend] = await screen.findAllByRole("list", { name: "图例" });
     expect(
-      within(legend)
+      within(legend as HTMLElement)
         .getAllByRole("listitem")
         .map((li) => li.textContent),
     ).toEqual(words);
@@ -222,7 +224,7 @@ describe("AgentMapTree (§6.16.28)", () => {
     );
     // siblings space.1 apart, the gap under each but the last (so every node tops its box)
     expect(rule(".cb-amap-kid")).not.toMatch(/padding/);
-    expect(rule(".cb-amap-kid:not(:last-child)")).toMatch(/padding-bottom: var\(--cb-space-1\);/);
+    expect(rule(".cb-amap-kid:not(:last-child)")).toMatch(/padding-bottom: var\(--cb-space-2\);/);
   });
 
   it("draws siblings newest first: the agent dispatched last is on top", () => {

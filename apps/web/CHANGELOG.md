@@ -1,5 +1,47 @@
 # @capybara-hq/web
 
+## 0.1.0-rc.63
+
+### Minor Changes
+
+- 1835433: The web is an installable PWA: `/manifest.webmanifest` carries the deployment's name
+  (`platform.name`, "Capybara" unset) and platform icon (the app and maskable icons, else the
+  Capybara set the web ships), and the page title, the iOS web app title, the favicon and the
+  apple-touch-icon follow them. A signed-out browser may read the manifest and the two default PNG
+  icons (the sign-in proxy skips exactly those names). The super admin's deployment settings gain
+  应用图标 / App icon: upload the app icon, its maskable variant and the SVG favicon, or restore the
+  default; the `/api` proxy admits 2 MiB for the icon upload.
+  
+  The design system exports `PAGE_BACKGROUND` (the page background per theme) for what cannot read a
+  CSS variable.
+
+### Patch Changes
+
+- 72e5e94: New page `/apps/authorize`: after signing in, you confirm (or cancel) signing the Capybara desktop app in
+  from the browser, then return to the app.
+- Updated dependencies [1835433]
+  - @capybara-hq/design@0.2.0-rc.23
+
+## 0.1.0-rc.62
+
+No changes in this release.
+
+## 0.1.0-rc.61
+
+### Patch Changes
+
+- d91ad92: Agent map: every node (root and sub-agents) is the same bordered compact card, siblings `space.2`
+  apart; the status legend moves into a tooltip on the count line; line 2 shows the model's display
+  name alone, so it no longer collapses into an ellipsis behind the provider prefix.
+- 8b3450b: The purpose list no longer warns that extensions cannot call models yet under an extension's
+  purpose: extensions call `ctx.models.embed` / `generateImage` with their declared purposes.
+- Updated dependencies [d91ad92]
+  - @capybara-hq/design@0.2.0-rc.22
+
+## 0.1.0-rc.60
+
+No changes in this release.
+
 ## 0.1.0-rc.59
 
 ### Patch Changes

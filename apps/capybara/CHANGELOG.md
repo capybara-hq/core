@@ -1,5 +1,59 @@
 # @capybara-hq/capybara
 
+## 0.1.0-rc.63
+
+### Patch Changes
+
+- 872d26b: Native apps sign in through the browser: `POST /api/v1/app-auth/authorize` (a signed-in person's
+  consent) issues a one-time code bound to a PKCE S256 challenge and a redirect URI from the new
+  `auth.appRedirectUris` (default `["capybara://auth/callback"]`), and `POST /api/v1/app-auth/token`
+  exchanges it once, within 60 s, for an ordinary web session of the app's own.
+- 0d10b80: `GET /api/v1/meta` returns the platform icon URL when one is uploaded, and reports
+  `features.appSignIn` only when `http.publicUrl` is set.
+- ddc2f3c: Add the `platform.name` config field and the public `GET /api/v1/meta` discovery route (platform
+  name, icon, device protocol range, features) for native clients and the installed web app.
+- 1835433: The web is an installable PWA: `/manifest.webmanifest` carries the deployment's name
+  (`platform.name`, "Capybara" unset) and platform icon (the app and maskable icons, else the
+  Capybara set the web ships), and the page title, the iOS web app title, the favicon and the
+  apple-touch-icon follow them. A signed-out browser may read the manifest and the two default PNG
+  icons (the sign-in proxy skips exactly those names). The super admin's deployment settings gain
+  应用图标 / App icon: upload the app icon, its maskable variant and the SVG favicon, or restore the
+  default; the `/api` proxy admits 2 MiB for the icon upload.
+  
+  The design system exports `PAGE_BACKGROUND` (the page background per theme) for what cannot read a
+  CSS variable.
+- Updated dependencies [872d26b]
+- Updated dependencies [0d10b80]
+- Updated dependencies [6b3e60e]
+- Updated dependencies [ddc2f3c]
+  - @capybara-hq/kernel@0.1.0-rc.54
+
+## 0.1.0-rc.62
+
+### Patch Changes
+
+- Updated dependencies [5bfad28]
+  - @capybara-hq/kernel@0.1.0-rc.53
+
+## 0.1.0-rc.61
+
+### Patch Changes
+
+- d91ad92: Agent map: every node (root and sub-agents) is the same bordered compact card, siblings `space.2`
+  apart; the status legend moves into a tooltip on the count line; line 2 shows the model's display
+  name alone, so it no longer collapses into an ellipsis behind the provider prefix.
+- 8b3450b: The purpose list no longer warns that extensions cannot call models yet under an extension's
+  purpose: extensions call `ctx.models.embed` / `generateImage` with their declared purposes.
+
+## 0.1.0-rc.60
+
+### Patch Changes
+
+- a01098a: Images: `Read` shows images, the new `vision` model purpose reads them for models without vision,
+  and `GenerateImage` returns standard-size images by default.
+- Updated dependencies [a01098a]
+  - @capybara-hq/kernel@0.1.0-rc.52
+
 ## 0.1.0-rc.59
 
 ### Patch Changes

@@ -560,7 +560,7 @@ The migration never widens.
   - Copy the snapshot's `outer_network` where it was an allowlist (`network_mode: allowlist` with its
     hosts as `network_hosts` when they are a non-empty array of strings; an empty or unreadable list
     ran closed and becomes `network_mode: none`). Since a device list only narrows, this is exact and
-    never widens. Migration `0165` repeats the copy, the B1 snapshot writer copies new snapshots, and
+    never widens. Migration `0167` repeats the copy, the B1 snapshot writer copies new snapshots, and
     the device sandbox reads `outer_network` while a device has no `network_mode` (a snapshot an
     older replica writes later).
   - **`sandbox.limits.orgHosts: within` and other allowlist devices:** at the publication's version

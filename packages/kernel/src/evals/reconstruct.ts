@@ -163,6 +163,11 @@ export interface ReconstructOptions {
   media?: ReadonlyMap<string, MediaBytes | null>;
   /** The request's media byte budget; defaults to the recorded `mediaBudgetBytes` (recorded only when the request had media). */
   mediaBudgetBytes?: number;
+  /**
+   * The Read-image window; defaults to the recorded `readImagesPerRequest` (recorded only when the
+   * request rendered an image from Read).
+   */
+  readImagesPerRequest?: number;
   /** The candidate's model (a non-baseline reconstruction): checked against the run's switch. */
   modelRef?: ModelRef;
   /**
@@ -395,6 +400,7 @@ export function reconstructInputs(
     }
   }
   const budget = opts.mediaBudgetBytes ?? rec.mediaBudgetBytes;
+  const readWindow = opts.readImagesPerRequest ?? rec.readImagesPerRequest;
 
   const input: AssembleModelRequestInput = {
     events: inputEvents(all, call),
@@ -410,6 +416,7 @@ export function reconstructInputs(
     ...(opts.mediaInfo !== undefined && { mediaInfo: opts.mediaInfo }),
     ...(opts.media !== undefined && { media: opts.media }),
     ...(budget !== undefined && { mediaBudgetBytes: budget }),
+    ...(readWindow !== undefined && { readImagesPerRequest: readWindow }),
     defaultMaxOutputTokens: rec.maxOutputTokens,
     // The baseline replays the recorded output cap as sent: the runtime may have clamped it below
     // the agent's `maxOutputTokens` knob (context compaction spec §4.3), and recomputing it from the
@@ -695,7 +702,8 @@ export function snapshotMediaRefs(
   model: ModelInfo,
 ): string[] {
   const all = toEvents(s);
-  return mediaRefs(inputEvents(all, findCall(all, modelCallSeq)), model);
+  const call = findCall(all, modelCallSeq);
+  return mediaRefs(inputEvents(all, call), model, call.payload.request.readImagesPerRequest);
 }
 
 /**
@@ -711,16 +719,18 @@ export async function loadSnapshotMedia(
   model: ModelInfo,
   source: MediaSourceDeps,
   mediaBudgetBytes?: number,
+  readImagesPerRequest?: number,
 ): Promise<{ mediaInfo: Map<string, MediaInfo>; media: Map<string, MediaBytes | null> }> {
   const all = toEvents(s);
   const call = findCall(all, modelCallSeq);
   const events = inputEvents(all, call);
-  const refs = mediaRefs(events, model);
+  const readWindow = readImagesPerRequest ?? call.payload.request.readImagesPerRequest;
+  const refs = mediaRefs(events, model, readWindow);
   const media = new Map<string, MediaBytes | null>();
   if (refs.length === 0) return { mediaInfo: new Map(), media };
   const mediaInfo = await source.info(s.orgId, s.conversationId, refs);
   const budget = mediaBudgetBytes ?? call.payload.request.mediaBudgetBytes;
-  const plan = planMedia(events, model, mediaInfo, budget);
+  const plan = planMedia(events, model, mediaInfo, budget, readWindow);
   if (plan.fetch.length > 0) {
     const caps = new Map(
       plan.fetch.flatMap((id) => (plan.caps.has(id) ? [[id, plan.caps.get(id) as number]] : [])),

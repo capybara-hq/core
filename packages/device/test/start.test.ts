@@ -1,12 +1,25 @@
 import { EventEmitter } from "node:events";
-import { existsSync, mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from "node:fs";
+import {
+  chmodSync,
+  existsSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  realpathSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { RunningOperations } from "../src/activity.js";
 import type { Connection } from "../src/client.js";
+import { CommandLog } from "../src/command-log.js";
 import { drain, drainAndWait } from "../src/commands/drain.js";
 import { legacyPolicyNotice, start } from "../src/commands/start.js";
 import { stop } from "../src/commands/stop.js";
+import { queryControl } from "../src/control/client.js";
+import { controlSocketPath } from "../src/control/protocol.js";
 import { type ProcessLookup, pidPath, readRunning, removePid, writePid } from "../src/pid.js";
 import type { PolicyStore } from "../src/policy-store.js";
 import type { StagedDevice } from "../src/staged-device.js";
@@ -18,6 +31,7 @@ import {
   writeCredential,
   writePolicy,
 } from "../src/state.js";
+import { WakeDetector } from "../src/wake.js";
 
 /** `ps` for a test: every pid is a capybara-device that started long ago. */
 const ps: ProcessLookup = () => ({
@@ -485,5 +499,159 @@ describe("start: the staged protocol (W3-M)", () => {
     });
     expect(code).toBe(0);
     expect(calls).toEqual(["recover", "dispose"]);
+  });
+});
+
+describe("start: the control socket", () => {
+  it("the socket exists while serving, answers live status, and is removed after stop", async () => {
+    writeCredential(dir, cred);
+    const proc = Object.assign(new EventEmitter(), { pid: 4270 });
+    const calls: string[] = [];
+    let finish!: (code: number) => void;
+    let onState: ((s: { connection: "online" | "offline"; reason?: string }) => void) | undefined;
+    const conn: Connection = {
+      done: new Promise<number>((r) => {
+        finish = r;
+      }),
+      drain: () => calls.push("drain"),
+      stop: () => {
+        calls.push("stop");
+        finish(0);
+      },
+    };
+    const errs: string[] = [];
+    const p = start({
+      stateDir: dir,
+      out: () => {},
+      err: (l) => errs.push(l),
+      proc: proc as never,
+      createStaged: () => stagedParts(),
+      connectStaged: (_device, opts) => {
+        onState = opts?.onState;
+        calls.push("connectStaged");
+        return conn;
+      },
+    });
+    await vi.waitFor(() => expect(calls).toContain("connectStaged"));
+    expect(existsSync(controlSocketPath(dir))).toBe(true);
+    expect(await queryControl(dir, "status")).toMatchObject({
+      pid: 4270,
+      deviceId: "e1",
+      orgId: "o",
+      url: "http://x.test",
+      mode: "os",
+      connection: "starting",
+    });
+    onState?.({ connection: "offline", reason: "Cannot reach x.test." });
+    expect(await queryControl(dir, "status")).toMatchObject({
+      connection: "offline",
+      offlineReason: "Cannot reach x.test.",
+    });
+    onState?.({ connection: "online" });
+    const live = (await queryControl(dir, "status")) as Record<string, unknown>;
+    expect(live.connection).toBe("online");
+    expect(live).not.toHaveProperty("offlineReason");
+    expect(JSON.stringify(live)).not.toContain("cap_dev_a");
+    expect(await queryControl(dir, "running")).toEqual([]);
+    expect(await queryControl(dir, "drain")).toBeNull();
+    expect(await queryControl(dir, "status")).toMatchObject({ connection: "draining" });
+    expect(await queryControl(dir, "stop")).toBeNull();
+    expect(await p).toBe(0);
+    expect(calls).toEqual(["connectStaged", "drain", "stop"]);
+    expect(existsSync(controlSocketPath(dir))).toBe(false);
+    expect(errs).toEqual([]);
+  });
+
+  it("a control socket that cannot be made leaves the program serving", async () => {
+    writeCredential(dir, cred);
+    chmodSync(dir, 0o755);
+    const errs: string[] = [];
+    const code = await start({
+      stateDir: dir,
+      out: () => {},
+      err: (l) => errs.push(l),
+      proc: Object.assign(new EventEmitter(), { pid: 4271 }) as never,
+      createStaged: () => stagedParts(),
+      connectStaged: () => ({ done: Promise.resolve(0), drain: () => {}, stop: () => {} }),
+    });
+    expect(code).toBe(0);
+    expect(errs.join("\n")).toContain("control socket unavailable");
+    expect(existsSync(controlSocketPath(dir))).toBe(false);
+  });
+});
+
+describe("start: keep-awake in the live status", () => {
+  it("status shows keepAwake and lastWakeAt", async () => {
+    writeCredential(dir, cred);
+    writePolicy(dir, DEFAULT_POLICY);
+    const proc = Object.assign(new EventEmitter(), { pid: 4280 });
+    const running = new RunningOperations();
+    const spawned: { args: string[]; killed: boolean }[] = [];
+    const spawn = ((_command: string, args: string[]) => {
+      const child = Object.assign(new EventEmitter(), {
+        killed: false,
+        kill() {
+          this.killed = true;
+          entry.killed = true;
+        },
+      });
+      const entry = { args, killed: false };
+      spawned.push(entry);
+      return child;
+    }) as never;
+    let wall = Date.UTC(2026, 10, 19);
+    const mono = 0;
+    const wake = new WakeDetector({ now: () => wall, monotonic: () => mono });
+    const calls: string[] = [];
+    let finish!: (code: number) => void;
+    const conn: Connection = {
+      done: new Promise<number>((r) => {
+        finish = r;
+      }),
+      drain: () => {},
+      stop: () => finish(0),
+    };
+    const staged = {
+      ...stagedParts(calls),
+      owner: { running, store: undefined, log: new CommandLog(dir) },
+    } as unknown as StagedDevice;
+    const p = start({
+      stateDir: dir,
+      out: () => {},
+      err: () => {},
+      proc: proc as never,
+      service: { home: dir, platform: "darwin" },
+      createStaged: () => staged,
+      connectStaged: () => {
+        calls.push("connectStaged");
+        return conn;
+      },
+      keepAwakeSpawn: spawn,
+      wake,
+      tickMs: 5,
+    });
+    await vi.waitFor(() => expect(calls).toContain("connectStaged"));
+    expect(await queryControl(dir, "status")).toMatchObject({
+      keepAwake: { mode: "while-busy", held: false },
+    });
+    running.begin(
+      { tag: "t", conversationId: "c", accountId: "a", isolation: "full", startedAt: "x" },
+      "op1",
+    );
+    expect(await queryControl(dir, "status")).toMatchObject({
+      keepAwake: { mode: "while-busy", held: true },
+    });
+    expect(spawned.map((s) => s.args)).toEqual([["-i", "-w", "4280"]]);
+    running.endOperation("op1");
+    expect(spawned[0]?.killed).toBe(true);
+    wall += 60_000; // the computer slept for a minute: the monotonic clock did not move
+    await vi.waitFor(async () =>
+      expect(await queryControl(dir, "status")).toHaveProperty("lastWakeAt"),
+    );
+    const live = (await queryControl(dir, "status")) as { lastWakeAt: string };
+    expect(live.lastWakeAt).toBe(new Date(wall).toISOString());
+    expect(readFileSync(join(dir, "commands.log"), "utf8")).toContain('"op":"wake"');
+    expect(await queryControl(dir, "stop")).toBeNull();
+    expect(await p).toBe(0);
   });
 });

@@ -379,6 +379,11 @@
       "replace_required": "旧版本启动的后台任务可能仍在这台电脑上运行，且这台电脑无法证明已重启。请删除这台设备，再把这台电脑作为新设备重新连接。",
       "recreate_required": "旧版本启动的后台任务可能仍在这台设备之前的实例上运行，且已无法确认该实例已被销毁。请删除这台设备后重新创建。"
     },
+    "app_auth": {
+      "code_invalid": "登录链接已失效，请在桌面端重新登录。",
+      "redirect_uri_invalid": "这次登录请求来自平台不接受的应用地址，未发送。请回到 Capybara 桌面端重新发起登录。",
+      "unavailable": "平台暂时无法为应用登录：尚未设置公开地址。请联系超级管理员。"
+    },
     "device_sign_in": {
       "authorization_pending": "还未确认连接，请在网页上确认后稍候。",
       "slow_down": "请求过于频繁，请稍后再试。",
@@ -565,6 +570,13 @@
       "external_not_allowed": "这个组织目前不允许对外分享。",
       "expiry_too_long": "有效期超过了平台允许的上限，请选短一些。",
       "file_unavailable": "文件已不可用，可能已被删除。"
+    },
+    "platform_icon": {
+      "invalid_type": "文件类型不对：应用图标和自适应图标必须是 PNG，网站图标必须是 SVG。",
+      "invalid_size": "PNG 必须正好是 512 × 512 像素。",
+      "too_large": "文件太大：最多 1 MiB（SVG 网站图标最多 128 KiB）。",
+      "storage_unavailable": "对象存储不可用，无法保存图标。请稍后重试。",
+      "not_found": "这个图标尚未上传。"
     }
   },
   "agents": {
@@ -3199,6 +3211,19 @@
     "invalidHint": "在 IM 里给机器人重新发一条消息，获取新的绑定链接。",
     "goHome": "进入 Capybara"
   },
+  "appAuth": {
+    "title": "在 {machine} 上的 Capybara 桌面端登录 {platform}？",
+    "subtitle": "只有在你刚从 Capybara 桌面端发起登录时才继续。",
+    "account": "账号",
+    "machine": "机器",
+    "appVersion": "应用版本",
+    "confirm": "登录",
+    "cancel": "取消",
+    "invalidTitle": "无法登录",
+    "invalidHint": "这个链接不完整。请回到 Capybara 桌面端重新发起登录。",
+    "doneTitle": "已完成",
+    "doneHint": "已返回 Capybara，可以关闭此页"
+  },
   "deviceLink": {
     "title": "连接这台机器",
     "subtitle": "确认这个连接码与终端里显示的一致。",
@@ -3803,7 +3828,6 @@
     },
     "purpose": {
       "declaredByPlugin": "来自 {plugin}",
-      "pluginNote": "扩展调用模型尚未开放，可先配置。",
       "model": "模型",
       "modelInvalid": "所选模型不可用。",
       "unset": "未设置",
@@ -3818,7 +3842,8 @@
         "eval": "评测的评委用它比较基线与候选，给出通过 / 不通过。未设置时，评测不能开评委。",
         "titles": "为新会话生成标题。未设置时，使用会话最近一次运行的模型。",
         "webFetch": "网页读取工具用它从抓到的网页里提取需要的内容。未设置时，使用调用它的会话最近一次运行的模型（子智能体调用时用子智能体的）。",
-        "review": "命令审查的分类器用它判断命令。未设置时不运行分类器，原本不确定的命令会改为询问。"
+        "review": "命令审查的分类器用它判断命令。未设置时不运行分类器，原本不确定的命令会改为询问。",
+        "vision": "为看不了图片的模型识别图片，经由 Read 工具（粘贴的图片也按其文件 id 读取）。只列出能看图片的模型。未设置时，这些模型无法读取图片。"
       }
     },
     "catalog": {
@@ -4140,6 +4165,10 @@
       "actions": {
         "accountCreated": "创建了账号",
         "accountUpdated": "修改了账号",
+        "authAppAuthorized": "授权桌面端登录",
+        "authAppSignedIn": "桌面端已登录",
+        "platformIconUpdated": "更换了平台图标",
+        "platformIconCleared": "恢复了默认平台图标",
         "identityLinked": "关联了外部身份",
         "identityVerified": "验证了外部身份",
         "identityUnlinked": "解除了外部身份关联",
@@ -6390,6 +6419,29 @@
       "label": "平台默认主题",
       "notAvailable": "这个主题没有在所有组织启用，不能作为平台默认主题。未启用它的组织：{orgs}。"
     }
+  },
+  "appIcon": {
+    "title": "应用图标",
+    "description": "整个平台的已安装应用图标和浏览器标签页图标。未上传时使用 Capybara 图标。",
+    "app": {
+      "title": "标准图标",
+      "hint": "PNG，必须为 512 × 512"
+    },
+    "maskable": {
+      "title": "自适应图标",
+      "hint": "PNG，512 × 512，主体位于中央 80 % 范围内；启动器会把它裁成自己的形状"
+    },
+    "favicon": {
+      "title": "网站图标",
+      "hint": "SVG，不超过 128 KiB"
+    },
+    "default": "默认",
+    "custom": "已上传",
+    "upload": "上传",
+    "uploadLabel": "上传{name}",
+    "restore": "恢复默认",
+    "uploaded": "图标已上传。",
+    "restored": "已恢复默认图标。"
   },
   "clientExtensions": {
     "budget": "「{plugin}」的界面代码出错，已在本次会话停用",

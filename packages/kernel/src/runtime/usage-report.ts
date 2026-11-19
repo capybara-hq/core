@@ -133,8 +133,9 @@ export function narrowPending(stored: readonly string[] | undefined, failed: rea
  * as are conversation title calls (`purpose: "title"`, no run: `runId` is "") and `WebFetch`
  * extraction calls (`purpose: "web_fetch"`). Command-review classifier calls log usage with
  * `purpose: "review"` and the reviewed tool call's `callId`; `GenerateImage` calls with
- * `purpose: "image"` and their `outputImages`, passed through in `usage`. Prompt suggestion calls
- * (`purpose: "suggestion"`) have no run either: `runId` is "".
+ * `purpose: "image"` and their `outputImages`, passed through in `usage`; vision reads of an
+ * image (`Read` for a model without vision) with `purpose: "vision"` and the call's `callId`.
+ * Prompt suggestion calls (`purpose: "suggestion"`) have no run either: `runId` is "".
  * Single-step eval replays and judge requests log no usage: not reported (M7).
  * - **Model usage outside conversations** (spec B §5.4): each `ctx.models.embed` and
  *   `ctx.models.generateImage` call writes a `model_usage` row and owes job `usage-model-<rowId>`
@@ -353,7 +354,7 @@ export class UsageReporter {
       .executeTakeFirst();
     if (row?.type !== "usage") return null;
     const p = row.payload as {
-      purpose?: "compaction" | "title" | "web_fetch" | "review" | "image" | "suggestion";
+      purpose?: "compaction" | "title" | "web_fetch" | "review" | "image" | "vision" | "suggestion";
       provider: string;
       model: string;
       inputTokens: number;

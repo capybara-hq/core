@@ -291,7 +291,9 @@ describe("上传 → finalize → 发消息 → 模型请求", () => {
     const blocks = userBlocks(reqs[0] as ModelRequest);
     expect(blocks.every((b) => b.type === "text")).toBe(true);
     const texts = blocks.map((b) => (b.type === "text" ? b.text : ""));
-    expect(texts).toContain('[Attached image "cat.png" — this model cannot view images.]');
+    expect(texts).toContain(
+      `[Attached image "cat.png" — this model cannot view images. Read with file_id ${img} sends it to the organization's vision model, if one is set.]`,
+    );
     expect(texts.some((t) => t.startsWith('[Attached document "spec.pdf"'))).toBe(true);
     expect(texts.some((t) => t.includes("apple,3"))).toBe(true);
     const sent = JSON.stringify(reqs);

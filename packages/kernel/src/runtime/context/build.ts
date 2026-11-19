@@ -1,6 +1,8 @@
 import { createHash } from "node:crypto";
 import {
   type ContentBlock,
+  IMAGE_MEDIA_TYPES,
+  type ImageMediaType,
   MEDIA_LIMITS,
   type ModelInfo,
   type ModelMessage,
@@ -94,6 +96,11 @@ export interface ModelCallMeta {
   media?: MediaOutcomeEntry[];
   /** 请求里有媒体、且给了有限的预算时：所用的媒体字节预算（还原时重现同样的省略）。 */
   mediaBudgetBytes?: number;
+  /**
+   * The Read-image window the request was built with, when it renders an image from Read and a
+   * window was given (reconstruction repeats the same evictions).
+   */
+  readImagesPerRequest?: number;
 }
 
 /** 构建请求用到的工具信息（`ResolvedTool` 的子集）。 */
@@ -155,6 +162,11 @@ export interface BuildModelRequestInput {
   media?: ReadonlyMap<string, MediaBytes | null>;
   /** 单次请求里媒体原始字节的预算（见 {@link planMedia}）；默认不限。 */
   mediaBudgetBytes?: number;
+  /**
+   * The Read-image window (`attachments.readImagesPerRequest`, see {@link readImageWindow}); absent
+   * means no window. The runtime passes the config value, a reconstruction the recorded one.
+   */
+  readImagesPerRequest?: number;
 }
 
 /** 一个附件的字节。 */
@@ -229,19 +241,112 @@ function mediaMode(
   return isText(b.mediaType) ? "inline" : "placeholder";
 }
 
+/** One image the builtin Read stored (`tool_result.media`, vision-read design §1.2). */
+export type ReadMedia = NonNullable<EventPayload<"tool_result">["media"]>[number];
+
+type ToolResultEvent = ConversationEvent & { type: "tool_result" };
+
+/** The key a tool result is matched to its call by: (runId, callId). */
+const resultKey = (runId: string | null, callId: string) => `${runId ?? ""}\u0000${callId}`;
+
 /**
- * 最近摘要之后、会进请求的消息里，该模型需要其附件行（大小、页数、无签名引用）的媒体块（按 seq 与块顺序），
- * 也包括随摘要再次发送的用户消息（摘要的 `openingSeqs`，{@link summaryOpeners}）。`file` 块只在其中取行信息，
- * 从不取字节（见 {@link planMedia}）。
+ * The tool results a request renders (`events` sorted by seq): after the summary boundary, the
+ * first result of each call, and only when an assistant message after the boundary (with content)
+ * carries the call. Keyed by {@link resultKey}.
  */
-function mediaBlocks(events: readonly ConversationEvent[], model: ModelInfo): LogMedia[] {
+function renderedResults(
+  events: readonly ConversationEvent[],
+  after: number,
+): Map<string, ToolResultEvent> {
+  const first = new Map<string, ToolResultEvent>();
+  const called = new Set<string>();
+  for (const e of events) {
+    if (e.seq <= after) continue;
+    if (e.type === "tool_result") {
+      const k = resultKey(e.runId, e.payload.callId);
+      if (!first.has(k)) first.set(k, e);
+    } else if (e.type === "assistant_message" && e.payload.content.length > 0) {
+      for (const b of e.payload.content) {
+        if (b.type === "tool_call") called.add(resultKey(e.runId, b.id));
+      }
+    }
+  }
+  for (const k of [...first.keys()]) if (!called.has(k)) first.delete(k);
+  return first;
+}
+
+/**
+ * The images from Read a request renders, in log order (`events` sorted by seq): by their result's
+ * seq. Rendering places them in call order (after the step's results), so parallel calls that
+ * finish out of order are "newer" for the window and the image cap in the order they finished,
+ * not the order they show; both orders come from the log, so this stays deterministic.
+ */
+function readImages(events: readonly ConversationEvent[], after: number): ReadMedia[] {
+  return [...renderedResults(events, after).values()]
+    .sort((a, b) => a.seq - b.seq)
+    .flatMap((e) => e.payload.media ?? []);
+}
+
+/**
+ * The Read-image window with chunked eviction (vision-read design §1.4): walks the images from Read
+ * in log order with a kept set; whenever the set grows past `window`, it is cut to its newest
+ * `floor(window / 2)`. So the kept set changes only at those overflow points and the request's
+ * prefix stays the same between them. Decided from the log alone (the ids in log order and the
+ * recorded window). Returns the kept ids; `window` undefined keeps every id.
+ */
+export function readImageWindow(ids: readonly string[], window: number | undefined): Set<string> {
+  if (window === undefined) return new Set(ids);
+  let kept: string[] = [];
+  for (const id of ids) {
+    kept.push(id);
+    if (kept.length > window) kept = kept.slice(kept.length - Math.floor(window / 2));
+  }
+  return new Set(kept);
+}
+
+/** An image from Read as a log media block (a `ref` to its `read` attachment). */
+function readBlock(m: ReadMedia): LogMedia {
+  return {
+    type: "image",
+    mediaType: m.mediaType,
+    source: { kind: "ref", attachmentId: m.attachmentId },
+    name: m.name,
+  } as LogMedia;
+}
+
+/**
+ * The media blocks after the latest summary, in the messages the request renders, whose attachment
+ * rows (size, pages, unsigned reference) this model needs, by seq and block order; the user messages
+ * re-sent with the summary (its `openingSeqs`, {@link summaryOpeners}) count too. A `file` block
+ * only needs its row, never its bytes (see {@link planMedia}). Images from Read (`tool_result.media`
+ * of the rendered results) join at their result's position when the model has vision and the
+ * Read-image window keeps them ({@link readImageWindow}; no window given keeps all).
+ */
+function mediaBlocks(
+  events: readonly ConversationEvent[],
+  model: ModelInfo,
+  readWindow?: number,
+): LogMedia[] {
   const sorted = [...events].sort((a, b) => a.seq - b.seq);
   const summary = latestSummary(sorted);
   const after = summary?.payload.coversUpToSeq ?? Number.NEGATIVE_INFINITY;
   const openers = new Set<ConversationEvent>(summaryOpeners(sorted, summary));
+  const rendered = new Set<ConversationEvent>(renderedResults(sorted, after).values());
+  const kept = readImageWindow(
+    readImages(sorted, after).map((m) => m.attachmentId),
+    readWindow,
+  );
   const out: LogMedia[] = [];
   for (const e of sorted) {
     if (e.seq <= after && !openers.has(e)) continue;
+    if (e.type === "tool_result") {
+      const media = e.payload.media ?? [];
+      if (media.length === 0 || !rendered.has(e) || !model.capabilities.vision) continue;
+      for (const m of media) {
+        if (kept.has(m.attachmentId)) out.push(readBlock(m));
+      }
+      continue;
+    }
     if (e.type !== "user_message" && e.type !== "assistant_message") continue;
     for (const b of e.payload.content) {
       if (b.type !== "image" && b.type !== "document" && b.type !== "file") continue;
@@ -263,60 +368,85 @@ export function excludedMedia(events: readonly ConversationEvent[]): Set<string>
 }
 
 /**
- * 该模型需要其附件行的附件 id（去重、按出现顺序），调用方据此查行信息（{@link MediaInfo}）。
- * 模型不支持的图片 / PDF、被 `media_excluded` 排除的不在其中——只发占位，行与字节都不取。
- * `file` 块在结果里（引用行要行里的大小与 URI），但从不取字节。
+ * The attachment ids whose rows this model needs (deduplicated, in order of appearance), for the
+ * caller to look up ({@link MediaInfo}). Images / PDFs the model cannot take, ones excluded by
+ * `media_excluded`, and images from Read the window leaves out (`readWindow`, see
+ * {@link readImageWindow}) are not in it: they render without a row or bytes. `file` blocks are in
+ * it (the reference line needs the row's size and URI) but their bytes are never fetched.
  */
-export function mediaRefs(events: readonly ConversationEvent[], model: ModelInfo): string[] {
+export function mediaRefs(
+  events: readonly ConversationEvent[],
+  model: ModelInfo,
+  readWindow?: number,
+): string[] {
   const excluded = excludedMedia(events);
   return [
     ...new Set(
-      mediaBlocks(events, model)
+      mediaBlocks(events, model, readWindow)
         .map((b) => b.source.attachmentId)
         .filter((id) => !excluded.has(id)),
     ),
   ];
 }
 
-/** {@link planMedia} 的结果。 */
+/** The result of {@link planMedia}. */
 export interface MediaPlan {
-  /** 要取字节的附件 id（从新到旧）。 */
+  /** The attachment ids whose bytes are fetched (newest first). */
   fetch: string[];
   /**
-   * 只取开头若干字节的附件（`text/*` 超过 {@link TEXT_FETCH_MAX_BYTES}）：id → 字节数。
-   * 现在总是空：超过取字节上限的文本不再取（它是引用行，§5.2），上限之内的取整份。
+   * Attachments fetched only up to a number of leading bytes (`text/*` over
+   * {@link TEXT_FETCH_MAX_BYTES}): id → bytes. Always empty now: text over the fetch cap is not
+   * fetched at all (it is the reference line, §5.2), text below it is fetched whole.
    */
   caps: Map<string, number>;
-  /** 为控制请求大小而省略（预算）。 */
+  /** Omitted to keep the request size down (the budget). */
   dropped: Set<string>;
-  /** 图片超过 {@link MAX_IMAGES_PER_REQUEST} 而省略。 */
+  /** Omitted because the images exceed {@link MAX_IMAGES_PER_REQUEST}. */
   tooManyImages: Set<string>;
-  /** PDF 页数超过 {@link MAX_PDF_PAGES}。 */
+  /** A PDF over {@link MAX_PDF_PAGES} pages. */
   tooManyPages: Set<string>;
-  /** 日志里 `media_excluded` 排除的。 */
+  /** Excluded by `media_excluded` in the log. */
   excluded: Set<string>;
+  /** Images from Read the Read-image window left out ({@link readImageWindow}): not fetched. */
+  notIncluded: Set<string>;
 }
 
 /**
- * 单次请求的媒体计划（Ruling M6 / M8），只取决于日志、模型能力与行信息，是确定的：
- * - 被 `media_excluded` 排除的：不取、不计；
- * - `file` 块（模型只看到引用行）：不取、不计（行信息照常查）；
- * - `text/*` 超过 {@link TEXT_FETCH_MAX_BYTES}：不取（它就是引用行，§5.2）——上限之内的取整份，
- *   解码后超过 {@link TEXT_INLINE_MAX_CHARS} 的在 {@link resolveMedia} 里也变成引用行；
- * - PDF 页数超过 {@link MAX_PDF_PAGES}：不取、不计；
- * - 从最新的媒体往前：图片最多保留 {@link MAX_IMAGES_PER_REQUEST} 张，更早的图片省略（不影响其他媒体）；
- * - 预算：按行里的**声明大小**累计，第一次超出 `budgetBytes` 起，该附件及更早的全部省略；
- * - 同一附件只算一次（按最后一次出现的位置算新旧）；没有行的不计（它们是「不再可用」）。
+ * The media plan of one request (Ruling M6 / M8): decided by the log, the model's capabilities and
+ * the rows alone, so it is deterministic:
+ * - excluded by `media_excluded`: not fetched, not counted;
+ * - a `file` block (the model sees only the reference line): not fetched, not counted (its row is
+ *   still looked up);
+ * - `text/*` over {@link TEXT_FETCH_MAX_BYTES}: not fetched (it is the reference line, §5.2); below
+ *   it, fetched whole, and one that decodes past {@link TEXT_INLINE_MAX_CHARS} also becomes the
+ *   reference line in {@link resolveMedia};
+ * - a PDF over {@link MAX_PDF_PAGES} pages: not fetched, not counted;
+ * - images from Read (vision models only): first the Read-image window (`readWindow`,
+ *   {@link readImageWindow}); the ones it leaves out are `notIncluded`, not fetched and not
+ *   counted, the kept ones then count toward the image cap and the budget like pasted images;
+ * - from the newest media back: at most {@link MAX_IMAGES_PER_REQUEST} images, older images are
+ *   omitted (other media unaffected);
+ * - the budget: the rows' **declared sizes** add up; from the first one past `budgetBytes`, that
+ *   attachment and every older one are omitted;
+ * - an attachment counts once (its last position decides how new it is); one without a row does
+ *   not count (it is "no longer available").
  *
- * 已知取舍（接受）：新的媒体把较早的媒体挤成占位时，请求里**较早位置**的内容随之改变，这一处之后的提示词缓存
- * 失效（不是严格的只追加）。配置保证 `maxBytes ≤ requestMediaBytes`，所以最新的附件总能放进请求。
+ * Accepted trade-off: when newer media push older media out into placeholders, content at an
+ * **earlier position** of the request changes and the prompt cache after it is lost (not strictly
+ * append-only). The config keeps `maxBytes ≤ requestMediaBytes`, so the newest attachment always fits.
+ * The Read-image window makes this rare for images from Read: it evicts in chunks.
  */
 export function planMedia(
   events: readonly ConversationEvent[],
   model: ModelInfo,
   info: ReadonlyMap<string, MediaInfo>,
   budgetBytes = Number.POSITIVE_INFINITY,
+  readWindow?: number,
 ): MediaPlan {
+  const sorted = [...events].sort((a, b) => a.seq - b.seq);
+  const after = latestSummary(sorted)?.payload.coversUpToSeq ?? Number.NEGATIVE_INFINITY;
+  const reads = readImages(sorted, after).map((m) => m.attachmentId);
+  const kept = readImageWindow(reads, readWindow);
   const plan: MediaPlan = {
     fetch: [],
     caps: new Map(),
@@ -324,9 +454,12 @@ export function planMedia(
     tooManyImages: new Set(),
     tooManyPages: new Set(),
     excluded: excludedMedia(events),
+    notIncluded: new Set(
+      reads.length > 0 && model.capabilities.vision ? reads.filter((id) => !kept.has(id)) : [],
+    ),
   };
   // 每个附件按最后一次出现的位置算新旧
-  const blocks = mediaBlocks(events, model);
+  const blocks = mediaBlocks(events, model, readWindow);
   const last = new Map<string, LogMedia>();
   for (const b of blocks) {
     const id = b.source.attachmentId;
@@ -376,17 +509,30 @@ export const mediaUnavailableText = (name: string): string =>
 export const mediaOmittedText = (name: string): string =>
   `[Attachment ${quoted(name)} omitted to fit the request size limit.]`;
 
-/** 单次请求图片太多而省略的附件（模型可见，英文）。 */
+/** An attachment omitted because one request has too many images (model-facing, English). */
 export const mediaTooManyImagesText = (name: string): string =>
   `[Attachment ${quoted(name)} omitted (too many images in one request).]`;
 
-/** PDF 页数超过上限（模型可见，英文）。 */
+/** A PDF over the page limit (model-facing, English). */
 export const mediaTooManyPagesText = (name: string): string =>
   `[Attachment ${quoted(name)} has too many pages for this model.]`;
 
-/** 被供应商拒绝、此后不再发送的附件（模型可见，英文）。 */
+/** An attachment the provider rejected, never sent again (model-facing, English). */
 export const mediaRejectedText = (name: string): string =>
   `[Attachment ${quoted(name)} was rejected by the model provider.]`;
+
+/** The label before an image from Read (model-facing, vision-read design §1.4). */
+export const readImageLabelText = (id: string): string => `Image from Read (file_id ${id}):`;
+
+/**
+ * An image from Read for a model without vision (static, so history stays append-only; any
+ * fallback answer is already in the tool result).
+ */
+export const READ_IMAGE_NO_VISION_TEXT = "[This model cannot view images.]";
+
+/** An image from Read the Read-image window left out of this request. */
+export const readImageNotIncludedText = (id: string): string =>
+  `[Image from Read (file_id ${id}) not included in this request.]`;
 
 /**
  * The usual file extension per content type: the label of a `file` block logged without a name (every
@@ -437,7 +583,7 @@ export const attachmentReferenceText = (input: {
 
 function placeholder(b: LogMedia, name: string): string {
   if (b.type === "image") {
-    return `[Attached image ${quoted(name)} — this model cannot view images.]`;
+    return `[Attached image ${quoted(name)} — this model cannot view images. Read with file_id ${b.source.attachmentId} sends it to the organization's vision model, if one is set.]`;
   }
   return `[Attached document ${quoted(name)} — this model cannot read ${
     b.mediaType === "application/pdf" ? "PDF documents" : "documents"
@@ -612,7 +758,15 @@ export function resolveMedia(
     };
     out.push(
       b.type === "image"
-        ? { type: "image", mediaType: b.mediaType, source, ...(b.name !== undefined && { name }) }
+        ? {
+            type: "image",
+            // the fetched copy's type: an image may arrive re-encoded for the model
+            mediaType: (IMAGE_MEDIA_TYPES as readonly string[]).includes(got.mediaType)
+              ? (got.mediaType as ImageMediaType)
+              : b.mediaType,
+            source,
+            ...(b.name !== undefined && { name }),
+          }
         : {
             type: "document",
             mediaType: b.mediaType,
@@ -696,7 +850,7 @@ export function summaryText(summary: string): string {
 export function buildModelRequest(input: BuildModelRequestInput): {
   request: ModelRequest;
   meta: ModelCallMeta;
-  /** 请求里媒体块（base64 的图片 / 文档）的估算 token 数，传给 `estimateTokens`。 */
+  /** Estimated tokens of the request's media blocks (base64 images / documents), for `estimateTokens`. */
   mediaTokens: number;
 } {
   const { agent, model } = input;
@@ -704,7 +858,13 @@ export function buildModelRequest(input: BuildModelRequestInput): {
   const mediaCtx: MediaContext = {
     info: input.mediaInfo,
     bytes: input.media,
-    plan: planMedia(events, model, input.mediaInfo ?? new Map(), input.mediaBudgetBytes),
+    plan: planMedia(
+      events,
+      model,
+      input.mediaInfo ?? new Map(),
+      input.mediaBudgetBytes,
+      input.readImagesPerRequest,
+    ),
   };
   let mediaTokens = 0;
   /** 本次请求里每个附件的处理结果（按首次出现，同一附件只记一次）。 */
@@ -874,9 +1034,11 @@ export function buildModelRequest(input: BuildModelRequestInput): {
     }
   };
   /**
-   * 把已被吸收（seq ≤ upTo）的延后消息按 seq 顺序放进 messages，插在末尾连续的 system 提醒之前
-   * （若有）。这样某一步自己写在 model_call 之前的提醒（含收尾提醒）仍排在它所跟随的用户消息之后，
-   * 收尾提醒保持在请求末尾。只要求确定性：本次请求与由日志还原时执行的是同一套规则，结果一致。
+   * Puts the deferred messages already absorbed (seq ≤ upTo) into messages in seq order, before the
+   * trailing run of system reminders (if any). So a reminder a step wrote before its model_call
+   * (the wrap-up one included) still follows the user message it goes with, and the wrap-up
+   * reminder stays at the end of the request. Only determinism is required: this request and a
+   * reconstruction from the log run the same rules and get the same result.
    */
   const flush = (upTo: number) => {
     const ready = deferred.filter((u) => u.seq <= upTo);
@@ -886,9 +1048,33 @@ export function buildModelRequest(input: BuildModelRequestInput): {
     while (at > 0 && messages[at - 1]?.role === "system") at--;
     messages.splice(at, 0, ...ready.map(absorbableMessage));
   };
-  /** (runId, callId) → 该调用的 tool_result 事件（同一调用只取第一个）。 */
+  /**
+   * The blocks of the images from Read of one result (vision-read design §1.4), each after its
+   * label: the image (through {@link resolveMedia}, so the cap, the budget and `media_excluded`
+   * apply), the static text for a model without vision, or the window's "not included" text.
+   */
+  const readBlocks = (media: readonly ReadMedia[]): ContentBlock[] =>
+    media.flatMap((m): ContentBlock[] => {
+      const id = m.attachmentId;
+      const note = (text: string, outcome: MediaOutcome): ContentBlock[] => {
+        if (!mediaOutcomes.has(id)) mediaOutcomes.set(id, { attachmentId: id, outcome });
+        return [{ type: "text", text }];
+      };
+      if (!model.capabilities.vision) {
+        return [
+          { type: "text", text: readImageLabelText(id) },
+          ...note(READ_IMAGE_NO_VISION_TEXT, "placeholder_unsupported"),
+        ];
+      }
+      if (mediaCtx.plan.notIncluded.has(id)) {
+        return note(readImageNotIncludedText(id), "not_included");
+      }
+      return [{ type: "text", text: readImageLabelText(id) }, ...blocksOf([readBlock(m)])];
+    });
+  /** Whether the request renders an image from Read (the window is then recorded). */
+  let hasReadImages = false;
+  /** (runId, callId) → the call's tool_result (the first one per call). */
   const results = new Map<string, EventPayload<"tool_result">>();
-  const resultKey = (runId: string | null, callId: string) => `${runId ?? ""}\u0000${callId}`;
   for (const e of events) {
     if (e.seq <= after || e.type !== "tool_result") continue;
     const k = resultKey(e.runId, e.payload.callId);
@@ -974,6 +1160,8 @@ export function buildModelRequest(input: BuildModelRequestInput): {
         if (e.payload.content.length > 0) {
           messages.push({ role: "assistant", content: blocksOf(e.payload.content) });
           const blocks: ContentBlock[] = [];
+          /** Images from Read (vision-read design §1.4): after all tool results, in call order. */
+          const images: ContentBlock[] = [];
           for (const b of e.payload.content) {
             if (b.type !== "tool_call") continue;
             const r = results.get(resultKey(e.runId, b.id));
@@ -984,9 +1172,13 @@ export function buildModelRequest(input: BuildModelRequestInput): {
                 content: r.content,
                 isError: r.isError,
               });
+              if (r.media !== undefined && r.media.length > 0) {
+                hasReadImages = true;
+                images.push(...readBlocks(r.media));
+              }
             }
           }
-          if (blocks.length > 0) messages.push({ role: "user", content: blocks });
+          if (blocks.length > 0) messages.push({ role: "user", content: [...blocks, ...images] });
         }
         break;
       case "reminder":
@@ -1163,6 +1355,10 @@ export function buildModelRequest(input: BuildModelRequestInput): {
     ...(mediaOutcomes.size > 0 &&
       input.mediaBudgetBytes !== undefined &&
       Number.isFinite(input.mediaBudgetBytes) && { mediaBudgetBytes: input.mediaBudgetBytes }),
+    ...(hasReadImages &&
+      input.readImagesPerRequest !== undefined && {
+        readImagesPerRequest: input.readImagesPerRequest,
+      }),
   };
   return { request, meta, mediaTokens };
 }

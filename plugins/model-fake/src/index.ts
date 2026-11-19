@@ -71,6 +71,16 @@ const DeploymentConfig = z.object({
             .min(0)
             .optional()
             .meta(label("最大参考图数", "Max reference images")),
+          imageSizes: z
+            .array(
+              z.object({
+                width: z.number().int().positive().meta(label("宽（像素）", "Width (px)")),
+                height: z.number().int().positive().meta(label("高（像素）", "Height (px)")),
+              }),
+            )
+            .min(1)
+            .optional()
+            .meta(label("出图尺寸", "Image sizes")),
         }),
       )
       .optional()
@@ -92,7 +102,7 @@ const DeploymentConfig = z.object({
  */
 export default defineExtension({
   name: "model-fake",
-  version: "0.1.0-rc.37",
+  version: "0.1.0-rc.39",
   sdk: "^0.1.0-rc.0",
   provides: [MODEL_PROVIDER_EXTENSION_POINT_V2],
   config: { deployment: DeploymentConfig },

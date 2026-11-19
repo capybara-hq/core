@@ -51,6 +51,7 @@ const SETTINGS = {
 
 const routes = (attribution: Record<string, unknown> = ATTRIBUTION) =>
   stubApi({
+    "GET /api/v1/admin/platform/icons": () => json(200, { icons: [] }),
     "GET /api/v1/admin/settings": () => json(200, { ...SETTINGS, attribution }),
     "GET /api/v1/admin/components?kind=theme": () => json(200, { components: [] }),
     "GET /api/v1/admin/ui/arrangement": () => json(200, { slots: [] }),

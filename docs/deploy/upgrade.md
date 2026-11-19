@@ -138,7 +138,7 @@ converts them, writes keep the old keys in step for replicas of the previous ver
 replica has converted the publication, rolling back to an older image is blocked (its replicas fail
 the publication barrier).
 
-**Cloud devices.** Migrations `0163` and `0165` add `devices.network_mode` / `network_hosts` and copy
+**Cloud devices.** Migrations `0165` and `0167` add `devices.network_mode` / `network_hosts` and copy
 an allowlist outer network snapshot into them (an empty or unreadable list ran closed and becomes
 `network_mode: none`). A cloud device that followed its org on the allowlist (for example under
 `sandbox.limits.orgHosts: within`) keeps the allowlist. `owner_full_access` is no longer read. A

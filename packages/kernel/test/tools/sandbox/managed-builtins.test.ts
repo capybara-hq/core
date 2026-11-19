@@ -397,7 +397,12 @@ function imageToolOf(deps: SandboxToolDeps): BuiltinTool {
   const ref = { provider: "p", model: "img" };
   return generateImageTool({
     images: {
-      prepare: async () => ({ ref, info: {}, request: { size: { width: 8, height: 8 } } }) as never,
+      prepare: async () =>
+        ({
+          ref,
+          info: { sizes: [{ width: 8, height: 8 }], defaultSize: { width: 8, height: 8 } },
+          request: { size: { width: 8, height: 8 } },
+        }) as never,
       run: async () =>
         ({
           images: [{ mediaType: "image/png", data: FAKE_PNG_BASE64 }],
@@ -413,7 +418,7 @@ function imageToolOf(deps: SandboxToolDeps): BuiltinTool {
     stepLog: k.app.get(StepLog),
     config: k.app.get(KernelConfigService),
     log: { warn: () => {} },
-    db: () => kernelDb(raw),
+    db: kernelDb(raw),
     attachments: { openForConversation: async () => null },
     sandbox: deps,
   });

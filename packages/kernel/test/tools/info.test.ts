@@ -219,7 +219,7 @@ describe("GET /conversations/:id/tools", () => {
       tool: null,
       source: { kind: "builtin" },
     });
-    expect(t.Read?.keyArgs).toEqual(["file_path"]);
+    expect(t.Read?.keyArgs).toEqual(["file_path", "file_id"]);
     expect(t.Write).toMatchObject({ kind: "edit", keyArgs: ["file_path"] });
     expect(t.Edit).toMatchObject({ kind: "edit", keyArgs: ["file_path"] });
     expect(t.Glob).toMatchObject({ kind: "search", keyArgs: ["pattern"] });

@@ -13,5 +13,5 @@ the sandbox) are supported with a whole-instance scope and no outside. Narrowing
 the allowlist (platform, org, owner or device) revokes running open-network work through the outbox,
 an owner network change is published, audited and resets Full consent, the exec limits sent to a
 device no longer carry the kernel's mode tier, and a device program newer than the deployment is told
-to have the deployment upgraded. Migration `0165` copies allowlist snapshots taken after `0163` into
+to have the deployment upgraded. Migration `0167` copies allowlist snapshots taken after `0165` into
 the device's own network.

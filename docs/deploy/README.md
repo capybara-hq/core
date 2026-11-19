@@ -770,6 +770,13 @@ long-lived WebSocket connection to the kernel's `gateway` role.
   (`CAPYBARA_DEVICES__LOCAL__RECONNECT_GRACE_SECONDS`).
 - **Sign-in** uses the public routes `POST /api/v1/device/authorize` and `/device/token` and the web
   page `/devices/link`, so `CAPYBARA_PUBLIC_URL` must be the origin people open in the browser.
+- **Desktop client sign-in.** The desktop client (`capybara-hq/clients`, an external app) signs
+  in through `/api/v1/app-auth` and the web consent page `/apps/authorize`. It needs `http.publicUrl`: without
+  it the authorize route answers `app_auth.unavailable` and `GET /api/v1/meta` reports
+  `features.appSignIn: false`. `auth.appRedirectUris` lists the redirect URIs an app may receive
+  the code at (default `capybara://auth/callback`; a fork shipping its own build adds its URI).
+  `platform.name` and the platform icon (admin settings) are what `GET /api/v1/meta` shows the
+  client before sign-in.
 
 ## Sandbox (optional)
 

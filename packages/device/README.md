@@ -17,6 +17,12 @@ capybara-device status [--json]
 capybara-device logout
 ```
 
+`login --json` is for programs that drive the CLI (the desktop app): it opens no browser and writes one
+JSON object per line to stdout, the human lines going to stderr: `{"event":"verification","url":…,
+"userCode":…,"expiresIn":…}`, then `{"event":"done","deviceId":…,"orgId":…,"dir":…}` or
+`{"event":"error","code":…,"message":…}` (for example `device_sign_in.expired`, `device_sign_in.denied`).
+It never prints the credential.
+
 `login` shows a code like `BCDF-GHJK`; with `--no-browser` it prints the address (`<url>/devices/link`) and
 the code to enter on any signed-in browser, where you pick the org and the device (a new one or
 an existing connected one of yours) after reading what the program can do. Logging in again from
@@ -100,6 +106,7 @@ becomes outside-the-sandbox on with the open network, denied keeps the allowlist
 
 ```bash
 capybara-device ceiling show                    # the owner ceiling, network, revision
+capybara-device ceiling show --json             # {"outsideSandbox":…,"network":…,"allowedDomains":[…],"projectReach":…,"revision":…}  (revision: string | null)
 capybara-device ceiling set --outside-sandbox off --network allowlist --project-reach workspace  # narrow
 capybara-device ceiling set --outside-sandbox on --network open --yes                            # widen
 capybara-device policy add allowedDomains files.slack.com
@@ -182,6 +189,73 @@ they left running survive the upgrade. Restart the machine, or kill such leftove
 upgrade yourself; this version never searches for them. In Docker mode the old container is
 recreated at the first operation, which ends whatever it still ran.
 
+## Control socket
+
+While `start` serves, it answers on `<stateDir>/control.sock` (next to `credential.json`): a unix
+socket of mode 0600, made only when the state directory belongs to you and has no group or other
+permissions (mode 0700). A socket left by a program that crashed (nothing listens on it) is
+replaced; one another running program answers on is never touched. When the path is longer than
+103 bytes (a long `XDG_CONFIG_HOME`) or the directory is open to other users, the program keeps
+serving without the socket and says why once.
+
+The protocol is JSON lines. A request is `{"id":<positive integer>,"op":"<op>"}`; each answer
+carries the request's id: `{"id":1,"ok":true,"result":...}` or
+`{"id":1,"ok":false,"error":{"code":"...","message":"..."}}` (`bad_request`, with id 0 for a line
+without a usable id, `unknown_op`). A malformed line keeps the connection open; a line over 64 KiB,
+or more than 1 MiB of answers a peer leaves unread, closes it.
+
+| Op | Result |
+|---|---|
+| `status` | The live status: `pid`, `version`, `url`, `orgId`, `deviceId`, `mode` (`os` or `docker`), `connection` (`starting`, `online`, `offline` or `draining`), `offlineReason` (while offline), `since` (when `connection` last changed), `keepAwake` (`mode`, `held`, and `unavailable` with the reason when the holder cannot run), `lastWakeAt` (once the computer woke from sleep) |
+| `running` | The operations executing now (an exec while it runs, a background task until it completes or is killed): `tag`, `conversationId`, `accountId`, `isolation` (`restricted` or `full`), `startedAt`; never a command's text, environment or output |
+| `subscribe` | The live status now; afterwards the connection receives `{"event":"status","status":{...}}` after each change |
+| `drain` | `null`; drains as `capybara-device drain` does |
+| `stop` | `null`; stops as `capybara-device stop` does |
+
+`status --json` asks the socket (for at most 500 ms) and adds:
+
+- `control`: `ok` (the running program answered), `absent` (no program runs) or `unavailable`
+  (a program runs but has no socket, with the reason in `controlReason`);
+- `live`: the live status above, or `null`.
+
+The credential is never part of any answer.
+
+## Keep-awake
+
+While the device serves, it can keep this computer from going to idle sleep, so a command a
+conversation started is not cut off and the deployment can reach the device. `policy.json` holds
+the mode in `keepAwake`:
+
+- `off`: never;
+- `while-busy` (the default): only while operations run (an exec, or a background task until it
+  ends);
+- `connected`: the whole time the device is connected to the deployment.
+
+```bash
+capybara-device keep-awake                  # show the mode (--json for one JSON object)
+capybara-device keep-awake off              # lower it: applies at once
+capybara-device keep-awake connected --yes  # raise it: asks on a terminal, needs --yes without one
+```
+
+A running program applies a change within a few seconds, without a restart; the change is logged
+in `commands.log`. The hold is a helper process: `/usr/bin/caffeinate -i -w <pid>` on macOS and
+`systemd-inhibit --what=idle:sleep --mode=block --who=capybara-device --why="Capybara device is
+serving" sleep infinity` on Linux. If it cannot start or ends early, the status says so
+(`keepAwake.unavailable`); it is never reported as held then. The program also notices a wake from
+sleep (a wall-clock jump of over 30 s): it writes `{ "op": "wake" }` to `commands.log` and sets
+`lastWakeAt` in the live status.
+
+A holder that cannot start or ends early is not started again while the same mode still wants it;
+it is tried again after nothing is wanted for one check, or when the mode changes. On Linux a runner
+killed with SIGKILL leaves `sleep infinity` holding the inhibitor until that process is killed (on
+macOS `caffeinate -w` ends with the runner).
+
+What this cannot prevent: closing the lid of a Mac on battery without an external display
+(clamshell) still sleeps; so do choosing Sleep, a critically low battery and thermal emergencies;
+on Linux, the lid switch as logind handles it (taking `handle-lid-switch` needs privileges the user
+service lacks). While the computer sleeps the device's WebSocket stops, and the kernel sees a
+sleeping machine as offline, as for a lost network.
+
 ## Docker mode
 
 `login --mode docker` runs every operation in one container per device
@@ -223,6 +297,11 @@ has the agent loaded, or systemd the unit active, and its pid is the pid file's)
 `service stop`; a program started in a terminal is signalled as before. `start` in a terminal says
 how to restart the installed service; started by the service manager (launchd sets
 `XPC_SERVICE_NAME`, systemd `INVOCATION_ID`) it prints no such hint.
+
+`capybara-device service status --json` prints one object instead: `installed`, `loaded`, `running`,
+`binExists` (false when the service file's `bin` path is gone, e.g. the app that installed it moved)
+and, when known, `pid`, `runningVersion`, `installedVersion`, `nodePath`, `binPath`. The exit code is
+the same as the human report's.
 
 `capybara-device service status` says one of four things: not installed; installed but not loaded
 (`service start`); loaded but the program is not running, i.e. it exited (the reason is at the end of

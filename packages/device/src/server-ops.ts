@@ -12,10 +12,12 @@ import {
   type LegacyDevicePolicyArgs,
   type LegacyDevicePolicyStatus,
   POLICY_ADD_REFUSED,
+  type SandboxExecutionRef,
   type SandboxHandle,
   type SandboxLimits,
   validateAllowHost,
 } from "@capybara-hq/plugin-sdk";
+import type { RunningOperations } from "./activity.js";
 import type { CommandLog, CommandLogEntry } from "./command-log.js";
 import type { InstanceBinder } from "./exec/instance-binding.js";
 import type { MacOperationBackend } from "./exec/mac-operation-backend.js";
@@ -305,6 +307,8 @@ export interface StagedOwnerPolicy {
   reconcile: (signal: AbortSignal) => Promise<void>;
   /** The owner's local command log: operations and policy changes are recorded there. */
   log?: CommandLog;
+  /** The operations executing now, for the control socket's `running` op (never their command). */
+  running?: RunningOperations;
 }
 
 /** Appends one line to the local command log: best effort, never fails or delays an operation. */
@@ -533,6 +537,20 @@ export async function serveOperationV3(
           ...(a.cwd === undefined ? {} : { cwd: a.cwd as string }),
           ...(a.env === undefined ? {} : { env: a.env as Record<string, string> }),
         };
+        // listed as running from here until its worker is gone (an exec: its answer; a background
+        // task: the backend reports its end, completion or kill); never the command
+        const entry = operationEntry(parsed.op, a, scope, null);
+        const running = owner?.running;
+        running?.begin(
+          {
+            tag: entry.tag ?? "",
+            conversationId: entry.actor?.conversationId || null,
+            accountId: entry.actor?.accountId || null,
+            isolation: entry.isolation ?? "restricted",
+            startedAt: new Date().toISOString(),
+          },
+          scope.operationId,
+        );
         try {
           result =
             parsed.op === "exec"
@@ -544,9 +562,12 @@ export async function serveOperationV3(
                   retainUntilMs: a.retainUntilMs as number,
                 });
         } catch (error) {
+          running?.endOperation(scope.operationId);
           note(owner?.log, operationEntry(parsed.op, a, scope, null, errorKind(sdk, error)));
           throw error;
         }
+        if (parsed.op === "exec") running?.endOperation(scope.operationId);
+        else if (running) await keepIfStillRunning(running, backend, handle, result, scope, signal);
         const exitCode =
           parsed.op === "exec" ? ((result as { exitCode?: number | null }).exitCode ?? null) : null;
         note(owner?.log, operationEntry(parsed.op, a, scope, exitCode));
@@ -621,6 +642,29 @@ export async function serveOperationV3(
       error: { kind, message: error instanceof Error ? error.message : String(error) },
     };
   }
+}
+
+/**
+ * A started background task stays in the running operations only while it runs: one that already
+ * ended (a fast task, or a retried start of a finished one, whose worker end was reported before
+ * or never) leaves now. A status that cannot be read leaves it too: a list that misses a task is
+ * safer than one that keeps the machine busy for good.
+ */
+async function keepIfStillRunning(
+  running: RunningOperations,
+  backend: MacOperationBackend,
+  handle: SandboxHandle,
+  ref: unknown,
+  scope: { operationId: string },
+  signal: AbortSignal,
+): Promise<void> {
+  try {
+    const status = await backend.background.status(handle, ref as SandboxExecutionRef, signal);
+    if (status.state === "running") return;
+  } catch {
+    // unreadable: not kept
+  }
+  running.endOperation(scope.operationId);
 }
 
 /** The protocol error kind of an operation's failure. */

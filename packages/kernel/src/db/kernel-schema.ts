@@ -951,8 +951,11 @@ export interface AttachmentsTable {
   agent_id: ColumnType<string | null, string | null | undefined, string | null>;
 }
 
-/** 预签名上传的用途：对话附件 / 技能包 zip / agent avatar image. */
-export type AttachmentPurpose = "chat" | "skill-package" | "agent-avatar";
+/**
+ * What an attachment row is for: a chat attachment, a skill package zip, an agent avatar image, or
+ * (0163) an image the builtin Read stored with the calling conversation.
+ */
+export type AttachmentPurpose = "chat" | "skill-package" | "agent-avatar" | "read";
 
 /** 技能版本的清单（`skill_versions.manifest`）。 */
 export interface SkillManifest {
@@ -1211,13 +1214,13 @@ export interface DevicesTable {
   permission_migration: ColumnType<unknown, string | null | undefined, string | null>;
   /** 0154: the applied limits must be established before any operation is admitted. */
   permission_reconcile_required: ColumnType<boolean, boolean | undefined, boolean>;
-  /** 0163: a cloud device's sandbox network choice; null follows the org, `none` is closed. */
+  /** 0165: a cloud device's sandbox network choice; null follows the org, `none` is closed. */
   network_mode: ColumnType<
     "open" | "allowlist" | "none" | null,
     "open" | "allowlist" | "none" | null | undefined,
     "open" | "allowlist" | "none" | null
   >;
-  /** 0163: a cloud device's allowlist hosts (a JSON array), used while the mode is `allowlist`. */
+  /** 0165: a cloud device's allowlist hosts (a JSON array), used while the mode is `allowlist`. */
   network_hosts: ColumnType<string[], string | undefined, string>;
   created_at: Ts;
   updated_at: Ts;
@@ -1637,6 +1640,16 @@ export type FileShareRevokeReason =
   | "member_offboarded"
   | "creator_lost_access";
 
+/** 0164: the platform icon of one purpose (mobile layout spec §10.2.1); no row: the default. */
+export interface PlatformIconsTable {
+  purpose: "app" | "maskable" | "favicon";
+  /** Relative to the kernel's `deployment/` prefix: `platform-icons/<purpose>-<sha256>.<ext>`. */
+  object_key: string;
+  sha256: string;
+  content_type: string;
+  updated_at: Ts;
+}
+
 /**
  * 0161: a link to a frozen snapshot of one conversation file (file sharing spec §1). The row stays
  * after a revoke or expiry; `object_key` is null once the snapshot is freed.
@@ -1906,6 +1919,7 @@ export interface KernelDatabase {
   scheduled_task_runs: ScheduledTaskRunsTable;
   scheduled_task_grants: ScheduledTaskGrantsTable;
   file_shares: FileSharesTable;
+  platform_icons: PlatformIconsTable;
   skills: SkillsTable;
   skill_versions: SkillVersionsTable;
   skill_change_requests: SkillChangeRequestsTable;

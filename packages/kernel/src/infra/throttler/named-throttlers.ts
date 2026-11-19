@@ -63,8 +63,9 @@ const LOGIN_MSG = "Too many failed login attempts; try again later";
  *
  * `POST /api/v1/device/authorize` and `POST /api/v1/device/token` opt in to `device-authorize-ip`
  * and `device-token-ip` with `@Throttled` (every request counts; neither checks a guessable
- * credential: the device code is 32 random bytes). `POST …/guides/:guideId/checks/:checkId/run`
- * opts in to `setup-check` (setup guides v2 §10.3: each run may call a third party).
+ * credential: the device code is 32 random bytes). `POST /api/v1/app-auth/token` opts in to
+ * `app-auth-token-ip` the same way (the one-time code is 32 random bytes).
+ * `POST …/guides/:guideId/checks/:checkId/run` opts in to `setup-check` (setup guides v2 §10.3: each run may call a third party).
  *
  * `plugin-public-write` is not a Nest route limit: the plugin dispatch counts it for unsafe
  * methods on `public` extension routes (`PluginRouteAccess`).
@@ -175,6 +176,17 @@ export const NAMED_THROTTLERS: readonly NamedThrottler[] = [
     limit: 600,
     ttl: CREDENTIAL_WINDOW_MS,
     message: "Too many device sign-in polls; try again later",
+    getTracker: ip,
+  },
+  // native-app sign-in code exchanges per client address (@Throttled like device-token-ip): 60.
+  // The code is 32 random bytes and dies at its first try, so this only bounds the load
+  {
+    name: "app-auth-token-ip",
+    group: "app-auth-token",
+    onSuccess: "clear",
+    limit: 60,
+    ttl: CREDENTIAL_WINDOW_MS,
+    message: "Too many app sign-in attempts; try again later",
     getTracker: ip,
   },
   // user codes tried per signed-in person (guessing another machine's code): 10, refunded on success

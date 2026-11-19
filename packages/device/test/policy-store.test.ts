@@ -235,3 +235,14 @@ for (let i = 0; i < 15; i++) {
     expect(existsSync(policyLockPath(dir))).toBe(false);
   });
 });
+
+describe("PolicyStore keepAwake", () => {
+  it("keeps keepAwake through an update of another field and applies an outside change", () => {
+    writePolicy(dir, { ...DEFAULT_POLICY, keepAwake: "connected" });
+    const store = new PolicyStore(dir);
+    store.update((p) => ({ ...p, allowedDomains: ["a.com"] }));
+    expect(readPolicy(dir).keepAwake).toBe("connected");
+    writePolicy(dir, { ...DEFAULT_POLICY, keepAwake: "off" });
+    expect(store.current().keepAwake).toBe("off");
+  });
+});

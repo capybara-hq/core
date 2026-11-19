@@ -15,7 +15,7 @@ are renamed `org.outside_sandbox_not_allowed` / `deployment.outside_sandbox_not_
 The old config keys and environment variables are refused with a conversion message, and
 `capybara config migrate-permissions` converts a config file (an old `off` also sets
 `devices.network.ceiling: allowlist`, so nothing widens). Stored old keys are read narrower and kept in
-step until the permission configuration publication converts them. Migration `0163` adds a cloud
+step until the permission configuration publication converts them. Migration `0165` adds a cloud
 device's `network_mode` and `network_hosts`, copied from an allowlist outer network snapshot.
 
 The stored-key conversion runs at every permission configuration publication and stores exactly what

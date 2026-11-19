@@ -646,9 +646,19 @@ describe("fix round 1: applied versions only, the confirm lock (P3-34 to P3-37)"
     );
     // the confirming commit's component write fails: nothing of it commits, the extension the
     // confirmation installed is taken out again, the upload still waits
-    vi.spyOn(PlatformComponents.prototype, "applySyncIn").mockRejectedValueOnce(
-      new Error("injected component write failure"),
-    );
+    // Only this item's first write fails: another item's write (a scope or cleanup job still
+    // running from an earlier step or test, under load) must neither take the injected failure nor
+    // fail.
+    const realApply = PlatformComponents.prototype.applySyncIn;
+    let injected = false;
+    vi.spyOn(PlatformComponents.prototype, "applySyncIn").mockImplementation(function (
+      this: PlatformComponents,
+      prepared,
+    ) {
+      if (prepared.plan.itemId !== itemId || injected) return realApply.call(this, prepared);
+      injected = true;
+      return Promise.reject(new Error("injected component write failure"));
+    });
     const failed = await superConfirm(itemId, await digestOf(itemId));
     expect(failed.statusCode, failed.body).toBe(500);
     expect(await itemRow("ext-ns")).toMatchObject({
@@ -668,6 +678,9 @@ describe("fix round 1: applied versions only, the confirm lock (P3-34 to P3-37)"
     const c = await superConfirm(itemId, await digestOf(itemId));
     expect(c.statusCode, c.body).toBe(200);
     expect((await itemRow("ext-ns"))?.platform_synced_version).toBe("1.0.0");
+    // the scope jobs the two confirmations owed (the enable of each) have run before the next
+    // version is uploaded, so none changes the item behind the assertions below
+    await settleScope(env, itemId);
     await uploaded(
       env.boss,
       orgA,

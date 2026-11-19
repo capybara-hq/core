@@ -38,6 +38,7 @@ const { default: AuthLayout } = await import("../src/app/(auth)/layout");
 const { default: LoginLayout } = await import("../src/app/(auth)/login/layout");
 const { default: BindLayout } = await import("../src/app/(auth)/bind/[token]/layout");
 const { default: DeviceLayout } = await import("../src/app/(auth)/devices/link/layout");
+const { default: AppAuthorizeLayout } = await import("../src/app/(auth)/apps/authorize/layout");
 const { default: ShareLayout } = await import("../src/app/(auth)/s/[code]/layout");
 
 const layoutAt = (path: string) => {
@@ -288,5 +289,28 @@ describe("the device layout's decision before anything renders", () => {
   it("a signed-in visitor gets the page", async () => {
     serverRoutes({ "GET /api/v1/me": () => json(200, ME) });
     await expect(deviceAt(PAGE)).resolves.toBeTruthy();
+  });
+});
+
+describe("the app consent layout's decision before anything renders", () => {
+  const PAGE = "/apps/authorize?client=desktop&state=s1";
+  const appAt = (path: string) => {
+    req.headers = new Headers({ "x-cap-path": path });
+    return AppAuthorizeLayout({ children: <p>page body</p> });
+  };
+
+  it("a signed-out visitor goes to sign-in and back here, the query included", async () => {
+    serverRoutes({
+      "GET /api/v1/me": () =>
+        json(401, { error: { code: "auth.required", message: "signed out" } }),
+    });
+    await expect(appAt(PAGE)).rejects.toThrow(
+      `REDIRECT /login?returnTo=${encodeURIComponent(PAGE)}`,
+    );
+  });
+
+  it("a signed-in visitor gets the page", async () => {
+    serverRoutes({ "GET /api/v1/me": () => json(200, ME) });
+    await expect(appAt(PAGE)).resolves.toBeTruthy();
   });
 });

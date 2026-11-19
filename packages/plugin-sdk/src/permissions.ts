@@ -2,7 +2,7 @@ import { POLICY_HOOKS, type PolicyHook } from "./hooks.js";
 import { HTTP_ACCESS, type HttpPermission } from "./http-access.js";
 import { SETUP_CHECK_ID_RE, SETUP_CHECK_LIMITS } from "./setup-check.js";
 import { UI_ICONS, type UiContribution } from "./ui.js";
-import { parseSlotRef, uiSlot } from "./ui-slots.js";
+import { isCompactForm, parseSlotRef, uiSlot } from "./ui-slots.js";
 
 /** Extension permission manifest: governance, not a sandbox; using an undeclared platform API throws ExtensionPermissionError. */
 export interface ExtensionPermissions {
@@ -353,6 +353,8 @@ export function validateUiContributions(ui: unknown, permissions: unknown): stri
       errs.push(`ui "${id}" kind must be view, embed or component`);
       return;
     }
+    if (c.compact !== undefined && !isCompactForm(c.compact))
+      errs.push(`ui "${id}" compact must be one of kept, drawer, hidden`);
     if (c.icon !== undefined && !(UI_ICONS as readonly unknown[]).includes(c.icon))
       errs.push(`ui "${id}" icon must be one of ${UI_ICONS.join(", ")}`);
     // the slot checks describe only the catalog's version: another version is left to

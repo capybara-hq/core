@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import { resolve } from "node:path";
 import {
   type ExecResult,
@@ -34,6 +35,7 @@ import {
   within,
 } from "./operation-types.js";
 import type { MacWorkerHandle, MacWorkerRequest } from "./operation-worker.js";
+import { timed } from "./transfer-timing.js";
 export interface MacOperationBackendOptions {
   deviceId: string;
   instanceGeneration: string;
@@ -46,6 +48,11 @@ export interface MacOperationBackendOptions {
    */
   runtimeHash?: string;
   readOwnerCeiling: () => Promise<DeviceOwnerCeiling>;
+  /**
+   * Called when an operation's worker is gone (completed, killed, failed to launch): a background
+   * task long after its start answered. Feeds the control socket's running operations.
+   */
+  onOperationEnded?: (operationId: string) => void;
 }
 export type MacOperationBackend = Required<
   Pick<
@@ -230,6 +237,7 @@ export async function createLocalOperationBackend(
     ...(dependencies.now ? { now: dependencies.now } : {}),
     ...(host.startWorker ? { start: host.startWorker } : {}),
     ...(host.reapOrphan ? { reapOrphan: host.reapOrphan } : {}),
+    ...(options.onOperationEnded ? { onLiveEnded: options.onOperationEnded } : {}),
     onLiveChanged: (live) => {
       if (live && !stopWatch) {
         if (dependencies.watch) stopWatch = dependencies.watch(tick);
@@ -373,7 +381,17 @@ export async function createLocalOperationBackend(
             cwd: args?.cwd ?? options.roots.workspace,
           },
         };
-    const hash = digest({ scope, native, args, authority, background });
+    // The admission hash binds the operation id to its exact input. A write's bytes enter it as
+    // their sha256, hashed once, instead of being re-serialised inside the request JSON: a
+    // collision-resistant hash of the bytes binds them as tightly as the bytes themselves.
+    const hash = timed(native?.method ?? "exec", "digest", () => {
+      const { dataB64, ...rest } = native ?? {};
+      const input =
+        dataB64 === undefined
+          ? native
+          : { ...rest, dataSha256: createHash("sha256").update(dataB64).digest("hex") };
+      return digest({ scope, native: input, args, authority, background });
+    });
     return background
       ? supervisor.start(request, hash, background.retainUntilMs, signal)
       : supervisor.execute(request, hash, signal);
@@ -397,21 +415,26 @@ export async function createLocalOperationBackend(
           opts.maxBytes > 16 * 1024 * 1024
         )
           throw new SandboxScopeDeniedError("Invalid native read bound");
-        const result = (await run(
-          { method: "readFile", path, maxBytes: opts.maxBytes },
-          opts.signal,
-        )) as { dataB64: string; truncated: boolean } | null;
-        return result
-          ? { data: Buffer.from(result.dataB64, "base64"), truncated: result.truncated }
-          : null;
+        return timed("readFile", "total", async () => {
+          const result = (await run(
+            { method: "readFile", path, maxBytes: opts.maxBytes },
+            opts.signal,
+          )) as { dataB64: string; truncated: boolean } | null;
+          return result
+            ? timed("readFile", "encode", () => ({
+                data: Buffer.from(result.dataB64, "base64"),
+                truncated: result.truncated,
+              }))
+            : null;
+        });
       },
       writeFile: async (path: string, data: Uint8Array, signal: AbortSignal) => {
         if (data.byteLength > 16 * 1024 * 1024)
           throw new SandboxScopeDeniedError("Native write exceeds bounded transport");
-        await run(
-          { method: "writeFile", path, dataB64: Buffer.from(data).toString("base64") },
-          signal,
-        );
+        await timed("writeFile", "total", async () => {
+          const dataB64 = timed("writeFile", "encode", () => Buffer.from(data).toString("base64"));
+          await run({ method: "writeFile", path, dataB64 }, signal);
+        });
       },
       stat: (path: string, signal: AbortSignal) =>
         run({ method: "stat", path }, signal) as Promise<{ size: number; isDir: boolean } | null>,

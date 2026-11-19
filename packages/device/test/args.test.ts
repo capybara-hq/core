@@ -2,6 +2,41 @@ import { describe, expect, it } from "vitest";
 import { parseCommandLine, USAGE, UsageError } from "../src/args.js";
 
 describe("parseCommandLine", () => {
+  it("login --json sets browser false and json", () => {
+    expect(parseCommandLine(["login", "--url", "u", "--json"])).toEqual({
+      command: "login",
+      url: "u",
+      browser: false,
+      mode: "os",
+      json: true,
+    });
+  });
+
+  it("parses --json for ceiling show and service status only", () => {
+    expect(parseCommandLine(["ceiling", "show", "--json"])).toEqual({
+      command: "ceiling",
+      action: "show",
+      json: true,
+    });
+    expect(parseCommandLine(["service", "status", "--json"])).toEqual({
+      command: "service",
+      action: "status",
+      json: true,
+    });
+    expect(() => parseCommandLine(["service", "start", "--json"])).toThrow(UsageError);
+    expect(() =>
+      parseCommandLine([
+        "ceiling",
+        "set",
+        "--full-access",
+        "allow",
+        "--project-reach",
+        "workspace",
+        "--json",
+      ]),
+    ).toThrow(UsageError);
+  });
+
   it("parses login flags with defaults", () => {
     expect(parseCommandLine(["login", "--url", "https://x.test"])).toEqual({
       command: "login",

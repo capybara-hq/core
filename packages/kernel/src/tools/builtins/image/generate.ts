@@ -9,13 +9,12 @@ import {
   ToolError,
   type ToolSpec,
 } from "@capybara-hq/plugin-sdk";
-import { sql } from "kysely";
 import type { AttachmentsService } from "../../../conversations/attachments.service.js";
 import type { AppendEvent, EventLog } from "../../../conversations/event-log.js";
-import { type EventPayload, isValidArtifactName } from "../../../conversations/events.js";
-import type { KernelSchemaDb } from "../../../db/kernel-schema.js";
+import { isValidArtifactName } from "../../../conversations/events.js";
 import { ApiError } from "../../../errors.js";
 import type { KernelConfigService } from "../../../infra/config/kernel-config.service.js";
+import type { KernelDb } from "../../../infra/database/kernel-db.js";
 import {
   IMAGE_PURPOSE,
   type ImageInputCaps,
@@ -48,6 +47,7 @@ import {
   type StoredArtifact,
   storeArtifacts,
 } from "../artifacts.js";
+import { findConversationFile } from "../conversation-files.js";
 import {
   checkFilePathShape,
   checkToolWritable,
@@ -62,7 +62,9 @@ import {
 } from "../sandbox/common.js";
 import { assertReadAndUnchanged, FileGuardError, fileStateOf } from "../sandbox/file-state.js";
 import { READ_MAX_BYTES } from "../sandbox/read.js";
+import { sizeText } from "../size-text.js";
 import { generateImagePaths } from "./paths.js";
+import { pickStandardSize } from "./size.js";
 
 /** The model purpose the tool calls (image generation spec §5.4; no fallback). */
 const PURPOSE = IMAGE_PURPOSE;
@@ -75,12 +77,15 @@ const MAX_IMAGES = 4;
 const NAME_MAX_CHARS = 100;
 
 /** The listed spec for an org whose image model accepts `caps` (pure; `n` and references drop or cap). */
-export function generateImageSpec(caps: ImageInputCaps): ToolSpec {
+export function generateImageSpec(caps: ImageInputCaps, standardPixels: number): ToolSpec {
   const base = GENERATE_IMAGE_SPEC;
-  const { n, reference_images, ...rest } = (
+  const { n, reference_images, resolution, ...rest } = (
     base.inputSchema as { properties: Record<string, unknown> }
   ).properties;
-  const properties: Record<string, unknown> = { ...rest };
+  const properties: Record<string, unknown> = {
+    ...rest,
+    resolution: { ...(resolution as object), description: resolutionDescription(standardPixels) },
+  };
   if (caps.maxImages > 1) properties.n = { ...(n as object), maximum: caps.maxImages };
   if (caps.maxReferenceImages > 0) {
     properties.reference_images = {
@@ -103,7 +108,11 @@ export function generateImageSpec(caps: ImageInputCaps): ToolSpec {
  * with the `reference_images` field. `generateImageSpec` fails loudly if the two drift apart.
  */
 const REFERENCE_SENTENCE =
-  "Optionally pass reference images (attachment or earlier generated image ids) to guide the result. ";
+  "Pass reference images (ids of images in this conversation) to keep a subject or style consistent with them, or to edit one. ";
+
+/** The `resolution` description with the configured target area in megapixels. */
+const resolutionDescription = (standardPixels: number): string =>
+  `standard: the size closest to about ${(standardPixels / 1_000_000).toFixed(1)} megapixels for this shape; high: the model's largest size for this shape. Default: standard.`;
 
 export const GENERATE_IMAGE_SPEC: ToolSpec = {
   name: "GenerateImage",
@@ -114,7 +123,7 @@ export const GENERATE_IMAGE_SPEC: ToolSpec = {
     "the user in the conversation. Write a specific prompt: subject, composition, style, lighting, " +
     "any text that must appear. " +
     // REFERENCE_SENTENCE, spelled out: the tool-description check reads string literals only
-    "Optionally pass reference images (attachment or earlier generated image ids) to guide the result. " +
+    "Pass reference images (ids of images in this conversation) to keep a subject or style consistent with them, or to edit one. " +
     "Each call costs money: generate only what the user asked for.",
   inputSchema: {
     type: "object",
@@ -128,7 +137,14 @@ export const GENERATE_IMAGE_SPEC: ToolSpec = {
         type: "string",
         enum: [...IMAGE_ASPECT_RATIOS],
         description:
-          "Shape of the images; the closest size the model supports is used. Default: the model's default size.",
+          "Shape of the images; the closest size the model supports is used. Default: the shape of the model's default size.",
+      },
+      resolution: {
+        type: "string",
+        enum: ["standard", "high"],
+        // the listed spec replaces this with the configured megapixels (generateImageSpec)
+        description:
+          "standard: a mid-sized image for this shape; high: the model's largest size for this shape. Default: standard.",
       },
       n: {
         type: "integer",
@@ -141,7 +157,7 @@ export const GENERATE_IMAGE_SPEC: ToolSpec = {
         maxItems: MAX_REFERENCES,
         items: { type: "string", minLength: 1 },
         description:
-          "Ids of images that guide the result: attachment ids of this conversation, or artifact ids of images generated earlier in it.",
+          "Ids of images in this conversation that guide the result: attachment ids or artifact ids (generated or delivered images).",
       },
       name: {
         type: "string",
@@ -166,6 +182,7 @@ export const GENERATE_IMAGE_SPEC: ToolSpec = {
 interface GenerateImageInput {
   prompt: string;
   aspect_ratio?: ImageAspectRatio;
+  resolution?: "standard" | "high";
   n?: number;
   reference_images?: string[];
   name?: string;
@@ -186,7 +203,7 @@ const failedText = (message: string): string =>
 /** A refused argument (the request building's text names it and the allowed values). */
 const invalidText = (message: string): string => `${message}; fix the argument and retry.`;
 const unknownReferenceText = (k: number): string =>
-  `reference_images[${k}] is not an attachment or generated image of this conversation; pass an attachment id or the artifact id of an image generated earlier in it.`;
+  `reference_images[${k}] is not an image attachment or artifact of this conversation; pass the id of one.`;
 const badReferenceText = (k: number): string =>
   `reference_images[${k}] is not a PNG, JPEG, GIF or WebP image up to ${
     MEDIA_LIMITS.imageBytes / 1_048_576
@@ -216,9 +233,6 @@ const vanishedText = (path: string): string =>
 /** The device line of a call whose conversation has no device to write to. */
 export const NO_DEVICE_LINE = "Not written to the device: this conversation has no device.";
 
-/** Lower-case UUIDs: attachment and artifact ids. */
-const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
-
 /** The file extension of each image media type. */
 const EXTENSIONS: Record<ImageMediaType, string> = {
   "image/png": "png",
@@ -242,7 +256,7 @@ export interface GenerateImageDeps {
   /** Extension hooks (absent: none fire). */
   hooks?: HookRunner | undefined;
   /** The artifact lookup of `reference_images`. */
-  db: () => KernelSchemaDb;
+  db: Pick<KernelDb, "selectFrom">;
   attachments: Pick<AttachmentsService, "openForConversation">;
   /** The device copy of `file_path` (the sandbox tools' own dependencies). */
   sandbox: SandboxToolDeps;
@@ -273,7 +287,9 @@ export function generateImageTool(deps: GenerateImageDeps): BuiltinTool {
     // the counts the org's image model accepts (on a race to unusable: the static spec)
     specFor: async (scope) => {
       const state = await imagePurposeState(deps, scope.orgId, scope.memo);
-      return state.usable === "usable" ? generateImageSpec(state) : GENERATE_IMAGE_SPEC;
+      return state.usable === "usable"
+        ? generateImageSpec(state, deps.config.get().models.imageStandardPixels)
+        : GENERATE_IMAGE_SPEC;
     },
     timeoutMs: () => deps.config.get().models.imageTimeoutMs + 60_000,
     async run(raw, ctx) {
@@ -291,6 +307,14 @@ export function generateImageTool(deps: GenerateImageDeps): BuiltinTool {
         ...(input.n !== undefined && { n: input.n }),
       };
       // the cheap checks (prompt, count, size, the model) before any reference is read
+      // the size of the tool: the kernel's standard size for the shape, or the largest (spec §3.3)
+      const standardPixels = deps.config.get().models.imageStandardPixels;
+      call.chooseSize = (info) =>
+        pickStandardSize(info, {
+          aspectRatio: input.aspect_ratio,
+          resolution: input.resolution ?? "standard",
+          standardPixels,
+        });
       let prepared = await prepare(deps, ctx, call);
       const refs = input.reference_images ?? [];
       if (refs.length > prepared.info.maxReferenceImages) {
@@ -392,11 +416,10 @@ function toolErrorOf(e: unknown): ToolError | null {
 }
 
 /**
- * Reads the reference images as bytes, each an id of the conversation: an attachment of the
- * conversation whose device the call uses (a sub-agent: its root's, as `FetchAttachment`
- * resolves), else an `artifact_created` of the calling conversation or its root. Anything else
- * names its index; a file that is not an image within `MEDIA_LIMITS.imageBytes` is refused before
- * it is read.
+ * Reads the reference images as bytes, each an id of the conversation: an attachment or an
+ * `artifact_created` of the calling conversation or its root ({@link findConversationFile}).
+ * Anything else names its index; a file that is not an image within `MEDIA_LIMITS.imageBytes` is
+ * refused before it is read.
  */
 async function resolveReferences(
   deps: GenerateImageDeps,
@@ -406,55 +429,34 @@ async function resolveReferences(
   const root = sandboxConversationOf(ctx);
   const out: { mediaType: ImageMediaType; data: string }[] = [];
   for (const [k, id] of ids.entries()) {
-    if (!UUID.test(id)) throw new ToolError(unknownReferenceText(k));
-    const found = await openReference(deps, ctx, root, id.toLowerCase());
-    if (found === null) throw new ToolError(unknownReferenceText(k));
-    const mediaType = found.contentType.split(";")[0]?.trim().toLowerCase() ?? "";
-    if (
-      !(IMAGE_MEDIA_TYPES as readonly string[]).includes(mediaType) ||
-      found.size > MEDIA_LIMITS.imageBytes
-    ) {
-      await found.body.cancel().catch(() => {});
-      throw new ToolError(badReferenceText(k));
+    try {
+      const found = await findConversationFile(
+        { db: deps.db, attachments: deps.attachments, storage: deps.storage },
+        { orgId: ctx.orgId, conversationId: ctx.conversationId, rootConversationId: root, id },
+      );
+      if (found === null) throw new ToolError(unknownReferenceText(k));
+      const mediaType = found.contentType.split(";")[0]?.trim().toLowerCase() ?? "";
+      if (
+        !(IMAGE_MEDIA_TYPES as readonly string[]).includes(mediaType) ||
+        found.size > MEDIA_LIMITS.imageBytes
+      ) {
+        await found.discard();
+        throw new ToolError(badReferenceText(k));
+      }
+      const bytes = await found.open();
+      if (bytes.byteLength > MEDIA_LIMITS.imageBytes) throw new ToolError(badReferenceText(k));
+      out.push({
+        mediaType: mediaType as ImageMediaType,
+        data: Buffer.from(bytes).toString("base64"),
+      });
+    } catch (e) {
+      if (e instanceof ApiError && e.code === "storage.unavailable") {
+        throw new ToolError(NO_STORAGE);
+      }
+      throw e;
     }
-    const bytes = new Uint8Array(await new Response(found.body).arrayBuffer());
-    if (bytes.byteLength > MEDIA_LIMITS.imageBytes) throw new ToolError(badReferenceText(k));
-    out.push({
-      mediaType: mediaType as ImageMediaType,
-      data: Buffer.from(bytes).toString("base64"),
-    });
   }
   return out;
-}
-
-/** One reference by id: its declared type and size and its bytes, or null when it is not one. */
-async function openReference(
-  deps: GenerateImageDeps,
-  ctx: BuiltinCallContext,
-  root: string,
-  id: string,
-): Promise<{ contentType: string; size: number; body: ReadableStream<Uint8Array> } | null> {
-  try {
-    const attachment = await deps.attachments.openForConversation(ctx.orgId, root, id);
-    if (attachment !== null) return attachment;
-    const row = await deps
-      .db()
-      .selectFrom("conversation_events")
-      .select("payload")
-      .where("conversation_id", "in", [...new Set([ctx.conversationId, root])])
-      .where("type", "=", "artifact_created")
-      .where(sql<string>`payload->>'artifactId'`, "=", id)
-      .limit(1)
-      .executeTakeFirst();
-    if (!row) return null;
-    const a = row.payload as EventPayload<"artifact_created">;
-    const got = await deps.storage.kernel(ctx.orgId).get(a.objectKey);
-    if (got === null) return null;
-    return { contentType: a.contentType, size: got.head.size, body: got.body };
-  } catch (e) {
-    if (e instanceof ApiError && e.code === "storage.unavailable") throw new ToolError(NO_STORAGE);
-    throw e;
-  }
 }
 
 /**
@@ -718,13 +720,6 @@ async function hasDevice(sb: SandboxToolDeps, orgId: string, conv: string): Prom
   }
 }
 
-/** A byte count as the result shows it. */
-function sizeText(bytes: number): string {
-  if (bytes < 1024) return `${bytes} B`;
-  if (bytes < 1_048_576) return `${(bytes / 1024).toFixed(1)} KB`;
-  return `${(bytes / 1_048_576).toFixed(1)} MB`;
-}
-
 /** The model-visible result (spec §5.3): what was generated, delivered or repeated, billing, the device copy. */
 function resultText(
   prepared: PreparedImageCall,
@@ -757,6 +752,12 @@ function resultText(
   }
   if (typeof revisedPrompt === "string" && revisedPrompt !== "") {
     lines.push(`Revised prompt: ${revisedPrompt}`);
+  }
+  const first = stored[0];
+  if (first !== undefined) {
+    lines.push(
+      `The images are not shown to you; Read with file_id ${first.repeatOf?.artifactId ?? first.artifactId} returns one.`,
+    );
   }
   if (deviceLine !== null) lines.push(deviceLine);
   return lines.join("\n");

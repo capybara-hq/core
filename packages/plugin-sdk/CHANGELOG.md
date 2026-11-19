@@ -1,5 +1,24 @@
 # @capybara-hq/plugin-sdk
 
+## 0.1.0-rc.38
+
+### Minor Changes
+
+- d4fbc1f: Add the desktop shell capability types: `DeviceCapabilityV1`, `NotifyCapabilityV1`,
+  `OpenExternalCapabilityV1`, `SignInCapabilityV1`, `ThisMachineStatus`, `ShellCallError` and the
+  `SHELL_CAPABILITY_KEYS` constants.
+- 091cd08: Add the Shell environment types (`CapybaraShell`, `SHELL_CAPABILITIES`) and the compact form of UI
+  slots: `UiSlotSpec.compact`, `UiContribution.compact` (a contribution may only narrow its slot's
+  form), `CompactForm` and `effectiveCompact`.
+
+## 0.1.0-rc.37
+
+### Patch Changes
+
+- 10ecf48: `parseDeviceFrame` checks a `writeFile` payload's base64 in one linear pass: the previous pattern
+  overflowed the regex stack on Node 24 for payloads above about 3.3 MB, so larger device writes failed.
+- 311c56e: `ModelCallPurpose` gains `"vision"`: the call that reads an image for a model without vision.
+
 ## 0.1.0-rc.36
 
 ### Minor Changes

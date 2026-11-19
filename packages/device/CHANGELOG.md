@@ -1,5 +1,30 @@
 # @capybara-hq/device
 
+## 0.1.0-rc.18
+
+### Minor Changes
+
+- bd2ac1a: A running `capybara-device` answers on a local control socket (`<stateDir>/control.sock`, mode
+  0600): live status, running operations, status events, drain and stop. `status --json` adds
+  `control` and `live`.
+- 10e7317: `login --json`, `ceiling show --json` and `service status --json` print machine-readable output so
+  a desktop app can drive the CLI. `login --json` writes one JSON event per line to stdout (human
+  lines go to stderr) and opens no browser.
+- 0a56636: Keep-awake: `policy.json` gets `keepAwake` (`off`, `while-busy` default, `connected`). While it
+  applies, the program holds an idle-sleep assertion (`caffeinate` on macOS, `systemd-inhibit` on
+  Linux). New command `capybara-device keep-awake [show | off | while-busy | connected]`; the live
+  status adds `keepAwake` and `lastWakeAt`, and a wake from sleep is logged.
+
+## 0.1.0-rc.17
+
+### Patch Changes
+
+- ecaf6da: File transfers no longer slow down or fail as reads accumulate. The operation journal keeps a
+  native read's outcome without its bytes (a retry after a restart reports an unknown outcome); the
+  read bytes held in memory for retries are bounded at 64 MiB, the oldest given up first; and a
+  write's admission hash takes its bytes as one sha256. `CAPYBARA_DEVICE_DEBUG_TIMINGS=1` prints
+  per-stage transfer timings to stderr.
+
 ## 0.1.0-rc.16
 
 ### Patch Changes

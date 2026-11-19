@@ -4,6 +4,7 @@ import { Inject, Injectable } from "@nestjs/common";
 import { sql } from "kysely";
 import type { AttachmentPurpose } from "../db/kernel-schema.js";
 import { ApiError } from "../errors.js";
+import { CacheService } from "../infra/cache/cache.service.js";
 import { KernelConfigService } from "../infra/config/kernel-config.service.js";
 import { KernelDb } from "../infra/database/kernel-db.js";
 import { TransactionHost } from "../infra/database/transaction-host.js";
@@ -17,6 +18,13 @@ import { StorageService } from "../storage/storage.service.js";
 import { ConversationAccess } from "./access.js";
 import type { LogContentBlock } from "./events.js";
 import { acceptedContent, isImageContentType, isMediaContentType } from "./media-types.js";
+import {
+  fitImageForModel,
+  MODEL_IMAGE_CACHE_SECONDS,
+  modelImageKey,
+  parseModelImage,
+  serializeModelImage,
+} from "./model-image.js";
 
 /** 预签名上传的有效期（秒）。尽量短：表单在有效期内可被再次使用（内容替换由 etag 核对兜底）。 */
 export const ATTACHMENT_UPLOAD_TTL_SECONDS = 300;
@@ -59,8 +67,22 @@ export const skillFilesPrefix = (uploadId: string) => `skills/${uploadId}/`;
 export const ATTACHMENT_CLEANUP_JOB = "attachment-cleanup";
 /** 每批认领的行数。 */
 const CLEANUP_BATCH = 100;
+/** The hourly purge of `read` copies whose conversation was deleted long enough ago. */
+export const ATTACHMENT_READ_PURGE_JOB = "attachments-read-purge";
+/** Rows one claim of the read purge takes. */
+const READ_PURGE_BATCH = 500;
+/**
+ * How many sub-agent levels below a deleted conversation the read purge walks (the bound of
+ * `conversations/tree.ts`: far above `subagents.maxDepth`, so a corrupt chain cannot loop).
+ */
+const READ_PURGE_TREE_LEVELS = 16;
 /** finalize 时读取开头多少字节核对文件签名。 */
 const SNIFF_BYTES = 1024;
+
+/** {@link AttachmentsService.storeRead}'s result: the bound copy, or refused by the cap. */
+export type StoreReadResult =
+  | { ok: true; attachmentId: string; size: number }
+  | { ok: false; reason: "cap" };
 
 /** 附件元数据（finalize 的返回）。 */
 export interface AttachmentView {
@@ -129,6 +151,12 @@ export interface CreatedAttachment {
 
 const notFound = () => new ApiError("attachment.not_found", "Attachment not found");
 
+/**
+ * The purposes request building reads bytes of: chat attachments and the `read` copies of the
+ * builtin Read. Every other lookup (listing, sandbox sync, download, binding) stays `chat` only.
+ */
+const MEDIA_PURPOSES: AttachmentPurpose[] = ["chat", "read"];
+
 /** 去掉参数、转小写：`Text/Plain; charset=utf-8` → `text/plain`。 */
 export const normalizeContentType = (ct: string): string =>
   (ct.split(";")[0] ?? "").trim().toLowerCase();
@@ -138,13 +166,18 @@ type ImageBlock = Extract<LogContentBlock, { type: "image" }>;
 /** A logged document block. */
 type DocumentBlock = Extract<LogContentBlock, { type: "document" }>;
 
-/** 对象键：只用附件 id，用户的文件名不进键。技能包另放 `skill-packages/<id>`。 */
+/**
+ * The object key: the attachment id only (the user's file name never goes into a key), under one
+ * prefix per purpose.
+ */
 const objectKey = (id: string, purpose: AttachmentPurpose = "chat") =>
   purpose === "chat"
     ? `attachments/${id}`
     : purpose === "agent-avatar"
       ? `agent-avatars/${id}`
-      : `skill-packages/${id}`;
+      : purpose === "read"
+        ? `read-images/${id}`
+        : `skill-packages/${id}`;
 
 const startsWith = (b: Uint8Array, sig: readonly number[], at = 0) =>
   sig.every((x, i) => b[at + i] === x);
@@ -211,6 +244,8 @@ export class AttachmentsService {
     @Inject(ConversationAccess) private readonly access: Pick<ConversationAccess, "isAccessible">,
     @Inject(KERNEL_LOGGER) private readonly log: Pick<KernelLogger, "info" | "warn">,
     @Inject(TransactionHost) readonly txHost: TransactionHost,
+    /** where the model-sized copies of images are kept between steps ({@link fetchMedia}) */
+    @Inject(CacheService) private readonly cache: Pick<CacheService, "get" | "set">,
   ) {}
 
   /** 单个附件的大小上限：配置的 `maxBytes`，图片再受 `MEDIA_LIMITS.imageBytes` 限制。 */
@@ -344,6 +379,8 @@ export class AttachmentsService {
       .where("org_id", "=", orgId)
       .where("account_id", "=", accountId)
       .where("status", "in", ["pending", "ready"])
+      // read copies are the kernel's own (storeRead binds them); nobody finalizes them
+      .where("purpose", "<>", "read")
       .executeTakeFirst();
     if (!row) throw notFound();
     const view: AttachmentView = {
@@ -458,15 +495,22 @@ export class AttachmentsService {
   /**
    * The ready `chat` attachments bound to the conversation in this org (never another purpose, a
    * pending or an unbound upload), oldest first by upload time, then id; with `id`, only that one.
-   * Nothing here checks who reads them: callers check the conversation's access first.
+   * Nothing here checks who reads them: callers check the conversation's access first. `purposes`
+   * widens it for a model-facing lookup only (`read` copies; vision-read design §1.1): every
+   * person- or device-facing caller keeps the default.
    */
-  async boundRows(orgId: string, conversationId: string, id?: string): Promise<BoundAttachment[]> {
+  async boundRows(
+    orgId: string,
+    conversationId: string,
+    id?: string,
+    purposes: readonly ("chat" | "read")[] = ["chat"],
+  ): Promise<BoundAttachment[]> {
     let q = this.db
       .selectFrom("attachments")
       .select(["id", "name", "content_type", "size", "object_key", "etag", "created_at"])
       .where("org_id", "=", orgId)
       .where("conversation_id", "=", conversationId)
-      .where("purpose", "=", "chat")
+      .where("purpose", "in", [...purposes])
       .where("status", "=", "ready");
     if (id !== undefined) q = q.where("id", "=", id);
     const rows = await q.orderBy("created_at").orderBy("id").execute();
@@ -507,10 +551,25 @@ export class AttachmentsService {
     orgId: string,
     conversationId: string,
     attachmentId: string,
+    opts: {
+      /**
+       * Also `read` copies (the model-facing file lookup only, vision-read design §1.1); the
+       * default is `chat` attachments, which is all a person or a device may see.
+       */
+      purposes?: readonly ("chat" | "read")[];
+      /** Read at most this many bytes (a range read; a store that ignores it serves the whole). */
+      maxBytes?: number;
+      signal?: AbortSignal;
+    } = {},
   ): Promise<OpenedAttachment | null> {
-    const [row] = await this.boundRows(orgId, conversationId, attachmentId);
+    const [row] = await this.boundRows(orgId, conversationId, attachmentId, opts.purposes);
     if (!row) return null;
-    const got = await this.storage.kernel(orgId).get(row.objectKey);
+    const got = await this.storage.kernel(orgId).get(row.objectKey, {
+      ...(opts.signal !== undefined && { signal: opts.signal }),
+      // only a larger object is ranged (a range on an empty object is unsatisfiable)
+      ...(opts.maxBytes !== undefined &&
+        row.size > opts.maxBytes && { range: { start: 0, end: opts.maxBytes - 1 } }),
+    });
     if (!got) return null;
     if (!this.storedMatches(row, got.head, { orgId, conversationId })) {
       await got.body.cancel().catch(() => {});
@@ -637,8 +696,10 @@ export class AttachmentsService {
   }
 
   /**
-   * 构建模型请求时查附件行的声明信息（只含绑定在该会话、已 ready 的）：大小、PDF 页数，以及对象的无签名引用
-   * （`ObjectStore.uri`，存储没有时退回 `capybara://attachments/<id>`）。没有行的不在结果里；查询失败照常抛出。
+   * The recorded facts request building needs about attachments (only ready `chat` or `read` rows
+   * bound to this conversation): size, PDF page count, and the object's unsigned reference
+   * (`ObjectStore.uri`, falling back to `capybara://attachments/<id>`). An id with no row is left
+   * out; a failed query throws.
    */
   async mediaInfo(
     orgId: string,
@@ -651,7 +712,7 @@ export class AttachmentsService {
       .select(["id", "size", "pages", "etag", "object_key"])
       .where("org_id", "=", orgId)
       .where("conversation_id", "=", conversationId)
-      .where("purpose", "=", "chat")
+      .where("purpose", "in", MEDIA_PURPOSES)
       .where("status", "=", "ready")
       .where("id", "in", [...ids])
       .execute();
@@ -670,9 +731,14 @@ export class AttachmentsService {
   }
 
   /**
-   * 构建模型请求时取附件字节：只取绑定在该会话、已 ready 的附件。只有「确定不存在」才为 null：没有行、对象已不在、
-   * 大小或 etag 与 finalize 时不符（内容被替换，记 warn）。其余错误（存储不可用、网络错误）一律抛出（Ruling M4），
-   * 由调用方按可重试处理，不会变成占位。`caps` 里的附件只按范围读开头若干字节（`text/*` 封顶，更后面的不取）。
+   * The bytes request building sends, only of ready `chat` or `read` rows bound to this
+   * conversation. Null only when certainly gone: no row, the object missing, or its size or etag
+   * not the recorded one (content replaced, logged as a warning). Every other error (storage
+   * unavailable, network) throws (Ruling M4) for the caller to treat as retryable, never a
+   * placeholder. An id in `caps` is read by range up to that many leading bytes (the `text/*` cap).
+   * A whole image comes back as its model-sized copy ({@link fitImageForModel}), whose media type
+   * may differ from the row's; the copy is cached for {@link MODEL_IMAGE_CACHE_SECONDS} under the
+   * attachment's id and etag, so later steps of the conversation only check the object's head.
    */
   async fetchMedia(
     orgId: string,
@@ -687,7 +753,7 @@ export class AttachmentsService {
       .select(["id", "content_type", "object_key", "size", "etag"])
       .where("org_id", "=", orgId)
       .where("conversation_id", "=", conversationId)
-      .where("purpose", "=", "chat")
+      .where("purpose", "in", MEDIA_PURPOSES)
       .where("status", "=", "ready")
       .where("id", "in", [...ids])
       .execute();
@@ -698,13 +764,34 @@ export class AttachmentsService {
         const r = byId.get(id);
         if (!r) return out.set(id, null);
         const cap = caps?.get(id);
+        const where = { orgId, conversationId, attachmentId: id };
+        // a whole image already scaled for the model: the cached copy, once the object checks out
+        const cacheKey =
+          cap === undefined && isImageContentType(r.content_type)
+            ? modelImageKey(orgId, r)
+            : undefined;
+        const cached =
+          cacheKey === undefined ? null : parseModelImage(await this.cache.get(cacheKey));
+        if (cached) {
+          const head = await store.head(r.object_key);
+          if (!head) return out.set(id, null);
+          if (head.size !== Number(r.size) || !this.sameContent(r.etag, head.etag, where)) {
+            if (head.size !== Number(r.size)) {
+              this.log.warn(
+                "attachment size changed after finalize; treating it as unavailable",
+                where,
+              );
+            }
+            return out.set(id, null);
+          }
+          return out.set(id, cached);
+        }
         const want = cap !== undefined && cap < Number(r.size) ? Math.max(1, cap) : Number(r.size);
         const got = await store.get(
           r.object_key,
           want < Number(r.size) ? { range: { start: 0, end: want - 1 } } : undefined,
         );
         if (!got) return out.set(id, null);
-        const where = { orgId, conversationId, attachmentId: id };
         if (got.head.size !== Number(r.size) || !this.sameContent(r.etag, got.head.etag, where)) {
           if (got.head.size !== Number(r.size)) {
             this.log.warn(
@@ -718,7 +805,17 @@ export class AttachmentsService {
         // 提供方没按范围读、给了整个对象时只留开头
         const all = await readAll(got.body);
         const data = all.byteLength === Number(r.size) ? all.subarray(0, want) : all;
-        out.set(id, data.byteLength === want ? { mediaType: r.content_type, data } : null);
+        if (data.byteLength !== want) return out.set(id, null);
+        const media = { mediaType: r.content_type, data };
+        if (cacheKey === undefined) {
+          return out.set(id, media);
+        }
+        // a whole image goes out as the model-sized copy (the stored object stays unchanged)
+        const fitted = await fitImageForModel(media);
+        if (fitted !== media) {
+          await this.cache.set(cacheKey, serializeModelImage(fitted), MODEL_IMAGE_CACHE_SECONDS);
+        }
+        out.set(id, fitted);
       }),
     );
     return out;
@@ -895,6 +992,199 @@ export class AttachmentsService {
   }
 
   /**
+   * Stores the copy of an image the builtin Read read, bound to the calling conversation (never its
+   * root), intent first so a crash leaves nothing unowned (vision-read design §1.3):
+   * 1. the per-conversation cap `attachments.readMaxBytesPerConversation` (the sizes of the
+   *    conversation's `read` rows plus this one; 0 refuses always) → `{ ok: false, reason: "cap" }`,
+   *    nothing stored. Concurrent calls may pass it together: a soft cap;
+   * 2. the row, unbound, `pending`, expiring after `attachments.unboundTtlHours`, so
+   *    {@link deleteExpired} collects it after a crash; with no `accountId` (a run nobody started)
+   *    it is the conversation owner's;
+   * 3. the object under `read-images/<id>` (a failed put throws and leaves the row to expire);
+   * 4. one transaction binding it: the conversation, `ready`, no expiry, the stored size and etag.
+   * No object store → `storage.unavailable`. A conversation not in the org → an error, nothing stored.
+   */
+  async storeRead(
+    orgId: string,
+    conversationId: string,
+    accountId: string | null,
+    file: { name: string; contentType: string; data: Uint8Array },
+  ): Promise<StoreReadResult> {
+    this.storage.assertAvailable();
+    const size = file.data.byteLength;
+    const cap = this.config.get().attachments.readMaxBytesPerConversation;
+    if (cap === 0) return { ok: false, reason: "cap" };
+    const used = await this.db
+      .selectFrom("attachments")
+      .select(sql<string>`coalesce(sum(size), 0)`.as("n"))
+      .where("org_id", "=", orgId)
+      .where("conversation_id", "=", conversationId)
+      .where("purpose", "=", "read")
+      .executeTakeFirst();
+    if (Number(used?.n ?? 0) + size > cap) return { ok: false, reason: "cap" };
+
+    const id = randomUUID();
+    const key = objectKey(id, "read");
+    const contentType = normalizeContentType(file.contentType);
+    await this.insertReadIntent(orgId, conversationId, accountId, {
+      id,
+      key,
+      name: file.name,
+      contentType,
+      size,
+    });
+    const head = await this.storage
+      .kernel(orgId)
+      .put(key, file.data, { contentType: contentType || "application/octet-stream" });
+    await this.bindRead(id, conversationId, head.size, head.etag ?? null);
+    return { ok: true, attachmentId: id, size: head.size };
+  }
+
+  /**
+   * Step 2 of {@link storeRead}: the unbound intent row, in its own transaction so it is committed
+   * before the put even when the caller holds one (a rollback must never leave an object with no
+   * row). The INSERT ... SELECT proves the conversation is in the org; with no `accountId` the row
+   * is the conversation owner's.
+   */
+  @Transactional({ propagation: "requires_new" })
+  private async insertReadIntent(
+    orgId: string,
+    conversationId: string,
+    accountId: string | null,
+    r: { id: string; key: string; name: string; contentType: string; size: number },
+  ): Promise<void> {
+    const { unboundTtlHours } = this.config.get().attachments;
+    const inserted = await this.db.db
+      .insertInto("attachments")
+      .columns([
+        "id",
+        "org_id",
+        "account_id",
+        "name",
+        "content_type",
+        "size",
+        "object_key",
+        "status",
+        "purpose",
+        "expires_at",
+      ])
+      .expression((eb) =>
+        eb
+          .selectFrom("conversations")
+          .select([
+            sql.val(r.id).as("id"),
+            "org_id",
+            accountId === null ? "account_id" : sql.val(accountId).as("account_id"),
+            sql.val(r.name).as("name"),
+            sql.val(r.contentType).as("content_type"),
+            sql.val(r.size).as("size"),
+            sql.val(r.key).as("object_key"),
+            sql.lit("pending").as("status"),
+            sql.lit("read").as("purpose"),
+            sql<Date>`now() + make_interval(hours => ${unboundTtlHours})`.as("expires_at"),
+          ])
+          .where("id", "=", conversationId)
+          .where("org_id", "=", orgId),
+      )
+      .executeTakeFirst();
+    if (Number(inserted.numInsertedOrUpdatedRows ?? 0) !== 1) {
+      throw new Error(`conversation ${conversationId} not found in org ${orgId}`);
+    }
+  }
+
+  /** Step 4 of {@link storeRead}: binds the unbound row in one transaction. */
+  @Transactional()
+  private async bindRead(
+    id: string,
+    conversationId: string,
+    size: number,
+    etag: string | null,
+  ): Promise<void> {
+    const bound = await this.db.db
+      .updateTable("attachments")
+      .set({ conversation_id: conversationId, status: "ready", expires_at: null, size, etag })
+      .where("id", "=", id)
+      .where("purpose", "=", "read")
+      .where("status", "=", "pending")
+      .where("conversation_id", "is", null)
+      .executeTakeFirst();
+    if (Number(bound.numUpdatedRows) !== 1) {
+      throw new Error(`read attachment ${id} is no longer pending; cannot bind it`);
+    }
+  }
+
+  /**
+   * Purges the `read` copies of conversations deleted more than `attachments.readPurgeAfterHours`
+   * ago (read at run time), and of the sub-agent conversations below them (a sub-agent
+   * conversation keeps `deleted_at` null when its root is deleted): claims up to
+   * {@link READ_PURGE_BATCH} rows at a time as `deleting` (`FOR UPDATE SKIP LOCKED`, so concurrent
+   * runs never share a row), deletes each object, then the row. A row whose object delete fails stays `deleting` and is claimed again on the next run.
+   * Chat attachments of deleted conversations are not touched. Does nothing without an object
+   * store. Returns the number of rows deleted.
+   */
+  async purgeRead(): Promise<number> {
+    if (!this.storage.available) return 0;
+    const hours = this.config.get().attachments.readPurgeAfterHours;
+    let deleted = 0;
+    const failed: string[] = [];
+    for (;;) {
+      const claimed = await this.db
+        .updateTable("attachments")
+        .set({ status: "deleting" })
+        .where(
+          "id",
+          "in",
+          this.db
+            .selectFrom("attachments")
+            .select("id")
+            .where("purpose", "=", "read")
+            .where(
+              "conversation_id",
+              "in",
+              sql<string>`(
+                WITH RECURSIVE gone(id, level) AS (
+                  SELECT c.id, 0 FROM capybara.conversations c
+                  WHERE c.deleted_at < now() - make_interval(hours => ${hours})
+                  UNION ALL
+                  SELECT c.id, g.level + 1
+                  FROM capybara.conversations c JOIN gone g ON c.parent_conversation_id = g.id
+                  WHERE c.kind = 'subagent' AND g.level < ${READ_PURGE_TREE_LEVELS}
+                )
+                SELECT id FROM gone
+              )`,
+            )
+            .$if(failed.length > 0, (q) => q.where("id", "not in", failed))
+            .orderBy("created_at")
+            .limit(READ_PURGE_BATCH)
+            .forUpdate()
+            .skipLocked(),
+        )
+        .returning(["id", "org_id", "object_key"])
+        .execute();
+      if (claimed.length === 0) return deleted;
+      for (const r of claimed) {
+        try {
+          await this.storage.kernel(r.org_id).delete(r.object_key);
+          await this.db
+            .deleteFrom("attachments")
+            .where("id", "=", r.id)
+            .where("purpose", "=", "read")
+            .execute();
+          deleted++;
+        } catch (err) {
+          failed.push(r.id);
+          this.log.warn("cannot purge read attachment; will retry", {
+            orgId: r.org_id,
+            attachmentId: r.id,
+            err,
+          });
+        }
+      }
+      if (claimed.length < READ_PURGE_BATCH) return deleted;
+    }
+  }
+
+  /**
    * 删除过期（`expires_at < now()`）且从未绑定到会话的附件：先把行认领为 `deleting`（`FOR UPDATE SKIP LOCKED`，
    * 多副本并发时互不重复），再删对象、删行。删对象失败的行保持 `deleting`，下次运行重试。
    * 技能包上传（过期未用掉的，或已被 `POST /skills` 用掉、`expires_at` 置为当时的）同样由这里删 zip；
@@ -960,12 +1250,16 @@ export class AttachmentsService {
   }
 }
 
-/** The hourly cleanup of expired unbound attachments, once per tick across replicas. */
+/**
+ * The hourly attachment jobs, each once per tick across replicas (provided only under
+ * `WorkerModule`): the cleanup of expired unbound attachments and the purge of `read` copies of
+ * deleted conversations.
+ */
 @Injectable()
 export class AttachmentCleanupJob {
   constructor(
     @Inject(AttachmentsService)
-    private readonly attachments: Pick<AttachmentsService, "deleteExpired">,
+    private readonly attachments: Pick<AttachmentsService, "deleteExpired" | "purgeRead">,
     @Inject(LockService) readonly lockService: LockService,
     @Inject(KERNEL_LOGGER) readonly log: KernelLogger,
   ) {}
@@ -974,5 +1268,11 @@ export class AttachmentCleanupJob {
   async run(): Promise<void> {
     const n = await this.attachments.deleteExpired();
     if (n > 0) this.log.info("expired attachments deleted", { count: n });
+  }
+
+  @LockedCron("0 * * * *", { name: ATTACHMENT_READ_PURGE_JOB })
+  async purgeRead(): Promise<void> {
+    const n = await this.attachments.purgeRead();
+    if (n > 0) this.log.info("read attachments of deleted conversations purged", { count: n });
   }
 }
