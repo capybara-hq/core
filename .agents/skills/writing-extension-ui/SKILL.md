@@ -64,6 +64,10 @@ Where extension UI goes is a **slot**: a named, versioned position in the web, r
 
 **The two checks.** `check:ui-slots` (in `pnpm check`): the generated web copy and `docs/guide/ui-slots.md` equal what `pnpm gen:ui-slots` renders (`ui-slots-stale`), and every `<ExtensionSlot slot=...>` in `apps/web/src` has a literal, catalogued id, every catalog slot is rendered, in its `owner` file, exactly once. `web-ui-extension-slot` (a rule of `check:web-ui`): `ExtensionPanel`, `ExtensionSection`, `ExtensionCard`, `ExtensionViewTab` and `EmbedTab` appear in JSX only inside `components/extension-ui`; pages go through `<ExtensionSlot>`. Both are described in `tools/checks/README.md`.
 
+### Compact screens (mobile layout spec §5.6)
+
+Every slot has a `compact` form in `UI_SLOTS` (`UiSlotSpec.compact`; `pnpm gen:ui-slots`): `kept` (rendered in place), `drawer` (moved into a sheet or a pushed page) or `hidden`. A contribution may narrow its slot's form with `compact` (`UiContribution.compact`; order `kept` < `drawer` < `hidden`) and never widen it (`effectiveCompact` keeps the slot's form when a contribution asks for a wider one; an unknown value fails validation). `drawer` on a slot that is not a panel (only `conversation.panel` has one) behaves as `kept`: the contribution stays in the page's flow (a folded document item). Client code reads the window with `useSizeClass()` (`null` on the server and during hydration) and `useViewportSegments()` from `@capybara-hq/plugin-client`; plugin CSS follows the same class widths (`design-breakpoint` rules). Embeds and the HTML render never get `window.capybaraShell`.
+
 ### Conversation slots
 
 The conversation page (design spec §5.4, §6.16; UI refresh spec §5.3) has three extension slots.
