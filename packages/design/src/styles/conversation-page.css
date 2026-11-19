@@ -155,11 +155,13 @@ span.cb-title-btn {
 .cb-cmenu[data-size="narrow"] {
   min-width: 160px;
 }
-/* The compact top bar's overflow menu: 40 high items (tap targets), their icons `muted`. */
+/* The compact top bar's overflow menu: 40 high items (tap targets), their icons 16 and `muted`. */
 .cb-cmenu[data-size="touch"] .cb-cmenu-item {
   height: 40px;
 }
 .cb-cmenu[data-size="touch"] .cb-cmenu-item > .cb-icon {
+  width: 16px;
+  height: 16px;
   color: var(--cb-muted);
 }
 .cb-cmenu[data-size="touch"] .cb-cmenu-item[data-tone="fail"] > .cb-icon {

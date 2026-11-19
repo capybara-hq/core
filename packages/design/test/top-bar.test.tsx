@@ -10,6 +10,7 @@ import {
   TopBar,
   withViewTransition,
 } from "../src/index";
+import { css, parseCss } from "./css-rules";
 import { matchMediaFor } from "./width";
 
 const realMatchMedia = window.matchMedia;
@@ -95,6 +96,46 @@ describe("TopBar", () => {
         .getAllByRole("menuitem")
         .map((i) => i.textContent),
     ).toEqual(["属性", "智能体地图", "重命名", "复制链接", "删除"]);
+  });
+
+  it("puts the destructive item last, after one separator (spec §6.46)", () => {
+    const sepBeforeDanger = () => {
+      const menuEl = screen.getByRole("menu");
+      const kids = [...menuEl.querySelectorAll('[role="menuitem"], [role="separator"]')];
+      return {
+        roles: kids.map((k) => (k.getAttribute("role") === "separator" ? "|" : k.textContent)),
+      };
+    };
+    zh(<TopBar title="检索" back="/c" menu={menu} menuOpen />);
+    expect(sepBeforeDanger().roles).toEqual([
+      "属性",
+      "智能体地图",
+      "重命名",
+      "复制链接",
+      "|",
+      "删除",
+    ]);
+    cleanup();
+    // a menu that already separates it keeps one separator
+    const separated = [...menu.slice(0, -1), { kind: "separator" as const }, ...menu.slice(-1)];
+    zh(<TopBar title="检索" back="/c" menu={separated} menuOpen />);
+    expect(sepBeforeDanger().roles).toEqual([
+      "属性",
+      "智能体地图",
+      "重命名",
+      "复制链接",
+      "|",
+      "删除",
+    ]);
+  });
+
+  it("draws the overflow items' icons at 16 (spec §6.46)", () => {
+    const rule = parseCss(css("conversation-page.css")).find(
+      (r) =>
+        r.at === null && r.selector === '.cb-cmenu[data-size="touch"] .cb-cmenu-item > .cb-icon',
+    );
+    expect(rule?.decls.width).toBe("16px");
+    expect(rule?.decls.height).toBe("16px");
   });
 
   it("the open overflow button is pressed", () => {

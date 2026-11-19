@@ -57,6 +57,18 @@ function goBack(): Promise<void> {
   });
 }
 
+/**
+ * The overflow entries with a destructive (`fail`) last item set apart by a separator (design spec
+ * §6.46), unless the page already put one there.
+ */
+function withDangerSeparator(menu: ConvMenuEntry[]): ConvMenuEntry[] {
+  const last = menu.at(-1);
+  const before = menu.at(-2);
+  if (menu.length < 2 || last?.kind !== "item" || last.tone !== "fail") return menu;
+  if (before?.kind === "separator") return menu;
+  return [...menu.slice(0, -1), { kind: "separator" }, last];
+}
+
 /** The longest a view transition waits for the page behind a back to arrive. */
 const SETTLE_LIMIT_MS = 500;
 
@@ -125,7 +137,7 @@ export function TopBar({ title, back, onSearch, menu, onSteps, menuOpen }: TopBa
           size="touch"
           sideOffset={2}
           inline={menuOpen === true}
-          entries={menu}
+          entries={withDangerSeparator(menu)}
           trigger={
             <IconButton
               part="more"
