@@ -72,6 +72,12 @@ export interface LinuxWorkerOptions {
    * (a public one included) are closed explicitly. Read at each operation start.
    */
   closedAddresses?: () => string[];
+  /**
+   * Test seam (trusted construction only): faults the launcher injects, so a test can drive a
+   * path no real kernel produces on demand (`stagedMove: "fail"`: a guarded directory move whose
+   * final rename and move back both fail, which quarantines it and ends the operation).
+   */
+  faultInjection?: { stagedMove: "fail" };
 }
 
 /**
@@ -212,6 +218,7 @@ export function linuxOperationWorker(
             ...(options.allowPrivateProxyTargets ? { allowPrivate: true } : {}),
             ...(options.fakeIpDnsTest ? { dohTest: options.fakeIpDnsTest } : {}),
             ...(options.closedAddresses ? { closedAddresses: options.closedAddresses() } : {}),
+            ...(options.faultInjection ? { faultInjection: options.faultInjection } : {}),
             command: request.managedOutput
               ? `exec /bin/bash -c ${shellQuote(args.command)} 2>&1`
               : args.command,

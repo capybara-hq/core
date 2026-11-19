@@ -33,6 +33,9 @@
  *    where git keeps one (`logs/HEAD`, `refs/remotes/<r>/HEAD`, …), and no `objects`, `commondir`
  *    or `gitdir` beside such a `HEAD`.
  *
+ * 6. A component starting with {@link SANDBOX_RESERVED_NAME_PREFIX} (the broker's staging and
+ *    quarantine names) is denied with everything beneath it.
+ *
  * Names are compared after Unicode NFKC normalization and full case folding
  * ({@link sandboxFoldName}, identical to Python's `casefold`). Known limitations: a
  * restricted command cannot `git init`, add a submodule or worktree, or create a bare repository;
@@ -153,6 +156,14 @@ export const SANDBOX_SYSTEM_WRITE_DENIES: readonly string[] = Object.freeze([
   "/private/var/at/jobs",
   "/var/at",
 ]);
+
+/**
+ * The name prefix the Linux broker reserves for its own staging (a directory checked before it
+ * moves into a guarded place) and quarantine names. Any path with a component starting with it
+ * (compared folded) is denied to every sandboxed write, so nothing sandboxed can create, write
+ * into, or move into or out of such a directory.
+ */
+export const SANDBOX_RESERVED_NAME_PREFIX = ".capybara-staging-";
 
 /** Directories inside a gitdir whose whole subtree is writable (objects, refs, operation state). */
 export const SANDBOX_GIT_ALLOWED_DIRECTORIES: readonly string[] = Object.freeze([
@@ -617,6 +628,7 @@ function gitInternalAllowed(rel: readonly string[]): boolean {
 /** Whether restricted execution may never write `path` (an absolute, normalized path). */
 export function isSandboxWriteDenied(path: string): boolean {
   const names = parts(path);
+  if (names.some((name) => name.startsWith(SANDBOX_RESERVED_NAME_PREFIX))) return true;
   for (const system of SANDBOX_SYSTEM_WRITE_DENIES) {
     const anchored = parts(system);
     if (anchored.every((name, j) => names[j] === name)) return true;
@@ -692,6 +704,7 @@ GIT_ALLOWED_DIRECTORIES = set(${JSON.stringify(SANDBOX_GIT_ALLOWED_DIRECTORIES)}
 GIT_ALLOWED_FILES = set(${JSON.stringify(SANDBOX_GIT_ALLOWED_FILES)})
 GIT_DANGER = set(${JSON.stringify([...GIT_DANGER])})
 PROTECTED_PATH_NAMES = set(${JSON.stringify(SANDBOX_PROTECTED_PATH_NAMES)})
+RESERVED_NAME_PREFIX = ${JSON.stringify(SANDBOX_RESERVED_NAME_PREFIX)}
 
 
 def _fold_parts(path):
@@ -740,6 +753,8 @@ def _git_internal_allowed(rel):
 
 def write_denied(path):
     names = _fold_parts(path)
+    if any(n.startswith(RESERVED_NAME_PREFIX) for n in names):
+        return True
     for system in SYSTEM_WRITE_DENIES:
         if names[:len(system)] == system:
             return True

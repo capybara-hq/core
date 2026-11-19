@@ -219,6 +219,9 @@ SOCK_NONBLOCK, SOCK_CLOEXEC = 0o4000, 0o2000000
 SOL_SOCKET, SO_DOMAIN, IPPROTO_TCP = 1, 39, 6
 SO_REUSEPORT, SO_ATTACH_REUSEPORT_CBPF, SO_ATTACH_REUSEPORT_EBPF = 15, 51, 52
 LOOPBACK = ("127.0.0.1", "::1")
+# How long a guarded directory move waits for the operation's other writes (a FIFO open waiting
+# for its peer holds them) before it fails with EBUSY.
+EXCLUSIVE_WAIT_S = 5
 AT_FDCWD = -100
 AT_SYMLINK_NOFOLLOW = 0x100
 AT_EMPTY_PATH = 0x1000
@@ -644,10 +647,15 @@ class SharedLock:
                 self.condition.notify_all()
 
     @contextlib.contextmanager
-    def exclusive(self):
+    def exclusive(self, timeout):
+        """Raises EBUSY when the shared holders do not leave within timeout seconds."""
+        deadline = time.monotonic() + timeout
         with self.condition:
             while self.writer or self.readers:
-                self.condition.wait()
+                left = deadline - time.monotonic()
+                if left <= 0:
+                    raise OSError(errno.EBUSY, "The operation's other writes did not finish")
+                self.condition.wait(left)
             self.writer = True
         try:
             yield
@@ -671,11 +679,12 @@ class Broker:
         self.sockets = {}
         self.lock = threading.Lock()
         # Every mutating file operation holds this shared; a directory move into a guarded prefix
-        # holds it exclusively (listing, rename and recheck), so no write of the operation lands
-        # between its check and its rename.
+        # holds it exclusively (staging, listing and the final rename).
         self.files_lock = SharedLock()
         # A failure the broker could not undo: the supervisor ends the operation and reports it.
         self.fatal = None
+        # A test fixture's injected fault (request "faultInjection"); never set in production.
+        self.fault = None
         self.counts = {}
         # Creation modes are the command's (its umask is applied explicitly), never the broker's.
         os.umask(0)
@@ -860,7 +869,7 @@ class Broker:
                         return self.bind(ident, pid, mem, args)
                     return self.metadata(ident, pid, mem, name, args)
             except NeedsExclusive:
-                with self.files_lock.exclusive():
+                with self.files_lock.exclusive(EXCLUSIVE_WAIT_S):
                     return self.file_op(ident, pid, mem, name, args, exclusive=True)
         except Denied:
             return None, errno.EACCES
@@ -1023,6 +1032,43 @@ class Broker:
         # a non-directory named .git is a gitdir pointer to configuration written elsewhere
         if creates_entry and _fold_parts(name) == [".git"]:
             raise Denied()
+
+    def staged_move(self, sparent, sname, dparent, dname, origin, to):
+        """A directory move into a guarded place (a proper prefix of a multi-component deny). The
+        directory is first renamed to a fresh reserved staging name beside it, which the write
+        policy denies to every sandboxed write, so no process of this or another operation can add
+        the guarded next component while it is listed and checked there; it is then renamed into
+        place with NOREPLACE. A refused or failed step moves it back to its source; when that
+        fails too (its name was taken meanwhile) it goes to a quarantine name, also reserved, and
+        the operation ends with the failure reported."""
+        fault = self.fault == "fail"
+        stage = RESERVED_NAME_PREFIX + os.urandom(8).hex()
+        if libc.renameat2(sparent, os.fsencode(sname), sparent, os.fsencode(stage),
+                          ctypes.c_uint(RENAME_NOREPLACE)) < 0:
+            return None, ctypes.get_errno()
+        entries = self.listing(sparent, stage)
+        if entries is None or move_denied(origin, to, True, entries):
+            code = errno.EACCES
+        elif fault:
+            code = errno.EIO
+        elif libc.renameat2(sparent, os.fsencode(stage), dparent, os.fsencode(dname),
+                            ctypes.c_uint(RENAME_NOREPLACE)) == 0:
+            return 0, 0
+        else:
+            code = ctypes.get_errno()
+        if not fault and libc.renameat2(sparent, os.fsencode(stage), sparent, os.fsencode(sname),
+                                        ctypes.c_uint(RENAME_NOREPLACE)) == 0:
+            return None, code
+        quarantine = RESERVED_NAME_PREFIX + "quarantine-" + os.urandom(8).hex()
+        moved = libc.renameat2(sparent, os.fsencode(stage), sparent, os.fsencode(quarantine),
+                               ctypes.c_uint(RENAME_NOREPLACE)) == 0
+        try:
+            where = self.rebase(os.readlink("/proc/self/fd/%d" % sparent))
+        except OSError:
+            where = os.path.dirname(origin)
+        self.fail("A directory bound for %s could be moved neither into place nor back; it is in "
+                  "quarantine as %s" % (to, os.path.join(where, quarantine if moved else stage)))
+        return None, code
 
     def fail(self, message):
         """Ends the operation for a failure the broker could not undo: the supervisor kills the
@@ -1248,51 +1294,32 @@ class Broker:
                 try:
                     self.refuse(sresolved, sname)
                     self.refuse(dresolved, dname)
-                    # (parent, name) of each moved entry before and after the rename
-                    moves = [((sparent, sname), (dparent, dname), sresolved, dresolved)]
+                    moves = [((sparent, sname), sresolved, dresolved)]
                     if flags & RENAME_EXCHANGE:
-                        moves.append(((dparent, dname), (sparent, sname), dresolved, sresolved))
-                    recheck = []
-                    for (parent, entry), after, origin, to in moves:
+                        moves.append(((dparent, dname), dresolved, sresolved))
+                    staged = None
+                    for (parent, entry), origin, to in moves:
                         try:
                             info = os.stat(entry, dir_fd=parent, follow_symlinks=False)
                         except FileNotFoundError:
                             continue
                         is_dir = stat.S_ISDIR(info.st_mode)
-                        guarded = is_dir and bool(_prefix_next(_fold_parts(to)))
-                        # the moved directory's entries, listed from the broker's own descriptor
-                        entries = self.listing(parent, entry) if guarded else None
-                        if guarded and not exclusive:
-                            raise NeedsExclusive()
-                        if guarded and entries is None:
-                            raise Denied()
+                        if is_dir and _prefix_next(_fold_parts(to)):
+                            # a directory bound for a guarded place: checked in staging
+                            if flags & RENAME_EXCHANGE:
+                                raise Denied()
+                            if not exclusive:
+                                raise NeedsExclusive()
+                            staged = (origin, to)
+                            continue
                         # nothing leaves a protected name, nor is a directory moved under one
-                        if move_denied(origin, to, is_dir, entries):
+                        if move_denied(origin, to, is_dir):
                             raise Denied()
-                        if guarded:
-                            recheck.append((after, origin, to))
+                    if staged is not None:
+                        return self.staged_move(sparent, sname, dparent, dname, *staged)
                     if libc.renameat2(sparent, os.fsencode(sname), dparent, os.fsencode(dname),
                                       ctypes.c_uint(flags)) < 0:
                         return None, ctypes.get_errno()
-                    # The operation's own writes wait (exclusive files lock), but another process
-                    # may still have added the guarded next component in between. Check the moved
-                    # directory where it is now and undo a move that became a deny; an undo that
-                    # fails ends the operation and is reported.
-                    for (parent, entry), origin, to in recheck:
-                        entries = self.listing(parent, entry)
-                        if entries is None or move_denied(origin, to, True, entries):
-                            if flags & RENAME_EXCHANGE:
-                                undone = libc.renameat2(
-                                    sparent, os.fsencode(sname), dparent, os.fsencode(dname),
-                                    ctypes.c_uint(RENAME_EXCHANGE)) == 0
-                            else:
-                                undone = libc.renameat2(
-                                    dparent, os.fsencode(dname), sparent, os.fsencode(sname),
-                                    ctypes.c_uint(RENAME_NOREPLACE)) == 0
-                            if not undone:
-                                self.fail("A directory moved under a protected path could not be "
-                                          "moved back: %s" % to)
-                            return None, errno.EACCES
                 finally:
                     os.close(dparent)
             finally:
@@ -1531,8 +1558,9 @@ class Broker:
     # shared mutable state across its steps (socket ownership is locked): every check is made on
     # the broker's own resolution, and every effect is one syscall on descriptors that handler
     # holds, so concurrent notifications interleave only as the kernel would interleave the calls.
-    # The one multi-step check, a directory move into a guarded prefix (listing, rename, recheck),
-    # holds the files lock exclusively, so none of the operation's own writes lands inside it.
+    # The one multi-step check, a directory move into a guarded prefix (staging, listing, rename),
+    # holds the files lock exclusively (waiting at most EXCLUSIVE_WAIT_S, then EBUSY); its staging
+    # name is reserved, so no other operation writes into it either.
     def loop(self, stop):
         poller = select.poll()
         poller.register(self.listener, select.POLLIN)
@@ -1878,6 +1906,9 @@ def run(request, report):
             kill_tree()
             raise Refused("UNAVAILABLE", "The restricted child did not hand over its listener")
         broker = Broker(native, roots, table, endpoints, fds[0])
+        fault = request.get("faultInjection")
+        if isinstance(fault, dict) and fault.get("stagedMove") == "fail":
+            broker.fault = "fail"  # a test fixture's seam
         thread = threading.Thread(target=broker.loop, args=(stop_r,), daemon=True)
         thread.start()
     # Reported only once every restriction is installed and the broker holds the listener.

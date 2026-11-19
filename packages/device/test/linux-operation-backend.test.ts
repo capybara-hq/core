@@ -1311,6 +1311,118 @@ print(seen[0], moves[0])
     expect(seen).toBe(0);
   });
 
+  it("a directory move into a guarded prefix is checked in a staging name no other operation can write", async () => {
+    const root = project("race2");
+    // operation A moves d to .claude and back; operation B, sharing the write root, adds and
+    // removes d/commands, recreates d, and watches for .claude/commands
+    const mover = String.raw`
+import os, time
+stop = time.monotonic() + 6
+moves = 0
+while time.monotonic() < stop:
+    os.makedirs("d", exist_ok=True)
+    try:
+        os.rename("d", ".claude")
+        moves += 1
+        os.rename(".claude", "d")
+    except OSError:
+        pass
+print(moves)
+`;
+    const writer = String.raw`
+import os, threading, time
+stop = time.monotonic() + 6
+seen = [0]
+def write():
+    while time.monotonic() < stop:
+        for action in (lambda: os.mkdir("d/commands"), lambda: os.rmdir("d/commands"),
+                       lambda: os.mkdir("d")):
+            try:
+                action()
+            except OSError:
+                pass
+def watch():
+    while time.monotonic() < stop:
+        if os.path.isdir(".claude/commands"):
+            seen[0] += 1
+threads = [threading.Thread(target=write), threading.Thread(target=watch)]
+for t in threads:
+    t.start()
+for t in threads:
+    t.join()
+print(seen[0])
+`;
+    const [a, b] = await Promise.allSettled([
+      exec(root, python(mover), { kind: "none" }),
+      exec(root, python(writer), { kind: "none" }),
+    ]);
+    // A either finishes, or (B took d while A's prepared directory sat in staging, so it could
+    // not go back) ends with its directory in quarantine: never at the guarded place
+    if (a.status === "fulfilled") {
+      expect(a.value.exitCode, a.value.stderr).toBe(0);
+      expect(Number(a.value.stdout.trim())).toBeGreaterThan(0);
+    } else expect(String(a.reason)).toMatch(/ended the operation.*quarantine/);
+    expect(b.status).toBe("fulfilled");
+    if (b.status !== "fulfilled") return;
+    expect(b.value.exitCode, b.value.stderr).toBe(0);
+    expect(Number(b.value.stdout.trim())).toBe(0);
+    expect(await read(`${root}/.claude/commands`)).toBeNull();
+    expect(
+      device.run(`test -d ${root}/.claude/commands && echo present || echo absent`).trim(),
+    ).toBe("absent");
+  });
+
+  it("a guarded move that cannot be finished nor undone is quarantined and ends the operation", async () => {
+    device.run("mkdir -m 700 /home/sandbox/state-fault");
+    const faulty = new HostServer(device);
+    servers.push(faulty);
+    const failing = await hostBackend(faulty, {
+      stateDir: "/home/sandbox/state-fault",
+      deviceId: "device-fault",
+      network: "open",
+      allowedDomains: [],
+      privateProxyTargets: false,
+      restrictedProjectReach: "os-user",
+      // test seam: the final rename and the move back both fail
+      faultInjection: { stagedMove: "fail" },
+    });
+    const root = project("fault");
+    const scope = scopeFor(failing.deviceId, {
+      profile: "approve-for-me",
+      filesystem: { kind: "scoped", readRoots: [], writeRoots: [root] },
+      network: { kind: "none" },
+    });
+    await expect(
+      failing.operation(scope, openAuthorityFor(scope.operationId)).exec({
+        command: "mkdir -p d/x && mv d .claude; sleep 30",
+        cwd: root,
+        timeoutMs: 60_000,
+        maxOutputBytes: 4096,
+        signal: signal(),
+      }),
+    ).rejects.toThrow(/ended the operation.*quarantine/);
+    const listing = device.run(`ls -a ${root}`).split("\n");
+    expect(listing).not.toContain(".claude");
+    expect(listing).not.toContain("d");
+    const quarantined = listing.filter((name) => name.startsWith(".capybara-staging-quarantine-"));
+    expect(quarantined).toHaveLength(1);
+    expect(device.run(`ls ${root}/${quarantined[0]}`).trim()).toBe("x");
+  });
+
+  it("a guarded move waits a bounded time for the operation's other writes (EBUSY)", async () => {
+    const root = project("busy");
+    // a FIFO open without a reader holds the broker's shared files lock
+    const started = Date.now();
+    const result = await exec(
+      root,
+      "mkfifo f && (printf x > f &) && sleep 0.3 && mkdir d && (mv d .claude 2>&1 || true); true",
+      { kind: "none" },
+    );
+    expect(result.stdout).toMatch(/Device or resource busy/);
+    expect(Date.now() - started).toBeLessThan(40_000);
+    expect(device.run(`test -d ${root}/d && echo d`).trim()).toBe("d");
+  });
+
   it("re-resolves a fake-IP resolver's answers through encrypted DNS and checks the real address", async () => {
     const root = project("fake-ip");
     const before = { public: net.accepted("public"), public80: net.accepted("public80") };

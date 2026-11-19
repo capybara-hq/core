@@ -27,10 +27,13 @@ Linux open network (approval-only profiles).
 - SDK (`linux-sandbox.py`): no sandboxed connect reaches a loopback listener, the command's own
   included (clients outside the sandbox reach it). `SO_REUSEPORT` and `SO_ATTACH_REUSEPORT_*`
   are refused by seccomp, and the broker never binds or listens a socket with `SO_REUSEPORT` set.
-  A `symlink` named for a proper prefix of a multi-component write deny is refused; a directory
-  move into a guarded prefix lists the moved entries from the broker's descriptor and runs under an
-  exclusive lock against the operation's other writes, rechecks after the rename and undoes a move
-  that became a deny, ending the operation when the undo fails. New request field `writeDenies`
+  A `symlink` named for a proper prefix of a multi-component write deny is refused. A directory
+  move into a guarded prefix first renames the directory to a reserved staging name beside it,
+  which no sandboxed process may write, lists and checks it there and renames it into place with
+  NOREPLACE; a refused or failed step moves it back, and when that fails too it goes to a
+  quarantine name and the operation ends, reported. The move holds an exclusive lock against the
+  operation's other writes, waiting at most 5 s (then EBUSY). New request field `writeDenies`
   (absolute paths denied like the system spools).
 - SDK write policy: an ancestor of an anchored deny (a system spool, or a consumer's resolved
-  target) never moves away.
+  target) never moves away, and `SANDBOX_RESERVED_NAME_PREFIX` (`.capybara-staging-`, the broker's
+  staging and quarantine names) is denied to every sandboxed write, folded.

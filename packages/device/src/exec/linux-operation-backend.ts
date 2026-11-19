@@ -45,6 +45,8 @@ export interface LinuxBackendDependencies {
   allowPrivateProxyTargets?: boolean;
   /** Test seam (trusted construction only): see the worker's `fakeIpDnsTest`. */
   fakeIpDnsTest?: { endpoints: string[]; caPem: string };
+  /** Test seam (trusted construction only): see the worker's `faultInjection`. */
+  faultInjection?: { stagedMove: "fail" };
   /** Called with a reap failure of a lost supervisor's session (default: ignored). */
   onReapError?: (error: unknown) => void;
 }
@@ -123,6 +125,7 @@ export async function createLinuxOperationBackend(
       toolHome: dependencies.toolHome ?? { home: homedir(), env: process.env },
       ...(dependencies.allowPrivateProxyTargets ? { allowPrivateProxyTargets: true } : {}),
       ...(dependencies.fakeIpDnsTest ? { fakeIpDnsTest: dependencies.fakeIpDnsTest } : {}),
+      ...(dependencies.faultInjection ? { faultInjection: dependencies.faultInjection } : {}),
       ...(dependencies.acquireRuntime ? { acquireRuntime: dependencies.acquireRuntime } : {}),
     });
   return createLocalOperationBackend(

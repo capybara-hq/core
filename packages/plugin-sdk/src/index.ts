@@ -40,6 +40,7 @@ export {
   SANDBOX_GIT_DENIED_INTERNALS,
   SANDBOX_MANDATORY_WRITE_DENIES,
   SANDBOX_PROTECTED_PATH_NAMES,
+  SANDBOX_RESERVED_NAME_PREFIX,
 } from "./sandbox-write-denies.js";
 export * from "./secret.js";
 export * from "./setup-check.js";

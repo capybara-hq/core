@@ -179,6 +179,8 @@ export async function hostBackend(
     allowedDomains?: string[];
     /** A fixture DoH server that re-resolves fake-IP answers (the backend's test seam). */
     fakeIpDns?: { endpoints: string[]; caPem: string };
+    /** Test seam: faults the launcher injects (a staged directory move that cannot finish). */
+    faultInjection?: { stagedMove: "fail" };
     /** The owner's restricted project reach (default the workspace). */
     restrictedProjectReach?: "workspace" | "os-user";
     /** A local-Docker device: the server runs here, its agents in this container. */
@@ -206,6 +208,7 @@ export async function hostBackend(
     ...(options.restrictedSupported === false ? { restrictedSupported: false } : {}),
     ...(options.privateProxyTargets === false ? { privateProxyTargets: false } : {}),
     ...(options.fakeIpDns ? { dohTest: options.fakeIpDns } : {}),
+    ...(options.faultInjection ? { faultInjection: options.faultInjection } : {}),
     ...(options.docker
       ? {
           mode: "docker",

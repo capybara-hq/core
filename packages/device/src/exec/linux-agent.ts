@@ -1017,6 +1017,8 @@ def run_sealed(request, control, runtime):
                 "cwd": request["cwd"], "argv": ["/bin/bash", "-c", request["command"]],
                 "timeoutMs": request["timeoutMs"], "nativeFd": runtime["native-files.py"],
                 "writeDenies": denies}
+        if isinstance(request.get("faultInjection"), dict):
+            body["faultInjection"] = request["faultInjection"]  # a test fixture's seam
         if files:
             body["systemRoots"] = list(LAUNCHER_SYSTEM_ROOTS) + files
         if control.cancel is not None:
