@@ -11,8 +11,10 @@ import { type KernelSchemaDb, kernelDb } from "../../src/db/kernel-schema.js";
 import { createDb } from "../../src/db/pool.js";
 import { reviewRules } from "../../src/sandbox/review/index.js";
 import {
+  FAKE_PERMISSION_SUPPORT,
   readFakeSandboxLimits,
   readFakeSandboxOps,
+  setFakeSandboxPermissionSupport,
 } from "../fixtures/plugins/sandbox-fake/index.js";
 import { onlyBuiltins } from "../helpers/disabled-tools.js";
 import { accountsFor } from "../helpers/identity.js";
@@ -141,6 +143,12 @@ let versionUrl: string;
 beforeAll(async () => {
   [pgc, rd] = await Promise.all([startTestPostgres(), startTestRedis()]);
   root = await mkdtemp(join(tmpdir(), "cap-review-accept-"));
+  // the acceptance devices ran the open sandbox network: the fake enforces it too, so a public
+  // host such as github.com is no host crossing (only an allowlist has them)
+  await setFakeSandboxPermissionSupport(root, {
+    ...FAKE_PERMISSION_SUPPORT,
+    network: { ...FAKE_PERMISSION_SUPPORT.network, openPublic: true },
+  });
   k = await startKernel(
     runConfig(
       { pg: pgc.url, redis: rd.url },
