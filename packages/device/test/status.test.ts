@@ -39,6 +39,7 @@ const LIVE: LiveStatus = {
   mode: "os",
   connection: "online",
   since: "2026-11-19T00:00:00.000Z",
+  keepAwake: { mode: "while-busy", held: false },
 };
 
 async function run(stateDir: string, json: boolean, opts: Parameters<typeof status>[4] = {}) {

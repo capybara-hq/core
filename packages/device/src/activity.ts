@@ -18,6 +18,23 @@ export interface RunningOperation {
  */
 export class RunningOperations {
   private readonly ops: { operationId?: string; op: RunningOperation }[] = [];
+  private readonly listeners = new Set<() => void>();
+
+  /** Calls `fn` after every change of the list; returns how to stop. */
+  subscribe(fn: () => void): () => void {
+    this.listeners.add(fn);
+    return () => this.listeners.delete(fn);
+  }
+
+  private changed(): void {
+    for (const fn of this.listeners) {
+      try {
+        fn();
+      } catch {
+        // an observer never affects the operations
+      }
+    }
+  }
 
   /** `operationId` lets {@link endOperation} end exactly this one. */
   begin(op: RunningOperation, operationId?: string): void {
@@ -34,18 +51,25 @@ export class RunningOperations {
         startedAt: op.startedAt,
       },
     });
+    this.changed();
   }
 
   /** Ends the oldest running operation with this tag (tags may repeat); unknown tags are ignored. */
   end(tag: string): void {
     const i = this.ops.findIndex((o) => o.op.tag === tag);
-    if (i >= 0) this.ops.splice(i, 1);
+    if (i >= 0) {
+      this.ops.splice(i, 1);
+      this.changed();
+    }
   }
 
   /** Ends the operation begun with this id; ids already ended are ignored. */
   endOperation(operationId: string): void {
     const i = this.ops.findIndex((o) => o.operationId === operationId);
-    if (i >= 0) this.ops.splice(i, 1);
+    if (i >= 0) {
+      this.ops.splice(i, 1);
+      this.changed();
+    }
   }
 
   list(): RunningOperation[] {

@@ -115,6 +115,7 @@ describe("state", () => {
       memoryMb: null,
       // the restricted default ceiling of a new setup (B-14)
       ownerCeiling: { fullAccess: false, restrictedProjectReach: "workspace" },
+      keepAwake: "while-busy",
     });
     writePolicy(dir, {
       allowedDomains: ["a.test"],
@@ -122,6 +123,7 @@ describe("state", () => {
       cpu: 2,
       memoryMb: null,
       ownerCeiling: { fullAccess: false, restrictedProjectReach: "os-user" },
+      keepAwake: "connected",
     });
     expect(readPolicy(dir)).toEqual({
       allowedDomains: ["a.test"],
@@ -129,6 +131,7 @@ describe("state", () => {
       cpu: 2,
       memoryMb: null,
       ownerCeiling: { fullAccess: false, restrictedProjectReach: "os-user" },
+      keepAwake: "connected",
     });
     expect(readPolicyFile(dir).legacy).toBe(false);
   });

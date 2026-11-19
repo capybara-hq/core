@@ -1,5 +1,5 @@
 import { type ParseArgsOptionsConfig, parseArgs } from "node:util";
-import type { RestrictedProjectReach } from "./state.js";
+import { isKeepAwakeMode, type KeepAwakeMode, type RestrictedProjectReach } from "./state.js";
 
 export type DeviceMode = "os" | "docker";
 
@@ -41,6 +41,15 @@ export type Command =
       /** `--yes`: confirms a widening without asking. */
       yes?: true;
     }
+  | { command: "keep-awake"; action: "show"; json?: true }
+  | {
+      command: "keep-awake";
+      action: "set";
+      mode: KeepAwakeMode;
+      /** `--yes`: confirms keeping the computer awake more often without asking. */
+      yes?: true;
+      json?: true;
+    }
   | {
       command: "service";
       action: "install" | "uninstall" | "start" | "stop" | "restart" | "status";
@@ -64,6 +73,9 @@ export const USAGE = `Usage:
                                   Show this machine's owner ceiling (Full access, project reach)
   capybara-device ceiling set --full-access allow|deny --project-reach workspace|os-user [--yes]
                                   Set the owner ceiling; widening needs --yes or a y at the prompt
+  capybara-device keep-awake [show | off | while-busy | connected] [--yes] [--json]
+                                  Show or set when this computer is kept awake; raising it
+                                  needs --yes or a y at the prompt
   capybara-device policy [show]   Show the local policy
   capybara-device policy set <key> <value>
                                   Replace one field (cpu, memoryMb, allowCredentials)
@@ -199,6 +211,28 @@ export function parseCommandLine(argv: string[]): Command {
         fullAccess: full === "allow",
         projectReach: reach,
         ...(values.yes === true && { yes: true as const }),
+      };
+    }
+    case "keep-awake": {
+      const { values, positionals } = parse(rest, {
+        yes: { type: "boolean", short: "y" },
+        json: { type: "boolean" },
+      });
+      const usage = "usage: keep-awake [show | off | while-busy | connected] [--yes] [--json]";
+      const [action, ...extra] = positionals;
+      if (extra.length > 0) throw new UsageError(usage);
+      const json = values.json === true && { json: true as const };
+      if (action === undefined || action === "show") {
+        if (values.yes === true) throw new UsageError(usage);
+        return { command: "keep-awake", action: "show", ...json };
+      }
+      if (!isKeepAwakeMode(action)) throw new UsageError(usage);
+      return {
+        command: "keep-awake",
+        action: "set",
+        mode: action,
+        ...(values.yes === true && { yes: true as const }),
+        ...json,
       };
     }
     case "service": {

@@ -56,6 +56,15 @@ export interface OwnerCeilingPolicy {
 /** The persisted local policy format (`version: 2`). */
 export const POLICY_VERSION = 2;
 
+/**
+ * When the program keeps this computer awake: never, only while operations run, or the whole
+ * time it is connected to the deployment.
+ */
+export type KeepAwakeMode = "off" | "while-busy" | "connected";
+export const KEEP_AWAKE_MODES: readonly KeepAwakeMode[] = ["off", "while-busy", "connected"];
+export const isKeepAwakeMode = (v: unknown): v is KeepAwakeMode =>
+  typeof v === "string" && (KEEP_AWAKE_MODES as readonly string[]).includes(v);
+
 /** Local limits the person sets for this machine. */
 export interface Policy {
   allowedDomains: string[];
@@ -64,6 +73,8 @@ export interface Policy {
   memoryMb: number | null;
   /** The owner ceiling. The kernel's `limits.mode` and the org ceiling only narrow it. */
   ownerCeiling: OwnerCeilingPolicy;
+  /** Keep-awake (spec §9.7); absent in a file means the default. */
+  keepAwake: KeepAwakeMode;
 }
 
 /** The exact old `mode: auto` ceiling. */
@@ -101,6 +112,7 @@ export const DEFAULT_POLICY: Policy = {
   // A new setup's owner ceiling (B-14): no Full access, restricted work in the workspace. An old
   // policy file still converts exactly from its `mode` (convertPolicyFile).
   ownerCeiling: { ...SANDBOX_OWNER_CEILING },
+  keepAwake: "while-busy",
 };
 
 type Env = Record<string, string | undefined>;
@@ -296,7 +308,12 @@ export function readPolicyFile(dir: string): PolicyFile {
     cpu: o.cpu === undefined ? null : (o.cpu as number | null),
     memoryMb: o.memoryMb === undefined ? null : (o.memoryMb as number | null),
     ownerCeiling,
+    keepAwake:
+      o.keepAwake === undefined ? DEFAULT_POLICY.keepAwake : (o.keepAwake as KeepAwakeMode),
   };
+  if (!isKeepAwakeMode(policy.keepAwake)) {
+    throw bad("keepAwake", '"off", "while-busy" or "connected"');
+  }
   if (!isStringList(policy.allowedDomains)) throw bad("allowedDomains", "a list of strings");
   if (!isStringList(policy.allowCredentials)) throw bad("allowCredentials", "a list of strings");
   if (!isCeiling(policy.cpu)) throw bad("cpu", "a positive number or null");
@@ -317,7 +334,7 @@ export function writePolicy(
   const kept = Object.fromEntries(
     Object.entries(extra).filter(([k]) => !LEGACY_POLICY_KEYS.includes(k)),
   );
-  const { allowedDomains, allowCredentials, cpu, memoryMb, ownerCeiling } = policy;
+  const { allowedDomains, allowCredentials, cpu, memoryMb, ownerCeiling, keepAwake } = policy;
   const body = {
     ...kept,
     version: POLICY_VERSION,
@@ -329,6 +346,7 @@ export function writePolicy(
       fullAccess: ownerCeiling.fullAccess,
       restrictedProjectReach: ownerCeiling.restrictedProjectReach,
     },
+    keepAwake,
   };
   writePrivate(policyPath(dir), `${JSON.stringify(body, null, 2)}\n`);
 }
