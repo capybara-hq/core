@@ -307,7 +307,7 @@ it("publishes config by CAS and rejects stale replicas and stale publication ord
   });
   expect(JSON.stringify(active)).not.toContain(config.masterKey);
   const next = structuredClone(config);
-  next.devices.fullAccess = "off";
+  next.devices.outsideSandbox = "off";
   const i = invocation();
   await pending(i);
   const ready = barrier(),
@@ -341,7 +341,7 @@ it("publishes config by CAS and rejects stale replicas and stale publication ord
   await p2.publish(config, next);
   await expect(p2.assertCurrent()).rejects.toThrow("has not applied");
   const stale = structuredClone(config);
-  stale.devices.fullAccess = "allowed";
+  stale.devices.outsideSandbox = "allowed";
   await expect(p2.publish(config, stale)).rejects.toThrow("changed on another replica");
   const row = await a()
     .db.selectFrom("permission_authority_epochs")

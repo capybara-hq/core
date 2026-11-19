@@ -165,7 +165,7 @@ describe("all four owner combinations over authenticated reports", () => {
   it("a platform or org that turns Full off narrows reach to the workspace; no report overrides it", async () => {
     const f = await fixture();
     await f.record(report(1, true, "os-user"));
-    await k.app.get(OrgSettingsService).update(f.orgId, { fullAccess: "off" }, f.accountId);
+    await k.app.get(OrgSettingsService).update(f.orgId, { outsideSandbox: "off" }, f.accountId);
     const p = await f.preview();
     expect(p.fullAccessCeiling).toBe(false);
     expect(p.broadProjectReach).toBe(false);
@@ -401,7 +401,7 @@ describe("Full consent and revocation follow only actual Full changes", () => {
     const full = await admit();
     expect(full).toMatchObject({ profile: "full-access", filesystem: { kind: "device" } });
     // the org turns Full off; the machine still reports a Full owner ceiling
-    await k.app.get(OrgSettingsService).update(f.orgId, { fullAccess: "off" }, f.accountId);
+    await k.app.get(OrgSettingsService).update(f.orgId, { outsideSandbox: "off" }, f.accountId);
     expect((await f.profileView()).profile).not.toBe("full-access");
     const narrowed = await admit();
     expect(narrowed.profile).not.toBe("full-access");
@@ -557,7 +557,7 @@ describe("cloud owner ceiling PATCH", () => {
     });
     await c.patch({ ownerCeiling: { fullAccess: false } });
     expect((await c.row()).owner_full_access).toBe(false);
-    await k.app.get(OrgSettingsService).update(c.f.orgId, { fullAccess: "off" }, c.f.accountId);
+    await k.app.get(OrgSettingsService).update(c.f.orgId, { outsideSandbox: "off" }, c.f.accountId);
     await expect(
       c.patch({ ownerCeiling: { fullAccess: true }, confirmWidening: true }),
     ).rejects.toMatchObject({ code: "device.full_access_not_allowed" });

@@ -163,7 +163,7 @@ async function fullAccessFixture() {
 
 /** The super admin turns the platform's Full switch off (the real platform writer). */
 const platformFullOff = () =>
-  k.app.get(SettingsService).update({ devicesFullAccess: { permission: "off" } }, admin.id);
+  k.app.get(SettingsService).update({ devicesOutsideSandbox: { permission: "off" } }, admin.id);
 
 const revokeJobId = (operationId: string, suffix = "") =>
   `sandbox-operation-revoke-${operationId}${suffix}`;

@@ -334,7 +334,7 @@ describe("role modules", () => {
 });
 
 it("activation precedes startup for api, gateway, worker and all roles", async () => {
-  const seedConfig = cfg(["api"], { devices: { fullAccess: "allowed" } });
+  const seedConfig = cfg(["api"], { devices: { outsideSandbox: "allowed" } });
   const seed = await createKernelApp(seedConfig, {
     env: {},
     logger: createLogger("error", { write: () => {} }),
@@ -345,7 +345,9 @@ it("activation precedes startup for api, gateway, worker and all roles", async (
   let previous = seedConfig;
   for (const roles of [["api"], ["gateway"], ["worker"], ["api", "worker", "gateway"]]) {
     const next = cfg(roles, {
-      devices: { fullAccess: previous.devices.fullAccess === "allowed" ? "off" : "allowed" },
+      devices: {
+        outsideSandbox: previous.devices.outsideSandbox === "allowed" ? "off" : "allowed",
+      },
     });
     app = await buildKernelApp(next, {
       env: {},

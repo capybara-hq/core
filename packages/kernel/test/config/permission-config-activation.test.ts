@@ -44,7 +44,7 @@ const config = (fullAccess: "allowed" | "off" = "allowed", allowHosts = ["a.exam
     roles: ["api"],
     http: { port: 0 },
     marketplaces: { official: { enabled: false } },
-    devices: { fullAccess },
+    devices: { outsideSandbox: fullAccess },
     sandbox: { limits: { egress: "allowlist", allowHosts } },
   });
 const publisher = (cfg = config()) =>
@@ -75,7 +75,7 @@ beforeAll(async () => {
 });
 beforeEach(async () => {
   await db.deleteFrom("permission_config_publication").execute();
-  await db.deleteFrom("deployment_settings").where("key", "=", "devicesFullAccess").execute();
+  await db.deleteFrom("deployment_settings").where("key", "=", "devicesOutsideSandbox").execute();
 });
 afterAll(async () => {
   await k?.close();
@@ -145,7 +145,7 @@ it("first initialization converting org keys keeps the lock order org row before
         .where("id", "=", orgId)
         .executeTakeFirstOrThrow()
     ).settings,
-  ).toEqual({ fullAccess: "off" });
+  ).toEqual({ outsideSandbox: "off", deviceNetwork: { ceiling: "allowlist" } });
 });
 it("explicit CAS refuses absence/stale expectation and same candidate is idempotent", async () => {
   const a = publisher();
@@ -380,17 +380,17 @@ it("source labels normalize while delegated identity resolves current DB semanti
   const f = await consentFixture();
   const same = config("allowed", ["a.example", "a.example"]);
   expect(permissionConfigFingerprint(same)).toBe(permissionConfigFingerprint(config()));
-  const env = { CAPYBARA_DEVICES__FULL_ACCESS: "allowed" };
+  const env = { CAPYBARA_DEVICES__OUTSIDE_SANDBOX: "allowed" };
   const winning = resolveConfig({ ...config("off"), log: { level: "error" } }, env);
   const envReader = readers(winning, env);
   expect((await envReader.publication.initialize()).outcome).toBe("matching");
   expect((await f.view(envReader)).profile).toBe("full-access");
   const delegated = config();
-  delete delegated.devices.fullAccess;
+  delete delegated.devices.outsideSandbox;
   expect(permissionConfigFingerprint(delegated)).not.toBe(permissionConfigFingerprint(config()));
   await db
     .insertInto("deployment_settings")
-    .values({ key: "devicesFullAccess", value: JSON.stringify({ permission: "allowed" }) })
+    .values({ key: "devicesOutsideSandbox", value: JSON.stringify({ permission: "allowed" }) })
     .execute();
   const d = readers(delegated);
   await d.publication.initialize({
@@ -403,7 +403,7 @@ it("source labels normalize while delegated identity resolves current DB semanti
   await db
     .updateTable("deployment_settings")
     .set({ value: JSON.stringify({ permission: "off" }) })
-    .where("key", "=", "devicesFullAccess")
+    .where("key", "=", "devicesOutsideSandbox")
     .execute();
   const explicit = readers(config());
   await explicit.publication.initialize({
@@ -674,7 +674,7 @@ it.each(["exec", "backgroundStart"] as const)(
       .get(OrgSettingsService)
       .update(
         f.orgId,
-        { cloudNetwork: { mode: "allowlist", excludedHosts: ["a.example"], extraHosts: [] } },
+        { deviceNetwork: { ceiling: "allowlist", excludedHosts: ["a.example"], extraHosts: [] } },
         f.accountId,
       );
     const rows = await db

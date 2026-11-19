@@ -358,7 +358,7 @@ describe("local devices through the sandbox tools", () => {
       limits: { mode: "auto", network: { kind: "allowlist", hosts: ["example.com"] } },
     });
     await sql`UPDATE capybara.orgs SET settings = ${JSON.stringify({
-      cloudNetwork: { mode: "allowlist", base: "none", extraHosts: ["other.example.com"] },
+      deviceNetwork: { ceiling: "allowlist", base: "none", extraHosts: ["other.example.com"] },
     })}::jsonb WHERE id = ${orgId}`.execute(raw);
     try {
       await m.run("Bash", { command: "true" });

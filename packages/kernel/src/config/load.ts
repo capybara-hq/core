@@ -73,18 +73,34 @@ export function deepMerge(base: unknown, override: unknown): unknown {
 }
 
 /**
- * The permission keys B1 replaced, each with its replacement. The old keys are no longer read:
- * {@link refuseLegacyPermissionKeys} refuses them with the conversion message, and
- * `capybara config migrate-permissions` (`permission-migration.ts`) converts a config file.
+ * The permission keys the approval-only profiles design replaced, each with its replacement (B1's
+ * `devices.autoMode` and its successor `devices.fullAccess`, both now `devices.outsideSandbox`).
+ * The old keys are no longer read: {@link refuseLegacyPermissionKeys} refuses them with the
+ * conversion message, and `capybara config migrate-permissions` (`permission-migration.ts`)
+ * converts a config file. The values are the same (`allowed` / `off`); an old `off` also kept every
+ * device on the allowlist, so its conversion adds `devices.network.ceiling: allowlist` (never wider).
  */
 export const LEGACY_PERMISSION_KEYS = [
   {
     path: ["devices", "autoMode"],
-    replacement: ["devices", "fullAccess"],
+    replacement: ["devices", "outsideSandbox"],
     env: "CAPYBARA_DEVICES__AUTO_MODE",
-    replacementEnv: "CAPYBARA_DEVICES__FULL_ACCESS",
+    replacementEnv: "CAPYBARA_DEVICES__OUTSIDE_SANDBOX",
+  },
+  {
+    path: ["devices", "fullAccess"],
+    replacement: ["devices", "outsideSandbox"],
+    env: "CAPYBARA_DEVICES__FULL_ACCESS",
+    replacementEnv: "CAPYBARA_DEVICES__OUTSIDE_SANDBOX",
   },
 ] as const;
+
+/** The key and variable an old `off` adds, so a converted deployment never widens a device. */
+export const LEGACY_OFF_NETWORK_CEILING = {
+  path: ["devices", "network", "ceiling"],
+  env: "CAPYBARA_DEVICES__NETWORK__CEILING",
+  value: "allowlist",
+} as const;
 
 /**
  * The conversion message of every old permission key in ONE config source (the file / Nacos
@@ -103,8 +119,8 @@ function legacyPermissionKeyProblems(
     if (!isPlainObject(parent) || !(old in parent)) continue;
     problems.push(
       label === "env"
-        ? `  - ${key.env} is no longer read: set ${key.replacementEnv} instead (the same values, allowed or off)`
-        : `  - ${key.path.join(".")} is no longer read: rename it to ${key.replacement.join(".")} (the same values, allowed or off); capybara config migrate-permissions --in <file> --out <file> converts a config file or Nacos document`,
+        ? `  - ${key.env} is no longer read: set ${key.replacementEnv} instead (the same values, allowed or off; with off, also set ${LEGACY_OFF_NETWORK_CEILING.env}=${LEGACY_OFF_NETWORK_CEILING.value} so no device widens)`
+        : `  - ${key.path.join(".")} is no longer read: rename it to ${key.replacement.join(".")} (the same values, allowed or off; with off, also set ${LEGACY_OFF_NETWORK_CEILING.path.join(".")}: ${LEGACY_OFF_NETWORK_CEILING.value} so no device widens); capybara config migrate-permissions --in <file> --out <file> converts a config file or Nacos document`,
     );
   }
   return problems;

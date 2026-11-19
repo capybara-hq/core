@@ -38,8 +38,8 @@ describe("配置 sandbox", () => {
       ],
       orgHosts: "extend",
     });
-    // unset in the config: the deployment setting `devicesFullAccess` decides (default: allowed)
-    expect(c.devices.fullAccess).toBeUndefined();
+    // unset in the config: the deployment setting `devicesOutsideSandbox` decides (default: allowed)
+    expect(c.devices.outsideSandbox).toBeUndefined();
   });
 
   it("allowHosts 每项用 validateAllowHost 校验：IP、单段名、带协议 / 端口都拒绝", () => {
@@ -71,6 +71,6 @@ describe("配置 sandbox", () => {
     ).toBe(false);
     const open = KernelConfigSchema.safeParse({ ...base, sandbox: { limits: { egress: "open" } } });
     expect(open.success).toBe(false);
-    expect(open.error?.issues[0]?.message).toMatch(/devices\.fullAccess.*cloudNetwork/);
+    expect(open.error?.issues[0]?.message).toMatch(/devices\.network.*deviceNetwork/);
   });
 });

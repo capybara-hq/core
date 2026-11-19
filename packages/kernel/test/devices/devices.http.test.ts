@@ -469,17 +469,17 @@ describe("a cloud device's mode switch (auto mode spec §4.3, hardening D2)", ()
       .orderBy("at")
       .orderBy("id")
       .execute();
-  const setOrgNetwork = async (cloudNetwork: unknown) => {
+  const setOrgNetwork = async (deviceNetwork: unknown) => {
     const res = await owner({
       method: "PATCH",
       url: `/api/v1/orgs/${orgId}/settings`,
-      payload: { cloudNetwork },
+      payload: { deviceNetwork },
     });
     expect(res.statusCode, res.body).toBe(200);
   };
 
   it("defaults to auto; the owner narrows it to sandbox, which applies the org's allowlist", async () => {
-    await setOrgNetwork({ mode: "allowlist" });
+    await setOrgNetwork({ ceiling: "allowlist" });
     const me = await member();
     const env = await create(me.req, "Mode");
     expect(env.mode).toMatchObject({
@@ -529,7 +529,7 @@ describe("a cloud device's mode switch (auto mode spec §4.3, hardening D2)", ()
   });
 
   it("the owner sends it back to auto with mode null (follow the org), audited (spec D2, K4)", async () => {
-    await setOrgNetwork({ mode: "allowlist" });
+    await setOrgNetwork({ ceiling: "allowlist" });
     const me = await member();
     const env = await create(me.req, "Back");
     expect((await patch(me.req, env.id, { mode: "sandbox" })).statusCode).toBe(200);
@@ -579,7 +579,7 @@ describe("a cloud device's mode switch (auto mode spec §4.3, hardening D2)", ()
     const off = await owner({
       method: "PATCH",
       url: `/api/v1/orgs/${orgId}/settings`,
-      payload: { fullAccess: "off" },
+      payload: { outsideSandbox: "off" },
     });
     expect(off.statusCode, off.body).toBe(200);
     try {
@@ -594,13 +594,13 @@ describe("a cloud device's mode switch (auto mode spec §4.3, hardening D2)", ()
       await owner({
         method: "PATCH",
         url: `/api/v1/orgs/${orgId}/settings`,
-        payload: { fullAccess: null },
+        payload: { outsideSandbox: null },
       });
     }
   });
 
   it("a used instance is pending until its next use", async () => {
-    await setOrgNetwork({ mode: "allowlist" });
+    await setOrgNetwork({ ceiling: "allowlist" });
     const me = await member();
     const env = await create(me.req, "Used");
     const conversationId = randomUUID();

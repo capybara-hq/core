@@ -18,7 +18,7 @@ import { orgAllows } from "../local-devices/network-grants.js";
 import { OrgLock } from "../orgs/org-lock.js";
 import { roleAtLeast } from "../orgs/roles.js";
 import {
-  type CloudNetworkSetting,
+  type DeviceNetworkSetting,
   ORG_SANDBOX_ALLOW_HOSTS_MAX,
   OrgSettingsService,
   readOrgSettings,
@@ -168,7 +168,7 @@ const deploymentEgressNone = () =>
  */
 function sandboxAllowlist(
   limits: NetworkLimits,
-  org: CloudNetworkSetting | undefined,
+  org: DeviceNetworkSetting | undefined,
 ): { kind: "allowlist"; hosts: string[] } {
   return { kind: "allowlist", hosts: orgEffectiveHosts(limits, org) };
 }
@@ -206,7 +206,7 @@ const ORG_KINDS = ["enable", "connector_setup", "network_allowlist"] as const;
  *   (`PendingConnectorRequests`), closed by binding (`approved`) or the agent's deletion
  *   (`cancelled`); here it is listed and rejected;
  * - `network_allowlist` (network ask-to-allow spec §5.3): a member asks the org admins to add hosts
- *   to the org's cloud network allowlist; approving merges them into the org's `cloudNetwork`.
+ *   to the org's cloud network allowlist; approving merges them into the org's `deviceNetwork`.
  * A rejection stores an optional reason. Decided requests show in the requester's inbox until
  * dismissed. No in-process state.
  */
@@ -222,7 +222,7 @@ export class CatalogRequestsService {
     @Inject(CatalogService) private readonly catalog: CatalogService,
     @Inject(KernelConfigService) private readonly config: KernelConfigService,
     @Inject(PluginImport) private readonly pluginImport: PluginImport,
-    /** Approving a network request writes the org's `cloudNetwork` through the settings path. */
+    /** Approving a network request writes the org's `deviceNetwork` through the settings path. */
     @Inject(OrgSettingsService) private readonly orgSettings: OrgSettingsService,
     @Inject(TransactionHost) readonly txHost: TransactionHost,
     /** Serializes the approvals of one `import` request (`@WithLock`). */
@@ -373,7 +373,7 @@ export class CatalogRequestsService {
     const limits = this.config.get().sandbox.limits;
     if (limits.egress === "none") throw deploymentEgressNone();
     const settings = await readOrgSettings(t, orgId);
-    const network = sandboxAllowlist(limits, settings.cloudNetwork);
+    const network = sandboxAllowlist(limits, settings.deviceNetwork);
     if (hosts.every((h) => orgAllows(h, { network }))) {
       throw new ApiError(
         "catalog.request_invalid",
@@ -573,7 +573,7 @@ export class CatalogRequestsService {
    * An org admin decides a member's `enable`, `network_allowlist` or `connector_setup` request
    * (`catalog.decide`). Not this org's request of those kinds -> `catalog.request_not_found`;
    * decided -> `catalog.request_decided`. Approving a `network_allowlist` request merges its hosts
-   * into the org's `cloudNetwork` (`approveNetwork`). Approving an `enable` request switches the
+   * into the org's `deviceNetwork` (`approveNetwork`). Approving an `enable` request switches the
    * item on in the org as the deciding admin ({@link OrgCatalogService.setSwitch}: its errors, e.g. inputs the install
    * needs, leave the request pending); the install itself resolves the request. A
    * `connector_setup` request is approved only by binding its connectors (ruling P4-T6-6):
@@ -845,7 +845,7 @@ export class CatalogRequestsService {
 
   /**
    * Approves a `network_allowlist` request inside its decision's transaction: the hosts the org's
-   * sandbox allowlist does not hold yet are added to the org's `cloudNetwork` delta (an extra
+   * sandbox allowlist does not hold yet are added to the org's `deviceNetwork` delta (an extra
    * host, or out of the exclusions for a platform host the org had dropped), through
    * {@link OrgSettingsService.update} (audited `org.settings_updated` with `requestId`). The
    * platform's list is never copied, so the org keeps following it (org egress ceiling spec §D1).
@@ -867,7 +867,7 @@ export class CatalogRequestsService {
     const hosts = (detail as Partial<NetworkRequestDetail> | null)?.hosts ?? [];
     const limits = this.config.get().sandbox.limits;
     if (limits.egress === "none") throw deploymentEgressNone();
-    const current = (await readOrgSettings(this.db, orgId)).cloudNetwork;
+    const current = (await readOrgSettings(this.db, orgId)).deviceNetwork;
     // the hosts the org's sandbox-mode devices reach now (an open cloud network still gives them
     // the allowlist: a host their network ask names must be addable)
     const network = sandboxAllowlist(limits, current);
@@ -894,17 +894,17 @@ export class CatalogRequestsService {
     const excludedHosts = excluded.filter((h) => !readmit.includes(h));
     // the stored value is sent back whole with the hosts changed; the mode is never written
     // (approving a host never turns an open cloud network into an allowlist, K1)
-    const cloudNetwork: CloudNetworkSetting = {
+    const deviceNetwork: DeviceNetworkSetting = {
       ...current,
       ...(extraHosts.length > 0 ? { extraHosts } : {}),
       ...(excludedHosts.length > 0 ? { excludedHosts } : {}),
     };
-    if (excludedHosts.length === 0) delete cloudNetwork.excludedHosts;
+    if (excludedHosts.length === 0) delete deviceNetwork.excludedHosts;
     // approving widens the org's network allowlist: only a person in a session does that, never an
     // API token (auto mode spec §4.3; the Platform tool has no decide operation at all)
     await this.orgSettings.update(
       orgId,
-      { cloudNetwork },
+      { deviceNetwork },
       actor,
       opts.actorTokenId,
       { requestId },

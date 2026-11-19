@@ -22,24 +22,32 @@ import { Transactional } from "../infra/database/transactional.decorator.js";
 import { KERNEL_LOGGER } from "../infra/tokens.js";
 import type { KernelLogger } from "../log.js";
 import {
+  applyDevicesNetworkPatch,
+  applyDevicesOutsideSandboxPatch,
+  configuredDeviceSandbox,
+  DEVICES_NETWORK_PATCH,
+  DEVICES_NETWORK_SETTING,
+  DEVICES_OUTSIDE_SANDBOX_PATCH,
+  DEVICES_OUTSIDE_SANDBOX_SETTING,
+  type DeviceSandboxSettingsView,
+  type DevicesNetworkPatch,
+  type DevicesNetworkStored,
+  type DevicesNetworkView,
+  type DevicesOutsideSandboxPatch,
+  type DevicesOutsideSandboxStored,
+  type DevicesOutsideSandboxView,
+  devicesNetworkStored,
+  LEGACY_DEVICES_AUTO_MODE_SETTING,
+  legacyPlatformKeysStored,
+  readDeviceSandboxSettingsView,
+  readStoredDeviceSandbox,
+  resolveDeviceSandboxSettings,
+} from "../sandbox/device-sandbox-settings.js";
+import {
   localMachineRoots,
   needsWiderDeviceCeiling,
   PermissionCeilingWrites,
 } from "../sandbox/permission-ceiling-writes.js";
-import {
-  applyDevicesFullAccessPatch,
-  DEVICES_FULL_ACCESS_DEFAULT,
-  DEVICES_FULL_ACCESS_PATCH,
-  DEVICES_FULL_ACCESS_SETTING,
-  type DevicesFullAccessPatch,
-  type DevicesFullAccessStored,
-  type DevicesFullAccessView,
-  type FullAccessPermission,
-  LEGACY_DEVICES_AUTO_MODE_SETTING,
-  legacyDevicesAutoModeStored,
-  readDevicesFullAccess,
-  readStoredDevicesFullAccess,
-} from "../sandbox/platform-full-access.js";
 import {
   EXTERNAL_SHARING_SETTING,
   ExternalSharingValue,
@@ -292,13 +300,16 @@ export type DeploymentSettings = z.infer<typeof DEPLOYMENT_SETTINGS>;
 const DEFAULTS: DeploymentSettings = DEPLOYMENT_SETTINGS.parse({});
 
 /**
- * What `GET /api/v1/admin/settings` answers: the stored settings, the platform's Full permission
- * switch as it is in effect with where it comes from (`env` / `file` / `nacos`: the startup config,
- * read-only here; `db`: chosen in the admin console; `default`), and the platform's effective
- * attribution defaults with their sources the same way.
+ * What `GET /api/v1/admin/settings` answers: the stored settings, the platform's device sandbox
+ * settings as they are in effect with where each comes from (`env` / `file` / `nacos`: the startup
+ * config, read-only here; `db`: chosen in the admin console; `default`), and the platform's
+ * effective attribution defaults with their sources the same way.
  */
 export type DeploymentSettingsView = DeploymentSettings & {
-  devicesFullAccess: DevicesFullAccessView;
+  /** Whether a device may be granted running a call outside its sandbox. */
+  devicesOutsideSandbox: DevicesOutsideSandboxView;
+  /** The sandbox network's default and ceiling (the default never above the ceiling). */
+  devicesNetwork: DevicesNetworkView;
   attribution: PlatformAttributionView;
   /** The platform's external sharing switch in effect and where it comes from. */
   externalSharing: ExternalSharingView;
@@ -308,11 +319,14 @@ export type DeploymentSettingsView = DeploymentSettings & {
   promptSuggestions: "on" | "off";
 };
 
-const fullAccessWidenRefused = (): ApiError =>
+const outsideSandboxWidenRefused = (): ApiError =>
   new ApiError(
-    "deployment.full_access_not_allowed",
-    "Allowing Full permission at the platform level (devicesFullAccess) needs a super admin in the admin console; an API token or the Platform tool may only turn it off.",
+    "deployment.outside_sandbox_not_allowed",
+    "Allowing devices to run outside the sandbox at the platform level (devicesOutsideSandbox) needs a super admin in the admin console; an API token or the Platform tool may only turn it off.",
   );
+
+const networkNotAllowed = (message: string, field: "default" | "ceiling"): ApiError =>
+  new ApiError("deployment.network_not_allowed", message, [{ path: `devicesNetwork.${field}` }]);
 
 /** The `deployment_settings` key of the platform's prompt suggestions switch (`"on" | "off"`). */
 export const PROMPT_SUGGESTIONS_SETTING = "promptSuggestions";
@@ -396,12 +410,19 @@ export const DEPLOYMENT_SETTINGS_PATCH = z
       })
       .optional(),
     /**
-     * The platform's Full permission switch (B1): `permission` replaced, null clears it (back to
-     * the default, allowed). A value set in the startup config is read-only (409
+     * The platform's outside-sandbox ceiling: `permission` replaced, null clears it (back to the
+     * default, allowed). A value set in the startup config is read-only (409
      * `deployment.setting_readonly`); an API token or the Platform tool may only turn it off (400
-     * `deployment.full_access_not_allowed`).
+     * `deployment.outside_sandbox_not_allowed`).
      */
-    devicesFullAccess: DEVICES_FULL_ACCESS_PATCH.optional(),
+    devicesOutsideSandbox: DEVICES_OUTSIDE_SANDBOX_PATCH.optional(),
+    /**
+     * The platform's sandbox network: each given field replaces the stored one, null clears it
+     * (back to the default, open). A default above the ceiling, or (an API token or the Platform
+     * tool) any widening is refused (400 `deployment.network_not_allowed`); a field set in the
+     * startup config is read-only (409 `deployment.setting_readonly`).
+     */
+    devicesNetwork: DEVICES_NETWORK_PATCH.optional(),
     /**
      * The platform's attribution defaults for agent-created git commits and pull requests (spec
      * 2026-11-14-agent-attribution): each given field replaces the stored one, null clears it
@@ -629,24 +650,24 @@ export class SettingsService {
     @Inject(TransactionHost) readonly txHost: TransactionHost,
     @Inject(SuperAdminLock) private readonly adminLock: SuperAdminLock,
     @Inject(KERNEL_LOGGER) private readonly log: Pick<KernelLogger, "warn">,
-    /** The startup config's `devices.fullAccess`, which wins over the stored choice. */
+    /** The startup config's `devices.outsideSandbox` / `devices.network.*`, which win over the stored choice. */
     @Inject(KernelConfigService)
     private readonly config: Pick<KernelConfigService, "get" | "fieldSource">,
     @Inject(PermissionCeilingWrites) private readonly ceilings: PermissionCeilingWrites,
   ) {}
 
-  /** The settings with the platform's Full switch and attribution defaults in effect. */
+  /** The settings with the platform's device sandbox settings and attribution defaults in effect. */
   async view(): Promise<DeploymentSettingsView> {
     const [
       settings,
-      devicesFullAccess,
+      deviceSandbox,
       attribution,
       externalSharing,
       shareMaxExpiryDays,
       promptSuggestions,
     ] = await Promise.all([
       this.get(),
-      readDevicesFullAccess(this.db.db, this.config, this.log),
+      readDeviceSandboxSettingsView(this.db.db, this.config, this.log),
       readStoredPlatformAttribution(this.db.db, this.log),
       readExternalSharing(this.db.db, this.config, this.log),
       readShareMaxExpiry(this.db.db, this.config, this.log),
@@ -654,7 +675,8 @@ export class SettingsService {
     ]);
     return {
       ...settings,
-      devicesFullAccess,
+      devicesOutsideSandbox: deviceSandbox.outsideSandbox,
+      devicesNetwork: deviceSandbox.network,
       attribution: this.attributionView(attribution),
       externalSharing,
       shareMaxExpiryDays,
@@ -674,33 +696,97 @@ export class SettingsService {
   }
 
   /**
-   * The refusals of a `devicesFullAccess` change: a value set in the startup config
-   * (`deployment.setting_readonly`) and, with `onlyNarrows` (an API token, the Platform tool),
-   * allowing Full where it is off (`deployment.full_access_not_allowed`). Returns the next stored
-   * choice and the effective switch before it.
+   * The refusals of a `devicesOutsideSandbox` / `devicesNetwork` change against the stored choice
+   * and the startup config: a field set in the startup config (`deployment.setting_readonly`); a
+   * network default above the effective ceiling (`deployment.network_not_allowed`); and, with
+   * `onlyNarrows` (an API token, the Platform tool), any widening: allowing outside-sandbox runs
+   * where it is off (`deployment.outside_sandbox_not_allowed`; clearing it goes back to the default
+   * allowed, a widening too) or a network default or ceiling opened where it is the allowlist
+   * (`deployment.network_not_allowed`). Returns the next stored choices and the effective view
+   * before and after.
    */
-  async checkDevicesFullAccess(
-    patch: DevicesFullAccessPatch,
+  async checkDeviceSandbox(
+    patch: {
+      devicesOutsideSandbox?: DevicesOutsideSandboxPatch | undefined;
+      devicesNetwork?: DevicesNetworkPatch | undefined;
+    },
     opts: { onlyNarrows?: boolean } = {},
-  ): Promise<{ next: DevicesFullAccessStored; before: DevicesFullAccessView }> {
-    const source = this.config.fieldSource("devices.fullAccess");
-    if (source !== undefined) {
+  ): Promise<{
+    next: { outsideSandbox: DevicesOutsideSandboxStored; network: DevicesNetworkStored };
+    before: DeviceSandboxSettingsView;
+    after: DeviceSandboxSettingsView;
+  }> {
+    const configured = configuredDeviceSandbox(this.config);
+    const readonly = [
+      [
+        "devicesOutsideSandbox.permission",
+        patch.devicesOutsideSandbox !== undefined,
+        configured.sources.outsideSandbox,
+      ],
+      [
+        "devicesNetwork.default",
+        patch.devicesNetwork?.default !== undefined,
+        configured.sources.networkDefault,
+      ],
+      [
+        "devicesNetwork.ceiling",
+        patch.devicesNetwork?.ceiling !== undefined,
+        configured.sources.networkCeiling,
+      ],
+    ] as const;
+    const fixed = readonly.filter(([, given, source]) => given && source !== undefined);
+    if (fixed.length > 0) {
       throw new ApiError(
         "deployment.setting_readonly",
-        "The platform's Full permission switch is set in the startup config (file, Nacos or environment) and is read-only here",
-        [{ path: "devicesFullAccess.permission", source }],
+        `These device sandbox settings are set in the startup config (file, Nacos or environment) and are read-only here: ${fixed.map(([path]) => path).join(", ")}`,
+        fixed.map(([path, , source]) => ({ path, source })),
       );
     }
-    const before = await readDevicesFullAccess(this.db.db, this.config, this.log);
-    const next = applyDevicesFullAccessPatch(
-      await readStoredDevicesFullAccess(this.db.db, this.log),
-      patch,
-    );
-    const after = next.permission ?? DEVICES_FULL_ACCESS_DEFAULT;
-    if (opts.onlyNarrows && before.permission === "off" && after === DEVICES_FULL_ACCESS_DEFAULT) {
-      throw fullAccessWidenRefused();
+    const stored = await readStoredDeviceSandbox(this.db.db, this.log);
+    const next = {
+      outsideSandbox:
+        patch.devicesOutsideSandbox === undefined
+          ? stored.outsideSandbox
+          : applyDevicesOutsideSandboxPatch(stored.outsideSandbox, patch.devicesOutsideSandbox),
+      network:
+        patch.devicesNetwork === undefined
+          ? stored.network
+          : applyDevicesNetworkPatch(stored.network, patch.devicesNetwork),
+    };
+    const before = resolveDeviceSandboxSettings(configured, stored);
+    const after = resolveDeviceSandboxSettings(configured, next);
+    if (patch.devicesNetwork !== undefined) {
+      // the default the patch leaves, compared with the ceiling it leaves (never clamped silently)
+      const def =
+        configured.sources.networkDefault !== undefined
+          ? configured.networkDefault
+          : next.network.default;
+      if (def === "open" && after.network.ceiling === "allowlist")
+        throw networkNotAllowed(
+          "The network default open is above the ceiling allowlist; set the default to allowlist too, or keep the ceiling open",
+          "default",
+        );
     }
-    return { next, before };
+    if (opts.onlyNarrows) {
+      if (
+        patch.devicesOutsideSandbox !== undefined &&
+        before.outsideSandbox.permission === "off" &&
+        after.outsideSandbox.permission === "allowed"
+      )
+        throw outsideSandboxWidenRefused();
+      for (const field of ["default", "ceiling"] as const) {
+        if (patch.devicesNetwork?.[field] === undefined) continue;
+        const was =
+          field === "default" ? (stored.network.default ?? "open") : before.network.ceiling;
+        const now = field === "default" ? (next.network.default ?? "open") : after.network.ceiling;
+        if (was === "allowlist" && now === "open")
+          throw networkNotAllowed(
+            `Opening the platform's network ${field} needs a super admin in the admin console; an API token or the Platform tool may only narrow it to the allowlist.`,
+            field,
+          );
+      }
+    }
+    return { next, before, after };
   }
 
   /**
@@ -806,7 +892,8 @@ export class SettingsService {
 
   /**
    * Updates settings under the super admin lock, re-checking the actor (else `forbidden`).
-   * `onlyNarrows` (an API token, the Platform tool): `devicesFullAccess` may only turn Full off,
+   * `onlyNarrows` (an API token, the Platform tool): `devicesOutsideSandbox` may only turn it off,
+   * `devicesNetwork` may only narrow to the allowlist,
    * `externalSharing` may only turn external sharing off, `shareMaxExpiryDays` may only decrease and
    * `htmlRenderCdnAllowlist` may only shrink.
    */
@@ -827,7 +914,7 @@ export class SettingsService {
       );
     }
     const valid = check.data;
-    // the super admin lock, then (for a Full switch change) the platform permission authority
+    // the super admin lock, then (for a device sandbox change) the platform permission authority
     // lock: the ordered prelude, so inside a run's fence (the Platform tool's
     // `admin.update-settings`) they precede the conversation rows; the patch decides the lock
     await withOrderedLocks(
@@ -840,7 +927,8 @@ export class SettingsService {
   @Transactional({ propagation: "mandatory" })
   private async lockFor(patch: DeploymentSettingsPatch, actorAccountId: string): Promise<void> {
     await this.adminLock.lockAndAuthorize(actorAccountId);
-    if (patch.devicesFullAccess !== undefined) await this.ceilings.lock({}, "platform");
+    if (patch.devicesOutsideSandbox !== undefined || patch.devicesNetwork !== undefined)
+      await this.ceilings.lock({}, "platform");
   }
 
   @Transactional()
@@ -928,36 +1016,57 @@ export class SettingsService {
         next.subagentLimitOverrides = mergeByOrg(current.subagentLimitOverrides, subagentPatch);
       }
     }
-    // the platform's Full switch: checked against the stored choice under the lock; the stored
-    // shape keeps `permission` optional, so clearing it (null) writes `{}` back to the default
-    let fullAccessChange:
-      | { before: DevicesFullAccessView; after: FullAccessPermission }
+    // the platform's device sandbox settings: checked against the stored choices under the lock;
+    // the stored shapes keep every field optional, so clearing one (null) writes it out
+    let deviceSandboxChange:
+      | { before: DeviceSandboxSettingsView; after: DeviceSandboxSettingsView }
       | undefined;
     const writes: [string, unknown][] = Object.entries(next);
-    if (patch.devicesFullAccess !== undefined) {
-      const r = await this.checkDevicesFullAccess(patch.devicesFullAccess, opts);
-      fullAccessChange = {
-        before: r.before,
-        after: r.next.permission ?? DEVICES_FULL_ACCESS_DEFAULT,
-      };
-      writes.push([DEVICES_FULL_ACCESS_SETTING, r.next]);
-      // an old key the publication conversion has not reached yet (a mismatch window before
-      // activation) is kept in step, so the narrowed read shows the value the super admin chose
-      if (await legacyDevicesAutoModeStored(this.db.db))
-        writes.push([
-          LEGACY_DEVICES_AUTO_MODE_SETTING,
-          r.next.permission === undefined ? {} : { mode: r.next.permission },
-        ]);
-      if (fullAccessChange.before.permission !== fullAccessChange.after) {
-        const machineRoots =
-          fullAccessChange.after === "off" ? await localMachineRoots(this.db.db) : null;
+    if (patch.devicesOutsideSandbox !== undefined || patch.devicesNetwork !== undefined) {
+      const r = await this.checkDeviceSandbox(patch, opts);
+      deviceSandboxChange = { before: r.before, after: r.after };
+      const legacy = await legacyPlatformKeysStored(this.db.db);
+      if (patch.devicesOutsideSandbox !== undefined) {
+        writes.push([DEVICES_OUTSIDE_SANDBOX_SETTING, r.next.outsideSandbox]);
+        // old keys the publication conversion has not reached yet (a mismatch window before
+        // activation) are kept in step for replicas of the previous version
+        for (const key of legacy)
+          writes.push([
+            key,
+            key === LEGACY_DEVICES_AUTO_MODE_SETTING
+              ? r.next.outsideSandbox.permission === undefined
+                ? {}
+                : { mode: r.next.outsideSandbox.permission }
+              : r.next.outsideSandbox,
+          ]);
+      }
+      // the network the readers see, stored once old keys are still in play: an old off read as
+      // the allowlist ceiling must not widen when its key changes in step
+      if (
+        patch.devicesNetwork !== undefined ||
+        (legacy.length > 0 && !(await devicesNetworkStored(this.db.db)))
+      )
+        writes.push([DEVICES_NETWORK_SETTING, r.next.network]);
+      const outsideOff =
+        r.before.outsideSandbox.permission === "allowed" &&
+        r.after.outsideSandbox.permission === "off";
+      const outsideChanged =
+        r.before.outsideSandbox.permission !== r.after.outsideSandbox.permission;
+      const widened = (a: DevicesNetworkView, b: DevicesNetworkView) =>
+        (a.ceiling === "allowlist" && b.ceiling === "open") ||
+        (a.default === "allowlist" && b.default === "open");
+      const networkChanged =
+        r.before.network.default !== r.after.network.default ||
+        r.before.network.ceiling !== r.after.network.ceiling;
+      if (outsideChanged || networkChanged) {
+        const machineRoots = outsideOff ? await localMachineRoots(this.db.db) : null;
         await this.ceilings.publishLocked(
           {},
           "platform",
           machineRoots === null
             ? false
             : (scope, row) => needsWiderDeviceCeiling(scope, machineRoots.get(row.device_id)),
-          true,
+          outsideChanged || widened(r.before.network, r.after.network),
         );
       }
     }
@@ -1007,7 +1116,7 @@ export class SettingsService {
       action: "deployment.settings.updated",
       detail: {
         ...patch,
-        ...(fullAccessChange !== undefined && { devicesFullAccessEffective: fullAccessChange }),
+        ...(deviceSandboxChange !== undefined && { deviceSandboxEffective: deviceSandboxChange }),
         ...auditDetail,
       },
     });

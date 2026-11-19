@@ -37,8 +37,11 @@ const HOT_APPLIERS: Record<string, (k: { log: KernelLogger }, value: unknown) =>
   // The command-review service reads the classifier's bounds at every classifier call.
   "sandbox.review.timeoutMs": () => {},
   "sandbox.review.messageTokens": () => {},
-  // The devices service reads the platform's Full switch at every device use and settings read.
-  "devices.fullAccess": () => {},
+  // The device sandbox settings reader reads these at every device use and settings read; a
+  // change is published first (`PERMISSION_CONFIG_PATHS`).
+  "devices.outsideSandbox": () => {},
+  "devices.network.default": () => {},
+  "devices.network.ceiling": () => {},
   // The devices service reads the personal limit at every create.
   "devices.maxPersonal": () => {},
   // The local device relay reads the reconnect grace at every disconnect and token response.
@@ -69,6 +72,16 @@ const HOT_APPLIERS: Record<string, (k: { log: KernelLogger }, value: unknown) =>
   "sharing.external": () => {},
   "sharing.maxExpiryDays": () => {},
 };
+
+/**
+ * The hot fields the permission configuration publication covers: a change to any of them is
+ * published (fingerprint compare-and-set) before this replica applies it.
+ */
+const PERMISSION_CONFIG_PATHS: readonly string[] = [
+  "devices.outsideSandbox",
+  "devices.network.default",
+  "devices.network.ceiling",
+];
 
 const HOT_PATHS = configFields(KernelConfigSchema)
   .filter((f) => f.meta?.hot)
@@ -113,7 +126,7 @@ export class KernelConfigService {
    * Where the current value of a field without a schema default comes from: `env` when an
    * environment variable sets it, else the config source (`file` / `nacos`) when it is set at all;
    * undefined when nothing sets it (a layer below the startup config decides, e.g. the deployment
-   * settings for `devices.fullAccess`). Such fields are read-only in the admin console.
+   * settings for `devices.outsideSandbox`). Such fields are read-only in the admin console.
    */
   fieldSource(path: string): "env" | "file" | "nacos" | undefined {
     if (getPath(this.current, path) === undefined) return undefined;
@@ -156,7 +169,7 @@ export class KernelConfigService {
       setPath(updated as unknown as Record<string, unknown>, p, getPath(next, p));
       applied.push(p);
     }
-    if (applied.includes("devices.fullAccess")) {
+    if (applied.some((p) => PERMISSION_CONFIG_PATHS.includes(p))) {
       if (!publish) {
         log.error("permission config reload rejected: durable publication is required");
         return;

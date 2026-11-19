@@ -1892,7 +1892,7 @@ export const KernelConfigSchema = z.strictObject({
             .enum(["none", "allowlist"], {
               error: (iss) =>
                 iss.input === "open"
-                  ? 'sandbox.limits.egress does not take "open": the open public network is set by devices.fullAccess and an organization\'s cloudNetwork; use "allowlist" or "none"'
+                  ? 'sandbox.limits.egress does not take "open": the open public network is set by devices.network and an organization\'s deviceNetwork; use "allowlist" or "none"'
                   : undefined,
             })
             .default("allowlist")
@@ -1924,7 +1924,7 @@ export const KernelConfigSchema = z.strictObject({
             .meta(
               meta({
                 description:
-                  "Whether organizations may go beyond allowHosts in sandbox mode: extend (the default: an organization may use the open cloud network and add hosts, and its admins approve network requests) or within (allowHosts is the ceiling: an organization's cloud network in sandbox mode is the allowlist, and it may only keep or drop hosts the list covers; only a super admin adds others). Auto mode is not limited by it: devices.fullAccess governs Full permission's open network, so set devices.fullAccess off as well for a hard ceiling",
+                  "Whether organizations may go beyond allowHosts: extend (the default: an organization may add hosts of its own, and its admins approve network requests) or within (allowHosts is the ceiling: an organization's list may only keep or drop hosts the list covers; only a super admin adds others). It limits the hosts of the allowlist only: devices.network.ceiling decides whether devices may use the open network, so set it to allowlist as well for a hard ceiling",
               }),
             ),
         })
@@ -1934,24 +1934,64 @@ export const KernelConfigSchema = z.strictObject({
   devices: z
     .strictObject({
       /**
-       * The platform's Full permission switch (permission runtime cutover B1): whether a device's
-       * owner ceiling may allow Full permission. Also a deployment setting the super admin changes
-       * in the admin console (`devicesFullAccess`); the startup config wins over it, so this field
-       * is optional with no schema default (the default `allowed` is applied by
-       * `readDevicesFullAccess`: a schema default would be indistinguishable from a value the config
-       * source set). The old key `devices.autoMode` (`CAPYBARA_DEVICES__AUTO_MODE`) is refused with
-       * the conversion message (`config/load.ts`).
+       * The platform's outside-sandbox ceiling (approval-only profiles design, "Settings model"):
+       * whether any device may be granted a per-call escalation outside its sandbox. Also a
+       * deployment setting the super admin changes in the admin console (`devicesOutsideSandbox`);
+       * the startup config wins over it, so this field is optional with no schema default (the
+       * default `allowed` is applied by `readDeviceSandboxSettings`: a schema default would be
+       * indistinguishable from a value the config source set). The old keys `devices.fullAccess`
+       * and `devices.autoMode` are refused with the conversion message (`config/load.ts`).
        */
-      fullAccess: z
+      outsideSandbox: z
         .enum(["allowed", "off"])
         .optional()
         .meta(
           meta({
             hot: true,
             description:
-              "Whether devices may run with Full permission (default allowed): a device whose owner allows Full may then run a conversation with Full permission; a cloud device on Full reaches the open public network (private and internal addresses blocked) unless sandbox.limits.egress is none. When off, devices run restricted: local devices on their allowlist, cloud devices on their organization's cloud network (cloudNetwork). An organization may turn it off and follow the platform. Set here, it is read-only in the admin console. Replaces devices.autoMode (CAPYBARA_DEVICES__AUTO_MODE), which is refused: rename it (the same values), or convert a config file with capybara config migrate-permissions",
+              "Whether a device may be granted running a call outside its sandbox (default allowed): a person, the review model or Full access then approves such an escalation per call, within the organization's and the device owner's settings; off refuses every escalation, and devices only run in their sandbox. An organization may turn it off and follow the platform. Set here, it is read-only in the admin console. Replaces devices.fullAccess (CAPYBARA_DEVICES__FULL_ACCESS) and devices.autoMode, which are refused: rename them (the same values; off also needs devices.network.ceiling: allowlist to keep devices on the allowlist), or convert a config file with capybara config migrate-permissions",
           }),
         ),
+      /**
+       * The platform's device sandbox network (approval-only profiles design, "Settings model"):
+       * the default mode and the widest mode an org or device may choose, `open` (the public
+       * internet; private, loopback and metadata addresses closed) or `allowlist`. Optional with
+       * no schema default, like `outsideSandbox`: the admin console's choice applies when unset
+       * (`devicesNetwork`), else `open`. A default above the ceiling is refused.
+       */
+      network: z
+        .strictObject({
+          default: z
+            .enum(["open", "allowlist"])
+            .optional()
+            .meta(
+              meta({
+                hot: true,
+                description:
+                  "The sandbox network a device gets when neither its organization nor its owner chooses one (default open): open is the public internet, with private, loopback, link-local and cloud metadata addresses closed; allowlist is only the hosts of sandbox.limits.allowHosts and the organization's list. Never wider than devices.network.ceiling. Set here, it is read-only in the admin console",
+              }),
+            ),
+          ceiling: z
+            .enum(["open", "allowlist"])
+            .optional()
+            .meta(
+              meta({
+                hot: true,
+                description:
+                  "The widest sandbox network an organization or a device may choose (default open). Set it to allowlist for egress control: every device then reaches only the hosts of sandbox.limits.allowHosts and its organization's list. Set here, it is read-only in the admin console",
+              }),
+            ),
+        })
+        .superRefine((n, ctx) => {
+          if (n.default === "open" && n.ceiling === "allowlist")
+            ctx.addIssue({
+              code: "custom",
+              path: ["default"],
+              message:
+                "devices.network.default open is above devices.network.ceiling allowlist; choose a default no wider than the ceiling",
+            });
+        })
+        .prefault({} as never),
       maxPersonal: z
         .number()
         .int()

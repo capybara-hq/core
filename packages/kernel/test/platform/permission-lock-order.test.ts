@@ -242,11 +242,11 @@ describe("ceiling writers reached from a tool step lock in the ordered prelude",
     await againstReader(f, treeSubject(f), () =>
       k.app
         .get(OrgSettingsService)
-        .update(f.orgId, { fullAccess: "off" }, f.accountId, undefined, undefined, {
+        .update(f.orgId, { outsideSandbox: "off" }, f.accountId, undefined, undefined, {
           onlyNarrows: true,
         }),
     );
-    expect((await k.app.get(OrgSettingsService).get(f.orgId)).fullAccess).toBe("off");
+    expect((await k.app.get(OrgSettingsService).get(f.orgId)).outsideSandbox).toBe("off");
   });
 
   it("accounts.disable: the platform write lock precedes the run's root row", async () => {
@@ -265,15 +265,24 @@ describe("ceiling writers reached from a tool step lock in the ordered prelude",
       await againstReader(f, treeSubject(f), () =>
         k.app
           .get(SettingsService)
-          .update({ devicesFullAccess: { permission: "off" } }, f.accountId, undefined, undefined, {
-            onlyNarrows: true,
-          }),
+          .update(
+            { devicesOutsideSandbox: { permission: "off" } },
+            f.accountId,
+            undefined,
+            undefined,
+            {
+              onlyNarrows: true,
+            },
+          ),
       );
-      expect((await k.app.get(SettingsService).view()).devicesFullAccess).toMatchObject({
+      expect((await k.app.get(SettingsService).view()).devicesOutsideSandbox).toMatchObject({
         permission: "off",
       });
     } finally {
-      await f.db.deleteFrom("deployment_settings").where("key", "=", "devicesFullAccess").execute();
+      await f.db
+        .deleteFrom("deployment_settings")
+        .where("key", "=", "devicesOutsideSandbox")
+        .execute();
     }
   });
 });
@@ -463,15 +472,15 @@ describe("more fenced ceiling writes commit", () => {
         .get(OrgSettingsService)
         .update(
           f.orgId,
-          { cloudNetwork: { mode: "allowlist", excludedHosts: ["blocked.example.com"] } },
+          { deviceNetwork: { ceiling: "allowlist", excludedHosts: ["blocked.example.com"] } },
           f.accountId,
           undefined,
           undefined,
           { onlyNarrows: true },
         ),
     );
-    expect((await k.app.get(OrgSettingsService).get(f.orgId)).cloudNetwork).toMatchObject({
-      mode: "allowlist",
+    expect((await k.app.get(OrgSettingsService).get(f.orgId)).deviceNetwork).toMatchObject({
+      ceiling: "allowlist",
     });
   });
 

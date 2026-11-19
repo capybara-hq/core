@@ -179,7 +179,7 @@ beforeAll(async () => {
     method: "PATCH",
     url: `/api/v1/orgs/${orgSandbox}/settings`,
     // sandbox mode on a cloud device narrows the network to the org's allowlist
-    payload: { fullAccess: "off", cloudNetwork: { mode: "allowlist" } },
+    payload: { outsideSandbox: "off", deviceNetwork: { ceiling: "allowlist" } },
   });
   expect(off.statusCode, off.body).toBe(200);
   agentSandbox = await createAgent(orgSandbox);

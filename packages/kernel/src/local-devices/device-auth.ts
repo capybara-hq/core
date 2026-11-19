@@ -130,8 +130,8 @@ export interface DeviceGrant extends Grant {
   /** `devices.local.maxFrameBytes`: the program never sends a larger frame (ruling R26). */
   maxFrameBytes: number;
   /**
-   * Whether the platform and the organization allow Full access now (`devices.fullAccess` and the
-   * org's `fullAccess`): `off` makes `login` say that the org does not allow Full access, even
+   * Whether the platform and the organization allow Full access now (`devices.outsideSandbox` and
+   * the org's `outsideSandbox`): `off` makes `login` say that the org does not allow Full access, even
    * when the machine's owner ceiling does.
    */
   fullAccess: "allowed" | "off";
@@ -258,7 +258,7 @@ export class DeviceAuthService {
           reconnectGraceSeconds: local.reconnectGraceSeconds,
           maxFrameBytes: local.maxFrameBytes,
           fullAccess:
-            allowedDeviceMode(deployment.fullAccess, settings.fullAccess) === "auto"
+            allowedDeviceMode(deployment.fullAccess, settings.outsideSandbox) === "auto"
               ? "allowed"
               : "off",
         };

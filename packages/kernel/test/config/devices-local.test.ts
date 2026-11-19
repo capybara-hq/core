@@ -23,12 +23,13 @@ describe("devices.local config", () => {
 
   it("devices.fullAccess: unset by the config source (the deployment setting / default decides)", () => {
     // no schema default: readDevicesFullAccess can tell "the source set it" from "it is the default"
-    expect(KernelConfigSchema.parse(base).devices.fullAccess).toBeUndefined();
+    expect(KernelConfigSchema.parse(base).devices.outsideSandbox).toBeUndefined();
     expect(
-      KernelConfigSchema.parse({ ...base, devices: { fullAccess: "off" } }).devices.fullAccess,
+      KernelConfigSchema.parse({ ...base, devices: { outsideSandbox: "off" } }).devices
+        .outsideSandbox,
     ).toBe("off");
     expect(
-      KernelConfigSchema.safeParse({ ...base, devices: { fullAccess: "maybe" } }).success,
+      KernelConfigSchema.safeParse({ ...base, devices: { outsideSandbox: "maybe" } }).success,
     ).toBe(false);
   });
 
@@ -57,12 +58,12 @@ describe("devices.local config", () => {
         CAPYBARA_REDIS__URL: base.redis.url,
         CAPYBARA_MASTER_KEY: base.masterKey,
         CAPYBARA_DEVICES__LOCAL__RECONNECT_GRACE_SECONDS: "60",
-        CAPYBARA_DEVICES__FULL_ACCESS: "off",
+        CAPYBARA_DEVICES__OUTSIDE_SANDBOX: "off",
       },
     );
     expect(c.devices.local.reconnectGraceSeconds).toBe(60);
     expect(c.devices.local.pollIntervalSeconds).toBe(5);
-    expect(c.devices.fullAccess).toBe("off");
+    expect(c.devices.outsideSandbox).toBe("off");
   });
 });
 
@@ -117,11 +118,11 @@ describe("unknown config keys fail loudly", () => {
     expect(c.extensionConfig).toEqual({ x: { anything: { goes: 1 } } });
   });
 
-  it("sandbox.limits.egress: open fails, naming devices.fullAccess and cloudNetwork", () => {
+  it("sandbox.limits.egress: open fails, naming devices.network and deviceNetwork", () => {
     const run = () => resolveConfig({}, { ...env, CAPYBARA_SANDBOX__LIMITS__EGRESS: "open" });
     expect(run).toThrow(/sandbox\.limits\.egress/);
-    expect(run).toThrow(/devices\.fullAccess/);
-    expect(run).toThrow(/cloudNetwork/);
+    expect(run).toThrow(/devices\.network/);
+    expect(run).toThrow(/deviceNetwork/);
   });
 });
 

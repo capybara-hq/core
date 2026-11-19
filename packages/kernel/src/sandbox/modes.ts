@@ -1,8 +1,11 @@
 import type { KernelConfig } from "../config/schema.js";
 import type { KernelSchemaDb } from "../db/kernel-schema.js";
 import type { KernelConfigService } from "../infra/config/kernel-config.service.js";
-import type { CloudNetworkSetting, OrgSettings } from "../orgs/settings.service.js";
-import { type FullAccessPermission, readDevicesFullAccess } from "./platform-full-access.js";
+import type { DeviceNetworkSetting, OrgSettings } from "../orgs/settings.service.js";
+import {
+  type OutsideSandboxPermission as FullAccessPermission,
+  readDeviceSandboxSettings,
+} from "./device-sandbox-settings.js";
 
 /**
  * Device modes (auto mode spec §4.1–§4.3): who may choose auto mode, and the network each mode
@@ -66,7 +69,7 @@ export function orgHostOutsideCeiling(limits: NetworkLimits, host: string): bool
  */
 export function orgEffectiveHosts(
   limits: NetworkLimits,
-  org: CloudNetworkSetting | undefined,
+  org: DeviceNetworkSetting | undefined,
 ): string[] {
   if (limits.egress === "none") return [];
   const extra = (org?.extraHosts ?? []).filter((h) => !orgHostOutsideCeiling(limits, h));
@@ -81,10 +84,10 @@ export function orgEffectiveHosts(
  */
 export function orgCloudMode(
   limits: NetworkLimits,
-  org: CloudNetworkSetting | undefined,
+  org: DeviceNetworkSetting | undefined,
 ): "open" | "allowlist" {
   if (limits.egress === "none" || limits.orgHosts === "within") return "allowlist";
-  return org?.mode ?? "open";
+  return org?.ceiling === "allowlist" || org?.default === "allowlist" ? "allowlist" : "open";
 }
 
 /**
@@ -95,12 +98,12 @@ export async function readDeploymentDevicePolicy(
   db: KernelSchemaDb,
   config: Pick<KernelConfigService, "get" | "fieldSource">,
 ): Promise<DeploymentDevicePolicy> {
-  const fullAccess = await readDevicesFullAccess(db, config);
-  return { fullAccess: fullAccess.permission, limits: config.get().sandbox.limits };
+  const settings = await readDeviceSandboxSettings(db, config);
+  return { fullAccess: settings.outsideSandbox, limits: config.get().sandbox.limits };
 }
 
 /** The org settings the policy reads. */
-export type OrgDeviceSettings = Pick<OrgSettings, "fullAccess" | "cloudNetwork">;
+export type OrgDeviceSettings = Pick<OrgSettings, "outsideSandbox" | "deviceNetwork">;
 
 /** The effective device policy of one device (or of a new device, with no choice of its own). */
 export interface EffectiveDevicePolicy {
@@ -136,7 +139,7 @@ export function projectReachOf(
 /** The mode the platform and the org allow: `auto` only when neither turns it off. */
 export function allowedDeviceMode(
   platform: FullAccessPermission,
-  org: OrgDeviceSettings["fullAccess"],
+  org: OrgDeviceSettings["outsideSandbox"],
 ): SandboxMode {
   return platform === "allowed" && org !== "off" ? "auto" : "sandbox";
 }
@@ -146,7 +149,7 @@ export function orgAllowedDomains(
   deployment: DeploymentDevicePolicy,
   org: OrgDeviceSettings,
 ): string[] {
-  return orgEffectiveHosts(deployment.limits, org.cloudNetwork);
+  return orgEffectiveHosts(deployment.limits, org.deviceNetwork);
 }
 
 /**
@@ -162,7 +165,7 @@ export function deviceNetwork(
   if (deployment.limits.egress === "none") return { kind: "allowlist", hosts: [] };
   // auto mode is 开放挡内网 whatever the org says; only sandbox mode applies `cloudNetwork`
   if (mode === "auto") return { kind: "open-public", hosts: [] };
-  if (orgCloudMode(deployment.limits, org.cloudNetwork) === "open") {
+  if (orgCloudMode(deployment.limits, org.deviceNetwork) === "open") {
     return { kind: "open-public", hosts: [] };
   }
   return { kind: "allowlist", hosts: orgAllowedDomains(deployment, org) };
@@ -181,7 +184,7 @@ export function effectiveDevicePolicy(
   /** A cloud device's B1 outer network snapshot: the network never goes beyond it. */
   outer: DeviceNetwork | null = null,
 ): EffectiveDevicePolicy {
-  const allowedMode = allowedDeviceMode(deployment.fullAccess, org.fullAccess);
+  const allowedMode = allowedDeviceMode(deployment.fullAccess, org.outsideSandbox);
   const mode: SandboxMode = allowedMode === "sandbox" ? "sandbox" : (deviceMode ?? "auto");
   return {
     mode,

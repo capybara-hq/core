@@ -45,7 +45,11 @@ describe("deviceModeViewOf", () => {
 
   it("cloud auto mode ignores the org's allowlist; the source is the platform", () => {
     const org = {
-      cloudNetwork: { mode: "allowlist" as const, base: "none" as const, extraHosts: ["a.com"] },
+      deviceNetwork: {
+        ceiling: "allowlist" as const,
+        base: "none" as const,
+        extraHosts: ["a.com"],
+      },
     };
     const policy = effectiveDevicePolicy(deployment(), org, null);
     expect(deviceModeViewOf(policy, org, false, null, extra)).toMatchObject({
@@ -56,7 +60,11 @@ describe("deviceModeViewOf", () => {
 
   it("a cloud device narrowed to sandbox applies the org's allowlist", () => {
     const org = {
-      cloudNetwork: { mode: "allowlist" as const, base: "none" as const, extraHosts: ["a.com"] },
+      deviceNetwork: {
+        ceiling: "allowlist" as const,
+        base: "none" as const,
+        extraHosts: ["a.com"],
+      },
     };
     const policy = effectiveDevicePolicy(deployment(), org, "sandbox");
     expect(deviceModeViewOf(policy, org, false, null, extra)).toMatchObject({
@@ -68,7 +76,7 @@ describe("deviceModeViewOf", () => {
   });
 
   it("the org turning auto mode off: allowedBy is null and no device may report auto", () => {
-    const org = { fullAccess: "off" as const };
+    const org = { outsideSandbox: "off" as const };
     const policy = effectiveDevicePolicy(deployment(), org, "auto");
     expect(deviceModeViewOf(policy, org, true, summary(), extra)).toMatchObject({
       mode: "sandbox",
@@ -83,7 +91,7 @@ describe("deviceModeViewOf", () => {
   });
 
   it("a cloud device in sandbox mode with the org's open network names the org", () => {
-    const org = { cloudNetwork: { mode: "open" as const } };
+    const org = { deviceNetwork: { default: "open" as const } };
     const policy = effectiveDevicePolicy(deployment(), org, "sandbox");
     expect(deviceModeViewOf(policy, org, false, null, extra)).toMatchObject({
       mode: "sandbox",
@@ -93,7 +101,11 @@ describe("deviceModeViewOf", () => {
 
   it("the platform kill switch names the platform even when the org supplied hosts", () => {
     const org = {
-      cloudNetwork: { mode: "allowlist" as const, base: "none" as const, extraHosts: ["a.com"] },
+      deviceNetwork: {
+        ceiling: "allowlist" as const,
+        base: "none" as const,
+        extraHosts: ["a.com"],
+      },
     };
     // the deployment is at egress none: every read is an empty allowlist
     const policy = effectiveDevicePolicy(deployment("allowed", "none"), org, "sandbox");
@@ -105,7 +117,11 @@ describe("deviceModeViewOf", () => {
 
   it("a pending change is pending at the next use or at a file reset, never both", () => {
     const org = {
-      cloudNetwork: { mode: "allowlist" as const, base: "none" as const, extraHosts: ["a.com"] },
+      deviceNetwork: {
+        ceiling: "allowlist" as const,
+        base: "none" as const,
+        extraHosts: ["a.com"],
+      },
     };
     const policy = effectiveDevicePolicy(deployment(), org, "sandbox");
     const nextUse = { ...extra, pendingNextUse: true };
@@ -121,7 +137,7 @@ describe("deviceModeViewOf", () => {
   });
 
   it("a local device reports its own mode and allowlist; the org explicitly allowing auto names the org", () => {
-    const org = { fullAccess: "allowed" as const };
+    const org = { outsideSandbox: "allowed" as const };
     const s = summary({ mode: "sandbox", allowedDomains: ["a.com"] });
     const policy = effectiveDevicePolicy(deployment(), org, s.mode);
     expect(deviceModeViewOf(policy, org, true, s, extra)).toMatchObject({

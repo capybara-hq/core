@@ -216,7 +216,7 @@ describe("创建沙箱时按组织覆盖 cpu / memoryMb", () => {
     });
     // the org cannot widen it back
     await sql`UPDATE capybara.orgs SET settings = ${JSON.stringify({
-      cloudNetwork: { mode: "open", allowHosts: ["a.com"] },
+      deviceNetwork: { default: "open", allowHosts: ["a.com"] },
     })}::jsonb WHERE id = ${orgId}`.execute(raw);
     expect(await limitsOf(service(), await newDevice())).toMatchObject({
       network: { kind: "allowlist", hosts: [] },

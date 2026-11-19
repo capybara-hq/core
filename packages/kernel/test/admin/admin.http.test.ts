@@ -70,7 +70,12 @@ beforeEach(async () => {
 });
 
 /** The platform's auto-mode switch when neither the startup config nor the admin console sets it. */
-const DEFAULT_FULL_ACCESS = { permission: "allowed", source: "default" };
+const DEFAULT_OUTSIDE = { permission: "allowed", source: "default" };
+const DEFAULT_NETWORK = {
+  default: "open",
+  ceiling: "open",
+  sources: { default: "default", ceiling: "default" },
+};
 
 /** The platform's attribution defaults when neither the startup config nor the admin console sets them. */
 const DEFAULT_ATTRIBUTION = {
@@ -555,7 +560,8 @@ describe("超级管理员端点", () => {
       orgMarketplaceBrowse: true,
       uiTheme: { id: null },
       clientExtensions: { enabled: true, disabled: [] },
-      devicesFullAccess: DEFAULT_FULL_ACCESS,
+      devicesOutsideSandbox: DEFAULT_OUTSIDE,
+      devicesNetwork: DEFAULT_NETWORK,
       attribution: DEFAULT_ATTRIBUTION,
       compaction: DEFAULT_COMPACTION,
       ...DEFAULT_SHARING,
@@ -578,7 +584,8 @@ describe("超级管理员端点", () => {
       orgMarketplaceBrowse: true,
       uiTheme: { id: null },
       clientExtensions: { enabled: true, disabled: [] },
-      devicesFullAccess: DEFAULT_FULL_ACCESS,
+      devicesOutsideSandbox: DEFAULT_OUTSIDE,
+      devicesNetwork: DEFAULT_NETWORK,
       attribution: DEFAULT_ATTRIBUTION,
       compaction: DEFAULT_COMPACTION,
       ...DEFAULT_SHARING,
@@ -621,7 +628,8 @@ describe("超级管理员端点", () => {
       orgMarketplaceBrowse: true,
       uiTheme: { id: null },
       clientExtensions: { enabled: true, disabled: [] },
-      devicesFullAccess: DEFAULT_FULL_ACCESS,
+      devicesOutsideSandbox: DEFAULT_OUTSIDE,
+      devicesNetwork: DEFAULT_NETWORK,
       attribution: DEFAULT_ATTRIBUTION,
       compaction: DEFAULT_COMPACTION,
       ...DEFAULT_SHARING,
@@ -652,7 +660,8 @@ describe("超级管理员端点", () => {
       orgMarketplaceBrowse: true,
       uiTheme: { id: null },
       clientExtensions: { enabled: true, disabled: [] },
-      devicesFullAccess: DEFAULT_FULL_ACCESS,
+      devicesOutsideSandbox: DEFAULT_OUTSIDE,
+      devicesNetwork: DEFAULT_NETWORK,
       attribution: DEFAULT_ATTRIBUTION,
       compaction: DEFAULT_COMPACTION,
       ...DEFAULT_SHARING,
@@ -684,7 +693,8 @@ describe("超级管理员端点", () => {
       orgMarketplaceBrowse: true,
       uiTheme: { id: null },
       clientExtensions: { enabled: true, disabled: [] },
-      devicesFullAccess: DEFAULT_FULL_ACCESS,
+      devicesOutsideSandbox: DEFAULT_OUTSIDE,
+      devicesNetwork: DEFAULT_NETWORK,
       attribution: DEFAULT_ATTRIBUTION,
       compaction: DEFAULT_COMPACTION,
       ...DEFAULT_SHARING,
@@ -783,60 +793,65 @@ describe("超级管理员端点", () => {
     );
   });
 
-  it("PUT /admin/settings devicesFullAccess: audited; null clears it; the old name devicesAutoMode is refused", async () => {
+  it("PUT /admin/settings devicesOutsideSandbox: audited; null clears it; the old name devicesAutoMode is refused", async () => {
     const adminReq = await session("admin");
     const put = (payload: Record<string, unknown>) =>
       adminReq({ method: "PUT", url: "/api/v1/admin/settings", payload });
     for (const payload of [
       { devicesAutoMode: { mode: "off" } },
       { devicesAutoMode: { mode: null } },
-      { devicesFullAccess: { permission: "off", extra: 1 } },
+      { devicesOutsideSandbox: { permission: "off", extra: 1 } },
     ]) {
       const res = await put(payload);
       expect(res.statusCode, JSON.stringify(payload)).toBe(400);
       expect(errCode(res)).toBe("validation_failed");
     }
-    const off = await put({ devicesFullAccess: { permission: "off" } });
+    const off = await put({ devicesOutsideSandbox: { permission: "off" } });
     expect(off.statusCode, off.body).toBe(200);
-    expect(off.json().devicesFullAccess).toEqual({ permission: "off", source: "db" });
+    expect(off.json().devicesOutsideSandbox).toEqual({ permission: "off", source: "db" });
     const audit = await db
       .selectFrom("audit_events")
       .select(["action", "detail"])
       .where("action", "=", "deployment.settings.updated")
       .executeTakeFirstOrThrow();
     expect(audit.detail).toMatchObject({
-      devicesFullAccess: { permission: "off" },
-      devicesFullAccessEffective: { before: DEFAULT_FULL_ACCESS, after: "off" },
+      devicesOutsideSandbox: { permission: "off" },
+      deviceSandboxEffective: {
+        before: { outsideSandbox: DEFAULT_OUTSIDE, network: DEFAULT_NETWORK },
+        after: { outsideSandbox: { permission: "off", source: "db" }, network: DEFAULT_NETWORK },
+      },
     });
     // null clears it back to the default
-    const cleared = await put({ devicesFullAccess: { permission: null } });
+    const cleared = await put({ devicesOutsideSandbox: { permission: null } });
     expect(cleared.statusCode, cleared.body).toBe(200);
-    expect(cleared.json().devicesFullAccess).toEqual(DEFAULT_FULL_ACCESS);
+    expect(cleared.json().devicesOutsideSandbox).toEqual(DEFAULT_OUTSIDE);
   });
 
-  it("PUT /admin/settings devicesFullAccess: validated, read back with its source, never with the old name", async () => {
+  it("PUT /admin/settings devicesOutsideSandbox: validated, read back with its source, never with the old name", async () => {
     const adminReq = await session("admin");
     const put = (payload: Record<string, unknown>) =>
       adminReq({ method: "PUT", url: "/api/v1/admin/settings", payload });
     for (const payload of [
-      { devicesFullAccess: {} },
-      { devicesFullAccess: { permission: "wide" } },
-      { devicesFullAccess: { mode: "off" } },
-      { devicesFullAccess: { permission: "off" }, devicesAutoMode: { mode: "off" } },
+      { devicesOutsideSandbox: {} },
+      { devicesOutsideSandbox: { permission: "wide" } },
+      { devicesOutsideSandbox: { mode: "off" } },
+      { devicesOutsideSandbox: { permission: "off" }, devicesAutoMode: { mode: "off" } },
     ]) {
       const res = await put(payload);
       expect(res.statusCode, JSON.stringify(payload)).toBe(400);
       expect(errCode(res)).toBe("validation_failed");
     }
-    const off = await put({ devicesFullAccess: { permission: "off" } });
+    const off = await put({ devicesOutsideSandbox: { permission: "off" } });
     expect(off.statusCode, off.body).toBe(200);
-    expect(off.json()).toMatchObject({ devicesFullAccess: { permission: "off", source: "db" } });
+    expect(off.json()).toMatchObject({
+      devicesOutsideSandbox: { permission: "off", source: "db" },
+    });
     expect(off.json()).not.toHaveProperty("devicesAutoMode");
-    const cleared = await put({ devicesFullAccess: { permission: null } });
-    expect(cleared.json().devicesFullAccess).toEqual(DEFAULT_FULL_ACCESS);
+    const cleared = await put({ devicesOutsideSandbox: { permission: null } });
+    expect(cleared.json().devicesOutsideSandbox).toEqual(DEFAULT_OUTSIDE);
   });
 
-  it("PUT /admin/settings devicesFullAccess through a personal access token may only turn it off", async () => {
+  it("PUT /admin/settings devicesOutsideSandbox through a personal access token may only turn it off", async () => {
     const pat = await tokens.createPersonal(admin.id, { name: "automation" });
     const viaToken = (payload: Record<string, unknown>) =>
       k.http.inject({
@@ -846,27 +861,63 @@ describe("超级管理员端点", () => {
         payload,
       });
     // from allowed, off narrows
-    const off = await viaToken({ devicesFullAccess: { permission: "off" } });
+    const off = await viaToken({ devicesOutsideSandbox: { permission: "off" } });
     expect(off.statusCode, off.body).toBe(200);
-    expect((off.json() as { devicesFullAccess: unknown }).devicesFullAccess).toEqual({
+    expect((off.json() as { devicesOutsideSandbox: unknown }).devicesOutsideSandbox).toEqual({
       permission: "off",
       source: "db",
     });
     // turning it back on widens: refused for a token, allowed for a person in a session
-    const widened = await viaToken({ devicesFullAccess: { permission: "allowed" } });
+    const widened = await viaToken({ devicesOutsideSandbox: { permission: "allowed" } });
     expect(widened.statusCode).toBe(400);
-    expect(errCode(widened)).toBe("deployment.full_access_not_allowed");
+    expect(errCode(widened)).toBe("deployment.outside_sandbox_not_allowed");
     const adminReq = await session("admin");
     const on = await adminReq({
       method: "PUT",
       url: "/api/v1/admin/settings",
-      payload: { devicesFullAccess: { permission: "allowed" } },
+      payload: { devicesOutsideSandbox: { permission: "allowed" } },
     });
     expect(on.statusCode, on.body).toBe(200);
-    expect(on.json().devicesFullAccess).toEqual({ permission: "allowed", source: "db" });
+    expect(on.json().devicesOutsideSandbox).toEqual({ permission: "allowed", source: "db" });
   });
 
-  it("PUT /admin/settings devicesFullAccess: a value set in the startup config is read-only and wins", async () => {
+  it("PUT /admin/settings devicesNetwork: a token may only narrow; a default above the ceiling is refused", async () => {
+    const pat = await tokens.createPersonal(admin.id, { name: "network-automation" });
+    const viaToken = (payload: Record<string, unknown>) =>
+      k.http.inject({
+        method: "PUT",
+        url: "/api/v1/admin/settings",
+        headers: { authorization: `Bearer ${pat.token}` },
+        payload,
+      });
+    const adminReq = await session("admin");
+    const put = (payload: Record<string, unknown>) =>
+      adminReq({ method: "PUT", url: "/api/v1/admin/settings", payload });
+    for (const payload of [{ devicesNetwork: {} }, { devicesNetwork: { ceiling: "public" } }]) {
+      const res = await put(payload);
+      expect(res.statusCode, JSON.stringify(payload)).toBe(400);
+      expect(errCode(res)).toBe("validation_failed");
+    }
+    const narrowed = await viaToken({ devicesNetwork: { ceiling: "allowlist" } });
+    expect(narrowed.statusCode, narrowed.body).toBe(200);
+    expect(narrowed.json().devicesNetwork).toEqual({
+      default: "allowlist",
+      ceiling: "allowlist",
+      sources: { default: "default", ceiling: "db" },
+    });
+    const opened = await viaToken({ devicesNetwork: { ceiling: "open" } });
+    expect(opened.statusCode).toBe(400);
+    expect(errCode(opened)).toBe("deployment.network_not_allowed");
+    const above = await put({ devicesNetwork: { default: "open" } });
+    expect(above.statusCode).toBe(400);
+    expect(errCode(above)).toBe("deployment.network_not_allowed");
+    // a person opens it again
+    const back = await put({ devicesNetwork: { ceiling: null } });
+    expect(back.statusCode, back.body).toBe(200);
+    expect(back.json().devicesNetwork).toEqual(DEFAULT_NETWORK);
+  });
+
+  it("PUT /admin/settings devicesOutsideSandbox: a value set in the startup config is read-only and wins", async () => {
     const service = k.app.get(KernelConfigService);
     const rawConfig = (fullAccess?: "allowed" | "off") => ({
       db: { url: pgc.url, poolMax: 5 },
@@ -875,12 +926,12 @@ describe("超级管理员端点", () => {
       marketplaces: { official: { enabled: false } },
       http: { port: 0 },
       auth: { setupToken: SETUP_TOKEN },
-      devices: { fullAccess },
+      devices: { outsideSandbox: fullAccess },
     });
     const adminReq = await session("admin");
     const put = (payload: Record<string, unknown>) =>
       adminReq({ method: "PUT", url: "/api/v1/admin/settings", payload });
-    expect((await put({ devicesFullAccess: { permission: "allowed" } })).statusCode).toBe(200);
+    expect((await put({ devicesOutsideSandbox: { permission: "allowed" } })).statusCode).toBe(200);
     // a hot change of the Full switch publishes durably first (B1 / 6c), as the lifecycle does
     const publication = k.app.get(PermissionConfigPublication);
     const publish = (before: KernelConfig, next: KernelConfig) => publication.publish(before, next);
@@ -888,19 +939,19 @@ describe("超级管理员端点", () => {
     try {
       const view = await adminReq({ method: "GET", url: "/api/v1/admin/settings" });
       // the startup config wins over the stored allowed and reports itself read-only
-      expect(view.json().devicesFullAccess).toEqual({ permission: "off", source: "file" });
-      const locked = await put({ devicesFullAccess: { permission: "allowed" } });
+      expect(view.json().devicesOutsideSandbox).toEqual({ permission: "off", source: "file" });
+      const locked = await put({ devicesOutsideSandbox: { permission: "allowed" } });
       expect(locked.statusCode).toBe(409);
       expect(errCode(locked)).toBe("deployment.setting_readonly");
       expect(locked.json().error.details).toEqual([
-        { path: "devicesFullAccess.permission", source: "file" },
+        { path: "devicesOutsideSandbox.permission", source: "file" },
       ]);
     } finally {
       await service.apply(rawConfig(undefined), publish);
     }
     // with the startup config silent again, the stored choice applies
     const back = await adminReq({ method: "GET", url: "/api/v1/admin/settings" });
-    expect(back.json().devicesFullAccess).toEqual({ permission: "allowed", source: "db" });
+    expect(back.json().devicesOutsideSandbox).toEqual({ permission: "allowed", source: "db" });
   });
 
   it('PUT /admin/settings attribution: saved, read back with sources, "" turns a line off, null clears, a startup-config field is read-only', async () => {

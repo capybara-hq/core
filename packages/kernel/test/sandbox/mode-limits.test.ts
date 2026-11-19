@@ -129,13 +129,13 @@ const service = (
   });
 
 /**
- * The org's mode switch. `off` also selects the allowlist network (the org's `cloudNetwork`),
+ * The org's mode switch. `off` also selects the allowlist network (the org's `deviceNetwork`),
  * because a cloud device in sandbox mode applies it; `allowed` is auto mode, which ignores it.
  */
 const setAutoMode = (mode: "allowed" | "off") =>
   sql`UPDATE capybara.orgs SET settings = ${JSON.stringify({
-    fullAccess: mode,
-    cloudNetwork: { mode: mode === "off" ? "allowlist" : "open" },
+    outsideSandbox: mode,
+    deviceNetwork: mode === "off" ? { ceiling: "allowlist" } : { default: "open" },
   })}::jsonb
     WHERE id = ${orgId}`.execute(raw);
 const setOrgSettings = (value: unknown) =>
@@ -351,8 +351,8 @@ describe("a changed mode on use", () => {
     await setAutoMode("off");
     const first = await use(s);
     await setOrgSettings({
-      fullAccess: "off",
-      cloudNetwork: { mode: "allowlist", extraHosts: ["example.com"] },
+      outsideSandbox: "off",
+      deviceNetwork: { ceiling: "allowlist", extraHosts: ["example.com"] },
     });
     await sql`INSERT INTO capybara.deployment_settings (key, value)
       VALUES ('sandboxLimitOverrides', ${JSON.stringify({ [orgId]: { cpu: 4 } })}::jsonb)
@@ -372,8 +372,8 @@ describe("a changed mode on use", () => {
     await setAutoMode("off");
     const first = await use(s);
     await setOrgSettings({
-      fullAccess: "off",
-      cloudNetwork: { mode: "allowlist", excludedHosts: ["pypi.org"] },
+      outsideSandbox: "off",
+      deviceNetwork: { ceiling: "allowlist", excludedHosts: ["pypi.org"] },
     });
     const again = await use(s);
     expect(again.h).toEqual(first.h);

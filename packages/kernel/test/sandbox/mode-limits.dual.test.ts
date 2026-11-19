@@ -75,8 +75,8 @@ async function seed() {
 
 const setAutoMode = (orgId: string, mode: "allowed" | "off") =>
   sql`UPDATE capybara.orgs SET settings = ${JSON.stringify({
-    fullAccess: mode,
-    cloudNetwork: { mode: mode === "off" ? "allowlist" : "open" },
+    outsideSandbox: mode,
+    deviceNetwork: mode === "off" ? { ceiling: "allowlist" } : { default: "open" },
   })}::jsonb
     WHERE id = ${orgId}`.execute(raw);
 

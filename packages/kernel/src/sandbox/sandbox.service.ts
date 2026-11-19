@@ -450,19 +450,19 @@ export function sandboxConfigWarnings(
     if (pc?.refuseOpenNetwork === true) {
       out.push({
         level: "warn",
-        message: `extensionConfig."${providerPlugin}".refuseOpenNetwork is true: the ${providerPlugin} plugin refuses cloud devices on the open public network, which every device in auto mode and every sandbox-mode device of an organization whose cloudNetwork is open (the default) uses; set refuseOpenNetwork to false, or turn Full permission off (devices.fullAccess) and have every organization switch its cloudNetwork to the allowlist`,
+        message: `extensionConfig."${providerPlugin}".refuseOpenNetwork is true: the ${providerPlugin} plugin refuses cloud devices on the open public network, which every device uses whose network is open (devices.network.default, open by default, and an organization's deviceNetwork); set refuseOpenNetwork to false, or set devices.network.ceiling to allowlist`,
       });
     }
   }
   if (
     cfg.sandbox.limits.orgHosts === "within" &&
     cfg.sandbox.limits.egress !== "none" &&
-    cfg.devices?.fullAccess !== "off"
+    cfg.devices?.network?.ceiling !== "allowlist"
   ) {
     out.push({
       level: "warn",
       message:
-        "sandbox.limits.orgHosts is within but devices.fullAccess is not off: the platform allowlist limits restricted execution only; devices on Full permission (allowed by default) still reach the open public network. Set devices.fullAccess to off (or turn Full permission off in the admin console) for a hard ceiling",
+        "sandbox.limits.orgHosts is within but devices.network.ceiling is not allowlist: the platform allowlist limits the hosts of the allowlist only; devices on the open network (the default) still reach any public host. Set devices.network.ceiling to allowlist (or in the admin console) for a hard ceiling",
     });
   }
   const run = cfg.runtime.maxRunSeconds;

@@ -27,7 +27,7 @@
   "config/devices-local.test.ts",
   "config/env.test.ts",
   "config/fields.test.ts",
-  "config/full-access.test.ts",
+  "config/device-sandbox-config.test.ts",
   "config/load.test.ts",
   "config/net-proxy.test.ts",
   "config/plugin-permissions.test.ts",

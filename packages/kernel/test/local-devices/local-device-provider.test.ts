@@ -446,7 +446,7 @@ it.each(["exec", "backgroundStart"] as const)(
     });
     expect(sent[1]?.grants).toEqual(sent[0]?.grants);
     orgSettings = {
-      cloudNetwork: { mode: "allowlist", excludedHosts: ["example.com"], extraHosts: [] },
+      deviceNetwork: { ceiling: "allowlist", excludedHosts: ["example.com"], extraHosts: [] },
     };
     await expect(invoke()).rejects.toThrow("Current organization limits refuse");
     expect(sent).toHaveLength(2);

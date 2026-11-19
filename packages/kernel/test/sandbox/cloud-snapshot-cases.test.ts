@@ -18,8 +18,8 @@ const platform = (
   limits: { egress, allowHosts: ["a.example", "b.example"], orgHosts: "extend" },
 });
 const OPEN: OrgDeviceSettings = {};
-const LIST: OrgDeviceSettings = { cloudNetwork: { mode: "allowlist" } };
-const EMPTY: OrgDeviceSettings = { cloudNetwork: { mode: "allowlist", base: "none" } };
+const LIST: OrgDeviceSettings = { deviceNetwork: { ceiling: "allowlist" } };
+const EMPTY: OrgDeviceSettings = { deviceNetwork: { ceiling: "allowlist", base: "none" } };
 const snapshot = (d: DeploymentDevicePolicy, o: OrgDeviceSettings, mode: "sandbox" | null) =>
   cloudSnapshotOf(effectiveDevicePolicy(d, o, mode));
 
@@ -43,7 +43,7 @@ describe("cloudSnapshotOf (old effective authority -> owner ceiling + outer netw
     });
     // the device's own narrowing switch is part of the old effective authority too
     expect(snapshot(platform(), OPEN, "sandbox").fullAccess).toBe(false);
-    expect(snapshot(platform(), { fullAccess: "off" }, null).fullAccess).toBe(false);
+    expect(snapshot(platform(), { outsideSandbox: "off" }, null).fullAccess).toBe(false);
   });
   it("old sandbox on an allowlist -> restricted, the exact list", () => {
     expect(snapshot(platform("off"), LIST, null)).toEqual({
@@ -77,7 +77,7 @@ describe("cloudSnapshotOf (old effective authority -> owner ceiling + outer netw
 describe("the snapshot as a later ceiling", () => {
   it("an explicit false stays restricted after the platform and the org widen", () => {
     const chosen = cloudChosenMode({ mode: null, owner_full_access: false });
-    expect(effectiveDevicePolicy(platform(), { fullAccess: "allowed" }, chosen).mode).toBe(
+    expect(effectiveDevicePolicy(platform(), { outsideSandbox: "allowed" }, chosen).mode).toBe(
       "sandbox",
     );
     // an explicit sandbox switch (an old replica's PATCH included) is never overridden

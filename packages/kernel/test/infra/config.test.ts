@@ -86,19 +86,19 @@ it("publishes permission authority before exposing a hot ceiling and keeps old c
   const ready = new Promise<void>((resolve) => {
     entered = resolve;
   });
-  const applied = svc.apply(raw({ devices: { fullAccess: "off" } }), async () => {
+  const applied = svc.apply(raw({ devices: { outsideSandbox: "off" } }), async () => {
     entered();
     await barrier;
   });
   await ready;
-  expect(svc.get().devices.fullAccess).toBeUndefined();
+  expect(svc.get().devices.outsideSandbox).toBeUndefined();
   release();
   await applied;
-  expect(svc.get().devices.fullAccess).toBe("off");
-  await svc.apply(raw({ devices: { fullAccess: "allowed" } }), async () => {
+  expect(svc.get().devices.outsideSandbox).toBe("off");
+  await svc.apply(raw({ devices: { outsideSandbox: "allowed" } }), async () => {
     throw new Error("database unavailable");
   });
-  expect(svc.get().devices.fullAccess).toBe("off");
+  expect(svc.get().devices.outsideSandbox).toBe("off");
 });
 it("observing restart-only network fields preserves the active effective configuration", async () => {
   const { svc } = make();
@@ -118,11 +118,13 @@ it("permission publication keeps a bounded nonsecret projection of winning input
     parsePermissionConfigProjection,
   } = await import("../../src/sandbox/permission-config-publication.js");
   const delegated = resolveConfig(raw({}), {});
-  expect(permissionConfigProjection(delegated).fullAccess).toEqual({ kind: "deployment-setting" });
-  const winning = resolveConfig(raw({ devices: { fullAccess: "off" } }), {
-    CAPYBARA_DEVICES__FULL_ACCESS: "allowed",
+  expect(permissionConfigProjection(delegated).outsideSandbox).toEqual({
+    kind: "deployment-setting",
   });
-  expect(permissionConfigProjection(winning).fullAccess).toEqual({
+  const winning = resolveConfig(raw({ devices: { outsideSandbox: "off" } }), {
+    CAPYBARA_DEVICES__OUTSIDE_SANDBOX: "allowed",
+  });
+  expect(permissionConfigProjection(winning).outsideSandbox).toEqual({
     kind: "configured",
     value: "allowed",
   });

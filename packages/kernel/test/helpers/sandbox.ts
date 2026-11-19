@@ -107,7 +107,7 @@ export function sandboxServiceFor(d: SandboxServiceDeps): SandboxService {
   const config: Pick<KernelConfigService, "get" | "fieldSource"> = {
     get: () => d.config() as KernelConfig,
     fieldSource: (path: string) =>
-      path === "devices.fullAccess" && d.config().devices.fullAccess !== undefined
+      path === "devices.outsideSandbox" && d.config().devices.outsideSandbox !== undefined
         ? ("file" as const)
         : undefined,
   };

@@ -219,14 +219,14 @@ describe("组织云网络设置（auto mode spec §4.3）", () => {
   it("an org's own host list (base none) applies; a changed host list reaches only later instances", async () => {
     const s = service();
     await setOrg({
-      fullAccess: "off",
-      cloudNetwork: { mode: "allowlist", base: "none", extraHosts: ["example.com"] },
+      outsideSandbox: "off",
+      deviceNetwork: { ceiling: "allowlist", base: "none", extraHosts: ["example.com"] },
     });
     expect(await limitsOf(s, await newDevice())).toMatchObject({
       mode: "sandbox",
       network: { kind: "allowlist", hosts: ["example.com"] },
     });
-    await setOrg({ fullAccess: "off", cloudNetwork: { mode: "allowlist" } });
+    await setOrg({ outsideSandbox: "off", deviceNetwork: { ceiling: "allowlist" } });
     expect(await limitsOf(s, await newDevice())).toMatchObject({
       network: { kind: "allowlist", hosts: config.sandbox.limits.allowHosts },
     });
@@ -236,8 +236,8 @@ describe("组织云网络设置（auto mode spec §4.3）", () => {
     const s = service();
     // auto mode ignores the org's allowlist: the cloud device's network is open
     await setOrg({
-      fullAccess: "allowed",
-      cloudNetwork: { mode: "allowlist", base: "none", extraHosts: ["example.com"] },
+      outsideSandbox: "allowed",
+      deviceNetwork: { ceiling: "allowlist", base: "none", extraHosts: ["example.com"] },
     });
     const first = await use(s);
     expect((await fakeSandboxMeta(root, first.h.id))?.limits).toMatchObject({
@@ -246,15 +246,15 @@ describe("组织云网络设置（auto mode spec §4.3）", () => {
     });
     // a host change under the same (ignored) network changes nothing
     await setOrg({
-      fullAccess: "allowed",
-      cloudNetwork: { mode: "allowlist", base: "none", extraHosts: ["other.example.com"] },
+      outsideSandbox: "allowed",
+      deviceNetwork: { ceiling: "allowlist", base: "none", extraHosts: ["other.example.com"] },
     });
     const same = await use(s);
     expect(same.h).toEqual(first.h);
     // switching to sandbox mode applies the org's allowlist: the instance is recreated
     await setOrg({
-      fullAccess: "off",
-      cloudNetwork: { mode: "allowlist", base: "none", extraHosts: ["other.example.com"] },
+      outsideSandbox: "off",
+      deviceNetwork: { ceiling: "allowlist", base: "none", extraHosts: ["other.example.com"] },
     });
     const again = await use(s);
     expect(again.h).not.toEqual(first.h);
@@ -383,7 +383,7 @@ describe("lazy creation", () => {
     const s = service(() => flaky);
     // sandbox mode: the deployment allowlist, so a failure is not attributed to the open network
     await sql`UPDATE capybara.orgs SET settings =
-      '{"fullAccess":"off","cloudNetwork":{"mode":"allowlist"}}'::jsonb
+      '{"outsideSandbox":"off","deviceNetwork":{"ceiling":"allowlist"}}'::jsonb
       WHERE id = ${orgId}`.execute(raw);
     // the provider's own message stays in the log
     await expect(use(s)).rejects.toMatchObject({ code: "sandbox.create_failed" });
@@ -1003,7 +1003,7 @@ describe("restarted is sticky (fix round 1)", () => {
     const s = service(() => flaky);
     // sandbox mode: the deployment allowlist, so a failure is not attributed to the open network
     await sql`UPDATE capybara.orgs SET settings =
-      '{"fullAccess":"off","cloudNetwork":{"mode":"allowlist"}}'::jsonb
+      '{"outsideSandbox":"off","deviceNetwork":{"ceiling":"allowlist"}}'::jsonb
       WHERE id = ${orgId}`.execute(raw);
     await use(s);
     expect(await s.destroyInactive(later(8 * DAY))).toBe(1);

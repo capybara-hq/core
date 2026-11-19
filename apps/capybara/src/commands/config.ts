@@ -12,7 +12,7 @@ export interface ConfigCommandIo {
 }
 
 /**
- * `capybara config migrate-permissions --in <file> --out <file>` (permission runtime cutover B1):
+ * `capybara config migrate-permissions --in <file> --out <file>` (approval-only profiles design):
  * the bounded offline conversion of a config document to the new permission keys. It reads the
  * input, writes the converted document to a new output file (never over an existing one) and
  * names the old environment variables to rename. It connects to nothing: a Nacos data id is
@@ -49,11 +49,17 @@ export async function runConfigMigratePermissions(
         ? `No permission key to convert in ${opts.input}; wrote it unchanged to ${opts.output}\n`
         : `Converted ${opts.input} to ${opts.output}:\n${migration.changed.map((c) => `  ${c}\n`).join("")}`,
     );
-    if (renames.length > 0)
+    const moves = renames.flatMap((r) => ("from" in r ? [r] : []));
+    const adds = renames.flatMap((r) => ("add" in r ? [r.add] : []));
+    if (moves.length > 0)
       io.stdout.write(
-        `Rename these environment variables before the restart (keep their values):\n${renames
+        `Rename these environment variables before the restart (keep their values):\n${moves
           .map((r) => `  ${r.from} -> ${r.to}\n`)
           .join("")}`,
+      );
+    if (adds.length > 0)
+      io.stdout.write(
+        `Also set these before the restart, so no device widens:\n${adds.map((a) => `  ${a}\n`).join("")}`,
       );
     return 0;
   } catch (e) {
