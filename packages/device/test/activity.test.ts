@@ -79,7 +79,6 @@ const limits = {
   cpu: 1,
   memoryMb: 512,
   diskMb: 1024,
-  mode: "sandbox",
   network: { kind: "allowlist", hosts: [] },
 };
 const request = (args: unknown) =>

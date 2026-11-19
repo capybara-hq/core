@@ -158,7 +158,11 @@ describe("deployment policy ops and keepAwake", () => {
   it("a deployment policy op keeps keepAwake", async () => {
     const dir = mkdtempSync(join(tmpdir(), "device-ops-keep-awake-"));
     try {
-      writePolicy(dir, { ...DEFAULT_POLICY, keepAwake: "connected" });
+      writePolicy(dir, {
+        ...DEFAULT_POLICY,
+        allowedDomains: ["a.com", "b.com"],
+        keepAwake: "connected",
+      });
       const store = new PolicyStore(dir);
       const res = await serveOperationV3(
         {} as MacOperationBackend,
@@ -166,25 +170,26 @@ describe("deployment policy ops and keepAwake", () => {
         request("policy", {
           opId: "op_keep_awake_1",
           source: { approvalId: "a", accountId: "acc", accountName: "Ada", via: "web" },
-          add: ["a.com"],
+          remove: ["a.com"],
         }),
         signal,
         undefined,
         {
           store,
           report: () => ({
-            version: 2,
+            version: 3,
             sequence: 0,
             revision: "rev",
-            fullAccess: false,
+            outsideSandbox: false,
+            network: "allowlist",
             restrictedProjectReach: "workspace",
-            restrictedAllowedDomains: [],
+            allowedDomains: [],
           }),
           reconcile: async () => {},
         } as never,
       );
       expect(res).toMatchObject({ ok: true });
-      expect(readPolicy(dir)).toMatchObject({ allowedDomains: ["a.com"], keepAwake: "connected" });
+      expect(readPolicy(dir)).toMatchObject({ allowedDomains: ["b.com"], keepAwake: "connected" });
     } finally {
       rmSync(dir, { recursive: true, force: true });
     }
