@@ -28,6 +28,7 @@ export type CompactForm = "kept" | "drawer" | "hidden";
 
 const COMPACT_ORDER: readonly CompactForm[] = ["kept", "drawer", "hidden"];
 
+/** True when `v` is one of the three compact forms (used to validate manifests). */
 export function isCompactForm(v: unknown): v is CompactForm {
   return typeof v === "string" && (COMPACT_ORDER as readonly string[]).includes(v);
 }

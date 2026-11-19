@@ -24,6 +24,7 @@ export const UI_SLOT_SPECS: Record<
     minRole: string;
     args: readonly string[];
     density: string;
+    compact: "kept" | "drawer" | "hidden";
     anchors: readonly string[];
   }
 > = {
@@ -33,6 +34,7 @@ export const UI_SLOT_SPECS: Record<
     minRole: "guest",
     args: ["conversationId", "item"],
     density: "regular",
+    compact: "drawer",
     anchors: [],
   },
   "conversation.properties.section": {
@@ -41,6 +43,7 @@ export const UI_SLOT_SPECS: Record<
     minRole: "guest",
     args: ["conversationId"],
     density: "dense",
+    compact: "kept",
     anchors: ["context", "files", "background"],
   },
   "conversation.tool-result.card": {
@@ -49,6 +52,7 @@ export const UI_SLOT_SPECS: Record<
     minRole: "guest",
     args: ["conversationId", "card"],
     density: "regular",
+    compact: "kept",
     anchors: [],
   },
   "org.page": {
@@ -57,6 +61,7 @@ export const UI_SLOT_SPECS: Record<
     minRole: "member",
     args: [],
     density: "regular",
+    compact: "kept",
     anchors: [],
   },
   "file.preview": {
@@ -65,6 +70,7 @@ export const UI_SLOT_SPECS: Record<
     minRole: "guest",
     args: ["conversationId", "fileId"],
     density: "regular",
+    compact: "kept",
     anchors: [],
   },
   "agent.detail.section": {
@@ -73,6 +79,7 @@ export const UI_SLOT_SPECS: Record<
     minRole: "guest",
     args: ["agentId"],
     density: "regular",
+    compact: "kept",
     anchors: [],
   },
   "org.settings.section": {
@@ -81,6 +88,7 @@ export const UI_SLOT_SPECS: Record<
     minRole: "admin",
     args: [],
     density: "regular",
+    compact: "kept",
     anchors: [],
   },
   "platform.page": {
@@ -89,6 +97,7 @@ export const UI_SLOT_SPECS: Record<
     minRole: "superAdmin",
     args: [],
     density: "regular",
+    compact: "kept",
     anchors: [],
   },
   "shell.brand": {
@@ -97,6 +106,7 @@ export const UI_SLOT_SPECS: Record<
     minRole: "guest",
     args: [],
     density: "regular",
+    compact: "hidden",
     anchors: [],
   },
   "shell.overlay": {
@@ -105,6 +115,7 @@ export const UI_SLOT_SPECS: Record<
     minRole: "guest",
     args: [],
     density: "regular",
+    compact: "kept",
     anchors: [],
   },
   "conversation.empty": {
@@ -113,6 +124,7 @@ export const UI_SLOT_SPECS: Record<
     minRole: "guest",
     args: [],
     density: "regular",
+    compact: "kept",
     anchors: [],
   },
   "conversation.composer.frame": {
@@ -121,6 +133,7 @@ export const UI_SLOT_SPECS: Record<
     minRole: "guest",
     args: [],
     density: "regular",
+    compact: "kept",
     anchors: [],
   },
 };

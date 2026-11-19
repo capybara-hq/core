@@ -5,20 +5,20 @@
 The places in the web app where extension UI can appear. Each slot has an id, a scope, the kinds
 of UI it accepts, the lowest role that sees it and the arguments it passes to the contribution.
 
-| Slot | Scope | Accepts | Min role | Args | Density |
-|---|---|---|---|---|---|
-| `conversation.panel` | conversation | `view`, `embed`, `component` | guest | `conversationId`, `item` | regular |
-| `conversation.properties.section` | conversation | `view`, `embed`, `component` | guest | `conversationId` | dense |
-| `conversation.tool-result.card` | conversation | `view`, `embed`, `component` | guest | `conversationId`, `card` | regular |
-| `org.page` | org | `view`, `embed`, `component` | member | none | regular |
-| `file.preview` | file | `embed` | guest | `conversationId`, `fileId` | regular |
-| `agent.detail.section` | agent | `view`, `embed`, `component` | guest | `agentId` | regular |
-| `org.settings.section` | org | `view`, `embed`, `component` | admin | none | regular |
-| `platform.page` | platform | `view`, `embed`, `component` | superAdmin | none | regular |
-| `shell.brand` | org | `component` | guest | none | regular |
-| `shell.overlay` | org | `component` | guest | none | regular |
-| `conversation.empty` | org | `component` | guest | none | regular |
-| `conversation.composer.frame` | org | `component` | guest | none | regular |
+| Slot | Scope | Accepts | Min role | Args | Density | Compact |
+|---|---|---|---|---|---|---|
+| `conversation.panel` | conversation | `view`, `embed`, `component` | guest | `conversationId`, `item` | regular | drawer |
+| `conversation.properties.section` | conversation | `view`, `embed`, `component` | guest | `conversationId` | dense | kept |
+| `conversation.tool-result.card` | conversation | `view`, `embed`, `component` | guest | `conversationId`, `card` | regular | kept |
+| `org.page` | org | `view`, `embed`, `component` | member | none | regular | kept |
+| `file.preview` | file | `embed` | guest | `conversationId`, `fileId` | regular | kept |
+| `agent.detail.section` | agent | `view`, `embed`, `component` | guest | `agentId` | regular | kept |
+| `org.settings.section` | org | `view`, `embed`, `component` | admin | none | regular | kept |
+| `platform.page` | platform | `view`, `embed`, `component` | superAdmin | none | regular | kept |
+| `shell.brand` | org | `component` | guest | none | regular | hidden |
+| `shell.overlay` | org | `component` | guest | none | regular | kept |
+| `conversation.empty` | org | `component` | guest | none | regular | kept |
+| `conversation.composer.frame` | org | `component` | guest | none | regular | kept |
 
 ## `conversation.panel`
 
@@ -30,6 +30,7 @@ A panel beside the conversation, opened from the right area.
 - Minimum role: guest
 - Args: `conversationId`, `item`
 - Density: regular
+- Compact: drawer
 - Anchors: none
 - Owner: `apps/web/src/components/conversation/RightArea.tsx`
 
@@ -43,6 +44,7 @@ A section in the conversation properties list.
 - Minimum role: guest
 - Args: `conversationId`
 - Density: dense
+- Compact: kept
 - Anchors: `context`, `files`, `background`
 - Owner: `apps/web/src/components/conversation/PropertiesSections.tsx`
 
@@ -56,6 +58,7 @@ A card a tool result opens in the conversation.
 - Minimum role: guest
 - Args: `conversationId`, `card`
 - Density: regular
+- Compact: kept
 - Anchors: none
 - Owner: `apps/web/src/components/conversation/RightArea.tsx`
 
@@ -69,6 +72,7 @@ A full page in the organization navigation.
 - Minimum role: member
 - Args: none
 - Density: regular
+- Compact: kept
 - Anchors: none
 - Owner: `apps/web/src/app/(app)/p/[plugin]/[id]/view.tsx`
 
@@ -82,6 +86,7 @@ A previewer for a file of the conversation.
 - Minimum role: guest
 - Args: `conversationId`, `fileId`
 - Density: regular
+- Compact: kept
 - Anchors: none
 - Owner: `apps/web/src/components/conversation/FilePanel.tsx`
 
@@ -95,6 +100,7 @@ A section on the detail page of an agent.
 - Minimum role: guest
 - Args: `agentId`
 - Density: regular
+- Compact: kept
 - Anchors: none
 - Owner: `apps/web/src/components/agent/AgentPage.tsx`
 
@@ -108,6 +114,7 @@ A section on the organization settings page.
 - Minimum role: admin
 - Args: none
 - Density: regular
+- Compact: kept
 - Anchors: none
 - Owner: `apps/web/src/app/(app)/settings/organization/view.tsx`
 
@@ -121,6 +128,7 @@ A full page in the platform administration.
 - Minimum role: superAdmin
 - Args: none
 - Density: regular
+- Compact: kept
 - Anchors: none
 - Owner: `apps/web/src/app/(app)/admin/p/[plugin]/[id]/view.tsx`
 
@@ -134,6 +142,7 @@ The brand row of the sidebar (the mark of the collapsed rail).
 - Minimum role: guest
 - Args: none
 - Density: regular
+- Compact: hidden
 - Anchors: none
 - Owner: `apps/web/src/components/shell/AppFrame.tsx`
 
@@ -147,6 +156,7 @@ A full-viewport layer over the workspace shell.
 - Minimum role: guest
 - Args: none
 - Density: regular
+- Compact: kept
 - Anchors: none
 - Owner: `apps/web/src/components/shell/AppFrame.tsx`
 
@@ -160,6 +170,7 @@ The hero of the new-conversation page.
 - Minimum role: guest
 - Args: none
 - Density: regular
+- Compact: kept
 - Anchors: none
 - Owner: `apps/web/src/components/conversation/NewConversation.tsx`
 
@@ -173,5 +184,6 @@ The frame around the composer, on the new-conversation and conversation pages.
 - Minimum role: guest
 - Args: none
 - Density: regular
+- Compact: kept
 - Anchors: none
 - Owner: `apps/web/src/components/conversation/ComposerBar.tsx`
