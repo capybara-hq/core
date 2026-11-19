@@ -411,7 +411,8 @@
   flex: none;
   color: var(--cb-muted);
 }
-.cb-me-row > .cb-icon:last-child:not(:first-child) {
+/* The trailing icon (chevron, outward arrow); a link's pending mark may follow it. */
+.cb-me-row > .cb-icon:not(:first-child) {
   color: var(--cb-faint);
 }
 .cb-me-row > .cb-me-ellipsis {

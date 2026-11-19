@@ -157,3 +157,14 @@ describe("MePanel", () => {
     expect(screen.queryByRole("menu")).toBeNull();
   });
 });
+
+describe("MePanel styles", () => {
+  it("draws a row's trailing icon (chevron, outward arrow) faint, even before the link's pending mark", async () => {
+    const { css, parseCss } = await import("./css-rules");
+    const rules = parseCss(css("shell.css"));
+    const trailing = rules.find(
+      (r) => r.at === null && r.selector === ".cb-me-row > .cb-icon:not(:first-child)",
+    );
+    expect(trailing?.decls.color).toBe("var(--cb-faint)");
+  });
+});
