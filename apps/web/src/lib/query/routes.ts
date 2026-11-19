@@ -61,6 +61,7 @@ import {
   availableExtensionPointsQuery,
   extensionToolsQuery,
 } from "./agents";
+import { platformMetaQuery } from "./app-auth";
 import { authSourcesQuery, invitationQuery, pendingBindingQuery } from "./auth";
 import { orgCatalogItemQuery, orgCatalogQuery, orgMarketplaceEntriesQuery } from "./catalog";
 import { channelQuery, channelSchemaQuery, channelsQuery, orgExtensionsQuery } from "./channels";
@@ -681,6 +682,11 @@ export const ROUTES: readonly RouteEntry[] = [
     pattern: "/change-password",
     // The session: signed out goes to sign-in, an account with nothing to change goes home.
     queries: () => [q(maybeMeQuery())],
+  },
+  {
+    pattern: "/apps/authorize",
+    // The session (the layout sends a signed-out visitor to sign-in first) and the platform's name.
+    queries: () => [q(maybeMeQuery()), q(platformMetaQuery())],
   },
   {
     pattern: "/devices/link",

@@ -380,6 +380,10 @@
       "replace_required": "Background work started by an earlier version may still be running on this computer, and it cannot prove a restart. Delete this device and connect the computer again as a new device.",
       "recreate_required": "Background work started by an earlier version may still be running on an earlier instance of this device, and that instance can no longer be verified as destroyed. Delete this device and create it again."
     },
+    "app_auth": {
+      "redirect_uri_invalid": "This sign-in request came from an app address this platform does not accept, so it was not sent. Start signing in again from the Capybara desktop app.",
+      "unavailable": "This platform cannot sign apps in yet: its public address is not set. Ask your super admin."
+    },
     "device_sign_in": {
       "authorization_pending": "The connection is not confirmed yet. Confirm it on the web page and wait a moment.",
       "slow_down": "Too many requests. Try again shortly.",
@@ -3218,6 +3222,19 @@
     "invalidTitle": "Link expired",
     "invalidHint": "Send the bot a new message in IM to get a fresh link.",
     "goHome": "Go to Capybara"
+  },
+  "appAuth": {
+    "title": "Sign in to {platform} with Capybara Desktop on {machine}?",
+    "subtitle": "Only continue if you just started this from the Capybara desktop app.",
+    "account": "Account",
+    "machine": "Computer",
+    "appVersion": "App version",
+    "confirm": "Sign in",
+    "cancel": "Cancel",
+    "invalidTitle": "Cannot sign in",
+    "invalidHint": "This link is incomplete. Start signing in again from the Capybara desktop app.",
+    "doneTitle": "Done",
+    "doneHint": "Returned to Capybara. You can close this page."
   },
   "deviceLink": {
     "title": "Connect this machine",

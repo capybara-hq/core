@@ -380,6 +380,10 @@
       "replace_required": "旧版本启动的后台任务可能仍在这台电脑上运行，且这台电脑无法证明已重启。请删除这台设备，再把这台电脑作为新设备重新连接。",
       "recreate_required": "旧版本启动的后台任务可能仍在这台设备之前的实例上运行，且已无法确认该实例已被销毁。请删除这台设备后重新创建。"
     },
+    "app_auth": {
+      "redirect_uri_invalid": "这次登录请求来自平台不接受的应用地址，未发送。请回到 Capybara 桌面端重新发起登录。",
+      "unavailable": "平台暂时无法为应用登录：尚未设置公开地址。请联系超级管理员。"
+    },
     "device_sign_in": {
       "authorization_pending": "还未确认连接，请在网页上确认后稍候。",
       "slow_down": "请求过于频繁，请稍后再试。",
@@ -3206,6 +3210,19 @@
     "invalidTitle": "链接已失效",
     "invalidHint": "在 IM 里给机器人重新发一条消息，获取新的绑定链接。",
     "goHome": "进入 Capybara"
+  },
+  "appAuth": {
+    "title": "在 {machine} 上的 Capybara 桌面端登录 {platform}？",
+    "subtitle": "只有在你刚从 Capybara 桌面端发起登录时才继续。",
+    "account": "账号",
+    "machine": "机器",
+    "appVersion": "应用版本",
+    "confirm": "登录",
+    "cancel": "取消",
+    "invalidTitle": "无法登录",
+    "invalidHint": "这个链接不完整。请回到 Capybara 桌面端重新发起登录。",
+    "doneTitle": "已完成",
+    "doneHint": "已返回 Capybara，可以关闭此页"
   },
   "deviceLink": {
     "title": "连接这台机器",
