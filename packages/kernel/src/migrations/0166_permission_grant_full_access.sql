@@ -2,13 +2,16 @@
 -- access grants a crossing within the device's ceilings by itself, so a call grant's evidence may
 -- also be a Full access auto-grant, recorded like the review model's by its `permission_reviewed`
 -- event (`review_event_seq`), with no approval and no deciding account.
+-- each check is added NOT VALID (no scan under the add's lock), then validated
 ALTER TABLE permission_call_grants DROP CONSTRAINT IF EXISTS permission_call_grants_source_check;
 ALTER TABLE permission_call_grants ADD CONSTRAINT permission_call_grants_source_check
-  CHECK (source IN ('human', 'review-model', 'full-access'));
+  CHECK (source IN ('human', 'review-model', 'full-access')) NOT VALID;
+ALTER TABLE permission_call_grants VALIDATE CONSTRAINT permission_call_grants_source_check;
 -- the evidence shape of each source (0150 created it unnamed: PostgreSQL named it `_check`)
 ALTER TABLE permission_call_grants DROP CONSTRAINT IF EXISTS permission_call_grants_check;
 ALTER TABLE permission_call_grants DROP CONSTRAINT IF EXISTS permission_call_grants_evidence_check;
 ALTER TABLE permission_call_grants ADD CONSTRAINT permission_call_grants_evidence_check
   CHECK ((source = 'human' AND approval_id IS NOT NULL AND decided_by IS NOT NULL AND review_event_seq IS NULL)
     OR (source IN ('review-model', 'full-access') AND approval_id IS NULL AND decided_by IS NULL
-      AND review_event_seq IS NOT NULL));
+      AND review_event_seq IS NOT NULL)) NOT VALID;
+ALTER TABLE permission_call_grants VALIDATE CONSTRAINT permission_call_grants_evidence_check;

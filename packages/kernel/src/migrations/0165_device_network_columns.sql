@@ -4,15 +4,21 @@
 -- array of host patterns),
 -- used while the mode is `allowlist`. The device owner or an org admin changes both, within the
 -- org and platform ceilings. A cloud device has no outside of its sandbox, so `owner_full_access`
--- is no longer read; a later migration drops it (expand, then contract).
+-- no longer decides what a cloud device may do. It is still read by the one-time conversions (the
+-- B1 snapshot and its reconciliation, the permission publication's version conversion) and for
+-- the kernel-only mode recorded with an instance's limits, which never decides a provider update;
+-- a later migration drops it (expand, then contract).
 ALTER TABLE devices ADD COLUMN IF NOT EXISTS network_mode text;
 ALTER TABLE devices ADD COLUMN IF NOT EXISTS network_hosts jsonb NOT NULL DEFAULT '[]'::jsonb;
+-- each check is added NOT VALID (no scan under the add's lock), then validated
 ALTER TABLE devices DROP CONSTRAINT IF EXISTS devices_network_mode_check;
 ALTER TABLE devices ADD CONSTRAINT devices_network_mode_check
-  CHECK (network_mode IS NULL OR network_mode IN ('open', 'allowlist', 'none'));
+  CHECK (network_mode IS NULL OR network_mode IN ('open', 'allowlist', 'none')) NOT VALID;
+ALTER TABLE devices VALIDATE CONSTRAINT devices_network_mode_check;
 ALTER TABLE devices DROP CONSTRAINT IF EXISTS devices_network_hosts_check;
 ALTER TABLE devices ADD CONSTRAINT devices_network_hosts_check
-  CHECK (jsonb_typeof(network_hosts) = 'array');
+  CHECK (jsonb_typeof(network_hosts) = 'array') NOT VALID;
+ALTER TABLE devices VALIDATE CONSTRAINT devices_network_hosts_check;
 
 -- Never wider: a device's host list only narrows its org's effective hosts, never adds to them,
 -- so a cloud device whose B1 snapshot ran on an allowlist keeps exactly that allowlist; an empty

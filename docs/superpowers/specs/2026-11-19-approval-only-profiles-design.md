@@ -561,16 +561,21 @@ The migration never widens.
     hosts as `network_hosts` when they are a non-empty array of strings; an empty or unreadable list
     ran closed and becomes `network_mode: none`). Since a device list only narrows, this is exact and
     never widens. Migration `0167` repeats the copy, the B1 snapshot writer copies new snapshots, and
-    the device sandbox reads `outer_network` while a device has no `network_mode` (a snapshot an
-    older replica writes later).
+    every permission publication repeats the copy (`copyCloudSnapshotNetworks`) for a snapshot an
+    older replica writes later. The device sandbox never reads `outer_network`: a device without
+    `network_mode` follows its org.
   - **`sandbox.limits.orgHosts: within` and other allowlist devices:** at the publication's version
     conversion (it has the config), a cloud device still following its org (`network_mode` NULL)
     whose old effective network was the allowlist (`effectiveDevicePolicy(...).network.kind ===
     "allowlist"`: a sandbox-mode device under `within`, an org allowlist or an old `off`) gets
     `network_mode: allowlist, network_hosts: []`. The new model's `orgHosts` limits hosts only, so
     without this such a device would open.
-  - `owner_full_access` is no longer read; a later migration drops it (the writing-migrations
-    two-step).
+  - `owner_full_access` no longer decides what a cloud device may do. It is still read by the
+    one-time conversions (the B1 snapshot and its reconciliation, the publication's version
+    conversion) and for the kernel-only mode recorded with an instance's limits, which never decides
+    a provider update (`sameApplied` and `appliedWider` compare the network only), so toggling
+    `outsideSandbox` updates no running cloud instance. A later migration drops it (the
+    writing-migrations two-step).
 - **Conversations:** no data rewrite.
   - The consent fingerprint changes, so a stored Full access selection reads as Approve for me until
     the owner confirms again.
