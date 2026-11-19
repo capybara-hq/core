@@ -121,9 +121,9 @@ reload and without losing state (the URL hash keeps the right area, §5.4).
 
 Width decides the class; height only trims chrome. A window **shorter than 480 px** (a phone in
 landscape, the iPhone Duo at its shortest reported height, 368) sets `data-short` on the shell:
-the StatusBar hides, the PageHeader drops its path row on every class (on compact the top bar's back
-button keeps the way up, §4.1; medium and expanded have no top bar, and a phone in landscape at
-844 × 390 is expanded: the rail or sidebar is the way around there),
+the StatusBar hides, the PageHeader drops its path row on compact only (the top bar's back button
+keeps the way up, §4.1; medium and expanded have no top bar, and a phone in landscape at 844 × 390
+is expanded, so they keep the path row: maintainer to confirm: R26),
 and the bottom navigation (compact only) shows icons without labels at its full 56 height. This is not orientation:
 a short desktop window gets the same.
 

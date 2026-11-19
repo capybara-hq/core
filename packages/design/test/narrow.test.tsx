@@ -180,10 +180,17 @@ describe("size-class widths in the stylesheets", () => {
     expect(decls(compact, ".cb-shell-bottomnav")).toContain("display: block;");
   });
 
-  it("a short window hides the status bar and the path row", () => {
+  it("a short window hides the status bar on every class", () => {
     const hidden = media(css("shell.css"), "(max-height: 479px)");
     expect(decls(hidden, ".cb-statusbar")).toContain("display: none;");
-    expect(decls(hidden, ".cb-pageheader-path")).toContain("display: none;");
+  });
+
+  it("a short window drops the path row on compact only (its top bar carries back; R26)", () => {
+    // medium and expanded (844 × 390 is expanded) have no top bar: the path row is their way up
+    const any = media(css("shell.css"), "(max-height: 479px)");
+    expect(decls(any, ".cb-pageheader-path")).not.toContain("display: none;");
+    const compact = media(css("shell.css"), "(max-width: 599px) and (max-height: 479px)");
+    expect(decls(compact, ".cb-pageheader-path")).toContain("display: none;");
   });
 });
 
