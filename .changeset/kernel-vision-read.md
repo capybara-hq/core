@@ -12,3 +12,7 @@ any image of the conversation.
 
 Agents without a device now list `Read` (for `file_id`), so their tool list changes once after the
 upgrade.
+
+On upgrade, a model without vision sees its earlier pasted-image placeholders with the new text once
+(the placeholder now names the attachment's `file_id`), which costs one prompt-cache miss per
+conversation.

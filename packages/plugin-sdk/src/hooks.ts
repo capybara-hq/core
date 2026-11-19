@@ -56,8 +56,8 @@ export interface HookScope {
  * `WebFetch` tool, `review` is the command-review classifier's call (`review` purpose, no run
  * step; absent = no classifier), `suggestion` is the prompt suggestion side request after a
  * completed web run (`runId` the run, `step` 0, `attempt` 1; a denial skips it and is recorded only
- * in the audit log), `vision` is the call that reads an image for a model without vision (`Read`
- * or a pasted image; the `vision` purpose's model).
+ * in the audit log), `vision` is the call that reads an image for a model without vision, made by
+ * the `Read` tool (also for a pasted image, read by its `file_id`; the `vision` purpose's model).
  */
 export type ModelCallPurpose =
   | "step"

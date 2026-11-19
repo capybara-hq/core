@@ -1440,7 +1440,7 @@ export const KernelConfigSchema = z.strictObject({
           meta({
             hot: true,
             description:
-              "Bytes of images Read keeps for one conversation (images from files on a device or generated artifacts); 0 turns the cache off",
+              "Most bytes of Read image copies stored for one conversation; past it a Read image is not stored and does not stay in the history; 0 stores none",
           }),
         ),
       readPurgeAfterHours: z
@@ -1453,7 +1453,7 @@ export const KernelConfigSchema = z.strictObject({
           meta({
             hot: true,
             description:
-              "Hours after the last use before a Read image copy is deleted (row and object)",
+              "Hours after a conversation is deleted before its Read image copies are purged (row and object)",
           }),
         ),
     })
@@ -2220,7 +2220,7 @@ export const KernelConfigSchema = z.strictObject({
           meta({
             hot: true,
             description:
-              "Pixel budget (width times height) a generated image or a Read image is scaled down to before it is shown to a model",
+              "Target pixel area (width times height) of a standard-resolution GenerateImage size: the model's size closest to it for the requested shape",
           }),
         ),
       visionTimeoutMs: z

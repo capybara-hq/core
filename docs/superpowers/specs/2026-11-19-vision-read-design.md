@@ -1,7 +1,6 @@
 # Read shows images, smaller generated images, references for continuity
 
-Status: draft for maintainer review (2026-11-19). It was revised after an adversarial review the
-same day (3 Critical, 9 Important, 12 Minor findings; all are folded in below).
+Status: implemented on this branch (2026-11-19), revised after adversarial and implementation reviews.
 
 Scope:
 - the kernel;
