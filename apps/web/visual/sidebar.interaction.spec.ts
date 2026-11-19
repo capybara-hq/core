@@ -270,9 +270,11 @@ test.describe("first paint without JavaScript", () => {
     });
   }
 
-  // m6: below 640 the header's non-primary actions are folded at first paint, not after hydration.
+  // m6: below 600 (compact) the header's non-primary actions are folded at first paint, not after
+  // hydration; from 600 (medium) they are inline (design spec §4.2 "Below 600").
   for (const [width, labels] of [
-    [600, ["更多操作", "新建智能体"]],
+    [599, ["更多操作", "新建智能体"]],
+    [600, ["导入", "导出", "新建智能体"]],
     [1440, ["导入", "导出", "新建智能体"]],
   ] as const) {
     test(`${width}: the page header shows ${labels.join(" / ")}`, async ({ page }) => {
