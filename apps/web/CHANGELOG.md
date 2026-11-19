@@ -1,5 +1,12 @@
 # @capybara-hq/web
 
+## 0.1.0-rc.64
+
+### Patch Changes
+
+- 9b4be8f: Label the builtin tools FetchAttachment and ScheduleTargets on the agent Tools section and the tool
+  table headers of the connector wizard; they showed raw keys and logged MISSING_MESSAGE.
+
 ## 0.1.0-rc.63
 
 ### Minor Changes
