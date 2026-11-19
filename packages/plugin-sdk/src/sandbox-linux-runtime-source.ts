@@ -10,7 +10,7 @@
  * memfd, used instead of the file beside the launcher), writeDenies? (exec: absolute paths the
  * consumer resolved for this operation, denied like `SANDBOX_SYSTEM_WRITE_DENIES`),
  * filesLockFd? (exec: an inherited descriptor of the device's files lock, a regular file outside
- * every root, shared by all operations of the device; see DeviceFilesLock)}`.
+ * every root, shared by all operations of the device; see native-files.py DeviceFilesLock)}`.
  * Root descriptors are pinned once by the consumer and inherited; the launcher verifies their
  * identity and never reopens a root pathname. Landlock rules, broker metadata checks and the
  * native helper all use those same descriptors. JSON events (`launch`, `exit`, `refused`) go to
@@ -225,10 +225,6 @@ LOOPBACK = ("127.0.0.1", "::1")
 # How long a guarded directory move waits for the device's other writes (a FIFO open waiting
 # for its peer holds them) before it fails with EBUSY.
 EXCLUSIVE_WAIT_S = 5
-# How long a write waits for a guarded move of the device (which holds the device's files lock
-# exclusively for a few renames) before it fails with EBUSY: only a lock held from outside every
-# sandbox (Full work of the owner) can take that long.
-SHARED_WAIT_S = 30
 # The faultInjection seam's pause before a named mkdir, and the marker announcing it.
 PAUSE_S = 2
 PAUSE_MARKER = ".capybara-test-paused"
@@ -673,53 +669,6 @@ class SharedLock:
             with self.condition:
                 self.writer = False
                 self.condition.notify_all()
-
-
-class DeviceFilesLock:
-    """The device's files lock, shared by every operation of the device: an flock on a file outside
-    every sandbox, inherited as a descriptor ("filesLockFd") that the restricted command never
-    holds. Every acquisition reopens it through /proc/self/fd (this process is non-dumpable, so no
-    other process can), because flock belongs to an open file description: each holder needs its
-    own. Shared and exclusive acquisitions both poll without blocking up to their bound, so a
-    waiting exclusive holder never holds back new shared ones (as in SharedLock)."""
-
-    def __init__(self, fd):
-        self.fd = fd
-
-    def acquire(self, mode, timeout, message):
-        fd = os.open("/proc/self/fd/%d" % self.fd, os.O_RDONLY | os.O_CLOEXEC)
-        deadline = time.monotonic() + timeout
-        delay = 0.0005
-        while True:
-            try:
-                fcntl.flock(fd, mode | fcntl.LOCK_NB)
-                return fd
-            except OSError as error:
-                if error.errno not in (errno.EWOULDBLOCK, errno.EAGAIN, errno.EINTR):
-                    os.close(fd)
-                    raise
-            if time.monotonic() >= deadline:
-                os.close(fd)
-                raise OSError(errno.EBUSY, message)
-            time.sleep(delay)
-            delay = min(delay * 2, 0.005)
-
-    @contextlib.contextmanager
-    def shared(self):
-        fd = self.acquire(fcntl.LOCK_SH, SHARED_WAIT_S, "A guarded move of the device did not end")
-        try:
-            yield
-        finally:
-            os.close(fd)  # closing the last descriptor of the description releases the lock
-
-    @contextlib.contextmanager
-    def exclusive(self, timeout):
-        """Raises EBUSY when the shared holders do not leave within timeout seconds."""
-        fd = self.acquire(fcntl.LOCK_EX, timeout, "The device's other writes did not finish")
-        try:
-            yield
-        finally:
-            os.close(fd)
 
 
 class NeedsExclusive(Exception):
@@ -2161,7 +2110,7 @@ def run(request, report):
             kill_tree()
             raise Refused("UNAVAILABLE", "The restricted child did not hand over its listener")
         broker = Broker(native, roots, table, endpoints, fds[0],
-                        DeviceFilesLock(files_lock) if files_lock is not None else None)
+                        native.DeviceFilesLock(files_lock) if files_lock is not None else None)
         fault = request.get("faultInjection")
         if isinstance(fault, dict) and fault.get("stagedMove") == "fail":
             broker.fault = "fail"  # a test fixture's seam

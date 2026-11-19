@@ -25,6 +25,8 @@ import { SANDBOX_FAKE_IP_DNS } from "@capybara-hq/plugin-sdk";
  *   reached through links) go to the launcher and to native work. The agent opens the device's
  *   files lock (a private file at the path the device chose, outside every sandbox) and hands its
  *   descriptor to the launcher only, so every operation of the device shares one write lock.
+ *   A restricted native write takes the same lock in this process (shared, from its check to its
+ *   effect), and the native helper checks each entry it creates again where it landed.
  * - Full exec: no restricted filters; the command runs as the OS user in a session of its own, and
  *   the agent ends that session (exact SID plus start time) when it exits, is cancelled or times out.
  * - native: the SDK native helper on pinned descriptors (descriptor-relative, no-follow), in this
@@ -1203,8 +1205,18 @@ def run_native(request):
                     raise native.ScopeDenied("Native path is denied by the owner")
                 return result
         send({"event": "launched", "pid": os.getpid()})
+        fault = request.get("faultInjection")
         try:
-            response = {"result": (native.NativeFiles if request["full"] else Bounded)(roots).run(body)}
+            files = (native.NativeFiles if request["full"] else Bounded)(roots)
+            if isinstance(fault, dict) and isinstance(fault.get("pauseBeforeMkdir"), str):
+                files.pause_mkdir = fault["pauseBeforeMkdir"]  # a test fixture's seam
+            if not request["full"] and body.get("method") == "writeFile":
+                # a restricted write holds the device's files lock shared from check to effect,
+                # like every brokered write, so no guarded move of the device slips in between
+                lock = files_lock(request)
+                pinned.append({"fd": lock})
+                files.files_lock = native.DeviceFilesLock(lock)
+            response = {"result": files.run(body)}
         except Exception as error:
             code = ("SCOPE_DENIED" if isinstance(error, native.ScopeDenied)
                     else errno.errorcode.get(getattr(error, "errno", None), "INVALID_NATIVE_REQUEST"))

@@ -16,3 +16,7 @@ longer slip between another operation's write check and its effect.
   rename, the staged move's final rename) the broker checks where the parent sits now; an entry
   that landed at a denied path is undone and refused, and an undo that fails ends the operation.
   Truncation (O_TRUNC, truncate) waits for that check.
+- Restricted native writes (Write, Edit) the device's Linux agent makes itself take the same lock
+  shared from their check to their effect, and the native helper checks every directory and file
+  it creates again at its parent's current place (Linux), undoing and refusing one that landed at a
+  protected path.

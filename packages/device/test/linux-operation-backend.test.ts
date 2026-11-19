@@ -1293,9 +1293,27 @@ def writer():
             os.rmdir("d/commands")
         except OSError:
             pass
+def sighted():
+    # a path lookup is not atomic against renames: ".claude/commands" can resolve .claude to d's
+    # directory just before it moves back to d and then find a commands made there. Count only a
+    # commands seen inside the directory while it is named .claude before and after the look.
+    try:
+        fd = os.open(".claude", os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
+    except OSError:
+        return False
+    try:
+        named = lambda: os.readlink("/proc/self/fd/%d" % fd) == os.path.abspath(".claude")
+        before = named()
+        try:
+            found = os.path.isdir(os.path.join("/proc/self/fd/%d" % fd, "commands"))
+        except OSError:
+            found = False
+        return before and found and named()
+    finally:
+        os.close(fd)
 def watcher():
     while time.monotonic() < stop:
-        if os.path.isdir(".claude/commands"):
+        if sighted():
             seen[0] += 1
 threads = [threading.Thread(target=f) for f in (mover, writer, watcher)]
 for t in threads:
@@ -1341,9 +1359,27 @@ def write():
                 action()
             except OSError:
                 pass
+def sighted():
+    # a path lookup is not atomic against renames: ".claude/commands" can resolve .claude to d's
+    # directory just before it moves back to d and then find a commands made there. Count only a
+    # commands seen inside the directory while it is named .claude before and after the look.
+    try:
+        fd = os.open(".claude", os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW)
+    except OSError:
+        return False
+    try:
+        named = lambda: os.readlink("/proc/self/fd/%d" % fd) == os.path.abspath(".claude")
+        before = named()
+        try:
+            found = os.path.isdir(os.path.join("/proc/self/fd/%d" % fd, "commands"))
+        except OSError:
+            found = False
+        return before and found and named()
+    finally:
+        os.close(fd)
 def watch():
     while time.monotonic() < stop:
-        if os.path.isdir(".claude/commands"):
+        if sighted():
             seen[0] += 1
 threads = [threading.Thread(target=write), threading.Thread(target=watch)]
 for t in threads:
@@ -1443,10 +1479,31 @@ print(seen[0])
         signal: signal(),
       });
     };
-    /** Starts `mkdir d/commands` in its own operation and waits until it is paused. */
-    const pausedWrite = async (root: string) => {
+    /** A native write of the same operation kind (Write / Edit), refused or not. */
+    const nativeWrite = (root: string, path: string) => {
+      const scope = scopeFor(pausing.deviceId, {
+        profile: "approve-for-me",
+        filesystem: { kind: "scoped", readRoots: [], writeRoots: [root] },
+        network: { kind: "none" },
+      });
+      return pausing
+        .operation(scope, openAuthorityFor(scope.operationId))
+        .writeFile(path, new TextEncoder().encode("note"), signal())
+        .then(
+          () => "written",
+          (error: Error) => `refused: ${error.name}: ${error.message}`,
+        );
+    };
+    /**
+     * Starts a write that creates d/commands in its own operation (`mkdir d/commands` through the
+     * broker by default) and waits until it is paused between its check and its mkdir.
+     */
+    const pausedWrite = async <T = Awaited<ReturnType<typeof run>>>(
+      root: string,
+      start?: () => Promise<T>,
+    ) => {
       device.run(`mkdir ${root}/d`);
-      const writer = run(root, "mkdir d/commands 2>&1; echo $?");
+      const writer = (start ? start() : run(root, "mkdir d/commands 2>&1; echo $?")) as Promise<T>;
       let settled = false;
       void writer.finally(() => {
         settled = true;
@@ -1480,6 +1537,34 @@ print(seen[0])
       device.run(`mv ${root}/d ${root}/.claude`);
       const written = await writer;
       expect(written.stdout).toMatch(/Permission denied\n1\n?$/);
+      expect(
+        device.run(`test -e ${root}/.claude/commands && echo present || echo absent`).trim(),
+      ).toBe("absent");
+      expect(device.run(`ls -A ${root}/.claude`).trim()).toBe(marker);
+    });
+
+    it("another operation's guarded move waits for a native write it checked (the device files lock)", async () => {
+      const root = project("native-held");
+      const { writer } = await pausedWrite(root, () =>
+        nativeWrite(root, `${root}/d/commands/note.md`),
+      );
+      const mover = await run(root, "mv d .claude 2>&1; echo $?");
+      const outcome = await writer;
+      // the move waited for the write, then found commands in staging: refused
+      expect(outcome).toBe("written");
+      expect(mover.stdout).toMatch(/Permission denied\n1\n?$/);
+      // the device user's own file (0600)
+      expect(device.run(`cat ${root}/d/commands/note.md`)).toBe("note");
+      expect(device.run(`ls -A ${root}`).trim()).toBe("d");
+    });
+
+    it("a native write whose parent moves to a protected path outside the sandbox is undone and refused", async () => {
+      const root = project("native-outside");
+      const { writer } = await pausedWrite(root, () =>
+        nativeWrite(root, `${root}/d/commands/note.md`),
+      );
+      device.run(`mv ${root}/d ${root}/.claude`);
+      expect(await writer).toMatch(/^refused: SandboxScopeDeniedError/);
       expect(
         device.run(`test -e ${root}/.claude/commands && echo present || echo absent`).trim(),
       ).toBe("absent");

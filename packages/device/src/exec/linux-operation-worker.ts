@@ -40,9 +40,9 @@ export interface LinuxWorkerOptions {
    * The device's files lock, as the agent sees it: one file per device, outside every sandbox
    * (on a host, in the device's state directory, which restricted work is denied; in the device's
    * container, on its private /dev/shm, which no Landlock rule grants). Every restricted
-   * operation's broker holds it shared from a write's check to its effect, and exclusively for a
-   * directory move into a guarded place, so no operation's move can slip between another
-   * operation's check and write.
+   * operation's broker, and the agent's own restricted native writes, hold it shared from a
+   * write's check to its effect; the broker holds it exclusively for a directory move into a
+   * guarded place, so no operation's move can slip between another operation's check and write.
    */
   filesLock: string;
   /**
@@ -199,6 +199,8 @@ export function linuxOperationWorker(
             full: request.grant.full,
             ...roots,
             ...(request.grant.full ? {} : { denied: [...request.grant.deniedReadRoots] }),
+            ...(options.faultInjection ? { faultInjection: options.faultInjection } : {}),
+            filesLock: options.filesLock,
             native: request.native,
           };
         } else {
