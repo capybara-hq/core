@@ -11,6 +11,7 @@ import { createDb } from "../../src/db/pool.js";
 import { InboxService } from "../../src/inbox/inbox.service.js";
 import { ScheduledTasksService } from "../../src/schedules/scheduled-tasks.service.js";
 import { ToolRegistry } from "../../src/tools/registry.js";
+import { giveUploadAvatar, UPLOAD_AVATAR_URL } from "../helpers/avatar.js";
 import { truncateTables } from "../helpers/db.js";
 import { builtinsOff } from "../helpers/disabled-tools.js";
 import { accountsFor } from "../helpers/identity.js";
@@ -149,7 +150,13 @@ describe("schedule_attention inbox items", () => {
     await svc.pause(orgId, { accountId: adminId }, task.id);
     const [item] = await attention(aliceId);
     expect(item).toMatchObject({
-      attention: { reason: "admin", pausedBy: { id: adminId, name: "admin" } },
+      attention: { reason: "admin", pausedBy: { id: adminId, name: "admin", avatarUrl: null } },
+    });
+    // the admin's own upload avatar shows on the person
+    await giveUploadAvatar(db, adminId);
+    const [again] = await attention(aliceId);
+    expect(again?.attention).toMatchObject({
+      pausedBy: { id: adminId, avatarUrl: expect.stringContaining(UPLOAD_AVATAR_URL(adminId)) },
     });
   });
 

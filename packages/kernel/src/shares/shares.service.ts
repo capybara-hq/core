@@ -6,6 +6,7 @@ import { attachmentContentMatches } from "../conversations/attachments.service.j
 import { ConversationFiles } from "../conversations/files.js";
 import type { FileShareRevokeReason, KernelDatabase } from "../db/kernel-schema.js";
 import { ApiError } from "../errors.js";
+import { avatarColumns, personAvatarUrl } from "../identity/account-avatar.js";
 import { audit } from "../identity/audit.js";
 import { KernelConfigService } from "../infra/config/kernel-config.service.js";
 import { KernelDb } from "../infra/database/kernel-db.js";
@@ -60,7 +61,7 @@ export interface ShareView {
   contentType: string;
   size: number;
   generation: number;
-  createdBy: { id: string; displayName: string };
+  createdBy: { id: string; displayName: string; avatarUrl: string | null };
   createdAt: string;
   expiresAt: string | null;
   lastOpenedAt: string | null;
@@ -540,7 +541,7 @@ export class SharesService {
     let q = this.db
       .selectFrom("file_shares")
       .innerJoin("accounts as creator", "creator.id", "file_shares.created_by")
-      .select([
+      .select((eb) => [
         "file_shares.id",
         "file_shares.code",
         "file_shares.audience",
@@ -553,6 +554,7 @@ export class SharesService {
         "file_shares.generation",
         "file_shares.created_by",
         "creator.display_name",
+        ...avatarColumns(eb, "creator", "creator"),
         "file_shares.created_at",
         "file_shares.expires_at",
         "file_shares.last_opened_at",
@@ -561,10 +563,9 @@ export class SharesService {
         sql<boolean>`file_shares.expires_at IS NOT NULL AND file_shares.expires_at <= now()`.as(
           "expired",
         ),
-        (eb) =>
-          creatorStillHasAccess(
-            eb as unknown as ExpressionBuilder<KernelDatabase, "file_shares">,
-          ).as("creator_ok"),
+        creatorStillHasAccess(eb as unknown as ExpressionBuilder<KernelDatabase, "file_shares">).as(
+          "creator_ok",
+        ),
         // a later delivery of the same source path in the conversation (refresh offered)
         sql<boolean>`file_shares.source_path IS NOT NULL AND EXISTS (
           SELECT 1 FROM capybara.conversation_events later
@@ -626,7 +627,11 @@ export class SharesService {
       contentType: r.content_type,
       size: Number(r.size),
       generation: r.generation,
-      createdBy: { id: r.created_by, displayName: r.display_name },
+      createdBy: {
+        id: r.created_by,
+        displayName: r.display_name,
+        avatarUrl: personAvatarUrl(r, "creator", r.created_by),
+      },
       createdAt: r.created_at.toISOString(),
       expiresAt: iso(r.expires_at),
       lastOpenedAt: iso(r.last_opened_at),

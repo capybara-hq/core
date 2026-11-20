@@ -705,7 +705,7 @@ export function RecentChanges({ recent }: { recent: DeviceSettingChange[] }) {
             // a report of the machine names nobody; a change made on it, its owner
             ...(c.via === "device" && (c.kind !== "policy" || c.by === null)
               ? []
-              : [c.by ?? t("unknownBy")]),
+              : [c.by?.name ?? t("unknownBy")]),
             t(`via.${c.via}`),
           ].join(" · "),
           ...(c.outcome === "applied" ? {} : { status: { label: t(`outcome.${c.outcome}`) } }),

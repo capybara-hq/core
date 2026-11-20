@@ -740,7 +740,7 @@ describe("the recent changes", () => {
     remove: [],
     ceiling: null,
     network: null,
-    by: "Ada",
+    by: { id: "a1", name: "Ada", avatarUrl: null },
     via: "web",
     outcome: "applied",
     ...over,
@@ -833,7 +833,7 @@ describe("a cloud device's network changes in the recent changes", () => {
       remove: [],
       ceiling: null,
       network: { from, to },
-      by: "Ada",
+      by: { id: "a1", name: "Ada", avatarUrl: null },
       via,
       outcome: "applied",
     });

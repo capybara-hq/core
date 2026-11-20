@@ -9,6 +9,7 @@ import type { KernelSchemaDb } from "../db/kernel-schema.js";
 import { ApiError } from "../errors.js";
 import { enabledExtensionsByOrg, isExtensionEnabled } from "../extensions/enabled.js";
 import { ExtensionRegistry } from "../extensions/registry.js";
+import { loadPeople, type PersonRef } from "../identity/account-avatar.js";
 import { audit } from "../identity/audit.js";
 import { KernelConfigService } from "../infra/config/kernel-config.service.js";
 import { KernelDb } from "../infra/database/kernel-db.js";
@@ -98,7 +99,7 @@ export interface ScheduleAttention {
    */
   reason: SchedulePauseReason | "missing_grants" | "failed";
   /** The person who paused the task (`reason: "admin"` names the admin); else null. */
-  pausedBy: { id: string; name: string } | null;
+  pausedBy: PersonRef | null;
   /**
    * `missing_grants` only: tool keys the latest run was refused and the task has no grant for now,
    * `connection:<slug>` (connect that connector), or `network:<host>` (a domain the run was
@@ -250,7 +251,10 @@ export interface TaskLastRun {
 }
 
 /** A task in a list, with its latest settled run. */
-export type ScheduledTaskListItem = ScheduledTask & { lastRun: TaskLastRun | null };
+export type ScheduledTaskListItem = ScheduledTaskView & { lastRun: TaskLastRun | null };
+
+/** A task with its creator as a person (null when the account is gone). */
+export type ScheduledTaskView = ScheduledTask & { account: PersonRef | null };
 
 /**
  * A chat the creator can point a `chat` task at (spec §8): their DM with a connection's bot
@@ -588,13 +592,23 @@ export class ScheduledTasksService {
   }
 
   /** The creator, or an org admin. */
-  async get(orgId: string, actor: ScheduleActor, id: string): Promise<ScheduledTask> {
+  async get(orgId: string, actor: ScheduleActor, id: string): Promise<ScheduledTaskView> {
     const role = await this.liveRole(orgId, actor.accountId);
     const task = await this.store.getTask(this.db.db, orgId, id);
     if (!task || (task.accountId !== actor.accountId && !can(role, "schedules.manage"))) {
       throw scheduleNotFound();
     }
-    return task;
+    const [view] = await this.withAccounts([task]);
+    return view as ScheduledTaskView;
+  }
+
+  /** Each task with its creator as a person, in one query. */
+  private async withAccounts(tasks: ScheduledTask[]): Promise<ScheduledTaskView[]> {
+    const people = await loadPeople(
+      this.db.db,
+      tasks.map((t) => t.accountId),
+    );
+    return tasks.map((t) => ({ ...t, account: people.get(t.accountId) ?? null }));
   }
 
   /** The actor's own tasks; `all` (org admins only, else `forbidden`): every task of the org. */
@@ -721,8 +735,9 @@ export class ScheduledTasksService {
   }
 
   /** Each task with its latest settled non-trial run, in one query. */
-  private async withLastRuns(tasks: ScheduledTask[]): Promise<ScheduledTaskListItem[]> {
-    if (tasks.length === 0) return [];
+  private async withLastRuns(plain: ScheduledTask[]): Promise<ScheduledTaskListItem[]> {
+    if (plain.length === 0) return [];
+    const tasks = await this.withAccounts(plain);
     const rows = await this.db.db
       .selectFrom("scheduled_task_runs")
       .select(["task_id", "status", "skip_reason", "fired_at", "scheduled_for"])
@@ -941,15 +956,7 @@ export class ScheduledTasksService {
     const pausers = tasks.flatMap((t) =>
       t.status === "paused" && t.pausedBy !== null ? [t.pausedBy] : [],
     );
-    const names = new Map<string, string>();
-    if (pausers.length > 0) {
-      const rows = await db
-        .selectFrom("accounts")
-        .select(["id", "display_name"])
-        .where("id", "in", pausers)
-        .execute();
-      for (const r of rows) names.set(r.id, r.display_name);
-    }
+    const people = await loadPeople(db, pausers);
     const ids = tasks.map((t) => t.id);
     // the latest settled non-trial run of each task, and every grant of these tasks, in one query each
     const latest = await db
@@ -999,7 +1006,7 @@ export class ScheduledTasksService {
           pausedBy:
             task.pausedBy === null
               ? null
-              : { id: task.pausedBy, name: names.get(task.pausedBy) ?? "" },
+              : (people.get(task.pausedBy) ?? { id: task.pausedBy, name: "", avatarUrl: null }),
           missing: [],
           needsRole: [],
           needsAdmin: [],
