@@ -273,6 +273,13 @@ export function secretFieldsOf(
   return { fields, recordOnly: [...recordOnly].filter((p) => !asked.has(p)) };
 }
 
+/**
+ * A refusal of a call's person fields (model-visible English, never a value): thrown by the plan,
+ * or by an operation's `personFields` for an input the plan cannot see (a dynamic record such as
+ * the install's `extensionConfig`). The tool denies the call with the message before the card.
+ */
+export class PersonFieldsRefused extends Error {}
+
 /** The plan of one call: the fields the card asks for and the secrets to clear, or a refusal. */
 export type PersonFieldPlan =
   | { ok: true; ask: PersonFieldSpec[]; clear: string[] }

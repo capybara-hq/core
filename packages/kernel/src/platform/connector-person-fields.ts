@@ -145,3 +145,24 @@ export function headersWebOnly(auth: ConnectorAuth, where: string): string | nul
     ? `${where} authenticates with custom headers, whose values the confirmation card cannot ask for; the person enters them on the web.`
     : null;
 }
+
+/**
+ * Why a write's OAuth client param does not fit the auth method, or null: an OAuth client the
+ * person enters a secret for (oauth_client, oauth_code with a manual client) needs its id in
+ * `client`; any other auth method takes no client (refused rather than ignored).
+ */
+export function clientProblem(
+  auth: ConnectorAuth,
+  client: { clientId: string } | undefined,
+  where: string,
+): string | null {
+  const needs =
+    auth.type === "oauth_client" || (auth.type === "oauth_code" && auth.client === "manual");
+  if (needs && client === undefined) {
+    return `${where} uses an OAuth client: pass its id in client (the person enters the client secret on the confirmation card)`;
+  }
+  if (!needs && client !== undefined) {
+    return `${where} takes no OAuth client (auth ${auth.type}${auth.type === "oauth_code" ? " with a registered client" : ""}); leave client out`;
+  }
+  return null;
+}

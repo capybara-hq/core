@@ -28,6 +28,7 @@ import {
 import type { ConnectorAuth } from "../../tools/credentials.js";
 import { publicEndpoint } from "../../tools/endpoint.js";
 import {
+  clientProblem,
   connectorCredential,
   connectorPersonFields,
   headersWebOnly,
@@ -511,7 +512,12 @@ export class ConnectorsOperations implements OnModuleInit {
             next: "Tell the person to enter the credential on the connector's web page (Connectors).",
           },
         ],
-        precheck: async (i) => webOnly(headersWebOnly(i.auth as ConnectorAuth, "This connector")),
+        precheck: async (i) => {
+          const auth = i.auth as ConnectorAuth;
+          const client = clientProblem(auth, i.client, "This connector");
+          if (client !== null) return { ok: false, code: "validation_failed", message: client };
+          return webOnly(headersWebOnly(auth, "This connector"));
+        },
         personFields: async (i) => ({
           target: connectorTarget(i.name, i.auth as ConnectorAuth),
           fields: connectorPersonFields(i.auth as ConnectorAuth, new Set()),
@@ -641,9 +647,8 @@ export class ConnectorsOperations implements OnModuleInit {
               "The OAuth client of this connector was registered automatically and cannot be replaced",
             );
           }
-          if ((a.type === "oauth_code" || a.type === "oauth_client") && i.client === undefined) {
-            return refuse("Pass the OAuth client's id in client; the person enters its secret");
-          }
+          const client = clientProblem(a, i.client, `Connector ${named(c.name)}`);
+          if (client !== null) return refuse(client);
           if (a.type !== "oauth_code" && a.type !== "oauth_client" && a.ownership === "personal") {
             return refuse(
               "This connector uses each member's own credential, not an org one; each person sets theirs with connectors.set-my-credential",
@@ -776,6 +781,8 @@ export class ConnectorsOperations implements OnModuleInit {
         authz: { orgAction: "connectors.use" },
         mirrors: ["DELETE /api/v1/orgs/:orgId/connectors/:connectorId/credentials/me"],
         confirm: "personal",
+        // destructive: agents lose the connector as this person
+        rememberable: false,
         errors: [
           { code: "connector.not_found", next: "Check the connector id with connectors.list." },
         ],
@@ -843,12 +850,16 @@ export class ConnectorsOperations implements OnModuleInit {
         ],
         precheck: async (i, ctx) => {
           const t = await this.template(ctx.orgId, i.templateId);
-          return webOnly(headersWebOnly(t.auth, `Connector template ${named(t.name)}`));
+          const where = `Connector template ${named(t.name)}`;
+          const client = clientProblem(t.auth, i.client, where);
+          if (client !== null) return { ok: false, code: "validation_failed", message: client };
+          return webOnly(headersWebOnly(t.auth, where));
         },
         personFields: async (i, ctx) => {
           const t = await this.template(ctx.orgId, i.templateId);
           return {
-            target: connectorTarget(i.name ?? t.name, t.auth),
+            // the template's own name: the model's name for the new connector is in the summary
+            target: connectorTarget(t.name, t.auth),
             fields: connectorPersonFields(t.auth, new Set()),
           };
         },
@@ -903,6 +914,8 @@ export class ConnectorsOperations implements OnModuleInit {
         authz: { orgAction: "connectors.manage" },
         mirrors: ["POST /api/v1/orgs/:orgId/connectors/:connectorId/guide-ack"],
         confirm: "personal",
+        // a person's attestation: confirmed each time, never remembered
+        rememberable: false,
         errors: [
           {
             code: "connector.not_found",

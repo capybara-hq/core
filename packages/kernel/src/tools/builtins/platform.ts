@@ -29,7 +29,11 @@ import {
   type PlatformOperation,
   PRECHECK_TIMEOUT_MS,
 } from "../../platform/operation.js";
-import { type PersonFieldSpec, planPersonFields } from "../../platform/person-fields.js";
+import {
+  type PersonFieldSpec,
+  PersonFieldsRefused,
+  planPersonFields,
+} from "../../platform/person-fields.js";
 import type { PlatformOperations } from "../../platform/registry.js";
 import { type SealedInputs, SealedInputsExpiredError } from "../../platform/sealed-inputs.js";
 import { BUILTIN } from "../builtin-names.js";
@@ -629,9 +633,6 @@ export function platformTool(deps: PlatformToolDeps): BuiltinTool {
     },
   };
 }
-
-/** A person-field plan that refuses the call (model-visible English). */
-class PersonFieldsRefused extends Error {}
 
 /** The fields to enter differ from what the person confirmed ({@link PERSON_FIELDS_CHANGED_TEXT}). */
 class PersonFieldsChanged extends Error {}

@@ -350,8 +350,9 @@ export function checkInputParity(
   routes: readonly RouteSchemas[],
 ): ParityFinding[] {
   const byRoute = new Map(routes.map((r) => [r.route, r]));
-  return ops.flatMap((op) =>
-    op.mirrors.flatMap((m) => {
+  return ops.flatMap((op) => [
+    ...staleWithoutSecrets(op, byRoute),
+    ...op.mirrors.flatMap((m) => {
       const r = byRoute.get(m);
       return r !== undefined
         ? inputParity(op, r)
@@ -363,5 +364,30 @@ export function checkInputParity(
             },
           ];
     }),
+  ]);
+}
+
+/**
+ * Rule `platform-op-secret-param`: a `withoutSecrets` reason on an operation none of whose
+ * registered mirrored routes carries a secret field is stale (it would hide a later secret).
+ */
+function staleWithoutSecrets(
+  op: ParityOperation,
+  byRoute: ReadonlyMap<string, RouteSchemas>,
+): ParityFinding[] {
+  if (op.withoutSecrets === undefined) return [];
+  const routes = op.mirrors.flatMap((m) => byRoute.get(m) ?? []);
+  const secret = routes.some((r) =>
+    [r.params, r.query, r.body].some((part) => part !== undefined && holdsSecret(toJson(part))),
   );
+  if (secret || routes.length === 0) return [];
+  return [
+    {
+      op: op.id,
+      route: op.mirrors.join(", "),
+      field: "withoutSecrets",
+      rule: "platform-op-secret-param",
+      message: `${op.id}: platform-op-secret-param: \`withoutSecrets\` is stale: no mirrored route carries a secret field; remove it`,
+    },
+  ];
 }

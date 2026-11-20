@@ -226,3 +226,11 @@ export const secretWithoutParam = op3(
   },
   { withoutSecrets: "a preview never stores the secret entries" },
 );
+
+/** `withoutSecrets` on an operation whose route carries no secret: stale. */
+export const staleWithoutSecrets = {
+  id: "things.stale-without",
+  input: route.body,
+  mirrors: [route.route],
+  withoutSecrets: "nothing secret here",
+};

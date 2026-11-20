@@ -1,5 +1,7 @@
 import { describe, expect, it } from "vitest";
+import { ApiError } from "../../src/errors.js";
 import { connectorPersonFields } from "../../src/platform/connector-person-fields.js";
+import { afterTaken } from "../../src/platform/ops/person-inputs.js";
 import { checkPersonValue } from "../../src/platform/person-fields.js";
 
 /**
@@ -76,5 +78,20 @@ describe("connectorPersonFields", () => {
     if (f === undefined) throw new Error("no field");
     expect(checkPersonValue(f, "")).toBe("Token is empty.");
     expect(checkPersonValue(f, "tok-1")).toBeNull();
+  });
+});
+
+describe("afterTaken", () => {
+  it("tells the model the person enters the values again on a new card, only when values were taken", () => {
+    const e = new ApiError(
+      "plugin.install_failed",
+      "Installing the plugin failed at step connectors",
+    );
+    const out = afterTaken(e, { "connectors.gh.credential.token": "tok-Zq81Lm40" }) as ApiError;
+    expect(out).toBeInstanceOf(ApiError);
+    expect(out.code).toBe("plugin.install_failed");
+    expect(out.message).toContain("enters them again");
+    expect(out.message).not.toContain("tok-Zq81Lm40");
+    expect(afterTaken(e, {})).toBe(e);
   });
 });

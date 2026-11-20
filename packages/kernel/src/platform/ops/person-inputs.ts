@@ -1,3 +1,4 @@
+import { ApiError } from "../../errors.js";
 import { setDeep } from "../../extensions/deployment-config-store.js";
 import type { OperationContext } from "../operation.js";
 import { viaAgent } from "./errors.js";
@@ -26,6 +27,11 @@ export function withPersonInputs<T>(
 }
 
 /**
+ * Ruling R11 (platform web parity plan): the one exception to "the write runs inside
+ * `personInputs.apply`". The catalog install runs `requires_new` steps that take the org row lock;
+ * inside `apply`, `connectors.create` would take that lock in the consuming transaction and the
+ * next step would wait on it for good. Such a write takes the values first and runs outside.
+ *
  * The person's card values for a write that cannot run inside the consuming transaction: one made
  * of several transactions of its own (`requires_new` steps under the org row lock, such as the
  * catalog install), which would wait on a lock the consuming transaction holds. The values are
@@ -41,6 +47,19 @@ export async function takePersonInputs(
     entered: { ...entered },
     auditDetail,
   }));
+}
+
+/**
+ * The error of a write that failed after {@link takePersonInputs} consumed the values: the same
+ * error, its message saying the values are gone and the person enters them again on a new card.
+ */
+export function afterTaken(e: unknown, entered: Readonly<Record<string, string>>): unknown {
+  if (!(e instanceof ApiError) || Object.keys(entered).length === 0) return e;
+  return new ApiError(
+    e.code,
+    `${e.message.replace(/\.?$/, ".")} The values the person entered were used up: calling the operation again shows a new card where the person enters them again.`,
+    e.details,
+  );
 }
 
 /**

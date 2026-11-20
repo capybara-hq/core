@@ -25,6 +25,7 @@ import { KernelDb } from "../../infra/database/kernel-db.js";
 import { ThemesService } from "../../themes/themes.service.js";
 import type { ConnectorAuth } from "../../tools/credentials.js";
 import {
+  clientProblem,
   headersWebOnly,
   type TemplateParams,
   type TemplateTarget,
@@ -34,6 +35,7 @@ import {
 import { defineOperation, type OperationContext, type PrecheckResult } from "../operation.js";
 import {
   type PersonFieldSpec,
+  PersonFieldsRefused,
   type PersonFieldTarget,
   personFieldParams,
   planPersonFields,
@@ -43,7 +45,7 @@ import { PlatformOperations } from "../registry.js";
 import { appearanceSummary, reviewBrief } from "./catalog-admin.ops.js";
 import { precheckBy, viaAgent } from "./errors.js";
 import { Cursor, pageOf, startOf } from "./paging.js";
-import { enteredUnder, nestedConfig, takePersonInputs } from "./person-inputs.js";
+import { afterTaken, enteredUnder, nestedConfig, takePersonInputs } from "./person-inputs.js";
 import { localized, named, orElse } from "./summary.js";
 
 const InstallId = PluginInstallPathParams.shape.installId.max(100);
@@ -112,11 +114,21 @@ const targetOf = (t: {
   auth: t.auth as ConnectorAuth,
 });
 
-/** The refusal of a template whose credential the card cannot ask for, or null. */
-function headersRefusal(templates: readonly TemplateTarget[]): PrecheckResult {
+/**
+ * The refusal of a template input the card cannot complete, or ok: a credential the card cannot
+ * ask for (custom headers), an OAuth client without its id, or a client for a template that takes
+ * none.
+ */
+function templatesRefusal(
+  templates: readonly TemplateTarget[],
+  params: Readonly<Record<string, TemplateParams>> | undefined,
+): PrecheckResult {
   for (const t of templates) {
-    const why = headersWebOnly(t.auth, `Connector template ${t.name}`);
+    const where = `Connector template ${t.name} (${t.id})`;
+    const why = headersWebOnly(t.auth, where);
     if (why !== null) return { ok: false, code: "platform.secret_record_web_only", message: why };
+    const client = clientProblem(t.auth, params?.[t.id]?.client, where);
+    if (client !== null) return { ok: false, code: "validation_failed", message: client };
   }
   return { ok: true };
 }
@@ -178,8 +190,8 @@ export class OrgPluginsOperations implements OnModuleInit {
    * What installing a plugin asks the person for (platform web parity spec §7.2): the connector
    * templates whose connector the install creates (on in the org, none kept from an earlier
    * switch-off, as the install wizard asks), and the secret fields of its extension's org config
-   * under `extensionConfig.` (stored ones count as set; one the schema walk cannot address, or an
-   * extension whose org view cannot be read, is web only).
+   * under `extensionConfig.` (stored ones count as set; one the schema walk cannot address is web
+   * only). An extension whose org view cannot be read refuses the call: its secrets are unknown.
    */
   private async installTargets(ctx: OperationContext, itemId: string) {
     const d = await this.orgCatalog.detail(ctx.orgId, ctx.actorAccountId, itemId);
@@ -190,8 +202,11 @@ export class OrgPluginsOperations implements OnModuleInit {
       const v = (await this.extensions.list(ctx.orgId)).find(
         (e) => e.catalogItem?.itemId === itemId || e.plugin === d.extension,
       );
-      if (v === undefined) recordOnly = ["extensionConfig"];
-      else {
+      if (v === undefined) {
+        throw new PersonFieldsRefused(
+          `Cannot read the config schema of the plugin's extension ${d.extension} now, so its secret fields are unknown; try again, or install the plugin on the web (Plugins page).`,
+        );
+      } else {
         const stored = new Set(v.secrets.filter((x) => x.set).map((x) => x.path));
         const found = secretFieldsOf(v.orgConfigSchema, stored);
         const asked = new Set(found.fields.map((f) => f.path));
@@ -610,7 +625,7 @@ export class OrgPluginsOperations implements OnModuleInit {
           },
           {
             code: "plugin.install_failed",
-            next: "The install failed at the step its details name and was rolled back; fix that (often the connector's endpoint or credential) and call again, so the person enters the credentials anew.",
+            next: "The install failed at the step its details name and was rolled back; fix that (often the connector's endpoint or credential) and call again: the person enters the credentials again on a new card.",
           },
           {
             code: "catalog.not_deployed",
@@ -638,7 +653,7 @@ export class OrgPluginsOperations implements OnModuleInit {
               message: `Plugin ${r.item.name} is installed in this org already`,
             };
           }
-          return headersRefusal(r.templates);
+          return templatesRefusal(r.templates, i.templates);
         },
         personFields: async (i, ctx) => {
           const { target } = await this.installTargets(ctx, i.itemId);
@@ -648,7 +663,7 @@ export class OrgPluginsOperations implements OnModuleInit {
             askPerson: [],
             clearSecrets: [],
           });
-          if (!plan.ok) throw new ApiError("validation_failed", plan.message);
+          if (!plan.ok) throw new PersonFieldsRefused(plan.message);
           return target;
         },
         summary: async (i, ctx) => {
@@ -671,17 +686,21 @@ export class OrgPluginsOperations implements OnModuleInit {
             input.extensionConfig !== undefined || Object.keys(ext).length > 0
               ? nestedConfig(input.extensionConfig ?? {}, ext, [])
               : undefined;
-          const r = await this.orgCatalog.install(
-            ctx.orgId,
-            ctx.actorAccountId,
-            input.itemId,
-            {
-              ...(connectors !== undefined && { connectors }),
-              ...(extensionConfig !== undefined && { extensionConfig }),
-            } as Parameters<OrgCatalogService["install"]>[3],
-            undefined,
-            auditDetail,
-          );
+          const r = await this.orgCatalog
+            .install(
+              ctx.orgId,
+              ctx.actorAccountId,
+              input.itemId,
+              {
+                ...(connectors !== undefined && { connectors }),
+                ...(extensionConfig !== undefined && { extensionConfig }),
+              } as Parameters<OrgCatalogService["install"]>[3],
+              undefined,
+              auditDetail,
+            )
+            .catch((e: unknown) => {
+              throw afterTaken(e, entered);
+            });
           return { installed: r.installed, install: installRow(r.install) };
         },
       }),
@@ -720,7 +739,7 @@ export class OrgPluginsOperations implements OnModuleInit {
           const read = await precheckBy(async () => {
             templates = await this.configureTargets(ctx, i.itemId, Object.keys(i.templates));
           });
-          return read.ok ? headersRefusal(templates) : read;
+          return read.ok ? templatesRefusal(templates, i.templates) : read;
         },
         personFields: async (i, ctx) => {
           const templates = await this.configureTargets(ctx, i.itemId, Object.keys(i.templates));
@@ -756,15 +775,19 @@ export class OrgPluginsOperations implements OnModuleInit {
             ctx,
           );
           return {
-            connectors: await this.installer.configureConnectors(
-              ctx.orgId,
-              ctx.actorAccountId,
-              input.itemId,
-              {
-                connectors: connectorInputs(templates, input.templates, entered) ?? {},
-              } as Parameters<PluginInstaller["configureConnectors"]>[3],
-              { auditDetail },
-            ),
+            connectors: await this.installer
+              .configureConnectors(
+                ctx.orgId,
+                ctx.actorAccountId,
+                input.itemId,
+                {
+                  connectors: connectorInputs(templates, input.templates, entered) ?? {},
+                } as Parameters<PluginInstaller["configureConnectors"]>[3],
+                { auditDetail },
+              )
+              .catch((e: unknown) => {
+                throw afterTaken(e, entered);
+              }),
           };
         },
       }),
