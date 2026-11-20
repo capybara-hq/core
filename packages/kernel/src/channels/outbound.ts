@@ -1097,6 +1097,26 @@ class Delivery {
         );
         return this.advance(e.seq);
       }
+      case "tool_result": {
+        // a Platform operation's link card (platform web parity spec §6): a link to the web page
+        // where the person decides; an OAuth connect opens the conversation, whose card starts it
+        const v = e.payload.view;
+        if (v?.kind !== "handoff") return;
+        await this.send(
+          this.base === undefined
+            ? { text: phrase("handleOnWeb", this.locale) }
+            : cardMessage(v.title[this.locale], {
+                kind: "bind",
+                text: v.title[this.locale],
+                url:
+                  v.target.type === "link"
+                    ? `${this.base}${v.target.url}`
+                    : conversationUrl(this.base, this.conversationId),
+              }),
+          this.key(e.seq),
+        );
+        return this.advance(e.seq);
+      }
       case "approval_decided": {
         const at = await this.cardMessageOf("approval", e.payload.approvalId);
         if (!at || this.base === undefined) return;

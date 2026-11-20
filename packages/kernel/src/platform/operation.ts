@@ -1,4 +1,5 @@
 import type { z } from "zod";
+import type { ToolView } from "../conversations/events.js";
 import type { OrgAction } from "../orgs/roles.js";
 import type { ErrorRole } from "./errors.js";
 import type { PersonFieldTarget } from "./person-fields.js";
@@ -83,6 +84,15 @@ export interface OperationError {
 export type PrecheckResult =
   | { ok: true }
   | { ok: false; code: string; message: string; next?: OperationErrorNext };
+
+/**
+ * A link card the conversation pops up after an operation (platform web parity spec §4.4, §6): the
+ * write's decision stays with a person on a web page (an import review, an OAuth connect), and the
+ * card names what waits for them with one button. `link` opens a relative web path (the tool also
+ * puts it in the result text as `reviewUrl`); `connect` starts a connector's OAuth flow from the
+ * person's web session. Display only (`tool_result.view`): never model-visible.
+ */
+export type HandoffView = Extract<ToolView, { kind: "handoff" }>;
 
 /** How long a precheck may take before the tool skips it (spec §14.2 item 2). */
 export const PRECHECK_TIMEOUT_MS = 2000;
@@ -183,6 +193,12 @@ export interface PlatformOperation<I = unknown> {
     ctx: OperationContext,
   ): { zh: string; en: string } | Promise<{ zh: string; en: string }>;
   run(input: I, ctx: OperationContext): Promise<unknown>;
+  /**
+   * The link card to pop up after a successful `run` (platform web parity spec §6), built from the
+   * input and the result, never from model text; null: none for this result. A throw leaves the
+   * card out (the result stands).
+   */
+  handoff?(input: I, result: unknown, ctx: OperationContext): HandoffView | null;
 }
 
 /** Identity helper that types an operation's handler and summary from its input schema. */
@@ -232,7 +248,7 @@ export const PLATFORM_DOMAINS: readonly { id: string; description: string }[] = 
   {
     id: "connectors",
     description:
-      "Connectors and connector templates: list, read, preview, create (custom or from a template), edit, credentials (the person enters them on the card), guide acknowledgement, refresh tools, delete.",
+      "Connectors and connector templates: list, read, preview, create (custom or from a template), edit, credentials (the person enters them on the card), OAuth connect (a Connect button for the person), guide acknowledgement, refresh tools, delete.",
   },
   {
     id: "extensions",

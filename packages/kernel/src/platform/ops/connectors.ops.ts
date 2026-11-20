@@ -44,6 +44,10 @@ import { named, orElse } from "./summary.js";
 
 const PAGE = 50;
 
+/** The result text of `connectors.connect` (platform web parity spec §4.4); model-visible English. */
+export const CONNECT_SHOWN_TEXT =
+  "The person was shown a Connect button; check connectors.get for the connection state.";
+
 const ConnectorId = ConnectorPathParams.shape.connectorId.max(100);
 const EXAMPLE_ID = "5d2e8f1a-0b3c-4d5e-8f9a-1b2c3d4e5f60";
 
@@ -769,6 +773,72 @@ export class ConnectorsOperations implements OnModuleInit {
             connector: detail(
               await this.connectors.get(ctx.orgId, input.connectorId, ctx.actorAccountId),
             ),
+          };
+        },
+      }),
+      defineOperation({
+        id: "connectors.connect",
+        description:
+          "Connect your own account to an OAuth connector (oauth_code, each member's own account): shows the person a Connect button in the conversation; the authorization runs in their browser, never through the tool. Starts nothing by itself and returns the connector's current connection state; call connectors.get afterwards to see whether the person connected.",
+        input: z.object({ connectorId: ConnectorId }).strict(),
+        example: { connectorId: EXAMPLE_ID },
+        authz: { orgAction: "connectors.use" },
+        mirrors: ["POST /api/v1/orgs/:orgId/connectors/:connectorId/connect"],
+        // the web card starts the flow from the person's session and returns to the conversation
+        omits: ["returnTo"],
+        confirm: "personal",
+        errors: [
+          { code: "connector.not_found", next: "Check the connector id with connectors.list." },
+          {
+            code: "validation_failed",
+            next: "Only an active OAuth authorization-code connector is connected this way: a token connector takes connectors.set-my-credential, a disabled one needs an org admin to enable it.",
+          },
+        ],
+        precheck: async (i, ctx) => {
+          let c: ConnectorDetail | undefined;
+          const r = await precheckBy(async () => {
+            c = await this.connectors.get(ctx.orgId, i.connectorId, ctx.actorAccountId);
+          });
+          if (!r.ok || c === undefined) return r;
+          if (c.auth.type !== "oauth_code") {
+            return {
+              ok: false,
+              code: "validation_failed",
+              message: "Only OAuth authorization-code connectors are connected this way",
+            };
+          }
+          if (c.status !== "active") {
+            return {
+              ok: false,
+              code: "validation_failed",
+              message: "The connector is disabled; ask an administrator to enable it",
+            };
+          }
+          return { ok: true };
+        },
+        summary: async (i, ctx) => {
+          const n = await this.connectorName(ctx, i.connectorId);
+          return {
+            zh: `在对话里显示连接器「${n}」的连接按钮`,
+            en: `Show the Connect button of connector "${n}" in the conversation`,
+          };
+        },
+        // nothing is written: the route's start (state, PKCE, the browser binding cookie) stays
+        // in the person's browser, through the web card
+        run: async (input, ctx) => {
+          const c = await this.connectors.get(ctx.orgId, input.connectorId, ctx.actorAccountId);
+          return {
+            connector: { ...summary(c), credential: c.credential },
+            next: CONNECT_SHOWN_TEXT,
+          };
+        },
+        handoff: (input, result) => {
+          const name = (result as { connector?: { name?: unknown } } | null)?.connector?.name;
+          const n = typeof name === "string" ? named(name) : input.connectorId;
+          return {
+            kind: "handoff",
+            title: { zh: `连接「${n}」`, en: `Connect ${n}` },
+            target: { type: "connect", connectorId: input.connectorId },
           };
         },
       }),

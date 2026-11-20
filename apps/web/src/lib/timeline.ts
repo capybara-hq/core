@@ -16,6 +16,7 @@ import type {
   CommandAsk,
   ContentBlock,
   ConversationEvent,
+  HandoffTarget,
   InputForm,
   MessageAttachment,
   ModelRef,
@@ -395,6 +396,18 @@ export type TimelineEntry =
       callId: string;
       url: string;
       code: string;
+    }
+  | {
+      /**
+       * A `Platform` operation's link card (`tool_result.view` kind `handoff`, platform web parity
+       * spec §6): the title in the viewer's language and the one button's target, under the group
+       * that holds the call.
+       */
+      kind: "handoff";
+      key: string;
+      callId: string;
+      title: string;
+      target: HandoffTarget;
     }
   | {
       /** A group's files: inline images (and generating placeholders) in call order, then the rest. */
@@ -806,6 +819,7 @@ export function buildEventTimeline(
   /** Group key → the network facts of its calls. */
   const groupFacts = new Map<string, Extract<TimelineEntry, { kind: "network-facts" }>[]>();
   const groupDeviceCodes = new Map<string, Extract<TimelineEntry, { kind: "device-code" }>[]>();
+  const groupHandoffs = new Map<string, Extract<TimelineEntry, { kind: "handoff" }>[]>();
   /** The last user message (Retry repeats it). */
   let lastUser: RetryMessage | null = null;
   /** Plain user bubbles by seq, and the fork invocations (phase D: who waits for a sub-agent). */
@@ -1255,6 +1269,17 @@ export function buildEventTimeline(
             ...(p.card.key !== undefined ? { cardKey: p.card.key } : {}),
           });
           groupCards.set(c.group, list);
+        }
+        if (view?.kind === "handoff" && !p.isError) {
+          const list = groupHandoffs.get(c.group) ?? [];
+          list.push({
+            kind: "handoff",
+            key: `${key}:handoff`,
+            callId: p.callId,
+            title: view.title[locale],
+            target: view.target,
+          });
+          groupHandoffs.set(c.group, list);
         }
         break;
       }
@@ -1739,6 +1764,7 @@ export function buildEventTimeline(
     groupCards.size === 0 &&
     groupFacts.size === 0 &&
     groupDeviceCodes.size === 0 &&
+    groupHandoffs.size === 0 &&
     !shown.some((entry) => entry.kind === "tools" && entry.rows.some(generating))
   )
     return { entries: shown, modelOf };
@@ -1778,6 +1804,7 @@ export function buildEventTimeline(
     for (const card of groupCards.get(entry.key) ?? []) withExtras.push(card);
     for (const fact of groupFacts.get(entry.key) ?? []) withExtras.push(fact);
     for (const device of groupDeviceCodes.get(entry.key) ?? []) withExtras.push(device);
+    for (const handoff of groupHandoffs.get(entry.key) ?? []) withExtras.push(handoff);
   }
   return { entries: withExtras, modelOf };
 }

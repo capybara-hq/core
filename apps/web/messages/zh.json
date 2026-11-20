@@ -1506,6 +1506,12 @@
     },
     "stats": "第 {n} 轮 · 已用 {elapsed}",
     "contextPct": "上下文 {n}%",
+    "handoff": {
+      "open": "打开",
+      "connect": "连接",
+      "linkBody": "这一步在对应页面上等你处理。",
+      "connectBody": "在浏览器里完成授权，只连接你自己的账号。"
+    },
     "deviceCode": {
       "title": "登录 GitHub",
       "body": "打开 GitHub 并输入下面的一次性代码，完成登录。登录在设备内进行，令牌不会离开设备。",

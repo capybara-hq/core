@@ -119,6 +119,7 @@ describe("registration", () => {
     ).toEqual([
       "connectors.add-from-template",
       "connectors.clear-my-credential",
+      "connectors.connect",
       "connectors.create",
       "connectors.delete",
       "connectors.get",

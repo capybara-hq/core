@@ -35,6 +35,7 @@ import { PLATFORM_ICON_ROUTES } from "../themes/platform-icon.schemas.js";
 import { THEME_ROUTES } from "../themes/themes.schemas.js";
 import { APPROVAL_ROUTES } from "../tools/approvals.schemas.js";
 import { CONNECTOR_ROUTES } from "../tools/connectors.schemas.js";
+import { OAUTH_ROUTES } from "../tools/oauth/oauth.schemas.js";
 import { UI_ROUTES } from "../ui/ui.schemas.js";
 
 /**
@@ -62,6 +63,7 @@ export const ROUTE_SCHEMAS: readonly RouteSchemas[] = [
   ...ADMIN_CATALOG_ROUTES,
   ...MARKETPLACE_ROUTES,
   ...CONNECTOR_ROUTES,
+  ...OAUTH_ROUTES,
   ...COMPONENT_SCOPE_ROUTES,
   ...ORG_EXTENSION_ROUTES,
   ...CONVERSATION_ROUTES,

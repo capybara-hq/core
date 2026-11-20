@@ -626,6 +626,13 @@ const FileStateViewSchema = z.object({
   sha256: z.string().regex(/^[0-9a-f]{64}$/),
 });
 
+/** The longest handoff card title (`ToolViewSchema` kind `handoff`), per language. */
+export const HANDOFF_TITLE_MAX_CHARS = 200;
+/** The longest handoff link (a relative web path). */
+export const HANDOFF_URL_MAX_CHARS = 2000;
+/** A relative web path: one leading `/`, never `//` (another host) or a backslash. */
+const HANDOFF_PATH = /^\/(?![/\\])[^\\\s]*$/;
+
 /**
  * Structured view of a builtin tool's result (UI refresh B, spec §5.5 / §5.9): display only, like
  * `display`. `command`: `Bash` (the model's `description`, the exit code, null when the
@@ -638,6 +645,10 @@ const FileStateViewSchema = z.object({
  * `not_loaded`: a call to a tool the catalog holds but the step's request did not carry
  * (ToolSearch mode, spec 5.5): expected behaviour, the model is told to load it first. The result
  * stays `isError: true` for the model; the web shows it as a neutral outcome too.
+ * `handoff`: a `Platform` operation whose decision stays with a person on a web page (platform web
+ * parity spec §4.4, §6): the card's title and either a relative web path (`link`, also in the
+ * result text as `reviewUrl`) or a connector to connect (`connect`: the web's Connect button starts
+ * the OAuth flow from the person's session). IM forwards it as a `bind` card.
  */
 export const ToolViewSchema = z.discriminatedUnion("kind", [
   z.object({
@@ -683,6 +694,20 @@ export const ToolViewSchema = z.discriminatedUnion("kind", [
     reason: z.enum(["not_read", "modified"]),
   }),
   z.object({ kind: z.literal("not_loaded") }),
+  z.object({
+    kind: z.literal("handoff"),
+    title: z.object({
+      zh: z.string().min(1).max(HANDOFF_TITLE_MAX_CHARS),
+      en: z.string().min(1).max(HANDOFF_TITLE_MAX_CHARS),
+    }),
+    target: z.discriminatedUnion("type", [
+      z.object({
+        type: z.literal("link"),
+        url: z.string().max(HANDOFF_URL_MAX_CHARS).regex(HANDOFF_PATH, "a relative web path"),
+      }),
+      z.object({ type: z.literal("connect"), connectorId: z.string().min(1).max(100) }),
+    ]),
+  }),
 ]);
 export type ToolView = z.infer<typeof ToolViewSchema>;
 

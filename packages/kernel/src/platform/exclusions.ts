@@ -669,11 +669,6 @@ export const PLATFORM_EXCLUSIONS: readonly {
       "Display list of the agent form's tools picker; extensions.tools gives an agent the same facts",
   },
   {
-    route: "POST /api/v1/orgs/:orgId/connectors/:connectorId/connect",
-    category: "secret",
-    reason: "Starts a connector OAuth flow",
-  },
-  {
     route: "GET /api/v1/oauth/callback",
     category: "secret",
     reason: "Receives the OAuth authorization code",
