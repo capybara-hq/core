@@ -2118,7 +2118,7 @@ export interface OrgNoticesTable {
 }
 
 /**
- * 0084: a notice for the super admins (platform inbox), until one of them dismisses it; 0171
+ * 0084: a notice for the super admins (platform inbox), until one of them dismisses it; 0172
  * added `push_auth_failed` (at most one open per plugin).
  */
 export interface PlatformNoticesTable {

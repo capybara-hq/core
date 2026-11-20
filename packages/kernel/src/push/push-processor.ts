@@ -1,6 +1,7 @@
 import { OnWorkerEvent, Processor, WorkerHost } from "@nestjs/bullmq";
 import { Inject, Injectable, Module } from "@nestjs/common";
 import { type Job, UnrecoverableError, type Worker } from "bullmq";
+import { ExtensionsModule } from "../extensions/extensions.module.js";
 import { runJob } from "../infra/queue/run-job.js";
 import { KERNEL_LOGGER } from "../infra/tokens.js";
 import type { KernelLogger } from "../log.js";
@@ -26,8 +27,6 @@ type PushJobData = PushDeliverData;
 @Injectable()
 @Processor(PUSH_QUEUE, { autorun: false, concurrency: PUSH_CONCURRENCY })
 export class PushProcessor extends WorkerHost<Worker<PushJobData>> {
-  private readonly stopping = new AbortController();
-
   constructor(
     @Inject(PushDelivery) private readonly delivery: PushDelivery,
     @Inject(KERNEL_LOGGER) private readonly log: KernelLogger,
@@ -39,7 +38,7 @@ export class PushProcessor extends WorkerHost<Worker<PushJobData>> {
     return runJob(PUSH_QUEUE, job, async () => {
       switch (job.name) {
         case PUSH_DELIVER_JOB:
-          return this.delivery.deliver(job.data, this.stopping.signal);
+          return this.delivery.deliver(job.data);
         default:
           throw new UnrecoverableError(`unknown push job ${job.name}`);
       }
@@ -51,9 +50,11 @@ export class PushProcessor extends WorkerHost<Worker<PushJobData>> {
     void this.worker.run().catch((err) => this.error(err));
   }
 
-  /** Aborts the calls in flight (they are retried) and closes the worker. */
+  /**
+   * Closes the worker, waiting for the jobs in flight: each send is bounded by the send time
+   * limit, and aborting one the provider may already have accepted would only resend it.
+   */
   async close(): Promise<void> {
-    this.stopping.abort();
     await this.worker.close();
   }
 
@@ -84,7 +85,7 @@ export class PushProcessor extends WorkerHost<Worker<PushJobData>> {
  * (`WorkerModule`). The queue itself is registered by {@link PushModule} (every role owes jobs).
  */
 @Module({
-  imports: [PushModule, PushHostModule],
+  imports: [PushModule, PushHostModule, ExtensionsModule],
   providers: [PushDelivery, PushProcessor, PushStaleJob],
   exports: [PushProcessor],
 })

@@ -119,9 +119,9 @@ export class WorkerRole {
   }
 
   /**
-   * Closes the maintenance queue's worker, the plugin scope sync's (it stops between pairs) and
-   * the lifecycle hook deliveries' and the push deliveries' (calls in flight are aborted and
-   * retried).
+   * Closes the maintenance queue's worker, the plugin scope sync's (it stops between pairs), the
+   * lifecycle hook deliveries' (calls in flight are aborted and retried) and the push deliveries'
+   * (sends in flight finish, each bounded by the send time limit).
    */
   async closeMaintenance(): Promise<void> {
     await Promise.all([

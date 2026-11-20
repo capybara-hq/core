@@ -10,6 +10,7 @@ import {
 import { Inject, Injectable, Optional } from "@nestjs/common";
 import { sql } from "kysely";
 import { STALE_RECONCILE_PERIODS } from "../extensions/lifecycle-topics.js";
+import { ReplicaStatusStore } from "../extensions/sources.js";
 import { addPushAuthNotice } from "../inbox/platform-notices.js";
 import { KernelConfigService } from "../infra/config/kernel-config.service.js";
 import { KernelDb } from "../infra/database/kernel-db.js";
@@ -54,17 +55,21 @@ export class PushRetryableError extends Error {
  *   no longer covers the registration's app id -> `dropped` the same way (review focus 5).
  * - The token is opened from the row only for the call; job data never carries it.
  * - The call is aborted after {@link PUSH_SEND_TIMEOUT_MS} (default `PUSH_LIMITS.sendTimeoutMs`)
- *   or when the replica stops; both retry.
- * - `delivered` -> done; `unregistered` -> the registration is deleted (only while it still holds
- *   the token that was sent: a row id survives a re-registration of the same token only); `auth`
+ *   and retried. A replica that stops lets its calls in flight finish (each is bounded by that
+ *   limit): aborting one the provider may already have accepted would only resend it.
+ * - `delivered` -> done; `unregistered` -> the registration is deleted, only while it still holds
+ *   the token that was sent and was not posted again since it was read (a re-post refreshes
+ *   `last_seen_at`, so the app's fresh registration survives a stale dead report); `auth`
  *   -> done, with the platform notice `push_auth_failed` for the plugin (one open per plugin);
  *   `rate_limited`, `transient`, a thrown non-`PushError`, a timeout and an answer failing
  *   `checkPushResults` -> {@link PushRetryableError} (5 attempts, 10 s doubling: registry). A
  *   provider's `retryAfterMs` is not used: the registry's backoff already waits longer than a
  *   typical hint.
  *
- * Exactly one send per registration and event across replicas: the job id is deterministic and a
- * finished job is kept a day, so the outbox fast path and the relay adding it again is swallowed.
+ * Duplicate adds are one job: the id is deterministic and a finished job is kept a day, so the
+ * outbox fast path and the relay adding it again (or the event owed again) is swallowed. A crash or
+ * a timeout after the provider accepted the message can still resend it (at least once, not
+ * exactly once); a per-event collapse id lets the device replace the duplicate.
  */
 @Injectable()
 export class PushDelivery {
@@ -74,19 +79,23 @@ export class PushDelivery {
     @Inject(PushProviderHost) private readonly host: Pick<PushProviderHost, "provider" | "covers">,
     @Inject(PushTokenStore) private readonly tokens: Pick<PushTokenStore, "open">,
     @Inject(KernelConfigService) private readonly config: Pick<KernelConfigService, "get">,
+    /** This process's replica id (its own `extension_replica_status` rows). */
+    @Inject(ReplicaStatusStore) private readonly replica: Pick<ReplicaStatusStore, "replicaId">,
     @Inject(KERNEL_LOGGER) private readonly log: KernelLogger,
     @Optional()
     @Inject(PUSH_SEND_TIMEOUT_MS)
     private readonly timeoutMs: () => number = () => PUSH_LIMITS.sendTimeoutMs,
   ) {}
 
-  /** Delivers one job (see the class); `stop` aborts the call when the replica stops. */
-  async deliver(data: PushDeliverData, stop?: AbortSignal): Promise<PushDeliveryOutcome> {
+  /** Delivers one job (see the class). */
+  async deliver(data: PushDeliverData): Promise<PushDeliveryOutcome> {
     const fields = { eventId: data.eventId, registrationId: data.registrationId };
     const row = await this.kdb.db
       .selectFrom("push_registrations")
       .select(["id", "platform", "app_id", "provider", "token_hash", "master_key_id"])
       .select("token_ciphertext")
+      // exact (microseconds): a JS Date would cut it to milliseconds
+      .select(sql<string>`last_seen_at::text`.as("seen"))
       .where("id", "=", data.registrationId)
       .executeTakeFirst();
     if (row === undefined) {
@@ -116,12 +125,12 @@ export class PushDelivery {
       appId: row.app_id,
       token: this.tokens.open(row),
     };
-    const result = await this.send(plugin, provider, target, data.message, stop);
+    const result = await this.send(plugin, provider, target, data.message);
     switch (result.status) {
       case "delivered":
         return "delivered";
       case "unregistered":
-        await this.forget(row.id, row.token_hash);
+        await this.forget(row.id, row.token_hash, row.seen);
         this.log.info("push registration deleted: the provider reports its token dead", {
           ...fields,
           plugin,
@@ -141,21 +150,16 @@ export class PushDelivery {
   }
 
   /**
-   * One provider call for one registration, bounded by the time limit and the replica's stop;
-   * returns its one valid result or throws (an `auth` `PushError` becomes an `auth` result).
+   * One provider call for one registration, bounded by the time limit; returns its one valid result or throws (an `auth` `PushError` becomes an `auth` result).
    */
   private async send(
     plugin: string,
     provider: PushProvider,
     target: PushTarget,
     message: PushMessage,
-    stop: AbortSignal | undefined,
   ): Promise<PushResult> {
     const limit = this.timeoutMs();
     const ac = new AbortController();
-    const onStop = () => ac.abort(new PushRetryableError("push send aborted: the replica stops"));
-    if (stop?.aborted) onStop();
-    else stop?.addEventListener("abort", onStop, { once: true });
     let timer: NodeJS.Timeout | undefined;
     let results: unknown;
     try {
@@ -185,7 +189,6 @@ export class PushDelivery {
       throw new PushRetryableError(`push provider ${plugin} threw an error`);
     } finally {
       clearTimeout(timer);
-      stop?.removeEventListener("abort", onStop);
     }
     const problem = checkPushResults([target], results);
     if (problem !== null) {
@@ -194,13 +197,17 @@ export class PushDelivery {
     return (results as PushResult[])[0] as PushResult;
   }
 
-  /** Deletes the registration while it still holds the token that was reported dead. */
+  /**
+   * Deletes the registration while it still holds the token that was reported dead and was not
+   * posted again after `seen` (its `last_seen_at` as read before the send, exact text).
+   */
   @Transactional()
-  private async forget(id: string, tokenHash: string): Promise<void> {
+  private async forget(id: string, tokenHash: string, seen: string): Promise<void> {
     await this.kdb.db
       .deleteFrom("push_registrations")
       .where("id", "=", id)
       .where("token_hash", "=", tokenHash)
+      .where("last_seen_at", "<=", sql<Date>`${seen}::timestamptz`)
       .execute();
   }
 
@@ -211,8 +218,9 @@ export class PushDelivery {
   }
 
   /**
-   * Whether a live replica (heartbeat within the stale window) reports `plugin` loaded: then this
-   * replica merely lags (a rolling deploy) and a later attempt may land where it is loaded.
+   * Whether another live replica (heartbeat within the stale window) reports `plugin` loaded: then
+   * this replica merely lags (a rolling deploy) and a later attempt may land where it is loaded.
+   * This replica's own row is not counted: the registry already answered for it.
    */
   private async loadedElsewhere(plugin: string): Promise<boolean> {
     const staleSeconds =
@@ -221,6 +229,7 @@ export class PushDelivery {
       .selectFrom("extension_replica_status")
       .select("plugin")
       .where("plugin", "=", plugin)
+      .where("replica_id", "<>", this.replica.replicaId)
       .where("state", "=", "loaded")
       .where("heartbeat_at", ">", sql<Date>`now() - make_interval(secs => ${staleSeconds})`)
       .limit(1)

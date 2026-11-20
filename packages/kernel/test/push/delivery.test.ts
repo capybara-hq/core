@@ -14,6 +14,8 @@ import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import { KernelConfigSchema } from "../../src/config/schema.js";
 import { type KernelSchemaDb, kernelDb } from "../../src/db/kernel-schema.js";
 import { createDb } from "../../src/db/pool.js";
+import { ExtensionHost } from "../../src/extensions/host.js";
+import { ReplicaStatusStore } from "../../src/extensions/sources.js";
 import type { Account } from "../../src/identity/accounts.js";
 import { TransactionHost } from "../../src/infra/database/transaction-host.js";
 import { OutboxService } from "../../src/infra/outbox/outbox.service.js";
@@ -302,5 +304,68 @@ describe("push delivery", () => {
     );
     expect((await queue.getJob(jobId))?.attemptsMade).toBe(1);
     expect(sendsTo(id)).toHaveLength(1);
+  });
+
+  it("retries while another live replica reports the absent provider loaded (a rolling deploy)", async () => {
+    await db
+      .insertInto("extension_replica_status")
+      .values({
+        replica_id: "other-replica",
+        plugin: "push-later",
+        version: "1.0.0",
+        sha256: null,
+        source: "config",
+        state: "loaded",
+        reason: null,
+        detail: null,
+        http_replica_id: null,
+        heartbeat_at: sql<Date>`now()`,
+      })
+      .execute();
+    const id = await register("plain-later", { provider: "push-later" });
+    const { jobId } = await owe(id);
+    // the first attempt fails and waits out its backoff (not promoted here)
+    const retried = await waitFor(
+      async () => {
+        const job = await queue.getJob(jobId);
+        return job !== undefined && (await job.getState()) === "delayed" ? job : null;
+      },
+      10_000,
+      "the first attempt retried",
+    );
+    expect(retried.attemptsMade).toBe(1);
+    expect(retried.failedReason).toContain("not loaded on this replica");
+    expect(await registrationExists(id)).toBe(true);
+    // the other replica is gone: the next attempt drops it
+    await db
+      .deleteFrom("extension_replica_status")
+      .where("replica_id", "=", "other-replica")
+      .execute();
+    const job = await settled(jobId);
+    expect(job.returnvalue).toBe("dropped");
+    expect(await registrationExists(id)).toBe(true);
+  });
+
+  it("drops without a send, keeping the registration, when fake-push is unloaded here (its own status row aside)", async () => {
+    const host = k.app.get(ExtensionHost);
+    const id = await register("plain-unloaded");
+    await host.unload("fake-push");
+    // this replica's own row still claiming `loaded` (a heartbeat racing the unload) must not
+    // count as another replica serving it
+    await db
+      .updateTable("extension_replica_status")
+      .set({ state: "loaded", heartbeat_at: sql<Date>`now()` })
+      .where("replica_id", "=", k.app.get(ReplicaStatusStore).replicaId)
+      .where("plugin", "=", "fake-push")
+      .execute();
+    try {
+      const job = await settled((await owe(id)).jobId);
+      expect(job.returnvalue).toBe("dropped");
+      expect(job.attemptsMade).toBe(1);
+      expect(sendsTo(id)).toHaveLength(0);
+      expect(await registrationExists(id)).toBe(true);
+    } finally {
+      await host.reload("fake-push");
+    }
   });
 });

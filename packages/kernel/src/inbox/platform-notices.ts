@@ -50,7 +50,8 @@ export async function addPushAuthNotice(db: KernelSchemaDb, plugin: string): Pro
     .onConflict((oc) =>
       oc
         .expression(sql`(detail ->> 'plugin')`)
-        .where("kind", "=", "push_auth_failed")
+        // literals, not parameters: PostgreSQL matches the partial index's predicate textually
+        .where("kind", "=", sql.lit("push_auth_failed"))
         .where("dismissed_at", "is", null)
         .doNothing(),
     )

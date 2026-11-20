@@ -192,6 +192,8 @@ export class PlatformInboxService {
       ),
       ...notices.map(
         (n): PlatformInboxItem =>
+          // the same object either way; the branches only narrow `n` so each item type pairs with
+          // its own notice kind (TypeScript does not distribute the union through one literal)
           n.kind === "push_auth_failed"
             ? { type: n.kind, id: n.id, createdAt: n.createdAt, notice: n }
             : { type: n.kind, id: n.id, createdAt: n.createdAt, notice: n },
