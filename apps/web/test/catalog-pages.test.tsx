@@ -2350,6 +2350,25 @@ describe("/admin/plugins/sources: git username and config-managed sources", () =
       expect((sw as HTMLButtonElement).disabled).toBe(false);
     },
   );
+
+  it.each(LOCALES)(
+    "a config-managed row says whether the deployment set its token (%s)",
+    async (locale) => {
+      const s = msgs[locale].catalog.admin.marketplaces;
+      stubApi({
+        "GET /api/v1/admin/marketplaces": () =>
+          json(200, {
+            offline: false,
+            items: [MANAGED, { ...MANAGED, id: "m2", name: "Public", hasToken: false }],
+          }),
+      });
+      await renderRouteWithCache("/admin/plugins/sources", lastStubRoutes(), { locale });
+      expect(await screen.findByText(s.managedTokenSet)).toBeTruthy();
+      expect(screen.getByText(s.managedTokenUnset)).toBeTruthy();
+      // no clear button: the token lives in the deployment config
+      expect(screen.queryByRole("button", { name: s.clearToken })).toBeNull();
+    },
+  );
 });
 
 describe("marketplaces: the two tabs share one head", () => {

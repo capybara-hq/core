@@ -5381,6 +5381,8 @@
         "username": "用户名",
         "usernameHelp": "可选；令牌配合使用的用户名，留空用默认值 x-access-token。常见主机：Bitbucket 为 x-token-auth，GitLab 为 oauth2。",
         "managed": "由部署配置管理",
+        "managedTokenSet": "部署已配置令牌",
+        "managedTokenUnset": "部署未配置令牌",
         "clearToken": "清除令牌",
         "save": "保存",
         "saved": "已保存「{name}」。",

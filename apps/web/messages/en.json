@@ -5393,6 +5393,8 @@
         "username": "Username",
         "usernameHelp": "Optional; the username sent with the token. Empty uses the default x-access-token. Common hosts: x-token-auth for Bitbucket, oauth2 for GitLab.",
         "managed": "Configured by the deployment",
+        "managedTokenSet": "Token set by the deployment",
+        "managedTokenUnset": "No token set by the deployment",
         "clearToken": "Clear token",
         "save": "Save",
         "saved": "Saved \"{name}\".",

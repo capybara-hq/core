@@ -342,9 +342,15 @@ function SourceEditor({
         }
       />
       {managed && (
-        <Text variant="small" tone="muted">
-          {t("managed")}
-        </Text>
+        <>
+          <Text variant="small" tone="muted">
+            {t("managed")}
+          </Text>
+          {/* The token is in the deployment config (marketplaces.tokens), never shown */}
+          <Text variant="small" tone="muted">
+            {source.hasToken ? t("managedTokenSet") : t("managedTokenUnset")}
+          </Text>
+        </>
       )}
       {!locked && (
         <Field label={t("name")}>
