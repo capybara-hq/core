@@ -28,6 +28,11 @@ export interface BootstrapExtraOptions {
   out?: string;
   /** Also compare `npm` entries with the registry. */
   network?: boolean;
+  /**
+   * Only the `git` entries of this marketplace (`root` is its repository); the others are left
+   * as they are. Without it every `git` entry is read from `root`.
+   */
+  marketplace?: string;
 }
 
 export interface BootstrapExtraResult {
@@ -83,7 +88,9 @@ const message = (e: unknown) => {
  * Checks (or, with `write`, pins) the extra bootstrap manifest: it parses; each `git` entry's tree
  * at `commit` packs with the kernel's `packPackageTgz` to `integrity`; with `network`, `npm`
  * entries match the registry. `write` sets each `git` entry's `commit` to HEAD, its `version` from
- * `plugin.json` and its `integrity`, and writes the packs into `out`.
+ * `plugin.json` and its `integrity`, and writes the packs into `out`. Every `git` entry is read
+ * from `root`, so a manifest whose entries come from several marketplaces (repositories) is
+ * checked once per repository with `marketplace`.
  */
 export async function syncBootstrapExtra(
   opts: BootstrapExtraOptions,
@@ -113,7 +120,17 @@ export async function syncBootstrapExtra(
       return result;
     }
   }
-  const git_ = manifest.plugins.filter((e): e is BootstrapGitEntry => e.source === "git");
+  if (
+    opts.marketplace !== undefined &&
+    !manifest.marketplaces.some((m) => m.name === opts.marketplace)
+  ) {
+    add("bootstrap-extra-invalid", `no marketplace ${opts.marketplace} in the manifest`);
+    return result;
+  }
+  const git_ = manifest.plugins.filter(
+    (e): e is BootstrapGitEntry =>
+      e.source === "git" && (opts.marketplace === undefined || e.marketplace === opts.marketplace),
+  );
   for (const e of git_) {
     const commit = head ?? e.commit;
     let files: Map<string, Uint8Array>;

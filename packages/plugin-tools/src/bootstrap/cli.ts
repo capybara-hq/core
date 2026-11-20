@@ -5,7 +5,7 @@ import { errorsOf } from "../check/source.js";
 import { BOOTSTRAP_EXTRA_FILE, syncBootstrapExtra } from "./check.js";
 
 export const BOOTSTRAP_USAGE =
-  "capybara-plugin bootstrap --check|--write [--file <path>] [--root <dir>] [--out <dir>] [--network]";
+  "capybara-plugin bootstrap --check|--write [--file <path>] [--root <dir>] [--marketplace <name>] [--out <dir>] [--network]";
 
 /**
  * `capybara-plugin bootstrap`: checks (`--check`) or pins (`--write`) a distribution's extra
@@ -13,6 +13,9 @@ export const BOOTSTRAP_USAGE =
  *
  * - `--file <path>`: the manifest, relative to the root (default `bootstrap.extra.json`);
  * - `--root <dir>`: the local clone `git` entries are read from (default: the current directory);
+ *   every `git` entry is read from it, so entries of several marketplaces (repositories) are
+ *   checked once per repository with `--marketplace`;
+ * - `--marketplace <name>`: only the `git` entries of that marketplace (the others untouched);
  * - `--out <dir>` (with `--write`): where the packs `<name>-<version>.tgz` are written, for the
  *   offline directory;
  * - `--network` (with `--check`): `npm` entries must match the registry tarball.
@@ -30,6 +33,7 @@ export async function bootstrapCommand(args: string[], cwd: string): Promise<num
       file: { type: "string" },
       root: { type: "string" },
       out: { type: "string" },
+      marketplace: { type: "string" },
       network: { type: "boolean", default: false },
     },
   });
@@ -53,6 +57,7 @@ export async function bootstrapCommand(args: string[], cwd: string): Promise<num
       file,
       write: values.write,
       network: values.network,
+      ...(values.marketplace !== undefined && { marketplace: values.marketplace }),
       ...(values.out !== undefined && { out: resolve(cwd, values.out) }),
     });
     for (const f of r.findings) console.error(formatFinding(f, root));

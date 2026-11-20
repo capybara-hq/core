@@ -181,6 +181,56 @@ describe("bootstrap git entries: root paths, parity and refusals", () => {
     }
   });
 
+  it("--marketplace reads only that marketplace's git entries from the root", async () => {
+    const r = repoWith({ ".capybara-plugin/plugin.json": PLUGIN_JSON });
+    try {
+      const f = join(r.dir, "bootstrap.extra.json");
+      const other = entry({ name: "elsewhere", marketplace: "other", path: "./not/here" });
+      writeFileSync(
+        f,
+        JSON.stringify({
+          schemaVersion: 1,
+          marketplaces: [
+            { name: "mine", url: "https://git.example.com/o/r.git" },
+            { name: "other", url: "https://git.example.com/o/other.git" },
+          ],
+          plugins: [entry({ path: "." }), other],
+        }),
+      );
+      // without it, the other repository's entry is read from this root too: not found
+      const all = await syncBootstrapExtra({ root: r.dir, file: f, write: false });
+      expect(all.findings.map((x) => x.message)).toEqual(
+        expect.arrayContaining([expect.stringContaining("elsewhere: cannot read ./not/here")]),
+      );
+      const w = await syncBootstrapExtra({
+        root: r.dir,
+        file: f,
+        write: true,
+        marketplace: "mine",
+      });
+      expect(w.findings).toEqual([]);
+      expect(w.updated).toEqual(["demo"]);
+      const pinned = JSON.parse(readFileSync(f, "utf8")).plugins as Record<string, string>[];
+      expect(pinned[0]).toMatchObject({ commit: r.head });
+      expect(pinned[1]).toEqual(other);
+      expect(
+        (await syncBootstrapExtra({ root: r.dir, file: f, write: false, marketplace: "mine" }))
+          .findings,
+      ).toEqual([]);
+      const unknown = await syncBootstrapExtra({
+        root: r.dir,
+        file: f,
+        write: false,
+        marketplace: "nope",
+      });
+      expect(unknown.findings.map((x) => x.message)).toEqual([
+        "no marketplace nope in the manifest",
+      ]);
+    } finally {
+      rmSync(r.dir, { recursive: true, force: true });
+    }
+  });
+
   it("computes the integrity the kernel's git reader and packer give (mapping parity)", async () => {
     const srv = await startFakeGitServer();
     const clone = mkdtempSync(join(tmpdir(), "bootstrap-extra-clone-"));
