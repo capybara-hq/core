@@ -237,7 +237,7 @@ describe("ApprovalCard (design ApprovalBlock)", () => {
     renderPage(<ApprovalCard orgId="o1" item={item()} info={INFO} />, { locale: "zh" });
     await userEvent.setup().click(await screen.findByRole("button", { name: label }));
     expect(bodyOf(calls.find((c) => c.method === "POST"))).toEqual({ decision: "approve", scope });
-    // the viewer is a person too: "你" beside their avatar, the initial from their own name
+    // the viewer is a person too: the localized "You" beside their avatar, the initial from their own name
     const line = await vi.waitFor(() => {
       const l = document.querySelector('[data-part="tool-line"]');
       expect(l?.textContent).toMatch(/你 批准了 Fixture \[delete_item\]/);
@@ -738,7 +738,7 @@ describe("QuestionCard (design QuestionBlock)", () => {
       locale: "zh",
     });
     expect(state(zhSkip.container)).toBe("skipped");
-    // the viewer is drawn as a person: their initial (G) beside "你"
+    // the viewer is drawn as a person: their initial (G) beside the localized "You"
     expect(zhSkip.container.textContent).toContain("已跳过：直接回复了消息 · G你");
     cleanup();
     const enSkip = renderPage(<QuestionCard orgId="o1" item={done("skipped", ME.account.id)} />, {

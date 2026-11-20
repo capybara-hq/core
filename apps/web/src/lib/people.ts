@@ -43,8 +43,8 @@ export function usePersonLookup(people?: PeopleMap): (id: string) => PersonRef |
 }
 
 /**
- * The viewer as every person surface draws them (one rule): the label `label` (default "You" /
- * 你) beside their own avatar from the session, the initial from their real display name.
+ * The viewer as every person surface draws them (one rule): the label `label` (default: the localized
+ * "You") beside their own avatar from the session, the initial from their real display name.
  */
 export function useViewerPerson(label?: string): PersonRef {
   const { me } = useSession();

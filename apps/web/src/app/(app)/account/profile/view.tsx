@@ -50,7 +50,7 @@ const profileKeys = (qc: QueryClient) => [
 ];
 
 /**
- * The words for an identity source key (`lark:t1`): its sign-in source's label (飞书 / Lark) when
+ * The words for an identity source key (`lark:t1`): its sign-in source's label (the localized Lark name) when
  * the deployment offers it, else the plugin name; never the tenant.
  */
 function sourceLabel(source: string, sources: AuthSource[] | undefined, locale: string): string {
