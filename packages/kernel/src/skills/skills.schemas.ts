@@ -2,6 +2,7 @@ import { hasControlChars, MEDIA_NAME_MAX_CHARS } from "@capybara-hq/plugin-sdk";
 import { z } from "zod";
 import { SKILL_PACKAGE_UPLOAD_MAX_BYTES } from "../conversations/attachments.service.js";
 import type { RouteSchemas } from "../platform/route-schemas.js";
+
 /** `POST /skills/uploads`: registers a skill package upload (a presigned form). */
 export const SkillUploadBody = z
   .object({

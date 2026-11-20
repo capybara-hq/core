@@ -507,18 +507,27 @@ export class AgentsOperations implements OnModuleInit {
             );
             avatar = { kind: "upload", uploadId: id };
           }
-          const profile = await this.profiles.update(
-            ctx.orgId,
-            input.agentId,
-            ctx.actorAccountId,
-            {
-              ...(avatar !== undefined && { avatar }),
-              ...(input.quickActions !== undefined && { quickActions: input.quickActions }),
-            },
-            current.profile.updatedAt,
-            undefined,
-            viaAgent("agents.update-profile", ctx),
-          );
+          const stored = avatar?.kind === "upload" ? avatar.uploadId : null;
+          const profile = await this.profiles
+            .update(
+              ctx.orgId,
+              input.agentId,
+              ctx.actorAccountId,
+              {
+                ...(avatar !== undefined && { avatar }),
+                ...(input.quickActions !== undefined && { quickActions: input.quickActions }),
+              },
+              current.profile.updatedAt,
+              undefined,
+              viaAgent("agents.update-profile", ctx),
+            )
+            .catch(async (e: unknown) => {
+              // the stored image no profile took: out of the cap, cleaned up
+              if (stored !== null) {
+                await this.attachments.discardUpload(ctx.orgId, ctx.actorAccountId, stored);
+              }
+              throw e;
+            });
           return { id: input.agentId, profile };
         },
       }),

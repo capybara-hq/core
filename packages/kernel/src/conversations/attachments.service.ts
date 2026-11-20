@@ -434,6 +434,26 @@ export class AttachmentsService {
     return { id };
   }
 
+  /**
+   * Gives up an upload {@link createFromBytes} stored when the write meant to take it failed: a
+   * `ready` upload of the account no agent uses becomes `deleting`, expiring now, so it no longer
+   * counts toward the cap and the cleanup job deletes it with its object. One already taken (a
+   * consumed skill package, an avatar bound to an agent) is left alone.
+   */
+  @Transactional()
+  async discardUpload(orgId: string, accountId: string, id: string): Promise<void> {
+    await this.db.db
+      .updateTable("attachments")
+      .set({ status: "deleting", expires_at: sql<Date>`now()` })
+      .where("id", "=", id)
+      .where("org_id", "=", orgId)
+      .where("account_id", "=", accountId)
+      .where("purpose", "in", ["agent-avatar", "skill-package"])
+      .where("status", "=", "ready")
+      .where("agent_id", "is", null)
+      .execute();
+  }
+
   /** The last step of {@link createFromBytes}: the stored object's size and etag, `ready`. */
   @Transactional()
   private async markStored(id: string, size: number, etag: string | null): Promise<void> {

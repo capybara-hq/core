@@ -148,6 +148,14 @@ export class AgentSkillsOperations implements OnModuleInit {
     await this.agentSkills.assertOwner(ctx.orgId, ctx.agentId, ctx.actorAccountId);
   }
 
+  /** The refusals of `agents.upload-skill`: a sub-agent conversation, then an actor not the owner. */
+  private async uploadCheck(agentId: string, ctx: OperationContext): Promise<void> {
+    if ((await rootConversationOf(this.db.db, ctx.conversationId)) !== ctx.conversationId) {
+      throw subagentRefusal();
+    }
+    await this.agentSkills.assertOwner(ctx.orgId, agentId, ctx.actorAccountId);
+  }
+
   /**
    * The refusals of sharing read before the card: a sub-agent conversation, an actor who is not
    * the agent's current owner, a skill that is not one of the agent's own.
@@ -358,6 +366,10 @@ export class AgentSkillsOperations implements OnModuleInit {
         confirmFor: (i, ctx) => this.registerClass(ctx, i.agentId),
         errors: [
           {
+            code: "skill.subagent_register",
+            next: "Hand the skill package back to your parent agent; only the agent the person talks with uploads skills.",
+          },
+          {
             code: "forbidden",
             next: "Only the agent's owner can add or update its skills; tell the person, and the owner can upload the package.",
           },
@@ -390,8 +402,8 @@ export class AgentSkillsOperations implements OnModuleInit {
             next: "File storage is unavailable; try again later, or tell the person to contact the super admin.",
           },
         ],
-        precheck: (i, ctx) =>
-          precheckBy(() => this.agentSkills.assertOwner(ctx.orgId, i.agentId, ctx.actorAccountId)),
+        // as agents.register-skill: only the agent the person talks with writes skills
+        precheck: (i, ctx) => precheckBy(() => this.uploadCheck(i.agentId, ctx)),
         fileRef: (i) => ({
           ref: i.file,
           limits: {
@@ -416,6 +428,7 @@ export class AgentSkillsOperations implements OnModuleInit {
         run: async (input, ctx) => {
           const f = ctx.file;
           if (f === undefined) throw new Error("agents.upload-skill: the file is missing");
+          await this.uploadCheck(input.agentId, ctx);
           // the route's register step on the bytes the person confirmed (no upload row needed)
           const o = await this.agentSkills.register(
             {

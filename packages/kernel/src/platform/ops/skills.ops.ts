@@ -138,14 +138,20 @@ export class SkillsOperations implements OnModuleInit {
             "skill-package",
             { name: f.name, contentType: f.contentType, bytes: f.bytes },
           );
-          const r = await this.skills.upload(
-            ctx.orgId,
-            ctx.actorAccountId,
-            id,
-            undefined,
-            input.shareable,
-            viaAgent("skills.create-from-file", ctx),
-          );
+          const r = await this.skills
+            .upload(
+              ctx.orgId,
+              ctx.actorAccountId,
+              id,
+              undefined,
+              input.shareable,
+              viaAgent("skills.create-from-file", ctx),
+            )
+            .catch(async (e: unknown) => {
+              // the stored package no version took: out of the cap, cleaned up
+              await this.attachments.discardUpload(ctx.orgId, ctx.actorAccountId, id);
+              throw e;
+            });
           return { skill: r.skill, version: r.version, created: r.created };
         },
       }),

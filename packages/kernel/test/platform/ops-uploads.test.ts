@@ -1,6 +1,7 @@
 import { createHash, randomUUID } from "node:crypto";
 import { fileURLToPath } from "node:url";
 import { startTestPostgres, startTestRedis, type TestContainer } from "@capybara-hq/testing";
+import { sql } from "kysely";
 import sharp from "sharp";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { EventLog } from "../../src/conversations/event-log.js";
@@ -353,6 +354,48 @@ describe("the other upload operations on fixture packages", () => {
       "triage",
     );
     await viaAgent("skill.created", "agents.upload-skill");
+  });
+
+  it("agents.upload-skill is refused in a sub-agent conversation, as agents.register-skill", async () => {
+    const parent = await createConv(root, orgId, agentId);
+    const child = await createConv(root, orgId, agentId);
+    await db
+      .updateTable("conversations")
+      .set({ parent_conversation_id: parent })
+      .where("id", "=", child)
+      .execute();
+    const o = op("agents.upload-skill");
+    const input = o.input.parse({ agentId, file: { fileId: randomUUID() } });
+    const ctx = { ...ctxOf(fileOf("x.zip", "application/zip", skillZip("x"))) };
+    expect(await o.precheck?.(input, { ...ctx, conversationId: child })).toMatchObject({
+      ok: false,
+      code: "skill.subagent_register",
+    });
+    expect(await o.precheck?.(input, { ...ctx, conversationId: parent })).toEqual({ ok: true });
+  });
+
+  it("skills.create-from-file gives up the stored package when the write fails", async () => {
+    const before = await db
+      .selectFrom("attachments")
+      .select("id")
+      .where("purpose", "=", "skill-package")
+      .execute();
+    const bad = new Uint8Array(makeZip([{ name: "README.md", data: "no SKILL.md here\n" }]));
+    await expect(
+      run(
+        "skills.create-from-file",
+        { file: { fileId: randomUUID() } },
+        fileOf("bad.zip", "application/zip", bad),
+      ),
+    ).rejects.toMatchObject({ code: "skill.invalid_package" });
+    const rows = await db
+      .selectFrom("attachments")
+      .select(["status", sql<boolean>`expires_at <= now()`.as("expired")])
+      .where("purpose", "=", "skill-package")
+      .where("id", "not in", before.length > 0 ? before.map((r) => r.id) : [randomUUID()])
+      .execute();
+    // out of the cap (not ready) and due for the cleanup job
+    expect(rows).toEqual([{ status: "deleting", expired: true }]);
   });
 
   it("plugins.upload stages an org upload; confirming it stays with the person", async () => {
