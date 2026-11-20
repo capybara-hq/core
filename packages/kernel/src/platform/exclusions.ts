@@ -458,8 +458,8 @@ export const PLATFORM_EXCLUSIONS: readonly {
   },
   {
     route: "POST /api/v1/me/avatar/uploads",
-    category: "transport",
-    reason: "Creates a presigned avatar upload",
+    category: "human-only",
+    reason: "The person's own avatar: only the person sets it, as with PATCH /me/profile",
   },
   {
     route: "PUT /api/v1/me/password",
