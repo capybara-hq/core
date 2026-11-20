@@ -27,6 +27,7 @@ import {
 } from "../extensions/bootstrap.js";
 import { BootstrapDefaultsService } from "../extensions/bootstrap-defaults.js";
 import {
+  BootstrapExtraMismatchError,
   type LoadedBootstrapManifest,
   loadBootstrapManifest,
   missingExtraManifestMessage,
@@ -257,10 +258,12 @@ export class KernelLifecycle
         { marketplaces: unmanaged },
       );
     } else {
-      // The extra manifest's marketplaces (an empty list demotes the config-managed rows)
+      // The extra manifest's marketplaces (an empty list demotes the config-managed rows). Without
+      // an extra manifest nothing is synced or demoted: the check above may have run before
+      // another replica's sync committed (ruling R16)
       await syncExtraMarketplaces(
         (m) => this.marketplaces.syncExtraFromConfig(m),
-        opts.bootstrap !== undefined ? ((await this.manifest()).extra?.marketplaces ?? []) : [],
+        opts.bootstrap !== undefined ? (await this.manifest()).extra?.marketplaces : undefined,
         this.log,
       );
     }
@@ -423,6 +426,14 @@ export class KernelLifecycle
       });
       return false;
     } catch (e) {
+      // The step's own check under the lock (ruling R16): another replica's sync committed after
+      // this start's check. Nothing was written; the start goes on like an R14 mismatch
+      if (e instanceof BootstrapExtraMismatchError) {
+        this.log.error(`${e.message}. The bootstrap step is skipped in this start`, {
+          marketplaces: e.marketplaces,
+        });
+        return false;
+      }
       if (e instanceof BootstrapFailedError && !e.requiredFailed) {
         this.bootstrapCarry = e.results;
         this.bootstrapPackages = e.packages;

@@ -126,6 +126,19 @@ export function missingExtraManifestMessage(names: readonly string[]): string {
   return `this service has no extra bootstrap manifest (bootstrap.extraManifest, env CAPYBARA_BOOTSTRAP__EXTRA_MANIFEST), but the deployment has marketplaces an extra manifest manages (${names.join(", ")}): every service (init, api, worker, gateway) must use the same extra manifest. To remove a distribution, point bootstrap.extraManifest at a file whose marketplaces and plugins lists are empty`;
 }
 
+/**
+ * The bootstrap step refused under its lock: the manifest has no extra manifest while config-managed
+ * marketplaces exist (`marketplaces`; ruling R16). A replica that checked before another replica's
+ * sync committed gets here instead of stripping the extra entries' required / builtin. Nothing was
+ * written.
+ */
+export class BootstrapExtraMismatchError extends Error {
+  constructor(readonly marketplaces: readonly string[]) {
+    super(missingExtraManifestMessage(marketplaces));
+    this.name = "BootstrapExtraMismatchError";
+  }
+}
+
 /** Postgres deadlock_detected / serialization_failure: replicas starting together may collide. */
 const isContention = (e: unknown): boolean => {
   const codeOf = (x: unknown) => (x as { code?: unknown } | null)?.code;
@@ -140,8 +153,11 @@ const isContention = (e: unknown): boolean => {
  * names left the extra manifest) are logged as a warning.
  */
 export async function syncExtraMarketplaces(
-  sync: (marketplaces: readonly BootstrapExtraMarketplace[]) => Promise<readonly string[]>,
-  marketplaces: readonly BootstrapExtraMarketplace[],
+  sync: (
+    marketplaces: readonly BootstrapExtraMarketplace[] | undefined,
+  ) => Promise<readonly string[]>,
+  /** The extra manifest's marketplaces; undefined: no extra manifest (nothing is demoted). */
+  marketplaces: readonly BootstrapExtraMarketplace[] | undefined,
   log: Pick<Logger, "warn">,
 ): Promise<void> {
   for (let attempt = 1; ; attempt++) {

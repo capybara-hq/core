@@ -115,6 +115,7 @@ export {
   resolveBootstrapPackages,
 } from "./extensions/bootstrap.js";
 export {
+  BootstrapExtraMismatchError,
   loadBootstrapManifest,
   type MergedBootstrapManifest,
   mergeBootstrapManifests,

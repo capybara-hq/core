@@ -48,10 +48,11 @@ import {
 import { PackageTgzError, packPackageTgz, unpackPackageTgz } from "../packages/tgz.js";
 import { ExtensionAdminOps } from "./admin-ops.js";
 import { writeSnapshot } from "./approvals.js";
-import type {
-  BootstrapGitRunEntry,
-  MergedBootstrapEntry,
-  MergedBootstrapManifest,
+import {
+  BootstrapExtraMismatchError,
+  type BootstrapGitRunEntry,
+  type MergedBootstrapEntry,
+  type MergedBootstrapManifest,
 } from "./bootstrap-extra.js";
 import { ExtensionInstalls } from "./installs.js";
 import { PluginApproveLock } from "./locks.js";
@@ -541,7 +542,10 @@ export class BootstrapService {
    * (also when another replica finished it while this one waited for the lock) returns the
    * recorded result without doing anything. `carry`: the results of an earlier, failed run in the
    * same start ({@link BootstrapFailedError.results}); an entry it installed, upgraded or imported
-   * keeps that action instead of `kept` in this run's record.
+   * keeps that action instead of `kept` in this run's record. A manifest without an extra manifest
+   * while config-managed marketplaces exist throws {@link BootstrapExtraMismatchError}, checked
+   * under the lock before anything is obtained or written (ruling R16): the caller's own check may
+   * have run before another replica's sync committed.
    */
   async run(o: {
     manifest: MergedBootstrapManifest;
@@ -579,6 +583,10 @@ export class BootstrapService {
       // Another replica may have finished it while this one waited for the lock
       const done = await recorded();
       if (done) return done;
+      if (o.manifest.extra === undefined) {
+        const managed = await this.configManagedMarketplaces();
+        if (managed.length > 0) throw new BootstrapExtraMismatchError(managed);
+      }
       const deferBuiltin = o.deferBuiltin === true;
       const isDeferred = (e: MergedBootstrapEntry) => deferBuiltin && e.builtin === true;
       // Every package is obtained and checked before the first write (a deferred entry's by the

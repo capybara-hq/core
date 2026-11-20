@@ -1,6 +1,7 @@
 import { resolve } from "node:path";
 import {
   type BootstrapEntryResult,
+  BootstrapExtraMismatchError,
   BootstrapFailedError,
   bootstrapManifestSha256,
   type KernelLogger,
@@ -109,19 +110,25 @@ export async function runBootstrap(
         sha = bootstrapManifestSha256(manifest);
         if (carry === undefined && (await cli.bootstrap.isDone(sha))) return "done" as const;
         const dir = bootstrapDirOf(cli.config, opts.dir);
-        return (
-          await cli.bootstrap.run({
-            // git entries are read from their marketplace (no marketplace row needed)
-            manifest,
-            dir,
-            imports: cli.imports,
-            ...(carry !== undefined && { carry }),
-            // What the first pass obtained is not downloaded again
-            ...(packages !== undefined && { packages }),
-            // The first pass opens no object store a builtin entry's skills need: the second does
-            deferBuiltin: carry === undefined,
-          })
-        ).results;
+        try {
+          return (
+            await cli.bootstrap.run({
+              // git entries are read from their marketplace (no marketplace row needed)
+              manifest,
+              dir,
+              imports: cli.imports,
+              ...(carry !== undefined && { carry }),
+              // What the first pass obtained is not downloaded again
+              ...(packages !== undefined && { packages }),
+              // The first pass opens no object store a builtin entry's skills need: the second does
+              deferBuiltin: carry === undefined,
+            })
+          ).results;
+        } catch (e) {
+          // The step's own check under the lock: a kernel with the extra manifest synced after ours
+          if (e instanceof BootstrapExtraMismatchError) return { mismatch: [...e.marketplaces] };
+          throw e;
+        }
       },
     );
   try {

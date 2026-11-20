@@ -314,6 +314,14 @@ describe("syncExtraFromConfig", () => {
     ).toBe(204);
   });
 
+  it("a process without an extra manifest (undefined) neither writes nor demotes managed rows", async () => {
+    // Another replica with the extra manifest synced; this one read no managed row before that
+    // commit and syncs now: demoting would undo the other replica's rows (ruling R16)
+    await svc.syncExtraFromConfig([{ name: "acme", url: srv.url("acme-race") }]);
+    expect(await svc.syncExtraFromConfig(undefined)).toEqual([]);
+    expect(await view("config:acme")).toMatchObject({ managed: "config" });
+  });
+
   it("re-promoting a demoted row drops the admin token from secrets", async () => {
     const entry = { name: "acme", url: srv.url("acme-again") };
     await svc.syncExtraFromConfig([entry]);

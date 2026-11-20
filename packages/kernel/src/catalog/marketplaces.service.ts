@@ -778,10 +778,16 @@ export class MarketplacesService {
    * was demoted is deleted when it becomes managed again). A managed row whose name left the
    * file is kept as an ordinary custom marketplace (`managed = NULL`, so no token). Called by
    * every replica at start; idempotent. An invalid entry -> {@link ConfigError}, nothing written.
-   * Returns the names of the rows it demoted.
+   * `undefined` (this process has no extra manifest) writes nothing and demotes nothing: such a
+   * process may have read no managed row before another replica's sync committed (ruling R16), so
+   * only a configured extra manifest (an empty one included) removes a marketplace. Returns the
+   * names of the rows it demoted.
    */
   @Transactional()
-  async syncExtraFromConfig(marketplaces: readonly BootstrapExtraMarketplace[]): Promise<string[]> {
+  async syncExtraFromConfig(
+    marketplaces: readonly BootstrapExtraMarketplace[] | undefined,
+  ): Promise<string[]> {
+    if (marketplaces === undefined) return [];
     const rows = marketplaces
       .map((m) => this.extraMarketplaceRow(m))
       // one lock order for every replica

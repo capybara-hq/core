@@ -4,19 +4,28 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { BootstrapExtraManifest } from "@capybara-hq/plugin-sdk";
 import { startTestPostgres, startTestRedis, type TestContainer } from "@capybara-hq/testing";
-import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
+import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
+import { PluginImport } from "../../src/catalog/plugin-import.js";
 import type { KernelConfig } from "../../src/config/schema.js";
 import { type KernelSchemaDb, kernelDb } from "../../src/db/kernel-schema.js";
 import { migrate } from "../../src/db/migrator.js";
 import { createDb } from "../../src/db/pool.js";
-import { bootstrapManifestSha256 } from "../../src/extensions/bootstrap.js";
+import { BootstrapService, bootstrapManifestSha256 } from "../../src/extensions/bootstrap.js";
+import { BootstrapExtraMismatchError } from "../../src/extensions/bootstrap-extra.js";
 import { SettingsService } from "../../src/identity/settings.js";
 import { KERNEL_MIGRATIONS_DIR } from "../../src/kernel.js";
 import { createLogger, type KernelLogger } from "../../src/log.js";
 import { truncateTables } from "../helpers/db.js";
 import { accountsFor } from "../helpers/identity.js";
 import { bootstrapFixture, packFake, pluginTgz } from "../helpers/plugin-packages.js";
-import { buildKernel, PW, runConfig, session, type TestKernel } from "../helpers/runs.js";
+import {
+  type BuiltKernel,
+  buildKernel,
+  PW,
+  runConfig,
+  session,
+  type TestKernel,
+} from "../helpers/runs.js";
 
 /**
  * The extra bootstrap manifest's `defaultTheme` (bootstrap extra manifest spec §7): every start
@@ -69,6 +78,17 @@ async function boot(
   /** The extra manifest; null: none configured. */
   extra: string | null = extraManifest,
 ): Promise<TestKernel> {
+  const k = await build(overrides, logger, extra);
+  await k.start();
+  return k;
+}
+
+/** A kernel built like {@link boot}'s, not started. */
+async function build(
+  overrides: Record<string, unknown>,
+  logger: KernelLogger,
+  extra: string | null,
+): Promise<BuiltKernel> {
   const config: KernelConfig = runConfig(
     { pg: pgc.url, redis: rd.url },
     {
@@ -85,7 +105,6 @@ async function boot(
     bootstrapManifest: fx.manifest,
   });
   kernels.push(k);
-  await k.start();
   return k;
 }
 
@@ -428,5 +447,35 @@ describe("an extra manifest that dropped the distribution", () => {
       lines.find((l) => l.level === "warn" && l.msg.includes("left the extra bootstrap manifest"))
         ?.fields,
     ).toMatchObject({ marketplaces: ["dist"] });
+  });
+});
+
+describe("a replica without the extra manifest that raced one with it (ruling R16)", () => {
+  it("read no managed marketplace before the other's sync committed: no demotion, no run, flags kept", async () => {
+    await distributed();
+    const before = await runs();
+    const { logger, lines } = recordingLogger();
+    const k = await build(OBJECT_STORE_CONFIG, logger, null);
+    const svc = k.app.get(BootstrapService);
+    // Its check before the sync ran before the other replica's sync committed: it saw no row
+    vi.spyOn(svc, "configManagedMarketplaces").mockResolvedValueOnce([]);
+    await k.start();
+    expect(k.port).toBeGreaterThan(0);
+    expect(await marketplaceRows()).toEqual([{ id: "config:dist", managed: "config" }]);
+    expect(await runs()).toEqual(before);
+    expect(await builtinItems()).toEqual(
+      expect.arrayContaining([{ name: "brand", builtin: true }]),
+    );
+    expect(await requiredInstall("fake-bootstrap-a")).toBe(true);
+    const err = lines.find(
+      (l) => l.level === "error" && l.msg.includes("CAPYBARA_BOOTSTRAP__EXTRA_MANIFEST"),
+    );
+    expect(err?.fields).toMatchObject({ marketplaces: ["dist"] });
+    // The step itself refuses once it holds the lock (the CLI goes through it too)
+    await expect(
+      svc.run({ manifest: fx.manifest, dir: fx.dir, imports: k.app.get(PluginImport) }),
+    ).rejects.toBeInstanceOf(BootstrapExtraMismatchError);
+    expect(await runs()).toEqual(before);
+    expect(await requiredInstall("fake-bootstrap-a")).toBe(true);
   });
 });
