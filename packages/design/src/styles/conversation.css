@@ -1104,6 +1104,57 @@ button.cb-tool-toggle:focus-visible {
   line-clamp: 3;
   overflow: hidden;
 }
+/* The requester's reason (§6.16.11 "Details inside the card"): a quote, not a box. */
+.cb-hcard-reason {
+  display: flex;
+  flex-direction: column;
+  gap: var(--cb-space-1);
+  min-width: 0;
+  margin: 0;
+  padding-left: var(--cb-space-3);
+  border-left: 2px solid var(--cb-line-strong);
+}
+.cb-hcard-reason-text {
+  margin: 0;
+  color: var(--cb-ink);
+  font-family: var(--cb-font-prose);
+  font-size: var(--cb-type-prose-size);
+  line-height: var(--cb-type-prose-line);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+.cb-hcard-facts {
+  display: grid;
+  grid-template-columns: max-content minmax(0, 1fr);
+  column-gap: var(--cb-space-3);
+  row-gap: var(--cb-space-1);
+  margin: 0;
+  font-size: var(--cb-type-small-size);
+  line-height: var(--cb-type-small-line);
+}
+.cb-hcard-fact {
+  display: contents;
+}
+.cb-hcard-fact-label {
+  grid-column: 1;
+  color: var(--cb-faint);
+}
+.cb-hcard-fact-value {
+  grid-column: 2;
+  margin: 0;
+  color: var(--cb-ink);
+  font-family: var(--cb-font);
+  font-size: inherit;
+  overflow-wrap: anywhere;
+}
+.cb-hcard-root {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+.cb-hcard-root-path {
+  font-family: var(--cb-font);
+  font-size: inherit;
+}
 .cb-hcard-file {
   display: flex;
   align-items: center;
