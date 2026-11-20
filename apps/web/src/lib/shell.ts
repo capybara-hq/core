@@ -193,6 +193,7 @@ export function shellCapability<T extends object>(key: string): T | undefined {
  * keep in step. Capability keys are `name@major`; a rejected call carries `{ code: ShellCallError }`.
  */
 export const SHELL_CAPABILITY_KEYS = {
+  chrome: "chrome@1",
   device: "device@1",
   notify: "notify@1",
   openExternal: "openExternal@1",
@@ -269,6 +270,35 @@ export interface OpenExternalCapabilityV1 {
 /** `signIn@1`: sign in through the system browser (desktop client spec §6.5). */
 export interface SignInCapabilityV1 {
   start(): Promise<"signedIn" | "cancelled">;
+}
+
+/**
+ * The page's main color tokens (the computed `--cb-bg`, `--cb-panel`, `--cb-ink`, `--cb-muted`,
+ * `--cb-line`, `--cb-accent`, `--cb-on-accent`), each a CSS hex or `rgb()` / `rgba()` color. The
+ * shell validates them and uses them only as custom properties of its own pages, never as markup.
+ */
+export interface ShellChromeTokens {
+  bg: string;
+  panel: string;
+  ink: string;
+  muted: string;
+  line: string;
+  accent: string;
+  onAccent: string;
+}
+
+/**
+ * `chrome@1` (mobile layout spec §9.2): the native chrome (window background, title bar, the
+ * shell's own pages) follows the page's theme. `tokens` is sent only when all seven are colors;
+ * `singleScheme` is true under a UI theme with one scheme (no light / dark toggle on either side).
+ */
+export interface ChromeCapabilityV1 {
+  setAppearance(input: {
+    scheme: "light" | "dark";
+    background: string;
+    tokens?: ShellChromeTokens;
+    singleScheme?: boolean;
+  }): Promise<void>;
 }
 
 export const useDeviceCapability = () =>
