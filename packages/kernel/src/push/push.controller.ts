@@ -70,9 +70,8 @@ export class PushController {
     @CurrentPrincipal() principal: Principal,
     @ZParam(PushRegistrationParamsDto) { id }: z.infer<typeof PushRegistrationParams>,
   ): Promise<void> {
-    const p = requireUser(principal);
-    sessionOf(p);
-    await this.registrations.remove(p.account.id, id);
+    // @SessionOnly() already refused personal tokens; removal needs no session id
+    await this.registrations.remove(requireUser(principal).account.id, id);
   }
 
   @Get("push-preferences")

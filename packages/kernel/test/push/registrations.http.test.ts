@@ -349,6 +349,46 @@ describe("POST /api/v1/me/push-registrations", () => {
   });
 });
 
+describe("eviction under concurrent locks", () => {
+  it("skips a row another transaction holds instead of waiting for it", async () => {
+    const req = await signIn("alice");
+    const ids: string[] = [];
+    for (let i = 0; i < 20; i++) ids.push(await register(req, newToken()));
+    const held = ids[3] as string;
+    await db
+      .updateTable("push_registrations")
+      .set({ last_seen_at: sql<Date>`now() - interval '10 days'` })
+      .where("id", "=", held)
+      .execute();
+    // another transaction (a revoke deleting it, say) holds the least recently seen row
+    let release!: () => void;
+    let locked!: () => void;
+    const isLocked = new Promise<void>((r) => {
+      locked = r;
+    });
+    const holder = raw.transaction().execute(async (t) => {
+      await sql`select id from capybara.push_registrations where id = ${held} for update`.execute(
+        t,
+      );
+      locked();
+      await new Promise<void>((r) => {
+        release = r;
+      });
+    });
+    await isLocked;
+    try {
+      // answers without waiting for the holder; the held row is not evicted and not counted
+      await register(req, newToken());
+    } finally {
+      release();
+      await holder;
+    }
+    const left = await idsOf(alice.id);
+    expect(left).toContain(held);
+    expect(left).toHaveLength(21);
+  });
+});
+
 describe("DELETE /api/v1/me/push-registrations/:id", () => {
   it("another account's id is 404 push.registration_not_found; the owner's is 204 and audited", async () => {
     const a = await signIn("alice");

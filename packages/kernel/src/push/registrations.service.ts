@@ -63,8 +63,11 @@ export class PushRegistrationsService {
         "No enabled push provider of that name covers this app id",
       );
     }
-    // The account row first, then the session row: the order a password change and a disable
-    // take, so registrations of one account are serialized (the cap holds) without a deadlock.
+    // The account row first (registrations of one account are serialized, so the cap holds),
+    // then the session row. Safe against the revoke paths: a disable updates the account row
+    // before its sessions, the same order; a password change holds only KEY SHARE on the account
+    // (through the foreign key; it updates the row, before its sessions, only while
+    // must_change_password is set), which does not conflict with FOR NO KEY UPDATE.
     await this.db
       .selectFrom("accounts")
       .select("id")
@@ -85,44 +88,12 @@ export class PushRegistrationsService {
     if (!session) throw new ApiError("auth.session_revoked", "Session has been revoked");
 
     const tokenHash = PushTokenStore.hash(body.token);
-    const existing = await this.lockExisting(body.provider, body.appId, tokenHash);
-    let id: string;
-    let changedHands: boolean;
-    if (existing) {
-      id = existing.id;
-      changedHands = existing.account_id !== accountId;
-      await this.refresh(id, accountId, sessionId, body);
-    } else {
-      id = randomUUID();
-      const sealed = this.tokens.seal(id, body.token);
-      const inserted = await this.db
-        .insertInto("push_registrations")
-        .values({
-          id,
-          account_id: accountId,
-          session_id: sessionId,
-          platform: body.platform,
-          app_id: body.appId,
-          provider: body.provider,
-          token_hash: sealed.tokenHash,
-          master_key_id: sealed.masterKeyId,
-          token_ciphertext: sealed.ciphertext,
-          locale: body.locale,
-          device_name: body.deviceName,
-        })
-        .onConflict((oc) => oc.columns(["provider", "app_id", "token_hash"]).doNothing())
-        .returning("id")
-        .executeTakeFirst();
-      changedHands = true;
-      if (!inserted) {
-        // a concurrent post of the same token won the insert: take its row, keeping its id
-        const raced = await this.lockExisting(body.provider, body.appId, tokenHash);
-        if (!raced) throw new Error("push registration vanished after a unique conflict");
-        id = raced.id;
-        changedHands = raced.account_id !== accountId;
-        await this.refresh(id, accountId, sessionId, body);
-      }
-    }
+    // a unique conflict whose winning row is gone again (a revoke deleted it) is retried once
+    const placed =
+      (await this.place(accountId, sessionId, body, tokenHash)) ??
+      (await this.place(accountId, sessionId, body, tokenHash));
+    if (!placed) throw new Error("push registration conflicted twice with a deleted row");
+    const { id, changedHands } = placed;
     await this.evictBeyondCap(accountId);
     if (changedHands) {
       await audit(this.db.db, {
@@ -192,6 +163,46 @@ export class PushRegistrationsService {
       .execute();
   }
 
+  /**
+   * Updates the row of this token in place (keeping its id) or inserts a sealed new one; null
+   * when the insert lost a unique conflict to a row that is already gone again.
+   */
+  private async place(
+    accountId: string,
+    sessionId: string,
+    body: PushRegistrationBody,
+    tokenHash: string,
+  ): Promise<{ id: string; changedHands: boolean } | null> {
+    const existing = await this.lockExisting(body.provider, body.appId, tokenHash);
+    if (existing) {
+      await this.refresh(existing.id, accountId, sessionId, body);
+      return { id: existing.id, changedHands: existing.account_id !== accountId };
+    }
+    const id = randomUUID();
+    const sealed = this.tokens.seal(id, body.token);
+    // ON CONFLICT waits for a concurrent insert of the same token; on its commit this inserts
+    // nothing and the caller's retry finds and takes that row
+    const inserted = await this.db
+      .insertInto("push_registrations")
+      .values({
+        id,
+        account_id: accountId,
+        session_id: sessionId,
+        platform: body.platform,
+        app_id: body.appId,
+        provider: body.provider,
+        token_hash: sealed.tokenHash,
+        master_key_id: sealed.masterKeyId,
+        token_ciphertext: sealed.ciphertext,
+        locale: body.locale,
+        device_name: body.deviceName,
+      })
+      .onConflict((oc) => oc.columns(["provider", "app_id", "token_hash"]).doNothing())
+      .returning("id")
+      .executeTakeFirst();
+    return inserted ? { id, changedHands: true } : null;
+  }
+
   private lockExisting(provider: string, appId: string, tokenHash: string) {
     return this.db
       .selectFrom("push_registrations")
@@ -223,7 +234,13 @@ export class PushRegistrationsService {
       .execute();
   }
 
-  /** Deletes the account's registrations beyond the cap, least recently seen first. */
+  /**
+   * Deletes the account's registrations beyond the cap, least recently seen first. Rows locked by
+   * another transaction are skipped (`FOR UPDATE SKIP LOCKED`), never waited for: a concurrent
+   * revoke of another session deleting its rows would otherwise deadlock with this (40P01). A
+   * skipped row is on its way out (a revoke) or to another account (a reassignment), so it does
+   * not count toward the 20 kept; the cap stays exact once those commit.
+   */
   private async evictBeyondCap(accountId: string): Promise<void> {
     await this.db
       .deleteFrom("push_registrations")
@@ -235,7 +252,9 @@ export class PushRegistrationsService {
           .orderBy("last_seen_at", "desc")
           .orderBy("created_at", "desc")
           .orderBy("id", "desc")
-          .offset(PUSH_LIMITS.registrationsPerAccount),
+          .offset(PUSH_LIMITS.registrationsPerAccount)
+          .forUpdate()
+          .skipLocked(),
       )
       .execute();
   }

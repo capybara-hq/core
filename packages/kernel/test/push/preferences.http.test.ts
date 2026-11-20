@@ -8,6 +8,7 @@ import type { Account, AccountsService } from "../../src/identity/accounts.js";
 import type { OperationContext } from "../../src/platform/operation.js";
 import { PlatformOperations } from "../../src/platform/registry.js";
 import { PushPreferencesService } from "../../src/push/preferences.service.js";
+import { platformTool } from "../../src/tools/builtins/platform.js";
 import { truncateTables } from "../helpers/db.js";
 import { asUser, cookieJar } from "../helpers/http.js";
 import { accountsFor, apiTokensFor } from "../helpers/identity.js";
@@ -143,6 +144,31 @@ describe("GET / PUT /api/v1/me/push-preferences", () => {
   });
 });
 
+/** The Platform tool on the real operations, as a member present behind the run. */
+const toolAs = () =>
+  platformTool({
+    ops: k.app.get(PlatformOperations),
+    actor: {
+      facts: async () => ({
+        role: "member",
+        isSuperAdmin: false,
+        personPresent: true,
+        agentPrivateToActor: true,
+        setting: "on",
+      }),
+    },
+    docs: { topics: () => [], read: () => null },
+    setting: async () => "on",
+  });
+
+const policyCtx = (accountId: string) => ({
+  orgId: randomUUID(),
+  accountId,
+  agentId: randomUUID(),
+  conversationId: randomUUID(),
+  runId: randomUUID(),
+});
+
 describe("Platform operations", () => {
   it("platform.push-preferences reads the actor's switches", async () => {
     const o = op("platform.push-preferences");
@@ -152,10 +178,28 @@ describe("Platform operations", () => {
     expect(await o.run(o.input.parse({}), ctxOf(alice.id))).toEqual({ ...ALL_ON, waiting: false });
   });
 
-  it("platform.set-push-preferences asks once (personal, rememberable), names each switch and writes", async () => {
+  it("platform.set-push-preferences asks and may be remembered (personal), names each switch and writes", async () => {
     const o = op("platform.set-push-preferences");
     expect(o.confirm).toBe("personal");
+    // not marked rememberable: false, so the person may remember the approval
     expect(o.rememberable).toBeUndefined();
+    // the Platform tool's confirmation, as the pipeline asks it: ask once, rememberable
+    const policy = await toolAs().callPolicy?.(
+      { action: "call", operation: "platform.set-push-preferences", params: { replies: false } },
+      policyCtx(alice.id),
+    );
+    expect(policy).toEqual({
+      key: "Platform:platform.set-push-preferences",
+      policy: "ask",
+      remember: true,
+      summary: { zh: "关闭「智能体回复」通知", en: 'Turn off "Agent replies" notifications' },
+    });
+    // the read runs without asking
+    const read = await toolAs().callPolicy?.(
+      { action: "call", operation: "platform.push-preferences" },
+      policyCtx(alice.id),
+    );
+    expect(read).toMatchObject({ policy: "allow", remember: false });
     expect(o.mirrors).toEqual(["PUT /api/v1/me/push-preferences"]);
     expect(o.input.safeParse({}).success).toBe(false);
     expect(o.input.safeParse({ replies: false, extra: 1 }).success).toBe(false);
