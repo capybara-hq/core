@@ -6,6 +6,14 @@ import PluginsView from "./view";
  * marketplace entries) on a first load (`lib/query/routes.ts`), and the view reads them from the
  * cache.
  */
-export default function PluginsPage() {
-  return <PluginsView />;
+export default async function PluginsPage({
+  searchParams,
+}: {
+  searchParams?: Promise<{ staging?: string | string[] }>;
+} = {}) {
+  const staging = (await searchParams)?.staging;
+  // `?staging=<id>`: an upload staged by the Platform tool; its review opens (org admins)
+  const id = typeof staging === "string" && staging !== "" ? staging : null;
+  // keyed by the staged upload: client navigation to another `?staging=` reopens the dialog
+  return <PluginsView key={id ?? ""} staging={id} />;
 }

@@ -6,6 +6,7 @@ import {
   parseToolKey,
 } from "@capybara-hq/plugin-sdk";
 import type { KernelSchemaDb } from "../db/kernel-schema.js";
+import type { FileCardDetail } from "../platform/file-ref.js";
 import type { PermissionEscalation } from "../sandbox/permission-call-types.js";
 import {
   escalationAskReason,
@@ -155,6 +156,36 @@ export function callSummary(
     line = title !== undefined && arg !== undefined ? `${title}: ${arg}` : (title ?? arg ?? "");
   }
   return cut(redact(line), CARD_SUMMARY_MAX);
+}
+
+/** A byte count as people read it (`1.5 KB`). */
+export function humanSize(bytes: number): string {
+  if (bytes < 1024) return `${bytes} B`;
+  const units = ["KB", "MB", "GB"];
+  let v = bytes / 1024;
+  let i = 0;
+  while (v >= 1024 && i < units.length - 1) {
+    v /= 1024;
+    i += 1;
+  }
+  return `${v >= 10 ? Math.round(v) : Math.round(v * 10) / 10} ${units[i]}`;
+}
+
+/**
+ * The approval card's line about the file a call takes in place of an upload (platform web parity
+ * spec §5): name, size and the first 12 hex of the sha256, as text (IM shows no thumbnail). The
+ * name is a person's file name: one line, no backticks, redacted, cut.
+ */
+export function fileLine(
+  f: Pick<FileCardDetail, "name" | "size" | "sha256">,
+  locale: ChannelLocale,
+  redact: (s: string) => string = (s) => s,
+): string {
+  const name = cut(redact(f.name.replace(/[\r\n`]+/g, " ").trim()), 80);
+  return phrase("approvalFile", locale)
+    .replace("{name}", name)
+    .replace("{size}", humanSize(f.size))
+    .replace("{sha}", f.sha256.slice(0, 12));
 }
 
 /** 去掉末尾斜杠的 `http.publicUrl`；未配置返回 undefined。 */
@@ -419,7 +450,14 @@ export async function approvalCard(
     agentName: v.agent.name || "Agent",
     // the field keeps its contract name; it carries the call line (a network ask's hosts and
     // command, a command ask's reason and command), never the raw input
-    inputPreview: special?.inputPreview ?? callSummary(v, display, locale, redact),
+    inputPreview:
+      special?.inputPreview ??
+      [
+        callSummary(v, display, locale, redact),
+        ...(v.file !== undefined ? [fileLine(v.file, locale, redact)] : []),
+      ]
+        .filter((l) => l !== "")
+        .join("\n"),
     // the scopes the approval allows (the kernel stores them for per-call policies); a network,
     // git or command ask offers only those it labels (an older network ask may still list
     // `always`, which the decision refuses)

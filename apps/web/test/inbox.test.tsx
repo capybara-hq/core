@@ -455,6 +455,48 @@ describe("inbox: command review asks (auto mode spec §5.4)", () => {
   });
 });
 
+describe("inbox: an approval that takes a file (platform web parity spec §5)", () => {
+  const THUMB = "data:image/webp;base64,UklGRhIAAABXRUJQVlA4IAYAAAAwAQCdASo=";
+  it("shows the file the person confirms: thumbnail, name, size and the sha256 prefix", async () => {
+    const sha = "ab12cd34ef56".padEnd(64, "0");
+    const { container } = await renderInbox({
+      [LIST]: () =>
+        json(
+          200,
+          inbox([
+            approval("f", {
+              toolKey: "Platform",
+              toolName: "Platform",
+              connector: null,
+              input: { action: "call", operation: "agents.update-profile" },
+              file: {
+                name: "fox.png",
+                size: 2048,
+                sha256: sha,
+                contentType: "image/png",
+                thumbnail: THUMB,
+              },
+            }),
+          ]),
+        ),
+    });
+    expect(await screen.findByText("fox.png")).toBeTruthy();
+    const row = container.querySelector('[data-part="file"]') as Element;
+    expect(row.textContent).toContain("sha256 ab12cd34ef56");
+    expect(row.textContent).not.toContain(sha);
+    const img = row.querySelector('[data-part="file-thumbnail"]') as HTMLImageElement;
+    expect(img.getAttribute("src")).toBe(THUMB);
+  });
+
+  it("an approval without a file shows no file row", async () => {
+    const { container } = await renderInbox({
+      [LIST]: () => json(200, inbox([approval("n")])),
+    });
+    await screen.findByLabelText(en.approval.input);
+    expect(container.querySelector('[data-part="file"]')).toBeNull();
+  });
+});
+
 describe("inbox: exact permission scope and superseded asks (Task 10D)", () => {
   const LONG = `/outside/${"very-long-directory-name-".repeat(12)}end`;
   const SCOPE = {

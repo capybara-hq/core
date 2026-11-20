@@ -12,6 +12,7 @@ import { z } from "zod";
 import {
   clean,
   clean2,
+  createRoute,
   flattenedLooser,
   looserBound,
   nestedLooser,
@@ -31,9 +32,13 @@ import {
   secretWithoutParam,
   staleLoosens,
   staleWithoutSecrets,
+  twoRoutes,
+  twoRoutesMismatch,
+  twoRoutesMissing,
   typeMismatch,
   undeclaredExtra,
   undeclaredOmission,
+  uploadRoute,
 } from "../fixtures/platform-parity/cases.js";
 import { checkPlatformOps, kernelRoutes } from "../src/platform-ops.js";
 
@@ -180,6 +185,16 @@ describe("inputParity", () => {
         inputParity(op, route3).map((f) => ({ op: f.op, field: f.field, rule: f.rule })),
       ).toEqual([{ op: id, field: "secretEntries", rule: "platform-op-secret-param" }]);
     }
+  });
+
+  it("compares an operation mirroring two routes with the fields of both", () => {
+    expect(checkInputParity([twoRoutes], [uploadRoute, createRoute])).toEqual([]);
+    expect(brief(checkInputParity([twoRoutesMissing], [uploadRoute, createRoute]))).toEqual([
+      { op: "things.missing", field: "uploadId" },
+    ]);
+    const mismatch = checkInputParity([twoRoutesMismatch], [uploadRoute, createRoute]);
+    expect(brief(mismatch)).toEqual([{ op: "things.mismatch", field: "shareable" }]);
+    expect(mismatch[0]?.route).toBe(createRoute.route);
   });
 
   it("(d) a mirror of a removed route: not registered here, an orphan for check:platform-ops", () => {

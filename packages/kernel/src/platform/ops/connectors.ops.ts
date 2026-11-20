@@ -377,6 +377,19 @@ export class ConnectorsOperations implements OnModuleInit {
           );
           return { connector: detail(r.connector), issues: r.issues, changes: r.changes };
         },
+        handoff: (input, result) => {
+          const c = (result as { changes?: { added?: unknown[]; changed?: unknown[] } } | null)
+            ?.changes;
+          if ((c?.added?.length ?? 0) + (c?.changed?.length ?? 0) === 0) return null;
+          return {
+            kind: "handoff",
+            title: {
+              zh: "审阅连接器新增或变更的工具",
+              en: "Review the connector's new or changed tools",
+            },
+            target: { type: "link", url: `/connectors/${encodeURIComponent(input.connectorId)}` },
+          };
+        },
       }),
       defineOperation<z.infer<typeof SetGitPushPolicyInput>>({
         id: "connectors.set-git-push-policy",
@@ -609,7 +622,7 @@ export class ConnectorsOperations implements OnModuleInit {
       defineOperation({
         id: "connectors.set-org-credential",
         description:
-          "Replace the org's credential of an org-credential connector (org admins): the person enters it on the confirmation card (bearer and api_key: credential.token; basic: credential.username and credential.password). For an OAuth connector it replaces the OAuth client: pass its id in client, the person enters client.clientSecret. Every field of the credential is asked. Custom header credentials are entered on the web.",
+          "Replace the org's credential of an org-credential connector (org admins): the person enters it on the confirmation card (bearer and api_key: credential.token; basic: credential.username and credential.password). For an OAuth connector it replaces the OAuth client: pass its id in client, the person enters client.clientSecret. Every field of the credential is asked. Custom header credentials are entered by a person in the connector's settings in the web app.",
         input: z
           .object({
             connectorId: ConnectorId,

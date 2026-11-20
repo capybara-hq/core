@@ -16,6 +16,8 @@ export const OrgOwnedShareableBody = z.object({ shareable: z.boolean() }).strict
 export const OrgOwnedDeleteBody = z.object({ previewHash: z.string().min(1).max(128) }).strict();
 
 export const ORG_PLUGIN_UPLOAD_ROUTES: readonly RouteSchemas[] = [
+  // the plugin package is the raw body (no schema)
+  { route: "POST /api/v1/orgs/:orgId/catalog/uploads/file" },
   { route: "GET /api/v1/orgs/:orgId/catalog/uploads/:stagingId", params: OrgUploadStagingParams },
   {
     route: "PUT /api/v1/orgs/:orgId/owned-plugins/:id/shareable",

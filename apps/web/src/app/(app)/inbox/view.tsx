@@ -2,6 +2,7 @@
 
 import {
   type ActionRowProps,
+  ApprovalFileRow,
   Button,
   CodeBlock,
   clipCommand,
@@ -870,6 +871,19 @@ function toolApprovalDetail({
       <div data-approval-id={approval.id}>
         <Stack gap={12}>
           {person && <Text variant="prose">{ta("person.fillOnWeb", { n: personCount })}</Text>}
+          {/* the file the call takes: the person decides on these bytes, not the bare fileId */}
+          {approval.file !== undefined && (
+            <ApprovalFileRow
+              file={{
+                name: approval.file.name,
+                size: approval.file.size,
+                sha256: approval.file.sha256,
+                ...(approval.file.thumbnail !== undefined
+                  ? { thumbnail: approval.file.thumbnail }
+                  : {}),
+              }}
+            />
+          )}
           {command === null ? (
             <Stack gap={4}>
               <Text variant="small" tone="muted">

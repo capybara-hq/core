@@ -86,6 +86,8 @@ export { GREETING_TYPE_MS, Greeting, type GreetingProps } from "./greeting";
 export {
   ApprovalBlock,
   type ApprovalBlockProps,
+  type ApprovalFile,
+  ApprovalFileRow,
   type ApprovalScope,
   type ApprovalState,
   approvalArgs,

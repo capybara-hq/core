@@ -1,4 +1,9 @@
+import { hasControlChars, MEDIA_NAME_MAX_CHARS } from "@capybara-hq/plugin-sdk";
 import { z } from "zod";
+import {
+  AGENT_AVATAR_CONTENT_TYPES,
+  AGENT_AVATAR_MAX_BYTES,
+} from "../conversations/attachments.service.js";
 import type { RouteSchemas } from "../platform/route-schemas.js";
 import { AGENT_VISIBILITIES } from "./agents.service.js";
 import { AgentDefinitionSchema, ModelRef } from "./definition.js";
@@ -69,6 +74,19 @@ export const AgentProfileBody = ProfileInputSchema.omit({ description: true })
   })
   .strict();
 
+/** `POST …/avatar/uploads`: registers an avatar image upload (a presigned form). */
+export const AgentAvatarUploadBody = z
+  .object({
+    name: z
+      .string()
+      .min(1)
+      .max(MEDIA_NAME_MAX_CHARS)
+      .refine((s) => !hasControlChars(s), "name must not contain control characters"),
+    contentType: z.enum(AGENT_AVATAR_CONTENT_TYPES),
+    size: z.number().int().min(1).max(AGENT_AVATAR_MAX_BYTES),
+  })
+  .strict();
+
 const TemplateId = z.string().min(1).max(100);
 export const AgentFromTemplatePreviewBody = z.object({ templateId: TemplateId }).strict();
 export const AgentFromTemplateBody = z
@@ -113,6 +131,11 @@ export const AGENT_ROUTES: readonly RouteSchemas[] = [
     route: "PATCH /api/v1/orgs/:orgId/agents/:agentId/profile",
     params: AgentPathParams,
     body: AgentProfileBody,
+  },
+  {
+    route: "POST /api/v1/orgs/:orgId/agents/:agentId/avatar/uploads",
+    params: AgentPathParams,
+    body: AgentAvatarUploadBody,
   },
   {
     route: "POST /api/v1/orgs/:orgId/agents/from-template/preview",

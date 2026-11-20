@@ -241,6 +241,12 @@ export const keys = {
       catalogItemsAll: (): readonly unknown[] => [...all, "catalogItem"],
       /** One catalog item from the org's view (its latest version's components). */
       catalogItem: (itemId: string): readonly unknown[] => [...all, "catalogItem", itemId],
+      /** One of the org's staged plugin uploads (its review). */
+      catalogUpload: (stagingId: string): readonly unknown[] => [
+        ...all,
+        "catalogUpload",
+        stagingId,
+      ],
       /** The marketplace entries an org admin browses (source `""`: all; search `""`: none). */
       marketplaceEntries: (sourceId: string, q: string): readonly unknown[] => [
         ...all,

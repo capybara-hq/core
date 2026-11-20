@@ -20,6 +20,13 @@ import {
   sentence,
   toToolError,
 } from "../../platform/errors.js";
+import {
+  FILE_CHANGED_TEXT,
+  type FileCardDetail,
+  type FileRefs,
+  fileCardDetail,
+  type ResolvedFile,
+} from "../../platform/file-ref.js";
 import { PLATFORM_METHOD } from "../../platform/method.js";
 import {
   type ConfirmClass,
@@ -65,6 +72,10 @@ import type {
  *   card through {@link CallPolicy.personFields} (never remembered). The approved call reads the
  *   person's sealed values through `personInputs` and its result names each entered path, never a
  *   value.
+ * - A write that takes a file in place of an upload (spec §5: `op.fileRef`) resolves it at the
+ *   policy step: a file over the limit or of another type is denied before the card; the card
+ *   shows it (`CallPolicy.file`, never remembered) and the approval binds its sha256. Right before
+ *   `op.run` the file is read again, and bytes with another sha256 are refused.
  * - Results are JSON text; a list an operation returns is capped at {@link LIST_MAX} entries.
  */
 
@@ -162,6 +173,17 @@ export interface PlatformToolDeps {
     approvalId: string,
     call: { orgId: string; runId: string; callId: string },
   ): Promise<string[] | null>;
+  /** Resolves a write's file reference (`op.fileRef`); absent: no write takes a file. */
+  files?: Pick<FileRefs, "resolve">;
+  /**
+   * The sha256 of the file an approval's card showed (its stored `detail.file`), or null when it
+   * has none or is not this call's approved approval in the org: what an approved call's file is
+   * bound to.
+   */
+  approvalFileSha256?(
+    approvalId: string,
+    call: { orgId: string; runId: string; callId: string },
+  ): Promise<string | null>;
 }
 
 const json = (value: unknown, summary: { zh: string; en: string }): BuiltinResult => ({
@@ -324,6 +346,9 @@ const PERSON_FIELDS_CHANGED_TEXT =
 const unusedValuesText = (id: string) => `The values the person entered were not used by ${id}.`;
 /** The result line of one field the person entered (never its value). */
 const enteredLine = (path: string) => `\`${path}\`: entered by the person`;
+/** Model-visible: an operation takes a file, and this kernel has no resolver wired (a bug). */
+const filesUnavailableText = (id: string) =>
+  `Operation ${id} takes a file, which this deployment cannot read right now; tell the person to use the web page instead.`;
 const outputRefText = (id: string) =>
   `Operation ${id} writes, and its params hold a {"$output": ...} reference, which the person confirming would see instead of the content. Pass the content inline in params and call again.`;
 
@@ -443,24 +468,38 @@ export function platformTool(deps: PlatformToolDeps): BuiltinTool {
       const next = resolveNext(failed.next, role) ?? nextStepFor(op.errors, failed.code, role);
       return deny(precheckText(op.id, failed.code, failed.message, next));
     }
+    // the file the write takes: read, checked and hashed before the card (spec §5)
+    let file: ResolvedFile | null;
+    let card: FileCardDetail | null = null;
+    try {
+      file = await fileOf(op, params, deps, octx, ctx.signal);
+      if (file !== null) card = await fileCardDetail(file);
+    } catch (e) {
+      if (e instanceof ToolError) return deny(e.message);
+      return deny(toToolError(e, (code) => nextStepFor(op.errors, code, role)).message);
+    }
+    const sctx: OperationContext = {
+      ...octx,
+      ...(op.personFields !== undefined && {
+        personAsk: personFields?.fields.map((f) => f.path) ?? [],
+      }),
+      ...(file !== null && { file }),
+    };
     const [cls, summary] = await Promise.all([
       classOf(op, params, octx),
-      summaryOf(
-        op,
-        params,
-        op.personFields === undefined
-          ? octx
-          : { ...octx, personAsk: personFields?.fields.map((f) => f.path) ?? [] },
-      ),
+      summaryOf(op, params, sctx),
     ]);
     return {
       key,
       policy: "ask",
       // org / platform writes are confirmed every time (spec §6.2); so is a write with person
-      // fields, whatever its class (spec §4.2, R6)
-      remember: personFields === null && cls === "personal" && op.rememberable !== false,
+      // fields, whatever its class (spec §4.2, R6), and one whose card shows a file (§5: the
+      // person confirms these bytes)
+      remember:
+        personFields === null && card === null && cls === "personal" && op.rememberable !== false,
       summary,
       ...(personFields !== null && { personFields }),
+      ...(card !== null && { file: card }),
       // its result is shown once to the approver: only the person may confirm it
       ...(op.revealsToApprover === true && { personOnly: true as const }),
     };
@@ -578,6 +617,24 @@ export function platformTool(deps: PlatformToolDeps): BuiltinTool {
     let applied = false;
     let result: unknown;
     try {
+      // the file is read again, and must be the bytes the person confirmed (Review Focus 5)
+      const file = await fileOf(op, params, deps, octx, ctx.signal);
+      if (file !== null) {
+        // fails closed: bytes run only under this call's approval whose card showed them (no
+        // approval, one whose card showed no file or another one does not cover these bytes)
+        const bound =
+          ctx.approvalId === undefined ||
+          ctx.runId === undefined ||
+          deps.approvalFileSha256 === undefined
+            ? null
+            : await deps.approvalFileSha256(ctx.approvalId, {
+                orgId: ctx.orgId,
+                runId: ctx.runId,
+                callId: ctx.callId,
+              });
+        if (bound === null || bound !== file.sha256) throw new ToolError(FILE_CHANGED_TEXT);
+        octx.file = file;
+      }
       const person = await personFieldsOf(op, params, octx);
       // what the card showed (the approval's stored specs) binds what runs: the run-time plan
       // must ask exactly those fields, and the sealed values must carry exactly them
@@ -678,6 +735,28 @@ export function platformTool(deps: PlatformToolDeps): BuiltinTool {
       return (await deps.setting(orgId)) === "off" ? PLATFORM_UNAVAILABLE_OFF : null;
     },
   };
+}
+
+/**
+ * The file one call takes (spec §5): `op.fileRef` of the validated input, resolved and checked
+ * against its limits; null when the operation takes none for this input. Refusals are
+ * model-visible `ToolError`s; other errors propagate.
+ */
+async function fileOf(
+  op: PlatformOperation,
+  params: unknown,
+  deps: PlatformToolDeps,
+  ctx: OperationContext,
+  signal: AbortSignal | undefined,
+): Promise<ResolvedFile | null> {
+  const wanted = op.fileRef?.(params) ?? null;
+  if (wanted === null) return null;
+  if (deps.files === undefined) throw new ToolError(filesUnavailableText(op.id));
+  return deps.files.resolve(wanted.ref, wanted.limits, {
+    orgId: ctx.orgId,
+    conversationId: ctx.conversationId,
+    signal: signal ?? ctx.signal,
+  });
 }
 
 /** The fields to enter differ from what the person confirmed ({@link PERSON_FIELDS_CHANGED_TEXT}). */
