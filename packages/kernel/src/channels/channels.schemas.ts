@@ -35,8 +35,17 @@ export const ChannelGuideAckSchema = z
 
 export const ChannelPathParams = z.object({ connectionId: z.string().min(1).max(100) });
 
+export const ChannelSchemaParams = z.object({ plugin: z.string().min(1).max(214) });
+
 export const CHANNEL_ROUTES: readonly RouteSchemas[] = [
   { route: "GET /api/v1/orgs/:orgId/channels" },
+  { route: "GET /api/v1/orgs/:orgId/channels/schema/:plugin", params: ChannelSchemaParams },
+  { route: "POST /api/v1/orgs/:orgId/channels", body: ChannelCreateSchema },
+  {
+    route: "POST /api/v1/orgs/:orgId/channels/:connectionId/guide-ack",
+    params: ChannelPathParams,
+    body: ChannelGuideAckSchema,
+  },
   { route: "GET /api/v1/orgs/:orgId/channels/:connectionId", params: ChannelPathParams },
   {
     route: "PATCH /api/v1/orgs/:orgId/channels/:connectionId",

@@ -211,23 +211,6 @@ export const PLATFORM_EXCLUSIONS: readonly {
     reason: "Confirms an upload review, an approval decision",
   },
   // channels
-  {
-    route: "GET /api/v1/orgs/:orgId/channels/schema/:plugin",
-    category: "internal",
-    reason:
-      "The config form schema of the create and credential routes, which stay on the web; an agent has no use for it",
-  },
-  {
-    route: "POST /api/v1/orgs/:orgId/channels",
-    category: "secret",
-    reason: "Creates a channel connection with app secrets",
-  },
-  {
-    route: "POST /api/v1/orgs/:orgId/channels/:connectionId/guide-ack",
-    category: "human-only",
-    reason:
-      "A person confirms they updated the app on the third-party platform after a setup guide changed; only that person knows it was done",
-  },
   // attachments
   {
     route: "GET /api/v1/orgs/:orgId/attachments/limits",
