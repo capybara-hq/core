@@ -5,6 +5,7 @@ import {
   bootstrapManifestSha256,
   type KernelLogger,
   loadBootstrapManifest,
+  missingExtraManifestMessage,
   openCatalogCli,
 } from "@capybara-hq/kernel";
 import { withOpened } from "./extensions.js";
@@ -77,7 +78,8 @@ const entryLine = (r: BootstrapEntryResult): string =>
  * `start` retries them), and the deployment can serve, as `capybara start` would (it refuses only
  * for required entries). Exit code 1 when a required entry fails, a package cannot be obtained
  * (missing, download failed, or not matching its pin: nothing is written then), or anything else
- * goes wrong.
+ * goes wrong, and when no extra manifest is given while the deployment has marketplaces an extra
+ * manifest manages (another service runs with one; nothing is written).
  */
 export async function runBootstrap(
   opts: { dir?: string; manifest?: string; extraManifest?: string },
@@ -94,6 +96,12 @@ export async function runBootstrap(
       (config) => openCatalogCli(config, log),
       async (cli) => {
         const extraManifest = bootstrapExtraManifestOf(cli.config, opts.extraManifest);
+        // Without an extra manifest while config-managed marketplaces exist, the run would strip
+        // the extra entries' required / builtin under the built-in manifest's sha: refused
+        if (extraManifest === undefined) {
+          const managed = await cli.bootstrap.configManagedMarketplaces();
+          if (managed.length > 0) return { mismatch: managed };
+        }
         const manifest = await loadBootstrapManifest({
           ...(opts.manifest !== undefined && { manifestFile: opts.manifest }),
           ...(extraManifest !== undefined && { extraManifest }),
@@ -117,7 +125,7 @@ export async function runBootstrap(
       },
     );
   try {
-    let results: BootstrapEntryResult[] | "done";
+    let results: BootstrapEntryResult[] | "done" | { mismatch: string[] };
     try {
       results = await pass();
     } catch (e) {
@@ -143,6 +151,12 @@ export async function runBootstrap(
         );
         return 0;
       }
+    }
+    if (typeof results === "object" && "mismatch" in results) {
+      io.stderr.write(
+        `capybara: bootstrap: ${missingExtraManifestMessage(results.mismatch)}; refusing to run the bootstrap step\n`,
+      );
+      return 1;
     }
     if (results === "done") {
       io.stdout.write(

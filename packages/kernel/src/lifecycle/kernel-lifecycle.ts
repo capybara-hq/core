@@ -29,6 +29,7 @@ import { BootstrapDefaultsService } from "../extensions/bootstrap-defaults.js";
 import {
   type LoadedBootstrapManifest,
   loadBootstrapManifest,
+  missingExtraManifestMessage,
   syncExtraMarketplaces,
 } from "../extensions/bootstrap-extra.js";
 import { ExtensionHost } from "../extensions/host.js";
@@ -240,12 +241,29 @@ export class KernelLifecycle
     this.checkpoint();
     // official 清单来源按配置同步（幂等；每个副本启动时都做）
     await this.marketplaces.syncOfficialFromConfig();
-    // The extra manifest's marketplaces (none configured: demotes the config-managed rows)
-    await syncExtraMarketplaces(
-      (m) => this.marketplaces.syncExtraFromConfig(m),
-      opts.bootstrap !== undefined ? ((await this.manifest()).extra?.marketplaces ?? []) : [],
-      this.log,
-    );
+    // No extra manifest here while config-managed marketplaces exist: this service is configured
+    // differently from the one that wrote them. Syncing would demote them, and the bootstrap step
+    // would clear the extra entries' required / builtin under the built-in manifest's sha, which
+    // the correctly configured services then find done and never repair. So both are skipped
+    // (decided from the database before either runs); the start goes on with the state as it is
+    const unmanaged =
+      opts.bootstrap?.extraManifest === undefined
+        ? await this.bootstrap.configManagedMarketplaces()
+        : [];
+    const mismatch = unmanaged.length > 0;
+    if (mismatch) {
+      this.log.error(
+        `${missingExtraManifestMessage(unmanaged)}. The bootstrap step and the marketplace sync are skipped in this start`,
+        { marketplaces: unmanaged },
+      );
+    } else {
+      // The extra manifest's marketplaces (an empty list demotes the config-managed rows)
+      await syncExtraMarketplaces(
+        (m) => this.marketplaces.syncExtraFromConfig(m),
+        opts.bootstrap !== undefined ? ((await this.manifest()).extra?.marketplaces ?? []) : [],
+        this.log,
+      );
+    }
     // The bootstrap plugins (spec §7), once per manifest across replicas (the Redis lock
     // `lock:bootstrap`); a bootstrap entry named like a config-declared extension is kept
     if (opts.bootstrap !== undefined) {
@@ -256,7 +274,7 @@ export class KernelLifecycle
       );
     }
     const bootstrapAgain =
-      opts.bootstrap !== undefined && (await this.runBootstrap(opts.bootstrap.dir));
+      opts.bootstrap !== undefined && !mismatch && (await this.runBootstrap(opts.bootstrap.dir));
     this.checkpoint();
     // 配置声明 → 安装记录（C15 / C13）。安装记录的包在本副本同步到 extensionHost.dir 后导入，
     // 与运行中的 reconcile 走同一条路径；迁移由一个副本持锁执行（ensureMigrated，C16）

@@ -516,6 +516,21 @@ export class BootstrapService {
   }
 
   /**
+   * The names of the marketplaces the deployment config manages (`managed = 'config'`, written
+   * from an extra manifest). A process without an extra manifest that finds any is configured
+   * differently from the ones that wrote them ({@link missingExtraManifestMessage}).
+   */
+  async configManagedMarketplaces(): Promise<string[]> {
+    const rows = await this.db
+      .selectFrom("marketplaces")
+      .select("name")
+      .where("managed", "=", "config")
+      .orderBy("name")
+      .execute();
+    return rows.map((r) => r.name);
+  }
+
+  /**
    * Runs the bootstrap step (see the file header); when it is already done for this manifest
    * (also when another replica finished it while this one waited for the lock) returns the
    * recorded result without doing anything. `carry`: the results of an earlier, failed run in the

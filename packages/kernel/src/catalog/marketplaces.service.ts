@@ -778,9 +778,10 @@ export class MarketplacesService {
    * was demoted is deleted when it becomes managed again). A managed row whose name left the
    * file is kept as an ordinary custom marketplace (`managed = NULL`, so no token). Called by
    * every replica at start; idempotent. An invalid entry -> {@link ConfigError}, nothing written.
+   * Returns the names of the rows it demoted.
    */
   @Transactional()
-  async syncExtraFromConfig(marketplaces: readonly BootstrapExtraMarketplace[]): Promise<void> {
+  async syncExtraFromConfig(marketplaces: readonly BootstrapExtraMarketplace[]): Promise<string[]> {
     const rows = marketplaces
       .map((m) => this.extraMarketplaceRow(m))
       // one lock order for every replica
@@ -820,8 +821,9 @@ export class MarketplacesService {
     }
     let gone = t.updateTable("marketplaces").set({ managed: null }).where("managed", "=", "config");
     if (ids.length > 0) gone = gone.where("id", "not in", ids);
-    await gone.execute();
+    const demoted = await gone.returning("name").execute();
     for (const r of rows) await this.backfillBootstrapItems(r.id);
+    return demoted.map((d) => d.name).sort();
   }
 
   /**

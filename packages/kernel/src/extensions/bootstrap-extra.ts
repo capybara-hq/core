@@ -116,6 +116,16 @@ export async function loadBootstrapManifest(o: {
   return mergeBootstrapManifests(builtin, extra);
 }
 
+/**
+ * A process without an extra manifest found config-managed marketplaces (`names`): another
+ * service of the deployment runs with an extra manifest. Bootstrapping or syncing here would
+ * demote those marketplaces and strip the extra entries' `required` / `builtin` under the
+ * built-in manifest's sha, which the correctly configured services then take as done.
+ */
+export function missingExtraManifestMessage(names: readonly string[]): string {
+  return `this service has no extra bootstrap manifest (bootstrap.extraManifest, env CAPYBARA_BOOTSTRAP__EXTRA_MANIFEST), but the deployment has marketplaces an extra manifest manages (${names.join(", ")}): every service (init, api, worker, gateway) must use the same extra manifest. To remove a distribution, point bootstrap.extraManifest at a file whose marketplaces and plugins lists are empty`;
+}
+
 /** Postgres deadlock_detected / serialization_failure: replicas starting together may collide. */
 const isContention = (e: unknown): boolean => {
   const codeOf = (x: unknown) => (x as { code?: unknown } | null)?.code;
@@ -126,16 +136,23 @@ const isContention = (e: unknown): boolean => {
 /**
  * Runs `syncExtraFromConfig`: a deadlock or serialization failure is retried once; a failure that
  * remains is logged and does not stop the start (another replica writes the same rows).
- * A configuration error is not contention and is thrown.
+ * A configuration error is not contention and is thrown. The marketplaces it demoted (their
+ * names left the extra manifest) are logged as a warning.
  */
 export async function syncExtraMarketplaces(
-  sync: (marketplaces: readonly BootstrapExtraMarketplace[]) => Promise<void>,
+  sync: (marketplaces: readonly BootstrapExtraMarketplace[]) => Promise<readonly string[]>,
   marketplaces: readonly BootstrapExtraMarketplace[],
   log: Pick<Logger, "warn">,
 ): Promise<void> {
   for (let attempt = 1; ; attempt++) {
     try {
-      await sync(marketplaces);
+      const demoted = await sync(marketplaces);
+      if (demoted.length > 0) {
+        log.warn(
+          "marketplaces left the extra bootstrap manifest: they are now ordinary custom marketplaces (editable, no deployment token)",
+          { marketplaces: demoted },
+        );
+      }
       return;
     } catch (e) {
       if (!isContention(e)) throw e;

@@ -2,7 +2,7 @@ import { createHash } from "node:crypto";
 import { cp, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
-import { createDb, kernelDb } from "@capybara-hq/kernel";
+import { createDb, KERNEL_MIGRATIONS_DIR, kernelDb, migrate } from "@capybara-hq/kernel";
 import {
   type FakeNpmRegistry,
   startFakeNpmRegistry,
@@ -402,6 +402,65 @@ describe("capybara bootstrap from npm", () => {
     expect(r.stdout).toContain(`${A} ${A_V}: installed\n`);
     expect(r.stdout).toContain(`${B} ${B_V}: installed\n`);
     expect(reg.requests.filter((p) => p.includes("/-/"))).toHaveLength(2);
+  }, 120_000);
+});
+
+/**
+ * Another service runs with an extra manifest (config-managed marketplaces exist): without one,
+ * the step would strip the extra entries' required / builtin under the built-in manifest's sha.
+ */
+describe("capybara bootstrap without the extra manifest other services use", () => {
+  let pg5: TestContainer;
+  beforeAll(async () => {
+    pg5 = await startTestPostgres();
+    await migrate(pg5.url, { schema: "capybara", dir: KERNEL_MIGRATIONS_DIR });
+    const raw = createDb(pg5.url, 1);
+    try {
+      await kernelDb(raw)
+        .insertInto("marketplaces")
+        .values({
+          id: "config:dist",
+          name: "dist",
+          url: "https://git.example.com/acme/dist.git",
+          form: "git",
+          mirrors: "[]",
+          builtin: false,
+          enabled: true,
+          managed: "config",
+        })
+        .execute();
+    } finally {
+      await raw.destroy();
+    }
+  }, 180_000);
+  afterAll(async () => {
+    await pg5?.stop();
+  });
+
+  it("refuses with exit 1 naming CAPYBARA_BOOTSTRAP__EXTRA_MANIFEST and writes nothing", async () => {
+    const r = await runCli(["bootstrap", "--dir", dir, "--manifest", boot.manifest], {
+      ...env(),
+      CAPYBARA_DB__URL: pg5.url,
+    });
+    expect(r.code).toBe(1);
+    expect(r.stderr).toContain("CAPYBARA_BOOTSTRAP__EXTRA_MANIFEST");
+    expect(r.stderr).toContain("(dist)");
+    expect(r.stderr).toContain("refusing to run the bootstrap step");
+    const raw = createDb(pg5.url, 1);
+    try {
+      const db = kernelDb(raw);
+      expect(await db.selectFrom("bootstrap_runs").select("manifest_sha256").execute()).toEqual([]);
+      expect(await db.selectFrom("extension_installs").select("name").execute()).toEqual([]);
+      expect(
+        await db
+          .selectFrom("marketplaces")
+          .select("managed")
+          .where("id", "=", "config:dist")
+          .execute(),
+      ).toEqual([{ managed: "config" }]);
+    } finally {
+      await raw.destroy();
+    }
   }, 120_000);
 });
 

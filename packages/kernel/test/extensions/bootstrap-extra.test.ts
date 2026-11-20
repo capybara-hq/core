@@ -167,14 +167,20 @@ describe("syncExtraMarketplaces", () => {
   const contention = (code: string) => Object.assign(new Error("boom"), { code });
 
   it("retries a deadlock once", async () => {
-    const sync = vi
-      .fn()
-      .mockRejectedValueOnce(contention("40P01"))
-      .mockResolvedValueOnce(undefined);
+    const sync = vi.fn().mockRejectedValueOnce(contention("40P01")).mockResolvedValueOnce([]);
     const l = log();
     await syncExtraMarketplaces(sync, [], l);
     expect(sync).toHaveBeenCalledTimes(2);
     expect(l.warn).not.toHaveBeenCalled();
+  });
+
+  it("the marketplaces it demoted are a warning listing them", async () => {
+    const l = log();
+    await syncExtraMarketplaces(vi.fn().mockResolvedValue(["dist", "more"]), [], l);
+    expect(l.warn).toHaveBeenCalledWith(
+      expect.stringContaining("left the extra bootstrap manifest"),
+      { marketplaces: ["dist", "more"] },
+    );
   });
 
   it("a failure that remains is a warning, not a failed start", async () => {

@@ -118,6 +118,7 @@ export {
   loadBootstrapManifest,
   type MergedBootstrapManifest,
   mergeBootstrapManifests,
+  missingExtraManifestMessage,
   readBootstrapExtraManifest,
 } from "./extensions/bootstrap-extra.js";
 export { type ExtensionCli, openExtensionCli } from "./extensions/cli.js";
