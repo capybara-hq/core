@@ -15,7 +15,12 @@ export interface ParityFinding {
 
 /** What {@link inputParity} reads of an operation. */
 export type ParityOperation = Pick<PlatformOperation, "id" | "input" | "mirrors"> &
-  Partial<Pick<PlatformOperation, "omits" | "extras" | "renames" | "loosens" | "personFields">>;
+  Partial<
+    Pick<
+      PlatformOperation,
+      "omits" | "extras" | "renames" | "loosens" | "personFields" | "withoutSecrets"
+    >
+  >;
 
 type Json = Record<string, unknown>;
 
@@ -238,7 +243,8 @@ function fieldMismatch(op: Json, route: Json, path: string, top: string): string
  * - a top-level route field the input neither has nor renames into is listed in `omits`, an input
  *   field with no route counterpart in `extras`; stale entries of either are findings;
  * - rule `platform-op-secret-param`: a route field holding the SDK's `secret()` meta anywhere is
- *   never an input field (it is in `omits`), and the operation defines `personFields`.
+ *   never an input field (it is in `omits`), and the operation defines `personFields`, or says in
+ *   `withoutSecrets` why it takes none of them and asks for none (a preview without the credential).
  */
 export function inputParity(op: ParityOperation, route: RouteSchemas): ParityFinding[] {
   const out: ParityFinding[] = [];
@@ -308,9 +314,9 @@ export function inputParity(op: ParityOperation, route: RouteSchemas): ParityFin
       secretRule(
         `\`${k}\` of ${r} carries a secret (\`secret()\` meta): leave it out of the input, list it in \`omits\`, and have the person enter it on the card (\`personFields\`)`,
       );
-    } else if (op.personFields === undefined) {
+    } else if (op.personFields === undefined && !op.withoutSecrets?.trim()) {
       secretRule(
-        `\`${k}\` of ${r} carries a secret (\`secret()\` meta): the operation must define \`personFields\`, so the person enters secrets on the card`,
+        `\`${k}\` of ${r} carries a secret (\`secret()\` meta): the operation must define \`personFields\`, so the person enters secrets on the card, or say in \`withoutSecrets\` why it takes none`,
       );
     }
   }

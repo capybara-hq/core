@@ -159,6 +159,13 @@ export interface PlatformOperation<I = unknown> {
    */
   personFields?(input: I, ctx: OperationContext): Promise<PersonFieldTarget>;
   /**
+   * Why the operation takes none of its mirrored route's secret fields (`secret()` meta, left in
+   * `omits`) and asks the person for none, e.g. a preview without the credential, or a switch that
+   * refuses a plugin needing input (`plugins.install` takes it). Rule `platform-op-secret-param`
+   * otherwise requires {@link personFields}.
+   */
+  withoutSecrets?: string;
+  /**
    * The bilingual card summary of a write, rendered from the input and kernel reads (names of
    * the targets, preview counts), never from model text; required unless `confirm` is `read`.
    * May read PG; the tool falls back to the operation id when it throws. Method syntax so an
@@ -203,7 +210,7 @@ export const PLATFORM_DOMAINS: readonly { id: string; description: string }[] = 
   {
     id: "plugins",
     description:
-      "Plugins in the org and on the platform: list, read, enable, disable, update, scope, import, the org's own uploads.",
+      "Plugins in the org and on the platform: list, read, install with inputs, enable, disable, update, scope, import, the org's own uploads.",
   },
   {
     id: "marketplaces",
@@ -217,7 +224,8 @@ export const PLATFORM_DOMAINS: readonly { id: string; description: string }[] = 
   },
   {
     id: "connectors",
-    description: "Connectors and connector templates: list and read, refresh tools, delete.",
+    description:
+      "Connectors and connector templates: list, read, preview, create (custom or from a template), edit, credentials (the person enters them on the card), guide acknowledgement, refresh tools, delete.",
   },
   {
     id: "extensions",

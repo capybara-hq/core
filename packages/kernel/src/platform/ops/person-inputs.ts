@@ -26,6 +26,38 @@ export function withPersonInputs<T>(
 }
 
 /**
+ * The person's card values for a write that cannot run inside the consuming transaction: one made
+ * of several transactions of its own (`requires_new` steps under the org row lock, such as the
+ * catalog install), which would wait on a lock the consuming transaction holds. The values are
+ * consumed in a short transaction of their own and returned with the audit detail
+ * ({@link withPersonInputs}'s); the write then runs outside it. A write that fails after this
+ * leaves nothing to retry with: the call is made again, with a new card, like any failed call.
+ */
+export async function takePersonInputs(
+  operation: string,
+  ctx: OperationContext,
+): Promise<{ entered: Readonly<Record<string, string>>; auditDetail: Record<string, unknown> }> {
+  return withPersonInputs(operation, ctx, async (entered, auditDetail) => ({
+    entered: { ...entered },
+    auditDetail,
+  }));
+}
+
+/**
+ * The values under `prefix` (`connectors.<templateId>.`), keyed by the rest of their path.
+ */
+export function enteredUnder(
+  entered: Readonly<Record<string, string>>,
+  prefix: string,
+): Record<string, string> {
+  return Object.fromEntries(
+    Object.entries(entered)
+      .filter(([p]) => p.startsWith(prefix))
+      .map(([p, v]) => [p.slice(prefix.length), v]),
+  );
+}
+
+/**
  * The `values` of a config route keyed by field dot path (deployment config, the org's copy): the
  * model's non-secret values, the person's entered secrets, and `null` (clear) for each path in
  * `clear`. A secret left out keeps its stored value, as on the web form.

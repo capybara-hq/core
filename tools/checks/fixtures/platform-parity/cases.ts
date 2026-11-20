@@ -198,3 +198,31 @@ export const secretNoPersonFields = op3(
   { thingId: z.string().min(1).max(100), values: Values },
   { omits: ["secretEntries"] },
 );
+
+/** The secret field left out with the reason no person field is needed (clean). */
+export const secretWithout = op3(
+  "things.preview",
+  { thingId: z.string().min(1).max(100), values: Values },
+  { omits: ["secretEntries"], withoutSecrets: "a preview never stores the secret entries" },
+);
+
+/** `withoutSecrets` with an empty reason: no exemption. */
+export const secretWithoutBlank = op3(
+  "things.preview-blank",
+  { thingId: z.string().min(1).max(100), values: Values },
+  { omits: ["secretEntries"], withoutSecrets: " " },
+);
+
+/** The route's `secret()` field taken as a param despite `withoutSecrets`: still a finding. */
+export const secretWithoutParam = op3(
+  "things.preview-param",
+  {
+    thingId: z.string().min(1).max(100),
+    values: Values,
+    secretEntries: z
+      .array(z.object({ key: z.string().min(1).max(256), value: z.string().max(100) }))
+      .max(10)
+      .optional(),
+  },
+  { withoutSecrets: "a preview never stores the secret entries" },
+);

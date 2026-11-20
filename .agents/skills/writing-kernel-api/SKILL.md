@@ -380,13 +380,17 @@ holds secrets never takes them as params: the person types them on the approval 
 - The decision seals the values (`SealedInputs`, AES-GCM, 15 minutes, read once). `run` gets them
   only through `ctx.personInputs.apply(fn)`: the whole service write happens inside `fn`, in the
   transaction that consumes the row (`withPersonInputs` in `platform/ops/person-inputs.ts`; without
-  `personInputs` it calls the service directly). A service whose post-write side effects must see the
+  `personInputs` it calls the service directly). A write made of several transactions of its own
+  (`requires_new` steps under the org row lock: the catalog install, missing template connectors)
+  would wait inside `fn` on a lock the consuming transaction holds: it takes the values first with
+  `takePersonInputs` and runs outside. A connector's person fields come from its auth method
+  (`connectorPersonFields`, `platform/connector-person-fields.ts`), not from a schema. A service whose post-write side effects must see the
   commit puts them in `afterCommit` when it runs inside a caller's transaction
   (`ExtensionDeploymentConfigService.put`). The audit detail adds `inputsProvided` (paths); results and
   events carry paths, never values.
 - A route schema field carrying a secret is marked with the SDK's `secret()` (`SecretEntry.value`);
   the parity rule `platform-op-secret-param` then requires it in `omits` and the operation to define
-  `personFields`. Dynamic records (`values`, `config`) cannot carry the marker; the runtime plan
+  `personFields`, or to say in `withoutSecrets` why it takes none (a preview without the credential). Dynamic records (`values`, `config`) cannot carry the marker; the runtime plan
   covers them.
 
 **Results.** A list returns compact rows: `id`, `name`, `state`, `reason?`, `next?` and at most 3

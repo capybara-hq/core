@@ -1201,7 +1201,13 @@ export class PluginInstaller {
           );
         }
         if (actor === null) throw systemNeedsInput(manifest.name);
-        const r = await this.connectors.create(orgId, actor, ci, opts.actorTokenId);
+        const r = await this.connectors.create(
+          orgId,
+          actor,
+          ci,
+          opts.actorTokenId,
+          opts.auditDetail,
+        );
         await record({
           kind: "connector",
           ref: r.connector.id,
@@ -2252,7 +2258,7 @@ export class PluginInstaller {
     actor: string,
     itemId: string,
     input: PluginInstallInput,
-    opts: { actorTokenId?: string } = {},
+    opts: { actorTokenId?: string; auditDetail?: AuditDetail } = {},
   ): Promise<{ templateId: string; connectorId: string }[]> {
     if (!UUID_RE.test(itemId)) throw installNotFound();
     const missing = await this.missingConnectors(orgId, itemId);
@@ -2293,7 +2299,13 @@ export class PluginInstaller {
       }));
     const out: { templateId: string; connectorId: string }[] = [];
     for (const p of plans) {
-      const r = await this.connectors.create(orgId, actor, p.ci, opts.actorTokenId);
+      const r = await this.connectors.create(
+        orgId,
+        actor,
+        p.ci,
+        opts.actorTokenId,
+        opts.auditDetail,
+      );
       await this.recordConnector(missing.installId, r.connector.id, p.id);
       out.push({ templateId: p.id, connectorId: r.connector.id });
     }
@@ -2336,7 +2348,7 @@ export class PluginInstaller {
     actor: string,
     templateId: string,
     input: { name?: string | undefined; config: Omit<ConnectorInstallInput, "name"> },
-    opts: { actorTokenId?: string } = {},
+    opts: { actorTokenId?: string; auditDetail?: AuditDetail } = {},
   ): Promise<{ connector: ConnectorDetail; issues: ToolIssue[] }> {
     const notFound = () =>
       new ApiError(
@@ -2420,7 +2432,7 @@ export class PluginInstaller {
       }),
     };
     try {
-      const r = await this.connectors.create(orgId, actor, ci, opts.actorTokenId);
+      const r = await this.connectors.create(orgId, actor, ci, opts.actorTokenId, opts.auditDetail);
       await this.recordOnLiveInstall(orgId, row.catalog_item_id, r.connector.id, ct.id);
       return r;
     } catch (e) {

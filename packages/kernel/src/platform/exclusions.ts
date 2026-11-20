@@ -179,22 +179,6 @@ export const PLATFORM_EXCLUSIONS: readonly {
     reason: "Serves icon image bytes",
   },
   {
-    route: "POST /api/v1/orgs/:orgId/catalog/:itemId/install",
-    category: "secret",
-    reason:
-      "Install body carries connector credentials, client secrets and extension config entered by a person",
-  },
-  {
-    route: "POST /api/v1/orgs/:orgId/catalog/:itemId/connectors",
-    category: "secret",
-    reason: "Body carries connector credentials and client secrets entered by a person",
-  },
-  {
-    route: "POST /api/v1/orgs/:orgId/connector-templates/:templateId/connectors",
-    category: "secret",
-    reason: "Body carries connector credentials and client secrets entered by a person",
-  },
-  {
     route: "POST /api/v1/orgs/:orgId/catalog-requests/network",
     category: "human-only",
     reason:
@@ -698,46 +682,9 @@ export const PLATFORM_EXCLUSIONS: readonly {
       "Renders a remote server's prompt into text for the web input box, for the person to send; it calls the server with the person's own credential",
   },
   {
-    route: "GET /api/v1/orgs/:orgId/connectors/kinds",
-    category: "internal",
-    reason:
-      "The protocols the web's create-connector form offers; creating a connector stays on the web (secret credentials)",
-  },
-  {
-    route: "POST /api/v1/orgs/:orgId/connectors",
-    category: "secret",
-    reason: "Creates a connector whose endpoint config can carry credentials",
-  },
-  {
-    route: "POST /api/v1/orgs/:orgId/connectors/preview",
-    category: "secret",
-    reason: "Preview body carries a connector credential entered by a person",
-  },
-  {
-    route: "PATCH /api/v1/orgs/:orgId/connectors/:connectorId",
-    category: "secret",
-    reason: "Edits connector endpoint config that can carry credentials",
-  },
-  {
-    route: "POST /api/v1/orgs/:orgId/connectors/:connectorId/guide-ack",
-    category: "human-only",
-    reason:
-      "A person confirms they updated the app on the third-party platform after a connector template's setup guide changed; only that person knows it was done",
-  },
-  {
     route: "POST /api/v1/orgs/:orgId/connectors/:connectorId/tools/:name/review",
     category: "human-only",
     reason: "Reviews a connector tool change, an approval decision",
-  },
-  {
-    route: "PUT /api/v1/orgs/:orgId/connectors/:connectorId/credentials/org",
-    category: "secret",
-    reason: "Writes the org's connector credentials",
-  },
-  {
-    route: "PUT /api/v1/orgs/:orgId/connectors/:connectorId/credentials/me",
-    category: "secret",
-    reason: "Writes the caller's connector credentials",
   },
   {
     route: "GET /api/v1/orgs/:orgId/connectors/:connectorId/tool-policies/me",
@@ -750,11 +697,6 @@ export const PLATFORM_EXCLUSIONS: readonly {
     category: "human-only",
     reason:
       "A member's own tool policies decide what agents may call with their connection without asking; an agent must never loosen them for itself",
-  },
-  {
-    route: "DELETE /api/v1/orgs/:orgId/connectors/:connectorId/credentials/me",
-    category: "secret",
-    reason: "Deletes the caller's connector credentials",
   },
   {
     route: "GET /api/v1/orgs/:orgId/tools/extensions",
