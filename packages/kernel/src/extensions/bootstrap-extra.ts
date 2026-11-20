@@ -63,7 +63,7 @@ function checkGitMarketplaces(extra: BootstrapExtraManifest, where: string): voi
     if (used.has(m.name) && marketplaceForm(m.url).form !== "git") {
       throw new ApiError(
         "bootstrap.extra_invalid",
-        `Invalid extra bootstrap manifest ${where}: marketplace ${m.name} serves git entries, so its url must be a git repository (ending in .git, or owner/repo)`,
+        `Invalid extra bootstrap manifest ${where}: marketplace ${m.name} serves git entries, so its url must be a git repository: an https URL ending in .git`,
       );
     }
   }

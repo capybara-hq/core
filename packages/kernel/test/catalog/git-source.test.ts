@@ -308,6 +308,7 @@ describe("readGitTree", () => {
     expect((err as GitSourceError).message).toContain(
       `the server refused to serve commit ${bad}; pin a branch or tag tip instead`,
     );
+    expect((err as GitSourceError).refusedCommit).toBe(bad);
   });
 
   it("refuses a tree over the file limit", async () => {

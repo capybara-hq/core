@@ -344,6 +344,25 @@ describe("git entries of the extra bootstrap manifest", () => {
     ]);
   });
 
+  it("a commit the host will not send by its sha fails with the bootstrap hint, not a ref tip", async () => {
+    const { theme } = await distCommit();
+    const bad = "2".repeat(40);
+    const manifest = manifestOf([await gitEntry("theme-x", "dist", bad, theme)]);
+    const err = await resolveBootstrapPackages(manifest, { config, dir: offlineDir }).then(
+      () => undefined,
+      (e: unknown) => e,
+    );
+    expect(err).toMatchObject({ code: "bootstrap.git_read_failed" });
+    const message = String((err as Error).message);
+    expect(message).toContain(`commit ${bad}`);
+    expect(message).toContain("uploadpack.allowReachableSHA1InWant");
+    expect(message).toContain("pin the commit of a tag and keep the tag");
+    expect(message).toContain(
+      `capybara-plugin bootstrap --write --out <dir>) in the offline directory, ${offlineDir}`,
+    );
+    expect(message).not.toContain("branch or tag tip");
+  });
+
   it("a private repo needs the token; the token is absent from the error when wrong", async () => {
     const files = themeFiles("priv-x", "1.0.0");
     const commit = await priv.commit("private", under("plugins/priv-x", files));

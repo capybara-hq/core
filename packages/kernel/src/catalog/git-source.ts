@@ -96,15 +96,23 @@ export interface GitErrorDetail {
 export class GitSourceError extends Error {
   readonly netCode: MarketplaceNetCode | undefined;
   readonly detail: GitErrorDetail;
+  /** The pinned commit the server would not send by its sha (the message advises a ref tip). */
+  readonly refusedCommit: string | undefined;
   constructor(
     readonly code: GitSourceErrorCode,
     message: string,
-    options?: { cause?: unknown; netCode?: MarketplaceNetCode; detail?: GitErrorDetail },
+    options?: {
+      cause?: unknown;
+      netCode?: MarketplaceNetCode;
+      detail?: GitErrorDetail;
+      refusedCommit?: string;
+    },
   ) {
     super(message, options);
     this.name = "GitSourceError";
     this.netCode = options?.netCode;
     this.detail = options?.detail ?? {};
+    this.refusedCommit = options?.refusedCommit;
   }
 }
 
@@ -397,9 +405,13 @@ function scanningFs(maxUnpacked: number) {
   };
 }
 
-/** The message for a pinned commit the server would not send. */
-const refusedCommit = (commit: string) =>
-  `the server refused to serve commit ${commit}; pin a branch or tag tip instead`;
+/** A pinned commit the server would not send. */
+const refusedCommit = (what: string, commit: string, cause?: unknown) =>
+  new GitSourceError(
+    "marketplace.git_failed",
+    `${what}: the server refused to serve commit ${commit}; pin a branch or tag tip instead`,
+    { ...(cause !== undefined && { cause }), refusedCommit: commit },
+  );
 
 /** isomorphic-git's error for a want the server did not answer (an unknown or unadvertised sha). */
 function refusedWant(e: unknown): boolean {
@@ -495,17 +507,17 @@ export async function readGitTreeAndOids(
     } catch (e) {
       // A commit that is not a ref tip needs the server to allow reachable-sha wants (GitHub does;
       // GitLab / Gitea depend on their configuration); the server then sends nothing for it
-      if (refusedWant(e)) throw failed(`${what}: ${refusedCommit(commit)}`, e);
+      if (refusedWant(e)) throw refusedCommit(what, commit, e);
       throw e;
     }
-    if (res.fetchHead !== commit) throw failed(`${what}: ${refusedCommit(commit)}`);
+    if (res.fetchHead !== commit) throw refusedCommit(what, commit);
     op.signal.throwIfAborted();
     let c: Awaited<ReturnType<typeof git.readCommit>>["commit"];
     try {
       ({ commit: c } = await git.readCommit({ fs, gitdir, oid: commit, cache }));
     } catch (e) {
       // the server answered the fetch without the commit
-      if (refusedWant(e)) throw failed(`${what}: ${refusedCommit(commit)}`, e);
+      if (refusedWant(e)) throw refusedCommit(what, commit, e);
       throw e;
     }
     let tree = c.tree;

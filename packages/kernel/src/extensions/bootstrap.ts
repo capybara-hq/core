@@ -14,7 +14,7 @@ import { Inject, Injectable, Optional } from "@nestjs/common";
 import { sql } from "kysely";
 import semver from "semver";
 import { marketplaceGitSource, repoOwner } from "../catalog/catalog.service.js";
-import { normalGitPath, readGitTreeAndOids } from "../catalog/git-source.js";
+import { GitSourceError, normalGitPath, readGitTreeAndOids } from "../catalog/git-source.js";
 import { marketplaceNetPolicy, marketplaceUrlProblem } from "../catalog/marketplace-fetch.js";
 import { CONFIG_MARKETPLACE_PREFIX, marketplaceForm } from "../catalog/marketplaces.service.js";
 import { otherNameOwner } from "../catalog/ownership.js";
@@ -377,9 +377,15 @@ export async function resolveBootstrapPackages(
       if (signal.aborted) throw err;
       // git-source messages never carry the token; redacted all the same, it is a credential
       const reason = errMsg(err);
+      const redacted = token !== undefined ? reason.replaceAll(token, "***") : reason;
+      // A bootstrap entry pins a commit by its sha: a ref tip is not what it can change to
+      const message =
+        err instanceof GitSourceError && err.refusedCommit !== undefined
+          ? `the host refused to send commit ${err.refusedCommit} by its sha. The commit must be fetchable by its sha (GitHub: always; GitLab, Gitea and other hosts: only when fetching unadvertised commits is allowed, e.g. git's uploadpack.allowReachableSHA1InWant or the host's equivalent), or pin the commit of a tag and keep the tag, or put its pack (capybara-plugin bootstrap --write --out <dir>) in the offline directory, ${where}`
+          : `${redacted}; to install offline, put its pack (capybara-plugin bootstrap --write) in ${where}`;
       throw new ApiError(
         "bootstrap.git_read_failed",
-        `Bootstrap plugin ${e.name} ${e.version}: cannot read ${at}: ${token !== undefined ? reason.replaceAll(token, "***") : reason}; to install offline, put its pack (capybara-plugin bootstrap --write) in ${where}`,
+        `Bootstrap plugin ${e.name} ${e.version}: cannot read ${at}: ${message}`,
       );
     }
     const pack = await packPackageTgz(read.files);
