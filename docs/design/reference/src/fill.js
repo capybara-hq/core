@@ -309,8 +309,8 @@
           : `<a class="r-nav-item r-sb-admin" href="#">${icon("admin")}<span class="r-ellipsis">${esc(F.ADMIN_LABEL)}</span>${icon("arrow-up-right", 14)}</a>`
         : "";
     const foot = rail
-      ? `<div class="r-sb-foot"><span class="r-avatar" title="${esc(C.account)}">${F.FIXTURE_USER.initial}</span></div>`
-      : `<div class="r-sb-foot"><span class="r-avatar">${F.FIXTURE_USER.initial}</span><span class="r-ellipsis">${esc(C.account)}</span><span class="r-theme">${icon("sun", 12)}${icon("moon", 12)}</span></div>`;
+      ? `<div class="r-sb-foot"><span class="r-avatar" data-part="avatar" data-kind="initial" data-shape="circle" data-size="24" aria-hidden="true" title="${esc(C.account)}">${F.FIXTURE_USER.initial}</span></div>`
+      : `<div class="r-sb-foot"><span class="r-avatar" data-part="avatar" data-kind="initial" data-shape="circle" data-size="24" aria-hidden="true">${F.FIXTURE_USER.initial}</span><span class="r-ellipsis">${esc(C.account)}</span><span class="r-theme">${icon("sun", 12)}${icon("moon", 12)}</span></div>`;
     return `<aside class="r-sidebar" data-mode="${o.mode || "full"}">${top}${context}${navBlock}${middle}${adminEntry}${foot}</aside>`;
   }
 
@@ -558,7 +558,7 @@
 
   /** The objects list while loading: the real header with dashes for the counts, three object rows. */
   function listLoadingObjects() {
-    const row = `<li class="r-lrow" data-part="loading-row"><div class="r-skel-box" data-part="skeleton-box" data-box="mark"></div><div class="r-lrow-text">${skelText("30%")}${skelText("55%")}</div></li>`;
+    const row = `<li class="r-lrow" data-part="loading-row"><span class="r-lrow-mark" data-part="object-row-mark"><div class="r-skel-box" data-part="skeleton-box" data-box="mark"></div></span><div class="r-lrow-text">${skelText("30%")}${skelText("55%")}</div></li>`;
     const head = pageHeader({ title: F.PAGE_HEADER_FIXTURE.title, actions: true, tabs: true, pending: true });
     return `<div class="r-tpl" aria-busy="true"><div class="r-tpl-head">${head}</div><div class="r-tpl-body"><div class="r-tpl-main"><ul class="r-llist" data-part="loading-list">${row.repeat(3)}</ul></div></div></div>`;
   }
@@ -590,16 +590,30 @@
 
   function selectField(o) {
     const S = F.SELECT_FIXTURE;
+    const person = o.state === "person";
+    // an option with a person (spec §6.2): the 16 circle before the label, in the field and the list
+    const circle = (label) =>
+      `<span class="r-avatar" data-part="avatar" data-kind="initial" data-shape="circle" data-size="16" aria-hidden="true">${esc([...label][0].toUpperCase())}</span>`;
     const L = F.LONG_MODELS_FIXTURE;
     const long = o.state === "long";
-    const open = long || o.state === "open";
+    const open = long || o.state === "open" || person;
     const options = long
       ? L.groups.flatMap((g) => g.models.map((m) => ({ value: m.id, label: m.label })))
-      : S.options;
-    const value = long ? L.selected : o.state === "placeholder" ? "" : S.value;
+      : person
+        ? F.SELECT_PERSON_FIXTURE.options
+        : S.options;
+    const value = long
+      ? L.selected
+      : person
+        ? F.SELECT_PERSON_FIXTURE.value
+        : o.state === "placeholder"
+          ? ""
+          : S.value;
     const chosen = options.find((x) => x.value === value);
     const shown = chosen
-      ? `<span class="r-ellipsis" data-part="select-label">${esc(chosen.label)}</span>`
+      ? person
+        ? `<span class="r-select-label-person" data-part="select-label">${circle(chosen.label)}<span class="r-ellipsis">${esc(chosen.label)}</span></span>`
+        : `<span class="r-ellipsis" data-part="select-label">${esc(chosen.label)}</span>`
       : `<span class="r-ellipsis r-faint" data-part="select-label" data-placeholder="true">${esc(S.placeholder)}</span>`;
     const st = o.state === "error" ? ' data-state="error"' : open ? ' data-state="focus"' : "";
     const field = `<button class="r-input r-select-field" data-part="select" role="combobox" aria-haspopup="listbox" aria-expanded="${open}"${st}${o.state === "disabled" ? " disabled" : ""}><span class="r-select-value" data-part="input-control">${shown}</span>${icon("chevron-down", 14)}</button>`;
@@ -612,7 +626,7 @@
       const rows = view
         .map((x) => {
           const sel = x.value === value;
-          return `<div class="r-menu-item" data-part="menu-item" role="option" aria-selected="${sel}"><span class="r-ellipsis">${esc(x.label)}</span><span class="r-grow"></span>${sel ? icon("check", 14) : ""}</div>`;
+          return `<div class="r-menu-item" data-part="menu-item" role="option" aria-selected="${sel}">${person ? circle(x.label) : ""}<span class="r-ellipsis">${esc(x.label)}</span><span class="r-grow"></span>${sel ? icon("check", 14) : ""}</div>`;
         })
         .join("");
       const filter = long ? '<input class="r-menu-filter" data-part="menu-filter" placeholder="筛选" aria-label="筛选">' : "";

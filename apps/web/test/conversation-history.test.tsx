@@ -63,9 +63,9 @@ const LOG = [
 function eventsRoute(fail = false) {
   return (c: Call) => {
     const before = new URL(c.url, "http://x").searchParams.get("before");
-    if (before === "end") return json(200, { events: LOG.slice(3), turnsBefore: 1 });
+    if (before === "end") return json(200, { events: LOG.slice(3), people: {}, turnsBefore: 1 });
     if (fail) return json(500, { error: { code: "internal", message: "x" } });
-    if (before === "4") return json(200, { events: LOG.slice(0, 3), turnsBefore: 0 });
+    if (before === "4") return json(200, { events: LOG.slice(0, 3), people: {}, turnsBefore: 0 });
     throw new Error(`unexpected ${c.url}`);
   };
 }
@@ -138,7 +138,9 @@ describe("the conversation page reads its history in pages", () => {
 
   it("a log that fits the first page shows no top edge", async () => {
     stubApi({});
-    await renderChatRoute({ routes: routes(() => json(200, { events: LOG, turnsBefore: 0 })) });
+    await renderChatRoute({
+      routes: routes(() => json(200, { events: LOG, people: {}, turnsBefore: 0 })),
+    });
     expect(screen.getByText("early")).toBeTruthy();
     expect(document.querySelector('[data-part="thread-history"]')).toBeNull();
   });

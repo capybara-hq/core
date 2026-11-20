@@ -368,6 +368,32 @@ describe("Sidebar navigation (work context)", () => {
     await userEvent.click(await screen.findByRole("menuitem", { name: "退出登录" }));
     expect(onSelect).toHaveBeenCalledTimes(1);
   });
+
+  it("the account row draws a circle avatar at 24: the initial, or the image when given", () => {
+    const { unmount } = zh(
+      <Sidebar
+        {...props({ account: { name: "grant", menu: [{ label: "x", onSelect: vi.fn() }] } })}
+      />,
+    );
+    const row = () => document.querySelector('[data-part="account"]') as HTMLElement;
+    const initial = row().querySelector('[data-part="avatar"]') as HTMLElement;
+    expect(initial.getAttribute("data-shape")).toBe("circle");
+    expect(initial.getAttribute("data-size")).toBe("24");
+    expect(initial.textContent).toBe("G");
+    unmount();
+    zh(
+      <Sidebar
+        {...props({
+          account: {
+            name: "grant",
+            avatarUrl: "/api/v1/accounts/a1/avatar?v=1",
+            menu: [{ label: "x", onSelect: vi.fn() }],
+          },
+        })}
+      />,
+    );
+    expect(row().querySelector("img")?.getAttribute("src")).toBe("/api/v1/accounts/a1/avatar?v=1");
+  });
 });
 describe("Sidebar theme switch and account submenus", () => {
   const theme = () => ({

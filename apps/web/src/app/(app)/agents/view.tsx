@@ -19,6 +19,7 @@ import { usePagePath } from "../../../components/shell/path";
 import { type AgentsTab, parseAgentsTab } from "../../../lib/agents";
 import { usableRows } from "../../../lib/components";
 import { canUpdateOrg } from "../../../lib/org-settings";
+import type { PersonRef } from "../../../lib/people";
 import { agentsQuery, agentTemplatesQuery } from "../../../lib/query/agents";
 import { retryOnMountOf } from "../../../lib/query/client";
 import { orgComponentsQuery } from "../../../lib/query/components";
@@ -201,8 +202,10 @@ function AgentsTabList({
   }
   const all = list.data.agents;
   const rows = all.filter((a) => inScope(a, filter, me.account.id) && matchesAgent(a, query));
-  const nameOf = (accountId: string) =>
-    members.data?.members.find((m) => m.account.id === accountId)?.account.displayName;
+  const ownerOf = (accountId: string): PersonRef | undefined => {
+    const a = members.data?.members.find((m) => m.account.id === accountId)?.account;
+    return a === undefined ? undefined : { id: a.id, name: a.displayName, avatarUrl: a.avatarUrl };
+  };
   return (
     <ListPage
       header={header}
@@ -217,7 +220,7 @@ function AgentsTabList({
         : {})}
     >
       {rows.map((a) => (
-        <AgentCard key={a.id} agent={a} me={me} ownerName={nameOf(a.ownerAccountId)} />
+        <AgentCard key={a.id} agent={a} me={me} owner={ownerOf(a.ownerAccountId)} />
       ))}
     </ListPage>
   );

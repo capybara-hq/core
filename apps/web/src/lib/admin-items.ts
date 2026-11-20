@@ -28,6 +28,7 @@ export interface AdminAgentRow {
   avatar: AgentAvatar;
   ownerAccountId: string;
   ownerName: string;
+  ownerAvatarUrl: string | null;
   needsReassignment: boolean;
   visibility: AgentVisibility;
   createdFrom: { templateId: string; name: string | null } | null;
@@ -78,6 +79,7 @@ export interface AdminConnectorRow {
   toolsSyncedAt: string | null;
   createdBy: string;
   createdByName: string;
+  createdByAvatarUrl: string | null;
   createdAt: string;
   updatedAt: string;
 }

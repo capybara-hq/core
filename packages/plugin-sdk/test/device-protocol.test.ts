@@ -422,6 +422,14 @@ describe("device protocol", () => {
         expect(isDeviceBootId(bootId)).toBe(false);
       }
     });
+
+    it("keeps a well-formed program run identity and drops a malformed one", () => {
+      const programRunId = "0f2a9c1e-7b1d-4b8e-9d5e-1c2b3a4d5e6f";
+      expect(parseHello({ ...hello, programRunId }).programRunId).toBe(programRunId);
+      expect(parseHello(hello).programRunId).toBeUndefined();
+      for (const bad of ["", "a b", "x".repeat(129), 1, null])
+        expect(parseHello({ ...hello, programRunId: bad }).programRunId).toBeUndefined();
+    });
   });
 
   describe("project names", () => {

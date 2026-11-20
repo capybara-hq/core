@@ -12,6 +12,7 @@ import { createLogger } from "../../src/log.js";
 import { AdminConnectors } from "../../src/tools/admin-connectors.js";
 import { ConnectorsService } from "../../src/tools/connectors.service.js";
 import { memState } from "../fixtures/plugins/mem-connector/index.js";
+import { giveUploadAvatar, UPLOAD_AVATAR_URL } from "../helpers/avatar.js";
 import { truncateTables } from "../helpers/db.js";
 import { asUser, cookieJar } from "../helpers/http.js";
 import { accountsFor } from "../helpers/identity.js";
@@ -196,6 +197,21 @@ describe("AdminConnectors", () => {
       .where("target", "=", target)
       .execute();
   }
+
+  it("names the creator's avatar URL: the upload of one, null for another", async () => {
+    await giveUploadAvatar(db, owner.id);
+    await db
+      .updateTable("connectors")
+      .set({ created_by: outsider.id })
+      .where("id", "=", fx.open)
+      .execute();
+    const { connectors } = await admin().list({ limit: 50 });
+    const byId = Object.fromEntries(connectors.map((c) => [c.id, c]));
+    expect(byId[fx.docs]?.createdByAvatarUrl).toEqual(
+      expect.stringContaining(UPLOAD_AVATAR_URL(owner.id)),
+    );
+    expect(byId[fx.open]?.createdByAvatarUrl).toBeNull();
+  });
 
   it("lists live connectors of every org with tool counts", async () => {
     const { connectors, next } = await admin().list({ limit: 50 });

@@ -113,6 +113,7 @@ export interface SkillChange {
   status: SkillChangeStatus;
   requestedBy: string;
   requestedByName: string;
+  requestedByAvatarUrl: string | null;
   /** The proposing conversation; null for a share request and a proposal made on the web. */
   requestedInConversation: string | null;
   /** The proposing conversation's web path (no locale prefix), or null. */

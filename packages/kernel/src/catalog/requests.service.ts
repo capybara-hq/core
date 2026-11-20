@@ -5,6 +5,7 @@ import { sql } from "kysely";
 import type { AgentDefinition } from "../agents/definition.js";
 import type { KernelSchemaDb } from "../db/kernel-schema.js";
 import { ApiError } from "../errors.js";
+import { type AccountAvatar, avatarColumns, personAvatarUrl } from "../identity/account-avatar.js";
 import { audit } from "../identity/audit.js";
 import { readOrgMarketplaceBrowse } from "../identity/settings.js";
 import { SuperAdminLock } from "../identity/super-admin.js";
@@ -117,6 +118,8 @@ export interface CatalogRequestView {
   requestedBy: string | null;
   /** 申请人的显示名（账号已删除为 null）。 */
   requestedByName: string | null;
+  /** The requester's avatar URL (null: none, or the account is gone). */
+  requestedByAvatarUrl: string | null;
   decidedBy: string | null;
   decidedAt: string | null;
   /** The prepared import of an approved `import` request that is not confirmed yet. */
@@ -1064,7 +1067,7 @@ export class CatalogRequestsService {
         .leftJoin("agent_versions as av", (j) =>
           j.onRef("av.agent_id", "=", "ag.id").onRef("av.version", "=", "ag.current_version"),
         )
-        .select([
+        .select((eb) => [
           "r.agent_id",
           "r.pending_keys",
           "ag.deleted_at as agent_deleted_at",
@@ -1084,6 +1087,7 @@ export class CatalogRequestsService {
           "r.reason",
           "r.requested_by",
           "a.display_name as requested_by_name",
+          ...avatarColumns(eb, "a", "requester"),
           "r.decided_by",
           "r.decided_at",
           "r.staging_id",
@@ -1175,6 +1179,8 @@ type RequestRow = {
   reason: string | null;
   requested_by: string | null;
   requested_by_name: string | null;
+  requester_avatar: AccountAvatar | null;
+  requester_sso_avatar_url: string | null;
   decided_by: string | null;
   decided_at: Date | null;
   staging_id: string | null;
@@ -1206,6 +1212,8 @@ function toView(
     reason: r.reason,
     requestedBy: r.requested_by,
     requestedByName: r.requested_by_name,
+    requestedByAvatarUrl:
+      r.requested_by === null ? null : personAvatarUrl(r, "requester", r.requested_by),
     decidedBy: r.decided_by,
     decidedAt: r.decided_at?.toISOString() ?? null,
     stagingId: r.status === "pending" ? r.staging_id : null,

@@ -102,6 +102,12 @@ export const PLATFORM_EXCLUSIONS: readonly {
     reason:
       "Transfers ownership of an org's agent to another person on the platform's behalf, as the org's own transfer route",
   },
+  // accounts
+  {
+    route: "GET /api/v1/accounts/:accountId/avatar",
+    category: "transport",
+    reason: "Redirects to the avatar image for <img>; no agent use",
+  },
   // background
   {
     route: "GET /api/v1/orgs/:orgId/conversations/:id/background-tasks/:taskId/output",
@@ -444,6 +450,16 @@ export const PLATFORM_EXCLUSIONS: readonly {
     route: "PUT /api/v1/me/current-org",
     category: "human-only",
     reason: "Switches the web session's current org",
+  },
+  {
+    route: "PATCH /api/v1/me/profile",
+    category: "human-only",
+    reason: "Changes the person's own name and avatar",
+  },
+  {
+    route: "POST /api/v1/me/avatar/uploads",
+    category: "human-only",
+    reason: "The person's own avatar: only the person sets it, an agent never does",
   },
   {
     route: "PUT /api/v1/me/password",

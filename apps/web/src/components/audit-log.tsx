@@ -1,6 +1,6 @@
 "use client";
 
-import { CellTitle, type Column, DateTime, Text } from "@capybara-hq/design";
+import { CellTitle, type Column, DateTime, PersonName, Text } from "@capybara-hq/design";
 import { useTranslations } from "next-intl";
 import type { AuditEvent, AuditPage } from "../lib/admin";
 import { auditActionKey } from "../lib/audit-actions";
@@ -32,7 +32,17 @@ export function useAuditColumns(): Column<AuditEvent>[] {
           ...(e.viaAgent ? [t("viaAgent")] : []),
           ...(e.viaToken ? [t("viaToken")] : []),
         ].join(" · ");
-        return <CellTitle title={name} {...(via !== "" ? { description: via } : {})} />;
+        if (e.actor === null) {
+          return <CellTitle title={name} {...(via !== "" ? { description: via } : {})} />;
+        }
+        return (
+          <PersonName
+            name={name}
+            avatarUrl={e.actor.avatarUrl}
+            size={16}
+            {...(via !== "" ? { secondary: via } : {})}
+          />
+        );
       },
     },
     {

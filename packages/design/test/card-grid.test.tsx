@@ -91,6 +91,15 @@ describe("ObjectCard", () => {
     expect(parts).toEqual(["warn", "fail"]);
   });
 
+  it("draws a person meta part as a 16 PersonName before the other parts", () => {
+    withNav(grid([card({ meta: [{ person: { name: "Ada", avatarUrl: "/a.png" } }, "仅自己"] })]));
+    const meta = document.querySelector('[data-part="object-card-meta"]') as HTMLElement;
+    const person = meta.querySelector('[data-part="person-name"]') as HTMLElement;
+    expect(person.getAttribute("data-size")).toBe("16");
+    expect(person.querySelector("img")?.getAttribute("src")).toBe("/a.png");
+    expect(meta.textContent).toBe("Ada · 仅自己");
+  });
+
   it("draws the avatar, the name as the one link, the description, the meta, the primary and the menu", () => {
     withNav(grid([card()]));
     const list = screen.getByRole("list", { name: "智能体" });

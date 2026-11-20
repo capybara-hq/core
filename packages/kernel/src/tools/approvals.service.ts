@@ -24,6 +24,7 @@ import { conversationSourceOf } from "../conversations/source.js";
 import type { ApprovalsTable } from "../db/kernel-schema.js";
 import { ApiError } from "../errors.js";
 import { clipText } from "../extensions/hooks.js";
+import { loadPeople, type PersonRef } from "../identity/account-avatar.js";
 import { audit } from "../identity/audit.js";
 import { sha256Hex } from "../identity/hash.js";
 import { KernelConfigService } from "../infra/config/kernel-config.service.js";
@@ -331,6 +332,8 @@ export interface ApprovalView extends ApprovalPublicRecord {
   parentConversationId?: string;
   /** 发起本次运行的人。 */
   initiatorAccountId: string;
+  /** The person who decided (next to `decidedBy`); null while pending or when the account is gone. */
+  decidedByPerson: PersonRef | null;
 }
 
 /** 新建审批（Task 9 的 loop 在策略为 `ask` 时调用）。 */
@@ -2484,6 +2487,10 @@ export class ApprovalsService {
       roots.set(p, await rootConversationOf(db.db, p));
     }
     const names = await this.agentNames([...new Set(ctxRows.map((r) => r.agent_id))]);
+    const people = await loadPeople(
+      db.db,
+      recs.flatMap((r) => (r.decidedBy === null ? [] : [r.decidedBy])),
+    );
     const connectorIds = [
       ...new Set(recs.flatMap((r) => (r.connectorId === null ? [] : [r.connectorId]))),
     ];
@@ -2516,6 +2523,7 @@ export class ApprovalsService {
       return [
         {
           ...publicRecord(r),
+          decidedByPerson: r.decidedBy === null ? null : (people.get(r.decidedBy) ?? null),
           toolName:
             prefix !== undefined && r.toolKey.startsWith(prefix)
               ? r.toolKey.slice(prefix.length)

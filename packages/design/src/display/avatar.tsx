@@ -17,6 +17,9 @@ export {
 export const AVATAR_SIZES = [16, 24, 28, 40, 64] as const;
 export type AvatarSize = (typeof AVATAR_SIZES)[number];
 
+/** `square` is an agent's, `circle` a person's (spec §6.30). */
+export type AvatarShape = "square" | "circle";
+
 /** An agent's avatar: a preset animal, an uploaded image, or none (the initial). */
 export type AvatarValue = { kind: "preset"; id: PresetId } | { kind: "image"; src: string } | null;
 
@@ -47,11 +50,14 @@ export function Avatar({
   value,
   name,
   size,
+  shape = "square",
   onImageError,
 }: {
   value: AvatarValue;
   name: string;
   size: AvatarSize;
+  /** `circle` is a person's avatar: it never draws a preset (the initial instead). */
+  shape?: AvatarShape;
   /** Called once when an image avatar fails to load (it then draws the initial). */
   onImageError?: () => void;
 }) {
@@ -60,9 +66,11 @@ export function Avatar({
     className: "cb-avatar",
     "data-part": "avatar",
     "data-size": String(size),
+    "data-shape": shape,
     "aria-hidden": true,
   } as const;
-  const preset = value?.kind === "preset" ? AVATAR_PRESETS[value.id] : undefined;
+  const preset =
+    shape === "square" && value?.kind === "preset" ? AVATAR_PRESETS[value.id] : undefined;
   if (value?.kind === "preset" && preset) {
     const { viewBox, paths } = presetDrawing(value.id, size);
     return (

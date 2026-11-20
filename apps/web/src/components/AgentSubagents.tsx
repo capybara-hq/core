@@ -221,6 +221,7 @@ export function useSubagentsForm(
   onEdit: () => void = () => {},
 ): SubagentsForm {
   const t = useTranslations("agents.form.subagents");
+  const departed = useTranslations("people")("departed");
   // the saved block: the draft follows it until something is edited (agent page §3.2)
   const initial = existing?.definition.subagents;
   const saved = draftOf(existing);
@@ -506,7 +507,8 @@ export function useSubagentsForm(
                 const chosen = agents.find((x) => x.agentId === a.id);
                 const index = agents.findIndex((x) => x.agentId === a.id);
                 const name = a.definition.name;
-                const owner = names[a.ownerAccountId] ?? a.ownerAccountId;
+                // an owner who left reads "Former member", never the account id
+                const owner = names[a.ownerAccountId] ?? departed;
                 return (
                   <Stack key={a.id} gap={4}>
                     <Checkbox

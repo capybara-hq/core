@@ -1,5 +1,6 @@
 import { Inject, Injectable } from "@nestjs/common";
 import { sql } from "kysely";
+import { avatarColumns, personAvatarUrl } from "../identity/account-avatar.js";
 import { KernelDb } from "../infra/database/kernel-db.js";
 
 /**
@@ -11,7 +12,12 @@ export interface AuditEvent {
   /** The event id (a bigserial, as a decimal string); also the keyset cursor. */
   id: string;
   at: string;
-  actor: { id: string; name: string | null; email: string | null } | null;
+  actor: {
+    id: string;
+    name: string | null;
+    email: string | null;
+    avatarUrl: string | null;
+  } | null;
   /** Done with a personal access token. */
   viaToken: boolean;
   /** Done through the Platform tool by the actor's own agent (`detail.via === "agent"`). */
@@ -54,7 +60,7 @@ export class AuditLogService {
     let query = this.kdb.db
       .selectFrom("audit_events as a")
       .leftJoin("accounts as ac", "ac.id", "a.actor_account_id")
-      .select([
+      .select((eb) => [
         "a.id",
         "a.at",
         "a.actor_account_id",
@@ -63,6 +69,7 @@ export class AuditLogService {
         "a.target",
         "ac.display_name",
         "ac.email",
+        ...avatarColumns(eb, "ac", "actor"),
         // only the one flag the log shows, never the whole detail (spec §9)
         sql<string | null>`a.detail->>'via'`.as("via"),
       ]);
@@ -89,6 +96,7 @@ export class AuditLogService {
                 id: r.actor_account_id,
                 name: r.display_name ?? null,
                 email: r.email ?? null,
+                avatarUrl: personAvatarUrl(r, "actor", r.actor_account_id),
               },
         viaToken: r.actor_token_id !== null,
         viaAgent: r.via === "agent",

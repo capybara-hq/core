@@ -218,10 +218,15 @@ describe("嵌入令牌", () => {
     expect((ok.json() as Issued).src).toBe("/plugin-ui/fake-embed/panel-conv");
   });
 
-  it("令牌不能当 Bearer 调内核 /api（401）", async () => {
+  it("an embed token is no Bearer for the kernel /api (401)", async () => {
     await enable(owner, orgId, "fake-embed");
     const { token } = (await issue(owner, "fake-embed", "panel")).json() as Issued;
-    for (const url of ["/api/v1/me", `${ui}/contributions`, `/api/v1/orgs/${orgId}/agents`]) {
+    for (const url of [
+      "/api/v1/me",
+      `${ui}/contributions`,
+      `/api/v1/orgs/${orgId}/agents`,
+      `/api/v1/accounts/${ownerId}/avatar`,
+    ]) {
       const r = await k.http.inject({
         method: "GET",
         url,

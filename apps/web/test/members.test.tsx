@@ -6,6 +6,7 @@ import zh from "../messages/zh.json";
 import type { Me } from "../src/lib/session";
 import { bodyOf, json, lastStubRoutes, noContent, stubApi } from "./support/api";
 import { resetNavigation } from "./support/navigation";
+import { personAvatarSrc, personInitial } from "./support/person";
 import { renderRouteWithCache } from "./support/query";
 import { ME } from "./support/render";
 import { pickOption } from "./support/select";
@@ -25,19 +26,24 @@ const asRole = (role: string): Me => ({
 
 const MEMBERS = [
   {
-    account: { id: "a1", displayName: "Grant", email: null },
+    account: {
+      id: "a1",
+      displayName: "Grant",
+      email: null,
+      avatarUrl: "/api/v1/accounts/a1/avatar?v=abc123",
+    },
     role: "owner",
     joinedAt: "2026-10-01T00:00:00.000Z",
     anonymous: false,
   },
   {
-    account: { id: "a2", displayName: "Bob", email: "bob@corp.example" },
+    account: { id: "a2", displayName: "Bob", email: "bob@corp.example", avatarUrl: null },
     role: "member",
     joinedAt: "2026-10-02T00:00:00.000Z",
     anonymous: false,
   },
   {
-    account: { id: "a3", displayName: "IM visitor", email: null },
+    account: { id: "a3", displayName: "IM visitor", email: null, avatarUrl: null },
     role: "guest",
     joinedAt: "2026-10-03T00:00:00.000Z",
     anonymous: true,
@@ -99,6 +105,18 @@ describe("成员页（SettingsPage）", () => {
     },
   );
 
+  it("each member row leads with the avatar image, or the initial without one", async () => {
+    stubApi({
+      [`GET ${BASE}/members`]: () => json(200, { members: MEMBERS }),
+      [`GET ${BASE}/invitations`]: () => json(200, { invitations: [] }),
+    });
+    await renderRouteWithCache("/settings/members", lastStubRoutes(), { me: asRole("admin") });
+    await screen.findByText("Bob");
+    expect(personAvatarSrc(rowOf("Grant"))).toBe("/api/v1/accounts/a1/avatar?v=abc123");
+    expect(personAvatarSrc(rowOf("Bob"))).toBeNull();
+    expect(personInitial(rowOf("Bob"))).toBe("B");
+  });
+
   it("管理员把成员改为访客：PATCH members/:id，行内角色随之更新（members invalidated: read again）", async () => {
     const m = en.members;
     let members = MEMBERS;
@@ -152,7 +170,12 @@ describe("成员页（SettingsPage）", () => {
     ).toHaveProperty("disabled", true);
     expect(within(owner).queryByRole("button", { name: ROW_ACTIONS.en })).toBeNull();
     // 自己这一行显示「（你）」，角色不可改，也没有行菜单
-    const self = rowOf(`Bob (${m.you})`);
+    const self = rowOf("Bob");
+    // "(you)" is the secondary text, never part of the name the avatar initial reads
+    expect(self.querySelector('[data-part="person-name-secondary"]')?.textContent).toBe(
+      `(${m.you})`,
+    );
+    expect(personInitial(self)).toBe("B");
     expect(
       within(self).getByRole("combobox", { name: m.roleOf.replace("{name}", "Bob") }),
     ).toHaveProperty("disabled", true);
@@ -271,7 +294,7 @@ describe("成员页（SettingsPage）", () => {
     expect(bob.value).toBe("owner");
     // an admin may not change an owner's role, nor grant owner
     expect(bob.disabled).toBe(true);
-    const mine = within(rowOf(`Grant (${m.you})`)).getByRole("combobox", {
+    const mine = within(rowOf("Grant")).getByRole("combobox", {
       name: m.roleOf.replace("{name}", "Grant"),
     }) as HTMLButtonElement;
     expect(mine.value).toBe("admin");

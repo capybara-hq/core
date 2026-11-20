@@ -14,6 +14,7 @@ import type { Account, AccountsService } from "../../src/identity/accounts.js";
 import { createLogger } from "../../src/log.js";
 import type { MembersService } from "../../src/orgs/members.service.js";
 import type { OrgsService } from "../../src/orgs/orgs.service.js";
+import { giveUploadAvatar, UPLOAD_AVATAR_URL } from "../helpers/avatar.js";
 import { anonymousGuestsFor } from "../helpers/channels.js";
 import { truncateTables } from "../helpers/db.js";
 import { accountsFor, orgsFor } from "../helpers/identity.js";
@@ -227,6 +228,15 @@ describe("AdminAgents", () => {
       createdFrom: null,
     });
     expect(a?.updatedAt).toBeInstanceOf(Date);
+  });
+
+  it("names each owner's avatar URL: the upload of one, null for the other", async () => {
+    await giveUploadAvatar(db, f.memberA.id);
+    const { agents: rows } = await admin.list({ limit: 50 });
+    expect(rows.find((r) => r.id === f.agentA)?.ownerAvatarUrl).toEqual(
+      expect.stringContaining(UPLOAD_AVATAR_URL(f.memberA.id)),
+    );
+    expect(rows.find((r) => r.id === f.agentB)?.ownerAvatarUrl).toBeNull();
   });
 
   it("filters by org and searches the name case-insensitively", async () => {

@@ -39,7 +39,7 @@ const share = (id: string, extra: Partial<ShareView> = {}): ShareView => ({
   contentType: "text/html",
   size: 1234,
   generation: 1,
-  createdBy: { id: "a1", displayName: "Grant" },
+  createdBy: { id: "a1", displayName: "Grant", avatarUrl: null },
   createdAt: "2026-11-18T06:00:00.000Z",
   expiresAt: null,
   lastOpenedAt: null,

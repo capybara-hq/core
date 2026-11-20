@@ -21,6 +21,7 @@ import { MachinesService } from "../../src/local-devices/machines.js";
 import { NetworkGrants } from "../../src/local-devices/network-grants.js";
 import { LocalDeviceRelay } from "../../src/local-devices/relay.js";
 import { LegacyRetirementStore } from "../../src/sandbox/legacy-retirement.js";
+import { DeviceProgramRestartedError } from "../../src/sandbox/request-not-sent.js";
 import { SandboxService } from "../../src/sandbox/sandbox.service.js";
 import { legacyDbFor } from "../helpers/conversations.js";
 import { accountsFor } from "../helpers/identity.js";
@@ -729,6 +730,63 @@ describe("GET /device/connect", () => {
     await second.ready;
     second.respond(req.id, { ok: true, result: EXEC_RESULT });
     expect(await call).toEqual(EXEC_RESULT);
+    second.close();
+  });
+
+  it("a result flushed by the same program run after a reconnect is still accepted", async () => {
+    const m = await connected();
+    const first = new FakeMachineV3(url, m.credential, undefined, { hello: false });
+    await first.opened;
+    first.hello({ programRunId: "run-1" });
+    await first.ready;
+    const call = relay.callV3(m.deviceId, "exec", execArgs(m.deviceId), {
+      deadlineMs: 20_000,
+      signal: AbortSignal.timeout(30_000),
+    });
+    const req = (await first.next((f) => f.type === "req")) as KernelReq;
+    first.close();
+    await first.closed;
+    // a socket blip: the same process connects again and flushes the result it kept
+    const second = new FakeMachineV3(url, m.credential, undefined, { hello: false });
+    await second.opened;
+    second.hello({ programRunId: "run-1" });
+    await second.ready;
+    second.respond(req.id, { ok: true, result: EXEC_RESULT });
+    expect(await call).toEqual(EXEC_RESULT);
+    second.close();
+  });
+
+  it("a request sent to an earlier program run ends once the machine reconnects as a new run", async () => {
+    const m = await connected();
+    const first = new FakeMachineV3(url, m.credential, undefined, { hello: false });
+    await first.opened;
+    first.hello({ programRunId: "run-1" });
+    await first.ready;
+    const started = Date.now();
+    // a long command: without the evidence the call would wait for its whole deadline
+    const call = relay
+      .callV3(m.deviceId, "exec", execArgs(m.deviceId), {
+        deadlineMs: 600_000,
+        signal: AbortSignal.timeout(900_000),
+      })
+      .then(
+        () => undefined,
+        (e: unknown) => e,
+      );
+    const req = (await first.next((f) => f.type === "req")) as KernelReq;
+    // the program crashes and its service manager starts a new process
+    first.close();
+    await first.closed;
+    const second = new FakeMachineV3(url, m.credential, undefined, { hello: false });
+    await second.opened;
+    second.hello({ programRunId: "run-2" });
+    await second.ready;
+    const e = await call;
+    expect(e).toBeInstanceOf(DeviceProgramRestartedError);
+    // ended on the evidence (a poll or two), never at the deadline
+    expect(Date.now() - started).toBeLessThan(30_000);
+    // the old request is given up: the new run is told to cancel it (it never ran there)
+    expect(await second.next((f) => f.type === "cancel" && f.id === req.id)).toBeTruthy();
     second.close();
   });
 

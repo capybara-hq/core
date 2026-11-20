@@ -299,7 +299,7 @@ export function useConversationPage(
     () => (subagents.views ? new Map(subagents.views.map((v) => [v.id, v])) : undefined),
     [subagents.views],
   );
-  const whoWaits = useWhoWaits(orgId, conv.events);
+  const whoWaits = useWhoWaits(conv.people);
   // the tree is a root's (a sub-agent's page, or one still loading, reads none)
   const isRoot = conv.conversation !== undefined && !conv.conversation.parentConversationId;
   const tree = useTreeLookup(orgId, conversationId, conv.events, isRoot);
@@ -545,6 +545,7 @@ export function useConversationPage(
           info={info}
           reasoningOf={selection.reasoningOf}
           compaction={conv.compaction}
+          people={conv.people}
           runLinks={{
             agentOwnerId: agent?.ownerAccountId,
             // a sub-agent conversation's trajectory is gated on the parent's agent: no link

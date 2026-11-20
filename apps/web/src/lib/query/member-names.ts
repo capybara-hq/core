@@ -1,17 +1,18 @@
 "use client";
 
 import { useQuery } from "@tanstack/react-query";
+import type { PersonRef } from "../people";
 import { retryOnMountOf } from "./client";
 import { membersQuery } from "./members";
 
 /** The members' display names by account id, as a page that shows who started a run reads them. */
 export type MemberNames =
-  | { kind: "ready"; people: Record<string, string> }
+  | { kind: "ready"; people: Record<string, string>; refs: Record<string, PersonRef> }
   | { kind: "loading" }
   | { kind: "error"; retry(): void };
 
 /**
- * The org's member names (account id → display name). Names are cosmetic: when the kernel refuses
+ * The org's member names (account id → display name) and people (account id → name and avatar). Names are cosmetic: when the kernel refuses
  * the list (403 / 404) the ids show (`ready` with no names); any other failure is `error` (the
  * page's error state, with a retry). A failure the layout already read is not read again on mount.
  * `enabled: false`: not read (a page that names people only in one of its views).
@@ -25,10 +26,16 @@ export function useMemberNames(orgId: string, enabled = true): MemberNames {
       people: Object.fromEntries(
         members.data.members.map((m) => [m.account.id, m.account.displayName]),
       ),
+      refs: Object.fromEntries(
+        members.data.members.map((m) => [
+          m.account.id,
+          { id: m.account.id, name: m.account.displayName, avatarUrl: m.account.avatarUrl },
+        ]),
+      ),
     };
   }
   const refused = members.error?.status === 403 || members.error?.status === 404;
-  if (refused) return { kind: "ready", people: {} };
+  if (refused) return { kind: "ready", people: {}, refs: {} };
   if (members.error) return { kind: "error", retry: () => void members.refetch() };
   return { kind: "loading" };
 }

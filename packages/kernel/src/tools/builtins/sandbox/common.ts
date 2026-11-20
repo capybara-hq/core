@@ -52,6 +52,7 @@ import {
 import type { SandboxMode } from "../../../sandbox/modes.js";
 import { isEscalationGrantMissing } from "../../../sandbox/operation-authority-types.js";
 import type { HeldDeviceContextEvidence } from "../../../sandbox/permission-context-types.js";
+import { isDeviceProgramRestarted } from "../../../sandbox/request-not-sent.js";
 import {
   type HeldProvider,
   RetirementPendingError,
@@ -564,6 +565,12 @@ export const PERMISSION_UNSUPPORTED_TOOL_TEXT =
  */
 export const SCOPE_INVALID_TOOL_TEXT =
   "The device refused this operation as malformed, which points to a problem in Capybara itself, not in the request. Tell the user the device rejected the operation and that it should be reported; do not retry it unchanged.";
+/**
+ * A device request whose machine came back as a new run of capybara-device before answering
+ * (`DeviceProgramRestartedError`, also as the cause of an unknown outcome): its result is lost.
+ */
+export const DEVICE_PROGRAM_RESTARTED_TOOL_TEXT =
+  "The capybara-device program restarted on the device's machine while this operation was in progress, so its result is lost and whether it ran, or how far, is unknown. Check the device's state (for example with Read, Glob or TaskList), then run it again if it is still needed; do not repeat an operation that must not run twice.";
 /** A managed operation whose outcome could not be confirmed (`SandboxOperationOutcomeUnknownError`). */
 export const OUTCOME_UNKNOWN_TOOL_TEXT =
   "The device may or may not have run this operation: its outcome could not be confirmed. Check the device's state (for example with Read, Glob or TaskList) before retrying, and do not repeat an operation that must not run twice.";
@@ -599,6 +606,11 @@ export function mapSandboxError(e: unknown, log: Pick<Logger, "warn"> | undefine
     return new ToolError(MANAGED_DEVICE_CONTEXT_UNAVAILABLE_TEXT, { kind: "unavailable" });
   if (e instanceof ManagedDeviceContextFailed)
     return new ToolError(MANAGED_DEVICE_CONTEXT_FAILED_TEXT, { kind: "unavailable" });
+  // the machine came back as a new program run: the request's result can never arrive
+  if (isDeviceProgramRestarted(e)) {
+    log?.warn("device program restarted before answering", { err: e, outcome: "unknown" });
+    return new ToolError(DEVICE_PROGRAM_RESTARTED_TOOL_TEXT, { kind: "unavailable" });
+  }
   // the managed route's typed refusals (unknown first: it never proves the operation had no effect)
   if (isSandboxOperationOutcomeUnknownError(e)) {
     // the provider could not be reached after the durable dispatch: the ledger keeps the outcome

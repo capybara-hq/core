@@ -119,7 +119,8 @@
       "not_found": "The account does not exist.",
       "last_super_admin": "The last super admin cannot be revoked or deactivated.",
       "initial_password_unavailable": "There is no initial password to show: it was shown already, has expired, or the account was not created by a call you approved.",
-      "create_needs_approval": "Create the account from a conversation where you approve the call yourself, or on the web."
+      "create_needs_approval": "Create the account from a conversation where you approve the call yourself, or on the web.",
+      "display_name_too_long": "The name is too long: at most 64 characters."
     },
     "org": {
       "not_found": "The organization does not exist or you are no longer a member.",
@@ -1420,7 +1421,6 @@
   },
   "chat": {
     "waitingFor": {
-      "someone": "another member",
       "role": {
         "guest": "a guest",
         "member": "an org member",
@@ -1436,7 +1436,6 @@
     "stopped": "Stopped",
     "running": "Replying…",
     "you": "You",
-    "anotherMember": "another member",
     "assistant": "Agent",
     "failed": "This reply failed ({code}).",
     "empty": "Send a message to start the conversation.",
@@ -2695,6 +2694,7 @@
       "models": "Models",
       "members": "Members",
       "tokens": "Service tokens",
+      "profile": "Profile",
       "preferences": "Preferences",
       "appearance": "Appearance",
       "schedules": "Scheduled tasks",
@@ -4293,6 +4293,7 @@
       "actions": {
         "accountCreated": "Created an account",
         "accountUpdated": "Updated an account",
+        "accountProfileUpdated": "Edited their profile",
         "authAppAuthorized": "Allowed an app to sign in",
         "authAppSignedIn": "An app signed in",
         "platformIconUpdated": "Changed the platform icon",
@@ -5550,7 +5551,7 @@
           "import": "Asks to install",
           "enable": "Asks to enable"
         },
-        "requester": "By {name}",
+        "requester": "Requested by",
         "approve": "Approve",
         "reject": "Reject",
         "approved": "Approved",
@@ -6493,6 +6494,30 @@
     "listUnavailable": "The platform components' state in this organization could not be read: the ones that are off and their switches are not shown.",
     "retry": "Retry"
   },
+  "people": {
+    "you": "You",
+    "departed": "Former member"
+  },
+  "profile": {
+    "title": "Profile",
+    "section": "Profile",
+    "description": "How you appear to the other people in your organizations.",
+    "avatarLabel": "Avatar",
+    "upload": "Upload",
+    "replace": "Replace",
+    "remove": "Remove",
+    "fromSource": "From {source}",
+    "uploadOff": "Uploading needs object storage, which this deployment has not configured.",
+    "uploadType": "Choose a png, jpg or webp image.",
+    "uploadFailed": "The image could not be read. Pick a png, jpg or webp file.",
+    "avatarSaved": "Avatar saved.",
+    "avatarRemoved": "Avatar removed.",
+    "nameLabel": "Name",
+    "nameRequired": "Enter a name.",
+    "nameTooLong": "At most {max} characters.",
+    "save": "Save",
+    "saved": "Profile saved."
+  },
   "preferences": {
     "title": "Preferences",
     "save": "Save",
@@ -6735,8 +6760,7 @@
       "missingTitle": "Refused in the latest runs",
       "addMissing": "Add to approved tools",
       "connect": "Connect {slug}",
-      "readOnly": "This task belongs to {name}. Organization admins can pause, resume or delete it, not change it.",
-      "creatorUnknown": "another member",
+      "readOnlyOwner": "This task belongs to {name}. Organization admins can pause, resume or delete it, not change it.",
       "chatAgentFixed": "A chat task uses the agent of the chat's connection.",
       "minInterval": "This organization runs a task at most once every {n} minutes.",
       "expiresHelp": "The task ends after this day. Leave empty to keep it running, unless the organization sets a default end; then it ends that many days from now.",
@@ -6952,7 +6976,6 @@
       "missing_grants": "Its latest run was refused tools it isn't approved for",
       "failed": "Its latest run failed",
       "admin": "Paused by {name}",
-      "adminUnknown": "Paused by an organization admin",
       "failures": "Paused after repeated failures",
       "creator_inactive": "Paused: you are no longer active in the organization",
       "agent_gone": "Paused: its agent is gone",

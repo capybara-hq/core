@@ -143,6 +143,28 @@ describe("Avatar (spec §6.30)", () => {
     );
     expect(root(container).getAttribute("aria-hidden")).toBe("true");
   });
+  it("shape circle sets data-shape and never draws a preset (the initial instead)", () => {
+    const { container } = wrap(
+      <Avatar value={{ kind: "preset", id: "fox" }} name="Grant" size={24} shape="circle" />,
+    );
+    const el = root(container);
+    expect(el.getAttribute("data-shape")).toBe("circle");
+    expect(el.getAttribute("data-kind")).toBe("initial");
+    expect(el.querySelector("svg")).toBeNull();
+    expect(el.textContent).toBe("G");
+  });
+
+  it("the default shape is square", () => {
+    const { container } = wrap(<Avatar value={null} name="Grant" size={24} />);
+    expect(root(container).getAttribute("data-shape")).toBe("square");
+  });
+
+  it("a circle draws an image value as an image", () => {
+    const { container } = wrap(
+      <Avatar value={{ kind: "image", src: "/a.png" }} name="Grant" size={24} shape="circle" />,
+    );
+    expect(root(container).getAttribute("data-kind")).toBe("image");
+  });
 });
 
 describe("AvatarPicker (spec §6.30)", () => {
