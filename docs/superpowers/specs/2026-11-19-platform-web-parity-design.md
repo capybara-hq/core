@@ -1,6 +1,6 @@
 # Platform: what a person can do on the web, their agent can do
 
-Status: design, awaiting maintainer review (2026-11-19).
+Status: design, open questions decided by the maintainer (2026-11-20); awaiting review.
 
 Scope: the kernel's `Platform` tool (`packages/kernel/src/platform`), the approval flow it uses, the
 web approval card, `check:platform-ops` and the parity test. No SDK contract changes, no plugin
@@ -66,7 +66,7 @@ Goals:
    The person types them, and the values go from the browser to the kernel. They never enter
    the event log, the tool result, the approval record, an audit row or a log line (§4).
 2. **Files already in the conversation can be used where the web takes an upload** (§5).
-3. **A decision that stays on the web is one tap away** from the card (§6).
+3. **A decision that stays on the web is one tap away**: a link card pops up in the conversation (§6).
 4. Every exclusion is re-audited against the new principle (§7). An exclusion stays only for a
    reason that holds even with these mechanisms.
 5. The fence enforces the new rules (§9).
@@ -114,7 +114,8 @@ Rules, enforced in the operation's input handling (shared, not per operation):
   for anything else.
 - A secret value in `values` is refused: "Secret fields are entered by the person on the
   confirmation card; leave `apiKey` out of values and list it in askPerson." The refusal does
-  not echo the value.
+  not echo the value. A value in `values` has passed through the model, so it counts as leaked
+  (§4.5): the refusal also says so, and the agent tells the person to rotate it.
 - A secret field the target requires and has no value for is added to `askPerson` by the kernel.
 - A secret not named in `askPerson` or `clearSecrets` keeps its stored value, as on the web form.
 
@@ -173,6 +174,22 @@ button that opens the web flow; the existing route starts it from the person's s
 result says: "The person was shown a Connect button; check connectors.get for the connection
 state." The same card-link shape serves §6.
 
+### 4.5 A secret that appeared in the conversation is leaked
+
+Maintainer decision (Q3, 2026-11-20): anything that appeared in the conversation counts as leaked.
+The model has read it, and the event log, trajectories and evals keep it.
+
+- The tool never takes a secret from the conversation: not in `values` (§4.1), not as a prefill
+  of the card. The card's inputs always start empty.
+- When the person submits the card, the kernel checks each entered value (8 characters or more)
+  against the conversation's own text: the user messages, assistant messages and tool results of
+  the conversation and its sub-agents. A value found there is refused in place: "This value
+  appeared in the conversation, so it counts as leaked. Create a new one at the provider and enter
+  that." The card stays pending. The check reads the log in the decision request and never stores
+  or logs the value.
+- The refusal text the model gets names the field, not the value: "The person's apiKey appeared in
+  the conversation earlier and was refused as leaked; ask them to rotate it."
+
 ## 5. Mechanism 2: files instead of uploads
 
 An operation that mirrors an upload takes a **file reference**:
@@ -209,19 +226,22 @@ Kept as exclusions: `POST …/attachments`, `…/finalize` and `GET …/attachme
 `internal`). They exist to bring a person's file into a conversation, and the agent's files are
 already there.
 
-## 6. Mechanism 3: handoff buttons
+## 6. Mechanism 3: handoff link cards
 
 A write whose decision stays with a person on the web has a place where that person decides: an
-import or upload review, an extension permission approval, a connector tool review. Its
-operation's card or result carries a **button to that page**, alongside the URL in text for the
-model. Today only `marketplaces.import` and `plugins.import-npm` return a `reviewUrl`. Every
-operation that hands off gains the button.
+import or upload review, an extension permission approval, a connector tool review. Maintainer
+decision (Q1, 2026-11-20): the decision stays on that page, and the conversation **pops up a link
+card** to it. When the operation returns, the conversation shows a card naming what waits for the
+person ("Review the permissions of plugin X") with one button that opens the page; the URL is in
+the result's text for the model too. On IM the card is a message with the link. Today only
+`marketplaces.import` and `plugins.import-npm` return a `reviewUrl`, as text. Every operation that
+hands off gains the card.
 
 "Guide the install" is then one conversation, with the agent preparing every step:
 
 1. `marketplaces.entries` finds the plugin.
-2. `marketplaces.import` prepares it; the person taps **Review** and confirms the permission
-   review.
+2. `marketplaces.import` prepares it; the link card pops up, the person taps **Review** and
+   confirms the permission review on that page.
 3. `extensions.platform-set-config` takes the API key on the card.
 4. `extensions.platform-enable` enables the extension.
 5. `setup.check` verifies the setup.
@@ -261,7 +281,7 @@ reasons. The four categories stay, with narrower meanings:
 reads (`channels.schema`, `connectors.kinds`). A create operation needs the form schema to know
 which fields are secret.
 
-**Member management** (open question Q2, recommended yes): `orgs.invite`, `orgs.revoke-invitation`,
+**Member management** (Q2, maintainer decision 2026-11-20: yes): `orgs.invite`, `orgs.revoke-invitation`,
 `orgs.set-member-role` and `orgs.remove-member`, class `org`, never remembered. The invitation link
 is revealed only on the web, to the person who approved, with the initial-password mechanism.
 Never offered:
@@ -284,7 +304,7 @@ guide changed").
 | Personal access tokens, service tokens (create, list, revoke) | Long-lived credentials to act as the person or the org. An agent minting them outlives the conversation's confirmation. |
 | Deciding tool approvals and network asks, answering questions, a conversation's permission selection, `first-message` | The agent would decide its own consent; these are already cards |
 | A person's own connector tool policies, device policy, device pairing and disconnect | The agent's own permissions, or the machine's trust; decided on the machine or by the person |
-| Extension permission approval, extension install, import / upload / item confirms, catalog and skill-change decisions, connector tool review | Trust decisions: the person decides on the review page, reached by the §6 button (open question Q1) |
+| Extension permission approval, extension install, import / upload / item confirms, catalog and skill-change decisions, connector tool review | Trust decisions: the person decides on the review page, reached by the §6 link card (Q1) |
 | Org create / delete / leave / ownership transfer, member decisions on others' requests | Whole-org or ownership acts; rare, and irreversible |
 | Others' trajectories | Replay privacy (the trajectory viewer is audited as a human review) |
 | `POST conversations`, `POST …/messages`, the deprecated queue | A run is started by its person, never by another run |
@@ -297,7 +317,7 @@ a description, a masked input and an inline error. It is built in `packages/desi
 uses it as a design component (`check:web-ui`). Copy goes through i18n (zh and en). The zh terms
 are 平台, 超级管理员 and 智能体.
 
-The handoff button and the file row (name, size, thumbnail) reuse existing card parts.
+The handoff link card and the file row (name, size, thumbnail) reuse existing card parts.
 
 ## 9. The fence
 
@@ -336,7 +356,7 @@ unit tests. It is not a check, because extension schemas are only known at run t
 
 ## 11. Acceptance
 
-On a deployment like argus:
+On a deployment like prod (the former argus):
 
 1. **An org admin with no technical background.** "把视觉模型设成 X, 记忆用 Y."
    - The agent reads `models.purpose-availability` and finds X's provider not configured for the
@@ -357,25 +377,20 @@ On a deployment like argus:
    - `askPerson` naming a non-secret field is refused.
    - An IM approval with person fields shows only the web link.
    - A stale sealed input returns the "expired" error.
+   - A key the person pasted into the chat earlier and then enters on the card is refused as
+     leaked; a new key is accepted (§4.5).
+   - `marketplaces.import` pops up the link card to the review page.
 6. **The fence.** Each new rule is red on its fixture.
 
-## 12. Open questions (recommendation first)
+## 12. Decisions (maintainer, 2026-11-20)
 
-- **Q1. Trust decisions on the card?** Should the person confirm an import review or an
-  extension's permissions on the Platform card itself, rendered with the same review component?
-  The alternative is the review page reached by the §6 button.
-  - *Recommended: the review page.* The maintainer named only uploads to drop. The review pages
-    are built for that decision, and one tap keeps the guided flow.
-  - Moving them onto the card is a later, separate change.
-- **Q2. Member management** (§7.2): offer invite, revoke invitation, role change and remove member?
-  - *Recommended: yes*, with the limits listed there. A non-technical org admin onboarding people
-    is the maintainer's case.
-  - Ownership transfer, org deletion and leaving stay off.
-- **Q3. A secret the person pasted into the chat.** The tool still refuses it in `values` and asks
-  on the card.
-  - *Recommended: no other handling.* The value is already in that conversation's history, and
-    the tool cannot undo that. Prefilling the card from it would make the model a source of
-    secret values.
+- **Q1. Trust decisions.** They stay on their review pages. The conversation pops up a link card
+  to the page (§6); the card itself does not render the review.
+- **Q2. Member management.** Yes: invite, revoke invitation, role change and remove member, with
+  the limits of §7.2. Ownership transfer, org deletion and leaving stay off.
+- **Q3. Secrets in the conversation.** Refused. Anything that appeared in the conversation counts
+  as leaked: the tool never takes it, and the card refuses a value the conversation contains
+  (§4.5).
 
 ## 13. Delivery
 
@@ -384,18 +399,18 @@ One plan, three PRs by mechanism, each with its exclusions moved and its fence r
 1. Person fields:
    - the sealed store (one expand-only migration);
    - the card row;
-   - the decision route's `inputs`;
+   - the decision route's `inputs` and the leak check (§4.5);
    - the extension and model-provider config operations (acceptance 1, 2).
 2. Connectors, channels and catalog installs on person fields, plus OAuth connect and member
-   management (if Q2 is accepted).
-3. Files instead of uploads (acceptance 3, 4), and the handoff buttons.
+   management.
+3. Files instead of uploads (acceptance 3, 4), and the handoff link cards.
 
 ## AGENTS.md rules touched
 
 - **Platform tool.** The line gains: "a secret an operation needs is a person field entered on the
   card, never a param; an upload route is mirrored with a file reference
   (`check:platform-ops`)". `writing-kernel-api` and `writing-tools` describe person fields, file
-  references and handoff buttons.
+  references and handoff link cards.
 - **Multi-replica discipline.** Followed: the sealed inputs have a TTL in PG, a `@LockedCron`
   cleanup under `WorkerModule`, and writes in the decision's and the call's transactions.
 - **Migrations.** One new expand-only table in schema `capybara`.
