@@ -94,7 +94,7 @@ export function ObjectList({
     <ul className="cb-object-list" aria-label={label} aria-busy="true">
       {Array.from({ length: rows }, (_, i) => (
         // biome-ignore lint/suspicious/noArrayIndexKey: the skeleton rows are positional
-        <li key={i} className="cb-object-row" data-skeleton="true">
+        <li key={i} className="cb-object-row" data-part="object-row" data-skeleton="true">
           <SkeletonBox part="mark" />
           <span className="cb-object-text">
             <SkeletonText width="30%" />
@@ -141,14 +141,20 @@ export function ObjectRow({
   const slots: (RowButton | undefined)[] = [action, single];
   const hasMeta = meta !== undefined && meta.length > 0;
   return (
-    <li className="cb-object-row">
+    <li className="cb-object-row" data-part="object-row">
       {mark.avatar !== undefined ? (
-        <span className="cb-object-mark" data-kind="avatar" aria-hidden="true">
+        <span
+          className="cb-object-mark"
+          data-part="object-row-mark"
+          data-kind="avatar"
+          aria-hidden="true"
+        >
           <Avatar value={mark.avatar} name={mark.text ?? name} size={28} />
         </span>
       ) : (
         <span
           className="cb-object-mark"
+          data-part="object-row-mark"
           data-tone={mark.tone ?? "neutral"}
           data-kind={mark.image ? "image" : undefined}
           aria-hidden="true"

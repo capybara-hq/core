@@ -2883,6 +2883,23 @@ States: `default`, `running`, `waiting`, `hover`, `narrow`
 <!-- states: object-list -->
 States: `person`
 
+<!-- size-table: object-list -->
+| Part | State | Property | Value |
+|---|---|---|---|
+| object-row | person | min-height | 64 |
+| object-row | person | padding-top | space.3 |
+| object-row | person | padding-left | space.4 |
+| object-row | person | column-gap | space.3 |
+| object-row-mark | person | width | 36 |
+| object-row-mark | person | height | 36 |
+| object-row-mark | person | border-top-left-radius | radius.md |
+| object-row-mark | person | background-color | color.selected |
+| object-row-person avatar[data-size=16] | person | width | 16 |
+| object-row-person avatar[data-size=16] | person | height | 16 |
+| object-row-person avatar[data-shape=circle] | person | border-top-left-radius | 50% |
+| object-row-person person-name[data-size=16] | person | column-gap | space.1 |
+| object-row-person person-name-text | person | font-size | type.small |
+
 ### 6.18 EmptyState
 
 One empty state for the whole product, in three styles. `EmptyState({ text, hint?, action?, size? })`:
