@@ -36,8 +36,9 @@ import {
 import { allowHostProblem } from "../lib/network-hosts";
 import { keys } from "../lib/query/keys";
 import { useAppMutation } from "../lib/query/mutation";
+import type { DeviceCeilingRequest } from "../lib/shell";
 import { ApiErrorDetail } from "./ApiErrorDetail";
-import { SHELL_WIDENINGS, type ShellWidening, useShellWidening } from "./ThisMachineSection";
+import { useShellWidening } from "./ThisMachineSection";
 
 /**
  * The CLI lines a device page shows for a local machine: its owner widens the sandbox on the
@@ -49,6 +50,19 @@ export const SANDBOX_COMMANDS = {
   host: "capybara-device policy add allowedDomains <host>",
   reach: "capybara-device ceiling set --project-reach os-user",
 } as const;
+
+/**
+ * The widenings this machine's shell can ask for (`device@1.requestCeiling`), by command key: each
+ * request names its one field, so the fields the person did not touch are never sent and a stale
+ * value on the page can never narrow them. Adding a host has no shell call.
+ */
+export const SHELL_WIDENINGS = {
+  network: { network: "open" },
+  outside: { outsideSandbox: true },
+  reach: { projectReach: "os-user" },
+} as const satisfies Partial<Record<keyof typeof SANDBOX_COMMANDS, DeviceCeilingRequest>>;
+
+type ShellWidening = keyof typeof SHELL_WIDENINGS;
 
 type Translate = ReturnType<typeof useTranslations>;
 
@@ -369,12 +383,12 @@ function LocalSandbox({
   // on this machine in a shell that offers it, a widening is a button (the shell's confirmation),
   // each one a single field; what the shell cannot ask for stays a command
   const byShell = shell === undefined ? [] : widening.filter(isShellWidening);
-  const byCommand = widening.filter((k) => !isShellWidening(k) || !byShell.includes(k));
+  const byCommand = shell === undefined ? widening : widening.filter((k) => !isShellWidening(k));
   const commands =
     e.machine === null || widening.length === 0 ? null : (
       <Stack gap={8}>
         <Text variant="prose" tone="muted">
-          {t(shell === undefined ? "widenLocal" : "widenHere")}
+          {t(byShell.length > 0 ? "widenHere" : "widenLocal")}
         </Text>
         {shell !== undefined && byShell.length > 0 && (
           <Stack direction="row" gap={8} wrap>
@@ -383,7 +397,7 @@ function LocalSandbox({
                 key={k}
                 density="dense"
                 disabled={shell.pending}
-                onClick={() => shell.request(k)}
+                onClick={() => shell.request(SHELL_WIDENINGS[k])}
               >
                 {t(`widen.${k}`)}
               </Button>

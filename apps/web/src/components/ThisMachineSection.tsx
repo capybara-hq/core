@@ -181,30 +181,19 @@ function Section({ cap, status }: { cap: DeviceCapabilityV1; status: Connected }
 }
 
 /**
- * The owner ceiling widenings the shell can ask this machine for (`device@1.requestCeiling`), by
- * the device page's command key: each request names its one field, so the fields the person did
- * not touch are never sent and a stale value on the page can never narrow them.
- */
-export const SHELL_WIDENINGS = {
-  network: { network: "open" },
-  outside: { outsideSandbox: true },
-  reach: { projectReach: "os-user" },
-} as const satisfies Record<string, DeviceCeilingRequest>;
-
-export type ShellWidening = keyof typeof SHELL_WIDENINGS;
-
-/**
  * Widening on this machine from its device page (desktop client spec §9.5): `request` asks the
- * shell for one field (a native confirmation with the device program's risk text; applied only on
+ * shell for the fields it names (the page sends one) (a native confirmation with the device program's risk text; applied only on
  * yes), toasts when applied, says nothing when the person declines. `undefined` in a browser, on
  * another device, and in a shell whose `device@1` has no `requestCeiling`: the page then shows the
- * `capybara-device ceiling set` lines.
+ * `capybara-device ceiling set` lines. The device's owner report reaches the kernel with its next
+ * heartbeat, so the page may show the old ceiling (and the button) for a moment after an applied
+ * widening; asking again then changes nothing and needs no confirmation.
  */
 export function useShellWidening(
   orgId: string,
   deviceId: string,
   invalidates: () => (readonly unknown[])[],
-): { request(key: ShellWidening): void; pending: boolean } | undefined {
+): { request(req: DeviceCeilingRequest): void; pending: boolean } | undefined {
   const t = useTranslations("devices.thisMachine");
   const toast = useToast();
   const here = useIsThisMachine(orgId, deviceId);
@@ -218,9 +207,9 @@ export function useShellWidening(
   if (!offered) return undefined;
   return {
     pending: widen.isPending,
-    request: (key) => {
+    request: (req) => {
       if (widen.isPending) return;
-      void widen.mutateAsync(SHELL_WIDENINGS[key]).then(
+      void widen.mutateAsync(req).then(
         (r) => {
           if (r === "applied") toast.success(t("widened"));
         },

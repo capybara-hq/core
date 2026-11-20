@@ -348,10 +348,32 @@ describe("widening on this machine", () => {
     expect(screen.queryByRole("button", { name: W.reach })).toBeNull();
   });
 
-  it("a cancelled widening shows nothing; a failed one says so", async () => {
+  it("with nothing the shell can widen, the host line keeps the owner's lead-in", async () => {
+    installShell({ "device@1": fakeDevice().device });
+    stubApi(
+      detailRoutes(
+        local("e1", {
+          sandbox: {
+            ...SANDBOX,
+            networkCeiling: "allowlist",
+            outsideSandbox: true,
+            layer: { network: "org", outsideSandbox: "device" },
+          },
+        }),
+      ),
+    );
+    await renderDetail();
+    await settings();
+    expect(await screen.findByText(SANDBOX_COMMANDS.host)).toBeTruthy();
+    expect(screen.getByText(D.sandbox.widenLocal)).toBeTruthy();
+    expect(screen.queryByText(D.sandbox.widenHere)).toBeNull();
+  });
+
+  it("a declined or cancelled widening shows nothing; a failed one says so", async () => {
     const fake = fakeDevice(CONNECTED, {
       requestCeiling: vi
         .fn()
+        .mockResolvedValueOnce("cancelled")
         .mockRejectedValueOnce({ code: "cancelled" })
         .mockRejectedValueOnce({ code: "failed" }),
     });
@@ -361,6 +383,8 @@ describe("widening on this machine", () => {
     const user = await settings();
     await user.click(await screen.findByRole("button", { name: W.outside }));
     await waitFor(() => expect(fake.device.requestCeiling).toHaveBeenCalledTimes(1));
+    await user.click(screen.getByRole("button", { name: W.outside }));
+    await waitFor(() => expect(fake.device.requestCeiling).toHaveBeenCalledTimes(2));
     expect(screen.queryByText(M.widened)).toBeNull();
     expect(screen.queryByText(M.failed)).toBeNull();
     await user.click(screen.getByRole("button", { name: W.outside }));

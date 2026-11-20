@@ -486,8 +486,8 @@ rule of mobile layout §9.4: a user activation, one native dialog at a time, `bu
   owner ceiling **(decided)**.
 - Widening (running outside the sandbox allowed, the open network, project reach `os-user`) and
   resuming need a native confirmation; the widening dialog names each widened field and shows the
-  device program's own risk text (`CEILING_WIDENING_TEXT`, plus `FULL_ACCESS_RISK_TEXT` when
-  running outside the sandbox is widened on an `os` machine) and the shell then runs
+  device program's own risk text (`CEILING_WIDENING_TEXT`, which covers all three) and the shell
+  then runs
   `capybara-device ceiling set` with only the requested fields and `--yes`. Editing `policy.json`
   or running the CLI on the machine stays the other way.
 - The deployment's own policy operations over the device protocol are unchanged (they narrow the
