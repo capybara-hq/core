@@ -221,14 +221,36 @@ const sidebar = {
   account: { name: "grant", menu: [] },
 };
 const status = { context: "grant@acme:/", version: "0.1.0" };
-const renderShell = () =>
-  render(
-    <DesignProvider locale="zh">
-      <AppShell sidebar={sidebar} status={status} capState="run=idle">
-        <p>page</p>
-      </AppShell>
-    </DesignProvider>,
-  );
+const shellTree = (singleScheme?: boolean) => (
+  <DesignProvider locale="zh">
+    <AppShell
+      sidebar={sidebar}
+      status={status}
+      capState="run=idle"
+      {...(singleScheme === undefined ? {} : { singleScheme })}
+    >
+      <p>page</p>
+    </AppShell>
+  </DesignProvider>
+);
+const renderShell = () => render(shellTree());
+
+/** The seven main color tokens chrome@1 carries, as a theme would set them on <html>. */
+const TOKENS = {
+  "--cb-bg": "#101010",
+  "--cb-panel": "#181818",
+  "--cb-ink": "rgb(240, 240, 240)",
+  "--cb-muted": "#888",
+  "--cb-line": "rgba(255, 255, 255, 0.12)",
+  "--cb-accent": "#00ff99",
+  "--cb-on-accent": "#000000",
+};
+const setTokens = (over: Record<string, string> = {}) => {
+  for (const [k, v] of Object.entries({ ...TOKENS, ...over })) root().style.setProperty(k, v);
+};
+const clearTokens = () => {
+  for (const k of Object.keys(TOKENS)) root().style.removeProperty(k);
+};
 const capState = (c: HTMLElement) =>
   (c.querySelector(".cb-shell") as HTMLElement).dataset.capState ?? "";
 
@@ -291,6 +313,67 @@ describe("the AppShell in a shell (after hydration)", () => {
     expect(setAppearance).toHaveBeenCalledTimes(1);
     expect(setAppearance).toHaveBeenCalledWith({ scheme: "dark", background: "#123456" });
     root().style.removeProperty("--cb-bg");
+  });
+
+  it("adds the seven color tokens only when every one is a plain color", async () => {
+    const setAppearance = vi.fn();
+    install(fakeShell({ capabilities: { "chrome@1": { setAppearance } } }).shell);
+    root().dataset.theme = "dark";
+    setTokens();
+    try {
+      renderShell();
+      expect(setAppearance).toHaveBeenCalledTimes(1);
+      expect(setAppearance).toHaveBeenCalledWith({
+        scheme: "dark",
+        background: "#101010",
+        tokens: {
+          bg: "#101010",
+          panel: "#181818",
+          ink: "rgb(240, 240, 240)",
+          muted: "#888",
+          line: "rgba(255, 255, 255, 0.12)",
+          accent: "#00ff99",
+          onAccent: "#000000",
+        },
+      });
+      setAppearance.mockClear();
+      // a token the shell cannot check (color-mix) drops all of them, not just that one
+      await act(async () => {
+        root().style.setProperty("--cb-line", "color-mix(in srgb, #fff 12%, transparent)");
+        await Promise.resolve();
+      });
+      expect(setAppearance).toHaveBeenCalledTimes(1);
+      expect(setAppearance).toHaveBeenCalledWith({ scheme: "dark", background: "#101010" });
+      setAppearance.mockClear();
+      // a changed token is a new report
+      await act(async () => {
+        setTokens({ "--cb-accent": "#ff0066" });
+        await Promise.resolve();
+      });
+      expect(setAppearance).toHaveBeenCalledTimes(1);
+      expect(setAppearance.mock.calls[0]?.[0].tokens.accent).toBe("#ff0066");
+    } finally {
+      clearTokens();
+    }
+  });
+
+  it("says singleScheme when the AppShell is told so, and reports a flip once", () => {
+    const setAppearance = vi.fn();
+    install(fakeShell({ capabilities: { "chrome@1": { setAppearance } } }).shell);
+    root().dataset.theme = "dark";
+    const view = render(shellTree(true));
+    expect(setAppearance).toHaveBeenCalledTimes(1);
+    expect(setAppearance).toHaveBeenCalledWith({
+      scheme: "dark",
+      background: "#0A0A0A",
+      singleScheme: true,
+    });
+    setAppearance.mockClear();
+    view.rerender(shellTree(true));
+    expect(setAppearance).not.toHaveBeenCalled();
+    view.rerender(shellTree(false));
+    expect(setAppearance).toHaveBeenCalledTimes(1);
+    expect(setAppearance).toHaveBeenCalledWith({ scheme: "dark", background: "#0A0A0A" });
   });
 
   it("draws the window drag band as a real element, hidden from assistive tech", () => {

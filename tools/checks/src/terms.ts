@@ -52,6 +52,7 @@ export const CLI_ARGS_FILE = "apps/capybara/src/args.ts";
 export const SHELL_CAPABILITY_NAMES: ReadonlySet<string> = new Set([
   "SHELL_CAPABILITIES",
   "SHELL_CAPABILITY_KEYS",
+  "ChromeCapabilityV1",
   "DeviceCapabilityV1",
   "NotifyCapabilityV1",
   "OpenExternalCapabilityV1",

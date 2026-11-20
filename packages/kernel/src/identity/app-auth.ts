@@ -9,7 +9,7 @@ import { TransactionHost } from "../infra/database/transaction-host.js";
 import { Transactional } from "../infra/database/transactional.decorator.js";
 import { REDIS } from "../infra/tokens.js";
 import { type Account, AccountsService } from "./accounts.js";
-import type { AppAuthorizeBody, AppTokenBody } from "./app-auth.schemas.js";
+import type { AppAuthorizeBody, AppClient, AppTokenBody } from "./app-auth.schemas.js";
 import { audit } from "./audit.js";
 import { sha256Hex } from "./hash.js";
 import type { UserPrincipal } from "./principal.js";
@@ -30,7 +30,7 @@ interface CodeGrant {
   accountId: string;
   /** The browser session that consented: the exchange fails once it signed out. */
   sessionId: string;
-  client: "desktop";
+  client: AppClient;
   redirectUri: string;
   codeChallenge: string;
   name: string;
@@ -57,9 +57,17 @@ export function isAllowedRedirect(uri: string, allowed: readonly string[]): bool
   return allowed.includes(uri);
 }
 
-/** The session user agent of an app session: `Capybara Desktop/<appVersion> (<name>)`. */
-const appUserAgent = (g: Pick<CodeGrant, "appVersion" | "name">) =>
-  `Capybara Desktop/${g.appVersion} (${g.name})`;
+const CLIENT_PRODUCT: Record<AppClient, string> = {
+  desktop: "Capybara Desktop",
+  mobile: "Capybara Mobile",
+};
+
+/**
+ * The session user agent of an app session: `Capybara Desktop/<appVersion> (<name>)` or
+ * `Capybara Mobile/<appVersion> (<name>)`.
+ */
+export const appUserAgent = (g: Pick<CodeGrant, "client" | "appVersion" | "name">): string =>
+  `${CLIENT_PRODUCT[g.client]}/${g.appVersion} (${g.name})`;
 
 const codeInvalid = () =>
   new ApiError(
@@ -68,11 +76,11 @@ const codeInvalid = () =>
   );
 
 /**
- * Native-app sign-in (desktop client spec §6.5): the authorization code flow with PKCE for native
- * apps (RFC 8252, RFC 7636). The signed-in person consents on the web (`authorize`), which issues
- * a one-time code bound to the PKCE challenge, the redirect URI and the browser session; the app
- * exchanges it (`token`) for an ordinary web session of its own. State lives only in Redis, under
- * the code's hash with a 60 s TTL, so any replica can exchange it.
+ * Native-app sign-in (desktop client spec §6.5, mobile spec §4.3): the authorization code flow with
+ * PKCE for native apps (RFC 8252, RFC 7636). The signed-in person consents on the web
+ * (`authorize`), which issues a one-time code bound to the PKCE challenge, the redirect URI and
+ * the browser session; the app exchanges it (`token`) for an ordinary web session of its own.
+ * State lives only in Redis, under the code's hash with a 60 s TTL, so any replica can exchange it.
  */
 @Injectable()
 export class AppAuthService {
@@ -135,7 +143,7 @@ export class AppAuthService {
    * The app's exchange: the code is taken from Redis with GETDEL before anything else (one use:
    * a wrong verifier or redirect URI burns it too), then checked against `redirectUri` and
    * `S256(codeVerifier)`; the session is created in {@link signIn}. Every failure is
-   * `app_auth.code_invalid`.
+   * `app_auth.code_invalid`, except an account that is not active: `auth.account_disabled`.
    */
   async token(
     body: AppTokenBody,
@@ -169,7 +177,9 @@ export class AppAuthService {
       .where("id", "=", grant.accountId)
       .forShare()
       .executeTakeFirst();
-    if (row?.status !== "active") throw codeInvalid();
+    if (!row) throw codeInvalid();
+    // the app tells the person why (desktop client spec §6.6) instead of a generic failed code
+    if (row.status !== "active") throw new ApiError("auth.account_disabled", "Account is disabled");
     const consenting = await this.db
       .selectFrom("sessions")
       .select("id")
