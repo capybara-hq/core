@@ -232,7 +232,7 @@ function Pending({
               chips={[{ label: t(`kind.${r.kind}`) }]}
               {...(r.note !== "" ? { description: r.note } : {})}
               meta={[
-                t("requester", { name: requesterOf(r) }),
+                t("requester", { name: requesterOf(r)?.name ?? "—" }),
                 ...(version !== null ? [versionLabel(version)] : []),
               ]}
               state={{ label: t("waiting"), tone: "warn" }}

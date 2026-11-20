@@ -3,6 +3,7 @@ import { ApiClientError, apiFetch, CSRF_HEADER, ensureSession, toError } from ".
 import type { SuggestedAppearance } from "./appearance";
 import type { Owner, PlatformComponentKind } from "./components";
 import type { ExtensionUnavailableReason, PermissionGroup, PermissionItem } from "./extensions";
+import type { PersonRef } from "./people";
 
 /**
  * The platform catalog (kernel `catalog/*.controller.ts`). Every catalog item is a plugin: an
@@ -789,6 +790,7 @@ export interface CatalogRequest {
   reason: string | null;
   requestedBy: string | null;
   requestedByName: string | null;
+  requestedByAvatarUrl: string | null;
   decidedBy: string | null;
   decidedAt: string | null;
   /** The prepared import of an approved `import` request that is not confirmed yet. */
@@ -1571,9 +1573,20 @@ export const requestSubject = (
 export const requestVersion = (r: Pick<CatalogRequest, "entry">): string | null =>
   r.entry?.version ?? null;
 
-/** 申请人：显示名，账号已删除时退回账号 id，都没有为「—」。 */
-export const requesterOf = (r: Pick<CatalogRequest, "requestedBy" | "requestedByName">): string =>
-  r.requestedByName ?? r.requestedBy ?? "—";
+/**
+ * The requester as a person: the display name, the account id once the name is gone; null (a
+ * former member) when the account is deleted and no id remains.
+ */
+export const requesterOf = (
+  r: Pick<CatalogRequest, "requestedBy" | "requestedByName" | "requestedByAvatarUrl">,
+): PersonRef | null =>
+  r.requestedBy === null && r.requestedByName === null
+    ? null
+    : {
+        id: r.requestedBy ?? "",
+        name: r.requestedByName ?? r.requestedBy ?? "",
+        avatarUrl: r.requestedByAvatarUrl,
+      };
 
 /** An item's source filter key: `manual` (file / npm import) or `marketplace:<marketplace id>`. */
 export const sourceKeyOf = (i: Pick<CatalogItem, "marketplaceId">): string =>

@@ -14,6 +14,7 @@ import { keepPreviousData, useQuery } from "@tanstack/react-query";
 import { useTranslations } from "next-intl";
 import { type ComponentProps, useRef } from "react";
 import type { ApiClientError } from "../lib/api";
+import type { PersonRef } from "../lib/people";
 import { agentsQuery } from "../lib/query/agents";
 import { retryOnMountOf } from "../lib/query/client";
 import { useMemberNames } from "../lib/query/member-names";
@@ -109,6 +110,9 @@ export function ScheduleCalendarView({
   }).data?.items;
   const names = useMemberNames(orgId, all);
   const people = all && names.kind === "ready" ? names.people : {};
+  const refs = all && names.kind === "ready" ? names.refs : {};
+  /** The creator as a person: the member, else the bare id (the members list is refused). */
+  const personOf = (id: string): PersonRef => refs[id] ?? { id, name: id, avatarUrl: null };
   const [panel, setPanel] = useRunPanelHash();
 
   const go = (next: Partial<SchedulesUrl>) => setUrl({ ...url, ...next });
@@ -185,6 +189,7 @@ export function ScheduleCalendarView({
       time,
       title,
       ...(m !== undefined ? { meta: m } : {}),
+      ...(all && task !== undefined ? { person: personOf(task.accountId) } : {}),
       state,
       ...(mark !== undefined ? { mark } : {}),
       label: mark !== undefined ? tc("itemMarkLabel", { label, mark }) : label,
@@ -323,7 +328,7 @@ export function ScheduleCalendarView({
         panel={panel}
         answer={answer}
         agentName={agentName}
-        personName={(id) => people[id] ?? id}
+        person={personOf}
         onOpen={setPanel}
       />
     </>

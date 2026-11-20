@@ -6,6 +6,7 @@ import zh from "../messages/zh.json";
 import type { Me } from "../src/lib/session";
 import { bodyOf, json, lastStubRoutes, noContent, stubApi } from "./support/api";
 import { resetNavigation } from "./support/navigation";
+import { personAvatarSrc, personInitial } from "./support/person";
 import { renderRouteWithCache } from "./support/query";
 import { ME } from "./support/render";
 import { pickOption } from "./support/select";
@@ -25,19 +26,24 @@ const asRole = (role: string): Me => ({
 
 const MEMBERS = [
   {
-    account: { id: "a1", displayName: "Grant", email: null },
+    account: {
+      id: "a1",
+      displayName: "Grant",
+      email: null,
+      avatarUrl: "/api/v1/accounts/a1/avatar?v=abc123",
+    },
     role: "owner",
     joinedAt: "2026-10-01T00:00:00.000Z",
     anonymous: false,
   },
   {
-    account: { id: "a2", displayName: "Bob", email: "bob@corp.example" },
+    account: { id: "a2", displayName: "Bob", email: "bob@corp.example", avatarUrl: null },
     role: "member",
     joinedAt: "2026-10-02T00:00:00.000Z",
     anonymous: false,
   },
   {
-    account: { id: "a3", displayName: "IM visitor", email: null },
+    account: { id: "a3", displayName: "IM visitor", email: null, avatarUrl: null },
     role: "guest",
     joinedAt: "2026-10-03T00:00:00.000Z",
     anonymous: true,
@@ -98,6 +104,20 @@ describe("成员页（SettingsPage）", () => {
       expect(within(bob).getByRole("button", { name: ROW_ACTIONS[locale] })).toBeTruthy();
     },
   );
+
+  it("each member row leads with the avatar image, or the initial without one", async () => {
+    stubApi({
+      [`GET ${BASE}/members`]: () => json(200, { members: MEMBERS }),
+      [`GET ${BASE}/invitations`]: () => json(200, { invitations: [] }),
+    });
+    await renderRouteWithCache("/settings/members", lastStubRoutes(), { me: asRole("admin") });
+    await screen.findByText("Bob");
+    expect(personAvatarSrc(rowOf(`Grant (${en.members.you})`))).toBe(
+      "/api/v1/accounts/a1/avatar?v=abc123",
+    );
+    expect(personAvatarSrc(rowOf("Bob"))).toBeNull();
+    expect(personInitial(rowOf("Bob"))).toBe("B");
+  });
 
   it("管理员把成员改为访客：PATCH members/:id，行内角色随之更新（members invalidated: read again）", async () => {
     const m = en.members;

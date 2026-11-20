@@ -112,7 +112,7 @@ const AUDIT: AuditPage = {
     {
       id: "12",
       at: T,
-      actor: { id: "a1", name: "Grant", email: null },
+      actor: { id: "a1", name: "Grant", email: null, avatarUrl: null },
       viaToken: false,
       viaAgent: false,
       action: "deployment.settings.updated",
@@ -121,7 +121,7 @@ const AUDIT: AuditPage = {
     {
       id: "11",
       at: T,
-      actor: { id: "a1", name: "Grant", email: null },
+      actor: { id: "a1", name: "Grant", email: null, avatarUrl: null },
       viaToken: false,
       viaAgent: true,
       action: "catalog.scope_changed",
@@ -139,7 +139,7 @@ const AUDIT: AuditPage = {
     {
       id: "9",
       at: T,
-      actor: { id: "a2", name: "Mia", email: "mia@example.com" },
+      actor: { id: "a2", name: "Mia", email: "mia@example.com", avatarUrl: null },
       viaToken: true,
       viaAgent: false,
       action: "marketplace.added",

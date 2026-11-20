@@ -9,6 +9,7 @@ import { RESET_POLL_DEADLINE_MS, RESET_POLL_MS, resetPollInterval } from "../src
 import { keys } from "../src/lib/query/keys";
 import { bodyOf, type Call, json, lastStubRoutes, stubApi } from "./support/api";
 import { resetNavigation } from "./support/navigation";
+import { personAvatarSrc } from "./support/person";
 import { renderRouteEmptyCache, renderRouteWithCache } from "./support/query";
 import { expectNoFirstPaintFetch } from "./support/server";
 
@@ -740,7 +741,7 @@ describe("the recent changes", () => {
     remove: [],
     ceiling: null,
     network: null,
-    by: { id: "a1", name: "Ada", avatarUrl: null },
+    by: { id: "a1", name: "Ada", avatarUrl: "/api/v1/accounts/a1/avatar?v=abc123" },
     via: "web",
     outcome: "applied",
     ...over,
@@ -776,8 +777,11 @@ describe("the recent changes", () => {
     const webRow = within(list)
       .getAllByRole("listitem")
       .find((r) => r.textContent?.includes("Added files.example.com")) as HTMLElement;
-    expect(webRow.querySelector(".cb-item-list-meta")?.textContent).toContain("Ada");
-    expect(webRow.querySelector(".cb-item-list-meta")?.textContent).toContain(E.recent.via.web);
+    expect(webRow.querySelector('[data-part="item-list-meta"]')?.textContent).toContain("Ada");
+    expect(personAvatarSrc(webRow)).toBe("/api/v1/accounts/a1/avatar?v=abc123");
+    expect(webRow.querySelector('[data-part="item-list-meta"]')?.textContent).toContain(
+      E.recent.via.web,
+    );
   });
 
   it("each setting change shows its from and to values", async () => {
@@ -818,7 +822,7 @@ describe("the recent changes", () => {
     const deviceRow = within(list)
       .getAllByRole("listitem")
       .find((r) => r.textContent?.includes(S.outsideValue.allowed)) as HTMLElement;
-    const meta = deviceRow.querySelector(".cb-item-list-meta")?.textContent ?? "";
+    const meta = deviceRow.querySelector('[data-part="item-list-meta"]')?.textContent ?? "";
     expect(meta).toContain(E.recent.via.device);
     expect(meta).not.toContain(E.recent.unknownBy);
   });

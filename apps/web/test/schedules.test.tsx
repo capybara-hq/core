@@ -6,6 +6,7 @@ import zh from "../messages/zh.json";
 import type { Me } from "../src/lib/session";
 import { bodyOf, json, lastStubRoutes, noContent, stubApi } from "./support/api";
 import { resetNavigation, router } from "./support/navigation";
+import { personAvatarSrc, personInitial } from "./support/person";
 import { renderRouteEmptyCache, renderRouteWithCache } from "./support/query";
 import { ME } from "./support/render";
 import { pickOption } from "./support/select";
@@ -130,8 +131,21 @@ const common = {
   [`GET ${ORG}/models?kind=chat`]: ok(MODELS),
   [`GET ${ORG}/members`]: ok({
     members: [
-      { account: { id: "a1", displayName: "Grant", email: null }, role: "owner", joinedAt: T },
-      { account: { id: "a2", displayName: "Mei", email: null }, role: "member", joinedAt: T },
+      {
+        account: { id: "a1", displayName: "Grant", email: null, avatarUrl: null },
+        role: "owner",
+        joinedAt: T,
+      },
+      {
+        account: {
+          id: "a2",
+          displayName: "Mei",
+          email: null,
+          avatarUrl: "/api/v1/accounts/a2/avatar?v=abc123",
+        },
+        role: "member",
+        joinedAt: T,
+      },
     ],
   }),
   [`GET ${BASE}/chat-targets`]: ok({
@@ -750,6 +764,8 @@ describe("/settings/schedules (org admins)", () => {
     const tasks = within(screen.getByRole("table", { name: S.tasks }));
     expect(tasks.getByText("Daily report")).toBeTruthy();
     expect(tasks.getByText("Mei")).toBeTruthy();
+    const meiRow = tasks.getByText("Mei").closest("tr") as HTMLElement;
+    expect(personAvatarSrc(meiRow)).toBe("/api/v1/accounts/a2/avatar?v=abc123");
     await settle();
     expect(browser).toEqual([]);
   });

@@ -10,6 +10,7 @@ import {
   ItemList,
   ItemListItem,
   KeyValue,
+  PersonName,
   Stack,
   StatusMark,
   Text,
@@ -154,7 +155,16 @@ function ConnectorFacts({ connector }: { connector: AdminConnectorDetail }) {
         ...(connector.auth.ownership !== null
           ? [{ k: td("facts.ownership"), v: td(`ownership.${connector.auth.ownership}`) }]
           : []),
-        { k: td("facts.createdBy"), v: connector.createdByName },
+        {
+          k: td("facts.createdBy"),
+          v: (
+            <PersonName
+              name={connector.createdByName}
+              avatarUrl={connector.createdByAvatarUrl}
+              size={16}
+            />
+          ),
+        },
         {
           k: td("facts.synced"),
           v:

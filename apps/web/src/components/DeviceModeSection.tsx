@@ -8,6 +8,7 @@ import {
   formatBytes,
   formatDateTime,
   ItemList,
+  ItemListItem,
   KeycapCommand,
   KeyValue,
   RadioGroup,
@@ -38,6 +39,7 @@ import { keys } from "../lib/query/keys";
 import { useAppMutation } from "../lib/query/mutation";
 import type { DeviceCeilingRequest } from "../lib/shell";
 import { ApiErrorDetail } from "./ApiErrorDetail";
+import { Person } from "./Person";
 import { useShellWidening } from "./ThisMachineSection";
 
 /**
@@ -695,22 +697,41 @@ export function RecentChanges({ recent }: { recent: DeviceSettingChange[] }) {
     ].join(" · ");
   return (
     <ContentSection title={t("title")}>
-      <ItemList
-        label={t("title")}
-        rows={recent.map((c, i) => ({
-          id: `${c.at}:${i}`,
-          title: what(c) || t("none"),
-          meta: [
-            formatDateTime(c.at, "full", zone),
-            // a report of the machine names nobody; a change made on it, its owner
-            ...(c.via === "device" && (c.kind !== "policy" || c.by === null)
-              ? []
-              : [c.by?.name ?? t("unknownBy")]),
-            t(`via.${c.via}`),
-          ].join(" · "),
-          ...(c.outcome === "applied" ? {} : { status: { label: t(`outcome.${c.outcome}`) } }),
-        }))}
-      />
+      <ItemList label={t("title")}>
+        {recent.map((c, i) => {
+          // a report of the machine names nobody; a change made on it, its owner
+          const named = !(c.via === "device" && (c.kind !== "policy" || c.by === null));
+          return (
+            <ItemListItem
+              // biome-ignore lint/suspicious/noArrayIndexKey: the changes have no id; the list is positional
+              key={`${c.at}:${i}`}
+              title={what(c) || t("none")}
+              {...(c.outcome === "applied"
+                ? {}
+                : {
+                    marks: (
+                      <Text variant="small" tone="muted">
+                        {t(`outcome.${c.outcome}`)}
+                      </Text>
+                    ),
+                  })}
+              meta={
+                <>
+                  {formatDateTime(c.at, "full", zone)}
+                  {" · "}
+                  {named ? (
+                    <>
+                      {c.by === null ? t("unknownBy") : <Person person={c.by} size={16} />}
+                      {" · "}
+                    </>
+                  ) : null}
+                  {t(`via.${c.via}`)}
+                </>
+              }
+            />
+          );
+        })}
+      </ItemList>
     </ContentSection>
   );
 }

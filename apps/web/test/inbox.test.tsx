@@ -6,6 +6,7 @@ import zh from "../messages/zh.json";
 import { keys } from "../src/lib/query/keys";
 import { bodyOf, json, lastStubRoutes, noContent, stubApi } from "./support/api";
 import { resetNavigation, router } from "./support/navigation";
+import { personAvatarSrc, personInitial } from "./support/person";
 import { renderRouteEmptyCache, renderRouteWithCache } from "./support/query";
 import type { renderPage } from "./support/render";
 import { expectNoFirstPaintFetch } from "./support/server";
@@ -107,6 +108,7 @@ const skillChange = (id: string, over: Record<string, unknown> = {}) => ({
   status: "pending",
   requestedBy: "a2",
   requestedByName: "Mia",
+  requestedByAvatarUrl: "/api/v1/accounts/a2/avatar?v=abc123",
   requestedInConversation: "c9",
   conversationPath: "/chat/c9",
   decidedBy: null,
@@ -548,6 +550,7 @@ describe("收件箱：技能变更", () => {
       });
       expect(within(card).getAllByText("Shared agent").length).toBeGreaterThan(0);
       expect(within(card).getAllByText("Mia").length).toBeGreaterThan(0);
+      expect(personAvatarSrc(card)).toBe("/api/v1/accounts/a2/avatar?v=abc123");
       // 差异：纯文本，按文件
       const diff = await within(card).findByLabelText(
         m.inbox.skillChange.diffLabel.replace("{path}", "SKILL.md"),
@@ -1285,6 +1288,7 @@ describe("inbox: network requests (network ask spec §5.3)", () => {
     reason: null,
     requestedBy: "a3",
     requestedByName: "Mia",
+    requestedByAvatarUrl: null,
     decidedBy: null,
     decidedAt: null,
     stagingId: null,
@@ -1312,6 +1316,9 @@ describe("inbox: network requests (network ask spec §5.3)", () => {
     expect(within(table).getByText(`${NR.label} · Mia`)).toBeTruthy();
     expect(await screen.findByText(NR.title.replace("{name}", "Mia"))).toBeTruthy();
     expect(screen.getByText("For the weekly export")).toBeTruthy();
+    // the requester without an avatar draws the initial
+    expect(personAvatarSrc(document.body)).toBeNull();
+    expect(personInitial(document.body)).toBe("M");
     expect(screen.getByRole("link", { name: en.inbox.openConversation }).getAttribute("href")).toBe(
       "/chat/c7",
     );

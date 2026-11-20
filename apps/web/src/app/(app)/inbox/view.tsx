@@ -36,6 +36,7 @@ import { PendingConnectorDialog } from "../../../components/agent/PendingConnect
 import { ErrorFrame } from "../../../components/ErrorFrame";
 import { NoAccess } from "../../../components/NoAccess";
 import { PermissionScopeDetail } from "../../../components/PermissionScopeDetail";
+import { Person } from "../../../components/Person";
 import { SandboxEscalationDetail } from "../../../components/SandboxEscalationDetail";
 import {
   requesterOf,
@@ -925,7 +926,10 @@ function skillChangeDetail({
   return {
     facts: [
       { label: t("skillChange.agent"), value: change.agent.name },
-      { label: t("skillChange.requester"), value: requesterOf(change) },
+      {
+        label: t("skillChange.requester"),
+        value: <Person person={requesterOf(change)} size={16} />,
+      },
       // a link where the reader may open it (the requester), else a dash, never the raw id
       {
         label: t("conversation"),
@@ -978,7 +982,7 @@ function directoryRequestDetail({
   const version = requestVersion(request);
   return {
     facts: [
-      { label: td("requester"), value: directoryRequester(request) },
+      { label: td("requester"), value: <Person person={directoryRequester(request)} size={16} /> },
       { label: td("version"), value: version === null ? "—" : versionLabel(version) },
       { label: t("requested"), value: <DateTime value={request.createdAt} /> },
     ],
@@ -1056,7 +1060,7 @@ function networkRequestDetail({
   const chat = conversationLinkOf(request);
   return {
     facts: [
-      { label: td("requester"), value: directoryRequester(request) },
+      { label: td("requester"), value: <Person person={directoryRequester(request)} size={16} /> },
       { label: tnr("hosts"), value: String(hosts.length) },
       { label: t("requested"), value: <DateTime value={request.createdAt} /> },
     ],
@@ -1074,7 +1078,7 @@ function networkRequestDetail({
         disabled: pending !== undefined,
       },
     },
-    title: tnr("title", { name: directoryRequester(request) }),
+    title: tnr("title", { name: directoryRequester(request)?.name ?? "—" }),
     status: <StatusMark status="waiting" label={tnr("label")} />,
     content: (
       <Stack gap={12}>
@@ -1200,7 +1204,7 @@ function setupRequestDetail({
   const agent = request.agent?.name ?? "—";
   return {
     facts: [
-      { label: td("requester"), value: directoryRequester(request) },
+      { label: td("requester"), value: <Person person={directoryRequester(request)} size={16} /> },
       { label: ts("agent"), value: agent },
       { label: ts("count"), value: String(connectors.length) },
       { label: t("requested"), value: <DateTime value={request.createdAt} /> },

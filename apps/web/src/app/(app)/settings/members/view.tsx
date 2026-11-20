@@ -11,6 +11,7 @@ import {
   formatDateTime,
   Input,
   type MenuItem,
+  PersonName,
   Select,
   SettingsPage,
   Stack,
@@ -134,11 +135,15 @@ function Members({ orgId }: { orgId: string }) {
       header: t("columns.name"),
       cell: (m) => (
         <Stack direction="row" gap={8}>
-          <Text>
-            {m.account.id === me.account.id
-              ? `${m.account.displayName} (${t("you")})`
-              : m.account.displayName}
-          </Text>
+          <PersonName
+            name={
+              m.account.id === me.account.id
+                ? `${m.account.displayName} (${t("you")})`
+                : m.account.displayName
+            }
+            avatarUrl={m.account.avatarUrl}
+            size={24}
+          />
           {m.anonymous && <Badge>{t("anonymous")}</Badge>}
         </Stack>
       ),

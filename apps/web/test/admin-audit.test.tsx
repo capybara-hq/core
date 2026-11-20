@@ -11,6 +11,7 @@ import { activeAdminOf, useAdminItems } from "../src/components/shell/nav";
 import { APP_PAGES } from "../src/components/shell/path";
 import { json, lastStubRoutes, stubApi } from "./support/api";
 import { resetNavigation } from "./support/navigation";
+import { personAvatarSrc, personInitial } from "./support/person";
 import { renderRouteEmptyCache, renderRouteWithCache } from "./support/query";
 import { ME } from "./support/render";
 import { expectNoFirstPaintFetch } from "./support/server";
@@ -23,7 +24,15 @@ const template = (name: string) => document.querySelector(`[data-template="${nam
 const event = (id: string, action: string, actor: string | null) => ({
   id,
   at: T,
-  actor: actor === null ? null : { id: `a-${actor}`, name: actor, email: null },
+  actor:
+    actor === null
+      ? null
+      : {
+          id: `a-${actor}`,
+          name: actor,
+          email: null,
+          avatarUrl: actor === "Grant" ? "/api/v1/accounts/a-Grant/avatar?v=abc123" : null,
+        },
   viaToken: false,
   viaAgent: false,
   action,
@@ -58,6 +67,11 @@ describe("/admin/audit（ListPage）", () => {
     expect(within(table).getByText(A.actions.deploymentSettingsUpdated)).toBeTruthy();
     expect(within(table).getByText(A.system)).toBeTruthy();
     expect(within(table).getByText("target-9")).toBeTruthy();
+    // the actor is a person display: the avatar image, or the initial; the kernel row has none
+    const grantRow = within(table).getByText("target-9").closest("tr") as HTMLElement;
+    expect(personAvatarSrc(grantRow)).toBe("/api/v1/accounts/a-Grant/avatar?v=abc123");
+    const systemRow = within(table).getByText("target-8").closest("tr") as HTMLElement;
+    expect(systemRow.querySelector('[data-part="person-name"]')).toBeNull();
     expect(browser).toEqual([]);
     const calls = stubApi(routes);
     await userEvent.setup().click(screen.getByRole("button", { name: A.loadMore }));

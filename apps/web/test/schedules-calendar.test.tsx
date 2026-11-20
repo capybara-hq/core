@@ -9,6 +9,7 @@ import { addDays, dayIn, rangeBounds, startOfDay } from "../src/lib/schedule-cal
 import type { Me } from "../src/lib/session";
 import { json, stubApi } from "./support/api";
 import { resetNavigation } from "./support/navigation";
+import { personAvatarSrc, personInitial } from "./support/person";
 import { renderRouteEmptyCache, renderRouteWithCache } from "./support/query";
 import { ME } from "./support/render";
 import { expectNoFirstPaintFetch } from "./support/server";
@@ -154,8 +155,19 @@ const routes = (over: Record<string, () => unknown> = {}) => ({
   [`GET ${CAL}`]: ok(ANSWER),
   [`GET ${ORG}/members`]: ok({
     members: [
-      { account: { id: ME.account.id, displayName: "Grant", email: null }, role: "owner" },
-      { account: { id: "a2", displayName: "Mei", email: null }, role: "member" },
+      {
+        account: { id: ME.account.id, displayName: "Grant", email: null, avatarUrl: null },
+        role: "owner",
+      },
+      {
+        account: {
+          id: "a2",
+          displayName: "Mei",
+          email: null,
+          avatarUrl: "/api/v1/accounts/a2/avatar?v=abc123",
+        },
+        role: "member",
+      },
     ],
   }),
   ...over,
@@ -499,11 +511,18 @@ describe("/schedules?view=calendar", () => {
     expect(calendarReads(calls).at(-1)).toMatchObject({ all: "true" });
     expect(window.location.search).toBe("?scope=all");
     expect(block("run=tr9")?.getAttribute("aria-label")).toContain("Helper · Mei");
+    // the block carries the creator as an avatar only
+    expect(
+      block("run=tr9")
+        ?.querySelector('[data-part="schedule-calendar-person"] img')
+        ?.getAttribute("src"),
+    ).toBe("/api/v1/accounts/a2/avatar?v=abc123");
     await user.click(block("run=tr9") as HTMLElement);
     const sheet = await screen.findByRole("dialog");
     expect(within(sheet).getByText("Mei sync", { selector: "h2" })).toBeTruthy();
     expect(within(sheet).queryByRole("link", { name: C.panel.openConversation })).toBeNull();
     expect(within(sheet).getByText(C.panel.creator)).toBeTruthy();
+    expect(personAvatarSrc(sheet)).toBe("/api/v1/accounts/a2/avatar?v=abc123");
   });
 
   it("a cut range warns and draws the rest as not loaded", async () => {
