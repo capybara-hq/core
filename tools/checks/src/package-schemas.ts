@@ -2,6 +2,7 @@ import { existsSync, readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import {
+  BootstrapExtraManifestSchema,
   BootstrapManifestSchema,
   ConnectorTemplateFileSchema,
   MarketplaceManifestSchema,
@@ -24,7 +25,7 @@ export interface PackageSchemaSpec {
 /**
  * The JSON Schemas the SDK publishes: the plugin manifest `plugin.json`, the marketplace manifest
  * `marketplace.json`, the connector template file `connectors/<id>.json`, the bootstrap manifest
- * `packages/kernel/bootstrap.json` and the theme file `themes/<id>.json`.
+ * `packages/kernel/bootstrap.json`, the extra bootstrap manifest and the theme file `themes/<id>.json`.
  */
 export const PACKAGE_SCHEMAS: PackageSchemaSpec[] = [
   {
@@ -50,6 +51,12 @@ export const PACKAGE_SCHEMAS: PackageSchemaSpec[] = [
     id: "https://capybarahq.com/schemas/bootstrap.v1.schema.json",
     title: "Capybara bootstrap manifest packages/kernel/bootstrap.json (schemaVersion 1)",
     schema: BootstrapManifestSchema,
+  },
+  {
+    file: "bootstrap-extra.v1.schema.json",
+    id: "https://capybarahq.com/schemas/bootstrap-extra.v1.schema.json",
+    title: "Capybara extra bootstrap manifest bootstrap.extra.json (schemaVersion 1)",
+    schema: BootstrapExtraManifestSchema,
   },
   {
     file: "theme.v1.schema.json",

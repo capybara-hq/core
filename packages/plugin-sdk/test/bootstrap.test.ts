@@ -4,8 +4,10 @@ import addFormats from "ajv-formats";
 import { describe, expect, it } from "vitest";
 import {
   type BootstrapEntry,
+  BootstrapExtraManifestSchema,
   BootstrapManifestSchema,
   bootstrapFileName,
+  parseBootstrapExtraManifest,
   parseBootstrapManifest,
 } from "../src/index.js";
 
@@ -178,6 +180,179 @@ describe("JSON Schema (ajv) agrees with zod", () => {
       const clean = JSON.parse(JSON.stringify(json));
       expect(validate(clean), JSON.stringify(validate.errors)).toBe(
         BootstrapManifestSchema.safeParse(clean).success,
+      );
+    });
+  }
+});
+
+const gitEntry = (over: Record<string, unknown> = {}): Record<string, unknown> => ({
+  name: "theme-acme",
+  source: "git",
+  marketplace: "acme",
+  commit: COMMIT,
+  path: "./plugins/theme-acme",
+  version: "0.1.1",
+  integrity: SHA512,
+  builtin: true,
+  ...over,
+});
+
+const extraExample = (): Record<string, unknown> => ({
+  $schema: "https://capybarahq.com/schemas/bootstrap-extra.v1.schema.json",
+  schemaVersion: 1,
+  marketplaces: [
+    { name: "acme", url: "https://git.example.com/acme/plugins.git", username: "x-token-auth" },
+  ],
+  plugins: [
+    gitEntry(),
+    {
+      name: "acme-tools",
+      source: "npm",
+      npm: "@acme/plugin-tools",
+      version: "1.2.0",
+      integrity: SHA512,
+      required: false,
+    },
+  ],
+  defaultTheme: { plugin: "theme-acme", theme: "acme" },
+});
+
+const extra = (over: Record<string, unknown> = {}) => ({ ...extraExample(), ...over });
+
+const extraErrors = (json: unknown) => {
+  const r = parseBootstrapExtraManifest(json);
+  return "errors" in r ? r.errors : [];
+};
+
+describe("parseBootstrapExtraManifest", () => {
+  it("accepts the spec example", () => {
+    const r = parseBootstrapExtraManifest(extraExample());
+    expect("manifest" in r && r.manifest.plugins.length).toBe(2);
+  });
+
+  it("accepts a manifest with no marketplaces and no plugins", () => {
+    expect(extraErrors({ schemaVersion: 1, marketplaces: [], plugins: [] })).toEqual([]);
+  });
+
+  it("rejects unknown keys", () => {
+    const m = extra({ plugins: [gitEntry({ foo: 1 })] });
+    expect(extraErrors(m).some((e) => e.startsWith("plugins.0"))).toBe(true);
+  });
+
+  it("rejects a workspace entry", () => {
+    const m = extra({ plugins: [workspace()] });
+    expect(extraErrors(m).some((e) => e.startsWith("plugins.0.source"))).toBe(true);
+  });
+
+  it("rejects defaultTheme on a non-builtin entry", () => {
+    const m = extra({ plugins: [gitEntry({ builtin: undefined })] });
+    expect(extraErrors(m).join("\n")).toContain("defaultTheme.plugin");
+  });
+
+  it("rejects defaultTheme naming an unknown plugin", () => {
+    const m = extra({ defaultTheme: { plugin: "nope", theme: "x" } });
+    expect(extraErrors(m).join("\n")).toContain("defaultTheme.plugin");
+  });
+
+  it("rejects a git entry naming an undeclared marketplace", () => {
+    const m = extra({ plugins: [gitEntry({ marketplace: "other" })], defaultTheme: undefined });
+    expect(extraErrors(m)).toEqual(['plugins.0.marketplace: marketplace "other" is not declared']);
+  });
+
+  it("rejects duplicate plugin and marketplace names", () => {
+    const m = extra({
+      marketplaces: [
+        { name: "acme", url: "https://a.example.com/x.git" },
+        { name: "acme", url: "https://b.example.com/x.git" },
+      ],
+      plugins: [gitEntry(), gitEntry()],
+      defaultTheme: undefined,
+    });
+    const errs = extraErrors(m);
+    expect(errs).toContain("marketplaces.1.name: duplicate marketplace acme");
+    expect(errs).toContain("plugins.1.name: duplicate entry theme-acme");
+  });
+
+  it("rejects the reserved name official", () => {
+    const m = extra({
+      marketplaces: [{ name: "official", url: "https://a.example.com/x.git" }],
+      plugins: [],
+      defaultTheme: undefined,
+    });
+    expect(extraErrors(m).some((e) => e.startsWith("marketplaces.0.name"))).toBe(true);
+  });
+
+  it("rejects required and builtin together", () => {
+    const m = extra({ plugins: [gitEntry({ required: true })] });
+    expect(extraErrors(m)).toContain(
+      "plugins.0.builtin: an entry is either required or builtin, not both",
+    );
+  });
+
+  it("rejects a branch as commit", () => {
+    const m = extra({ plugins: [gitEntry({ commit: "main" })] });
+    expect(extraErrors(m).some((e) => e.startsWith("plugins.0.commit"))).toBe(true);
+  });
+
+  it.each(["plugins/x", "../x", "./../x"])("rejects the path %s", (path) => {
+    const m = extra({ plugins: [gitEntry({ path })], defaultTheme: undefined });
+    expect(extraErrors(m).some((e) => e.startsWith("plugins.0.path"))).toBe(true);
+  });
+
+  it.each(["http://a.example.com/x.git", "https://user:pw@a.example.com/x.git"])(
+    "rejects the marketplace url %s",
+    (url) => {
+      const m = extra({
+        marketplaces: [{ name: "acme", url }],
+        plugins: [],
+        defaultTheme: undefined,
+      });
+      expect(extraErrors(m).some((e) => e.startsWith("marketplaces.0.url"))).toBe(true);
+    },
+  );
+
+  it("rejects a bad username", () => {
+    const m = extra({
+      marketplaces: [{ name: "acme", url: "https://a.example.com/x.git", username: "a b" }],
+      plugins: [],
+      defaultTheme: undefined,
+    });
+    expect(extraErrors(m).some((e) => e.startsWith("marketplaces.0.username"))).toBe(true);
+  });
+
+  it("never throws on garbage", () => {
+    expect(extraErrors(undefined).length).toBeGreaterThan(0);
+    expect(extraErrors("x").length).toBeGreaterThan(0);
+  });
+
+  it("caps errors at 50", () => {
+    const m = extra({
+      plugins: Array.from({ length: 60 }, () => gitEntry({ name: "Bad" })),
+      defaultTheme: undefined,
+    });
+    expect(extraErrors(m)).toHaveLength(50);
+  });
+});
+
+describe("bootstrap-extra JSON Schema (ajv) agrees with zod", () => {
+  const schema = JSON.parse(
+    readFileSync(new URL("../schemas/bootstrap-extra.v1.schema.json", import.meta.url), "utf8"),
+  );
+  const ajv = new Ajv2020({ allErrors: true, strict: false });
+  addFormats.default(ajv);
+  const validate = ajv.compile(schema);
+  const fixtures: [string, unknown][] = [
+    ["the example", extraExample()],
+    ["unknown key", extra({ plugins: [gitEntry({ foo: 1 })] })],
+    ["branch commit", extra({ plugins: [gitEntry({ commit: "main" })] })],
+    ["workspace entry", extra({ plugins: [workspace()] })],
+    ["schemaVersion 2", extra({ schemaVersion: 2 })],
+  ];
+  for (const [label, json] of fixtures) {
+    it(label, () => {
+      const clean = JSON.parse(JSON.stringify(json));
+      expect(validate(clean), JSON.stringify(validate.errors)).toBe(
+        BootstrapExtraManifestSchema.safeParse(clean).success,
       );
     });
   }
