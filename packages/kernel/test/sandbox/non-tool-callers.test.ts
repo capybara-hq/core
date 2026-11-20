@@ -120,7 +120,7 @@ describe("device projects (owner browse)", () => {
     home: "/home/me",
     supported: true,
   };
-  const projects = (activation?: boolean) =>
+  const projects = (activation?: boolean, log = { warn: () => {} }) =>
     new DeviceProjectsService(
       fakeDb(undefined, []),
       {} as never,
@@ -128,8 +128,20 @@ describe("device projects (owner browse)", () => {
       { usable: async () => {} } as never,
       { projectScope: async () => scope } as never,
       {} as never,
+      log,
       activation,
     );
+
+  it("a device that cannot be asked answers generically and logs the cause", async () => {
+    const refusal = new Error("Earlier work on this device is not settled (3)");
+    sb.ensureRunningForOwner.mockRejectedValueOnce(refusal);
+    const warn = vi.fn();
+    await expect(projects(true, { warn }).candidates(ORG, ACC, DEV)).rejects.toMatchObject({
+      code: "device.projects_unavailable",
+      message: "The device could not be asked now; try again shortly",
+    });
+    expect(warn).toHaveBeenCalledWith(expect.any(String), { deviceId: DEV, err: refusal });
+  });
 
   it("gate on: candidates start the device for its owner, then scan through withBrowse", async () => {
     const got = await projects(true).candidates(ORG, ACC, DEV);

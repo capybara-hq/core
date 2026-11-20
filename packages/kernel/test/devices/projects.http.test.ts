@@ -780,6 +780,7 @@ describe("device projects", () => {
         k.app.get(DeviceAccess),
       ),
       k.app.get(PermissionCeilingWrites),
+      { warn: () => {} },
     );
     // its files were made in auto mode with the open network, then the device was narrowed to
     // sandbox mode: the kernel-only mode is no dimension of a cloud instance's limits (it has no

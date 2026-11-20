@@ -19,8 +19,10 @@ import { audit } from "../identity/audit.js";
 import { KernelDb } from "../infra/database/kernel-db.js";
 import { TransactionHost, withOrderedLocks } from "../infra/database/transaction-host.js";
 import { Transactional } from "../infra/database/transactional.decorator.js";
+import { KERNEL_LOGGER } from "../infra/tokens.js";
 import { projectsUnsupported } from "../local-devices/local-device-provider.js";
 import { POLICY_REFUSAL_PREFIX } from "../local-devices/relay.js";
+import type { KernelLogger } from "../log.js";
 import type { SandboxMode } from "../sandbox/modes.js";
 import { PermissionCeilingWrites } from "../sandbox/permission-ceiling-writes.js";
 import {
@@ -177,6 +179,7 @@ export class DeviceProjectsService {
       "resolveProjectForBinding" | "projectMatches" | "projectScope"
     >,
     @Inject(PermissionCeilingWrites) private readonly ceilings: PermissionCeilingWrites,
+    @Inject(KERNEL_LOGGER) private readonly log: Pick<KernelLogger, "warn">,
     /** The paired activation gate: once on, every device read is an owner browse. */
     @Optional() @Inject(PERMISSION_CONTEXT_ACTIVATION) private readonly activation?: boolean,
   ) {}
@@ -231,7 +234,10 @@ export class DeviceProjectsService {
         found = await scan(base, sig);
       } catch (e) {
         // the base is the device's own workspace or home: a refusal there is not the person's path
-        throw passThrough(e) ?? unavailable(e);
+        const passed = passThrough(e);
+        if (passed !== undefined) throw passed;
+        this.log.warn("device projects: the device could not scan", { deviceId, err: e });
+        throw unavailable(e);
       }
       // the device's answer is checked again: inside the base and the mode, a valid name, bounded
       const candidates = found
@@ -332,7 +338,13 @@ export class DeviceProjectsService {
         try {
           answer = await list(path, 1, sig);
         } catch (e) {
-          throw await listFailure(e, r, path, scope.mode, sig);
+          throw await listFailure(e, r, path, scope.mode, sig, (err, statErr) =>
+            this.log.warn("device projects: the device could not list", {
+              deviceId,
+              err,
+              statErr,
+            }),
+          );
         }
         if (answer === null) throw pathMissing(path);
         return { path, name };
@@ -545,6 +557,8 @@ export class DeviceProjectsService {
     } catch (e) {
       if (e instanceof ApiError) throw e;
       if (e instanceof SandboxProviderUnreachableError) throw providerUnreachable();
+      // the answer hides the cause (a provider's text is not for people): ops read it here
+      this.log.warn("device projects: the device could not be asked", { deviceId, err: e });
       throw unavailable(e);
     }
   }
@@ -653,6 +667,7 @@ async function listFailure(
   path: string,
   mode: SandboxMode,
   signal: AbortSignal,
+  logUnavailable: (err: unknown, statErr: unknown) => void,
 ): Promise<unknown> {
   const passed = passThrough(e);
   if (passed !== undefined) return passed;
@@ -671,7 +686,10 @@ async function listFailure(
   try {
     st = await r.stat(path, signal);
   } catch (e2) {
-    return passThrough(e2) ?? unavailable(e);
+    const passed = passThrough(e2);
+    if (passed !== undefined) return passed;
+    logUnavailable(e, e2);
+    return unavailable(e);
   }
   if (st === null) return pathMissing(path);
   return new ApiError(

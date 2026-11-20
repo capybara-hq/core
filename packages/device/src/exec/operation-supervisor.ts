@@ -560,17 +560,21 @@ export class MacOperationSupervisor {
         (entry.output && !entry.output.cleaned)
       )
         continue;
+      // Only the retained payload goes. A completed entry stays completed (settled for good). An
+      // entry that never completed stays unknown and keeps its launch identity: that identity is
+      // what marks work of a lost process that may still run (see retiredByExpiry).
+      const completed = entry.state === "completed";
       if (
-        entry.result !== undefined ||
+        Object.hasOwn(entry, "result") ||
         entry.tail !== undefined ||
         entry.request !== undefined ||
-        entry.identity !== undefined
+        (completed && entry.identity !== undefined)
       ) {
         delete entry.result;
         delete entry.tail;
         delete entry.request;
-        delete entry.identity;
-        entry.state = "unknown";
+        if (completed) delete entry.identity;
+        else entry.state = "unknown";
         changed = true;
       }
     }
@@ -825,7 +829,12 @@ export class MacOperationSupervisor {
   ): Promise<ExecResult | NativeHelperResult> {
     const { entry, fresh } = await this.admit(request, hash, this.now() + 60000, signal);
     if (!fresh) {
-      if (entry.state === "completed" && !isOmittedRead(entry.result)) return entry.result ?? null;
+      if (
+        entry.state === "completed" &&
+        Object.hasOwn(entry, "result") &&
+        !isOmittedRead(entry.result)
+      )
+        return entry.result ?? null;
       throw new SandboxOperationOutcomeUnknownError("Consumed operation outcome is unknown");
     }
     const launching = this.launch(entry, request, signal, false);
@@ -1106,8 +1115,9 @@ export class MacOperationSupervisor {
   /**
    * Operations of another instance generation whose effect may still exist (permission runtime
    * cutover B4): owned here (live, faulted or cancelling), or recorded without a completed result
-   * or an established stop or exit. A binding to another generation is refused while any remains;
-   * a newer generation alone never clears them.
+   * or an established stop or exit (an expired entry without a launch identity excepted: see
+   * retiredByExpiry). A binding to another generation is refused while any remains; a newer
+   * generation alone never clears them.
    */
   /**
    * Gives the journal up for good (B4: one supervisor per journal). Only after everything owned
@@ -1131,13 +1141,34 @@ export class MacOperationSupervisor {
       if (e.ref.instanceGeneration === generation) continue;
       const id = e.ref.operationId;
       const owned = this.live.has(id) || this.faultOwners.has(id) || this.cancellations.has(id);
-      const settled =
-        e.state === "completed" ||
-        e.stop?.outcome === "stopped" ||
-        e.stop?.outcome === "already-exited";
-      if (owned || !settled) count++;
+      if (owned || !this.settledEntry(e)) count++;
     }
     return count;
+  }
+  /** An entry (not owned by this process) whose work can have no effect any more. */
+  private settledEntry(e: Entry): boolean {
+    return (
+      e.state === "completed" ||
+      e.stop?.outcome === "stopped" ||
+      e.stop?.outcome === "already-exited" ||
+      this.retiredByExpiry(e)
+    );
+  }
+  /**
+   * An unknown entry past its retention with no launch identity and no output left uncleaned:
+   * nothing about it can be stopped, reaped or read, so it blocks no binding. Journals of earlier
+   * device versions hold such entries for work that completed (the retention sweep used to mark
+   * it unknown), and work that never launched (refused, revoked or failed before its launch was
+   * recorded) looks the same. Work of a lost process that may still run keeps its recorded launch
+   * identity past retention and stays an obligation.
+   */
+  private retiredByExpiry(e: Entry): boolean {
+    return (
+      e.state === "unknown" &&
+      e.retainUntilMs <= this.now() &&
+      e.identity === undefined &&
+      (e.output === undefined || e.output.cleaned === true)
+    );
   }
   /**
    * Waits until nothing is owned: acknowledged workers (whatever happened to their start RPC),
@@ -1417,11 +1448,7 @@ export class MacOperationSupervisor {
       const id = e.ref.operationId;
       if (e.ref.instanceGeneration === generation || background.has(id)) continue;
       if (this.live.has(id) || this.faultOwners.has(id) || this.cancellations.has(id)) continue;
-      const settled =
-        e.state === "completed" ||
-        e.stop?.outcome === "stopped" ||
-        e.stop?.outcome === "already-exited";
-      if (!settled) count++;
+      if (!this.settledEntry(e)) count++;
     }
     return count;
   }

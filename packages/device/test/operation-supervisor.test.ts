@@ -1,8 +1,9 @@
-import { mkdtemp, readdir, readFile, rm } from "node:fs/promises";
+import { mkdtemp, readdir, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { afterAll, afterEach, beforeAll, expect, it } from "vitest";
+import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 import { MacOperationSupervisor } from "../src/exec/operation-supervisor.js";
+import { digest } from "../src/exec/operation-types.js";
 import type { MacWorkerRequest } from "../src/exec/operation-worker.js";
 import { shellQuote } from "../src/exec/shared.js";
 import { sealWorkspaceRuntime } from "./runtime-seal.js";
@@ -1134,4 +1135,143 @@ it("bounds the read bytes it retains in memory: past the budget the oldest reads
       truncated: false,
     });
   expect(supervisor.retirementObligations("next")).toBe(0);
+});
+
+describe("expired entries of an earlier generation", () => {
+  const legacyEntry = (operationId: string, extra: Record<string, unknown> = {}) => ({
+    ref: {
+      executionId: `e-${operationId}`,
+      operationId,
+      instanceId: "d",
+      instanceGeneration: "old",
+    },
+    admitBeforeMs: 100,
+    hash: "h",
+    retainUntilMs: 100,
+    state: "unknown",
+    revoked: false,
+    ...extra,
+  });
+  // a journal as an earlier device version left it on disk (journal equal to its rollback floor)
+  const recovered = async (entries: unknown[], now = 1000) => {
+    const stateDir = await mkdtemp(join(tmpdir(), "cap-supervisor-legacy-"));
+    dirs.push(stateDir);
+    const file = join(stateDir, `operation-journal-${digest("d")}.json`);
+    const text = JSON.stringify({ version: 1, entries });
+    await writeFile(file, text);
+    await writeFile(`${file}.rollback`, text);
+    return new MacOperationSupervisor({
+      stateDir,
+      deviceId: "d",
+      instanceGeneration: "old",
+      now: () => now,
+      start: async () => {
+        throw Error("must not launch");
+      },
+    });
+  };
+
+  it("an expired entry emptied of its identity and payload is no obligation", async () => {
+    const supervisor = await recovered([
+      legacyEntry("a"),
+      legacyEntry("b", { stop: { outcome: "cancel-pending" } }),
+    ]);
+    expect(supervisor.retirementObligations("next")).toBe(0);
+    expect(supervisor.blockersBesidesLiveBackground("next")).toBe(0);
+  });
+
+  it("an entry that still has a launch identity blocks, expired or not", async () => {
+    const supervisor = await recovered([legacyEntry("a", { identity: { pid: 123, token: "t" } })]);
+    expect(supervisor.retirementObligations("next")).toBe(1);
+    expect(supervisor.blockersBesidesLiveBackground("next")).toBe(1);
+  });
+
+  it("an unknown entry within its retention blocks", async () => {
+    const supervisor = await recovered([legacyEntry("a")], 50);
+    expect(supervisor.retirementObligations("next")).toBe(1);
+    expect(supervisor.blockersBesidesLiveBackground("next")).toBe(1);
+  });
+
+  it("an expired entry whose output was never cleaned blocks", async () => {
+    const supervisor = await recovered([
+      legacyEntry("a", {
+        output: {
+          locator: { committed: 0 },
+          state: "uncertain",
+          interruptedCancellation: true,
+        },
+      }),
+    ]);
+    expect(supervisor.retirementObligations("next")).toBe(1);
+  });
+});
+
+const foreground = (stateDir: string, operationId: string, admitBeforeMs: number) => {
+  const { managedOutput: _, ...rest } = request(stateDir);
+  return { ...rest, scope: { ...scope, operationId, tag: operationId, admitBeforeMs } };
+};
+it("a completed exec stays settled once its retained payload expired", async () => {
+  const f = await fixture();
+  const first = f.supervisor.execute(foreground(f.stateDir, "op", 1000), "hash", signal);
+  await vi.waitFor(() => expect(f.starts()).toBe(1));
+  f.finish();
+  expect(await first).toEqual(result);
+  await vi.waitFor(() => expect(f.supervisor.ownership().workers).toBe(0));
+  // past the exec's retention, the next admission sweeps the retained payload away
+  f.setNow(70_000);
+  const second = f.supervisor.execute(foreground(f.stateDir, "op-2", 80_000), "h2", signal);
+  await vi.waitFor(() => expect(f.starts()).toBe(2));
+  f.finish();
+  await second;
+  const journal = (await readdir(f.stateDir)).find((name) =>
+    /^operation-journal-[a-f0-9]+\.json$/.test(name),
+  );
+  const entries = JSON.parse(await readFile(join(f.stateDir, journal as string), "utf8")).entries;
+  const swept = entries.find((e: { ref: { operationId: string } }) => e.ref.operationId === "op");
+  expect(swept).toMatchObject({ state: "completed" });
+  expect(swept.result).toBeUndefined();
+  expect(swept.request).toBeUndefined();
+  expect(f.supervisor.retirementObligations("next")).toBe(0);
+  expect(f.supervisor.blockersBesidesLiveBackground("next")).toBe(0);
+  // a retry past retention reports an unknown outcome, never an empty result
+  await expect(
+    f.supervisor.execute(foreground(f.stateDir, "op", 1000), "hash", signal),
+  ).rejects.toThrow(/unknown/);
+});
+
+it("an unknown exec of a lost process keeps its identity past retention and keeps blocking", async () => {
+  const f = await fixture();
+  const running = f.supervisor.execute(foreground(f.stateDir, "op", 1000), "hash", signal);
+  await vi.waitFor(() => expect(f.starts()).toBe(1));
+  let now = 1;
+  const restarted = new MacOperationSupervisor({
+    stateDir: f.stateDir,
+    deviceId: "d",
+    instanceGeneration: "g",
+    now: () => now,
+    start: async (r: MacWorkerRequest) => {
+      await r.beforeLaunch();
+      await r.onLaunch({ pid: 456, token: "other-child" });
+      return {
+        ready: Promise.resolve(),
+        completion: Promise.resolve(result),
+        cancel: async () => {},
+      };
+    },
+  });
+  now = 70_000;
+  // an admission sweeps every entry past its retention
+  await restarted.execute(foreground(f.stateDir, "op-2", 80_000), "h2", signal);
+  await vi.waitFor(() => expect(restarted.ownership().workers).toBe(0));
+  const journal = (await readdir(f.stateDir)).find((name) =>
+    /^operation-journal-[a-f0-9]+\.json$/.test(name),
+  );
+  const entries = JSON.parse(await readFile(join(f.stateDir, journal as string), "utf8")).entries;
+  const lost = entries.find((e: { ref: { operationId: string } }) => e.ref.operationId === "op");
+  expect(lost).toMatchObject({ state: "unknown", identity: { pid: 123 } });
+  expect(lost.request).toBeUndefined();
+  expect(restarted.retirementObligations("next")).toBe(1);
+  expect(restarted.blockersBesidesLiveBackground("next")).toBe(1);
+  f.finish();
+  await running;
 });
