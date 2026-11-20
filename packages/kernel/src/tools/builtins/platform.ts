@@ -620,18 +620,19 @@ export function platformTool(deps: PlatformToolDeps): BuiltinTool {
       // the file is read again, and must be the bytes the person confirmed (Review Focus 5)
       const file = await fileOf(op, params, deps, octx, ctx.signal);
       if (file !== null) {
-        if (ctx.approvalId !== undefined && ctx.runId !== undefined) {
-          const bound =
-            deps.approvalFileSha256 === undefined
-              ? null
-              : await deps.approvalFileSha256(ctx.approvalId, {
-                  orgId: ctx.orgId,
-                  runId: ctx.runId,
-                  callId: ctx.callId,
-                });
-          // an approval whose card showed no file, or another one, does not cover these bytes
-          if (bound !== file.sha256) throw new ToolError(FILE_CHANGED_TEXT);
-        }
+        // fails closed: bytes run only under this call's approval whose card showed them (no
+        // approval, one whose card showed no file or another one does not cover these bytes)
+        const bound =
+          ctx.approvalId === undefined ||
+          ctx.runId === undefined ||
+          deps.approvalFileSha256 === undefined
+            ? null
+            : await deps.approvalFileSha256(ctx.approvalId, {
+                orgId: ctx.orgId,
+                runId: ctx.runId,
+                callId: ctx.callId,
+              });
+        if (bound === null || bound !== file.sha256) throw new ToolError(FILE_CHANGED_TEXT);
         octx.file = file;
       }
       const person = await personFieldsOf(op, params, octx);

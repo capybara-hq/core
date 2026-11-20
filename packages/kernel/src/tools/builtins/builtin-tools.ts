@@ -89,7 +89,7 @@ export class BuiltinTools {
     @Inject(AgentDocs) agentDocs: AgentDocs,
     /** The person's sealed approval card values a Platform write with person fields reads. */
     @Inject(SealedInputs) sealedInputs: SealedInputs,
-    /** A Platform write's file reference: a conversation file or a device path (spec §5). */
+    /** A Platform write's file reference: a conversation file (spec §5). */
     @Inject(FileRefs) fileRefs: FileRefs,
     /** The schedule tools read tasks and grants; their writes go through the task service. */
     @Inject(ScheduledTaskStore) scheduleStore: ScheduledTaskStore,

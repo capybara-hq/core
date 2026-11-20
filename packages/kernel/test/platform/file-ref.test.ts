@@ -17,6 +17,9 @@ import {
 import { defineOperation, type PlatformOperation } from "../../src/platform/operation.js";
 import { PlatformOperations } from "../../src/platform/registry.js";
 import { StorageService } from "../../src/storage/storage.service.js";
+import { BUILTIN } from "../../src/tools/builtin-names.js";
+import { BuiltinTools } from "../../src/tools/builtins/builtin-tools.js";
+import type { BuiltinCallContext } from "../../src/tools/registry.js";
 import { builtinsOff } from "../helpers/disabled-tools.js";
 import { accountsFor } from "../helpers/identity.js";
 import { MODEL_FAKE } from "../helpers/model-plugins.js";
@@ -272,6 +275,56 @@ describe("Platform file references", () => {
     expect(result?.content).toContain(
       "The file is text/plain; this operation takes image/png, image/jpeg, image/webp.",
     );
+  });
+
+  it("bytes that are not the declared image type are refused before the card", async () => {
+    const conv = await createConv(owner, orgId, agentId);
+    const fileId = await attachment(
+      conv,
+      new TextEncoder().encode("not a png at all"),
+      "fake.png",
+      "image/png",
+    );
+    const result = await refusedCall(conv, { file: { fileId }, images: true });
+    expect(result?.content).toContain(
+      "The file's bytes are not image/png; this operation takes image/png, image/jpeg, image/webp.",
+    );
+  });
+
+  it("a file call run without an approval of its card fails closed with the change text", async () => {
+    const conv = await createConv(owner, orgId, agentId);
+    const bytes = new TextEncoder().encode("unbound bytes\n");
+    const fileId = await attachment(conv, bytes, "unbound.txt", "text/plain");
+    const platform = k.app
+      .get(BuiltinTools)
+      .list()
+      .find((t) => t.spec.name === BUILTIN.Platform);
+    if (platform === undefined) throw new Error("no Platform tool");
+    // a real run of the person in this conversation (the actor facts need one to call a write)
+    await postMessage(owner, orgId, conv, "hello");
+    await waitForTerminal(db, conv, 1, 30_000);
+    const run = await db
+      .selectFrom("runs")
+      .select("id")
+      .where("conversation_id", "=", conv)
+      .executeTakeFirstOrThrow();
+    const ctx = {
+      orgId,
+      runId: run.id,
+      accountId: ownerId,
+      agentId,
+      conversationId: conv,
+      callId: randomUUID(),
+      signal: new AbortController().signal,
+    } as unknown as BuiltinCallContext;
+    const before = seen.length;
+    const input = { action: "call", operation: OP, params: { file: { fileId } } };
+    // no approval at all, then an approval id that is not this call's approved approval
+    await expect(platform.run(input, ctx)).rejects.toThrow(CHANGED_TEXT);
+    await expect(platform.run(input, { ...ctx, approvalId: randomUUID() })).rejects.toThrow(
+      CHANGED_TEXT,
+    );
+    expect(seen.slice(before)).toEqual([]);
   });
 
   it("an unknown file id is refused before the card with the way to name one", async () => {

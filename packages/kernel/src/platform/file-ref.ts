@@ -18,9 +18,9 @@ import { findConversationFile } from "../tools/builtins/conversation-files.js";
  * takes a file the agent already has instead, a conversation file (`fileId`: an attachment, a
  * generated or delivered artifact, a `read` copy). A file on the conversation's device is delivered
  * first (`Deliver`: the device rules, the command review and the activation gate apply) and passed
- * by the delivered file's id, so device files have one reading path. The tool resolves it at the policy step (limits, sha256, a thumbnail for an image: the card's
- * `detail.file`) and again right before the run, which refuses bytes that differ from the ones the
- * person confirmed.
+ * by the delivered file's id, so device files have one reading path. The tool resolves it at the
+ * policy step (limits, sha256, a thumbnail for an image: the card's `detail.file`) and again right
+ * before the run, which refuses bytes that differ from the ones the person confirmed.
  */
 
 export type FileRef = { fileId: string };

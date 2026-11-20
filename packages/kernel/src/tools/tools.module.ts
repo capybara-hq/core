@@ -99,7 +99,7 @@ import { ToolRegistry } from "./registry.js";
     PermissionApprovalJobs,
     ToolOutputs,
     BuiltinTools,
-    // a Platform write's file reference (a conversation file or a device path)
+    // a Platform write's file reference (a conversation file)
     FileRefs,
     // `ScheduleUpdate`'s write in one transaction (scheduled tasks spec §11)
     ScheduleUpdates,
