@@ -205,6 +205,9 @@ button.cb-tool-line:focus-visible {
   font-family: var(--cb-font);
   font-size: var(--cb-type-body-size);
 }
+.cb-md-code {
+  font-family: var(--cb-font-code);
+}
 .cb-md-chip {
   border: 0;
   color: var(--cb-ink);
@@ -1213,6 +1216,7 @@ button.cb-tool-toggle:focus-visible {
   background: var(--cb-bg);
   color: var(--cb-ink);
   font: inherit;
+  font-family: var(--cb-font-code);
   font-size: var(--cb-type-small-size);
   line-height: var(--cb-type-small-line);
   white-space: pre-wrap;
@@ -1671,6 +1675,7 @@ button.cb-file-card:focus-visible {
   padding: var(--cb-space-2) var(--cb-space-3);
   color: var(--cb-muted);
   font: inherit;
+  font-family: var(--cb-font-code);
   font-size: var(--cb-type-small-size);
   line-height: var(--cb-type-small-line);
   white-space: pre-wrap;
@@ -1869,6 +1874,7 @@ button.cb-file-card:focus-visible {
   margin: 0;
   color: var(--cb-ink);
   font: inherit;
+  font-family: var(--cb-font-code);
   font-size: var(--cb-type-small-size);
   line-height: var(--cb-type-small-line);
   white-space: pre-wrap;

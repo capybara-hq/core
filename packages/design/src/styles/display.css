@@ -228,6 +228,7 @@
   border-radius: var(--cb-radius-sm);
   color: var(--cb-muted);
   font: inherit;
+  font-family: var(--cb-font-code);
   font-size: var(--cb-type-small-size);
   line-height: 14px;
 }
@@ -866,6 +867,7 @@
   margin: 0;
   color: var(--cb-ink);
   font: inherit;
+  font-family: var(--cb-font-code);
   white-space: pre-wrap;
   overflow-wrap: anywhere;
 }

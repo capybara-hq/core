@@ -561,6 +561,7 @@ a.cb-item-list-title:hover {
   font-weight: 500;
 }
 .cb-item-list-code {
+  font-family: var(--cb-font-code);
   flex: none;
   color: var(--cb-muted);
   font-size: var(--cb-type-small-size);

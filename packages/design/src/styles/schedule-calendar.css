@@ -73,6 +73,7 @@
   color: var(--cb-fail);
 }
 .cb-scal-error-code {
+  font-family: var(--cb-font-code);
   color: var(--cb-muted);
   margin-right: auto;
 }

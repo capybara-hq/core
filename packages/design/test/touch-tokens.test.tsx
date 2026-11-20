@@ -150,6 +150,16 @@ const CODE_SELECTORS: [file: string, selector: string][] = [
   ["display.css", ".cb-keycap-cap"],
   ["display.css", '.cb-kv[data-variant="facts"] .cb-kv-value[data-mono="true"]'],
   ["conversation.css", ".cb-md .cb-code"],
+  ["conversation.css", ".cb-md-code"],
+  ["conversation.css", ".cb-hcard-json"],
+  ["conversation.css", ".cb-text-output-body"],
+  ["conversation.css", ".cb-preview-text"],
+  ["display.css", ".cb-kbd"],
+  ["display.css", ".cb-io-text"],
+  ["overlays.css", ".cb-dialog-confirm code"],
+  ["controls.css", '.cb-textarea textarea[data-code="true"]'],
+  ["templates.css", ".cb-item-list-code"],
+  ["schedule-calendar.css", ".cb-scal-error-code"],
   ["conversation.css", ".cb-tool-command"],
   ["conversation.css", ".cb-tool-output"],
   ["conversation.css", ".cb-diff"],
@@ -168,7 +178,62 @@ describe("the code font role", () => {
   it.each(CODE_SELECTORS)("%s %s declares font-family: var(--cb-font-code)", (file, selector) => {
     const rules = parseCss(css(file)).filter((r) => r.selector === selector && r.at === null);
     expect(rules.length, `${file} has no ${selector}`).toBeGreaterThan(0);
-    expect(rules.some((r) => r.decls["font-family"] === "var(--cb-font-code)")).toBe(true);
+    const mine = rules.filter((r) => r.decls["font-family"] === "var(--cb-font-code)");
+    expect(mine.length).toBeGreaterThan(0);
+    // a `font` shorthand after the family would reset it to the inherited font
+    for (const r of mine) {
+      const keys = Object.keys(r.decls);
+      if (keys.includes("font")) {
+        expect(keys.indexOf("font"), `${selector}: font after font-family`).toBeLessThan(
+          keys.indexOf("font-family"),
+        );
+      }
+    }
+  });
+
+  /** Code-like selectors that rightly keep the UI font or inherit the code font: one reason each. */
+  const EXEMPT: Record<string, string> = {
+    ".cb-code": "the frame of a code block; its text is .cb-code-pre",
+    ".cb-code-lang": "the language label, UI text",
+    ".cb-code-head": "the head of a code block, UI text",
+    ".cb-code-title": "the title of a code block, UI text",
+    ".cb-code-head-lang": "the language label, UI text",
+    '.cb-code[data-framed="false"]': "the unframed block's box",
+    '.cb-code[data-framed="false"] > .cb-code-lang': "the language label, UI text",
+    '.cb-code[data-framed="false"] > .cb-code-head': "the head of a code block, UI text",
+    ".cb-code-pre code": "inherits the code font from .cb-code-pre",
+    ".cb-sidebar-kbd": "a shortcut hint in the UI skeleton",
+    ".cb-palette-item > .cb-kbd": "placement only; the face is .cb-kbd's",
+  };
+  const codeLike = (selector: string, decls: Record<string, string>) => {
+    const last = selector.split(/[\s>+~]+/).at(-1) ?? selector;
+    const byName =
+      /(^|\.)(code|kbd|samp|pre)\b|^(code|kbd|samp|pre)\b|-(code|kbd|json)\b|\[data-code/.test(
+        last,
+      );
+    const preformatted = decls.font === "inherit" && /^pre/.test(decls["white-space"] ?? "");
+    return byName || preformatted;
+  };
+
+  it("no code, pre or kbd-like rule outside the audit list keeps the UI font", () => {
+    const dir = resolve(import.meta.dirname, "../src/styles");
+    const missing: string[] = [];
+    for (const f of readdirSync(dir).filter((n) => n.endsWith(".css"))) {
+      if (f === "fonts.css" || f === "tokens.css") continue;
+      const rules = parseCss(css(f)).filter((r) => r.at === null);
+      const covered = new Set(
+        rules
+          .filter((r) => r.decls["font-family"] === "var(--cb-font-code)")
+          .flatMap((r) => r.selector.split(",").map((x) => x.trim())),
+      );
+      for (const r of rules) {
+        for (const sel of r.selector.split(",").map((x) => x.trim())) {
+          if (!codeLike(sel, r.decls) || covered.has(sel) || sel in EXEMPT) continue;
+          missing.push(`${f} ${sel}`);
+        }
+      }
+    }
+    expect(missing).toEqual([]);
   });
 
   it("no stylesheet but fonts.css and tokens.css names Sarasa", () => {
