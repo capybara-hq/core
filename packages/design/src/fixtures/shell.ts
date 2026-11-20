@@ -44,8 +44,8 @@ export type FixtureMeItem = {
   icon: string;
   /**
    * Who sees the row: the rows as the sidebar's `audience` for the same item (nav.tsx): the manage
-   * rows are the sidebar's 更多 items, 插件, 扩展 and 组织设置 for members up, 渠道 and 评测与运行
-   * for org admins and owners (design spec §6.48).
+   * rows are the sidebar's More items: Plugins, Extensions and Org settings for members up, Channels
+   * and Evals for org admins and owners (design spec §6.48).
    */
   audience: "all" | "member" | "admin";
   group: "workspace" | "manage";
