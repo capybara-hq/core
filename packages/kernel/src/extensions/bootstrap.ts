@@ -405,7 +405,8 @@ export async function resolveBootstrapPackages(
   }
 }
 
-const errMsg = (e: unknown) => (e instanceof Error ? e.message : String(e));
+/** The message of a thrown value. */
+export const errMsg = (e: unknown): string => (e instanceof Error ? e.message : String(e));
 
 /** The registry's origin, for messages (never its credentials or path). */
 function registryOrigin(registry: string): string {

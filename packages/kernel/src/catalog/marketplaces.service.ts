@@ -821,6 +821,36 @@ export class MarketplacesService {
     let gone = t.updateTable("marketplaces").set({ managed: null }).where("managed", "=", "config");
     if (ids.length > 0) gone = gone.where("id", "not in", ids);
     await gone.execute();
+    for (const r of rows) await this.backfillBootstrapItems(r.id);
+  }
+
+  /**
+   * Names the managed marketplace on the platform items the bootstrap step imported from it before
+   * its row existed (`capybara bootstrap` runs before the first start, and `marketplace_id` is a
+   * foreign key): a live item without a marketplace whose latest version came from the bootstrap
+   * with a `source_ref` of `<id>:…` (a git entry of that marketplace). Then the catalog tracks its
+   * updates like an import from the marketplace. Idempotent.
+   */
+  private async backfillBootstrapItems(id: string): Promise<void> {
+    const prefix = `${id.replace(/[\\%_]/g, (c) => `\\${c}`)}:%`;
+    await this.db
+      .updateTable("catalog_items as i")
+      .set({ marketplace_id: id })
+      .where("i.owner_org_id", "is", null)
+      .where("i.marketplace_id", "is", null)
+      .where("i.deleted_at", "is", null)
+      .where((eb) =>
+        eb.exists(
+          eb
+            .selectFrom("catalog_item_versions as v")
+            .select("v.item_id")
+            .whereRef("v.item_id", "=", "i.id")
+            .whereRef("v.version", "=", "i.latest_version")
+            .where("v.source", "=", "bootstrap")
+            .where("v.source_ref", "like", prefix),
+        ),
+      )
+      .execute();
   }
 
   /** The row of one extra-manifest marketplace, checked as an admin add is (else ConfigError). */

@@ -10,7 +10,7 @@ import {
 } from "@capybara-hq/plugin-sdk";
 import { marketplaceForm } from "../catalog/marketplaces.service.js";
 import { ApiError } from "../errors.js";
-import { BOOTSTRAP_MANIFEST_FILE, readBootstrapManifest } from "./bootstrap.js";
+import { BOOTSTRAP_MANIFEST_FILE, errMsg, readBootstrapManifest } from "./bootstrap.js";
 
 /**
  * The built-in bootstrap manifest merged with the extra one (spec 2026-11-20-bootstrap-extra-manifest
@@ -33,8 +33,6 @@ export type MergedBootstrapEntry = BootstrapEntry | BootstrapGitRunEntry;
 
 /** What the bootstrap step runs: the merged manifest. */
 export type LoadedBootstrapManifest = MergedBootstrapManifest;
-
-const errMsg = (e: unknown) => (e instanceof Error ? e.message : String(e));
 
 /** Reads and parses an extra manifest; every problem (also a missing file) is `bootstrap.extra_invalid`. */
 export async function readBootstrapExtraManifest(file: string): Promise<BootstrapExtraManifest> {

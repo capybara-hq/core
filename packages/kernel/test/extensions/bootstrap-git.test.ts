@@ -92,19 +92,28 @@ async function extFiles(name: string, version: string): Promise<Record<string, s
   return Object.fromEntries(files.map((f) => [f.path, f.data.toString("utf8")]));
 }
 
-const marketplaceJson = JSON.stringify({
-  schemaVersion: 1,
-  name: "Acme distribution",
-  owner: { name: "Acme Corp" },
-  plugins: [{ name: "theme-x", summary: { en: "theme" }, source: { path: "./plugins/theme-x" } }],
-});
+/** The distribution's marketplace listing theme-x at `version`. */
+const marketplaceJson = (version = "1.0.0") =>
+  JSON.stringify({
+    schemaVersion: 1,
+    name: "Acme distribution",
+    owner: { name: "Acme Corp" },
+    plugins: [
+      {
+        name: "theme-x",
+        version,
+        summary: { en: "theme" },
+        source: { path: "./plugins/theme-x" },
+      },
+    ],
+  });
 
 /** Repo `dist` at `theme-x@<themeVersion>` and `ext-x@1.0.0`; returns the commit and the trees. */
 async function distCommit(themeVersion = "1.0.0") {
   const theme = themeFiles("theme-x", themeVersion);
   const ext = await extFiles("ext-x", "1.0.0");
   const commit = await srv.commit("dist", {
-    ".capybara-plugin/marketplace.json": marketplaceJson,
+    ".capybara-plugin/marketplace.json": marketplaceJson(themeVersion),
     "README.md": "# dist\n",
     ...under("plugins/theme-x", theme),
     ...under("plugins/ext-x", ext),
@@ -147,8 +156,10 @@ const manifestOf = (
   );
 
 /** As a kernel start does: the managed marketplace rows, then the bootstrap step. */
-async function run(manifest: MergedBootstrapManifest, dir?: string) {
-  await k.app.get(MarketplacesService).syncExtraFromConfig(manifest.extra?.marketplaces ?? []);
+async function run(manifest: MergedBootstrapManifest, dir?: string, sync = true) {
+  if (sync) {
+    await k.app.get(MarketplacesService).syncExtraFromConfig(manifest.extra?.marketplaces ?? []);
+  }
   return k.app.get(BootstrapService).run({
     manifest,
     imports: k.app.get(PluginImport),
@@ -359,12 +370,62 @@ describe("git entries of the extra bootstrap manifest", () => {
     ]);
   });
 
+  it("items capybara bootstrap imported before any start get the managed marketplace at the next sync", async () => {
+    const { commit, theme } = await distCommit();
+    const privFiles = themeFiles("priv-x", "1.0.0");
+    const privCommit = await priv.commit("private", under("plugins/priv-x", privFiles));
+    const manifest = manifestOf([
+      await gitEntry("theme-x", "dist", commit, theme),
+      await gitEntry("priv-x", "priv", privCommit, privFiles),
+    ]);
+    // as `capybara bootstrap` in compose init: no marketplace rows yet
+    await run(manifest, undefined, false);
+    const itemIds = async () =>
+      Object.fromEntries(
+        (await db.selectFrom("catalog_items").select(["name", "marketplace_id"]).execute()).map(
+          (r) => [r.name, r.marketplace_id],
+        ),
+      );
+    expect(await itemIds()).toEqual({ "theme-x": null, "priv-x": null });
+    const svc = k.app.get(MarketplacesService);
+    const dist = manifest.extra?.marketplaces.filter((m) => m.name === "dist") ?? [];
+    // the kernel start: only the item whose source_ref names config:dist is backfilled
+    await svc.syncExtraFromConfig(dist);
+    expect(await itemIds()).toEqual({ "theme-x": "config:dist", "priv-x": null });
+    await svc.syncExtraFromConfig(dist);
+    expect(await itemIds()).toEqual({ "theme-x": "config:dist", "priv-x": null });
+    // an item that already names another marketplace is left alone
+    await db
+      .updateTable("catalog_items")
+      .set({ marketplace_id: "official" })
+      .where("name", "=", "priv-x")
+      .execute();
+    await svc.syncExtraFromConfig(manifest.extra?.marketplaces ?? []);
+    expect(await itemIds()).toEqual({ "theme-x": "config:dist", "priv-x": "official" });
+    // the managed marketplace lists a newer version: the catalog says so
+    await distCommit("1.1.0");
+    const refresh = await admin({
+      method: "POST",
+      url: "/api/v1/admin/marketplaces/config:dist/refresh",
+    });
+    expect(refresh.statusCode, refresh.body).toBe(200);
+    const items = await admin({ method: "GET", url: "/api/v1/admin/catalog/items" });
+    expect(items.statusCode, items.body).toBe(200);
+    expect(
+      (items.json().items as { name: string }[]).find((i) => i.name === "theme-x"),
+    ).toMatchObject({
+      marketplaceId: "config:dist",
+      latestMarketplaceVersion: "1.1.0",
+      newerInMarketplace: true,
+    });
+  });
+
   it("a tree that packs to another sha512 fails bootstrap.integrity_mismatch", async () => {
     const { theme } = await distCommit();
     const pinned = await gitEntry("theme-x", "dist", "0".repeat(40), theme);
     // the plugin changed under the same entry: a new commit, the old integrity
     const changed = await srv.commit("dist", {
-      ".capybara-plugin/marketplace.json": marketplaceJson,
+      ".capybara-plugin/marketplace.json": marketplaceJson(),
       ...under("plugins/theme-x", { ...theme, "README.md": "# changed\n" }),
     });
     const manifest = manifestOf([{ ...pinned, commit: changed }]);
