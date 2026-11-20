@@ -69,7 +69,10 @@ type AnyAccountsEb = ExpressionBuilder<KernelDatabase, any>;
 /**
  * A correlated subquery on the identity whose avatar is shown for `<alias>.id`: the most recently
  * refreshed non-local identity with an `https://` avatar (ties broken by key, so the url and the
- * source subqueries pick the same row).
+ * source subqueries pick the same row). The SQL `LIKE 'https://%'` is a prefix filter only and can
+ * disagree with the `new URL()` check of {@link safeSsoUrl} on a malformed value (rare): such a row
+ * is still picked here, the TS check wins, and the person shows no SSO avatar (null) rather than an
+ * older identity's.
  */
 function ssoIdentity(eb: AnyAccountsEb, alias: string, column: "url" | "source") {
   return eb
@@ -189,4 +192,14 @@ export async function withAvatarUrls(
       avatarSource,
     };
   });
+}
+
+/** One account with `avatarUrl` and `avatarSource` ({@link withAvatarUrls} for a single one). */
+export async function withAvatarUrl(
+  db: Kysely<KernelDatabase>,
+  account: Account,
+): Promise<AccountView> {
+  const [view] = await withAvatarUrls(db, [account]);
+  if (!view) throw new Error("withAvatarUrl: withAvatarUrls returned no row");
+  return view;
 }

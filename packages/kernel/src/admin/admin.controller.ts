@@ -4,7 +4,7 @@ import type { z } from "zod";
 import { ApiError } from "../errors.js";
 import { ExtensionDisplayNames } from "../extensions/display-name.js";
 import { PluginIcons } from "../extensions/plugin-icons.js";
-import { type AccountView, withAvatarUrls } from "../identity/account-avatar.js";
+import { type AccountView, withAvatarUrl, withAvatarUrls } from "../identity/account-avatar.js";
 import { type Account, AccountsService } from "../identity/accounts.js";
 import {
   CurrentPrincipal,
@@ -94,8 +94,7 @@ export class AdminController {
 
   /** One account with its avatar URL and source. */
   private async view(account: Account): Promise<AccountView> {
-    const [view] = await withAvatarUrls(this.db.db, [account]);
-    return view as AccountView;
+    return withAvatarUrl(this.db.db, account);
   }
 
   /**

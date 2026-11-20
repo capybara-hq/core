@@ -533,6 +533,16 @@ export const PLATFORM_EXCLUSIONS: readonly {
     reason: "Switches the web session's current org",
   },
   {
+    route: "PATCH /api/v1/me/profile",
+    category: "human-only",
+    reason: "Changes the person's own name and avatar",
+  },
+  {
+    route: "POST /api/v1/me/avatar/uploads",
+    category: "transport",
+    reason: "Creates a presigned avatar upload",
+  },
+  {
     route: "PUT /api/v1/me/password",
     category: "human-only",
     reason: "Changes the account password",
