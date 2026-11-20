@@ -113,6 +113,10 @@ const audits = (action: string) =>
   db.selectFrom("audit_events").selectAll().where("action", "=", action).execute();
 
 describe("channels.schema", () => {
+  it("guide-ack is never remembered: the card is the person's own confirmation", () => {
+    expect(op("channels.guide-ack").rememberable).toBe(false);
+  });
+
   it("shows the form with x-secret on the secret fields and no values", async () => {
     const r = (await run("channels.schema", { plugin: "chan-mini" })) as {
       plugin: string;

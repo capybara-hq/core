@@ -56,14 +56,12 @@ describe("Platform setup domain", () => {
     }
   });
 
-  it("the org guide route and the connector guide ack are mirrored now; the channel ack stays human-only", () => {
+  it("the org guide route and both guide acks are mirrored now", () => {
     expect(exclusion("GET /api/v1/orgs/:orgId/catalog/:itemId/guides/:guideId")).toBeUndefined();
     expect(exclusion("GET /api/v1/orgs/:orgId/setup-guides")).toBeUndefined();
-    expect(exclusion("POST /api/v1/orgs/:orgId/channels/:connectionId/guide-ack")?.category).toBe(
-      "human-only",
-    );
-    // connectors.guide-ack: the card states what the person confirms (platform web parity §7.2)
+    // connectors.guide-ack and channels.guide-ack: the card states what the person confirms (platform web parity §7.2)
     expect(exclusion("POST /api/v1/orgs/:orgId/connectors/:connectorId/guide-ack")).toBeUndefined();
+    expect(exclusion("POST /api/v1/orgs/:orgId/channels/:connectionId/guide-ack")).toBeUndefined();
     // the super admin's preview stays internal
     expect(exclusion("GET /api/v1/admin/catalog/:itemId/guides/:guideId")?.category).toBe(
       "internal",

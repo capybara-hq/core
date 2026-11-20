@@ -274,6 +274,8 @@ export class ChannelsOperations implements OnModuleInit {
         authz: { orgAction: "channels.manage" },
         mirrors: ["POST /api/v1/orgs/:orgId/channels/:connectionId/guide-ack"],
         confirm: "personal",
+        // A human attestation: a remembered grant would let the agent confirm unseen guides.
+        rememberable: false,
         errors: [
           {
             code: "channel.not_found",
