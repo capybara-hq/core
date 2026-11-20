@@ -208,7 +208,8 @@ tier, passed at `create` as today.
 
 For shared environments and untrusted work. Exactly what `main` does today, with one change: the
 Docker egress proxy stays at ports 443 / 80 and HTTP only, srt keeps `allowLocalBinding: false` and
-no unix sockets, local `HOME` stays the workspace root. Network asks (network spec) work as today.
+no unix sockets, local `HOME` is the device's sandbox home `<dir>/home` (§5.2.1, amended
+2026-11-20). Network asks (network spec) work as today.
 
 ### 5.2 `dev`: the default for personal devices
 
@@ -226,7 +227,18 @@ no unix sockets, local `HOME` stays the workspace root. Network asks (network sp
 The goal is that installs work and are fast, without letting a sandboxed command poison the
 person's own caches **(designer's call)**:
 
-- **Local OS mode**: commands keep `HOME` = the workspace root (as today), and the device sets
+- **Local OS mode**: a sandboxed command's `HOME` is the device's sandbox home `<dir>/home`
+  (amended 2026-11-20, maintainer decision from acceptance; it was the workspace root). Since
+  projects, a command's working directory may be the person's repository, and `HOME` there made
+  tools write their per-user state into it (pnpm created a 21 MB `.pnpm-store/` in the repository
+  root and its switch to the pinned pnpm version failed). `<dir>/home` is the device's own (0700,
+  kept across commands, outside every workspace and project; created again when missing), readable
+  and writable inside that command's sandbox like a write root (the mandatory write denies apply
+  there too; the real home's protected locations stay denied and the real home is never granted).
+  `XDG_CACHE_HOME`, `XDG_CONFIG_HOME`, `XDG_DATA_HOME` and `XDG_STATE_HOME` point under it; the
+  version manager variables keep pointing at the real home's directories, read only, and asdf's
+  global `~/.tool-versions` is linked into `<dir>/home` so managers that look under `HOME` find it.
+  An escalated call keeps the person's own environment. The device also sets
   `XDG_CACHE_HOME`, `npm_config_cache`, `PIP_CACHE_DIR`,
   `UV_CACHE_DIR`, `CARGO_HOME`, `GOMODCACHE`, `GOCACHE`, `GRADLE_USER_HOME`,
   `MAVEN_OPTS=-Dmaven.repo.local=…`, `PLAYWRIGHT_BROWSERS_PATH`, `COREPACK_HOME` to subdirectories of
@@ -237,7 +249,8 @@ person's own caches **(designer's call)**:
   applied after).
   No pnpm store variable: pnpm 10 reads its store only from `npm_config_store_dir`, which makes
   every npm command warn about an unknown config (acceptance 2026-11-13); pnpm's store stays at its
-  default under `HOME`.
+  default under `HOME`, which is `<dir>/home` (amended 2026-11-20). Until the `<dir>/cache`
+  redirection above is implemented, caches live under `<dir>/home/.cache`.
 - Sharing the host's real caches **writable** is rejected for `dev`: a poisoned cache entry would
   run in the person's own unsandboxed builds later. Unsandboxed devices use the real caches
   (they use everything).

@@ -25,7 +25,14 @@ import {
 } from "./operation-worker.js";
 import { onDisk, protectedChain } from "./protected-targets.js";
 import { acquireSealedRuntime } from "./runtime-source.js";
-import { ENV_NAME_RE, OutputCap, restrictedToolHomes, shellQuote } from "./shared.js";
+import {
+  ENV_NAME_RE,
+  OutputCap,
+  prepareSandboxHome,
+  restrictedToolHomes,
+  sandboxHomeEnv,
+  shellQuote,
+} from "./shared.js";
 
 /** This device process: a later one reaps sessions recorded under another token. */
 export const DEVICE_PROCESS_TOKEN = randomUUID();
@@ -58,6 +65,12 @@ export interface LinuxWorkerOptions {
    * Host only; a command in the device's container keeps the image's home and gets none.
    */
   toolHome?: { home: string; env: Record<string, string | undefined> };
+  /**
+   * The device's sandbox home (`<dir>/home`, see `deviceSandboxHome`): a restricted exec's HOME
+   * and XDG base directories, granted read and write for that command. Host only; a command in
+   * the device's container keeps HOME at its working directory.
+   */
+  sandboxHome?: string;
   /**
    * The runtime-hash gate (W1-B) every restricted launch passes before anything starts: the
    * binding's attested runtime must be the one verified and sealed in this process, unchanged.
@@ -183,6 +196,21 @@ export function linuxOperationWorker(
                 request.grant.deniedReadRoots,
               )
             : undefined;
+        // the device's own home for a restricted exec on the host, kept across commands and
+        // writable like a write root (the broker's write policy applies in it too)
+        const sandboxHome =
+          request.kind === "exec" && !request.grant.full && options.sandboxHome
+            ? prepareSandboxHome(
+                options.sandboxHome,
+                request.grant.deniedReadRoots,
+                toolHomes &&
+                  options.toolHome && {
+                    home: options.toolHome.home,
+                    readFiles: toolHomes.readFiles,
+                  },
+              )
+            : undefined;
+        const extra = sandboxHome ? [sandboxHome] : [];
         // only on the host: a command in the device's container has the image's home
         const writeDenies =
           !request.grant.full && options.toolHome
@@ -192,9 +220,9 @@ export function linuxOperationWorker(
           ? {}
           : {
               readRoots: [
-                ...new Set([...request.grant.readRoots, ...(toolHomes?.readRoots ?? [])]),
+                ...new Set([...request.grant.readRoots, ...(toolHomes?.readRoots ?? []), ...extra]),
               ],
-              writeRoots: [...request.grant.writeRoots],
+              writeRoots: [...new Set([...request.grant.writeRoots, ...extra])],
               ...(writeDenies.length ? { writeDenies } : {}),
             };
         let body: Record<string, unknown>;
@@ -218,7 +246,10 @@ export function linuxOperationWorker(
             ...options.baseEnv(request.grant.full),
             ...(request.grant.full
               ? {}
-              : { HOME: args.cwd ?? "/", TMPDIR: request.grant.writeRoots[0] ?? "/tmp" }),
+              : {
+                  ...(sandboxHome ? sandboxHomeEnv(sandboxHome) : { HOME: args.cwd ?? "/" }),
+                  TMPDIR: request.grant.writeRoots[0] ?? "/tmp",
+                }),
             ...(args.env ?? {}),
           };
           cap = new OutputCap(args.maxOutputBytes);

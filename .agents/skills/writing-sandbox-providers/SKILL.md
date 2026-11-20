@@ -600,7 +600,9 @@ suite in `@capybara-hq/testing` checks it):
   seccomp; on macOS listening is refused (Seatbelt cannot restrict a bind to loopback). A dev server that must be reached
   runs through the escalation.
 - **Minimal environment.** A sandboxed command never inherits the device program's environment: `PATH`, `LANG`, `HOME`
-  (the working root), a private `TMPDIR` / `TMP` / `TEMP`, the detected tool homes, the proxy variables and the call's
+  and the XDG base directories (on a host, the device's sandbox home `<dir>/home`, kept across commands and writable
+  only inside the command's sandbox, never the working directory: that may be the person's repository; in a local-Docker
+  container, the working root), a private `TMPDIR` / `TMP` / `TEMP`, the detected tool homes, the proxy variables and the call's
   own `env`, under every profile.
 - **Protected paths and chains.** The owner-denied secret paths (`DEVICE_DENIED_SECRET_PATHS`), the device state
   directory, the mandatory write denies and the OS persistence locations (`SANDBOX_SYSTEM_WRITE_DENIES`, LaunchAgents,

@@ -189,6 +189,8 @@ export async function hostBackend(
     faultInjection?: LinuxFaultInjection;
     /** The owner's restricted project reach (default the workspace). */
     restrictedProjectReach?: "workspace" | "os-user";
+    /** The device's sandbox home a restricted exec gets as HOME (default none: the cwd). */
+    sandboxHome?: string;
     /** A local-Docker device: the server runs here, its agents in this container. */
     docker?: { container: string; hostRoots: { workspace: string; skills: string; tmp: string } };
   },
@@ -215,6 +217,7 @@ export async function hostBackend(
     ...(options.privateProxyTargets === false ? { privateProxyTargets: false } : {}),
     ...(options.fakeIpDns ? { dohTest: options.fakeIpDns } : {}),
     ...(options.faultInjection ? { faultInjection: options.faultInjection } : {}),
+    ...(options.sandboxHome ? { sandboxHome: options.sandboxHome } : {}),
     ...(options.docker
       ? {
           mode: "docker",

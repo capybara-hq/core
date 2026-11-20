@@ -49,6 +49,12 @@ export interface MacOperationBackendOptions {
   runtimeHash?: string;
   readOwnerCeiling: () => Promise<DeviceOwnerCeiling>;
   /**
+   * The device's sandbox home (`<dir>/home`, `deviceSandboxHome`): HOME and the XDG base
+   * directories of a restricted exec on the host, granted read and write for that command. Absent
+   * (a container's device, a fixture): HOME stays the command's working directory.
+   */
+  sandboxHome?: string;
+  /**
    * Called when an operation's worker is gone (completed, killed, failed to launch): a background
    * task long after its start answered. Feeds the control socket's running operations.
    */
@@ -152,6 +158,11 @@ export interface LocalBackendHost {
   reapOrphan?: SupervisorOptions["reapOrphan"];
   /** Restricted operations run only while this proof holds (see {@link RestrictedProof}). */
   proof?: RestrictedProof;
+  /**
+   * The device's sandbox home a restricted exec gets as HOME (macOS: passed on in each worker
+   * request). Absent where the worker sets the home itself (Linux) or keeps the container's.
+   */
+  sandboxHome?: string;
 }
 export async function createMacOperationBackend(
   options: MacOperationBackendOptions,
@@ -180,6 +191,7 @@ export async function createMacOperationBackend(
     pending: (!restricted && dependencies.unavailableReason) || PENDING,
     ...(dependencies.startWorker ? { startWorker: dependencies.startWorker } : {}),
     ...(restricted && dependencies.restrictedProof ? { proof: dependencies.restrictedProof } : {}),
+    ...(options.sandboxHome ? { sandboxHome: options.sandboxHome } : {}),
     checkArtifactTarget: (outputPath) => {
       const canonical = (path: string) => path.replace(/^\/(tmp|var|etc)(?=\/|$)/, "/private/$1");
       if (implicitWritePaths().some((root) => within(canonical(outputPath), canonical(root))))
@@ -342,6 +354,7 @@ export async function createLocalOperationBackend(
       pythonPath: options.pythonPath,
       ...(options.runtimeHash ? { runtimeHash: options.runtimeHash } : {}),
       ...(authority ? { authority } : {}),
+      ...(host.sandboxHome ? { sandboxHome: host.sandboxHome } : {}),
       beforeLaunch: async () => {
         signal.throwIfAborted();
         const fresh = await read();

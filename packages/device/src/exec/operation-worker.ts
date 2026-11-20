@@ -43,7 +43,14 @@ import {
   stagePrivateSource,
   stageRuntimeSource,
 } from "./runtime-source.js";
-import { ENV_NAME_RE, OutputCap, restrictedToolHomes, shellQuote } from "./shared.js";
+import {
+  ENV_NAME_RE,
+  OutputCap,
+  prepareSandboxHome,
+  restrictedToolHomes,
+  sandboxHomeEnv,
+  shellQuote,
+} from "./shared.js";
 import { recordTransferTiming } from "./transfer-timing.js";
 export interface TrustedLaunchIdentity {
   pid: number;
@@ -87,6 +94,12 @@ interface Common {
    * takes them from its options.
    */
   toolHome?: { home: string; env: Record<string, string | undefined> };
+  /**
+   * The device's sandbox home (`<dir>/home`, `deviceSandboxHome`; trusted construction by
+   * the host backend): a restricted exec's HOME and XDG base directories, granted read and write
+   * for that command. Absent (a container's paths, a test): HOME stays the working directory.
+   */
+  sandboxHome?: string;
   /**
    * A test seam (trusted construction, like the Linux forwarder's `allow_private`): the proxy's
    * address rules are lifted so a fixture listening on loopback can be granted. Never set in
@@ -704,7 +717,7 @@ export async function startMacOperationWorker(
           }
         }
       // Version managers (asdf, nvm, pyenv, ...) read their data under the real home, while HOME
-      // is the working directory: this trusted process has the real home and the device's own
+      // is the device's sandbox home: this trusted process has the real home and the device's own
       // environment (the forked worker runs with a reduced one), so it picks the variables and
       // grants their directories read only. An escalated call inherits this process's environment
       // minus every CAPYBARA_ variable (escalatedEnvironment).
@@ -714,6 +727,20 @@ export async function startMacOperationWorker(
               request.toolHome?.home ?? homedir(),
               request.toolHome?.env ?? process.env,
               request.grant.deniedReadRoots,
+            )
+          : undefined;
+      // A restricted command's home (HOME and the XDG directories): the device's own, kept across
+      // commands, readable and writable inside this command's sandbox like a write root (the
+      // mandatory write denies apply in it too); the real home's protected locations stay denied.
+      const sandboxHome =
+        request.kind === "exec" && !request.grant.full && request.sandboxHome
+          ? prepareSandboxHome(
+              request.sandboxHome,
+              request.grant.deniedReadRoots,
+              toolHomes && {
+                home: request.toolHome?.home ?? homedir(),
+                readFiles: toolHomes.readFiles,
+              },
             )
           : undefined;
       // A restricted command's own temporary directory (TMPDIR, TMP, TEMP): created empty for
@@ -753,6 +780,7 @@ export async function startMacOperationWorker(
           roots: [
             ...runtimeRoots,
             ...(privateTmp ? [privateTmp] : []),
+            ...(sandboxHome ? [sandboxHome] : []),
             ...(toolHomes?.readRoots ?? []),
           ],
           exact: [
@@ -767,7 +795,11 @@ export async function startMacOperationWorker(
         const writeRoots =
           request.kind === "native"
             ? roots.filter((r) => r.access === "write").map((r) => r.path)
-            : [...request.grant.writeRoots, ...(privateTmp ? [privateTmp] : [])];
+            : [
+                ...request.grant.writeRoots,
+                ...(privateTmp ? [privateTmp] : []),
+                ...(sandboxHome ? [sandboxHome] : []),
+              ];
         // Only the fixed native helper may establish missing ancestor directories. Its
         // descriptor prelude creates exact components and passes only the final narrow
         // root to NativeFiles. SRT needs this transient subtree write exception because
@@ -927,7 +959,7 @@ export async function startMacOperationWorker(
         ...toolHomes?.env,
         PATH: process.env.PATH,
         LANG: process.env.LANG,
-        HOME: args.cwd ?? "/",
+        ...(sandboxHome ? sandboxHomeEnv(sandboxHome) : { HOME: args.cwd ?? "/" }),
         TMPDIR: privateTmp ?? request.grant.writeRoots[0] ?? "/tmp",
       };
       // the runtime's wrapper sets its own TMPDIR after this environment: set ours inside it

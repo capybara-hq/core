@@ -225,6 +225,8 @@ describe("staged device parts (W3-M)", () => {
     expect(s.checks.map((c) => c.runtimeHash)).toEqual(["a".repeat(64), "e".repeat(64)]);
     await s.startTask("op-1");
     expect(s.launched.at(-1)?.runtimeHash).toBe("e".repeat(64));
+    // a restricted exec's HOME is the device's own sandbox home, next to its roots
+    expect(s.launched.at(-1)?.sandboxHome).toBe(join(root, "device", "home"));
     expect(s.checks[1]).toMatchObject({ stateDir: state, platform: "darwin" });
   });
 

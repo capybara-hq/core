@@ -1,6 +1,6 @@
 import { mkdir, mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import { afterAll, afterEach, beforeAll, expect, it } from "vitest";
 import { createMacOperationBackend } from "../src/exec/mac-operation-backend.js";
 import type { DeviceOwnerCeiling } from "../src/exec/operation-types.js";
@@ -59,6 +59,7 @@ async function fixture() {
       roots,
       pythonPath: "/usr/bin/python3",
       runtimeHash: workspace.runtimeHash,
+      sandboxHome: join(dir, "home"),
       readOwnerCeiling: async () => {
         ceilingReads++;
         return ceiling;
@@ -940,4 +941,33 @@ it("restricted artifact creation preserves implicit write denies before any owne
   } finally {
     spy.mockRestore();
   }
+});
+
+it("a restricted exec and a background task both carry the device's sandbox home <dir>/home", async () => {
+  const f = await fixture();
+  const authority = (id: string) => ({
+    operationId: id,
+    orgNetwork: { kind: "open-public" as const, hosts: [] },
+  });
+  const op = await f.backend
+    .forExecution(authority("exec"))
+    .operation({ id: "d" }, { ...f.scope, operationId: "exec" }, signal);
+  await op.exec({ command: "true", timeoutMs: 1000, maxOutputBytes: 1000, signal });
+  const ref = await f.backend.forExecution(authority("bg")).background.start(
+    { id: "d" },
+    { ...f.scope, operationId: "bg" },
+    {
+      command: "true",
+      timeoutMs: 10000,
+      maxOutputBytes: 1000,
+      taskId: "bg",
+      outputPath: join(f.roots.tmp, "bg"),
+      retainUntilMs: Date.now() + 60000,
+      signal,
+    },
+  );
+  const home = join(dirname(f.roots.workspace), "home");
+  const requests = f.launched as import("../src/exec/operation-worker.js").MacWorkerRequest[];
+  expect(requests.map((r) => r.kind === "exec" && r.sandboxHome)).toEqual([home, home]);
+  await f.backend.background.stop({ id: "d" }, ref, { graceMs: 0, signal });
 });

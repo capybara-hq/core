@@ -26,7 +26,7 @@ import type { MacSelfCheckInput } from "./exec/mac-self-check.js";
 import { readStrictOwnerCeiling } from "./exec/operation-types.js";
 import type { MacWorkerHandle, MacWorkerRequest } from "./exec/operation-worker.js";
 import type { EnvironmentInputs, VerifiedRuntime } from "./exec/runtime-manifest.js";
-import { osRoots, RootGuard } from "./exec/shared.js";
+import { deviceSandboxHome, osRoots, RootGuard } from "./exec/shared.js";
 import { issueOwnerReport } from "./owner-report.js";
 import type { PolicyStore } from "./policy-store.js";
 import { policySummary, type StagedOwnerPolicy } from "./server-ops.js";
@@ -222,6 +222,8 @@ export function createStagedDevice(o: StagedDeviceOptions): StagedDevice {
       instanceGeneration: binding.instanceGeneration,
       stateDir,
       roots: hostRoots,
+      // HOME of a restricted exec on the host: the device's own, next to its roots
+      sandboxHome: deviceSandboxHome(resolve(cred.dir)),
       pythonPath,
       // restricted launches run only the sealed runtime this binding attested
       runtimeHash,
@@ -232,7 +234,8 @@ export function createStagedDevice(o: StagedDeviceOptions): StagedDevice {
     const deps = o.backendDependencies ?? {};
     if (mode === "docker") {
       const { createDockerOperationBackend } = await import("./exec/docker-operations.js");
-      const { roots: _host, ...rest } = options;
+      // a command in the container keeps HOME at its working directory (the image's paths)
+      const { roots: _host, sandboxHome: _home, ...rest } = options;
       return createDockerOperationBackend(
         { ...rest, hostRoots, container: o.container as OperationContainerHost },
         { ...deps, ...o.linux },

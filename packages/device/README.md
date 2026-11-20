@@ -78,7 +78,7 @@ is no authority: operations and owner reports are refused with the reason until 
 served from a policy read earlier). Changes made with `capybara-device policy` take
 `policy.json.lock`, so two writers never lose an update; keys this version does not know are kept.
 The working directory (default `~/capybara-device/<deviceId>`) holds `workspace/`, `skills/`
-and `tmp/`.
+and `tmp/`, and `home/`, the sandboxed commands' home (created when missing).
 
 ## Permissions
 
@@ -125,8 +125,11 @@ installed JDKs) and the data of the version managers your home uses, read only; 
 machine, such as the rest of your home, are not readable. Secret paths (`~/.ssh`, cloud CLI
 credentials, `~/.netrc`, `~/.gnupg`, browser profiles, this program's state directory) stay
 unreadable even inside those. Commands get a minimal environment (`PATH`, `LANG`,
-`HOME` set to the working root, a private temp directory, the tool homes, the proxy variables),
-never this program's. The network is the owner ceiling's: `open` reaches the public
+`HOME` and the XDG base directories set to the device's own home `<dir>/home`, a private temp
+directory, the tool homes, the proxy variables), never this program's. `<dir>/home` is kept across
+commands and writable inside the sandbox, so per-user state (a package manager's store, caches,
+configuration) stays there instead of landing in a project or in your real home (in Docker mode,
+`HOME` is the container's working root). The network is the owner ceiling's: `open` reaches the public
 internet, `allowlist` only hosts in the local `allowedDomains` that the organization's allowlist
 also admits (plus a run's or a task's grants, within that allowlist). Either way traffic goes
 through the operation's own proxy, which decides each connection on the resolved address and dials
