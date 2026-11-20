@@ -96,6 +96,13 @@ Suggested waves (execution may refine them in the ledger):
 - **R10. Invitation link reveal** uses a second sealed table (`platform_sealed_reveals`, PR 2
   migration), read once on the web by the approver like the initial password. Generalizing
   `account_initial_passwords` would change an applied migration's meaning.
+- **R11. Catalog installs take the sealed values before the write** (decided while executing PR 2).
+  `plugins.install` and `plugins.configure-connectors` consume the sealed values in a short
+  transaction of their own, then run the install outside it. Inside the consuming transaction, the
+  install's `requires_new` steps would wait on the org row lock it holds. The values leave PG
+  sooner, so nothing is weakened; a failed install needs the person to type them again on a new
+  card, and the tool result says so. Every other person-field write still consumes in its own
+  transaction.
 
 ## Global Constraints
 

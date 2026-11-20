@@ -15,7 +15,12 @@ export interface ParityFinding {
 
 /** What {@link inputParity} reads of an operation. */
 export type ParityOperation = Pick<PlatformOperation, "id" | "input" | "mirrors"> &
-  Partial<Pick<PlatformOperation, "omits" | "extras" | "renames" | "loosens" | "personFields">>;
+  Partial<
+    Pick<
+      PlatformOperation,
+      "omits" | "extras" | "renames" | "loosens" | "personFields" | "withoutSecrets"
+    >
+  >;
 
 type Json = Record<string, unknown>;
 
@@ -238,7 +243,8 @@ function fieldMismatch(op: Json, route: Json, path: string, top: string): string
  * - a top-level route field the input neither has nor renames into is listed in `omits`, an input
  *   field with no route counterpart in `extras`; stale entries of either are findings;
  * - rule `platform-op-secret-param`: a route field holding the SDK's `secret()` meta anywhere is
- *   never an input field (it is in `omits`), and the operation defines `personFields`.
+ *   never an input field (it is in `omits`), and the operation defines `personFields`, or says in
+ *   `withoutSecrets` why it takes none of them and asks for none (a preview without the credential).
  */
 export function inputParity(op: ParityOperation, route: RouteSchemas): ParityFinding[] {
   const out: ParityFinding[] = [];
@@ -308,9 +314,9 @@ export function inputParity(op: ParityOperation, route: RouteSchemas): ParityFin
       secretRule(
         `\`${k}\` of ${r} carries a secret (\`secret()\` meta): leave it out of the input, list it in \`omits\`, and have the person enter it on the card (\`personFields\`)`,
       );
-    } else if (op.personFields === undefined) {
+    } else if (op.personFields === undefined && !op.withoutSecrets?.trim()) {
       secretRule(
-        `\`${k}\` of ${r} carries a secret (\`secret()\` meta): the operation must define \`personFields\`, so the person enters secrets on the card`,
+        `\`${k}\` of ${r} carries a secret (\`secret()\` meta): the operation must define \`personFields\`, so the person enters secrets on the card, or say in \`withoutSecrets\` why it takes none`,
       );
     }
   }
@@ -344,8 +350,9 @@ export function checkInputParity(
   routes: readonly RouteSchemas[],
 ): ParityFinding[] {
   const byRoute = new Map(routes.map((r) => [r.route, r]));
-  return ops.flatMap((op) =>
-    op.mirrors.flatMap((m) => {
+  return ops.flatMap((op) => [
+    ...staleWithoutSecrets(op, byRoute),
+    ...op.mirrors.flatMap((m) => {
       const r = byRoute.get(m);
       return r !== undefined
         ? inputParity(op, r)
@@ -357,5 +364,30 @@ export function checkInputParity(
             },
           ];
     }),
+  ]);
+}
+
+/**
+ * Rule `platform-op-secret-param`: a `withoutSecrets` reason on an operation none of whose
+ * registered mirrored routes carries a secret field is stale (it would hide a later secret).
+ */
+function staleWithoutSecrets(
+  op: ParityOperation,
+  byRoute: ReadonlyMap<string, RouteSchemas>,
+): ParityFinding[] {
+  if (op.withoutSecrets === undefined) return [];
+  const routes = op.mirrors.flatMap((m) => byRoute.get(m) ?? []);
+  const secret = routes.some((r) =>
+    [r.params, r.query, r.body].some((part) => part !== undefined && holdsSecret(toJson(part))),
   );
+  if (secret || routes.length === 0) return [];
+  return [
+    {
+      op: op.id,
+      route: op.mirrors.join(", "),
+      field: "withoutSecrets",
+      rule: "platform-op-secret-param",
+      message: `${op.id}: platform-op-secret-param: \`withoutSecrets\` is stale: no mirrored route carries a secret field; remove it`,
+    },
+  ];
 }

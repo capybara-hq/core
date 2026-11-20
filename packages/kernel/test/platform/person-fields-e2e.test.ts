@@ -12,7 +12,11 @@ import { defineOperation, type PlatformOperation } from "../../src/platform/oper
 import { personFieldParams, secretFieldsOf } from "../../src/platform/person-fields.js";
 import { PlatformOperations } from "../../src/platform/registry.js";
 import { SealedInputs } from "../../src/platform/sealed-inputs.js";
-import { TOOL_PIPELINE_HOOKS } from "../../src/tools/pipeline.js";
+import {
+  PERSON_ONLY_ROLE_TEXT,
+  PERSON_ONLY_UNATTENDED_TEXT,
+  TOOL_PIPELINE_HOOKS,
+} from "../../src/tools/pipeline.js";
 import { createDecidePolicy } from "../../src/tools/policy.js";
 import { scriptRules } from "../fixtures/plugins/model-script/index.js";
 import { builtinsOff } from "../helpers/disabled-tools.js";
@@ -58,7 +62,13 @@ const TARGET_SCHEMA = {
   type: "object",
   properties: {
     baseUrl: { type: "string" },
-    apiKey: { type: "string", "x-secret": true, title: "API key" },
+    apiKey: {
+      type: "string",
+      "x-secret": true,
+      title: "API key",
+      // the shape of the prod case: a plain title and a localized x-ui label
+      "x-ui": { label: { zh: "API 密钥", en: "API key" } },
+    },
   },
 };
 
@@ -155,6 +165,67 @@ beforeAll(async () => {
   orgId = await createOrgWithProviders(k, owner);
   agentId = await createAgent("Mine");
 });
+
+/**
+ * Runs a scheduled task (unattended) whose scripted model makes one Platform call, and returns
+ * its conversation's events.
+ */
+async function unattendedCall(
+  prompt: string,
+  operation: string,
+  params: Record<string, unknown>,
+): Promise<ConversationEvent[]> {
+  // a scheduled run's message carries the task header first, so the scripted model answers it
+  const scripted = await createAgent("Scripted", { provider: "model-script", model: "script-1" });
+  scriptRules([
+    { when: { assistantTurns: 1 }, reply: { text: "done" } },
+    {
+      when: { lastUserIncludes: prompt },
+      reply: {
+        toolCalls: [
+          {
+            name: "Platform",
+            input: { action: "call", operation, params },
+          },
+        ],
+      },
+    },
+  ]);
+  const task = await owner({
+    method: "POST",
+    url: `/api/v1/orgs/${orgId}/schedules`,
+    payload: {
+      agentId: scripted,
+      name: "Probe",
+      prompt,
+      mode: "new",
+      trigger: { kind: "cron", expr: "0 9 * * *" },
+      timeZone: "UTC",
+    },
+  });
+  expect(task.statusCode, task.body).toBe(201);
+  const taskId = (task.json() as { task: { id: string } }).task.id;
+  const run = await owner({
+    method: "POST",
+    url: `/api/v1/orgs/${orgId}/schedules/${taskId}/run`,
+    payload: {},
+  });
+  expect(run.statusCode, run.body).toBe(202);
+  const runId = (run.json() as { run: { id: string } }).run.id;
+  const done = await waitFor(
+    async () => {
+      const r = await db
+        .selectFrom("scheduled_task_runs")
+        .select(["status", "conversation_id"])
+        .where("id", "=", runId)
+        .executeTakeFirst();
+      return r !== undefined && r.status !== "pending" && r.status !== "running" && r;
+    },
+    30_000,
+    "the task run settled",
+  );
+  return eventsOf(db, done.conversation_id as string);
+}
 
 /** A private agent of the owner with only the `Platform` builtin; returns its id. */
 async function createAgent(name: string, model = { provider: "model-fake", model: "fake-1" }) {
@@ -272,10 +343,14 @@ describe("Platform person fields", () => {
     const row = await approvalRow(asked.payload.approvalId);
     expect(row.scopes).toEqual(["once"]);
     const detail = row.detail as {
-      personFields: { path: string; label: string }[];
+      personFields: { path: string; label: { zh: string; en: string } }[];
       target: { zh: string; en: string };
     };
-    expect(detail.personFields[0]).toMatchObject({ path: "apiKey", label: "API key" });
+    // both languages reach the approval detail; the zh card shows the zh label
+    expect(detail.personFields[0]).toMatchObject({
+      path: "apiKey",
+      label: { zh: "API 密钥", en: "API key" },
+    });
     expect(detail.target).toEqual({ zh: "探针配置", en: "Probe config" });
     expect(JSON.stringify(row.input)).not.toContain(SECRET);
 
@@ -427,61 +502,37 @@ describe("Platform person fields", () => {
   });
 
   it("refuses the call in an unattended run (R6)", async () => {
-    // a scheduled run's message carries the task header first, so the scripted model answers it
-    const scripted = await createAgent("Scripted", { provider: "model-script", model: "script-1" });
-    scriptRules([
-      { when: { assistantTurns: 1 }, reply: { text: "done" } },
-      {
-        when: { lastUserIncludes: "probe unattended" },
-        reply: {
-          toolCalls: [
-            {
-              name: "Platform",
-              input: { action: "call", operation: OP, params: { askPerson: ["apiKey"] } },
-            },
-          ],
-        },
-      },
-    ]);
-    const task = await owner({
-      method: "POST",
-      url: `/api/v1/orgs/${orgId}/schedules`,
-      payload: {
-        agentId: scripted,
-        name: "Probe",
-        prompt: "probe unattended",
-        mode: "new",
-        trigger: { kind: "cron", expr: "0 9 * * *" },
-        timeZone: "UTC",
-      },
-    });
-    expect(task.statusCode, task.body).toBe(201);
-    const taskId = (task.json() as { task: { id: string } }).task.id;
-    const run = await owner({
-      method: "POST",
-      url: `/api/v1/orgs/${orgId}/schedules/${taskId}/run`,
-      payload: {},
-    });
-    expect(run.statusCode, run.body).toBe(202);
-    const runId = (run.json() as { run: { id: string } }).run.id;
-    const done = await waitFor(
-      async () => {
-        const r = await db
-          .selectFrom("scheduled_task_runs")
-          .select(["status", "conversation_id"])
-          .where("id", "=", runId)
-          .executeTakeFirst();
-        return r !== undefined && r.status !== "pending" && r.status !== "running" && r;
-      },
-      30_000,
-      "the task run settled",
-    );
-    const convId = done.conversation_id as string;
-    const evs = await eventsOf(db, convId);
+    const evs = await unattendedCall("probe unattended", OP, { askPerson: ["apiKey"] });
     expect(ofType(evs, "approval_requested")).toEqual([]);
     const result = ofType(evs, "tool_result").at(-1)?.payload;
     expect(result?.isError).toBe(true);
     expect(result?.content).toContain(UNATTENDED_TEXT);
+  });
+
+  it("refuses a call whose result is shown once to its approver in an unattended run", async () => {
+    const evs = await unattendedCall("probe invite unattended", "orgs.invite", { role: "member" });
+    expect(ofType(evs, "approval_requested")).toEqual([]);
+    const result = ofType(evs, "tool_result").at(-1)?.payload;
+    expect(result?.isError).toBe(true);
+    expect(result?.content).toContain(PERSON_ONLY_UNATTENDED_TEXT);
+    expect(await db.selectFrom("invitations").select("id").execute()).toEqual([]);
+  });
+
+  it("refuses a role escalation of a call whose result is shown once to its approver", async () => {
+    const convId = await createConv(owner, orgId, agentId);
+    escalated.add(convId);
+    await postMessage(
+      owner,
+      orgId,
+      convId,
+      `tool:Platform:${JSON.stringify({ action: "call", operation: "orgs.invite", params: { role: "member" } })}`,
+    );
+    await waitForTerminal(db, convId, 1, 30_000);
+    const evs = await eventsOf(db, convId);
+    expect(ofType(evs, "approval_requested")).toEqual([]);
+    const result = ofType(evs, "tool_result").at(-1)?.payload;
+    expect(result?.isError).toBe(true);
+    expect(result?.content).toContain(PERSON_ONLY_ROLE_TEXT);
   });
 
   it("refuses a call whose ask would go to a role instead of the person (R5)", async () => {

@@ -23,10 +23,13 @@ const PATH_MAX_CHARS = 200;
 export interface PersonFieldSpec {
   /** Dot path from the schema root (R1). */
   path: string;
-  /** From the node's `title` / `x-ui.label`, else the path. */
-  label: string;
-  /** From the node's `description` / `x-ui.help`. */
-  description?: string;
+  /**
+   * The card label in both languages: from the node's `title` / `x-ui.label` (a localized hint
+   * gives its `zh`; a plain string serves both), else the path.
+   */
+  label: { zh: string; en: string };
+  /** From the node's `description` / `x-ui.help`, in both languages as {@link label}. */
+  description?: { zh: string; en: string };
   /**
    * The node's `x-ui` widget is a textarea (or JSON) editor. `checkConfigUi` forbids widgets on
    * secret nodes of extension schemas, so their rows are single-line (JSON pastes fine into a
@@ -174,11 +177,26 @@ function hintText(v: unknown): string | undefined {
   return undefined;
 }
 
+/** The Chinese text of a localized hint (`{ zh, en }`); a plain string has none. */
+function hintZh(v: unknown): string | undefined {
+  return isObj(v) && typeof v.zh === "string" && v.zh !== "" ? v.zh : undefined;
+}
+
+/**
+ * A text in both languages from hints in order of preference: the first English text, and the
+ * first Chinese text of a localized hint, else the English one (a plain `title` is often the
+ * English of an `x-ui.label` that also carries `zh`).
+ */
+function bilingual(hints: readonly unknown[]): { zh: string; en: string } | undefined {
+  const en = hints.map(hintText).find((t) => t !== undefined);
+  if (en === undefined) return undefined;
+  return { zh: hints.map(hintZh).find((t) => t !== undefined) ?? en, en };
+}
+
 function fieldOf(node: Obj, shape: Obj, path: string, required: boolean, isSet: boolean) {
   const hints = isObj(shape["x-ui"]) ? shape["x-ui"] : isObj(node["x-ui"]) ? node["x-ui"] : {};
-  const label = hintText(shape.title) ?? hintText(node.title) ?? hintText(hints.label) ?? path;
-  const description =
-    hintText(shape.description) ?? hintText(node.description) ?? hintText(hints.help);
+  const label = bilingual([shape.title, node.title, hints.label]) ?? { zh: path, en: path };
+  const description = bilingual([shape.description, node.description, hints.help]);
   const spec: PersonFieldSpec = {
     path,
     label,
@@ -272,6 +290,13 @@ export function secretFieldsOf(
   const asked = new Set(fields.map((f) => f.path));
   return { fields, recordOnly: [...recordOnly].filter((p) => !asked.has(p)) };
 }
+
+/**
+ * A refusal of a call's person fields (model-visible English, never a value): thrown by the plan,
+ * or by an operation's `personFields` for an input the plan cannot see (a dynamic record such as
+ * the install's `extensionConfig`). The tool denies the call with the message before the card.
+ */
+export class PersonFieldsRefused extends Error {}
 
 /** The plan of one call: the fields the card asks for and the secrets to clear, or a refusal. */
 export type PersonFieldPlan =
@@ -430,11 +455,11 @@ function validatorOf(schema: Obj): ValidateFunction | null {
  */
 export function checkPersonValue(spec: PersonFieldSpec, value: string): string | null {
   if (Buffer.byteLength(value, "utf8") > PERSON_FIELD_MAX_BYTES) {
-    return `${spec.label} is longer than 16 KiB.`;
+    return `${spec.label.en} is longer than 16 KiB.`;
   }
-  if (value === "") return `${spec.label} is empty.`;
+  if (value === "") return `${spec.label.en} is empty.`;
   const validate = validatorOf(spec.schema);
   if (validate === null || validate(value)) return null;
   const problems = (validate.errors ?? []).map((e) => e.message ?? "is invalid");
-  return `${spec.label} ${[...new Set(problems)].join("; ")}.`;
+  return `${spec.label.en} ${[...new Set(problems)].join("; ")}.`;
 }

@@ -169,7 +169,17 @@ export type ToolView =
   /** `Edit` / `Write` refused by the read-before-write check: a neutral outcome, not a failure. */
   | { kind: "guard"; reason: "not_read" | "modified" }
   /** A call to a tool the step did not load: expected behaviour, a neutral notice, not a failure. */
-  | { kind: "not_loaded" };
+  | { kind: "not_loaded" }
+  /**
+   * A `Platform` operation's link card (platform web parity spec §4.4, §6): the decision waits for
+   * the person on a web page (`link`, a relative path) or an OAuth connect (`connect`).
+   */
+  | { kind: "handoff"; title: { zh: string; en: string }; target: HandoffTarget };
+
+/** Where a handoff card's one button goes: a relative web path, or a connector's OAuth connect. */
+export type HandoffTarget =
+  | { type: "link"; url: string }
+  | { type: "connect"; connectorId: string };
 
 export type StopReason = "end_turn" | "tool_use" | "max_tokens" | "refusal" | "other" | "aborted";
 

@@ -173,6 +173,25 @@ export interface PlatformSealedInputsTable {
   created_at: Ts;
 }
 
+/**
+ * A value a Platform call made for the person who approved it, read once on the web (migration
+ * 0170; first kind: an invitation link).
+ */
+export interface PlatformSealedRevealsTable {
+  /** The subject the value belongs to (the invitation id); part of the AAD. */
+  id: string;
+  kind: "invitation_link";
+  org_id: string;
+  recipient_account_id: string;
+  conversation_id: string;
+  run_id: string;
+  call_id: string;
+  master_key_id: string;
+  ciphertext: Buffer;
+  expires_at: Date | string;
+  created_at: Ts;
+}
+
 export interface IdentitiesTable {
   source: string;
   external_id: string;
@@ -1879,6 +1898,7 @@ export interface KernelDatabase {
   org_data_keys: OrgDataKeysTable;
   account_initial_passwords: AccountInitialPasswordsTable;
   platform_sealed_inputs: PlatformSealedInputsTable;
+  platform_sealed_reveals: PlatformSealedRevealsTable;
   identities: IdentitiesTable;
   local_passwords: LocalPasswordsTable;
   orgs: OrgsTable;

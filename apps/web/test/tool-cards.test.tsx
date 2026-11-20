@@ -168,6 +168,58 @@ describe("ApprovalCard (design ApprovalBlock)", () => {
     });
   });
 
+  describe("an approved orgs.invite shows its invitation link once to the approver", () => {
+    const inviteInput = { action: "call", operation: "orgs.invite", params: { role: "member" } };
+    const inviteItem = (byAccountId: string): ApprovalItem => ({
+      ...item({
+        approvalId: "ap1",
+        callId: "call_1",
+        decision: "approved",
+        scope: "once",
+        byAccountId,
+      }),
+      toolKey: "Platform:orgs.invite",
+      input: inviteInput,
+    });
+
+    it("the approver reads it on a click; a path answer is shown on this origin", async () => {
+      const calls = stubApi({
+        "POST /api/v1/orgs/o1/approvals/ap1/invitation-link": () =>
+          json(200, { url: "/invite/cap_inv_Abc123" }),
+      });
+      renderPage(<ApprovalCard orgId="o1" item={inviteItem(ME.account.id)} />, { locale: "zh" });
+      const show = await screen.findByRole("button", { name: zh.approval.invitationLink.show });
+      expect(calls.filter((c) => c.method === "POST")).toEqual([]);
+      await userEvent.setup().click(show);
+      const field = await screen.findByLabelText(zh.approval.invitationLink.label);
+      expect((field as HTMLInputElement).value).toBe(
+        `${window.location.origin}/invite/cap_inv_Abc123`,
+      );
+      expect(screen.queryByRole("button", { name: zh.approval.invitationLink.show })).toBeNull();
+    });
+
+    it("read already: the error says so, the button goes, nothing is shown", async () => {
+      stubApi({
+        "POST /api/v1/orgs/o1/approvals/ap1/invitation-link": () =>
+          json(404, { error: { code: "invitation.link_unavailable", message: "No link" } }),
+      });
+      renderPage(<ApprovalCard orgId="o1" item={inviteItem(ME.account.id)} />, { locale: "en" });
+      await userEvent
+        .setup()
+        .click(await screen.findByRole("button", { name: en.approval.invitationLink.show }));
+      expect(await screen.findByText(en.errors.invitation.link_unavailable)).toBeTruthy();
+      expect(screen.queryByRole("button", { name: en.approval.invitationLink.show })).toBeNull();
+    });
+
+    it("someone else's approval offers nothing", async () => {
+      stubApi({});
+      renderPage(<ApprovalCard orgId="o1" item={inviteItem("someone-else")} />, { locale: "en" });
+      await screen.findByText(/Approved|approved/);
+      expect(screen.queryByRole("button", { name: en.approval.invitationLink.show })).toBeNull();
+      expect(screen.queryByRole("button", { name: en.approval.initialPassword.show })).toBeNull();
+    });
+  });
+
   it.each([
     ["once", "批准"],
     ["session", "本会话内都批准"],

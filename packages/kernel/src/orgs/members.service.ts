@@ -42,6 +42,17 @@ export async function rejectAnonymousGuest(db: KernelSchemaDb, accountId: string
   }
 }
 
+/** Extras of {@link MembersService.changeRole} and {@link MembersService.remove}. */
+export interface MemberWriteOptions {
+  /** Goes into the audit event (a write through the Platform tool says so). */
+  auditDetail?: Record<string, unknown>;
+  /**
+   * Runs under the org row lock with the roles read there, before the service's own checks; throws
+   * to refuse (the Platform tool's limits, platform web parity spec §7.2).
+   */
+  guard?: (actorRole: OrgRole, targetRole: OrgRole) => void;
+}
+
 /**
  * 成员服务。发起人只传账号 id，角色由服务在组织行锁内实时读取，调用方无法传入过期角色。所有写操作在事务内先 `SELECT … FROM orgs WHERE id = $1 FOR NO KEY UPDATE`，
  * 把同一组织的成员变更串行化（多副本下两个 owner 并发互相降级也恰好剩一个 owner）。
@@ -132,8 +143,9 @@ export class MembersService {
     role: OrgRole,
     actorAccountId: string,
     actorTokenId?: string,
+    opts: MemberWriteOptions = {},
   ): Promise<void> {
-    await this.changeRoleIn(orgId, targetId, role, actorAccountId, actorTokenId);
+    await this.changeRoleIn(orgId, targetId, role, actorAccountId, actorTokenId, opts);
   }
 
   @Transactional()
@@ -143,6 +155,7 @@ export class MembersService {
     role: OrgRole,
     actorAccountId: string,
     actorTokenId: string | undefined,
+    opts: MemberWriteOptions,
   ): Promise<void> {
     const { role: actorRole } = await this.orgLock.lockAndAuthorize(
       orgId,
@@ -150,6 +163,7 @@ export class MembersService {
       "org.members.manage",
     );
     const before = await this.requireMember(orgId, targetId);
+    opts.guard?.(actorRole, before);
     await rejectAnonymousGuest(this.db.db, targetId);
     if ((role === "owner" || before === "owner") && actorRole !== "owner") {
       throw new ApiError("org.owner_required", "Only an owner can change owner roles");
@@ -163,7 +177,7 @@ export class MembersService {
       orgId,
       action: "org.member.role_changed",
       target: targetId,
-      detail: { from: before, to: role },
+      detail: { from: before, to: role, ...opts.auditDetail },
     });
   }
 
@@ -177,8 +191,9 @@ export class MembersService {
     targetId: string,
     actorAccountId: string,
     actorTokenId?: string,
+    opts: MemberWriteOptions = {},
   ): Promise<void> {
-    await this.removeIn(orgId, targetId, actorAccountId, actorTokenId);
+    await this.removeIn(orgId, targetId, actorAccountId, actorTokenId, opts);
   }
 
   @Transactional()
@@ -187,6 +202,7 @@ export class MembersService {
     targetId: string,
     actorAccountId: string,
     actorTokenId: string | undefined,
+    opts: MemberWriteOptions,
   ): Promise<OffboardResult> {
     // an unauthorized call is refused before it holds off the org's run writes
     await this.orgLock.precheck(orgId, actorAccountId, "org.members.manage");
@@ -198,6 +214,7 @@ export class MembersService {
       "org.members.manage",
     );
     const before = await this.requireMember(orgId, targetId);
+    opts.guard?.(actorRole, before);
     await rejectAnonymousGuest(this.db.db, targetId);
     if (before === "owner" && actorRole !== "owner") {
       throw new ApiError("org.owner_required", "Only an owner can remove an owner");
@@ -211,7 +228,7 @@ export class MembersService {
       orgId,
       action: "org.member.removed",
       target: targetId,
-      detail: { role: before },
+      detail: { role: before, ...opts.auditDetail },
     });
     return res;
   }

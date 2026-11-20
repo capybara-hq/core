@@ -30,12 +30,15 @@ import {
   type TestKernel,
   waitFor,
   waitForEvent,
+  waitForTerminal,
 } from "../helpers/runs.js";
 
 /**
  * A Platform call whose target has secret fields is web-only: a channel-bound conversation gets a
  * `bind` card (the count and the conversation link), never an approval card; an ordinary approval
- * still gets its card (platform web parity spec, Task 6).
+ * still gets its card (platform web parity spec, Task 6). A Platform result's handoff card is a
+ * `bind` card too: a `link` card with the page's absolute URL, a `connect` card linking the
+ * conversation, whose web card starts the OAuth flow (spec §6, Task 13).
  */
 
 const CHAN_MINI = fileURLToPath(new URL("../fixtures/plugins/chan-mini/index.ts", import.meta.url));
@@ -72,6 +75,47 @@ const probe = defineOperation({
   run: async () => ({ stored: true }),
 }) as PlatformOperation;
 
+const LINK_OP = "platform.probe-link";
+const CONNECT_OP = "platform.probe-connect";
+const STAGING = "/admin/plugins/import?staging=s-1";
+
+/** Test only: a read whose result hands the person off to a review page. */
+const linkProbe = defineOperation({
+  id: LINK_OP,
+  description: "Test only: hands off to a review page.",
+  input: z.object({}).strict(),
+  example: {},
+  authz: { orgAction: "agents.use" },
+  mirrors: [],
+  confirm: "read",
+  run: async () => ({ staged: true }),
+  handoff: () => ({
+    kind: "handoff",
+    title: { zh: "审阅插件 probe", en: "Review plugin probe" },
+    target: { type: "link", url: STAGING },
+  }),
+}) as PlatformOperation;
+
+/** Test only: a read whose result shows a Connect button. */
+const connectProbe = defineOperation({
+  id: CONNECT_OP,
+  description: "Test only: shows a Connect button.",
+  input: z.object({}).strict(),
+  example: {},
+  authz: { orgAction: "agents.use" },
+  mirrors: [],
+  confirm: "read",
+  run: async () => ({ shown: true }),
+  handoff: () => ({
+    kind: "handoff",
+    title: { zh: "连接「Docs」", en: "Connect Docs" },
+    target: { type: "connect", connectorId: "c-1" },
+  }),
+}) as PlatformOperation;
+
+const callOf = (operation: string) =>
+  `tool:Platform:${JSON.stringify({ action: "call", operation, params: {} })}`;
+
 const PROBE_CALL = `tool:Platform:${JSON.stringify({
   action: "call",
   operation: OP,
@@ -101,7 +145,7 @@ beforeAll(async () => {
       },
     ),
   );
-  k.app.get(PlatformOperations).register([probe]);
+  k.app.get(PlatformOperations).register([probe, linkProbe, connectProbe]);
   raw = createDb(pgc.url, 3);
   db = kernelDb(raw);
   const ownerId = (
@@ -133,8 +177,10 @@ beforeAll(async () => {
   });
   expect(ag.statusCode, ag.body).toBe(201);
   const agentId = (ag.json() as { agent: { id: string } }).agent.id;
-  await sql`INSERT INTO capybara.identities (source, external_id, account_id)
-    VALUES ('chan-mini:t1', 'u-owner', ${ownerId})`.execute(raw);
+  for (const user of ["u-owner", "u-link", "u-connect"]) {
+    await sql`INSERT INTO capybara.identities (source, external_id, account_id)
+      VALUES ('chan-mini:t1', ${user}, ${ownerId})`.execute(raw);
+  }
   const res = await owner({
     method: "POST",
     url: `/api/v1/orgs/${orgId}/channels`,
@@ -220,7 +266,7 @@ describe("approvals in IM: person fields", () => {
   });
 
   it("the bind card is delivered once", () => {
-    expect(im.sent.filter((s) => cardOf(s)?.kind === "bind")).toHaveLength(1);
+    expect(sentTo("dm-u-owner").filter((s) => cardOf(s)?.kind === "bind")).toHaveLength(1);
   });
 
   it("the ordinary approval card is recorded for decision updates", async () => {
@@ -238,5 +284,60 @@ describe("approvals in IM: person fields", () => {
       .where("tool_key", "=", `Platform:${OP}`)
       .executeTakeFirstOrThrow();
     expect((row.detail as { personFields: unknown[] }).personFields).toHaveLength(2);
+  });
+});
+
+describe("handoff cards in IM", () => {
+  it("a link card: a bind card with the title and the page's absolute URL", async () => {
+    im.push(connId, dm("hc1", "u-link", callOf(LINK_OP)));
+    const conv = await convOf("dm-u-link");
+    await waitForEvent(db, conv, (e) => e.type === "tool_result");
+    const sent = await waitFor(
+      async () => sentTo("dm-u-link").find((s) => cardOf(s)?.kind === "bind"),
+      10_000,
+      "bind card",
+    );
+    expect(cardOf(sent)).toEqual({
+      kind: "bind",
+      // the DM carries no locale: the org default (en)
+      text: "Review plugin probe",
+      url: `https://cap.example${STAGING}`,
+    });
+  });
+
+  it("a connect card: a bind card linking the conversation", async () => {
+    im.push(connId, dm("hc2", "u-connect", callOf(CONNECT_OP)));
+    const conv = await convOf("dm-u-connect");
+    await waitForEvent(db, conv, (e) => e.type === "tool_result");
+    const sent = await waitFor(
+      async () => sentTo("dm-u-connect").find((s) => cardOf(s)?.kind === "bind"),
+      10_000,
+      "bind card",
+    );
+    expect(cardOf(sent)).toEqual({
+      kind: "bind",
+      text: "Connect Docs",
+      url: `https://cap.example/chat/${conv}`,
+    });
+  });
+
+  it("each handoff card is delivered once, counted after the delivery passed the run's end", async () => {
+    for (const chat of ["dm-u-link", "dm-u-connect"]) {
+      const conv = await convOf(chat);
+      const [end] = await waitForTerminal(db, conv, 1, 20_000);
+      await waitFor(
+        async () => {
+          const d = await db
+            .selectFrom("channel_deliveries")
+            .select("last_seq")
+            .where("conversation_id", "=", conv)
+            .executeTakeFirst();
+          return d !== undefined && Number(d.last_seq) >= (end?.seq ?? Infinity);
+        },
+        10_000,
+        "delivery past the run's end",
+      );
+      expect(sentTo(chat).filter((s) => cardOf(s)?.kind === "bind")).toHaveLength(1);
+    }
   });
 });

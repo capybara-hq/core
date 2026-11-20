@@ -265,6 +265,13 @@ export interface CallPolicy {
    * would go to a role instead of the person, and stores the fields in the approval's `detail`.
    */
   personFields?: { target: { zh: string; en: string }; fields: PersonFieldSpec[] };
+  /**
+   * Only the person the run works for can confirm this call, on the card, because its result is
+   * shown once to whoever approves it (an invitation link, a generated initial password). Like a
+   * call with person fields (ruling R6): it always asks, never a grant or an `allow`; it is
+   * refused in an unattended run and when the ask would go to a role instead of the person.
+   */
+  personOnly?: true;
 }
 
 export type ToolPolicy = "allow" | "ask" | "deny";

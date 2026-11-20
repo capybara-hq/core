@@ -1,4 +1,5 @@
 import type { z } from "zod";
+import type { ToolView } from "../conversations/events.js";
 import type { OrgAction } from "../orgs/roles.js";
 import type { ErrorRole } from "./errors.js";
 import type { PersonFieldTarget } from "./person-fields.js";
@@ -84,6 +85,15 @@ export type PrecheckResult =
   | { ok: true }
   | { ok: false; code: string; message: string; next?: OperationErrorNext };
 
+/**
+ * A link card the conversation pops up after an operation (platform web parity spec §4.4, §6): the
+ * write's decision stays with a person on a web page (an import review, an OAuth connect), and the
+ * card names what waits for them with one button. `link` opens a relative web path (the tool also
+ * puts it in the result text as `reviewUrl`); `connect` starts a connector's OAuth flow from the
+ * person's web session. Display only (`tool_result.view`): never model-visible.
+ */
+export type HandoffView = Extract<ToolView, { kind: "handoff" }>;
+
 /** How long a precheck may take before the tool skips it (spec §14.2 item 2). */
 export const PRECHECK_TIMEOUT_MS = 2000;
 
@@ -130,6 +140,13 @@ export interface PlatformOperation<I = unknown> {
    */
   rememberable?: false;
   /**
+   * `true`: the write's result is shown once, on the web, to the person who approves the call (an
+   * invitation link, a generated initial password), so only the person the run works for may
+   * confirm it: the call always asks them (never a grant, an `allow`, a role escalation) and is
+   * refused in an unattended run (`CallPolicy.personOnly`, like person fields, ruling R6).
+   */
+  revealsToApprover?: true;
+  /**
    * The class of one call when it depends on the target (read at confirmation time): e.g.
    * `agents.update` is `personal` only on a private agent the actor owns and `org` otherwise, so a
    * remembered grant never carries over to a shared agent. Only for writes, never returns `read`;
@@ -159,6 +176,13 @@ export interface PlatformOperation<I = unknown> {
    */
   personFields?(input: I, ctx: OperationContext): Promise<PersonFieldTarget>;
   /**
+   * Why the operation takes none of its mirrored route's secret fields (`secret()` meta, left in
+   * `omits`) and asks the person for none, e.g. a preview without the credential, or a switch that
+   * refuses a plugin needing input (`plugins.install` takes it). Rule `platform-op-secret-param`
+   * otherwise requires {@link personFields}.
+   */
+  withoutSecrets?: string;
+  /**
    * The bilingual card summary of a write, rendered from the input and kernel reads (names of
    * the targets, preview counts), never from model text; required unless `confirm` is `read`.
    * May read PG; the tool falls back to the operation id when it throws. Method syntax so an
@@ -169,6 +193,12 @@ export interface PlatformOperation<I = unknown> {
     ctx: OperationContext,
   ): { zh: string; en: string } | Promise<{ zh: string; en: string }>;
   run(input: I, ctx: OperationContext): Promise<unknown>;
+  /**
+   * The link card to pop up after a successful `run` (platform web parity spec §6), built from the
+   * input and the result, never from model text; null: none for this result. A throw leaves the
+   * card out (the result stands).
+   */
+  handoff?(input: I, result: unknown, ctx: OperationContext): HandoffView | null;
 }
 
 /** Identity helper that types an operation's handler and summary from its input schema. */
@@ -203,7 +233,7 @@ export const PLATFORM_DOMAINS: readonly { id: string; description: string }[] = 
   {
     id: "plugins",
     description:
-      "Plugins in the org and on the platform: list, read, enable, disable, update, scope, import, the org's own uploads.",
+      "Plugins in the org and on the platform: list, read, install with inputs, enable, disable, update, scope, import, the org's own uploads.",
   },
   {
     id: "marketplaces",
@@ -217,7 +247,8 @@ export const PLATFORM_DOMAINS: readonly { id: string; description: string }[] = 
   },
   {
     id: "connectors",
-    description: "Connectors and connector templates: list and read, refresh tools, delete.",
+    description:
+      "Connectors and connector templates: list, read, preview, create (custom or from a template), edit, credentials (the person enters them on the card), OAuth connect (a Connect button for the person), guide acknowledgement, refresh tools, delete.",
   },
   {
     id: "extensions",
@@ -232,7 +263,7 @@ export const PLATFORM_DOMAINS: readonly { id: string; description: string }[] = 
   {
     id: "orgs",
     description:
-      "This org (read, rename, members, its audit log) and, for the super admin, every org and its limits.",
+      "This org (read, rename, members and invitations, its audit log) and, for the super admin, every org and its limits.",
   },
   {
     id: "accounts",

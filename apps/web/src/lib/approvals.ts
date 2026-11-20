@@ -74,8 +74,9 @@ export interface CommandAskDetail {
 /** A secret field the person types on the card (never the model); `isSet` says a value exists. */
 export interface PersonField {
   path: string;
-  label: string;
-  description?: string;
+  /** The schema's label in both languages; the card shows the viewer's. */
+  label: { zh: string; en: string };
+  description?: { zh: string; en: string };
   multiline: boolean;
   required: boolean;
   isSet: boolean;
@@ -192,6 +193,23 @@ export const CREATE_ACCOUNT_OPERATION = "accounts.create";
 export const revealInitialPassword = (orgId: string, approvalId: string) =>
   apiFetch<{ accountId: string; login: string | null; password: string }>(
     `${base(orgId)}/approvals/${encodeURIComponent(approvalId)}/initial-password`,
+    { method: "POST" },
+  );
+
+/**
+ * The Platform operation whose approval carries an invitation link: the invitation it created,
+ * shown once to the person who approved the call (platform web parity spec §7.2).
+ */
+export const INVITE_OPERATION = "orgs.invite";
+
+/**
+ * Reads the link of the invitation an approved `orgs.invite` call created, once: the kernel deletes
+ * it as it answers (`invitation.link_unavailable` afterwards). The URL is absolute when the
+ * deployment has a public URL, else a path on this origin.
+ */
+export const revealInvitationLink = (orgId: string, approvalId: string) =>
+  apiFetch<{ url: string }>(
+    `${base(orgId)}/approvals/${encodeURIComponent(approvalId)}/invitation-link`,
     { method: "POST" },
   );
 

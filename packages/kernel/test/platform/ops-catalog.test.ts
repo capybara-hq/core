@@ -117,14 +117,24 @@ describe("registration", () => {
         .map((o) => o.id)
         .filter((id) => /^(plugins|marketplaces|requests|connectors|extensions)\./.test(id)),
     ).toEqual([
+      "connectors.add-from-template",
+      "connectors.clear-my-credential",
+      "connectors.connect",
+      "connectors.create",
       "connectors.delete",
       "connectors.get",
+      "connectors.guide-ack",
+      "connectors.kinds",
       "connectors.list",
+      "connectors.preview",
       "connectors.refresh",
       "connectors.set-git-push-policy",
+      "connectors.set-my-credential",
+      "connectors.set-org-credential",
       "connectors.set-template-enabled",
       "connectors.template-disable-preview",
       "connectors.templates",
+      "connectors.update",
       "extensions.drop-org-config",
       "extensions.list",
       "extensions.org-config",
@@ -161,6 +171,7 @@ describe("registration", () => {
       "plugins.component-scope-preview",
       "plugins.component-versions",
       "plugins.components",
+      "plugins.configure-connectors",
       "plugins.delete",
       "plugins.disable-preview",
       "plugins.get",
@@ -168,6 +179,7 @@ describe("registration", () => {
       "plugins.import-npm",
       "plugins.import-review",
       "plugins.import-update-preview",
+      "plugins.install",
       "plugins.installs",
       "plugins.list",
       "plugins.owned-delete",
@@ -351,7 +363,7 @@ describe("marketplaces", () => {
 });
 
 describe("plugins in the org", () => {
-  it("a needs_config plugin missing its connector gets the Plugins page text, never the org config ops", async () => {
+  it("a needs_config plugin missing its connector gets the connector input text (plugins.install), never the org config ops", async () => {
     const item = await seedPlugin(env, { name: "tpl-needs", skills: [] });
     await setScope(env, item, "all");
     const rows = (await run("plugins.list", {}, ctxOf(env.bossId))) as {
@@ -366,13 +378,13 @@ describe("plugins in the org", () => {
     expect(pre).toEqual({ ok: false, code: "plugin.needs_input", message: NEEDS_INPUT });
   });
 
-  it("enabling a plugin that needs connector inputs is refused with the Plugins page pointer", async () => {
+  it("enabling a plugin that needs connector inputs is refused with the plugins.install pointer", async () => {
     const item = await importTemplate(env);
     const e = await failure(
       run("plugins.set-enabled", { itemId: item, enabled: true }, ctxOf(env.bossId)),
     );
     expect(e.message).toBe(NEEDS_INPUT);
-    expect(e.message).toContain("the Plugins page");
+    expect(e.message).toContain("plugins.install");
     // known before the card
     expect(
       await precheck("plugins.set-enabled", { itemId: item, enabled: true }, ctxOf(env.bossId)),

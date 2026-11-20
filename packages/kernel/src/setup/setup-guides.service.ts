@@ -69,6 +69,11 @@ export interface SetupGuideDocument {
   checks: { id: string; label: string }[];
   unresolved: { name: string; reason: UnresolvedReason }[];
   target: { kind: "channel-connection" | "connector"; id: string } | null;
+  /**
+   * The drift hash of this mode and audience: what `channels.guide-ack` takes (admin audience, the
+   * connection's mode) once the person confirms the app is updated.
+   */
+  hash: string;
   webPath: string;
   /** What stays with the person, and where they do it. */
   handover: string;
@@ -367,8 +372,9 @@ export class SetupGuidesService {
       checks: g.checks.map((c) => ({ id: c.id, label: c.label })),
       unresolved: g.unresolved,
       target: g.target,
+      hash: g.hash,
       webPath,
-      handover: `Secrets (tokens, signing secrets, client secrets) are typed by the person into their fields on ${webPath}; never ask for one in the conversation. Connecting a personal account and confirming the app was updated (the guide acknowledgement) also happen on that page.`,
+      handover: `Secrets (tokens, signing secrets, client secrets) are typed by the person into their fields on ${webPath}; never ask for one in the conversation. A secret field a write takes as a person field is typed on the Platform confirmation card instead. Connecting a personal account is connectors.connect (a Connect button for the person); confirming the app was updated is the person's statement on the card of channels.guide-ack or connectors.guide-ack.`,
     };
   }
 }

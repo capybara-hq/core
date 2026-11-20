@@ -47,6 +47,7 @@ import { useErrorMessage } from "../../lib/use-error-message";
 import { ApprovalCard } from "../ApprovalCard";
 import { ConnectCard } from "../ConnectCard";
 import { DeviceCodeCard } from "../DeviceCodeCard";
+import { HandoffCard } from "../HandoffCard";
 import { QuestionCard } from "../QuestionCard";
 import { useOpenDownload } from "../SessionFilePreview";
 import { useSession } from "../shell/session";
@@ -881,6 +882,8 @@ function EntryNode({ e, c }: { e: TimelineEntry; c: EntryContext }): ReactNode {
         return <NetworkFacts orgId={orgId} conversationId={conversationId} hosts={e.hosts} />;
       case "device-code":
         return <DeviceCodeCard url={e.url} code={e.code} />;
+      case "handoff":
+        return <HandoffCard orgId={orgId} title={e.title} target={e.target} />;
       case "files":
         return files(e);
       case "divider":

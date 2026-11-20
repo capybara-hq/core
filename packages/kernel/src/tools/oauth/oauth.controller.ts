@@ -1,6 +1,6 @@
 import { Controller, Get, HttpCode, Inject, Param, Post, Query, Req, Res } from "@nestjs/common";
 import type { FastifyReply, FastifyRequest } from "fastify";
-import { z } from "zod";
+import type { z } from "zod";
 import { CurrentPrincipal, type Principal, Public, requireUser } from "../../identity/principal.js";
 import { KernelConfigService } from "../../infra/config/kernel-config.service.js";
 import { createZodDto } from "../../infra/validation/create-zod-dto.js";
@@ -8,24 +8,14 @@ import { ZBody } from "../../infra/validation/zod-params.js";
 import { CurrentOrg, OrgAction, type OrgContext } from "../../orgs/org.guard.js";
 import {
   browserBinding,
-  isSafeReturnPath,
   OAUTH_BINDING_COOKIE,
   OAUTH_CALLBACK_PATH,
   OAUTH_STATE_TTL_SECONDS,
   OAuthFlow,
 } from "./flow.js";
+import { OAuthConnectBodySchema } from "./oauth.schemas.js";
 
-const ConnectBody = z
-  .object({
-    returnTo: z
-      .string()
-      .max(500)
-      .refine(isSafeReturnPath, { message: "returnTo must be a relative path on this site" })
-      .optional(),
-  })
-  .strict();
-
-class OAuthConnectBody extends createZodDto(ConnectBody, "OAuthConnectBody") {}
+class OAuthConnectBody extends createZodDto(OAuthConnectBodySchema, "OAuthConnectBody") {}
 
 /** 查询参数只取单值字符串（重复参数 / 数组按缺失处理）。 */
 const one = (v: unknown): string | undefined =>
@@ -49,7 +39,7 @@ export class OAuthConnectController {
     @CurrentPrincipal() principal: Principal,
     @CurrentOrg() org: OrgContext,
     @Param("connectorId") connectorId: string,
-    @ZBody(OAuthConnectBody) body: z.infer<typeof ConnectBody>,
+    @ZBody(OAuthConnectBody) body: z.infer<typeof OAuthConnectBodySchema>,
     @Req() req: FastifyRequest,
     @Res({ passthrough: true }) reply: FastifyReply,
   ): Promise<{ authorizationUrl: string }> {

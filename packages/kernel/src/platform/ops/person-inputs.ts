@@ -1,3 +1,5 @@
+import { ToolError } from "@capybara-hq/plugin-sdk";
+import { ApiError } from "../../errors.js";
 import { setDeep } from "../../extensions/deployment-config-store.js";
 import type { OperationContext } from "../operation.js";
 import { viaAgent } from "./errors.js";
@@ -22,6 +24,64 @@ export function withPersonInputs<T>(
   if (ctx.personInputs === undefined) return write({}, base);
   return ctx.personInputs.apply((values) =>
     write(values, { ...base, inputsProvided: Object.keys(values).sort() }),
+  );
+}
+
+/**
+ * Ruling R11 (platform web parity plan): the one exception to "the write runs inside
+ * `personInputs.apply`". The catalog install runs `requires_new` steps that take the org row lock;
+ * inside `apply`, `connectors.create` would take that lock in the consuming transaction and the
+ * next step would wait on it for good. Such a write takes the values first and runs outside.
+ *
+ * The person's card values for a write that cannot run inside the consuming transaction: one made
+ * of several transactions of its own (`requires_new` steps under the org row lock, such as the
+ * catalog install), which would wait on a lock the consuming transaction holds. The values are
+ * consumed in a short transaction of their own and returned with the audit detail
+ * ({@link withPersonInputs}'s); the write then runs outside it. A write that fails after this
+ * leaves nothing to retry with: the call is made again, with a new card, like any failed call.
+ */
+export async function takePersonInputs(
+  operation: string,
+  ctx: OperationContext,
+): Promise<{ entered: Readonly<Record<string, string>>; auditDetail: Record<string, unknown> }> {
+  return withPersonInputs(operation, ctx, async (entered, auditDetail) => ({
+    entered: { ...entered },
+    auditDetail,
+  }));
+}
+
+/** What the model is told after a failed write consumed the person's values. */
+export const VALUES_USED_UP_TEXT =
+  "The values the person entered were used up: calling the operation again shows a new card where the person enters them again.";
+
+/**
+ * The error of a write that failed after {@link takePersonInputs} consumed the values: the same
+ * error (an `ApiError` keeps its code and details, a `ToolError` its kind), its message saying the
+ * values are gone and the person enters them again on a new card. Any other error becomes a
+ * `ToolError` naming only its class (as the pipeline would), with the original as `cause`.
+ */
+export function afterTaken(e: unknown, entered: Readonly<Record<string, string>>): unknown {
+  if (Object.keys(entered).length === 0) return e;
+  const told = (message: string) => `${message.trim().replace(/\.?$/, ".")} ${VALUES_USED_UP_TEXT}`;
+  if (e instanceof ApiError) return new ApiError(e.code, told(e.message), e.details);
+  if (e instanceof ToolError) return new ToolError(told(e.message), { kind: e.kind });
+  const name = e instanceof Error ? e.name : "Error";
+  const out = new ToolError(told(`The write failed (${name})`));
+  Object.defineProperty(out, "cause", { value: e });
+  return out;
+}
+
+/**
+ * The values under `prefix` (`connectors.<templateId>.`), keyed by the rest of their path.
+ */
+export function enteredUnder(
+  entered: Readonly<Record<string, string>>,
+  prefix: string,
+): Record<string, string> {
+  return Object.fromEntries(
+    Object.entries(entered)
+      .filter(([p]) => p.startsWith(prefix))
+      .map(([p, v]) => [p.slice(prefix.length), v]),
   );
 }
 

@@ -243,6 +243,15 @@ export const PERSON_FIELDS_UNATTENDED_TEXT =
  */
 export const PERSON_FIELDS_ROLE_TEXT =
   "This write needs the person you work for to enter values; they lack the role. Ask an admin to do it on the web.";
+/**
+ * A call only the person may confirm (`CallPolicy.personOnly`: its result is shown once to the
+ * approver) in an unattended run: nobody is there to approve and read it.
+ */
+export const PERSON_ONLY_UNATTENDED_TEXT =
+  "This write shows its result once, on the web, to the person who approves it; it cannot run unattended.";
+/** A call only the person may confirm whose ask would go to a role instead of the person. */
+export const PERSON_ONLY_ROLE_TEXT =
+  "This write shows its result once to the person you work for, who must approve it; they lack the role. Ask an admin to do it on the web.";
 /** 调用执行中 run 被中止 / 到达截止时间。 */
 export const RUN_STOPPED_DURING_TEXT =
   "The run was stopped while this tool call was running; its outcome is unknown. Verify before retrying.";
@@ -1282,8 +1291,13 @@ export class ToolPipeline {
     // person fields (platform web parity spec §4.2, R6): the person types values on the card, so an
     // unattended run (a trial run has its creator there) cannot make the call at all
     const personFields = callPolicy?.personFields;
-    if (personFields !== undefined && unattendedRules(ctx.unattended)) {
-      return fail(PERSON_FIELDS_UNATTENDED_TEXT, outKey);
+    // a call whose result is shown once to its approver asks the person the same way
+    const personOnly = personFields !== undefined || callPolicy?.personOnly === true;
+    if (personOnly && unattendedRules(ctx.unattended)) {
+      return fail(
+        personFields !== undefined ? PERSON_FIELDS_UNATTENDED_TEXT : PERSON_ONLY_UNATTENDED_TEXT,
+        outKey,
+      );
     }
 
     let decision = await this.decide(tool, ctx.agent, {
@@ -1310,7 +1324,7 @@ export class ToolPipeline {
     if (typeof decision === "object" && "unavailable" in decision) {
       return fail(unavailableText(tool.key, decision.unavailable), outKey);
     }
-    if (personFields !== undefined) {
+    if (personOnly) {
       // R6: always the person's own card, never a grant or an `allow` (the default policy already
       // asks for them; this holds for any decision)
       if (decision === "allow" || "grant" in decision) {
@@ -1327,7 +1341,10 @@ export class ToolPipeline {
       }
       // R5: only the person the run works for types the values; a role escalation cannot ask them
       if ("ask" in decision && decision.ask.requestedFor === null) {
-        return fail(PERSON_FIELDS_ROLE_TEXT, outKey);
+        return fail(
+          personFields !== undefined ? PERSON_FIELDS_ROLE_TEXT : PERSON_ONLY_ROLE_TEXT,
+          outKey,
+        );
       }
     }
     // 该调用已有审批（续跑）→ 按审批结果；没有且策略为 ask → 建审批并等待

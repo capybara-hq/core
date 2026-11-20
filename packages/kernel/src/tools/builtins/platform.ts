@@ -1,5 +1,6 @@
 import { ToolError, type ToolSpec } from "@capybara-hq/plugin-sdk";
 import { z } from "zod";
+import { ToolViewSchema } from "../../conversations/events.js";
 import type { KernelLogger } from "../../log.js";
 import type { OrgSettings } from "../../orgs/settings.service.js";
 import type { ActorFacts } from "../../platform/actor.js";
@@ -22,6 +23,7 @@ import {
 import { PLATFORM_METHOD } from "../../platform/method.js";
 import {
   type ConfirmClass,
+  type HandoffView,
   OPERATION_ID,
   type OperationContext,
   type OperationErrorNext,
@@ -29,7 +31,11 @@ import {
   type PlatformOperation,
   PRECHECK_TIMEOUT_MS,
 } from "../../platform/operation.js";
-import { type PersonFieldSpec, planPersonFields } from "../../platform/person-fields.js";
+import {
+  type PersonFieldSpec,
+  PersonFieldsRefused,
+  planPersonFields,
+} from "../../platform/person-fields.js";
 import type { PlatformOperations } from "../../platform/registry.js";
 import { type SealedInputs, SealedInputsExpiredError } from "../../platform/sealed-inputs.js";
 import { BUILTIN } from "../builtin-names.js";
@@ -236,6 +242,46 @@ const capped = <T>(items: readonly T[]) => ({
   }),
 });
 
+/**
+ * The operation's link card for this result (platform web parity spec §6), or null. A throw or an
+ * invalid card leaves it out with a warning: the result stands either way.
+ */
+function handoffOf(
+  op: PlatformOperation,
+  params: unknown,
+  result: unknown,
+  ctx: OperationContext,
+  log: Pick<KernelLogger, "warn"> | undefined,
+): HandoffView | null {
+  if (op.handoff === undefined) return null;
+  try {
+    const view = op.handoff(params, result, ctx);
+    if (view === null) return null;
+    const parsed = ToolViewSchema.safeParse(view);
+    if (parsed.success && parsed.data.kind === "handoff") return parsed.data;
+    log?.warn("platform operation returned an invalid handoff card; left out", {
+      operation: op.id,
+    });
+  } catch (e) {
+    log?.warn("platform operation handoff failed; card left out", {
+      operation: op.id,
+      error: e instanceof Error ? e.message : String(e),
+    });
+  }
+  return null;
+}
+
+/**
+ * A link card's path is in the result text for the model too (`reviewUrl`, spec §6), unless the
+ * operation already returned one.
+ */
+function withReviewUrl(out: unknown, view: HandoffView | null): unknown {
+  if (view === null || view.target.type !== "link") return out;
+  if (typeof out !== "object" || out === null || Array.isArray(out)) return out;
+  if ("reviewUrl" in out) return out;
+  return { ...out, reviewUrl: view.target.url };
+}
+
 /** An operation's result as a JSON object: a bare list is capped, nothing becomes `{ ok: true }`. */
 function asResult(value: unknown): unknown {
   if (Array.isArray(value)) return capped(value);
@@ -415,6 +461,8 @@ export function platformTool(deps: PlatformToolDeps): BuiltinTool {
       remember: personFields === null && cls === "personal" && op.rememberable !== false,
       summary,
       ...(personFields !== null && { personFields }),
+      // its result is shown once to the approver: only the person may confirm it
+      ...(op.revealsToApprover === true && { personOnly: true as const }),
     };
   }
 
@@ -590,13 +638,15 @@ export function platformTool(deps: PlatformToolDeps): BuiltinTool {
       deps.log?.warn("platform operation did not use the person's values", { operation: op.id });
       lines.push(unusedValuesText(op.id));
     }
-    if (lines.length === 0) return json(asResult(result), summary);
+    const view = handoffOf(op, params, result, octx, deps.log);
+    const out = withReviewUrl(asResult(result), view);
     return {
       content: [
-        { type: "text", text: JSON.stringify(asResult(result)) },
-        { type: "text", text: lines.join("\n") },
+        { type: "text", text: JSON.stringify(out) },
+        ...(lines.length === 0 ? [] : [{ type: "text" as const, text: lines.join("\n") }]),
       ],
       display: { summary },
+      ...(view !== null && { view }),
     };
   }
 
@@ -629,9 +679,6 @@ export function platformTool(deps: PlatformToolDeps): BuiltinTool {
     },
   };
 }
-
-/** A person-field plan that refuses the call (model-visible English). */
-class PersonFieldsRefused extends Error {}
 
 /** The fields to enter differ from what the person confirmed ({@link PERSON_FIELDS_CHANGED_TEXT}). */
 class PersonFieldsChanged extends Error {}

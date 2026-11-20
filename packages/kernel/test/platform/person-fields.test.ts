@@ -1,6 +1,8 @@
-import { configJsonSchema, secret, ui } from "@capybara-hq/plugin-sdk";
+import { configJsonSchema, secret, ToolError, ui } from "@capybara-hq/plugin-sdk";
 import { describe, expect, it } from "vitest";
 import { z } from "zod";
+import { ApiError } from "../../src/errors.js";
+import { afterTaken, VALUES_USED_UP_TEXT } from "../../src/platform/ops/person-inputs.js";
 import {
   checkPersonValue,
   PERSON_FIELD_MAX_BYTES,
@@ -79,8 +81,8 @@ describe("secretFieldsOf", () => {
       }),
     );
     const [f] = secretFieldsOf(s, new Set()).fields;
-    expect(f?.label).toBe("API key");
-    expect(f?.description).toBe("Create one in the console");
+    expect(f?.label).toEqual({ zh: "接口密钥", en: "API key" });
+    expect(f?.description).toEqual({ zh: "在控制台创建", en: "Create one in the console" });
     expect(f?.multiline).toBe(false);
     expect(JSON.stringify(f?.schema)).not.toContain("dont-publish");
     expect(f?.schema).not.toHaveProperty("default");
@@ -97,7 +99,32 @@ describe("secretFieldsOf", () => {
       },
       new Set(),
     ).fields;
-    expect(fields).toMatchObject([{ path: "key", label: "key", multiline: true }]);
+    expect(fields).toMatchObject([
+      { path: "key", label: { zh: "key", en: "key" }, multiline: true },
+    ]);
+  });
+
+  it("a plain title gives the English label and the x-ui label its Chinese one", () => {
+    const fields = secretFieldsOf(
+      {
+        type: "object",
+        properties: {
+          apiKey: {
+            type: "string",
+            title: "API key",
+            "x-secret": true,
+            "x-ui": { label: { zh: "API 密钥", en: "API key" } },
+          },
+          token: { type: "string", title: "Token", "x-secret": true },
+        },
+      },
+      new Set(),
+    ).fields;
+    expect(fields.map((f) => f.label)).toEqual([
+      { zh: "API 密钥", en: "API key" },
+      // no Chinese text anywhere: the English serves both
+      { zh: "Token", en: "Token" },
+    ]);
   });
 
   it("finds a nullable secret either way round", () => {
@@ -356,7 +383,7 @@ describe("planPersonFields", () => {
 describe("checkPersonValue", () => {
   const spec = (node: Record<string, unknown>): PersonFieldSpec => ({
     path: "apiKey",
-    label: "apiKey",
+    label: { zh: "apiKey", en: "apiKey" },
     multiline: false,
     required: true,
     isSet: false,
@@ -389,5 +416,39 @@ describe("checkPersonValue", () => {
     expect(
       checkPersonValue(spec({ type: "string", minLength: 8, pattern: "^sk-" }), "sk-12345678"),
     ).toBeNull();
+  });
+});
+
+describe("afterTaken", () => {
+  const entered = { apiKey: "k" };
+
+  it("an ApiError keeps its code and details and says the values were used up", () => {
+    const e = afterTaken(
+      new ApiError("validation_failed", "Bad", [{ path: "x", message: "m" }]),
+      entered,
+    );
+    expect(e).toBeInstanceOf(ApiError);
+    expect(e).toMatchObject({ code: "validation_failed", details: [{ path: "x", message: "m" }] });
+    expect((e as ApiError).message).toBe(`Bad. ${VALUES_USED_UP_TEXT}`);
+  });
+
+  it("a ToolError keeps its kind", () => {
+    const e = afterTaken(new ToolError("Nope.", { kind: "unavailable" }), entered);
+    expect(e).toBeInstanceOf(ToolError);
+    expect(e).toMatchObject({ kind: "unavailable", message: `Nope. ${VALUES_USED_UP_TEXT}` });
+  });
+
+  it("any other error names only its class, keeping the original as the cause", () => {
+    const inner = new TypeError("secret detail");
+    const e = afterTaken(inner, entered) as ToolError;
+    expect(e).toBeInstanceOf(ToolError);
+    expect(e.message).toBe(`The write failed (TypeError). ${VALUES_USED_UP_TEXT}`);
+    expect(e.message).not.toContain("secret detail");
+    expect(e.cause).toBe(inner);
+  });
+
+  it("nothing entered: the error is unchanged", () => {
+    const inner = new Error("x");
+    expect(afterTaken(inner, {})).toBe(inner);
   });
 });

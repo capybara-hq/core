@@ -1575,7 +1575,7 @@ export class ApprovalsService {
       if (Object.keys(inputs).some((p) => !asked.has(p))) throw inputsNotExpected();
       const problems = person.flatMap((f) => {
         const v = Object.hasOwn(inputs, f.path) ? inputs[f.path] : undefined;
-        const problem = v === undefined ? `${f.label} is required.` : checkPersonValue(f, v);
+        const problem = v === undefined ? `${f.label.en} is required.` : checkPersonValue(f, v);
         return problem === null ? [] : [{ path: f.path, problem }];
       });
       if (problems.length > 0) {

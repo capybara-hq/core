@@ -693,6 +693,7 @@ export class ConnectorsService {
     actorAccountId: string,
     input: CreateConnectorInput,
     actorTokenId?: string,
+    auditDetail?: Record<string, unknown>,
   ): Promise<{ connector: ConnectorDetail; issues: ToolIssue[] }> {
     // 自建被禁止时先拒绝（事务里再复核一次）：不该为此触发外连
     if (!input.template) await assertCustomAllowed(this.db, "customConnectors");
@@ -732,7 +733,7 @@ export class ConnectorsService {
       tpl?.templateId !== undefined
         ? await this.guides.templateAck(tpl.itemId, tpl.templateId)
         : null;
-    return this.createIn(orgId, actorAccountId, input, actorTokenId, {
+    return this.createIn(orgId, actorAccountId, input, actorTokenId, auditDetail, {
       id,
       slug,
       endpoint,
@@ -751,6 +752,7 @@ export class ConnectorsService {
     actorAccountId: string,
     input: CreateConnectorInput,
     actorTokenId: string | undefined,
+    auditDetail: Record<string, unknown> | undefined,
     c: {
       id: string;
       slug: string;
@@ -858,6 +860,7 @@ export class ConnectorsService {
       action: "connector.created",
       target: id,
       detail: {
+        ...auditDetail,
         slug,
         connector: input.connector,
         auth: { type: auth.type, ...(auth.type !== "none" && { ownership: auth.ownership }) },
@@ -1320,14 +1323,34 @@ export class ConnectorsService {
     hash: string,
     actorAccountId: string,
     actorTokenId?: string,
+    auditDetail?: Record<string, unknown>,
   ): Promise<ConnectorDetail> {
-    const { orgId } = org;
+    const ack = await this.currentGuide(org, connectorId);
+    if (ack.hash !== hash) {
+      throw new ApiError(
+        "connector.guide_changed",
+        "The connector template's setup guide changed since it was shown; review the new guide first",
+      );
+    }
+    return this.ackIn(org.orgId, connectorId, ack, actorAccountId, actorTokenId, auditDetail);
+  }
+
+  /**
+   * The setup guide a connector made from a template would be acknowledged with now (the
+   * template's guide in its item's latest version, with its admin drift hash). An unknown
+   * connector -> 404 `connector.not_found`; one without a template guide, or whose item the org's
+   * catalog does not show -> 404 `catalog.guide_not_found`.
+   */
+  async currentGuide(
+    org: { orgId: string; role: OrgRole },
+    connectorId: string,
+  ): Promise<GuideAck> {
     const r = await this.db
       .selectFrom("connectors as c")
       .leftJoin("platform_connector_templates as t", "t.id", "c.platform_template_id")
       .select(["c.id", "t.catalog_item_id", "t.template_id"])
       .where("c.id", "=", connectorId)
-      .where("c.org_id", "=", orgId)
+      .where("c.org_id", "=", org.orgId)
       .where("c.deleted_at", "is", null)
       .executeTakeFirst();
     if (!r) throw notFound();
@@ -1339,13 +1362,7 @@ export class ConnectorsService {
     if (ack === null) {
       throw new ApiError("catalog.guide_not_found", "The connector has no template setup guide");
     }
-    if (ack.hash !== hash) {
-      throw new ApiError(
-        "connector.guide_changed",
-        "The connector template's setup guide changed since it was shown; review the new guide first",
-      );
-    }
-    return this.ackIn(orgId, connectorId, ack, actorAccountId, actorTokenId);
+    return ack;
   }
 
   /** The row and audit of {@link ackGuide}, in one transaction under the org lock. */
@@ -1356,6 +1373,7 @@ export class ConnectorsService {
     ack: GuideAck,
     actorAccountId: string,
     actorTokenId: string | undefined,
+    auditDetail: Record<string, unknown> | undefined,
   ): Promise<ConnectorDetail> {
     const t = this.db;
     await this.orgLock.lockAndAuthorize(orgId, actorAccountId, "connectors.manage");
@@ -1374,7 +1392,7 @@ export class ConnectorsService {
       orgId,
       action: "connector.guide_confirmed",
       target: connectorId,
-      detail: { guideId: ack.guideId, version: ack.version },
+      detail: { ...auditDetail, guideId: ack.guideId, version: ack.version },
     });
     return this.detail(t, orgId, connectorId, actorAccountId);
   }
@@ -1404,6 +1422,7 @@ export class ConnectorsService {
     actorAccountId: string,
     patch: UpdateConnectorInput,
     actorTokenId?: string,
+    auditDetail?: Record<string, unknown>,
   ): Promise<ConnectorDetail> {
     const t = this.db;
     await this.orgLock.lockAndAuthorize(orgId, actorAccountId, "connectors.manage");
@@ -1534,6 +1553,7 @@ export class ConnectorsService {
       action: "connector.updated",
       target: connectorId,
       detail: {
+        ...auditDetail,
         ...(patch.name !== undefined && { name: { from: app.name, to: patch.name } }),
         ...(patch.status !== undefined && { status: { from: app.status, to: patch.status } }),
         ...(gitChanged && { useForGit: { from: app.use_for_git, to: patch.useForGit } }),
@@ -1957,16 +1977,33 @@ export class ConnectorsService {
     ownership: "org" | "personal",
     value: unknown,
     actorTokenId?: string,
+    auditDetail?: Record<string, unknown>,
   ): Promise<void> {
     if (ownership === "org") {
       const app = await this.row(this.db, orgId, connectorId);
       const auth = app.auth as unknown as ConnectorAuth;
       if (isOAuth(auth)) {
-        await this.rotateOAuthClient(orgId, connectorId, actorAccountId, auth, value, actorTokenId);
+        await this.rotateOAuthClient(
+          orgId,
+          connectorId,
+          actorAccountId,
+          auth,
+          value,
+          actorTokenId,
+          auditDetail,
+        );
         return;
       }
     }
-    await this.setCredentialIn(orgId, connectorId, actorAccountId, ownership, value, actorTokenId);
+    await this.setCredentialIn(
+      orgId,
+      connectorId,
+      actorAccountId,
+      ownership,
+      value,
+      actorTokenId,
+      auditDetail,
+    );
   }
 
   /** The org-locked static credential write of {@link setCredential}. */
@@ -1978,6 +2015,7 @@ export class ConnectorsService {
     ownership: "org" | "personal",
     value: unknown,
     actorTokenId: string | undefined,
+    auditDetail: Record<string, unknown> | undefined,
   ): Promise<void> {
     const t = this.db;
     await this.orgLock.lockAndAuthorize(
@@ -1997,7 +2035,7 @@ export class ConnectorsService {
       orgId,
       action: "connector.credential.set",
       target: connectorId,
-      detail: { type: auth.type, ownership },
+      detail: { ...auditDetail, type: auth.type, ownership },
     });
   }
 
@@ -2014,6 +2052,7 @@ export class ConnectorsService {
     auth: OAuthAuth,
     value: unknown,
     actorTokenId?: string,
+    auditDetail?: Record<string, unknown>,
   ): Promise<void> {
     if (auth.type === "oauth_code" && auth.client !== "manual") {
       throw fail(
@@ -2060,6 +2099,7 @@ export class ConnectorsService {
       client,
       tokens,
       actorTokenId,
+      auditDetail,
     );
   }
 
@@ -2073,6 +2113,7 @@ export class ConnectorsService {
     client: OAuthClientRecord,
     tokens: OAuthTokenRecord | undefined,
     actorTokenId: string | undefined,
+    auditDetail: Record<string, unknown> | undefined,
   ): Promise<void> {
     const t = this.db;
     await this.orgLock.lockAndAuthorize(orgId, actorAccountId, "connectors.manage");
@@ -2085,7 +2126,7 @@ export class ConnectorsService {
       orgId,
       action: "connector.credential.set",
       target: connectorId,
-      detail: { type: auth.type, ownership: "org" },
+      detail: { ...auditDetail, type: auth.type, ownership: "org" },
     });
   }
 
@@ -2096,6 +2137,7 @@ export class ConnectorsService {
     connectorId: string,
     actorAccountId: string,
     actorTokenId?: string,
+    auditDetail?: Record<string, unknown>,
   ): Promise<void> {
     const t = this.db;
     await this.orgLock.lockAndAuthorize(orgId, actorAccountId, "connectors.use");
@@ -2107,7 +2149,11 @@ export class ConnectorsService {
       orgId,
       action: "connector.credential.cleared",
       target: connectorId,
-      detail: { type: (app.auth as unknown as ConnectorAuth).type, ownership: "personal" },
+      detail: {
+        ...auditDetail,
+        type: (app.auth as unknown as ConnectorAuth).type,
+        ownership: "personal",
+      },
     });
   }
 }

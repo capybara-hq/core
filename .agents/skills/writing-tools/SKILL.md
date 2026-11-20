@@ -605,11 +605,11 @@ section of `.agents/skills/writing-kernel-api`; the short list for a tool change
 - `defineOperation` fields: `id`, `description`, `input` (from the route's shared schemas, with `omits` /
   `extras` / `renames` / `loosens`), `example`, `authz` (+ `authzNote`), `mirrors`, `confirm`,
   `rememberable`, `confirmFor`, `precheck`, `personFields` (with `personFieldParams` in the input),
-  `summary`, `errors` (role-keyed `next`), `run`.
+  `withoutSecrets`, `summary`, `errors` (role-keyed `next`), `run`.
 - Checks: `check:platform-ops` (`platform-op-missing`, `-exclusion-reason`, `-later`, `-authz`, `-orphan`,
   `-double`, `-describe`, `-literal`, `-errors`) and the parity test
   `tools/checks/test/platform-parity.test.ts` (with `platform-op-secret-param`: a route field with
-  `secret()` meta is in `omits` and the operation defines `personFields`).
+  `secret()` meta is in `omits` and the operation defines `personFields` or a `withoutSecrets` reason).
 - Exclusion categories: `human-only`, `secret`, `transport`, `internal`; there is no `later`
   (`platform-op-later` fails it).
 - A new domain: `PLATFORM_DOMAINS`, `PlatformOpsModule`, `ROUTE_SCHEMAS`, and the domain list in

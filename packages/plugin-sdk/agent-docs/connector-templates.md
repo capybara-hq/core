@@ -45,4 +45,6 @@ Fields of `template`:
   `oauth_code` or `oauth_client`, plus `ownership` (`org` or per member).
 - `defaultToolPolicies`: tool name to `allow`, `ask` or `deny`. When unsure, do not write `allow`.
 
-Credentials and secret config are entered by people on the web page, never through an agent.
+Credentials and secret config are entered by the person on the `Platform` confirmation card (name
+their paths in `askPerson`), never typed by an agent; only what the card cannot take (secret
+records, custom header credentials) is entered on the web page.

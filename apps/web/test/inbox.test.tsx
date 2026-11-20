@@ -179,14 +179,14 @@ describe("收件箱（InboxPage）", () => {
                   personFields: [
                     {
                       path: "apiKey",
-                      label: "API key",
+                      label: { zh: "API 密钥", en: "API key" },
                       multiline: false,
                       required: true,
                       isSet: false,
                     },
                     {
                       path: "token",
-                      label: "Token",
+                      label: { zh: "令牌", en: "Token" },
                       multiline: false,
                       required: true,
                       isSet: false,

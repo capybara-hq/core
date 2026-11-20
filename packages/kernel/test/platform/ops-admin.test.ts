@@ -201,10 +201,15 @@ describe("registration and who may call", () => {
       "orgs.audit",
       "orgs.current",
       "orgs.get",
+      "orgs.invitations",
+      "orgs.invite",
       "orgs.list",
       "orgs.members",
       "orgs.network-allowances",
+      "orgs.remove-member",
+      "orgs.revoke-invitation",
       "orgs.set-limits",
+      "orgs.set-member-role",
       "orgs.update",
     ]);
   });

@@ -26,7 +26,11 @@ import {
   secretClean,
   secretNoPersonFields,
   secretParam,
+  secretWithout,
+  secretWithoutBlank,
+  secretWithoutParam,
   staleLoosens,
+  staleWithoutSecrets,
   typeMismatch,
   undeclaredExtra,
   undeclaredOmission,
@@ -150,6 +154,32 @@ describe("inputParity", () => {
       { op: "things.secret-unasked", field: "secretEntries", rule: "platform-op-secret-param" },
     ]);
     expect(unasked[0]?.message).toContain("personFields");
+  });
+
+  it("platform-op-secret-param: a withoutSecrets on an op whose route carries no secret is stale", () => {
+    expect(
+      checkInputParity([staleWithoutSecrets], [route]).map((f) => ({
+        op: f.op,
+        field: f.field,
+        rule: f.rule,
+      })),
+    ).toEqual([
+      { op: "things.stale-without", field: "withoutSecrets", rule: "platform-op-secret-param" },
+    ]);
+    // with a secret route it is not stale
+    expect(checkInputParity([secretWithout], [route3])).toEqual([]);
+  });
+
+  it("platform-op-secret-param: withoutSecrets with a reason exempts an op that takes no secret, never one that does", () => {
+    expect(inputParity(secretWithout, route3)).toEqual([]);
+    for (const [op, id] of [
+      [secretWithoutBlank, "things.preview-blank"],
+      [secretWithoutParam, "things.preview-param"],
+    ] as const) {
+      expect(
+        inputParity(op, route3).map((f) => ({ op: f.op, field: f.field, rule: f.rule })),
+      ).toEqual([{ op: id, field: "secretEntries", rule: "platform-op-secret-param" }]);
+    }
   });
 
   it("(d) a mirror of a removed route: not registered here, an orphan for check:platform-ops", () => {
