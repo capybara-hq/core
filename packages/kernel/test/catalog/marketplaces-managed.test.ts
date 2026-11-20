@@ -313,6 +313,31 @@ describe("syncExtraFromConfig", () => {
       (await admin({ method: "DELETE", url: "/api/v1/admin/marketplaces/config:acme" })).statusCode,
     ).toBe(204);
   });
+
+  it("re-promoting a demoted row drops the admin token from secrets", async () => {
+    const entry = { name: "acme", url: srv.url("acme-again") };
+    await svc.syncExtraFromConfig([entry]);
+    await svc.syncExtraFromConfig([]);
+    // An admin gives the demoted row a token meant for another host
+    const set = await patch("config:acme", { url: srv.url("acme-moved"), token: OTHER_TOKEN });
+    expect(set.statusCode, set.body).toBe(200);
+    const stored = () =>
+      db
+        .selectFrom("secrets")
+        .select("key")
+        .where("key", "=", "catalog-token:config:acme")
+        .execute();
+    expect(await stored()).toHaveLength(1);
+    await svc.syncExtraFromConfig([entry]);
+    expect(await stored()).toEqual([]);
+    await svc.syncExtraFromConfig([]);
+    expect(await view("config:acme")).toMatchObject({ managed: null, hasToken: false });
+    await marketplaceRepo("acme-again");
+    srv.requests.length = 0;
+    expect((await refresh("config:acme")).statusCode).toBe(200);
+    expect(srv.requests.length).toBeGreaterThan(0);
+    expect(srv.requests.every((q) => q.authorization === undefined)).toBe(true);
+  });
 });
 
 describe("git usernames of custom marketplaces", () => {

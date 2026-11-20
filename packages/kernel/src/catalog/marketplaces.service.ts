@@ -774,7 +774,8 @@ export class MarketplacesService {
    * `config:<name>` each with `managed = 'config'`; name, URL (its form per
    * {@link marketplaceForm}), ref and username follow the file, the admin's enable switch is left
    * alone, and a changed URL, form or ref drops the ETag and the last commit. The token stays in
-   * `marketplaces.tokens[name]`, never in the secrets table. A managed row whose name left the
+   * `marketplaces.tokens[name]`, never in the secrets table (a token an admin set while the row
+   * was demoted is deleted when it becomes managed again). A managed row whose name left the
    * file is kept as an ordinary custom marketplace (`managed = NULL`, so no token). Called by
    * every replica at start; idempotent. An invalid entry -> {@link ConfigError}, nothing written.
    */
@@ -813,6 +814,9 @@ export class MarketplacesService {
           }),
         )
         .execute();
+      // A managed row's token lives only in the config: drop one an admin set while the row was
+      // demoted, so it never follows the file's URL to another origin
+      await this.secrets().delete(DEPLOYMENT_SECRETS_ORG, tokenKey(r.id));
     }
     let gone = t.updateTable("marketplaces").set({ managed: null }).where("managed", "=", "config");
     if (ids.length > 0) gone = gone.where("id", "not in", ids);
