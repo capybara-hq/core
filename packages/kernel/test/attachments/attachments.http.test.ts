@@ -716,6 +716,113 @@ describe("待上传配额", () => {
   });
 });
 
+describe("createFromBytes (a Platform write's file)", () => {
+  const svc = () => k.app.get(AttachmentsService);
+  const rowOf = (id: string) =>
+    db
+      .selectFrom("attachments")
+      .select([
+        "status",
+        "purpose",
+        "content_type",
+        "size",
+        "object_key",
+        "etag",
+        "account_id",
+        sql<number>`extract(epoch from expires_at - now())`.as("ttl"),
+      ])
+      .where("id", "=", id)
+      .executeTakeFirstOrThrow();
+
+  it("stores the bytes in the purpose's key family as a ready upload the route's next step takes", async () => {
+    const avatar = await svc().createFromBytes(orgId, ownerId, "agent-avatar", {
+      name: "cat.png",
+      contentType: "image/png",
+      bytes: new Uint8Array(PNG),
+    });
+    const a = await rowOf(avatar.id);
+    expect(a).toMatchObject({
+      status: "ready",
+      purpose: "agent-avatar",
+      content_type: "image/png",
+      size: String(PNG.length),
+      object_key: `agent-avatars/${avatar.id}`,
+      account_id: ownerId,
+    });
+    expect(a.etag).not.toBeNull();
+    // the avatar upload's 24 hours
+    expect(Number(a.ttl)).toBeGreaterThan(23 * 3600);
+    expect(Number(a.ttl)).toBeLessThanOrEqual(24 * 3600);
+    const got = await k.app.get(StorageService).kernel(orgId).get(`agent-avatars/${avatar.id}`);
+    expect(Buffer.from(await new Response(got?.body).arrayBuffer())).toEqual(PNG);
+    // the profile save's check takes it (no finalize: it is ready)
+    const agentId = await createAgent(owner, orgId, { provider: "model-media", model: "see-1" });
+    await expect(svc().prepareAgentAvatar(orgId, ownerId, avatar.id, agentId)).resolves.toBe(
+      undefined,
+    );
+
+    const zip = new Uint8Array(Buffer.from("PK\u0003\u0004skill package bytes"));
+    const pkg = await svc().createFromBytes(orgId, ownerId, "skill-package", {
+      name: "report.zip",
+      contentType: "application/zip",
+      bytes: zip,
+    });
+    const p = await rowOf(pkg.id);
+    expect(p).toMatchObject({
+      status: "ready",
+      purpose: "skill-package",
+      object_key: `skill-packages/${pkg.id}`,
+    });
+    expect(Number(p.ttl)).toBeLessThanOrEqual(3600);
+    expect(await svc().readSkillPackage(orgId, ownerId, pkg.id)).toEqual(zip);
+    // no presigned upload: nothing else is registered
+    expect(
+      await db.selectFrom("attachments").select("id").where("status", "=", "pending").execute(),
+    ).toEqual([]);
+  });
+
+  it("applies the upload route's type, size and pending caps", async () => {
+    const put = (purpose: "agent-avatar" | "skill-package", contentType: string, size: number) =>
+      svc().createFromBytes(orgId, ownerId, purpose, {
+        name: "f",
+        contentType,
+        bytes: new Uint8Array(size).fill(1),
+      });
+    await expect(put("agent-avatar", "image/gif", 10)).rejects.toMatchObject({
+      code: "attachment.type_not_allowed",
+    });
+    await expect(put("skill-package", "application/gzip", 10)).rejects.toMatchObject({
+      code: "attachment.type_not_allowed",
+    });
+    await expect(put("agent-avatar", "image/png", 2 * 1024 * 1024 + 1)).rejects.toMatchObject({
+      code: "attachment.too_large",
+    });
+    // ten unused avatar uploads (registered or stored) are the cap
+    for (let i = 0; i < 10; i++) {
+      await svc().createFromBytes(orgId, ownerId, "agent-avatar", {
+        name: `a${i}.png`,
+        contentType: "image/png",
+        bytes: new Uint8Array(PNG),
+      });
+    }
+    await expect(
+      svc().createFromBytes(orgId, ownerId, "agent-avatar", {
+        name: "one-more.png",
+        contentType: "image/png",
+        bytes: new Uint8Array(PNG),
+      }),
+    ).rejects.toMatchObject({ code: "attachment.too_many_pending" });
+    // another account is not affected
+    await expect(
+      svc().createFromBytes(orgId, otherId, "agent-avatar", {
+        name: "theirs.png",
+        contentType: "image/png",
+        bytes: new Uint8Array(PNG),
+      }),
+    ).resolves.toMatchObject({ id: expect.any(String) });
+  });
+});
+
 describe("清理", () => {
   it("超过 24 小时未绑定的附件（pending / ready）连同对象被删除；已绑定的保留", async () => {
     const stale = await ready(owner, "old.png", "image/png", PNG);

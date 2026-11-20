@@ -1,11 +1,8 @@
-import { hasControlChars, MEDIA_NAME_MAX_CHARS } from "@capybara-hq/plugin-sdk";
 import { Controller, Delete, Get, HttpCode, Inject, Param, Patch, Post, Res } from "@nestjs/common";
 import type { FastifyReply } from "fastify";
 import { z } from "zod";
 import {
-  AGENT_AVATAR_CONTENT_TYPES,
   AGENT_AVATAR_DOWNLOAD_TTL_SECONDS,
-  AGENT_AVATAR_MAX_BYTES,
   AttachmentsService,
   type CreatedAttachment,
 } from "../conversations/attachments.service.js";
@@ -26,6 +23,7 @@ import {
   AgentFromTemplatePreviewBody,
   AgentProfileBody,
   AgentUpdateBody,
+  AgentAvatarUploadBody as AvatarUploadBody,
 } from "./agents.schemas.js";
 import {
   AgentsService,
@@ -38,17 +36,6 @@ import type { AgentProfile } from "./profile.js";
 
 const OwnerBody = z.object({ accountId: z.string().min(1).max(100) }).strict();
 
-const AvatarUploadBody = z
-  .object({
-    name: z
-      .string()
-      .min(1)
-      .max(MEDIA_NAME_MAX_CHARS)
-      .refine((s) => !hasControlChars(s), "name must not contain control characters"),
-    contentType: z.enum(AGENT_AVATAR_CONTENT_TYPES),
-    size: z.number().int().min(1).max(AGENT_AVATAR_MAX_BYTES),
-  })
-  .strict();
 /** 服务令牌没有账号：以 null 作为 viewer，只看到 visibility='org' 的 agent。 */
 const viewerOf = (p: Principal): string | null => (p.kind === "user" ? p.account.id : null);
 

@@ -256,3 +256,161 @@ describe("handoff views", () => {
     expect(JSON.parse(result.content)).toEqual({ staged: true });
   });
 });
+
+describe("handoffs of import and upload operations", () => {
+  const handoffOf = (id: string, result: unknown) => {
+    const o = op(id);
+    if (o.handoff === undefined) throw new Error(`${id} has no handoff`);
+    return o.handoff(o.example, result, ctxOf());
+  };
+  const staged = { stagingId: "s-1", review: { name: "github" } };
+  const importCard = {
+    kind: "handoff",
+    title: { zh: "审阅插件 github 的权限", en: "Review the permissions of plugin github" },
+    target: { type: "link", url: "/admin/plugins/import?staging=s-1" },
+  };
+
+  it.each([
+    "marketplaces.import",
+    "plugins.import-npm",
+    "plugins.import-git",
+    "plugins.import-file",
+  ])("%s links the staged import's review page", (id) => {
+    expect(handoffOf(id, staged)).toEqual(importCard);
+    expect(ToolViewSchema.safeParse(handoffOf(id, staged)).success).toBe(true);
+    // no staging id: no card
+    expect(handoffOf(id, { review: { name: "x" } })).toBeNull();
+  });
+
+  it("plugins.import-update-preview links the update's review page", () => {
+    const card = handoffOf("plugins.import-update-preview", {});
+    expect(card).toEqual({
+      kind: "handoff",
+      title: expect.objectContaining({ en: expect.any(String) }),
+      target: {
+        type: "link",
+        url: `/admin/plugins/import?staging=${(op("plugins.import-update-preview").example as { stagingId: string }).stagingId}`,
+      },
+    });
+    expect(ToolViewSchema.safeParse(card).success).toBe(true);
+  });
+
+  it("plugins.upload-review links the staged upload like plugins.upload", () => {
+    expect(handoffOf("plugins.upload-review", staged)).toEqual(handoffOf("plugins.upload", staged));
+    expect(handoffOf("plugins.upload-review", {})).toBeNull();
+  });
+
+  it("connectors.refresh links the connector's page only when tools wait for review", () => {
+    const id = (op("connectors.refresh").example as { connectorId: string }).connectorId;
+    expect(
+      handoffOf("connectors.refresh", { changes: { added: ["a"], changed: [], removed: [] } }),
+    ).toMatchObject({
+      target: { type: "link", url: `/connectors/${id}` },
+    });
+    expect(
+      handoffOf("connectors.refresh", { changes: { added: [], changed: ["b"], removed: [] } }),
+    ).not.toBeNull();
+    expect(
+      handoffOf("connectors.refresh", { changes: { added: [], changed: [], removed: ["c"] } }),
+    ).toBeNull();
+  });
+
+  it("extensions.platform-enable links the extension's page only while permissions wait", () => {
+    const name = (op("extensions.platform-enable").example as { name: string }).name;
+    expect(
+      handoffOf("extensions.platform-enable", { extension: { state: "pending_approval" } }),
+    ).toMatchObject({
+      target: { type: "link", url: `/admin/extensions/${name}` },
+    });
+    expect(handoffOf("extensions.platform-enable", { extension: { state: "enabled" } })).toBeNull();
+  });
+
+  it("skills.get-change links the inbox only for an org admin while the change is pending", () => {
+    expect(
+      handoffOf("skills.get-change", { skillChange: { state: "pending", canDecide: true } }),
+    ).toMatchObject({ target: { type: "link", url: "/inbox" } });
+    // the requester reads it but cannot decide it
+    expect(
+      handoffOf("skills.get-change", { skillChange: { state: "pending", canDecide: false } }),
+    ).toBeNull();
+    expect(
+      handoffOf("skills.get-change", { skillChange: { state: "approved", canDecide: false } }),
+    ).toBeNull();
+  });
+
+  it.each([
+    ["approvals.waiting", "/inbox"],
+    ["requests.pending", "/inbox"],
+    ["inbox.list", "/inbox"],
+    ["requests.platform-list", "/admin/inbox"],
+    ["inbox.platform-list", "/admin/inbox"],
+  ])("%s links its inbox when rows wait, and none when empty", (id, url) => {
+    expect(handoffOf(id, { items: [{}] })).toMatchObject({ target: { type: "link", url } });
+    expect(handoffOf(id, { items: [] })).toBeNull();
+  });
+
+  it("opt-outs: upload-package, dismiss-notice and request-connector-setup state why", () => {
+    for (const id of [
+      "extensions.upload-package",
+      "inbox.dismiss-notice",
+      "agents.request-connector-setup",
+    ]) {
+      const o = op(id);
+      expect(o.handoff).toBeUndefined();
+      expect((o.noHandoff ?? "").length).toBeGreaterThan(10);
+    }
+  });
+
+  it("plugins.upload links the org's Plugins page with the staged upload", () => {
+    expect(handoffOf("plugins.upload", staged)).toEqual({
+      kind: "handoff",
+      title: { zh: "确认插件 github 的上传", en: "Confirm the upload of plugin github" },
+      target: { type: "link", url: "/plugins?staging=s-1" },
+    });
+  });
+
+  it("extensions.upload-package has no card and names the API install first, then the CLI", () => {
+    const o = op("extensions.upload-package");
+    expect(o.handoff).toBeUndefined();
+    expect(o.description).toContain("POST /api/v1/admin/extensions/:name/install");
+    expect(o.description.indexOf("/install")).toBeLessThan(
+      o.description.indexOf("capybara extensions install"),
+    );
+    expect(o.description).toContain("after downloading the .tgz from this conversation");
+    expect(o.description).not.toContain("admin console");
+  });
+
+  it('a staged org upload without a plugin name gets a generic title, never "plugin ?"', () => {
+    for (const id of ["plugins.upload", "plugins.upload-review"]) {
+      expect(handoffOf(id, { stagingId: "s-1" })?.title).toEqual({
+        zh: "确认插件的上传",
+        en: "Confirm the plugin upload",
+      });
+    }
+  });
+
+  it("a staged import without a plugin name gets a generic title", () => {
+    expect(handoffOf("plugins.import-npm", { stagingId: "s-1" })?.title).toEqual({
+      zh: "审阅插件的权限",
+      en: "Review the plugin's permissions",
+    });
+  });
+
+  it("extensions.pending-permissions links the page of what waits, nothing when nothing waits", () => {
+    const url = (items: unknown[], total = items.length) => {
+      const v = handoffOf("extensions.pending-permissions", { items, total });
+      return v?.target.type === "link" ? v.target.url : null;
+    };
+    expect(url([])).toBeNull();
+    expect(url([{ kind: "extension", id: "crm" }])).toBe("/admin/extensions/crm");
+    expect(url([{ kind: "plugin", id: "p1" }])).toBe("/admin/plugins/pending");
+    // one extension on this page of a larger waiting set
+    expect(url([{ kind: "extension", id: "crm" }], 60)).toBe("/admin/plugins/pending");
+    expect(
+      url([
+        { kind: "extension", id: "crm" },
+        { kind: "plugin", id: "p1" },
+      ]),
+    ).toBe("/admin/plugins/pending");
+  });
+});

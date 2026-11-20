@@ -387,8 +387,8 @@
       "recreate_required": "Background work started by an earlier version may still be running on an earlier instance of this device, and that instance can no longer be verified as destroyed. Delete this device and create it again."
     },
     "app_auth": {
-      "code_invalid": "This sign-in link is invalid or has expired. Start signing in again from the Capybara desktop app.",
-      "redirect_uri_invalid": "This sign-in request came from an app address this platform does not accept, so it was not sent. Start signing in again from the Capybara desktop app.",
+      "code_invalid": "This sign-in link is invalid or has expired. Start signing in again from the Capybara app.",
+      "redirect_uri_invalid": "This sign-in request came from an app address this platform does not accept, so it was not sent. Start signing in again from the Capybara app.",
       "unavailable": "This platform cannot sign apps in yet: its public address is not set. Ask your super admin."
     },
     "device_sign_in": {
@@ -3332,15 +3332,30 @@
     "goHome": "Go to Capybara"
   },
   "appAuth": {
-    "title": "Sign in to {platform} with Capybara Desktop on {machine}?",
-    "subtitle": "Only continue if you just started this from the Capybara desktop app.",
+    "clients": {
+      "desktop": {
+        "title": "Sign in to {platform} with Capybara Desktop on {machine}?",
+        "subtitle": "Only continue if you just started this from the Capybara desktop app.",
+        "machine": "Computer",
+        "invalidHint": "This link is incomplete. Start signing in again from the Capybara desktop app.",
+        "redirectUriInvalid": "This sign-in request came from an app address this platform does not accept, so it was not sent. Start signing in again from the Capybara desktop app.",
+        "codeInvalid": "This sign-in link is invalid or has expired. Start signing in again from the Capybara desktop app."
+      },
+      "mobile": {
+        "title": "Sign in to {platform} with Capybara Mobile on {machine}?",
+        "subtitle": "Only continue if you just started this from the Capybara mobile app.",
+        "machine": "Device",
+        "invalidHint": "This link is incomplete. Start signing in again from the Capybara mobile app.",
+        "redirectUriInvalid": "This sign-in request came from an app address this platform does not accept, so it was not sent. Start signing in again from the Capybara mobile app.",
+        "codeInvalid": "This sign-in link is invalid or has expired. Start signing in again from the Capybara mobile app."
+      }
+    },
     "account": "Account",
-    "machine": "Computer",
     "appVersion": "App version",
     "confirm": "Sign in",
     "cancel": "Cancel",
     "invalidTitle": "Cannot sign in",
-    "invalidHint": "This link is incomplete. Start signing in again from the Capybara desktop app.",
+    "invalidHint": "This link is incomplete. Start signing in again from the Capybara app.",
     "doneTitle": "Done",
     "doneHint": "Returned to Capybara. You can close this page."
   },

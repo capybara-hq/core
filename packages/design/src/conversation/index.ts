@@ -87,6 +87,8 @@ export {
   ApprovalBlock,
   type ApprovalBlockProps,
   type ApprovalFact,
+  type ApprovalFile,
+  ApprovalFileRow,
   type ApprovalScope,
   type ApprovalState,
   approvalArgs,

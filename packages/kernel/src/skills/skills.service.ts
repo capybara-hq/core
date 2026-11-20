@@ -592,6 +592,8 @@ export class SkillsService {
     uploadId: string,
     actorTokenId?: string,
     shareable?: boolean,
+    /** Merged into the audit detail (a write made through the Platform tool: `via`, …). */
+    auditDetail?: Record<string, unknown>,
   ): Promise<UploadedSkill> {
     this.storage.assertAvailable();
     const prefix = skillFilesPrefix(uploadId);
@@ -629,6 +631,7 @@ export class SkillsService {
         actorTokenId,
         shareable,
         owner,
+        auditDetail,
       );
     } catch (e) {
       if (owner !== undefined) await this.platform.discardPrefix(owner.prefix);
@@ -652,6 +655,7 @@ export class SkillsService {
     actorTokenId: string | undefined,
     shareable: boolean | undefined,
     owner: OwnerVersion | undefined,
+    auditDetail: Record<string, unknown> | undefined,
   ): Promise<UploadedSkill> {
     await this.orgLock.lockAndAuthorize(orgId, actorAccountId, "skills.manage");
     await assertCustomAllowed(this.db.db, "customSkills");
@@ -661,6 +665,7 @@ export class SkillsService {
       ...(actorTokenId !== undefined && { actorTokenId }),
       ...(shareable !== undefined && { shareable }),
       ...(owner !== undefined && { owner }),
+      ...(auditDetail !== undefined && { auditDetail }),
     });
   }
 
@@ -807,7 +812,13 @@ export class SkillsService {
         orgId,
         action: "skill.version_created",
         target: existing.id,
-        detail: { name: pkg.name, version, files: manifest.files.length, platformId: promoted },
+        detail: {
+          name: pkg.name,
+          version,
+          files: manifest.files.length,
+          platformId: promoted,
+          ...opts.auditDetail,
+        },
       });
       await notifySharedUpdate(
         this.db.db,

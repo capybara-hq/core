@@ -2,6 +2,7 @@ import { type JSX, type KeyboardEvent, type ReactNode, useId, useRef, useState }
 import { Button } from "../controls/button";
 import { Input } from "../controls/inputs";
 import { Checkbox, Switch } from "../controls/toggles";
+import { formatBytes } from "../display/attachments";
 import { Callout, type CalloutAction } from "../display/callout";
 import { CodeBlock } from "../display/chat";
 import { initialOf } from "../display/initial";
@@ -119,6 +120,11 @@ export type ApprovalBlockProps = {
   }[];
   /** What the entered values are saved to (shown above the fields). */
   personTarget?: string;
+  /**
+   * The file the call takes in place of an upload (name, size, the sha256 the approval binds, an
+   * image's WebP data URL): a row above the actions so the person sees what they approve.
+   */
+  file?: { name: string; size: number; sha256: string; thumbnail?: string | undefined };
   /** Approve stays disabled (Deny does not): person fields not all filled yet. */
   approveDisabled?: boolean;
   /** `hosts`: a network ask's checked hosts (every host when it has one). */
@@ -472,6 +478,7 @@ export function ApprovalBlock(p: ApprovalBlockProps): JSX.Element {
           ) : null}
         </div>
       )}
+      {p.file ? <ApprovalFileRow file={p.file} /> : null}
       {p.personFields && p.personFields.length > 0 ? (
         <div className="cb-hcard-person" data-part="person-fields">
           <span className="cb-muted cb-small" data-part="person-note">
@@ -502,6 +509,44 @@ export function ApprovalBlock(p: ApprovalBlockProps): JSX.Element {
         />
       )}
       {denying ? null : <ApprovalNotes notes={p.notes} />}
+    </div>
+  );
+}
+
+/** Only a WebP data URL is shown as the thumbnail (the kernel makes nothing else). */
+const THUMBNAIL_URL = /^data:image\/webp;base64,[A-Za-z0-9+/=]+$/;
+
+/** What {@link ApprovalFileRow} shows of the file an approval takes. */
+export type ApprovalFile = NonNullable<ApprovalBlockProps["file"]>;
+
+/**
+ * The file an approval takes: its thumbnail (an image), name, size and the sha256's first 12 hex.
+ * The approval block draws it; the inbox's approval detail shows the same row.
+ */
+export function ApprovalFileRow({ file }: { file: ApprovalFile }): JSX.Element {
+  const t = useDesignT();
+  const thumb = file.thumbnail !== undefined && THUMBNAIL_URL.test(file.thumbnail);
+  return (
+    <div className="cb-hcard-file" data-part="file">
+      {thumb ? (
+        <img
+          className="cb-hcard-file-thumb"
+          data-part="file-thumbnail"
+          src={file.thumbnail}
+          alt=""
+        />
+      ) : null}
+      <span className="cb-hcard-file-text">
+        <span className="cb-hcard-file-name" data-part="file-name" title={file.name}>
+          {file.name}
+        </span>
+        <span className="cb-muted cb-small" data-part="file-meta">
+          {fillCopy(t("hitl.fileMeta"), {
+            size: formatBytes(file.size),
+            sha: file.sha256.slice(0, 12),
+          })}
+        </span>
+      </span>
     </div>
   );
 }

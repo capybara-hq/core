@@ -774,7 +774,8 @@ long-lived WebSocket connection to the kernel's `gateway` role.
   in through `/api/v1/app-auth` and the web consent page `/apps/authorize`. It needs `http.publicUrl`: without
   it the authorize route answers `app_auth.unavailable` and `GET /api/v1/meta` reports
   `features.appSignIn: false`. `auth.appRedirectUris` lists the redirect URIs an app may receive
-  the code at (default `capybara://auth/callback`; a fork shipping its own build adds its URI).
+  the code at (default `capybara://auth/callback`; a fork shipping its own build adds its URI);
+  `GET /api/v1/meta` returns them as `appRedirectUris` (an empty list while app sign-in is off).
   `platform.name` and the platform icon (admin settings) are what `GET /api/v1/meta` shows the
   client before sign-in.
 

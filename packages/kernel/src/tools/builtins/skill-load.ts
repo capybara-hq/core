@@ -808,10 +808,9 @@ export function skillLoadTool(deps: SkillLoadDeps): BuiltinTool {
           deps,
           ctx,
           "skills",
-          (roots) => [
-            skillSandboxDir(name, digest, roots.skills),
-            skillMarkerPath(name, digest, roots.skills),
-          ],
+          // directories only: a device pins each write root as a directory, so the marker's
+          // own path (a file once written) is granted through the marker directory
+          (roots) => [skillSandboxDir(name, digest, roots.skills), skillsMarkerDir(roots.skills)],
           (s) =>
             withPathLease(
               deps,

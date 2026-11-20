@@ -21,7 +21,8 @@ import { CurrentPrincipal, type Principal, Public, requireUser, SessionOnly } fr
  *   `/apps/authorize` → `{ redirect }` with `code`, `state` and `iss`, or `error=access_denied`
  *   with `deny: true`; an unlisted redirect URI is `app_auth.redirect_uri_invalid`;
  * - `POST /token` (public, CSRF header, `app-auth-token-ip`): the app exchanges the code with
- *   its verifier → `{ account }` and the session cookies, or `app_auth.code_invalid`.
+ *   its verifier → `{ account }` and the session cookies, or `app_auth.code_invalid`
+ *   (`auth.account_disabled` for an account that is not active).
  */
 @Controller("api/v1/app-auth")
 export class AppAuthController {

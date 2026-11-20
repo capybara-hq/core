@@ -500,6 +500,16 @@ export function ApprovalCard({
         {...(network !== undefined ? { network } : {})}
         {...(command !== undefined ? { command } : {})}
         state={state}
+        {...(view?.file !== undefined
+          ? {
+              file: {
+                name: view.file.name,
+                size: view.file.size,
+                sha256: view.file.sha256,
+                ...(view.file.thumbnail !== undefined ? { thumbnail: view.file.thumbnail } : {}),
+              },
+            }
+          : {})}
         {...(personFields.length > 0 && view?.personTarget
           ? {
               personTarget: view.personTarget[lang(locale)],

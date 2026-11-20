@@ -19,6 +19,8 @@ export const MetaResponseSchema = z.object({
     device: z.object({ min: z.number().int(), max: z.number().int() }),
   }),
   features: z.object({ localDevices: z.boolean(), appSignIn: z.boolean() }),
+  /** The redirect URIs app sign-in accepts (`auth.appRedirectUris`); [] while appSignIn is off. */
+  appRedirectUris: z.array(z.string()),
 });
 export type MetaResponse = z.infer<typeof MetaResponseSchema>;
 
@@ -40,6 +42,7 @@ export class MetaController {
       this.iconUrl("maskable"),
       this.iconUrl("favicon"),
     ]);
+    const appSignIn = Boolean(config.http.publicUrl);
     return {
       name: config.platform.name ?? null,
       icon: app,
@@ -48,8 +51,10 @@ export class MetaController {
       features: {
         localDevices: true,
         // The authorize route answers app_auth.unavailable without http.publicUrl.
-        appSignIn: Boolean(config.http.publicUrl),
+        appSignIn,
       },
+      // Not secret: an app that finds its own URI missing says so before opening the browser.
+      appRedirectUris: appSignIn ? [...config.auth.appRedirectUris] : [],
     };
   }
 

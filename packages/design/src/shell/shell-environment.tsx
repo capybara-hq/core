@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { PAGE_BACKGROUND } from "../tokens";
 
 export { SHELL_ENVIRONMENT_SCRIPT, ShellEnvironmentScript } from "./shell-environment-script";
@@ -149,16 +149,47 @@ function backgroundOf(root: HTMLElement, scheme: "dark" | "light"): string {
   return COLOR.test(computed) ? computed : PAGE_BACKGROUND[scheme];
 }
 
+/** The main color tokens `chrome@1` carries, by their `--cb-*` custom property. */
+const TOKEN_PROPERTIES = {
+  bg: "--cb-bg",
+  panel: "--cb-panel",
+  ink: "--cb-ink",
+  muted: "--cb-muted",
+  line: "--cb-line",
+  accent: "--cb-accent",
+  onAccent: "--cb-on-accent",
+} as const;
+type ChromeTokens = Record<keyof typeof TOKEN_PROPERTIES, string>;
+
+/**
+ * The computed main color tokens, only when all seven are plain colors (hex or `rgb()` /
+ * `rgba()`); any other value (`color-mix()`, a name, unset) means no tokens at all.
+ */
+function tokensOf(root: HTMLElement): ChromeTokens | null {
+  const style = getComputedStyle(root);
+  const tokens: Partial<ChromeTokens> = {};
+  for (const [key, property] of Object.entries(TOKEN_PROPERTIES)) {
+    const value = style.getPropertyValue(property).trim();
+    if (!COLOR.test(value)) return null;
+    tokens[key as keyof ChromeTokens] = value;
+  }
+  return tokens as ChromeTokens;
+}
+
 /**
  * The AppShell's side of the Shell environment (spec §9.3), after hydration: re-reads the
  * environment on every `change` (fullscreen hides the traffic lights, a capability appears) and
- * writes it on `<html>`; tells `chrome@1.setAppearance` the scheme and background on mount and
- * once per change of them (`data-theme`, or the background token through `<html>`'s class or
- * style). Returns the shell's kind for the `shell=` state token, null in a browser
+ * writes it on `<html>`; tells `chrome@1.setAppearance` the scheme, background, main color
+ * tokens (when all are plain colors) and `singleScheme: true` under a single-scheme theme on mount
+ * and once per change of them (`data-theme`, the tokens through `<html>`'s class or style, or
+ * `singleScheme`). Returns the shell's kind for the `shell=` state token, null in a browser
  * and before hydration. Unsubscribes on unmount.
  */
-export function useShellEnvironment(): ShellKind | null {
+export function useShellEnvironment(singleScheme = false): ShellKind | null {
   const [kind, setKind] = useState<ShellKind | null>(null);
+  const singleRef = useRef(singleScheme);
+  singleRef.current = singleScheme;
+  const resend = useRef<(() => void) | null>(null);
   useEffect(() => {
     const shell = shellOf(window);
     if (shell === null) return;
@@ -169,11 +200,18 @@ export function useShellEnvironment(): ShellKind | null {
       if (chrome === null) return;
       const scheme = root.dataset.theme === "light" ? "light" : "dark";
       const background = backgroundOf(root, scheme);
-      const key = `${scheme} ${background}`;
+      const tokens = tokensOf(root);
+      const single = singleRef.current;
+      const key = JSON.stringify([scheme, background, tokens, single]);
       if (key === sent) return;
       sent = key;
       try {
-        const r = chrome.setAppearance({ scheme, background });
+        const r = chrome.setAppearance({
+          scheme,
+          background,
+          ...(tokens !== null && { tokens }),
+          ...(single && { singleScheme: true }),
+        });
         // a rejected call is the shell's business: the page keeps its own theme either way
         Promise.resolve(r).catch(() => {});
       } catch {
@@ -187,6 +225,7 @@ export function useShellEnvironment(): ShellKind | null {
       appearance();
     };
     sync();
+    resend.current = appearance;
     let off: (() => void) | undefined;
     try {
       const r = shell.on("change", sync);
@@ -203,6 +242,7 @@ export function useShellEnvironment(): ShellKind | null {
       attributeFilter: ["data-theme", "class", "style"],
     });
     return () => {
+      resend.current = null;
       observer?.disconnect();
       try {
         off?.();
@@ -211,5 +251,10 @@ export function useShellEnvironment(): ShellKind | null {
       }
     };
   }, []);
+  // a theme switch may flip singleScheme without touching <html> first: report it too
+  useEffect(() => {
+    void singleScheme;
+    resend.current?.();
+  }, [singleScheme]);
   return kind;
 }

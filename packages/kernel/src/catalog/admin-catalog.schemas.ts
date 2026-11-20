@@ -78,6 +78,8 @@ export const AdminCatalogGuideQuery = z
   .strict();
 
 export const ADMIN_CATALOG_ROUTES: readonly RouteSchemas[] = [
+  // the plugin package is the raw body (no schema)
+  { route: "POST /api/v1/admin/catalog/import/file" },
   { route: "GET /api/v1/admin/catalog/items", query: CatalogItemsQuery },
   { route: "GET /api/v1/admin/catalog/items/:id", params: CatalogIdPathParams },
   {

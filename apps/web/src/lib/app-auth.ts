@@ -6,9 +6,19 @@ import { apiFetch } from "./api";
  * imports kernel code.
  */
 
+/** The native apps that sign in through the consent page (mobile spec §4.3). */
+export const APP_CLIENTS = ["desktop", "mobile"] as const;
+export type AppClient = (typeof APP_CLIENTS)[number];
+
+/** The query's `client` when it names a known app, else null. */
+export function appClientOf(q: Readonly<Record<string, string | undefined>>): AppClient | null {
+  const client = (q.client ?? "").trim();
+  return (APP_CLIENTS as readonly string[]).includes(client) ? (client as AppClient) : null;
+}
+
 /** The body of `POST /api/v1/app-auth/authorize`. */
 export interface AuthorizeAppBody {
-  client: "desktop";
+  client: AppClient;
   redirectUri: string;
   codeChallenge: string;
   codeChallengeMethod: "S256";
@@ -37,11 +47,12 @@ export function authorizeRequest(
   const state = get("state");
   const name = get("name");
   const appVersion = get("app_version");
-  if (get("client") !== "desktop" || get("code_challenge_method") !== "S256") return null;
+  const client = appClientOf(q);
+  if (client === null || get("code_challenge_method") !== "S256") return null;
   if (redirectUri === "" || codeChallenge === "" || state === "") return null;
   if (name === "" || appVersion === "") return null;
   return {
-    client: "desktop",
+    client,
     redirectUri,
     codeChallenge,
     codeChallengeMethod: "S256",
