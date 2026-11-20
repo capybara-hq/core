@@ -14,13 +14,15 @@ import {
 import type { FastifyReply, FastifyRequest } from "fastify";
 import { z } from "zod";
 import { ApiError } from "../errors.js";
+import { KernelDb } from "../infra/database/kernel-db.js";
 import { CredentialThrottler } from "../infra/throttler/credential-throttler.js";
 import { KERNEL_LOGGER } from "../infra/tokens.js";
 import { createZodDto } from "../infra/validation/create-zod-dto.js";
 import { ZBody } from "../infra/validation/zod-params.js";
 import { OrgsService } from "../orgs/orgs.service.js";
 import type { OrgRole } from "../orgs/roles.js";
-import { type Account, AccountsService } from "./accounts.js";
+import { type AccountView, withAvatarUrls } from "./account-avatar.js";
+import { AccountsService } from "./accounts.js";
 import { type ApiTokenRecord, ApiTokenService, FutureIsoDate } from "./api-tokens.js";
 import { MAX_PASSWORD_LENGTH } from "./login.js";
 import { type Preferences, PreferencesBody, type PreferencesSchema } from "./me.schemas.js";
@@ -65,12 +67,13 @@ export class MeController {
     @Inject(CredentialThrottler) private readonly throttler: CredentialThrottler,
     @Inject(KERNEL_LOGGER) private readonly log: Logger,
     @Inject(SettingsService) private readonly settings: SettingsService,
+    @Inject(KernelDb) private readonly db: KernelDb,
   ) {}
 
   @Get()
   @AllowPendingPasswordChange()
   async me(@CurrentPrincipal() principal: Principal): Promise<{
-    account: Account;
+    account: AccountView;
     via: "session" | "pat";
     currentOrgId: string | null;
     memberships: MembershipView[];
@@ -91,7 +94,14 @@ export class MeController {
     const current = memberships.some((m) => m.orgId === currentOrgId) ? currentOrgId : null;
     const { orgCreation } = await this.settings.get();
     const canCreateOrg = orgCreation === "anyone" || p.account.isSuperAdmin;
-    return { account: p.account, via: p.via, currentOrgId: current, memberships, canCreateOrg };
+    const [account] = await withAvatarUrls(this.db.db, [p.account]);
+    return {
+      account: account as AccountView,
+      via: p.via,
+      currentOrgId: current,
+      memberships,
+      canCreateOrg,
+    };
   }
 
   /**
