@@ -200,6 +200,13 @@ export const REWRAP_BATCH_SIZE = 500;
 /** The AAD binding a sealed initial password to its account (a row moved to another one fails). */
 export const initialPasswordAad = (accountId: string) => `capybara:initial-password:${accountId}`;
 
+/**
+ * The AAD binding a person's sealed card values to their approval and field paths (sorted, joined
+ * by ","): a row moved to another approval, or whose paths are altered, fails to unwrap.
+ */
+export const platformSealedInputAad = (approvalId: string, paths: readonly string[]) =>
+  `capybara:platform-sealed-input:${approvalId}:${[...paths].sort().join(",")}`;
+
 type RewrapHandles = { db: Pick<KernelDb, "db">; txHost: Pick<TransactionHost, "run"> };
 
 /** One table whose rows are sealed directly with a master key. */
