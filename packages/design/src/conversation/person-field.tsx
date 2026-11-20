@@ -26,7 +26,7 @@ export function PersonFieldRow(p: PersonFieldRowProps): JSX.Element {
     "aria-label": p.label,
     "aria-describedby": described === "" ? undefined : described,
     "aria-invalid": p.error ? true : undefined,
-    autoComplete: "off",
+    autoComplete: "new-password",
     spellCheck: false,
     value: p.value,
     disabled: p.disabled,
