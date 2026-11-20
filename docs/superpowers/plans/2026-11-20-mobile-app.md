@@ -17,6 +17,13 @@ keeps every done task as written and marks what the amendment supersedes in plac
 which replace Task 19, and the amended Task 16. The remaining-work wave table follows the original
 one.
 
+**Maintainer decisions 2026-11-21 (the touch open questions, now in layout spec §15).** (1) No
+voice button: the composer is attach, input and send, dictation is the system keyboard's
+(Task 26). (2) System back closes an open drawer or sheet first, then navigates: the web holds
+one history entry per open drawer or sheet (Tasks 25, 27, 28); the native `decideBack` is
+unchanged (Task 16). (3) The Duo inner display has the strip too (Task 31). (4) No 无痕会话
+button; the home's trailing slot stays empty (Tasks 27, 28).
+
 **Architecture:**
 - **Core (`capybara-hq/core`).**
   - `@capybara-hq/plugin-sdk` gains the capability shapes `nav@1`, `haptics@1`, `share@1`,
@@ -205,8 +212,19 @@ Added 2026-11-21 (the spec amendment's designer's calls, restated for the tasks)
 23. **`profiles@1.show()`** opens the native profile switcher from the web's account sheet (the
     long-pressed 我 tab is gone); it returns nothing to the page and is not offered when the app is
     locked to one deployment.
-24. **No voice button** in the floating composer until a voice input design exists (layout spec
-    §15 Q3); the composer takes an optional `voice` slot that nothing fills yet.
+24. **No voice button** in the floating composer (maintainer decision 2026-11-21): it is attach,
+    input and send, and dictation is the system keyboard's; a voice-conversation mode is a later
+    design. The composer has no `voice` slot.
+25. **Back closes an open overlay first** (maintainer decision 2026-11-21, layout spec §15). The
+    overlay's owner is the web: opening the drawer or a bottom sheet on a compact touch window
+    pushes one history entry (`history.pushState` with a marker in `history.state`), closing it
+    by any other means (scrim, drag, pick, Escape) pops that entry with `history.back()`, and a
+    `popstate` that lands on a state without the marker closes the overlay. Android's back and
+    the iOS edge swipe therefore need no native overlay knowledge.
+26. **The Duo inner display has the strip** (maintainer decision 2026-11-21): native strip
+    navigation applies on both displays.
+27. **No incognito conversation (无痕会话) button** (maintainer decision 2026-11-21): the home's
+    trailing floating slot stays empty.
 
 ## Review Focus
 
@@ -987,7 +1005,8 @@ its count.
 **Files:**
 - Create: `packages/design/src/shell/floating-button.tsx` (`FloatingIconButton`),
   `src/overlays/drawer.tsx` (`Drawer`, `DrawerLevel`), `src/display/nav-row.tsx` (`NavRow`),
-  `src/styles/touch.css` (floating surfaces; imported into `layer(design)` in `styles/index.css`).
+  `src/styles/touch.css` (floating surfaces; imported into `layer(design)` in `styles/index.css`),
+  `src/overlays/use-overlay-history.ts` (`useOverlayHistory(open, close)`, Decision 25).
 - Modify: `src/overlays/bottom-sheet.tsx` and `styles/overlays.css` (the touch form: radius
   `radius-md` at the top, the handle, rows `touch-row`), `styles/display.css` (ObjectRow and
   ItemList rows on touch: `touch-row` / `touch-row-roomy`, no `line-soft` dividers, no `line-card`
@@ -1027,6 +1046,13 @@ export function NavRow(props: { icon?: IconName; label: string; href?: string; o
     their list container no `box-shadow` hairline; outside it the desktop rules are unchanged.
   - **Bottom sheet**: under the touch query the sheet's top corners use `--cb-radius-md` and its
     option rows `--cb-touch-row`; the drag behaviour is unchanged.
+  - **Back closes the overlay first** (`useOverlayHistory`, Decision 25; jsdom `history`):
+    opening a `Drawer` or a touch `BottomSheet` adds exactly one history entry carrying the
+    marker; a `popstate` back to the entry without the marker calls `onOpenChange(false)`;
+    closing by scrim, drag, pick or Escape calls `history.back()` once (no second entry, no
+    double close); two overlays open at once (a sheet over the drawer) hold two entries and back
+    closes the top one; outside the compact touch query (medium, expanded, pointer fine) the hook
+    pushes nothing; unmounting while open pops its entry.
 - [ ] **Step 2: Run** `pnpm exec vitest run --project design packages/design/test/floating-button.test.tsx packages/design/test/drawer.test.tsx packages/design/test/nav-row.test.tsx packages/design/test/touch-rows.test.ts packages/design/test/bottom-sheet.test.tsx`
   — expect FAIL.
 - [ ] **Step 3: Implement** in design only.
@@ -1037,8 +1063,8 @@ export function NavRow(props: { icon?: IconName; label: string; href?: string; o
 ### Task 26: Touch components: the conversation
 
 **Files:**
-- Modify: `packages/design/src/conversation/composer.tsx` (the touch pill: attach, input, an
-  optional `voice` slot, send as a 48 accent circle, stop while running),
+- Modify: `packages/design/src/conversation/composer.tsx` (the touch pill: attach, input,
+  send as a 48 accent circle, stop while running; no voice button, Decision 24),
   `composer-options.tsx` (the settings chip "model · thinking · device" above the pill and the
   settings sheet: model, thinking 低 / 中 / 高 as a `Segmented`, where to run, permissions, the note
   「设置只对这次会话生效。」), `bubble.tsx` (user bubble at the end edge), `hitl.tsx` (approval card
@@ -1057,8 +1083,8 @@ export function NavRow(props: { icon?: IconName; label: string; href?: string; o
     `border-radius: var(--cb-radius-pill)`; send `var(--cb-touch-float)` round on `accent`;
     approval buttons `min-height: var(--cb-touch-primary)`; the user bubble sits at the end
     edge (`margin-inline-start: auto` or `justify-self: end`).
-  - Without a `voice` prop no voice button renders; with one it renders between the input and
-    send with an accessible name.
+  - The pill holds exactly attach, the input and send (stop while running): no voice button and
+    no `voice` prop exist.
   - The chip opens the settings sheet; picking 高 calls `onChange` once and plays `selection`; the
     sheet shows the note.
   - The approval card renders 拒绝 before 批准, 批准 primary, and its command in a
@@ -1085,6 +1111,8 @@ export function NavRow(props: { icon?: IconName; label: string; href?: string; o
   title bar (its compact form is the floating centre pill and trailing overflow),
   `src/shell/page-header.tsx` (on compact the title sits below the floating row),
   `styles/shell.css`, `styles/touch.css`.
+- The drawer and the account sheet use Task 25's overlay history, so back closes them first
+  (Decision 25); the home's trailing floating slot stays empty (no 无痕会话 button, Decision 27).
 - The AppShell stops rendering `BottomNav` and `TopBar`; the modules `bottom-nav.tsx`,
   `top-bar.tsx` and `me-panel.tsx` and their exports stay untouched in this task, because apps/web
   still imports `BottomNavItem` and `MePanel` (Task 28 deletes them with their last users).
@@ -1133,6 +1161,10 @@ templates (ConversationPage's title bar, the page head's actions).
     out; 「切换平台」 only with `onSwitchProfile`.
   - Chat surface → chat surface sets no `data-nav`; chat surface → pushed sets `data-nav="push-*"`;
     a `hasUAVisualTransition` pop still skips (Task 7).
+  - Back closes overlays first: with the drawer open, a `popstate` closes it and the route stays;
+    with the account sheet open over the drawer, the first back closes the sheet, the second the
+    drawer, the third navigates.
+  - The home renders no trailing floating control (no incognito button).
   - Medium and expanded render as before (the sidebar and rail tests stay green).
   - `findNestedBoxes` finds nothing in the drawer or the account sheet.
 - [ ] **Step 2: Run** `pnpm exec vitest run --project design packages/design/test/compact-shell.test.tsx packages/design/test/nav-drawer.test.tsx packages/design/test/account-sheet.test.tsx packages/design/test/transitions.test.tsx packages/design/test/touch.test.ts`
@@ -1174,6 +1206,11 @@ templates (ConversationPage's title bar, the page head's actions).
   - AppFrame at compact renders the menu button with the inbox badge and passes
     `chatSurface` from the pathname.
   - `/me` is not in the route table and renders the not-found page.
+  - On the home no trailing control renders; with the drawer open, `history.back()` closes it
+    without a route change, and a route change made by a drawer pick leaves no stale overlay
+    entry (the pick pops its entry before navigating, so one back goes to the previous page).
+  - The conversation settings sheet and the account sheet (Task 27) behave the same: open
+    pushes one entry, back closes it.
   - The manifest's `start_url` is `/`.
   - `check:i18n` passes with the `me.*` keys gone (no orphan, no missing key).
 - [ ] **Step 2: Run** `pnpm exec vitest run apps/web/test/compact-shell.test.tsx apps/web/test/compact-skeletons.test.tsx apps/web/test/manifest.test.ts apps/web/test/nav.test.tsx`
@@ -1627,7 +1664,11 @@ and tests `apps/mobile/test/runtime/{navigation,splash,chrome}.test.ts`.
     `moveTaskToBack(true)`. **Amended 2026-11-21:** there are no tab roots and Android has no
     `nav@1`: back goes back in history while `canGoBack()`, else `moveTaskToBack(true)`, decided by
     a pure `decideBack({ canGoBack }): "history" | "background"` in `navigation.ts`. Closing an
-    open drawer or sheet first is the web's (layout spec §15 Q4).
+    open drawer or sheet first is the web's (maintainer decision 2026-11-21, layout spec §15,
+    plan Decision 25): the overlay holds a history entry, so Android's back reports
+    `canGoBack() = true`, `decideBack` returns `history` and the WebView's popstate closes the
+    overlay; the iOS swipe moves through the same entry. Add a case: `decideBack({ canGoBack:
+    true })` is `history` whatever overlay state the page is in (the function takes none).
   - The native splash comes from `@capacitor/splash-screen` with `launchAutoHide: false`.
 - [ ] **Step 4: Run** the tests, `test:ios:ui` (a case: launch against the loopback test page that
   calls `capybaraShell.capabilities["chrome@1"].ready()` → the splash is gone, and the background
@@ -1918,8 +1959,10 @@ them on a change).
   - XCUITest on the Duo simulator: the outer display shows the vertical tab bar in the strip with
     four items and the menu button above them; tapping 收件箱 makes the loopback test page's
     `onSelect` handler set the location to `/inbox`; the menu button fires the page's `onMenu`;
-    opening to the inner display keeps the strip (or, where the inner display reports none, the
-    page's `data-native-nav` goes away), with exactly one tab bar in the hierarchy; on an iPhone
+    opening to the inner display keeps the strip (decided 2026-11-21: the inner display has the
+    right strip too), with exactly one tab bar in the hierarchy and the web's `menu: null`
+    there; the fallback below stays only for an OS that reports no strip, where `nav@1`
+    disappears and the page's `data-native-nav` goes away; on an iPhone
     17 simulator and an iPad simulator there is no tab bar and `nav@1` is absent.
 - [ ] **Step 2: Run** `pnpm exec vitest run apps/mobile/test/runtime/nav.test.ts`, `test:ios`,
   `test:ios:ui` — expect FAIL.
@@ -1977,8 +2020,9 @@ visible profiles by name (the current one marked), 「添加平台」 / "Add pla
   - §7.1 → 6; §7.2 → 7; §7.3 → 8; §7.4 is held by `check:web-ui` and no task changes tokens
     beyond motion. Amended 2026-11-21: §7.4 now allows the touch set, which Task 24 brings; the
     colors stay.
-  - Not planned here (open in layout spec §15): a voice input (Q3, Decision 24) and system back
-    closing an open drawer or sheet (Q4).
+  - Layout spec §15, decided 2026-11-21: no voice button (Q3 → Decision 24, Task 26), back closes
+    an open drawer or sheet first (Q4 → Decision 25, Tasks 16, 25, 27, 28), the Duo inner strip
+    (Task 31), no 无痕会话 button (Tasks 27, 28).
   - §8 → 1.4, 9, 19 (now 31); §10 minus push → 21, 22; §13 phases 1–3 → waves 1–7, then the
     remaining-work waves T1–T7.
   - Layout spec as amended 2026-11-21: §4.1 / §4.2 → 27, 28; §4.3 strip-aware entries → 30;
