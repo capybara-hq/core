@@ -216,7 +216,7 @@ export const PLATFORM_DOMAINS: readonly { id: string; description: string }[] = 
   {
     id: "extensions",
     description:
-      "Extensions in the org (state, tool switches, extension point defaults, file previewers) and, for the super admin, on the platform (state, pending permission confirmations, enable, disable, uninstall).",
+      "Extensions in the org (state, tool switches, extension point defaults, file previewers, the org config and the org's copy of platform config) and, for the super admin, on the platform (state, deployment config, pending permission confirmations, enable, disable, uninstall). Secrets are entered by the person on the confirmation card.",
   },
   {
     id: "conversations",

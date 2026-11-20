@@ -1,9 +1,16 @@
 import { Inject, Injectable, type OnModuleInit } from "@nestjs/common";
 import { z } from "zod";
-import { AdminExtensionNamePathParams } from "../../admin/extensions.schemas.js";
+import {
+  AdminExtensionConfigBody,
+  AdminExtensionNamePathParams,
+} from "../../admin/extensions.schemas.js";
 import { type CatalogItemView, CatalogService } from "../../catalog/catalog.service.js";
 import { ExtensionAdminOps } from "../../extensions/admin-ops.js";
 import { ExtensionAdmin } from "../../extensions/admin-view.js";
+import {
+  type DeploymentConfigView,
+  ExtensionDeploymentConfigService,
+} from "../../extensions/deployment-config.js";
 import type { AdminExtensionView } from "../../extensions/permission-view.js";
 import {
   SINGLE_PROVIDER_ENABLED,
@@ -14,10 +21,12 @@ import { unavailableReason } from "../../extensions/unavailable.js";
 import { KernelConfigService } from "../../infra/config/kernel-config.service.js";
 import { KernelDb } from "../../infra/database/kernel-db.js";
 import { defineOperation, type PrecheckResult } from "../operation.js";
+import { type PersonFieldTarget, personFieldParams, secretFieldsOf } from "../person-fields.js";
 import { PlatformOperations } from "../registry.js";
 import { precheckBy, viaAgent } from "./errors.js";
 import { assertExtensionNotOtherOrgs, OTHER_ORG, otherOrgExtensions } from "./other-orgs.js";
 import { Cursor, pageOf, startOf } from "./paging.js";
+import { configChanges, flatValues, withPersonInputs } from "./person-inputs.js";
 import { localized } from "./summary.js";
 import { unavailableFields } from "./unavailable.js";
 
@@ -25,6 +34,28 @@ import { unavailableFields } from "./unavailable.js";
 const Name = AdminExtensionNamePathParams.shape.name.max(64);
 const NameInput = z.object({ name: Name }).strict();
 const EXAMPLE = { name: "model-anthropic" };
+
+/** `values` of the deployment config route: field dot path -> value (`null` clears). */
+const ConfigValues = AdminExtensionConfigBody.shape.values;
+
+/**
+ * The person fields of an extension's deployment config (platform web parity spec §4.1): the
+ * secret fields of its form schema, set or not. A secret field the schema walk cannot address (no
+ * form schema, a record) is web only, so a value for it in `values` is refused too.
+ */
+function deploymentPersonFields(v: DeploymentConfigView): PersonFieldTarget {
+  const secrets = v.fields.filter((f) => f.secret);
+  const found = secretFieldsOf(v.schema, new Set(secrets.filter((f) => f.set).map((f) => f.path)));
+  const asked = new Set(found.fields.map((f) => f.path));
+  const n = localized(v.displayName, v.plugin);
+  return {
+    target: { zh: `扩展「${n.zh}」的部署配置`, en: `${n.en}: deployment config` },
+    fields: found.fields,
+    recordOnly: [
+      ...new Set([...found.recordOnly, ...secrets.map((f) => f.path).filter((p) => !asked.has(p))]),
+    ],
+  };
+}
 
 /** The English name of an extension as next steps name it. */
 const enName = (v: AdminExtensionView): string => localized(v.displayName, v.name).en;
@@ -96,7 +127,8 @@ const pendingPlugin = (i: CatalogItemView) => ({
  * The super admin's extension operations of the `Platform` tool (spec §14.2 "admin console",
  * §14.5 item 1): the deployment's extensions (list, read), enable, disable and uninstall. Installing
  * a package (upload, npm) and approving permissions stay on the web: a person reviews the
- * permissions there. Deployment config is never read or written here (secrets).
+ * permissions there. The deployment config is read (secrets as set or not) and written here, its
+ * secrets entered by the person on the confirmation card (platform web parity spec §4).
  */
 @Injectable()
 export class ExtensionsAdminOperations implements OnModuleInit {
@@ -107,6 +139,8 @@ export class ExtensionsAdminOperations implements OnModuleInit {
     @Inject(KernelConfigService) private readonly config: KernelConfigService,
     @Inject(KernelDb) private readonly kdb: KernelDb,
     @Inject(CatalogService) private readonly catalog: CatalogService,
+    @Inject(ExtensionDeploymentConfigService)
+    private readonly deploymentConfigs: ExtensionDeploymentConfigService,
   ) {}
 
   /** The view of `name` for a precheck, or the refusal (unknown, startup-declared). */
@@ -213,7 +247,7 @@ export class ExtensionsAdminOperations implements OnModuleInit {
       defineOperation({
         id: "extensions.platform-enable",
         description:
-          "Enable an installed extension on the platform (super admin): every replica loads it, without a restart. It runs once its permissions are approved and its deployment config is valid (both on the web); orgs then switch it on themselves.",
+          "Enable an installed extension on the platform (super admin): every replica loads it, without a restart. It runs once its permissions are approved (on the web) and its deployment config is valid (extensions.platform-config, extensions.platform-set-config); orgs then switch it on themselves.",
         input: NameInput,
         example: EXAMPLE,
         authz: { superAdmin: true },
@@ -387,6 +421,131 @@ export class ExtensionsAdminOperations implements OnModuleInit {
             viaAgent("extensions.uninstall", ctx),
           );
           return { uninstalled: input.name };
+        },
+      }),
+      defineOperation({
+        id: "extensions.platform-config",
+        description:
+          "Read an extension's deployment config (super admin): each field's source (env, file or nacos: read-only here; db: saved here; default; unset), the effective value of non-secret fields, whether each secret field is set (never its value), the form's JSON Schema (secret fields carry x-secret), whether the config is valid and the problems (paths only), and the overridable fields every org must fill in itself (orgMustConfigure).",
+        input: NameInput,
+        example: EXAMPLE,
+        authz: { superAdmin: true },
+        mirrors: ["GET /api/v1/admin/extensions/:name/config"],
+        confirm: "read",
+        errors: [
+          {
+            code: "extension.not_found",
+            next: "Check the extension name with extensions.platform-list.",
+          },
+        ],
+        run: async (input, ctx) => {
+          await assertExtensionNotOtherOrgs(this.kdb.db, input.name, ctx.orgId);
+          return this.deploymentConfigs.view(input.name);
+        },
+      }),
+      defineOperation({
+        id: "extensions.platform-set-config",
+        description:
+          "Save fields of an extension's deployment config (super admin): values maps field dot paths to new values (null clears a non-secret field; a field left out keeps its value). Secret fields are never in values: list them in askPerson and the person types them on the confirmation card (on the web); list stored secrets to empty in clearSecrets. Required secrets without a stored value are asked even when not listed. Every replica applies the saved config without a restart. Read the fields first with extensions.platform-config.",
+        input: z
+          .object({
+            name: Name,
+            values: ConfigValues.default({}),
+            askPerson: personFieldParams.askPerson,
+            clearSecrets: personFieldParams.clearSecrets,
+          })
+          .strict(),
+        example: { name: "model-anthropic", values: {}, askPerson: ["apiKey"], clearSecrets: [] },
+        authz: { superAdmin: true },
+        mirrors: ["PUT /api/v1/admin/extensions/:name/config"],
+        // secret record entries are entered on the web page (ruling R1)
+        omits: ["secretEntries"],
+        extras: ["askPerson", "clearSecrets"],
+        loosens: {
+          values: "defaults to {} so a call that only asks the person for secrets needs no values",
+        },
+        confirm: "platform",
+        errors: [
+          {
+            code: "extension.not_found",
+            next: "Check the extension name with extensions.platform-list.",
+          },
+          {
+            code: "extension.config_invalid",
+            next: "Read the fields and their schema with extensions.platform-config, correct the values (the error's details name the fields), then call again.",
+          },
+          {
+            code: "extension.config_readonly",
+            next: "These fields come from the startup config (file, Nacos or environment): only the deployment's config changes them. Leave them out and call again.",
+          },
+        ],
+        personFields: async (i, ctx) => {
+          await assertExtensionNotOtherOrgs(this.kdb.db, i.name, ctx.orgId);
+          return deploymentPersonFields(await this.deploymentConfigs.view(i.name));
+        },
+        summary: async (i) => {
+          const v = await this.deploymentConfigs.view(i.name);
+          const n = localized(v.displayName, v.plugin);
+          const c = configChanges(i.values, i.askPerson, i.clearSecrets);
+          return {
+            zh: `保存扩展「${n.zh}」的平台部署配置：${c.zh}`,
+            en: `Save the platform deployment config of extension "${n.en}": ${c.en}`,
+          };
+        },
+        run: async (input, ctx) => {
+          await assertExtensionNotOtherOrgs(this.kdb.db, input.name, ctx.orgId);
+          const view = await withPersonInputs(
+            "extensions.platform-set-config",
+            ctx,
+            (entered, detail) =>
+              this.deploymentConfigs.put(
+                input.name,
+                flatValues(input.values, entered, input.clearSecrets),
+                ctx.actorAccountId,
+                undefined,
+                [],
+                detail,
+              ),
+          );
+          return {
+            config: view,
+            next: "Replicas apply it in the background; check the extension's state with extensions.platform-get.",
+          };
+        },
+      }),
+      defineOperation({
+        id: "extensions.platform-clear-config",
+        description:
+          "Clear the deployment config saved on the platform for an extension (super admin): every saved field and every stored secret. Fields from the startup config (file, Nacos, environment) stay in effect. The extension reloads from what remains, or waits for configuration when that is missing or invalid.",
+        input: NameInput,
+        example: EXAMPLE,
+        authz: { superAdmin: true },
+        mirrors: ["DELETE /api/v1/admin/extensions/:name/config"],
+        confirm: "platform",
+        rememberable: false,
+        errors: [
+          {
+            code: "extension.not_found",
+            next: "Check the extension name with extensions.platform-list.",
+          },
+        ],
+        summary: async (i) => {
+          const v = await this.deploymentConfigs.view(i.name);
+          const n = localized(v.displayName, v.plugin);
+          return {
+            zh: `清除扩展「${n.zh}」保存在平台上的部署配置（含全部密钥；启动配置中的字段保留）`,
+            en: `Clear the deployment config of extension "${n.en}" saved on the platform (every secret too; startup config fields stay)`,
+          };
+        },
+        run: async (input, ctx) => {
+          await assertExtensionNotOtherOrgs(this.kdb.db, input.name, ctx.orgId);
+          const view = await this.deploymentConfigs.clear(
+            input.name,
+            ctx.actorAccountId,
+            undefined,
+            viaAgent("extensions.platform-clear-config", ctx),
+          );
+          return { config: view };
         },
       }),
     ]);

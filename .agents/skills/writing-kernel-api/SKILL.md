@@ -364,6 +364,31 @@ imports no domain module). `defineOperation({...})` fields:
   write's own `conversationId` / `runId` survive the merge). Results hold no secrets, tokens,
   credential fields or secret config.
 
+**Person fields** (platform web parity spec §4, `platform/person-fields.ts`). A write whose target
+holds secrets never takes them as params: the person types them on the approval card.
+
+- The input adds `personFieldParams` (`askPerson`, `clearSecrets`: dot paths, as the config routes'
+  `values`), the route's secret fields go into `omits`, and `personFields(input, ctx)` returns the
+  target (`{ zh, en }` card name) and `secretFieldsOf(jsonSchema, storedPaths)` of its form schema
+  (`x-secret` nodes; a secret it cannot address, such as a record or one with no form schema, goes to
+  `recordOnly`: web only, `platform.secret_record_web_only`).
+- The tool plans the call before the card (`planPersonFields`): a secret in `values` is refused as
+  leaked without echoing it, a path that is no secret field is refused, a required secret without a
+  stored value is asked anyway. A call with person fields always asks, once, and only its
+  `requested_for` person approves it in a web session with the values (`inputs` on the decision;
+  never from IM, never unattended, never remembered).
+- The decision seals the values (`SealedInputs`, AES-GCM, 15 minutes, read once). `run` gets them
+  only through `ctx.personInputs.apply(fn)`: the whole service write happens inside `fn`, in the
+  transaction that consumes the row (`withPersonInputs` in `platform/ops/person-inputs.ts`; without
+  `personInputs` it calls the service directly). A service whose post-write side effects must see the
+  commit puts them in `afterCommit` when it runs inside a caller's transaction
+  (`ExtensionDeploymentConfigService.put`). The audit detail adds `inputsProvided` (paths); results and
+  events carry paths, never values.
+- A route schema field carrying a secret is marked with the SDK's `secret()` (`SecretEntry.value`);
+  the parity rule `platform-op-secret-param` then requires it in `omits` and the operation to define
+  `personFields`. Dynamic records (`values`, `config`) cannot carry the marker; the runtime plan
+  covers them.
+
 **Results.** A list returns compact rows: `id`, `name`, `state`, `reason?`, `next?` and at most 3
 domain fields; details come from the domain's `get`. Lists page by 50 with `pageOf(rows,
 startOf(cursor), 50)` (`params.cursor`, result `{ items, total, next }`). A route that pages by
@@ -380,13 +405,16 @@ service error naming that org's items is rethrown without them).
 
 **Exclusions.** `PLATFORM_EXCLUSIONS` entries have a category and a reason: `human-only` (deciding
 approvals and requests, confirming extension permissions, roles, the super-admin flag, sign-in and
-setup), `secret` (tokens, credentials, secret config values, cross-org config state), `transport`
+setup), `secret` (a route that delivers a secret to a browser: SSO / OAuth callbacks, the
+initial-password reveal, other orgs' config copies; "it carries a secret" is no reason: that is a
+person field), `transport`
 (uploads, downloads, streams, presigned URLs), `internal` (the web's own plumbing). A `@SessionOnly()`
 route is `human-only` or `secret`, never mirrored (`platform-op-session-only`). A controller that
 switches a mirrored route to a schema not in its `ROUTE_SCHEMAS` entry is caught only by review: the
 parity test compares the registered schemas, and tying a `@ZBody` / `@ZQuery` DTO back to that entry
 would need cross-file resolution the source scan does not do. There is no `later`:
-`platform-op-later` fails any such exclusion. An operation that would touch a secret refuses with a
+`platform-op-later` fails any such exclusion. An operation that writes a secret takes it as a
+person field (above); one whose secret the card cannot ask for (a secret record) refuses with a
 pointer to the web page.
 
 **Adding a domain.** Add the id and its one-line description to `PLATFORM_DOMAINS`

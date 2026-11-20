@@ -51,8 +51,11 @@ export class OrgExtensionSwitch {
     extension: string,
     body: OrgExtensionInput & { confirm?: string | undefined },
     actorTokenId?: string,
+    /** Merged into the audit details (a Platform operation's `via: "agent"`). */
+    auditDetail?: Record<string, unknown>,
   ): Promise<OrgExtensionPutResult> {
     const { confirm, ...input } = body;
+    const audited = auditDetail !== undefined ? { auditDetail } : {};
     const plan =
       input.enabled === undefined
         ? ({ kind: "direct" } as const)
@@ -66,7 +69,7 @@ export class OrgExtensionSwitch {
     if (plan.kind === "direct") {
       return {
         kind: "done",
-        view: await this.configs.put(orgId, extension, input, actor, actorTokenId),
+        view: await this.configs.put(orgId, extension, input, actor, actorTokenId, audited),
       };
     }
     const { enabled } = input;
@@ -97,6 +100,7 @@ export class OrgExtensionSwitch {
       input,
       confirm,
       actorTokenId,
+      auditDetail,
     };
     const r = await (installing ? this.apply(args, true) : this.applyAtomic(args));
     if (r !== "readBack") return r;
@@ -107,6 +111,7 @@ export class OrgExtensionSwitch {
       kind: "done",
       view: await this.configs.put(orgId, extension, { enabled: true }, actor, actorTokenId, {
         ifDisabled: { skipped: false },
+        ...audited,
       }),
     };
   }
@@ -120,7 +125,9 @@ export class OrgExtensionSwitch {
     a: ApplyArgs,
     installing: boolean,
   ): Promise<OrgExtensionPutResult | "readBack"> {
-    const { orgId, actor, extension, itemId, enabled, input, confirm, actorTokenId } = a;
+    const { orgId, actor, extension, itemId, enabled, input, confirm, actorTokenId, auditDetail } =
+      a;
+    const audited = auditDetail !== undefined ? { auditDetail } : {};
     // Switching on inside the transaction relies on the live install seen before it: one removed
     // meanwhile would run the install saga here, which commits on its own. Refuse instead; the
     // retry takes the install path.
@@ -142,6 +149,7 @@ export class OrgExtensionSwitch {
             }
           : { enabled: false, ...(confirm !== undefined && { confirm }) },
         actorTokenId,
+        auditDetail,
       )
       .catch((e: unknown) => {
         throw configInvalidOf(e) ?? e;
@@ -156,6 +164,7 @@ export class OrgExtensionSwitch {
         kind: "done",
         view: await this.configs.put(orgId, extension, { enabled: true }, actor, actorTokenId, {
           ifDisabled: { skipped: false },
+          ...audited,
         }),
       };
     }
@@ -167,7 +176,7 @@ export class OrgExtensionSwitch {
         { config: input.config, ...(enabled && { enabled: true }) },
         actor,
         actorTokenId,
-        installing ? { ifDisabled: { skipped: false } } : undefined,
+        installing ? { ifDisabled: { skipped: false }, ...audited } : audited,
       ),
     };
   }
@@ -182,6 +191,7 @@ interface ApplyArgs {
   input: OrgExtensionInput;
   confirm: string | undefined;
   actorTokenId: string | undefined;
+  auditDetail: Record<string, unknown> | undefined;
 }
 
 /**

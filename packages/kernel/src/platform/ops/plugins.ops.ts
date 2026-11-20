@@ -43,6 +43,10 @@ const NOTHING_INSTALLED = "nothing-installed";
 export const NEEDS_INPUT =
   "This plugin needs configuration a person must enter; ask them to enable it on the Plugins page.";
 
+/** `plugin.needs_input` when what is missing is its extension's org config (an agent can set it). */
+export const needsOrgConfig = (extension: string): string =>
+  `This plugin's extension ${extension} needs its org config first: read what is missing with extensions.org-config, fill it in with extensions.set-org-config (the person enters secrets on the confirmation card; the org's own copy of overridable platform fields is extensions.save-org-config), then call plugins.set-enabled again.`;
+
 /** The English name of a plugin as next steps and messages name it. */
 const enName = (i: OrgCatalogItem): string => localized(i.displayName, i.name).en;
 
@@ -94,17 +98,25 @@ const hasConfigFields = (schema: OrgExtensionView["orgConfigSchema"]): boolean =
 };
 
 /**
- * Whether switching the plugin on needs input a person enters (the web's install wizard, the
- * web's `needsInput`): an org config still missing (`needs_config`), connector templates, or the
- * org config form of its extension while that extension is off in the org.
+ * Why switching the plugin on needs input first, as the `plugin.needs_input` message, or null: its
+ * extension's org config is incomplete (the item says `needs_config`, or the extension is off and
+ * its org config form misses required values: an agent fills it in with
+ * `extensions.set-org-config`), or connector templates (a person enters their inputs on the
+ * Plugins page). Unlike the web's install wizard, an org config form whose required values are all
+ * stored does not stop the switch.
  */
-function needsInput(item: OrgCatalogItem, extensions: readonly OrgExtensionView[]): boolean {
-  if (item.state === "needs_config") return true;
-  if (item.installed !== null) return false;
-  if (item.componentCounts.connectorTemplates > 0) return true;
-  if (item.componentCounts.extension === 0) return false;
+function needsInput(item: OrgCatalogItem, extensions: readonly OrgExtensionView[]): string | null {
   const own = extensions.find((e) => e.catalogItem?.itemId === item.id);
-  return own !== undefined && !own.enabled && hasConfigFields(own.orgConfigSchema);
+  if (item.state === "needs_config") return needsOrgConfig(own?.plugin ?? item.name);
+  if (item.installed !== null) return null;
+  if (item.componentCounts.connectorTemplates > 0) return NEEDS_INPUT;
+  if (item.componentCounts.extension === 0) return null;
+  return own !== undefined &&
+    !own.enabled &&
+    hasConfigFields(own.orgConfigSchema) &&
+    own.needsConfig
+    ? needsOrgConfig(own.plugin)
+    : null;
 }
 
 /**
@@ -267,7 +279,7 @@ export class PluginsOperations implements OnModuleInit {
           },
           {
             code: "plugin.needs_input",
-            next: "Ask the person to enable it on the Plugins page, where they enter its configuration.",
+            next: "When its extension's org config is missing, fill it in with extensions.set-org-config (secrets in askPerson), then call again; connector inputs are entered by the person on the Plugins page.",
           },
           {
             code: "catalog.approval_required",
@@ -311,9 +323,10 @@ export class PluginsOperations implements OnModuleInit {
               next: unavailableNext(item.reason, name),
             };
           }
-          if (i.enabled && needsInput(item, await this.extensions.list(ctx.orgId))) {
-            return { ok: false, code: "plugin.needs_input", message: NEEDS_INPUT };
-          }
+          const missing = i.enabled
+            ? needsInput(item, await this.extensions.list(ctx.orgId))
+            : null;
+          if (missing !== null) return { ok: false, code: "plugin.needs_input", message: missing };
           return { ok: true };
         },
         summary: async (i, ctx) => {
@@ -340,9 +353,8 @@ export class PluginsOperations implements OnModuleInit {
         run: async (input, ctx) => {
           if (input.enabled) {
             const [item] = await this.orgCatalog.list(ctx.orgId, ctx.actorAccountId, input.itemId);
-            if (item && needsInput(item, await this.extensions.list(ctx.orgId))) {
-              throw new ToolError(NEEDS_INPUT);
-            }
+            const missing = item ? needsInput(item, await this.extensions.list(ctx.orgId)) : null;
+            if (missing !== null) throw new ToolError(missing);
           }
           const r = await this.orgCatalog.setSwitch(
             ctx.orgId,

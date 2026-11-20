@@ -20,6 +20,7 @@ import {
 import { KernelConfigService } from "../infra/config/kernel-config.service.js";
 import { createZodDto } from "../infra/validation/create-zod-dto.js";
 import { ZBody, ZParam } from "../infra/validation/zod-params.js";
+import { AdminExtensionConfigBody } from "./extensions.schemas.js";
 
 const ApproveSchema = z.object({
   /** 安装记录的包（审阅时的 sha256）；配置声明的插件为 null。 */
@@ -35,31 +36,6 @@ const InstallSchema = z.object({
   sha256: z.string().regex(/^[0-9a-f]{64}$/),
 });
 
-const SecretEntrySchema = z
-  .object({
-    /** A secret record field some `x-ui.secrets[].path` names. */
-    path: z.string().min(1).max(256),
-    key: z.string().min(1).max(256),
-    /** A string sets the key, `null` removes it. */
-    value: z.string().max(65_536).nullable().optional(),
-    /** Moves the value at this key to `key` first. */
-    renameFrom: z.string().min(1).max(256).optional(),
-  })
-  .strict()
-  .refine((e) => e.value !== undefined || e.renameFrom !== undefined, {
-    message: "an entry needs value or renameFrom",
-  })
-  .refine((e) => e.key !== "__proto__" && e.renameFrom !== "__proto__", {
-    message: "__proto__ is not a valid key",
-  });
-
-const ConfigSchema = z.object({
-  /** 字段点路径 → 新值（`null` 清除）。 */
-  values: z.record(z.string().min(1).max(256), z.unknown()),
-  /** Single keys of hinted secret records (extension config forms spec §4.3), applied in order. */
-  secretEntries: z.array(SecretEntrySchema).max(200).optional(),
-});
-
 const NpmSchema = z.object({
   package: z.string().min(1).max(214),
   version: z.string().min(1).max(256).optional(),
@@ -67,7 +43,7 @@ const NpmSchema = z.object({
 
 class ExtensionApproveBody extends createZodDto(ApproveSchema, "ExtensionApproveBody") {}
 class ExtensionInstallBody extends createZodDto(InstallSchema, "ExtensionInstallBody") {}
-class ExtensionConfigBody extends createZodDto(ConfigSchema, "ExtensionConfigBody") {}
+class ExtensionConfigBody extends createZodDto(AdminExtensionConfigBody, "ExtensionConfigBody") {}
 class ExtensionNpmImportBody extends createZodDto(NpmSchema, "ExtensionNpmImportBody") {}
 /** The `:name` route parameter of the org-overrides list (decision R20). */
 const NameParams = z.object({ name: z.string().min(1).max(64) });
@@ -148,7 +124,7 @@ export class AdminExtensionsController {
   putConfig(
     @CurrentPrincipal() principal: Principal,
     @Param("name") name: string,
-    @ZBody(ExtensionConfigBody) body: z.infer<typeof ConfigSchema>,
+    @ZBody(ExtensionConfigBody) body: z.infer<typeof AdminExtensionConfigBody>,
   ): Promise<DeploymentConfigView> {
     const actor = requireUser(principal);
     return this.deploymentConfigs.put(

@@ -149,6 +149,8 @@ export interface OrgExtensionPutOptions {
    * dependencies) are left to that write: the plugin install that enables it checks them.
    */
   validateOnly?: boolean;
+  /** Merged into the audit detail (a Platform operation's `via: "agent"`). */
+  auditDetail?: Record<string, unknown>;
 }
 
 type Obj = Record<string, unknown>;
@@ -578,6 +580,7 @@ export class OrgExtensionConfigs {
         enabled,
         changedPaths: changed,
         ...(opts.viaItem !== undefined && { catalogItemId: opts.viaItem }),
+        ...opts.auditDetail,
       },
     });
     // 在同一事务里读回，返回值就是刚提交的状态

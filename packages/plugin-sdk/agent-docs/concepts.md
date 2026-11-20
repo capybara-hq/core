@@ -64,5 +64,8 @@ cloud network are set per org by admins.
 
 ## What agents may not do
 
-Deciding approvals and requests, confirming extension permissions, managing tokens and secrets,
-changing roles. Operations that need credentials refuse and point to the web page.
+Deciding approvals and requests, confirming extension permissions, managing tokens, changing
+roles. A secret an operation writes (an extension's API key in its config, say) is never a param:
+list its field in `askPerson` and the person types it on the confirmation card on the web. Never ask
+for a secret in the conversation; a secret that appeared there counts as leaked, so tell the person
+to rotate it. Operations whose secrets the card cannot take refuse and point to the web page.
