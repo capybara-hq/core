@@ -289,6 +289,7 @@ export interface NavItemV1 {
   id: NavTabId;
   label: string;
   count?: number;
+  /** The badge shows `count+`: more than `count` are waiting (`count` is capped at `navCount`). */
   countMore?: boolean;
 }
 
@@ -341,6 +342,7 @@ export interface MenuCapabilityV1 {
   show(input: MenuInputV1): Promise<string | null>;
 }
 
+/** The shell validates every input against these (and the web keeps within them). */
 export const MOBILE_SHELL_LIMITS = {
   navLabel: 32,
   navCount: 9999,
@@ -352,6 +354,7 @@ export const MOBILE_SHELL_LIMITS = {
   url: 2048,
 } as const;
 
+/** The menu item id pattern, checked on `menu@1.show` (the shell validates every input). */
 export const MENU_ITEM_ID = /^[A-Za-z0-9_.-]{1,64}$/;
 
 export const useDeviceCapability = () =>
