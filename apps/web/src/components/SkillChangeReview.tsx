@@ -33,14 +33,16 @@ import { FormError } from "./form-error";
 import { Person } from "./Person";
 import { useSession } from "./shell/session";
 
-/** The requester as a person: the display name, the id once the account no longer exists. */
+/**
+ * The requester as a person; null (drawn as "Former member") once the account no longer exists
+ * (the kernel then names no one: an empty name).
+ */
 export const requesterOf = (
   c: Pick<SkillChange, "requestedBy" | "requestedByName" | "requestedByAvatarUrl">,
-): PersonRef => ({
-  id: c.requestedBy,
-  name: c.requestedByName || c.requestedBy,
-  avatarUrl: c.requestedByAvatarUrl,
-});
+): PersonRef | null =>
+  c.requestedByName === ""
+    ? null
+    : { id: c.requestedBy, name: c.requestedByName, avatarUrl: c.requestedByAvatarUrl };
 
 /**
  * 决定技能变更（`POST /skill-changes/:id/decide`）：成功返回 true；已被处理等错误以 toast 告知并返回 false。

@@ -416,6 +416,7 @@ function EntryNode({ e, c }: { e: TimelineEntry; c: EntryContext }): ReactNode {
   const t = useTranslations("chat");
   const tb = useTranslations("background");
   const te = useTranslations("errors");
+  const tp = useTranslations("people");
   const locale = useLocale();
   const timeZone = useTimeZone();
   const { me } = useSession();
@@ -460,15 +461,9 @@ function EntryNode({ e, c }: { e: TimelineEntry; c: EntryContext }): ReactNode {
   const { renderCard, renderTask } = cb.current;
 
   const person = usePersonLookup(c.people);
-  // who stopped a run: the system, the viewer, or a person with their avatar
+  // who stopped a run: the system, or a person with their avatar (the viewer reads "You")
   const whoStopped = (id: string | null): ReactNode =>
-    id === null ? (
-      t("system")
-    ) : id === me.account.id ? (
-      t("you")
-    ) : (
-      <Person person={person(id)} size={16} />
-    );
+    id === null ? t("system") : <Person person={person(id)} size={16} viewerId={me.account.id} />;
 
   const rowWithSize = (r: TimelineTool): ToolRowData => {
     const taskId = r.background?.taskId;
@@ -707,8 +702,12 @@ function EntryNode({ e, c }: { e: TimelineEntry; c: EntryContext }): ReactNode {
               ) : null}
             </>
           ) : undefined;
+        // an author who left gets the departed avatar (the initial of "Former member")
         const writer = e.authorAccountId === undefined ? undefined : person(e.authorAccountId);
-        const author = writer ? { name: writer.name, avatarUrl: writer.avatarUrl } : undefined;
+        const author =
+          writer === undefined
+            ? undefined
+            : { name: writer?.name ?? tp("departed"), avatarUrl: writer?.avatarUrl ?? null };
         return (
           <>
             <UserBubble

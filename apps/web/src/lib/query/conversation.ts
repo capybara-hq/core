@@ -568,10 +568,17 @@ const STREAMED_PERSON_KEYS = [
 ] as const;
 
 /**
+ * The people reads in flight, per query client: `<orgId>/<conversation id>/<account id>`. A second
+ * frame naming an id whose read still runs reads nothing.
+ */
+const peopleReads = new WeakMap<QueryClient, Set<string>>();
+
+/**
  * Reads the people a streamed event names when the window does not know them yet (an account that
  * joined the conversation after the page loaded): the events read for that one event carries the
- * sidecar. Only a window a read filled is checked (a seeded one is the viewer's own conversation:
- * its people are known from the session). A failed read leaves the id as departed.
+ * sidecar. At most one read runs per conversation and unknown id at a time. Only a window a read
+ * filled is checked (a seeded one is the viewer's own conversation: its people are known from the
+ * session). A failed read leaves the id as departed.
  */
 export async function learnPeople(
   qc: QueryClient,
@@ -582,16 +589,28 @@ export async function learnPeople(
   const payload = event.payload as Record<string, unknown> | null;
   const known = qc.getQueryData<EventWindow>(keys.org(orgId).conversation(id).events())?.people;
   if (known === undefined) return;
-  const unknown = STREAMED_PERSON_KEYS.some((k) => {
+  let inFlight = peopleReads.get(qc);
+  if (inFlight === undefined) {
+    inFlight = new Set();
+    peopleReads.set(qc, inFlight);
+  }
+  const reading = inFlight;
+  const ids = new Set<string>();
+  for (const k of STREAMED_PERSON_KEYS) {
     const v = payload?.[k];
-    return typeof v === "string" && known[v] === undefined;
-  });
-  if (!unknown) return;
+    if (typeof v === "string" && known[v] === undefined && !reading.has(`${orgId}/${id}/${v}`)) {
+      ids.add(`${orgId}/${id}/${v}`);
+    }
+  }
+  if (ids.size === 0) return;
+  for (const key of ids) reading.add(key);
   try {
     const page = await listEvents(orgId, id, event.seq - 1, 1);
     addPeople(qc, orgId, id, page.people);
   } catch {
     // cosmetic: the id shows as a former member until the next read
+  } finally {
+    for (const key of ids) reading.delete(key);
   }
 }
 

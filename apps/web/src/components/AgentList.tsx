@@ -6,7 +6,7 @@ import { useState } from "react";
 import { type Agent, avatarValue } from "../lib/agents";
 import { modelLabel } from "../lib/extension-label";
 import { canEditAgent, canUpdateOrg } from "../lib/org-settings";
-import type { PersonRef } from "../lib/people";
+import { type PersonRef, useViewerPerson } from "../lib/people";
 import { newConversationPath } from "../lib/routes";
 import type { Me } from "../lib/session";
 import { SaveAsTemplateDialog } from "./SaveAsTemplateDialog";
@@ -59,9 +59,8 @@ export function AgentCard({
   const canViewRuns = editable && (level === "admin" || (level === "member" && mine));
   const name = agent.definition.name;
   const page = `/agents/${encodeURIComponent(agent.id)}`;
-  const owner: PersonRef | undefined = mine
-    ? { id: me.account.id, name: t("ownerMe"), avatarUrl: me.account.avatarUrl }
-    : ownerPerson;
+  const viewer = useViewerPerson(t("ownerMe"));
+  const owner: PersonRef | undefined = mine ? viewer : ownerPerson;
   const description = agent.profile.description;
   return (
     <>

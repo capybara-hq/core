@@ -6,7 +6,8 @@ import type { PersonRef } from "../lib/people";
 
 /**
  * A person in a line, cell, option or row: their avatar and name. A person who left (`null`) is
- * "Former member" with the initial; the viewer's own entry reads "You" with their avatar.
+ * "Former member" with the initial; the viewer's own entry reads "You" with their avatar and
+ * their own initial.
  */
 export function Person({
   person,
@@ -30,10 +31,13 @@ export function Person({
       />
     );
   }
+  const viewer = viewerId !== undefined && person.id === viewerId;
   return (
     <PersonName
-      name={viewerId !== undefined && person.id === viewerId ? t("you") : person.name}
+      name={viewer ? t("you") : person.name}
       avatarUrl={person.avatarUrl}
+      // the viewer as "You" keeps their own initial
+      initialFrom={viewer ? person.name : person.initialFrom}
       size={size}
       {...(secondary === undefined ? {} : { secondary })}
     />

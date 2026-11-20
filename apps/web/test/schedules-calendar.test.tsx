@@ -525,6 +525,45 @@ describe("/schedules?view=calendar", () => {
     expect(personAvatarSrc(sheet)).toBe("/api/v1/accounts/a2/avatar?v=abc123");
   });
 
+  it("a creator who left reads a former member on the block and in the sheet, never the id", async () => {
+    const org = {
+      ...ANSWER,
+      tasks: [...ANSWER.tasks, calTask({ id: "s2", name: "Gone sync", accountId: "gone" })],
+      items: [
+        ...ANSWER.items,
+        run({
+          id: "tr9",
+          taskId: "s2",
+          scheduledFor: "2026-11-12T02:00:00.000Z",
+          status: "failed",
+          conversationId: null,
+          error: null,
+          missingGrants: null,
+        }),
+      ],
+    };
+    const calls = stubApi(
+      routes({
+        [`GET ${CAL}`]: () =>
+          json(200, calls.at(-1)?.url.includes("all=true") ? org : ANSWER) as never,
+        [`GET ${BASE}?all=true`]: ok({
+          items: [listTask(), listTask({ id: "s2", accountId: "gone" })],
+        }),
+      }),
+    );
+    await load("/schedules?view=calendar", { me: asRole("admin") });
+    const user = userEvent.setup();
+    await user.click(screen.getByRole("radio", { name: C.all }));
+    await vi.waitFor(() => expect(block("run=tr9")).not.toBeNull());
+    expect(block("run=tr9")?.getAttribute("aria-label")).toContain(
+      `Helper · ${en.people.departed}`,
+    );
+    expect(block("run=tr9")?.getAttribute("aria-label")).not.toContain("gone");
+    await user.click(block("run=tr9") as HTMLElement);
+    const sheet = await screen.findByRole("dialog");
+    expect(within(sheet).getByText(en.people.departed)).toBeTruthy();
+  });
+
   it("a cut range warns and draws the rest as not loaded", async () => {
     stubApi(routes());
     req.cookie = COOKIES;

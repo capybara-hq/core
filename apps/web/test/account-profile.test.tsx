@@ -34,6 +34,7 @@ function api(me: Me, routes: Parameters<typeof stubApi>[0] = {}) {
   return stubApi({
     "GET /api/v1/me": () => json(200, me),
     "GET /api/v1/orgs/o1/members": () => json(200, { members: [] }),
+    "GET /api/v1/auth/sources": () => json(200, { sources: [] }),
     ...routes,
   });
 }
@@ -57,14 +58,37 @@ describe("/account/profile", () => {
   it("shows the avatar route as an image and says where an SSO avatar comes from", async () => {
     const me = meWith({
       avatarUrl: "/api/v1/accounts/a1/avatar?v=abc",
-      avatarSource: { kind: "identity", source: "Lark" },
+      avatarSource: { kind: "identity", source: "lark:t1" },
     });
-    api(me);
+    api(me, {
+      "GET /api/v1/auth/sources": () =>
+        json(200, { sources: [{ plugin: "lark", label: { zh: "飞书", en: "Lark" } }] }),
+    });
     await renderRouteWithCache(PATH, lastStubRoutes(), { me });
     expect(document.querySelector('[data-part="avatar"][data-kind="image"]')).not.toBeNull();
-    expect(screen.getByText("From Lark")).toBeTruthy();
+    // the sign-in source's label, never the identity key
+    expect(await screen.findByText("From Lark")).toBeTruthy();
+    expect(screen.queryByText(/lark:t1/)).toBeNull();
     // an SSO avatar is not the person's own: nothing to remove
     expect(screen.queryByRole("button", { name: P.remove })).toBeNull();
+  });
+
+  it("names an SSO source the deployment no longer offers by its plugin, not its tenant", async () => {
+    const me = meWith({
+      avatarUrl: "/api/v1/accounts/a1/avatar?v=abc",
+      avatarSource: { kind: "identity", source: "wecom:corp9" },
+    });
+    api(me, { "GET /api/v1/auth/sources": () => json(200, { sources: [] }) });
+    await renderRouteWithCache(PATH, lastStubRoutes(), { me });
+    expect(await screen.findByText("From wecom")).toBeTruthy();
+  });
+
+  it("ties the avatar controls to their label", async () => {
+    api(ME);
+    await renderRouteWithCache(PATH, lastStubRoutes());
+    const group = screen.getByRole("group", { name: P.avatarLabel });
+    expect(group.querySelector('[data-part="avatar"]')).not.toBeNull();
+    expect(group.querySelector('input[type="file"]')).not.toBeNull();
   });
 
   it("saves a new name with PATCH { displayName } and reads me and the members again", async () => {
@@ -75,6 +99,8 @@ describe("/account/profile", () => {
     const { client } = await renderRouteWithCache(PATH, lastStubRoutes());
     // a members list another page read earlier
     client.setQueryData(keys.org("o1").members(), { members: [] });
+    // the admin accounts list another page read earlier
+    client.setQueryData(keys.deployment().adminAccounts(), { accounts: [] });
     const user = userEvent.setup();
     await user.clear(nameInput());
     await user.type(nameInput(), "  Grace ");
@@ -85,6 +111,7 @@ describe("/account/profile", () => {
     await vi.waitFor(() =>
       expect(client.getQueryState(keys.org("o1").members())?.isInvalidated).toBe(true),
     );
+    expect(client.getQueryState(keys.deployment().adminAccounts())?.isInvalidated).toBe(true);
   });
 
   it("refuses a 65-character name before sending", async () => {

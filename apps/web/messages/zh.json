@@ -1413,7 +1413,6 @@
   },
   "chat": {
     "waitingFor": {
-      "someone": "其他成员",
       "role": {
         "guest": "访客",
         "member": "组织成员",
@@ -1429,7 +1428,6 @@
     "stopped": "已停止",
     "running": "正在回复…",
     "you": "你",
-    "anotherMember": "其他成员",
     "assistant": "智能体",
     "failed": "本次回复失败（{code}）。",
     "empty": "发送一条消息开始对话。",
@@ -6711,9 +6709,7 @@
       "missingTitle": "最近运行中被拒绝的工具",
       "addMissing": "加入预先批准的工具",
       "connect": "连接 {slug}",
-      "readOnlyOwner": "这个任务属于",
-      "readOnlyRights": "组织管理员可以暂停、恢复或删除它，但不能修改。",
-      "creatorUnknown": "其他成员",
+      "readOnlyOwner": "这个任务属于 {name}。组织管理员可以暂停、恢复或删除它，但不能修改。",
       "chatAgentFixed": "聊天任务使用该聊天所属渠道连接的智能体。",
       "minInterval": "本组织的任务最短每 {n} 分钟运行一次。",
       "expiresHelp": "任务在这一天之后结束。留空表示一直运行；如果组织设置了默认结束期限，则从现在起按该天数结束。",
@@ -6929,7 +6925,6 @@
       "missing_grants": "最近一次运行中有工具未被预先批准而被拒绝",
       "failed": "最近一次运行失败",
       "admin": "已被 {name} 暂停",
-      "adminUnknown": "已被组织管理员暂停",
       "failures": "多次失败后已暂停",
       "creator_inactive": "已暂停：你已不在组织中",
       "agent_gone": "已暂停：智能体已不存在",

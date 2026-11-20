@@ -42,6 +42,7 @@ import { usePagePath } from "../../../../components/shell/path";
 import { useRouter } from "../../../../i18n/navigation";
 import type { ProviderModels } from "../../../../lib/agents";
 import { roleAtLeast } from "../../../../lib/members";
+import { withNode } from "../../../../lib/node-slot";
 import type { PersonRef } from "../../../../lib/people";
 import { agentsQuery } from "../../../../lib/query/agents";
 import { retryOnMountOf } from "../../../../lib/query/client";
@@ -249,14 +250,9 @@ function ScheduleForm({
           onSelect: () => void act(actions.resume.mutateAsync(task.id), t("actions.resumed")),
           loading: actions.resume.isPending,
         };
-  const creator: PersonRef | null =
-    names.kind === "ready"
-      ? (names.refs[task.accountId] ?? {
-          id: task.accountId,
-          name: t("form.creatorUnknown"),
-          avatarUrl: null,
-        })
-      : null;
+  // undefined while the members are read; null for a creator who left ("Former member")
+  const creator: PersonRef | null | undefined =
+    names.kind === "ready" ? (names.refs[task.accountId] ?? null) : undefined;
   return (
     <>
       <FormPage
@@ -313,10 +309,12 @@ function ScheduleForm({
               }
         }
       >
-        {readOnly && creator !== null ? (
+        {readOnly && creator !== undefined ? (
           <Callout tone="info">
-            {t("form.readOnlyOwner")} <Person person={creator} size={16} />.{" "}
-            {t("form.readOnlyRights")}
+            {withNode(
+              (mark) => t("form.readOnlyOwner", { name: mark }),
+              <Person person={creator} size={16} />,
+            )}
           </Callout>
         ) : null}
         <ScheduleFormSections

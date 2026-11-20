@@ -14,15 +14,19 @@ import {
   Text,
   useToast,
 } from "@capybara-hq/design";
-import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { useTranslations } from "next-intl";
+import { type QueryClient, useQuery, useQueryClient } from "@tanstack/react-query";
+import { useLocale, useTranslations } from "next-intl";
 import { useState } from "react";
 import { FormError } from "../../../../components/form-error";
 import { ACCOUNT_HOME, useAccountNav } from "../../../../components/settings-nav";
 import { usePagePath } from "../../../../components/shell/path";
 import { ApiClientError } from "../../../../lib/api";
+import type { AuthSource } from "../../../../lib/auth-sources";
 import { cropAvatar } from "../../../../lib/avatar-crop";
+import { splitSource } from "../../../../lib/identities";
 import { patchProfile, uploadAccountAvatar } from "../../../../lib/profile";
+import { authSourcesQuery } from "../../../../lib/query/auth";
+import { retryOnMountOf } from "../../../../lib/query/client";
 import { keys } from "../../../../lib/query/keys";
 import { cachedMembersKeys } from "../../../../lib/query/members";
 import { useAppMutation } from "../../../../lib/query/mutation";
@@ -36,9 +40,29 @@ const NAME_MAX = 64;
 const lengthOf = (s: string) => [...s].length;
 
 /**
+ * What a profile change refreshes: `me`, every cached members list, and the admin accounts list
+ * (the person's row shows the name and avatar there too).
+ */
+const profileKeys = (qc: QueryClient) => [
+  keys.account("self").me(),
+  ...cachedMembersKeys(qc),
+  keys.deployment().adminAccountsAll(),
+];
+
+/**
+ * The words for an identity source key (`lark:t1`): its sign-in source's label (飞书 / Lark) when
+ * the deployment offers it, else the plugin name; never the tenant.
+ */
+function sourceLabel(source: string, sources: AuthSource[] | undefined, locale: string): string {
+  const plugin = splitSource(source).plugin;
+  const known = sources?.find((s) => s.plugin === plugin);
+  return known === undefined ? plugin : locale === "zh" ? known.label.zh : known.label.en;
+}
+
+/**
  * `/account/profile`: the person's name and avatar (SettingsPage). An avatar change saves at once
  * (a picked image is cropped square, uploaded, then named in the profile; the remove button sends `null`); the
- * name saves from the action row. Both refresh `me` and every cached members list.
+ * name saves from the action row. Both refresh what shows the person ({@link profileKeys}).
  */
 export default function ProfileView() {
   const me = useQuery(meQuery()).data;
@@ -50,6 +74,9 @@ function ProfileForm({ account }: { account: Account }) {
   const scope = usePagePath("home");
   const t = useTranslations("profile");
   const tc = useTranslations("common");
+  const locale = useLocale();
+  const sourcesQ = authSourcesQuery();
+  const sources = useQuery({ ...sourcesQ, retryOnMount: retryOnMountOf(sourcesQ.queryKey) }).data;
   const toast = useToast();
   const errorMessage = useErrorMessage();
   const nav = useAccountNav();
@@ -61,14 +88,14 @@ function ProfileForm({ account }: { account: Account }) {
 
   const save = useAppMutation({
     fn: patchProfile,
-    invalidates: () => [keys.account("self").me(), ...cachedMembersKeys(qc)],
+    invalidates: () => profileKeys(qc),
   });
 
   // register, upload to storage, then name the upload in the profile
   const saveUpload = useAppMutation({
     fn: async (square: Blob) =>
       patchProfile({ avatar: { kind: "upload", ...(await uploadAccountAvatar(square)) } }),
-    invalidates: () => [keys.account("self").me(), ...cachedMembersKeys(qc)],
+    invalidates: () => profileKeys(qc),
   });
 
   const name = draft ?? account.displayName;
@@ -147,42 +174,45 @@ function ProfileForm({ account }: { account: Account }) {
         : {})}
     >
       <FormSection id="profile" title={t("section")} description={t("description")}>
-        <Stack gap={8}>
-          <Text variant="body">{t("avatarLabel")}</Text>
-          <Avatar
-            shape="circle"
-            size={64}
-            name={account.displayName}
-            value={account.avatarUrl ? { kind: "image", src: account.avatarUrl } : null}
-          />
-          <Stack gap={8} direction="row">
-            <FileButton
-              label={hasAvatar ? t("replace") : t("upload")}
-              accept={AVATAR_UPLOAD_ACCEPT}
-              icon={<Icon name="upload" size={16} />}
-              disabled={busy || storageOff}
-              onFiles={([file]) => {
-                if (file !== undefined) void onUpload(file);
-              }}
+        {/* biome-ignore lint/a11y/useSemanticElements: fieldset has browser default styles; apps/web writes none */}
+        <div role="group" aria-label={t("avatarLabel")}>
+          <Stack gap={8}>
+            <Text variant="body">{t("avatarLabel")}</Text>
+            <Avatar
+              shape="circle"
+              size={64}
+              name={account.displayName}
+              value={account.avatarUrl ? { kind: "image", src: account.avatarUrl } : null}
             />
-            {source?.kind === "upload" ? (
-              <Button disabled={busy} onClick={() => void onRemove()}>
-                {t("remove")}
-              </Button>
+            <Stack gap={8} direction="row">
+              <FileButton
+                label={hasAvatar ? t("replace") : t("upload")}
+                accept={AVATAR_UPLOAD_ACCEPT}
+                icon={<Icon name="upload" size={16} />}
+                disabled={busy || storageOff}
+                onFiles={([file]) => {
+                  if (file !== undefined) void onUpload(file);
+                }}
+              />
+              {source?.kind === "upload" ? (
+                <Button disabled={busy} onClick={() => void onRemove()}>
+                  {t("remove")}
+                </Button>
+              ) : null}
+            </Stack>
+            {source?.kind === "identity" ? (
+              <Text variant="small" tone="muted">
+                {t("fromSource", { source: sourceLabel(source.source, sources, locale) })}
+              </Text>
             ) : null}
+            {storageOff ? (
+              <Text variant="small" tone="muted">
+                {t("uploadOff")}
+              </Text>
+            ) : null}
+            {avatarError !== null ? <FormError message={avatarError} /> : null}
           </Stack>
-          {source?.kind === "identity" ? (
-            <Text variant="small" tone="muted">
-              {t("fromSource", { source: source.source })}
-            </Text>
-          ) : null}
-          {storageOff ? (
-            <Text variant="small" tone="muted">
-              {t("uploadOff")}
-            </Text>
-          ) : null}
-          {avatarError !== null ? <FormError message={avatarError} /> : null}
-        </Stack>
+        </div>
         <Field
           label={t("nameLabel")}
           required

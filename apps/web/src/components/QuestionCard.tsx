@@ -17,7 +17,7 @@ import {
 import { useLocale, useTranslations } from "next-intl";
 import { type ReactElement, useState } from "react";
 import type { FormAnswer, InputForm } from "../lib/conversations";
-import { type PersonRef, usePersonLookup } from "../lib/people";
+import { type PersonRef, usePersonLookup, useViewerPerson } from "../lib/people";
 import { keys } from "../lib/query/keys";
 import { useAppMutation } from "../lib/query/mutation";
 import {
@@ -245,6 +245,7 @@ export function QuestionCard({ orgId, item }: { orgId: string; item: QuestionIte
   const errorMessage = useErrorMessage();
   const { me } = useSession();
   const lookup = usePersonLookup();
+  const viewer = useViewerPerson();
   const tp = useTranslations("people");
   const [pending, setPending] = useState(false);
   // The answer reaches the log as `question_answered` (and the question's cache entry here).
@@ -280,7 +281,7 @@ export function QuestionCard({ orgId, item }: { orgId: string; item: QuestionIte
     byPerson: PersonRef | null | undefined,
   ): PersonLike | string | undefined => {
     if (id === null || id === undefined) return undefined;
-    if (id === me.account.id) return t("you");
+    if (id === me.account.id) return viewer;
     const p = lookup(id) ?? byPerson ?? null;
     return p ? { name: p.name, avatarUrl: p.avatarUrl } : { name: tp("departed"), avatarUrl: null };
   };
@@ -303,7 +304,7 @@ export function QuestionCard({ orgId, item }: { orgId: string; item: QuestionIte
         state = { kind: "cancelled" };
     }
   } else if (submitted !== null) {
-    state = { kind: "answered", pairs: pairs(submitted), who: t("you") };
+    state = { kind: "answered", pairs: pairs(submitted), who: viewer };
   } else {
     state = { kind: "pending", busy: pending };
   }

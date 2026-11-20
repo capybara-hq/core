@@ -185,7 +185,14 @@ describe("ApprovalCard (design ApprovalBlock)", () => {
     renderPage(<ApprovalCard orgId="o1" item={item()} info={INFO} />, { locale: "zh" });
     await userEvent.setup().click(await screen.findByRole("button", { name: label }));
     expect(bodyOf(calls.find((c) => c.method === "POST"))).toEqual({ decision: "approve", scope });
-    expect(await screen.findByText(/你 批准了 Fixture \[delete_item\]/)).toBeTruthy();
+    // the viewer is a person too: "你" beside their avatar, the initial from their own name
+    const line = await vi.waitFor(() => {
+      const l = document.querySelector('[data-part="tool-line"]');
+      expect(l?.textContent).toMatch(/你 批准了 Fixture \[delete_item\]/);
+      return l as HTMLElement;
+    });
+    expect(line.querySelector('[data-part="person-name-text"]')?.textContent).toBe("你");
+    expect(line.querySelector('[data-part="avatar"]')?.textContent).toBe("G");
   });
 
   it("a decision in the conversation invalidates the inbox and its count (the inbox list is not left stale)", async () => {
@@ -326,12 +333,40 @@ describe("ApprovalCard (design ApprovalBlock)", () => {
       ),
       { locale: "zh", me: ME },
     );
+    // one sentence with the person (avatar and name) in it
+    const line = await vi.waitFor(() => {
+      const l = document.querySelector('[data-role="approval"]');
+      expect(l?.querySelector('[data-part="person-name-text"]')?.textContent).toBe("张三");
+      return l as HTMLElement;
+    });
     expect(
-      await screen.findByText(
-        "Fixture [delete_item]（mcp__fixture__delete_item）需要审批，等待 张三 处理。",
-      ),
-    ).toBeTruthy();
+      line.textContent?.replace(line.querySelector('[data-part="avatar"]')?.textContent ?? "", ""),
+    ).toBe("Fixture [delete_item]（mcp__fixture__delete_item）需要审批，等待 张三 处理。");
     expect(calls.map((c) => c.url)).toEqual(["/api/v1/orgs/o1/approvals/ap1"]);
+  });
+
+  it("a viewer who can't decide, waiting on a person who left, reads a former member", async () => {
+    stubApi({
+      "GET /api/v1/orgs/o1/approvals/ap1": () =>
+        json(404, { error: { code: "approval.not_found", message: "x" } }),
+    });
+    const { container } = renderPage(
+      inThread(
+        <ApprovalCard
+          orgId="o1"
+          item={{ ...item(), approver: { kind: "account", accountId: "acc_gone" } }}
+          info={INFO}
+        />,
+        {},
+      ),
+      { locale: "en", me: ME },
+    );
+    await vi.waitFor(() =>
+      expect(container.querySelector('[data-part="person-name-text"]')?.textContent).toBe(
+        en.people.departed,
+      ),
+    );
+    expect(container.textContent).not.toContain("acc_gone");
   });
 
   it("an approval escalated by role names the role, without reading the member list", async () => {
@@ -651,12 +686,13 @@ describe("QuestionCard (design QuestionBlock)", () => {
       locale: "zh",
     });
     expect(state(zhSkip.container)).toBe("skipped");
-    expect(zhSkip.container.textContent).toContain("已跳过：直接回复了消息 · 你");
+    // the viewer is drawn as a person: their initial (G) beside "你"
+    expect(zhSkip.container.textContent).toContain("已跳过：直接回复了消息 · G你");
     cleanup();
     const enSkip = renderPage(<QuestionCard orgId="o1" item={done("skipped", ME.account.id)} />, {
       locale: "en",
     });
-    expect(enSkip.container.textContent).toContain("Skipped: replied with a message · You");
+    expect(enSkip.container.textContent).toContain("Skipped: replied with a message · GYou");
     cleanup();
     const zhCancel = renderPage(<QuestionCard orgId="o1" item={done("cancelled", null)} />, {
       locale: "zh",

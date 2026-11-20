@@ -319,12 +319,7 @@ function AllTasks({ orgId }: { orgId: string }) {
     {
       key: "creator",
       header: ts("columns.creator"),
-      cell: (s: ScheduledTaskListItem) => (
-        <Person
-          person={refs[s.accountId] ?? { id: s.accountId, name: s.accountId, avatarUrl: null }}
-          size={16}
-        />
-      ),
+      cell: (s: ScheduledTaskListItem) => <Person person={refs[s.accountId] ?? null} size={16} />,
     },
     ...base.slice(1),
   ];

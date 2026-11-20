@@ -1574,19 +1574,15 @@ export const requestVersion = (r: Pick<CatalogRequest, "entry">): string | null 
   r.entry?.version ?? null;
 
 /**
- * The requester as a person: the display name, the account id once the name is gone; null (a
- * former member) when the account is deleted and no id remains.
+ * The requester as a person; null (drawn as "Former member") once the account no longer exists:
+ * the kernel then names no one, and a raw account id is never shown.
  */
 export const requesterOf = (
   r: Pick<CatalogRequest, "requestedBy" | "requestedByName" | "requestedByAvatarUrl">,
 ): PersonRef | null =>
-  r.requestedBy === null && r.requestedByName === null
+  r.requestedByName === null
     ? null
-    : {
-        id: r.requestedBy ?? "",
-        name: r.requestedByName ?? r.requestedBy ?? "",
-        avatarUrl: r.requestedByAvatarUrl,
-      };
+    : { id: r.requestedBy ?? "", name: r.requestedByName, avatarUrl: r.requestedByAvatarUrl };
 
 /** An item's source filter key: `manual` (file / npm import) or `marketplace:<marketplace id>`. */
 export const sourceKeyOf = (i: Pick<CatalogItem, "marketplaceId">): string =>

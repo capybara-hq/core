@@ -1413,7 +1413,6 @@
   },
   "chat": {
     "waitingFor": {
-      "someone": "another member",
       "role": {
         "guest": "a guest",
         "member": "an org member",
@@ -1429,7 +1428,6 @@
     "stopped": "Stopped",
     "running": "Replying…",
     "you": "You",
-    "anotherMember": "another member",
     "assistant": "Agent",
     "failed": "This reply failed ({code}).",
     "empty": "Send a message to start the conversation.",
@@ -6723,9 +6721,7 @@
       "missingTitle": "Refused in the latest runs",
       "addMissing": "Add to approved tools",
       "connect": "Connect {slug}",
-      "readOnlyOwner": "This task belongs to",
-      "readOnlyRights": "Organization admins can pause, resume or delete it, not change it.",
-      "creatorUnknown": "another member",
+      "readOnlyOwner": "This task belongs to {name}. Organization admins can pause, resume or delete it, not change it.",
       "chatAgentFixed": "A chat task uses the agent of the chat's connection.",
       "minInterval": "This organization runs a task at most once every {n} minutes.",
       "expiresHelp": "The task ends after this day. Leave empty to keep it running, unless the organization sets a default end; then it ends that many days from now.",
@@ -6941,7 +6937,6 @@
       "missing_grants": "Its latest run was refused tools it isn't approved for",
       "failed": "Its latest run failed",
       "admin": "Paused by {name}",
-      "adminUnknown": "Paused by an organization admin",
       "failures": "Paused after repeated failures",
       "creator_inactive": "Paused: you are no longer active in the organization",
       "agent_gone": "Paused: its agent is gone",

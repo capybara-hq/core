@@ -151,10 +151,10 @@ describe("(app) 页面模板", () => {
     await screen.findByText("Alpha");
     expect(screen.getByRole("tab", { name: /Agents/ }).textContent).toContain("3");
     expect(screen.getByRole("tab", { name: /Templates/ }).textContent).toContain("0");
-    // the owner is "Me" on one's own agents
+    // the owner is "Me" on one's own agents, with the viewer's own initial (Grant)
     const mine = screen.getByText("Beta").closest("li") as HTMLElement;
     expect(mine.querySelector('[data-part="object-card-meta"]')?.textContent).toBe(
-      `M${en.agents.ownerMe} · ${en.agents.scope.private}`,
+      `G${en.agents.ownerMe} · ${en.agents.scope.private}`,
     );
     const filter = screen.getByRole("radiogroup", { name: en.agents.filter });
     await user.click(within(filter).getByRole("radio", { name: en.agents.tabs.mine }));

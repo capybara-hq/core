@@ -27,13 +27,13 @@ import {
 } from "../lib/approvals";
 import type { PermissionScope, SandboxEscalation, ToolInfo } from "../lib/conversations";
 import { withNode } from "../lib/node-slot";
-import { type PersonRef, usePersonLookup } from "../lib/people";
+import { type PersonRef, usePersonLookup, useViewerPerson } from "../lib/people";
 import { retryOnMountOf } from "../lib/query/client";
 import { approvalQuery } from "../lib/query/conversation";
 import { inboxChangeKeys } from "../lib/query/inbox";
 import { keys } from "../lib/query/keys";
 import { useAppMutation } from "../lib/query/mutation";
-import { useThreadWaiterWords } from "../lib/query/who-waits";
+import { useThreadWaitTarget, type WaitTarget } from "../lib/query/who-waits";
 import { shortTime } from "../lib/time";
 import type { ApprovalDecision, ApprovalItem } from "../lib/timeline";
 import { lang, PLATFORM_PREFIX, toolLabel, toolLabelOfKey, toolLabelText } from "../lib/tool-label";
@@ -109,37 +109,6 @@ export function ScopePicker({
         description: t(`scopeHint.${s}`),
       }))}
     />
-  );
-}
-
-/** 处理结果：状态标记 + 范围 + 处理人。 */
-export function ApprovalOutcome({ outcome }: { outcome: Outcome }) {
-  const t = useTranslations("approval");
-  const { me } = useSession();
-  const who =
-    outcome.byAccountId === null ? (
-      t("system")
-    ) : (
-      <Person person={outcome.byPerson ?? null} size={16} viewerId={me.account.id} />
-    );
-  const status =
-    outcome.decision === "approved"
-      ? "success"
-      : outcome.decision === "denied"
-        ? "failed"
-        : "cancelled"; // expired, cancelled, skipped and superseded alike
-  return (
-    <Stack direction="row" gap={12} align="center" wrap>
-      <StatusMark status={status} label={t(`decision.${outcome.decision}`)} />
-      {outcome.decision === "approved" && outcome.scope !== undefined && (
-        <Text variant="small" tone="muted">
-          {t(`scope.${outcome.scope}`)}
-        </Text>
-      )}
-      <Text variant="small" tone="muted">
-        {withNode((mark) => t("decidedBy", { who: mark }), who)}
-      </Text>
-    </Stack>
   );
 }
 
@@ -243,6 +212,7 @@ export function ApprovalCard({
   const { decide, pending } = useDecide(orgId);
   const decided = item.decided;
   const lookup = usePersonLookup();
+  const viewer = useViewerPerson();
   // a decided card whose decider the thread's people do not name (a sub-agent's, decided in its
   // own log) reads the approval for the person
   const decidedByUnknown =
@@ -273,13 +243,13 @@ export function ApprovalCard({
         }
       : (local ?? (fromView !== null && view ? { ...fromView, at: view.decidedAt } : null));
   const awaited = outcome === null && view === null ? item.approver : undefined;
-  const words = useThreadWaiterWords();
+  const waitTarget = useThreadWaitTarget();
   const tp = useTranslations("people");
   // The decider: the system, the viewer ("you"), or a person with their avatar; one who left
   // reads "Former member". Names come from the thread's people, else from the approval read.
   const who = (o: Outcome): PersonLike | string => {
     if (o.byAccountId === null) return t("system");
-    if (o.byAccountId === me.account.id) return t("you");
+    if (o.byAccountId === me.account.id) return viewer;
     const p = lookup(o.byAccountId) ?? o.byPerson ?? null;
     return p ? { name: p.name, avatarUrl: p.avatarUrl } : { name: tp("departed"), avatarUrl: null };
   };
@@ -421,12 +391,16 @@ export function ApprovalCard({
         </div>
       );
     }
+    const target = awaited === undefined ? undefined : waitTarget(awaited);
     return (
       <div data-role="approval" data-approval-id={item.approvalId}>
         <Text variant="small" tone="muted">
-          {awaited !== undefined && words(awaited) !== undefined
-            ? t("otherApproverNamed", { tool, key: item.toolKey, who: words(awaited) ?? "" })
-            : t("otherApproverFor", { tool, key: item.toolKey })}
+          {target === undefined
+            ? t("otherApproverFor", { tool, key: item.toolKey })
+            : withNode(
+                (mark) => t("otherApproverNamed", { tool, key: item.toolKey, who: mark }),
+                <WaitTargetName target={target} />,
+              )}
         </Text>
       </div>
     );
@@ -615,4 +589,9 @@ export function escalationOf(
     ...(from.escalation.maxSeconds !== undefined ? { maxSeconds: from.escalation.maxSeconds } : {}),
     ...(from.workingRoot !== undefined ? { workingRoot: from.workingRoot } : {}),
   };
+}
+
+/** Who an approval waits for: a role in words, or the person (16) with their avatar. */
+function WaitTargetName({ target }: { target: WaitTarget }) {
+  return target.kind === "role" ? target.words : <Person person={target.person} size={16} />;
 }

@@ -3,6 +3,8 @@ import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import en from "../messages/en.json";
 import zh from "../messages/zh.json";
+import { requesterOf as skillChangeRequester } from "../src/components/SkillChangeReview";
+import { requesterOf as catalogRequester } from "../src/lib/catalog";
 import { keys } from "../src/lib/query/keys";
 import { bodyOf, json, lastStubRoutes, noContent, stubApi } from "./support/api";
 import { resetNavigation, router } from "./support/navigation";
@@ -1251,6 +1253,19 @@ describe("inbox: my scheduled task needs me", () => {
         .length,
     ).toBeGreaterThan(0);
   });
+  it("an admin's pause whose admin has left names a former member", async () => {
+    await renderInbox({
+      [LIST]: () =>
+        json(200, attention({ reason: "admin", pausedBy: null, missing: [], needsRole: [] })),
+    });
+    expect(
+      (
+        await screen.findAllByText(S.reason.admin.replace("{name}", en.people.departed), {
+          exact: false,
+        })
+      ).length,
+    ).toBeGreaterThan(0);
+  });
   it("a failed latest run says so, with its error", async () => {
     await renderInbox({
       [LIST]: () =>
@@ -1298,6 +1313,13 @@ describe("inbox: network requests (network ask spec §5.3)", () => {
   const inbox = (type: string, r: ReturnType<typeof request> | null) => ({
     items: r === null ? [] : [{ type, id: r.id, createdAt: T, request: r }],
     truncated: false,
+  });
+
+  it("a requester who left is titled a former member, never a dash or an id", async () => {
+    const r = request({ requestedBy: "gone", requestedByName: null });
+    await renderInbox({ [LIST]: () => json(200, inbox("catalog_request", r)) });
+    expect(await screen.findByText(NR.title.replace("{name}", en.people.departed))).toBeTruthy();
+    expect(document.body.textContent).not.toContain("gone");
   });
 
   it("an org admin sees the hosts, who asked, the note and the conversation; approving decides it", async () => {
@@ -1399,5 +1421,27 @@ describe("inbox: a task refused domains", () => {
     const missing = within(screen.getByRole("list", { name: S.missing }));
     expect(missing.queryByRole("button", { name: S.addDomain })).toBeNull();
     expect(missing.getAllByText(S.deviceRefusesShort)).toHaveLength(2);
+  });
+});
+
+describe("requesters who left", () => {
+  it("are null (drawn as a former member), never their raw account id", () => {
+    expect(
+      skillChangeRequester({
+        requestedBy: "gone",
+        requestedByName: "",
+        requestedByAvatarUrl: null,
+      }),
+    ).toBeNull();
+    expect(
+      skillChangeRequester({
+        requestedBy: "a2",
+        requestedByName: "Bo",
+        requestedByAvatarUrl: null,
+      }),
+    ).toEqual({ id: "a2", name: "Bo", avatarUrl: null });
+    expect(
+      catalogRequester({ requestedBy: "gone", requestedByName: null, requestedByAvatarUrl: null }),
+    ).toBeNull();
   });
 });

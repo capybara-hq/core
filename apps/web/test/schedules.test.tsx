@@ -711,12 +711,20 @@ describe("/schedules/[id]", () => {
     });
   });
 
+  it("an org admin on the task of a creator who left: the notice names a former member", async () => {
+    stubApi(routes({ accountId: "gone" }));
+    await renderRouteWithCache("/schedules/s1", lastStubRoutes(), { me: asRole("admin") });
+    const notice = await screen.findByRole("note");
+    expect(within(notice).getByText(en.people.departed)).toBeTruthy();
+    expect(notice.textContent).not.toContain("gone");
+  });
+
   it("an org admin on another member's task: read-only, pause in the action row, no run", async () => {
     stubApi(routes({ accountId: "a2" }));
     await renderRouteWithCache("/schedules/s1", lastStubRoutes(), { me: asRole("admin") });
     const notice = screen.getByRole("note");
-    expect(notice.textContent).toContain(E.form.readOnlyOwner);
-    expect(notice.textContent).toContain(E.form.readOnlyRights);
+    // one sentence with the person in it (zh punctuation follows the message, not fragments)
+    expect(notice.textContent).toBe(E.form.readOnlyOwner.replace("{name}", "Mei"));
     expect(within(notice).getByText("Mei")).toBeTruthy();
     expect(personAvatarSrc(notice)).toBe("/api/v1/accounts/a2/avatar?v=abc123");
     expect(screen.getByRole("textbox", { name: E.form.name })).toHaveProperty("disabled", true);

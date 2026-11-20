@@ -96,7 +96,7 @@ export function ScheduleRunSheet({
   /** The drawn range's answer (null while it loads). */
   answer: CalendarAnswer | null;
   agentName(id: string): string;
-  person(id: string): PersonRef;
+  person(id: string): PersonRef | null;
   onOpen(next: RunPanelRef | null): void;
 }) {
   const t = useTranslations("schedules.calendar.panel");
@@ -308,7 +308,7 @@ function TaskRegion({
 }: {
   task: CalendarTask;
   agentName(id: string): string;
-  person: ((id: string) => PersonRef) | null;
+  person: ((id: string) => PersonRef | null) | null;
 }) {
   const t = useTranslations("schedules.calendar.panel");
   const tf = useTranslations("schedules.form.mode");

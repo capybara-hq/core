@@ -126,6 +126,46 @@ describe("learnPeople", () => {
     ]);
   });
 
+  it("reads an unknown account once while its read runs, and again after it ends", async () => {
+    let release: () => void = () => {};
+    const gate = new Promise<void>((r) => {
+      release = r;
+    });
+    const calls = stubApi({
+      "GET /api/v1/orgs/o1/conversations/c1/events": async () => {
+        await gate;
+        return json(200, { events: [], people: {} });
+      },
+    });
+    const qc = testQueryClient();
+    qc.setQueryData(key, { ...win([msg(1)]), people: {} });
+    const first = learnPeople(qc, "o1", "c1", stopped(2, "a2"));
+    // a second frame naming the same id while the read runs triggers nothing
+    await learnPeople(qc, "o1", "c1", stopped(3, "a2"));
+    expect(calls).toHaveLength(1);
+    // another conversation's read of the same id is its own
+    qc.setQueryData(eventsQuery("o1", "c2").queryKey, { ...win([msg(1)]), people: {} });
+    const other = stubApi({
+      "GET /api/v1/orgs/o1/conversations/c1/events": async () => {
+        await gate;
+        return json(200, { events: [], people: {} });
+      },
+      "GET /api/v1/orgs/o1/conversations/c2/events": () => json(200, { events: [], people: {} }),
+    });
+    await learnPeople(qc, "o1", "c2", stopped(2, "a2"));
+    expect(other.map((c) => c.url.split("?")[0])).toEqual([
+      "/api/v1/orgs/o1/conversations/c2/events",
+    ]);
+    release();
+    await first;
+    // the read ended without naming a2 (departed): a later frame may read again
+    const again = stubApi({
+      "GET /api/v1/orgs/o1/conversations/c1/events": () => json(200, { events: [], people: {} }),
+    });
+    await learnPeople(qc, "o1", "c1", stopped(4, "a2"));
+    expect(again).toHaveLength(1);
+  });
+
   it("reads nothing for a known account or a window no read filled", async () => {
     const calls = stubApi({});
     const qc = testQueryClient();

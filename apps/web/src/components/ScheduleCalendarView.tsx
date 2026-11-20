@@ -75,6 +75,7 @@ export function ScheduleCalendarView({
 }) {
   const t = useTranslations("schedules");
   const tc = useTranslations("schedules.calendar");
+  const departed = useTranslations("people")("departed");
   const words = useCalendarWords();
   const dayLabel = useCalendarDayLabel();
   const timeZone = useTimeZone() ?? browserTimeZone() ?? "UTC";
@@ -111,8 +112,8 @@ export function ScheduleCalendarView({
   const names = useMemberNames(orgId, all);
   const people = all && names.kind === "ready" ? names.people : {};
   const refs = all && names.kind === "ready" ? names.refs : {};
-  /** The creator as a person: the member, else the bare id (the members list is refused). */
-  const personOf = (id: string): PersonRef => refs[id] ?? { id, name: id, avatarUrl: null };
+  /** The creator as a person: the member, else null (drawn as "Former member"; never the id). */
+  const personOf = (id: string): PersonRef | null => refs[id] ?? null;
   const [panel, setPanel] = useRunPanelHash();
 
   const go = (next: Partial<SchedulesUrl>) => setUrl({ ...url, ...next });
@@ -160,7 +161,7 @@ export function ScheduleCalendarView({
     if (task === undefined) return undefined;
     const agent = agentName(task.agentId);
     return all
-      ? tc("metaWithCreator", { agent, person: people[task.accountId] ?? task.accountId })
+      ? tc("metaWithCreator", { agent, person: people[task.accountId] ?? departed })
       : agent;
   };
 
@@ -189,7 +190,9 @@ export function ScheduleCalendarView({
       time,
       title,
       ...(m !== undefined ? { meta: m } : {}),
-      ...(all && task !== undefined ? { person: personOf(task.accountId) } : {}),
+      ...(all && task !== undefined
+        ? { person: personOf(task.accountId) ?? { name: departed, avatarUrl: null } }
+        : {}),
       state,
       ...(mark !== undefined ? { mark } : {}),
       label: mark !== undefined ? tc("itemMarkLabel", { label, mark }) : label,

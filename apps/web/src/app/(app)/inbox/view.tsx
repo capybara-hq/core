@@ -150,6 +150,7 @@ function Inbox({
   const tdd = useTranslations("inbox.requestDecided");
   const tsa = useTranslations("inboxSchedule");
   const tnr = useTranslations("inbox.network");
+  const departed = useTranslations("people")("departed");
   // Approving a refused tool for my task changes the task's grants and the inbox
   const addGrantMutation = useAppMutation({
     fn: (v: { taskId: string; toolKey: string }) => addScheduleGrants(orgId, v.taskId, [v.toolKey]),
@@ -209,7 +210,7 @@ function Inbox({
     approved: tdd("approved"),
     rejected: tdd("rejected"),
     schedule: tsa("label"),
-    scheduleReason: (a) => scheduleReason(a, tsa),
+    scheduleReason: (a) => scheduleReason(a, tsa, departed),
     network: tnr("label"),
     networkDecided: tnr("decidedLabel"),
   };
@@ -310,6 +311,7 @@ function Inbox({
             onOpen: () => router.push(`/schedules/${encodeURIComponent(active.attention.taskId)}`),
             tsa,
             t,
+            departed,
           })
         : hasNotice(active)
           ? noticeDetail({
@@ -339,6 +341,7 @@ function Inbox({
                   tnr,
                   td,
                   t,
+                  departed,
                 })
               : active.type === "catalog_request_decided" && isSetupRequest(active.request)
                 ? setupDecidedDetail({
@@ -614,12 +617,9 @@ function rowOf(
 }
 
 /** Why a task needs me, in one line. */
-function scheduleReason(a: ScheduleAttention, tsa: Translate): string {
-  if (a.reason === "admin") {
-    return a.pausedBy !== null && a.pausedBy.name !== ""
-      ? tsa("reason.admin", { name: a.pausedBy.name })
-      : tsa("reason.adminUnknown");
-  }
+function scheduleReason(a: ScheduleAttention, tsa: Translate, departed: string): string {
+  // an admin pause always names its admin: null is one who has left ("Former member")
+  if (a.reason === "admin") return tsa("reason.admin", { name: a.pausedBy?.name ?? departed });
   return tsa(`reason.${a.reason}`);
 }
 
@@ -636,6 +636,7 @@ function scheduleDetail({
   onOpen,
   tsa,
   t,
+  departed,
 }: {
   attention: ScheduleAttention;
   createdAt: string;
@@ -644,8 +645,10 @@ function scheduleDetail({
   onOpen(): void;
   tsa: Translate;
   t: Translate;
+  /** "Former member": the name of an admin who has left. */
+  departed: string;
 }): Detail {
-  const reason = scheduleReason(a, tsa);
+  const reason = scheduleReason(a, tsa, departed);
   return {
     facts: [
       { label: tsa("task"), value: a.name },
@@ -1046,6 +1049,7 @@ function networkRequestDetail({
   tnr,
   td,
   t,
+  departed,
 }: {
   request: CatalogRequest;
   pending: "approve" | "reject" | undefined;
@@ -1055,6 +1059,8 @@ function networkRequestDetail({
   tnr: Translate;
   td: Translate;
   t: Translate;
+  /** "Former member": the name of a requester who has left. */
+  departed: string;
 }): Detail {
   const hosts = request.network?.hosts ?? [];
   const chat = conversationLinkOf(request);
@@ -1078,7 +1084,7 @@ function networkRequestDetail({
         disabled: pending !== undefined,
       },
     },
-    title: tnr("title", { name: directoryRequester(request)?.name ?? "—" }),
+    title: tnr("title", { name: directoryRequester(request)?.name ?? departed }),
     status: <StatusMark status="waiting" label={tnr("label")} />,
     content: (
       <Stack gap={12}>

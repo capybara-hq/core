@@ -335,8 +335,8 @@ describe("the conversation page (ConversationPage)", () => {
     api({
       [`GET ${BASE}/events`]: () =>
         json(200, {
-          events: [userMsg(1, "hi")],
-          people: { a1: { id: "a1", name: "Ada", avatarUrl: "/api/v1/accounts/a1/avatar?v=1" } },
+          events: [userMsg(1, "hi", { authorAccountId: "a2" })],
+          people: { a2: { id: "a2", name: "Ada", avatarUrl: "/api/v1/accounts/a2/avatar?v=1" } },
         }),
     });
     await renderChat();
@@ -345,7 +345,45 @@ describe("the conversation page (ConversationPage)", () => {
       expect(r).not.toBeNull();
       return r as HTMLElement;
     });
-    expect(row.querySelector('img[src="/api/v1/accounts/a1/avatar?v=1"]')).not.toBeNull();
+    expect(row.querySelector('img[src="/api/v1/accounts/a2/avatar?v=1"]')).not.toBeNull();
+  });
+
+  it("the viewer's own bubble shows the session's avatar, not the log read's older one", async () => {
+    api({
+      [`GET ${BASE}/events`]: () =>
+        json(200, {
+          events: [userMsg(1, "hi")],
+          people: {
+            a1: { id: "a1", name: "Grant", avatarUrl: "/api/v1/accounts/a1/avatar?v=old" },
+          },
+        }),
+    });
+    await renderChatRoute({
+      me: { ...ME, account: { ...ME.account, avatarUrl: "/api/v1/accounts/a1/avatar?v=new" } },
+    });
+    const row = await vi.waitFor(() => {
+      const r = document.querySelector('[data-part="bubble-row"]');
+      expect(r).not.toBeNull();
+      return r as HTMLElement;
+    });
+    expect(row.querySelector('img[src="/api/v1/accounts/a1/avatar?v=new"]')).not.toBeNull();
+    expect(row.querySelector('img[src="/api/v1/accounts/a1/avatar?v=old"]')).toBeNull();
+  });
+
+  it("a bubble whose author left gets the departed avatar (the initial)", async () => {
+    api({
+      [`GET ${BASE}/events`]: () =>
+        json(200, { events: [userMsg(1, "hi", { authorAccountId: "gone" })], people: {} }),
+    });
+    await renderChat();
+    const row = await vi.waitFor(() => {
+      const r = document.querySelector('[data-part="bubble-row"]');
+      expect(r).not.toBeNull();
+      return r as HTMLElement;
+    });
+    const avatar = row.querySelector('[data-part="avatar"]');
+    expect(avatar?.getAttribute("data-kind")).toBe("initial");
+    expect(avatar?.textContent).toBe([...en.people.departed][0]?.toUpperCase());
   });
 
   it("streams deltas with a cursor; the assistant_message replaces the draft", async () => {

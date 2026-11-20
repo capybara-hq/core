@@ -18,9 +18,14 @@ export const membersQuery = (orgId: string) =>
 export function cachedMembersKeys(qc: QueryClient): (readonly unknown[])[] {
   return qc
     .getQueryCache()
-    .findAll({
-      predicate: ({ queryKey }) =>
-        queryKey[0] === "org" && queryKey[2] === "members" && queryKey.length === 3,
-    })
+    .findAll({ predicate: ({ queryKey }) => isMembersKey(queryKey) })
     .map((q) => q.queryKey);
+}
+
+/** Whether a key is `keys.org(<its org id>).members()`, compared by the builder's own key. */
+function isMembersKey(key: readonly unknown[]): boolean {
+  const orgId = key[1];
+  if (typeof orgId !== "string") return false;
+  const members = keys.org(orgId).members();
+  return members.length === key.length && members.every((part, i) => key[i] === part);
 }

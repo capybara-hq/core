@@ -262,7 +262,8 @@ export const ROUTES: readonly RouteEntry[] = [
   {
     // Nothing to read: `me` (the layout's) holds the name and the avatar.
     pattern: "/account/profile",
-    queries: () => [],
+    // No org needed: me (the shell's), and the sign-in sources that name an SSO avatar's origin.
+    queries: ({ me }) => (me === null ? [] : [q(authSourcesQuery())]),
   },
   {
     pattern: "/account/preferences",
