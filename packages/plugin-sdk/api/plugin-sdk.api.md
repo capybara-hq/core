@@ -475,6 +475,9 @@ export function checkParamValue(schema: ParamSchema, v: unknown): string | undef
 export function checkPng(bytes: Uint8Array): string | undefined;
 
 // @public
+export function checkPushResults(registrations: readonly PushTarget[], results: unknown): string | null;
+
+// @public
 export function checkThemeReadability(_scheme: ThemeScheme, merged: MergedScheme, rules?: {
     contrast: readonly (readonly [string, string, number, string?])[];
     separation: readonly (readonly [string, string, number])[];
@@ -3141,6 +3144,106 @@ export interface ProviderOpaque {
 }
 
 // @public
+export const PUSH_LIMITS: {
+    readonly titleChars: 100;
+    readonly bodyChars: 240;
+    readonly pathChars: 512;
+    readonly tokenChars: 4096;
+    readonly appIdChars: 255;
+    readonly deviceNameChars: 64;
+    readonly sendTimeoutMs: 15000;
+    readonly registrationsPerAccount: 20;
+};
+
+// @public
+export const PUSH_PROVIDER_EXTENSION_POINT = "push-provider@1";
+
+// @public
+export interface PushCapabilityV1 {
+    register(): Promise<PushRegistration>;
+    registered(id: string): Promise<void>;
+    status(): Promise<PushStatus>;
+    unregister(): Promise<void>;
+}
+
+// @public
+export class PushError extends Error {
+    constructor(message: string, opts: {
+        kind: PushErrorKind;
+        retryAfterMs?: number;
+    });
+    readonly kind: PushErrorKind;
+    readonly retryAfterMs?: number;
+}
+
+// @public
+export type PushErrorKind = "auth" | "rate_limited" | "transient";
+
+// @public
+export interface PushMessage {
+    badge?: number;
+    body: string;
+    origin: string;
+    path: string;
+    threadId: string;
+    title: string;
+}
+
+// @public
+export type PushPermission = "granted" | "denied" | "prompt";
+
+// @public
+export type PushPlatform = "ios" | "android";
+
+// @public
+export interface PushProvider {
+    apps(): readonly string[];
+    send(args: {
+        registrations: readonly PushTarget[];
+        message: PushMessage;
+        signal: AbortSignal;
+    }): Promise<PushResult[]>;
+}
+
+// @public
+export interface PushRegistration {
+    appId: string;
+    platform: PushPlatform;
+    provider: string;
+    token: string;
+}
+
+// @public
+export type PushResult = {
+    registrationId: string;
+    status: "delivered";
+} | {
+    registrationId: string;
+    status: "unregistered";
+} | {
+    registrationId: string;
+    status: "failed";
+    kind: PushErrorKind;
+    message: string;
+    retryAfterMs?: number;
+};
+
+// @public
+export interface PushStatus {
+    permission: PushPermission;
+    registrationId: string | null;
+    tokenChanged: boolean;
+}
+
+// @public
+export interface PushTarget {
+    appId: string;
+    id: string;
+    platform: PushPlatform;
+    token: string;
+}
+
+// @public
 export function questionRenderableInline(form: InputForm, opts?: {
     textReply?: boolean;
 }): boolean;
@@ -3888,6 +3991,7 @@ export const SHELL_CAPABILITY_KEYS: {
     readonly notify: "notify@1";
     readonly openExternal: "openExternal@1";
     readonly signIn: "signIn@1";
+    readonly push: "push@1";
 };
 
 // @public
@@ -4838,6 +4942,9 @@ export function validatePermissions(plugin: string, p: unknown): string[];
 export function validatePluginPackageJsonFor(pkg: unknown, manifest: PluginManifest, hostSdkVersion: string, opts?: {
     hostZodVersion?: string;
 }): string[];
+
+// @public
+export function validatePushMessage(m: PushMessage): string | null;
 
 // @public
 export function validateSandboxPath(p: string, roots?: SandboxRoots): string[];

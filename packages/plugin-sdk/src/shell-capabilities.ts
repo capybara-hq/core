@@ -1,3 +1,5 @@
+import type { PushPlatform } from "./push.js";
+
 /**
  * Desktop shell capabilities (desktop client spec §8): the shapes of the objects a desktop shell
  * puts in `window.capybaraShell.capabilities` under the keys of `SHELL_CAPABILITY_KEYS`. Types and
@@ -12,6 +14,7 @@ export const SHELL_CAPABILITY_KEYS = {
   notify: "notify@1",
   openExternal: "openExternal@1",
   signIn: "signIn@1",
+  push: "push@1",
 } as const;
 
 export type KeepAwakeMode = "off" | "while-busy" | "connected";
@@ -113,4 +116,32 @@ export interface ChromeCapabilityV1 {
     tokens?: ShellChromeTokens;
     singleScheme?: boolean;
   }): Promise<void>;
+}
+
+export type PushPermission = "granted" | "denied" | "prompt";
+
+export interface PushStatus {
+  permission: PushPermission;
+  /** The server-side registration id this install holds, or null. */
+  registrationId: string | null;
+  /** The OS token differs from the one last registered. */
+  tokenChanged: boolean;
+}
+
+/** What the shell hands the web app to register with the deployment. */
+export interface PushRegistration {
+  platform: PushPlatform;
+  appId: string;
+  provider: string;
+  token: string;
+}
+
+/** `push@1`: native push registration (mobile shells). */
+export interface PushCapabilityV1 {
+  status(): Promise<PushStatus>;
+  /** User activation only when permission is "prompt"; rejects { code: "cancelled" } when denied. */
+  register(): Promise<PushRegistration>;
+  /** Tells the shell the deployment's registration id for this install. */
+  registered(id: string): Promise<void>;
+  unregister(): Promise<void>;
 }

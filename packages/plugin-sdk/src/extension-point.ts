@@ -125,6 +125,12 @@ export const EXTENSION_POINTS: Record<string, ExtensionPointInfo> = {
     true,
     "org-default",
   ),
+  "push-provider": info(
+    [1],
+    "Delivers push notifications to people's mobile apps through one channel (APNs, FCM, an aggregator).",
+    "multi",
+    true,
+  ),
 };
 
 /** Cardinality of the registered extension points (derived from EXTENSION_POINTS). */
