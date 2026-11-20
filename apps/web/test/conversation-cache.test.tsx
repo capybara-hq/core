@@ -16,6 +16,7 @@ import {
   conversationFollowUps,
   type EventWindow,
   eventsQuery,
+  learnPeople,
   renameWithRow,
   seedNewConversation,
   toolInfoQuery,
@@ -81,6 +82,37 @@ describe("appendEvents", () => {
     const qc = testQueryClient();
     expect(appendEvents(qc, "o1", "c1", [msg(1)]).added).toBe(0);
     expect(qc.getQueryData(eventsQuery("o1", "c1").queryKey)).toBeUndefined();
+  });
+});
+
+describe("learnPeople", () => {
+  const key = eventsQuery("o1", "c1").queryKey;
+  const stopped = (seq: number, by: string) =>
+    ev(seq, "run_aborted", { byAccountId: by, reason: "user" }, "r1");
+  const bo = { id: "a2", name: "Bo", avatarUrl: null };
+
+  it("reads an unknown account a streamed event names, through that one event's people", async () => {
+    const calls = stubApi({
+      "GET /api/v1/orgs/o1/conversations/c1/events": () =>
+        json(200, { events: [stopped(3, "a2")], people: { a2: bo } }),
+    });
+    const qc = testQueryClient();
+    qc.setQueryData(key, { ...win([msg(1), msg(2)]), people: {} });
+    await learnPeople(qc, "o1", "c1", stopped(3, "a2"));
+    expect(calls.map((c) => c.url)).toEqual([
+      "/api/v1/orgs/o1/conversations/c1/events?after=2&limit=1",
+    ]);
+    expect(qc.getQueryData<EventWindow>(key)?.people).toEqual({ a2: bo });
+  });
+
+  it("reads nothing for a known account or a window no read filled", async () => {
+    const calls = stubApi({});
+    const qc = testQueryClient();
+    qc.setQueryData(key, { ...win([msg(1)]), people: { a2: bo } });
+    await learnPeople(qc, "o1", "c1", stopped(2, "a2"));
+    qc.setQueryData(key, win([msg(1)]));
+    await learnPeople(qc, "o1", "c1", stopped(2, "a9"));
+    expect(calls).toEqual([]);
   });
 });
 

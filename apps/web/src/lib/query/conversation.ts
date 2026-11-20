@@ -24,6 +24,7 @@ import {
   getToolInfo,
   listAllEvents,
   listBackgroundTasks,
+  listEvents,
   listEventsBefore,
   listQueue,
   listSubagents,
@@ -34,6 +35,7 @@ import {
   toolOutputSize,
 } from "../conversations";
 import { fileText, listFiles } from "../files";
+import type { PersonRef } from "../people";
 import { listFilePreviewers, renderFilePreview } from "../previewers";
 import { getQuestion } from "../questions";
 import { listInvocableSkills } from "../skills";
@@ -65,6 +67,11 @@ export const conversationQuery = (orgId: string, id: string) =>
 export interface EventWindow {
   events: ConversationEvent[];
   turnsBefore: number;
+  /**
+   * The accounts the cached events name, by id (the events response's `people`, read time). An id
+   * the map lacks has left the platform. Absent in a window nothing has read yet (a seeded one).
+   */
+  people?: Record<string, PersonRef>;
 }
 
 /**
@@ -81,6 +88,7 @@ export const eventsQuery = (orgId: string, id: string) =>
       listEventsBefore(orgId, id, "end").then((r) => ({
         events: r.events,
         turnsBefore: r.turnsBefore ?? 0,
+        people: r.people,
       })),
     freshness: "events",
   });
@@ -500,17 +508,20 @@ function mergeBySeq(
 export function mergeWindows(cached: EventWindow, incoming: EventWindow): EventWindow {
   const a = cached.events;
   const b = incoming.events;
-  if (a.length === 0) return incoming;
-  if (b.length === 0) return cached;
+  const people = { ...cached.people, ...incoming.people };
+  const withPeople = (w: EventWindow): EventWindow =>
+    Object.keys(people).length === 0 ? w : { ...w, people };
+  if (a.length === 0) return withPeople(incoming);
+  if (b.length === 0) return withPeople(cached);
   const aFirst = (a[0] as ConversationEvent).seq;
   const bFirst = (b[0] as ConversationEvent).seq;
   const aLast = (a.at(-1) as ConversationEvent).seq;
   const bLast = (b.at(-1) as ConversationEvent).seq;
-  if (bFirst > aLast + 1 || aFirst > bLast + 1) return incoming;
-  return {
+  if (bFirst > aLast + 1 || aFirst > bLast + 1) return withPeople(incoming);
+  return withPeople({
     events: mergeBySeq(a, b),
     turnsBefore: aFirst <= bFirst ? cached.turnsBefore : incoming.turnsBefore,
-  };
+  });
 }
 
 const isEventsKey = (k: readonly unknown[]) =>
@@ -535,18 +546,64 @@ export function mergeHydratedEvents(qc: QueryClient, state: DehydratedState): De
   };
 }
 
+/** Joins `people` into the cached window's map (nothing while the log is not cached). */
+function addPeople(
+  qc: QueryClient,
+  orgId: string,
+  id: string,
+  people: Record<string, PersonRef>,
+): void {
+  if (Object.keys(people).length === 0) return;
+  qc.setQueryData<EventWindow>(keys.org(orgId).conversation(id).events(), (win) =>
+    win === undefined ? win : { ...win, people: { ...win.people, ...people } },
+  );
+}
+
+/** The payload keys of an event that can name an account the page has not read yet. */
+const STREAMED_PERSON_KEYS = ["triggerAccountId", "byAccountId"] as const;
+
+/**
+ * Reads the people a streamed event names when the window does not know them yet (an account that
+ * joined the conversation after the page loaded): the events read for that one event carries the
+ * sidecar. Only a window a read filled is checked (a seeded one is the viewer's own conversation:
+ * its people are known from the session). A failed read leaves the id as departed.
+ */
+export async function learnPeople(
+  qc: QueryClient,
+  orgId: string,
+  id: string,
+  event: ConversationEvent,
+): Promise<void> {
+  const payload = event.payload as Record<string, unknown> | null;
+  const known = qc.getQueryData<EventWindow>(keys.org(orgId).conversation(id).events())?.people;
+  if (known === undefined) return;
+  const unknown = STREAMED_PERSON_KEYS.some((k) => {
+    const v = payload?.[k];
+    return typeof v === "string" && known[v] === undefined;
+  });
+  if (!unknown) return;
+  try {
+    const page = await listEvents(orgId, id, event.seq - 1, 1);
+    addPeople(qc, orgId, id, page.people);
+  } catch {
+    // cosmetic: the id shows as a former member until the next read
+  }
+}
+
 /**
  * Merges `events` into the cached log of the conversation by `seq`: none twice, in ascending
  * order. Returns how many were new. Nothing happens while the log is not cached (the stream opens
- * only once it is).
+ * only once it is). `people` (the read's sidecar) joins the window's map.
  */
 export function appendEvents(
   qc: QueryClient,
   orgId: string,
   id: string,
   events: readonly ConversationEvent[],
+  people?: Record<string, PersonRef>,
 ): { added: number } {
   let added = 0;
+  if (people !== undefined) addPeople(qc, orgId, id, people);
   qc.setQueryData<EventWindow>(keys.org(orgId).conversation(id).events(), (win) => {
     if (win === undefined || events.length === 0) return win;
     const cur = win.events;
@@ -586,8 +643,8 @@ export async function catchUpEvents(
 ): Promise<{ added: number }> {
   const cached = qc.getQueryData<EventWindow>(keys.org(orgId).conversation(id).events());
   if (cached === undefined) return { added: 0 };
-  const events = await listAllEvents(orgId, id, cached.events.at(-1)?.seq ?? 0);
-  return appendEvents(qc, orgId, id, events);
+  const { events, people } = await listAllEvents(orgId, id, cached.events.at(-1)?.seq ?? 0);
+  return appendEvents(qc, orgId, id, events, people);
 }
 
 /**
@@ -607,6 +664,7 @@ export async function loadEarlierEvents(
   const first = cached?.events[0]?.seq;
   if (cached === undefined || first === undefined || first === 1) return { added: 0 };
   const page = await listEventsBefore(orgId, id, first);
+  addPeople(qc, orgId, id, page.people);
   let added = 0;
   qc.setQueryData<EventWindow>(key, (win) => {
     if (win === undefined) return win;

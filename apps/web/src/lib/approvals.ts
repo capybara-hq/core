@@ -1,5 +1,6 @@
 import { apiFetch } from "./api";
 import type { PermissionScope, SandboxEscalation } from "./conversations";
+import type { PersonRef } from "./people";
 
 /**
  * 内核审批 API 的类型（`packages/kernel/src/tools/approvals.controller.ts` / `approvals.service.ts`；
@@ -103,6 +104,8 @@ export interface Approval {
   supersededReason?: string | null;
   scope: ApprovalScope | null;
   decidedBy: string | null;
+  /** The person who decided (null while pending or when the account is gone). */
+  decidedByPerson: PersonRef | null;
   decidedAt: string | null;
   expiresAt: string;
   createdAt: string;

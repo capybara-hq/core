@@ -5,6 +5,7 @@ import {
   type ApprovalState,
   type CommandAsk as CommandAskBlock,
   type NetworkAsk,
+  type PersonLike,
   RadioGroup,
   Stack,
   StatusMark,
@@ -25,18 +26,21 @@ import {
   scopesFor,
 } from "../lib/approvals";
 import type { PermissionScope, SandboxEscalation, ToolInfo } from "../lib/conversations";
+import { withNode } from "../lib/node-slot";
+import { type PersonRef, usePersonLookup } from "../lib/people";
 import { retryOnMountOf } from "../lib/query/client";
 import { approvalQuery } from "../lib/query/conversation";
 import { inboxChangeKeys } from "../lib/query/inbox";
 import { keys } from "../lib/query/keys";
 import { useAppMutation } from "../lib/query/mutation";
-import { useWaiterWords } from "../lib/query/who-waits";
+import { useThreadWaiterWords } from "../lib/query/who-waits";
 import { shortTime } from "../lib/time";
 import type { ApprovalDecision, ApprovalItem } from "../lib/timeline";
 import { lang, PLATFORM_PREFIX, toolLabel, toolLabelOfKey, toolLabelText } from "../lib/tool-label";
 import { useErrorMessage } from "../lib/use-error-message";
 import { InitialPasswordReveal } from "./InitialPasswordReveal";
 import { PermissionScopeDetail } from "./PermissionScopeDetail";
+import { Person } from "./Person";
 import { SandboxEscalationDetail } from "./SandboxEscalationDetail";
 import { useSession } from "./shell/session";
 
@@ -47,7 +51,10 @@ import { useSession } from "./shell/session";
 export type Outcome = Pick<
   ApprovalDecision,
   "decision" | "scope" | "byAccountId" | "reason" | "revision"
->;
+> & {
+  /** The decider as the approval read names them (null: the account is gone); absent: not read. */
+  byPerson?: PersonRef | null;
+};
 
 /** An approval detail's status as its outcome (null while pending). */
 export function outcomeOf(a: Approval): Outcome | null {
@@ -64,6 +71,7 @@ export function outcomeOf(a: Approval): Outcome | null {
     decision: a.status,
     ...(a.scope !== null ? { scope: a.scope } : {}),
     byAccountId: a.decidedBy,
+    byPerson: a.decidedByPerson,
   };
 }
 
@@ -109,11 +117,11 @@ export function ApprovalOutcome({ outcome }: { outcome: Outcome }) {
   const t = useTranslations("approval");
   const { me } = useSession();
   const who =
-    outcome.byAccountId === null
-      ? t("system")
-      : outcome.byAccountId === me.account.id
-        ? t("you")
-        : outcome.byAccountId;
+    outcome.byAccountId === null ? (
+      t("system")
+    ) : (
+      <Person person={outcome.byPerson ?? null} size={16} viewerId={me.account.id} />
+    );
   const status =
     outcome.decision === "approved"
       ? "success"
@@ -129,7 +137,7 @@ export function ApprovalOutcome({ outcome }: { outcome: Outcome }) {
         </Text>
       )}
       <Text variant="small" tone="muted">
-        {t("decidedBy", { who })}
+        {withNode((mark) => t("decidedBy", { who: mark }), who)}
       </Text>
     </Stack>
   );
@@ -234,12 +242,20 @@ export function ApprovalCard({
   const [local, setLocal] = useState<(Outcome & { at: string }) | null>(null);
   const { decide, pending } = useDecide(orgId);
   const decided = item.decided;
+  const lookup = usePersonLookup();
+  // a decided card whose decider the thread's people do not name (a sub-agent's, decided in its
+  // own log) reads the approval for the person
+  const decidedByUnknown =
+    decided !== null &&
+    decided.byAccountId !== null &&
+    decided.byAccountId !== me.account.id &&
+    lookup(decided.byAccountId) === null;
   // Pending, the approval tells who may decide; not visible = may not decide (assigned to
   // someone else, or the role is too low). A network ask reads it decided too (granted hosts).
   const approvalQ = approvalQuery(orgId, item.approvalId);
   const approval = useQuery({
     ...approvalQ,
-    enabled: decided === null || item.network !== undefined,
+    enabled: decided === null || item.network !== undefined || decidedByUnknown,
     retry: false,
     // a 404 the server read (not this viewer's to decide) stays as it was painted
     retryOnMount: retryOnMountOf(approvalQ.queryKey),
@@ -250,18 +266,23 @@ export function ApprovalCard({
   const fromView = view ? outcomeOf(view) : null;
   const outcome: (Outcome & { at: string | null }) | null =
     decided !== null
-      ? { ...decided, at: item.decidedAt }
+      ? {
+          ...decided,
+          ...(fromView?.byPerson !== undefined ? { byPerson: fromView.byPerson } : {}),
+          at: item.decidedAt,
+        }
       : (local ?? (fromView !== null && view ? { ...fromView, at: view.decidedAt } : null));
-  // Names only when someone else decided, or is awaited, so a person's own card reads nothing more
-  const by = outcome?.byAccountId ?? null;
   const awaited = outcome === null && view === null ? item.approver : undefined;
-  const words = useWaiterWords(
-    orgId,
-    (by !== null && by !== me.account.id) ||
-      (awaited?.kind === "account" && awaited.accountId !== me.account.id),
-  );
-  const who = (id: string | null) =>
-    id === null ? t("system") : (words({ kind: "account", accountId: id }) ?? t("you"));
+  const words = useThreadWaiterWords();
+  const tp = useTranslations("people");
+  // The decider: the system, the viewer ("you"), or a person with their avatar; one who left
+  // reads "Former member". Names come from the thread's people, else from the approval read.
+  const who = (o: Outcome): PersonLike | string => {
+    if (o.byAccountId === null) return t("system");
+    if (o.byAccountId === me.account.id) return t("you");
+    const p = lookup(o.byAccountId) ?? o.byPerson ?? null;
+    return p ? { name: p.name, avatarUrl: p.avatarUrl } : { name: tp("departed"), avatarUrl: null };
+  };
 
   async function onDecide(
     decision: "approve" | "deny",
@@ -275,6 +296,7 @@ export function ApprovalCard({
         decision: r.status === "pending" ? "cancelled" : r.status,
         ...(r.scope !== null ? { scope: r.scope } : {}),
         byAccountId: r.decidedBy,
+        byPerson: r.decidedByPerson,
         ...(reason !== undefined ? { reason } : {}),
         at: r.decidedAt ?? new Date().toISOString(),
       });
@@ -368,7 +390,7 @@ export function ApprovalCard({
     state = {
       kind: "decided",
       decision: outcome.decision,
-      who: who(outcome.byAccountId),
+      who: who(outcome),
       when: outcome.at ? shortTime(outcome.at, locale, timeZone) : "",
       ...(outcome.scope !== undefined ? { scope: outcome.scope } : {}),
       ...(granted !== undefined && granted.length > 0 ? { hosts: granted } : {}),

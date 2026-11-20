@@ -288,7 +288,7 @@ describe("the conversation page (ConversationPage)", () => {
     expect(screen.queryByText(/Couldn't stop/)).toBeNull();
   });
 
-  it("a run another member stopped names them; an unknown account reads another member (m8)", async () => {
+  it("a run another member stopped shows their name and avatar, from the events' people (a guest reads no members)", async () => {
     const stopped = (seq: number, by: string, run: string) => [
       ev(seq, "run_started", { agentVersion: 1, model: { provider: "p", model: "m" } }, run),
       ev(seq + 1, "run_aborted", { byAccountId: by, reason: "user" }, run),
@@ -301,28 +301,51 @@ describe("the conversation page (ConversationPage)", () => {
             ...stopped(2, "acc-bo", "r1"),
             ...stopped(4, "acc-gone", "r2"),
           ],
+          people: {
+            a1: { id: "a1", name: "Ada", avatarUrl: "/api/v1/accounts/a1/avatar?v=1" },
+            "acc-bo": {
+              id: "acc-bo",
+              name: "Bo Admin",
+              avatarUrl: "/api/v1/accounts/acc-bo/avatar?v=2",
+            },
+          },
         }),
       "GET /api/v1/orgs/o1/members": () =>
-        json(200, {
-          members: [
-            {
-              account: { id: "acc-bo", displayName: "Bo Admin", email: null },
-              role: "admin",
-              joinedAt: "2026-10-01T00:00:00.000Z",
-              anonymous: false,
-            },
-          ],
-        }),
+        json(403, { error: { code: "forbidden", message: "no" } }),
     });
     await renderChat();
     await vi.waitFor(() =>
       expect(document.querySelectorAll('[data-run-status="stopped"]')).toHaveLength(2),
     );
     const dividers = () =>
-      [...document.querySelectorAll('[data-run-status="stopped"]')].map((d) => d.textContent ?? "");
-    await vi.waitFor(() => expect(dividers()[0]).toContain("Bo Admin"));
-    expect(dividers()[1]).toContain(en.chat.anotherMember);
-    expect(dividers().join(" ")).not.toContain("acc-");
+      [...document.querySelectorAll('[data-run-status="stopped"]')] as HTMLElement[];
+    expect(dividers()[0]?.textContent).toContain("Bo Admin");
+    expect(
+      dividers()[0]?.querySelector('img[src="/api/v1/accounts/acc-bo/avatar?v=2"]'),
+    ).not.toBeNull();
+    expect(dividers()[1]?.textContent).toContain(en.people.departed);
+    expect(
+      dividers()
+        .map((d) => d.textContent)
+        .join(" "),
+    ).not.toContain("acc-");
+  });
+
+  it("the user bubble shows its author's avatar", async () => {
+    api({
+      [`GET ${BASE}/events`]: () =>
+        json(200, {
+          events: [userMsg(1, "hi")],
+          people: { a1: { id: "a1", name: "Ada", avatarUrl: "/api/v1/accounts/a1/avatar?v=1" } },
+        }),
+    });
+    await renderChat();
+    const row = await vi.waitFor(() => {
+      const r = document.querySelector('[data-part="bubble-row"]');
+      expect(r).not.toBeNull();
+      return r as HTMLElement;
+    });
+    expect(row.querySelector('img[src="/api/v1/accounts/a1/avatar?v=1"]')).not.toBeNull();
   });
 
   it("streams deltas with a cursor; the assistant_message replaces the draft", async () => {

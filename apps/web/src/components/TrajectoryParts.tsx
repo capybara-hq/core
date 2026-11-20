@@ -14,6 +14,7 @@ import {
 import { useLocale, useTranslations } from "next-intl";
 import type { ReactNode } from "react";
 import { Link } from "../i18n/navigation";
+import type { PersonRef } from "../lib/people";
 import { toolLabelOfKey, toolLabelText } from "../lib/tool-label";
 import {
   inputTotal,
@@ -25,6 +26,7 @@ import {
   type TrajectoryRun,
   type TrajectoryToolCall,
 } from "../lib/trajectories";
+import { Person } from "./Person";
 
 /**
  * 轨迹查看器的共用部件（运行记录页 `/trajectories/[conversationId]` 与评测用例的快照轨迹
@@ -103,8 +105,8 @@ export function SpanDetail({
 }: {
   source: SpanSource;
   currency: string;
-  /** Account id -> display name: the starter shows as a name, the id in a tooltip. */
-  people?: Readonly<Record<string, string>>;
+  /** Account id -> person (the response's `people`): who started, decided or answered. */
+  people?: Readonly<Record<string, PersonRef>>;
 }) {
   switch (source.kind) {
     case "run":
@@ -115,7 +117,7 @@ export function SpanDetail({
       return <ModelDetail call={source.call} currency={currency} />;
     default:
       // 工具调用与它的审批 / 提问等待：都显示该工具调用（含审批链与提问）
-      return <ToolDetail call={source.call} />;
+      return <ToolDetail call={source.call} people={people ?? {}} />;
   }
 }
 
@@ -135,7 +137,7 @@ function RunDetail({
 }: {
   run: TrajectoryRun;
   currency: string;
-  people: Readonly<Record<string, string>>;
+  people: Readonly<Record<string, PersonRef>>;
 }) {
   const t = useTranslations("trajectories.detail.run");
   const formatCost = useFormatCost();
@@ -144,12 +146,7 @@ function RunDetail({
     { k: t("version"), v: `v${run.agentVersion}` },
     {
       k: t("trigger"),
-      v:
-        people[run.triggerAccountId] === undefined ? (
-          run.triggerAccountId
-        ) : (
-          <Text title={run.triggerAccountId}>{people[run.triggerAccountId]}</Text>
-        ),
+      v: <Person person={people[run.triggerAccountId] ?? null} size={16} />,
     },
     { k: t("started"), v: <DateTime value={run.startedAt} /> },
     { k: t("ended"), v: run.endedAt === null ? t("running") : <DateTime value={run.endedAt} /> },
@@ -277,7 +274,13 @@ export function ParentTrajectoryLink({ conversationId }: { conversationId: strin
   );
 }
 
-function ToolDetail({ call }: { call: TrajectoryToolCall }) {
+function ToolDetail({
+  call,
+  people,
+}: {
+  call: TrajectoryToolCall;
+  people: Readonly<Record<string, PersonRef>>;
+}) {
   const t = useTranslations("trajectories.detail.tool");
   const th = useTranslations("trajectories.detail.hook");
   const ts = useTranslations("subagents");
@@ -338,7 +341,14 @@ function ToolDetail({ call }: { call: TrajectoryToolCall }) {
                 { k: t("approvalRequested"), v: <DateTime value={ap.requestedAt} /> },
                 { k: t("decision"), v: t(`decisions.${ap.decision ?? "pending"}`) },
                 ...(ap.scope !== undefined ? [{ k: t("scope"), v: t(`scopes.${ap.scope}`) }] : []),
-                ...(ap.byAccountId !== null ? [{ k: t("by"), v: ap.byAccountId }] : []),
+                ...(ap.byAccountId !== null
+                  ? [
+                      {
+                        k: t("by"),
+                        v: <Person person={people[ap.byAccountId] ?? null} size={16} />,
+                      },
+                    ]
+                  : []),
                 ...(ap.decidedAt !== null
                   ? [{ k: t("decidedAt"), v: <DateTime value={ap.decidedAt} /> }]
                   : []),
@@ -357,7 +367,9 @@ function ToolDetail({ call }: { call: TrajectoryToolCall }) {
                 ...(q.skippedBySeq !== undefined
                   ? [{ k: t("skippedBy"), v: `#${q.skippedBySeq}` }]
                   : []),
-                ...(q.byAccountId !== null ? [{ k: t("by"), v: q.byAccountId }] : []),
+                ...(q.byAccountId !== null
+                  ? [{ k: t("by"), v: <Person person={people[q.byAccountId] ?? null} size={16} /> }]
+                  : []),
               ]}
             />
           </Subsection>

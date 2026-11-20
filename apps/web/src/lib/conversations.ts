@@ -1,6 +1,7 @@
 import type { AgentProfile } from "./agents";
 import { apiFetch } from "./api";
 import type { OrgRole } from "./members";
+import type { PersonRef } from "./people";
 import type { PermissionProfile, PermissionSelection } from "./permissions";
 
 /**
@@ -714,6 +715,8 @@ export interface Conversation {
   subagentType?: string | null;
   /** The conversation's owner. */
   accountId?: string;
+  /** The owner as a person (null when the account is gone); read with the one conversation. */
+  owner?: PersonRef | null;
   /** The device it runs in, bound at the first message (null: none). */
   deviceId: string | null;
   /** The scheduled task that started it (a `new`-mode task); null otherwise. */
@@ -1031,7 +1034,7 @@ export const getConversation = (orgId: string, id: string) =>
   apiFetch<{ conversation: Conversation }>(one(orgId, id));
 
 export const listEvents = (orgId: string, id: string, after: number, limit = EVENTS_PAGE) =>
-  apiFetch<{ events: ConversationEvent[] }>(
+  apiFetch<{ events: ConversationEvent[]; people: Record<string, PersonRef> }>(
     `${one(orgId, id)}/events?after=${after}&limit=${limit}`,
   );
 
@@ -1055,23 +1058,28 @@ export const listEventsBefore = (
   before: number | "end",
   limit = HISTORY_PAGE,
 ) =>
-  apiFetch<{ events: ConversationEvent[]; turnsBefore?: number }>(
-    `${one(orgId, id)}/events?before=${before}&limit=${limit}`,
-  );
+  apiFetch<{
+    events: ConversationEvent[];
+    /** Every account the events name, by id (read time); an absent id has left. */
+    people: Record<string, PersonRef>;
+    turnsBefore?: number;
+  }>(`${one(orgId, id)}/events?before=${before}&limit=${limit}`);
 
 /** 读完 `after` 之后的全部事件（逐页）。 */
 export async function listAllEvents(
   orgId: string,
   id: string,
   after = 0,
-): Promise<ConversationEvent[]> {
+): Promise<{ events: ConversationEvent[]; people: Record<string, PersonRef> }> {
   const out: ConversationEvent[] = [];
+  const people: Record<string, PersonRef> = {};
   let cursor = after;
   for (;;) {
-    const { events } = await listEvents(orgId, id, cursor);
-    out.push(...events);
-    const last = events.at(-1);
-    if (events.length < EVENTS_PAGE || last === undefined) return out;
+    const page = await listEvents(orgId, id, cursor);
+    out.push(...page.events);
+    Object.assign(people, page.people);
+    const last = page.events.at(-1);
+    if (page.events.length < EVENTS_PAGE || last === undefined) return { events: out, people };
     cursor = last.seq;
   }
 }

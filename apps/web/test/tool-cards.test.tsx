@@ -1,5 +1,6 @@
 import { cleanup, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
+import type { ReactElement } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import en from "../messages/en.json";
 import zh from "../messages/zh.json";
@@ -7,6 +8,7 @@ import { ApprovalCard } from "../src/components/ApprovalCard";
 import { ConnectCard } from "../src/components/ConnectCard";
 import { QuestionCard } from "../src/components/QuestionCard";
 import type { InputForm, ToolInfo } from "../src/lib/conversations";
+import { PeopleContext, type PeopleMap } from "../src/lib/people";
 import { buildAnswer, initialDraft, OTHER } from "../src/lib/questions";
 import type { ApprovalItem, QuestionItem } from "../src/lib/timeline";
 import { bodyOf, json, stubApi } from "./support/api";
@@ -252,48 +254,76 @@ describe("ApprovalCard (design ApprovalBlock)", () => {
     },
   );
 
-  it("decided (from the log): one line naming who, the key, the scope and the reason", async () => {
-    const calls = stubApi({
-      "GET /api/v1/orgs/o1/members": () =>
-        json(200, {
-          members: [{ account: { id: "someone", displayName: "李四" }, role: "member" }],
-        }),
-    });
-    renderPage(
-      <ApprovalCard
-        orgId="o1"
-        item={item({
-          approvalId: "ap1",
-          callId: "call_1",
-          decision: "denied",
-          byAccountId: "someone",
-          reason: "too risky",
-        })}
-        info={INFO}
-      />,
-      { locale: "zh", me: ME },
-    );
-    // the decider's name, read from the member list (the approval itself is not read)
-    expect(await screen.findByText(/李四 拒绝了 Fixture \[delete_item\]/)).toBeTruthy();
-    expect(screen.getByText(/「too risky」/)).toBeTruthy();
-    expect(calls.map((c) => c.url)).toEqual(["/api/v1/orgs/o1/members"]);
+  const PEOPLE = {
+    someone: { id: "someone", name: "李四", avatarUrl: "/api/v1/accounts/someone/avatar?v=1" },
+    acc_zhang: { id: "acc_zhang", name: "张三", avatarUrl: null },
+  };
+  const inThread = (node: ReactElement, people: PeopleMap = PEOPLE) => (
+    <PeopleContext.Provider value={people}>{node}</PeopleContext.Provider>
+  );
+  const decidedBy = (byAccountId: string | null): ApprovalItem["decided"] => ({
+    approvalId: "ap1",
+    callId: "call_1",
+    decision: "denied",
+    byAccountId,
+    reason: "too risky",
   });
 
-  it("a viewer who can't decide is told who is awaited by name", async () => {
+  it("decided by another account: their name and avatar, never the id; no member list read", () => {
+    const calls = stubApi({});
+    const { container } = renderPage(
+      inThread(<ApprovalCard orgId="o1" item={item(decidedBy("someone"))} info={INFO} />),
+      { locale: "zh", me: ME },
+    );
+    const line = container.querySelector('[data-role="approval"]') as HTMLElement;
+    expect(line.textContent).toContain("李四");
+    expect(line.textContent).not.toContain("someone");
+    expect(line.querySelector('img[src="/api/v1/accounts/someone/avatar?v=1"]')).not.toBeNull();
+    expect(screen.getByText(/「too risky」/)).toBeTruthy();
+    expect(calls).toEqual([]);
+  });
+
+  it("decided by the viewer reads 你; decided by nobody reads 系统", () => {
+    stubApi({});
+    const mine = renderPage(
+      inThread(<ApprovalCard orgId="o1" item={item(decidedBy(ME.account.id))} info={INFO} />),
+      { locale: "zh", me: ME },
+    );
+    expect(mine.container.textContent).toContain("你");
+    cleanup();
+    const system = renderPage(
+      inThread(<ApprovalCard orgId="o1" item={item(decidedBy(null))} info={INFO} />),
+      { locale: "zh", me: ME },
+    );
+    expect(system.container.textContent).toContain("系统");
+  });
+
+  it("decided by an account absent from the people reads Former member", async () => {
     stubApi({
       "GET /api/v1/orgs/o1/approvals/ap1": () =>
         json(404, { error: { code: "approval.not_found", message: "x" } }),
-      "GET /api/v1/orgs/o1/members": () =>
-        json(200, {
-          members: [{ account: { id: "acc_zhang", displayName: "张三" }, role: "member" }],
-        }),
+    });
+    const { container } = renderPage(
+      inThread(<ApprovalCard orgId="o1" item={item(decidedBy("gone"))} info={INFO} />, {}),
+      { locale: "en", me: ME },
+    );
+    await vi.waitFor(() => expect(container.textContent).toContain(en.people.departed));
+    expect(container.textContent).not.toContain("gone");
+  });
+
+  it("a viewer who can't decide is told who is awaited by name, from the people", async () => {
+    const calls = stubApi({
+      "GET /api/v1/orgs/o1/approvals/ap1": () =>
+        json(404, { error: { code: "approval.not_found", message: "x" } }),
     });
     renderPage(
-      <ApprovalCard
-        orgId="o1"
-        item={{ ...item(), approver: { kind: "account", accountId: "acc_zhang" } }}
-        info={INFO}
-      />,
+      inThread(
+        <ApprovalCard
+          orgId="o1"
+          item={{ ...item(), approver: { kind: "account", accountId: "acc_zhang" } }}
+          info={INFO}
+        />,
+      ),
       { locale: "zh", me: ME },
     );
     expect(
@@ -301,6 +331,7 @@ describe("ApprovalCard (design ApprovalBlock)", () => {
         "Fixture [delete_item]（mcp__fixture__delete_item）需要审批，等待 张三 处理。",
       ),
     ).toBeTruthy();
+    expect(calls.map((c) => c.url)).toEqual(["/api/v1/orgs/o1/approvals/ap1"]);
   });
 
   it("an approval escalated by role names the role, without reading the member list", async () => {
@@ -537,6 +568,37 @@ describe("QuestionCard (design QuestionBlock)", () => {
     await user.click(screen.getByRole("button", { name: "Answer" }));
     expect(bodyOf(calls[0])).toEqual({ answer: { env: "prod", notify: true, note: "hello" } });
     expect(await screen.findByText(/prod/)).toBeTruthy();
+  });
+
+  it("a question answered by another account shows their name and avatar; one who left reads Former member", () => {
+    const answered = (byAccountId: string): QuestionItem["answered"] => ({
+      questionId: "q1",
+      callId: "call_1",
+      answer: { env: "prod", notify: false },
+      byAccountId,
+      outcome: "answered",
+    });
+    const people = {
+      a2: { id: "a2", name: "Bo", avatarUrl: "/api/v1/accounts/a2/avatar?v=1" },
+    };
+    const known = renderPage(
+      <PeopleContext.Provider value={people}>
+        <QuestionCard orgId="o1" item={item(answered("a2"))} />
+      </PeopleContext.Provider>,
+      { locale: "en", me: ME },
+    );
+    expect(known.container.textContent).toContain("Bo");
+    expect(known.container.textContent).not.toContain("a2");
+    expect(
+      known.container.querySelector('img[src="/api/v1/accounts/a2/avatar?v=1"]'),
+    ).not.toBeNull();
+    cleanup();
+    const gone = renderPage(<QuestionCard orgId="o1" item={item(answered("a3"))} />, {
+      locale: "en",
+      me: ME,
+    });
+    expect(gone.container.textContent).toContain(en.people.departed);
+    expect(gone.container.textContent).not.toContain("a3");
   });
 
   it("answered from the log collapses to question and answer; expired says so", () => {

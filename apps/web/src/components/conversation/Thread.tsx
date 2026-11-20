@@ -23,7 +23,7 @@ import {
   useTimeZone,
   useToast,
 } from "@capybara-hq/design";
-import { useQueries, useQuery } from "@tanstack/react-query";
+import { useQueries } from "@tanstack/react-query";
 import { useLocale, useTranslations } from "next-intl";
 import { memo, type ReactNode, useCallback, useMemo, useRef, useState } from "react";
 import { ApiClientError, ensureSession } from "../../lib/api";
@@ -31,9 +31,9 @@ import { artifactDownloadUrl } from "../../lib/artifacts";
 import { attachmentDownloadUrl } from "../../lib/attachments";
 import type { ModelRef, ToolInfo } from "../../lib/conversations";
 import { type ModelConfigViewer, modelConfigViewer } from "../../lib/model-config";
-import { retryOnMountOf } from "../../lib/query/client";
+import { withNode } from "../../lib/node-slot";
+import { PeopleContext, type PeopleMap, usePersonLookup } from "../../lib/people";
 import { toolOutputSizeQuery } from "../../lib/query/conversation";
-import { membersQuery } from "../../lib/query/members";
 import { canViewTrajectory, configureModelsHref, runParts } from "../../lib/run-row";
 import type { CompactionProgress } from "../../lib/stream";
 import { shortTime } from "../../lib/time";
@@ -47,6 +47,7 @@ import { useErrorMessage } from "../../lib/use-error-message";
 import { ApprovalCard } from "../ApprovalCard";
 import { ConnectCard } from "../ConnectCard";
 import { DeviceCodeCard } from "../DeviceCodeCard";
+import { Person } from "../Person";
 import { QuestionCard } from "../QuestionCard";
 import { useOpenDownload } from "../SessionFilePreview";
 import { useSession } from "../shell/session";
@@ -76,22 +77,8 @@ function useOutputSizes(
   }, [answered]);
 }
 
-/**
- * Display names of the org's members, read once the thread shows a run another account stopped
- * (m8); empty while loading or when the caller cannot list members (a guest).
- */
-function useMemberNames(orgId: string, needed: boolean): ReadonlyMap<string, string> {
-  const q = membersQuery(orgId);
-  const { data } = useQuery({
-    ...q,
-    enabled: needed,
-    retryOnMount: retryOnMountOf(q.queryKey),
-  });
-  return useMemo(
-    () => new Map((data?.members ?? []).map((m) => [m.account.id, m.account.displayName])),
-    [data],
-  );
-}
+/** The people map of a thread given none (a record without a log read). */
+const NO_PEOPLE: PeopleMap = {};
 
 const modelName = (m: ModelRef | null) => (m === null ? "—" : m.model);
 
@@ -155,6 +142,11 @@ export type ThreadProps = {
    * the end of the thread until the compaction's event replaces it.
    */
   compaction?: CompactionProgress | null;
+  /**
+   * The accounts the log names, by id (the events response's `people`): who stopped a run, decided
+   * or answered a card, wrote a message. The cards inside the thread read it from its context.
+   */
+  people?: PeopleMap;
 };
 
 /** The callbacks an entry calls, read through a ref so they never re-render the entries. */
@@ -190,8 +182,8 @@ type EntryContext = {
   removedFiles: ReadonlySet<string> | undefined;
   listedFiles: ReadonlySet<string> | undefined;
   openSubagent: string | undefined;
-  /** Member display names (another member who stopped a run). */
-  names: ReadonlyMap<string, string>;
+  /** The accounts the log names (who stopped a run, who wrote a message). */
+  people: PeopleMap;
   /** The run rows' links this reader may follow. */
   /** `configureModels`: who reads, for the model-setup fix of a failed run (null: no run links). */
   links: { trajectory: boolean; configureModels: ModelConfigViewer | null };
@@ -238,6 +230,7 @@ export function Thread({
   renderTask,
   runLinks,
   compaction,
+  people = NO_PEOPLE,
 }: ThreadProps) {
   const t = useTranslations("chat");
   const [openSummaries, setOpenSummaries] = useState<ReadonlySet<string>>(new Set());
@@ -282,14 +275,6 @@ export function Thread({
   }, [entries]);
   const paths = useMemo(() => new Set(filePaths?.keys() ?? []), [filePaths]);
   const { me } = useSession();
-  const stoppedByOther = entries.some(
-    (e) =>
-      e.kind === "run" &&
-      e.status === "stopped" &&
-      e.byAccountId !== null &&
-      e.byAccountId !== me.account.id,
-  );
-  const names = useMemberNames(orgId, stoppedByOther);
   const cb = useRef<EntryCallbacks>({});
   cb.current = {
     onRetry,
@@ -338,7 +323,7 @@ export function Thread({
       removedFiles,
       listedFiles,
       openSubagent,
-      names,
+      people,
       links: { trajectory, configureModels },
       has: {
         retry: hasRetry,
@@ -368,7 +353,7 @@ export function Thread({
       removedFiles,
       listedFiles,
       openSubagent,
-      names,
+      people,
       trajectory,
       configureModels,
       hasRetry,
@@ -384,14 +369,16 @@ export function Thread({
   if (entries.length === 0 && !compaction) return null;
 
   return (
-    <div role="log" aria-live={live ? "polite" : "off"} aria-label={t("timeline")}>
-      <Stack gap={12}>
-        {entries.map((e) => (
-          <EntryView key={e.key} e={e} c={ctx} />
-        ))}
-        {compaction ? <CompactingRow progress={compaction} /> : null}
-      </Stack>
-    </div>
+    <PeopleContext.Provider value={people}>
+      <div role="log" aria-live={live ? "polite" : "off"} aria-label={t("timeline")}>
+        <Stack gap={12}>
+          {entries.map((e) => (
+            <EntryView key={e.key} e={e} c={ctx} />
+          ))}
+          {compaction ? <CompactingRow progress={compaction} /> : null}
+        </Stack>
+      </div>
+    </PeopleContext.Provider>
   );
 }
 
@@ -472,12 +459,16 @@ function EntryNode({ e, c }: { e: TimelineEntry; c: EntryContext }): ReactNode {
     : undefined;
   const { renderCard, renderTask } = cb.current;
 
-  const who = (id: string | null) =>
-    id === null
-      ? t("system")
-      : id === me.account.id
-        ? t("you")
-        : (c.names.get(id) ?? t("anotherMember"));
+  const person = usePersonLookup(c.people);
+  // who stopped a run: the system, the viewer, or a person with their avatar
+  const whoStopped = (id: string | null): ReactNode =>
+    id === null ? (
+      t("system")
+    ) : id === me.account.id ? (
+      t("you")
+    ) : (
+      <Person person={person(id)} size={16} />
+    );
 
   const rowWithSize = (r: TimelineTool): ToolRowData => {
     const taskId = r.background?.taskId;
@@ -583,10 +574,10 @@ function EntryNode({ e, c }: { e: TimelineEntry; c: EntryContext }): ReactNode {
           status="stopped"
           {...(label !== undefined ? { label } : {})}
           parts={parts}
-          statusText={t("run.stopped", {
-            who: who(e.byAccountId),
-            time: shortTime(e.at, locale, timeZone),
-          })}
+          statusText={withNode(
+            (who) => t("run.stopped", { who, time: shortTime(e.at, locale, timeZone) }),
+            whoStopped(e.byAccountId),
+          )}
           facts={facts}
           links={links}
         />
@@ -716,10 +707,13 @@ function EntryNode({ e, c }: { e: TimelineEntry; c: EntryContext }): ReactNode {
               ) : null}
             </>
           ) : undefined;
+        const writer = e.authorAccountId === undefined ? undefined : person(e.authorAccountId);
+        const author = writer ? { name: writer.name, avatarUrl: writer.avatarUrl } : undefined;
         return (
           <>
             <UserBubble
               text={e.text}
+              {...(author !== undefined ? { author } : {})}
               {...(e.pending ? { queued: true } : {})}
               {...(e.sender ? { sender: e.sender.name ?? t("parentAgent") } : {})}
               {...(e.skill ? { skill: e.skill.label } : {})}

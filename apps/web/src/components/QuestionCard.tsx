@@ -4,6 +4,7 @@ import {
   Checkbox,
   Field,
   Input,
+  type PersonLike,
   QuestionBlock,
   type QuestionField,
   type QuestionState,
@@ -16,6 +17,7 @@ import {
 import { useLocale, useTranslations } from "next-intl";
 import { type ReactElement, useState } from "react";
 import type { FormAnswer, InputForm } from "../lib/conversations";
+import { type PersonRef, usePersonLookup } from "../lib/people";
 import { keys } from "../lib/query/keys";
 import { useAppMutation } from "../lib/query/mutation";
 import {
@@ -242,6 +244,8 @@ export function QuestionCard({ orgId, item }: { orgId: string; item: QuestionIte
   const toast = useToast();
   const errorMessage = useErrorMessage();
   const { me } = useSession();
+  const lookup = usePersonLookup();
+  const tp = useTranslations("people");
   const [pending, setPending] = useState(false);
   // The answer reaches the log as `question_answered` (and the question's cache entry here).
   const { mutateAsync: postAnswer } = useAppMutation({
@@ -269,12 +273,21 @@ export function QuestionCard({ orgId, item }: { orgId: string; item: QuestionIte
           t("separator"),
         ),
       ]);
-  const who = (id: string | null | undefined) =>
-    id === null || id === undefined ? undefined : id === me.account.id ? t("you") : id;
+  // The answerer: the viewer ("you") or a person with their avatar, from the thread's people (else
+  // the question read); one who left reads "Former member". Nobody (no id): no line.
+  const who = (
+    id: string | null | undefined,
+    byPerson: PersonRef | null | undefined,
+  ): PersonLike | string | undefined => {
+    if (id === null || id === undefined) return undefined;
+    if (id === me.account.id) return t("you");
+    const p = lookup(id) ?? byPerson ?? null;
+    return p ? { name: p.name, avatarUrl: p.avatarUrl } : { name: tp("departed"), avatarUrl: null };
+  };
 
   let state: QuestionState;
   if (done !== null) {
-    const w = who(done.byAccountId);
+    const w = who(done.byAccountId, done.byPerson);
     switch (done.outcome) {
       case "answered":
         state = { kind: "answered", pairs: pairs(done.answer ?? {}), ...(w ? { who: w } : {}) };
