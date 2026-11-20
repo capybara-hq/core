@@ -160,11 +160,16 @@
   :root[data-cb-transition] .cb-shell-main[data-nav] {
     animation: none;
   }
+  /* No plus-lighter blend: it would add the opaque top page to the one under it (a washed-out
+     flash). Current Chromium sets it only through its own animation, which ours replaces; an
+     engine that sets it as a static style would still blend. */
   :root[data-cb-transition="pop"]::view-transition-old(root) {
     z-index: 1;
+    mix-blend-mode: normal;
     animation: cb-pop-out var(--cb-motion-push) var(--cb-ease-push) both;
   }
   :root[data-cb-transition="pop"]::view-transition-new(root) {
+    mix-blend-mode: normal;
     animation: cb-pop-under var(--cb-motion-push) var(--cb-ease-push) both;
   }
 }
@@ -189,12 +194,20 @@
   from {
     transform: translateX(-30%);
     filter: brightness(0.9);
+    opacity: 0;
+  }
+  40% {
+    opacity: 1;
   }
 }
 @keyframes cb-pop-1 {
   from {
     transform: translateX(-30%);
     filter: brightness(0.9);
+    opacity: 0;
+  }
+  40% {
+    opacity: 1;
   }
 }
 @keyframes cb-pop-under {

@@ -190,16 +190,21 @@ describe("transition CSS", () => {
     );
     expect(old?.decls.animation).toBe("cb-pop-out var(--cb-motion-push) var(--cb-ease-push) both");
     expect(old?.decls["z-index"]).toBe("1");
+    // no plus-lighter blend from the UA: it would add the opaque top page to the page under it
+    expect(old?.decls["mix-blend-mode"]).toBe("normal");
+    expect(next?.decls["mix-blend-mode"]).toBe("normal");
     expect(next?.decls.animation).toBe(
       "cb-pop-under var(--cb-motion-push) var(--cb-ease-push) both",
     );
     expect(keyframes("cb-pop-under")).toContain("transform: translateX(-30%)");
     expect(keyframes("cb-pop-under")).toContain("filter: brightness(0.9)");
     expect(keyframes("cb-pop-out")).toContain("transform: translateX(100%)");
-    // the CSS-only pop brings the page back from the same parallax and dim
+    // the CSS-only pop brings the page back from the same parallax and dim, fading in early so
+    // the shell ground never shows at the end edge
     for (const name of ["cb-pop-0", "cb-pop-1"]) {
       expect(keyframes(name)).toContain("transform: translateX(-30%)");
       expect(keyframes(name)).toContain("filter: brightness(0.9)");
+      expect(keyframes(name)).toMatch(/from \{[^}]*opacity: 0;[^}]*\} 40% \{ opacity: 1; \}/);
     }
   });
 
