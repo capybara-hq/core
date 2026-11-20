@@ -485,6 +485,7 @@ export function checkWoff2(bytes: Uint8Array): string | undefined;
 
 // @public
 export interface ChromeCapabilityV1 {
+    ready?(): Promise<void>;
     setAppearance(input: {
         scheme: "light" | "dark";
         background: string;
@@ -2495,8 +2496,6 @@ export function missingInboundModeFields(schema: JsonSchema, mode: ChannelInboun
 
 // @public
 export const MOBILE_SHELL_LIMITS: {
-    readonly navLabel: 32;
-    readonly navCount: 9999;
     readonly menuItems: 12;
     readonly menuLabel: 64;
     readonly menuTitle: 128;
@@ -2687,30 +2686,6 @@ export interface ModelUsage {
     outputImages?: number;
     outputTokens: number;
 }
-
-// @public
-export interface NavCapabilityV1 {
-    onSelect(listener: (id: NavTabId) => void): () => void;
-    set(state: NavStateV1): Promise<void>;
-}
-
-// @public
-export interface NavItemV1 {
-    count?: number;
-    countMore?: boolean;
-    id: NavTabId;
-    label: string;
-}
-
-// @public
-export interface NavStateV1 {
-    current: NavTabId | null;
-    items: NavItemV1[];
-    visible: boolean;
-}
-
-// @public
-export type NavTabId = "chats" | "agents" | "inbox" | "me";
 
 // @public
 export type NetDeniedCode = "net.insecure_url" | "net.private_address" | "net.dns_failed" | "net.redirect" | "net.proxy_refused";
@@ -3972,8 +3947,6 @@ export const SHELL_CAPABILITY_KEYS: {
     readonly notify: "notify@1";
     readonly openExternal: "openExternal@1";
     readonly signIn: "signIn@1";
-    readonly chrome: "chrome@1";
-    readonly nav: "nav@1";
     readonly haptics: "haptics@1";
     readonly share: "share@1";
     readonly menu: "menu@1";

@@ -306,7 +306,6 @@ export interface ChromeCapabilityV1 {
   ready?(): Promise<void>;
 }
 
-
 export type HapticKind = "selection" | "light" | "success" | "warning";
 
 /** `haptics@1`: a haptic impact (mobile app spec §5.2). */
