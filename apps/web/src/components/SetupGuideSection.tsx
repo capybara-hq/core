@@ -46,8 +46,18 @@ import { FormError } from "./form-error";
 
 const KNOWN_MODES = new Set(["long_connection", "webhook"]);
 
-export type SetupGuideSectionProps = {
-  orgId: string;
+export type SetupGuideSectionProps = (
+  | { orgId: string; deployment?: undefined }
+  | {
+      orgId?: undefined;
+      /**
+       * An `extension-deployment` guide of this extension (the super admin's extension page):
+       * read from the extension's guide list, with live check rows run against the platform
+       * deployment config. No org, no target, no drift.
+       */
+      deployment: string;
+    }
+) & {
   guide: SetupGuideRef;
   /** The target (a saved connection or connector, or the name typed so far) and the audience. */
   query: {
@@ -69,12 +79,6 @@ export type SetupGuideSectionProps = {
   checks?: "static" | "live";
   /** The super admin's platform route: no org, no target (spec §9.3). */
   admin?: boolean;
-  /**
-   * An `extension-deployment` guide of this extension (the super admin's extension page): read
-   * from the extension's guide list, with live check rows run against the platform deployment
-   * config. No org, no target, no drift.
-   */
-  deployment?: string;
   /** The plugin's display name for the drift notice; defaults to the plugin's name. */
   pluginLabel?: string;
   /**
@@ -104,7 +108,7 @@ export type SetupGuideSectionProps = {
  * the page puts it in a section card (a FormSection or a Card), where the notice is a line.
  */
 export function SetupGuideSection({
-  orgId,
+  orgId: ownOrgId,
   guide,
   query,
   drift = null,
@@ -121,6 +125,8 @@ export function SetupGuideSection({
   const t = useTranslations("setupGuide");
   const locale = labelLocale(useLocale());
   const errorMessage = useErrorMessage();
+  // a deployment guide has no org: the org reads below are disabled for it
+  const orgId = ownOrgId ?? "";
   // Undefined: the kernel's default (the target's mode, else the guide's first)
   const [ownMode, setOwnMode] = useState<string>();
   const controlled = onModeChange !== undefined;

@@ -15,6 +15,7 @@ import { ChannelConnections } from "../channels/connections.service.js";
 import { secretValues } from "../config/fields.js";
 import type { Keyring } from "../ctx/secrets.js";
 import { ApiError } from "../errors.js";
+import { canonicalJson } from "../extensions/config-hash.js";
 import { EffectiveConfigs } from "../extensions/effective-config.js";
 import { isExtensionEnabled } from "../extensions/enabled.js";
 import { deepFreeze } from "../extensions/hooks.js";
@@ -596,7 +597,7 @@ export class SetupChecksService {
     if (p.orgId === null) {
       const loaded = this.extensions.current(p.plugin)?.config;
       return createHmac("sha256", this.keyring.deriveKey("setup-check-fingerprint").current)
-        .update(`${DEPLOYMENT_SCOPE}\0${JSON.stringify(loaded ?? null)}`)
+        .update(`${DEPLOYMENT_SCOPE}\0${canonicalJson(loaded ?? null)}`)
         .digest("hex");
     }
     const orgId = p.orgId;

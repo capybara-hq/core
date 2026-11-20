@@ -296,6 +296,19 @@ describe("extension-deployment guides", () => {
     expect(forced.cooldownUntil).toBeDefined();
   });
 
+  it("replacing only the secret key answers from a new run, not the cached result", async () => {
+    await saveKey(BAD_KEY);
+    const bad = await runOk();
+    expect(bad.status).toBe("failing");
+    // the cache keeps the failing result; only the secret changes (configHash leaves it out)
+    const hash = k.app.get(ExtensionRegistry).current("fake-push")?.configHash;
+    await saveKey(GOOD_KEY);
+    expect(k.app.get(ExtensionRegistry).current("fake-push")?.configHash).toBe(hash);
+    const good = await runOk();
+    expect(good.status).toBe("ok");
+    expect(good.checkedAt).not.toBe(bad.checkedAt);
+  });
+
   it("an org admin gets 403 on the deployment routes, and the org routes refuse the deployment guide", async () => {
     for (const [method, url] of [
       ["GET", GUIDES],

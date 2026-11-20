@@ -649,7 +649,7 @@ export class ExtensionsAdminOperations implements OnModuleInit {
       defineOperation({
         id: "extensions.platform-check",
         description:
-          "Run one check of an extension's platform setup guide against its deployment config and return its state: ok, failing (with a reason and a fix to explain), unknown, or running (try again in a moment). A fresh cached result is returned as is; force reruns it, at most once per 10 seconds per check. A check only reads, and its result never carries a secret; run it after the person says they saved the config.",
+          "Run one check of an extension's platform setup guide against its deployment config and return its state: ok, failing (with a reason and a fix to explain), unknown, or running (try again in a moment). A fresh cached result is returned as is; force reruns it, at most once per 10 seconds per check. A check only reads; run it after the person says they saved the config. The result is shown to you: the kernel redacts exact matches of whole secret values of 8 characters or more, so a well-behaved check never echoes any part of a secret, and you never repeat a value that looks like one.",
         input: DeploymentCheckPathParams.extend(DeploymentCheckRunBody.shape).strict(),
         example: { name: "push-apns", guideId: "apns-key", checkId: "key-works" },
         authz: { superAdmin: true },

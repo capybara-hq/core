@@ -3,7 +3,7 @@ import type { core } from "zod";
 import { configFields, getPath, setPath } from "../config/fields.js";
 
 /** 键排序后的 JSON（对象键顺序不影响结果）；undefined 字段与 JSON.stringify 一样省略。 */
-const canonicalJson = (v: unknown): string => {
+export const canonicalJson = (v: unknown): string => {
   if (Array.isArray(v))
     return `[${v.map((x) => (x === undefined ? "null" : canonicalJson(x))).join(",")}]`;
   if (v !== null && typeof v === "object") {

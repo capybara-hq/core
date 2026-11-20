@@ -564,6 +564,12 @@ export const keys = {
         plugin,
         locale,
       ],
+      /** Every platform guide's check states of an extension (an invalidation prefix). */
+      deploymentChecksOf: (plugin: string): readonly unknown[] => [
+        ...all,
+        "deploymentChecks",
+        plugin,
+      ],
       /** The cached check states of an extension's platform setup guide. */
       deploymentChecks: (plugin: string, guideId: string): readonly unknown[] => [
         ...all,

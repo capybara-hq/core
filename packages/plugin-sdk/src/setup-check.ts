@@ -10,8 +10,10 @@
  * - A check never writes, at the third party or in Capybara, and stays cheap (one or two reads).
  * - Pass `signal` to every request; the kernel aborts it at {@link SETUP_CHECK_LIMITS}.timeoutMs.
  * - No retries inside the check: the person retries, retry policy is the kernel's.
- * - Never put a secret in `reason` or `fix`. The kernel replaces known secret values with
- *   `[REDACTED]` before caching or returning, but it can only redact what it knows.
+ * - Never put a secret, or any part of one, in `reason` or `fix`: the result is shown to people
+ *   and to models (the `Platform` tool returns it). The kernel replaces known secret values with
+ *   `[REDACTED]` before caching or returning, but only as exact matches of whole values of 8
+ *   characters or more: a prefix, suffix, shorter secret or transformed copy is not redacted.
  *
  * What a check receives is what the extension already receives for the same target, nothing more:
  * a channel connection's config (as `channel@1` `verify` and `connect` get it), a connector's

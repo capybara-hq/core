@@ -33,6 +33,7 @@ import {
   adminExtensionsQuery,
   extensionChangeKeys,
 } from "../../../../../lib/query/admin";
+import { keys } from "../../../../../lib/query/keys";
 import { usePageQuery } from "../../../../../lib/query/page-query";
 import { deploymentGuidesQuery } from "../../../../../lib/query/setup";
 import { useAdmin } from "../../../../../lib/query/workspace";
@@ -199,9 +200,14 @@ function Detail({
             name={name}
             drainSeconds={data.drainSeconds}
             pending={plugin.status === "pending_config"}
-            // The extension's state (pending config) and the org's readiness may change with it.
+            // The extension's state (pending config) and the org's readiness may change with it,
+            // and its platform guide checks verify the config just saved.
             onChanged={() => {
-              for (const queryKey of [listKey, ...extensionChangeKeys(orgId)])
+              for (const queryKey of [
+                listKey,
+                ...extensionChangeKeys(orgId),
+                keys.deployment().deploymentChecksOf(name),
+              ])
                 void qc.invalidateQueries({ queryKey });
             }}
           />
@@ -232,7 +238,6 @@ function DeploymentGuides({ name }: { name: string }) {
               {t("deploymentHint")}
             </Text>
             <SetupGuideSection
-              orgId=""
               guide={{ itemId: g.itemId, guideId: g.id, version: g.version }}
               query={{}}
               deployment={name}
