@@ -147,7 +147,7 @@ describe("/account/profile", () => {
     expect(screen.getByRole("button", { name: P.upload })).toHaveProperty("disabled", true);
   });
 
-  it("lists 个人资料 first in the account navigation", async () => {
+  it("lists Profile first in the account navigation", async () => {
     api(ME);
     await renderRouteWithCache(PATH, lastStubRoutes(), { locale: "zh" });
     const links = screen
@@ -171,7 +171,7 @@ describe("/account/profile", () => {
 describe("Person", () => {
   afterEach(() => cleanup());
 
-  it("a person who left reads 已离开的成员 with the initial", () => {
+  it("a person who left reads the former-member name with the initial", () => {
     renderPage(<Person person={null} size={16} />, { locale: "zh" });
     expect(screen.getByText("已离开的成员")).toBeTruthy();
     expect(document.querySelector('[data-part="avatar"]')?.getAttribute("data-kind")).toBe(
@@ -179,7 +179,7 @@ describe("Person", () => {
     );
   });
 
-  it("the viewer reads 你 and keeps their avatar", () => {
+  it("the viewer reads the you label and keeps their avatar", () => {
     const person = { id: "a1", name: "Grant", avatarUrl: "/api/v1/accounts/a1/avatar?v=abc" };
     renderPage(<Person person={person} size={24} viewerId="a1" />, { locale: "zh" });
     expect(screen.getByText("你")).toBeTruthy();

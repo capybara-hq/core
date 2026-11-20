@@ -37,7 +37,7 @@ const lengthOf = (s: string) => [...s].length;
 
 /**
  * `/account/profile`: the person's name and avatar (SettingsPage). An avatar change saves at once
- * (a picked image is cropped square, uploaded, then named in the profile; 移除 sends `null`); the
+ * (a picked image is cropped square, uploaded, then named in the profile; the remove button sends `null`); the
  * name saves from the action row. Both refresh `me` and every cached members list.
  */
 export default function ProfileView() {
