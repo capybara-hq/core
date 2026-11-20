@@ -1,5 +1,18 @@
 # @capybara-hq/plugin-client
 
+## 0.1.0-rc.7
+
+### Minor Changes
+
+- e39c372: Add `useSizeClass` and `useViewportSegments` to the plugin client (the window's size class and the
+  two segments of a folded display, read from the host). The kernel lists each contribution's compact
+  form (the slot's, narrowed by the contribution's), and the web does not draw a `hidden`
+  contribution on a compact screen.
+
+### Patch Changes
+
+- b6339e3: The `shell.brand` host's `panel` is `"full" | "rail"`: the sidebar has no drawer form any more.
+
 ## 0.1.0-rc.6
 
 ### Patch Changes

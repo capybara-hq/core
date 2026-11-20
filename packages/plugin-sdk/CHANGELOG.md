@@ -1,5 +1,15 @@
 # @capybara-hq/plugin-sdk
 
+## 0.1.0-rc.40
+
+### Patch Changes
+
+- e8b4d00: The built-in theme tokens gain `preview-light` and `preview-dark`, the two fixed grounds of the
+  app-icon preview (the same in both themes). They are not in `THEME_OVERRIDABLE`: a theme cannot
+  change them.
+- d9602dc: Declare `"sideEffects": false`: the package has no import-time side effects, so a bundler that imports
+  one export no longer pulls in the whole SDK.
+
 ## 0.1.0-rc.39
 
 ### Patch Changes
