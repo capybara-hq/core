@@ -88,6 +88,8 @@ export interface Approval {
   personFields?: PersonField[];
   /** What the entered values are saved to. */
   personTarget?: { zh: string; en: string };
+  /** The file the call takes in place of an upload (its sha256 is what the approval binds). */
+  file?: { name: string; size: number; sha256: string; contentType: string; thumbnail?: string };
   /** `network`: a device refused a command network hosts; `command`: a command review ask. */
   kind?: "tool" | "network" | "git" | "command";
   /** A network ask's detail; null for other approvals. */

@@ -1372,6 +1372,10 @@ export async function uploadOrgPluginPackage(orgId: string, file: Blob): Promise
   return (await res.json()) as OrgUploadReview;
 }
 
+/** One of the org's staged uploads (`plugin.staging_not_found` once expired or confirmed). */
+export const getOrgUpload = (orgId: string, stagingId: string) =>
+  apiFetch<OrgUploadReview>(`${org(orgId)}/catalog/uploads/${enc(stagingId)}`);
+
 /**
  * Confirms the org's staged upload: `shareable` only for a new plugin (default false).
  */

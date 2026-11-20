@@ -1082,6 +1082,30 @@ button.cb-tool-toggle:focus-visible {
   line-clamp: 3;
   overflow: hidden;
 }
+.cb-hcard-file {
+  display: flex;
+  align-items: center;
+  gap: var(--cb-space-3);
+  min-width: 0;
+}
+.cb-hcard-file-thumb {
+  flex: none;
+  width: var(--cb-space-8);
+  height: var(--cb-space-8);
+  object-fit: cover;
+  border-radius: var(--cb-radius-sm);
+}
+.cb-hcard-file-text {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+.cb-hcard-file-name {
+  font-weight: 600;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
 .cb-hcard-person {
   display: flex;
   flex-direction: column;

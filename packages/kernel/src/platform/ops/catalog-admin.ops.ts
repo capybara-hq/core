@@ -22,7 +22,7 @@ import { KernelConfigService } from "../../infra/config/kernel-config.service.js
 import { KernelDb } from "../../infra/database/kernel-db.js";
 import { ThemesService } from "../../themes/themes.service.js";
 import { FileRefSchema } from "../file-ref.js";
-import { defineOperation, type PrecheckResult } from "../operation.js";
+import { defineOperation, type HandoffView, type PrecheckResult } from "../operation.js";
 import { PlatformOperations } from "../registry.js";
 import { precheckBy, viaAgent } from "./errors.js";
 import { assertNotOtherOrgs, OTHER_ORG } from "./other-orgs.js";
@@ -38,6 +38,21 @@ export const ORG_OWNED =
 
 /** Where the person confirms a staged import (the admin console's import review). */
 export const reviewUrl = (stagingId: string) => `/admin/plugins/import?staging=${stagingId}`;
+
+/**
+ * The link card of a prepared import (platform web parity spec §6): the review page of its staged
+ * import, titled by the plugin's name. Null when the result carries no staging id.
+ */
+export const importHandoff = (result: unknown): HandoffView | null => {
+  const r = result as { stagingId?: unknown; review?: { name?: unknown } } | null;
+  if (typeof r?.stagingId !== "string") return null;
+  const name = named(typeof r.review?.name === "string" ? r.review.name : "?");
+  return {
+    kind: "handoff",
+    title: { zh: `审阅插件 ${name} 的权限`, en: `Review the permissions of plugin ${name}` },
+    target: { type: "link", url: reviewUrl(r.stagingId) },
+  };
+};
 
 /** What only a person does with a staged import, after reading its review on the web. */
 export const CONFIRM_ON_WEB =
@@ -284,6 +299,7 @@ export class CatalogAdminOperations implements OnModuleInit {
             next: CONFIRM_ON_WEB,
           };
         },
+        handoff: (_i, result) => importHandoff(result),
       }),
       defineOperation({
         id: "plugins.import-file",
@@ -339,6 +355,7 @@ export class CatalogAdminOperations implements OnModuleInit {
             next: CONFIRM_ON_WEB,
           };
         },
+        handoff: (_i, result) => importHandoff(result),
       }),
       defineOperation({
         id: "plugins.import-git",
@@ -388,6 +405,7 @@ export class CatalogAdminOperations implements OnModuleInit {
             next: CONFIRM_ON_WEB,
           };
         },
+        handoff: (_i, result) => importHandoff(result),
       }),
       defineOperation({
         id: "plugins.import-review",

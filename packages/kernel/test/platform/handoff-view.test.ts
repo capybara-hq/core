@@ -256,3 +256,61 @@ describe("handoff views", () => {
     expect(JSON.parse(result.content)).toEqual({ staged: true });
   });
 });
+
+describe("handoffs of import and upload operations", () => {
+  const handoffOf = (id: string, result: unknown) => {
+    const o = op(id);
+    if (o.handoff === undefined) throw new Error(`${id} has no handoff`);
+    return o.handoff(o.example, result, ctxOf());
+  };
+  const staged = { stagingId: "s-1", review: { name: "github" } };
+  const importCard = {
+    kind: "handoff",
+    title: { zh: "审阅插件 github 的权限", en: "Review the permissions of plugin github" },
+    target: { type: "link", url: "/admin/plugins/import?staging=s-1" },
+  };
+
+  it.each([
+    "marketplaces.import",
+    "plugins.import-npm",
+    "plugins.import-git",
+    "plugins.import-file",
+  ])("%s links the staged import's review page", (id) => {
+    expect(handoffOf(id, staged)).toEqual(importCard);
+    expect(ToolViewSchema.safeParse(handoffOf(id, staged)).success).toBe(true);
+    // no staging id: no card
+    expect(handoffOf(id, { review: { name: "x" } })).toBeNull();
+  });
+
+  it("plugins.upload links the org's Plugins page with the staged upload", () => {
+    expect(handoffOf("plugins.upload", staged)).toEqual({
+      kind: "handoff",
+      title: { zh: "确认插件 github 的上传", en: "Confirm the upload of plugin github" },
+      target: { type: "link", url: "/plugins?staging=s-1" },
+    });
+  });
+
+  it("extensions.upload-package links the extensions page", () => {
+    expect(handoffOf("extensions.upload-package", { review: { name: "crm" } })).toEqual({
+      kind: "handoff",
+      title: { zh: "审阅扩展 crm 的权限", en: "Review the permissions of extension crm" },
+      target: { type: "link", url: "/admin/extensions" },
+    });
+  });
+
+  it("extensions.pending-permissions links the page of what waits, nothing when nothing waits", () => {
+    const url = (items: unknown[]) => {
+      const v = handoffOf("extensions.pending-permissions", { items });
+      return v?.target.type === "link" ? v.target.url : null;
+    };
+    expect(url([])).toBeNull();
+    expect(url([{ kind: "extension", id: "crm" }])).toBe("/admin/extensions/crm");
+    expect(url([{ kind: "plugin", id: "p1" }])).toBe("/admin/plugins/pending");
+    expect(
+      url([
+        { kind: "extension", id: "crm" },
+        { kind: "plugin", id: "p1" },
+      ]),
+    ).toBe("/admin/plugins/pending");
+  });
+});

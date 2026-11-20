@@ -412,6 +412,16 @@ export class OrgPluginsOperations implements OnModuleInit {
             next: "Nothing is added yet: the person confirms the upload on the web (Plugins page).",
           };
         },
+        handoff: (_i, result) => {
+          const r = result as { stagingId?: unknown; review?: { name?: unknown } } | null;
+          if (typeof r?.stagingId !== "string") return null;
+          const name = named(typeof r.review?.name === "string" ? r.review.name : "?");
+          return {
+            kind: "handoff",
+            title: { zh: `确认插件 ${name} 的上传`, en: `Confirm the upload of plugin ${name}` },
+            target: { type: "link", url: `/plugins?staging=${encodeURIComponent(r.stagingId)}` },
+          };
+        },
       }),
       defineOperation({
         id: "plugins.upload-review",

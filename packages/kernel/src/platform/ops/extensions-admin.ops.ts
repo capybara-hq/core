@@ -254,6 +254,26 @@ export class ExtensionsAdminOperations implements OnModuleInit {
             otherOrgExtensions: waiting.length - exts.length,
           };
         },
+        handoff: (_i, result) => {
+          const rows = (result as { items?: { kind?: unknown; id?: unknown }[] } | null)?.items;
+          if (rows === undefined || rows.length === 0) return null;
+          const onlyExtension = rows.length === 1 && rows[0]?.kind === "extension";
+          const id = rows[0]?.id;
+          return {
+            kind: "handoff",
+            title: {
+              zh: "审阅待确认的权限",
+              en: "Review the permissions waiting for confirmation",
+            },
+            target: {
+              type: "link",
+              url:
+                onlyExtension && typeof id === "string"
+                  ? `/admin/extensions/${encodeURIComponent(id)}`
+                  : "/admin/plugins/pending",
+            },
+          };
+        },
       }),
       defineOperation({
         id: "extensions.upload-package",
@@ -314,6 +334,16 @@ export class ExtensionsAdminOperations implements OnModuleInit {
               warnings: r.warnings,
             },
             next: "Nothing is installed: the person installs the package in the admin console (Extensions), reviewing and approving its permissions there.",
+          };
+        },
+        handoff: (_i, result) => {
+          const name = (result as { review?: { name?: unknown } } | null)?.review?.name;
+          if (typeof name !== "string") return null;
+          const n = named(name);
+          return {
+            kind: "handoff",
+            title: { zh: `审阅扩展 ${n} 的权限`, en: `Review the permissions of extension ${n}` },
+            target: { type: "link", url: "/admin/extensions" },
           };
         },
       }),
