@@ -1,5 +1,30 @@
 # @capybara-hq/web
 
+## 0.1.0-rc.65
+
+### Patch Changes
+
+- 68fb86e: Approval-only permission profiles in the web app. The composer has one mode button before send:
+  it opens the three profiles and the reasoning effort, Shift+Tab cycles the profiles, the left
+  keeps the device and a model · effort chip, and no standing hint line remains. The profile copy
+  says a profile only chooses who approves, and the Full access confirmation is shorter and shows
+  again only for a new device or scope. The device page has one Sandbox section (network and
+  running outside the sandbox; a local machine narrows on the web and widens on the machine, a cloud
+  device changes its network within the ceilings); org and platform settings read and write
+  `outsideSandbox`, `deviceNetwork`, `devicesOutsideSandbox` and `devicesNetwork`; network asks
+  lose the always choice; a tool row shows a crossing Full access approved automatically.
+- 34c67e0: The device page offers only the `capybara-device` commands that would change something (no
+  `--network open` on an open machine), and shows the allowlist host list only for an allowlist
+  network. A tool row's status words ("approved automatically", "ran outside the sandbox") are its
+  meta and stay visible beside a long command.
+- 1eceaf8: A Read outside the scope asks as a read: the approval's kind is `read` and its tool key `Read`
+  (it was recorded as a write under `Write`), and its texts say read. The approval card, the inbox
+  and IM cards word a command ask in the reader's language from its structured facts (kind, reach,
+  escalation, rule and the profile now carried on `approval_requested.command.profile`) instead of
+  showing the kernel's English reason, which stays model-facing.
+- Updated dependencies [68fb86e]
+  - @capybara-hq/design@0.2.0-rc.24
+
 ## 0.1.0-rc.64
 
 ### Patch Changes
