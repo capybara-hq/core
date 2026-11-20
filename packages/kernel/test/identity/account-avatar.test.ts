@@ -58,4 +58,11 @@ describe("safeSsoUrl", () => {
     for (const raw of ["http://idp/x.png", "javascript:alert(1)", "not a url", null, 7, {}])
       expect(safeSsoUrl(raw), String(raw)).toBe(null);
   });
+
+  it("returns the normalized href, so a header can always carry it and the version is stable", () => {
+    expect(safeSsoUrl("https://idp/a\r\n\tb.png")).toBe("https://idp/ab.png");
+    expect(safeSsoUrl("https://IDP")).toBe("https://idp/");
+    const v = (raw: string) => accountAvatarUrl({ id: "a1", avatar: null, ssoAvatarUrl: raw });
+    expect(v("https://idp/a\nb.png")).toBe(v("https://idp/ab.png"));
+  });
 });

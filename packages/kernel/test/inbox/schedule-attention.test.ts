@@ -160,6 +160,18 @@ describe("schedule_attention inbox items", () => {
     });
   });
 
+  it("an admin pause whose admin account is gone names no one (null, drawn as departed)", async () => {
+    const task = await mkTask();
+    await svc.pause(orgId, { accountId: adminId }, task.id);
+    await db
+      .updateTable("scheduled_tasks")
+      .set({ paused_by: "gone-account" })
+      .where("id", "=", task.id)
+      .execute();
+    const [item] = await attention(aliceId);
+    expect(item?.attention).toMatchObject({ reason: "admin", pausedBy: null });
+  });
+
   it("missing grants show the tool keys", async () => {
     const task = await mkTask();
     await seedRun(task.id, ["connection:github", "Bash"], new Date(Date.now() - 60_000));

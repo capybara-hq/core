@@ -9,6 +9,7 @@ import {
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { type KernelSchemaDb, kernelDb } from "../../src/db/kernel-schema.js";
 import { createDb } from "../../src/db/pool.js";
+import { AccountAvatarsService } from "../../src/identity/account-avatars.service.js";
 import { StorageService } from "../../src/storage/storage.service.js";
 import { truncateTables } from "../helpers/db.js";
 import { accountsFor, apiTokensFor } from "../helpers/identity.js";
@@ -25,7 +26,7 @@ import {
 } from "../helpers/runs.js";
 
 /**
- * GET /api/v1/accounts/:accountId/avatar (account profile spec §6): who may read a person's image.
+ * GET /api/v1/accounts/:accountId/avatar (account profile spec §5.3): who may read a person's image.
  * Every refusal answers exactly like an unknown account or a person without an image (404).
  */
 
@@ -180,6 +181,7 @@ async function expectNotFound(res: Awaited<ReturnType<Req>>): Promise<void> {
     error: { code: "account.not_found", message: "Account not found" },
   });
   expect(res.headers.location).toBeUndefined();
+  expect(res.headers["cache-control"]).toBe("private, no-store");
 }
 
 function expectPresigned(res: Awaited<ReturnType<Req>>): string {
@@ -274,6 +276,20 @@ describe("account avatar route: who may read", () => {
     expect(anonymous.headers.location).toBeUndefined();
   });
 
+  it("an account that must change its password reads its own image, and only its own", async () => {
+    await setSsoAvatar(adaId, SSO_URL);
+    await setSsoAvatar(samId, "https://img.example.com/sam.png");
+    await db
+      .updateTable("accounts")
+      .set({ must_change_password: true })
+      .where("id", "=", samId)
+      .execute();
+    const own = await avatarOf(sam, samId);
+    expect(own.statusCode, own.body).toBe(302);
+    expect(own.headers.location).toBe("https://img.example.com/sam.png");
+    await expectNotFound(await avatarOf(sam, adaId));
+  });
+
   it("a personal token of an allowed reader works", async () => {
     await setUploadedAvatar(ada);
     const { token } = await apiTokensFor(db).createPersonal(samId, { name: "cli" });
@@ -319,6 +335,29 @@ describe("account avatar route: which image", () => {
     const res = await avatarOf(sam, adaId);
     expect(res.statusCode, res.body).toBe(302);
     expect(res.headers.location).toBe(SSO_URL);
+  });
+
+  it("an SSO URL holding a line break redirects to its normalized form, never a 500", async () => {
+    await setSsoAvatar(adaId, "https://img.example.com/a\r\nda.png");
+    const res = await avatarOf(sam, adaId);
+    expect(res.statusCode, res.body).toBe(302);
+    expect(res.headers.location).toBe(SSO_URL);
+  });
+
+  it("an object store failure falls back to the SSO URL, else 404, never a 500", async () => {
+    await setUploadedAvatar(ada);
+    const failing = vi
+      .spyOn(k.app.get(AccountAvatarsService), "objectUrl")
+      .mockRejectedValue(new Error("store down"));
+    try {
+      await expectNotFound(await avatarOf(sam, adaId));
+      await setSsoAvatar(adaId, SSO_URL);
+      const res = await avatarOf(sam, adaId);
+      expect(res.statusCode, res.body).toBe(302);
+      expect(res.headers.location).toBe(SSO_URL);
+    } finally {
+      failing.mockRestore();
+    }
   });
 
   it("without an object store an upload falls back to the SSO URL, else 404", async () => {

@@ -35,11 +35,15 @@ export function ownAvatar(raw: unknown): AccountAvatar | null {
     : null;
 }
 
-/** The URL itself when it parses with the `https:` protocol, else null. */
+/**
+ * The normalized URL (`href`) when it parses with the `https:` protocol, else null. Normalizing
+ * drops what a header cannot carry (tabs and line breaks), so the redirect never fails.
+ */
 export function safeSsoUrl(raw: unknown): string | null {
   if (typeof raw !== "string") return null;
   try {
-    return new URL(raw).protocol === "https:" ? raw : null;
+    const url = new URL(raw);
+    return url.protocol === "https:" ? url.href : null;
   } catch {
     return null;
   }

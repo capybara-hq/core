@@ -1003,10 +1003,7 @@ export class ScheduledTasksService {
           taskId: task.id,
           name: task.name,
           reason: task.pauseReason,
-          pausedBy:
-            task.pausedBy === null
-              ? null
-              : (people.get(task.pausedBy) ?? { id: task.pausedBy, name: "", avatarUrl: null }),
+          pausedBy: task.pausedBy === null ? null : (people.get(task.pausedBy) ?? null),
           missing: [],
           needsRole: [],
           needsAdmin: [],

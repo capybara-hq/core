@@ -129,7 +129,7 @@ export const PLATFORM_EXCLUSIONS: readonly {
   {
     route: "GET /api/v1/accounts/:accountId/avatar",
     category: "transport",
-    reason: "Streams avatar image bytes",
+    reason: "Redirects to the avatar image for <img>; no agent use",
   },
   // background
   {
