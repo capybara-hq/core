@@ -132,8 +132,9 @@ export class MembersService {
     role: OrgRole,
     actorAccountId: string,
     actorTokenId?: string,
+    auditDetail?: Record<string, unknown>,
   ): Promise<void> {
-    await this.changeRoleIn(orgId, targetId, role, actorAccountId, actorTokenId);
+    await this.changeRoleIn(orgId, targetId, role, actorAccountId, actorTokenId, auditDetail);
   }
 
   @Transactional()
@@ -143,6 +144,7 @@ export class MembersService {
     role: OrgRole,
     actorAccountId: string,
     actorTokenId: string | undefined,
+    auditDetail: Record<string, unknown> | undefined,
   ): Promise<void> {
     const { role: actorRole } = await this.orgLock.lockAndAuthorize(
       orgId,
@@ -163,7 +165,7 @@ export class MembersService {
       orgId,
       action: "org.member.role_changed",
       target: targetId,
-      detail: { from: before, to: role },
+      detail: { from: before, to: role, ...auditDetail },
     });
   }
 
@@ -177,8 +179,9 @@ export class MembersService {
     targetId: string,
     actorAccountId: string,
     actorTokenId?: string,
+    auditDetail?: Record<string, unknown>,
   ): Promise<void> {
-    await this.removeIn(orgId, targetId, actorAccountId, actorTokenId);
+    await this.removeIn(orgId, targetId, actorAccountId, actorTokenId, auditDetail);
   }
 
   @Transactional()
@@ -187,6 +190,7 @@ export class MembersService {
     targetId: string,
     actorAccountId: string,
     actorTokenId: string | undefined,
+    auditDetail: Record<string, unknown> | undefined,
   ): Promise<OffboardResult> {
     // an unauthorized call is refused before it holds off the org's run writes
     await this.orgLock.precheck(orgId, actorAccountId, "org.members.manage");
@@ -211,7 +215,7 @@ export class MembersService {
       orgId,
       action: "org.member.removed",
       target: targetId,
-      detail: { role: before },
+      detail: { role: before, ...auditDetail },
     });
     return res;
   }

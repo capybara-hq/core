@@ -201,6 +201,7 @@ describe("ctx.secrets", () => {
     expect(await rewrapToCurrentMasterKey(handlesOf(db), ring2)).toEqual({
       dataKeys: 0,
       initialPasswords: 0,
+      sealedReveals: 0,
     });
     expect(await createSecrets(db, createKeyring(k2, []), "ns-rot").get("rotorg", "k")).toBe(
       "persist-me",
@@ -305,6 +306,7 @@ describe("rewrapToCurrentMasterKey", () => {
     expect(await rewrapToCurrentMasterKey(handlesOf(db), ring2, { batchSize: 2 })).toEqual({
       dataKeys: 5,
       initialPasswords: 0,
+      sealedReveals: 0,
     });
     expect(new Set((await dataKeyIds()).values())).toEqual(new Set([ring2.currentId]));
     const onlyNew = createSecrets(db, createKeyring(k2, []), "ns-batch");
@@ -320,6 +322,7 @@ describe("rewrapToCurrentMasterKey", () => {
     expect(await rewrapToCurrentMasterKey(handlesOf(db), ring2)).toEqual({
       dataKeys: 0,
       initialPasswords: 1,
+      sealedReveals: 0,
     });
     const rows = await db
       .withSchema("capybara")

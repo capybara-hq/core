@@ -325,7 +325,10 @@
     "member": {
       "anonymous_guest": "The anonymous guest cannot be given a role, ownership or agents, invited or removed.",
       "not_found": "Member not found.",
-      "already_exists": "You are already a member of this organization."
+      "already_exists": "You are already a member of this organization.",
+      "self": "Your own membership is changed by you on the web, never through an agent.",
+      "owner_untouchable": "Owners and ownership are changed by an owner on the Members page, never through an agent.",
+      "role_above_actor": "An agent cannot give anyone a role above your own."
     },
     "attachment": {
       "too_large": "The file is larger than the size limit for one attachment.",
@@ -482,7 +485,9 @@
     "invitation": {
       "invalid": "This invitation link is invalid or has been revoked.",
       "expired": "This invitation has expired.",
-      "used": "This invitation has already been used."
+      "used": "This invitation has already been used.",
+      "link_unavailable": "There is no invitation link to show: it was shown already, has expired, the invitation is no longer pending, or it was not created by a call you approved.",
+      "create_needs_approval": "Invite from a conversation where you approve the call yourself, or on the Members page."
     },
     "marketplace": {
       "not_found": "The marketplace does not exist.",
@@ -2080,6 +2085,11 @@
       "show": "Show the initial password",
       "label": "Initial password of {login}",
       "hint": "The platform generated it for the new account. It is shown only once; the account must change it at first sign-in."
+    },
+    "invitationLink": {
+      "show": "Show the invitation link",
+      "label": "Invitation link",
+      "hint": "Send it to the person you are inviting. It is shown only once; the invitation itself stays on the Members page."
     },
     "person": {
       "fillOnWeb": "Open the conversation to fill in {n, plural, one {# field} other {# fields}}",
@@ -4390,6 +4400,7 @@
         "orgInvitationAccepted": "Accepted an invitation",
         "orgInvitationCreated": "Invited a member",
         "orgInvitationRevoked": "Revoked an invitation",
+        "orgInvitationLinkShown": "Viewed an invitation link",
         "orgMemberAdded": "Added a member",
         "orgMemberLeft": "Left the organization",
         "orgMemberOffboarded": "Offboarded a member",

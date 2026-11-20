@@ -195,6 +195,23 @@ export const revealInitialPassword = (orgId: string, approvalId: string) =>
     { method: "POST" },
   );
 
+/**
+ * The Platform operation whose approval carries an invitation link: the invitation it created,
+ * shown once to the person who approved the call (platform web parity spec §7.2).
+ */
+export const INVITE_OPERATION = "orgs.invite";
+
+/**
+ * Reads the link of the invitation an approved `orgs.invite` call created, once: the kernel deletes
+ * it as it answers (`invitation.link_unavailable` afterwards). The URL is absolute when the
+ * deployment has a public URL, else a path on this origin.
+ */
+export const revealInvitationLink = (orgId: string, approvalId: string) =>
+  apiFetch<{ url: string }>(
+    `${base(orgId)}/approvals/${encodeURIComponent(approvalId)}/invitation-link`,
+    { method: "POST" },
+  );
+
 export const listToolGrants = (orgId: string) =>
   apiFetch<{ grants: ToolGrant[] }>(`${base(orgId)}/me/tool-grants`);
 

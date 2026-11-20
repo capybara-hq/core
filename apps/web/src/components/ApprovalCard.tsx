@@ -23,6 +23,7 @@ import {
   CREATE_ACCOUNT_OPERATION,
   decideApproval,
   formatInput,
+  INVITE_OPERATION,
   scopesFor,
 } from "../lib/approvals";
 import type { PermissionScope, SandboxEscalation, ToolInfo } from "../lib/conversations";
@@ -37,6 +38,7 @@ import type { ApprovalDecision, ApprovalItem } from "../lib/timeline";
 import { lang, PLATFORM_PREFIX, toolLabel, toolLabelOfKey, toolLabelText } from "../lib/tool-label";
 import { useErrorMessage } from "../lib/use-error-message";
 import { InitialPasswordReveal } from "./InitialPasswordReveal";
+import { InvitationLinkReveal } from "./InvitationLinkReveal";
 import { PermissionScopeDetail } from "./PermissionScopeDetail";
 import { SandboxEscalationDetail } from "./SandboxEscalationDetail";
 import { useSession } from "./shell/session";
@@ -364,12 +366,15 @@ export function ApprovalCard({
       : view && typeof view.input === "object" && view.input !== null
         ? (view.input as Record<string, unknown>)
         : {};
-  // an approved accounts.create: its generated password is shown once to the person who approved
-  const revealsPassword =
+  // an approved Platform call of `operation`, decided by me (what it made is shown to me once)
+  const approvedByMe = (operation: string) =>
     outcome?.decision === "approved" &&
     outcome.byAccountId === me.account.id &&
-    ((platformKey ?? item.toolKey) === `${PLATFORM_PREFIX}${CREATE_ACCOUNT_OPERATION}` ||
-      (item.toolKey === "Platform" && input.operation === CREATE_ACCOUNT_OPERATION));
+    ((platformKey ?? item.toolKey) === `${PLATFORM_PREFIX}${operation}` ||
+      (item.toolKey === "Platform" && input.operation === operation));
+  // accounts.create: its generated password; orgs.invite: the invitation's link
+  const revealsPassword = approvedByMe(CREATE_ACCOUNT_OPERATION);
+  const revealsInvitation = approvedByMe(INVITE_OPERATION);
   const network = networkAskOf(item, view);
   const asked = commandAskOf(item, view);
   const lead = asked === undefined ? undefined : commandLeadOf(item, view);
@@ -538,6 +543,7 @@ export function ApprovalCard({
         />
       )}
       {revealsPassword && <InitialPasswordReveal orgId={orgId} approvalId={item.approvalId} />}
+      {revealsInvitation && <InvitationLinkReveal orgId={orgId} approvalId={item.approvalId} />}
     </div>
   );
 }

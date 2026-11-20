@@ -445,6 +445,12 @@ export const PLATFORM_EXCLUSIONS: readonly {
     reason:
       "Returns a generated initial password once, on the web, to the person who approved the account creation",
   },
+  {
+    route: "POST /api/v1/orgs/:orgId/approvals/:approvalId/invitation-link",
+    category: "secret",
+    reason:
+      "Returns an invitation link once, on the web, to the person who approved the orgs.invite call",
+  },
   { route: "POST /api/v1/auth/login", category: "human-only", reason: "Password login" },
   { route: "POST /api/v1/auth/refresh", category: "human-only", reason: "Rotates a refresh token" },
   { route: "POST /api/v1/auth/logout", category: "human-only", reason: "Ends the login session" },
@@ -525,21 +531,6 @@ export const PLATFORM_EXCLUSIONS: readonly {
     reason: "Adds and removes org members from the directory; only an admin, by hand, starts it",
   },
   {
-    route: "POST /api/v1/orgs/:orgId/invitations",
-    category: "human-only",
-    reason: "Invites a person into the org",
-  },
-  {
-    route: "GET /api/v1/orgs/:orgId/invitations",
-    category: "human-only",
-    reason: "Lists invitations with their tokens",
-  },
-  {
-    route: "DELETE /api/v1/orgs/:orgId/invitations/:id",
-    category: "human-only",
-    reason: "Revokes an invitation",
-  },
-  {
     route: "GET /api/v1/invitations/:token",
     category: "human-only",
     reason: "Shows an invitation to its recipient",
@@ -570,16 +561,6 @@ export const PLATFORM_EXCLUSIONS: readonly {
     route: "POST /api/v1/orgs/:orgId/leave",
     category: "human-only",
     reason: "Removes the caller from the org",
-  },
-  {
-    route: "PATCH /api/v1/orgs/:orgId/members/:accountId",
-    category: "human-only",
-    reason: "Changes a member's role",
-  },
-  {
-    route: "DELETE /api/v1/orgs/:orgId/members/:accountId",
-    category: "human-only",
-    reason: "Removes a member from the org",
   },
   {
     route: "POST /api/v1/orgs/:orgId/service-tokens",

@@ -192,6 +192,8 @@ export interface RewrapResult {
   dataKeys: number;
   /** Unexpired one-time initial passwords (`account_initial_passwords`) now sealed with it. */
   initialPasswords: number;
+  /** Unexpired sealed Platform reveals (`platform_sealed_reveals`, invitation links) now sealed with it. */
+  sealedReveals: number;
 }
 
 /** Rows rewrapped per transaction by default. */
@@ -207,13 +209,19 @@ export const initialPasswordAad = (accountId: string) => `capybara:initial-passw
 export const platformSealedInputAad = (approvalId: string, paths: readonly string[]) =>
   `capybara:platform-sealed-input:${approvalId}:${[...paths].sort().join(",")}`;
 
+/**
+ * The AAD binding a sealed Platform reveal (an invitation link) to its subject: a row moved to
+ * another subject fails to unwrap.
+ */
+export const platformSealedRevealAad = (id: string) => `capybara:platform-sealed-reveal:${id}`;
+
 type RewrapHandles = { db: Pick<KernelDb, "db">; txHost: Pick<TransactionHost, "run"> };
 
 /** One table whose rows are sealed directly with a master key. */
 interface MasterKeyedTable {
-  table: "org_data_keys" | "account_initial_passwords";
+  table: "org_data_keys" | "account_initial_passwords" | "platform_sealed_reveals";
   /** The row key column; also names the row in errors (an id, never key material). */
-  idColumn: "org_id" | "account_id";
+  idColumn: "org_id" | "account_id" | "id";
   dataColumn: "wrapped_key" | "ciphertext";
   aad(id: string): string;
   /**
@@ -238,6 +246,13 @@ const MASTER_KEYED: MasterKeyedTable[] = [
     aad: initialPasswordAad,
     hasExpiresAt: true,
   },
+  {
+    table: "platform_sealed_reveals",
+    idColumn: "id",
+    dataColumn: "ciphertext",
+    aad: platformSealedRevealAad,
+    hasExpiresAt: true,
+  },
 ];
 
 function staleRows(db: AnyDb, t: MasterKeyedTable, keyring: Keyring) {
@@ -260,7 +275,7 @@ function assertKnown(t: MasterKeyedTable, keyring: Keyring, rows: { id: string; 
 
 /**
  * Rewraps everything sealed with a master key other than the keyring's current one (org data keys
- * and unexpired initial passwords) with the current key, `batchSize` rows per transaction, until
+ * and unexpired initial passwords and sealed reveals) with the current key, `batchSize` rows per transaction, until
  * none is left. Checks first that the keyring holds every master key in use and throws (naming row
  * ids and key ids, never key material) before writing anything when it does not. Idempotent: a
  * second run finds nothing; concurrent runs lock the same rows and skip the ones already done.
@@ -327,5 +342,6 @@ export async function rewrapToCurrentMasterKey(
   return {
     dataKeys: counts.get("org_data_keys") ?? 0,
     initialPasswords: counts.get("account_initial_passwords") ?? 0,
+    sealedReveals: counts.get("platform_sealed_reveals") ?? 0,
   };
 }

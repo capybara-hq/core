@@ -325,7 +325,10 @@
     "member": {
       "anonymous_guest": "匿名访客不能被授予角色、所有权或智能体，也不能被邀请或移出。",
       "not_found": "成员不存在。",
-      "already_exists": "你已经是这个组织的成员了。"
+      "already_exists": "你已经是这个组织的成员了。",
+      "self": "你自己的成员身份只能由你在网页上修改，不能通过智能体修改。",
+      "owner_untouchable": "所有者和所有权只能由所有者在成员页面修改，不能通过智能体修改。",
+      "role_above_actor": "智能体不能授予高于你自己角色的角色。"
     },
     "attachment": {
       "too_large": "文件太大，超过了单个附件的大小上限。",
@@ -482,7 +485,9 @@
     "invitation": {
       "invalid": "邀请链接无效或已被撤销。",
       "expired": "邀请已过期。",
-      "used": "这个邀请已经被使用过了。"
+      "used": "这个邀请已经被使用过了。",
+      "link_unavailable": "没有可显示的邀请链接：已经显示过、已过期、邀请已不再待接受，或它不是由你批准的调用创建的。",
+      "create_needs_approval": "请在由你自己批准调用的会话里邀请，或到成员页面邀请。"
     },
     "marketplace": {
       "not_found": "市场不存在。",
@@ -2068,6 +2073,11 @@
       "show": "显示初始密码",
       "label": "{login} 的初始密码",
       "hint": "平台为新账号生成了这个密码。它只显示这一次；账号首次登录时必须修改。"
+    },
+    "invitationLink": {
+      "show": "显示邀请链接",
+      "label": "邀请链接",
+      "hint": "把它发给你要邀请的人。它只显示这一次；邀请本身仍可在成员页面查看。"
     },
     "person": {
       "fillOnWeb": "打开对话填写 {n} 项",
@@ -4378,6 +4388,7 @@
         "orgInvitationAccepted": "接受了邀请",
         "orgInvitationCreated": "邀请了成员",
         "orgInvitationRevoked": "撤销了邀请",
+        "orgInvitationLinkShown": "查看了邀请链接",
         "orgMemberAdded": "添加了成员",
         "orgMemberLeft": "退出了组织",
         "orgMemberOffboarded": "为成员办理了离职",

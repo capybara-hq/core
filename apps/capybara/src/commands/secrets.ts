@@ -32,8 +32,8 @@ export async function runSecretsRewrap(
     log.setLevel(config.log.level);
     const r = await rewrapMasterKeys(config, { logger: log });
     io.stdout.write(
-      `rewrapped ${r.dataKeys} org data key(s) and ${r.initialPasswords} initial password(s) ` +
-        `to master key ${r.currentMasterKeyId}\n`,
+      `rewrapped ${r.dataKeys} org data key(s), ${r.initialPasswords} initial password(s) and ` +
+        `${r.sealedReveals} invitation link(s) to master key ${r.currentMasterKeyId}\n`,
     );
     if (config.masterKeyPrevious.length > 0) {
       io.stdout.write(

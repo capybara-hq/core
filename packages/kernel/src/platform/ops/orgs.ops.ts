@@ -5,17 +5,27 @@ import { AuditLogService } from "../../admin/audit-log.service.js";
 import { limitDefaults } from "../../admin/limit-defaults.js";
 import { NetworkAllowanceBody, NetworkAllowanceParams } from "../../admin/org-network.schemas.js";
 import { OrgNetworkAdmin } from "../../admin/org-network.service.js";
-import { ApiError } from "../../errors.js";
+import { ApiError, type ErrorCode } from "../../errors.js";
 import { AccountsService } from "../../identity/accounts.js";
 import { DEPLOYMENT_SETTINGS_PATCH, SettingsService } from "../../identity/settings.js";
 import { KernelConfigService } from "../../infra/config/kernel-config.service.js";
 import { KernelDb } from "../../infra/database/kernel-db.js";
+import { type Invitation, InvitationsService } from "../../orgs/invitations.service.js";
 import { MembersService } from "../../orgs/members.service.js";
 import { OrgNetworkAllowances } from "../../orgs/network-allowances.service.js";
-import { networkAllowanceView, OrgUpdateBody } from "../../orgs/orgs.schemas.js";
+import {
+  InvitationCreateBody,
+  InvitationIdParams,
+  MemberParams,
+  MemberRoleBody,
+  networkAllowanceView,
+  OrgUpdateBody,
+} from "../../orgs/orgs.schemas.js";
 import { type Org, OrgsService } from "../../orgs/orgs.service.js";
-import { defineOperation, type OperationContext } from "../operation.js";
+import { type OrgRole, roleAtLeast } from "../../orgs/roles.js";
+import { defineOperation, type OperationContext, type PrecheckResult } from "../operation.js";
 import { PlatformOperations } from "../registry.js";
+import { SEALED_REVEAL_TTL_MS, SealedReveals } from "../sealed-reveals.js";
 import { precheckBy, viaAgent } from "./errors.js";
 import { Cursor, pageOf, startOf } from "./paging.js";
 import { roleOf } from "./role.js";
@@ -41,11 +51,68 @@ async function limitsOf(settings: SettingsService, orgId: string) {
   };
 }
 
+/** The role names a card summary uses. */
+const ROLE_WORDS: Record<OrgRole, { zh: string; en: string }> = {
+  owner: { zh: "所有者", en: "owner" },
+  admin: { zh: "管理员", en: "admin" },
+  member: { zh: "成员", en: "member" },
+  guest: { zh: "访客", en: "guest" },
+};
+
+/** What `orgs.invite` returns in place of the token (model-visible English). */
+export const INVITATION_LINK_NOTE = `The invitation link is shown once, on the web, to the person who approved this call (on the approval card); they share it with the invitee. It is not shown to you. If it is not read within ${SEALED_REVEAL_TTL_MS / 3_600_000} hours it is lost: revoke the invitation (orgs.revoke-invitation) and invite again.`;
+
+/**
+ * Why a member operation through the tool is never offered (spec §7.2, maintainer decision Q2):
+ * the actor's own membership (`member.self`), an owner or granting owner
+ * (`member.owner_untouchable`), or a role above the actor's own (`member.role_above_actor`). Null:
+ * allowed here; the service's own checks still run. A target that is no member is left to the
+ * service (`member.not_found`).
+ */
+export function memberChangeRefusal(
+  actor: { id: string; role: OrgRole | null },
+  target: { id: string; role: OrgRole | null },
+  role?: OrgRole,
+): { code: ErrorCode; message: string } | null {
+  if (target.id === actor.id) {
+    return {
+      code: "member.self",
+      message: "The Platform tool never changes or removes your own membership",
+    };
+  }
+  if (target.role === "owner" || role === "owner") {
+    return {
+      code: "member.owner_untouchable",
+      message: "The Platform tool never touches an owner or makes anyone an owner",
+    };
+  }
+  if (role !== undefined && (actor.role === null || !roleAtLeast(actor.role, role))) {
+    return {
+      code: "member.role_above_actor",
+      message: `The Platform tool never gives a role above your own (${actor.role ?? "none"})`,
+    };
+  }
+  return null;
+}
+
+/** The invitation as the tool shows it: never a token (the list has none; create's is sealed). */
+const invitationView = (i: Invitation & { status?: string }) => ({
+  id: i.id,
+  role: i.role,
+  ...(i.status !== undefined && { status: i.status }),
+  createdBy: i.createdBy,
+  createdAt: i.createdAt,
+  expiresAt: i.expiresAt,
+  acceptedAt: i.acceptedAt,
+  revokedAt: i.revokedAt,
+});
+
 /**
  * Org operations of the `Platform` tool (spec §14.2): the super admin's view of every org (list,
  * get, the per-org limits) through their own private agent, and the conversation's org for its
- * members (read, rename, member list, the org audit log for its admins). Creating, deleting and
- * transferring an org, invitations, member role changes and removal stay on the web (human-only).
+ * members (read, rename, member list, the org audit log for its admins), and member management for
+ * its admins (invite, revoke, role change, remove; platform web parity spec §7.2: never self, never
+ * an owner, never above the actor). Creating, deleting and transferring an org stay on the web.
  */
 @Injectable()
 export class OrgsOperations implements OnModuleInit {
@@ -53,6 +120,8 @@ export class OrgsOperations implements OnModuleInit {
     @Inject(PlatformOperations) private readonly registry: PlatformOperations,
     @Inject(OrgsService) private readonly orgs: OrgsService,
     @Inject(MembersService) private readonly members: MembersService,
+    @Inject(InvitationsService) private readonly invitations: InvitationsService,
+    @Inject(SealedReveals) private readonly reveals: SealedReveals,
     @Inject(SettingsService) private readonly settings: SettingsService,
     @Inject(AccountsService) private readonly accounts: AccountsService,
     @Inject(KernelConfigService) private readonly config: KernelConfigService,
@@ -73,6 +142,43 @@ export class OrgsOperations implements OnModuleInit {
     const a = await this.accounts.get(ctx.actorAccountId);
     if (!a) throw new ApiError("forbidden", "Your account no longer exists");
     return a;
+  }
+
+  /** {@link memberChangeRefusal} against the roles read now. */
+  private async memberRefusal(ctx: OperationContext, targetId: string, role?: OrgRole) {
+    const [actorRole, targetRole] = await Promise.all([
+      roleOf(this.kdb.db, ctx.orgId, ctx.actorAccountId),
+      roleOf(this.kdb.db, ctx.orgId, targetId),
+    ]);
+    return memberChangeRefusal(
+      { id: ctx.actorAccountId, role: actorRole },
+      { id: targetId, role: targetRole },
+      role,
+    );
+  }
+
+  /** The precheck of a member operation: the refusal, before the card. */
+  private async memberCheck(
+    ctx: OperationContext,
+    targetId: string,
+    role?: OrgRole,
+  ): Promise<PrecheckResult> {
+    const refused = await this.memberRefusal(ctx, targetId, role);
+    return refused === null ? { ok: true } : { ok: false, ...refused };
+  }
+
+  /** Throws the refusal in the run (the precheck may have been skipped). */
+  private async assertMember(ctx: OperationContext, targetId: string, role?: OrgRole) {
+    const refused = await this.memberRefusal(ctx, targetId, role);
+    if (refused !== null) throw new ApiError(refused.code, refused.message);
+  }
+
+  /** The member's display name for a card; the id when unknown. */
+  private async memberName(accountId: string): Promise<string> {
+    return orElse(async () => {
+      const a = await this.accounts.get(accountId);
+      return a === undefined || a === null ? accountId : named(a.displayName);
+    }, accountId);
   }
 
   /** The org's allowance `id` (for a card and the remove precheck); none → the remove's 404. */
@@ -433,7 +539,7 @@ export class OrgsOperations implements OnModuleInit {
       defineOperation({
         id: "orgs.members",
         description:
-          "List the members of this conversation's org, one compact row each: account id, display name, role, email and when they joined. Changing roles and removing members is done on the web. Pages by 50: pass the returned next as params.cursor.",
+          "List the members of this conversation's org, one compact row each: account id, display name, role, email and when they joined. Org admins change roles with orgs.set-member-role and remove members with orgs.remove-member. Pages by 50: pass the returned next as params.cursor.",
         input: z.object({ cursor: Cursor.optional() }).strict(),
         example: {},
         authz: { orgAction: "org.members.read" },
@@ -453,6 +559,244 @@ export class OrgsOperations implements OnModuleInit {
             startOf(input.cursor),
             PAGE,
           ),
+      }),
+      defineOperation({
+        id: "orgs.invitations",
+        description:
+          "List the invitations of this conversation's org (org admins), oldest first: id, role, status (pending, accepted, expired or revoked), who created it and when, when it expires. Never the link: an invitation's link is shown only once, to the person who approved its creation.",
+        input: z.object({ cursor: Cursor.optional() }).strict(),
+        example: {},
+        authz: { orgAction: "org.invitations.manage" },
+        mirrors: ["GET /api/v1/orgs/:orgId/invitations"],
+        extras: ["cursor"],
+        confirm: "read",
+        run: async (input, ctx) =>
+          pageOf(
+            (await this.invitations.list(ctx.orgId)).map(invitationView),
+            startOf(input.cursor),
+            PAGE,
+          ),
+      }),
+      defineOperation({
+        id: "orgs.invite",
+        description:
+          "Invite a person into this conversation's org (org admins) with a role: admin, member or guest (never owner; never above your own role). expiresInHours is 1 to 720 (default 168). You never see the link: it is shown once, on the web, to the person who approves this call (on the approval card), who shares it with the invitee. If it is not read within 24 hours it is lost: revoke the invitation (orgs.revoke-invitation) and invite again.",
+        input: InvitationCreateBody.strict(),
+        example: { role: "member" },
+        authz: { orgAction: "org.invitations.manage" },
+        mirrors: ["POST /api/v1/orgs/:orgId/invitations"],
+        confirm: "org",
+        rememberable: false,
+        errors: [
+          {
+            code: "member.role_above_actor",
+            next: "Invite with a role no higher than your own, or ask an owner to invite on the web.",
+          },
+          {
+            code: "invitation.create_needs_approval",
+            next: "Call it from a conversation where you approve the call yourself, or invite on the web (the org's Members page).",
+          },
+          {
+            code: "validation_failed",
+            next: "Pass role admin, member or guest and expiresInHours from 1 to 720.",
+          },
+        ],
+        precheck: async (i, ctx) => {
+          const actor = await roleOf(this.kdb.db, ctx.orgId, ctx.actorAccountId);
+          return actor !== null && roleAtLeast(actor, i.role)
+            ? { ok: true }
+            : {
+                ok: false,
+                code: "member.role_above_actor",
+                message: `The Platform tool never gives a role above your own (${actor ?? "none"})`,
+              };
+        },
+        summary: (i) => {
+          const h = i.expiresInHours;
+          return {
+            zh: `邀请一位${ROLE_WORDS[i.role].zh}加入本组织${h === undefined ? "" : `，${h} 小时后过期`}；批准后邀请链接仅向你显示一次`,
+            en: `Invite a new ${ROLE_WORDS[i.role].en} into this org${h === undefined ? "" : `, expiring in ${h} hours`}; the invitation link is shown once to you after approval`,
+          };
+        },
+        run: async (input, ctx) => {
+          if (ctx.callId === undefined || ctx.runId === null) {
+            // the link reaches the approver through the approved call; without one it could never
+            // be shown, so nothing is created
+            throw new ApiError(
+              "invitation.create_needs_approval",
+              "orgs.invite runs only as a Platform call you approve in a conversation",
+            );
+          }
+          const actor = await roleOf(this.kdb.db, ctx.orgId, ctx.actorAccountId);
+          if (actor === null || !roleAtLeast(actor, input.role)) {
+            throw new ApiError(
+              "member.role_above_actor",
+              `The Platform tool never gives a role above your own (${actor ?? "none"})`,
+            );
+          }
+          const to = {
+            conversationId: ctx.conversationId,
+            runId: ctx.runId,
+            callId: ctx.callId,
+            recipientAccountId: ctx.actorAccountId,
+          };
+          const { invitation } = await this.invitations.create(
+            ctx.orgId,
+            input,
+            ctx.actorAccountId,
+            undefined,
+            {
+              auditDetail: viaAgent("orgs.invite", ctx),
+              inTransaction: (inv, token) => this.reveals.sealIn(ctx.orgId, inv.id, token, to),
+            },
+          );
+          return { invitation: invitationView(invitation), link: INVITATION_LINK_NOTE };
+        },
+      }),
+      defineOperation({
+        id: "orgs.revoke-invitation",
+        description:
+          "Revoke an invitation of this conversation's org (org admins) by its id (orgs.invitations): its link stops working at once. An accepted invitation cannot be revoked (remove the member instead); revoking one already revoked does nothing.",
+        input: z.object({ invitationId: InvitationIdParams.shape.id }).strict(),
+        example: { invitationId: "00000000-0000-4000-8000-000000000000" },
+        authz: { orgAction: "org.invitations.manage" },
+        mirrors: ["DELETE /api/v1/orgs/:orgId/invitations/:id"],
+        renames: { invitationId: "id" },
+        confirm: "org",
+        rememberable: false,
+        errors: [
+          {
+            code: "invitation.invalid",
+            next: "List the invitations with orgs.invitations and pass one of their ids.",
+          },
+          {
+            code: "invitation.used",
+            next: "The invitation was accepted; remove the member with orgs.remove-member if they should leave.",
+          },
+        ],
+        summary: async (i, ctx) => {
+          const inv = await orElse(
+            async () =>
+              (await this.invitations.list(ctx.orgId)).find((x) => x.id === i.invitationId),
+            undefined,
+          );
+          const role = inv === undefined ? undefined : ROLE_WORDS[inv.role];
+          return {
+            zh: `撤销${role === undefined ? "" : `${role.zh}`}邀请 ${i.invitationId}，它的链接将立即失效`,
+            en: `Revoke the ${role === undefined ? "" : `${role.en} `}invitation ${i.invitationId}; its link stops working at once`,
+          };
+        },
+        run: async (input, ctx) => {
+          await this.invitations.revoke(
+            ctx.orgId,
+            input.invitationId,
+            ctx.actorAccountId,
+            undefined,
+            viaAgent("orgs.revoke-invitation", ctx),
+          );
+          return { id: input.invitationId, revoked: true };
+        },
+      }),
+      defineOperation({
+        id: "orgs.set-member-role",
+        description:
+          "Change a member's role in this conversation's org (org admins): guest, member or admin, never above your own role. Never offered: changing your own role, changing an owner's role or making anyone an owner (an owner does that on the web).",
+        input: MemberParams.extend(MemberRoleBody.shape).strict(),
+        example: { accountId: "00000000-0000-4000-8000-000000000000", role: "member" as const },
+        authz: { orgAction: "org.members.manage" },
+        mirrors: ["PATCH /api/v1/orgs/:orgId/members/:accountId"],
+        confirm: "org",
+        rememberable: false,
+        errors: [
+          {
+            code: "member.role_above_actor",
+            next: "Choose a role no higher than your own, or ask an owner to change it on the web.",
+          },
+          {
+            code: "member.self",
+            next: "Your own membership is changed by you on the web, never through this tool.",
+          },
+          {
+            code: "member.owner_untouchable",
+            next: "Owners and ownership are changed by an owner on the web (the org's Members page), never through this tool.",
+          },
+          {
+            code: "member.not_found",
+            next: "List the members with orgs.members and pass one of their ids.",
+          },
+          {
+            code: "member.anonymous_guest",
+            next: "The anonymous guest has no role to change; switch the channel connection back to binding on the web if it is no longer wanted.",
+          },
+        ],
+        precheck: (i, ctx) => this.memberCheck(ctx, i.accountId, i.role),
+        summary: async (i) => {
+          const name = await this.memberName(i.accountId);
+          return {
+            zh: `将成员「${name}」的角色改为${ROLE_WORDS[i.role].zh}`,
+            en: `Change the role of member "${name}" to ${ROLE_WORDS[i.role].en}`,
+          };
+        },
+        run: async (input, ctx) => {
+          await this.assertMember(ctx, input.accountId, input.role);
+          await this.members.changeRole(
+            ctx.orgId,
+            input.accountId,
+            input.role,
+            ctx.actorAccountId,
+            undefined,
+            viaAgent("orgs.set-member-role", ctx),
+          );
+          return { accountId: input.accountId, role: input.role };
+        },
+      }),
+      defineOperation({
+        id: "orgs.remove-member",
+        description:
+          "Remove a member from this conversation's org (org admins): they lose access at once; every session and personal access token of the account is revoked, their runs in the org stop, their devices and file shares in the org are removed, and the org agents they own pass to an owner for reassignment. Never offered: removing yourself or an owner.",
+        input: MemberParams.strict(),
+        example: { accountId: "00000000-0000-4000-8000-000000000000" },
+        authz: { orgAction: "org.members.manage" },
+        mirrors: ["DELETE /api/v1/orgs/:orgId/members/:accountId"],
+        confirm: "org",
+        rememberable: false,
+        errors: [
+          {
+            code: "member.self",
+            next: "Your own membership is changed by you on the web, never through this tool.",
+          },
+          {
+            code: "member.owner_untouchable",
+            next: "Owners and ownership are changed by an owner on the web (the org's Members page), never through this tool.",
+          },
+          {
+            code: "member.not_found",
+            next: "List the members with orgs.members and pass one of their ids.",
+          },
+          {
+            code: "member.anonymous_guest",
+            next: "The anonymous guest has no role to change; switch the channel connection back to binding on the web if it is no longer wanted.",
+          },
+        ],
+        precheck: (i, ctx) => this.memberCheck(ctx, i.accountId),
+        summary: async (i) => {
+          const name = await this.memberName(i.accountId);
+          return {
+            zh: `将成员「${name}」移出本组织，其访问权限立即失效`,
+            en: `Remove member "${name}" from this org; their access ends at once`,
+          };
+        },
+        run: async (input, ctx) => {
+          await this.assertMember(ctx, input.accountId);
+          await this.members.remove(
+            ctx.orgId,
+            input.accountId,
+            ctx.actorAccountId,
+            undefined,
+            viaAgent("orgs.remove-member", ctx),
+          );
+          return { accountId: input.accountId, removed: true };
+        },
       }),
       defineOperation({
         id: "orgs.audit",
