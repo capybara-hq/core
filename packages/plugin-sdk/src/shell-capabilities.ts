@@ -45,6 +45,18 @@ export interface RunningOperationView {
 /** The `code` of a rejected shell call. */
 export type ShellCallError = "busy" | "no_activation" | "cancelled" | "failed";
 
+/**
+ * A change to this machine's owner ceiling, as `capybara-device ceiling set` takes it
+ * (`--outside-sandbox on|off`, `--network open|allowlist`, `--project-reach workspace|os-user`):
+ * only the fields to change. A field left out is never touched, so a stale value on the page can
+ * never narrow it. A widening needs the shell's native confirmation; a narrowing applies at once.
+ */
+export interface DeviceCeilingRequest {
+  outsideSandbox?: boolean;
+  network?: "open" | "allowlist";
+  projectReach?: "workspace" | "os-user";
+}
+
 /** `device@1`: connect this machine to the deployment as a device. */
 export interface DeviceCapabilityV1 {
   status(): Promise<ThisMachineStatus>;
@@ -54,10 +66,7 @@ export interface DeviceCapabilityV1 {
   pause(): Promise<void>;
   resume(): Promise<"resumed" | "cancelled">;
   disconnect(): Promise<void>;
-  requestCeiling(input: {
-    fullAccess: boolean;
-    projectReach: "workspace" | "os-user";
-  }): Promise<"applied" | "cancelled">;
+  requestCeiling(input: DeviceCeilingRequest): Promise<"applied" | "cancelled">;
   setKeepAwake(mode: KeepAwakeMode): Promise<"applied" | "cancelled">;
 }
 

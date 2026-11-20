@@ -16,7 +16,7 @@ import type { Device } from "../lib/devices";
 import { deviceRunningQuery } from "../lib/query/device-running";
 import { keys } from "../lib/query/keys";
 import { useAppMutation } from "../lib/query/mutation";
-import type { DeviceCapabilityV1, KeepAwakeMode } from "../lib/shell";
+import type { DeviceCapabilityV1, DeviceCeilingRequest, KeepAwakeMode } from "../lib/shell";
 import { type Connected, useIsThisMachine } from "../lib/use-this-machine";
 
 /** How often the running list is read again (an operation starting or ending is no status change). */
@@ -178,4 +178,56 @@ function Section({ cap, status }: { cap: DeviceCapabilityV1; status: Connected }
       </Stack>
     </ContentSection>
   );
+}
+
+/**
+ * The owner ceiling widenings the shell can ask this machine for (`device@1.requestCeiling`), by
+ * the device page's command key: each request names its one field, so the fields the person did
+ * not touch are never sent and a stale value on the page can never narrow them.
+ */
+export const SHELL_WIDENINGS = {
+  network: { network: "open" },
+  outside: { outsideSandbox: true },
+  reach: { projectReach: "os-user" },
+} as const satisfies Record<string, DeviceCeilingRequest>;
+
+export type ShellWidening = keyof typeof SHELL_WIDENINGS;
+
+/**
+ * Widening on this machine from its device page (desktop client spec §9.5): `request` asks the
+ * shell for one field (a native confirmation with the device program's risk text; applied only on
+ * yes), toasts when applied, says nothing when the person declines. `undefined` in a browser, on
+ * another device, and in a shell whose `device@1` has no `requestCeiling`: the page then shows the
+ * `capybara-device ceiling set` lines.
+ */
+export function useShellWidening(
+  orgId: string,
+  deviceId: string,
+  invalidates: () => (readonly unknown[])[],
+): { request(key: ShellWidening): void; pending: boolean } | undefined {
+  const t = useTranslations("devices.thisMachine");
+  const toast = useToast();
+  const here = useIsThisMachine(orgId, deviceId);
+  const cap = here?.cap;
+  const offered = cap !== undefined && typeof cap.requestCeiling === "function";
+  const widen = useAppMutation({
+    fn: (req: DeviceCeilingRequest) =>
+      offered ? cap.requestCeiling(req) : Promise.resolve("cancelled" as const),
+    invalidates: () => [keys.shell().deviceStatus(), ...invalidates()],
+  });
+  if (!offered) return undefined;
+  return {
+    pending: widen.isPending,
+    request: (key) => {
+      if (widen.isPending) return;
+      void widen.mutateAsync(SHELL_WIDENINGS[key]).then(
+        (r) => {
+          if (r === "applied") toast.success(t("widened"));
+        },
+        (e: unknown) => {
+          if (!isCancelled(e)) toast.error(t("failed"));
+        },
+      );
+    },
+  };
 }

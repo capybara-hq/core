@@ -904,14 +904,18 @@ export interface DeviceCapabilityV1 {
     disconnect(): Promise<void>;
     onStatus(listener: (s: ThisMachineStatus) => void): () => void;
     pause(): Promise<void>;
-    requestCeiling(input: {
-        fullAccess: boolean;
-        projectReach: "workspace" | "os-user";
-    }): Promise<"applied" | "cancelled">;
+    requestCeiling(input: DeviceCeilingRequest): Promise<"applied" | "cancelled">;
     resume(): Promise<"resumed" | "cancelled">;
     running(): Promise<RunningOperationView[]>;
     setKeepAwake(mode: KeepAwakeMode): Promise<"applied" | "cancelled">;
     status(): Promise<ThisMachineStatus>;
+}
+
+// @public
+export interface DeviceCeilingRequest {
+    network?: "open" | "allowlist";
+    outsideSandbox?: boolean;
+    projectReach?: "workspace" | "os-user";
 }
 
 // @public

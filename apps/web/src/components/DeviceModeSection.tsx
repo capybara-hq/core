@@ -37,6 +37,7 @@ import { allowHostProblem } from "../lib/network-hosts";
 import { keys } from "../lib/query/keys";
 import { useAppMutation } from "../lib/query/mutation";
 import { ApiErrorDetail } from "./ApiErrorDetail";
+import { SHELL_WIDENINGS, type ShellWidening, useShellWidening } from "./ThisMachineSection";
 
 /**
  * The CLI lines a device page shows for a local machine: its owner widens the sandbox on the
@@ -193,9 +194,9 @@ export function DeviceOverview({
  * its permission profile; the device keeps its sandbox, the same under every profile, in one
  * Sandbox section with its network, running outside the sandbox and the project reach:
  * - a local machine's sandbox is its owner's, widened only on the machine (the commands as
- *   keycaps); the page only narrows it through the policy op (the allowlist, removing hosts,
- *   running outside the sandbox off, the workspace reach), and only while the machine is online,
- *   current and able to take it, else it says why;
+ *   keycaps, or this machine's shell confirmation); the page only narrows it through the policy
+ *   op (the allowlist, removing hosts, running outside the sandbox off, the workspace reach), and
+ *   only while the machine is online, current and able to take it, else it says why;
  * - a cloud device's network is changed by its owner in either direction within the platform,
  *   org and provider ceilings, or follows the org again; it never runs outside its instance.
  * A disabled option names the layer that limits it. Disconnect this machine follows; the page's
@@ -274,7 +275,13 @@ export function DeviceSettings({
             </Text>
           )}
           {local ? (
-            <LocalSandbox device={e} pending={pending} onSend={(p, done) => void send(p, done)} />
+            <LocalSandbox
+              orgId={orgId}
+              device={e}
+              pending={pending}
+              invalidates={invalidates}
+              onSend={(p, done) => void send(p, done)}
+            />
           ) : facts.sandbox != null ? (
             <CloudNetwork
               // a saved network starts the draft again from what the kernel answers
@@ -322,23 +329,33 @@ export function wideningCommands(
   ];
 }
 
+const isShellWidening = (k: keyof typeof SANDBOX_COMMANDS): k is ShellWidening =>
+  Object.hasOwn(SHELL_WIDENINGS, k);
+
 /**
  * A local machine's sandbox controls: the network (only the allowlist can be chosen here, its hosts
  * only removed), running outside the sandbox (only off) and the project reach (only the
  * workspace), each sent to the machine through the policy op. A machine that cannot take the change
  * now says why once and its controls are disabled, never refused; without a usable report there is
- * nothing to change. The widening commands follow as keycaps while a machine is connected.
+ * nothing to change. The widening commands follow as keycaps while a machine is connected; on this
+ * machine, in a shell whose `device@1` offers `requestCeiling`, the ones it can ask for are buttons
+ * instead (one field each, behind the shell's native confirmation).
  */
 function LocalSandbox({
+  orgId,
   device: e,
   pending,
+  invalidates,
   onSend,
 }: {
+  orgId: string;
   device: Device;
   pending: boolean;
+  invalidates(): (readonly unknown[])[];
   onSend(patch: DevicePolicyPatch, done: string): void;
 }) {
   const t = useTranslations("devices.sandbox");
+  const shell = useShellWidening(orgId, e.id, invalidates);
   const facts = deviceCeilingOf(e);
   const s = facts.sandbox;
   const owner = facts.owner;
@@ -349,13 +366,31 @@ function LocalSandbox({
     (e.network?.features.includes("policyOpId") ?? false);
   const disabled = !canApply || pending;
   const widening = wideningCommands(s, owner === null ? null : owner.restrictedProjectReach);
+  // on this machine in a shell that offers it, a widening is a button (the shell's confirmation),
+  // each one a single field; what the shell cannot ask for stays a command
+  const byShell = shell === undefined ? [] : widening.filter(isShellWidening);
+  const byCommand = widening.filter((k) => !isShellWidening(k) || !byShell.includes(k));
   const commands =
     e.machine === null || widening.length === 0 ? null : (
       <Stack gap={8}>
         <Text variant="prose" tone="muted">
-          {t("widenLocal")}
+          {t(shell === undefined ? "widenLocal" : "widenHere")}
         </Text>
-        {widening.map((k) => (
+        {shell !== undefined && byShell.length > 0 && (
+          <Stack direction="row" gap={8} wrap>
+            {byShell.map((k) => (
+              <Button
+                key={k}
+                density="dense"
+                disabled={shell.pending}
+                onClick={() => shell.request(k)}
+              >
+                {t(`widen.${k}`)}
+              </Button>
+            ))}
+          </Stack>
+        )}
+        {byCommand.map((k) => (
           <KeycapCommand key={k} command={SANDBOX_COMMANDS[k]} hint={t(`command.${k}`)} />
         ))}
       </Stack>

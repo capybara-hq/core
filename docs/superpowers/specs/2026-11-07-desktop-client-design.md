@@ -420,7 +420,7 @@ browser. Every call returns plain data, never a credential.
 | `device@1.pause()` | Drain: no new operations, the runner stops when the running ones finish; the service stays stopped |
 | `device@1.resume()` | `service start`; asks natively first, like connect |
 | `device@1.disconnect()` | `service stop` (or `stop` for a terminal runner): stops now, running operations end |
-| `device@1.requestCeiling({ fullAccess, projectReach })` | A narrowing applies at once (`ceiling set …`); a widening shows the native confirmation with the program's risk text (§9.5) and applies only on yes |
+| `device@1.requestCeiling({ outsideSandbox?, network?, projectReach? })` | Changes the owner ceiling fields it names, as `capybara-device ceiling set` does (`--outside-sandbox on\|off`, `--network open\|allowlist`, `--project-reach workspace\|os-user`); a field left out is never touched, so a stale value on the page cannot narrow it, and an empty request is refused. The shell reads the ceiling again (`ceiling show --json`) and compares: a narrowing applies at once (`ceiling set …` without `--yes`), a widening shows the native confirmation naming each widened field with the program's risk text (§9.5) and applies only on yes; a narrowing that became a widening meanwhile is refused by the program under its lock |
 | `device@1.setKeepAwake(mode)` | A lower mode (`off` < `while-busy` < `connected`) applies at once; a higher one asks natively first (§9.7) |
 
 Deliberately absent: the credential, file access, command execution, `policy add`
@@ -484,11 +484,12 @@ rule of mobile layout §9.4: a user activation, one native dialog at a time, `bu
 
 - Through the bridge the web may read status, list what runs, pause, disconnect and narrow the
   owner ceiling **(decided)**.
-- Widening (Full access allowed, project reach `os-user`) and resuming need a native
-  confirmation; the widening dialog shows the device program's own risk text
-  (`FULL_ACCESS_RISK_TEXT`, `CEILING_WIDENING_TEXT`) and the shell then runs
-  `capybara-device ceiling set … --yes`. Editing `policy.json` or running the CLI on the machine
-  stays the other way.
+- Widening (running outside the sandbox allowed, the open network, project reach `os-user`) and
+  resuming need a native confirmation; the widening dialog names each widened field and shows the
+  device program's own risk text (`CEILING_WIDENING_TEXT`, plus `FULL_ACCESS_RISK_TEXT` when
+  running outside the sandbox is widened on an `os` machine) and the shell then runs
+  `capybara-device ceiling set` with only the requested fields and `--yes`. Editing `policy.json`
+  or running the CLI on the machine stays the other way.
 - The deployment's own policy operations over the device protocol are unchanged (they narrow the
   ceiling and maintain `allowedDomains` within the org's allowlist, logged in `commands.log`).
 
@@ -496,9 +497,11 @@ rule of mobile layout §9.4: a user activation, one native dialog at a time, `bu
 
 - The deployment's device page shows the machine's state as it does today (the kernel's view),
   plus, when `device@1.status` says the device is this machine, 「本机」, the live running list from
-  `device@1.running`, 暂停 / 断开 / 恢复, the keep-awake choice (§9.7), and a widen action that goes
-  through `device@1.requestCeiling` (instead of the `capybara-device ceiling set` line it shows in a
-  browser).
+  `device@1.running`, 暂停 / 断开 / 恢复, the keep-awake choice (§9.7), and one widen action per
+  field the machine itself keeps narrow (the open network, running outside the sandbox, the
+  `os-user` project reach) that goes through `device@1.requestCeiling` with that field only
+  (instead of the `capybara-device ceiling set` line it shows in a browser, on another device and
+  in a shell whose `device@1` lacks the call). Adding an allowlist host stays a CLI line.
 - The device list and the conversation's device picker mark this machine 「本机」.
 - The tray icon shows not connected, online, offline, paused and busy. Its native menu: the
   profiles, the connection state, the number of running operations, 暂停 / 恢复 / 断开 (resume with
@@ -637,6 +640,9 @@ changes.
 - **Dependency direction**: the clients repository is an external app (kernel HTTP only) and
   depends on the published `@capybara-hq/device`; it imports neither the kernel nor
   `@capybara-hq/design` (§5.1).
+- **SDK public API**: the shell capability types (`DeviceCapabilityV1`, `DeviceCeilingRequest`,
+  §8) live in `@capybara-hq/plugin-sdk` and apps/web mirrors them exactly in `lib/shell.ts`; a
+  change runs `pnpm gen:sdk-api` with a changeset bumping the SDK.
 - **Sandboxes**: no inbound port; the control socket is a local Unix socket in the owner's private
   state directory (§3, §4.2).
 - **Config**: the new fields `platform.name` (§6.2) and `auth.appRedirectUris` (§6.5), with the

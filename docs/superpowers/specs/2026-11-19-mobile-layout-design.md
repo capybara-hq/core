@@ -536,7 +536,10 @@ declare global {
   changes (a new optional function or field) keep the key; an incompatible change is a new key
   (`device@2`), and a shell may offer both while deployments upgrade. The web uses the highest
   major it knows and **treats an absent capability as the browser** (the page behaves exactly as
-  in a browser). Unknown keys are ignored.
+  in a browser). Unknown keys are ignored. Before 0.1.0 a capability's shape may still change in
+  place under its key (AGENTS.md "Before 0.1.0"; `device@1.requestCeiling` took the device's
+  `{ outsideSandbox?, network?, projectReach? }` fields on 2026-11-20); a shell validates every
+  input and refuses a shape it does not know (`failed`), so the skew fails closed.
 - **Detection is by capability, never by user agent or `kind`**: `capybaraShell?.capabilities["device@1"]`.
   `kind` and `platform` only choose shell attributes (§9.3), never features.
 - Web versions skew against shell versions in both directions (self-hosted deployments upgrade

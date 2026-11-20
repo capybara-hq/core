@@ -1,6 +1,7 @@
 import { describe, expect, expectTypeOf, it } from "vitest";
 import {
   type DeviceCapabilityV1,
+  type DeviceCeilingRequest,
   type NotifyCapabilityV1,
   type OpenExternalCapabilityV1,
   SHELL_CAPABILITIES,
@@ -41,6 +42,22 @@ describe("desktop shell capability types", () => {
     >();
     expectTypeOf<ShellCallError>().toEqualTypeOf<
       "busy" | "no_activation" | "cancelled" | "failed"
+    >();
+  });
+
+  it("takes a ceiling request as only the owner ceiling fields to change", () => {
+    expectTypeOf<
+      Parameters<DeviceCapabilityV1["requestCeiling"]>[0]
+    >().toEqualTypeOf<DeviceCeilingRequest>();
+    expectTypeOf<DeviceCeilingRequest>().toEqualTypeOf<{
+      outsideSandbox?: boolean;
+      network?: "open" | "allowlist";
+      projectReach?: "workspace" | "os-user";
+    }>();
+    // a single field is a whole request: the others are never sent, so never touched
+    expectTypeOf<{ network: "open" }>().toMatchTypeOf<DeviceCeilingRequest>();
+    expectTypeOf<ReturnType<DeviceCapabilityV1["requestCeiling"]>>().toEqualTypeOf<
+      Promise<"applied" | "cancelled">
     >();
   });
 });
