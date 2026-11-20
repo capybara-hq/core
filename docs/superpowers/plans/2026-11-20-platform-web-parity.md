@@ -568,7 +568,7 @@ Suggested waves (execution may refine them in the ledger):
   - `plugins.upload`: `OrgPluginUploads.prepare`.
   - `plugins.import-file`: `PluginImport.prepare(actor, bytes, { kind: "file", ref: "upload" })`.
   - `extensions.upload-package`: `installs.ingestFile`.
-  - `components.upload-skill-version`: `PlatformComponents.uploadSkillVersion`.
+  - `plugins.update-skill` (the operations have no `components` domain): `PlatformComponents.uploadSkillVersion`.
 
   Upload routes' `uploadId`-style fields go in `omits`, and `file` in `extras`.
 

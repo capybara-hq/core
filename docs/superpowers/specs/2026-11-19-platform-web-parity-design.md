@@ -222,7 +222,7 @@ Routes and the operations that mirror them:
 | `POST …/catalog/uploads/file` | `plugins.upload`: stages and returns the review; confirming stays on the web (§6) | `org` |
 | `POST /admin/catalog/import/file` | `plugins.import-file`: same handoff | `platform` |
 | `POST /admin/extensions/packages/file` | `extensions.upload-package`: install stays human-only | `platform` |
-| `POST /admin/components/skill/:id/versions` | `components.upload-skill-version` | `platform` |
+| `POST /admin/components/skill/:id/versions` | `plugins.update-skill` | `platform` |
 
 Kept as exclusions: `POST …/attachments`, `…/finalize` and `GET …/attachments/limits` (category
 `internal`). They exist to bring a person's file into a conversation, and the agent's files are
