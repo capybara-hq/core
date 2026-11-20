@@ -1,6 +1,5 @@
-import { Ajv2020 } from "ajv/dist/2020.js";
+import { Ajv2020, type ValidateFunction } from "ajv/dist/2020.js";
 import { z } from "zod";
-import { getPath } from "../config/fields.js";
 import { hintedSecretPaths } from "../extensions/config-json-schema.js";
 
 /**
@@ -28,7 +27,11 @@ export interface PersonFieldSpec {
   label: string;
   /** From the node's `description` / `x-ui.help`. */
   description?: string;
-  /** The node's `x-ui` widget is a textarea (or JSON) editor. */
+  /**
+   * The node's `x-ui` widget is a textarea (or JSON) editor. `checkConfigUi` forbids widgets on
+   * secret nodes of extension schemas, so their rows are single-line (JSON pastes fine into a
+   * masked single-line input).
+   */
   multiline: boolean;
   /** Listed in its parent's `required` along the whole path. */
   required: boolean;
@@ -46,8 +49,23 @@ export interface PersonFieldTarget {
   recordOnly?: string[];
 }
 
+/** Path segments that would reach the prototype chain: never a field name. */
+const FORBIDDEN_SEGMENTS = new Set(["__proto__", "prototype", "constructor"]);
+
 const pathList = (what: string) =>
-  z.array(z.string().min(1).max(PATH_MAX_CHARS)).max(PERSON_FIELDS_MAX).default([]).describe(what);
+  z
+    .array(
+      z
+        .string()
+        .min(1)
+        .max(PATH_MAX_CHARS)
+        .refine((p) => p.split(".").every((seg) => !FORBIDDEN_SEGMENTS.has(seg)), {
+          message: "Not a field path: __proto__, prototype and constructor are not field names",
+        }),
+    )
+    .max(PERSON_FIELDS_MAX)
+    .default([])
+    .describe(what);
 
 /** The params every operation with person fields adds to its input schema. */
 export const personFieldParams: {
@@ -81,6 +99,54 @@ function shapeOf(node: Obj): Obj {
     if (rest.length === 1 && rest[0] !== undefined) return rest[0];
   }
   return node;
+}
+
+/** The node `$ref` points to inside `root` (`#/$defs/…` or `#/definitions/…`), if any. */
+function resolveRef(root: Obj, ref: unknown): Obj | undefined {
+  if (typeof ref !== "string" || !ref.startsWith("#/")) return undefined;
+  let node: unknown = root;
+  for (const raw of ref.slice(2).split("/")) {
+    const seg = raw.replace(/~1/g, "/").replace(/~0/g, "~");
+    if (!isObj(node) || !Object.hasOwn(node, seg)) return undefined;
+    node = node[seg];
+  }
+  return isObj(node) ? node : undefined;
+}
+
+/** Whether a subtree holds `"x-secret": true` anywhere, following `$ref`s into `root`. */
+function containsSecret(node: unknown, root: Obj, seen = new Set<unknown>()): boolean {
+  if (seen.has(node)) return false;
+  if (Array.isArray(node)) {
+    seen.add(node);
+    return node.some((n) => containsSecret(n, root, seen));
+  }
+  if (!isObj(node)) return false;
+  seen.add(node);
+  if (node["x-secret"] === true) return true;
+  if (node.$ref !== undefined) {
+    const target = resolveRef(root, node.$ref);
+    // An unresolvable reference may hide a secret: fail closed.
+    if (target === undefined || containsSecret(target, root, seen)) return true;
+  }
+  for (const [k, v] of Object.entries(node)) {
+    if (k === "x-ui" || VALUE_KEYWORDS.has(k)) continue;
+    if (containsSecret(v, root, seen)) return true;
+  }
+  return false;
+}
+
+/**
+ * Whether the walker cannot see through the node: a `$ref`, an `allOf`, or an `anyOf` / `oneOf`
+ * with two or more non-null branches.
+ */
+function isOpaque(node: Obj): boolean {
+  if (node.$ref !== undefined || node.allOf !== undefined) return true;
+  for (const branches of [node.anyOf, node.oneOf]) {
+    if (!Array.isArray(branches)) continue;
+    const rest = branches.filter((b) => !(isObj(b) && b.type === "null"));
+    if (rest.length >= 2) return true;
+  }
+  return false;
 }
 
 /** Whether the node only accepts strings (or strings and null). */
@@ -138,7 +204,9 @@ function fieldOf(node: Obj, shape: Obj, path: string, required: boolean, isSet: 
  * declaration order. `required` holds when every object along the path lists the next name in
  * its `required`; `isSet` when `stored` holds the path. Secrets the card cannot address go to
  * `recordOnly`: the paths `x-ui.secrets` names, secret nodes that are not strings (records), and
- * secrets inside array items (as `list[].key`).
+ * secrets inside array items (as `list[].key`). It fails closed on shapes it cannot see through:
+ * a `$ref`, an `allOf` or a union of two or more non-null branches whose subtree holds a secret
+ * puts the node's own path into `recordOnly`.
  */
 export function secretFieldsOf(
   jsonSchema: unknown,
@@ -158,6 +226,10 @@ export function secretFieldsOf(
   ) => {
     const shape = shapeOf(node);
     const secret = inSecret || node["x-secret"] === true || shape["x-secret"] === true;
+    if (!secret && (isOpaque(node) || isOpaque(shape))) {
+      if (containsSecret(node, jsonSchema)) recordOnly.add(path);
+      return;
+    }
     if (isObj(shape.properties)) {
       const req = Array.isArray(shape.required) ? shape.required : [];
       for (const [name, child] of Object.entries(shape.properties)) {
@@ -187,12 +259,27 @@ export type PersonFieldPlan =
   | { ok: true; ask: PersonFieldSpec[]; clear: string[] }
   | { ok: false; message: string };
 
-/** Whether `values` (keyed by dot path, or nesting objects) carries a value at `path`. */
+/** The value at a dot path, reading own properties only. */
+function ownPath(obj: unknown, path: string): unknown {
+  let node = obj;
+  for (const seg of path.split(".")) {
+    if (!isObj(node) || FORBIDDEN_SEGMENTS.has(seg) || !Object.hasOwn(node, seg)) return undefined;
+    node = node[seg];
+  }
+  return node;
+}
+
+/**
+ * Whether `values` (keyed by dot path, or nesting objects) carries a value at `path`: a flat key,
+ * a parent key holding a nested object, or a key under the path. `""` (an opaque root) matches
+ * any key.
+ */
 function valueAt(values: Obj, path: string): unknown {
   for (const [key, v] of Object.entries(values)) {
+    if (path === "") return v;
     if (key === path) return v;
     if (path.startsWith(`${key}.`)) {
-      const inner = getPath(v, path.slice(key.length + 1));
+      const inner = ownPath(v, path.slice(key.length + 1));
       if (inner !== undefined) return inner;
     }
     if (key.startsWith(`${path}.`) && v !== undefined) return v;
@@ -231,8 +318,10 @@ export function planPersonFields(
     }
   }
   for (const path of t.recordOnly ?? []) {
-    const v = valueAt(values, path);
-    if (v !== undefined && v !== null) {
+    // A secret inside array items: anything at the array (its root before the first `[]`) counts.
+    const cut = path.indexOf("[]");
+    const v = valueAt(values, cut < 0 ? path : path.slice(0, cut));
+    if (v !== undefined && (v !== null || cut >= 0)) {
       return {
         ok: false,
         message: `\`${path}\` is a secret record the person enters on the web page; leave it out of values. A value passed in params has been seen by the model and counts as leaked: tell the person to rotate it.`,
@@ -272,27 +361,42 @@ export function planPersonFields(
   return { ok: true, ask, clear: t.fields.filter((f) => clear.has(f.path)).map((f) => f.path) };
 }
 
+/** One validator for every person field, configured like the tool pipeline's (`tools/validate.ts`). */
+const ajv = new Ajv2020({ strict: false, allErrors: true, logger: false });
+/** Compiled validators by schema node (null: the node does not compile). */
+const compiled = new WeakMap<object, ValidateFunction | null>();
+
+function validatorOf(schema: Obj): ValidateFunction | null {
+  const hit = compiled.get(schema);
+  if (hit !== undefined) return hit;
+  const { $schema: _ignored, $id: _id, ...node } = schema;
+  let fn: ValidateFunction | null;
+  try {
+    fn = ajv.compile(node);
+  } catch {
+    fn = null;
+  } finally {
+    // Ajv keeps every compiled schema object; the WeakMap is the only cache.
+    ajv.removeSchema(node);
+  }
+  compiled.set(schema, fn);
+  return fn;
+}
+
 /**
  * Checks one value the person typed against its field: at most {@link PERSON_FIELD_MAX_BYTES}
  * UTF-8 bytes, not empty, and valid for the field's JSON Schema node (ajv, JSON Schema 2020-12,
  * as the tool pipeline validates inputs). Returns null when valid, else an English problem that
- * names the field and never echoes the value.
+ * names the field and never echoes the value. A node ajv cannot compile accepts the value: the
+ * write validates the whole config again.
  */
 export function checkPersonValue(spec: PersonFieldSpec, value: string): string | null {
   if (Buffer.byteLength(value, "utf8") > PERSON_FIELD_MAX_BYTES) {
     return `${spec.label} is longer than 16 KiB.`;
   }
   if (value === "") return `${spec.label} is empty.`;
-  let validate: ReturnType<Ajv2020["compile"]>;
-  try {
-    const { $schema: _ignored, ...node } = spec.schema;
-    validate = new Ajv2020({ strict: false, allErrors: true }).compile(node);
-  } catch {
-    // A schema node ajv cannot compile is the extension's problem; the write's own validation
-    // still checks the value.
-    return null;
-  }
-  if (validate(value)) return null;
+  const validate = validatorOf(spec.schema);
+  if (validate === null || validate(value)) return null;
   const problems = (validate.errors ?? []).map((e) => e.message ?? "is invalid");
   return `${spec.label} ${[...new Set(problems)].join("; ")}.`;
 }

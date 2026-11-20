@@ -100,6 +100,60 @@ describe("secretFieldsOf", () => {
     expect(fields).toMatchObject([{ path: "key", label: "key", multiline: true }]);
   });
 
+  it("finds a nullable secret either way round", () => {
+    const s = configJsonSchema(
+      z.object({
+        outer: secret(z.string()).nullable(),
+        inner: secret(z.string().nullable()),
+      }),
+    );
+    const { fields, recordOnly } = secretFieldsOf(s, new Set());
+    expect(fields.map((f) => f.path)).toEqual(["outer", "inner"]);
+    expect(recordOnly).toEqual([]);
+  });
+
+  it("puts a non-string secret and a secret inside array items into recordOnly", () => {
+    const s = configJsonSchema(
+      z.object({
+        port: secret(z.number()),
+        list: z.array(z.object({ name: z.string(), key: secret(z.string()) })),
+      }),
+    );
+    const { fields, recordOnly } = secretFieldsOf(s, new Set());
+    expect(fields).toEqual([]);
+    expect(recordOnly).toEqual(["port", "list[].key"]);
+  });
+
+  it("fails closed on a union of secret-bearing branches", () => {
+    const s = configJsonSchema(
+      z.object({
+        auth: z.discriminatedUnion("kind", [
+          z.object({ kind: z.literal("token"), token: secret(z.string()) }),
+          z.object({ kind: z.literal("basic"), password: secret(z.string()) }),
+        ]),
+        plain: z.union([z.string(), z.number()]),
+      }),
+    );
+    expect(secretFieldsOf(s, new Set())).toEqual({ fields: [], recordOnly: ["auth"] });
+  });
+
+  it("fails closed on a $ref to a secret and on an allOf holding one", () => {
+    const s = {
+      type: "object",
+      $defs: { key: { type: "string", "x-secret": true }, name: { type: "string" } },
+      properties: {
+        apiKey: { $ref: "#/$defs/key" },
+        name: { $ref: "#/$defs/name" },
+        both: { allOf: [{ type: "string" }, { "x-secret": true }] },
+        dangling: { $ref: "#/$defs/missing" },
+      },
+    };
+    expect(secretFieldsOf(s, new Set())).toEqual({
+      fields: [],
+      recordOnly: ["apiKey", "both", "dangling"],
+    });
+  });
+
   it("returns nothing for a value that is not a JSON Schema object", () => {
     expect(secretFieldsOf(null, new Set())).toEqual({ fields: [], recordOnly: [] });
   });
@@ -115,6 +169,58 @@ describe("planPersonFields", () => {
     });
     expect(r).toEqual({ ok: false, message: SECRET_IN_VALUES });
     if (!r.ok) expect(r.message).not.toContain("sk-live");
+  });
+
+  it("points a null secret in values to clearSecrets", () => {
+    expect(
+      planPersonFields(target(["apiKey"]), {
+        values: { apiKey: null },
+        askPerson: [],
+        clearSecrets: [],
+      }),
+    ).toEqual({
+      ok: false,
+      message: "To clear `apiKey`, leave it out of values and list it in clearSecrets.",
+    });
+  });
+
+  it("refuses a secret in values given as a nested object", () => {
+    const r = planPersonFields(target(), {
+      values: { nested: { token: "tok-123456789" } },
+      askPerson: ["apiKey"],
+      clearSecrets: [],
+    });
+    expect(r.ok).toBe(false);
+    if (!r.ok) expect(r.message).toContain("`nested.token`");
+  });
+
+  it("does not read values through the prototype chain", () => {
+    const values = { nested: Object.create({ token: "tok-123456789" }) as object };
+    const r = planPersonFields(target(), { values, askPerson: ["apiKey"], clearSecrets: [] });
+    expect(r.ok).toBe(true);
+  });
+
+  it("refuses a recordOnly path in values", () => {
+    const s = configJsonSchema(
+      z.object({
+        port: secret(z.number()),
+        list: z.array(z.object({ name: z.string(), key: secret(z.string()) })),
+        a: z.object({ list: z.array(z.object({ key: secret(z.string()) })) }),
+      }),
+    );
+    const { fields, recordOnly } = secretFieldsOf(s, new Set());
+    const t: PersonFieldTarget = { target: { zh: "测试", en: "Test" }, fields, recordOnly };
+    const plan = (values: Record<string, unknown>) =>
+      planPersonFields(t, { values, askPerson: [], clearSecrets: [] });
+    expect(plan({ port: 8080 })).toMatchObject({ ok: false });
+    if (!plan({ port: 8080 }).ok)
+      expect(JSON.stringify(plan({ port: 8080 }))).not.toContain("8080");
+    // Anything at the array root of an array-item secret: flat, nested and prefix keys.
+    expect(plan({ list: [{ name: "x", key: "sk-123456789" }] })).toMatchObject({ ok: false });
+    expect(plan({ list: null })).toMatchObject({ ok: false });
+    expect(plan({ a: { list: [{ key: "sk-123456789" }] } })).toMatchObject({ ok: false });
+    expect(plan({ "a.list": [] })).toMatchObject({ ok: false });
+    expect(plan({})).toEqual({ ok: true, ask: [], clear: [] });
   });
 
   it("refuses an ask for a field that is not a secret of the target", () => {
@@ -169,6 +275,10 @@ describe("planPersonFields", () => {
     expect(personFieldParams.clearSecrets.parse(undefined)).toEqual([]);
     expect(personFieldParams.askPerson.safeParse(Array(33).fill("a")).success).toBe(false);
     expect(personFieldParams.askPerson.safeParse(["a".repeat(201)]).success).toBe(false);
+    for (const bad of ["__proto__", "a.constructor", "prototype.x"]) {
+      expect(personFieldParams.clearSecrets.safeParse([bad]).success).toBe(false);
+    }
+    expect(personFieldParams.askPerson.parse(["nested.token"])).toEqual(["nested.token"]);
   });
 });
 
@@ -195,6 +305,13 @@ describe("checkPersonValue", () => {
     expect(short).not.toBeNull();
     expect(short).not.toContain("sk-1");
     expect(checkPersonValue(s, "pk-12345678")).not.toBeNull();
+  });
+
+  it("accepts a value when the node does not compile, and reuses compiled validators", () => {
+    expect(checkPersonValue(spec({ type: "string", pattern: "(" }), "anything")).toBeNull();
+    const s = spec({ type: "string", minLength: 3 });
+    expect(checkPersonValue(s, "ab")).not.toBeNull();
+    expect(checkPersonValue(s, "abc")).toBeNull();
   });
 
   it("accepts a valid value", () => {
