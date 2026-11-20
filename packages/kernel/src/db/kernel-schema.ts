@@ -2117,10 +2117,13 @@ export interface OrgNoticesTable {
   dismissed_by: NullableCol<string>;
 }
 
-/** 0084: a notice for the super admins (platform inbox), until one of them dismisses it. */
+/**
+ * 0084: a notice for the super admins (platform inbox), until one of them dismisses it; 0171
+ * added `push_auth_failed` (at most one open per plugin).
+ */
 export interface PlatformNoticesTable {
   id: string;
-  kind: "ownership_transferred";
+  kind: "ownership_transferred" | "push_auth_failed";
   detail: Json<Record<string, unknown>>;
   created_at: Ts;
   dismissed_at: TsNullable;

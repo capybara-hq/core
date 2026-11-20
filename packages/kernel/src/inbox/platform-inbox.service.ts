@@ -7,7 +7,7 @@ import { CatalogRequestsService, type CatalogRequestView } from "../catalog/requ
 import type { ScopeSyncOp } from "../db/kernel-schema.js";
 import { ApiError } from "../errors.js";
 import { KernelDb } from "../infra/database/kernel-db.js";
-import type { PlatformNoticeDetails } from "./platform-notices.js";
+import type { PlatformNoticeDetails, PlatformNoticeKind } from "./platform-notices.js";
 
 /** The most items one platform inbox read returns. */
 export const PLATFORM_INBOX_MAX_ITEMS = 100;
@@ -58,7 +58,9 @@ export interface ExtensionDisabledView {
  *   ({@link ExtensionDisabledView}), `id` = the item's; gone once the extension is enabled (or the
  *   scope no longer turns it on);
  * - `ownership_transferred`: a deleted org's shared item now belongs to the platform, until a
- *   super admin dismisses it (`POST admin/inbox/notices/:id/dismiss`).
+ *   super admin dismisses it (`POST admin/inbox/notices/:id/dismiss`);
+ * - `push_auth_failed`: a push provider's credentials were refused on a delivery (at most one
+ *   open per plugin), until a super admin dismisses it (same route).
  */
 export type PlatformInboxItem =
   | { type: "catalog_request"; id: string; createdAt: string; request: CatalogRequestView }
@@ -75,7 +77,13 @@ export type PlatformInboxItem =
       type: "ownership_transferred";
       id: string;
       createdAt: string;
-      notice: PlatformNoticeView;
+      notice: PlatformNoticeView<"ownership_transferred">;
+    }
+  | {
+      type: "push_auth_failed";
+      id: string;
+      createdAt: string;
+      notice: PlatformNoticeView<"push_auth_failed">;
     };
 
 /** Every {@link PlatformInboxItem} type, in the order the admin overview lists them. */
@@ -86,18 +94,16 @@ export const PLATFORM_INBOX_TYPES = [
   "scope_sync_failed",
   "extension_disabled",
   "ownership_transferred",
+  "push_auth_failed",
 ] as const satisfies readonly PlatformInboxItem["type"][];
 
 /** How many items of each type wait: every type, zeros included. */
 export type PlatformInboxCounts = Record<PlatformInboxItem["type"], number>;
 
-/** An open platform notice (`platform_notices`, kind `ownership_transferred`). */
-export interface PlatformNoticeView {
-  id: string;
-  kind: "ownership_transferred";
-  createdAt: string;
-  detail: PlatformNoticeDetails["ownership_transferred"];
-}
+/** An open platform notice (`platform_notices`) of one kind. */
+export type PlatformNoticeView<K extends PlatformNoticeKind = PlatformNoticeKind> = {
+  [P in K]: { id: string; kind: P; createdAt: string; detail: PlatformNoticeDetails[P] };
+}[K];
 
 /**
  * `GET /admin/inbox`: newest first, at most {@link PLATFORM_INBOX_MAX_ITEMS}; `truncated`: more;
@@ -185,12 +191,10 @@ export class PlatformInboxService {
         }),
       ),
       ...notices.map(
-        (n): PlatformInboxItem => ({
-          type: "ownership_transferred",
-          id: n.id,
-          createdAt: n.createdAt,
-          notice: n,
-        }),
+        (n): PlatformInboxItem =>
+          n.kind === "push_auth_failed"
+            ? { type: n.kind, id: n.id, createdAt: n.createdAt, notice: n }
+            : { type: n.kind, id: n.id, createdAt: n.createdAt, notice: n },
       ),
     ];
     // newest first; equal times by id (a stable order)
@@ -212,7 +216,8 @@ export class PlatformInboxService {
       org_upload_pending: orgUploads,
       scope_sync_failed: failureCount,
       extension_disabled: disabledCount,
-      ownership_transferred: noticeCount,
+      ownership_transferred: noticeCount.ownership_transferred,
+      push_auth_failed: noticeCount.push_auth_failed,
     };
     const total = Object.values(byType).reduce((a, b) => a + b, 0);
     const items = all.slice(0, PLATFORM_INBOX_MAX_ITEMS);
@@ -231,16 +236,30 @@ export class PlatformInboxService {
       this.countDisabledExtensions(),
       this.countNotices(),
     ]);
-    return requests + pending.length + failures + disabled + notices;
+    return (
+      requests +
+      pending.length +
+      failures +
+      disabled +
+      notices.ownership_transferred +
+      notices.push_auth_failed
+    );
   }
 
-  private async countNotices(): Promise<number> {
-    const r = await this.kdb.db
+  /** The open platform notices of each kind. */
+  private async countNotices(): Promise<Record<PlatformNoticeKind, number>> {
+    const rows = await this.kdb.db
       .selectFrom("platform_notices")
-      .select(sql<string>`count(*)`.as("n"))
+      .select(["kind", sql<string>`count(*)`.as("n")])
       .where("dismissed_at", "is", null)
-      .executeTakeFirstOrThrow();
-    return Number(r.n);
+      .groupBy("kind")
+      .execute();
+    const counts: Record<PlatformNoticeKind, number> = {
+      ownership_transferred: 0,
+      push_auth_failed: 0,
+    };
+    for (const r of rows) counts[r.kind] = Number(r.n);
+    return counts;
   }
 
   /** The open platform notices, newest first, at most {@link PLATFORM_INBOX_MAX_ITEMS}. */
@@ -253,12 +272,15 @@ export class PlatformInboxService {
       .orderBy("id")
       .limit(PLATFORM_INBOX_MAX_ITEMS)
       .execute();
-    return rows.map((r) => ({
-      id: r.id,
-      kind: r.kind,
-      createdAt: r.created_at.toISOString(),
-      detail: r.detail as unknown as PlatformNoticeDetails["ownership_transferred"],
-    }));
+    return rows.map(
+      (r) =>
+        ({
+          id: r.id,
+          kind: r.kind,
+          createdAt: r.created_at.toISOString(),
+          detail: r.detail,
+        }) as unknown as PlatformNoticeView,
+    );
   }
 
   /**

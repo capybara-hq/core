@@ -8,6 +8,7 @@ import {
   PLATFORM_INBOX_TYPES,
   PlatformInboxService,
 } from "../../src/inbox/platform-inbox.service.js";
+import { addPushAuthNotice } from "../../src/inbox/platform-notices.js";
 import { KernelDb } from "../../src/infra/database/kernel-db.js";
 import { SkillsService } from "../../src/skills/skills.service.js";
 import { SKILL_MD } from "../skills/zip.js";
@@ -49,6 +50,7 @@ const NO_ITEMS = {
   scope_sync_failed: 0,
   extension_disabled: 0,
   ownership_transferred: 0,
+  push_auth_failed: 0,
 };
 
 interface Item {
@@ -315,6 +317,31 @@ describe("platform inbox", () => {
     expect(await count()).toBe(101);
   });
 
+  it("lists one open push_auth_failed notice per plugin until it is dismissed", async () => {
+    await addPushAuthNotice(env.db, "push-a");
+    await addPushAuthNotice(env.db, "push-a");
+    await addPushAuthNotice(env.db, "push-b");
+    const view = await inbox();
+    expect(view.byType).toEqual({ ...NO_ITEMS, push_auth_failed: 2 });
+    const items = await ofType("push_auth_failed");
+    expect(items.map((i) => (i.notice as { detail: unknown }).detail)).toEqual(
+      expect.arrayContaining([{ plugin: "push-a" }, { plugin: "push-b" }]),
+    );
+    expect(items[0]?.notice).toMatchObject({ kind: "push_auth_failed" });
+    const a = items.find(
+      (i) => (i.notice as { detail: { plugin: string } }).detail.plugin === "push-a",
+    );
+    const r = await env.root({
+      method: "POST",
+      url: `/api/v1/admin/inbox/notices/${a?.id}/dismiss`,
+    });
+    expect(r.statusCode, r.body).toBe(204);
+    expect(await count()).toBe(1);
+    // dismissed: the next refusal tells the platform again
+    await addPushAuthNotice(env.db, "push-a");
+    expect(await count()).toBe(2);
+  });
+
   it("byType counts every source, the pending list split by owner, and sums to total", async () => {
     const itemId = randomUUID();
     await env.db
@@ -367,6 +394,7 @@ describe("platform inbox", () => {
       scope_sync_failed: 1,
       extension_disabled: 0,
       ownership_transferred: 1,
+      push_auth_failed: 0,
     });
     expect(Object.keys(view.byType).sort()).toEqual([...PLATFORM_INBOX_TYPES].sort());
     expect(view.total).toBe(6);
