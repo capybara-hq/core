@@ -1318,8 +1318,11 @@ describe("ListPage loading", () => {
     const kinds = [...(rows[0]?.children ?? [])]
       .map((c) => c.className.split(" ")[0])
       .filter((c) => c !== "cb-sr-only");
-    expect(kinds.slice(0, 1)).toEqual(["cb-skeleton-box"]);
+    // the skeleton's mark place is the loaded mark's element (same part), holding the placeholder
+    expect(kinds.slice(0, 1)).toEqual(["cb-object-mark"]);
     expect(loadedKinds.slice(0, 1)).toEqual(["cb-object-mark"]);
+    expect(rows[0]?.firstElementChild?.getAttribute("data-part")).toBe("object-row-mark");
+    expect(loadedRow?.firstElementChild?.getAttribute("data-part")).toBe("object-row-mark");
     expect(rows[0]?.querySelector('[data-part="skeleton-box"][data-box="mark"]')).not.toBeNull();
     // Two text lines in the text column, in the one bar look: no old bars.
     const text = rows[0]?.querySelector(".cb-object-text");

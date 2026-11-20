@@ -315,6 +315,12 @@
   flex: none;
   color: var(--cb-muted);
 }
+/* The creator's 16 circle at the end of a block, line or row (spec §6.40). */
+.cb-scal-person {
+  display: inline-flex;
+  flex: none;
+  margin-left: auto;
+}
 .cb-scal-chip-failed {
   color: var(--cb-fail);
 }

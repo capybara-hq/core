@@ -179,9 +179,14 @@ const usd = (v: number, locale: string) =>
     maximumFractionDigits: 6,
   }).format(v);
 
-const detailBody = (runs: TrajectoryRun[], next: string | null = null) => ({
+const detailBody = (
+  runs: TrajectoryRun[],
+  next: string | null = null,
+  people: Record<string, unknown> = {},
+) => ({
   conversation: { id: "c1", agentId: "ag1", accountId: "a2", title: "Clean up", kind: "chat" },
   runs,
+  people,
   currency: "USD",
   next,
 });
@@ -513,33 +518,30 @@ describe("轨迹详情（TracePage）", () => {
     expect(within(row).getByText("—")).toBeTruthy();
   });
 
-  it("the run's starter shows as a name with the account id in a tooltip; the id when members are unreadable", async () => {
+  it("the run's starter shows as a person with their avatar from the response; a departed one reads Former member", async () => {
     stubApi({
-      [`GET ${DETAIL}`]: () => json(200, detailBody([run()])),
-      "GET /api/v1/orgs/o1/members": () =>
-        json(200, {
-          members: [
-            {
-              account: { id: "a1", displayName: "Grace", email: null },
-              role: "member",
-              joinedAt: at(0),
-              anonymous: false,
-            },
-          ],
-        }),
-    });
-    await renderRouteWithCache("/trajectories/c1", { ...NO_MEMBERS, ...lastStubRoutes() });
-    const name = await screen.findByText("Grace");
-    expect(name.getAttribute("title")).toBe("a1");
-    cleanup();
-    // a member list the kernel refuses costs only the name
-    stubApi({
-      [`GET ${DETAIL}`]: () => json(200, detailBody([run()])),
+      [`GET ${DETAIL}`]: () =>
+        json(
+          200,
+          detailBody([run()], null, {
+            a1: { id: "a1", name: "Grace", avatarUrl: "/api/v1/accounts/a1/avatar?v=1" },
+          }),
+        ),
+      // a guest cannot list members: the names do not come from there
       "GET /api/v1/orgs/o1/members": () =>
         json(403, { error: { code: "auth.forbidden", message: "no" } }),
     });
+    const first = await renderRouteWithCache("/trajectories/c1", lastStubRoutes());
+    const name = await screen.findByText("Grace");
+    expect(
+      first.container.querySelector('img[src="/api/v1/accounts/a1/avatar?v=1"]'),
+    ).not.toBeNull();
+    expect(name.textContent).toBe("Grace");
+    cleanup();
+    stubApi({ [`GET ${DETAIL}`]: () => json(200, detailBody([run()])) });
     await renderRouteWithCache("/trajectories/c1", lastStubRoutes());
-    expect(await screen.findByText("a1")).toBeTruthy();
+    expect(await screen.findByText(en.people.departed)).toBeTruthy();
+    expect(screen.queryByText("a1")).toBeNull();
   });
 
   it("加载更早的运行：带 before 再读一页，拼在前面", async () => {

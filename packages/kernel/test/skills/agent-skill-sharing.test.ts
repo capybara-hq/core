@@ -11,6 +11,7 @@ import { SkillChangesService } from "../../src/skills/changes.service.js";
 import { SkillsService } from "../../src/skills/skills.service.js";
 import { StorageService } from "../../src/storage/storage.service.js";
 import { type OrgEnv, resetOrgCatalog, setDeployment, startOrgEnv } from "../catalog/org-env.js";
+import { giveUploadAvatar, UPLOAD_AVATAR_URL } from "../helpers/avatar.js";
 import { eventsOf, type Req } from "../helpers/runs.js";
 import { makeZip, SKILL_MD } from "./zip.js";
 
@@ -184,6 +185,21 @@ describe("sharing an agent skill", () => {
     const pending = await changes.listPending(env.orgId, env.bossId);
     expect(pending.map((c) => [c.id, c.kind])).toEqual([[out.requestId, "share"]]);
     expect(await changes.listPending(env.orgId, env.memId)).toEqual([]);
+    // the requester's avatar URL: null without an upload, the upload's URL with one
+    expect(pending[0]?.requestedByAvatarUrl).toBeNull();
+    await giveUploadAvatar(env.db, env.memId);
+    try {
+      const [withAvatar] = await changes.listPending(env.orgId, env.bossId);
+      expect(withAvatar?.requestedByAvatarUrl).toEqual(
+        expect.stringContaining(UPLOAD_AVATAR_URL(env.memId)),
+      );
+    } finally {
+      await env.db
+        .updateTable("accounts")
+        .set({ avatar: null })
+        .where("id", "=", env.memId)
+        .execute();
+    }
     // still the agent's own skill while it waits
     expect((await skillRow(own.skillId)).scope).toBe("agent");
 

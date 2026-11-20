@@ -35,7 +35,14 @@ const DATE = "2026-11-12";
 const T = "2026-11-01T00:00:00.000Z";
 
 const meAs = (role: "owner" | "member"): Me => ({
-  account: { id: "a1", displayName: "Grant", email: null, isSuperAdmin: false },
+  account: {
+    id: "a1",
+    displayName: "Grant",
+    email: null,
+    isSuperAdmin: false,
+    avatarUrl: null,
+    avatarSource: null,
+  },
   via: "session",
   currentOrgId: ORG,
   memberships: [{ orgId: ORG, slug: "acme", name: "Acme", role }],

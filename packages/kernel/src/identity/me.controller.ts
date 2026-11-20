@@ -1,4 +1,4 @@
-import type { Logger } from "@capybara-hq/plugin-sdk";
+import type { Logger, PresignedUpload } from "@capybara-hq/plugin-sdk";
 import {
   Controller,
   Delete,
@@ -6,6 +6,7 @@ import {
   HttpCode,
   Inject,
   Param,
+  Patch,
   Post,
   Put,
   Req,
@@ -14,20 +15,32 @@ import {
 import type { FastifyReply, FastifyRequest } from "fastify";
 import { z } from "zod";
 import { ApiError } from "../errors.js";
+import { KernelDb } from "../infra/database/kernel-db.js";
 import { CredentialThrottler } from "../infra/throttler/credential-throttler.js";
 import { KERNEL_LOGGER } from "../infra/tokens.js";
 import { createZodDto } from "../infra/validation/create-zod-dto.js";
 import { ZBody } from "../infra/validation/zod-params.js";
 import { OrgsService } from "../orgs/orgs.service.js";
 import type { OrgRole } from "../orgs/roles.js";
-import { type Account, AccountsService } from "./accounts.js";
+import { type AccountView, withAvatarUrl } from "./account-avatar.js";
+import { AccountAvatarsService } from "./account-avatars.service.js";
+import { AccountsService } from "./accounts.js";
 import { type ApiTokenRecord, ApiTokenService, FutureIsoDate } from "./api-tokens.js";
 import { MAX_PASSWORD_LENGTH } from "./login.js";
-import { type Preferences, PreferencesBody, type PreferencesSchema } from "./me.schemas.js";
+import {
+  AvatarUploadBody,
+  type AvatarUploadSchema,
+  type Preferences,
+  PreferencesBody,
+  type PreferencesSchema,
+  ProfilePatchBody,
+  type ProfilePatchSchema,
+} from "./me.schemas.js";
 import {
   AllowPendingPasswordChange,
   CurrentPrincipal,
   type Principal,
+  patTokenId,
   requireUser,
   SessionOnly,
 } from "./principal.js";
@@ -65,12 +78,14 @@ export class MeController {
     @Inject(CredentialThrottler) private readonly throttler: CredentialThrottler,
     @Inject(KERNEL_LOGGER) private readonly log: Logger,
     @Inject(SettingsService) private readonly settings: SettingsService,
+    @Inject(KernelDb) private readonly db: KernelDb,
+    @Inject(AccountAvatarsService) private readonly avatars: AccountAvatarsService,
   ) {}
 
   @Get()
   @AllowPendingPasswordChange()
   async me(@CurrentPrincipal() principal: Principal): Promise<{
-    account: Account;
+    account: AccountView;
     via: "session" | "pat";
     currentOrgId: string | null;
     memberships: MembershipView[];
@@ -91,7 +106,53 @@ export class MeController {
     const current = memberships.some((m) => m.orgId === currentOrgId) ? currentOrgId : null;
     const { orgCreation } = await this.settings.get();
     const canCreateOrg = orgCreation === "anyone" || p.account.isSuperAdmin;
-    return { account: p.account, via: p.via, currentOrgId: current, memberships, canCreateOrg };
+    return {
+      account: await withAvatarUrl(this.db.db, p.account),
+      via: p.via,
+      currentOrgId: current,
+      memberships,
+      canCreateOrg,
+    };
+  }
+
+  /**
+   * Registers an upload of the person's avatar (png / jpeg / webp, at most 2 MB); the browser
+   * uploads to `upload`, then saves it with `PATCH /me/profile`. No object store → 503
+   * `storage.unavailable`.
+   */
+  @Post("avatar/uploads")
+  @HttpCode(201)
+  async createAvatarUpload(
+    @CurrentPrincipal() principal: Principal,
+    @ZBody(AvatarUploadBody) body: z.infer<typeof AvatarUploadSchema>,
+  ): Promise<{ uploadId: string; upload: PresignedUpload; expiresAt: string }> {
+    return this.avatars.createUpload(requireUser(principal).account.id, body);
+  }
+
+  /**
+   * Changes the person's own name and avatar (a field left out keeps its value). An upload avatar
+   * is checked against the object store first (outside the transaction), then bound in the
+   * profile write's transaction; `avatar: null` removes it. A changed name over 64 characters →
+   * 400 `account.display_name_too_long`.
+   */
+  @Patch("profile")
+  async updateProfile(
+    @CurrentPrincipal() principal: Principal,
+    @ZBody(ProfilePatchBody) body: z.infer<typeof ProfilePatchSchema>,
+  ): Promise<{ account: AccountView }> {
+    const p = requireUser(principal);
+    const accountId = p.account.id;
+    if (body.avatar) await this.avatars.prepare(accountId, body.avatar.uploadId);
+    const account = await this.accounts.updateProfile(
+      accountId,
+      {
+        ...(body.displayName !== undefined && { displayName: body.displayName }),
+        ...(body.avatar !== undefined && { avatar: body.avatar }),
+      },
+      patTokenId(p),
+      { bindAvatar: (uploadId) => this.avatars.bind(accountId, uploadId) },
+    );
+    return { account };
   }
 
   /**

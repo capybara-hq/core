@@ -14,6 +14,7 @@ import {
   ItemList,
   ItemListItem,
   KeyValue,
+  PersonName,
   Select,
   Skeleton,
   Stack,
@@ -130,7 +131,7 @@ function AgentFacts({ agent }: { agent: AdminAgentDetail }) {
           k: t("facts.owner"),
           v: (
             <Stack direction="row" gap={8} align="center">
-              <Text>{agent.ownerName}</Text>
+              <PersonName name={agent.ownerName} avatarUrl={agent.ownerAvatarUrl} size={16} />
               {agent.needsReassignment && <Badge tone="warn">{tl("needsReassignment")}</Badge>}
             </Stack>
           ),
@@ -303,6 +304,7 @@ function TransferDialog({ agent, onClose }: { agent: AdminAgentDetail; onClose()
                 label: m.account.email
                   ? `${m.account.displayName} · ${m.account.email}`
                   : m.account.displayName,
+                person: { avatarUrl: m.account.avatarUrl },
               })),
             ]}
           />

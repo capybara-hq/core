@@ -142,10 +142,12 @@ const isRecord = (v: unknown): v is Record<string, unknown> =>
 
 /**
  * A size-table value: a literal number (px), a size path without the `size.` prefix
- * (`row.default`, `pad.default.x`, `type.body`, `type.body.line`) or `color.<token>` for `theme`.
+ * (`row.default`, `pad.default.x`, `type.body`, `type.body.line`), `color.<token>` for `theme`, or
+ * a percentage literal (`50%`, a circle's radius; measured as its number).
  */
 export function resolveToken(tokens: unknown, value: string, theme: Theme): string | number {
   if (/^-?\d+(\.\d+)?$/.test(value)) return Number(value);
+  if (/^-?\d+(\.\d+)?%$/.test(value)) return Number.parseFloat(value);
   const fail = (): never => {
     throw new Error(`tokens.json has no "${value}"`);
   };

@@ -243,6 +243,51 @@ describe("列表与详情的可见性", () => {
   });
 });
 
+describe("decider person shape", () => {
+  it("an approval decided by an admin carries decidedByPerson (list and detail)", async () => {
+    const a = await request({ requestedFor: null, approverRole: "admin" });
+    const pending = await admin.req({ method: "GET", url: `${base()}/${a.id}` });
+    expect((pending.json() as { approval: { decidedByPerson: unknown } }).approval).toMatchObject({
+      decidedByPerson: null,
+    });
+    const res = await admin.req({
+      method: "POST",
+      url: `${base()}/${a.id}/decision`,
+      payload: { decision: "approve" },
+    });
+    expect(res.statusCode).toBe(200);
+    const one = await admin.req({ method: "GET", url: `${base()}/${a.id}` });
+    expect((one.json() as { approval: unknown }).approval).toMatchObject({
+      decidedBy: admin.account.id,
+      decidedByPerson: { id: admin.account.id, name: "adm", avatarUrl: null },
+    });
+    const list = await admin.req({ method: "GET", url: base() });
+    expect(
+      (
+        list.json() as { approvals: { id: string; decidedByPerson: { name: string } }[] }
+      ).approvals.find((x) => x.id === a.id)?.decidedByPerson.name,
+    ).toBe("adm");
+  });
+
+  it("a guest gets decidedByPerson without org.members.read", async () => {
+    const guest = await member("gst", "guest");
+    const a = await request({ requestedFor: guest.account.id });
+    const res = await guest.req({
+      method: "POST",
+      url: `${base()}/${a.id}/decision`,
+      payload: { decision: "deny" },
+    });
+    expect(res.statusCode).toBe(200);
+    const members = await guest.req({ method: "GET", url: `/api/v1/orgs/${orgId}/members` });
+    expect(members.statusCode).toBe(403);
+    const one = await guest.req({ method: "GET", url: `${base()}/${a.id}` });
+    expect(one.statusCode).toBe(200);
+    expect((one.json() as { approval: unknown }).approval).toMatchObject({
+      decidedByPerson: { id: guest.account.id, name: "gst" },
+    });
+  });
+});
+
 describe("决定", () => {
   it("非发起人不能处理 requested_for 审批", async () => {
     const a = await request();

@@ -76,6 +76,7 @@ describe("resolveToken", () => {
     expect(resolveToken(tokens, "color.muted", "dark")).toBe("#8E8E89");
     expect(resolveToken(tokens, "1.5", "dark")).toBe(1.5);
     expect(resolveToken(tokens, "0", "dark")).toBe(0);
+    expect(resolveToken(tokens, "50%", "dark")).toBe(50);
   });
 
   it("throws on a path tokens.json lacks", () => {

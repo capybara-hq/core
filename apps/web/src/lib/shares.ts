@@ -26,7 +26,7 @@ export interface ShareView {
   contentType: string;
   size: number;
   generation: number;
-  createdBy: { id: string; displayName: string };
+  createdBy: { id: string; displayName: string; avatarUrl: string | null };
   createdAt: string;
   expiresAt: string | null;
   lastOpenedAt: string | null;

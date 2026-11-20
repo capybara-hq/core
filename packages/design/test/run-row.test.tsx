@@ -1,7 +1,8 @@
 import { cleanup, render, screen } from "@testing-library/react";
 import { userEvent } from "@testing-library/user-event";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { DesignProvider, formatDuration, RunRow } from "../src/index";
+import { DesignProvider, formatDuration, PersonName, RunRow } from "../src/index";
+import { describeNestedBox, findNestedBoxes } from "../src/reference/index";
 
 afterEach(cleanup);
 
@@ -153,4 +154,23 @@ describe("formatDuration (the one duration format, F29)", () => {
     expect(formatDuration(-5, "en")).toBe("0.0s");
     expect(formatDuration(Number.NaN, "zh")).toBe("0.0 秒");
   });
+});
+
+it("takes a node in statusText, such as a person", () => {
+  const { container } = wrap(
+    <RunRow
+      status="stopped"
+      parts={["4.2s"]}
+      statusText={
+        <span>
+          Stopped by <PersonName name="Ada" avatarUrl={null} size={16} />
+        </span>
+      }
+    />,
+  );
+  const status = container.querySelector('[data-part="run-status"]') as HTMLElement;
+  expect(status.querySelector('[data-part="person-name-text"]')?.textContent).toBe("Ada");
+  expect(status.textContent).toContain("Stopped by");
+  expect(status.querySelector('[data-part="run-mark"]')).not.toBeNull();
+  expect(findNestedBoxes(document.body).map(describeNestedBox)).toEqual([]);
 });

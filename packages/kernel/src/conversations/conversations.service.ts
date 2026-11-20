@@ -13,6 +13,7 @@ import {
 } from "../devices/conversation-devices.js";
 import { DeviceProjectsService } from "../devices/device-projects.service.js";
 import { ApiError } from "../errors.js";
+import { loadPeople, type PersonRef } from "../identity/account-avatar.js";
 import { afterCommit } from "../infra/database/after-commit.js";
 import { KernelDb } from "../infra/database/kernel-db.js";
 import {
@@ -38,6 +39,7 @@ import { ConversationAccess, parentReachable } from "./access.js";
 import { type AgentTreeNode, readAgentTree } from "./agent-tree.js";
 import { AttachmentsService } from "./attachments.service.js";
 import { type AppendEvent, EventLog } from "./event-log.js";
+import { peopleOfEvents } from "./event-people.js";
 import type { ConversationEvent, LogContentBlock } from "./events.js";
 import { userMessageIdemKey } from "./idem-keys.js";
 import {
@@ -1334,6 +1336,16 @@ export class ConversationsService {
       .executeTakeFirst();
     if (!row?.parent_conversation_id) return conversationId;
     return rootConversationOf(this.db.db, row.parent_conversation_id);
+  }
+
+  /** The `people` sidecar of an events response: every account the events name (read time). */
+  eventPeople(events: readonly ConversationEvent[]): Promise<Record<string, PersonRef>> {
+    return peopleOfEvents(this.db.db, events);
+  }
+
+  /** The person behind an account id; null when the account is gone. */
+  async person(accountId: string): Promise<PersonRef | null> {
+    return (await loadPeople(this.db.db, [accountId])).get(accountId) ?? null;
   }
 
   /**

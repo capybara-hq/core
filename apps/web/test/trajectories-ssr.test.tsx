@@ -86,6 +86,7 @@ const RUN = (runId: string) => ({
 const DETAIL = (next: string | null = null) => ({
   conversation: { id: "c1", agentId: "ag1", accountId: "a2", title: "Clean up", kind: "chat" },
   runs: [RUN("r2")],
+  people: {},
   currency: "USD",
   next,
 });
@@ -99,7 +100,6 @@ const BOARD = {
 const LIVE = { ...BOARD, id: "live", title: { zh: "实时", en: "Live" }, kind: "embed" };
 
 const ROUTES: Routes = {
-  [`GET ${O}/members`]: () => json(200, { members: [] }),
   [`GET ${O}/agents`]: () => json(200, { agents: [AGENT] }),
   [`GET ${O}/trajectories`]: () =>
     json(200, { items: [ITEM("c1", "Clean up"), ITEM("c2", null)], next: null }),
@@ -336,23 +336,12 @@ describe("/trajectories/[conversationId]", () => {
     expect(screen.getByRole("heading", { level: 1, name: en.notFound.title })).toBeTruthy();
   });
 
-  it("members the kernel refuses only cost the names; another failure is the error state", async () => {
-    const browser = expectNoFirstPaintFetch();
-    await renderRouteWithCache("/trajectories/c1", {
-      ...ROUTES,
-      [`GET ${O}/members`]: () => json(403, { error: { code: "forbidden", message: "x" } }),
-    });
+  it("reads no member list: the response names the people", async () => {
+    const calls = stubApi(ROUTES);
+    await renderRouteWithCache("/trajectories/c1", ROUTES);
     expect(screen.getByRole("tree", { name: en.trajectories.detail.waterfall })).toBeTruthy();
     await settle();
-    expect(browser).toEqual([]);
-    cleanup();
-    stubApi(ROUTES);
-    await renderRouteWithCache("/trajectories/c1", { ...ROUTES, [`GET ${O}/members`]: failing });
-    expect(template("StatusPage")?.getAttribute("data-kind")).toBe("maintenance");
-    await userEvent.setup().click(screen.getByRole("button", { name: en.errors.page.retry }));
-    expect(
-      await screen.findByRole("tree", { name: en.trajectories.detail.waterfall }),
-    ).toBeTruthy();
+    expect(calls.some((c) => c.url.includes("/members"))).toBe(false);
   });
 
   it("adding a run to an eval set invalidates that set and the sets list", async () => {

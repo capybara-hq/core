@@ -1,6 +1,7 @@
 "use client";
 
 import {
+  Callout,
   type Column,
   DangerZone,
   DangerZoneItem,
@@ -19,6 +20,7 @@ import { useState } from "react";
 import { ErrorFrame } from "../../../../components/ErrorFrame";
 import { FormError } from "../../../../components/form-error";
 import { NoAccess } from "../../../../components/NoAccess";
+import { Person } from "../../../../components/Person";
 import {
   ApprovedToolsSection,
   changedCount,
@@ -40,6 +42,8 @@ import { usePagePath } from "../../../../components/shell/path";
 import { useRouter } from "../../../../i18n/navigation";
 import type { ProviderModels } from "../../../../lib/agents";
 import { roleAtLeast } from "../../../../lib/members";
+import { withNode } from "../../../../lib/node-slot";
+import type { PersonRef } from "../../../../lib/people";
 import { agentsQuery } from "../../../../lib/query/agents";
 import { retryOnMountOf } from "../../../../lib/query/client";
 import { modelsQuery } from "../../../../lib/query/conversation";
@@ -246,8 +250,9 @@ function ScheduleForm({
           onSelect: () => void act(actions.resume.mutateAsync(task.id), t("actions.resumed")),
           loading: actions.resume.isPending,
         };
-  const creator =
-    names.kind === "ready" ? (names.people[task.accountId] ?? t("form.creatorUnknown")) : "";
+  // undefined while the members are read; null for a creator who left ("Former member")
+  const creator: PersonRef | null | undefined =
+    names.kind === "ready" ? (names.refs[task.accountId] ?? null) : undefined;
   return (
     <>
       <FormPage
@@ -255,7 +260,6 @@ function ScheduleForm({
           path: [...scope, { label: "schedules", href: "/schedules" }, { label: task.name }],
           title: task.name,
           status: <ScheduleStateMark task={task} />,
-          ...(readOnly ? { description: t("form.readOnly", { name: creator }) } : {}),
           // An org admin on another member's task: pause or resume only (no run, no edit)
           actions: readOnly
             ? []
@@ -305,6 +309,14 @@ function ScheduleForm({
               }
         }
       >
+        {readOnly && creator !== undefined ? (
+          <Callout tone="info">
+            {withNode(
+              (mark) => t("form.readOnlyOwner", { name: mark }),
+              <Person person={creator} size={16} />,
+            )}
+          </Callout>
+        ) : null}
         <ScheduleFormSections
           orgId={orgId}
           draft={draft}

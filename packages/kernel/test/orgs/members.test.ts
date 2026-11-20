@@ -9,6 +9,7 @@ import type { Account, AccountsService } from "../../src/identity/accounts.js";
 import type { MembersService } from "../../src/orgs/members.service.js";
 import type { Org, OrgsService } from "../../src/orgs/orgs.service.js";
 import type { OrgRole } from "../../src/orgs/roles.js";
+import { giveUploadAvatar, UPLOAD_AVATAR_URL } from "../helpers/avatar.js";
 import { truncateTables } from "../helpers/db.js";
 import { accountsFor, orgsFor } from "../helpers/identity.js";
 import { testMembers } from "../helpers/members.js";
@@ -104,7 +105,12 @@ describe("MembersService", () => {
       [A.id, "owner"],
       [B.id, "member"],
     ]);
-    expect(list[0]?.account).toEqual({ id: A.id, displayName: "A", email: "a@x.io" });
+    expect(list[0]?.account).toEqual({
+      id: A.id,
+      displayName: "A",
+      email: "a@x.io",
+      avatarUrl: null,
+    });
     expect(list[0]?.joinedAt).toBeInstanceOf(Date);
     const ev = await db
       .selectFrom("audit_events")
@@ -112,6 +118,16 @@ describe("MembersService", () => {
       .where("action", "=", "org.member.added")
       .executeTakeFirstOrThrow();
     expect(ev).toMatchObject({ org_id: org.id, actor_account_id: A.id, target: B.id });
+  });
+
+  it("list carries the avatar URL of a member with an upload and null for one without", async () => {
+    await members.add(org.id, B.id, "member", A.id);
+    await giveUploadAvatar(db, B.id);
+    const byId = new Map((await members.list(org.id)).map((m) => [m.account.id, m.account]));
+    expect(byId.get(B.id)?.avatarUrl).toEqual(
+      expect.stringMatching(new RegExp(`^${UPLOAD_AVATAR_URL(B.id).replace("?", "\\?")}.+`)),
+    );
+    expect(byId.get(A.id)?.avatarUrl).toBeNull();
   });
 
   it("admin 把 member 升为 admin 成功；审计 detail 含前后角色", async () => {

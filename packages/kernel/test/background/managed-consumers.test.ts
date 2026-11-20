@@ -660,6 +660,8 @@ describe("tool and HTTP surfaces stay the same for managed tasks", () => {
         "status",
         "stopping",
         "subagentId",
+        // the person whose run started it, for the web (account profile); no tool returns it
+        "trigger",
       ].sort(),
     );
     // an acknowledged managed task is running, not "starting", for the model and the API

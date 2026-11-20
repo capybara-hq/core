@@ -17,6 +17,7 @@ import {
 import { useQuery } from "@tanstack/react-query";
 import { useTranslations } from "next-intl";
 import type { ReactNode } from "react";
+import type { PersonRef } from "../lib/people";
 import { retryOnMountOf } from "../lib/query/client";
 import { scheduleCalendarQuery } from "../lib/query/schedules";
 import {
@@ -29,6 +30,7 @@ import {
   timeIn,
 } from "../lib/schedule-calendar";
 import type { CalendarAnswer, CalendarItem, CalendarTask } from "../lib/schedules";
+import { Person } from "./Person";
 import { ScheduleStateMark, useScheduleWords } from "./ScheduleParts";
 import { useCalendarDayLabel, useCalendarWords } from "./schedule-calendar-words";
 
@@ -83,7 +85,7 @@ export function ScheduleRunSheet({
   panel,
   answer,
   agentName,
-  personName,
+  person,
   onOpen,
 }: {
   orgId: string;
@@ -94,7 +96,7 @@ export function ScheduleRunSheet({
   /** The drawn range's answer (null while it loads). */
   answer: CalendarAnswer | null;
   agentName(id: string): string;
-  personName(id: string): string;
+  person(id: string): PersonRef | null;
   onOpen(next: RunPanelRef | null): void;
 }) {
   const t = useTranslations("schedules.calendar.panel");
@@ -212,7 +214,7 @@ export function ScheduleRunSheet({
           <Text variant="h3">{t("day", { day: dayLabel(panel.day) })}</Text>
         ) : null}
         {body}
-        <TaskRegion task={task} agentName={agentName} personName={all ? personName : null} />
+        <TaskRegion task={task} agentName={agentName} person={all ? person : null} />
       </Stack>
     </Sheet>
   );
@@ -302,11 +304,11 @@ function ItemDetail({
 function TaskRegion({
   task,
   agentName,
-  personName,
+  person,
 }: {
   task: CalendarTask;
   agentName(id: string): string;
-  personName: ((id: string) => string) | null;
+  person: ((id: string) => PersonRef | null) | null;
 }) {
   const t = useTranslations("schedules.calendar.panel");
   const tf = useTranslations("schedules.form.mode");
@@ -314,7 +316,9 @@ function TaskRegion({
   const rows: { k: ReactNode; v: ReactNode }[] = [
     { k: t("schedule"), v: when(task.trigger, task.trigger.timeZone) },
     { k: t("agent"), v: agentName(task.agentId) },
-    ...(personName !== null ? [{ k: t("creator"), v: personName(task.accountId) }] : []),
+    ...(person !== null
+      ? [{ k: t("creator"), v: <Person person={person(task.accountId)} size={16} /> }]
+      : []),
     { k: t("target"), v: tf(task.mode) },
     { k: t("taskStatus"), v: <ScheduleStateMark task={task} /> },
     {

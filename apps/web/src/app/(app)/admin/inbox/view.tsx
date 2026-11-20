@@ -20,6 +20,7 @@ import { useLocale, useTranslations } from "next-intl";
 import { type ReactNode, useMemo, useState } from "react";
 import { ErrorFrame } from "../../../../components/ErrorFrame";
 import { NoAccess } from "../../../../components/NoAccess";
+import { Person } from "../../../../components/Person";
 import { usePagePath } from "../../../../components/shell/path";
 import { useRouter } from "../../../../i18n/navigation";
 import {
@@ -301,7 +302,7 @@ function detailOf(
       return {
         facts: [
           { label: t("org"), value: r.orgName },
-          { label: t("request.requester"), value: requesterOf(r) },
+          { label: t("request.requester"), value: <Person person={requesterOf(r)} size={16} /> },
           { label: t("request.version"), value: version === null ? "—" : versionLabel(version) },
           { label: t("time"), value: <DateTime value={r.createdAt} /> },
         ],

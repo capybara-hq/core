@@ -23,6 +23,7 @@ import { SHARE_CODE_RE } from "../../src/shares/share-code.js";
 import { shareObjectDeleteJobId } from "../../src/shares/share-objects.js";
 import { ShareSweepJob } from "../../src/shares/sweep.job.js";
 import { StorageService } from "../../src/storage/storage.service.js";
+import { giveUploadAvatar, UPLOAD_AVATAR_URL } from "../helpers/avatar.js";
 import { truncateTables } from "../helpers/db.js";
 import { asUser, cookieJar } from "../helpers/http.js";
 import { accountsFor } from "../helpers/identity.js";
@@ -216,7 +217,7 @@ interface ShareView {
   contentType: string;
   size: number;
   generation: number;
-  createdBy: { id: string; displayName: string };
+  createdBy: { id: string; displayName: string; avatarUrl: string | null };
   createdAt: string;
   expiresAt: string | null;
   lastOpenedAt: string | null;
@@ -556,6 +557,17 @@ describe("revoking a share", () => {
 });
 
 describe("listing shares", () => {
+  it("names the creator's avatar URL: null without an upload, the upload's URL with one", async () => {
+    const s = await share((await deliver("r.html", "one")).artifactId);
+    expect(s.createdBy.avatarUrl).toBeNull();
+    await giveUploadAvatar(db, aliceId);
+    const r = await owner({ method: "GET", url: `/api/v1/orgs/${orgId}/shares?scope=all` });
+    const [listed] = (r.json() as { shares: ShareView[] }).shares;
+    expect(listed?.createdBy.avatarUrl).toEqual(
+      expect.stringContaining(UPLOAD_AVATAR_URL(aliceId)),
+    );
+  });
+
   it("mine for any member, all only for org admins", async () => {
     const s = await share((await deliver("r.html", "one")).artifactId);
     let r = await alice({ method: "GET", url: `/api/v1/orgs/${orgId}/shares?scope=all` });

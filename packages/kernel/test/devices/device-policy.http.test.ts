@@ -15,6 +15,7 @@ import { DevicesService } from "../../src/devices/devices.service.js";
 import { TransactionHost } from "../../src/infra/database/transaction-host.js";
 import { deviceLeaseKey } from "../../src/local-devices/keys.js";
 import { MachinesService } from "../../src/local-devices/machines.js";
+import { giveUploadAvatar, UPLOAD_AVATAR_URL } from "../helpers/avatar.js";
 import { legacyDbFor } from "../helpers/conversations.js";
 import { accountsFor, apiTokensFor } from "../helpers/identity.js";
 import { testMembers } from "../helpers/members.js";
@@ -276,8 +277,14 @@ describe("POST /devices/:id/policy", () => {
       }),
     ]);
 
-    // the device page lists the recent changes, newest first, with the person's name
+    // the device page lists the recent changes, newest first, with the person (name, avatar)
+    await giveUploadAvatar(db, d.accountId);
     const v = await view(d.req, d.deviceId);
+    const person = {
+      id: d.accountId,
+      name: `Name ${d.login}`,
+      avatarUrl: expect.stringContaining(UPLOAD_AVATAR_URL(d.accountId)),
+    };
     expect(v.ownerCeiling).toMatchObject({
       state: "report",
       outsideSandbox: false,
@@ -297,14 +304,14 @@ describe("POST /devices/:id/policy", () => {
         from: { outsideSandbox: true, restrictedProjectReach: "workspace", network: "open" },
         to: { outsideSandbox: false, restrictedProjectReach: "workspace", network: "allowlist" },
       },
-      by: `Name ${d.login}`,
+      by: person,
       via: "web",
     });
     expect(v.sandbox.recent[1]).toMatchObject({
       kind: "policy",
       add: [],
       remove: ["pypi.org"],
-      by: `Name ${d.login}`,
+      by: person,
     });
   });
 

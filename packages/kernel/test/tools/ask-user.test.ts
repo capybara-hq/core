@@ -297,6 +297,10 @@ describe("AskUserQuestion 端到端", () => {
     expect((got.json() as { question: Record<string, unknown> }).question).not.toHaveProperty(
       "state",
     );
+    expect((got.json() as { question: unknown }).question).toMatchObject({
+      answeredBy: null,
+      answeredByPerson: null,
+    });
 
     // 不合规的答案 → validation_failed
     const bad = await answer(reqB, questionId, { answer: { q0: ["Postgres"] } });
@@ -308,7 +312,21 @@ describe("AskUserQuestion 端到端", () => {
     // 回答落在 B（只有 api 角色），续跑由 A 的 worker 执行
     const ok = await answer(reqB, questionId, { answer: { q0: "Postgres" } });
     expect(ok.statusCode, ok.body).toBe(200);
-    expect(ok.json()).toMatchObject({ question: { id: questionId, status: "answered" } });
+    expect(ok.json()).toMatchObject({
+      question: {
+        id: questionId,
+        status: "answered",
+        answeredBy: ownerId,
+        answeredByPerson: { id: ownerId, name: "O", avatarUrl: null },
+      },
+    });
+    const after = await reqB({
+      method: "GET",
+      url: `/api/v1/orgs/${orgId}/questions/${questionId}`,
+    });
+    expect(after.json()).toMatchObject({
+      question: { answeredByPerson: { id: ownerId, name: "O" } },
+    });
     const dup = await answer(reqB, questionId, { answer: { q0: "Mongo" } });
     expect(dup.statusCode).toBe(409);
     expect(errCode(dup)).toBe("question.already_answered");

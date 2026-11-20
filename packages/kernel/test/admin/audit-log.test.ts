@@ -7,6 +7,7 @@ import { kernelDb } from "../../src/db/kernel-schema.js";
 import { migrate } from "../../src/db/migrator.js";
 import { createDb } from "../../src/db/pool.js";
 import { audit } from "../../src/identity/audit.js";
+import { giveUploadAvatar, UPLOAD_AVATAR_URL } from "../helpers/avatar.js";
 import { truncateTables } from "../helpers/db.js";
 import { handlesFor } from "../helpers/identity.js";
 
@@ -123,6 +124,16 @@ describe("AuditLogService.list (platform scope)", () => {
     expect([...ids].sort((a, b) => (a > b ? -1 : 1))).toEqual(ids);
   });
 
+  it("carries the actor's avatar URL: the upload of one account, null for another", async () => {
+    await seed();
+    await giveUploadAvatar(db(), "acc-root");
+    const { events } = await service.list(PLATFORM, { limit: 20 });
+    expect(
+      events.find((e) => e.action === "deployment.settings.updated")?.actor?.avatarUrl,
+    ).toEqual(expect.stringContaining(`${UPLOAD_AVATAR_URL("acc-root")}`));
+    expect(events.find((e) => e.action === "marketplace.added")?.actor?.avatarUrl).toBeNull();
+  });
+
   it("carries the actor, the token and agent flags, and never the detail", async () => {
     await seed();
     const { events } = await service.list(PLATFORM, { limit: 20 });
@@ -130,13 +141,18 @@ describe("AuditLogService.list (platform scope)", () => {
     expect(by("deployment.settings.updated")).toEqual({
       id: expect.any(String),
       at: expect.stringMatching(/^\d{4}-\d{2}-\d{2}T/),
-      actor: { id: "acc-root", name: "Root", email: "root@example.com" },
+      actor: { id: "acc-root", name: "Root", email: "root@example.com", avatarUrl: null },
       viaToken: true,
       viaAgent: false,
       action: "deployment.settings.updated",
       target: "settings",
     });
-    expect(by("marketplace.added")?.actor).toEqual({ id: "acc-gone", name: null, email: null });
+    expect(by("marketplace.added")?.actor).toEqual({
+      id: "acc-gone",
+      name: null,
+      email: null,
+      avatarUrl: null,
+    });
     expect(by("account.created")).toMatchObject({ viaAgent: true, viaToken: false });
     expect(by("connector.created")).toMatchObject({ actor: null, target: "conn-1" });
     for (const e of events) expect(Object.keys(e)).not.toContain("detail");
@@ -189,7 +205,7 @@ describe("AuditLogService.list (org scope)", () => {
     expect(events.find((e) => e.action === "org.member.added")).toEqual({
       id: expect.any(String),
       at: expect.stringMatching(/^\d{4}-\d{2}-\d{2}T/),
-      actor: { id: "acc-admin", name: "Ada", email: "ada@example.com" },
+      actor: { id: "acc-admin", name: "Ada", email: "ada@example.com", avatarUrl: null },
       viaToken: false,
       viaAgent: false,
       action: "org.member.added",

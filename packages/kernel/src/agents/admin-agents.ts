@@ -2,6 +2,7 @@ import { Inject, Injectable } from "@nestjs/common";
 import { sql } from "kysely";
 import { escapeLike } from "../conversations/conversations.service.js";
 import { ApiError } from "../errors.js";
+import { type AccountAvatar, avatarColumns, personAvatarUrl } from "../identity/account-avatar.js";
 import { KernelDb } from "../infra/database/kernel-db.js";
 import {
   agentSkills,
@@ -30,6 +31,7 @@ export interface AdminAgentRow {
   avatar: AgentAvatar;
   ownerAccountId: string;
   ownerName: string;
+  ownerAvatarUrl: string | null;
   needsReassignment: boolean;
   visibility: AgentVisibility;
   createdFrom: { templateId: string; name: string | null } | null;
@@ -263,7 +265,7 @@ export class AdminAgents {
           .onRef("agent_versions.agent_id", "=", "agents.id")
           .onRef("agent_versions.version", "=", "agents.current_version"),
       )
-      .select([
+      .select((eb) => [
         "agents.id",
         "agents.org_id",
         "orgs.name as org_name",
@@ -272,6 +274,7 @@ export class AdminAgents {
         "agents.profile_avatar",
         "agents.owner_account_id",
         "accounts.display_name as owner_name",
+        ...avatarColumns(eb, "accounts", "owner"),
         "agents.needs_reassignment",
         "agents.visibility",
         "agents.created_from_template_id",
@@ -292,6 +295,8 @@ function toRow(
     profile_avatar: unknown;
     owner_account_id: string;
     owner_name: string;
+    owner_avatar: AccountAvatar | null;
+    owner_sso_avatar_url: string | null;
     needs_reassignment: boolean;
     visibility: AgentVisibility;
     created_from_template_id: string | null;
@@ -308,6 +313,7 @@ function toRow(
     avatar: (r.profile_avatar ?? null) as AgentAvatar,
     ownerAccountId: r.owner_account_id,
     ownerName: r.owner_name,
+    ownerAvatarUrl: personAvatarUrl(r, "owner", r.owner_account_id),
     needsReassignment: r.needs_reassignment,
     visibility: r.visibility,
     createdFrom:

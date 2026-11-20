@@ -7,6 +7,7 @@ import {
   DateTime,
   Field,
   ListPage,
+  PersonName,
   Select,
   Stack,
   StatusMark,
@@ -102,7 +103,12 @@ const connectorColumns = (t: T): Column<AdminConnectorRow>[] => [
     fit: true,
     cell: (c) => (c.toolsSyncedAt === null ? t("never") : <DateTime value={c.toolsSyncedAt} />),
   },
-  { key: "createdBy", header: t("columns.createdBy"), tone: "muted", cell: (c) => c.createdByName },
+  {
+    key: "createdBy",
+    header: t("columns.createdBy"),
+    tone: "muted",
+    cell: (c) => <PersonName name={c.createdByName} avatarUrl={c.createdByAvatarUrl} size={16} />,
+  },
 ];
 
 function AdminConnectors({ filter }: { filter: Filter }) {
