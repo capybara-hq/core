@@ -98,6 +98,7 @@ import {
   UNATTENDED_QUESTION_ERROR,
   type UnattendedRun,
   unattendedFails,
+  unattendedRules,
   unattendedRunOf,
 } from "../schedules/unattended.js";
 import { skillLoadOfferedIn } from "../skills/catalog.js";
@@ -219,6 +220,18 @@ export const INPUT_SKIPPED_TEXT =
 export const TOO_MANY_INPUT_REQUESTS_TEXT = "Tool requested user input too many times.";
 /** run 已被中止 / 到达截止时间，调用尚未开始执行。 */
 export const RUN_STOPPED_TEXT = "The run was stopped before this tool call was executed.";
+/**
+ * A call with person fields in an unattended run (ruling R6): no person is there to type the
+ * values on the card.
+ */
+export const PERSON_FIELDS_UNATTENDED_TEXT =
+  "This write needs the person to enter values on the web; it cannot run unattended.";
+/**
+ * A call with person fields whose ask would go to a role instead of the person (ruling R5): only the
+ * person the run works for may type the values, and they lack the role.
+ */
+export const PERSON_FIELDS_ROLE_TEXT =
+  "This write needs the person you work for to enter values; they lack the role. Ask an admin to do it on the web.";
 /** 调用执行中 run 被中止 / 到达截止时间。 */
 export const RUN_STOPPED_DURING_TEXT =
   "The run was stopped while this tool call was running; its outcome is unknown. Verify before retrying.";
@@ -1246,6 +1259,7 @@ export class ToolPipeline {
         agentId: ctx.agentId,
         conversationId: ctx.conversationId,
         runId: ctx.runId,
+        callId: call.id,
         rawInput: call.input,
         signal: ctx.signal,
       })) ?? null;
@@ -1254,8 +1268,14 @@ export class ToolPipeline {
       return fail(callPolicy.denyReason, outKey);
     }
     const policyKey = callPolicy?.key ?? tool.key;
+    // person fields (platform web parity spec §4.2, R6): the person types values on the card, so an
+    // unattended run (a trial run has its creator there) cannot make the call at all
+    const personFields = callPolicy?.personFields;
+    if (personFields !== undefined && unattendedRules(ctx.unattended)) {
+      return fail(PERSON_FIELDS_UNATTENDED_TEXT, outKey);
+    }
 
-    const decision = await this.decide(tool, ctx.agent, {
+    let decision = await this.decide(tool, ctx.agent, {
       orgId: ctx.orgId,
       accountId: ctx.accountId,
       agentId: ctx.agentId,
@@ -1278,6 +1298,26 @@ export class ToolPipeline {
     }
     if (typeof decision === "object" && "unavailable" in decision) {
       return fail(unavailableText(tool.key, decision.unavailable), outKey);
+    }
+    if (personFields !== undefined) {
+      // R6: always the person's own card, never a grant or an `allow` (the default policy already
+      // asks for them; this holds for any decision)
+      if (decision === "allow" || "grant" in decision) {
+        decision = {
+          ask: {
+            toolKey: policyKey,
+            specHash: tool.specHash,
+            connectorId: tool.source.kind === "connector" ? tool.source.connectorId : null,
+            requestedFor: ctx.accountId,
+            approverRole: null,
+            policy: "fixed",
+          },
+        };
+      }
+      // R5: only the person the run works for types the values; a role escalation cannot ask them
+      if ("ask" in decision && decision.ask.requestedFor === null) {
+        return fail(PERSON_FIELDS_ROLE_TEXT, outKey);
+      }
     }
     // 该调用已有审批（续跑）→ 按审批结果；没有且策略为 ask → 建审批并等待
     // （不写 tool_call_started：此时尚未开始执行）。
@@ -1306,7 +1346,13 @@ export class ToolPipeline {
         approverRole: decision.ask.approverRole,
         policy: decision.ask.policy,
         ...(callPolicy?.summary !== undefined && { summary: callPolicy.summary }),
-        ...(callPolicy !== null && !callPolicy.remember && { scopes: ["once"] }),
+        ...((personFields !== undefined || (callPolicy !== null && !callPolicy.remember)) && {
+          scopes: ["once"],
+        }),
+        // the specs of the asked fields, never a value (the card draws its inputs from them)
+        ...(personFields !== undefined && {
+          detail: { personFields: personFields.fields, target: personFields.target },
+        }),
       });
     }
     if (approval && approval.status !== "approved") {
@@ -1525,6 +1571,8 @@ export class ToolPipeline {
       resume,
       resolved.tools,
       reviewedRoots,
+      // the approval the call runs under (a Platform write reads the person's values by it)
+      approval?.status === "approved" && approvedHere ? approval.id : undefined,
     );
     const durationMs = Date.now() - t0;
     await this.deps.hooks?.afterExecute?.(ctx.runId, call.id);
@@ -2658,6 +2706,8 @@ export class ToolPipeline {
       escalation?: "available" | "escalated" | undefined;
       escalationRefusal?: string | undefined;
     },
+    /** The approved approval of this call, matching its definition and input (builtins only). */
+    approvalId?: string,
   ): Promise<ExecOutcome> {
     const reviewedWorkingRoot = reviewed?.workingRoot;
     const reviewedAgainstRoot = reviewed?.against;
@@ -2685,6 +2735,7 @@ export class ToolPipeline {
       }),
       ...(tool.source.kind === "builtin" &&
         ctx.deadline !== undefined && { runDeadline: ctx.deadline }),
+      ...(tool.source.kind === "builtin" && approvalId !== undefined && { approvalId }),
       // a reviewed call runs in the working root its review judged (project root spec §4.3)
       ...(tool.source.kind === "builtin" &&
         reviewedWorkingRoot !== undefined && { reviewedWorkingRoot }),

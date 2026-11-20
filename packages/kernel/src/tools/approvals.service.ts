@@ -36,6 +36,7 @@ import { KernelEvents } from "../infra/events/kernel-events.js";
 import { LockService } from "../infra/lock/lock.service.js";
 import { WithLock } from "../infra/lock/with-lock.decorator.js";
 import { ORG_ROLES, type OrgRole, roleAtLeast } from "../orgs/roles.js";
+import type { PersonFieldSpec } from "../platform/person-fields.js";
 import { RunResume } from "../runtime/run-jobs.js";
 import { rootConversationOf } from "../runtime/subagents/child.js";
 import { PermissionAuthorityLock } from "../sandbox/permission-authority-lock.js";
@@ -214,6 +215,13 @@ export interface ApprovalRecord {
   git: GitAskDetail | null;
   /** A command review ask's facts; null for any other kind. */
   command: CommandAskDetail | null;
+  /**
+   * A tool ask with person fields (platform web parity spec §4.2): the secret fields the person
+   * enters on the card, as specs (path, label, schema node), never values. Absent otherwise.
+   */
+  personFields?: PersonFieldSpec[];
+  /** The card's target name with {@link personFields} ("Anthropic: deployment config"). */
+  personTarget?: { zh: string; en: string };
   toolKey: string;
   specHash: string;
   connectorId: string | null;
@@ -335,6 +343,26 @@ export interface ApprovalRequestInput {
   summary?: { zh: string; en: string };
   /** The scopes the decider may choose; unset: derived (see {@link ApprovalRecord.scopes}). */
   scopes?: ApprovalScope[];
+  /** A tool ask's person fields and their target (stored in `detail`; specs only, no values). */
+  detail?: ToolAskDetail;
+}
+
+/** A tool ask's `detail`: the person fields the card asks for and the target they belong to. */
+export interface ToolAskDetail {
+  personFields: PersonFieldSpec[];
+  target: { zh: string; en: string };
+}
+
+/** A tool ask's person fields from its stored `detail` (none: an ordinary tool ask). */
+function personFieldsOf(
+  detail: unknown,
+): Pick<ApprovalRecord, "personFields" | "personTarget"> | null {
+  if (typeof detail !== "object" || detail === null) return null;
+  const d = detail as Partial<ToolAskDetail>;
+  if (!Array.isArray(d.personFields) || d.personFields.length === 0 || d.target === undefined) {
+    return null;
+  }
+  return { personFields: d.personFields, personTarget: d.target };
 }
 
 export interface DecisionInput {
@@ -463,6 +491,7 @@ function toRecord(r: Selectable<ApprovalsTable>): ApprovalRecord {
     detail: r.kind === "network" ? ((r.detail as NetworkAskDetail | null) ?? null) : null,
     git: r.kind === "git" ? ((r.detail as GitAskDetail | null) ?? null) : null,
     command: r.kind === "command" ? ((r.detail as CommandAskDetail | null) ?? null) : null,
+    ...(r.kind === "tool" && personFieldsOf(r.detail)),
     toolKey: r.tool_key,
     specHash: r.spec_hash,
     connectorId: r.connector_id,
@@ -586,6 +615,7 @@ export class ApprovalsService {
         approver_role: input.approverRole,
         summary: input.summary === undefined ? null : JSON.stringify(input.summary),
         scopes: input.scopes ?? null,
+        ...(input.detail !== undefined && { detail: JSON.stringify(input.detail) }),
         scope: null,
         decided_by: null,
         expires_at: sql<Date>`now() + ${hours}::integer * interval '1 hour'`,

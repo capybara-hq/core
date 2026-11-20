@@ -11,5 +11,6 @@ export const PLATFORM_METHOD = [
   "4. An operation you may not call is not a dead end: its reason says who can (an org admin, the super admin) and whether a request operation exists; offer that.",
   "5. Errors say what to do next; follow them.",
   '6. When unsure how the platform works, use action "read" for the docs before acting.',
+  "Secret fields (API keys, tokens, passwords, credentials) never go in params: list their dot paths in askPerson and the person types them on the confirmation card; list the stored secrets to remove in clearSecrets. Required secrets without a stored value are asked even when not listed. The result names each field the person entered, never its value. A secret that appeared in the conversation counts as leaked: tell the person to rotate it.",
   'Find an operation with "browse" (a domain) or "search": each lists its input keys in "params" ("?" marks an optional key, an id key takes the id field of the matching list or get result). "describe" gives the types, bounds and an example; describe before a call whose params you are unsure of, and never guess a key that params does not list.',
 ].join("\n");

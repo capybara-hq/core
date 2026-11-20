@@ -20,6 +20,7 @@ import { readOrgSettings } from "../../orgs/settings.service.js";
 import { PlatformActor } from "../../platform/actor.js";
 import { AgentDocs } from "../../platform/agent-docs.js";
 import { PlatformOperations } from "../../platform/registry.js";
+import { SealedInputs } from "../../platform/sealed-inputs.js";
 import type { HookRunner } from "../../runtime/hook-calls.js";
 import { ProviderListError, ProviderRegistry } from "../../runtime/providers.js";
 import { conversationTimeZone, RUN_CONTEXT_CLOCK } from "../../runtime/run-context.service.js";
@@ -85,6 +86,8 @@ export class BuiltinTools {
     @Inject(PlatformOperations) platformOps: PlatformOperations,
     @Inject(PlatformActor) platformActor: PlatformActor,
     @Inject(AgentDocs) agentDocs: AgentDocs,
+    /** The person's sealed approval card values a Platform write with person fields reads. */
+    @Inject(SealedInputs) sealedInputs: SealedInputs,
     /** The schedule tools read tasks and grants; their writes go through the task service. */
     @Inject(ScheduledTaskStore) scheduleStore: ScheduledTaskStore,
     /** `ScheduleUpdate`'s write: its field change and grant changes in one transaction. */
@@ -193,6 +196,7 @@ export class BuiltinTools {
         docs: agentDocs,
         setting: async (orgId) => (await readOrgSettings(db.db, orgId)).platformTool,
         log,
+        sealed: sealedInputs,
       }),
       // the clock in the run context's time zone (the run context carries only the date)
       currentTimeTool({

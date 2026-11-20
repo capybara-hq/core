@@ -1,6 +1,7 @@
 import type { z } from "zod";
 import type { OrgAction } from "../orgs/roles.js";
 import type { ErrorRole } from "./errors.js";
+import type { PersonFieldTarget } from "./person-fields.js";
 
 /**
  * How an operation is confirmed (spec §6.2): `read` runs; `personal` asks each time and may be
@@ -32,6 +33,18 @@ export interface OperationContext {
    * then with `roleFor` in ./ops/unavailable.ts.
    */
   errorRole?: ErrorRole;
+  /**
+   * The values the person typed on the approval card for this call's secret fields (platform web
+   * parity spec §4.3): present only when the approved call asked for person fields. `paths` are the
+   * asked fields; `apply` consumes the sealed values once and runs `fn` with them in the same
+   * transaction (a throw puts them back), so the handler passes them to the route's service method
+   * inside `fn`. The values never go into the result: the tool appends a line per entered path.
+   * `apply` throws when the values expired; the tool returns the "expired" text then.
+   */
+  personInputs?: {
+    paths: readonly string[];
+    apply<T>(fn: (values: Readonly<Record<string, string>>) => Promise<T>): Promise<T>;
+  };
 }
 
 /**
@@ -57,8 +70,9 @@ export interface OperationError {
  * Some codes exist only in the tool, never answered by a route: `marketplace.already_added` (the
  * `marketplaces.add` duplicate check is tool policy; the web accepts a duplicate source),
  * `plugin.needs_input` (input only a person enters on the web), `agent.visibility_web_only`,
- * `catalog.org_owned` (`plugins.set-shown` leaves an org's own plugin to that org), and
- * `account.self` / `account.no_change` (disabling your own account, a status that is set already).
+ * `catalog.org_owned` (`plugins.set-shown` leaves an org's own plugin to that org),
+ * `account.self` / `account.no_change` (disabling your own account, a status that is set already),
+ * and `platform.secret_record_web_only` (a secret record the card cannot ask for; ruling R1).
  */
 export type PrecheckResult =
   | { ok: true }
@@ -136,6 +150,14 @@ export interface PlatformOperation<I = unknown> {
    * May read PG; the tool falls back to the operation id when it throws. Method syntax so an
    * operation of any input type is a `PlatformOperation` (the registry's element type).
    */
+  /**
+   * The secret fields of the write's target (platform web parity spec §4.1): read at confirmation
+   * time, after availability, and planned against the input's `values`, `askPerson` and
+   * `clearSecrets` (`planPersonFields`). Only for writes whose input carries
+   * `personFieldParams`; a secret in `values` is refused before the card, and the asked fields
+   * make the call always ask the person, once, on the web. Absent: the write has no person fields.
+   */
+  personFields?(input: I, ctx: OperationContext): Promise<PersonFieldTarget>;
   summary?(
     input: I,
     ctx: OperationContext,

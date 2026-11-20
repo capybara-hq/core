@@ -29,7 +29,9 @@ import {
   type PlatformOperation,
   PRECHECK_TIMEOUT_MS,
 } from "../../platform/operation.js";
+import { type PersonFieldSpec, planPersonFields } from "../../platform/person-fields.js";
 import type { PlatformOperations } from "../../platform/registry.js";
+import { type SealedInputs, SealedInputsExpiredError } from "../../platform/sealed-inputs.js";
 import { BUILTIN } from "../builtin-names.js";
 import type {
   BuiltinCallContext,
@@ -52,6 +54,11 @@ import type {
  *   waited).
  * - An `ApiError` gets the next step the operation declares for its code and the actor's role.
  * - The actor, the agent and the conversation come from the runtime context, never from input.
+ * - A write with person fields (platform web parity spec §4: `op.personFields`) is planned at the
+ *   policy step: a secret in `values` is denied before the card, and the asked fields go to the
+ *   card through {@link CallPolicy.personFields} (never remembered). The approved call reads the
+ *   person's sealed values through `personInputs` and its result names each entered path, never a
+ *   value.
  * - Results are JSON text; a list an operation returns is capped at {@link LIST_MAX} entries.
  */
 
@@ -138,6 +145,8 @@ export interface PlatformToolDeps {
   precheckTimeoutMs?: number;
   /** A precheck that throws is logged (warn) and one that times out (debug), with the op id. */
   log?: Pick<KernelLogger, "warn"> & Partial<Pick<KernelLogger, "debug">>;
+  /** The person's sealed card values (`personInputs`); absent: no write has person fields. */
+  sealed?: Pick<SealedInputs, "consume">;
 }
 
 const json = (value: unknown, summary: { zh: string; en: string }): BuiltinResult => ({
@@ -236,6 +245,22 @@ const unavailableOpText = (id: string, reason: string) =>
   `Operation ${id} is unavailable, so do not call it again as is: ${reason}`;
 const precheckText = (id: string, code: string, message: string, next: string | undefined) =>
   `Operation ${id} cannot run now: ${code}: ${sentence(message)} ${next ?? OPERATION_ERROR_NEXT}`;
+const secretRecordText = (id: string, path: string, target: string) =>
+  `Operation ${id} cannot run now: platform.secret_record_web_only: \`${path}\` is a secret record, which the confirmation card cannot ask for. Tell the person to enter it on the web page of ${target}.`;
+/** Model-visible: the person's values expired before the approved call ran (spec §4.3). */
+export const PERSON_INPUTS_EXPIRED_TEXT =
+  "The values the person entered expired before they were applied; call the operation again.";
+/** Model-visible: an approved call with person fields that has no approval to read them by. */
+const personInputsMissingText = (id: string) =>
+  `Operation ${id} needs values the person enters on the confirmation card, and this call ran without one; call the operation again.`;
+/**
+ * Model-visible: the person-field plan refused an approved call when it resumed (the target's
+ * secret fields changed while the card waited); `message` is the plan's English refusal.
+ */
+const personRefusedText = (id: string, message: string) =>
+  `Operation ${id} cannot run as approved: ${message} Correct the params, then call the operation again.`;
+/** The result line of one field the person entered (never its value). */
+const enteredLine = (path: string) => `\`${path}\`: entered by the person`;
 const outputRefText = (id: string) =>
   `Operation ${id} writes, and its params hold a {"$output": ...} reference, which the person confirming would see instead of the content. Pass the content inline in params and call again.`;
 
@@ -288,6 +313,7 @@ const confirmCtx = (ctx: CallPolicyContext, errorRole: ErrorRole): OperationCont
   agentId: ctx.agentId,
   conversationId: ctx.conversationId,
   runId: ctx.runId,
+  ...(ctx.callId !== undefined && { callId: ctx.callId }),
   signal: new AbortController().signal,
   errorRole,
 });
@@ -333,6 +359,15 @@ export function platformTool(deps: PlatformToolDeps): BuiltinTool {
       return deny(outputRefText(op.id));
     }
     const role = errorRoleOf(f);
+    const octx = confirmCtx(ctx, role);
+    let personFields: { target: { zh: string; en: string }; fields: PersonFieldSpec[] } | null;
+    try {
+      personFields = await personFieldsOf(op, params, octx);
+    } catch (e) {
+      if (e instanceof PersonFieldsRefused) return deny(e.message);
+      // a target that cannot be read (gone, not allowed) is the write's own error
+      return deny(toToolError(e, (code) => nextStepFor(op.errors, code, role)).message);
+    }
     const failed = await precheckOf(
       op,
       params,
@@ -345,7 +380,6 @@ export function platformTool(deps: PlatformToolDeps): BuiltinTool {
       const next = resolveNext(failed.next, role) ?? nextStepFor(op.errors, failed.code, role);
       return deny(precheckText(op.id, failed.code, failed.message, next));
     }
-    const octx = confirmCtx(ctx, role);
     const [cls, summary] = await Promise.all([
       classOf(op, params, octx),
       summaryOf(op, params, octx),
@@ -353,9 +387,11 @@ export function platformTool(deps: PlatformToolDeps): BuiltinTool {
     return {
       key,
       policy: "ask",
-      // org / platform writes are confirmed every time (spec §6.2)
-      remember: cls === "personal" && op.rememberable !== false,
+      // org / platform writes are confirmed every time (spec §6.2); so is a write with person
+      // fields, whatever its class (spec §4.2, R6)
+      remember: personFields === null && cls === "personal" && op.rememberable !== false,
       summary,
+      ...(personFields !== null && { personFields }),
     };
   }
 
@@ -447,7 +483,7 @@ export function platformTool(deps: PlatformToolDeps): BuiltinTool {
     );
   }
 
-  async function call(input: PlatformInput, ctx: BuiltinCallContext) {
+  async function call(input: PlatformInput, ctx: BuiltinCallContext): Promise<BuiltinResult> {
     const op = operationOf(deps, "call", input.operation);
     const params = paramsOf(op, input.params);
     // fresh facts right before running: the role may be gone since the confirmation (Review Focus 3)
@@ -455,24 +491,57 @@ export function platformTool(deps: PlatformToolDeps): BuiltinTool {
     const verdict = availability(op, f);
     if (!verdict.ok) throw new ToolError(unavailableOpText(op.id, verdict.reason));
     const role: ErrorRole = errorRoleOf(f);
+    const octx: OperationContext = {
+      orgId: ctx.orgId,
+      actorAccountId: ctx.accountId,
+      agentId: ctx.agentId,
+      conversationId: ctx.conversationId,
+      runId: ctx.runId ?? null,
+      callId: ctx.callId,
+      signal: ctx.signal,
+      errorRole: role,
+    };
+    /** The paths whose values the handler applied (the result's lines). */
+    let entered: readonly string[] = [];
     let result: unknown;
     try {
-      result = await op.run(params, {
-        orgId: ctx.orgId,
-        actorAccountId: ctx.accountId,
-        agentId: ctx.agentId,
-        conversationId: ctx.conversationId,
-        runId: ctx.runId ?? null,
-        callId: ctx.callId,
-        signal: ctx.signal,
-        errorRole: role,
-      });
+      const person = await personFieldsOf(op, params, octx);
+      if (person !== null) {
+        const approvalId = ctx.approvalId;
+        const sealed = deps.sealed;
+        if (approvalId === undefined || sealed === undefined) {
+          throw new ToolError(personInputsMissingText(op.id));
+        }
+        octx.personInputs = {
+          paths: person.fields.map((p) => p.path),
+          apply: (fn) =>
+            // the person who typed the values is the run's trigger account, the approval's
+            // `requested_for` (a role escalation is refused before the card, R5)
+            sealed.consume(approvalId, ctx.accountId, async (values) => {
+              const out = await fn(values);
+              entered = Object.keys(values).sort();
+              return out;
+            }),
+        };
+      }
+      result = await op.run(params, octx);
     } catch (e) {
+      if (e instanceof SealedInputsExpiredError) throw new ToolError(PERSON_INPUTS_EXPIRED_TEXT);
+      if (e instanceof PersonFieldsRefused)
+        throw new ToolError(personRefusedText(op.id, e.message));
       // a service refusal after the approval (a race the precheck could not see) still names the
       // next step for this actor (Review Focus 2)
       throw toToolError(e, (code) => nextStepFor(op.errors, code, role));
     }
-    return json(asResult(result), { zh: `调用平台操作 ${op.id}`, en: `Called ${op.id}` });
+    const summary = { zh: `调用平台操作 ${op.id}`, en: `Called ${op.id}` };
+    if (entered.length === 0) return json(asResult(result), summary);
+    return {
+      content: [
+        { type: "text", text: JSON.stringify(asResult(result)) },
+        { type: "text", text: entered.map(enteredLine).join("\n") },
+      ],
+      display: { summary },
+    };
   }
 
   function read(topic: string | undefined): BuiltinResult {
@@ -503,6 +572,48 @@ export function platformTool(deps: PlatformToolDeps): BuiltinTool {
       return (await deps.setting(orgId)) === "off" ? PLATFORM_UNAVAILABLE_OFF : null;
     },
   };
+}
+
+/** A person-field plan that refuses the call (model-visible English). */
+class PersonFieldsRefused extends Error {}
+
+/** The `askPerson` / `clearSecrets` of a validated input (both default to [] in the schema). */
+const pathsOf = (params: unknown, key: "askPerson" | "clearSecrets"): string[] => {
+  const v = (params as Record<string, unknown> | null)?.[key];
+  return Array.isArray(v) ? v.filter((x): x is string => typeof x === "string") : [];
+};
+
+/**
+ * The person fields one call asks for (spec §4.1): `op.personFields` planned against the input's
+ * `values`, `askPerson` and `clearSecrets`. Null when the operation has none or the plan asks for
+ * nothing. Throws {@link PersonFieldsRefused} with the plan's refusal, or with
+ * `platform.secret_record_web_only` when `askPerson` / `clearSecrets` names a secret record the card
+ * cannot ask for (ruling R1); an error reading the target propagates.
+ */
+async function personFieldsOf(
+  op: PlatformOperation,
+  params: unknown,
+  ctx: OperationContext,
+): Promise<{ target: { zh: string; en: string }; fields: PersonFieldSpec[] } | null> {
+  if (op.personFields === undefined) return null;
+  const target = await op.personFields(params, ctx);
+  const askPerson = pathsOf(params, "askPerson");
+  const clearSecrets = pathsOf(params, "clearSecrets");
+  const records = new Set(target.recordOnly ?? []);
+  const record = [...askPerson, ...clearSecrets].find((p) => records.has(p));
+  if (record !== undefined) {
+    throw new PersonFieldsRefused(secretRecordText(op.id, record, target.target.en));
+  }
+  const values = (params as { values?: unknown } | null)?.values;
+  const plan = planPersonFields(target, {
+    ...(typeof values === "object" &&
+      values !== null &&
+      !Array.isArray(values) && { values: values as Record<string, unknown> }),
+    askPerson,
+    clearSecrets,
+  });
+  if (!plan.ok) throw new PersonFieldsRefused(plan.message);
+  return plan.ask.length === 0 ? null : { target: target.target, fields: plan.ask };
 }
 
 /**
