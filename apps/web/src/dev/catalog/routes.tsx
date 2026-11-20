@@ -132,6 +132,7 @@ export const REFERENCE_COMPONENTS = [
   "agents-chip",
   // agent avatars (agent profile design §2.3)
   "avatar",
+  "person-name",
   // config forms
   "repeater",
   "field-row",

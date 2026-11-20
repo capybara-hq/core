@@ -911,8 +911,10 @@ States: `default`, `focus`, `error`, `disabled`, `action`
 | field-control | action | column-gap | space.2 |
 | input | action | height | control.default |
 
+- **Options with a person** (state `person`): an option may carry `person: { avatarUrl }`, a 16 circle `Avatar` (§6.30; `null` draws the initial of the label) before the label, in the field (after the field's `space.2` padding, `space.1` before the label) and in the list (before the label, the menu item's own `space.2` gap). The label keeps its ellipsis and the avatar its size; an option without `person` is drawn as before. The first letter of the label is the initial.
+
 <!-- states: select -->
-States: `default`, `placeholder`, `open`, `long`, `disabled`, `error`
+States: `default`, `placeholder`, `open`, `person`, `long`, `disabled`, `error`
 
 <!-- size-table: select -->
 | Part | State | Property | Value |
@@ -931,6 +933,13 @@ States: `default`, `placeholder`, `open`, `long`, `disabled`, `error`
 | menu-item | open | height | row.default |
 | menu-item | open | padding-left | pad.default.x |
 | menu-item[aria-selected=true] | open | background-color | color.selected |
+| select-label | person | column-gap | space.1 |
+| select avatar[data-size=16] | person | width | 16 |
+| select avatar[data-size=16] | person | height | 16 |
+| select avatar[data-shape=circle] | person | border-top-left-radius | 50% |
+| menu-item avatar[data-size=16] | person | width | 16 |
+| menu-item avatar[data-size=16] | person | height | 16 |
+| menu-item | person | height | row.default |
 | menu | long | max-height | layout.menu-max-height |
 | menu-filter | long | height | control.dense |
 | menu-filter | long | font-size | type.small |
@@ -1719,8 +1728,10 @@ States: `collapsed`, `expanded`, `live`
 
 - **Sender** (state `sender`, agent map spec §9.4): a message another agent sent (a parent's message in a sub-agent's transcript) has, above the bubble and right-aligned, "来自 <sender>" / "From <sender>" (`small`, `muted`, one line with an ellipsis, at most 75% wide, `space.2` above the bubble). A person's own message has none.
 
+- **Author** (state `author`, account profile design): `author` `{ name, avatarUrl, showName? }` is the person who wrote the message, drawn as a 24 circle `Avatar` (§6.30, `shape="circle"`: the picture, or the initial of `name` when `avatarUrl` is `null` or fails) at the bubble's end side: the bubble and the circle sit in one row, `space.2` apart, top-aligned, the row as wide as the thread, the bubble still at most 75%. With `showName` the name is above the message (above the attachments too), right-aligned and pulled in by the circle's width and the gap so it ends on the bubble's edge: `small`, `muted`, one line with an ellipsis, at most 75% wide, `space.2` above what follows (the trajectory's form, where the writer is not the viewer). Without `author` nothing is drawn and the bubble is as before; a message with no bubble (attachments only) shows the name line but no circle.
+
 <!-- states: user-bubble -->
-States: `default`, `attachments`, `skill`, `sender`, `long`, `expanded`
+States: `default`, `attachments`, `skill`, `sender`, `author`, `long`, `expanded`
 
 <!-- size-table: user-bubble -->
 | Part | State | Property | Value |
@@ -1748,6 +1759,13 @@ States: `default`, `attachments`, `skill`, `sender`, `long`, `expanded`
 | bubble-sender | sender | font-size | type.small |
 | bubble-sender | sender | color | color.muted |
 | bubble | sender | background-color | color.selected |
+| bubble-author-name | author | font-size | type.small |
+| bubble-author-name | author | color | color.muted |
+| bubble-row | author | column-gap | space.2 |
+| bubble-row avatar[data-size=24] | author | width | 24 |
+| bubble-row avatar[data-size=24] | author | height | 24 |
+| bubble-row avatar[data-shape=circle] | author | border-top-left-radius | 50% |
+| bubble | author | background-color | color.selected |
 | bubble-body | long | max-height | layout.bubble-clamp |
 | bubble-body | long | height | layout.bubble-clamp |
 | bubble-more | long | font-size | type.small |
@@ -1919,8 +1937,10 @@ States: `default`, `truncated`
 - **Network ask** (network ask spec §6.5): a command on a device was refused network hosts by the device's own policy, and the device owner is asked. Same accent card, no tool, key or argument grid. Head: the `accent` dot and the title (600): one host "智能体想访问 `files.slack.com`，允许吗？" / "The agent wants to reach `files.slack.com`. Allow?", the host as inline code; n hosts "智能体想访问 n 个域名，允许吗？" / "The agent wants to reach n domains. Allow?". Body: "这条命令被这台设备的网络规则拦下了：<description>" / "This command was blocked by this device's network rules: <description>" (without a description the sentence ends there). The command read-only in code style (the full-input box of a tool approval), clipped to 300 characters with an ellipsis. Then the hosts, one per line: the registrable domain (600; e.g. **evil.io** in `files.slack.com.evil.io`, the last two labels, three under a known multi-label suffix such as `co.uk`, `com.cn`: a display aid, never a security decision) and the full host as inline code; with more than one host each line is a checkbox, all checked, and the decision covers the checked ones (none checked disables both allow buttons, Deny stays). Actions: "这次允许" / "Allow this time" (primary, the first and focused one) with a `small` `muted` hint under it, "到智能体这次回复结束为止有效" / "Until the agent finishes this reply", and "拒绝" / "Deny" (default), which opens the same reason form as a tool approval. There is no "always": the deployment never widens a device (device protocol 4, approval-only profiles design), so under the actions one `small` `muted` line (`network-on-machine`) names the owner's command on the machine: "要让这台设备一直允许，请在设备上运行 `capybara-device policy add allowedDomains <host>`" / "To always allow it on this device, run `capybara-device policy add allowedDomains <host>` on the device" (the host when there is one, `<host>` for several). Host, command and description are model-controlled: always plain text or code, never markup.
 - **Network ask decided**: a tool line with `check` 12 (allowed) or `x` 12 and the word: "已允许（这次）" / "Allowed (this time)", "已拒绝" / "Denied", "已过期" / "Expired", "已跳过" / "Skipped" (the person sent a message instead of answering), "已取消" / "Cancelled"; then the hosts it covers (the granted ones when allowed) and who in `faint` (expired and cancelled name no one); a denial's reason and the time as for tool approvals.
 
+- **Decider as a person** (state `person`): `who` is `string | { name, avatarUrl }`. A string stays plain text ("你", "系统"); a person is a `PersonName` (§6.50) at size 16 in the same place, inline in the line ("<PersonName> 批准了 <tool>", and the same for the denied, network and command lines, where it stands after the key joined by " · "). It keeps its own `ink`; the line's `muted` stays on the words around it.
+
 <!-- states: approval-block -->
-States: `pending`, `pending-once`, `pending-summary`, `deny-reason`, `approved`, `denied`, `network`, `network-hosts`, `network-once`, `network-allowed`, `network-denied`, `network-skipped`
+States: `pending`, `pending-once`, `pending-summary`, `deny-reason`, `approved`, `person`, `denied`, `network`, `network-hosts`, `network-once`, `network-allowed`, `network-denied`, `network-skipped`
 
 <!-- size-table: approval-block -->
 | Part | State | Property | Value |
@@ -1943,6 +1963,11 @@ States: `pending`, `pending-once`, `pending-summary`, `deny-reason`, `approved`,
 | tool-line | approved | height | row.dense |
 | tool-line | approved | color | color.muted |
 | tool-key | approved | color | color.faint |
+| tool-line | person | height | row.dense |
+| tool-line person-name[data-size=16] avatar[data-size=16] | person | width | 16 |
+| tool-line person-name[data-size=16] avatar[data-size=16] | person | height | 16 |
+| tool-line person-name[data-size=16] avatar[data-shape=circle] | person | border-top-left-radius | 50% |
+| tool-line person-name[data-size=16] person-name-text | person | font-size | type.small |
 | tool-line | denied | color | color.muted |
 | tool-key | denied | color | color.faint |
 | approval-block | network | border-top-color | color.accent |
@@ -1975,8 +2000,10 @@ States: `org`, `address`
 - **URL mode** (the form has a `url`): the full address as a link (`small` `ink`, underlined in `line-strong`, breaking anywhere, `external-link` 14 `muted` before it), "打开链接" / "Open link" (primary, with the icon), Skip, and the note "完成后回到这里继续" / "Come back here when you're done".
 - **Answered**: collapses to the question as a tool line and a second one with `corner-down-right` 12, the answer in `ink` and " · <who>" in `faint`. The other closed states use the same two lines with their word in place of the answer: **skipped** (the run's starter sent a message instead of answering) says "已跳过：直接回复了消息" / "Skipped: replied with a message" with " · <who>"; **cancelled** (the run ended first) says "已取消" / "Cancelled"; **expired** says "已过期" / "Expired". Cancelled and expired name no one.
 
+- **Answerer as a person** (state `person`): the `who` of an answered or skipped question is `string | { name, avatarUrl }` as in §6.16.11: the " · " stays `faint` and the person is a `PersonName` at size 16 after it.
+
 <!-- states: question-block -->
-States: `pending`, `url`, `answered`, `skipped`, `cancelled`, `expired`
+States: `pending`, `url`, `answered`, `person`, `skipped`, `cancelled`, `expired`
 
 <!-- size-table: question-block -->
 | Part | State | Property | Value |
@@ -1993,6 +2020,10 @@ States: `pending`, `url`, `answered`, `skipped`, `cancelled`, `expired`
 | question-url | url | font-size | type.small |
 | question-url | url | color | color.ink |
 | tool-line | answered | height | row.dense |
+| tool-line | person | height | row.dense |
+| tool-line person-name[data-size=16] avatar[data-size=16] | person | width | 16 |
+| tool-line person-name[data-size=16] avatar[data-size=16] | person | height | 16 |
+| tool-line person-name[data-size=16] avatar[data-shape=circle] | person | border-top-left-radius | 50% |
 | tool-line | skipped | color | color.muted |
 | tool-line | cancelled | color | color.muted |
 
@@ -2323,9 +2354,10 @@ States: `image`, `text`, `markdown`, `csv`, `none`, `failed`, `unshared`, `share
 
 #### 6.16.23 Run row
 
-`RunRow({ status, parts, statusText?, defaultOpen?, error?, facts?, onRetry?, retryLabel?, links? })` closes every run that ended (§5.4): what ran, how long, what it cost, and how it ended, without colour unless it failed.
+`RunRow({ status, parts, statusText?: ReactNode, defaultOpen?, error?, facts?, onRetry?, retryLabel?, links? })` closes every run that ended (§5.4): what ran, how long, what it cost, and how it ended, without colour unless it failed.
 
 - **Line**: a tool line (§6.16, `row.dense` high, mono `small` `muted`, gap `space.2`): "运行" / "Run" and the `parts` the page fills (the model, the duration such as "3.7 秒" / `3.7s` (`formatDuration`, §7), the tokens such as `1,234 tokens`; unknown ones are left out) joined by " · " with an ellipsis, then the **status**: the mark (12) and the status word, `space.1` apart: `ok` a `check` in `ok` and "完成" / "Done" in `muted` (the one coloured mark of a quiet row, an exception to §2.4's uncoloured success: a run is a unit a person checks for its outcome); `failed` a `circle-x` and "失败" / "Failed" (or the page's words such as "失败 · 已重试") both in `fail`; `stopped` a `ban` and the page's words "已停止 · <who> <time>" in `muted`. Then a `chevron-right` / `chevron-down` 12 when there is a detail. The duration is the run's working time: from its start to its end without the time it waited for a person (an approval or a question, until answered), the same derivation as the status bar's "已用" (§5.4), so the two agree.
+- **Status text as a node**: `statusText` is a `ReactNode`, so the words after the mark may hold a person: a `PersonName` (§6.50) at size 16 inside them ("已被 <PersonName> 停止"); a string is drawn as before. The mark and the gap are unchanged.
 - **Disclosure**: with a detail the line is a `button` with `aria-expanded` and `aria-controls`; the detail is a `region` named "运行详情" / "Run details". A failed row starts open (`defaultOpen` overrides), the others closed. Without any detail the line is plain text.
 - **Detail**: `space.1` below the line, `space.2` between its parts, under a 1px `line` guide on the left, indented `space.3` (the thinking body's guide): the failure as an `ErrorDetail` (§6.24: the localized sentence, the raw text behind its toggle); `facts`, plain mono `small` `muted` lines (the token split, the start time); then the actions, a row `space.2` apart of `dense` buttons: Retry ("重试" / "Retry", default) and the `links` as `LinkButton`s (default): "查看轨迹" / "View trajectory", "去配置模型服务" / "Configure model services". The page decides which actions a role gets; the row never draws one the reader cannot use.
 
@@ -3464,7 +3496,7 @@ States: `default`, `group`
 
 ### 6.40 ScheduleCalendar
 
-`ScheduleCalendar({ range, days, today, now, timeZone, items, collapsed, selectedId?, onSelect, onNavigate, onRange, rangeLabel, scope?, footnote?, loading?, refreshing?, empty?, error?, notLoadedFrom?, onDay?, day? })`, `items` `{ id, day, minute, time, title, meta?, state, mark?, label }[]`, `collapsed` `{ id, day, title, summary, failed?, state, label }[]`, `state` `upcoming | running | completed | failed | skipped` (scheduled tasks calendar design §4, §6, §7, §8): the scheduled task runs of a week or a month, recorded runs and planned occurrences on one time grid. Named for its one use: no durations, all-day events or editing. Plain props: the page places every item in the viewer's zone (`day` YYYY-MM-DD, `minute` 0..1439) and writes every label; the component reads no clock and no zone of its own (§2.2): `now` (epoch ms, the page's `useNow`) and `timeZone` only place the now line.
+`ScheduleCalendar({ range, days, today, now, timeZone, items, collapsed, selectedId?, onSelect, onNavigate, onRange, rangeLabel, scope?, footnote?, loading?, refreshing?, empty?, error?, notLoadedFrom?, onDay?, day? })`, `items` `{ id, day, minute, time, title, meta?, state, mark?, label, person?: { name, avatarUrl } }[]`, `collapsed` `{ id, day, title, summary, failed?, state, label }[]`, `state` `upcoming | running | completed | failed | skipped` (scheduled tasks calendar design §4, §6, §7, §8): the scheduled task runs of a week or a month, recorded runs and planned occurrences on one time grid. Named for its one use: no durations, all-day events or editing. Plain props: the page places every item in the viewer's zone (`day` YYYY-MM-DD, `minute` 0..1439) and writes every label; the component reads no clock and no zone of its own (§2.2): `now` (epoch ms, the page's `useNow`) and `timeZone` only place the now line.
 
 - **Toolbar** (a row of `default` controls on the page ground): 今天, the `chevron-left` / `chevron-right` icon buttons (上一周 / 下一周, 上个月 / 下个月), the range label (`rangeLabel`, mono; with `refreshing` a 14 px `spinner` in `accent` beside it while the previous range stays drawn), then at the right end a `Segmented` 周 / 月 (`onRange`) and, for org admins (`scope`), a `Segmented` 只看我的 / 全组织. Under the box a `small` `muted` footnote (`footnote`: the zone, the horizon).
 - **The box**: the grid on the `panel` ground with the `line-card` hairline, radius `md`; it is the one box (§1), nothing inside it is boxed.
@@ -3476,8 +3508,10 @@ States: `default`, `group`
 - **States**: `loading` draws the toolbar for real and the grid frame with skeleton blocks (§6.29) in one busy region (`aria-busy`); `empty` (`{ text, hint?, action? }`) draws a `panel` EmptyState (§6.18) on the `panel` ground centered over the grid body, the grid still under it; `error` (`{ retry, code? }`) draws the load-failed line at the top of the box (「加载失败」 with `circle-x` in `fail`, the code `muted`, a `dense` 重试), the grid kept; days at or after `notLoadedFrom` draw no items and a `muted` 未加载 in their header (the kernel cut the range).
 - `forced-colors`: borders `CanvasText`, the failed marker, the now line and the agenda dot `Highlight`. Reduced motion: the spinner is static (§6.11).
 
+- **Creator** (state `person`): an item's `person` is its creator, an avatar-only chip at the end of the block, line, row or pop-over item: a 16 circle `Avatar` (§6.30), `flex: none`, pushed to the end by `margin-left: auto` (after the mark). The name is never drawn in the block; it goes into the block's `title` tooltip after the label ("每日简报，研究助手，11月12日 周四 09:00，已完成 · Ada Lovelace"), while `aria-label` stays the caller's `label`. A block without `person` is drawn as before.
+
 <!-- states: schedule-calendar -->
-States: `week`, `week-dense`, `month`, `agenda`, `loading`, `empty`, `failed`, `selected`
+States: `week`, `week-dense`, `month`, `agenda`, `loading`, `empty`, `failed`, `selected`, `person`
 
 <!-- size-table: schedule-calendar -->
 | Part | State | Property | Value |
@@ -3527,6 +3561,10 @@ States: `week`, `week-dense`, `month`, `agenda`, `loading`, `empty`, `failed`, `
 | schedule-calendar-error-text | failed | color | color.fail |
 | schedule-calendar-error-text | failed | font-size | type.small |
 | schedule-calendar-block[data-selected=true] | selected | border-top-color | color.line-strong |
+| schedule-calendar-block schedule-calendar-person avatar[data-size=16] | person | width | 16 |
+| schedule-calendar-block schedule-calendar-person avatar[data-size=16] | person | height | 16 |
+| schedule-calendar-block schedule-calendar-person avatar[data-shape=circle] | person | border-top-left-radius | 50% |
+| schedule-calendar-block | person | height | 24 |
 
 ### 6.41 DeviceNameplate
 
@@ -3818,20 +3856,22 @@ States: `sizes`, `image`, `ellipsis`, `secondary`
 <!-- size-table: person-name -->
 | Part | State | Property | Value |
 |---|---|---|---|
-| person-name avatar[data-size=24] | sizes | width | 24 |
-| person-name avatar[data-size=24] | sizes | height | 24 |
-| person-name avatar[data-shape=circle] | sizes | border-top-left-radius | 50% |
-| person-name avatar[data-shape=circle] | sizes | background-color | color.selected |
-| person-name avatar[data-shape=circle] | sizes | color | color.muted |
-| person-name-text | sizes | font-size | type.body |
+| person-name[data-size=24] avatar[data-size=24] | sizes | width | 24 |
+| person-name[data-size=24] avatar[data-size=24] | sizes | height | 24 |
+| person-name[data-size=24] avatar[data-shape=circle] | sizes | border-top-left-radius | 50% |
+| person-name[data-size=24] avatar[data-shape=circle] | sizes | background-color | color.selected |
+| person-name[data-size=24] avatar[data-shape=circle] | sizes | color | color.muted |
+| person-name[data-size=24] person-name-text | sizes | font-size | type.body |
+| person-name[data-size=24] | sizes | column-gap | 8 |
 | person-name[data-size=16] avatar[data-size=16] | sizes | width | 16 |
 | person-name[data-size=16] avatar[data-size=16] | sizes | height | 16 |
 | person-name[data-size=16] person-name-text | sizes | font-size | type.small |
-| person-name avatar[data-size=24] | image | width | 24 |
-| person-name avatar[data-kind=image] | image | border-top-left-radius | 50% |
+| person-name[data-size=16] | sizes | column-gap | 4 |
+| person-name[data-size=24] avatar[data-size=24] | image | width | 24 |
+| person-name[data-size=24] avatar[data-kind=image] | image | border-top-left-radius | 50% |
 | person-name-text | ellipsis | height | 20 |
-| person-name-secondary | secondary | font-size | type.small |
-| person-name-secondary | secondary | color | color.muted |
+| person-name[data-size=24] person-name-secondary | secondary | font-size | type.small |
+| person-name[data-size=24] person-name-secondary | secondary | color | color.muted |
 
 ## 7. Copy and internationalization
 - All UI text goes through next-intl, in both Chinese and English. Text shown to the model (prompts, tool descriptions) is always English, and the prompt field in a form must say so.

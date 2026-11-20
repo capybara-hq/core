@@ -371,6 +371,13 @@ textarea {
   min-width: 0;
   display: flex;
 }
+/* An option with a person (spec §6.2): the 16 circle, space.1, the label cut with an ellipsis. */
+.r-select-label-person {
+  display: flex;
+  align-items: center;
+  gap: var(--cb-space-1);
+  min-width: 0;
+}
 .r-select-list {
   top: calc(100% + var(--cb-space-1));
   left: 0;
@@ -2152,6 +2159,28 @@ textarea {
 }
 .r-bubble-sender {
   max-width: 75%;
+  overflow: hidden;
+  color: var(--cb-muted);
+  font-size: var(--cb-type-small-size);
+  line-height: var(--cb-type-small-line);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+/* A message with an author (spec §6.16.6): the 24 circle after the bubble, top-aligned. */
+.r-bubble-row {
+  display: flex;
+  align-items: flex-start;
+  justify-content: flex-end;
+  gap: var(--cb-space-2);
+  width: 100%;
+  min-width: 0;
+}
+.r-bubble-row > .r-avatar {
+  flex: none;
+}
+.r-bubble-author-name {
+  max-width: 75%;
+  margin-inline-end: calc(24px + var(--cb-space-2));
   overflow: hidden;
   color: var(--cb-muted);
   font-size: var(--cb-type-small-size);
@@ -6197,6 +6226,12 @@ textarea {
 .r-scal-meta {
   flex: none;
   color: var(--cb-muted);
+}
+/* The creator's 16 circle at the end of a block (spec §6.40). */
+.r-scal-person {
+  display: inline-flex;
+  flex: none;
+  margin-left: auto;
 }
 .r-scal-chip-failed {
   color: var(--cb-fail);

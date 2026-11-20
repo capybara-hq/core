@@ -65,6 +65,7 @@ import {
   PAGE_HEADER_FIXTURE,
   PERSON_AVATAR_FIXTURE,
   SELECT_FIXTURE,
+  SELECT_PERSON_FIXTURE,
   STATUS_FIXTURE,
   TABLE_HOVER_ROW,
   TABLE_SELECTED_ROW,
@@ -240,19 +241,37 @@ const LONG_OPTIONS = LONG_MODELS_FIXTURE.groups.flatMap((g) =>
 function SelectField({
   state,
 }: {
-  state: "default" | "placeholder" | "open" | "long" | "disabled" | "error";
+  state: "default" | "placeholder" | "open" | "long" | "disabled" | "error" | "person";
 }) {
   const S = SELECT_FIXTURE;
   const long = state === "long";
+  const person = state === "person";
   return (
-    <Field label={long ? S.longLabel : S.label} {...(state === "error" ? { error: S.error } : {})}>
+    <Field
+      label={person ? SELECT_PERSON_FIXTURE.label : long ? S.longLabel : S.label}
+      {...(state === "error" ? { error: S.error } : {})}
+    >
       <Select
-        options={long ? LONG_OPTIONS : S.options}
-        value={long ? LONG_MODELS_FIXTURE.selected : state === "placeholder" ? "" : S.value}
+        options={
+          long
+            ? LONG_OPTIONS
+            : person
+              ? SELECT_PERSON_FIXTURE.options.map((o) => ({ ...o, person: { avatarUrl: null } }))
+              : S.options
+        }
+        value={
+          long
+            ? LONG_MODELS_FIXTURE.selected
+            : person
+              ? SELECT_PERSON_FIXTURE.value
+              : state === "placeholder"
+                ? ""
+                : S.value
+        }
         placeholder={S.placeholder}
         onChange={noop}
         disabled={state === "disabled"}
-        referenceOpen={state === "open" || long}
+        referenceOpen={state === "open" || long || person}
       />
     </Field>
   );
@@ -270,6 +289,10 @@ function selectBlocks(): ReactNode {
       {/* the list drawn open under the field: three options, the selected one checked */}
       <RefBlock id="select-open" width={720} height={220} pad itemWidth={320}>
         <SelectField state="open" />
+      </RefBlock>
+      {/* options with a person (spec §6.2): the 16 circle before each label, in the field and the list */}
+      <RefBlock id="select-person" width={720} height={220} pad itemWidth={320}>
+        <SelectField state="person" />
       </RefBlock>
       {/* 100 models: the filter, the list capped at layout.menu-max-height, scrolled to the
           selected one */}

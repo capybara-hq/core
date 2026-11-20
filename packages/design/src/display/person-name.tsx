@@ -1,5 +1,8 @@
 import { Avatar } from "./avatar";
 
+/** A person as the design components take one: the name and the avatar route (null: the initial). */
+export type PersonLike = { name: string; avatarUrl: string | null };
+
 /**
  * PersonName (spec §6.50): a person as a circle avatar and the name on one line that never wraps;
  * the name is ellipsized (full text in `title`), the optional `secondary` follows it in `muted`.

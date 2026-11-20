@@ -655,6 +655,17 @@ export const SELECT_FIXTURE = {
   longLabel: "模型",
 };
 
+/** A select whose options are people (spec §6.2 "Options with a person"). */
+export const SELECT_PERSON_FIXTURE = {
+  label: "负责人",
+  options: [
+    { value: "ada", label: "Ada Lovelace" },
+    { value: "grace", label: "Grace Hopper" },
+    { value: "alan", label: "Alan Turing" },
+  ],
+  value: "grace",
+};
+
 export * from "./conversation";
 
 /**
@@ -663,6 +674,12 @@ export * from "./conversation";
  */
 export const PLUGIN_ICON_FIXTURE =
   "data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Crect x='2' y='2' width='20' height='20' rx='5'/%3E%3Cpath d='M7 12h10M12 7v10' stroke='white' stroke-width='2.5' stroke-linecap='round'/%3E%3C/svg%3E";
+
+/**
+ * A person in a design component's person slot (user bubble author, a decider, a select option, a
+ * calendar block; spec §6.16.6, §6.16.11, §6.2, §6.40): the initial stands in for the picture.
+ */
+export const PERSON_FIXTURE = { name: "Ada Lovelace", avatarUrl: null as string | null };
 
 /**
  * A person's picture for the catalog and the reference set (spec §6.30, §6.50): a neutral

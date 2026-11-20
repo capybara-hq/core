@@ -12,7 +12,8 @@ import {
   Select,
   type SelectChangeEvent,
 } from "../src/index";
-import { optionLabels, optionOf, pickOption } from "./support/select";
+import { describeNestedBox, findNestedBoxes } from "../src/reference/index";
+import { openSelect, optionLabels, optionOf, pickOption } from "./support/select";
 
 /**
  * The form Select (spec §6.2): a `combobox` button opening the design system's anchored listbox
@@ -423,5 +424,34 @@ describe("Select styles", () => {
   it("the field keeps the input look and shows its focus ring while the list is open", () => {
     expect(css).toMatch(/\.cb-select\[aria-expanded="true"\]/);
     expect(css).toMatch(/\.cb-select-label\[data-current="true"\]\s*\{\s*visibility: visible;/);
+  });
+});
+
+describe("Select options with a person (§6.2)", () => {
+  const PEOPLE = [
+    { value: "ada", label: "Ada", person: { avatarUrl: null } },
+    { value: "grace", label: "Grace", person: { avatarUrl: "/g.png" } },
+    { value: "plain", label: "Plain" },
+  ];
+
+  it("shows the circle avatar before the label in the trigger and in the menu", async () => {
+    zh(<Select aria-label="负责人" options={PEOPLE} defaultValue="ada" />);
+    const box = screen.getByRole("combobox", { name: "负责人" });
+    const inTrigger = box.querySelectorAll('[data-part="avatar"]');
+    expect(inTrigger).toHaveLength(2);
+    const first = inTrigger[0] as HTMLElement;
+    expect(first.getAttribute("data-shape")).toBe("circle");
+    expect(first.getAttribute("data-size")).toBe("16");
+    expect(first.textContent).toBe("A");
+    expect(box.querySelector('[data-person="true"][data-current="true"]')?.textContent).toBe(
+      "AAda",
+    );
+    const listbox = await openSelect(box);
+    expect(within(optionOf(listbox, "ada")).getByText("A").getAttribute("data-shape")).toBe(
+      "circle",
+    );
+    expect(optionOf(listbox, "grace").querySelector("img")?.getAttribute("src")).toBe("/g.png");
+    expect(optionOf(listbox, "plain").querySelector('[data-part="avatar"]')).toBeNull();
+    expect(findNestedBoxes(document.body).map(describeNestedBox)).toEqual([]);
   });
 });

@@ -590,16 +590,30 @@
 
   function selectField(o) {
     const S = F.SELECT_FIXTURE;
+    const person = o.state === "person";
+    // an option with a person (spec §6.2): the 16 circle before the label, in the field and the list
+    const circle = (label) =>
+      `<span class="r-avatar" data-part="avatar" data-kind="initial" data-shape="circle" data-size="16" aria-hidden="true">${esc([...label][0].toUpperCase())}</span>`;
     const L = F.LONG_MODELS_FIXTURE;
     const long = o.state === "long";
-    const open = long || o.state === "open";
+    const open = long || o.state === "open" || person;
     const options = long
       ? L.groups.flatMap((g) => g.models.map((m) => ({ value: m.id, label: m.label })))
-      : S.options;
-    const value = long ? L.selected : o.state === "placeholder" ? "" : S.value;
+      : person
+        ? F.SELECT_PERSON_FIXTURE.options
+        : S.options;
+    const value = long
+      ? L.selected
+      : person
+        ? F.SELECT_PERSON_FIXTURE.value
+        : o.state === "placeholder"
+          ? ""
+          : S.value;
     const chosen = options.find((x) => x.value === value);
     const shown = chosen
-      ? `<span class="r-ellipsis" data-part="select-label">${esc(chosen.label)}</span>`
+      ? person
+        ? `<span class="r-select-label-person" data-part="select-label">${circle(chosen.label)}<span class="r-ellipsis">${esc(chosen.label)}</span></span>`
+        : `<span class="r-ellipsis" data-part="select-label">${esc(chosen.label)}</span>`
       : `<span class="r-ellipsis r-faint" data-part="select-label" data-placeholder="true">${esc(S.placeholder)}</span>`;
     const st = o.state === "error" ? ' data-state="error"' : open ? ' data-state="focus"' : "";
     const field = `<button class="r-input r-select-field" data-part="select" role="combobox" aria-haspopup="listbox" aria-expanded="${open}"${st}${o.state === "disabled" ? " disabled" : ""}><span class="r-select-value" data-part="input-control">${shown}</span>${icon("chevron-down", 14)}</button>`;
@@ -612,7 +626,7 @@
       const rows = view
         .map((x) => {
           const sel = x.value === value;
-          return `<div class="r-menu-item" data-part="menu-item" role="option" aria-selected="${sel}"><span class="r-ellipsis">${esc(x.label)}</span><span class="r-grow"></span>${sel ? icon("check", 14) : ""}</div>`;
+          return `<div class="r-menu-item" data-part="menu-item" role="option" aria-selected="${sel}">${person ? circle(x.label) : ""}<span class="r-ellipsis">${esc(x.label)}</span><span class="r-grow"></span>${sel ? icon("check", 14) : ""}</div>`;
         })
         .join("");
       const filter = long ? '<input class="r-menu-filter" data-part="menu-filter" placeholder="筛选" aria-label="筛选">' : "";

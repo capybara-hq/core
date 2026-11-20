@@ -12,6 +12,7 @@ import {
   QueuedMessage,
   QueuePaused,
 } from "../src/index";
+import { describeNestedBox, findNestedBoxes } from "../src/reference/index";
 
 afterEach(cleanup);
 
@@ -674,5 +675,69 @@ describe("QueuedMessage (§6.16.14)", () => {
     for (const name of ["Copy", "Edit", "Delete", "Send now"]) {
       expect(within(actions).getByRole("button", { name })).toBeTruthy();
     }
+  });
+});
+
+describe("a decider as a person (§6.16.11, §6.16.12)", () => {
+  const person = { name: "Ada", avatarUrl: null };
+  const decided = (who: string | typeof person): ApprovalBlockProps["state"] => ({
+    kind: "decided",
+    decision: "approved",
+    who,
+    when: "10-20 14:32",
+    scope: "once",
+  });
+
+  it("draws an approval's who as a PersonName and keeps a string as text", () => {
+    const { container, rerender } = wrap(
+      <ApprovalBlock {...pending({ state: decided(person) })} />,
+      "en",
+    );
+    const name = container.querySelector('[data-part="person-name"]') as HTMLElement;
+    expect(name.querySelector("[data-part=person-name-text]")?.textContent).toBe("Ada");
+    expect(name.getAttribute("data-size")).toBe("16");
+    expect(container.querySelector('[data-part="tool-line"]')?.textContent).toContain(
+      "Ada approved",
+    );
+    expect(findNestedBoxes(document.body).map(describeNestedBox)).toEqual([]);
+    rerender(
+      <DesignProvider locale="en">
+        <ApprovalBlock {...pending({ state: decided("你") })} />
+      </DesignProvider>,
+    );
+    expect(container.querySelector('[data-part="person-name"]')).toBeNull();
+    expect(container.querySelector('[data-part="tool-line"]')?.textContent).toContain(
+      "你 approved",
+    );
+  });
+
+  it("draws a denied approval's who as a PersonName too", () => {
+    const { container } = wrap(
+      <ApprovalBlock
+        {...pending({
+          state: { kind: "decided", decision: "denied", who: person, when: "10-20 14:32" },
+        })}
+      />,
+      "en",
+    );
+    expect(container.querySelector('[data-part="person-name-text"]')?.textContent).toBe("Ada");
+    expect(container.querySelector('[data-part="tool-line"]')?.textContent).toContain("Ada denied");
+  });
+
+  it("draws a question's answerer as a PersonName and keeps a string as text", () => {
+    const field: QuestionField = { key: "k", label: "Which?", kind: "enum", options: ["a", "b"] };
+    const answered = (who: string | typeof person) => (
+      <QuestionBlock
+        title="Which?"
+        fields={[field]}
+        state={{ kind: "answered", pairs: [["Which?", "a"]], who }}
+      />
+    );
+    const { container, rerender } = wrap(answered(person), "en");
+    expect(container.querySelector('[data-part="person-name-text"]')?.textContent).toBe("Ada");
+    expect(findNestedBoxes(document.body).map(describeNestedBox)).toEqual([]);
+    rerender(<DesignProvider locale="en">{answered("system")}</DesignProvider>);
+    expect(container.querySelector('[data-part="person-name"]')).toBeNull();
+    expect(container.textContent).toContain("system");
   });
 });
