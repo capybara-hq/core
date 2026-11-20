@@ -1,11 +1,21 @@
 # Mobile app shell (phases 1–3) Implementation Plan
 
-> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking. With 26 tasks across two repositories, `wave-planned-subagent-development` governs the dispatch (wave table below).
+> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking. With 34 tasks across two repositories (26 planned on 2026-11-20, 10 added and 1 superseded on 2026-11-21), `wave-planned-subagent-development` governs the dispatch (wave tables below).
 
 **Goal:** The official Capybara app for iOS and Android (`capybara-hq/clients` `apps/mobile`): it
 loads a deployment's own web with native chrome (tab bar, share, haptics, menus, appearance,
 Safari / Custom Tabs sign-in). The web gets the native-feel pass, which the browser and the PWA
 get too. Organizations can fork, rebrand and release it. Push is not in this plan.
+
+**Amendment 2026-11-21 (the maintainer's touch decisions).** The specs were amended on
+`docs/mobile-touch-decisions` (layout spec §4.1–§4.6, §8; mobile app spec §5, §6.1, §8): the
+compact shell is chat-first (a menu button and a drawer, no bottom navigation, the Me page
+retired), touch has its own token and component set, management pages are desktop-only on touch,
+and native navigation exists only in the iPhone Duo's strip through a new `nav@1` shape. This plan
+keeps every done task as written and marks what the amendment supersedes in place ("Superseded
+2026-11-21"). New work: core Tasks 23–30 (Phase 2b) and the amended Task 9; clients Tasks 31–32,
+which replace Task 19, and the amended Task 16. The remaining-work wave table follows the original
+one.
 
 **Architecture:**
 - **Core (`capybara-hq/core`).**
@@ -93,11 +103,14 @@ get too. Organizations can fork, rebrand and release it. Push is not in this pla
 |---|---|
 | Official ids | bundle id / application id `com.capybarahq.mobile`; scheme `capybara`; redirect `capybara://auth/callback` |
 | Shell environment | `version: 1`, `kind: "mobile"`, `platform: "ios" \| "android"`, `shellVersion` = app version, `controls` absent |
-| Capabilities | `signIn@1`, `openExternal@1`, `chrome@1`, `nav@1`, `haptics@1`, `share@1`, `menu@1` (`push@1`: push plan); never `device@1`, `notify@1` |
-| `insets` | `bottom` = the native tab bar's height while it shows on a phone, else 0; `right` = the Duo strip's width only when the WebView does not report `safe-area-inset-right` (spike 1.4), else 0; `top` / `left` 0 |
-| Nav ids | `chats`, `agents`, `inbox`, `me` |
+| Capabilities | `signIn@1`, `openExternal@1`, `chrome@1`, `haptics@1`, `share@1`, `menu@1`; `nav@1` on iOS only while the window has a strip; `profiles@1` unless locked to one deployment (`push@1`: push plan); never `device@1`, `notify@1` (amended 2026-11-21) |
+| `insets` | All 0 (amended 2026-11-21: no native bottom bar; the strip arrives as `env(safe-area-inset-right)`, spike 1.4). Superseded: "`bottom` = the native tab bar's height" |
+| Nav section ids | `chats`, `inbox`, `agents`, `schedules`, in that order (amended 2026-11-21; the tab ids `chats`, `agents`, `inbox`, `me` are withdrawn) |
+| Section routes | `chats` `/`, `inbox` `/inbox`, `agents` `/agents`, `schedules` `/schedules` |
+| Touch query | `(pointer: coarse), (any-pointer: coarse) and (not (any-pointer: fine))` (`TOUCH_QUERY`) |
+| Desktop-only route prefixes (touch) | `/plugins`, `/extensions`, `/channels`, `/settings`, `/evals`, `/trajectories`, `/admin` |
 | Haptic kinds | `selection`, `light`, `success`, `warning` |
-| Haptic uses | tab switch and a selection change `selection`; sending a message `light`; an approval granted `success`; a destructive confirmation `warning` |
+| Haptic uses | a section switch from the strip (was: tab switch) and a selection change `selection`; sending a message `light`; an approval granted `success`; a destructive confirmation `warning` |
 | Data stores | iOS `WKWebsiteDataStore(forIdentifier:)`, iOS 17 minimum; Android `androidx.webkit` multi-profile, else one deployment at a time with a cleared store on switch |
 | Managed keys | `presetUrl` (string), `lockToPreset` (boolean): iOS AppConfig `com.apple.configuration.managed`, Android managed configurations |
 | Sign-in | iOS `ASWebAuthenticationSession` (`prefersEphemeralWebBrowserSession = false`), Android Custom Tabs; `/apps/authorize`; `POST /api/v1/app-auth/token` with header `X-Capybara-Csrf: 1`, `credentials: "include"`, `redirect: "error"`; TTL 10 min (`SIGN_IN_TTL_MS`); exchange timeout 30 s |
@@ -125,7 +138,10 @@ Each stays inside the spec's intent. Task 1.5 copies them into the spec as one-l
    plan never call `ready`).
 4. **`data-native-nav` before the first paint.** `ShellEnvironmentScript` sets it on `<html>` when
    `nav@1` is present. The AppShell also sets it on the shell element (spec §6.1). The CSS drops
-   the bottom-nav slot under either.
+   the bottom-nav slot under either. **Amended 2026-11-21:** `nav@1` is present exactly while the
+   strip shows, so the attribute means "the strip shows"; the CSS drops the web's section entries
+   and its menu button under it, and the AppShell clears both attributes when the capability goes
+   (Task 30).
 5. **Capabilities run in the TypeScript runtime** (the local Capacitor WebView). Native first
    gates frame and origin, then forwards. The runtime re-checks the origin, validates, gates user
    activation and one dialog per profile, then calls native ports. If spike 1.2 rules for plain
@@ -161,10 +177,36 @@ Each stays inside the spec's intent. Task 1.5 copies them into the spec as one-l
     version from `apps/mobile/package.json`; secret names fixed in Task 21.
 14. **Tab icons per id** (SF Symbol / Material): `chats` `bubble.left.and.bubble.right` /
     `chat_bubble`; `agents` `person.2` / `smart_toy`; `inbox` `tray` / `inbox`; `me`
-    `person.crop.circle` / `account_circle`.
+    `person.crop.circle` / `account_circle`. **Superseded 2026-11-21:** SF Symbols only (Android
+    draws no bar): `chats` `bubble.left.and.bubble.right`, `inbox` `tray`, `agents` `person.2`,
+    `schedules` `clock`; the strip's menu button `line.3.horizontal`.
 15. **Touch prefetch** (spec §7.3): today only Next's link prefetch exists on the client. apps/web
     adds `warmRoute`, which runs the route table's queries, on `pointerdown` and when a
     conversation row scrolls into view.
+
+Added 2026-11-21 (the spec amendment's designer's calls, restated for the tasks):
+
+16. **Touch scope** is the media query `TOUCH_QUERY` (Values), the design's existing touch
+    definition. `tokens.json` gains a `touch` block of overrides that `gen:tokens` emits inside
+    that query; no `data-touch` attribute, no script. `useTouch()` reads it after hydration only
+    where a tree differs (the gate).
+17. **One compact shell for every pointer.** `BottomNav`, `TopBar` and `MePanel` are deleted, not
+    kept for a fine pointer; a narrow desktop window gets the chat-first shell at desktop sizes.
+18. **The drawer's 「技能、连接器、设备…」 is a second drawer level**, not a route.
+19. **Back with no history** goes to the last linked segment of the page's path, else `/`.
+20. **The gate** renders the notice and the page on the server and lets the touch query show one;
+    after hydration it mounts only one. Routes are flagged `desktopOnly` in the route table; a web
+    test pins the prefixes. Presentation only: the kernel decides access.
+21. **`nav@1` presence is the strip**: the shell offers it only while the window has a strip and
+    removes it (with `change`) when the strip goes. `menu` is non-null exactly while the web's
+    class is compact. The strip host is chosen by `StripDetector` (reserved region, else a
+    trailing-only side safe area), never by the device model.
+22. **Android has no `nav@1`** and no native navigation; foldables follow the no-strip rule.
+23. **`profiles@1.show()`** opens the native profile switcher from the web's account sheet (the
+    long-pressed 我 tab is gone); it returns nothing to the page and is not offered when the app is
+    locked to one deployment.
+24. **No voice button** in the floating composer until a voice input design exists (layout spec
+    §15 Q3); the composer takes an optional `voice` slot that nothing fills yet.
 
 ## Review Focus
 
@@ -186,7 +228,25 @@ Each stays inside the spec's intent. Task 1.5 copies them into the spec as one-l
    and a runtime change re-applies without deleting other profiles' stores. Task 18.
 5. **Opening the Duo or turning the phone while the native bar shows,** or the keyboard opening.
    Expected: never two tab bars; `insets.bottom` returns to 0 when the bar hides; a back swipe
-   animates once. Tasks 4, 7 and 19.
+   animates once. Tasks 4, 7 and 19. **Superseded 2026-11-21** by item 7 (no bottom bar exists;
+   insets stay 0).
+6. **The desktop stays as it was** (2026-11-21). Cases: `tokens.css` outside the touch block, the
+   1440 baselines, a tablet with a mouse as its primary pointer, a narrow desktop window. Expected:
+   unchanged declarations and baselines; desktop sizes with a fine pointer. Tasks 24–27.
+7. **Never two navigations** (2026-11-21). Cases: the strip appearing or going (fold, rotate, a
+   scene resize), the first paint with the strip, a guest (no 定时任务), a class change while the
+   drawer is open, `onMenu` twice. Expected: the web's section entries and menu button hidden
+   exactly while `nav@1` exists (on `<html>` and the shell element, both ways); never a native bar
+   on an ordinary phone, an iPad or Android; one tab bar in the hierarchy. Tasks 30, 31.
+8. **The management gate** (2026-11-21). Cases: a management URL opened on touch with and without
+   JavaScript, a member and an org admin, the command palette, `/account/*`. Expected: only the
+   notice shows on touch, the page's subtree is never mounted after hydration and its queries
+   never run; no management entry is reachable from touch navigation; personal settings are not
+   gated. Task 29.
+9. **`profiles@1` leaks nothing** (2026-11-21). Cases: a page calling `show()` without a
+   gesture, twice at once, in a locked build. Expected: `no_activation`, `busy`, absent; the
+   promise resolves `undefined` whatever is chosen, and no profile name or origin reaches the
+   page. Task 32.
 
 ---
 
@@ -195,7 +255,9 @@ Each stays inside the spec's intent. Task 1.5 copies them into the spec as one-l
 | Needs | From | Used by |
 |---|---|---|
 | Spike rulings (Capacitor or plain native, tab host, insets.right, Android profiles) | Tasks 1.1–1.5 | 11, 13, 14, 16, 19 |
-| `@capybara-hq/plugin-sdk` release with Task 2's types (the core Version Packages PR) | Task 2 | Clients 13, 16, 19, 20 (bump the exact version) |
+| `@capybara-hq/plugin-sdk` release with Task 2's types (the core Version Packages PR) | Task 2 | Clients 13, 16, 20 (bump the exact version; 19 superseded) |
+| `@capybara-hq/plugin-sdk` release with Task 23's `nav@1` / `profiles@1` (2026-11-21) | Task 23 | Clients 31, 32 |
+| A dev deployment running Task 30's strip-aware web (2026-11-21) | Task 30 | Task 31's manual Duo check |
 | Kernel accepting `client: "mobile"`, in a released kernel | Task 3 | Task 17 (its e2e against a dev kernel) |
 | `packages/shell` lifts | Task 10 | 13–18 |
 
@@ -206,6 +268,15 @@ Each stays inside the spec's intent. Task 1.5 copies them into the spec as one-l
 - `brand.ts`: the push plan adds its own optional `push` field. This plan adds none.
 - The runtime's `DeepLinkRouter`: push taps that carry a deployment origin route through it to a
   profile.
+
+Checked against the 2026-11-21 amendment: none of the four seams moves. Task 31 adds
+`registry.refresh(profileId)` (re-evaluates `available` and pushes the descriptors with `change`);
+it is additive and `register(key, impl, { available })` keeps its signature. Two things the push
+plan relies on shift around it: the `nav@1` types now arrive with Task 23, not Task 2, so its C1 /
+C9 rebase against Task 23 for `shell-capabilities.ts`, `lib/shell.ts` and the key-count test
+(whichever lands second); and the notification settings of its C9 are reached on touch through
+the drawer's account sheet (个人设置) instead of the retired Me page, with no change to its routes.
+Push taps to `/inbox` land on a pushed page whose back goes to `/` when there is no history.
 
 ## Wave plan
 
@@ -239,10 +310,51 @@ Owners of shared files, one task per wave:
 | 16 Loading, navigation, splash, appearance, errors | clients | 1.1, 13, 14, Task 2 release | normal | 5 | batched |
 | 17 Sign-in and the in-WebView block | clients | 3, 10, 13, 14, 16 | **high** | 6 | alone, most capable |
 | 18 Managed configuration | clients | 12, 14, 15 | **high** | 6 | alone |
-| 19 `nav@1` native tab bar | clients | 1.1, 1.4, 13, 16 | normal | 6 | batched |
+| 19 `nav@1` native tab bar (**superseded 2026-11-21 by 31**) | clients | 1.1, 1.4, 13, 16 | normal | 6 | batched |
 | 20 `haptics@1`, `share@1`, `menu@1`, `openExternal@1` | clients | 13 | normal | 6 | batched |
 | 21 Release workflow | clients | 12 | normal (secrets) | 7 | batched |
 | 22 Fork guide and docs | clients | 12, 17, 21 | normal | 7 | batched |
+
+### Remaining work, amended 2026-11-21
+
+Done when the amendment landed: Tasks 1.1–1.5, 2 (PR #477, `nav@1` withdrawn from it), 3, 4, 4b,
+5, 6, 7, 8 (core PR C `feat/mobile-native-feel`, unpushed), 10–14 (clients). Task 19 is
+superseded by Task 31 and never runs.
+
+**Before PR C is pushed** (coordinator): drop the web adapter's `useNavCapability` /
+`useNativeNavHandle` and AppFrame's `nativeNav` line from Task 5's commit, because they import
+the withdrawn `NavCapabilityV1`; design's own `NativeNavHandle` (structural, no SDK import) stays
+inert until Task 30 replaces it. The touch tasks then go on a new core PR F
+`feat/mobile-touch`, branched from main after PR C merges.
+
+Owners of shared files, one task per wave:
+- Core: `app-shell.tsx` (27 → 29 → 30), `AppFrame.tsx`, `nav.tsx` and apps/web messages
+  (28 → 29 → 30), `shell.css` (27 → 30 → 9), `tokens.json` and the generated token files (24
+  only), `lib/shell.ts` (23 mirror → 30), `docs/design/spec.md` (24 → 25 / 26 in disjoint
+  sections, merged additively → 27 → 28 → 29), `packages/design/test/touch.test.ts` (27 → 28).
+- Clients: the runtime entry that registers capabilities (31 and 32 add one line each; the
+  coordinator merges them), `registry.ts` (31 only).
+
+| Task | Repo | Depends on | Risk | Wave | Review |
+|---|---|---|---|---|---|
+| 23 SDK `nav@1` (strip) and `profiles@1` | core | 2 merged | normal | T1 | batched |
+| 24 Touch tokens and font roles | core | — | normal | T1 | batched |
+| 15 Address page and discovery | clients | 10, 12, 14 | normal | T1 | batched |
+| 16 Loading, navigation, splash, appearance, errors (amended) | clients | 1.1, 13, 14, Task 2 release | normal | T1 | batched |
+| 25 Touch components: floating button, drawer, rows, sheet | core | 24 | normal | T2 | batched |
+| 26 Touch components: conversation | core | 24 | normal | T2 | batched |
+| 17 Sign-in and the in-WebView block | clients | 3, 10, 13, 14, 16 | **high** | T2 | alone, most capable |
+| 18 Managed configuration | clients | 12, 14, 15 | **high** | T2 | alone |
+| 20 `haptics@1`, `share@1`, `menu@1`, `openExternal@1` | clients | 13 | normal | T2 | batched |
+| 27 Chat-first compact shell (design) | core | 25 | normal | T3 | batched |
+| 31 Native strip and menu button (replaces 19) | clients | 1.1, 1.4, 13, 16, Task 23 release | normal | T3 | batched |
+| 32 `profiles@1` | clients | 13, 14, 20, Task 23 release | normal (privacy) | T3 | batched, with 31 |
+| 21 Release workflow | clients | 12 | normal (secrets) | T3 | batched |
+| 28 Chat-first wiring in apps/web, `/me` retired | core | 27 | normal | T4 | batched |
+| 22 Fork guide and docs | clients | 12, 17, 21 | normal | T4 | batched |
+| 29 「请在电脑上管理」 and the touch route gate | core | 27, 28 | normal | T5 | batched |
+| 30 `nav@1` strip rework of the native handles, `profiles@1` in the web | core | 23, 27, 28, 29 | normal | T6 | batched |
+| 9 Duo edge to edge on the web (amended) | core | 1.4, 7, 27, 30 | normal | T7 | batched |
 
 ---
 
@@ -370,6 +482,10 @@ layout spec §15 (answers to Q1 and Q2).
 
 ### Task 2: SDK capability types and registry
 
+> **Superseded in part 2026-11-21.** The `nav@1` types below (`NavTabId`, `NavItemV1`,
+> `NavStateV1` with `visible`, `NavCapabilityV1`) and the `nav` key were withdrawn from PR #477
+> before release; Task 23 defines `nav@1` in the strip shape. Everything else stays.
+
 **Files:**
 - Modify: `packages/plugin-sdk/src/shell-capabilities.ts` (append), `src/shell-environment.ts`
   (`SHELL_CAPABILITIES`), `src/index.ts`; regenerate `api/plugin-sdk.api.md`.
@@ -467,6 +583,14 @@ layout spec §15 (answers to Q1 and Q2).
 
 ### Task 4: Design native handles (nav, menu, share, haptics, ready)
 
+> **Superseded in part 2026-11-21 (done; not rewritten).** Stays: `native.ts` menu / share /
+> haptics, `useHaptics`, `isPlainMenu`, the native menu path, the haptic sites, `ShellReady`, the
+> `DesignProvider` `native` prop, `ShellEnvironmentScript`'s `data-native-nav` from `nav@1`'s
+> presence (it now means "the strip shows") and the handle-identity guard of fix round 1.
+> Replaced by Task 30: the `NativeTabId` / `NativeNavHandle` shape, the `visible` computation, the
+> hide-on-unmount call and the `[data-native-nav] .cb-shell-bottomnav` rule. Retired by Tasks 27–28:
+> the bottom navigation the handle replaced.
+
 **Files:**
 - Create: `packages/design/src/native.ts` (types, `useNative()`, `useHaptics()`, `isPlainMenu`).
 - Modify:
@@ -538,6 +662,12 @@ layout spec §15 (answers to Q1 and Q2).
 
 ### Task 5: Web adapter and wiring
 
+> **Superseded in part 2026-11-21 (done; not rewritten).** Stays: `useHapticsCapability`,
+> `useShareCapability`, `useMenuCapability`, `useNativeHandlers`, `shareOrCopy`, `ShellReady` in
+> `DesignRoot`, `onNavigate = router.push`. `useNavCapability`, `useNativeNavHandle` and AppFrame's
+> `nativeNav` are dropped from PR C before it is pushed (they import the withdrawn types) and come
+> back in the strip shape in Task 30.
+
 **Files:**
 - Modify: `apps/web/src/lib/shell.ts` (accessors), `components/shell/AppFrame.tsx`
   (`nativeNav`, `onNavigate`), `components/design-root.tsx` (`native` handlers),
@@ -588,6 +718,10 @@ layout spec §15 (answers to Q1 and Q2).
 
 ### Task 6: Touch pass (spec §7.1)
 
+> **Note 2026-11-21 (done; not rewritten).** Task 27 removes `.cb-bottomnav a` and
+> `.cb-shell-topbar` from the audit lists of `touch.test.ts` when it deletes those parts, and adds
+> the floating button, the drawer rows and the account sheet rows.
+
 **Files:** Modify `packages/design/src/styles/{base,controls,shell,sidebar,table}.css`. Test:
 `packages/design/test/touch.test.ts` (new, on `parseCss`), plus a jsdom case in `shell.test.tsx`.
 
@@ -611,6 +745,10 @@ layout spec §15 (answers to Q1 and Q2).
 - [ ] **Step 5:** Changeset `@capybara-hq/web: patch`. Commit `feat(design): touch behaviour pass`.
 
 ### Task 7: Transitions (spec §7.2, §4.4)
+
+> **Note 2026-11-21 (done; not rewritten).** "Root → root never slides" was keyed on the bottom
+> navigation's tab roots. Task 27 re-keys it on chat surfaces (`/`, `/chat/<id>`); Task 30 keeps
+> the "a native selection never slides" case with the strip's `onSelect`.
 
 **Files:**
 - Modify: `packages/design/src/shell/app-shell.tsx` (slide effect), `src/shell/view-transition.ts`,
@@ -649,6 +787,9 @@ layout spec §15 (answers to Q1 and Q2).
 
 ### Task 8: Perceived speed (spec §7.3)
 
+> **Note 2026-11-21 (done; not rewritten).** Task 28 drops `/me` from the skeleton route list when
+> it deletes the page and adds `/`.
+
 **Files:**
 - Create: `apps/web/src/lib/query/warm.ts`.
 - Modify: `components/design-root.tsx` (the `link` component calls `warmRoute` on `pointerdown`),
@@ -681,32 +822,473 @@ lacks.
 - [ ] **Step 5:** Changeset `@capybara-hq/web: patch`. Commit `feat(web): warm routes on touch and
   check compact skeletons`.
 
-### Task 9: Duo edge to edge on the web (spec §8)
+### Task 9: Duo edge to edge on the web (spec §8) — amended 2026-11-21
+
+> **Amended 2026-11-21** (not started when the amendment landed): the full-bleed parts are now the
+> chat-first shell's (the floating row, the floating composer, the ActionRow, the page ground);
+> the top bar and the bottom navigation it listed are retired, and the `[data-native-nav]` bottom
+> padding case is gone (no native bottom bar). Runs after Tasks 27 and 30.
 
 Depends on spike 1.4 only for the record. The CSS is the same either way, because
 `--cb-inset-right` is `max(env(safe-area-inset-right), var(--cb-shell-inset-right, 0px))`.
 
-**Files:** Modify `packages/design/src/styles/{shell,templates,conversation-page}.css`. Test:
+**Files:** Modify `packages/design/src/styles/{shell,touch,templates,conversation-page}.css`. Test:
 `packages/design/test/duo-edge.test.ts` (new), `apps/web/visual/duo.spec.ts` (new; baselines via
 `visual-update`).
 
 - [ ] **Step 1: Failing tests.**
   - `duo-edge.test.ts`: the full-bleed grounds have no `margin-right` / `right` offset by an
-    inset: the page body, `.cb-shell-topbar`, `.cb-action-row`, the composer dock and
-    `.cb-bottomnav`.
+    inset: the page body, `.cb-action-row`, the floating composer's dock and the drawer's scrim.
   - Their inner content declares `padding-inline-end` (or `padding-right`) containing
-    `var(--cb-inset-right)`.
-  - Under `[data-native-nav]` the shell's bottom padding still uses `--cb-inset-bottom` (the
-    native bar's height).
-- [ ] **Step 2:** Add `duo.spec.ts`. At 382 × 800 with
-  `document.documentElement.style.setProperty("--cb-shell-inset-right","44px")`, take screenshots
-  `duo-outer-list` (`/conversations`) and `duo-outer-chat` (`/chat/<fixture>`). The ground runs to
-  the right edge; text and controls end 44 px before it.
+    `var(--cb-inset-right)`; the floating row's trailing control is placed with `right` (or
+    `inset-inline-end`) containing `var(--cb-inset-right)`.
+  - No rule pads the shell's bottom by a native bar: under `[data-native-nav]` the bottom padding
+    is `--cb-inset-bottom` alone (0 from the mobile shell).
+- [ ] **Step 2:** Add `duo.spec.ts`. At 382 × 800 with a coarse pointer and
+  `document.documentElement.style.setProperty("--cb-shell-inset-right","84px")` (the spike's strip
+  width), take screenshots `duo-outer-home` (`/`) and `duo-outer-chat` (`/chat/<fixture>`), once
+  plain and once with `data-native-nav` on `<html>`. The ground runs to the right edge; text and
+  controls end 84 px before it; with `data-native-nav` the web's menu button is absent.
 - [ ] **Step 3: Run** `pnpm exec vitest run --project design packages/design/test/duo-edge.test.ts`
   — expect FAIL. Then implement, and run again — expect PASS.
-- [ ] **Step 4:** Dispatch `visual-update` on the branch; review the two new baselines.
+- [ ] **Step 4:** Dispatch `visual-update` on the branch; review the four new baselines.
 - [ ] **Step 5:** Changeset `@capybara-hq/web: patch`. Commit `feat(design): edge to edge under the
   Duo strip`.
+
+## Phase 2b: touch and chat-first (core, added 2026-11-21)
+
+Spec: layout spec §4.1–§4.6, §7, §8, §11 and mobile app spec §5.2, §6.1 as amended on
+2026-11-21; the boards "Capybara 触屏版" (首页, 会话中, 抽屉, 收件箱, 对话设置, 浅色首页, 请在电脑上管理,
+iPhone Duo 外屏 / 内屏) are the visual reference the reference blocks are drawn from. Every design
+change goes through the design spec's change process (state lists, size tables, reference
+blocks, `/dev/ui` catalog). Desktop output must not change: each design task re-runs the 1440
+baselines and expects no diff.
+
+### Task 23: SDK `nav@1` (strip shape) and `profiles@1`
+
+Depends on PR #477 (Task 2) on main.
+
+**Files:**
+- Modify: `packages/plugin-sdk/src/shell-capabilities.ts` (append), `src/shell-environment.ts`
+  (`SHELL_CAPABILITIES` rows `nav@1`, `profiles@1`, owner: mobile app spec §5.2),
+  `src/index.ts`; regenerate `api/plugin-sdk.api.md`.
+- Modify: `apps/web/src/lib/shell.ts` (mirror only, before `export const useDeviceCapability`).
+- Modify: `tools/checks/src/terms.ts` if the terms guard needs the new `*CapabilityV1` names
+  (as `fee76914f` did for Task 2).
+- Create: `.changeset/sdk-nav-strip.md` (`"@capybara-hq/plugin-sdk": minor`).
+- Test: `packages/plugin-sdk/test/shell-capabilities.test.ts`, `shell-environment.test.ts`.
+
+**Interfaces:** Produces (exact; the push plan appends `push@1` after it):
+```ts
+// SHELL_CAPABILITY_KEYS gains: nav: "nav@1", profiles: "profiles@1"
+export type NavSectionId = "chats" | "inbox" | "agents" | "schedules";
+export const NAV_SECTION_ORDER: readonly NavSectionId[] = ["chats", "inbox", "agents", "schedules"];
+export interface NavBadgeV1 { count?: number; countMore?: boolean }
+export interface NavItemV1 extends NavBadgeV1 { id: NavSectionId; label: string }
+export interface NavMenuV1 extends NavBadgeV1 { label: string }
+export interface NavStateV1 {
+  /** The sections the person sees, in NAV_SECTION_ORDER (a guest has no `schedules`). */
+  items: NavItemV1[];
+  current: NavSectionId | null;
+  /** The strip's menu button, or null for none (non-null while the web's class is compact). */
+  menu: NavMenuV1 | null;
+}
+/** Offered only while the window has a strip (mobile app spec §6.1): presence is visibility. */
+export interface NavCapabilityV1 {
+  set(state: NavStateV1): Promise<void>;
+  onSelect(listener: (id: NavSectionId) => void): () => void;
+  onMenu(listener: () => void): () => void;
+}
+export interface ProfilesCapabilityV1 {
+  /** Opens the native profile switcher; resolves when it closes, with nothing. */
+  show(): Promise<void>;
+}
+```
+`MOBILE_SHELL_LIMITS` is unchanged: `navLabel` (32) bounds the menu label too, `navCount` (9999)
+its count.
+
+- [ ] **Step 1: Failing tests.**
+  - `SHELL_CAPABILITY_KEYS` toEqual main's keys plus `nav@1` and `profiles@1`.
+  - Both new keys appear in `SHELL_CAPABILITIES`, owners naming the mobile app spec.
+  - `expectTypeOf<NavSectionId>().toEqualTypeOf<"chats" | "inbox" | "agents" | "schedules">()`.
+  - `expectTypeOf<keyof NavStateV1>().toEqualTypeOf<"items" | "current" | "menu">()` (no
+    `visible`).
+  - `expectTypeOf<ReturnType<NavCapabilityV1["onMenu"]>>().toEqualTypeOf<() => void>()`.
+  - `expectTypeOf<ReturnType<ProfilesCapabilityV1["show"]>>().toEqualTypeOf<Promise<void>>()`.
+  - `NAV_SECTION_ORDER` toEqual `["chats", "inbox", "agents", "schedules"]`.
+- [ ] **Step 2: Run** `pnpm exec vitest run packages/plugin-sdk/test/shell-capabilities.test.ts packages/plugin-sdk/test/shell-environment.test.ts`
+  — expect FAIL.
+- [ ] **Step 3: Implement**, and copy the block into the `lib/shell.ts` mirror.
+- [ ] **Step 4: Run** the tests and `apps/web/test/shell-types-mirror.test.ts` — expect PASS. Then
+  `pnpm gen:sdk-api && pnpm check:sdk-api && pnpm check:sdk-api-changeset && pnpm check && pnpm typecheck`.
+- [ ] **Step 5: Commit** `feat(sdk): nav@1 strip sections and profiles@1`. After merge, the
+  Version Packages PR publishes the SDK that Tasks 31 and 32 pin.
+
+### Task 24: Touch tokens and font roles
+
+**Files:**
+- Modify: `docs/design/tokens.json` (a `touch` block and the new tokens below),
+  `tools/checks/src/cli/gen-tokens.ts` and the tokens generator it calls (emit the block inside
+  `@media <TOUCH_QUERY>` after the scheme blocks), the `check:tokens` rules (override names must
+  exist; touch type sizes ≥ 13; touch contrast pairs).
+- Generated: `packages/design/src/styles/tokens.css`, `packages/design/src/tokens.ts`.
+- Create: `packages/design/src/shell/touch.ts` (`TOUCH_QUERY`, `useTouch()`); `isTouchPointer` in
+  `shell/pointer.ts` reads the same constants.
+- Modify: the design CSS that draws code, commands, paths, versions and times uses
+  `var(--cb-font-code)`: `base.css` (`code`, `pre`, `kbd`, `samp`), the `DateTime`, version label,
+  `KeycapCommand`, `CopyField`, tool row command, diff block and path cells (the audit list lives in
+  the test, one selector each).
+- Modify: `docs/design/spec.md` §2.2 (a touch column for the type table; the font roles: the UI
+  font on touch, `font-code`), §2.5 (a touch column for the size scales, the radius steps), §2.6
+  (icon sizes on touch), §4.3 (hit targets 44 on touch).
+- Test: `packages/design/test/tokens.test.ts`, `spec-tables.test.ts`,
+  `packages/design/test/touch-tokens.test.ts` (new), the tokens check's tests with red fixtures
+  (`tools/checks/fixtures/tokens/…`: an override of an unknown token, a touch type size of 12).
+
+**Interfaces:** Produces:
+- New tokens, every scope: `font-code` (the Sarasa Mono SC stack), `radius-pill` (999),
+  `float-ground` (dark `rgba(28,28,26,0.85)`, light `rgba(255,255,255,0.85)`), `float-line` (dark
+  `rgba(255,255,255,0.08)`, light `rgba(26,26,24,0.08)`), `shadow-float-touch` (dark
+  `0 6px 20px rgba(0,0,0,.35)`, light `0 6px 20px rgba(26,26,24,.10)`), `layout.drawer` (320),
+  and the sizes `touch-hit` 44, `touch-float` 48, `touch-primary` 48, `touch-prominent` 52,
+  `touch-composer` 60, `touch-row` 52, `touch-row-roomy` 56, `touch-icon` 22,
+  `touch-icon-float` 24.
+- Overrides under `TOUCH_QUERY`: `font` and `font-prose` → `system-ui, -apple-system,
+  'PingFang SC', 'Noto Sans SC', sans-serif`; type size / line: `body` 17/24, `small` 15/20,
+  `micro` 13/18, `h2` 22/28, `h1` 28/34, `prose` 17/26, `prose-small` 15/22, `metric` 22/28;
+  `control-dense` and `control-default` 44, `control-prominent` 52; `row-dense` and
+  `row-default` 44, `row-roomy` 56; `radius-sm` 12, `radius-md` 20, `radius-bubble` 20.
+- Contrast pairs added: `ink` and `muted` on `float-ground` (composited over `bg`), both schemes.
+- `export const TOUCH_QUERY = "(pointer: coarse), (any-pointer: coarse) and (not (any-pointer: fine))";`
+  `export function useTouch(): boolean | null;` (`null` on the server and during hydration).
+
+- [ ] **Step 1: Failing tests.**
+  - `touch-tokens.test.ts` (on `parseCss` of `tokens.css`): exactly one `@media` block whose
+    query equals `TOUCH_QUERY`, holding the overrides above and nothing else; every declaration
+    outside it that existed before the task is unchanged (a snapshot of the pre-task `:root`
+    declarations, checked in with the test); the new tokens exist in both schemes.
+  - The font audit: each listed selector declares `font-family: var(--cb-font-code)`; no rule
+    outside that list and `fonts.css` names Sarasa directly.
+  - `useTouch()` is `null` before hydration and follows a fake `matchMedia` after;
+    `isTouchPointer()` agrees with it for the four pointer combinations.
+  - `tokens.test.ts` / `spec-tables.test.ts` see the new tokens and the touch columns.
+  - The tokens check: the two red fixtures fail with their rule; the real file passes.
+  - `design-breakpoint` accepts the touch query and still rejects a stray `max-width: 500px`.
+- [ ] **Step 2: Run** `pnpm exec vitest run --project design packages/design/test/touch-tokens.test.ts packages/design/test/tokens.test.ts packages/design/test/spec-tables.test.ts`
+  and the tokens check's tests — expect FAIL.
+- [ ] **Step 3: Implement**, `pnpm gen:tokens`.
+- [ ] **Step 4: Run** the tests, `pnpm check:tokens`, `pnpm check:web-ui`, `pnpm typecheck`.
+  Dispatch `visual-update`: compact baselines move, the 1440 baselines must not.
+- [ ] **Step 5:** Changeset `@capybara-hq/web: minor`. Commit `feat(design): touch tokens and the
+  code font role`.
+
+### Task 25: Touch components: floating button, drawer, rows, bottom sheet
+
+**Files:**
+- Create: `packages/design/src/shell/floating-button.tsx` (`FloatingIconButton`),
+  `src/overlays/drawer.tsx` (`Drawer`, `DrawerLevel`), `src/display/nav-row.tsx` (`NavRow`),
+  `src/styles/touch.css` (floating surfaces; imported into `layer(design)` in `styles/index.css`).
+- Modify: `src/overlays/bottom-sheet.tsx` and `styles/overlays.css` (the touch form: radius
+  `radius-md` at the top, the handle, rows `touch-row`), `styles/display.css` (ObjectRow and
+  ItemList rows on touch: `touch-row` / `touch-row-roomy`, no `line-soft` dividers, no `line-card`
+  box around the list), the index exports, `/dev/ui` catalog entries.
+- Modify: `docs/design/spec.md` §6.7 (sheet touch form), §6.17 / §6.33 (touch rows), new §6.50
+  FloatingIconButton, §6.51 Drawer, §6.52 NavRow (state lists, size tables, reference blocks from
+  the 抽屉 and 收件箱 boards).
+- Test: `packages/design/test/floating-button.test.tsx`, `drawer.test.tsx`, `nav-row.test.tsx`,
+  `touch-rows.test.ts` (new), `bottom-sheet.test.tsx` (extend); `findNestedBoxes` stays clean.
+
+**Interfaces:** Produces:
+```ts
+export interface NavBadge { count: number; more?: boolean }
+export function badgeText(b: NavBadge | undefined): string | null; // 0 → null, 120 → "99+", 3+more → "3+"
+export function FloatingIconButton(props: { icon: IconName; label: string; badge?: NavBadge;
+  onClick?(): void; href?: string; "data-cap-part"?: string }): JSX.Element;
+export function Drawer(props: { open: boolean; onOpenChange(open: boolean): void; label: string;
+  children: ReactNode }): JSX.Element;
+export function DrawerLevel(props: { title: string; backLabel: string; onBack(): void;
+  children: ReactNode }): JSX.Element;
+export function NavRow(props: { icon?: IconName; label: string; href?: string; onSelect?(): void;
+  badge?: NavBadge; current?: boolean; trailing?: "chevron"; "data-nav-section"?: string }): JSX.Element;
+```
+
+- [ ] **Step 1: Failing tests.**
+  - **FloatingIconButton**: `.cb-float-btn` sizes from `--cb-touch-float` under the touch query
+    and from `--cb-control-prominent` otherwise; its ground, hairline and shadow are the float
+    tokens; the badge renders `badgeText`; the accessible name is `label`; an `href` renders a
+    link through the design `link` component.
+  - **Drawer**: `role="dialog"`, `aria-modal`, `aria-label`; opening moves focus to the first
+    row and Escape, the scrim and a pick close it with focus back on the trigger; a drag toward
+    the start edge past 40 % (the `overlays/drag.ts` helper, fake pointer events) closes it, a
+    short drag springs back; under reduced motion it snaps; no pointer listener exists on the
+    screen edge while closed; a `DrawerLevel` replaces the list and its back row returns.
+  - **Touch rows** (`parseCss`): under the touch query ObjectRow / ItemList rows have
+    `min-height: var(--cb-touch-row)` (two-line `--cb-touch-row-roomy`) and no `border-bottom`,
+    their list container no `box-shadow` hairline; outside it the desktop rules are unchanged.
+  - **Bottom sheet**: under the touch query the sheet's top corners use `--cb-radius-md` and its
+    option rows `--cb-touch-row`; the drag behaviour is unchanged.
+- [ ] **Step 2: Run** `pnpm exec vitest run --project design packages/design/test/floating-button.test.tsx packages/design/test/drawer.test.tsx packages/design/test/nav-row.test.tsx packages/design/test/touch-rows.test.ts packages/design/test/bottom-sheet.test.tsx`
+  — expect FAIL.
+- [ ] **Step 3: Implement** in design only.
+- [ ] **Step 4: Run** the tests, the design suite, `pnpm check:web-ui`. Dispatch `visual-update`.
+- [ ] **Step 5:** Changeset `@capybara-hq/web: minor`. Commit `feat(design): floating button,
+  drawer and touch rows`.
+
+### Task 26: Touch components: the conversation
+
+**Files:**
+- Modify: `packages/design/src/conversation/composer.tsx` (the touch pill: attach, input, an
+  optional `voice` slot, send as a 48 accent circle, stop while running),
+  `composer-options.tsx` (the settings chip "model · thinking · device" above the pill and the
+  settings sheet: model, thinking 低 / 中 / 高 as a `Segmented`, where to run, permissions, the note
+  「设置只对这次会话生效。」), `bubble.tsx` (user bubble at the end edge), `hitl.tsx` (approval card
+  buttons side by side at `touch-primary`, 拒绝 then 批准, 批准 the accent; the command in
+  `font-code`), `tool-group.tsx` (the one-line summary on touch).
+- Modify: `styles/conversation.css`, `styles/conversation-page.css` (the floating composer above
+  `--cb-inset-bottom` and `--cb-keyboard-inset`; the thread's bottom padding clears it).
+- Modify: `docs/design/spec.md` §6.16.2, §6.16.6, §6.16.8, §6.16.11 (touch forms; reference blocks
+  from the 首页, 会话中 and 对话设置 boards); apps/web messages only if a new string is needed (none
+  expected: the sheet reuses the composer options' strings).
+- Test: `packages/design/test/touch-conversation.test.tsx` (new), `composer-menu.test.tsx`
+  (extend).
+
+- [ ] **Step 1: Failing tests.**
+  - Under the touch query: the composer pill `min-height: var(--cb-touch-composer)` with
+    `border-radius: var(--cb-radius-pill)`; send `var(--cb-touch-float)` round on `accent`;
+    approval buttons `min-height: var(--cb-touch-primary)`; the user bubble sits at the end
+    edge (`margin-inline-start: auto` or `justify-self: end`).
+  - Without a `voice` prop no voice button renders; with one it renders between the input and
+    send with an accessible name.
+  - The chip opens the settings sheet; picking 高 calls `onChange` once and plays `selection`; the
+    sheet shows the note.
+  - The approval card renders 拒绝 before 批准, 批准 primary, and its command in a
+    `font-code` element.
+  - Outside the touch query the composer and the thread match the existing snapshots.
+- [ ] **Step 2: Run** `pnpm exec vitest run --project design packages/design/test/touch-conversation.test.tsx packages/design/test/composer-menu.test.tsx`
+  — expect FAIL.
+- [ ] **Step 3: Implement** in design only.
+- [ ] **Step 4: Run** the tests, the design suite, `pnpm check:web-ui`. Dispatch `visual-update`.
+- [ ] **Step 5:** Changeset `@capybara-hq/web: minor`. Commit `feat(design): touch conversation
+  layout`.
+
+### Task 27: Chat-first compact shell (design)
+
+**Files:**
+- Create: `packages/design/src/shell/nav-drawer.tsx` (`NavDrawer`: search, sections, the
+  「技能、连接器、设备…」 level, the recent list reusing `sidebar-conversations.tsx`, the foot),
+  `src/shell/account-sheet.tsx` (`AccountSheet`), `src/shell/floating-bar.tsx` (the leading
+  floating control: menu or back).
+- Modify: `src/shell/app-shell.tsx` (compact frame: no top bar row, no bottom-nav slot; the
+  leading floating control; `drawer` and `chatSurface` props; back without history → the last
+  linked path segment, else `/`), `src/shell/view-transition.ts` and the slide effect (chat
+  surface ↔ chat surface never slides; a push slides), `templates/conversation-page.tsx` and the
+  title bar (its compact form is the floating centre pill and trailing overflow),
+  `src/shell/page-header.tsx` (on compact the title sits below the floating row),
+  `styles/shell.css`, `styles/touch.css`.
+- The AppShell stops rendering `BottomNav` and `TopBar`; the modules `bottom-nav.tsx`,
+  `top-bar.tsx` and `me-panel.tsx` and their exports stay untouched in this task, because apps/web
+  still imports `BottomNavItem` and `MePanel` (Task 28 deletes them with their last users).
+- Modify: `packages/design/test/touch.test.ts` (Task 6's audit lists gain `.cb-float-btn`, the
+  drawer's rows and the account sheet's rows).
+- Modify: `docs/design/spec.md` §4.6 (rewritten: chat surfaces, pushed pages, floating controls,
+  the drawer), §4.7; new §6.53 NavDrawer, §6.54 AccountSheet, §6.55 FloatingBar; §5.4 / §6.16.1
+  compact title bar (Task 28 removes §6.45, §6.46 and §6.48).
+- Test: `packages/design/test/compact-shell.test.tsx` (new or reworked), `nav-drawer.test.tsx`,
+  `account-sheet.test.tsx`, `transitions.test.tsx` (re-keyed), `shell.test.tsx`.
+
+**Interfaces:** Produces:
+```ts
+export type DrawerSectionId = "inbox" | "agents" | "schedules";
+export interface DrawerNavData {
+  sections: { id: DrawerSectionId; label: string; href: string; icon: IconName; badge?: NavBadge }[];
+  more: { id: string; label: string; href: string; icon: IconName }[]; // 技能, 连接器, 设备, org pages
+  moreLabel: string;                       // 「技能、连接器、设备…」
+  recent: SidebarConversationsProps;       // the sidebar's conversation section
+  allConversations: { label: string; href: string };
+  newConversation: { label: string; href: string };
+  onSearch(): void;                        // opens the command palette
+  account: AccountSheetData;
+  menuBadge?: NavBadge;                    // the pending inbox count on the menu button
+}
+export interface AccountSheetData {
+  name: string; orgName: string | null; avatar?: AvatarProps;
+  orgSwitcher?: ReactNode; personalSettingsHref: string; theme: ReactNode; status: ReactNode;
+  installHint?: ReactNode; onSwitchProfile?(): void; onSignOut(): void;
+}
+// AppShellProps: + drawer?: DrawerNavData; + chatSurface?: boolean; − bottomNav
+```
+The leading control is the shell's; the centre and trailing floating controls belong to the
+templates (ConversationPage's title bar, the page head's actions).
+
+- [ ] **Step 1: Failing tests.**
+  - At compact on a chat surface: a menu button with the badge, no back, no `.cb-shell-bottomnav`,
+    no top bar element. On a pushed page: a back button and no menu button.
+  - Back with history pops; without history goes to the last linked path segment; with no
+    linked segment goes to `/`.
+  - The menu button opens the drawer: sections in order with the inbox badge (a guest's data
+    without `schedules` renders two), the more row opens its level with the `more` entries, the
+    recent list and 「全部会话」, the foot's account row and new conversation; a pick closes the
+    drawer and navigates.
+  - The account row opens `AccountSheet` with the org switcher, 个人设置, theme, status, sign
+    out; 「切换平台」 only with `onSwitchProfile`.
+  - Chat surface → chat surface sets no `data-nav`; chat surface → pushed sets `data-nav="push-*"`;
+    a `hasUAVisualTransition` pop still skips (Task 7).
+  - Medium and expanded render as before (the sidebar and rail tests stay green).
+  - `findNestedBoxes` finds nothing in the drawer or the account sheet.
+- [ ] **Step 2: Run** `pnpm exec vitest run --project design packages/design/test/compact-shell.test.tsx packages/design/test/nav-drawer.test.tsx packages/design/test/account-sheet.test.tsx packages/design/test/transitions.test.tsx packages/design/test/touch.test.ts`
+  — expect FAIL.
+- [ ] **Step 3: Implement.** apps/web still passes `bottomNav` until Task 28: keep the prop
+  accepted and ignored for this one task; Task 28 removes it.
+- [ ] **Step 4: Run** the tests, the design suite, `pnpm check:web-ui`, `pnpm typecheck`.
+  Dispatch `visual-update`.
+- [ ] **Step 5:** Changeset `@capybara-hq/web: minor`. Commit `feat(design): chat-first compact
+  shell`.
+
+### Task 28: Chat-first wiring in apps/web; `/me` retired
+
+**Files:**
+- Modify: `apps/web/src/components/shell/nav.tsx` (`useDrawerNav()` from the same `NAV` data:
+  sections inbox / agents / schedules by audience, `more` = skills / connectors / devices plus the
+  org's extension pages; the management items never enter it; `useNav`'s bottom-nav output
+  removed), `components/shell/AppFrame.tsx` (pass `drawer` and `chatSurface`, drop `bottomNav`),
+  `lib/chat-surface.ts` (new: `isChatSurface(pathname)`), `app/manifest.ts`
+  (`start_url: "/"`), `lib/query/routes.ts` (drop `/me`), `components/shell/path.ts`,
+  `apps/web/messages/{zh,en}.json` (drawer and account sheet strings; the `me.*` keys removed).
+- Delete: `app/(app)/me/`, `components/shell/me.tsx`, `apps/web/test/me-page.test.tsx`; in
+  design, `src/shell/bottom-nav.tsx`, `top-bar.tsx`, `me-panel.tsx`, their CSS, exports, `/dev/ui`
+  entries and tests (`bottom-nav.test.tsx`, `top-bar.test.tsx`, `me-panel.test.tsx`), and in
+  `packages/design/test/touch.test.ts` the audit entries `.cb-bottomnav a` and
+  `.cb-shell-topbar`.
+- Modify tests: `apps/web/test/compact-shell.test.tsx`, `compact-shell-catalog.test.tsx`,
+  `compact-skeletons.test.tsx` (drop `/me`, add `/`), `manifest.test.ts`, `nav.test.tsx`.
+- Remove the ignored `bottomNav` prop from design's `AppShellProps` (Task 27 Step 3).
+- Modify: `docs/design/spec.md`: remove §6.45 BottomNav, §6.46 TopBar and §6.48 MePanel (Task 27
+  wrote their replacements).
+
+- [ ] **Step 1: Failing tests.**
+  - `isChatSurface`: `/` and `/chat/c1` true; `/conversations`, `/inbox`, `/agents`,
+    `/chat` (redirect) false.
+  - `useDrawerNav` for a member: sections inbox (count from `inboxCountQuery`), agents,
+    schedules; `more` holds skills, connectors, devices and an `org.page`; nothing for plugins,
+    extensions, channels, evals or settings. A guest: no schedules, no skills.
+  - AppFrame at compact renders the menu button with the inbox badge and passes
+    `chatSurface` from the pathname.
+  - `/me` is not in the route table and renders the not-found page.
+  - The manifest's `start_url` is `/`.
+  - `check:i18n` passes with the `me.*` keys gone (no orphan, no missing key).
+- [ ] **Step 2: Run** `pnpm exec vitest run apps/web/test/compact-shell.test.tsx apps/web/test/compact-skeletons.test.tsx apps/web/test/manifest.test.ts apps/web/test/nav.test.tsx`
+  — expect FAIL.
+- [ ] **Step 3: Implement.**
+- [ ] **Step 4: Run** the tests, `pnpm check:web-ui`, `pnpm check:i18n`, `pnpm typecheck`.
+- [ ] **Step 5:** Changeset `@capybara-hq/web: minor`. Commit `feat(web): chat-first compact
+  navigation; retire the Me page`.
+
+### Task 29: The 「请在电脑上管理」 page and the touch route gate
+
+**Files:**
+- Create: `packages/design/src/templates/desktop-only.tsx` (`DesktopOnlyNotice`, a `StatusPage`
+  form: title, sentence, the URL in `font-code`, 复制链接, 回到对话 as the primary).
+- Modify: `src/shell/app-shell.tsx` (prop `desktopOnly`: renders the notice and the children on
+  the server; after hydration `useTouch() === true` mounts only the notice, `false` only the
+  children), `styles/templates.css` (the notice shown and the page hidden under `TOUCH_QUERY`, the
+  reverse otherwise), the sidebar, rail and command palette (an entry flagged `desktopOnly`
+  carries `data-desktop-only`, hidden under `TOUCH_QUERY`).
+- Modify: `apps/web/src/lib/query/routes.ts` (`desktopOnly: true` on every route under the
+  Values prefixes), `components/shell/AppFrame.tsx` (pass `desktopOnly` from `matchRoute`, the URL
+  from `location.href` after hydration and the pathname before, `onCopy` through the existing
+  copy helper and toast), `components/shell/nav.tsx` (the management items flagged),
+  `apps/web/messages/{zh,en}.json` (`desktopOnly.title` 「请在电脑上管理」 / "Manage this on a
+  computer", `desktopOnly.body` 「插件、扩展、渠道、组织设置和管理后台这类配置，只在电脑上提供。」 / "Plugins,
+  extensions, channels, organization settings and the admin console are managed on a computer.",
+  `desktopOnly.copy` 「复制链接」 / "Copy link", `desktopOnly.copied`, `desktopOnly.back` 「回到对话」 /
+  "Back to chat").
+- Modify: `docs/design/spec.md` (the notice in §5.10 / StatusPage forms, with its reference
+  block from the 请在电脑上管理 board).
+- Test: `packages/design/test/desktop-only.test.tsx` (new), `apps/web/test/desktop-only-routes.test.ts`
+  (new), `apps/web/test/compact-shell.test.tsx` (extend).
+
+- [ ] **Step 1: Failing tests.**
+  - Design: the server render holds the notice and the children; the CSS shows the notice only
+    under `TOUCH_QUERY` (`parseCss`); after hydration with a coarse `matchMedia` the children are
+    not in the DOM and a child's effect never ran; with a fine one the notice is not in the DOM;
+    复制链接 calls `onCopy`; 回到对话 links to `/`.
+  - Web: every route under the seven prefixes has `desktopOnly`; `/`, `/chat/c1`,
+    `/conversations`, `/inbox`, `/agents`, `/schedules`, `/skills`, `/connectors`, `/devices`,
+    `/p/x/y` and every `/account/*` route do not; the sidebar's 插件 / 扩展 / 渠道 / 评测与运行 /
+    组织设置 / 管理后台 entries and their palette commands carry `data-desktop-only`; the drawer has
+    none of them; on touch at `/settings/members` no request for the members query is made.
+- [ ] **Step 2: Run** `pnpm exec vitest run --project design packages/design/test/desktop-only.test.tsx`
+  and `pnpm exec vitest run apps/web/test/desktop-only-routes.test.ts apps/web/test/compact-shell.test.tsx`
+  — expect FAIL.
+- [ ] **Step 3: Implement.** Not access control: the kernel's answers are unchanged.
+- [ ] **Step 4: Run** the tests, `pnpm check:web-ui`, `pnpm check:i18n`, `pnpm typecheck`.
+  Dispatch `visual-update` (one compact baseline of the notice, dark and light).
+- [ ] **Step 5:** Changeset `@capybara-hq/web: minor`. Commit `feat(web,design): management pages
+  are desktop-only on touch`.
+
+### Task 30: `nav@1` strip rework of the native handles; `profiles@1` in the web
+
+Replaces the `nativeNav` parts of Tasks 4 and 5 (see their notes); everything else they built
+stays.
+
+**Files:**
+- Modify: `packages/design/src/native.ts` (`NativeSectionId`, the new `NativeNavHandle`; drop
+  `NativeTabId`), `src/shell/app-shell.tsx` (send `set` from the drawer data and the route; `menu`
+  non-null while the hydrated class is compact; `onSelect` → `selection` haptic and
+  `onNavigate(href, { transition: "none" })`; `onMenu` toggles the drawer; when the handle goes,
+  clear `data-native-nav` on the shell element and on `<html>`; no hide-on-unmount call), the
+  drawer, rail and sidebar (section entries carry `data-nav-section`; the account popover's
+  `more` group shows only under `[data-native-nav]`), `styles/shell.css` (remove
+  `[data-native-nav] .cb-shell-bottomnav`; add `[data-native-nav] [data-nav-section]` and
+  `[data-native-nav] .cb-shell-menu-btn` hidden; on medium and expanded also the sidebar's other
+  section entries, layout spec §4.3).
+- Modify: `apps/web/src/lib/shell.ts` (`useNavCapability`, `useNativeNavHandle` in the new shape,
+  `useProfilesCapability`, `useSwitchProfile()`), `components/shell/AppFrame.tsx` (`nativeNav`,
+  `onSwitchProfile`), `components/shell/nav.tsx` (the section items with their `NavSectionId`).
+- Test: `packages/design/test/native-nav.test.tsx` (rewritten for the new shape),
+  `apps/web/test/shell-adapter.test.tsx`, `apps/web/test/native-wiring.test.tsx`.
+
+**Interfaces:**
+- Consumes: Task 23's types (mirror); Task 27's `DrawerNavData`, `AccountSheetData`.
+- Produces:
+  ```ts
+  export type NativeSectionId = "chats" | "inbox" | "agents" | "schedules";
+  export interface NativeNavHandle {
+    set(state: { items: { id: NativeSectionId; label: string; count?: number; countMore?: boolean }[];
+                 current: NativeSectionId | null;
+                 menu: { label: string; count?: number; countMore?: boolean } | null }): void;
+    onSelect(listener: (id: NativeSectionId) => void): () => void;
+    onMenu(listener: () => void): () => void;
+  }
+  // apps/web lib/shell.ts
+  export const useProfilesCapability: () => ProfilesCapabilityV1 | undefined;
+  export function useSwitchProfile(): (() => void) | undefined; // calls show() inside the click
+  ```
+
+- [ ] **Step 1: Failing tests.**
+  - Design, a fake `nativeNav` at compact on `/`: the shell has `data-native-nav`; `set` once
+    with `chats`, `inbox` (count 3), `agents`, `schedules`, `current: "chats"`, `menu` with the
+    label and count 3; the web's menu button and the drawer's section rows are hidden by the CSS
+    (`parseCss`); a medium width sends `menu: null`; a guest's items omit `schedules`; `/inbox`
+    sends `current: "inbox"`, `/account/preferences` `current: null`; an unchanged rerender and a
+    new equivalent handle each render send nothing (Task 4's guard).
+  - `onSelect("agents")` → `haptics("selection")` and `onNavigate("/agents", { transition:
+    "none" })`, no `data-nav`; `onSelect` of the current section navigates to its root.
+  - `onMenu` opens the drawer, a second `onMenu` closes it.
+  - The handle going away (a `change` that removes `nav@1`) removes `data-native-nav` from the
+    shell element and `<html>` and shows the web's menu button and section rows again; unmount
+    unsubscribes both listeners and calls nothing else.
+  - Web: `useNativeNavHandle` is undefined without `nav@1`; a rejected `set` is swallowed;
+    AppFrame passes `nativeNav` only with `nav@1`; 「切换平台」 shows only with `profiles@1`, and
+    tapping it calls `show()` synchronously in the click handler.
+- [ ] **Step 2: Run** `pnpm exec vitest run --project design packages/design/test/native-nav.test.tsx`
+  and `pnpm exec vitest run apps/web/test/shell-adapter.test.tsx apps/web/test/native-wiring.test.tsx apps/web/test/shell-types-mirror.test.ts`
+  — expect FAIL.
+- [ ] **Step 3: Implement.** `nav.set` is the one capability call made from an effect (not
+  confirming, no activation; Task 5's rule).
+- [ ] **Step 4: Run** the tests, `pnpm check:web-ui` (incl. `web-shell-access`), `pnpm typecheck`.
+- [ ] **Step 5:** Changeset `@capybara-hq/web: minor`. Commit `feat(web,design): nav@1 strip
+  sections and the profile switcher`.
 
 ## Phase 3: the app shell (clients)
 
@@ -1026,6 +1608,8 @@ and tests `apps/mobile/test/runtime/{navigation,splash,chrome}.test.ts`.
     - `target=_blank` → `sheet`.
     - `javascript:`, `file:` and `data:` top level → `block`.
     - The two sign-in routes as navigations → `block` (Task 17 adds the request block).
+  - **Back (Android, amended 2026-11-21).** `decideBack({ canGoBack: true })` → `history`;
+    `false` → `background`; it reads no `nav@1` state.
   - **Splash.** `ready()` hides once; `loaded()` then 3000 ms on the injected scheduler hides;
     `failed()` hides at once; a later `ready()` does nothing.
   - **chrome@1.** `scheme: "dim"`, `background: "#12345678"` or `"red"` → `failed`. A valid call
@@ -1040,7 +1624,10 @@ and tests `apps/mobile/test/runtime/{navigation,splash,chrome}.test.ts`.
   - iOS: `allowsBackForwardNavigationGestures = true`.
   - Android: `OnBackPressedCallback` goes back in history while `canGoBack()` and the route is
     not a tab root (from the last `nav@1.set`: `visible` with a current id), else
-    `moveTaskToBack(true)`.
+    `moveTaskToBack(true)`. **Amended 2026-11-21:** there are no tab roots and Android has no
+    `nav@1`: back goes back in history while `canGoBack()`, else `moveTaskToBack(true)`, decided by
+    a pure `decideBack({ canGoBack }): "history" | "background"` in `navigation.ts`. Closing an
+    open drawer or sheet first is the web's (layout spec §15 Q4).
   - The native splash comes from `@capacitor/splash-screen` with `launchAutoHide: false`.
 - [ ] **Step 4: Run** the tests, `test:ios:ui` (a case: launch against the loopback test page that
   calls `capybaraShell.capabilities["chrome@1"].ready()` → the splash is gone, and the background
@@ -1144,6 +1731,9 @@ and tests `apps/mobile/test/runtime/{navigation,splash,chrome}.test.ts`.
 - [ ] **Step 5: Commit** `feat(mobile): managed presetUrl and lockToPreset`.
 
 ### Task 19: `nav@1` native tab bar
+
+> **Superseded 2026-11-21 by Task 31; not to be executed.** No native tab bar on ordinary phones
+> or Android; `nav@1` changed shape (Task 23). The text below is kept for the record.
 
 Depends on spikes 1.1 (host: shared WebView under `UITabBarController`, or the
 `UIViewReservedRegion` bar) and 1.4 (`insets.right` source).
@@ -1282,6 +1872,99 @@ link) and `README.md`.
 - [ ] **Step 4:** Changeset `@capybara-hq/mobile: minor`. Commit `docs(mobile): fork guide and
   store review notes`.
 
+### Task 31: Native strip navigation and menu button (iOS) — replaces Task 19
+
+Added 2026-11-21. Depends on spikes 1.1 (shared WebView under `UITabBarController`) and 1.4
+(the strip as `env(safe-area-inset-right)`), Tasks 13 and 16, and the SDK release with Task 23.
+iOS only: Android registers no `nav@1` (spec §6.1).
+
+**Files:** Create `apps/mobile/src/runtime/capabilities/nav.ts`,
+`ios/App/App/Shell/{StripHost,StripDetector}.swift`, `apps/mobile/test/runtime/nav.test.ts`,
+`ios/AppTests/StripDetectorTests.swift`, `ios/AppUITests/StripTests.swift`. Modify
+`apps/mobile/src/runtime/registry.ts` (`refresh`), the runtime entry (register `nav@1` on iOS
+with `available` reading the host's strip state), Task 16's host view (the profile WebView sits
+in `StripHost` while the window has a strip, else in Task 16's plain container; it moves between
+them on a change).
+
+**Interfaces:**
+- Consumes: `NavStateV1`, `NavSectionId`, `NAV_SECTION_ORDER`, `MOBILE_SHELL_LIMITS` (SDK);
+  `CapabilityRegistry`, `HostPort` (Task 13).
+- Produces:
+  - `validateNavState(input: unknown): NavStateV1 | null`.
+  - `badgeText(b: { count?: number; countMore?: boolean }): string | null`.
+  - `registry.refresh(profileId: string): void`: re-evaluates every `available` and, when the
+    descriptors changed, sends them with one `pushState` (the page's `change`). Additive; the
+    push seam `register(key, impl, { available })` is unchanged.
+  - Native → runtime events `stripChanged(visible: boolean)`, `sectionSelected(id)`,
+    `menuTapped()`.
+  - Swift `enum StripDetector { static func hasStrip(safeArea: UIEdgeInsets, reservedRegion: CGRect?) -> Bool }`:
+    true when iOS reports a reserved region, else when the trailing side inset is above 0 and the
+    leading one is 0. Never the model identifier.
+
+- [ ] **Step 1: Failing tests.**
+  - `validateNavState` rejects: an unknown id (`me`, `files`), a duplicate, items out of
+    `NAV_SECTION_ORDER`, five items, an empty or 33-character label, `count` -1 / 1.5 / 10000, a
+    `current` that is neither null nor an item's id, a missing `menu`, an empty menu label, an
+    unknown key (`visible`). It accepts four items, three (a guest) and `menu: null`.
+  - `badgeText`: 120 → `99+`; 3 with `countMore` → `3+`; 0 or absent → null.
+  - Availability: `stripChanged(true)` → `refresh` → the descriptors hold `nav@1` and the page
+    gets one `change`; `stripChanged(false)` → `nav@1` gone, its listeners dropped, one `change`;
+    a `set` while unavailable → `failed`.
+  - `sectionSelected("agents")` reaches the page's `onSelect` listeners, also for the current
+    section; `menuTapped` reaches `onMenu` listeners.
+  - Android: the runtime built for Android never registers `nav@1`.
+  - XCTest `StripDetector`: Duo outer portrait (right 84, left 0) → true; iPhone portrait (top 59,
+    bottom 34) → false; iPhone landscape (left 59, right 59) → false; a reserved region → true.
+  - XCUITest on the Duo simulator: the outer display shows the vertical tab bar in the strip with
+    four items and the menu button above them; tapping 收件箱 makes the loopback test page's
+    `onSelect` handler set the location to `/inbox`; the menu button fires the page's `onMenu`;
+    opening to the inner display keeps the strip (or, where the inner display reports none, the
+    page's `data-native-nav` goes away), with exactly one tab bar in the hierarchy; on an iPhone
+    17 simulator and an iPad simulator there is no tab bar and `nav@1` is absent.
+- [ ] **Step 2: Run** `pnpm exec vitest run apps/mobile/test/runtime/nav.test.ts`, `test:ios`,
+  `test:ios:ui` — expect FAIL.
+- [ ] **Step 3: Implement.**
+  - Icons per Decision 14 (amended); badges through `tabBarItem.badgeValue` from `badgeText`.
+  - The menu button sits at the top of the strip above the items: the tab bar's leading
+    accessory where iOS 27.1 offers one, else a button in the strip region above the bar; the
+    XCUITest pins the result. Its accessible label is `menu.label`.
+  - `current: null` leaves the selection as it was; a tap on the selected item still emits
+    `sectionSelected` (`tabBarController(_:shouldSelect:)`).
+  - Re-measure `env(safe-area-inset-right)` inside the tab child (84 on the outer display); only if
+    the child double-counts the strip, keep the safe-area override of the profile WebView (R7).
+  - `insets` stay 0.
+- [ ] **Step 4: Run** the tests. Manual check on the Duo simulator against a dev deployment with
+  Task 30: open and close, rotate, keyboard up; never two navigations, one back animation.
+- [ ] **Step 5: Commit** `feat(mobile): native strip sections and menu button through nav@1`.
+
+### Task 32: `profiles@1` (the profile switcher from the web)
+
+Added 2026-11-21. Depends on Tasks 13, 14, 20 (`MenuHost`) and the SDK release with Task 23.
+
+**Files:** Create `apps/mobile/src/runtime/capabilities/profiles.ts`,
+`apps/mobile/test/runtime/profiles-capability.test.ts`. Modify the runtime entry (one
+`register` line with `available` = not locked, Task 18's policy).
+
+**Interfaces:** Produces
+`createProfilesCapability(deps: { profiles: ProfileStore; menu: MenuHostPort; openAddress(): Promise<void>; policy(): { locked: boolean } }): CapabilityImpl`,
+with `show` in `confirming` (activation and the per-profile dialog gate). The sheet lists the
+visible profiles by name (the current one marked), 「添加平台」 / "Add platform" and 「移除当前平台」
+/ "Remove this platform" (destructive, then the native confirm).
+
+- [ ] **Step 1: Failing tests.**
+  - No activation → `no_activation`; a second `show` while the sheet is open → `busy`.
+  - A locked policy → `profiles@1` absent from the descriptors.
+  - Picking another profile → `profiles.setCurrent(id)` (single-store mode asks first, Decision
+    9); picking 添加平台 → `openAddress`; dismissing → nothing.
+  - Whatever is picked, the page's promise resolves `undefined`; no profile name, id or origin
+    is ever in a reply or an event to the page.
+- [ ] **Step 2: Run** `pnpm exec vitest run apps/mobile/test/runtime/profiles-capability.test.ts`
+  — expect FAIL.
+- [ ] **Step 3: Implement.** Removing the current profile goes through `ProfileStore.remove`, so
+  its `onRemoved` listeners (the push plan's seam) run.
+- [ ] **Step 4: Run** the tests, `test:ios`, `test:android`, `pnpm check:i18n`.
+- [ ] **Step 5: Commit** `feat(mobile): profile switcher through profiles@1`.
+
 ---
 
 ## Self-review notes
@@ -1289,10 +1972,18 @@ link) and `README.md`.
 - **Coverage:**
   - §4.1 → 11, 13; §4.2 → 12; §4.3 → 14, 15, 17, 18; §4.4 → 16, 7.
   - §5.1 / 5.2 → 2, 13, 16, 19, 20; §5.3 → 1.2, 13.
-  - §6.1 → 4, 5, 19; §6.2 → 4, 5, 20; §6.3 → 16.
+  - §6.1 → 4, 5, 19; §6.2 → 4, 5, 20; §6.3 → 16. Amended 2026-11-21: §6.1 → 23, 30, 31 (19
+    superseded); `profiles@1` (§4.3, §5.2) → 23, 30, 32.
   - §7.1 → 6; §7.2 → 7; §7.3 → 8; §7.4 is held by `check:web-ui` and no task changes tokens
-    beyond motion.
-  - §8 → 1.4, 9, 19; §10 minus push → 21, 22; §13 phases 1–3 → waves 1–7.
+    beyond motion. Amended 2026-11-21: §7.4 now allows the touch set, which Task 24 brings; the
+    colors stay.
+  - Not planned here (open in layout spec §15): a voice input (Q3, Decision 24) and system back
+    closing an open drawer or sheet (Q4).
+  - §8 → 1.4, 9, 19 (now 31); §10 minus push → 21, 22; §13 phases 1–3 → waves 1–7, then the
+    remaining-work waves T1–T7.
+  - Layout spec as amended 2026-11-21: §4.1 / §4.2 → 27, 28; §4.3 strip-aware entries → 30;
+    §4.5 → 24, 25, 26; §4.6 → 29; §8 → 9, 30, 31; §10.2 `start_url` → 28; §11 → the visual
+    dispatches of 24–29 and Review Focus 6–8.
   - §14 open questions → 1.1, 1.3, 1.4, recorded in 1.5.
 - **Out of scope here:** §9 and `push@1` / `push-provider@1` (the push plan, through the seams
   above); store submission (phase 5, the maintainer).
