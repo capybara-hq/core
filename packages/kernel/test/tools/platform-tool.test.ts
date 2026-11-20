@@ -125,6 +125,30 @@ const orgOp = defineOperation({
   },
 });
 
+/** Returns every person shape the admin, audit, schedule and request outputs carry (K1). */
+const peopleOp = defineOperation({
+  id: "admin.fixture-people",
+  description: "Read rows that name people.",
+  input: z.object({}),
+  example: {},
+  authz: { orgAction: "org.read" },
+  mirrors: [],
+  confirm: "read",
+  run: async () => ({
+    agents: [
+      { id: "a1", ownerName: "Ada", ownerAvatarUrl: "/api/v1/accounts/u1/avatar?v=abc" },
+      { id: "a2", ownerName: "Bob", ownerAvatarUrl: null },
+    ],
+    connector: { createdByName: "Ada", createdByAvatarUrl: "/api/v1/accounts/u1/avatar?v=abc" },
+    request: { requestedByName: "Ada", requestedByAvatarUrl: null },
+    audit: [{ actor: { id: "u1", name: "Ada", avatarUrl: "/api/v1/accounts/u1/avatar?v=a" } }],
+    members: [{ account: { id: "u2", name: "Bob", avatarUrl: null } }],
+    schedule: { pausedBy: { id: "u1", name: "Ada", avatarUrl: "/api/v1/accounts/u1/avatar" } },
+    agent: { id: "a3", avatarUrl: "/api/v1/orgs/o1/agents/a3/avatar?v=1" },
+    at: new Date("2026-11-20T00:00:00.000Z"),
+  }),
+});
+
 /** The class depends on the target (finding 1): personal on "mine", org otherwise; throws on "boom". */
 let targetClassCtx: unknown[] = [];
 const targetedOp = defineOperation({
@@ -174,7 +198,14 @@ beforeEach(() => {
   setting = "on";
   const ops = new PlatformOperations();
   targetClassCtx = [];
-  ops.register([listOp, personalOp, orgOp, targetedOp, neverOp] as PlatformOperation[]);
+  ops.register([
+    listOp,
+    personalOp,
+    orgOp,
+    targetedOp,
+    neverOp,
+    peopleOp,
+  ] as PlatformOperation[]);
   tool = platformTool({
     ops,
     actor: {
@@ -388,6 +419,24 @@ describe("browse, search, describe, read", () => {
 });
 
 describe("call", () => {
+  it("never shows the model a person's avatar: names stay, an agent's avatar stays", async () => {
+    const out = await run({ action: "call", operation: "admin.fixture-people" });
+    expect(JSON.stringify(out)).not.toMatch(/"(avatarUrl|\w+AvatarUrl)":(null|"\/api\/v1\/accounts)/);
+    expect(out).toEqual({
+      agents: [
+        { id: "a1", ownerName: "Ada" },
+        { id: "a2", ownerName: "Bob" },
+      ],
+      connector: { createdByName: "Ada" },
+      request: { requestedByName: "Ada" },
+      audit: [{ actor: { id: "u1", name: "Ada" } }],
+      members: [{ account: { id: "u2", name: "Bob" } }],
+      schedule: { pausedBy: { id: "u1", name: "Ada" } },
+      agent: { id: "a3", avatarUrl: "/api/v1/orgs/o1/agents/a3/avatar?v=1" },
+      at: "2026-11-20T00:00:00.000Z",
+    });
+  });
+
   it("runs a read operation and caps a list at 50 entries", async () => {
     const out = await run({ action: "call", operation: "skills.list" });
     expect((out.items as unknown[]).length).toBe(50);

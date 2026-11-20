@@ -219,6 +219,34 @@ const capped = <T>(items: readonly T[]) => ({
 });
 
 /** An operation's result as a JSON object: a bare list is capped, nothing becomes `{ ok: true }`. */
+/** A key that carries a person's avatar: `avatarUrl`, `ownerAvatarUrl`, `createdByAvatarUrl`, … */
+const AVATAR_KEY = /^(avatarUrl|[a-z][A-Za-z]*AvatarUrl)$/;
+/** The prefix of every person avatar URL (`accountAvatarUrl`). */
+const PERSON_AVATAR_PREFIX = "/api/v1/accounts/";
+
+/**
+ * An operation's result without people's avatars (account profile spec §3, §5.4: a person's
+ * avatar is never model-visible). Drops every avatar key whose value is a person avatar URL or
+ * null (a person shape without an image); an agent's own avatar URL stays. Names stay.
+ */
+export function withoutPersonAvatars(value: unknown): unknown {
+  if (Array.isArray(value)) return value.map(withoutPersonAvatars);
+  if (typeof value !== "object" || value === null) return value;
+  // a value that serializes itself (a Date) is not a record of fields
+  if (typeof (value as { toJSON?: unknown }).toJSON === "function") return value;
+  const out: Record<string, unknown> = {};
+  for (const [k, v] of Object.entries(value)) {
+    if (
+      AVATAR_KEY.test(k) &&
+      (v === null || (typeof v === "string" && v.startsWith(PERSON_AVATAR_PREFIX)))
+    ) {
+      continue;
+    }
+    out[k] = withoutPersonAvatars(v);
+  }
+  return out;
+}
+
 function asResult(value: unknown): unknown {
   if (Array.isArray(value)) return capped(value);
   if (value === undefined || value === null) return { ok: true };
@@ -472,7 +500,10 @@ export function platformTool(deps: PlatformToolDeps): BuiltinTool {
       // next step for this actor (Review Focus 2)
       throw toToolError(e, (code) => nextStepFor(op.errors, code, role));
     }
-    return json(asResult(result), { zh: `调用平台操作 ${op.id}`, en: `Called ${op.id}` });
+    return json(asResult(withoutPersonAvatars(result)), {
+      zh: `调用平台操作 ${op.id}`,
+      en: `Called ${op.id}`,
+    });
   }
 
   function read(topic: string | undefined): BuiltinResult {

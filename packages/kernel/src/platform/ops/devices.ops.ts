@@ -170,7 +170,12 @@ export class DevicesOperations implements OnModuleInit {
         ],
         run: async (input, ctx) => {
           const e = await this.devices.get(ctx.orgId, ctx.actorAccountId, input.deviceId);
-          return { device: { ...e, name: labelOf(e), ...stateOf(e) } };
+          // the model sees who changed a setting by name only, never their avatar (spec §3)
+          const sandbox = {
+            ...e.sandbox,
+            recent: e.sandbox.recent.map((c) => ({ ...c, by: c.by?.name ?? null })),
+          };
+          return { device: { ...e, name: labelOf(e), ...stateOf(e), sandbox } };
         },
       }),
       defineOperation({

@@ -227,6 +227,16 @@ describe("devices", () => {
       via: "agent",
       operation: "devices.set-network",
     });
+    // the model reads who changed it by name, never as a person shape with an avatar (K1)
+    const got = (await run("devices.get", { deviceId: id }, ctx)) as {
+      device: { sandbox: { recent: { by: unknown }[] } };
+    };
+    const owner = await db
+      .selectFrom("accounts")
+      .select("display_name")
+      .where("id", "=", ownerId)
+      .executeTakeFirstOrThrow();
+    expect(got.device.sandbox.recent[0]?.by).toBe(owner.display_name);
     // a widening is refused at the precheck and at the run
     expect(
       await precheck("devices.set-network", { deviceId: id, network: { mode: "open" } }, ctx),
