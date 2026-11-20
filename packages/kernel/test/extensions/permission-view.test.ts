@@ -150,10 +150,11 @@ describe("permissionGroups", () => {
         "directory@1",
         "identity-source@1",
         "object-store@1",
+        "push-provider@1",
         "sandbox@2",
       ].sort(),
     );
-    for (const cap of ["sandbox@2", "object-store@1"]) {
+    for (const cap of ["sandbox@2", "object-store@1", "push-provider@1"]) {
       const [g] = permissionGroups({ ...base, provides: [cap] });
       expect(g, cap).toEqual({
         category: "provides",
