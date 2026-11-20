@@ -1,5 +1,17 @@
 # @capybara-hq/kernel
 
+## 0.1.0-rc.56
+
+### Patch Changes
+
+- e39c372: Add `useSizeClass` and `useViewportSegments` to the plugin client (the window's size class and the
+  two segments of a folded display, read from the host). The kernel lists each contribution's compact
+  form (the slot's, narrowed by the contribution's), and the web does not draw a `hidden`
+  contribution on a compact screen.
+- Updated dependencies [e8b4d00]
+- Updated dependencies [d9602dc]
+  - @capybara-hq/plugin-sdk@0.1.0-rc.40
+
 ## 0.1.0-rc.55
 
 ### Patch Changes

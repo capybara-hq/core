@@ -1,5 +1,45 @@
 # @capybara-hq/web
 
+## 0.1.0-rc.66
+
+### Minor Changes
+
+- 11e3c8e: Compact layout (windows narrower than 600): a bottom navigation (会话, 智能体, 收件箱, 我) on the tab
+  roots, a top bar with back, the page's name, search and the page's overflow menu, new pages
+  `/conversations` (your conversations grouped by agent) and `/me` (account, org switcher, workspace,
+  manage and account rows by role, and the system line), and the admin console's navigation as the Me
+  page in the admin context. The sidebar drawer and its menu bar (once shown below 960) are gone:
+  compact windows use the bottom navigation, medium windows the icon rail.
+- 067bc43: Phones and native shells: pages extend under the notch and the home indicator with the right
+  padding, the on-screen keyboard resizes the page instead of covering it, and the browser bar takes
+  the theme's color in light and dark. Inside the desktop or mobile app the layout follows the app's
+  own window chrome and theme. A conversation whose live stream dropped while the app was in the
+  background picks up where it left off when you come back.
+
+### Patch Changes
+
+- 78bb3f1: In the desktop client, the device create dialog offers 连接本机 (Connect this machine) and shows this
+  machine's status; `/devices/link` accepts `org=` to preselect an organization.
+- efc0362: The inbox and the platform inbox list items as rows (name, kind, time, a dot for what waits for you)
+  instead of a table, and an open item shows its facts inline beside or above its content, never in a
+  side sheet; the list no longer has a collapse button. On a phone the list is the page and an item
+  opens full screen with its decision buttons at the bottom; the system back returns to the list.
+- 9c5dcb1: The layout follows size classes (compact below 600, medium 600 to 840, expanded from 841) instead of
+  the old 640 / 960 / 1280 widths. From 841 the sidebar keeps its full form and can be collapsed to the
+  icon rail with its toggle or Ctrl+\ (⌘\ on a Mac); the choice is remembered. On a medium window the
+  rail has a Conversations button that opens the conversation list as a side sheet. A short window
+  (under 480 high) hides the status bar, and on a phone-width window the page path (the top bar's back
+  keeps the way up).
+- e39c372: Add `useSizeClass` and `useViewportSegments` to the plugin client (the window's size class and the
+  two segments of a folded display, read from the host). The kernel lists each contribution's compact
+  form (the slot's, narrowed by the contribution's), and the web does not draw a `hidden`
+  contribution on a compact screen.
+- 9abf30d: In the desktop client, the device page shows 本机 (the running list, pause / resume / disconnect,
+  keep-awake, widening through the shell), the device list and the new-conversation picker mark this
+  machine, and new inbox items raise native notifications while the window is hidden.
+- 2ee3ac4: Inside the desktop shell the sign-in page offers only "Sign in with your browser" when the shell
+  provides `signIn@1`; typed accessors for the shell's `device@1`, `notify@1` and `signIn@1`.
+
 ## 0.1.0-rc.65
 
 ### Patch Changes
