@@ -352,8 +352,8 @@ export function usePermissionChoice(input: PermissionChoiceInput): {
     setConsented(consent);
     choose({ profile: "full-access", consent });
   };
-  // no persistent explanation: only a device not checked yet says when it will be
-  const unprobed = shown?.availability.state === "unprobed";
+  // no persistent explanation: a device not checked yet says nothing (it is checked on first use);
+  // only a profile a checked device cannot offer carries its reason, on the item
   const picker: PickerProps = {
     label: t("label"),
     value: t(`profile.${PROFILE_KEY[choice.profile]}`),
@@ -372,7 +372,6 @@ export function usePermissionChoice(input: PermissionChoiceInput): {
         }),
       },
     ],
-    ...(unprobed ? { note: t("note.unprobed") } : {}),
     ...(canUpdateOrg(session.me)
       ? {
           action: {

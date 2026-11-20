@@ -296,13 +296,12 @@ test.describe("permission profiles", () => {
       const deviceId = await createDevice(page, orgId, deviceName);
       devices.push({ orgId, id: deviceId });
 
-      // Not started yet: unprobed, so the restricted rows are offered with the note saying
-      // when the device is checked.
+      // Not started yet: unprobed, so the restricted rows are offered (no note in the menu).
       await newChat(page, agentId);
       await pickDevice(page, deviceName);
       await permissionButton(page, PROFILE.approveForMe).click();
       await expect(row(page, PROFILE.requestApproval)).toBeEnabled();
-      await expect(page.getByText(p.note.unprobed, { exact: false })).toBeVisible();
+      await expect(page.getByText("Checked when this device starts")).toHaveCount(0);
       await row(page, PROFILE.requestApproval).click();
       await expect(permissionButton(page, PROFILE.requestApproval)).toBeVisible();
 

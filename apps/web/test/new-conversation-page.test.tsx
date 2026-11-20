@@ -769,9 +769,9 @@ describe("the first send carries the permission choice (atomic first message, Ta
     await user.click(within(dialog).getByRole("button", { name: "Cancel" }));
     expect(permissionButton().getAttribute("aria-label")).toMatch(/^Permissions: Approve for me/);
     await chooseFull(user);
-    // unprobed: Full stays choosable and the note says when it is checked, nothing provisioned
+    // unprobed: Full stays choosable with no note in the menu, nothing provisioned
     await user.click(permissionButton());
-    expect(screen.getByRole("menu").textContent).toContain(en.chat.permission.note.unprobed);
+    expect(screen.getByRole("menu").textContent).not.toContain("Checked when this device starts");
     await user.keyboard("{Escape}");
     await user.type(input(), "go{Enter}");
     await vi.waitFor(() => expect(router.replace).toHaveBeenCalledWith("/chat/c9"));

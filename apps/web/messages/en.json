@@ -1645,9 +1645,6 @@
         "checkFailed": "Couldn't check this device",
         "unsupported": "Not supported on this device"
       },
-      "note": {
-        "unprobed": "Checked when this device starts."
-      },
       "configureReview": "Set up the review model",
       "locked": {
         "inherited": "Follows the main conversation's permissions",
