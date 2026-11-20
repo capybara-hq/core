@@ -18,13 +18,15 @@ import { CatalogScopeService, type ScopePreview } from "../../catalog/catalog-sc
 import { PlatformImportUpdate } from "../../catalog/platform-import-update.js";
 import { PluginImport, type PluginReview } from "../../catalog/plugin-import.js";
 import { ApiError } from "../../errors.js";
+import { KernelConfigService } from "../../infra/config/kernel-config.service.js";
 import { KernelDb } from "../../infra/database/kernel-db.js";
 import { ThemesService } from "../../themes/themes.service.js";
+import { FileRefSchema } from "../file-ref.js";
 import { defineOperation, type PrecheckResult } from "../operation.js";
 import { PlatformOperations } from "../registry.js";
 import { precheckBy, viaAgent } from "./errors.js";
 import { assertNotOtherOrgs, OTHER_ORG } from "./other-orgs.js";
-import { localized, orElse } from "./summary.js";
+import { localized, named, orElse } from "./summary.js";
 
 /** A platform catalog item id (`:id` of the admin routes), named `itemId` like the org's. */
 const ItemId = CatalogIdPathParams.shape.id.max(100);
@@ -154,6 +156,7 @@ export class CatalogAdminOperations implements OnModuleInit {
     @Inject(KernelDb) private readonly kdb: KernelDb,
     @Inject(AppearanceService) private readonly appearance: AppearanceService,
     @Inject(ThemesService) private readonly themes: ThemesService,
+    @Inject(KernelConfigService) private readonly config: KernelConfigService,
   ) {}
 
   /** The precheck refusal of another org's private plugin (the phase-1 rule), else null. */
@@ -273,6 +276,61 @@ export class CatalogAdminOperations implements OnModuleInit {
               ...(input.version !== undefined && { version: input.version }),
             },
             { auditDetail: viaAgent("plugins.import-npm", ctx) },
+          );
+          return {
+            stagingId: r.stagingId,
+            review: reviewBrief(r.review),
+            reviewUrl: reviewUrl(r.stagingId),
+            next: CONFIRM_ON_WEB,
+          };
+        },
+      }),
+      defineOperation({
+        id: "plugins.import-file",
+        description:
+          "Prepare importing a plugin package into the catalog (super admin): a .tgz plugin package of this conversation, e.g. one you packed in the sandbox and delivered with Deliver, passed as file: { fileId }; at most the deployment's package limit. Checks the whole plugin and stages it for 24 hours. Returns what it brings and a reviewUrl; nothing is imported until the person confirms it there.",
+        input: z.object({ file: FileRefSchema }).strict(),
+        example: { file: { fileId: "0b9f2c4e-1d3a-4c55-9e0a-7a2f6d1c8b11" } },
+        authz: { superAdmin: true },
+        mirrors: ["POST /api/v1/admin/catalog/import/file"],
+        // the route's raw body
+        extras: ["file"],
+        confirm: "platform",
+        errors: [
+          {
+            code: "catalog.version_exists",
+            next: "This version is in the catalog already: update the plugin to it with plugins.update-preview, or raise the version and pack it again.",
+          },
+          {
+            code: "catalog.name_conflict",
+            next: "A catalog plugin of this name comes from another npm package; check the package name.",
+          },
+          {
+            code: "catalog.invalid_manifest",
+            next: "The package is not a valid plugin (the details list each problem); fix it, pack and deliver it again.",
+          },
+        ],
+        fileRef: (i) => ({
+          ref: i.file,
+          // the route takes the raw bytes whatever their type (a delivered .tgz is
+          // application/octet-stream); the package reader checks them
+          limits: { maxBytes: this.config.get().packages.maxBytes },
+        }),
+        summary: (_i, ctx) => {
+          const f = named(ctx.file?.name ?? "?");
+          return {
+            zh: `准备从文件「${f}」导入插件（确认在网页上进行）`,
+            en: `Prepare importing a plugin from the file "${f}" (confirmed on the web)`,
+          };
+        },
+        run: async (_input, ctx) => {
+          const f = ctx.file;
+          if (f === undefined) throw new Error("plugins.import-file: the file is missing");
+          const r = await this.pluginImport.prepare(
+            ctx.actorAccountId,
+            f.bytes,
+            { kind: "file", ref: "upload" },
+            { auditDetail: viaAgent("plugins.import-file", ctx) },
           );
           return {
             stagingId: r.stagingId,

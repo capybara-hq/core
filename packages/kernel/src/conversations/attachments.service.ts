@@ -284,6 +284,49 @@ export class AttachmentsService {
     purpose: AttachmentPurpose = "chat",
   ): Promise<CreatedAttachment> {
     this.storage.assertAvailable();
+    const { contentType, ttlHours } = await this.admit(orgId, accountId, purpose, input, false);
+    const id = randomUUID();
+    const key = objectKey(id, purpose);
+    const upload = await this.storage.kernel(orgId).presignPut(key, {
+      contentType,
+      maxSize: input.size,
+      ttlSeconds: ATTACHMENT_UPLOAD_TTL_SECONDS,
+    });
+    await this.db
+      .insertInto("attachments")
+      .values({
+        id,
+        org_id: orgId,
+        account_id: accountId,
+        name: input.name,
+        content_type: contentType,
+        size: input.size,
+        object_key: key,
+        status: "pending",
+        purpose,
+        expires_at: sql<Date>`now() + make_interval(hours => ${ttlHours})`,
+      })
+      .execute();
+    return {
+      id,
+      upload,
+      expiresAt: new Date(Date.now() + ATTACHMENT_UPLOAD_TTL_SECONDS * 1000).toISOString(),
+    };
+  }
+
+  /**
+   * The checks of registering an upload of `purpose` (type, size, the account's unfinished uploads
+   * of that purpose) and its expiry. `countStored`: uploads already stored but not yet used (ready,
+   * still expiring, bound to no agent) count as unfinished too ({@link createFromBytes}'s rows do
+   * not stay pending).
+   */
+  private async admit(
+    orgId: string,
+    accountId: string,
+    purpose: AttachmentPurpose,
+    input: { contentType: string; size: number },
+    countStored: boolean,
+  ): Promise<{ contentType: string; ttlHours: number }> {
     const cfg = this.config.get().attachments;
     const contentType = normalizeContentType(input.contentType);
     const skill = purpose === "skill-package";
@@ -316,8 +359,19 @@ export class AttachmentsService {
       .select((eb) => eb.fn.countAll<string>().as("n"))
       .where("org_id", "=", orgId)
       .where("account_id", "=", accountId)
-      .where("status", "=", "pending")
       .where("purpose", "=", purpose)
+      .where((eb) =>
+        countStored
+          ? eb.or([
+              eb("status", "=", "pending"),
+              eb.and([
+                eb("status", "=", "ready"),
+                eb("expires_at", "is not", null),
+                eb("agent_id", "is", null),
+              ]),
+            ])
+          : eb("status", "=", "pending"),
+      )
       .executeTakeFirst();
     const maxPending = skill
       ? MAX_PENDING_SKILL_PACKAGES
@@ -330,38 +384,95 @@ export class AttachmentsService {
         `Too many unfinished uploads (at most ${maxPending}); finish or wait for them first`,
       );
     }
-    const id = randomUUID();
-    const key = objectKey(id, purpose);
     const ttlHours = skill
       ? SKILL_PACKAGE_TTL_HOURS
       : avatar
         ? AGENT_AVATAR_TTL_HOURS
         : cfg.unboundTtlHours;
-    const upload = await this.storage.kernel(orgId).presignPut(key, {
+    return { contentType, ttlHours };
+  }
+
+  /**
+   * Stores bytes the kernel already holds as an upload of `purpose`, as if a person had uploaded
+   * and finalized them (platform web parity spec §5: a `Platform` write takes a file in place of
+   * an upload), then the route's next step takes its id (the profile save, `POST /skills`). The
+   * checks, expiry and caps of {@link create} apply; no presigned URL is made. Intent first: the
+   * `pending` row is committed before the put (a failed put leaves it to expire and be cleaned
+   * up), then one update makes it `ready` with the stored size and etag. The type is not sniffed
+   * here: callers pass bytes they checked (the Platform tool sniffs a file reference).
+   */
+  async createFromBytes(
+    orgId: string,
+    accountId: string,
+    purpose: "agent-avatar" | "skill-package",
+    file: { name: string; contentType: string; bytes: Uint8Array },
+  ): Promise<{ id: string }> {
+    this.storage.assertAvailable();
+    const size = file.bytes.byteLength;
+    const { contentType, ttlHours } = await this.admit(
+      orgId,
+      accountId,
+      purpose,
+      { contentType: file.contentType, size },
+      true,
+    );
+    const id = randomUUID();
+    const key = objectKey(id, purpose);
+    await this.insertUploadIntent({
+      id,
+      orgId,
+      accountId,
+      name: file.name,
       contentType,
-      maxSize: input.size,
-      ttlSeconds: ATTACHMENT_UPLOAD_TTL_SECONDS,
+      size,
+      key,
+      purpose,
+      ttlHours,
     });
-    await this.db
+    const head = await this.storage.kernel(orgId).put(key, file.bytes, { contentType, size });
+    await this.markStored(id, head.size, head.etag ?? null);
+    return { id };
+  }
+
+  /** The last step of {@link createFromBytes}: the stored object's size and etag, `ready`. */
+  @Transactional()
+  private async markStored(id: string, size: number, etag: string | null): Promise<void> {
+    await this.db.db
+      .updateTable("attachments")
+      .set({ status: "ready", size, etag })
+      .where("id", "=", id)
+      .where("status", "=", "pending")
+      .execute();
+  }
+
+  /** The `pending` row of {@link createFromBytes}, committed on its own before the put. */
+  @Transactional({ propagation: "requires_new" })
+  private async insertUploadIntent(r: {
+    id: string;
+    orgId: string;
+    accountId: string;
+    name: string;
+    contentType: string;
+    size: number;
+    key: string;
+    purpose: AttachmentPurpose;
+    ttlHours: number;
+  }): Promise<void> {
+    await this.db.db
       .insertInto("attachments")
       .values({
-        id,
-        org_id: orgId,
-        account_id: accountId,
-        name: input.name,
-        content_type: contentType,
-        size: input.size,
-        object_key: key,
+        id: r.id,
+        org_id: r.orgId,
+        account_id: r.accountId,
+        name: r.name,
+        content_type: r.contentType,
+        size: r.size,
+        object_key: r.key,
         status: "pending",
-        purpose,
-        expires_at: sql<Date>`now() + make_interval(hours => ${ttlHours})`,
+        purpose: r.purpose,
+        expires_at: sql<Date>`now() + make_interval(hours => ${r.ttlHours})`,
       })
       .execute();
-    return {
-      id,
-      upload,
-      expiresAt: new Date(Date.now() + ATTACHMENT_UPLOAD_TTL_SECONDS * 1000).toISOString(),
-    };
   }
 
   /**

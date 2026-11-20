@@ -21,6 +21,7 @@ import { OwnedItems } from "../../catalog/owned-items.js";
 import { PluginInstaller, type PluginInstallView } from "../../catalog/plugin-install.js";
 import { ApiError } from "../../errors.js";
 import { OrgExtensionConfigs } from "../../extensions/org-config.js";
+import { KernelConfigService } from "../../infra/config/kernel-config.service.js";
 import { KernelDb } from "../../infra/database/kernel-db.js";
 import { ThemesService } from "../../themes/themes.service.js";
 import type { ConnectorAuth } from "../../tools/credentials.js";
@@ -32,6 +33,7 @@ import {
   templateConnectorInput,
   templatePersonFields,
 } from "../connector-person-fields.js";
+import { FileRefSchema } from "../file-ref.js";
 import { defineOperation, type OperationContext, type PrecheckResult } from "../operation.js";
 import {
   type PersonFieldSpec,
@@ -187,6 +189,7 @@ export class OrgPluginsOperations implements OnModuleInit {
     @Inject(AppearanceService) private readonly appearance: AppearanceService,
     @Inject(ThemesService) private readonly themes: ThemesService,
     @Inject(OrgExtensionConfigs) private readonly extensions: OrgExtensionConfigs,
+    @Inject(KernelConfigService) private readonly config: KernelConfigService,
   ) {}
 
   /**
@@ -344,9 +347,76 @@ export class OrgPluginsOperations implements OnModuleInit {
           ),
       }),
       defineOperation({
+        id: "plugins.upload",
+        description:
+          "Stage a plugin package as this org's own upload (org admins): a .tgz plugin package of this conversation, e.g. one you packed in the sandbox and delivered with Deliver, passed as file: { fileId }; at most the deployment's package limit. Checks the whole plugin and stages it for 24 hours; returns what it brings and, for a new version of the org's own plugin, the update it applies. Nothing is added until the person confirms the upload on the web (Plugins page); a plugin with an extension then waits for the super admin.",
+        input: z.object({ file: FileRefSchema }).strict(),
+        example: { file: { fileId: EXAMPLE_ID } },
+        authz: { orgAction: "catalog.upload" },
+        mirrors: ["POST /api/v1/orgs/:orgId/catalog/uploads/file"],
+        // the route's raw body
+        extras: ["file"],
+        confirm: "org",
+        errors: [
+          {
+            code: "catalog.invalid_manifest",
+            next: "The package is not a valid plugin (the details list each problem); fix it, pack and deliver it again.",
+          },
+          {
+            code: "catalog.custom_disabled",
+            next: "This deployment does not allow the org's own skills, agent templates or connector templates that the plugin brings; tell the person.",
+          },
+          {
+            code: "plugin.name_taken",
+            next: "Another owner has a live plugin of this name; rename the plugin in its manifest, pack it and retry.",
+          },
+          {
+            code: "plugin.dependency_unavailable",
+            next: "The plugin depends on plugins this org cannot use (the details list them); install those first, or remove the dependency.",
+          },
+          {
+            code: "catalog.version_exists",
+            next: "This version was uploaded already; raise the version in the manifest, pack it and retry.",
+          },
+        ],
+        fileRef: (i) => ({
+          ref: i.file,
+          // the route takes the raw bytes whatever their type (a delivered .tgz is
+          // application/octet-stream); the package reader checks them
+          limits: { maxBytes: this.config.get().packages.maxBytes },
+        }),
+        summary: (_i, ctx) => {
+          const f = named(ctx.file?.name ?? "?");
+          return {
+            zh: `暂存插件包「${f}」作为本组织的上传（确认在网页上进行）`,
+            en: `Stage the plugin package "${f}" as this org's upload (confirmed on the web)`,
+          };
+        },
+        run: async (_input, ctx) => {
+          const f = ctx.file;
+          if (f === undefined) throw new Error("plugins.upload: the file is missing");
+          const r = await this.uploads.prepare(ctx.actorAccountId, ctx.orgId, f.bytes, {
+            auditDetail: viaAgent("plugins.upload", ctx),
+          });
+          return {
+            stagingId: r.stagingId,
+            review: reviewBrief(r.review),
+            update:
+              r.update === null
+                ? null
+                : {
+                    from: r.update.from,
+                    to: r.update.to,
+                    components: r.update.components.filter((c) => c.change !== "same").length,
+                  },
+            next: "Nothing is added yet: the person confirms the upload on the web (Plugins page).",
+          };
+        },
+      }),
+      defineOperation({
         id: "plugins.upload-review",
         description:
-          "Read one of this org's staged plugin uploads (org admins): what the plugin brings, and for a new version of the org's own plugin the update it applies. Uploading the package and confirming it are done by a person on the web (Plugins page).",
+          "Read one of this org's staged plugin uploads (org admins): what the plugin brings, and for a new version of the org's own plugin the update it applies. plugins.upload stages one; confirming it is done by a person on the web (Plugins page).",
         input: z.object({ stagingId: OrgUploadStagingParams.shape.stagingId }).strict(),
         example: { stagingId: EXAMPLE_ID },
         authz: { orgAction: "catalog.upload" },

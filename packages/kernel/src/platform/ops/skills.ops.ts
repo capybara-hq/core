@@ -2,11 +2,20 @@ import { Inject, Injectable, type OnModuleInit } from "@nestjs/common";
 import { z } from "zod";
 import { OwnedItems } from "../../catalog/owned-items.js";
 import {
+  AttachmentsService,
+  SKILL_PACKAGE_CONTENT_TYPE,
+  SKILL_PACKAGE_UPLOAD_MAX_BYTES,
+} from "../../conversations/attachments.service.js";
+import { assertCustomAllowed } from "../../identity/settings.js";
+import { KernelDb } from "../../infra/database/kernel-db.js";
+import {
+  SkillCreateBody,
   SkillIdParams,
   SkillPathParams,
   SkillShareableSchema,
 } from "../../skills/skills.schemas.js";
 import { SkillsService } from "../../skills/skills.service.js";
+import { FileRefSchema } from "../file-ref.js";
 import { defineOperation } from "../operation.js";
 import { PlatformOperations } from "../registry.js";
 import { precheckBy, viaAgent } from "./errors.js";
@@ -26,6 +35,8 @@ export class SkillsOperations implements OnModuleInit {
     @Inject(PlatformOperations) private readonly registry: PlatformOperations,
     @Inject(SkillsService) private readonly skills: SkillsService,
     @Inject(OwnedItems) private readonly owned: OwnedItems,
+    @Inject(AttachmentsService) private readonly attachments: AttachmentsService,
+    @Inject(KernelDb) private readonly db: KernelDb,
   ) {}
 
   /** The skill's name for a card summary; its id when it cannot be read. */
@@ -57,6 +68,86 @@ export class SkillsOperations implements OnModuleInit {
         renames: { skillId: "id" },
         confirm: "read",
         run: async (input, ctx) => this.skills.get(ctx.orgId, input.skillId),
+      }),
+      defineOperation({
+        id: "skills.create-from-file",
+        description:
+          "Create an org skill from a skill package, or add the next version of the org skill with the same name (org admins): a zip file of this conversation (an attachment, or a zip you built in the sandbox and delivered with Deliver), passed as file: { fileId }. The zip has SKILL.md at its root or in one top-level folder (frontmatter name and description, then the instructions), plus any scripts or references, at most 50 MiB. Every agent of the org has the skill unless it turns it off; shareable lets other orgs use it. The person sees the file on the card.",
+        input: z
+          .object({ file: FileRefSchema, shareable: SkillCreateBody.shape.shareable })
+          .strict(),
+        example: { file: { fileId: "0b9f2c4e-1d3a-4c55-9e0a-7a2f6d1c8b11" } },
+        authz: { orgAction: "skills.manage" },
+        mirrors: ["POST /api/v1/orgs/:orgId/skills/uploads", "POST /api/v1/orgs/:orgId/skills"],
+        // the upload registration's fields come from the referenced file; the kernel registers
+        // the upload and passes its id itself
+        omits: ["name", "size", "uploadId"],
+        extras: ["file"],
+        confirm: "org",
+        errors: [
+          {
+            code: "catalog.custom_disabled",
+            next: {
+              superAdmin:
+                "Custom skills are switched off for this deployment; allow them in the admin console's deployment settings, or install a skill from the catalog.",
+              orgAdmin:
+                "This deployment does not allow custom skills; install one from the platform catalog, or ask the super admin.",
+            },
+          },
+          {
+            code: "skill.invalid_package",
+            next: "Fix the package as the message says (SKILL.md at the zip's root with name and description frontmatter, allowed paths and sizes), rebuild the zip, deliver it and retry.",
+          },
+          {
+            code: "attachment.too_many_pending",
+            next: "Too many skill packages are stored and not used yet; wait an hour for them to expire, then retry.",
+          },
+          {
+            code: "storage.unavailable",
+            next: "File storage is unavailable; try again later, or tell the person to contact the super admin.",
+          },
+        ],
+        precheck: () => precheckBy(() => assertCustomAllowed(this.db.db, "customSkills")),
+        fileRef: (i) => ({
+          ref: i.file,
+          limits: {
+            maxBytes: SKILL_PACKAGE_UPLOAD_MAX_BYTES,
+            contentTypes: [SKILL_PACKAGE_CONTENT_TYPE],
+          },
+        }),
+        summary: (i, ctx) => {
+          const f = named(ctx.file?.name ?? "?");
+          return i.shareable === true
+            ? {
+                zh: `用技能包「${f}」创建或更新组织技能，并允许共享给其他组织`,
+                en: `Create or update an org skill from the package "${f}", shareable with other orgs`,
+              }
+            : {
+                zh: `用技能包「${f}」创建或更新组织技能`,
+                en: `Create or update an org skill from the package "${f}"`,
+              };
+        },
+        run: async (input, ctx) => {
+          const f = ctx.file;
+          if (f === undefined) throw new Error("skills.create-from-file: the file is missing");
+          // the bytes the person confirmed, stored as the upload route stores a package, then
+          // created from as `POST /skills` does
+          const { id } = await this.attachments.createFromBytes(
+            ctx.orgId,
+            ctx.actorAccountId,
+            "skill-package",
+            { name: f.name, contentType: f.contentType, bytes: f.bytes },
+          );
+          const r = await this.skills.upload(
+            ctx.orgId,
+            ctx.actorAccountId,
+            id,
+            undefined,
+            input.shareable,
+            viaAgent("skills.create-from-file", ctx),
+          );
+          return { skill: r.skill, version: r.version, created: r.created };
+        },
       }),
       defineOperation({
         id: "skills.set-shareable",

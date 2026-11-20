@@ -51,11 +51,6 @@ export const PLATFORM_EXCLUSIONS: readonly {
       "Points an extension at a package from the package store (a new install or a version change); the package comes from an upload or npm import whose permissions a person reviews, and new permissions wait for that person's approval, so the install stays with the review on the web",
   },
   {
-    route: "POST /api/v1/admin/extensions/packages/file",
-    category: "transport",
-    reason: "Uploads a package file as multipart bytes",
-  },
-  {
     route: "POST /api/v1/admin/extensions/packages/npm",
     category: "human-only",
     reason:
@@ -91,11 +86,6 @@ export const PLATFORM_EXCLUSIONS: readonly {
   },
   // agents
   {
-    route: "POST /api/v1/orgs/:orgId/agents/:agentId/avatar/uploads",
-    category: "transport",
-    reason: "Creates a presigned avatar upload",
-  },
-  {
     route: "GET /api/v1/orgs/:orgId/agents/:agentId/avatar",
     category: "transport",
     reason: "Streams avatar image bytes",
@@ -118,11 +108,6 @@ export const PLATFORM_EXCLUSIONS: readonly {
     reason: "Streams raw task output bytes",
   },
   // catalog-admin
-  {
-    route: "POST /api/v1/admin/catalog/import/file",
-    category: "transport",
-    reason: "Uploads a plugin archive as multipart bytes",
-  },
   {
     route: "POST /api/v1/admin/catalog/imports/:stagingId/confirm",
     category: "human-only",
@@ -156,11 +141,6 @@ export const PLATFORM_EXCLUSIONS: readonly {
     reason: "Rejects a catalog item's reviewed changes, an approval decision",
   },
   // components
-  {
-    route: "POST /api/v1/admin/components/skill/:id/versions",
-    category: "transport",
-    reason: "Uploads a platform skill package as raw bytes",
-  },
   // marketplaces
   {
     route: "GET /api/v1/admin/marketplaces/:id/icons/:sha256",
@@ -200,11 +180,6 @@ export const PLATFORM_EXCLUSIONS: readonly {
     reason: "Decides an org's catalog request as super admin",
   },
   // org-uploads
-  {
-    route: "POST /api/v1/orgs/:orgId/catalog/uploads/file",
-    category: "transport",
-    reason: "Uploads a plugin archive as multipart bytes",
-  },
   {
     route: "POST /api/v1/orgs/:orgId/catalog/uploads/:stagingId/confirm",
     category: "human-only",
@@ -593,21 +568,6 @@ export const PLATFORM_EXCLUSIONS: readonly {
     route: "POST /api/v1/orgs/:orgId/skill-changes/:id/decide",
     category: "human-only",
     reason: "Decides a proposed skill change",
-  },
-  {
-    route: "POST /api/v1/orgs/:orgId/skills/uploads",
-    category: "transport",
-    reason: "Uploads a skill archive as multipart bytes",
-  },
-  {
-    route: "POST /api/v1/orgs/:orgId/skills",
-    category: "transport",
-    reason: "Creates an org skill from an uploaded archive; uploads are multipart bytes",
-  },
-  {
-    route: "POST /api/v1/orgs/:orgId/agents/:agentId/skills/uploads",
-    category: "transport",
-    reason: "Uploads a skill archive as multipart bytes",
   },
   // approvals
   {

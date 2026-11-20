@@ -12,6 +12,7 @@ import {
   type DeploymentConfigView,
   ExtensionDeploymentConfigService,
 } from "../../extensions/deployment-config.js";
+import { ExtensionInstalls } from "../../extensions/installs.js";
 import type { AdminExtensionView } from "../../extensions/permission-view.js";
 import {
   SINGLE_PROVIDER_ENABLED,
@@ -21,6 +22,7 @@ import {
 import { unavailableReason } from "../../extensions/unavailable.js";
 import { KernelConfigService } from "../../infra/config/kernel-config.service.js";
 import { KernelDb } from "../../infra/database/kernel-db.js";
+import { FileRefSchema } from "../file-ref.js";
 import { defineOperation, type PrecheckResult } from "../operation.js";
 import {
   type PersonFieldTarget,
@@ -33,7 +35,7 @@ import { precheckBy, viaAgent } from "./errors.js";
 import { assertExtensionNotOtherOrgs, OTHER_ORG, otherOrgExtensions } from "./other-orgs.js";
 import { Cursor, pageOf, startOf } from "./paging.js";
 import { configChanges, flatValues, withPersonInputs } from "./person-inputs.js";
-import { localized } from "./summary.js";
+import { localized, named } from "./summary.js";
 import { unavailableFields } from "./unavailable.js";
 
 /** An extension's name (`:name` of the admin routes), bounded like the org routes' `:extension`. */
@@ -157,9 +159,9 @@ const pendingPlugin = (i: CatalogItemView) => ({
 
 /**
  * The super admin's extension operations of the `Platform` tool (spec §14.2 "admin console",
- * §14.5 item 1): the deployment's extensions (list, read), enable, disable and uninstall. Installing
- * a package (upload, npm) and approving permissions stay on the web: a person reviews the
- * permissions there. The deployment config is read (secrets as set or not) and written here, its
+ * §14.5 item 1): the deployment's extensions (list, read), enable, disable and uninstall, and
+ * storing an uploaded package (its review). Installing a package and approving permissions stay on
+ * the web: a person reviews the permissions there. The deployment config is read (secrets as set or not) and written here, its
  * secrets entered by the person on the confirmation card (platform web parity spec §4).
  */
 @Injectable()
@@ -173,6 +175,7 @@ export class ExtensionsAdminOperations implements OnModuleInit {
     @Inject(CatalogService) private readonly catalog: CatalogService,
     @Inject(ExtensionDeploymentConfigService)
     private readonly deploymentConfigs: ExtensionDeploymentConfigService,
+    @Inject(ExtensionInstalls) private readonly installs: ExtensionInstalls,
   ) {}
 
   /** The view of `name` for a precheck, or the refusal (unknown, startup-declared). */
@@ -249,6 +252,68 @@ export class ExtensionsAdminOperations implements OnModuleInit {
             ),
             otherOrgItems: items.length - ours.length,
             otherOrgExtensions: waiting.length - exts.length,
+          };
+        },
+      }),
+      defineOperation({
+        id: "extensions.upload-package",
+        description:
+          "Store an extension package in the deployment's package store (super admin): a .tgz extension package of this conversation, e.g. one you packed in the sandbox and delivered with Deliver, passed as file: { fileId }; at most the deployment's package limit. Returns its review: name, version, sha256, the permissions it asks for and those added or removed against the approved ones, migration warnings. Nothing is installed or run: the person installs it in the admin console (Extensions), where they review and approve its permissions.",
+        input: z.object({ file: FileRefSchema }).strict(),
+        example: { file: { fileId: "0b9f2c4e-1d3a-4c55-9e0a-7a2f6d1c8b11" } },
+        authz: { superAdmin: true },
+        mirrors: ["POST /api/v1/admin/extensions/packages/file"],
+        // the route's raw body
+        extras: ["file"],
+        confirm: "platform",
+        errors: [
+          {
+            code: "extension.package_invalid",
+            next: "The package is not a valid extension package (the details list each problem); fix it, pack and deliver it again.",
+          },
+          {
+            code: "extension.package_too_large",
+            next: "The package is over the deployment's package limit; make it smaller.",
+          },
+          {
+            code: "extension.config_declared",
+            next: "An extension of this name is declared in the startup config; tell the person, who removes it there first.",
+          },
+          {
+            code: "extension.name_conflict",
+            next: "An extension of this name is installed from another npm package; check the package name.",
+          },
+        ],
+        fileRef: (i) => ({
+          ref: i.file,
+          // the route takes the raw bytes whatever their type (a delivered .tgz is
+          // application/octet-stream); the package reader checks them
+          limits: { maxBytes: this.config.get().packages.maxBytes },
+        }),
+        summary: (_i, ctx) => {
+          const f = named(ctx.file?.name ?? "?");
+          return {
+            zh: `把扩展包「${f}」存入平台的包存储（安装在网页上进行）`,
+            en: `Store the extension package "${f}" in the platform's package store (installed on the web)`,
+          };
+        },
+        run: async (_input, ctx) => {
+          const f = ctx.file;
+          if (f === undefined) throw new Error("extensions.upload-package: the file is missing");
+          const r = await this.installs.ingestFile(ctx.actorAccountId, f.bytes, {
+            auditDetail: viaAgent("extensions.upload-package", ctx),
+          });
+          return {
+            review: {
+              name: r.name,
+              version: r.version,
+              sha256: r.sha256,
+              permissions: r.permissions,
+              addedPermissions: r.added,
+              removedPermissions: r.removed,
+              warnings: r.warnings,
+            },
+            next: "Nothing is installed: the person installs the package in the admin console (Extensions), reviewing and approving its permissions there.",
           };
         },
       }),

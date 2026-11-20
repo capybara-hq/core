@@ -19,13 +19,19 @@ import { AgentDefinitionSchema, type ModelRef } from "../../agents/definition.js
 import { AgentsFromTemplate } from "../../agents/from-template.service.js";
 import { OrgAgentTemplates } from "../../agents/org-templates.js";
 import { PendingConnectorsService } from "../../agents/pending-connectors.service.js";
-import { PresetAvatarSchema } from "../../agents/profile.js";
+import { PresetAvatarSchema, type ProfilePatch } from "../../agents/profile.js";
 import { ReadinessService } from "../../agents/readiness.service.js";
 import { CatalogRequestsService } from "../../catalog/requests.service.js";
+import {
+  AGENT_AVATAR_CONTENT_TYPES,
+  AGENT_AVATAR_MAX_BYTES,
+  AttachmentsService,
+} from "../../conversations/attachments.service.js";
 import { KernelDb } from "../../infra/database/kernel-db.js";
 import { roleAtLeast } from "../../orgs/roles.js";
 import { rootConversationOf } from "../../runtime/subagents/child.js";
 import { ConnectorsService } from "../../tools/connectors.service.js";
+import { FileRefSchema } from "../file-ref.js";
 import {
   type ConfirmClass,
   defineOperation,
@@ -76,23 +82,36 @@ const Fields = {
 };
 
 /**
- * The profile fields the tool sets: a preset avatar (or none) and the quick actions. An uploaded
- * image is the web's (byte upload); the description moves into the agent definition (run-context
- * spec §3.5), so it is not mirrored here.
+ * The profile fields the tool sets: an avatar (a preset, an image of the conversation, or none)
+ * and the quick actions. The description moves into the agent definition (run-context spec §3.5),
+ * so it is not mirrored here.
  */
 const Profile = AgentProfileBody.shape;
 const PresetAvatar = PresetAvatarSchema;
+/**
+ * An image of the conversation as the avatar (platform web parity spec §5): in place of the
+ * route's `upload` kind, the kernel stores the file as an avatar upload and saves that.
+ */
+const FileAvatar = z.object({ kind: z.literal("file"), file: FileRefSchema }).strict();
 
 /** One change of `agents.update-profile` as the card says it. */
-function profileChanges(i: {
-  avatar?: { id: string } | null | undefined;
-  quickActions?: { title: string }[] | undefined;
-}): { zh: string[]; en: string[] } {
+function profileChanges(
+  i: {
+    avatar?: { kind: "preset"; id: string } | { kind: "file" } | null | undefined;
+    quickActions?: { title: string }[] | undefined;
+  },
+  fileName?: string,
+): { zh: string[]; en: string[] } {
   const zh: string[] = [];
   const en: string[] = [];
   if (i.avatar === null) {
     zh.push("移除头像");
     en.push("remove the avatar");
+  } else if (i.avatar?.kind === "file") {
+    // the card's file row shows the image itself; the name is the file's, clipped
+    const n = named(fileName ?? "?");
+    zh.push(`头像设为图片「${n}」`);
+    en.push(`set the avatar to the image "${n}"`);
   } else if (i.avatar !== undefined) {
     zh.push(`头像设为预设「${i.avatar.id}」`);
     en.push(`set the avatar to preset "${i.avatar.id}"`);
@@ -138,6 +157,7 @@ export class AgentsOperations implements OnModuleInit {
     @Inject(ConnectorsService) private readonly connectors: ConnectorsService,
     @Inject(ReadinessService) private readonly readiness: ReadinessService,
     @Inject(KernelDb) private readonly kdb: KernelDb,
+    @Inject(AttachmentsService) private readonly attachments: AttachmentsService,
   ) {}
 
   /**
@@ -379,12 +399,11 @@ export class AgentsOperations implements OnModuleInit {
       defineOperation({
         id: "agents.update-profile",
         description:
-          "Change how an agent you may edit looks to people: its avatar (one of the preset animals, or null for none) and its quick actions (the prompts offered when a conversation starts; the list you send replaces the current one, [] clears it). Send at least one of the two. The current profile is in agents.get. The description is part of the definition: change it with agents.update. A custom avatar image is uploaded on the agents page of the web app. A change to your own private agent may be remembered by the person; a change to a shared agent is confirmed every time.",
+          'Change how an agent you may edit looks to people: its avatar (one of the preset animals; an image of this conversation as { kind: "file", file: { fileId } }, e.g. a generated image, an attachment or a delivered file, PNG, JPEG or WebP up to 2 MiB, which the person sees on the card; or null for none) and its quick actions (the prompts offered when a conversation starts; the list you send replaces the current one, [] clears it). Send at least one of the two. The current profile is in agents.get. The description is part of the definition: change it with agents.update. A change to your own private agent may be remembered by the person (never one that takes an image); a change to a shared agent is confirmed every time.',
         input: z
           .object({
             agentId: AgentId,
-            // a preset only: the route's `upload` kind needs a byte upload, which stays on the web
-            avatar: PresetAvatar.nullable().optional(),
+            avatar: z.union([PresetAvatar, FileAvatar]).nullable().optional(),
             quickActions: Profile.quickActions,
           })
           .strict()
@@ -399,11 +418,18 @@ export class AgentsOperations implements OnModuleInit {
           ],
         },
         authz: { orgAction: "agents.create" },
-        mirrors: ["PATCH /api/v1/orgs/:orgId/agents/:agentId/profile"],
+        mirrors: [
+          "PATCH /api/v1/orgs/:orgId/agents/:agentId/profile",
+          "POST /api/v1/orgs/:orgId/agents/:agentId/avatar/uploads",
+        ],
         // `expectedUpdatedAt` is read by the operation itself (the route takes no description: it
-        // is saved with the definition, agents.update). The narrower avatar (no `upload` kind)
-        // needs no declaration: an input that accepts less than the route passes the parity test.
-        omits: ["expectedUpdatedAt"],
+        // is saved with the definition, agents.update); the upload registration's fields come
+        // from the referenced file
+        omits: ["expectedUpdatedAt", "name", "contentType", "size"],
+        loosens: {
+          avatar:
+            "the `file` kind takes an image of the conversation in place of the route's `upload` kind (spec §5): the kernel stores it as an avatar upload and saves that",
+        },
         confirm: "personal",
         confirmFor: (i, ctx) => this.updateClass(i.agentId, undefined, ctx),
         errors: [
@@ -423,18 +449,36 @@ export class AgentsOperations implements OnModuleInit {
             code: "agent.profile_conflict",
             next: "Someone changed the profile while you were waiting: read it again with agents.get, then call again.",
           },
+          {
+            code: "attachment.too_many_pending",
+            next: "Too many avatar images are stored and not used yet; wait a day for them to expire, or save one of them.",
+          },
+          {
+            code: "storage.unavailable",
+            next: "File storage is unavailable, so an image cannot be stored; use a preset avatar, or tell the person to contact the super admin.",
+          },
         ],
         precheck: async (i, ctx) => {
           const { agent: _a, ...check } = await this.editCheck(i.agentId, ctx);
           return check;
         },
+        fileRef: (i) =>
+          i.avatar?.kind === "file"
+            ? {
+                ref: i.avatar.file,
+                limits: {
+                  maxBytes: AGENT_AVATAR_MAX_BYTES,
+                  contentTypes: AGENT_AVATAR_CONTENT_TYPES,
+                },
+              }
+            : null,
         summary: async (i, ctx) => {
           const a = await orElse(
             () => this.agents.get(ctx.orgId, i.agentId, ctx.actorAccountId),
             null,
           );
           const n = named(a?.definition.name ?? i.agentId);
-          const c = profileChanges(i);
+          const c = profileChanges(i, ctx.file?.name);
           return a?.visibility === "private"
             ? {
                 zh: `修改私有智能体「${n}」的资料：${c.zh.join("；")}`,
@@ -448,12 +492,27 @@ export class AgentsOperations implements OnModuleInit {
         run: async (input, ctx) => {
           // the profile as of now: the person approved this change, not a guard on an earlier read
           const current = await this.agents.get(ctx.orgId, input.agentId, ctx.actorAccountId);
+          let avatar: ProfilePatch["avatar"] =
+            input.avatar?.kind === "file" ? undefined : input.avatar;
+          if (input.avatar?.kind === "file") {
+            // the bytes the person confirmed (the tool verified their sha256), stored as the
+            // avatar route stores an upload, then saved as that upload
+            const f = ctx.file;
+            if (f === undefined) throw new Error("agents.update-profile: the file is missing");
+            const { id } = await this.attachments.createFromBytes(
+              ctx.orgId,
+              ctx.actorAccountId,
+              "agent-avatar",
+              { name: f.name, contentType: f.contentType, bytes: f.bytes },
+            );
+            avatar = { kind: "upload", uploadId: id };
+          }
           const profile = await this.profiles.update(
             ctx.orgId,
             input.agentId,
             ctx.actorAccountId,
             {
-              ...(input.avatar !== undefined && { avatar: input.avatar }),
+              ...(avatar !== undefined && { avatar }),
               ...(input.quickActions !== undefined && { quickActions: input.quickActions }),
             },
             current.profile.updatedAt,

@@ -20,7 +20,9 @@ import {
 import type { ComponentKind } from "../../catalog/component-state.js";
 import { PlatformComponents } from "../../catalog/platform-components.js";
 import { ApiError } from "../../errors.js";
+import { KernelConfigService } from "../../infra/config/kernel-config.service.js";
 import { KernelDb } from "../../infra/database/kernel-db.js";
+import { FileRefSchema } from "../file-ref.js";
 import { defineOperation, type OperationContext } from "../operation.js";
 import { PlatformOperations } from "../registry.js";
 import { precheckBy, viaAgent } from "./errors.js";
@@ -168,6 +170,7 @@ export class ComponentsOperations implements OnModuleInit {
     @Inject(ComponentScopeService) private readonly components: ComponentScopeService,
     @Inject(PlatformComponents) private readonly platformComponents: PlatformComponents,
     @Inject(KernelDb) private readonly kdb: KernelDb,
+    @Inject(KernelConfigService) private readonly config: KernelConfigService,
   ) {}
 
   /** A component as a write returns it, with its orgs named (see {@link brief}). */
@@ -962,6 +965,65 @@ export class ComponentsOperations implements OnModuleInit {
               ),
             ),
           };
+        },
+      }),
+      defineOperation({
+        id: "plugins.update-skill",
+        description:
+          "Publish a new version of a platform skill on its own (super admin): a skill package (zip) of this conversation, e.g. one you built in the sandbox and delivered with Deliver, passed as file: { fileId }. The package must keep the skill's name and is checked like an org skill upload; it serves in orgs at once and stays with its plugin. Takes the skill id from plugins.components with kind skill.",
+        input: z.object({ skillId: Id, file: FileRefSchema }).strict(),
+        example: { skillId: EXAMPLE_ID, file: { fileId: "0b9f2c4e-1d3a-4c55-9e0a-7a2f6d1c8b11" } },
+        authz: { superAdmin: true },
+        mirrors: ["POST /api/v1/admin/components/skill/:id/versions"],
+        renames: { skillId: "id" },
+        // the route's raw body
+        extras: ["file"],
+        confirm: "platform",
+        errors: [
+          {
+            code: "component.not_found",
+            next: "Check the skill id with plugins.components (kind skill).",
+          },
+          {
+            code: "validation_failed",
+            next: "The package must keep the skill's name: fix the name in SKILL.md, rebuild the zip and retry.",
+          },
+          {
+            code: "skill.invalid_package",
+            next: "Fix the package as the message says (SKILL.md at the zip's root with name and description frontmatter, allowed paths and sizes), rebuild the zip, deliver it and retry.",
+          },
+          {
+            code: "component.version_stale",
+            next: "The skill changed while this version was stored; call again.",
+          },
+        ],
+        precheck: (i, ctx) =>
+          precheckBy(() => this.assertNotOtherOrgs("skill", i.skillId, ctx.orgId)),
+        fileRef: (i) => ({
+          ref: i.file,
+          // the route takes the raw bytes whatever their type; the package reader checks them
+          limits: { maxBytes: this.config.get().packages.maxBytes },
+        }),
+        summary: async (i, ctx) => {
+          const n = await this.adminName("skill", i.skillId);
+          const f = named(ctx.file?.name ?? "?");
+          return {
+            zh: `用技能包「${f}」发布平台技能「${n}」的新版本`,
+            en: `Publish a new version of platform skill "${n}" from the package "${f}"`,
+          };
+        },
+        run: async (i, ctx) => {
+          const f = ctx.file;
+          if (f === undefined) throw new Error("plugins.update-skill: the file is missing");
+          await this.assertNotOtherOrgs("skill", i.skillId, ctx.orgId);
+          return this.platformComponents.uploadSkillVersion(
+            {
+              accountId: ctx.actorAccountId,
+              auditDetail: viaAgent("plugins.update-skill", ctx),
+            },
+            i.skillId,
+            f.bytes,
+          );
         },
       }),
       defineOperation({

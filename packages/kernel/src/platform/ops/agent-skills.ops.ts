@@ -1,6 +1,10 @@
 import { Inject, Injectable, type OnModuleInit } from "@nestjs/common";
 import { z } from "zod";
 import { AgentsService } from "../../agents/agents.service.js";
+import {
+  SKILL_PACKAGE_CONTENT_TYPE,
+  SKILL_PACKAGE_UPLOAD_MAX_BYTES,
+} from "../../conversations/attachments.service.js";
 import { ApiError } from "../../errors.js";
 import { KernelDb } from "../../infra/database/kernel-db.js";
 import { rootConversationOf } from "../../runtime/subagents/child.js";
@@ -21,6 +25,7 @@ import {
   SkillChangePathParams,
 } from "../../skills/skills.schemas.js";
 import { type SkillSummary, SkillsService } from "../../skills/skills.service.js";
+import { FileRefSchema } from "../file-ref.js";
 import {
   type ConfirmClass,
   defineOperation,
@@ -61,6 +66,17 @@ function sharedText(o: ShareOutcome, name: string): string {
   return o.kind === "shared"
     ? `Shared skill "${name}" with the organization: it is now an org skill (the person maintains it) that every agent of the org has unless it turns it off; this agent keeps using it.`
     : `Asked the org admins to share skill "${name}" with the organization; it waits for their decision in the inbox. Until then it stays this agent's own skill.`;
+}
+
+/** The model-facing result line of `agents.upload-skill` (another conversation's catalog). */
+function uploadedText(o: RegisterOutcome, agent: string): string {
+  if (o.kind === "proposed") {
+    return `Proposed version ${o.version} of the org skill "${o.name}"; it waits for an org admin to approve it in the inbox.`;
+  }
+  const head = `${o.created ? "Created" : "Updated"} skill "${o.name}" of agent "${agent}", version ${o.version}.`;
+  return o.manualOnly
+    ? `${head} It is manual-only: a person invokes it with /${o.name} in a conversation with that agent.`
+    : `${head} Conversations with that agent use it from their next run.`;
 }
 
 /** The model-facing result line of `agents.register-skill`. */
@@ -109,8 +125,8 @@ export class AgentSkillsOperations implements OnModuleInit {
    * Also `org` when the registration may apply a version to a shared org skill at once (the actor
    * is an org admin maintaining one; the package name is not known before the card).
    */
-  private async registerClass(ctx: OperationContext): Promise<ConfirmClass> {
-    const a = await this.agents.get(ctx.orgId, ctx.agentId, ctx.actorAccountId);
+  private async registerClass(ctx: OperationContext, agentId = ctx.agentId): Promise<ConfirmClass> {
+    const a = await this.agents.get(ctx.orgId, agentId, ctx.actorAccountId);
     const personal =
       a.visibility === "private" &&
       a.ownerAccountId === ctx.actorAccountId &&
@@ -320,6 +336,111 @@ export class AgentSkillsOperations implements OnModuleInit {
             viaAgent("agents.delete-skill", ctx),
           );
           return { id: input.skillId, deleted: true };
+        },
+      }),
+      defineOperation({
+        id: "agents.upload-skill",
+        description:
+          "Upload a skill package onto an agent you own: a zip file of this conversation (an attachment, or a zip you built in the sandbox and delivered with Deliver), passed as file: { fileId }. The zip has SKILL.md at its root or in one top-level folder (frontmatter name and description, then the instructions), plus any scripts or references, at most 50 MiB. It becomes a new skill of the agent, or the next version of its skill with the same name; when you maintain a shared org skill of that name, the version goes to that skill (an org admin's applies at once, anyone else's is proposed to the org admins). Only the agent's owner can; the person sees the file on the card. Takes the agent id from agents.list.",
+        input: z
+          .object({ agentId: AgentSkillsListParams.shape.agentId, file: FileRefSchema })
+          .strict(),
+        example: {
+          agentId: "7c1a5b0e-9a53-4c6b-8d64-2f5a1b0c3e77",
+          file: { fileId: "0b9f2c4e-1d3a-4c55-9e0a-7a2f6d1c8b11" },
+        },
+        authz: { orgAction: "agents.create" },
+        mirrors: ["POST /api/v1/orgs/:orgId/agents/:agentId/skills/uploads"],
+        // the upload registration's fields come from the referenced file
+        omits: ["name", "size"],
+        extras: ["file"],
+        confirm: "personal",
+        confirmFor: (i, ctx) => this.registerClass(ctx, i.agentId),
+        errors: [
+          {
+            code: "forbidden",
+            next: "Only the agent's owner can add or update its skills; tell the person, and the owner can upload the package.",
+          },
+          {
+            code: "agent.not_found",
+            next: "Check the agent id with agents.list: only agents you can see are readable.",
+          },
+          {
+            code: "skill.invalid_package",
+            next: "Fix the package as the message says (SKILL.md at the zip's root with name and description frontmatter, allowed paths and sizes), rebuild the zip, deliver it and retry.",
+          },
+          {
+            code: "skill.agent_cap",
+            next: "Upload a new version of an existing skill (same name) instead, or ask the agent's owner to delete one of its skills (agents.skills lists them).",
+          },
+          {
+            code: "skill.name_exists",
+            next: "The agent uses an org skill with this name that only its maintainer can update; change the name in SKILL.md, rebuild the zip and upload again, or ask the skill's maintainer.",
+          },
+          {
+            code: "catalog.custom_disabled",
+            next: "This deployment does not allow custom org skills, so this version of a shared skill cannot be uploaded; tell the person.",
+          },
+          {
+            code: "skill.proposal_pending_elsewhere",
+            next: "Another conversation has a proposed version of this skill waiting for an org admin; wait for that decision.",
+          },
+          {
+            code: "storage.unavailable",
+            next: "File storage is unavailable; try again later, or tell the person to contact the super admin.",
+          },
+        ],
+        precheck: (i, ctx) =>
+          precheckBy(() => this.agentSkills.assertOwner(ctx.orgId, i.agentId, ctx.actorAccountId)),
+        fileRef: (i) => ({
+          ref: i.file,
+          limits: {
+            maxBytes: SKILL_PACKAGE_UPLOAD_MAX_BYTES,
+            contentTypes: [SKILL_PACKAGE_CONTENT_TYPE],
+          },
+        }),
+        summary: async (i, ctx) => {
+          const agent = await orElse(
+            async () =>
+              named(
+                (await this.agents.get(ctx.orgId, i.agentId, ctx.actorAccountId)).definition.name,
+              ),
+            i.agentId,
+          );
+          const f = named(ctx.file?.name ?? "?");
+          return {
+            zh: `把技能包「${f}」上传为智能体「${agent}」的技能`,
+            en: `Upload the skill package "${f}" as a skill of agent "${agent}"`,
+          };
+        },
+        run: async (input, ctx) => {
+          const f = ctx.file;
+          if (f === undefined) throw new Error("agents.upload-skill: the file is missing");
+          // the route's register step on the bytes the person confirmed (no upload row needed)
+          const o = await this.agentSkills.register(
+            {
+              orgId: ctx.orgId,
+              agentId: input.agentId,
+              accountId: ctx.actorAccountId,
+              auditDetail: viaAgent("agents.upload-skill", ctx),
+            },
+            f.bytes,
+          );
+          const agent = await orElse(
+            async () =>
+              (await this.agents.get(ctx.orgId, input.agentId, ctx.actorAccountId)).definition.name,
+            input.agentId,
+          );
+          return {
+            skill: {
+              id: o.skillId,
+              name: o.name,
+              state: o.kind === "proposed" ? "pending" : o.manualOnly ? "manual" : "active",
+              version: o.version,
+              ...(o.kind === "proposed" && { requestId: o.requestId }),
+            },
+            message: uploadedText(o, named(agent)),
+          };
         },
       }),
       defineOperation({
