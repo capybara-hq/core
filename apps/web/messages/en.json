@@ -119,7 +119,8 @@
       "not_found": "The account does not exist.",
       "last_super_admin": "The last super admin cannot be revoked or deactivated.",
       "initial_password_unavailable": "There is no initial password to show: it was shown already, has expired, or the account was not created by a call you approved.",
-      "create_needs_approval": "Create the account from a conversation where you approve the call yourself, or on the web."
+      "create_needs_approval": "Create the account from a conversation where you approve the call yourself, or on the web.",
+      "display_name_too_long": "The name is too long: at most 64 characters."
     },
     "org": {
       "not_found": "The organization does not exist or you are no longer a member.",
@@ -2672,6 +2673,7 @@
       "models": "Models",
       "members": "Members",
       "tokens": "Service tokens",
+      "profile": "Profile",
       "preferences": "Preferences",
       "appearance": "Appearance",
       "schedules": "Scheduled tasks",
@@ -6453,6 +6455,30 @@
     "noneInOrg": "This plugin offers no component to this organization.",
     "listUnavailable": "The platform components' state in this organization could not be read: the ones that are off and their switches are not shown.",
     "retry": "Retry"
+  },
+  "people": {
+    "you": "You",
+    "departed": "Former member"
+  },
+  "profile": {
+    "title": "Profile",
+    "section": "Profile",
+    "description": "How you appear to the other people in your organizations.",
+    "avatarLabel": "Avatar",
+    "upload": "Upload",
+    "replace": "Replace",
+    "remove": "Remove",
+    "fromSource": "From {source}",
+    "uploadOff": "Uploading needs object storage, which this deployment has not configured.",
+    "uploadType": "Choose a png, jpg or webp image.",
+    "uploadFailed": "The image could not be read. Pick a png, jpg or webp file.",
+    "avatarSaved": "Avatar saved.",
+    "avatarRemoved": "Avatar removed.",
+    "nameLabel": "Name",
+    "nameRequired": "Enter a name.",
+    "nameTooLong": "At most {max} characters.",
+    "save": "Save",
+    "saved": "Profile saved."
   },
   "preferences": {
     "title": "Preferences",

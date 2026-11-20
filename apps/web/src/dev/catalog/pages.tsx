@@ -34,7 +34,14 @@ import { sidebarProps, statusFixture } from "./shell-fixture";
 const T = "2026-11-10T08:30:00.000Z";
 
 const ME: Me = {
-  account: { id: "a1", displayName: "Grant", email: null, isSuperAdmin: true },
+  account: {
+    id: "a1",
+    displayName: "Grant",
+    email: null,
+    isSuperAdmin: true,
+    avatarUrl: null,
+    avatarSource: null,
+  },
   via: "session",
   currentOrgId: "o1",
   memberships: [{ orgId: "o1", slug: "acme", name: "Acme", role: "owner" }],

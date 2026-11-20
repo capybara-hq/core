@@ -56,6 +56,7 @@ import { useClientComponent, useSlotHasClientCode } from "../extension-ui/Client
 import { ExtensionSlot, useSlotContributions } from "../extension-ui/ExtensionSlot";
 import { LeaveOrgDialog } from "../LeaveOrgDialog";
 import { usePluginPendingCount } from "../PluginsHead";
+import { ACCOUNT_HOME } from "../settings-nav";
 import { useResolvedTheme } from "../theme-root";
 import { noOrgConversations, useConversationGroups } from "./conversations";
 import { AdminMePage, type MePanels, MePanelsContext } from "./me";
@@ -533,7 +534,7 @@ function ShellFrame({
   };
   const personalMenu: MenuItem[] = [
     languageMenu,
-    { label: t("shell.accountSettings"), href: "/account/preferences" },
+    { label: t("shell.accountSettings"), href: ACCOUNT_HOME },
     "separator",
     { label: t("common.logout"), onSelect: () => void onLogout() },
   ];
@@ -574,7 +575,7 @@ function ShellFrame({
       id: "account",
       label: t("shell.accountSettings"),
       icon: "user",
-      href: "/account/preferences",
+      href: ACCOUNT_HOME,
     },
     {
       id: "language",
@@ -591,7 +592,7 @@ function ShellFrame({
   const system = [version, timeZone].filter((v) => v !== "").join(" · ");
   const mePanels: MePanels = {
     work: {
-      account: { name: me.account.displayName },
+      account: { name: me.account.displayName, avatarUrl: me.account.avatarUrl },
       org: sidebarOrg(orgItems),
       workspace: [
         ...meNav.workspace.map(toRow),
@@ -621,7 +622,7 @@ function ShellFrame({
     },
     admin: me.account.isSuperAdmin
       ? {
-          account: { name: me.account.displayName },
+          account: { name: me.account.displayName, avatarUrl: me.account.avatarUrl },
           org: null,
           adminContext: true,
           manage: adminItems.filter((i) => !hiddenOnCompact.has(i.id)).map(toRow),
@@ -671,7 +672,11 @@ function ShellFrame({
               steps,
               activeNav: activeStepOf(pathname, steps),
               // The org has its own menu in the switcher.
-              account: { name: me.account.displayName, menu: personalMenu },
+              account: {
+                name: me.account.displayName,
+                avatarUrl: me.account.avatarUrl,
+                menu: personalMenu,
+              },
               ...schemeToggle,
               ...(me.account.isSuperAdmin ? { adminHref: "/admin" } : {}),
             }}
@@ -762,7 +767,11 @@ function ShellFrame({
         newConversation: { href: HOME_PATH },
         activeNav: inAdmin ? activeAdminOf(pathname, adminItems) : activeNavOf(pathname),
         conversations,
-        account: { name: me.account.displayName, menu: personalMenu },
+        account: {
+          name: me.account.displayName,
+          avatarUrl: me.account.avatarUrl,
+          menu: personalMenu,
+        },
         ...schemeToggle,
         ...(brand === undefined ? {} : { brand }),
       }}

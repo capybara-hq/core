@@ -260,6 +260,11 @@ export const ROUTES: readonly RouteEntry[] = [
       orgId === null || !atLeast(me, "guest") ? [] : [q(orgSharesQuery(orgId, "mine"))],
   },
   {
+    // Nothing to read: `me` (the layout's) holds the name and the avatar.
+    pattern: "/account/profile",
+    queries: () => [],
+  },
+  {
     pattern: "/account/preferences",
     // No org needed: my preferences; with an org, its themes (外观: the cards or the lock).
     queries: ({ me, orgId }) =>
