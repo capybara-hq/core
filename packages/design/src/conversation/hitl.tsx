@@ -448,14 +448,14 @@ export function ApprovalBlock(p: ApprovalBlockProps): JSX.Element {
     actions = (
       <div className="cb-hcard-actions">
         {p.scopes.map((scope, i) => (
-          <Button
+          <ScopeChoice
             key={scope}
-            variant={i === 0 ? "primary" : "default"}
+            primary={i === 0}
             disabled={busy || p.approveDisabled === true}
+            label={p.scopeLabels?.[scope] ?? t(SCOPE_LABEL[scope])}
+            hint={undefined}
             onClick={() => p.onApprove?.(scope)}
-          >
-            {p.scopeLabels?.[scope] ?? t(SCOPE_LABEL[scope])}
-          </Button>
+          />
         ))}
         <Button disabled={busy} onClick={() => setDenying(true)}>
           {t("hitl.denyEllipsis")}
@@ -974,14 +974,14 @@ function CommandApproval(p: ApprovalBlockProps & { command: CommandAsk }): JSX.E
     actions = (
       <div className="cb-hcard-actions">
         {p.scopes.map((scope, i) => (
-          <Button
+          <ScopeChoice
             key={scope}
-            variant={i === 0 ? "primary" : "default"}
+            primary={i === 0}
             disabled={busy}
+            label={label(scope)}
+            hint={undefined}
             onClick={() => p.onApprove?.(scope)}
-          >
-            {label(scope)}
-          </Button>
+          />
         ))}
         <Button disabled={busy} onClick={() => setDenying(true)}>
           {t("hitl.command.deny")}
