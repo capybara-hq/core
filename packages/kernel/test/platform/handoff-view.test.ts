@@ -12,6 +12,7 @@ import { CONNECT_SHOWN_TEXT } from "../../src/platform/ops/connectors.ops.js";
 import { PlatformOperations } from "../../src/platform/registry.js";
 import { MCP_TOKEN, type OrgEnv, startOrgEnv } from "../catalog/org-env.js";
 import { builtinsOff } from "../helpers/disabled-tools.js";
+import { captureProviderRequests } from "../helpers/provider-capture.js";
 import {
   createConv,
   enableConnectorExtensions,
@@ -51,8 +52,11 @@ const linkProbe = defineOperation({
 
 let env: OrgEnv;
 let ops: PlatformOperations;
+/** Every request the model provider receives (installed before the kernel starts). */
+const capture = captureProviderRequests();
 
 beforeAll(async () => {
+  capture.install();
   env = await startOrgEnv();
   ops = env.k.app.get(PlatformOperations);
   ops.register([linkProbe]);
@@ -60,6 +64,7 @@ beforeAll(async () => {
 });
 afterAll(async () => {
   await env?.stop();
+  capture.restore();
 });
 
 type Ev<T extends ConversationEvent["type"]> = Extract<ConversationEvent, { type: T }>;
@@ -125,7 +130,7 @@ async function callOp(agentId: string, operation: string, params: Record<string,
   await waitForTerminal(env.db, convId, 1, 30_000);
   const result = ofType(await eventsOf(env.db, convId), "tool_result").at(-1)?.payload;
   if (result === undefined) throw new Error("no tool_result");
-  return result;
+  return { convId, result };
 }
 
 async function oauthConnector(name: string): Promise<string> {
@@ -159,6 +164,8 @@ describe("registration", () => {
       "POST /api/v1/orgs/:orgId/connectors/:connectorId/connect",
     ]);
     expect(excluded.get("GET /api/v1/oauth/callback")?.category).toBe("secret");
+    // a read: the Connect card is the only card, no approval before it
+    expect(op("connectors.connect").confirm).toBe("read");
   });
 
   it("the view schema takes only a relative web path for a link", () => {
@@ -178,8 +185,11 @@ describe("handoff views", () => {
   it("connectors.connect: the Connect card on the result, the sentence in the text, nothing started", async () => {
     const id = await oauthConnector("Docs");
     const agentId = await platformAgent("Connector helper");
-    const result = await callOp(agentId, "connectors.connect", { connectorId: id });
+    capture.reset();
+    const { convId, result } = await callOp(agentId, "connectors.connect", { connectorId: id });
     expect(result.isError, result.content).toBe(false);
+    // a read: no approval card came before the Connect card
+    expect(ofType(await eventsOf(env.db, convId), "approval_requested")).toEqual([]);
     expect(result.content).toContain(CONNECT_SHOWN_TEXT);
     expect(CONNECT_SHOWN_TEXT).toBe(
       "The person was shown a Connect button; check connectors.get for the connection state.",
@@ -194,6 +204,16 @@ describe("handoff views", () => {
     expect(JSON.parse(result.content)).toMatchObject({
       connector: { id, credential: { ownership: "personal", status: "missing" } },
     });
+    // request building ignores the view: the request after the call carries the result text and
+    // none of the card
+    const after = capture.sent.filter((r) => JSON.stringify(r).includes("Connect button"));
+    expect(after.length).toBeGreaterThan(0);
+    for (const r of capture.sent) {
+      const text = JSON.stringify(r);
+      expect(text).not.toContain("Connect Docs");
+      expect(text).not.toContain("连接「Docs」");
+      expect(text).not.toContain('"handoff"');
+    }
   });
 
   it("connectors.connect refuses a connector that is not OAuth authorization-code", async () => {
@@ -211,15 +231,14 @@ describe("handoff views", () => {
     expect(created.statusCode, created.body).toBe(201);
     const id = (created.json() as { connector: { id: string } }).connector.id;
     const o = op("connectors.connect");
-    expect(await o.precheck?.(o.input.parse({ connectorId: id }), ctxOf())).toMatchObject({
-      ok: false,
+    await expect(o.run(o.input.parse({ connectorId: id }), ctxOf())).rejects.toMatchObject({
       code: "validation_failed",
     });
   });
 
   it("a link card: the view on the result and its path in the text as reviewUrl", async () => {
     const agentId = await platformAgent("Link helper");
-    const result = await callOp(agentId, LINK_OP, {});
+    const { result } = await callOp(agentId, LINK_OP, {});
     expect(result.isError, result.content).toBe(false);
     expect(result.view).toEqual({
       kind: "handoff",
@@ -231,7 +250,7 @@ describe("handoff views", () => {
 
   it("an invalid card is left out and the result stands", async () => {
     const agentId = await platformAgent("Bad link helper");
-    const result = await callOp(agentId, LINK_OP, { bad: true });
+    const { result } = await callOp(agentId, LINK_OP, { bad: true });
     expect(result.isError, result.content).toBe(false);
     expect(result.view).toBeUndefined();
     expect(JSON.parse(result.content)).toEqual({ staged: true });

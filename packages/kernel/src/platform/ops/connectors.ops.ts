@@ -355,7 +355,7 @@ export class ConnectorsOperations implements OnModuleInit {
           { code: "connector.not_found", next: "Check the connector id with connectors.list." },
           {
             code: "credential.missing",
-            next: "Your credential for this connector is missing: set it with connectors.set-my-credential (you enter it on the card; an OAuth connector is connected on its web page), then refresh again.",
+            next: "Your credential for this connector is missing: set it with connectors.set-my-credential (the person enters it on the card; for an OAuth connector call connectors.connect, which shows the person a Connect button), then refresh again.",
           },
         ],
         precheck: (i, ctx) =>
@@ -698,7 +698,7 @@ export class ConnectorsOperations implements OnModuleInit {
       defineOperation({
         id: "connectors.set-my-credential",
         description:
-          "Set your own credential for a connector that uses each member's own credential: you enter it on the confirmation card (bearer and api_key: credential.token; basic: credential.username and credential.password). An OAuth connector is connected on its web page instead. Every field of the credential is asked.",
+          "Set your own credential for a connector that uses each member's own credential: you enter it on the confirmation card (bearer and api_key: credential.token; basic: credential.username and credential.password). An OAuth connector is connected with connectors.connect instead (it shows the person a Connect button). Every field of the credential is asked.",
         input: z
           .object({ connectorId: ConnectorId, askPerson: personFieldParams.askPerson })
           .strict(),
@@ -736,7 +736,7 @@ export class ConnectorsOperations implements OnModuleInit {
               ok: false,
               code: "validation_failed",
               message:
-                "This connector connects each person's account through OAuth: the person connects it on the connector's web page",
+                "This connector connects each person's account through OAuth: call connectors.connect, which shows the person a Connect button",
             };
           }
           return webOnly(headersWebOnly(c.auth, `Connector ${named(c.name)}`));
@@ -786,7 +786,7 @@ export class ConnectorsOperations implements OnModuleInit {
         mirrors: ["POST /api/v1/orgs/:orgId/connectors/:connectorId/connect"],
         // the web card starts the flow from the person's session and returns to the conversation
         omits: ["returnTo"],
-        confirm: "personal",
+        confirm: "read",
         errors: [
           { code: "connector.not_found", next: "Check the connector id with connectors.list." },
           {
@@ -794,39 +794,28 @@ export class ConnectorsOperations implements OnModuleInit {
             next: "Only an active OAuth authorization-code connector is connected this way: a token connector takes connectors.set-my-credential, a disabled one needs an org admin to enable it.",
           },
         ],
-        precheck: async (i, ctx) => {
-          let c: ConnectorDetail | undefined;
-          const r = await precheckBy(async () => {
-            c = await this.connectors.get(ctx.orgId, i.connectorId, ctx.actorAccountId);
-          });
-          if (!r.ok || c === undefined) return r;
-          if (c.auth.type !== "oauth_code") {
-            return {
-              ok: false,
-              code: "validation_failed",
-              message: "Only OAuth authorization-code connectors are connected this way",
-            };
-          }
-          if (c.status !== "active") {
-            return {
-              ok: false,
-              code: "validation_failed",
-              message: "The connector is disabled; ask an administrator to enable it",
-            };
-          }
-          return { ok: true };
-        },
-        summary: async (i, ctx) => {
-          const n = await this.connectorName(ctx, i.connectorId);
-          return {
-            zh: `在对话里显示连接器「${n}」的连接按钮`,
-            en: `Show the Connect button of connector "${n}" in the conversation`,
-          };
-        },
         // nothing is written: the route's start (state, PKCE, the browser binding cookie) stays
         // in the person's browser, through the web card
         run: async (input, ctx) => {
           const c = await this.connectors.get(ctx.orgId, input.connectorId, ctx.actorAccountId);
+          // the checks the route's start makes, so no Connect button is shown for nothing (a read
+          // runs without a card, so these are the run's own refusals rather than a precheck)
+          if (c.auth.type !== "oauth_code") {
+            throw new ApiError("validation_failed", "Request validation failed", [
+              {
+                path: "auth",
+                message: "Only OAuth authorization-code connectors are connected this way",
+              },
+            ]);
+          }
+          if (c.status !== "active") {
+            throw new ApiError("validation_failed", "Request validation failed", [
+              {
+                path: "status",
+                message: "The connector is disabled; ask an administrator to enable it",
+              },
+            ]);
+          }
           return {
             connector: { ...summary(c), credential: c.credential },
             next: CONNECT_SHOWN_TEXT,
