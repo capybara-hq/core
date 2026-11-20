@@ -195,13 +195,15 @@ The model has read it, and the event log, trajectories and evals keep it.
 An operation that mirrors an upload takes a **file reference**:
 
 ```jsonc
-"file": { "fileId": "att_…" }   // a conversation file: attachment, artifact, Read copy
-"file": { "path": "/workspace/dist/my-plugin.tgz" }  // a file on the conversation's device
+"file": { "fileId": "att_…" }   // a conversation file: attachment, artifact, delivered file
 ```
 
-- `fileId` resolves through `findConversationFile`, the resolver Read uses. Device paths are
-  read through the device as Read does, with the same owner rules. This covers generated images,
-  pasted screenshots, and archives the agent built in the sandbox (the co-build case).
+- `fileId` resolves through `findConversationFile`, the resolver Read uses. This covers generated
+  images and pasted screenshots.
+- A file on the conversation's device (an archive the agent built in the sandbox, the co-build
+  case) is first delivered with `Deliver`, which reads it under the device's rules, then passed
+  by its `fileId`. The card is shown before the call starts, so the policy step cannot read the
+  device itself: device reads need a started call (decided while executing PR 3).
 - The route's byte limit and content-type rules apply unchanged: `AGENT_AVATAR_MAX_BYTES` and
   its content types, and `packages.maxBytes` for packages. Too-large files are refused before the
   card.
@@ -371,7 +373,7 @@ On a deployment like prod (the former argus):
    `{ kind: "file", file: { fileId } }`. The card shows the thumbnail, and the agent's avatar
    changes.
 4. **A skill built in the sandbox.** The agent packs a skill archive, then calls
-   `skills.create-from-file` with a `path`. The org has the skill.
+   `skills.create-from-file` with the delivered file's `fileId`. The org has the skill.
 5. **Refusals.**
    - A secret in `values` is refused without being echoed.
    - `askPerson` naming a non-secret field is refused.

@@ -103,6 +103,11 @@ Suggested waves (execution may refine them in the ledger):
   sooner, so nothing is weakened; a failed install needs the person to type them again on a new
   card, and the tool result says so. Every other person-field write still consumes in its own
   transaction.
+- **R12. No device paths in file references** (decided while executing PR 3). A file reference is
+  only `{ fileId }`. The policy step cannot read a device file: device reads need the call's
+  started row, and the card comes first. The model delivers a device file with `Deliver` and passes
+  its `fileId` (`sandbox.deliverMaxBytes` 100 MiB is above the 50 MiB package cap). This supersedes
+  the `{ path }` parts of Task 14 and acceptance 4.
 
 ## Global Constraints
 
