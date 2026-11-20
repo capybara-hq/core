@@ -584,19 +584,6 @@
   background: var(--cb-hover);
   color: var(--cb-ink);
 }
-.cb-sidebar-avatar {
-  display: inline-flex;
-  flex: none;
-  align-items: center;
-  justify-content: center;
-  width: var(--cb-control-dense);
-  height: var(--cb-control-dense);
-  border-radius: 50%;
-  background: var(--cb-selected);
-  color: var(--cb-ink);
-  font-size: var(--cb-type-micro-size);
-  line-height: var(--cb-type-micro-line);
-}
 
 /* Setup context (web-SSR spec §4): the steps are the navigation; each carries a state mark. */
 .cb-sidebar-step-mark {

@@ -1240,7 +1240,7 @@ The left sidebar replaces the TopBar on every page (UI refresh spec §4.4). Side
   4. **更多** (`more-toggle`, `more-horizontal` + label + a `chevron-right` 12, `muted`): a button opening a **flyout menu to the right of the sidebar** (the design `Menu` with `side="right"`, anchored to the row, `space.3` past the sidebar's edge): 插件, 扩展, 渠道, 评测与运行, 组织设置 (插件, 扩展 and 组织设置 for members up, 渠道 and 评测与运行 for org admins only; hiding is cosmetic, the kernel decides; the row is drawn only when it has something to list, so a guest without extension pages has none), then, after a separator, the org's extension pages; every item is led by its nav icon, as in the main nav. The row takes the `sidebar-active` ground and `ink` (`data-active`) while the current page is one of its items, and that item is marked current inside the flyout (`aria-current="page"`, `selected` ground). Enter, Space and → open it; Escape closes it and returns focus to the row. Nothing is remembered and it never opens by itself. **On compact** there is no flyout: the Me page's 管理 group lists them in place (§6.48).
   5. **Conversations** (`section` labelled "会话"): take the rest of the height and scroll on their own, after a `line-soft` divider (inset by the sidebar's padding, like the account row's) and `space.2`. The scroll box runs out over the sidebar's `space.2` side padding to its edges and pads its content back by `space.2`, so the rows keep their place and the scrollbar sits flush on the right border, never over the rows' ends. See below.
   6. **管理后台** (`admin-entry`, super admins only, `context.adminHref`): `admin` icon (a shield), the label and an outward `arrow-up-right` 14, `muted`, directly above the account row; it enters the admin context.
-  7. **Account row** (`account`): a `line-soft` divider with `space.2` above (the block gap) and below; a 24 round initial avatar on `selected` (the name's first grapheme) + the name (no org: the switcher shows it), opening the account menu (语言 ▸, 个人设置, sign out; no org entry, the switcher owns it); its accessible name is "账户: {name}". After it, in the same row, `ThemeToggle` (light / dark icon radio, the chosen one on `selected`). The rail has no room for it, so there the theme leads the account menu ("Theme: Light"). Menu items may open a submenu (`submenu`: a `chevron-right` mark, opens on hover, click or the right arrow). The auth pages (`AuthPage`) show `PreferenceBar` (a dense language `Select` and the `ThemeToggle`) in the bottom-right corner, `space.4` (16) inside the right dither column (16 from the edge below 600, where the columns are hidden), each control at its own width. The language is a cookie (`NEXT_LOCALE`), never part of the URL.
+  7. **Account row** (`account`): a `line-soft` divider with `space.2` above (the block gap) and below; a person's circle `Avatar` at 24 (§6.30: the account's image, else the name's first grapheme muted on `selected`) + the name (no org: the switcher shows it), opening the account menu (语言 ▸, 个人设置, sign out; no org entry, the switcher owns it); its accessible name is "账户: {name}". After it, in the same row, `ThemeToggle` (light / dark icon radio, the chosen one on `selected`). The rail has no room for it, so there the theme leads the account menu ("Theme: Light"). Menu items may open a submenu (`submenu`: a `chevron-right` mark, opens on hover, click or the right arrow). The auth pages (`AuthPage`) show `PreferenceBar` (a dense language `Select` and the `ThemeToggle`) in the bottom-right corner, `space.4` (16) inside the right dither column (16 from the edge below 600, where the columns are hidden), each control at its own width. The language is a cookie (`NEXT_LOCALE`), never part of the URL.
 - **Admin context**, top to bottom: the brand row; the **context block** (`context-block`): the switcher's size and light style but static (no chevrons): a shield in the accent tint (`accent-tint` ground, `accent` icon), "管理后台" and `整个部署 · /admin` in mono; below it a link "← 回到工作区 ~/<slug>" (`back`, `row.dense`, `small` `muted`, `arrow-left` 14); the items 概览, 账号, 组织, 插件 (its count: what waits in its 待确认 tab), 扩展, 模型, 部署设置; no conversations, no 新会话, no search or inbox buttons (⌘K still opens the palette); the account row.
 
 - **Setup context** (`kind: "setup"`, web-SSR spec §4), top to bottom: the brand row without the search and inbox buttons (the collapse toggle stays); the org switcher (`context.org`, as in the workspace); the navigation (`nav` "Main navigation"): **开始之前** (`nav-item`, `diamond`, the setup home `context.home`, current when `activeNav` is `home`), then the required steps, then the label **可以稍后再做** (`step-group-label`, mono `micro` `faint`, letter-spacing 0.06em, `row.dense` high with the text at its bottom; the optional steps form a `group` it names), then the optional steps; the fill; the admin entry (`context.adminHref`); the account row. No conversations, no 新会话, no command palette. A **step item** (`step-item`, `SetupStep { id, label, state, href?, reason?, optional? }`) has the nav item's box and a state mark (`step-mark`, an `Icon` 16, never a character): `done` a `check` in `ok` (still a link), `todo` a `circle` in `muted` (a link), `waiting` a `clock` in `muted`: not a link (`role="link"`, `aria-disabled="true"`, the label `muted`, no hover ground, still a roving stop so its reason can be read) with `reason` as its second line (`step-reason`, `micro` `muted`, one line with an ellipsis), which makes the item 48 high. The current step takes the nav item's current style. Its accessible name is "{label}，{state}" (已完成 / 未完成, or the reason of a waiting step; en "{label}, {state}"). In the rail the steps are their marks alone (`row.default` squares) with the accessible name in the Tooltip to the right; the group label becomes a `line-soft` divider (`step-divider`, 24 × 1). On compact the steps are a pushed list reached from the setup home, the tab root (§5.5).
@@ -3112,17 +3112,18 @@ States: `text`, `box`, `group`
 
 ### 6.30 Avatar and AvatarPicker
 
-An agent's picture, everywhere an agent appears (the new conversation page, the agent picker, the agent list rows, the agent page head, the conversation title bar, the sidebar group titles; agent profile design §2.3).
+An agent's picture (a person's, as a circle, below), everywhere an agent appears (the new conversation page, the agent picker, the agent list rows, the agent page head, the conversation title bar, the sidebar group titles; agent profile design §2.3).
 
 - `Avatar({ value, name, size })`, `size` 16, 24, 28, 40 or 64, a square of that size. `value` is one of:
   - `{ kind: "preset", id }`: one of the ten pixel animals (`AVATAR_PRESETS`): 水豚 / Capybara, 黑熊 / Black bear, 熊猫 / Panda, 大象 / Elephant, 狐狸 / Fox, 猫头鹰 / Owl, 企鹅 / Penguin, 兔子 / Rabbit, 乌龟 / Turtle, 鲸 / Whale (ids `capybara`, `black-bear`, `panda`, `elephant`, `fox`, `owl`, `penguin`, `rabbit`, `turtle`, `whale`). Each is a 12×12 bitmap drawn like the Logo (§3: solid squares, `shape-rendering: crispEdges`, no outline, no anti-aliasing), one SVG path per palette color, on its ground color. The palette values and the ground are token names (`avatar-*`, and `accent` for the capybara, §2.1), so no color literal is involved. The pixel unit is the whole number nearest to `size / 12` (16: 1, 24: 2, 28: 2, 40: 3, 64: 5), the drawing centred in the square; every size holds the whole drawing, nothing is clipped.
   - `{ kind: "image", src }`: the uploaded image, covering the square; when it fails to load, the initial.
   - `null`: the initial square, the avatar tile rule of §6.17: the first grapheme of `name` (`initialOf`), 600, `ink` on `selected`; `micro` at 16, `small` at 24 and 28, the h2 size at 40, the h1 size at 64.
-  - Radius `sm`, `md` at 64. The avatar is decorative (`aria-hidden`): the name is always written next to it.
+  - **A person** (`shape="circle"`, default `"square"`; `data-shape` on the avatar): a circle (radius 50%) for an account, everywhere a person appears (§6.50 PersonName, the sidebar's account row at 24, the Me page's at 40, the profile page at 64). It takes no preset (a preset value draws the initial instead); an image covers the circle, and `null` or a failed image draws the initial, `muted` on `selected` (an agent's initial stays `ink`), at the same sizes. Agents stay square, people round, so a row mixing both reads at once.
+  - Radius `sm`, `md` at 64 (a circle: 50% at every size). The avatar is decorative (`aria-hidden`): the name is always written next to it.
 - `AvatarPicker({ value, onChange, onUpload?, uploadOffReason?, label?, disabled? })` (`disabled`: every tile disabled while the owner saves, the value still shown): the ten presets as one radio group (named `label`, default "头像" / "Avatar"; each radio named by its preset's name), 48 px tiles (a 40 avatar, 3 px padding, a 1 px border, radius `md`) `space.2` apart and wrapping, then an upload tile (`upload` icon, "上传图片" / "Upload image"; `line` dashed border) that opens a file dialog for png, jpg or webp and passes the file to `onUpload` (cropping and the 2 MB limit are the caller's). A checked tile is neutral (§2.3): `selected` ground and a `line-strong` border; hover is the `hover` ground; keyboard focus the accent ring. When `value` is an image, the upload tile shows it and is the checked one; if that image fails to load, the tile shows the `upload` icon again. Without `onUpload` the upload tile is disabled (`disabled` icon color) and `uploadOffReason` (default "这里不能上传图片。" / "Uploading is not available here.") is written under the tiles in `small` `muted`, and describes the tile; presets still work.
 
 <!-- states: avatar -->
-States: `presets`, `sizes`, `initial`, `title-bar`, `sidebar-row`, `list-row`, `picker`, `picker-upload-off`
+States: `presets`, `sizes`, `initial`, `person`, `title-bar`, `sidebar-row`, `list-row`, `picker`, `picker-upload-off`
 
 <!-- size-table: avatar -->
 | Part | State | Property | Value |
@@ -3153,6 +3154,14 @@ States: `presets`, `sizes`, `initial`, `title-bar`, `sidebar-row`, `list-row`, `
 | avatar[data-size=24] | initial | font-size | type.small |
 | avatar[data-size=28] | initial | font-size | type.small |
 | avatar[data-size=40] | initial | font-size | type.h2 |
+| avatar[data-shape=circle] | person | width | 24 |
+| avatar[data-shape=circle] | person | border-top-left-radius | 50% |
+| avatar[data-shape=circle] | person | background-color | color.selected |
+| avatar[data-shape=circle] | person | color | color.muted |
+| avatar[data-shape=circle][data-size=40] | person | width | 40 |
+| avatar[data-shape=circle][data-size=40] | person | font-size | type.h2 |
+| avatar[data-shape=circle][data-size=64] | person | width | 64 |
+| avatar[data-shape=circle][data-size=64] | person | border-top-left-radius | 50% |
 | avatar | title-bar | width | 16 |
 | avatar | title-bar | height | 16 |
 | group-label avatar | sidebar-row | width | 16 |
@@ -3716,7 +3725,7 @@ States: `compact-list`, `compact-detail`, `two-pane`
 `MePanel` is the body of the **Me** tab, `/me` (mobile layout spec §4.2), the compact class's home for what the sidebar holds. The shell draws it from the sidebar's data (`useNav`, the org switcher, the account); the page is the `OverviewPage` template (T1, §5.6) with the MePanel as its one body and no stat cards, the title 我 / Me (mobile layout spec §4.2). It is a page, not an overlay.
 
 - **Top to bottom**, on the page ground with 16 px gutters, groups `space.4` apart, in **no box** (§1: headings, hairlines and space):
-  1. **Account**: the initial avatar (24, round, `selected`) and the name (600), `row.roomy` high; and the **org switcher** (the sidebar's, §6.13: a 40 high block, `radius.md`, the org's initial, name over `~/<slug> · <role>`, `chevrons-up-down`), which opens the org list in a bottom sheet (§6.7). In the admin context the sidebar's **context block** (`context-block`: the `admin` shield on the accent initial, 管理后台 over 整个部署 · /admin, not a button) takes the switcher's place.
+  1. **Account**: the person's circle `Avatar` (40, §6.30: the account's image, else the initial) and the name (600), `row.roomy` high; and the **org switcher** (the sidebar's, §6.13: a 40 high block, `radius.md`, the org's initial, name over `~/<slug> · <role>`, `chevrons-up-down`), which opens the org list in a bottom sheet (§6.7). In the admin context the sidebar's **context block** (`context-block`: the `admin` shield on the accent initial, 管理后台 over 整个部署 · /admin, not a button) takes the switcher's place.
   2. **工作区 / Workspace**: the label (`group-label`: `micro` `faint`, letter-spacing 0.06em, `row.dense` high, text at its bottom) over the rows 技能, 连接器, 定时任务, 设备 (the sidebar's primary items the bottom navigation has no room for, and 设备 from its 更多), then the org's extension pages after them.
   3. **管理 / Manage** (members up, by the sidebar's 更多 audience; super admins for its last row): the same label over the rows 插件, 扩展, 渠道, 评测与运行, 组织设置, then 管理后台 (`admin`, with an outward `arrow-up-right` 14 at the end instead of the chevron, entering the admin context). This group **is the compact admin navigation** (maintainer decision 2026-11-20), with no separate admin overview page of its own. In the admin context (after 管理后台, as the sidebar's admin context, §6.13; on compact `/admin` is a **pushed** page: the top bar shows back, and the back row below leaves the context) the shell draws the same MePanel from the admin context's nav data: the 管理 group lists the admin console's pages and its extension pages in the sidebar's order, and its last row, the admin context's back row (`back-row`: 回到工作区, `arrow-left`, no trailing icon, as the sidebar's `back`), leaves it; 工作区 is not drawn there, while the 账户 group and the system status line stay (the same MePanel).
   4. **账户 / Account**: 个人设置, 语言 (the current language at the end; opens a bottom sheet), 主题 (the theme toggle at the end) and 退出登录.
@@ -3742,6 +3751,8 @@ States: `member`, `admin`, `super-admin`, `admin-context`
 | Part | State | Property | Value |
 |---|---|---|---|
 | account | member | height | row.roomy |
+| account avatar | member | width | 40 |
+| account avatar | member | border-top-left-radius | 50% |
 | org-switcher | member | height | 40 |
 | org-switcher | member | border-radius | radius.md |
 | group-label | member | height | row.dense |
@@ -3791,6 +3802,36 @@ States: `default`, `labelled`
 | icon-preview-tile[data-ground=dark] | labelled | background-color | color.preview-dark |
 | icon-preview-label | labelled | color | color.muted |
 | icon-preview-label | labelled | font-size | type.micro |
+
+### 6.50 PersonName
+
+`PersonName({ name, avatarUrl, size, secondary? })` is a person (an account) in a line, a table cell, a select option or a row that leads with the person: the member lists, owners, authors, the account row's neighbours. It is one inline run that never wraps and draws no box.
+
+- **Avatar**: the circle `Avatar` (§6.30, `shape="circle"`) at `size` 16 or 24, `value` = the image of `avatarUrl` or, when it is `null` or fails to load, the initial of `name` (`muted` on `selected`). 16 in lines, cells and options; 24 in rows that lead with the person (a member row); the sidebar row, the Me page and the profile page use `Avatar` itself at 24, 40 and 64.
+- **Name**: one span, `ink`, `type.small` at 16 and `type.body` at 24, on one line with an ellipsis, the full name in `title`; the avatar and the secondary text keep their size and the name takes the cut. `space.1` (4) between the avatar and the name at 16, `space.2` (8) at 24.
+- **Secondary** (optional, `secondary`): after the name, `type.small` `muted`, never cut; the same gap as before the name. The email, the role or "you" belong here, never in the name.
+- The run is `inline-flex` with `min-width: 0` and `max-width: 100%` so a table cell or a flex row can shrink it. No hover, focus or selected state: it is not interactive; a link or button around it owns those.
+
+<!-- states: person-name -->
+States: `sizes`, `image`, `ellipsis`, `secondary`
+
+<!-- size-table: person-name -->
+| Part | State | Property | Value |
+|---|---|---|---|
+| person-name avatar[data-size=24] | sizes | width | 24 |
+| person-name avatar[data-size=24] | sizes | height | 24 |
+| person-name avatar[data-shape=circle] | sizes | border-top-left-radius | 50% |
+| person-name avatar[data-shape=circle] | sizes | background-color | color.selected |
+| person-name avatar[data-shape=circle] | sizes | color | color.muted |
+| person-name-text | sizes | font-size | type.body |
+| person-name[data-size=16] avatar[data-size=16] | sizes | width | 16 |
+| person-name[data-size=16] avatar[data-size=16] | sizes | height | 16 |
+| person-name[data-size=16] person-name-text | sizes | font-size | type.small |
+| person-name avatar[data-size=24] | image | width | 24 |
+| person-name avatar[data-kind=image] | image | border-top-left-radius | 50% |
+| person-name-text | ellipsis | height | 20 |
+| person-name-secondary | secondary | font-size | type.small |
+| person-name-secondary | secondary | color | color.muted |
 
 ## 7. Copy and internationalization
 - All UI text goes through next-intl, in both Chinese and English. Text shown to the model (prompts, tool descriptions) is always English, and the prompt field in a form must say so.
@@ -3863,7 +3904,7 @@ States: `state-a`, `state-b`
 - **Part** is a `data-part` value inside the block, optionally narrowed by attribute selectors (`button[data-variant=primary]`, `segment[aria-checked=true]`) and optionally a descendant of another part (`row[aria-current=true] cell`); `root` means the block element itself. The first matching element in document order is measured. Design components carry these `data-part` attributes.
 - **State** names the block `<component>-<state>`; it must be in the component's state list.
 - **Property** is a CSS property; `width` and `height` are measured from the element's box, everything else from its computed style.
-- **Value** is a `tokens.json` path or a literal number in px. Paths: sizes without the `size.` prefix (`row.default`, `control.dense`, `space.3`, `radius.sm`, `layout.sidebar`, `pad.default.x` / `pad.default.y`); `type.<name>` is the size and `type.<name>.line` the line height; colors are `color.<token>` and are resolved for each theme.
+- **Value** is a `tokens.json` path or a literal number in px (or a percentage such as `50%`, a circle's radius, measured as its number). Paths: sizes without the `size.` prefix (`row.default`, `control.dense`, `space.3`, `radius.sm`, `layout.sidebar`, `pad.default.x` / `pad.default.y`); `type.<name>` is the size and `type.<name>.line` the line height; colors are `color.<token>` and are resolved for each theme.
 - In `/dev/ui` a block is a `ReferenceBlock` (design package; `apps/web` wraps it as `RefBlock`) with the reference block's id and box, on the route `/dev/ui/reference/<component>`. A compact-class block that the reference draws as a whole phone screen (the reference's `r-screen`: the top bar, the body, the bottom navigation or a sticky row) puts its component in a `ReferenceScreen` (`top`, `bottom`, `pad`) inside the block; it stands in for the shell (a `ListDetail` inside draws no back bar of its own) and is for the development catalog only, never a page.
 - Pseudo-states in `/dev/ui` blocks (`*-hover`, `*-focus`) are forced by the test with the browser's DevTools protocol on the elements the block names; forced elements get `data-ref-forced="true"`, which size-table parts can select.
 

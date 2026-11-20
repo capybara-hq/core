@@ -1773,6 +1773,47 @@ textarea {
   border-radius: var(--cb-radius-md);
   font-size: var(--cb-type-h1-size);
 }
+/* A person's avatar (spec §6.30): a circle, the initial muted on selected. */
+.r-avatar[data-shape="circle"] {
+  border-radius: 50%;
+}
+.r-avatar[data-shape="circle"][data-kind="initial"] {
+  color: var(--cb-muted);
+}
+.r-avatar[data-shape="circle"][data-size="24"] {
+  font-size: var(--cb-type-small-size);
+}
+
+/* PersonName (spec §6.50). */
+.r-person-name {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--cb-space-1);
+  min-width: 0;
+  max-width: 100%;
+  white-space: nowrap;
+  color: var(--cb-ink);
+}
+.r-person-name[data-size="24"] {
+  gap: var(--cb-space-2);
+}
+.r-person-name-text {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  font-size: var(--cb-type-small-size);
+  line-height: var(--cb-type-small-line);
+}
+.r-person-name[data-size="24"] .r-person-name-text {
+  font-size: var(--cb-type-body-size);
+  line-height: var(--cb-type-body-line);
+}
+.r-person-name-secondary {
+  flex: none;
+  color: var(--cb-muted);
+  font-size: var(--cb-type-small-size);
+  line-height: var(--cb-type-small-line);
+}
 .r-avatar-picker {
   display: flex;
   flex-direction: column;
@@ -6910,11 +6951,6 @@ span.r-scal-daynum {
   gap: var(--cb-space-2);
   height: var(--cb-row-roomy);
   font-weight: 600;
-}
-/* The initial avatar: 24, round, on selected (spec §6.48). */
-.r-me-account .r-avatar {
-  border-radius: 50%;
-  font-size: var(--cb-type-small-size);
 }
 /* The ThemeToggle's options (control.dense − 6), the chosen one on selected. */
 .r-me-theme {

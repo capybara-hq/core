@@ -34,6 +34,7 @@ import {
   ObjectList,
   ObjectRow,
   PageHeader,
+  PersonName,
   SecretReveal,
   Segmented,
   Select,
@@ -62,6 +63,7 @@ import {
   LIST_PAGE_FIXTURE,
   LONG_MODELS_FIXTURE,
   PAGE_HEADER_FIXTURE,
+  PERSON_AVATAR_FIXTURE,
   SELECT_FIXTURE,
   STATUS_FIXTURE,
   TABLE_HOVER_ROW,
@@ -1211,6 +1213,38 @@ function sidebarWithAvatars(): ReturnType<typeof sidebarProps> {
   };
 }
 
+function personNameBlocks(): ReactNode {
+  return (
+    <>
+      <RefBlock id="person-name-sizes" width={640} pad>
+        <Stack direction="row" gap={12} align="center">
+          <PersonName name="Grant" avatarUrl={null} size={24} />
+          <PersonName name="Grant" avatarUrl={null} size={16} />
+        </Stack>
+      </RefBlock>
+      <RefBlock id="person-name-image" width={640} pad>
+        <Stack direction="row" gap={12} align="center">
+          <PersonName name="Grant" avatarUrl={PERSON_AVATAR_FIXTURE} size={24} />
+          <PersonName name="Grant" avatarUrl={PERSON_AVATAR_FIXTURE} size={16} />
+        </Stack>
+      </RefBlock>
+      <RefBlock id="person-name-ellipsis" width={200} pad>
+        <PersonName
+          name="A member with a very long display name indeed"
+          avatarUrl={null}
+          size={24}
+        />
+      </RefBlock>
+      <RefBlock id="person-name-secondary" width={640} pad>
+        <Stack direction="row" gap={12} align="center">
+          <PersonName name="Grant" avatarUrl={null} size={24} secondary="grant@example.com" />
+          <PersonName name="Grant" avatarUrl={null} size={16} secondary="owner" />
+        </Stack>
+      </RefBlock>
+    </>
+  );
+}
+
 function avatarBlocks(): ReactNode {
   return (
     <>
@@ -1263,6 +1297,20 @@ function avatarBlocks(): ReactNode {
           <ObjectRow mark={{ avatar: null }} name="周报助手" description="每周五生成周报" />
         </ObjectList>
       </RefBlock>
+      {/* A person's circle (spec §6.30): the initial at 24, 40 and 64, then an image at 24. */}
+      <RefBlock id="avatar-person" width={640} pad>
+        <Stack direction="row" gap={12} align="end">
+          {([24, 40, 64] as const).map((size) => (
+            <Avatar key={size} shape="circle" value={null} name="Grant" size={size} />
+          ))}
+          <Avatar
+            shape="circle"
+            value={{ kind: "image", src: PERSON_AVATAR_FIXTURE }}
+            name="Grant"
+            size={24}
+          />
+        </Stack>
+      </RefBlock>
       <RefBlock id="avatar-picker" width={640} pad>
         <AvatarPicker value={{ kind: "preset", id: "capybara" }} onChange={noop} onUpload={noop} />
       </RefBlock>
@@ -1305,6 +1353,7 @@ export const REFERENCE_BLOCKS = {
   "error-detail": errorDetailBlocks,
   "file-picker": filePickerBlocks,
   avatar: avatarBlocks,
+  "person-name": personNameBlocks,
   ...CONFIG_FORM_BLOCKS,
   ...BOX_BLOCKS,
   ...CARD_GRID_BLOCKS,

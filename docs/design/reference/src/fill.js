@@ -309,8 +309,8 @@
           : `<a class="r-nav-item r-sb-admin" href="#">${icon("admin")}<span class="r-ellipsis">${esc(F.ADMIN_LABEL)}</span>${icon("arrow-up-right", 14)}</a>`
         : "";
     const foot = rail
-      ? `<div class="r-sb-foot"><span class="r-avatar" title="${esc(C.account)}">${F.FIXTURE_USER.initial}</span></div>`
-      : `<div class="r-sb-foot"><span class="r-avatar">${F.FIXTURE_USER.initial}</span><span class="r-ellipsis">${esc(C.account)}</span><span class="r-theme">${icon("sun", 12)}${icon("moon", 12)}</span></div>`;
+      ? `<div class="r-sb-foot"><span class="r-avatar" data-part="avatar" data-kind="initial" data-shape="circle" data-size="24" aria-hidden="true" title="${esc(C.account)}">${F.FIXTURE_USER.initial}</span></div>`
+      : `<div class="r-sb-foot"><span class="r-avatar" data-part="avatar" data-kind="initial" data-shape="circle" data-size="24" aria-hidden="true">${F.FIXTURE_USER.initial}</span><span class="r-ellipsis">${esc(C.account)}</span><span class="r-theme">${icon("sun", 12)}${icon("moon", 12)}</span></div>`;
     return `<aside class="r-sidebar" data-mode="${o.mode || "full"}">${top}${context}${navBlock}${middle}${adminEntry}${foot}</aside>`;
   }
 
