@@ -92,12 +92,12 @@ jobs:
       # (published packages carry the repository npm provenance needs; F2 packages stay private)
       # and check:bootstrap (offline: the manifest and the compose files' pinned git contexts).
       - run: pnpm check
-      # A change to the plugin SDK API report needs a changeset bumping @capybara-hq/plugin-sdk.
-      # The checkout is the PR merge commit; its first parent is the base branch as merged, while
-      # pull_request.base.sha goes stale once main moves on.
-      - name: SDK API changeset
+      # A change to a published package's API report (plugin-sdk, plugin-client) needs a changeset
+      # bumping that package. The checkout is the PR merge commit; its first parent is the base
+      # branch as merged, while pull_request.base.sha goes stale once main moves on.
+      - name: API changeset
         if: github.event_name == 'pull_request'
-        run: pnpm check:sdk-api-changeset --base "$(git rev-parse HEAD^1)"
+        run: pnpm check:api-changeset --base "$(git rev-parse HEAD^1)"
       # Comment lines the PR adds are English (the full scan of the SDK is in pnpm check). Same base.
       - name: English comments
         if: github.event_name == 'pull_request'

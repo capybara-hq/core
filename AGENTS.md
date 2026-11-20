@@ -184,8 +184,12 @@ Each line is the rule you must not miss; the skill has the rest.
   shared and rendered HTML is served only with the sandbox CSP and the CDN allowlist, never from a
   presigned URL on the app origin.
   [file-sharing](docs/superpowers/specs/2026-11-18-file-sharing-design.md)
-- **SDK public API:** changing it means `pnpm gen:sdk-api` plus a changeset bumping
-  `@capybara-hq/plugin-sdk` (`check:sdk-api`, `check:sdk-api-changeset`).
+- **Public API reports:** changing the SDK's public API means `pnpm gen:sdk-api` plus a changeset
+  bumping `@capybara-hq/plugin-sdk` (`check:sdk-api`); changing the client package's public API means
+  `pnpm gen:plugin-client` plus a changeset bumping `@capybara-hq/plugin-client`
+  (`check:plugin-client-api` regenerates its report and the web's copy). A report changed without
+  that changeset fails `check:api-changeset`, a PR-only step: locally,
+  `pnpm check:api-changeset --base origin/main`.
 - **Before 0.1.0:** no real users yet, so change formats, names and APIs directly; don't add
   compatibility layers for pre-release state. Applied migrations still stay immutable.
 - **When a rule can be checked automatically, the check is the authority.** Every check has a test
