@@ -286,6 +286,8 @@ export {
   NpmFetchError,
   PackageTooLargeError,
 } from "./packages/npm.js";
+// The canonical tgz of a package tree; `capybara-plugin bootstrap` pins git entries with it.
+export { packPackageTgz } from "./packages/tgz.js";
 // Test seam: the Platform input-parity test in tools/checks (no runtime caller).
 export {
   checkInputParity,
