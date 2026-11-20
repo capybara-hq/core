@@ -25,7 +25,8 @@ describe("useHashItem", () => {
     act(() => result.current.open("b"));
     expect(window.location.hash).toBe("#item=b");
     expect(result.current.id).toBe("b");
-    const back = vi.spyOn(window.history, "back");
+    // stubbed: a real traversal fires `popstate` after the test, once jsdom may be gone
+    const back = vi.spyOn(window.history, "back").mockImplementation(() => {});
     act(() => result.current.close());
     expect(back).toHaveBeenCalledTimes(1);
     expect(result.current.id).toBeNull();
@@ -36,7 +37,8 @@ describe("useHashItem", () => {
     act(() => result.current.open("b"));
     await systemBack("");
     expect(result.current.id).toBeNull();
-    const back = vi.spyOn(window.history, "back");
+    // stubbed: a real traversal fires `popstate` after the test, once jsdom may be gone
+    const back = vi.spyOn(window.history, "back").mockImplementation(() => {});
     act(() => result.current.close());
     expect(back).not.toHaveBeenCalled();
     expect(window.location.pathname).toBe("/inbox");
