@@ -18,7 +18,7 @@ import { startKernel, type TestKernel } from "../helpers/runs.js";
 /**
  * Org-layer network requests (network ask-to-allow spec §5.3, plan P2.1): a member asks the org
  * admins to allow hosts in the org's sandbox allowlist; approving adds them to the org's
- * `cloudNetwork` as an allowlist. The deployment's list holds `pypi.org` and `*.github.com`.
+ * `deviceNetwork` as an allowlist. The deployment's list holds `pypi.org` and `*.github.com`.
  */
 
 let pgc: TestContainer;
@@ -123,14 +123,14 @@ const decide = (req: Req, id: string, payload: Record<string, unknown>) =>
 
 async function orgNetwork(): Promise<unknown> {
   const res = await ownerReq({ method: "GET", url: `/api/v1/orgs/${orgId}/settings` });
-  return (res.json() as { settings: { cloudNetwork?: unknown } }).settings.cloudNetwork;
+  return (res.json() as { settings: { deviceNetwork?: unknown } }).settings.deviceNetwork;
 }
 
-const setOrgNetwork = async (cloudNetwork: unknown) => {
+const setOrgNetwork = async (deviceNetwork: unknown) => {
   const res = await ownerReq({
     method: "PATCH",
     url: `/api/v1/orgs/${orgId}/settings`,
-    payload: { cloudNetwork },
+    payload: { deviceNetwork },
   });
   expect(res.statusCode, res.body).toBe(200);
 };
@@ -256,7 +256,7 @@ describe("network requests", () => {
 
   it("approving merges into the org's own list, adding only what it lacks", async () => {
     await setOrgNetwork({
-      mode: "allowlist",
+      ceiling: "allowlist",
       extraHosts: ["*.slack.com"],
       excludedHosts: ["pypi.org", "gone.example.org"],
     });
@@ -264,7 +264,7 @@ describe("network requests", () => {
     expect((await decide(ownerReq, r.id, { approve: true })).statusCode).toBe(200);
     // a platform host the org had dropped comes back out of the exclusions; another is an extra
     expect(await orgNetwork()).toEqual({
-      mode: "allowlist",
+      ceiling: "allowlist",
       extraHosts: ["*.slack.com", "api.openai.com"],
       excludedHosts: ["gone.example.org"],
     });
@@ -274,10 +274,10 @@ describe("network requests", () => {
     // the org's cloud network is open (the default for cloud devices); a local device in sandbox
     // mode still gets the allowlist, so a host its network ask names must be addable, and
     // approving it must not turn the open cloud network into an allowlist (spec K1)
-    await setOrgNetwork({ mode: "open" });
+    await setOrgNetwork({ default: "open" });
     const r = await fileOk({ hosts: ["files.slack.com"] });
     expect((await decide(ownerReq, r.id, { approve: true })).statusCode).toBe(200);
-    expect(await orgNetwork()).toEqual({ mode: "open", extraHosts: ["files.slack.com"] });
+    expect(await orgNetwork()).toEqual({ default: "open", extraHosts: ["files.slack.com"] });
   });
 
   it("under the platform ceiling, hosts outside it are refused for filing and approving", async () => {
@@ -297,12 +297,12 @@ describe("network requests", () => {
   });
 
   it("under the platform ceiling, approving a covered host works with stored values the ceiling ignores", async () => {
-    await setOrgNetwork({ mode: "open", base: "none", extraHosts: ["files.slack.com"] });
+    await setOrgNetwork({ default: "open", base: "none", extraHosts: ["files.slack.com"] });
     deploymentLimits({ orgHosts: "within" });
     const r = await fileOk({ hosts: ["x.github.com"] });
     expect((await decide(ownerReq, r.id, { approve: true })).statusCode).toBe(200);
     expect(await orgNetwork()).toEqual({
-      mode: "open",
+      default: "open",
       base: "none",
       extraHosts: ["files.slack.com", "x.github.com"],
     });
@@ -324,14 +324,14 @@ describe("network requests", () => {
 
   it("an org's empty allowlist still takes requests; it can deny", async () => {
     const r = await fileOk({ hosts: ["files.slack.com"] });
-    await setOrgNetwork({ mode: "allowlist", base: "none" });
+    await setOrgNetwork({ ceiling: "allowlist", base: "none" });
     const deny = await decide(ownerReq, r.id, { approve: false, reason: "not now" });
     expect(deny.statusCode).toBe(200);
     expect((deny.json() as { request: RequestView & { reason: string } }).request).toMatchObject({
       status: "rejected",
       reason: "not now",
     });
-    expect(await orgNetwork()).toEqual({ mode: "allowlist", base: "none" });
+    expect(await orgNetwork()).toEqual({ ceiling: "allowlist", base: "none" });
     // decided: a second decision is refused
     const again = await decide(ownerReq, r.id, { approve: true });
     expect(errCode(again)).toBe("catalog.request_decided");
@@ -339,7 +339,7 @@ describe("network requests", () => {
     const second = await fileOk({ hosts: ["api.openai.com"] });
     expect((await decide(ownerReq, second.id, { approve: true })).statusCode).toBe(200);
     expect(await orgNetwork()).toEqual({
-      mode: "allowlist",
+      ceiling: "allowlist",
       base: "none",
       extraHosts: ["api.openai.com"],
     });

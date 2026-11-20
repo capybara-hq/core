@@ -93,9 +93,11 @@ export function permissionAvailability(
     return {
       state,
       report: {
-        version: 1,
+        version: 2,
         restricted: { filesystem: true, network: true, native: true, concurrentScopes: true },
-        fullAccess: true,
+        boundary: "operation",
+        network: { openPublic: false, allowlist: true, perOperationHosts: true },
+        outsideSandbox: true,
         background: true,
       },
     };
@@ -114,7 +116,7 @@ export const permissionPreview = (over: Partial<PermissionPreview> = {}): Permis
   project: null,
   scopeRevision: "scope-1",
   availability: permissionAvailability(),
-  fullAccessCeiling: true,
+  outsideSandboxCeiling: true,
   ...over,
 });
 
@@ -129,7 +131,7 @@ export const permissionsView = (
   consentScope: null,
   scopeRevision: null,
   availability: { state: "unsupported", reason: "Choose a device to run device operations" },
-  fullAccessCeiling: false,
+  outsideSandboxCeiling: false,
   startingWorkNotice:
     "Changes apply to new operations. Work already started keeps its starting permissions.",
   ...over,
@@ -139,16 +141,18 @@ const ENV_LIMITS = {
   cpu: 2,
   memoryMb: 2048,
   diskMb: 10240,
-  mode: "auto",
   network: { kind: "open-public", hosts: [] },
 };
-/** A device's mode and network (kernel `DeviceModeView`): a cloud device in auto mode. */
-export const ENV_MODE = {
-  mode: "auto",
-  allowedMode: "auto",
-  allowedBy: "org",
-  network: { kind: "open-public", hosts: [], source: "org" },
-  local: null,
+/** A device's sandbox (kernel `DeviceSandboxView`): a cloud device following its org's open network. */
+export const ENV_SANDBOX = {
+  network: "open",
+  networkCeiling: "open",
+  hosts: [],
+  ownNetwork: null,
+  allowedDomains: [],
+  outsideSandbox: false,
+  restrictedProjectReach: "workspace",
+  layer: { network: null, outsideSandbox: "provider" },
   pendingNextUse: false,
   pendingFilesReset: false,
   recent: [],
@@ -167,7 +171,7 @@ export const envView = (id: string, name: string | null, over: Record<string, un
   filesLost: false,
   instance: null,
   limits: ENV_LIMITS,
-  mode: ENV_MODE,
+  sandbox: ENV_SANDBOX,
   createdAt: "2026-11-07T08:00:00.000Z",
   ...over,
 });

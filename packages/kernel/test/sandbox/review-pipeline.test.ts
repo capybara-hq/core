@@ -29,6 +29,7 @@ import { RunQueue } from "../../src/runtime/run-queue.js";
 import { Waits } from "../../src/runtime/waits.js";
 import { PermissionFacts } from "../../src/sandbox/permission-facts.js";
 import { REVIEW_SYSTEM_PROMPT } from "../../src/sandbox/review/index.js";
+import { ESCALATION_NO_OUTSIDE_WHY } from "../../src/sandbox/review/permission-candidate.js";
 import { ScheduledTaskFirer } from "../../src/schedules/fire.js";
 import { SCHED_SCAN_JOB } from "../../src/schedules/job-ids.js";
 import { type ScheduledTaskInsert, ScheduledTaskStore } from "../../src/schedules/store.js";
@@ -429,11 +430,11 @@ describe("the command review in the pipeline", () => {
       expect(r.payload.isError).toBe(false);
       const facts = await k.app.get(ConversationDevices).reviewFacts(orgId, conv);
       const bash = execute.mock.calls.find(([tool]) => tool.key === "Bash");
-      // a restricted Bash call on a device that allows escalation carries its hint state
+      // a cloud device has no outside of its sandbox: the hints say so instead of inviting one
       expect(bash?.[6]).toEqual({
         workingRoot: undefined,
         against: facts?.workingRoot,
-        escalation: "available",
+        escalationRefusal: ESCALATION_NO_OUTSIDE_WHY,
       });
       expect(facts?.workingRoot).toBe(facts?.workspace);
     } finally {
@@ -463,7 +464,7 @@ describe("the command review in the pipeline", () => {
       expect(bash?.[6]).toEqual({
         workingRoot: undefined,
         against: approvedRoot,
-        escalation: "available",
+        escalationRefusal: ESCALATION_NO_OUTSIDE_WHY,
       });
     } finally {
       execute.mockRestore();
@@ -984,7 +985,7 @@ describe("runs of accounts that own no device here", () => {
     );
     const [context] = await contextsOf(conv);
     expect(context?.payload).toMatchObject({
-      version: 1,
+      version: 2,
       deviceId: null,
       scope: null,
       availability: { state: "unavailable", cause: "no-device" },
@@ -1227,12 +1228,16 @@ describe("the permission review order", () => {
     }
   });
 
-  it("Full access: sudo runs without an ask or a review", async () => {
+  it("Full access: sudo runs without an ask or a review, recorded as a sensitive crossing", async () => {
     const conv = await createConv(owner, orgId, agentId);
     await call(conv, "Bash", { command: "echo bound", description: "Bind" }, 1);
     await setProfile(conv, "full-access");
     const r = await call(conv, "Bash", SUDO, 2);
-    expect(r.payload.review).toMatchObject({ decision: "allow", decisionSource: "full-access" });
+    expect(r.payload.review).toMatchObject({
+      decision: "allow",
+      decisionSource: "full-access",
+      crossing: "sensitive",
+    });
     const asks = await db
       .selectFrom("approvals")
       .select("id")

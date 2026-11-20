@@ -24,9 +24,10 @@ import { useSession } from "../../../../components/shell/session";
 import { ApiClientError } from "../../../../lib/api";
 import { allowHostProblem } from "../../../../lib/network-hosts";
 import {
-  type CloudNetworkSetting,
   canUpdateOrg,
-  cloudNetworkToSave,
+  type DeviceNetworkMode,
+  deviceNetworkToSave,
+  narrowerNetwork,
   type OrgSettings,
   type OrgSettingsPatch,
   type OrgSettingsResponse,
@@ -43,14 +44,14 @@ import NotFound from "../../not-found";
 
 /**
  * `/settings/sandbox`: the organization's sandbox settings (SettingsPage): the default policy of the
- * sandbox tools (run directly / ask for approval), the org's Full permission switch (`fullAccess`:
- * the org may follow the platform or turn it off; 「平台未开放」 when the platform turned it off)
- * and its sandbox network (egress ceiling spec §D4): the cloud mode (开放挡内网 / allowlist) and the
- * host editor, shown in both modes because the hosts are also the ceiling of every local device in
- * sandbox mode; it starts from the effective hosts and saves a delta over the platform's list. The
- * kill switch makes both read-only; the platform ceiling (`within`) disables the open mode. An org
- * with a stored network gets 跟随平台 (after a confirmation: `cloudNetwork: null`, which drops its
- * own additions and removals; spec §D5: how an org migrated to base none re-attaches). Plus
+ * sandbox tools (run directly / ask for approval), whether calls may run outside the sandbox
+ * (`outsideSandbox`: the org may follow the platform or turn it off; the platform's off locks it,
+ * naming the super admin) and its device network (approval-only profiles design, "Settings model"):
+ * a ceiling and a default (open internet or the allowlist; never above the platform's ceiling, the
+ * default never above the ceiling) and the host editor, which starts from the effective hosts and
+ * saves a delta over the platform's list. The kill switch makes the network read-only. An org with
+ * a stored network gets "follow the platform" (after a confirmation: `deviceNetwork: null`, which drops its own
+ * default, ceiling, additions and removals). Plus
  * the sandbox resources (cpu / memory, read-only: super admins
  * override them per organization in the deployment settings, C19). Members can see, admins can
  * change; changes show an ActionRow. The org-settings PATCH is shared with the general page: this
@@ -82,16 +83,17 @@ function SandboxSettings({ orgId, allowHosts }: { orgId: string; allowHosts: str
   const read = usePageQuery(orgSettingsQuery(orgId));
   const [draft, setDraft] = useState<{
     sandboxToolPolicy?: NonNullable<OrgSettings["sandboxToolPolicy"]>;
-    fullAccess?: "allowed" | "off";
-    cloudMode?: NonNullable<CloudNetworkSetting["mode"]>;
+    outsideSandbox?: "allowed" | "off";
+    networkDefault?: DeviceNetworkMode;
+    networkCeiling?: DeviceNetworkMode;
     hostsText?: string;
   }>({});
   // The answer is the new settings; the read-only parts it leaves out keep their cached values.
   const update = useAppMutation({
     fn: (patch: OrgSettingsPatch) => updateOrgSettings(orgId, patch),
-    // Full access and the cloud network change every device's effective Full access and network
+    // both change every device's effective sandbox
     invalidates: (patch) =>
-      patch.fullAccess !== undefined || patch.cloudNetwork !== undefined
+      patch.outsideSandbox !== undefined || patch.deviceNetwork !== undefined
         ? [keys.org(orgId).devices(), keys.org(orgId).deviceAll()]
         : [],
     onSuccess: (res) =>
@@ -104,13 +106,13 @@ function SandboxSettings({ orgId, allowHosts }: { orgId: string; allowHosts: str
       })),
   });
   // `?allowHost=`: once the settings are in, an org admin's host editor gets the hosts appended
-  // (those not listed yet); the mode is left alone; nothing is saved until the person saves.
+  // (those not listed yet); the modes are left alone; nothing is saved until the person saves.
   const [prefilled, setPrefilled] = useState<string[] | null>(null);
   const [confirmingFollow, setConfirmingFollow] = useState(false);
   const loaded = read.kind === "ready" ? read.data : null;
   useEffect(() => {
     if (prefilled !== null || loaded === null || !manage || allowHosts.length === 0) return;
-    const platformNetwork = loaded.deployment?.cloudNetwork;
+    const platformNetwork = loaded.deployment?.deviceNetwork;
     // the kernel always answers with the deployment defaults; no list to add to without them
     if (platformNetwork === undefined) return;
     // no list to add to: the platform turned the network off
@@ -138,8 +140,8 @@ function SandboxSettings({ orgId, allowHosts }: { orgId: string; allowHosts: str
         nav={nav}
         activeNav="sandbox"
         // The static sections: the tool policy (two cards, and the read-only note for a member),
-        // Full access (two cards), the cloud network (two cards and the host list) and the resources
-        // (three rows and the same note).
+        // running outside the sandbox (two cards), the device network (two card groups and the
+        // host list) and the resources (three rows and the same note).
         loading={{
           sections: [
             {
@@ -149,16 +151,17 @@ function SandboxSettings({ orgId, allowHosts }: { orgId: string; allowHosts: str
             },
             {
               fields: [{ control: "radio-cards", options: 2 }],
-              title: t("fullAccess.title"),
-              description: t("fullAccess.description"),
+              title: t("outsideSandbox.title"),
+              description: t("outsideSandbox.description"),
             },
             {
               fields: [
                 { control: "radio-cards", options: 2 },
+                { control: "radio-cards", options: 2 },
                 { control: "textarea", rows: 8 },
               ],
-              title: t("cloudNetwork.title"),
-              description: t("cloudNetwork.description"),
+              title: t("deviceNetwork.title"),
+              description: t("deviceNetwork.description"),
             },
             {
               fields: [{ control: "key-value", rows: 3, keyWidth: "10ch", help: true }],
@@ -184,46 +187,53 @@ function SandboxSettings({ orgId, allowHosts }: { orgId: string; allowHosts: str
   }
   const { sandboxLimits } = data;
   const sandboxPolicy = draft.sandboxToolPolicy ?? saved?.sandboxToolPolicy ?? "allow";
-  // The Full permission switch: the platform's answer wins; the org may narrow it, never widen it
-  const platformOff = deployment.fullAccess.permission === "off";
-  const savedFullAccess: "allowed" | "off" = platformOff
+  // Running outside the sandbox: the platform's off wins; the org may narrow it, never widen it
+  const platformOff = deployment.outsideSandbox.permission === "off";
+  const savedOutside: "allowed" | "off" = platformOff
     ? "off"
-    : (saved.fullAccess ?? deployment.fullAccess.permission);
-  const fullAccess = platformOff ? "off" : (draft.fullAccess ?? savedFullAccess);
-  const fullChanged =
-    !platformOff && draft.fullAccess !== undefined && draft.fullAccess !== savedFullAccess;
-  // The sandbox network (egress ceiling spec §D4): the page shows the effective mode and hosts. The
-  // kill switch (`off`) makes it read-only and it is never sent; the ceiling (`within`) forces the
-  // allowlist, so the open choice is disabled. A host outside the ceiling is the kernel's to refuse.
-  const platformNetwork = deployment.cloudNetwork;
+    : (saved.outsideSandbox ?? deployment.outsideSandbox.permission);
+  const outsideSandbox = platformOff ? "off" : (draft.outsideSandbox ?? savedOutside);
+  const outsideChanged =
+    !platformOff && draft.outsideSandbox !== undefined && draft.outsideSandbox !== savedOutside;
+  // The device network: the kill switch (`off`) makes it read-only (an empty allowlist) and it is
+  // never sent; the platform's allowlist ceiling disables open in both groups; the default never
+  // goes above the ceiling. A host outside the platform list under `within` is the kernel's to refuse.
+  const platformNetwork = deployment.deviceNetwork;
   const networkOff = platformNetwork.off;
   const within = platformNetwork.orgHosts === "within";
-  const savedCloudMode = effectiveNetwork.mode;
-  const cloudMode = networkOff ? "allowlist" : (draft.cloudMode ?? savedCloudMode);
-  const modeChanged = !networkOff && cloudMode !== savedCloudMode;
+  const platformAllowlist = networkOff || platformNetwork.ceiling === "allowlist";
+  const storedNetwork = saved.deviceNetwork;
+  const ceilingOf = (choice: DeviceNetworkMode | undefined): DeviceNetworkMode =>
+    platformAllowlist ? "allowlist" : (choice ?? platformNetwork.ceiling);
+  const defaultOf = (choice: DeviceNetworkMode | undefined, ceiling: DeviceNetworkMode) =>
+    narrowerNetwork(choice ?? platformNetwork.default, ceiling);
+  const savedCeiling = ceilingOf(storedNetwork?.ceiling);
+  const savedDefault = defaultOf(storedNetwork?.default, savedCeiling);
+  const networkCeiling = ceilingOf(draft.networkCeiling ?? storedNetwork?.ceiling);
+  const networkDefault = defaultOf(draft.networkDefault ?? storedNetwork?.default, networkCeiling);
+  const ceilingChanged = !networkOff && networkCeiling !== savedCeiling;
+  const defaultChanged = !networkOff && networkDefault !== savedDefault;
   const baseHosts = effectiveNetwork.hosts;
   const hostsText = draft.hostsText ?? baseHosts.join("\n");
   const hosts = parseHostList(hostsText);
   const hostsChanged = !networkOff && draft.hostsText !== undefined && !sameList(hosts, baseHosts);
-  const cloudChanged = modeChanged || hostsChanged;
+  const networkChanged = ceilingChanged || defaultChanged || hostsChanged;
   // PATCH replaces the stored value whole: the stored value with the edited fields changed
-  const cloudValue = cloudNetworkToSave(
-    saved.cloudNetwork,
-    platformNetwork.allowHosts,
-    hosts,
-    modeChanged ? cloudMode : undefined,
-  );
+  const networkValue = deviceNetworkToSave(storedNetwork, platformNetwork.allowHosts, hosts, {
+    ...(ceilingChanged ? { ceiling: networkCeiling } : {}),
+    ...(defaultChanged ? { default: networkDefault } : {}),
+  });
   const badHost = networkOff
     ? undefined
     : hosts.find((h) => allowHostProblem(h, { wildcard: true }) !== null);
   const hostsInvalid =
     badHost !== undefined ||
-    (cloudValue.extraHosts?.length ?? 0) > 200 ||
-    (cloudValue.excludedHosts?.length ?? 0) > 200;
+    (networkValue.extraHosts?.length ?? 0) > 200 ||
+    (networkValue.excludedHosts?.length ?? 0) > 200;
   // Only the changed fields
   const patch: OrgSettingsPatch = {
-    ...(fullChanged && draft.fullAccess !== undefined ? { fullAccess: draft.fullAccess } : {}),
-    ...(cloudChanged ? { cloudNetwork: cloudValue } : {}),
+    ...(outsideChanged ? { outsideSandbox } : {}),
+    ...(networkChanged ? { deviceNetwork: networkValue } : {}),
     ...(sandboxPolicy !== (saved.sandboxToolPolicy ?? "allow")
       ? { sandboxToolPolicy: sandboxPolicy }
       : {}),
@@ -246,11 +256,11 @@ function SandboxSettings({ orgId, allowHosts }: { orgId: string; allowHosts: str
   // 跟随平台: clears the stored network (and any unsaved network draft); other drafts stay.
   async function followPlatform() {
     try {
-      await update.mutateAsync({ cloudNetwork: null });
-      setDraft(({ cloudMode: _m, hostsText: _h, ...rest }) => rest);
+      await update.mutateAsync({ deviceNetwork: null });
+      setDraft(({ networkDefault: _d, networkCeiling: _c, hostsText: _h, ...rest }) => rest);
       setPrefilled([]);
       setConfirmingFollow(false);
-      toast.success(t("cloudNetwork.followPlatformDone"));
+      toast.success(t("deviceNetwork.followPlatformDone"));
     } catch (e) {
       setConfirmingFollow(false);
       toast.error(saveError(e));
@@ -262,7 +272,7 @@ function SandboxSettings({ orgId, allowHosts }: { orgId: string; allowHosts: str
     if (e instanceof ApiClientError && e.code === "org.sandbox_egress_not_allowed") {
       const d = e.rawDetails[0] as { reason?: unknown; hosts?: unknown } | undefined;
       if (d?.reason === "outside_ceiling" && Array.isArray(d.hosts) && d.hosts.length > 0) {
-        return t("cloudNetwork.outsideCeiling", { hosts: d.hosts.join(", ") });
+        return t("deviceNetwork.outsideCeiling", { hosts: d.hosts.join(", ") });
       }
     }
     return errorMessage(e);
@@ -326,23 +336,25 @@ function SandboxSettings({ orgId, allowHosts }: { orgId: string; allowHosts: str
         </Stack>
       </FormSection>
       <FormSection
-        id="full-access"
-        title={t("fullAccess.title")}
-        description={t("fullAccess.description")}
+        id="outside-sandbox"
+        title={t("outsideSandbox.title")}
+        description={t("outsideSandbox.description")}
       >
         <Stack gap={8}>
           <RadioGroup
-            label={t("fullAccess.title")}
+            label={t("outsideSandbox.title")}
             variant="card"
-            value={fullAccess}
+            value={outsideSandbox}
             disabled={!manage || platformOff}
-            onChange={(v) => setDraft((d) => ({ ...d, fullAccess: v as "allowed" | "off" }))}
+            onChange={(v) => setDraft((d) => ({ ...d, outsideSandbox: v as "allowed" | "off" }))}
             options={(["allowed", "off"] as const).map((v) => {
               const closed = v === "allowed" && platformOff;
               return {
                 value: v,
-                label: t(`fullAccess.${v}`),
-                description: closed ? t("fullAccess.platformClosed") : t(`fullAccess.${v}Hint`),
+                label: t(`outsideSandbox.${v}`),
+                description: closed
+                  ? t("outsideSandbox.platformClosed")
+                  : t(`outsideSandbox.${v}Hint`),
                 ...(closed ? { disabled: true } : {}),
               };
             })}
@@ -355,42 +367,63 @@ function SandboxSettings({ orgId, allowHosts }: { orgId: string; allowHosts: str
         </Stack>
       </FormSection>
       <FormSection
-        id="cloud-network"
-        title={t("cloudNetwork.title")}
-        description={t("cloudNetwork.description")}
+        id="device-network"
+        title={t("deviceNetwork.title")}
+        description={t("deviceNetwork.description")}
       >
         <Stack gap={8}>
-          <RadioGroup
-            label={t("cloudNetwork.title")}
-            variant="card"
-            value={cloudMode}
-            disabled={!manage || networkOff}
-            onChange={(v) =>
-              setDraft((d) => ({
-                ...d,
-                cloudMode: v as NonNullable<CloudNetworkSetting["mode"]>,
-              }))
-            }
-            options={(["open", "allowlist"] as const).map((v) => {
-              const closed = v === "open" && within && !networkOff;
-              return {
-                value: v,
-                label: t(`cloudNetwork.${v}`),
-                description: closed ? t("cloudNetwork.withinClosed") : t(`cloudNetwork.${v}Hint`),
-                ...(closed ? { disabled: true } : {}),
-              };
-            })}
-          />
+          <Field label={t("deviceNetwork.ceiling")}>
+            <RadioGroup
+              label={t("deviceNetwork.ceiling")}
+              variant="card"
+              value={networkCeiling}
+              disabled={!manage || networkOff}
+              onChange={(v) => setDraft((d) => ({ ...d, networkCeiling: v as DeviceNetworkMode }))}
+              options={(["open", "allowlist"] as const).map((v) => {
+                const closed = v === "open" && platformAllowlist && !networkOff;
+                return {
+                  value: v,
+                  label: t(`deviceNetwork.${v}`),
+                  description: closed
+                    ? t("deviceNetwork.platformAllowlist")
+                    : t(`deviceNetwork.${v}Hint`),
+                  ...(closed ? { disabled: true } : {}),
+                };
+              })}
+            />
+          </Field>
+          <Field label={t("deviceNetwork.default")}>
+            <RadioGroup
+              label={t("deviceNetwork.default")}
+              variant="card"
+              value={networkDefault}
+              disabled={!manage || networkOff}
+              onChange={(v) => setDraft((d) => ({ ...d, networkDefault: v as DeviceNetworkMode }))}
+              options={(["open", "allowlist"] as const).map((v) => {
+                const closed = v === "open" && networkCeiling === "allowlist" && !networkOff;
+                return {
+                  value: v,
+                  label: t(`deviceNetwork.${v}`),
+                  description: !closed
+                    ? t(`deviceNetwork.${v}Hint`)
+                    : platformAllowlist
+                      ? t("deviceNetwork.platformAllowlist")
+                      : t("deviceNetwork.ceilingAllowlist"),
+                  ...(closed ? { disabled: true } : {}),
+                };
+              })}
+            />
+          </Field>
           {networkOff && (
             <Text variant="small" tone="muted">
-              {t("cloudNetwork.platformClosed")}
+              {t("deviceNetwork.platformClosed")}
             </Text>
           )}
           <Field
-            label={t("cloudNetwork.hosts")}
-            help={t("cloudNetwork.hostsHelp")}
+            label={t("deviceNetwork.hosts")}
+            help={t("deviceNetwork.hostsHelp")}
             {...(badHost !== undefined
-              ? { error: t("cloudNetwork.invalidHost", { host: badHost }) }
+              ? { error: t("deviceNetwork.invalidHost", { host: badHost }) }
               : {})}
           >
             <Textarea
@@ -401,10 +434,15 @@ function SandboxSettings({ orgId, allowHosts }: { orgId: string; allowHosts: str
               onChange={(e) => setDraft((d) => ({ ...d, hostsText: e.target.value }))}
             />
           </Field>
-          {manage && !networkOff && saved.cloudNetwork !== undefined && (
+          {within && !networkOff && (
+            <Text variant="small" tone="muted">
+              {t("deviceNetwork.withinNote")}
+            </Text>
+          )}
+          {manage && !networkOff && storedNetwork !== undefined && (
             <Stack gap={4}>
               <Text variant="prose" tone="muted">
-                {t("cloudNetwork.ownNetwork")}
+                {t("deviceNetwork.ownNetwork")}
               </Text>
               <Stack direction="row" gap={8}>
                 <Button
@@ -412,7 +450,7 @@ function SandboxSettings({ orgId, allowHosts }: { orgId: string; allowHosts: str
                   disabled={update.isPending}
                   onClick={() => setConfirmingFollow(true)}
                 >
-                  {t("cloudNetwork.followPlatform")}
+                  {t("deviceNetwork.followPlatform")}
                 </Button>
               </Stack>
             </Stack>
@@ -423,7 +461,7 @@ function SandboxSettings({ orgId, allowHosts }: { orgId: string; allowHosts: str
               onOpenChange={(o) => {
                 if (!o) setConfirmingFollow(false);
               }}
-              title={t("cloudNetwork.followPlatform")}
+              title={t("deviceNetwork.followPlatform")}
               danger
               initialFocus="cancel"
               footer={
@@ -436,21 +474,21 @@ function SandboxSettings({ orgId, allowHosts }: { orgId: string; allowHosts: str
                     loading={update.isPending}
                     onClick={() => void followPlatform()}
                   >
-                    {t("cloudNetwork.followPlatform")}
+                    {t("deviceNetwork.followPlatform")}
                   </Button>
                 </>
               }
             >
-              <Text variant="prose">{t("cloudNetwork.followPlatformBody")}</Text>
+              <Text variant="prose">{t("deviceNetwork.followPlatformBody")}</Text>
             </Dialog>
           )}
           {prefilled !== null && prefilled.length > 0 && (
             <Text variant="small" tone="muted">
-              {t("cloudNetwork.prefilled", { hosts: prefilled.join(", ") })}
+              {t("deviceNetwork.prefilled", { hosts: prefilled.join(", ") })}
             </Text>
           )}
           <Text variant="small" tone="muted">
-            {t("cloudNetwork.publicOnly")}
+            {t("deviceNetwork.publicOnly")}
           </Text>
           {!manage && (
             <Text variant="small" tone="muted">

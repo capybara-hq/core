@@ -1,5 +1,5 @@
 import type { SandboxRoots } from "@capybara-hq/plugin-sdk";
-import type { PermissionContextV1 } from "../conversations/events.js";
+import type { PermissionContextV2 } from "../conversations/events.js";
 
 /**
  * The complete identity a recorded permission context is read for: the calling conversation, its
@@ -29,7 +29,7 @@ export interface HeldDeviceContextEvidence {
 }
 
 /** The outer boundary a recorded context reports, as the applied environment proves it. */
-export type AppliedOuterNetwork = NonNullable<PermissionContextV1["scope"]>["outerNetwork"];
+export type AppliedOuterNetwork = NonNullable<PermissionContextV2["scope"]>["outerNetwork"];
 
 /**
  * The installed environment of a device's current instance, proved by its installed binding and

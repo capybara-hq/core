@@ -117,11 +117,6 @@ export const projectUnavailable = {
   /** The device's own error text is logged, never recorded: the message stays the same per root. */
   unreadable: (root: string) =>
     unavailable("unreadable", `The project's root ${clipped(root)} could not be read.`),
-  widerMode: (root: string) =>
-    unavailable(
-      "outside_mode",
-      `The project's root ${clipped(root)} was not read: the device runs a wider mode than the organization allows.`,
-    ),
   removed: (project: string) =>
     unavailable(
       "removed",
@@ -132,6 +127,12 @@ export const projectUnavailable = {
     unavailable(
       "unreadable",
       `The project's root ${clipped(root)} was not read: this device's runtime cannot enforce a read-only read on its host; turn on its sandbox enforcement or use another device.`,
+    ),
+  /** A device runtime that refused the kernel's read-only read scope (its text is logged). */
+  refused: (root: string) =>
+    unavailable(
+      "unreadable",
+      `The project's root ${clipped(root)} was not read: this device's runtime refused the kernel's read-only read.`,
     ),
   unsupported: () =>
     unavailable(

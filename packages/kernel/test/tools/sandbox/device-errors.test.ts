@@ -4,6 +4,7 @@ import {
   SandboxOperationOutcomeUnknownError,
   SandboxPermissionUnsupportedError,
   SandboxScopeDeniedError,
+  SandboxScopeValidationError,
   ToolError,
 } from "@capybara-hq/plugin-sdk";
 import { describe, expect, it } from "vitest";
@@ -18,16 +19,20 @@ import {
 } from "../../../src/sandbox/sandbox.service.js";
 import {
   DEVICE_REQUEST_NOT_SENT_TOOL_TEXT,
-  FULL_ACCESS_CEILING_TOOL_TEXT,
-  FULL_ACCESS_OFF_BY_POLICY_TOOL_TEXT,
+  ESCALATION_GRANT_MISSING_LAUNCH_WHY,
+  ESCALATION_GRANT_MISSING_TEXT,
   mapSandboxError,
+  ORG_OUTSIDE_SANDBOX_OFF_TOOL_TEXT,
   OUTCOME_UNKNOWN_TOOL_TEXT,
+  OUTSIDE_SANDBOX_CEILING_TOOL_TEXT,
   PERMISSION_UNSUPPORTED_TOOL_TEXT,
+  PLATFORM_OUTSIDE_SANDBOX_OFF_TOOL_TEXT,
   RETIREMENT_PENDING_TOOL_TEXT,
   RETIREMENT_RECREATE_TOOL_TEXT,
   RETIREMENT_REPLACE_TOOL_TEXT,
   RETIREMENT_RESTART_TOOL_TEXT,
   SCOPE_DENIED_TOOL_TEXT,
+  SCOPE_INVALID_TOOL_TEXT,
 } from "../../../src/tools/builtins/sandbox/common.js";
 
 /** The model-visible tool errors of a device (spec 2026-11-07-environments-design §15). */
@@ -73,28 +78,44 @@ describe("sandbox tool errors", () => {
     expect(message(mapped)).not.toContain("internal detail");
   });
 
-  // B-13: the full-access refusals are actionable English tool errors, never the kernel's message
-  it.each(["org.full_access_not_allowed", "deployment.full_access_not_allowed"] as const)(
-    "Full access off by policy (%s) names the profiles and who can allow it",
-    (code) => {
+  // B-13: running outside the sandbox off by policy: one actionable text per layer that blocks it,
+  // never the kernel's message and never "Full access" (the profile no longer runs outside)
+  it.each([
+    ["org.outside_sandbox_not_allowed", ORG_OUTSIDE_SANDBOX_OFF_TOOL_TEXT, /an organization admin/],
+    [
+      "deployment.outside_sandbox_not_allowed",
+      PLATFORM_OUTSIDE_SANDBOX_OFF_TOOL_TEXT,
+      /a super admin/,
+    ],
+  ] as const)(
+    "running outside the sandbox off by policy (%s) names who can allow it",
+    (code, text, who) => {
       const mapped = mapSandboxError(new ApiError(code, "internal detail"), undefined);
       expect(mapped).toBeInstanceOf(ToolError);
-      expect(message(mapped)).toBe(FULL_ACCESS_OFF_BY_POLICY_TOOL_TEXT);
-      expect(message(mapped)).toMatch(/Request approval or Approve for me/);
-      expect(message(mapped)).toMatch(/admin/);
-      expect(message(mapped)).not.toMatch(/capybara-device mode/);
+      expect(message(mapped)).toBe(text);
+      expect(message(mapped)).toMatch(who);
+      expect(message(mapped)).toMatch(/outside the sandbox/);
+      expect(message(mapped)).not.toMatch(/Full access/);
+      expect(message(mapped)).not.toContain("internal detail");
     },
   );
 
-  it("a device ceiling without Full access points to the owner's ceiling command", () => {
+  it("an approval that no longer matches names the outside-sandbox setting, not Full access", () => {
+    for (const text of [ESCALATION_GRANT_MISSING_TEXT, ESCALATION_GRANT_MISSING_LAUNCH_WHY]) {
+      expect(text).toMatch(/outside-sandbox setting/);
+      expect(text).not.toMatch(/Full access/);
+    }
+  });
+
+  it("a device that does not allow running outside the sandbox points to the owner's ceiling command", () => {
     const mapped = mapSandboxError(
-      new ApiError("device.full_access_not_allowed", "internal detail"),
+      new ApiError("device.outside_sandbox_not_allowed", "internal detail"),
       undefined,
     );
     expect(mapped).toBeInstanceOf(ToolError);
-    expect(message(mapped)).toBe(FULL_ACCESS_CEILING_TOOL_TEXT);
-    expect(message(mapped)).toMatch(/owner ceiling/);
-    expect(message(mapped)).toMatch(/capybara-device ceiling set/);
+    expect(message(mapped)).toBe(OUTSIDE_SANDBOX_CEILING_TOOL_TEXT);
+    expect(message(mapped)).toMatch(/outside the sandbox/);
+    expect(message(mapped)).toMatch(/capybara-device ceiling set --outside-sandbox on/);
     expect(message(mapped)).not.toContain("internal detail");
   });
 
@@ -111,6 +132,18 @@ describe("sandbox tool errors", () => {
     expect(message(mapped)).toMatch(what);
     expect(message(mapped)).not.toMatch(/not active in this deployment/);
     expect(message(mapped)).toBe(text);
+  });
+
+  it("a scope the device refuses as invalid is a kernel invariant break: fixed text, logged", () => {
+    const warned: unknown[][] = [];
+    const mapped = mapSandboxError(
+      new SandboxScopeValidationError("provider secret network.kind: environment"),
+      { warn: (...args: unknown[]) => void warned.push(args) } as never,
+    );
+    expect(mapped).toBeInstanceOf(ToolError);
+    expect(message(mapped)).toBe(SCOPE_INVALID_TOOL_TEXT);
+    expect(message(mapped)).not.toContain("provider secret");
+    expect(String(warned[0]?.[0])).toMatch(/kernel invariant/);
   });
 
   // the managed route's typed refusals: fixed kernel text, never the refusal's own message

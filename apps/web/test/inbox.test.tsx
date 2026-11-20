@@ -342,6 +342,10 @@ describe("inbox: command review asks (auto mode spec §5.4)", () => {
     const rg = await screen.findByRole("radiogroup", { name: en.approval.scopeLabel });
     expect(rg).toBeTruthy();
     expect(await screen.findByText(en.approval.command.title)).toBeTruthy();
+    // the ask in the UI's language, the rule's own reason under it as detail text
+    expect(
+      screen.getByText("The review rule rm:forced asks you to confirm this call."),
+    ).toBeTruthy();
     expect(screen.getByText("Deletes files outside the workspace")).toBeTruthy();
     expect(screen.getByText("box")).toBeTruthy();
     const code = container.querySelector('[data-part="code-block"]') as Element;

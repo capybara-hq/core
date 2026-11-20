@@ -4,25 +4,34 @@ import { homedir } from "node:os";
 import { basename, dirname, join, resolve } from "node:path";
 import {
   type DeviceExecGrants,
+  type DeviceNetworkMode,
   type SandboxLimits,
   type SandboxOperationScope,
   type SandboxRoots,
   SandboxScopeDeniedError,
+  sandboxRuntimeDirectoryOf,
   validateAllowHost,
 } from "@capybara-hq/plugin-sdk";
 import { covers, deniedSecretPaths, effectiveEgress } from "../policy.js";
-import { policyPath, readPolicyFile, SANDBOX_OWNER_CEILING } from "../state.js";
+import { policyPath, readPolicyFile } from "../state.js";
 import { osRoots } from "./shared.js";
 
+/**
+ * The owner ceiling as this program enforces it: the fields of the protocol's
+ * `DeviceOwnerCeiling` (the device sandbox for every profile) plus the local facts the
+ * intersection needs (roots, denied read roots, preparation roots).
+ */
 export interface DeviceOwnerCeiling {
   readonly revision: string;
-  readonly fullAccess: boolean;
+  /** Whether a call may be granted escalation outside the sandbox (device + environment). */
+  readonly outsideSandbox: boolean;
+  /** The sandbox network: the open public internet or the {@link allowedDomains} allowlist. */
+  readonly network: DeviceNetworkMode;
+  readonly allowedDomains: readonly string[];
   readonly roots: Readonly<SandboxRoots>;
   readonly restrictedProjectReach: "workspace" | "os-user";
-  readonly restrictedAllowedDomains: readonly string[];
   readonly restrictedDeniedReadRoots: readonly string[];
   readonly preparation: Readonly<{ skillsRoot: string; attachmentsBase: string }>;
-  readonly fullNetwork: "environment";
 }
 export interface LocalExecAuthority {
   readonly operationId: string;
@@ -30,7 +39,14 @@ export interface LocalExecAuthority {
   readonly grants?: DeviceExecGrants;
 }
 export interface LocalOperationGrant {
+  /** Only an escalated call (device + environment): it runs outside the sandbox. */
   readonly full: boolean;
+  /**
+   * A sandboxed command may reach the open public internet (the address classes the design closes
+   * stay closed). Absent or false: exactly {@link hosts}, so a grant that does not say otherwise
+   * fails closed. Never set on a {@link full} grant, which has the escalated call's own network.
+   */
+  readonly openNetwork?: boolean;
   readonly readRoots: readonly string[];
   readonly writeRoots: readonly string[];
   readonly hosts: readonly string[];
@@ -54,7 +70,7 @@ export async function readStrictOwnerCeiling(input: {
 }
 /**
  * {@link readStrictOwnerCeiling}, synchronously (the owner report issues it under the policy lock).
- * Only a version-2 policy file is authority: an old format is refused until it is converted.
+ * Only a version-3 policy file is authority: an old format is refused until it is converted.
  */
 export function readStrictOwnerCeilingSync(input: {
   stateDir: string;
@@ -82,10 +98,11 @@ export function readStrictOwnerCeilingSync(input: {
   const roots = Object.freeze(osRoots(resolve(input.dir)));
   return Object.freeze({
     revision: digest({ generation: version(after), policy, roots, deviceId: input.deviceId }),
-    fullAccess: policy.ownerCeiling.fullAccess,
+    outsideSandbox: policy.ownerCeiling.outsideSandbox,
+    network: policy.ownerCeiling.network,
+    allowedDomains: Object.freeze([...policy.allowedDomains]),
     roots,
     restrictedProjectReach: policy.ownerCeiling.restrictedProjectReach,
-    restrictedAllowedDomains: Object.freeze([...policy.allowedDomains]),
     restrictedDeniedReadRoots: Object.freeze(
       withCanonicalForms([...deniedSecretPaths(input.home ?? homedir()), resolve(input.stateDir)]),
     ),
@@ -93,7 +110,6 @@ export function readStrictOwnerCeilingSync(input: {
       skillsRoot: roots.skills,
       attachmentsBase: join(roots.workspace, "attachments"),
     }),
-    fullNetwork: "environment",
   });
 }
 /**
@@ -138,6 +154,16 @@ export function checkRoots(
     if (ceiling.restrictedDeniedReadRoots.some((r) => within(root, r)))
       throw new SandboxScopeDeniedError("Root is denied by the owner");
   }
+  // the kernel's candidate builder and admission refuse the same roots: another process's socket
+  // there would let a sandboxed command act outside the sandbox. Checked before the skills rule so
+  // the refusal names the real reason wherever the skills root lives (under /tmp on Linux)
+  for (const root of write) {
+    const runtime = sandboxRuntimeDirectoryOf(root);
+    if (runtime !== null)
+      throw new SandboxScopeDeniedError(
+        `Write root ${root} is a system runtime or socket directory (${runtime}), where other programs keep their sockets; grant a directory of its own (such as /tmp/<name>) or one inside the project instead`,
+      );
+  }
   if (
     !preparation &&
     write.some((r) => within(r, ceiling.roots.skills) || within(ceiling.roots.skills, r))
@@ -175,6 +201,18 @@ export function freezeAuthority(a: LocalExecAuthority): LocalExecAuthority {
       : {}),
   });
 }
+/** The refusal of an escalated call the owner ceiling does not allow. */
+export const OUTSIDE_SANDBOX_REFUSAL =
+  "Running outside the sandbox is outside the current owner ceiling; the owner allows it on " +
+  "this machine with capybara-device ceiling set --outside-sandbox on";
+
+/**
+ * One operation's scope intersected with the owner ceiling now (approval-only profiles design).
+ * Every profile's ordinary call is sandboxed: scoped roots, the owner's denied read roots and the
+ * sandbox network. Only an escalated call (`filesystem: device` with `network: environment`) runs
+ * outside the sandbox, and only while the owner ceiling allows `outsideSandbox`. The profile in the
+ * scope is audit only: it never widens anything here.
+ */
 export function intersectOperation(
   scope: SandboxOperationScope,
   ceiling: DeviceOwnerCeiling,
@@ -183,10 +221,9 @@ export function intersectOperation(
 ): LocalOperationGrant {
   if (authority && authority.operationId !== scope.operationId)
     throw new SandboxScopeDeniedError("Execution authority operation ID mismatch");
-  const full = scope.filesystem.kind === "device" && scope.network.kind === "environment";
-  if (full) {
-    if (!ceiling.fullAccess)
-      throw new SandboxScopeDeniedError("Full access is outside the current owner ceiling");
+  const escalated = scope.filesystem.kind === "device" && scope.network.kind === "environment";
+  if (escalated) {
+    if (!ceiling.outsideSandbox) throw new SandboxScopeDeniedError(OUTSIDE_SANDBOX_REFUSAL);
     return Object.freeze({
       full: true,
       readRoots: Object.freeze(["/"]),
@@ -198,33 +235,60 @@ export function intersectOperation(
   }
   if (scope.filesystem.kind !== "scoped" || scope.network.kind === "environment")
     throw new SandboxScopeDeniedError(
-      "Expanded device/environment authority requires the independent Full ceiling",
+      "The device filesystem and the environment network come only together, as one escalated call",
     );
   checkRoots(scope.filesystem.readRoots, scope.filesystem.writeRoots, ceiling);
   if (!native && !authority)
     throw new SandboxScopeDeniedError("Restricted execution requires authenticated authority");
+  let openNetwork = false;
   const hosts = new Set<string>();
-  if (authority && !native && scope.network.kind === "allowlist") {
-    const baseline = effectiveEgress(
-      {
-        ownerCeiling: SANDBOX_OWNER_CEILING,
-        allowedDomains: [...ceiling.restrictedAllowedDomains],
-      },
-      { mode: "sandbox", network: authority.orgNetwork },
+  if (authority && !native) {
+    const egress = effectiveEgress(
+      { ownerCeiling: { network: ceiling.network }, allowedDomains: [...ceiling.allowedDomains] },
+      authority.orgNetwork,
       authority.grants,
     );
-    for (const a of baseline)
-      for (const b of scope.network.hosts) {
-        if (covers(a, b)) hosts.add(b);
-        else if (covers(b, a)) hosts.add(a);
-      }
+    if (scope.network.kind === "open-public") {
+      // asked for the open network: open only where the owner and the kernel both allow it,
+      // otherwise narrowed to the allowlist they do allow
+      if (egress.kind === "open-public") openNetwork = true;
+      else for (const h of egress.hosts) hosts.add(h);
+    } else if (scope.network.kind !== "allowlist") {
+      // `none`: no network at all
+    } else if (egress.kind === "open-public") {
+      for (const h of scope.network.hosts) hosts.add(h.toLowerCase());
+    } else {
+      for (const a of egress.hosts)
+        for (const b of scope.network.hosts) {
+          if (covers(a, b)) hosts.add(b);
+          else if (covers(b, a)) hosts.add(a);
+        }
+    }
   }
   return Object.freeze({
     full: false,
+    ...(openNetwork && { openNetwork: true }),
     readRoots: Object.freeze([...scope.filesystem.readRoots]),
     writeRoots: Object.freeze([...scope.filesystem.writeRoots]),
     hosts: Object.freeze([...hosts]),
     deniedReadRoots: Object.freeze([...ceiling.restrictedDeniedReadRoots]),
     revision: ceiling.revision,
   });
+}
+
+/**
+ * Whether a live operation's grant still holds against the grant the fresh owner ceiling gives the
+ * same scope (owner reconcile): a full grant only while the next one is full; a sandboxed grant
+ * only while every host, the open network if it had one, and exactly the same denied read roots
+ * remain. Anything narrower revokes the operation.
+ */
+export function grantStillHolds(grant: LocalOperationGrant, next: LocalOperationGrant): boolean {
+  if (grant.full) return next.full;
+  return (
+    !next.full &&
+    (!grant.openNetwork || next.openNetwork === true) &&
+    grant.hosts.every((h) => next.hosts.includes(h)) &&
+    grant.deniedReadRoots.every((r) => next.deniedReadRoots.includes(r)) &&
+    next.deniedReadRoots.every((r) => grant.deniedReadRoots.includes(r))
+  );
 }

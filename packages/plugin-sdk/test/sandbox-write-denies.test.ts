@@ -1,15 +1,127 @@
 import { execFileSync } from "node:child_process";
+import { mkdirSync, mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import { LINUX_SANDBOX_SOURCE } from "../src/sandbox-linux-runtime-source.js";
 import { NATIVE_FILES_SOURCE } from "../src/sandbox-native-runtime-source.js";
 import {
+  isSandboxHomeWriteDenied,
   isSandboxMoveDenied,
   isSandboxWriteDenied,
+  SANDBOX_MANDATORY_WRITE_DENIES,
+  SANDBOX_PROTECTED_PATH_NAMES,
+  SANDBOX_RESERVED_NAME_PREFIX,
+  SANDBOX_SYSTEM_WRITE_DENIES,
   SANDBOX_WRITE_POLICY_PYTHON,
   sandboxFoldName,
+  sandboxRuntimeDirectoryOf,
 } from "../src/sandbox-write-denies.js";
 
+/**
+ * The persistence vectors of the approval-only profiles design ("Fixed denies"): launchd agents and
+ * daemons, systemd units and environment, XDG and KDE autostart, X session files, every shell
+ * startup and logout file, fish configuration and the crontab and at spools, in every spelling a
+ * consumer may see (APFS case folding, full Unicode case folding, the `/private` and Data-volume
+ * forms of macOS, the Linux spool layouts).
+ */
+const PERSISTENCE_DENIED = [
+  "/Users/u/Library/LaunchAgents",
+  "/Users/u/Library/LaunchAgents/com.evil.plist",
+  "/users/u/library/launchagents/com.evil.plist",
+  "/Users/u/LIBRARY/LAUNCHAGENTS/com.evil.plist",
+  "/Users/u/Library/LaunchAgentſ/com.evil.plist",
+  "/Users/u/Ｌibrary/LaunchAgents/com.evil.plist",
+  "/System/Volumes/Data/Users/u/Library/LaunchAgents/com.evil.plist",
+  "/private/var/root/Library/LaunchAgents/x.plist",
+  "/Library/LaunchAgents/com.evil.plist",
+  "/Library/LaunchDaemons",
+  "/Library/LaunchDaemons/com.evil.plist",
+  "/Users/u/Library/LaunchDaemons/com.evil.plist",
+  "/library/launchdaemons/com.evil.plist",
+  "/home/u/.config/systemd",
+  "/home/u/.config/systemd/user",
+  "/home/u/.config/systemd/user/evil.service",
+  "/home/u/.config/systemd/user/default.target.wants/evil.service",
+  "/home/u/.config/systemd/user.control/evil.service",
+  "/home/u/.config/systemd/user.conf",
+  "/home/u/.config/systemd/user.conf.d/env.conf",
+  "/home/u/.CONFIG/Systemd/USER/evil.service",
+  "/home/u/.local/share/systemd/user/evil.service",
+  "/home/u/.LOCAL/Share/SYSTEMD",
+  "/home/u/.config/environment.d/90-evil.conf",
+  "/home/u/.config/autostart",
+  "/home/u/.config/autostart/evil.desktop",
+  "/home/u/.config/AutoStart/evil.desktop",
+  "/home/u/.config/autostart-scripts/evil.sh",
+  "/home/u/.config/plasma-workspace/env/evil.sh",
+  "/home/u/.xprofile",
+  "/home/u/.xsessionrc",
+  "/home/u/.zshenv",
+  "/home/u/.zlogin",
+  "/home/u/.zlogout",
+  "/home/u/.bash_login",
+  "/home/u/.bash_logout",
+  "/home/u/.tcshrc",
+  "/home/u/.cshrc",
+  "/home/u/.kshrc",
+  "/home/u/.logout",
+  "/home/u/.config/git/config",
+  "/home/u/.config/fish/config.fish",
+  "/home/u/.config/fish/conf.d/evil.fish",
+  "/home/u/.config/fish/conf.d",
+  // PATH-shim directories a later shell runs programs from
+  "/home/u/.local/bin",
+  "/home/u/.local/bin/ls",
+  "/Users/u/.LOCAL/Bin/git",
+  "/home/u/.cargo/bin",
+  "/home/u/.cargo/bin/cargo-evil",
+  "/private/var/at/tabs/u",
+  "/private/var/at/tabs",
+  "/private/var/at/jobs/x",
+  "/PRIVATE/VAR/AT/TABS/u",
+  "/var/at",
+  "/var/at/tabs/u",
+  "/var/at/jobs/x",
+  "/var/spool/cron/crontabs/u",
+  "/var/spool/cron/u",
+  "/var/spool/cron/tabs/u",
+  "/var/spool/cron",
+  "/VAR/SPOOL/CRON/crontabs/u",
+  "/var/spool/at/a0001",
+];
+const PERSISTENCE_ALLOWED = [
+  "/Users/u/Library/Caches/x",
+  "/Users/u/Library",
+  "/Users/u/LaunchAgents/x.plist",
+  "/home/u/.config",
+  "/home/u/.config/systemd-not/x",
+  "/home/u/.config/autostart-scripts.txt",
+  "/home/u/.config/plasma-workspace/shutdown/x.sh",
+  "/home/u/.config/fish/functions/f.fish",
+  "/home/u/.local/share/other/x",
+  "/home/u/.local/lib/x",
+  "/home/u/.cargo/registry/x",
+  "/w/bin/run.sh",
+  "/w/node_modules/pkg/bin/cli.js",
+  "/home/u/.config/git/ignore",
+  "/var/spool/mail/u",
+  "/var/spool",
+  "/private/var/folders/xy/T/x",
+  "/w/src/cron/job.ts",
+  "/w/tabs/at.ts",
+  "/w/at/tabs/x",
+  "/w/spool/cron/x",
+  "/w/var/spool/cron/x",
+  "/w/private/var/at/x",
+];
+
 const DENIED = [
+  // the broker's reserved staging names, in every spelling, and everything beneath them
+  "/w/.capybara-staging-3f9a",
+  "/w/.capybara-staging-3f9a/commands/x.md",
+  "/w/.Capybara-Staging-quarantine-1/x",
+  "/w/src/.capybara-staging-",
   "/w/.git/config",
   "/w/.git/hooks/pre-commit",
   "/w/.git/hooks",
@@ -60,8 +172,11 @@ const DENIED = [
   "/w/.git/index.stash.",
   "/w/.baſhrc",
   "/w/.ﬁx/../.bashrc",
+  ...PERSISTENCE_DENIED,
 ];
 const ALLOWED = [
+  "/w/capybara-staging-3f9a",
+  "/w/.capybara-stagingx",
   "/w/src/a.ts",
   "/w/.git",
   "/w/.git/HEAD",
@@ -89,19 +204,124 @@ const ALLOWED = [
   "/w/.git/index.stash.12345.lock",
   "/w/.git/packed-refs.new",
   "/w/.git/MERGE_AUTOSTASH",
+  ...PERSISTENCE_ALLOWED,
 ];
 /** Names whose folding differs between toLowerCase and full case folding (and NFKC). */
 const FOLDS = ["Straße", "ſ", "\u212A", "ΣΑΣ", "ς", "ǰ", "ŉ", "ᏸ", "Ꭰ", "ﬃ", "ＡＢＣ", "İ"];
-const MOVES: [string, string, boolean, boolean][] = [
+/** [source, destination, source is a directory, refused, the source directory's entries]. */
+const MOVES: [string, string, boolean, boolean, string[]?][] = [
+  // nothing sandboxed moves into or out of a reserved staging name
+  ["/w/d", "/w/.capybara-staging-1", true, true, []],
+  ["/w/.capybara-staging-1", "/w/d", true, true, []],
   ["/w/.git/index.lock", "/w/.git/index", false, false],
   ["/w/.git/objects/ab/tmp_obj", "/w/.git/objects/ab/cdef", false, false],
   ["/w/.git", "/w/g2", true, true],
   ["/w/.git/objects", "/w/objects", true, true],
   ["/w/evil", "/w/sub/.git", true, true],
   ["/w/file", "/w/sub/.git", false, true],
-  ["/w/a", "/w/b", true, false],
-  ["/w/.claude/x", "/w/y", false, true],
+  ["/w/a", "/w/b", true, false, []],
+  ["/w/.husky/pre-commit", "/w/x", false, true],
+  ["/w/.claude/commands/c.md", "/w/y", false, true],
+  ["/w/.claude/x", "/w/y", false, false],
+  // ordinary directory names stay movable, also when they begin a multi-component entry
+  ["/w/src/library/a.ts", "/w/a.ts", false, false],
+  ["/w/lib", "/w/library", true, false, ["a.ts", "b"]],
+  ["/w/library", "/w/lib", true, false, ["LaunchAgents"]],
+  ["/w/.gradle/at/stash", "/w/.gradle/stash", true, false, ["x.bin"]],
+  ["/w/src/main/java/at/example/A.java", "/w/src/main/java/at/sample/A.java", false, false],
+  ["/w/src/main/java/at/example", "/w/src/main/java/at/sample", true, false, ["A.java"]],
+  ["/w/spool", "/w/spool2", true, false, ["cron"]],
+  ["/w/q", "/w/spool", true, false, ["cron"]],
+  ["/w/var/cache/x", "/w/x", false, false],
+  ["/w/src/cron/job.ts", "/w/job.ts", false, false],
+  ["/w/x", "/w/.config", true, false, ["nvim"]],
+  ["/Users/u/Library", "/Users/u/L2", true, false, ["LaunchAgents"]],
+  // a prepared directory never moves into place: a destination ending in a prefix of an entry
+  // takes no source holding the entry's next component
+  ["/Users/u/L2", "/Users/u/Library", true, true, ["LaunchAgents"]],
+  ["/w/prep", "/Users/u/Library", true, true, ["Caches", "launchagents"]],
+  ["/w/prep", "/Users/u/LIBRARY", true, true, ["LaunchDaemonſ"]],
+  ["/w/prep", "/Users/u/Library", true, false, ["Caches"]],
+  ["/w/prep", "/Users/u/Library", true, true],
+  ["/w/prep", "/home/u/.config", true, true, ["systemd"]],
+  ["/w/prep", "/home/u/.config", true, true, ["fish"]],
+  ["/w/prep", "/home/u/.config/fish", true, true, ["conf.d"]],
+  ["/w/prep", "/home/u/.config/fish", true, false, ["functions"]],
+  ["/w/prep", "/home/u/.local", true, true, ["share"]],
+  ["/w/prep", "/home/u/.local/share", true, true, ["systemd"]],
+  ["/w/prep", "/w/.claude", true, true, ["commands"]],
+  ["/w/prep", "/home/u/.config/systemd", true, true, []],
+  // a link (or file) never takes a prefix name: a link there would point the entry elsewhere
+  ["/w/link", "/Users/u/Library", false, true],
+  ["/w/link", "/home/u/.config/fish", false, true],
+  // the system spools are anchored absolute paths
+  // an anchored deny's ancestor never moves away (a link resolved into it would dangle)
+  ["/var/spool", "/var/sp2", true, true, ["mail"]],
+  ["/var", "/v2", true, true, []],
+  ["/private/var/at", "/private/var/at2", true, true, []],
+  ["/var/spool/mail", "/var/spool/mail2", true, false, []],
+  ["/var/sp2", "/var/spool", true, true, ["cron"]],
+  ["/var/sp2", "/var/spool", true, false, ["mail"]],
+  ["/tmp/prep", "/var", true, true, ["at"]],
+  ["/var/at", "/var/at2", true, true, ["tabs"]],
 ];
+
+describe("home-anchored write denies", () => {
+  it("denies ~/bin and beneath it under the home only, folded", () => {
+    for (const path of ["/home/u/bin", "/home/u/bin/ls", "/Users/u/BIN/git"])
+      expect(
+        isSandboxHomeWriteDenied(path, path.startsWith("/Users") ? "/Users/u" : "/home/u"),
+        path,
+      ).toBe(true);
+    for (const path of ["/home/u/binx", "/home/u/w/bin/x", "/home/u", "/home/v/bin/x"])
+      expect(isSandboxHomeWriteDenied(path, "/home/u"), path).toBe(false);
+    // a project's own bin/ stays writable everywhere
+    expect(isSandboxWriteDenied("/home/u/bin/x")).toBe(false);
+  });
+});
+
+describe("system runtime and socket directories", () => {
+  it("names the runtime directory a write root is, lies in or contains", () => {
+    const refused: [string, string][] = [
+      ["/run", "/run"],
+      ["/run/user/1000", "/run"],
+      ["/run/user/1000/bus", "/run"],
+      ["/var/run", "/var/run"],
+      ["/var/run/docker", "/var/run"],
+      ["/private/var/run", "/private/var/run"],
+      ["/dev", "/dev"],
+      ["/dev/shm", "/dev"],
+      ["/proc/self", "/proc"],
+      ["/sys/fs", "/sys"],
+      ["/tmp", "/tmp"],
+      ["/private/tmp", "/private/tmp"],
+      ["/TMP", "/tmp"],
+      ["/tmp/.X11-unix", "/tmp/.x11-unix"],
+      ["/tmp/tmux-1000", "/tmp/tmux-1000"],
+      ["/tmp/tmux-1000/x", "/tmp/tmux-1000"],
+      ["/tmp/ssh-AbC123", "/tmp/ssh-abc123"],
+      ["/private/tmp/com.apple.launchd.x1/y", "/private/tmp/com.apple.launchd.x1"],
+      // an ancestor of one
+      ["/var", "/var/run"],
+      ["/private", "/private/var/run"],
+      ["/private/var", "/private/var/run"],
+    ];
+    for (const [root, hit] of refused) expect(sandboxRuntimeDirectoryOf(root), root).toBe(hit);
+    for (const root of [
+      "/tmp/build",
+      "/tmp/build/x",
+      "/private/tmp/cap-1",
+      "/var/tmp",
+      "/var/lib/x",
+      "/runner/work",
+      "/home/u",
+      "/home/u/project",
+      "/workspace/project",
+      "/private/var/folders/xy/T/x",
+    ])
+      expect(sandboxRuntimeDirectoryOf(root), root).toBeNull();
+  });
+});
 
 describe("restricted write policy", () => {
   it("denies git internals beyond the allowlist, rc and editor files, bare lookalikes", () => {
@@ -109,9 +329,52 @@ describe("restricted write policy", () => {
     for (const path of ALLOWED) expect(isSandboxWriteDenied(path), path).toBe(false);
   });
 
+  it("reserves the broker's staging prefix, folded", () => {
+    expect(SANDBOX_RESERVED_NAME_PREFIX).toBe(".capybara-staging-");
+    expect(sandboxFoldName(SANDBOX_RESERVED_NAME_PREFIX)).toBe(SANDBOX_RESERVED_NAME_PREFIX);
+  });
+
+  it("writes every mandatory entry already folded (the TypeScript side compares folded names)", () => {
+    for (const entry of SANDBOX_MANDATORY_WRITE_DENIES)
+      for (const name of entry) expect(sandboxFoldName(name), name).toBe(name);
+    for (const path of SANDBOX_SYSTEM_WRITE_DENIES) {
+      expect(path.startsWith("/"), path).toBe(true);
+      expect(sandboxFoldName(path), path).toBe(path);
+    }
+  });
+
   it("refuses moves out of protected names and directories into them", () => {
-    for (const [from, to, dir, denied] of MOVES)
-      expect(isSandboxMoveDenied(from, to, dir), `${from} -> ${to}`).toBe(denied);
+    for (const [from, to, dir, denied, children] of MOVES)
+      expect(isSandboxMoveDenied(from, to, dir, children), `${from} -> ${to}`).toBe(denied);
+  });
+
+  it("takes protected move names only from single-component entries", () => {
+    const single = SANDBOX_MANDATORY_WRITE_DENIES.filter((e) => e.length === 1).map((e) => e[0]);
+    expect(new Set(SANDBOX_PROTECTED_PATH_NAMES)).toEqual(new Set([".git", ...single]));
+    for (const name of ["library", "at", "spool", ".config", ".local", ".claude", "var"])
+      expect(SANDBOX_PROTECTED_PATH_NAMES, name).not.toContain(name);
+  });
+
+  it("the Python policy lists the source directory itself when no entries are given", () => {
+    const dir = mkdtempSync(join(tmpdir(), "move-policy-"));
+    try {
+      mkdirSync(join(dir, "prep", "LaunchAgents"), { recursive: true });
+      mkdirSync(join(dir, "plain", "Caches"), { recursive: true });
+      const program = `${SANDBOX_WRITE_POLICY_PYTHON}
+import json, sys
+d = sys.argv[1]
+print(json.dumps([move_denied(d + "/prep", "/Users/u/Library", True),
+                  move_denied(d + "/plain", "/Users/u/Library", True),
+                  move_denied(d + "/missing", "/Users/u/Library", True)]))
+`;
+      const out = JSON.parse(
+        execFileSync("python3", ["-I", "-c", program, dir], { encoding: "utf8" }),
+      ) as boolean[];
+      // a source that cannot be listed is refused
+      expect(out).toEqual([true, false, true]);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
   });
 
   it("the Python policy the launcher and the native helper embed decides identically", () => {
@@ -121,19 +384,23 @@ describe("restricted write policy", () => {
 import json, sys
 data = json.loads(sys.stdin.read())
 print(json.dumps({"writes": [write_denied(p) for p in data["paths"]],
-                  "moves": [move_denied(a, b, d) for a, b, d in data["moves"]],
+                  "moves": [move_denied(a, b, d, c) for a, b, d, c in data["moves"]],
                   "folds": _fold_parts("/".join(data["folds"]))}))
 `;
     const paths = [...DENIED, ...ALLOWED];
     const out = JSON.parse(
       execFileSync("python3", ["-I", "-c", program], {
-        input: JSON.stringify({ paths, moves: MOVES.map(([a, b, d]) => [a, b, d]), folds: FOLDS }),
+        input: JSON.stringify({
+          paths,
+          moves: MOVES.map(([a, b, d, , c]) => [a, b, d, c ?? null]),
+          folds: FOLDS,
+        }),
         encoding: "utf8",
       }),
     ) as { writes: boolean[]; moves: boolean[]; folds: string[] };
     // the same full case folding on both sides (toLowerCase alone differs on most of these)
     expect(FOLDS.map(sandboxFoldName)).toEqual(out.folds);
     expect(out.writes).toEqual(paths.map(isSandboxWriteDenied));
-    expect(out.moves).toEqual(MOVES.map(([a, b, d]) => isSandboxMoveDenied(a, b, d)));
+    expect(out.moves).toEqual(MOVES.map(([a, b, d, , c]) => isSandboxMoveDenied(a, b, d, c)));
   });
 });

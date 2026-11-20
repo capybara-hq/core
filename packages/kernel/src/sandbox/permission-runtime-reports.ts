@@ -1,5 +1,10 @@
 import { createHash } from "node:crypto";
-import type { SandboxHandle, SandboxPermissionSupport } from "@capybara-hq/plugin-sdk";
+import {
+  instanceSupported,
+  parseSandboxPermissionSupport,
+  type SandboxHandle,
+  type SandboxPermissionSupport,
+} from "@capybara-hq/plugin-sdk";
 import { Inject, Injectable } from "@nestjs/common";
 import type { KernelSchemaDb } from "../db/kernel-schema.js";
 import { KernelDb } from "../infra/database/kernel-db.js";
@@ -95,30 +100,17 @@ export function cloudRuntimeIdentity(input: {
 }
 
 /**
- * A cloud provider's permission support copied field by field, or null when it is not a version 1
- * report (an in-process extension is trusted, but its answer is stored and read back later, so
- * nothing beyond the contract's fields is kept).
+ * A permission support report strictly parsed (`parseSandboxPermissionSupport`, version 2), or null
+ * when it is not one: a cloud provider's answer (an in-process extension is trusted, but its answer
+ * is stored and read back later, so nothing beyond the contract's fields is kept) and a stored
+ * report read back (one recorded before version 2 is no report).
  */
 export function cloudSupportOf(value: unknown): SandboxPermissionSupport | null {
-  if (!value || typeof value !== "object") return null;
-  const o = value as Record<string, unknown>;
-  if (o.version !== 1 || typeof o.fullAccess !== "boolean" || typeof o.background !== "boolean")
+  try {
+    return parseSandboxPermissionSupport(value);
+  } catch {
     return null;
-  const r = o.restricted as Record<string, unknown> | null | undefined;
-  if (r !== null && (typeof r !== "object" || r === undefined)) return null;
-  if (r && !["filesystem", "network", "native", "concurrentScopes"].every((k) => r[k] === true))
-    return null;
-  return {
-    version: 1,
-    restricted: r
-      ? { filesystem: true, network: true, native: true, concurrentScopes: true }
-      : null,
-    fullAccess: o.fullAccess,
-    background: o.background,
-    ...(typeof o.unavailableReason === "string" && {
-      unavailableReason: o.unavailableReason.slice(0, 1000),
-    }),
-  };
+  }
 }
 
 /**
@@ -163,11 +155,11 @@ export function cloudEnforceable(
   report: SandboxPermissionSupport,
   instanceLimits: unknown,
 ): SandboxPermissionSupport {
-  if (!report.fullAccess || readInstanceLimits(instanceLimits).applied?.mode === "auto")
+  if (!report.outsideSandbox || readInstanceLimits(instanceLimits).applied?.mode === "auto")
     return report;
   return {
     ...report,
-    fullAccess: false,
+    outsideSandbox: false,
     unavailableReason:
       "This cloud instance enforces its outer network only inside the OS sandbox, so it cannot run Full access",
   };
@@ -256,11 +248,13 @@ export async function readCurrentReport(
     row.identity_hash !== permissionScopeHash(instance.permission_runtime_identity)
   )
     return unprobed;
+  const stored = cloudSupportOf(row.report);
+  if (stored === null) return unprobed;
   const report =
-    device?.source === "cloud"
-      ? cloudEnforceable(row.report, instance.instance_limits)
-      : row.report;
-  if (!report.restricted && !report.fullAccess)
+    device?.source === "cloud" ? cloudEnforceable(stored, instance.instance_limits) : stored;
+  // an instance-boundary provider is a supported device whose scope is the whole instance,
+  // unless its report names why it is unavailable (a stale image, a digest mismatch)
+  if (!report.restricted && !instanceSupported(report) && !report.outsideSandbox)
     return {
       availability: {
         state: "unsupported",

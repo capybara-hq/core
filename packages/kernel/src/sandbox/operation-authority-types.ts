@@ -7,7 +7,7 @@ import {
 } from "@capybara-hq/plugin-sdk";
 /**
  * A call that asked to run outside the sandbox (`sandbox: "escalated"`) whose escalation grant no
- * longer matches at admission: the device, its Full access ceiling or the permission scope
+ * longer matches at admission: the device, its outside-sandbox setting or the permission scope
  * changed after the approval. A typed pre-effect scope refusal (nothing ran), never a silent
  * downgrade to the restricted scope; the tool tells the model to ask again.
  */
@@ -17,15 +17,16 @@ export class EscalationGrantMissingError extends SandboxScopeDeniedError {
 export const isEscalationGrantMissing = (e: unknown): boolean =>
   e instanceof Error && (e as { escalationGrantMissing?: unknown }).escalationGrantMissing === true;
 /**
- * Whether an operation scope needs the Full access ceiling and the runtime's Full support: a Full
- * access operation (its reach is full, or narrowed for a kernel read on a Full-only runtime), or a
- * per-call sandbox escalation under a restricted profile, whose reach is full (`filesystem:
- * device`, `network: environment`) while it keeps its conversation's restricted profile.
+ * Whether an operation scope runs outside the sandbox and so needs the outside-sandbox ceiling and
+ * the runtime's support for it: only an escalated call (`filesystem: device`, `network:
+ * environment`), under any profile. A Full access call is sandboxed like any other.
  */
 export const isFullExecutionScope = (scope: SandboxOperationScope | SandboxBrowseScope): boolean =>
-  "profile" in scope &&
-  (scope.profile === "full-access" ||
-    (scope.filesystem.kind === "device" && scope.network.kind === "environment"));
+  "profile" in scope && scope.filesystem.kind === "device" && scope.network.kind === "environment";
+
+/** Whether an operation scope uses the open public network (what an allowlist narrowing takes). */
+export const usesOpenNetwork = (scope: SandboxOperationScope | SandboxBrowseScope): boolean =>
+  "profile" in scope && scope.network.kind === "open-public";
 
 export const isExecutionMethod = (method: string): method is "exec" | "backgroundStart" =>
   method === "exec" || method === "backgroundStart";

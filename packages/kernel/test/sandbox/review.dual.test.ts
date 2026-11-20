@@ -28,7 +28,17 @@ afterEach(async () => {
 
 type Json = Record<string, unknown>;
 
-const POLICY = { mode: "auto" as const, allowedDomains: [] as string[] };
+const POLICY = { allowedDomains: [] as string[] };
+/** The owner allows work outside the sandbox (what the `auto` mode reported before protocol 4). */
+const OWNER_CEILING = {
+  version: 3,
+  sequence: 1,
+  revision: "test-owner-outside",
+  outsideSandbox: true,
+  network: "open",
+  allowedDomains: [],
+  restrictedProjectReach: "os-user",
+};
 const PUSH = { command: "git push origin main", description: "Push the branch" };
 
 interface AskScene {
@@ -131,7 +141,7 @@ async function openAskScene(): Promise<AskScene> {
   );
   cleanups.push(() => machine.close());
   await machine.opened;
-  machine.hello({ features: ["mode"], policy: POLICY });
+  machine.hello({ features: [], policy: POLICY, ownerCeiling: OWNER_CEILING });
   await waitFor(
     async () =>
       (
@@ -298,7 +308,7 @@ describe("command ask (dual replica)", () => {
     );
     cleanups.push(() => machine.close());
     await machine.opened;
-    machine.hello({ features: ["mode"], policy: POLICY });
+    machine.hello({ features: [], policy: POLICY, ownerCeiling: OWNER_CEILING });
     await waitFor(
       async () =>
         (

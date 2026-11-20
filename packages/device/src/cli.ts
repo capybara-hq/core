@@ -54,7 +54,7 @@ async function askOnTerminal(question: string): Promise<string> {
 }
 
 /**
- * The program's parts (device protocol 3): the binder with one operation backend per bound
+ * The program's parts (device protocol 4): the binder with one operation backend per bound
  * generation, built for this host (macOS, Linux) or the device's container (docker mode). Loaded
  * on demand: only start needs them.
  */

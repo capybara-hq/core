@@ -194,9 +194,11 @@ async function device(opts: { binder?: boolean } = {}) {
           instanceGeneration: g,
         },
         permissionSupport: {
-          version: 1 as const,
+          version: 2 as const,
           restricted: null,
-          fullAccess: true,
+          boundary: "operation",
+          network: { openPublic: false, allowlist: false, perOperationHosts: false },
+          outsideSandbox: true,
           background: true,
           unavailableReason: "Restricted per-instance validation pending",
         },

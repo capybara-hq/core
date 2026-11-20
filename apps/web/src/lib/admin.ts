@@ -2,7 +2,11 @@ import type { ExtensionStatus } from "./admin-extensions";
 import { apiFetch } from "./api";
 import type { LocalizedName } from "./catalog";
 import type { CompactionSettings, CompactionSettingsPatch } from "./compaction";
-import type { DevicesFullAccessView } from "./org-settings";
+import type {
+  DeviceNetworkMode,
+  DevicesNetworkView,
+  DevicesOutsideSandboxView,
+} from "./org-settings";
 import type { UiArrangementEntry } from "./ui";
 
 /**
@@ -308,12 +312,12 @@ export interface DeploymentSettings {
    */
   clientExtensions?: ClientExtensionsSetting;
   /**
-   * The platform's Full permission switch in effect and where it comes from (kernel
-   * `DevicesFullAccessView`):
-   * `env` / `file` / `nacos` are the startup config (read-only here), `db` the admin console's
-   * choice, `default`.
+   * The platform's outside-sandbox ceiling and device network in effect, each with where it comes
+   * from (kernel `DevicesOutsideSandboxView`, `DevicesNetworkView`): `env` / `file` / `nacos` are
+   * the startup config (read-only here), `db` the admin console's choice, `default`.
    */
-  devicesFullAccess?: DevicesFullAccessView;
+  devicesOutsideSandbox?: DevicesOutsideSandboxView;
+  devicesNetwork?: DevicesNetworkView;
   /**
    * The platform's attribution defaults for agent-created git commits and pull requests (spec
    * 2026-11-14-agent-attribution), with where each comes from (`env` / `file` / `nacos` are the
@@ -396,9 +400,15 @@ export const ATTRIBUTION_DEFAULTS: Readonly<Omit<PlatformAttributionView, "sourc
     sessionUrl: false,
   });
 
-/** A change of the platform's Full permission switch: `permission` replaced, null clears it. */
-export interface DevicesFullAccessPatch {
+/** A change of the platform's outside-sandbox ceiling: `permission` replaced, null clears it. */
+export interface DevicesOutsideSandboxPatch {
   permission: "allowed" | "off" | null;
+}
+
+/** A change of the platform's device network: each given field replaced, null clears it (open). */
+export interface DevicesNetworkPatch {
+  default?: DeviceNetworkMode | null;
+  ceiling?: DeviceNetworkMode | null;
 }
 
 /** The kill switch as stored (kernel `ClientExtensionsSetting`). */
@@ -418,7 +428,8 @@ export type DeploymentSettingsPatch = Partial<
     | "sandboxLimitOverrides"
     | "subagentLimitOverrides"
     | "clientExtensions"
-    | "devicesFullAccess"
+    | "devicesOutsideSandbox"
+    | "devicesNetwork"
     | "attribution"
     | "compaction"
     | "externalSharing"
@@ -439,8 +450,10 @@ export type DeploymentSettingsPatch = Partial<
   clientExtensions?: Partial<ClientExtensionsSetting>;
   /** Each given field replaces the stored one; null clears it (back to the default). */
   attribution?: AttributionPatch;
-  /** The platform's Full permission switch: `permission` replaced, null clears it (the default). */
-  devicesFullAccess?: DevicesFullAccessPatch;
+  /** The platform's outside-sandbox ceiling: `permission` replaced, null clears it (the default). */
+  devicesOutsideSandbox?: DevicesOutsideSandboxPatch;
+  /** The platform's device network: each given field replaced, null clears it (the default). */
+  devicesNetwork?: DevicesNetworkPatch;
   /** Each given field replaces the stored one; fields left out keep their value. */
   compaction?: CompactionSettingsPatch;
   /** `on` / `off`; null clears the stored choice (back to on). */

@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   appliedOf,
+  appliedWider,
   type DeploymentDevicePolicy,
   deviceNetwork,
   type EffectiveDevicePolicy,
@@ -8,6 +9,7 @@ import {
   instanceLimitsJson,
   type NetworkLimits,
   type OrgDeviceSettings,
+  orgAllowedDomains,
   orgCloudMode,
   orgEffectiveHosts,
   orgHostOutsideCeiling,
@@ -31,7 +33,6 @@ describe("effectiveDevicePolicy", () => {
       mode: "auto",
       allowedMode: "auto",
       network: { kind: "open-public", hosts: [] },
-      localAllowedDomains: L,
     });
   });
 
@@ -53,31 +54,28 @@ describe("effectiveDevicePolicy", () => {
         mode: "sandbox",
         allowedMode: "sandbox",
         network: { kind: "open-public", hosts: [] },
-        localAllowedDomains: L,
       },
     ],
     [
       "the org turned auto mode off",
       deployment(),
-      { fullAccess: "off" },
+      { outsideSandbox: "off" },
       "auto",
       {
         mode: "sandbox",
         allowedMode: "sandbox",
         network: { kind: "open-public", hosts: [] },
-        localAllowedDomains: L,
       },
     ],
     [
       "the org has auto mode explicitly allowed",
       deployment(),
-      { fullAccess: "allowed" },
+      { outsideSandbox: "allowed" },
       null,
       {
         mode: "auto",
         allowedMode: "auto",
         network: { kind: "open-public", hosts: [] },
-        localAllowedDomains: L,
       },
     ],
     [
@@ -89,39 +87,36 @@ describe("effectiveDevicePolicy", () => {
         mode: "sandbox",
         allowedMode: "auto",
         network: { kind: "open-public", hosts: [] },
-        localAllowedDomains: L,
       },
     ],
     [
       "the device reports auto mode while the org allows only sandbox",
       deployment(),
-      { fullAccess: "off" },
+      { outsideSandbox: "off" },
       "auto",
       {
         mode: "sandbox",
         allowedMode: "sandbox",
         network: { kind: "open-public", hosts: [] },
-        localAllowedDomains: L,
       },
     ],
     [
       "the org's cloud network is the allowlist",
       deployment(),
-      { cloudNetwork: { mode: "allowlist" } },
+      { deviceNetwork: { ceiling: "allowlist" } },
       null,
       {
         mode: "auto",
         allowedMode: "auto",
         network: { kind: "open-public", hosts: [] },
-        localAllowedDomains: L,
       },
     ],
     [
       "the org's cloud allowlist is its delta over the deployment's",
       deployment(),
       {
-        cloudNetwork: {
-          mode: "allowlist",
+        deviceNetwork: {
+          ceiling: "allowlist",
           extraHosts: ["a.com"],
           excludedHosts: ["example.com"],
         },
@@ -131,19 +126,17 @@ describe("effectiveDevicePolicy", () => {
         mode: "sandbox",
         allowedMode: "auto",
         network: { kind: "allowlist", hosts: ["registry.npmjs.org", "a.com"] },
-        localAllowedDomains: ["registry.npmjs.org", "a.com"],
       },
     ],
     [
       "the org lists only its own hosts",
       deployment(),
-      { cloudNetwork: { mode: "allowlist", base: "none", extraHosts: ["a.com"] } },
+      { deviceNetwork: { ceiling: "allowlist", base: "none", extraHosts: ["a.com"] } },
       "sandbox",
       {
         mode: "sandbox",
         allowedMode: "auto",
         network: { kind: "allowlist", hosts: ["a.com"] },
-        localAllowedDomains: ["a.com"],
       },
     ],
   ])("%s", (_name, dep, org, deviceMode, expected) => {
@@ -153,13 +146,13 @@ describe("effectiveDevicePolicy", () => {
   it("the platform kill switch forces an empty allowlist, cloud and local (R20)", () => {
     const p = effectiveDevicePolicy(deployment("allowed", "none"), NO_ORG, "auto");
     expect(p.network).toEqual({ kind: "allowlist", hosts: [] });
-    expect(p.localAllowedDomains).toEqual([]);
+    expect(orgAllowedDomains(deployment("allowed", "none"), NO_ORG)).toEqual([]);
     // the org may not widen it back
     expect(
       effectiveDevicePolicy(
         deployment("allowed", "none"),
         {
-          cloudNetwork: { mode: "open", extraHosts: ["a.com"] },
+          deviceNetwork: { default: "open", extraHosts: ["a.com"] },
         },
         null,
       ).network,
@@ -175,13 +168,13 @@ describe("effectiveDevicePolicy", () => {
       kind: "open-public",
       hosts: [],
     });
-    expect(deviceNetwork(deployment(), { cloudNetwork: { mode: "allowlist" } }, "sandbox")).toEqual(
-      { kind: "allowlist", hosts: L },
-    );
+    expect(
+      deviceNetwork(deployment(), { deviceNetwork: { ceiling: "allowlist" } }, "sandbox"),
+    ).toEqual({ kind: "allowlist", hosts: L });
     expect(
       deviceNetwork(
         deployment(),
-        { cloudNetwork: { mode: "open", extraHosts: ["a.com"] } },
+        { deviceNetwork: { default: "open", extraHosts: ["a.com"] } },
         "auto",
       ),
     ).toEqual({ kind: "open-public", hosts: [] });
@@ -265,12 +258,12 @@ describe("orgEffectiveHosts", () => {
 describe("orgCloudMode", () => {
   it("the org's mode, open by default", () => {
     expect(orgCloudMode(limits(), undefined)).toBe("open");
-    expect(orgCloudMode(limits(), { mode: "allowlist" })).toBe("allowlist");
+    expect(orgCloudMode(limits(), { ceiling: "allowlist" })).toBe("allowlist");
   });
 
   it("the allowlist under the kill switch or the platform ceiling", () => {
-    expect(orgCloudMode(limits("extend", "none"), { mode: "open" })).toBe("allowlist");
-    expect(orgCloudMode(limits("within"), { mode: "open" })).toBe("allowlist");
+    expect(orgCloudMode(limits("extend", "none"), { default: "open" })).toBe("allowlist");
+    expect(orgCloudMode(limits("within"), { default: "open" })).toBe("allowlist");
     expect(orgCloudMode(limits("within"), undefined)).toBe("allowlist");
   });
 });
@@ -286,7 +279,7 @@ describe("orgHostOutsideCeiling", () => {
 });
 
 describe("instance limits", () => {
-  it("compares the mode and the network kind only; hosts reach the next create", () => {
+  it("compares the network kind only, never the mode; hosts reach the next create", () => {
     const a = appliedOf({
       mode: "auto",
       network: { kind: "open-public", hosts: [] },
@@ -296,9 +289,10 @@ describe("instance limits", () => {
       network: { kind: "open-public", hosts: ["a.com"] },
     });
     expect(sameApplied(a, b)).toBe(true);
-    expect(
-      sameApplied(a, appliedOf({ mode: "sandbox", network: { kind: "open-public", hosts: [] } })),
-    ).toBe(false);
+    // the mode follows the outside-sandbox setting, which a cloud instance has no use for
+    const sandboxMode = appliedOf({ mode: "sandbox", network: { kind: "open-public", hosts: [] } });
+    expect(sameApplied(a, sandboxMode)).toBe(true);
+    expect(appliedWider(a, sandboxMode)).toBe(false);
     expect(
       sameApplied(a, appliedOf({ mode: "auto", network: { kind: "allowlist", hosts: ["a.com"] } })),
     ).toBe(false);

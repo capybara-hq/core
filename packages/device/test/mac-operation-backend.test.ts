@@ -33,16 +33,16 @@ async function fixture() {
   let ceilingReads = 0;
   let ceiling: DeviceOwnerCeiling = {
     revision: "one",
-    fullAccess: true,
+    outsideSandbox: true,
+    network: "allowlist",
     roots,
     restrictedProjectReach: "os-user",
-    restrictedAllowedDomains: ["a.example.com"],
+    allowedDomains: ["a.example.com"],
     restrictedDeniedReadRoots: [],
     preparation: {
       skillsRoot: roots.skills,
       attachmentsBase: join(roots.workspace, "attachments"),
     },
-    fullNetwork: "environment",
   };
   const launched: unknown[] = [];
   let beforeStart = async () => {};
@@ -201,6 +201,20 @@ it("preparation cannot select the entire attachments base or arbitrary roots", a
       .then((p) => p.stat(join(f.roots.workspace, "attachments"), signal)),
   ).rejects.toThrow(/preparation/);
 });
+it("reports runtime support for running outside the sandbox, not the owner's consent", async () => {
+  // SandboxPermissionSupport.outsideSandbox is runtime support (as the Linux backends report it);
+  // the owner's switch reaches the kernel in the owner report, whose layer names the device
+  // ceiling and its CLI command. Mixing the consent in made the kernel blame the runtime, show a
+  // local device the cloud text, and keep refusing escalations after `ceiling set
+  // --outside-sandbox on` until the program restarted (R3 Mac dogfood, 2026-11-20).
+  const f = await fixture();
+  f.setCeiling({ revision: "off", outsideSandbox: false });
+  const off = await f.backend.permissionSupport({ id: "d" }, signal);
+  expect(off.outsideSandbox).toBe(true);
+  f.setCeiling({ revision: "on", outsideSandbox: true });
+  expect((await f.backend.permissionSupport({ id: "d" }, signal)).outsideSandbox).toBe(true);
+});
+
 it("rejects wrong device handles before creating a worker", async () => {
   const f = await fixture();
   await expect(f.backend.operation({ id: "other" }, f.scope, signal)).rejects.toThrow(/handle/);
@@ -208,7 +222,7 @@ it("rejects wrong device handles before creating a worker", async () => {
 });
 
 it.runIf(process.platform === "darwin")(
-  "real Full preserves the OS environment while restricted exec excludes ambient secrets",
+  "real Full preserves the OS environment (minus CAPYBARA_) while restricted exec excludes ambient secrets",
   async () => {
     const { startMacOperationWorker } = await import("../src/exec/operation-worker.js");
     const { mkdir, realpath } = await import("node:fs/promises");
@@ -218,8 +232,8 @@ it.runIf(process.platform === "darwin")(
     const project = join(root, "project");
     await mkdir(stateDir, { mode: 0o700 });
     await mkdir(project);
-    const prior = process.env.CAPYBARA_OWNED_TEST_SECRET;
-    process.env.CAPYBARA_OWNED_TEST_SECRET = "synthetic-owned-value";
+    const prior = process.env.OWNED_TEST_SECRET;
+    process.env.OWNED_TEST_SECRET = "synthetic-owned-value";
     const workers: MacWorkerHandle[] = [];
     try {
       for (const full of [true, false]) {
@@ -241,7 +255,7 @@ it.runIf(process.platform === "darwin")(
             kind: "exec",
             scope,
             args: {
-              command: 'printf %s "$CAPYBARA_OWNED_TEST_SECRET"',
+              command: 'printf %s "$OWNED_TEST_SECRET"',
               cwd: project,
               timeoutMs: 5000,
               maxOutputBytes: 100,
@@ -268,8 +282,8 @@ it.runIf(process.platform === "darwin")(
         expect(output).toMatchObject({ exitCode: 0, stdout: full ? "synthetic-owned-value" : "" });
       }
     } finally {
-      if (prior === undefined) delete process.env.CAPYBARA_OWNED_TEST_SECRET;
-      else process.env.CAPYBARA_OWNED_TEST_SECRET = prior;
+      if (prior === undefined) delete process.env.OWNED_TEST_SECRET;
+      else process.env.OWNED_TEST_SECRET = prior;
       await Promise.all(workers.map((w) => w.cancel("fixture cleanup")));
     }
   },
@@ -286,7 +300,7 @@ it("rejects a revision change during trusted startup before effects", async () =
   );
   expect(f.launched).toHaveLength(0);
 });
-it("owned idle watcher revokes removed baseline while preserving independent granted sibling", async () => {
+it("owned idle watcher revokes a removed owner host, a granted sibling with it (owner ceiling)", async () => {
   const f = await fixture();
   f.hold();
   const start = async (id: string, approved: boolean) => {
@@ -319,17 +333,57 @@ it("owned idle watcher revokes removed baseline while preserving independent gra
   };
   const removed = await start("baseline", false);
   const granted = await start("granted", true);
-  f.setCeiling({ revision: "two", restrictedAllowedDomains: [] });
+  // the owner's allowlist is a ceiling: a grant it no longer covers is revoked too
+  f.setCeiling({ revision: "two", allowedDomains: [] });
   await f.tick();
-  expect(f.cancellations).toEqual(["baseline"]);
-  expect(await f.backend.background.status({ id: "d" }, granted, signal)).toEqual({
-    state: "running",
-  });
+  expect(f.cancellations.sort()).toEqual(["baseline", "granted"]);
   expect(await f.backend.background.stop({ id: "d" }, removed, { graceMs: 0, signal })).toEqual({
     outcome: "stopped",
   });
   await f.backend.background.stop({ id: "d" }, granted, { graceMs: 0, signal });
   expect(f.stoppedWatcher()).toBe(1);
+});
+it("owner reconcile revokes a running open-network grant once the owner narrows to an allowlist", async () => {
+  const f = await fixture();
+  f.hold();
+  f.setCeiling({ network: "open" });
+  const start = (
+    id: string,
+    network:
+      | (typeof f.scope)["network"]
+      | { kind: "open-public" }
+      | {
+          kind: "allowlist";
+          hosts: string[];
+        },
+  ) =>
+    f.backend
+      .forExecution({ operationId: id, orgNetwork: { kind: "open-public", hosts: [] } })
+      .background.start(
+        { id: "d" },
+        { ...f.scope, operationId: id, network },
+        {
+          command: "fixture command",
+          timeoutMs: 10000,
+          maxOutputBytes: 1000,
+          taskId: id,
+          outputPath: join(f.roots.tmp, id),
+          retainUntilMs: Date.now() + 60000,
+          signal,
+        },
+      );
+  const open = await start("open", { kind: "open-public" });
+  const listed = await start("listed", { kind: "allowlist", hosts: ["a.example.com"] });
+  // the owner keeps a.example.com on the list but closes the open network
+  f.setCeiling({ revision: "two", network: "allowlist", allowedDomains: ["a.example.com"] });
+  await f.backend.reconcileOwnerCeiling(signal);
+  // grantStillHolds through the backend: the open-network work is revoked, its allowlisted
+  // sibling keeps running
+  expect(f.cancellations).toEqual(["open"]);
+  expect(await f.backend.background.stop({ id: "d" }, open, { graceMs: 0, signal })).toEqual({
+    outcome: "stopped",
+  });
+  await f.backend.background.stop({ id: "d" }, listed, { graceMs: 0, signal });
 });
 it("Full owner narrowing cancels Full without a websocket or another tool call", async () => {
   const f = await fixture();
@@ -348,7 +402,7 @@ it("Full owner narrowing cancels Full without a websocket or another tool call",
     retainUntilMs: Date.now() + 60000,
     signal,
   });
-  f.setCeiling({ revision: "two", fullAccess: false });
+  f.setCeiling({ revision: "two", outsideSandbox: false });
   await f.tick();
   expect(f.cancellations).toEqual(["op"]);
   expect(await f.backend.background.stop({ id: "d" }, ref, { graceMs: 0, signal })).toEqual({
@@ -423,6 +477,8 @@ it.runIf(process.platform === "darwin")(
           stateDir,
           pythonPath: "/usr/bin/python3",
           runtimeHash: workspace.runtimeHash,
+          // the fixture listens on loopback, which only the trusted test seam reopens
+          allowPrivateProxyTargets: true,
           beforeLaunch: async () => {},
           onLaunch: async () => {},
         },
@@ -542,6 +598,8 @@ it.runIf(process.platform === "darwin")(
               stateDir,
               pythonPath: "/usr/bin/python3",
               runtimeHash: workspace.runtimeHash,
+              // the fixture listens on loopback, which only the trusted test seam reopens
+              allowPrivateProxyTargets: true,
               beforeLaunch: async () => {},
               onLaunch: async (info) => {
                 identities.push(info.pid);
@@ -686,13 +744,13 @@ it.runIf(process.platform === "darwin")(
     const conversation = join(base, "123456789abc");
     const ceiling: DeviceOwnerCeiling = {
       revision: "fixture",
-      fullAccess: true,
+      outsideSandbox: true,
+      network: "allowlist",
       roots,
       restrictedProjectReach: "os-user",
-      restrictedAllowedDomains: [],
+      allowedDomains: [],
       restrictedDeniedReadRoots: [stateDir],
       preparation: { skillsRoot: roots.skills, attachmentsBase: base },
-      fullNetwork: "environment",
     };
     const backend = await createMacOperationBackend(
       {
@@ -818,7 +876,7 @@ it("retained output controls use the exact reference without a fresh profile gra
   });
   const reads = f.ceilingReads(),
     launches = f.launched.length;
-  f.setCeiling({ fullAccess: false, restrictedDeniedReadRoots: [f.roots.tmp] });
+  f.setCeiling({ outsideSandbox: false, restrictedDeniedReadRoots: [f.roots.tmp] });
   expect(
     await f.backend.background.readOutput({ id: "d" }, ref, { offset: 0, maxBytes: 0, signal }),
   ).toMatchObject({ totalBytes: 0, nextOffset: 0 });

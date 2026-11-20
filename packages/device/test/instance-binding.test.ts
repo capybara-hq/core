@@ -27,12 +27,13 @@ const G1 = "1700000000001",
 const B1 = "6f1e0a52-8f5b-4d5e-9a1c-1f0e2d3c4b51",
   B2 = "6f1e0a52-8f5b-4d5e-9a1c-1f0e2d3c4b52";
 const owner = {
-  version: 2 as const,
+  version: 3 as const,
   sequence: 4,
   restrictedProjectReach: "workspace" as const,
   revision: "owner-r",
-  fullAccess: true,
-  restrictedAllowedDomains: [],
+  outsideSandbox: true,
+  network: "open" as const,
+  allowedDomains: [],
 };
 const verified = {
   runtimeHash: "a".repeat(64),
@@ -81,13 +82,13 @@ async function fixture() {
         pythonPath: "/usr/bin/python3",
         readOwnerCeiling: async () => ({
           revision: "r",
-          fullAccess: true,
+          outsideSandbox: true,
+          network: "allowlist" as const,
           roots,
           restrictedProjectReach: "os-user",
-          restrictedAllowedDomains: [],
+          allowedDomains: [],
           restrictedDeniedReadRoots: [],
           preparation: { skillsRoot: roots.skills, attachmentsBase: join(roots.workspace, "a") },
-          fullNetwork: "environment",
         }),
       },
       {
@@ -284,6 +285,24 @@ describe("device binding", () => {
     await expect(f.binder().bind(request(G1, B1, null), signal())).rejects.toThrow(
       "installed runtime changed",
     );
+  });
+
+  it("an upgraded runtime binds the kernel's replacement generation under the new identity", async () => {
+    const f = await fixture();
+    await f.binder().bind(request(G1, B1, null), signal());
+    // an upgrade replaces the runtime bytes: the restarted program cannot recover G1 and starts
+    // unbound; the kernel replaces the instance and sends the next generation after G1
+    const upgraded = { ...verified, runtimeHash: "e".repeat(64) };
+    f.setRuntime(upgraded);
+    const restarted = f.binder();
+    expect(await restarted.recover()).toBeUndefined();
+    const answer = await restarted.bind(request(G2, B2, G1), signal());
+    expect(answer).toMatchObject({
+      instanceGeneration: G2,
+      bindingId: B2,
+      runtimeIdentity: { ...upgraded, instanceGeneration: G2 },
+    });
+    expect(restarted.current()?.binding.previousGeneration).toBe(G1);
   });
 
   it("live foreground work of an older generation blocks a newer one", async () => {
@@ -611,7 +630,7 @@ it("an unbound first hello admits no operation until the authenticated bind", as
     client,
     {
       type: "hello",
-      protocol: 3,
+      protocol: 4,
       programVersion: "fixture",
       os: "darwin",
       arch: "arm64",
@@ -619,9 +638,11 @@ it("an unbound first hello admits no operation until the authenticated bind", as
       roots: f.roots,
       sessionIsolation: false,
       permissionSupport: {
-        version: 1,
+        version: 2,
         restricted: null,
-        fullAccess: false,
+        boundary: "operation",
+        network: { openPublic: false, allowlist: false, perOperationHosts: false },
+        outsideSandbox: false,
         background: false,
         unavailableReason: "Instance binding pending",
       },

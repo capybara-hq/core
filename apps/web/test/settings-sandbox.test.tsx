@@ -20,8 +20,11 @@ const SETTINGS = "/api/v1/orgs/o1/settings";
  * the platform's Full permission switch and its network (allowlist, ceiling, kill switch).
  */
 const DEPLOYMENT = {
-  fullAccess: { permission: "allowed", source: "default" },
-  cloudNetwork: {
+  outsideSandbox: { permission: "allowed", source: "default" },
+  deviceNetwork: {
+    default: "open",
+    ceiling: "open",
+    sources: { default: "default", ceiling: "default" },
     allowHosts: ["registry.npmjs.org", "pypi.org"],
     orgHosts: "extend",
     off: false,
@@ -29,11 +32,19 @@ const DEPLOYMENT = {
 };
 
 type Deployment = {
-  fullAccess?: unknown;
-  cloudNetwork: { allowHosts: string[]; orgHosts: string; off: boolean };
+  outsideSandbox?: unknown;
+  deviceNetwork: {
+    default: string;
+    ceiling: string;
+    sources: unknown;
+    allowHosts: string[];
+    orgHosts: string;
+    off: boolean;
+  };
 };
 type StoredNetwork = {
-  mode?: string;
+  default?: string;
+  ceiling?: string;
   base?: string;
   extraHosts?: string[];
   excludedHosts?: string[];
@@ -44,9 +55,9 @@ type StoredNetwork = {
  * `within` forces the allowlist and drops extras (exact matches stand in for the kernel's matcher).
  */
 const effectiveNetwork = (settings: Record<string, unknown>, deployment: Deployment) => {
-  const p = deployment.cloudNetwork;
+  const p = deployment.deviceNetwork;
   if (p.off) return { mode: "allowlist", hosts: [] };
-  const cn = (settings.cloudNetwork ?? {}) as StoredNetwork;
+  const cn = (settings.deviceNetwork ?? {}) as StoredNetwork;
   const within = p.orgHosts === "within";
   const extra = (cn.extraHosts ?? []).filter((h) => !within || p.allowHosts.includes(h));
   const excluded = cn.excludedHosts ?? [];
@@ -54,7 +65,8 @@ const effectiveNetwork = (settings: Record<string, unknown>, deployment: Deploym
     cn.base === "none"
       ? extra
       : [...new Set([...p.allowHosts.filter((h) => !excluded.includes(h)), ...extra])];
-  return { mode: within ? "allowlist" : (cn.mode ?? "open"), hosts };
+  const allowlist = within || cn.ceiling === "allowlist" || cn.default === "allowlist";
+  return { mode: allowlist ? "allowlist" : "open", hosts };
 };
 
 /** The effective network with no org setting under {@link DEPLOYMENT}. */
@@ -72,6 +84,15 @@ const actionRow = (locale: "zh" | "en") =>
 
 /** A label as a radio's accessible name prefix (escaping regex metacharacters such as brackets). */
 const prefix = (label: string) => new RegExp(`^${label.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}`);
+
+/** A radio group by its accessible name. */
+const group = (label: string) => screen.getByRole("radiogroup", { name: label });
+
+/** The ceiling group's open radio, once the page is there. */
+const ceilingOpen = async (o: { ceiling: string; open: string }) =>
+  within(await screen.findByRole("radiogroup", { name: o.ceiling })).getByRole("radio", {
+    name: prefix(o.open),
+  });
 
 const sectionOf = async (title: string) =>
   (await screen.findByRole("heading", { name: title })).closest("section") as HTMLElement;
@@ -201,50 +222,54 @@ describe("沙箱设置（SettingsPage）", () => {
     expect(actionRow("en")).toBeNull();
   });
 
-  describe("Full access (fullAccess)", () => {
+  describe("run outside the sandbox (outsideSandbox)", () => {
     it.each(LOCALES)("an org admin narrows to off, then allows it again (%s)", async (locale) => {
       const o = msgs[locale].orgSettings;
       const calls = stub({ toolSearch: "on" }, DEPLOYMENT);
       await renderRouteWithCache("/settings/sandbox", lastStubRoutes(), { locale });
-      const allowed = await screen.findByRole("radio", {
-        name: prefix(o.fullAccess.allowed),
+      const section = await sectionOf(o.outsideSandbox.title);
+      const allowed = await within(section).findByRole("radio", {
+        name: prefix(o.outsideSandbox.allowed),
       });
       expect(allowed).toHaveProperty("checked", true);
       const user = userEvent.setup();
-      await user.click(screen.getByRole("radio", { name: prefix(o.fullAccess.off) }));
+      await user.click(within(section).getByRole("radio", { name: prefix(o.outsideSandbox.off) }));
       await save(locale);
-      expect(bodyOf(calls.find((c) => c.method === "PATCH"))).toEqual({ fullAccess: "off" });
+      expect(bodyOf(calls.find((c) => c.method === "PATCH"))).toEqual({ outsideSandbox: "off" });
       await vi.waitFor(() => expect(actionRow(locale)).toBeNull());
-      await user.click(screen.getByRole("radio", { name: prefix(o.fullAccess.allowed) }));
+      await user.click(
+        within(section).getByRole("radio", { name: prefix(o.outsideSandbox.allowed) }),
+      );
       await save(locale);
       expect(bodyOf(calls.filter((c) => c.method === "PATCH")[1])).toEqual({
-        fullAccess: "allowed",
+        outsideSandbox: "allowed",
       });
     });
 
-    it("the platform turned Full access off: the control is disabled with 平台未开放", async () => {
+    it("the platform turned it off: the control is disabled and names the layer", async () => {
       stub(
         { toolSearch: "on" },
-        { ...DEPLOYMENT, fullAccess: { permission: "off", source: "db" } },
+        { ...DEPLOYMENT, outsideSandbox: { permission: "off", source: "db" } },
       );
       await renderRouteWithCache("/settings/sandbox", lastStubRoutes(), { locale: "zh" });
-      const o = zh.orgSettings.fullAccess;
+      const o = zh.orgSettings.outsideSandbox;
       const allowed = await screen.findByRole("radio", { name: prefix(o.allowed) });
       expect((allowed as HTMLInputElement).disabled).toBe(true);
       expect(screen.getByRole("radio", { name: prefix(o.off) })).toHaveProperty("checked", true);
       expect(screen.getByText(o.platformClosed)).toBeTruthy();
+      expect(o.platformClosed).toContain("超级管理员");
       expect(actionRow("zh")).toBeNull();
     });
 
-    it("saving Full access invalidates the org's cached device lists and details", async () => {
+    it("saving it invalidates the org's cached device lists and details", async () => {
       const o = en.orgSettings;
       stub({ toolSearch: "on" }, DEPLOYMENT);
       const { client } = await renderRouteWithCache("/settings/sandbox", lastStubRoutes());
       client.setQueryData(keys.org("o1").devices(), { items: [] });
       client.setQueryData(keys.org("o1").device("d1"), { device: {} });
-      await screen.findByRole("radio", { name: prefix(o.fullAccess.allowed) });
+      await screen.findByRole("radio", { name: prefix(o.outsideSandbox.allowed) });
       const user = userEvent.setup();
-      await user.click(screen.getByRole("radio", { name: prefix(o.fullAccess.off) }));
+      await user.click(screen.getByRole("radio", { name: prefix(o.outsideSandbox.off) }));
       await save("en");
       await waitFor(() =>
         expect(client.getQueryState(keys.org("o1").devices())?.isInvalidated).toBe(true),
@@ -257,17 +282,19 @@ describe("沙箱设置（SettingsPage）", () => {
       stub({ toolSearch: "on" }, DEPLOYMENT);
       await renderRouteWithCache("/settings/sandbox", lastStubRoutes(), { locale, me: MEMBER });
       const allowed = await screen.findByRole("radio", {
-        name: prefix(o.fullAccess.allowed),
+        name: prefix(o.outsideSandbox.allowed),
       });
       expect((allowed as HTMLInputElement).disabled).toBe(true);
-      const open = screen.getByRole("radio", { name: prefix(o.cloudNetwork.open) });
+      const open = within(group(o.deviceNetwork.ceiling)).getByRole("radio", {
+        name: prefix(o.deviceNetwork.open),
+      });
       expect((open as HTMLInputElement).disabled).toBe(true);
       expect(screen.getAllByText(o.readonly).length).toBeGreaterThan(0);
       expect(actionRow(locale)).toBeNull();
     });
   });
 
-  describe("云设备网络 (egress ceiling spec §D4)", () => {
+  describe("device network (deviceNetwork)", () => {
     const hostsBox = (label: string) =>
       screen.getByRole("textbox", { name: label }) as HTMLTextAreaElement;
     const setHosts = async (label: string, text: string) => {
@@ -276,69 +303,112 @@ describe("沙箱设置（SettingsPage）", () => {
       await user.clear(box);
       await user.type(box, text);
     };
+    const radio = (groupLabel: string, label: string) =>
+      within(group(groupLabel)).getByRole("radio", { name: prefix(label) }) as HTMLInputElement;
 
     it.each(LOCALES)(
-      "the host editor shows in both modes from the effective hosts; a mode change sends only the mode (%s)",
+      "default and ceiling from the platform; narrowing the ceiling to the allowlist takes the default with it (%s)",
       async (locale) => {
-        const o = msgs[locale].orgSettings;
+        const o = msgs[locale].orgSettings.deviceNetwork;
         const calls = stub({ toolSearch: "on" });
         await renderRouteWithCache("/settings/sandbox", lastStubRoutes(), { locale });
-        const open = await screen.findByRole("radio", { name: prefix(o.cloudNetwork.open) });
-        expect(open).toHaveProperty("checked", true);
-        expect(screen.getByText(o.cloudNetwork.publicOnly)).toBeTruthy();
-        // open mode: the editor is there (the local sandbox ceiling), from the effective hosts
-        expect(hostsBox(o.cloudNetwork.hosts).value).toBe("registry.npmjs.org\npypi.org");
-        expect(screen.getByText(o.cloudNetwork.hostsHelp)).toBeTruthy();
+        await screen.findByRole("radiogroup", { name: o.ceiling });
+        expect(radio(o.ceiling, o.open).checked).toBe(true);
+        expect(radio(o.default, o.open).checked).toBe(true);
+        expect(screen.getByText(o.publicOnly)).toBeTruthy();
+        // the editor shows in both modes, from the effective hosts
+        expect(hostsBox(o.hosts).value).toBe("registry.npmjs.org\npypi.org");
         const user = userEvent.setup();
-        await user.click(screen.getByRole("radio", { name: prefix(o.cloudNetwork.allowlist) }));
-        expect(hostsBox(o.cloudNetwork.hosts).value).toBe("registry.npmjs.org\npypi.org");
+        await user.click(radio(o.ceiling, o.allowlist));
+        expect(radio(o.default, o.allowlist).checked).toBe(true);
+        expect(radio(o.default, o.open).disabled).toBe(true);
+        expect(screen.getByText(o.ceilingAllowlist)).toBeTruthy();
         await save(locale);
-        // the stored value (absent) with the mode changed: no host lists
         expect(bodyOf(calls.find((c) => c.method === "PATCH"))).toEqual({
-          cloudNetwork: { mode: "allowlist" },
+          deviceNetwork: { default: "allowlist", ceiling: "allowlist" },
         });
         await vi.waitFor(() => expect(actionRow(locale)).toBeNull());
-        await user.click(screen.getByRole("radio", { name: prefix(o.cloudNetwork.open) }));
+        await user.click(radio(o.ceiling, o.open));
         await save(locale);
+        // the stored default stays the allowlist: only the ceiling widens
         expect(bodyOf(calls.filter((c) => c.method === "PATCH")[1])).toEqual({
-          cloudNetwork: { mode: "open" },
+          deviceNetwork: { default: "allowlist", ceiling: "open" },
         });
       },
     );
 
-    it("base platform: the edited list becomes extras and exclusions; a stale exclusion is kept; an absent mode stays absent", async () => {
+    it("a default change sends only the default", async () => {
+      const o = en.orgSettings.deviceNetwork;
+      const calls = stub({ toolSearch: "on" });
+      await renderRouteWithCache("/settings/sandbox", lastStubRoutes());
+      await screen.findByRole("radiogroup", { name: o.default });
+      await userEvent.setup().click(radio(o.default, o.allowlist));
+      await save("en");
+      expect(bodyOf(calls.find((c) => c.method === "PATCH"))).toEqual({
+        deviceNetwork: { default: "allowlist" },
+      });
+    });
+
+    it.each(LOCALES)(
+      "the platform limits networks to the allowlist: open is disabled in both groups and names the layer (%s)",
+      async (locale) => {
+        const o = msgs[locale].orgSettings.deviceNetwork;
+        stub(
+          { toolSearch: "on" },
+          {
+            ...DEPLOYMENT,
+            deviceNetwork: {
+              ...DEPLOYMENT.deviceNetwork,
+              default: "allowlist",
+              ceiling: "allowlist",
+            },
+          },
+        );
+        await renderRouteWithCache("/settings/sandbox", lastStubRoutes(), { locale });
+        await screen.findByRole("radiogroup", { name: o.ceiling });
+        for (const g of [o.ceiling, o.default]) {
+          expect(radio(g, o.open).disabled).toBe(true);
+          expect(radio(g, o.allowlist).checked).toBe(true);
+        }
+        expect(screen.getAllByText(o.platformAllowlist).length).toBeGreaterThan(0);
+        if (locale === "zh") expect(o.platformAllowlist).toContain("超级管理员");
+        expect(actionRow(locale)).toBeNull();
+      },
+    );
+
+    it("base platform: the edited list becomes extras and exclusions; a stale exclusion is kept; absent modes stay absent", async () => {
       const o = en.orgSettings;
       const calls = stub({
         toolSearch: "on",
-        cloudNetwork: { extraHosts: ["a.example.com"], excludedHosts: ["gone.example.com"] },
+        deviceNetwork: { extraHosts: ["a.example.com"], excludedHosts: ["gone.example.com"] },
       });
       await renderRouteWithCache("/settings/sandbox", lastStubRoutes());
-      await screen.findByRole("radio", { name: prefix(o.cloudNetwork.open) });
-      expect(hostsBox(o.cloudNetwork.hosts).value).toBe(
+      await screen.findByRole("radiogroup", { name: o.deviceNetwork.ceiling });
+      expect(hostsBox(o.deviceNetwork.hosts).value).toBe(
         "registry.npmjs.org\npypi.org\na.example.com",
       );
-      await setHosts(o.cloudNetwork.hosts, "registry.npmjs.org\nb.example.com");
+      await setHosts(o.deviceNetwork.hosts, "registry.npmjs.org\nb.example.com");
       await save("en");
       expect(bodyOf(calls.find((c) => c.method === "PATCH"))).toEqual({
-        cloudNetwork: {
+        deviceNetwork: {
           extraHosts: ["b.example.com"],
           excludedHosts: ["pypi.org", "gone.example.com"],
         },
       });
     });
 
-    it("a stored mode is sent back as it is when only the hosts change; empty lists are left out", async () => {
+    it("stored modes are sent back as they are when only the hosts change; empty lists are left out", async () => {
       const o = en.orgSettings;
       const calls = stub({
         toolSearch: "on",
-        cloudNetwork: { mode: "open", base: "platform", extraHosts: ["a.example.com"] },
+        deviceNetwork: { default: "open", base: "platform", extraHosts: ["a.example.com"] },
       });
       await renderRouteWithCache("/settings/sandbox", lastStubRoutes());
-      await screen.findByRole("radio", { name: prefix(o.cloudNetwork.open) });
-      await setHosts(o.cloudNetwork.hosts, "registry.npmjs.org\npypi.org");
+      await screen.findByRole("radiogroup", { name: o.deviceNetwork.ceiling });
+      await setHosts(o.deviceNetwork.hosts, "registry.npmjs.org\npypi.org");
       await save("en");
       expect(bodyOf(calls.find((c) => c.method === "PATCH"))).toEqual({
-        cloudNetwork: { mode: "open", base: "platform" },
+        deviceNetwork: { default: "open", base: "platform" },
       });
     });
 
@@ -346,99 +416,84 @@ describe("沙箱设置（SettingsPage）", () => {
       const o = en.orgSettings;
       const calls = stub({
         toolSearch: "on",
-        cloudNetwork: { mode: "allowlist", base: "none", extraHosts: ["a.example.com"] },
+        deviceNetwork: { ceiling: "allowlist", base: "none", extraHosts: ["a.example.com"] },
       });
       await renderRouteWithCache("/settings/sandbox", lastStubRoutes());
-      const allowlist = await screen.findByRole("radio", {
-        name: prefix(o.cloudNetwork.allowlist),
-      });
-      expect(allowlist).toHaveProperty("checked", true);
-      expect(hostsBox(o.cloudNetwork.hosts).value).toBe("a.example.com");
-      await setHosts(o.cloudNetwork.hosts, "a.example.com\npypi.org");
+      await screen.findByRole("radiogroup", { name: o.deviceNetwork.ceiling });
+      expect(radio(o.deviceNetwork.ceiling, o.deviceNetwork.allowlist).checked).toBe(true);
+      expect(hostsBox(o.deviceNetwork.hosts).value).toBe("a.example.com");
+      await setHosts(o.deviceNetwork.hosts, "a.example.com\npypi.org");
       await save("en");
       expect(bodyOf(calls.find((c) => c.method === "PATCH"))).toEqual({
-        cloudNetwork: {
-          mode: "allowlist",
+        deviceNetwork: {
+          ceiling: "allowlist",
           base: "none",
           extraHosts: ["a.example.com", "pypi.org"],
         },
       });
     });
 
-    it("a host that is not a valid allowlist name blocks the save, in open mode too", async () => {
+    it("a host that is not a valid allowlist name blocks the save, with an open network too", async () => {
       const o = en.orgSettings;
       stub({ toolSearch: "on" });
       await renderRouteWithCache("/settings/sandbox", lastStubRoutes());
-      const open = await screen.findByRole("radio", { name: prefix(o.cloudNetwork.open) });
-      expect(open).toHaveProperty("checked", true);
-      await setHosts(o.cloudNetwork.hosts, "Bad_Host");
+      await screen.findByRole("radiogroup", { name: o.deviceNetwork.ceiling });
+      await setHosts(o.deviceNetwork.hosts, "Bad_Host");
       expect(
-        screen.getByText(o.cloudNetwork.invalidHost.replace("{host}", "bad_host")),
+        screen.getByText(o.deviceNetwork.invalidHost.replace("{host}", "bad_host")),
       ).toBeTruthy();
       const row = actionRow("en") as HTMLElement;
       expect(within(row).getByRole("button", { name: o.save })).toHaveProperty("disabled", true);
-      await setHosts(o.cloudNetwork.hosts, "good.example.org");
+      await setHosts(o.deviceNetwork.hosts, "good.example.org");
       expect(
-        screen.queryByText(o.cloudNetwork.invalidHost.replace("{host}", "bad_host")),
+        screen.queryByText(o.deviceNetwork.invalidHost.replace("{host}", "bad_host")),
       ).toBeNull();
       expect(within(row).getByRole("button", { name: o.save })).toHaveProperty("disabled", false);
     });
 
-    it("the platform's kill switch: both choices and the editor read-only, and no save sends the network", async () => {
+    it("the platform's kill switch: every choice and the editor read-only, and no save sends the network", async () => {
       const calls = stub(
-        { toolSearch: "on", cloudNetwork: { mode: "open", extraHosts: ["a.example.com"] } },
-        { ...DEPLOYMENT, cloudNetwork: { ...DEPLOYMENT.cloudNetwork, off: true } },
+        { toolSearch: "on", deviceNetwork: { default: "open", extraHosts: ["a.example.com"] } },
+        { ...DEPLOYMENT, deviceNetwork: { ...DEPLOYMENT.deviceNetwork, off: true } },
       );
       await renderRouteWithCache("/settings/sandbox", lastStubRoutes(), { locale: "zh" });
       const o = zh.orgSettings;
-      const open = await screen.findByRole("radio", { name: prefix(o.cloudNetwork.open) });
-      expect((open as HTMLInputElement).disabled).toBe(true);
-      expect(
-        (screen.getByRole("radio", { name: prefix(o.cloudNetwork.allowlist) }) as HTMLInputElement)
-          .checked,
-      ).toBe(true);
-      expect(screen.getByText(o.cloudNetwork.platformClosed)).toBeTruthy();
-      expect(hostsBox(o.cloudNetwork.hosts).disabled).toBe(true);
+      await screen.findByRole("radiogroup", { name: o.deviceNetwork.ceiling });
+      for (const g of [o.deviceNetwork.ceiling, o.deviceNetwork.default]) {
+        expect(radio(g, o.deviceNetwork.open).disabled).toBe(true);
+        expect(radio(g, o.deviceNetwork.allowlist).checked).toBe(true);
+      }
+      expect(screen.getByText(o.deviceNetwork.platformClosed)).toBeTruthy();
+      expect(hostsBox(o.deviceNetwork.hosts).disabled).toBe(true);
       expect(actionRow("zh")).toBeNull();
-      await userEvent.setup().click(screen.getByRole("radio", { name: prefix(o.fullAccess.off) }));
+      await userEvent
+        .setup()
+        .click(screen.getByRole("radio", { name: prefix(o.outsideSandbox.off) }));
       await save("zh");
-      expect(bodyOf(calls.find((c) => c.method === "PATCH"))).toEqual({ fullAccess: "off" });
+      expect(bodyOf(calls.find((c) => c.method === "PATCH"))).toEqual({ outsideSandbox: "off" });
     });
 
-    it.each(LOCALES)(
-      "the platform ceiling (within): open is disabled with the reason; the stored mode is sent back (%s)",
-      async (locale) => {
-        const o = msgs[locale].orgSettings;
-        const calls = stub(
-          { toolSearch: "on", cloudNetwork: { mode: "open", extraHosts: ["x.example.com"] } },
-          { ...DEPLOYMENT, cloudNetwork: { ...DEPLOYMENT.cloudNetwork, orgHosts: "within" } },
-        );
-        await renderRouteWithCache("/settings/sandbox", lastStubRoutes(), { locale });
-        const open = await screen.findByRole("radio", { name: prefix(o.cloudNetwork.open) });
-        expect((open as HTMLInputElement).disabled).toBe(true);
-        expect(
-          (
-            screen.getByRole("radio", {
-              name: prefix(o.cloudNetwork.allowlist),
-            }) as HTMLInputElement
-          ).checked,
-        ).toBe(true);
-        expect(screen.getByText(o.cloudNetwork.withinClosed)).toBeTruthy();
-        // the stored extra outside the ceiling had no effect: the editor shows only effective hosts
-        expect(hostsBox(o.cloudNetwork.hosts).value).toBe("registry.npmjs.org\npypi.org");
-        await setHosts(o.cloudNetwork.hosts, "registry.npmjs.org");
-        await save(locale);
-        expect(bodyOf(calls.find((c) => c.method === "PATCH"))).toEqual({
-          cloudNetwork: { mode: "open", excludedHosts: ["pypi.org"] },
-        });
-      },
-    );
-
+    it("the platform host ceiling (within): the editor shows only effective hosts; the stored fields are sent back", async () => {
+      const o = en.orgSettings;
+      const calls = stub(
+        { toolSearch: "on", deviceNetwork: { default: "open", extraHosts: ["x.example.com"] } },
+        { ...DEPLOYMENT, deviceNetwork: { ...DEPLOYMENT.deviceNetwork, orgHosts: "within" } },
+      );
+      await renderRouteWithCache("/settings/sandbox", lastStubRoutes());
+      await screen.findByRole("radiogroup", { name: o.deviceNetwork.ceiling });
+      expect(screen.getByText(o.deviceNetwork.withinNote)).toBeTruthy();
+      expect(hostsBox(o.deviceNetwork.hosts).value).toBe("registry.npmjs.org\npypi.org");
+      await setHosts(o.deviceNetwork.hosts, "registry.npmjs.org");
+      await save("en");
+      expect(bodyOf(calls.find((c) => c.method === "PATCH"))).toEqual({
+        deviceNetwork: { default: "open", excludedHosts: ["pypi.org"] },
+      });
+    });
     it.each([
       [
         "names the hosts in its details",
         [{ reason: "outside_ceiling", hosts: ["evil.example.com"] }],
-        en.orgSettings.cloudNetwork.outsideCeiling.replace("{hosts}", "evil.example.com"),
+        en.orgSettings.deviceNetwork.outsideCeiling.replace("{hosts}", "evil.example.com"),
       ],
       [
         "gives only the reason",
@@ -454,7 +509,7 @@ describe("沙箱设置（SettingsPage）", () => {
             settings: { toolSearch: "on" },
             deployment: {
               ...DEPLOYMENT,
-              cloudNetwork: { ...DEPLOYMENT.cloudNetwork, orgHosts: "within" },
+              deviceNetwork: { ...DEPLOYMENT.deviceNetwork, orgHosts: "within" },
             },
             effectiveNetwork: { mode: "allowlist", hosts: ["registry.npmjs.org", "pypi.org"] },
           }),
@@ -468,8 +523,8 @@ describe("沙箱设置（SettingsPage）", () => {
           }),
       });
       await renderRouteWithCache("/settings/sandbox", lastStubRoutes());
-      await screen.findByRole("radio", { name: prefix(o.cloudNetwork.open) });
-      await setHosts(o.cloudNetwork.hosts, "registry.npmjs.org\nevil.example.com");
+      await ceilingOpen(o.deviceNetwork);
+      await setHosts(o.deviceNetwork.hosts, "registry.npmjs.org\nevil.example.com");
       await save("en");
       expect(await screen.findByText(shown)).toBeTruthy();
     });
@@ -528,10 +583,10 @@ describe("沙箱设置（SettingsPage）", () => {
     it.each(LOCALES)(
       "an org with its own network goes back to the platform's list after a confirmation (%s)",
       async (locale) => {
-        const o = msgs[locale].orgSettings.cloudNetwork;
+        const o = msgs[locale].orgSettings.deviceNetwork;
         const calls = stub({
           toolSearch: "on",
-          cloudNetwork: { mode: "allowlist", base: "none", extraHosts: ["a.example.com"] },
+          deviceNetwork: { ceiling: "allowlist", base: "none", extraHosts: ["a.example.com"] },
         });
         await renderRouteWithCache("/settings/sandbox", lastStubRoutes(), { locale });
         const section = await sectionOf(o.title);
@@ -543,7 +598,7 @@ describe("沙箱设置（SettingsPage）", () => {
         expect(calls.some((c) => c.method === "PATCH")).toBe(false);
         await user.click(within(dialog).getByRole("button", { name: o.followPlatform }));
         await vi.waitFor(() =>
-          expect(bodyOf(calls.find((c) => c.method === "PATCH"))).toEqual({ cloudNetwork: null }),
+          expect(bodyOf(calls.find((c) => c.method === "PATCH"))).toEqual({ deviceNetwork: null }),
         );
         expect(await screen.findByText(o.followPlatformDone)).toBeTruthy();
         await vi.waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
@@ -560,33 +615,39 @@ describe("沙箱设置（SettingsPage）", () => {
     it("hidden while the org follows the platform", async () => {
       stub({ toolSearch: "on" });
       await renderRouteWithCache("/settings/sandbox", lastStubRoutes());
-      const section = await sectionOf(en.orgSettings.cloudNetwork.title);
-      await within(section).findByRole("textbox", { name: en.orgSettings.cloudNetwork.hosts });
+      const section = await sectionOf(en.orgSettings.deviceNetwork.title);
+      await within(section).findByRole("textbox", { name: en.orgSettings.deviceNetwork.hosts });
       expect(
-        within(section).queryByRole("button", { name: en.orgSettings.cloudNetwork.followPlatform }),
+        within(section).queryByRole("button", {
+          name: en.orgSettings.deviceNetwork.followPlatform,
+        }),
       ).toBeNull();
     });
 
     it("hidden under the kill switch", async () => {
       stub(
-        { toolSearch: "on", cloudNetwork: { extraHosts: ["a.example.com"] } },
-        { ...DEPLOYMENT, cloudNetwork: { ...DEPLOYMENT.cloudNetwork, off: true } },
+        { toolSearch: "on", deviceNetwork: { extraHosts: ["a.example.com"] } },
+        { ...DEPLOYMENT, deviceNetwork: { ...DEPLOYMENT.deviceNetwork, off: true } },
       );
       await renderRouteWithCache("/settings/sandbox", lastStubRoutes());
-      const section = await sectionOf(en.orgSettings.cloudNetwork.title);
-      await within(section).findByRole("textbox", { name: en.orgSettings.cloudNetwork.hosts });
+      const section = await sectionOf(en.orgSettings.deviceNetwork.title);
+      await within(section).findByRole("textbox", { name: en.orgSettings.deviceNetwork.hosts });
       expect(
-        within(section).queryByRole("button", { name: en.orgSettings.cloudNetwork.followPlatform }),
+        within(section).queryByRole("button", {
+          name: en.orgSettings.deviceNetwork.followPlatform,
+        }),
       ).toBeNull();
     });
 
     it("hidden from a member", async () => {
-      stub({ toolSearch: "on", cloudNetwork: { extraHosts: ["a.example.com"] } });
+      stub({ toolSearch: "on", deviceNetwork: { extraHosts: ["a.example.com"] } });
       await renderRouteWithCache("/settings/sandbox", lastStubRoutes(), { me: MEMBER });
-      const section = await sectionOf(en.orgSettings.cloudNetwork.title);
-      await within(section).findByRole("textbox", { name: en.orgSettings.cloudNetwork.hosts });
+      const section = await sectionOf(en.orgSettings.deviceNetwork.title);
+      await within(section).findByRole("textbox", { name: en.orgSettings.deviceNetwork.hosts });
       expect(
-        within(section).queryByRole("button", { name: en.orgSettings.cloudNetwork.followPlatform }),
+        within(section).queryByRole("button", {
+          name: en.orgSettings.deviceNetwork.followPlatform,
+        }),
       ).toBeNull();
     });
   });
@@ -594,7 +655,7 @@ describe("沙箱设置（SettingsPage）", () => {
   describe("?allowHost= (network ask spec §5.3)", () => {
     const DEPLOYMENT_ALLOW = {
       ...DEPLOYMENT,
-      cloudNetwork: { ...DEPLOYMENT.cloudNetwork, allowHosts: ["registry.npmjs.org"] },
+      deviceNetwork: { ...DEPLOYMENT.deviceNetwork, allowHosts: ["registry.npmjs.org"] },
     };
 
     it("appends the host to the editor without changing the mode; saving sends it as an extra", async () => {
@@ -604,18 +665,18 @@ describe("沙箱设置（SettingsPage）", () => {
         "/settings/sandbox?allowHost=Files.Slack.com,bad_host",
         lastStubRoutes(),
       );
-      const open = await screen.findByRole("radio", { name: prefix(o.cloudNetwork.open) });
+      const open = await ceilingOpen(o.deviceNetwork);
       const hosts = screen.getByRole("textbox", {
-        name: o.cloudNetwork.hosts,
+        name: o.deviceNetwork.hosts,
       }) as HTMLTextAreaElement;
       await vi.waitFor(() => expect(hosts.value).toBe("registry.npmjs.org\nfiles.slack.com"));
       expect(open).toHaveProperty("checked", true);
       expect(
-        screen.getByText(o.cloudNetwork.prefilled.replace("{hosts}", "files.slack.com")),
+        screen.getByText(o.deviceNetwork.prefilled.replace("{hosts}", "files.slack.com")),
       ).toBeTruthy();
       await save("en");
       expect(bodyOf(calls.find((c) => c.method === "PATCH"))).toEqual({
-        cloudNetwork: { extraHosts: ["files.slack.com"] },
+        deviceNetwork: { extraHosts: ["files.slack.com"] },
       });
     });
 
@@ -625,9 +686,7 @@ describe("沙箱设置（SettingsPage）", () => {
         "/settings/sandbox?allowHost=registry.npmjs.org",
         lastStubRoutes(),
       );
-      const open = await screen.findByRole("radio", {
-        name: prefix(en.orgSettings.cloudNetwork.open),
-      });
+      const open = await ceilingOpen(en.orgSettings.deviceNetwork);
       expect(open).toHaveProperty("checked", true);
       expect(actionRow("en")).toBeNull();
     });
@@ -637,9 +696,7 @@ describe("沙箱设置（SettingsPage）", () => {
       await renderRouteWithCache("/settings/sandbox?allowHost=files.slack.com", lastStubRoutes(), {
         me: MEMBER,
       });
-      const open = await screen.findByRole("radio", {
-        name: prefix(en.orgSettings.cloudNetwork.open),
-      });
+      const open = await ceilingOpen(en.orgSettings.deviceNetwork);
       expect(open).toHaveProperty("checked", true);
       expect(actionRow("en")).toBeNull();
     });
@@ -647,11 +704,11 @@ describe("沙箱设置（SettingsPage）", () => {
     it("under the kill switch nothing is prefilled", async () => {
       stub(
         { toolSearch: "on" },
-        { ...DEPLOYMENT_ALLOW, cloudNetwork: { ...DEPLOYMENT_ALLOW.cloudNetwork, off: true } },
+        { ...DEPLOYMENT_ALLOW, deviceNetwork: { ...DEPLOYMENT_ALLOW.deviceNetwork, off: true } },
       );
       await renderRouteWithCache("/settings/sandbox?allowHost=files.slack.com", lastStubRoutes());
       const hosts = (await screen.findByRole("textbox", {
-        name: en.orgSettings.cloudNetwork.hosts,
+        name: en.orgSettings.deviceNetwork.hosts,
       })) as HTMLTextAreaElement;
       expect(hosts.value).toBe("");
       expect(actionRow("en")).toBeNull();

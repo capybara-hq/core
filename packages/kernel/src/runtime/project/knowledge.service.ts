@@ -1,12 +1,8 @@
-import { DeviceProtocolError } from "@capybara-hq/plugin-sdk";
+import { DeviceProtocolError, isSandboxPermissionUnsupportedError } from "@capybara-hq/plugin-sdk";
 import { Inject, Injectable, Optional } from "@nestjs/common";
 import { EventLog } from "../../conversations/event-log.js";
 import { ConversationDevices } from "../../devices/conversation-devices.js";
-import {
-  DeviceProjectsService,
-  readModeOf,
-  withinMode,
-} from "../../devices/device-projects.service.js";
+import { DeviceProjectsService, withinMode } from "../../devices/device-projects.service.js";
 import { aboveHome } from "../../devices/working-root.js";
 import { ApiError } from "../../errors.js";
 import { KernelDb } from "../../infra/database/kernel-db.js";
@@ -219,19 +215,6 @@ export class ProjectKnowledgeService {
         });
         return unavailableProject(bound.project, bound.root, projectUnavailable.unsupported());
       }
-      // A machine reporting a wider mode than the org allows is not read unasked. The local
-      // provider rechecks the current ceiling on every readFile / stat request as well.
-      if (scope.widerThanAllowed) {
-        this.log.warn("project knowledge not read: the device runs a wider mode than allowed", {
-          ...where,
-          deviceId,
-        });
-        return unavailableProject(
-          bound.project,
-          bound.root,
-          projectUnavailable.widerMode(bound.root),
-        );
-      }
       const enter = await this.entry(input, bound.accountId, bound.root);
       return await enter(
         {
@@ -266,16 +249,32 @@ export class ProjectKnowledgeService {
             stat: (path) => p.stat(h, path, sig),
             readFile: (path, maxBytes) => p.readFile(h, path, { maxBytes, signal: sig }),
             ...(list !== undefined && {
-              list: (path: string, limit: number) =>
-                list.call(p, h, path, { limit, limits: { mode: readModeOf(scope) }, signal: sig }),
+              list: (path: string, limit: number) => list.call(p, h, path, { limit, signal: sig }),
             }),
           };
           try {
             return await readProjectKnowledge(files, target, {
               log: (msg, detail) => this.log.info(msg, { ...where, ...detail }),
-              isDeviceFailure: (e) => sig.aborted || isDeviceFailure(e),
+              // a runtime refusing the read's scope refuses every read of it: thrown, so no
+              // half-read snapshot is recorded
+              isDeviceFailure: (e) =>
+                sig.aborted || isDeviceFailure(e) || isSandboxPermissionUnsupportedError(e),
             });
           } catch (e) {
+            // the device's runtime refused the kernel read's scope: the project is recorded
+            // unreadable (the provider's text is logged, never recorded) and the run goes on
+            if (isSandboxPermissionUnsupportedError(e) && !sig.aborted) {
+              this.log.warn("project knowledge not read: the device refused the read's scope", {
+                ...where,
+                deviceId,
+                reason: e.message,
+              });
+              return unavailableProject(
+                bound.project,
+                bound.root,
+                projectUnavailable.refused(bound.root),
+              );
+            }
             // gate on: a host runtime without restricted enforcement gets no kernel read; the
             // project is recorded unreadable with the reason and the run goes on
             if (!(e instanceof KernelReadUnsupported)) throw e;

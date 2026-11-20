@@ -115,23 +115,23 @@ describe.skipIf(!hasDocker)("DockerContainer", () => {
         hostRoots,
         readOwnerCeiling: async () => ({
           revision: "one",
-          fullAccess: true,
+          outsideSandbox: true,
+          network: "allowlist",
           roots: hostRoots,
           restrictedProjectReach: "workspace",
-          restrictedAllowedDomains: [],
+          allowedDomains: [],
           restrictedDeniedReadRoots: [],
           preparation: {
             skillsRoot: hostRoots.skills,
             attachmentsBase: join(hostRoots.workspace, "attachments"),
           },
-          fullNetwork: "environment",
         }),
         container: ex,
       },
       { acquireRuntime: async () => ({ release: () => {} }) },
     );
     const support = await backend.permissionSupport({ id: envId }, live);
-    expect(support).toMatchObject({ fullAccess: true, background: true });
+    expect(support).toMatchObject({ outsideSandbox: true, background: true });
 
     const scope = (full: boolean, n: number) => ({
       operationId: `op-${n}`,

@@ -29,6 +29,12 @@ export type ToolGuard = "not_read" | "modified";
  */
 export type ToolNotice = "not_loaded";
 
+/**
+ * The kind of a boundary crossing Full access granted by itself (§6.16.9): a directory outside the
+ * scope, a new host on an allowlist, one call run outside the sandbox, or a sensitive command.
+ */
+export type ToolAutoGranted = "directory" | "host" | "outside-sandbox" | "sensitive";
+
 /** What a call waits for from a person (§6.16.9): an approval, an answer or a connection. */
 export type ToolWaiting = "approval" | "input" | "connect";
 

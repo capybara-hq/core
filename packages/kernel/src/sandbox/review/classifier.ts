@@ -102,6 +102,11 @@ export interface ReviewClassifierInput {
   personMessages: string;
   /** The call's data tag ({@link newReviewTag}). */
   tag: string;
+  /**
+   * Why a call of a Full access conversation is reviewed at all: a sub-agent asked for the
+   * escalation, or the escalation carries a credential consent. Absent otherwise.
+   */
+  fullAccessReview?: { subAgent?: true; credential?: true };
 }
 
 /**
@@ -143,6 +148,16 @@ export function classifierMessage(input: ReviewClassifierInput): string {
             `</${input.tag}>`,
           ]
         : []),
+    ...(input.fullAccessReview?.subAgent
+      ? [
+          "Review context: a sub-agent requested this escalation; its task text was written by an agent, not the person. The person chose Full access for this conversation, but a sub-agent's escalation is always reviewed. Apply the same standard as for any escalation.",
+        ]
+      : []),
+    ...(input.fullAccessReview?.credential
+      ? [
+          "Review context: this escalation also reads, prints or links credentials (see the rule findings). The person chose Full access for this conversation, but an escalation that touches credentials is always reviewed. Apply the same standard as for any escalation.",
+        ]
+      : []),
     "Rule findings:",
     rules,
     "The person's recent messages, oldest first (what they asked for):",

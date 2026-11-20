@@ -33,7 +33,7 @@ const cfg = (mode: "allowed" | "off", hosts = ["a.example"]) =>
     http: { port: 0 },
     log: { level: "error" },
     marketplaces: { official: { enabled: false } },
-    devices: { fullAccess: mode },
+    devices: { outsideSandbox: mode },
     sandbox: { limits: { egress: "allowlist", allowHosts: hosts } },
   });
 const pub = (replica: TestKernel) => replica.app.get(PermissionConfigPublication);
@@ -84,7 +84,7 @@ beforeEach(async () => {
   await db.deleteFrom("sandbox_operation_intents").execute();
   await db.deleteFrom("outbox").where("job_name", "=", "sandbox-operation-revoke").execute();
   await db.deleteFrom("permission_config_publication").execute();
-  await db.deleteFrom("deployment_settings").where("key", "=", "devicesFullAccess").execute();
+  await db.deleteFrom("deployment_settings").where("key", "=", "devicesOutsideSandbox").execute();
   await pub(a).initialize();
   await a.app
     .get(KernelConfigService)
@@ -325,13 +325,21 @@ function assertMixedEffects(
   expect(after.epochs).toEqual(
     before.epochs.map((row) =>
       row.kind === "platform"
-        ? { ...row, revision: row.revision + 1, full_revision: row.full_revision + 1 }
+        ? // outside the sandbox allowed -> off is a narrowing: it bumps the epoch but keeps Full
+          // consent; only a widening resets it (approval-only profiles, "Consent fingerprint"),
+          // here the platform host list gaining b.example (N0 -> N1)
+          {
+            ...row,
+            revision: row.revision + 1,
+            full_revision: row.full_revision + (changesNetwork ? 1 : 0),
+          }
         : row,
     ),
   );
-  // H0 allowed -> H1 off removes Full in both orders. N0 -> N1 additionally removes
-  // the existing a.example restricted exec scope; restricted readFile remains valid.
-  const revoked = changesNetwork ? [intents.full, intents.network] : [intents.full];
+  // Every profile is sandboxed: H0 allowed -> H1 off revokes only escalated work, and the Full
+  // access exec here is a sandboxed a.example scope like the restricted one. N0 -> N1 removes both
+  // a.example exec scopes; the restricted readFile remains valid.
+  const revoked = changesNetwork ? [intents.full, intents.network] : [];
   for (const row of after.intents) {
     const previous = before.intents.find((entry) => entry.operation_id === row.operation_id);
     expect(previous).toBeDefined();
@@ -352,9 +360,10 @@ function assertMixedEffects(
   if (!root) throw new Error("Missing Full root fixture");
   expect(root.permission_profile).toBe("full-access");
   const revision = root.permission_revision + 1;
+  // the consent resets (and its recheck is queued) only on the widening
   expect(after.roots).toEqual(
     before.roots.map((row) =>
-      row.id === root.id
+      row.id === root.id && changesNetwork
         ? {
             ...row,
             permission_profile: "approve-for-me",
@@ -372,13 +381,17 @@ function assertMixedEffects(
       data: { operationId },
       org_id: null,
     })),
-    {
-      job_id: `permission-recheck-${root.id}-${revision}`,
-      queue: "cap-kernel-maintenance",
-      job_name: "permission-approval-recheck",
-      data: { orgId: root.org_id, rootConversationId: root.id, revision },
-      org_id: root.org_id,
-    },
+    ...(changesNetwork
+      ? [
+          {
+            job_id: `permission-recheck-${root.id}-${revision}`,
+            queue: "cap-kernel-maintenance",
+            job_name: "permission-approval-recheck",
+            data: { orgId: root.org_id, rootConversationId: root.id, revision },
+            org_id: root.org_id,
+          },
+        ]
+      : []),
   ];
   expect(
     added
@@ -408,6 +421,7 @@ it("mixed-hot-restart-payload-keeps-effective-network", async () => {
     fingerprint: permissionConfigFingerprint(effective),
     projection: permissionConfigProjection(effective),
   });
+  // Outside the sandbox turned off only narrows: Full consent holds (approval-only profiles).
   // A real newly started replica with (H1,N0) can admit work immediately. The existing B
   // carries the frozen startup (H1,N1) and stays fenced until explicit activation.
   const matching = await startKernel(effective, { env: {}, logger: log });
@@ -415,16 +429,16 @@ it("mixed-hot-restart-payload-keeps-effective-network", async () => {
     const provider = a.app.get(SandboxProviders).forName("@activation-dual");
     if (!provider) throw new Error("Missing test provider");
     matching.app.get(SandboxProviders).register(provider);
-    expect((await f.admit(matching)).profile).toBe("approve-for-me");
+    expect((await f.admit(matching)).profile).toBe("full-access");
   } finally {
     await matching.close();
   }
   await expect(f.admit(b)).rejects.toThrow(/current permission configuration/);
-  expect((await f.admit(a)).profile).toBe("approve-for-me");
+  expect((await f.admit(a)).profile).toBe("full-access");
   const before = await state();
   await config.apply(cfg("off", ["future.example"]), (old, next) => pub(a).publish(old, next));
   expect(await state()).toEqual(before);
-  expect((await f.admit(a)).profile).toBe("approve-for-me");
+  expect((await f.admit(a)).profile).toBe("full-access");
 });
 
 it.each(["watch", "activation"])(
@@ -478,7 +492,7 @@ it.each(["watch", "activation"])(
       expect(await state()).toEqual(afterWinner);
       if (first === "watch") {
         expect(loserResult).toBeInstanceOf(Error);
-        expect((await f.admit(a)).profile).toBe("approve-for-me");
+        expect((await f.admit(a)).profile).toBe("full-access");
         await expect(f.admit(b)).rejects.toThrow();
       } else {
         expect((await f.admit(b)).profile).toBe("approve-for-me");
@@ -596,7 +610,7 @@ it("delegated DB writer serializes before frozen startup activation using curren
   await pub(a).initialize();
   const config = a.app.get(KernelConfigService);
   const delegated = cfg("allowed");
-  delete delegated.devices.fullAccess;
+  delete delegated.devices.outsideSandbox;
   await config.apply(delegated, (old, next) => pub(a).publish(old, next));
   const f = await consent();
   await db
@@ -616,7 +630,7 @@ it("delegated DB writer serializes before frozen startup activation using curren
   });
   const setting = a.app
     .get(SettingsService)
-    .update({ devicesFullAccess: { permission: "off" } }, f.accountId);
+    .update({ devicesOutsideSandbox: { permission: "off" } }, f.accountId);
   const settingResult = setting.catch((e: unknown) => e);
   try {
     await entered.promise;

@@ -52,16 +52,16 @@ async function fixture(
       pythonPath: "/usr/bin/python3",
       readOwnerCeiling: async () => ({
         revision: "r",
-        fullAccess: true,
+        outsideSandbox: true,
+        network: "allowlist",
         roots,
         restrictedProjectReach: "os-user",
-        restrictedAllowedDomains: [],
+        allowedDomains: [],
         restrictedDeniedReadRoots: [],
         preparation: {
           skillsRoot: roots.skills,
           attachmentsBase: join(roots.workspace, "attachments"),
         },
-        fullNetwork: "environment",
       }),
     },
     {
@@ -161,7 +161,7 @@ async function fixture(
   let { client, socket } = await open();
   const hello: DeviceHello = {
     type: "hello",
-    protocol: 3,
+    protocol: 4,
     programVersion: "fixture",
     os: "darwin",
     arch: "arm64",
@@ -169,22 +169,32 @@ async function fixture(
     roots,
     sessionIsolation: false,
     transport: { maxFrameBytes: 100000 },
-    permissionSupport: { version: 1, restricted: null, fullAccess: false, background: false },
-    ownerCeiling: {
+    permissionSupport: {
       version: 2,
+      restricted: null,
+      boundary: "operation",
+      network: { openPublic: false, allowlist: false, perOperationHosts: false },
+      outsideSandbox: false,
+      background: false,
+    },
+    ownerCeiling: {
+      version: 3,
       sequence: 0,
       restrictedProjectReach: "workspace",
       revision: "r",
-      fullAccess: false,
-      restrictedAllowedDomains: [],
+      outsideSandbox: false,
+      network: "allowlist",
+      allowedDomains: [],
     },
     instanceGeneration: "g",
     ...(!bound && {
       instanceGeneration: null,
       permissionSupport: {
-        version: 1,
+        version: 2,
         restricted: null,
-        fullAccess: false,
+        boundary: "operation",
+        network: { openPublic: false, allowlist: false, perOperationHosts: false },
+        outsideSandbox: false,
         background: false,
         unavailableReason: "Instance binding pending",
       },

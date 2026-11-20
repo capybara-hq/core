@@ -28,6 +28,7 @@ import { taskStopTool } from "../../src/tools/builtins/sandbox/task-stop.js";
 import type { BuiltinCallContext, BuiltinResult } from "../../src/tools/registry.js";
 import { asUser, cookieJar } from "./http.js";
 import { seedInstalledEvidence } from "./installed-evidence.js";
+import { storedOwnerReport } from "./owner-report.js";
 import { enableModelProviders, type Req, type TestKernel } from "./runs.js";
 
 /**
@@ -197,9 +198,11 @@ export function managedOutputProvider() {
     concurrentExec: true,
     async permissionSupport() {
       return {
-        version: 1,
+        version: 2,
         restricted: { filesystem: true, network: true, native: true, concurrentScopes: true },
-        fullAccess: true,
+        boundary: "operation",
+        network: { openPublic: false, allowlist: true, perOperationHosts: true },
+        outsideSandbox: true,
         background: true,
       };
     },
@@ -342,11 +345,12 @@ export async function managedTaskFixture(opts: {
       name: "Laptop",
       os: "darwin",
       arch: "arm64",
-      features: ["mode", "projects"],
+      features: ["projects"],
       // the machine reports every root the instance mounts (its handle's below)
       roots: JSON.stringify({ ...DEFAULT_SANDBOX_ROOTS, workspace: "/work" }),
       home: "/home/owner",
-      local_policy: JSON.stringify({ mode: "auto", allowedDomains: [] }),
+      local_policy: JSON.stringify({ allowedDomains: [] }),
+      owner_report: storedOwnerReport(),
     })
     .execute();
   await db

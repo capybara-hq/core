@@ -2,6 +2,7 @@ import { randomUUID } from "node:crypto";
 import {
   type DeviceFeature,
   type DeviceLocalPolicySummary,
+  type DeviceOwnerCeilingNarrowing,
   type DevicePolicyArgs,
   type LegacyDevicePolicyArgs,
   type LegacyDevicePolicyStatus,
@@ -48,8 +49,21 @@ const STATUS_DEADLINE_MS = 10_000;
 /** How long an op left `unknown` waits for the machine's hello to report it (from its intent). */
 export const UNKNOWN_OP_MS = 24 * 3_600_000;
 
-/** A policy change as callers ask for it: the op id and the source are added here. */
-type PolicyChange = Omit<DevicePolicyArgs, "source" | "opId">;
+/**
+ * A policy change as callers ask for it (the op id and the source are added here): narrowings
+ * only. Under device protocol 4 the deployment never widens a local device: its owner adds hosts,
+ * opens the network or allows running outside the sandbox on the machine.
+ */
+export interface PolicyChange {
+  remove?: string[];
+  ownerCeiling?: DeviceOwnerCeilingNarrowing;
+}
+
+/** The change as the machine takes it: narrowings only. */
+type WireChange = Omit<DevicePolicyArgs, "source" | "opId">;
+
+/** Who asked for a change, for the device's local audit line (never a network ask). */
+export type PolicyChangeSource = Omit<LegacyDevicePolicyArgs["source"], "approvalId">;
 
 /** The prefix the relay puts before a machine's `policy`-kind refusal. */
 const REFUSED_PREFIX = "Refused by the machine's local policy: ";
@@ -78,7 +92,7 @@ export interface PolicyIntent {
   opId: string;
   args: DevicePolicyArgs;
   /**
-   * The staged (protocol 3) connection the op goes to, when the device's machine is connected
+   * The staged (protocol 4) connection the op goes to, when the device's machine is connected
    * over one: the op is sent as a v3 `policy` request fenced to it (not sent at all once it
    * changed), and its answer's owner report is recorded with its id. Absent: protocol 2.
    */
@@ -126,8 +140,9 @@ const OWNER_CEILING_UNSUPPORTED_MESSAGE =
 const errMsg = (e: unknown) => (e instanceof Error ? e.message : String(e));
 
 /**
- * Changes a local device's policy on its machine (network ask-to-allow spec §5.2; auto mode spec
- * §4.1: its sandbox-mode allowlist, and its mode back to `sandbox`): the kernel→device `policy`
+ * Narrows a local device's policy on its machine (approval-only profiles design, "Settings model":
+ * hosts removed, the network to the allowlist, no running outside the sandbox, the workspace
+ * reach): the kernel→device `policy`
  * op over the {@link LocalDeviceRelay}. The machine is the authority: it refuses what its owner
  * forbids, validates every host and answers with the policy as written, which the kernel then
  * keeps on the active machine's row (§5.4).
@@ -174,7 +189,7 @@ export class DevicePolicyService {
     orgId: string;
     deviceId: string;
     change: PolicyChange;
-    source: LegacyDevicePolicyArgs["source"];
+    source: PolicyChangeSource;
     actorTokenId?: string;
   }): Promise<PolicyChangeOutcome> {
     const begun = await this.begin(input);
@@ -198,7 +213,7 @@ export class DevicePolicyService {
     orgId: string;
     deviceId: string;
     change: PolicyChange;
-    source: LegacyDevicePolicyArgs["source"];
+    source: PolicyChangeSource;
     actorTokenId?: string;
   }): Promise<{ intent: PolicyIntent } | { outcome: PolicyChangeOutcome }> {
     if (currentStore()) {
@@ -207,7 +222,7 @@ export class DevicePolicyService {
           "first, the policy op sent, then the outcome recorded in a transaction.",
       );
     }
-    assertHosts(input.change, input.source.approvalId !== undefined);
+    assertHosts(input.change);
     const device = await this.db
       .selectFrom("devices as e")
       .innerJoin("orgs as o", "o.id", "e.org_id")
@@ -234,14 +249,14 @@ export class DevicePolicyService {
       if (e instanceof ApiError && e.code === "device.not_found") throw e;
       return { outcome: offline() };
     }
-    const change = connection ? stagedChange(input.change) : input.change;
+    const change = wireChange(input.change);
     // B2: an owner-ceiling narrowing needs a program that reports authenticated owner facts over
-    // a staged connection; protocol 2 cannot express it (its `mode: sandbox` narrows both at once)
+    // a staged connection
     if (change.ownerCeiling !== undefined) {
       const row = connection
         ? await this.db
             .selectFrom("device_machines")
-            .select(["owner_report", "local_policy"])
+            .select(["owner_report"])
             .where("id", "=", machine.id)
             .executeTakeFirst()
         : undefined;
@@ -506,9 +521,6 @@ export class DevicePolicyService {
 
     const live = row.revoked_at === null;
     const policy = result.outcome === "applied" ? result.policy : undefined;
-    const modeBefore = localPolicyOf(row.local_policy)?.mode ?? null;
-    const modeNow =
-      policy !== undefined && live && policy.mode !== modeBefore ? policy.mode : undefined;
     await this.db
       .updateTable("device_machines")
       .set({
@@ -528,23 +540,16 @@ export class DevicePolicyService {
         { orgId: row.org_id, deviceId: row.device_id },
         "device",
         (scope, intent) => ownerPolicyRevokes(policy, scope, intent.method, intent.granted_hosts),
-        modeNow !== undefined,
+        false,
       );
     if (result.outcome === "applied") {
-      if (op.add.length > 0 || op.remove.length > 0) {
+      if (op.remove.length > 0) {
         await auditOp("device.policy_changed", {
           ...(op.status === "unknown" && { late: true }),
         });
       }
-      // a v3 answer's Full change is the owner report's, audited once by its writer
-      // (`device.owner_ceiling_changed`): the summary's derived mode is not audited again
-      if (modeNow !== undefined && !v3Report) {
-        await auditOp("device.mode_changed", {
-          from: modeBefore,
-          to: modeNow,
-          ...(op.status === "unknown" && { late: true }),
-        });
-      }
+      // the owner ceiling's change is the owner report's, audited once by its writer
+      // (`device.owner_ceiling_changed`)
       const stored = policy ?? (await this.machines.activeFor(row.device_id))?.localPolicy;
       return stored
         ? { applied: true, policy: stored }
@@ -618,8 +623,8 @@ export class DevicePolicyService {
     deviceId: string;
     machineId: string;
     opId: string;
-    change: PolicyChange;
-    source: LegacyDevicePolicyArgs["source"];
+    change: WireChange;
+    source: PolicyChangeSource;
     actorTokenId?: string;
   }): Promise<boolean> {
     const locked = await this.db
@@ -635,15 +640,9 @@ export class DevicePolicyService {
     const { change, source } = input;
     const op: PendingPolicyOp = {
       id: input.opId,
-      add: change.add ?? [],
       remove: change.remove ?? [],
-      ...(change.mode !== undefined && { mode: change.mode }),
       ...(change.ownerCeiling !== undefined && { ownerCeiling: change.ownerCeiling }),
-      source: {
-        accountId: source.accountId,
-        via: source.via,
-        approvalId: source.approvalId ?? null,
-      },
+      source: { accountId: source.accountId, via: source.via },
       ...(input.actorTokenId !== undefined && { actorTokenId: input.actorTokenId }),
       status: "sent",
       sentAt: now,
@@ -682,21 +681,13 @@ export class DevicePolicyService {
 }
 
 /**
- * A change as a staged (v3) machine takes it: protocol 2's one narrowing (`mode: "sandbox"`, Full
- * access off and the project reach to the workspace at once) becomes the owner-ceiling narrowing
- * it stands for; the protocol 3 machine keeps its owner ceiling, not a daily mode. Never wider:
- * only `false` / `workspace` can come out of it (the frame parser refuses anything else).
+ * A change as the machine takes it (protocol 4): the hosts to remove and the owner-ceiling
+ * narrowing. Never wider: only narrowings come out of it (the frame parser refuses anything else).
  */
-function stagedChange(change: PolicyChange): PolicyChange {
-  if (change.mode !== "sandbox") return change;
-  const { mode: _narrowed, ...rest } = change;
+function wireChange(change: PolicyChange): WireChange {
   return {
-    ...rest,
-    ownerCeiling: {
-      ...change.ownerCeiling,
-      fullAccess: false,
-      restrictedProjectReach: "workspace",
-    },
+    ...(change.remove !== undefined && { remove: change.remove }),
+    ...(change.ownerCeiling !== undefined && { ownerCeiling: change.ownerCeiling }),
   };
 }
 
@@ -711,17 +702,9 @@ const unsupported = (): PolicyChangeOutcome => ({
   message: UNSUPPORTED_MESSAGE,
 });
 
-/** The audit detail of an op's change and source (every `device.policy_*` / `device.mode_*` row). */
+/** The audit detail of an op's change and source (every `device.policy_*` row). */
 function changeDetail(op: PendingPolicyOp): Record<string, unknown> {
-  return {
-    opId: op.id,
-    add: op.add,
-    remove: op.remove,
-    ...(op.mode !== undefined && { mode: op.mode }),
-    by: op.source.accountId,
-    via: op.source.via,
-    approvalId: op.source.approvalId,
-  };
+  return { opId: op.id, remove: op.remove, by: op.source.accountId, via: op.source.via };
 }
 
 /** The machine's pending ops with the fields `patch` merged into the op `opId`. */
@@ -738,18 +721,9 @@ const withoutOp = (opId: string) =>
     WHERE e->>'id' <> ${opId}
   )`;
 
-/**
- * Hosts the platform may send: an approval's `add` takes exact hosts only (a card never grants a
- * wildcard); the owner's own change on the device page (no approval) may add a wildcard (spec §7);
- * `remove` takes any valid entry (narrowing, a wildcard too).
- */
-function assertHosts(change: PolicyChange, fromApproval: boolean): void {
+/** Hosts the platform may send: `remove` takes any valid entry (narrowing, a wildcard too). */
+function assertHosts(change: PolicyChange): void {
   const bad = (h: string) => typeof h !== "string" || validateAllowHost(h).length > 0;
-  for (const h of change.add ?? []) {
-    if (bad(h) || (fromApproval && h.startsWith("*."))) {
-      throw new Error(`not an exact host to add to a device policy: ${JSON.stringify(h)}`);
-    }
-  }
   for (const h of change.remove ?? []) {
     if (bad(h)) throw new Error(`not a host to remove from a device policy: ${JSON.stringify(h)}`);
   }

@@ -85,8 +85,15 @@ const ROUTES: Routes = {
     json(200, {
       settings: { toolSearch: "off", locale: "en", sandboxToolPolicy: "ask" },
       deployment: {
-        fullAccess: { permission: "allowed", source: "default" },
-        cloudNetwork: { allowHosts: [], orgHosts: "extend", off: false },
+        outsideSandbox: { permission: "allowed", source: "default" },
+        deviceNetwork: {
+          default: "open",
+          ceiling: "open",
+          sources: { default: "default", ceiling: "default" },
+          allowHosts: [],
+          orgHosts: "extend",
+          off: false,
+        },
       },
       sandboxLimits: { cpu: 2, memoryMb: 4096, source: "deployment" },
       effectiveNetwork: { mode: "open", hosts: [] },
@@ -216,11 +223,12 @@ describe("first paint comes from the hydrated cache (no browser read)", () => {
       `GET ${O}/settings`,
       { radios: 1, kv: 0, items: 0, switches: 3, groups: 0, hints: 0 },
     ],
-    // the tool policy, auto mode and cloud network radios, the resources' key-value
+    // the tool policy, outside-sandbox and the device network's ceiling and default radios, the
+    // resources' key-value
     [
       "/settings/sandbox",
       `GET ${O}/settings`,
-      { radios: 3, kv: 1, items: 0, switches: 0, groups: 0, hints: 0 },
+      { radios: 4, kv: 1, items: 0, switches: 0, groups: 0, hints: 0 },
     ],
     // the 用途默认 tab: the kernel's seven purposes as item rows, each with its model select
     [

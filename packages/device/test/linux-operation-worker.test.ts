@@ -1,12 +1,21 @@
 import { spawn } from "node:child_process";
-import { mkdir, mkdtemp, readFile, realpath, rm, writeFile } from "node:fs/promises";
+import {
+  mkdir,
+  mkdtemp,
+  readFile,
+  realpath,
+  rename,
+  rm,
+  symlink,
+  writeFile,
+} from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { type ExecResult, SANDBOX_RUNTIME_SOURCE } from "@capybara-hq/plugin-sdk";
 import { afterEach, describe, expect, it } from "vitest";
-import { createDockerOperationBackend } from "../src/exec/docker-operations.js";
+import { createDockerOperationBackend, hostAddresses } from "../src/exec/docker-operations.js";
 import { LINUX_DEVICE_AGENT } from "../src/exec/linux-agent.js";
-import { linuxOperationWorker } from "../src/exec/linux-operation-worker.js";
+import { linuxOperationWorker, protectedWriteTargets } from "../src/exec/linux-operation-worker.js";
 import { type LinuxAgentTransport, probeLinuxRuntime } from "../src/exec/linux-runtime.js";
 import type { MacWorkerRequest } from "../src/exec/operation-worker.js";
 
@@ -103,7 +112,7 @@ async function fakeTransport(behaviour: string) {
       .split("\n")
       .filter(Boolean)
       .map((l) => JSON.parse(l) as Record<string, unknown>);
-  return { transport, lines, spawned: () => spawned };
+  return { transport, lines, spawned: () => spawned, filesLock: "/state/operation-files.lock" };
 }
 
 const grant = (full: boolean) => ({
@@ -167,6 +176,7 @@ describe("Linux operation worker", () => {
       network: { kind: "allowlist", hosts: [] },
       env: { PATH: "/bin", HOME: "/work", TMPDIR: "/work" },
       expect: { "linux-sandbox.py": "x" },
+      filesLock: "/state/operation-files.lock",
     });
   });
 
@@ -232,6 +242,107 @@ describe("Linux operation worker", () => {
     expect(containerSent).toMatchObject({ readRoots: [] });
     expect(containerSent).not.toHaveProperty("readFiles");
     expect(containerSent?.env).not.toHaveProperty("ASDF_DATA_DIR");
+  });
+
+  it("an open-network grant asks for the open forwarder and denies the protected home targets", async () => {
+    // a dotfile manager's links: ~/.config and ~/.bashrc resolve into a project directory
+    const home = await realpath(await mkdtemp(join(tmpdir(), "cap-dotfiles-")));
+    dirs.push(home);
+    await mkdir(join(home, "dotfiles", "config"), { recursive: true });
+    await writeFile(join(home, "dotfiles", "bashrc"), "");
+    await symlink(join(home, "dotfiles", "config"), join(home, ".config"));
+    await symlink(join(home, "dotfiles", "bashrc"), join(home, ".bashrc"));
+    const fake = await fakeTransport("exit");
+    const request = execRequest(false, { grant: { ...grant(false), openNetwork: true } });
+    await (
+      await linuxOperationWorker({
+        ...fake,
+        baseEnv: env,
+        acquireRuntime: gate,
+        toolHome: { home, env: {} },
+      })(request, new AbortController().signal)
+    ).completion;
+    const [sent] = await fake.lines();
+    expect(sent).toMatchObject({ network: { kind: "open", hosts: [] } });
+    const denies = sent?.writeDenies as string[];
+    for (const target of ["config/systemd", "config/autostart", "config/git/config", "bashrc"])
+      expect(denies).toContain(join(home, "dotfiles", target));
+    // the literal locations are the policy's own denies; only differing targets are added
+    expect(denies).not.toContain(join(home, ".config", "systemd"));
+    expect(denies).not.toContain(join(home, ".zshrc"));
+    // an allowlist grant keeps the allowlist; Full has the escalated call's own network
+    const allow = await fakeTransport("exit");
+    await (
+      await linuxOperationWorker({ ...allow, baseEnv: env, acquireRuntime: gate })(
+        execRequest(false, { grant: { ...grant(false), hosts: ["a.example"] } }),
+        new AbortController().signal,
+      )
+    ).completion;
+    const [allowSent] = await allow.lines();
+    expect(allowSent).toMatchObject({ network: { kind: "allowlist", hosts: ["a.example"] } });
+    expect(allowSent).not.toHaveProperty("writeDenies");
+  });
+
+  it("protected home targets: every link of a chain and the target of a dangling link", async () => {
+    const root = await realpath(await mkdtemp(join(tmpdir(), "cap-chain-")));
+    dirs.push(root);
+    const home = join(root, "home");
+    await mkdir(join(root, "w", "v1"), { recursive: true });
+    await mkdir(join(root, "w", "dotfiles", "config"), { recursive: true });
+    await mkdir(home);
+    await writeFile(join(root, "w", "v1", "zshrc"), "");
+    await symlink("v1", join(root, "w", "current"));
+    await symlink(join(root, "w", "current", "zshrc"), join(home, ".zshrc"));
+    await symlink(join(root, "w", "dotfiles", "config"), join(home, ".config"));
+    // the target's ancestor moved away outside the sandbox: the link dangles
+    await rename(join(root, "w", "dotfiles"), join(root, "w", "gone"));
+    const denies = protectedWriteTargets(home);
+    expect(denies).toEqual(
+      expect.arrayContaining([
+        join(home, ".zshrc"),
+        join(root, "w", "current"),
+        join(root, "w", "v1", "zshrc"),
+        join(home, ".config"),
+        join(root, "w", "dotfiles", "config", "systemd"),
+      ]),
+    );
+    // a location reached without a link adds nothing
+    expect(denies).not.toContain(join(home, ".bashrc"));
+    // the home-anchored ~/bin is always denied, also where it is missing
+    expect(denies).toContain(join(home, "bin"));
+    // and at its target when it is a link
+    await symlink(join(root, "w", "v1"), join(home, "bin"));
+    expect(protectedWriteTargets(home)).toEqual(
+      expect.arrayContaining([join(home, "bin"), join(root, "w", "v1")]),
+    );
+  });
+
+  it("a container's worker closes the host's own addresses to the forwarder", async () => {
+    const fake = await fakeTransport("exit");
+    await (
+      await linuxOperationWorker({
+        ...fake,
+        baseEnv: env,
+        acquireRuntime: gate,
+        closedAddresses: () => ["203.0.113.7", "2001:db8::7"],
+      })(
+        execRequest(false, { grant: { ...grant(false), openNetwork: true } }),
+        new AbortController().signal,
+      )
+    ).completion;
+    const [sent] = await fake.lines();
+    expect(sent).toMatchObject({ closedAddresses: ["203.0.113.7", "2001:db8::7"] });
+  });
+
+  it("the host's own addresses are every interface address but loopback", () => {
+    const addresses = hostAddresses({
+      lo0: [{ address: "127.0.0.1", internal: true } as never],
+      en0: [
+        { address: "198.51.100.4", internal: false } as never,
+        { address: "fe80::1", internal: false, scopeid: 4 } as never,
+      ],
+    });
+    expect(addresses).toEqual(["198.51.100.4", "fe80::1"]);
   });
 
   it("an abort sends one immediate cancel; a second cancel is coalesced", async () => {
@@ -390,16 +501,16 @@ describe("local-Docker skill preparation", () => {
         hostRoots,
         readOwnerCeiling: async () => ({
           revision: "one",
-          fullAccess: false,
+          outsideSandbox: false,
+          network: "allowlist",
           roots: hostRoots,
           restrictedProjectReach: "workspace",
-          restrictedAllowedDomains: [],
+          allowedDomains: [],
           restrictedDeniedReadRoots: [],
           preparation: {
             skillsRoot: hostRoots.skills,
             attachmentsBase: join(hostRoots.workspace, "attachments"),
           },
-          fullNetwork: "environment",
         }),
         container: {
           operationContainer: async () => {

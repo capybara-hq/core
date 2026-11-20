@@ -16,12 +16,13 @@ import {
 
 const report = (sequence: number, over: Record<string, unknown> = {}) =>
   ({
-    version: 2,
+    version: 3,
     revision: `r${sequence}`,
     sequence,
-    fullAccess: true,
+    outsideSandbox: true,
+    network: "open",
     restrictedProjectReach: "os-user",
-    restrictedAllowedDomains: ["a.test"],
+    allowedDomains: ["a.test"],
     ...over,
   }) as StoredOwnerReport["report"];
 const stored = (r: StoredOwnerReport["report"]): StoredOwnerReport => ({
@@ -46,43 +47,58 @@ describe("owner report ordering (B2)", () => {
     expect(decideOwnerReport(s, report(4))).toBe("record");
     expect(decideOwnerReport(s, report(3))).toBe("same");
     expect(decideOwnerReport(s, report(2))).toBe("stale");
-    expect(decideOwnerReport(s, report(3, { fullAccess: false }))).toBe("conflict");
+    expect(decideOwnerReport(s, report(3, { outsideSandbox: false }))).toBe("conflict");
     expect(decideOwnerReport(s, report(3, { revision: "other" }))).toBe("conflict");
   });
 
-  it("reads reports first, translates protocol 2 summaries exactly and fails closed", () => {
-    expect(ownerFactsOf({ owner_report: stored(report(1, { fullAccess: false })) })).toMatchObject({
+  it("reads only the report and fails closed without one", () => {
+    expect(
+      ownerFactsOf({ owner_report: stored(report(1, { outsideSandbox: false })) }),
+    ).toMatchObject({
       state: "report",
-      fullAccess: false,
+      outsideSandbox: false,
       restrictedProjectReach: "os-user",
+      allowedDomains: ["a.test"],
+      network: "open",
     });
-    expect(ownerFactsOf({ local_policy: { mode: "auto", allowedDomains: [] } })).toMatchObject({
-      state: "legacy",
-      fullAccess: true,
-      restrictedProjectReach: "os-user",
-    });
-    expect(ownerFactsOf({ local_policy: { mode: "sandbox", allowedDomains: [] } })).toMatchObject({
-      state: "legacy",
-      fullAccess: false,
+    // protocol 4 has no legacy owner state: no report is missing (the summary's mode is gone)
+    expect(ownerFactsOf({})).toMatchObject({
+      state: "missing",
+      outsideSandbox: false,
       restrictedProjectReach: "workspace",
+      network: "allowlist",
     });
     expect(ownerFactsOf({ owner_report: { junk: true } })).toMatchObject({
       state: "missing",
-      fullAccess: false,
+      outsideSandbox: false,
+    });
+    // a protocol 3 (version 2) report is not readable: missing, fail closed
+    const v2 = {
+      ...stored(report(1)),
+      report: {
+        version: 2,
+        revision: "r1",
+        sequence: 1,
+        fullAccess: true,
+        restrictedProjectReach: "os-user",
+        restrictedAllowedDomains: [],
+      },
+    };
+    expect(ownerFactsOf({ owner_report: v2 })).toMatchObject({
+      state: "missing",
+      outsideSandbox: false,
     });
     const blocked = { ...stored(report(2)), blocked: { reason: "stale", sequence: 1, at: "x" } };
     expect(ownerFactsOf({ owner_report: blocked })).toMatchObject({
       state: "blocked",
-      fullAccess: false,
+      outsideSandbox: false,
       restrictedProjectReach: "workspace",
     });
-    expect(
-      ownerModeOf({
-        features: ["mode"],
-        local_policy: { mode: "auto", allowedDomains: [] },
-        owner_report: stored(report(1, { fullAccess: false })),
-      }),
-    ).toBe("sandbox");
+    expect(ownerModeOf({ owner_report: stored(report(1, { outsideSandbox: false })) })).toBe(
+      "sandbox",
+    );
+    expect(ownerModeOf({ owner_report: stored(report(1)) })).toBe("auto");
+    expect(ownerModeOf({})).toBe("sandbox");
   });
 
   it("revokes Full work only on Full removal and restricted work only on what narrows it", () => {
@@ -96,22 +112,25 @@ describe("owner report ordering (B2)", () => {
     } as never);
     expect(
       ownerReportRevokes(
-        facts({ restrictedProjectReach: "workspace", restrictedAllowedDomains: [] }),
+        facts({ restrictedProjectReach: "workspace", allowedDomains: [] }),
         full,
         "exec",
         [],
         roots,
       ),
     ).toBe(false);
-    expect(ownerReportRevokes(facts({ fullAccess: false }), full, "exec", [], roots)).toBe(true);
+    expect(ownerReportRevokes(facts({ outsideSandbox: false }), full, "exec", [], roots)).toBe(
+      true,
+    );
     // restricted: hosts removed (unless independently granted), reach narrowed outside the roots
-    expect(ownerReportRevokes(facts({ fullAccess: false }), op(), "exec", [], roots)).toBe(false);
-    expect(
-      ownerReportRevokes(facts({ restrictedAllowedDomains: [] }), op(), "exec", [], roots),
-    ).toBe(true);
-    expect(
-      ownerReportRevokes(facts({ restrictedAllowedDomains: [] }), op(), "exec", ["a.test"], roots),
-    ).toBe(false);
+    expect(ownerReportRevokes(facts({ outsideSandbox: false }), op(), "exec", [], roots)).toBe(
+      false,
+    );
+    const allowlist = facts({ network: "allowlist", allowedDomains: [] });
+    expect(ownerReportRevokes(allowlist, op(), "exec", [], roots)).toBe(true);
+    expect(ownerReportRevokes(allowlist, op(), "exec", ["a.test"], roots)).toBe(false);
+    // an owner who keeps the open network bounds no host
+    expect(ownerReportRevokes(facts({ allowedDomains: [] }), op(), "exec", [], roots)).toBe(false);
     const outside = op({
       filesystem: { kind: "scoped", readRoots: ["/home/o/p"], writeRoots: ["/home/o/p"] },
     } as never);
@@ -126,7 +145,7 @@ describe("owner report ordering (B2)", () => {
       ),
     ).toBe(true);
     expect(
-      ownerReportRevokes(facts({ fullAccess: false }), browse(["/"]), "browse", [], roots),
+      ownerReportRevokes(facts({ outsideSandbox: false }), browse(["/"]), "browse", [], roots),
     ).toBe(false);
     expect(
       ownerReportRevokes(
@@ -137,6 +156,21 @@ describe("owner report ordering (B2)", () => {
         roots,
       ),
     ).toBe(true);
+  });
+});
+
+describe("the owner's sandbox network", () => {
+  const facts = (over: Record<string, unknown>) => ownerFactsOfReport(stored(report(1, over)));
+  const open = op({ profile: "full-access", network: { kind: "open-public" } } as never);
+  it("narrowing to the allowlist revokes open-network executions, under every profile", () => {
+    expect(ownerReportRevokes(facts({ network: "allowlist" }), open, "exec", [], ["/work"])).toBe(
+      true,
+    );
+    expect(ownerReportRevokes(facts({ network: "open" }), open, "exec", [], ["/work"])).toBe(false);
+    // a sandboxed Full access call is not running outside the sandbox
+    expect(ownerReportRevokes(facts({ outsideSandbox: false }), open, "exec", [], ["/work"])).toBe(
+      false,
+    );
   });
 });
 
@@ -153,19 +187,16 @@ describe("a running per-call sandbox escalation loses to every Full ceiling turn
     "the owner ceiling dropping Full revokes its %s",
     (method) => {
       expect(
-        ownerReportRevokes(facts({ fullAccess: false }), escalated, method, [], ["/work"]),
+        ownerReportRevokes(facts({ outsideSandbox: false }), escalated, method, [], ["/work"]),
       ).toBe(true);
       expect(ownerReportRevokes(facts({}), escalated, method, [], ["/work"])).toBe(false);
     },
   );
 
-  it("a legacy owner policy turning to sandbox revokes it", () => {
-    expect(
-      ownerPolicyRevokes({ mode: "sandbox", allowedDomains: [] } as never, escalated, "exec", []),
-    ).toBe(true);
-    expect(
-      ownerPolicyRevokes({ mode: "auto", allowedDomains: [] } as never, escalated, "exec", []),
-    ).toBe(false);
+  it("a summary (allowlist only) leaves it to the owner report's writer", () => {
+    // protocol 4 summaries carry no mode: dropping Full is the owner report's change (above)
+    expect(ownerPolicyRevokes({ allowedDomains: [] }, escalated, "exec", [])).toBe(false);
+    expect(ownerPolicyRevokes(null, escalated, "exec", [])).toBe(true);
   });
 
   it("the org and platform writers' selectors take it (Full execution needs the Full ceiling)", () => {

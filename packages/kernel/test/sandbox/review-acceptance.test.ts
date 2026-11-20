@@ -11,8 +11,10 @@ import { type KernelSchemaDb, kernelDb } from "../../src/db/kernel-schema.js";
 import { createDb } from "../../src/db/pool.js";
 import { reviewRules } from "../../src/sandbox/review/index.js";
 import {
+  FAKE_PERMISSION_SUPPORT,
   readFakeSandboxLimits,
   readFakeSandboxOps,
+  setFakeSandboxPermissionSupport,
 } from "../fixtures/plugins/sandbox-fake/index.js";
 import { onlyBuiltins } from "../helpers/disabled-tools.js";
 import { accountsFor } from "../helpers/identity.js";
@@ -141,6 +143,12 @@ let versionUrl: string;
 beforeAll(async () => {
   [pgc, rd] = await Promise.all([startTestPostgres(), startTestRedis()]);
   root = await mkdtemp(join(tmpdir(), "cap-review-accept-"));
+  // the acceptance devices ran the open sandbox network: the fake enforces it too, so a public
+  // host such as github.com is no host crossing (only an allowlist has them)
+  await setFakeSandboxPermissionSupport(root, {
+    ...FAKE_PERMISSION_SUPPORT,
+    network: { ...FAKE_PERMISSION_SUPPORT.network, openPublic: true },
+  });
   k = await startKernel(
     runConfig(
       { pg: pgc.url, redis: rd.url },
@@ -179,7 +187,7 @@ beforeAll(async () => {
     method: "PATCH",
     url: `/api/v1/orgs/${orgSandbox}/settings`,
     // sandbox mode on a cloud device narrows the network to the org's allowlist
-    payload: { fullAccess: "off", cloudNetwork: { mode: "allowlist" } },
+    payload: { outsideSandbox: "off", deviceNetwork: { ceiling: "allowlist" } },
   });
   expect(off.statusCode, off.body).toBe(200);
   agentSandbox = await createAgent(orgSandbox);
@@ -252,47 +260,19 @@ async function callIn(
   return (await results(conv)).at(-1) as ToolResult;
 }
 
-/**
- * A Bash call in the auto org whose literal URL names a host outside the device's allowed hosts:
- * the person is asked about that exact host (Approve for me with no review model) and approves it.
- */
-async function callApprovingHost(conv: string, input: unknown, n: number): Promise<ToolResult> {
-  await postMessage(owner, orgAuto, conv, `tool:Bash:${JSON.stringify(input)}`);
-  const ask = await waitFor(
-    async () =>
-      db
-        .selectFrom("approvals")
-        .select(["id", "detail"])
-        .where("conversation_id", "=", conv)
-        .where("kind", "=", "command")
-        .where("status", "=", "pending")
-        .executeTakeFirst(),
-    30_000,
-    "the host ask",
-  );
-  expect(ask.detail as Record<string, unknown>).toMatchObject({
-    permissionScope: { hosts: ["github.com"] },
-  });
-  const approved = await owner({
-    method: "POST",
-    url: `/api/v1/orgs/${orgAuto}/approvals/${ask.id}/decision`,
-    payload: { decision: "approve", scope: "once" },
-  });
-  expect(approved.statusCode, approved.body).toBe(200);
-  await waitForTerminal(db, conv, n, 30_000);
-  return (await results(conv)).at(-1) as ToolResult;
-}
-
 describe("acceptance: auto mode on a real kernel", () => {
   it("scenario 1: cloning a repository with protected files succeeds in auto mode and is allowed", async () => {
     const conv = await createConv(owner, orgAuto, agentAuto);
-    const cloned = await callApprovingHost(
+    // the device's sandbox network is open: github.com is no host crossing, nobody is asked
+    // (approval-only profiles design, "Profiles": a host crosses only an allowlist)
+    const cloned = await call(
       conv,
+      "Bash",
       { command: `git clone ${CORE_URL}`, description: "Clone core" },
       1,
     );
     expect(cloned.payload.isError, cloned.payload.content).toBe(false);
-    expect(cloned.payload.review).toMatchObject({ decision: "allow", by: "person" });
+    expect(cloned.payload.review).toMatchObject({ decision: "allow", by: "rule" });
     expect(cloned.payload.content).toContain("Cloning into");
 
     // the protected-file tree today's sandbox refused to write is in the device's workspace
@@ -380,7 +360,6 @@ describe("acceptance: auto mode on a real kernel", () => {
       30_000,
       "the created device's limits",
     );
-    expect(created.limits.mode).toBe("sandbox");
     expect(created.limits.network.kind).toBe("allowlist");
   });
 
@@ -421,36 +400,13 @@ describe("acceptance: auto mode on a real kernel", () => {
       description: "Clone in the background",
       run_in_background: true,
     };
+    // the open sandbox network reaches github.com with no host crossing: reviewed, then launched
     await postMessage(owner, orgAuto, conv, `tool:Bash:${JSON.stringify(clone)}`);
-    // the clone reaches a host outside the device's allowed hosts: the person is asked about that
-    // exact host before anything launches (Approve for me with no review model configured)
-    const ask = await waitFor(
-      async () =>
-        db
-          .selectFrom("approvals")
-          .select(["id", "detail"])
-          .where("conversation_id", "=", conv)
-          .where("kind", "=", "command")
-          .where("status", "=", "pending")
-          .executeTakeFirst(),
-      30_000,
-      "the host ask",
-    );
-    expect(ask.detail as Record<string, unknown>).toMatchObject({
-      permissionScope: { hosts: ["github.com"] },
-    });
-    expect(await launches(), "nothing launched while the ask waits").toEqual([]);
-    const approved = await owner({
-      method: "POST",
-      url: `/api/v1/orgs/${orgAuto}/approvals/${ask.id}/decision`,
-      payload: { decision: "approve", scope: "once" },
-    });
-    expect(approved.statusCode, approved.body).toBe(200);
     await waitForTerminal(db, conv, 2, 30_000);
     const launched = (await results(conv)).at(-1) as ToolResult;
     expect(launched.payload.isError, launched.payload.content).toBe(false);
     // the launch itself carries the review decision: the command was judged before it ran
-    expect(launched.payload.review).toMatchObject({ decision: "allow", by: "person" });
+    expect(launched.payload.review).toMatchObject({ decision: "allow", by: "rule" });
     // the same log now holds this conversation's launch exec: the empty check above is not vacuous
     const launchExecs = await launches();
     expect(launchExecs.length, "the allowed launch reached the sandbox").toBeGreaterThan(0);
@@ -581,7 +537,20 @@ async function localDevice(): Promise<{ deviceId: string; machine: FakeMachine }
     { hello: false },
   );
   await machine.opened;
-  machine.hello({ features: ["mode"], policy: { mode: "auto", allowedDomains: [] } });
+  // the owner allows work outside the sandbox (what the `auto` mode reported before protocol 4)
+  machine.hello({
+    features: [],
+    policy: { allowedDomains: [] },
+    ownerCeiling: {
+      version: 3,
+      sequence: 1,
+      revision: "test-owner-outside",
+      outsideSandbox: true,
+      network: "open",
+      allowedDomains: [],
+      restrictedProjectReach: "os-user",
+    },
+  });
   // the policy frame is recorded before the conversation can use the device
   await waitFor(
     async () =>

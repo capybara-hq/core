@@ -18,10 +18,10 @@ export interface TokenResponse {
   /** The program uses 16 MiB when it is absent. */
   maxFrameBytes?: number;
   /**
-   * Whether the platform and the organization allow Full access (`allowed`) or not (`off`):
-   * `login` prints the matching line. Absent counts as allowed.
+   * Whether the platform and the organization allow running outside the sandbox (`allowed`) or not
+   * (`off`): `login` prints the matching line. Absent counts as allowed.
    */
-  fullAccess?: "allowed" | "off";
+  outsideSandbox?: "allowed" | "off";
 }
 
 /** An error response of the kernel: `{ error: { code, message } }`. */

@@ -111,6 +111,13 @@ button.cb-tool-line:focus-visible {
   white-space: nowrap;
 }
 
+/* The row's meta (§6.16.9): the status words after the label stay whole; the description yields
+   with the ellipsis. */
+.cb-tool-meta {
+  flex: none;
+  white-space: nowrap;
+}
+
 /* Waiting is an actionable state: truncate the description, never wrap the status. */
 .cb-tool-line > [data-part="waiting-word"],
 .cb-tool-toggle > [data-part="waiting-word"] {
@@ -811,9 +818,6 @@ button.cb-tool-row {
   outline: 1px solid var(--cb-accent);
   outline-offset: -1px;
 }
-.cb-tool-row > .cb-tool-label {
-  flex: 1;
-}
 .cb-tool-name {
   color: var(--cb-ink);
   font-weight: 600;
@@ -846,9 +850,6 @@ button.cb-tool-toggle:focus-visible {
   color: var(--cb-ink);
 }
 .cb-tool-row > .cb-tool-toggle {
-  flex: 1;
-}
-.cb-tool-row > .cb-tool-toggle > .cb-tool-label {
   flex: 1;
 }
 .cb-tool-link {

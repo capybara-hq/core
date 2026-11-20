@@ -104,6 +104,7 @@ export const REFERENCE_COMPONENTS = [
   "title-bar",
   "composer",
   "picker-menu",
+  "mode-menu",
   "command-palette",
   "inline-card",
   "property-section",

@@ -2,7 +2,6 @@ import { randomUUID } from "node:crypto";
 import {
   DEVICE_PROTOCOL_VERSION,
   type DeviceFrame,
-  type DeviceHello,
   type DeviceResponse,
   type ExtensionContext,
   type KernelCancel,
@@ -213,7 +212,7 @@ class DeviceConnection {
   private async onFrame(text: string): Promise<void> {
     let frame: DeviceFrame;
     try {
-      // protocol 3 only: a protocol 2 hello (or any frame that is not protocol 3, such as a hello
+      // protocol 4 only: an older hello (or any frame that is not protocol 4, such as a hello
       // whose protocol differs from the upgrade header's) fails the strict parse and closes 4400
       frame = parseDeviceFrame(text, "device", this.effectiveCap ?? this.gw.maxFrameBytes());
       if (this.effectiveCap !== undefined && this.gw.maxFrameBytes() < this.effectiveCap)
@@ -697,8 +696,8 @@ export class LocalDeviceGateway {
   }
 
   /**
-   * Serves one upgraded socket of a machine until it closes (protocol 3 only: the route refused any
-   * other header with 426, and a hello that is not protocol 3 closes 4400). The credential is
+   * Serves one upgraded socket of a machine until it closes (protocol 4 only: the route refused any
+   * other header with 426, and a hello that is not protocol 4 closes 4400). The credential is
    * checked again here, with the socket paused, so a credential revoked since the upgrade check
    * never gets a connection.
    */

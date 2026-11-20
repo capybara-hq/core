@@ -45,10 +45,15 @@ export const ERROR_CODES = {
   "org.owner_required": 403,
   "org.sandbox_egress_not_allowed": 400,
   /**
-   * The org asked for Full permission (`fullAccess: allowed`) where the platform turned it off, or
-   * widened it through an API token or the Platform tool.
+   * The org allowed running outside the sandbox (`outsideSandbox: allowed`) where the platform
+   * turned it off, or widened it through an API token or the Platform tool.
    */
-  "org.full_access_not_allowed": 400,
+  "org.outside_sandbox_not_allowed": 400,
+  /**
+   * The org's device network default or ceiling is above the platform's ceiling, or was opened
+   * through an API token or the Platform tool.
+   */
+  "org.network_not_allowed": 400,
   /** An org network allowance entry that is malformed, names a link-local address, or is over the cap. */
   "org.network_allowance_invalid": 400,
   "org.network_allowance_not_found": 404,
@@ -61,8 +66,13 @@ export const ERROR_CODES = {
   "org.external_sharing_not_allowed": 400,
   /** A deployment setting set in the startup config (file, Nacos or env): read-only in the admin console. */
   "deployment.setting_readonly": 409,
-  /** Allowing the platform's Full permission through an API token or the Platform tool (only off). */
-  "deployment.full_access_not_allowed": 400,
+  /** Allowing outside-sandbox runs platform-wide through an API token or the Platform tool (only off). */
+  "deployment.outside_sandbox_not_allowed": 400,
+  /**
+   * The platform's network default above its ceiling, or a default or ceiling opened through an API
+   * token or the Platform tool.
+   */
+  "deployment.network_not_allowed": 400,
   /** Allowing external sharing at the platform level through an API token or the Platform tool. */
   "deployment.external_sharing_not_allowed": 400,
   /**
@@ -432,11 +442,6 @@ export const ERROR_CODES = {
    * is admitted until a lifecycle action (a file reset) establishes them.
    */
   "device.permission_reconcile_required": 409,
-  /**
-   * B1: a cloud device's owner ceiling PATCH before its snapshot exists (not migrated yet); the old
-   * sandbox switch still narrows it. A file reset does not change this.
-   */
-  "device.permission_not_migrated": 409,
   "device.owner_report_stale": 409,
   /** A local device's old instance may still run legacy work until the computer restarts (8.5). */
   "device.restart_required": 503,
@@ -444,19 +449,19 @@ export const ERROR_CODES = {
   "device.replace_required": 503,
   /** A cloud device's earlier instance may run legacy work no evidence can cover (8.5). */
   "device.recreate_required": 503,
-  "device.owner_ceiling_confirmation_required": 409,
-  "device.full_access_not_allowed": 409,
   /**
-   * A device's mode is not a stored setting: a local device's mode lives on its machine
-   * (`capybara-device ceiling set` or the device page's policy op), and a cloud device has none to
-   * choose.
+   * A cloud device's network above its org's or the platform's ceiling, a host outside its org's
+   * list, or a widening through an API token or the Platform tool (narrow only).
    */
-  "device.mode_on_device": 409,
+  "device.network_not_allowed": 400,
+  /** Running outside the sandbox where the device, its org, the platform or its provider forbids it. */
+  "device.outside_sandbox_not_allowed": 409,
   /**
-   * A cloud device's mode (`PATCH /devices/:id` `mode`, sandbox or null) sent with an API token:
-   * only its owner in a web session changes it (hardening spec D2, K4).
+   * A local device's sandbox settings live on its machine: the web narrows them with
+   * `POST /devices/:id/policy`, the owner widens them on the machine (`capybara-device ceiling set`,
+   * `capybara-device policy add allowedDomains`).
    */
-  "device.mode_requires_session": 403,
+  "device.ceiling_on_machine": 409,
   /**
    * The device offers no projects (project root §4.1): its `capybara-device` does not announce
    * `projects` (update it), or its cloud sandbox provider has no `list` / `scan`.

@@ -1,5 +1,6 @@
 import {
   type ExecResult,
+  instanceSupported,
   type SandboxExecOptions,
   type SandboxExecutionRef,
   type SandboxHandle,
@@ -62,15 +63,24 @@ export async function assertPermissionSupport(
       "This provider does not support permission operations",
     );
   const support = await provider.permissionSupport(handle, signal);
+  // the sandbox is the same under every profile: an escalated call needs the runtime to run
+  // outside it; every other call needs per-operation enforcement, or an instance that is itself
+  // the sandbox (one whose report names no reason it is unavailable), and the sandbox network
+  // it names
+  const sandboxed =
+    instanceSupported(support) ||
+    (support.restricted?.filesystem === true &&
+      support.restricted.network &&
+      support.restricted.native &&
+      support.restricted.concurrentScopes);
   if (
-    support.version !== 1 ||
+    support.version !== 2 ||
     (method === "backgroundStart" && (!support.background || !provider.background)) ||
     (isFullExecutionScope(scope)
-      ? !support.fullAccess
-      : !support.restricted?.filesystem ||
-        !support.restricted.network ||
-        !support.restricted.native ||
-        !support.restricted.concurrentScopes)
+      ? !support.outsideSandbox || support.boundary === "instance"
+      : !sandboxed ||
+        (scope.network.kind === "open-public" && !support.network.openPublic) ||
+        (scope.network.kind === "allowlist" && !support.network.allowlist))
   )
     throw new SandboxPermissionUnsupportedError(
       support.unavailableReason ?? "This runtime cannot enforce the selected permissions",

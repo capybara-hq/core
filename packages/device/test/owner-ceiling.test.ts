@@ -13,6 +13,7 @@ import { join } from "node:path";
 import { type KernelRequest, parseOwnerCeilingReport } from "@capybara-hq/plugin-sdk";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { runCli } from "../src/cli.js";
+import { CEILING_WIDENING_TEXT } from "../src/commands/ceiling.js";
 import type { MacOperationBackend } from "../src/exec/mac-operation-backend.js";
 import { readStrictOwnerCeiling } from "../src/exec/operation-types.js";
 import { issueOwnerReport, ownerReportPath } from "../src/owner-report.js";
@@ -22,7 +23,6 @@ import {
   convertPolicyFile,
   DEFAULT_POLICY,
   FULL_OWNER_CEILING,
-  policyMode,
   policyPath,
   readPolicyFile,
   SANDBOX_OWNER_CEILING,
@@ -30,7 +30,7 @@ import {
   writePolicy,
 } from "../src/state.js";
 
-/** The policy these tests were written against: the owner allows Full access (old auto). */
+/** The policy these tests were written against: outside the sandbox on, the open network. */
 const FULL_POLICY = { ...DEFAULT_POLICY, ownerCeiling: { ...FULL_OWNER_CEILING } };
 let root: string;
 let state: string;
@@ -78,7 +78,7 @@ const cli = async (
   return { code, out: out.join("\n"), err: err.join("\n") };
 };
 
-describe("version-2 local owner policy", () => {
+describe("version-3 local owner policy", () => {
   it("converts old auto and sandbox exactly, keeping domains, resources and unknown keys", () => {
     writeRaw({
       allowedDomains: ["a.test"],
@@ -92,12 +92,12 @@ describe("version-2 local owner policy", () => {
     expect(convertPolicyFile(state)).toBe("converted");
     expect(onDisk()).toEqual({
       future: { kept: true },
-      version: 2,
+      version: 3,
       allowedDomains: ["a.test"],
       allowCredentials: ["GH"],
       cpu: 2,
       memoryMb: null,
-      ownerCeiling: { fullAccess: true, restrictedProjectReach: "os-user" },
+      ownerCeiling: { outsideSandbox: true, network: "open", restrictedProjectReach: "os-user" },
       keepAwake: "while-busy",
     });
     expect(convertPolicyFile(state)).toBe("current");
@@ -105,7 +105,8 @@ describe("version-2 local owner policy", () => {
     writeRaw({ allowedDomains: [], mode: "sandbox" });
     convertPolicyFile(state);
     expect(onDisk().ownerCeiling).toEqual({
-      fullAccess: false,
+      outsideSandbox: false,
+      network: "allowlist",
       restrictedProjectReach: "workspace",
     });
     expect(onDisk().mode).toBeUndefined();
@@ -121,6 +122,14 @@ describe("version-2 local owner policy", () => {
         ownerCeiling: { fullAccess: true, restrictedProjectReach: "os-user" },
       },
       { version: 3, ownerCeiling: { fullAccess: true, restrictedProjectReach: "os-user" } },
+      {
+        version: 3,
+        ownerCeiling: { outsideSandbox: true, network: "any", restrictedProjectReach: "os-user" },
+      },
+      {
+        version: 4,
+        ownerCeiling: { outsideSandbox: true, network: "open", restrictedProjectReach: "os-user" },
+      },
       { mode: "open" },
     ]) {
       writeRaw(bad);
@@ -130,35 +139,54 @@ describe("version-2 local owner policy", () => {
     }
   });
 
-  it("keeps Full and project reach independent in the strict reader", async () => {
+  it("keeps outside the sandbox, network and project reach independent in the strict reader", async () => {
     writePolicy(state, {
       ...FULL_POLICY,
-      ownerCeiling: { fullAccess: false, restrictedProjectReach: "os-user" },
+      allowedDomains: ["a.test"],
+      ownerCeiling: {
+        outsideSandbox: false,
+        network: "allowlist",
+        restrictedProjectReach: "os-user",
+      },
     });
     const c = await strict();
-    expect(c.fullAccess).toBe(false);
-    expect(c.restrictedProjectReach).toBe("os-user");
+    expect(c).toMatchObject({
+      outsideSandbox: false,
+      network: "allowlist",
+      allowedDomains: ["a.test"],
+      restrictedProjectReach: "os-user",
+    });
     writePolicy(state, {
       ...FULL_POLICY,
-      ownerCeiling: { fullAccess: true, restrictedProjectReach: "workspace" },
+      ownerCeiling: { outsideSandbox: true, network: "open", restrictedProjectReach: "workspace" },
     });
     const d = await strict();
-    expect(d.fullAccess).toBe(true);
-    expect(d.restrictedProjectReach).toBe("workspace");
-    expect(policyMode(readPolicyFile(state).policy)).toBe("auto");
+    expect(d).toMatchObject({
+      outsideSandbox: true,
+      network: "open",
+      restrictedProjectReach: "workspace",
+    });
+    expect(readPolicyFile(state).policy.ownerCeiling.outsideSandbox).toBe(true);
   });
 
   it("the strict reader refuses an unconverted old-format policy", async () => {
     writeRaw({ allowedDomains: [], mode: "auto" });
     await expect(strict()).rejects.toThrow(/old format/);
+    writeRaw({
+      version: 2,
+      allowedDomains: [],
+      ownerCeiling: { fullAccess: true, restrictedProjectReach: "os-user" },
+    });
+    await expect(strict()).rejects.toThrow(/old format/);
   });
 
-  it("a write through the store converts the file to version 2", () => {
+  it("a write through the store converts the file to version 3", () => {
     writeRaw({ allowedDomains: ["a.test"], mode: "sandbox" });
     new PolicyStore(state).update((p) => ({ ...p, allowedDomains: ["b.test"] }));
-    expect(onDisk().version).toBe(2);
+    expect(onDisk().version).toBe(3);
     expect(onDisk().ownerCeiling).toEqual({
-      fullAccess: false,
+      outsideSandbox: false,
+      network: "allowlist",
       restrictedProjectReach: "workspace",
     });
   });
@@ -185,18 +213,34 @@ describe("owner report sequence sidecar", () => {
     expect({ ...edited, revision: first.revision, sequence: 0 }).toEqual(first);
   });
 
-  it("reports owner fields exactly", async () => {
+  it("reports owner fields exactly in the protocol 4 report", async () => {
     writePolicy(state, {
       ...FULL_POLICY,
       allowedDomains: ["*.example.com"],
-      ownerCeiling: { fullAccess: false, restrictedProjectReach: "os-user" },
+      ownerCeiling: {
+        outsideSandbox: false,
+        network: "allowlist",
+        restrictedProjectReach: "os-user",
+      },
     });
-    const r = report();
-    expect(r).toMatchObject({
-      version: 2,
-      fullAccess: false,
+    expect(report()).toMatchObject({
+      version: 3,
+      outsideSandbox: false,
+      network: "allowlist",
       restrictedProjectReach: "os-user",
-      restrictedAllowedDomains: ["*.example.com"],
+      allowedDomains: ["*.example.com"],
+    });
+    writePolicy(state, {
+      ...FULL_POLICY,
+      allowedDomains: ["a.test"],
+      ownerCeiling: { outsideSandbox: true, network: "open", restrictedProjectReach: "workspace" },
+    });
+    expect(report()).toMatchObject({
+      version: 3,
+      outsideSandbox: true,
+      network: "open",
+      restrictedProjectReach: "workspace",
+      allowedDomains: ["a.test"],
     });
   });
 
@@ -219,49 +263,39 @@ describe("owner report sequence sidecar", () => {
 });
 
 describe("capybara-device ceiling", () => {
+  const NARROW = {
+    outsideSandbox: false,
+    network: "allowlist",
+    restrictedProjectReach: "workspace",
+  } as const;
   it("M1: the widening check runs on the locked policy, not an earlier read", async () => {
-    writePolicy(state, {
-      ...FULL_POLICY,
-      ownerCeiling: { fullAccess: true, restrictedProjectReach: "os-user" },
-    });
+    writePolicy(state, FULL_POLICY);
     // the narrowing lands after `ceiling set` read the policy but before it writes
-    const r = await cli(
-      ["ceiling", "set", "--full-access", "allow", "--project-reach", "os-user"],
-      {
-        beforeWrite: () =>
-          writePolicy(state, {
-            ...FULL_POLICY,
-            ownerCeiling: { fullAccess: false, restrictedProjectReach: "workspace" },
-          }),
-      },
-    );
-    expect(r.code).toBe(2);
-    expect(readPolicyFile(state).policy.ownerCeiling).toEqual({
-      fullAccess: false,
-      restrictedProjectReach: "workspace",
+    const r = await cli(["ceiling", "set", "--outside-sandbox", "on", "--network", "open"], {
+      beforeWrite: () => writePolicy(state, { ...FULL_POLICY, ownerCeiling: { ...NARROW } }),
     });
+    expect(r.code).toBe(2);
+    expect(readPolicyFile(state).policy.ownerCeiling).toEqual(NARROW);
   });
 
   it("show no longer carries the protocol 2 note, and the daily mode command is gone", async () => {
-    writePolicy(state, {
-      ...FULL_POLICY,
-      ownerCeiling: { fullAccess: true, restrictedProjectReach: "workspace" },
-    });
+    writePolicy(state, FULL_POLICY);
     const shown = await cli(["ceiling", "show"]);
     expect(shown.out).not.toMatch(/project reach takes effect only/i);
     const mode = await cli(["mode", "auto", "--yes"]);
     expect(mode.code).toBe(2);
-    expect(readPolicyFile(state).policy.ownerCeiling).toEqual({
-      fullAccess: true,
-      restrictedProjectReach: "workspace",
-    });
+    expect(readPolicyFile(state).policy.ownerCeiling).toEqual(FULL_OWNER_CEILING);
   });
 
-  it("shows the owner ceiling and the network baseline separately", async () => {
+  it("shows the owner ceiling and the sandbox allowlist separately", async () => {
     writePolicy(state, {
       ...FULL_POLICY,
       allowedDomains: ["a.test"],
-      ownerCeiling: { fullAccess: false, restrictedProjectReach: "os-user" },
+      ownerCeiling: {
+        outsideSandbox: false,
+        network: "allowlist",
+        restrictedProjectReach: "os-user",
+      },
     });
     writeCredential(state, {
       url: "https://x.test",
@@ -276,73 +310,92 @@ describe("capybara-device ceiling", () => {
     });
     const r = await cli(["ceiling", "show"]);
     expect(r.code).toBe(0);
-    expect(r.out).toMatch(/Full access: denied/);
+    expect(r.out).toMatch(/Outside the sandbox: off/);
+    expect(r.out).toMatch(/Network: allowlist/);
     expect(r.out).toMatch(/Project reach: os-user/);
-    expect(r.out).toMatch(/Restricted network baseline: a\.test/);
+    expect(r.out).toMatch(/Sandbox allowlist: a\.test/);
     expect(r.out).toMatch(/Revision: [0-9a-f]{64}/);
     expect(r.out).toMatch(/organization/i);
+    expect(r.out).not.toMatch(/Full access: /);
   });
 
-  it("narrows directly and requires both fields", async () => {
+  it("narrows directly, changes only the named fields and needs at least one", async () => {
     writePolicy(state, FULL_POLICY);
-    expect((await cli(["ceiling", "set", "--full-access", "deny"])).code).toBe(2);
-    const r = await cli([
-      "ceiling",
-      "set",
-      "--full-access",
-      "deny",
-      "--project-reach",
-      "workspace",
-    ]);
+    expect((await cli(["ceiling", "set"])).code).toBe(2);
+    // the old flag is gone, with a pointer to the new one
+    const old = await cli(["ceiling", "set", "--full-access", "deny"]);
+    expect(old.code).toBe(2);
+    expect(old.err).toMatch(/--outside-sandbox/);
+    for (const bad of [
+      ["--outside-sandbox", "yes"],
+      ["--network", "closed"],
+      ["--project-reach", "home"],
+    ])
+      expect((await cli(["ceiling", "set", ...bad])).code, bad.join(" ")).toBe(2);
+    const r = await cli(["ceiling", "set", "--outside-sandbox", "off"]);
     expect(r.code).toBe(0);
     expect(readPolicyFile(state).policy.ownerCeiling).toEqual({
-      fullAccess: false,
-      restrictedProjectReach: "workspace",
+      ...FULL_OWNER_CEILING,
+      outsideSandbox: false,
     });
-  });
-
-  it("widening needs --yes or a confirmed terminal answer", async () => {
-    writePolicy(state, {
-      ...FULL_POLICY,
-      ownerCeiling: { fullAccess: false, restrictedProjectReach: "workspace" },
-    });
-    const refused = await cli([
+    const n = await cli([
       "ceiling",
       "set",
-      "--full-access",
-      "allow",
+      "--network",
+      "allowlist",
       "--project-reach",
       "workspace",
     ]);
-    expect(refused.code).toBe(2);
-    expect(refused.err).toMatch(/--yes/);
-    expect(readPolicyFile(state).policy.ownerCeiling.fullAccess).toBe(false);
-    const declined = await cli(
-      ["ceiling", "set", "--full-access", "deny", "--project-reach", "os-user"],
-      { tty: true, answer: "n" },
-    );
+    expect(n.code).toBe(0);
+    expect(n.out).toMatch(/allowlist/);
+    expect(readPolicyFile(state).policy.ownerCeiling).toEqual(NARROW);
+  });
+
+  it("widening needs --yes or a confirmed terminal answer, and shows the new text", async () => {
+    writePolicy(state, { ...FULL_POLICY, ownerCeiling: { ...NARROW } });
+    for (const flags of [
+      ["--outside-sandbox", "on"],
+      ["--network", "open"],
+      ["--project-reach", "os-user"],
+    ]) {
+      const refused = await cli(["ceiling", "set", ...flags]);
+      expect(refused.code, flags.join(" ")).toBe(2);
+      expect(refused.err).toMatch(/--yes/);
+      expect(refused.out).toBe(CEILING_WIDENING_TEXT);
+      expect(readPolicyFile(state).policy.ownerCeiling).toEqual(NARROW);
+    }
+    // the widening text tells the new model: the sandbox under every profile
+    expect(CEILING_WIDENING_TEXT).toMatch(/run in the sandbox under every profile/);
+    expect(CEILING_WIDENING_TEXT).toMatch(/outside the sandbox/);
+    expect(CEILING_WIDENING_TEXT).toMatch(/open network/);
+    expect(CEILING_WIDENING_TEXT).not.toMatch(/switches to Full run commands as you/);
+    const declined = await cli(["ceiling", "set", "--network", "open"], {
+      tty: true,
+      answer: "n",
+    });
     expect(declined.code).toBe(1);
-    expect(readPolicyFile(state).policy.ownerCeiling.restrictedProjectReach).toBe("workspace");
-    const confirmed = await cli(
-      ["ceiling", "set", "--full-access", "deny", "--project-reach", "os-user"],
-      { tty: true, answer: "y" },
-    );
+    expect(readPolicyFile(state).policy.ownerCeiling.network).toBe("allowlist");
+    const confirmed = await cli(["ceiling", "set", "--project-reach", "os-user"], {
+      tty: true,
+      answer: "y",
+    });
     expect(confirmed.code).toBe(0);
     expect(confirmed.out).toMatch(/outside the device's workspace/);
     const yes = await cli([
       "ceiling",
       "set",
-      "--full-access",
-      "allow",
-      "--project-reach",
-      "os-user",
+      "--outside-sandbox",
+      "on",
+      "--network",
+      "open",
       "--yes",
     ]);
     expect(yes.code).toBe(0);
-    expect(readPolicyFile(state).policy.ownerCeiling).toEqual({
-      fullAccess: true,
-      restrictedProjectReach: "os-user",
-    });
+    expect(readPolicyFile(state).policy.ownerCeiling).toEqual(FULL_OWNER_CEILING);
+    // the local audit line names the new fields
+    expect(readFileSync(join(state, "commands.log"), "utf8")).toMatch(
+      /ceiling set outsideSandbox on, network open, projectReach os-user/,
+    );
   });
 });
 
@@ -373,7 +426,7 @@ describe("staged policy op with owner reports", () => {
     const res = await serveOperationV3(
       backend,
       { id: "dev" },
-      policyReq({ opId: "op1", source, ownerCeiling: { fullAccess: false } }),
+      policyReq({ opId: "op1", source, ownerCeiling: { outsideSandbox: false } }),
       new AbortController().signal,
       undefined,
       owner,
@@ -381,8 +434,13 @@ describe("staged policy op with owner reports", () => {
     expect(res).toMatchObject({
       ok: true,
       result: {
-        policy: { mode: "sandbox" },
-        ownerCeiling: { fullAccess: false, restrictedProjectReach: "os-user", sequence: 0 },
+        policy: { allowedDomains: [] },
+        ownerCeiling: {
+          outsideSandbox: false,
+          network: "open",
+          restrictedProjectReach: "os-user",
+          sequence: 0,
+        },
       },
     });
     expect(calls).toEqual(["reconcile", "report"]);
@@ -396,14 +454,19 @@ describe("staged policy op with owner reports", () => {
     );
     expect(status).toMatchObject({
       ok: true,
-      result: { outcome: "applied", ownerCeiling: { fullAccess: false } },
+      result: { outcome: "applied", ownerCeiling: { outsideSandbox: false } },
     });
   });
 
   it("refuses any widening over the wire and writes nothing", async () => {
     const { owner, calls, backend } = setup();
     writePolicy(state, { ...FULL_POLICY, ownerCeiling: { ...SANDBOX_OWNER_CEILING } });
-    for (const ownerCeiling of [{ fullAccess: true }, { restrictedProjectReach: "os-user" }]) {
+    for (const ownerCeiling of [
+      { fullAccess: true },
+      { restrictedProjectReach: "os-user" },
+      { outsideSandbox: true },
+      { network: "open" },
+    ]) {
       const res = await serveOperationV3(
         backend,
         { id: "dev" },

@@ -70,7 +70,7 @@ import { ToolRegistry } from "./registry.js";
     // the managed sandbox route's device context writer (passed only once activated)
     ManagedDeviceContextModule,
     DevicesModule,
-    // 「这台设备一直允许」 changes the device's local policy (network asks)
+    // network asks and the sandbox tools read a local device's machine (owner report, policy)
     LocalDevicesModule,
     // `Bash` with run_in_background records its task; TaskOutput / TaskStop finish and stop it
     BackgroundModule,

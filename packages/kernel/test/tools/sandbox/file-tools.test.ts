@@ -16,7 +16,11 @@ import { MANAGED_DEVICE_CONTEXT_STALE_TEXT } from "../../../src/sandbox/managed-
 import { PermissionFacts } from "../../../src/sandbox/permission-facts.js";
 import { CommandReviewService } from "../../../src/sandbox/review/index.js";
 import { SandboxService } from "../../../src/sandbox/sandbox.service.js";
-import { checkToolPath, checkToolWritable } from "../../../src/tools/builtins/sandbox/common.js";
+import {
+  checkToolPath,
+  checkToolWritable,
+  sessionPathBound,
+} from "../../../src/tools/builtins/sandbox/common.js";
 import { onlyBuiltins } from "../../helpers/disabled-tools.js";
 import { accountsFor } from "../../helpers/identity.js";
 import { MODEL_FAKE } from "../../helpers/model-plugins.js";
@@ -216,17 +220,20 @@ describe("file tool paths in the device's mode", () => {
     expect(r.payload.content).toContain("/skills");
   });
 
-  it("sandbox mode keeps the device roots", async () => {
+  // the file tools' own path check no longer follows the tier: on this operation-boundary cloud
+  // device the outside-sandbox setting is still its directory reach ceiling (broadProjectReach),
+  // so the review refuses the crossing before the tool runs
+  it("sandbox mode: a path outside the workspace is refused by the device's reach", async () => {
     const off = await owner({
       method: "PATCH",
       url: `/api/v1/orgs/${orgId}/settings`,
-      payload: { fullAccess: "off" },
+      payload: { outsideSandbox: "off" },
     });
     expect(off.statusCode, off.body).toBe(200);
     const conv = await createConv(owner, orgId, agentId);
     const read = await call(conv, "Read", { file_path: "/etc/passwd" }, 1);
     expect(read.payload.isError).toBe(true);
-    expect(read.payload.content).toContain("/workspace");
+    expect(read.payload.content).toContain("outside the working directory /workspace");
     const write = await call(conv, "Write", { file_path: "/etc/x", content: "x" }, 2);
     expect(write.payload.isError).toBe(true);
     expect(write.payload.content).toContain("/workspace");
@@ -235,23 +242,29 @@ describe("file tool paths in the device's mode", () => {
     expect(ok.payload.isError).toBe(false);
   });
 
-  it("the path checks are pure over the mode", () => {
+  it("the path checks are pure over what bounds them", () => {
+    // the managed route is bounded by the admitted scope under every tier; only the legacy route
+    // in sandbox mode keeps the fixed roots
+    expect(sessionPathBound(true, "sandbox")).toBe("scope");
+    expect(sessionPathBound(true, "auto")).toBe("scope");
+    expect(sessionPathBound(false, "auto")).toBe("scope");
+    expect(sessionPathBound(false, "sandbox")).toBe("roots");
     const roots = { workspace: "/workspace", skills: "/skills", tmp: "/tmp" };
-    expect(checkToolPath("/etc/hosts", { roots, mode: "auto" })).toBe("/etc/hosts");
-    expect(() => checkToolPath("/etc/../etc/hosts", { roots, mode: "auto" })).toThrow(/\.\./);
-    expect(() => checkToolPath("relative/x", { roots, mode: "auto" })).toThrow(/absolute/);
-    expect(() => checkToolPath("/etc/hosts", { roots, mode: "sandbox" })).toThrow(
+    expect(checkToolPath("/etc/hosts", { roots, pathBound: "scope" })).toBe("/etc/hosts");
+    expect(() => checkToolPath("/etc/../etc/hosts", { roots, pathBound: "scope" })).toThrow(/\.\./);
+    expect(() => checkToolPath("relative/x", { roots, pathBound: "scope" })).toThrow(/absolute/);
+    expect(() => checkToolPath("/etc/hosts", { roots, pathBound: "roots" })).toThrow(
       /under \/workspace/,
     );
-    expect(checkToolPath("/workspace/./a.txt", { roots, mode: "sandbox" })).toBe(
+    expect(checkToolPath("/workspace/./a.txt", { roots, pathBound: "roots" })).toBe(
       "/workspace/./a.txt",
     );
     const workingRoot = roots.workspace;
-    expect(() => checkToolWritable("/skills/x.md", { roots, mode: "auto", workingRoot })).toThrow(
-      /read-only/,
-    );
     expect(() =>
-      checkToolWritable("/skills/x.md", { roots, mode: "sandbox", workingRoot }),
+      checkToolWritable("/skills/x.md", { roots, pathBound: "scope", workingRoot }),
+    ).toThrow(/read-only/);
+    expect(() =>
+      checkToolWritable("/skills/x.md", { roots, pathBound: "roots", workingRoot }),
     ).toThrow(/read-only/);
   });
 });
@@ -310,7 +323,7 @@ async function followPlatformMode(): Promise<void> {
   const res = await owner({
     method: "PATCH",
     url: `/api/v1/orgs/${orgId}/settings`,
-    payload: { fullAccess: null },
+    payload: { outsideSandbox: null },
   });
   expect(res.statusCode, res.body).toBe(200);
 }
@@ -523,7 +536,7 @@ describe("a bound conversation works in its project's root", () => {
     const off = await owner({
       method: "PATCH",
       url: `/api/v1/orgs/${orgId}/settings`,
-      payload: { fullAccess: "off" },
+      payload: { outsideSandbox: "off" },
     });
     expect(off.statusCode, off.body).toBe(200);
     try {

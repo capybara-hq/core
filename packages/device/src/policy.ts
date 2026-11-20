@@ -6,7 +6,7 @@ import {
   type SandboxLimits,
   validateAllowHost,
 } from "@capybara-hq/plugin-sdk";
-import { type Policy, policyMode, type SandboxMode } from "./state.js";
+import type { OwnerCeilingPolicy, Policy } from "./state.js";
 
 /**
  * Paths no sandboxed command may read: the SDK's {@link DEVICE_DENIED_SECRET_PATHS} (one source
@@ -39,21 +39,6 @@ export function covers(pattern: string, host: string): boolean {
   return pattern.startsWith("*.") && host.endsWith(pattern.slice(1));
 }
 
-/** The limits fields that decide the mode and the sandbox-mode network. */
-export type ModeLimits = Pick<SandboxLimits, "mode" | "network">;
-
-/**
- * The mode a command runs in (spec §4.1): the device's own choice cut to the kernel's ceiling. A
- * sandbox-mode machine never runs auto because the organization allows it; an auto-mode machine in
- * an organization that forbids auto runs in the sandbox (and its summary says so).
- */
-export function effectiveMode(
-  policy: Pick<Policy, "ownerCeiling">,
-  limits: Pick<SandboxLimits, "mode">,
-): SandboxMode {
-  return policyMode(policy) === "sandbox" || limits.mode === "sandbox" ? "sandbox" : "auto";
-}
-
 /** The granted hosts that apply to one command, within the kernel's network limits. */
 export function grantedHosts(
   limits: Pick<SandboxLimits, "network">,
@@ -76,24 +61,41 @@ export function grantedHosts(
   return [...out];
 }
 
+/** The network one sandboxed command may reach: the open public internet or an allowlist. */
+export type SandboxEgress =
+  | { readonly kind: "open-public" }
+  | { readonly kind: "allowlist"; readonly hosts: string[] };
+
 /**
- * The domains one sandbox-mode command may reach (spec §4.1, §4.4): the intersection of the
- * device's own `allowedDomains` and the kernel's allowlist (`limits.network`), plus the command's
- * grants. An empty list allows nothing. Auto mode ignores both lists: the command has the machine's
- * own network, so this returns no list there (the OS sandbox is not running).
+ * The network one sandboxed command may reach (approval-only profiles design, "Settings model"):
+ * the owner's network ceiling intersected with the kernel's authenticated network, plus the
+ * command's grants.
+ *
+ * - Owner `open` and kernel `open-public`: the open public internet (the address classes the
+ *   design closes stay closed by the workers).
+ * - Owner `open` and a kernel allowlist: the kernel's hosts.
+ * - Owner `allowlist`: the owner's `allowedDomains`, cut to the kernel's allowlist when it has one.
+ *
+ * Granted hosts are added within the kernel's network ({@link grantedHosts}); under an owner
+ * allowlist only those the owner's `allowedDomains` cover, so a grant never widens the owner's
+ * ceiling. An empty allowlist allows nothing.
  */
 export function effectiveEgress(
-  policy: Pick<Policy, "allowedDomains" | "ownerCeiling">,
-  limits: ModeLimits,
+  policy: Pick<Policy, "allowedDomains"> & { ownerCeiling: Pick<OwnerCeilingPolicy, "network"> },
+  orgNetwork: SandboxLimits["network"],
   grants?: Pick<DeviceExecGrants, "hosts">,
-): string[] {
-  if (effectiveMode(policy, limits) === "auto") return [];
+): SandboxEgress {
+  const limits = { network: orgNetwork };
+  if (policy.ownerCeiling.network === "open") {
+    if (orgNetwork.kind === "open-public") return { kind: "open-public" };
+    const out = new Set(orgNetwork.hosts.map((h) => h.toLowerCase()));
+    for (const h of grantedHosts(limits, grants)) out.add(h);
+    return { kind: "allowlist", hosts: [...out] };
+  }
   const out = new Set<string>();
   const local = policy.allowedDomains.map((d) => d.toLowerCase());
-  // `open-public` is for cloud instances only; a local sandbox-mode device is stricter and keeps
-  // its own allowlist.
   const orgHosts =
-    limits.network.kind === "allowlist" ? limits.network.hosts.map((h) => h.toLowerCase()) : local;
+    orgNetwork.kind === "allowlist" ? orgNetwork.hosts.map((h) => h.toLowerCase()) : local;
   for (const host of orgHosts) {
     for (const p of local) {
       // The intersection of two entries is the narrower one, if either contains the other.
@@ -101,6 +103,8 @@ export function effectiveEgress(
       else if (covers(host, p)) out.add(p);
     }
   }
-  for (const h of grantedHosts(limits, grants)) out.add(h);
-  return [...out];
+  // The owner's allowlist is a ceiling on this machine: a grant counts only where the owner's own
+  // list covers it ("widening happens only on the machine").
+  for (const h of grantedHosts(limits, grants)) if (local.some((p) => covers(p, h))) out.add(h);
+  return { kind: "allowlist", hosts: [...out] };
 }

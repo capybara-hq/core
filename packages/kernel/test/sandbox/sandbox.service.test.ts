@@ -219,49 +219,47 @@ describe("组织云网络设置（auto mode spec §4.3）", () => {
   it("an org's own host list (base none) applies; a changed host list reaches only later instances", async () => {
     const s = service();
     await setOrg({
-      fullAccess: "off",
-      cloudNetwork: { mode: "allowlist", base: "none", extraHosts: ["example.com"] },
+      outsideSandbox: "off",
+      deviceNetwork: { ceiling: "allowlist", base: "none", extraHosts: ["example.com"] },
     });
     expect(await limitsOf(s, await newDevice())).toMatchObject({
-      mode: "sandbox",
       network: { kind: "allowlist", hosts: ["example.com"] },
     });
-    await setOrg({ fullAccess: "off", cloudNetwork: { mode: "allowlist" } });
+    await setOrg({ outsideSandbox: "off", deviceNetwork: { ceiling: "allowlist" } });
     expect(await limitsOf(s, await newDevice())).toMatchObject({
       network: { kind: "allowlist", hosts: config.sandbox.limits.allowHosts },
     });
   });
 
-  it("auto mode ignores the org's network; sandbox mode applies it; a kind change recreates", async () => {
+  it("the org's network ceiling applies whatever running outside allows; a kind change recreates", async () => {
     const s = service();
-    // auto mode ignores the org's allowlist: the cloud device's network is open
+    // a cloud device has no outside: the org's allowlist ceiling is its sandbox network
     await setOrg({
-      fullAccess: "allowed",
-      cloudNetwork: { mode: "allowlist", base: "none", extraHosts: ["example.com"] },
+      outsideSandbox: "allowed",
+      deviceNetwork: { ceiling: "allowlist", base: "none", extraHosts: ["example.com"] },
     });
     const first = await use(s);
     expect((await fakeSandboxMeta(root, first.h.id))?.limits).toMatchObject({
-      mode: "auto",
-      network: { kind: "open-public" },
+      network: { kind: "allowlist", hosts: ["example.com"] },
     });
-    // a host change under the same (ignored) network changes nothing
+    // an added host under the same network kind reaches only later instances
     await setOrg({
-      fullAccess: "allowed",
-      cloudNetwork: { mode: "allowlist", base: "none", extraHosts: ["other.example.com"] },
+      outsideSandbox: "allowed",
+      deviceNetwork: {
+        ceiling: "allowlist",
+        base: "none",
+        extraHosts: ["example.com", "other.example.com"],
+      },
     });
     const same = await use(s);
     expect(same.h).toEqual(first.h);
-    // switching to sandbox mode applies the org's allowlist: the instance is recreated
-    await setOrg({
-      fullAccess: "off",
-      cloudNetwork: { mode: "allowlist", base: "none", extraHosts: ["other.example.com"] },
-    });
+    // opening the org's network changes the kind: the instance is recreated on the open network
+    await setOrg({ outsideSandbox: "allowed" });
     const again = await use(s);
     expect(again.h).not.toEqual(first.h);
     expect(again.info).toMatchObject({ fresh: true, restarted: true });
     expect((await fakeSandboxMeta(root, again.h.id))?.limits).toMatchObject({
-      mode: "sandbox",
-      network: { kind: "allowlist", hosts: ["other.example.com"] },
+      network: { kind: "open-public" },
     });
   });
 });
@@ -278,7 +276,6 @@ describe("lazy creation", () => {
       cpu: 1,
       memoryMb: 2048,
       diskMb: 5120,
-      mode: "auto",
       network: { kind: "open-public", hosts: [] },
     };
     const meta = await fakeSandboxMeta(root, a.h.id);
@@ -383,7 +380,7 @@ describe("lazy creation", () => {
     const s = service(() => flaky);
     // sandbox mode: the deployment allowlist, so a failure is not attributed to the open network
     await sql`UPDATE capybara.orgs SET settings =
-      '{"fullAccess":"off","cloudNetwork":{"mode":"allowlist"}}'::jsonb
+      '{"outsideSandbox":"off","deviceNetwork":{"ceiling":"allowlist"}}'::jsonb
       WHERE id = ${orgId}`.execute(raw);
     // the provider's own message stays in the log
     await expect(use(s)).rejects.toMatchObject({ code: "sandbox.create_failed" });
@@ -1003,7 +1000,7 @@ describe("restarted is sticky (fix round 1)", () => {
     const s = service(() => flaky);
     // sandbox mode: the deployment allowlist, so a failure is not attributed to the open network
     await sql`UPDATE capybara.orgs SET settings =
-      '{"fullAccess":"off","cloudNetwork":{"mode":"allowlist"}}'::jsonb
+      '{"outsideSandbox":"off","deviceNetwork":{"ceiling":"allowlist"}}'::jsonb
       WHERE id = ${orgId}`.execute(raw);
     await use(s);
     expect(await s.destroyInactive(later(8 * DAY))).toBe(1);
@@ -1172,7 +1169,6 @@ describe("leftovers of interrupted creates and of other providers (fix round 1)"
     cpu: 1,
     memoryMb: 1,
     diskMb: 1,
-    mode: "sandbox",
     network: { kind: "allowlist", hosts: [] },
   };
   const name = () => `cap-device-${envId}`;
@@ -1250,7 +1246,6 @@ describe("provider switch during a create", () => {
     cpu: 1,
     memoryMb: 1,
     diskMb: 1,
-    mode: "sandbox",
     network: { kind: "allowlist", hosts: [] },
   };
   const name = () => `cap-device-${envId}`;

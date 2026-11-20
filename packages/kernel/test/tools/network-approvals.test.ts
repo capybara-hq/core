@@ -3,17 +3,19 @@ import type { DeviceLocalPolicySummary, KernelReq } from "@capybara-hq/plugin-sd
 import { startTestPostgres, startTestRedis, type TestContainer } from "@capybara-hq/testing";
 import { Redis } from "ioredis";
 import { sql } from "kysely";
-import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from "vitest";
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { EventLog } from "../../src/conversations/event-log.js";
 import type { ConversationEvent } from "../../src/conversations/events.js";
 import type { KernelSchemaDb } from "../../src/db/kernel-schema.js";
 import { createDb } from "../../src/db/pool.js";
+import { DeviceProjectsService } from "../../src/devices/device-projects.service.js";
 import { DevicesService } from "../../src/devices/devices.service.js";
 import { TransactionHost } from "../../src/infra/database/transaction-host.js";
 import { deviceLeaseKey } from "../../src/local-devices/keys.js";
 import { MachinesService } from "../../src/local-devices/machines.js";
 import { NetworkGrants } from "../../src/local-devices/network-grants.js";
 import { assistantIdemKey } from "../../src/runtime/model-call.js";
+import { RunExecution, withExclusiveAdmission } from "../../src/runtime/run-execution.js";
 import { Waits } from "../../src/runtime/waits.js";
 import {
   type ApprovalRecord,
@@ -21,6 +23,7 @@ import {
   NETWORK_ASK_CANCELLED_NOTE,
   type NetworkAskInput,
 } from "../../src/tools/approvals.service.js";
+import { DeviceOpResolver } from "../../src/tools/device-op-resolver.js";
 import { legacyDbFor } from "../helpers/conversations.js";
 import { accountsFor } from "../helpers/identity.js";
 import { testMembers } from "../helpers/members.js";
@@ -38,17 +41,19 @@ import {
   type TestKernel,
   waitFor,
 } from "../helpers/runs.js";
-import { FakeMachine, policyAnswer } from "../local-devices/fake-machine-v3.js";
+import { FakeMachine } from "../local-devices/fake-machine-v3.js";
 import type { Answer } from "../local-devices/test-holder.js";
 
 /**
  * Network asks (network ask-to-allow spec §5.2, §6.1–§6.8, P1.6): approvals of kind `network`
- * the device owner decides. 「这次允许」 is a run grant, 「一直允许」 the `policy` op to a fake
- * machine (offline: a run grant with the reason), a reply skips the ask, expiry and abort settle
- * it, and the call's tool approvals are left alone.
+ * the device owner decides. "Allow once" is a run grant and the only offer: under device protocol 4
+ * the deployment never adds a host to a local device, so "Always allow" is not offered and is
+ * refused (no `policy` op is sent). A reply skips the ask, expiry and abort settle it, and the
+ * call's tool approvals are left alone; a pending op is still settled in lock order with fenced
+ * device writers.
  */
 
-const POLICY: DeviceLocalPolicySummary = { mode: "auto", allowedDomains: ["pypi.org"] };
+const POLICY: DeviceLocalPolicySummary = { allowedDomains: ["pypi.org"] };
 
 let pgc: TestContainer;
 let rd: TestContainer;
@@ -165,7 +170,7 @@ function ask(over: Partial<NetworkAskInput> = {}): Promise<ApprovalRecord> {
       description: "Download the file",
       result: KEPT,
     },
-    scopes: ["once", "always"],
+    scopes: ["once"],
     ...over,
   });
 }
@@ -178,6 +183,16 @@ const ofType = <T extends ConversationEvent["type"]>(evs: ConversationEvent[], t
 
 const row = (id: string) =>
   db.selectFrom("approvals").selectAll().where("id", "=", id).executeTakeFirstOrThrow();
+
+/** The machine's pending policy ops (the platform's sent intents). */
+async function entries() {
+  const r = await db
+    .selectFrom("device_machines")
+    .select("pending_policy_ops")
+    .where("id", "=", s.machineId)
+    .executeTakeFirstOrThrow();
+  return r.pending_policy_ops as Record<string, unknown>[];
+}
 
 const runStatus = async (runId: string) =>
   (await db.selectFrom("runs").select("status").where("id", "=", runId).executeTakeFirstOrThrow())
@@ -232,7 +247,7 @@ describe("requestNetwork", () => {
       attempt: 1,
       requestedFor: s.accountId,
       approverRole: null,
-      scopes: ["once", "always"],
+      scopes: ["once"],
       detail: { deviceId: s.deviceId, result: KEPT },
     });
     const [requested] = ofType(await eventsOf(db, s.conversationId), "approval_requested");
@@ -326,119 +341,20 @@ describe("decide", () => {
     await waitFor(async () => (await runStatus(s.runId)) === "queued", 10_000, "run resumed");
   });
 
-  it("「一直允许」: the policy op reaches the machine first, the decision records always", async () => {
-    let now = POLICY;
-    const machine = await connect((req) => {
-      if (req.op !== "policy") return { ok: true, result: null };
-      const add = (req.args as { add?: string[] }).add ?? [];
-      now = { ...now, allowedDomains: [...now.allowedDomains, ...add] };
-      return policyAnswer(now);
-    });
-    const a = await ask();
-    const res = await decide(a.id, {
-      decision: "approve",
-      scope: "always",
-      hosts: ["files.slack.com"],
-    });
-    expect(res.statusCode, res.body).toBe(200);
-    expect((res.json() as { approval: unknown }).approval).toMatchObject({
-      status: "approved",
-      scope: "always",
-      detail: { grantedHosts: ["files.slack.com"], outcome: "always" },
-    });
-    const op = (await machine.next((f) => f.type === "req" && f.op === "policy")) as KernelReq;
-    expect(op.args).toEqual({
-      add: ["files.slack.com"],
-      opId: expect.any(String),
-      source: {
-        approvalId: a.id,
-        accountId: s.accountId,
-        accountName: expect.stringMatching(/^Dev /),
-        via: "web",
-      },
-    });
-    const audits = await networkAudits(s.deviceId);
-    expect(audits.map((x) => x.action)).toEqual([
-      "device.network_allowed",
-      "device.policy_changed",
-    ]);
-    expect(audits[0]?.detail).toMatchObject({
-      hosts: ["files.slack.com"],
-      refused: ["api.github.com"],
-      scope: "always",
-      outcome: "always",
-    });
-    // an always grant is the device's own policy now; the unchecked host is refused in the run
-    const state = await k.app.get(NetworkGrants).runState(s.runId);
-    expect([...state.refused]).toEqual(["api.github.com"]);
-  });
-
-  it("「一直允许」 with the device offline falls back to a run grant, with the reason", async () => {
-    // signed in with the feature, then gone
+  // Device protocol 4: the platform never widens a local device's sandbox, so an ask offers a run
+  // grant only; "Always allow" is refused and nothing reaches the machine
+  it("an ask offers once only; always → 409 approval.scope_not_allowed, nothing sent", async () => {
     const machine = await connect(() => ({ ok: true, result: null }));
-    machine.close();
-    await waitFor(
-      async () => (await redis.get(deviceLeaseKey(s.deviceId))) === null,
-      15_000,
-      "lease released",
-    );
     const a = await ask();
-    const res = await decide(a.id, { decision: "approve", scope: "always" });
-    expect(res.statusCode, res.body).toBe(200);
-    expect((res.json() as { approval: unknown }).approval).toMatchObject({
-      status: "approved",
-      scope: "once",
-      detail: { outcome: "once_fallback", fallback: "offline" },
-    });
-    const grants = await k.app
-      .get(NetworkGrants)
-      .forExec({ orgId, runId: s.runId, deviceId: s.deviceId });
-    expect(grants?.hosts).toHaveLength(2);
-    const audits = await networkAudits(s.deviceId);
-    expect(audits.map((x) => x.action)).toEqual(["device.network_allowed"]);
-    expect(audits[0]?.detail).toMatchObject({ outcome: "once_fallback", fallback: "offline" });
-  });
-
-  it("「一直允许」 refused by the device: approved as always, nothing granted, not even for the run", async () => {
-    await connect((req) =>
-      req.op === "policy"
-        ? {
-            ok: false,
-            error: { kind: "policy", message: "This device does not accept network changes." },
-          }
-        : { ok: true, result: null },
-    );
-    const a = await ask();
-    const res = await decide(a.id, { decision: "approve", scope: "always" });
-    expect(res.statusCode, res.body).toBe(200);
-    expect((res.json() as { approval: unknown }).approval).toMatchObject({
-      status: "approved",
-      scope: "always",
-      detail: { grantedHosts: [], outcome: "refused", fallback: "refused" },
-    });
-    expect(
-      await k.app.get(NetworkGrants).forExec({ orgId, runId: s.runId, deviceId: s.deviceId }),
-    ).toBeUndefined();
-    const state = await k.app.get(NetworkGrants).runState(s.runId);
-    expect([...state.refused].sort()).toEqual(["api.github.com", "files.slack.com"]);
-    const audits = await networkAudits(s.deviceId);
-    expect(audits.map((x) => x.action)).toEqual(["device.network_allowed"]);
-    expect(audits[0]?.detail).toMatchObject({
-      hosts: ["files.slack.com", "api.github.com"],
-      scope: "always",
-      outcome: "refused",
-      fallback: "refused",
-    });
-  });
-
-  it("a device without remote grants is asked once only; always → 409 approval.scope_not_allowed", async () => {
-    const a = await ask({ scopes: ["once"] });
+    expect(a.scopes).toEqual(["once"]);
     const res = await decide(a.id, { decision: "approve", scope: "always" });
     expect(res.statusCode).toBe(409);
     expect((res.json() as { error: { code: string } }).error.code).toBe(
       "approval.scope_not_allowed",
     );
     expect((await row(a.id)).status).toBe("pending");
+    expect(machine.frames.filter((f) => f.type === "req" && f.op === "policy")).toEqual([]);
+    expect(await entries()).toEqual([]);
   });
 
   it("deny: a reason, device.network_denied, nothing granted, the hosts refused in the run", async () => {
@@ -552,5 +468,115 @@ describe("settling without a decision", () => {
       content: `${KEPT.content}\n\n${NETWORK_ASK_CANCELLED_NOTE}`,
       isError: true,
     });
+  });
+});
+
+// A pending op naming an ask (written before device protocol 4, or by the resolver's own records)
+// is still settled: the settle transactions lock the ask's conversation, its approval and its run,
+// then record the op's outcome under the machine's device permission lock. A fenced device writer
+// of the same tree (a Platform device project write in a tool step) holds that lock in its prelude
+// and then wants the tree's root row: the settle takes the device lock first (its ordered prelude),
+// else 40P01.
+describe("network ask settlements and fenced device writers of the same tree", () => {
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
+
+  const resolver = () => k.app.get(DeviceOpResolver);
+  const deferred = () => {
+    let resolve!: () => void;
+    const promise = new Promise<void>((r) => {
+      resolve = r;
+    });
+    return { promise, resolve };
+  };
+  const waitingLocks = async () =>
+    Number(
+      (
+        await sql<{ n: string }>`select count(*) n from pg_locks l
+          join pg_stat_activity a on a.pid = l.pid
+          where not l.granted and a.datname = current_database()`.execute(raw)
+      ).rows[0]?.n,
+    );
+
+  /** A pending op on the machine answering ask `approvalId`, reported never received. */
+  async function pendingOp(approvalId: string): Promise<string> {
+    const opId = randomUUID();
+    const now = Date.now();
+    await db
+      .updateTable("device_machines")
+      .set({
+        pending_policy_ops: JSON.stringify([
+          {
+            id: opId,
+            add: ["files.slack.com"],
+            remove: [],
+            source: { accountId: s.accountId, via: "web", approvalId },
+            status: "sent",
+            sentAt: now,
+            resolveAt: now,
+            until: now + 3_600_000,
+            reported: { outcome: "absent" },
+          },
+        ]),
+      })
+      .where("id", "=", s.machineId)
+      .execute();
+    return opId;
+  }
+
+  /**
+   * A claimed run in the ask's tree removes a device project (a tool step), paused once
+   * its prelude holds the device lock; `settle` then runs, and the writer goes on once it waits.
+   */
+  async function againstFencedDeviceWrite(settle: () => Promise<unknown>): Promise<void> {
+    // a sub-agent of the ask's conversation (the root: its one active run is the waiting one)
+    const child = randomUUID();
+    await sql`INSERT INTO capybara.conversations
+        (id, org_id, agent_id, account_id, parent_conversation_id, kind)
+      SELECT ${child}, org_id, agent_id, account_id, id, 'subagent'
+      FROM capybara.conversations WHERE id = ${s.conversationId}`.execute(raw);
+    const runId = randomUUID();
+    await sql`INSERT INTO capybara.runs (id, conversation_id, status, agent_version,
+        trigger_account_id, trigger_seq)
+      VALUES (${runId}, ${child}, 'running', 1, ${s.accountId}, 0)`.execute(raw);
+    const claim = await k.app.get(RunExecution).claim(child, runId, randomUUID());
+    if (!claim) throw new Error("the run could not be claimed");
+    const projects = k.app.get(DeviceProjectsService);
+    // biome-ignore lint/suspicious/noExplicitAny: a private method spied on as a test seam
+    const seam = projects as unknown as Record<string, (...a: any[]) => Promise<void>>;
+    const real = seam.lockSubject?.bind(projects);
+    if (!real) throw new Error("no prelude to pause");
+    const held = deferred();
+    const go = deferred();
+    vi.spyOn(seam, "lockSubject").mockImplementationOnce(async (...args: unknown[]) => {
+      await real(...args);
+      held.resolve();
+      await go.promise;
+    });
+    const writer = k.app.get(RunExecution).withClaim(
+      claim,
+      () => true,
+      () => withExclusiveAdmission(() => projects.remove(orgId, s.accountId, s.deviceId, "none")),
+    );
+    await held.promise;
+    let settled = false;
+    const other = settle().finally(() => {
+      settled = true;
+    });
+    await expect.poll(async () => settled || (await waitingLocks()) > 0).toBe(true);
+    go.resolve();
+    const [w, o] = await Promise.allSettled([writer, other]);
+    expect(w.status === "rejected" ? String(w.reason) : "fulfilled").toBe("fulfilled");
+    expect(o.status === "rejected" ? String(o.reason) : "fulfilled").toBe("fulfilled");
+  }
+
+  it("the device-op-resolve job's settle", async () => {
+    const a = await ask();
+    const opId = await pendingOp(a.id);
+    await againstFencedDeviceWrite(() => resolver().resolve({ machineId: s.machineId, opId }));
+    // recorded: the op is gone; the ask is not decided by it
+    expect(await entries()).toEqual([]);
+    expect((await row(a.id)).status).toBe("pending");
   });
 });

@@ -455,8 +455,11 @@ describe("组织设置与 ToolSearch 启用条件", () => {
           reserveTokens: 8000,
           maxOutputTokens: 20000,
         },
-        fullAccess: { permission: "allowed", source: "default" },
-        cloudNetwork: {
+        outsideSandbox: { permission: "allowed", source: "default" },
+        deviceNetwork: {
+          default: "open",
+          ceiling: "open",
+          sources: { default: "default", ceiling: "default" },
           allowHosts: baseCfg.sandbox.limits.allowHosts,
           orgHosts: "extend",
           off: false,
@@ -572,40 +575,42 @@ describe("组织设置与 ToolSearch 启用条件", () => {
     expect((await req({ method: "GET", url: settingsUrl() })).statusCode).toBe(200);
   });
 
-  it("fullAccess and cloudNetwork: validated, null clears, the platform switch is the ceiling", async () => {
+  it("outsideSandbox and deviceNetwork: validated, null clears, the platform switch is the ceiling", async () => {
     const patch = (payload: Record<string, unknown>) =>
       req({ method: "PATCH", url: settingsUrl(), payload });
     for (const bad of [
-      { cloudNetwork: { mode: "open", extraHosts: ["10.0.0.1"] } },
-      { cloudNetwork: { mode: "allowlist", extraHosts: ["localhost"] } },
-      { cloudNetwork: { mode: "allowlist", excludedHosts: ["Example.com"] } },
-      { cloudNetwork: { mode: "allowlist", allowHosts: ["registry.npmjs.org"] } },
+      { deviceNetwork: { default: "open", extraHosts: ["10.0.0.1"] } },
+      { deviceNetwork: { ceiling: "allowlist", extraHosts: ["localhost"] } },
+      { deviceNetwork: { ceiling: "allowlist", excludedHosts: ["Example.com"] } },
+      { deviceNetwork: { ceiling: "allowlist", allowHosts: ["registry.npmjs.org"] } },
       {
-        cloudNetwork: {
-          mode: "allowlist",
+        deviceNetwork: {
+          ceiling: "allowlist",
           extraHosts: ["a.example.com", "a.example.com"],
         },
       },
       {
-        cloudNetwork: {
-          mode: "allowlist",
+        deviceNetwork: {
+          ceiling: "allowlist",
           extraHosts: Array.from({ length: 201 }, (_, i) => `h${i}.example.com`),
         },
       },
-      { cloudNetwork: { mode: "allowlist", extra: 1 } },
-      { fullAccess: "maybe" },
-      // the old name is no longer an input
+      { deviceNetwork: { ceiling: "allowlist", extra: 1 } },
+      { outsideSandbox: "maybe" },
+      // the old names are no longer inputs
       { autoMode: "off" },
+      { fullAccess: "off" },
+      { cloudNetwork: { mode: "allowlist" } },
     ]) {
       const r = await patch(bad);
       expect(r.statusCode, JSON.stringify(bad)).toBe(400);
     }
     const ok = await patch({
-      cloudNetwork: { mode: "allowlist", base: "none", extraHosts: ["registry.npmjs.org"] },
+      deviceNetwork: { ceiling: "allowlist", base: "none", extraHosts: ["registry.npmjs.org"] },
     });
     expect(ok.statusCode, ok.body).toBe(200);
-    expect(ok.json().settings.cloudNetwork).toEqual({
-      mode: "allowlist",
+    expect(ok.json().settings.deviceNetwork).toEqual({
+      ceiling: "allowlist",
       base: "none",
       extraHosts: ["registry.npmjs.org"],
     });
@@ -613,25 +618,25 @@ describe("组织设置与 ToolSearch 启用条件", () => {
       mode: "allowlist",
       hosts: ["registry.npmjs.org"],
     });
-    const narrowed = await patch({ fullAccess: "off" });
+    const narrowed = await patch({ outsideSandbox: "off" });
     expect(narrowed.statusCode, narrowed.body).toBe(200);
-    expect(narrowed.json().settings.fullAccess).toBe("off");
+    expect(narrowed.json().settings.outsideSandbox).toBe("off");
     expect(narrowed.json().settings).not.toHaveProperty("autoMode");
-    const cleared = await patch({ fullAccess: null, cloudNetwork: null });
+    const cleared = await patch({ outsideSandbox: null, deviceNetwork: null });
     expect(cleared.statusCode).toBe(200);
-    expect(cleared.json().settings).not.toHaveProperty("fullAccess");
-    expect(cleared.json().settings).not.toHaveProperty("cloudNetwork");
+    expect(cleared.json().settings).not.toHaveProperty("outsideSandbox");
+    expect(cleared.json().settings).not.toHaveProperty("deviceNetwork");
 
     // a stored value this version cannot read narrows to off, never widens
     await db
       .updateTable("orgs")
-      .set({ settings: JSON.stringify({ fullAccess: "everything" }) })
+      .set({ settings: JSON.stringify({ outsideSandbox: "everything" }) })
       .where("id", "=", orgId)
       .execute();
-    expect((await req({ method: "GET", url: settingsUrl() })).json().settings.fullAccess).toBe(
+    expect((await req({ method: "GET", url: settingsUrl() })).json().settings.outsideSandbox).toBe(
       "off",
     );
-    await patch({ fullAccess: null });
+    await patch({ outsideSandbox: null });
   });
 
   it("阈值切换：工具数或定义估算超过阈值才启用并自动加入 ToolSearch；组织关闭后全部直接加载", async () => {

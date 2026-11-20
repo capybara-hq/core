@@ -1,0 +1,32 @@
+<!doctype html>
+<html lang="zh-CN" data-theme="dark">
+<head>
+<meta charset="utf-8">
+<title>Mode menu · reference</title>
+<link rel="stylesheet" href="/design/styles/fonts.css">
+<link rel="stylesheet" href="/design/styles/tokens.css">
+<link rel="stylesheet" href="reference.css">
+</head>
+<body>
+<main class="r-page">
+<h1>Mode menu</h1>
+<p>One button at the end of the composer row (before send) with the current profile's icon and label; the device and a model · effort chip stay on the left. Open: the head with the ⇧Tab hint, the three described profile rows, the review model action, then the effort as segments under a hairline. No effort: the segments are gone. Locked: every profile read-only, the reason as the note, no hint.</p>
+<div class="r-blocks">
+<section data-ref-block="mode-menu-closed" style="width:752px" data-pad>
+  <template data-fixture="mode-menu" data-opts='{"state": "closed"}'></template>
+</section>
+<section data-ref-block="mode-menu-open" style="width:752px" data-pad>
+  <template data-fixture="mode-menu" data-opts='{"state": "open"}'></template>
+</section>
+<section data-ref-block="mode-menu-no-effort" style="width:752px" data-pad>
+  <template data-fixture="mode-menu" data-opts='{"state": "no-effort"}'></template>
+</section>
+<section data-ref-block="mode-menu-locked" style="width:752px" data-pad>
+  <template data-fixture="mode-menu" data-opts='{"state": "locked"}'></template>
+</section>
+</div>
+</main>
+<script src="conversation.js"></script>
+<script src="fill.js"></script>
+</body>
+</html>

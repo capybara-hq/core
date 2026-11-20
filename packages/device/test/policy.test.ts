@@ -4,7 +4,7 @@ import { join } from "node:path";
 import type { SandboxLimits } from "@capybara-hq/plugin-sdk";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { describeCeiling, policyCommand } from "../src/commands/policy.js";
-import { effectiveEgress, effectiveMode, grantedHosts } from "../src/policy.js";
+import { effectiveEgress, grantedHosts } from "../src/policy.js";
 import {
   DEFAULT_POLICY,
   ownerCeilingOfMode,
@@ -16,14 +16,10 @@ import {
   writePolicy,
 } from "../src/state.js";
 
-const limits = (
-  mode: SandboxLimits["mode"],
+const net = (
   hosts: string[] = [],
   kind: SandboxLimits["network"]["kind"] = "allowlist",
-): Pick<SandboxLimits, "mode" | "network"> => ({
-  mode,
-  network: { kind, hosts },
-});
+): SandboxLimits["network"] => ({ kind, hosts });
 const policy = (over: Partial<Policy> & { mode?: SandboxMode } = {}): Policy => {
   const { mode, ...rest } = over;
   return {
@@ -32,83 +28,104 @@ const policy = (over: Partial<Policy> & { mode?: SandboxMode } = {}): Policy => 
     ...(mode !== undefined && { ownerCeiling: ownerCeilingOfMode(mode) }),
   };
 };
-
-describe("effectiveMode", () => {
-  it("cuts the device's choice to the kernel's ceiling", () => {
-    expect(effectiveMode(policy({ mode: "auto" }), limits("auto"))).toBe("auto");
-    expect(effectiveMode(policy({ mode: "sandbox" }), limits("auto"))).toBe("sandbox");
-    expect(effectiveMode(policy({ mode: "auto" }), limits("sandbox"))).toBe("sandbox");
-    expect(effectiveMode(policy({ mode: "sandbox" }), limits("sandbox"))).toBe("sandbox");
+const allowlistPolicy = (allowedDomains: string[]): Policy =>
+  policy({
+    allowedDomains,
+    ownerCeiling: {
+      outsideSandbox: false,
+      network: "allowlist",
+      restrictedProjectReach: "workspace",
+    },
   });
-});
+const openPolicy = (allowedDomains: string[] = []): Policy =>
+  policy({
+    allowedDomains,
+    ownerCeiling: { outsideSandbox: false, network: "open", restrictedProjectReach: "workspace" },
+  });
+const hostsOf = (e: ReturnType<typeof effectiveEgress>) =>
+  e.kind === "allowlist" ? [...e.hosts].sort() : e.kind;
 
 describe("effectiveEgress", () => {
-  const sandbox = limits("sandbox", ["a.com", "*.b.com", "c.com"]);
+  const org = net(["a.com", "*.b.com", "c.com"]);
 
-  it("is the intersection of the device's list and the kernel's", () => {
-    const p = policy({ mode: "sandbox", allowedDomains: ["a.com", "x.b.com", "c.com"] });
-    expect(effectiveEgress(p, sandbox).sort()).toEqual(["a.com", "c.com", "x.b.com"]);
+  it("an allowlist owner ceiling is the intersection of the device's list and the kernel's", () => {
+    const p = allowlistPolicy(["a.com", "x.b.com", "c.com"]);
+    expect(hostsOf(effectiveEgress(p, org))).toEqual(["a.com", "c.com", "x.b.com"]);
   });
 
   it("a wildcard on one side narrows to the narrower entry", () => {
-    expect(
-      effectiveEgress(policy({ mode: "sandbox", allowedDomains: ["*.b.com"] }), sandbox),
-    ).toEqual(["*.b.com"]);
-    expect(
-      effectiveEgress(policy({ mode: "sandbox", allowedDomains: ["x.b.com"] }), sandbox),
-    ).toEqual(["x.b.com"]);
+    expect(hostsOf(effectiveEgress(allowlistPolicy(["*.b.com"]), org))).toEqual(["*.b.com"]);
+    expect(hostsOf(effectiveEgress(allowlistPolicy(["x.b.com"]), org))).toEqual(["x.b.com"]);
   });
 
-  it("an empty device list allows nothing, whatever the kernel asks", () => {
-    expect(effectiveEgress(policy({ mode: "sandbox", allowedDomains: [] }), sandbox)).toEqual([]);
+  it("an empty device allowlist allows nothing, whatever the kernel asks", () => {
+    expect(effectiveEgress(allowlistPolicy([]), org)).toEqual({ kind: "allowlist", hosts: [] });
+    expect(effectiveEgress(allowlistPolicy([]), net([], "open-public"))).toEqual({
+      kind: "allowlist",
+      hosts: [],
+    });
   });
 
-  it("auto mode ignores both lists: the command has the machine's network", () => {
-    expect(
-      effectiveEgress(policy({ mode: "auto", allowedDomains: ["a.com"] }), limits("auto")),
-    ).toEqual([]);
-    expect(
-      effectiveEgress(
-        policy({ mode: "auto", allowedDomains: ["a.com"] }),
-        limits("auto", ["a.com"]),
-      ),
-    ).toEqual([]);
+  it("an allowlist owner ceiling keeps its own list against the kernel's open network", () => {
+    expect(effectiveEgress(allowlistPolicy(["a.com"]), net([], "open-public"))).toEqual({
+      kind: "allowlist",
+      hosts: ["a.com"],
+    });
   });
 
-  it("a local sandbox-mode device keeps its own list even for an open-public ceiling", () => {
-    expect(
-      effectiveEgress(
-        policy({ mode: "sandbox", allowedDomains: ["a.com"] }),
-        limits("sandbox", [], "open-public"),
-      ),
-    ).toEqual(["a.com"]);
+  it("the open owner ceiling is open only where the kernel is open too", () => {
+    expect(effectiveEgress(openPolicy(["a.com"]), net([], "open-public"))).toEqual({
+      kind: "open-public",
+    });
+    // against a kernel allowlist: exactly the kernel's hosts (the owner's list is not a filter)
+    expect(hostsOf(effectiveEgress(openPolicy(["zz.com"]), org))).toEqual([
+      "*.b.com",
+      "a.com",
+      "c.com",
+    ]);
   });
 
-  it("adds a command's grants within the kernel's network", () => {
+  it("adds a command's grants within the kernel's network under the open owner network", () => {
     const grants = { hosts: ["a.com", "evil.com"] };
+    expect(hostsOf(effectiveEgress(openPolicy(), net(["a.com"]), grants))).toEqual(["a.com"]);
+  });
+
+  it("an owner allowlist bounds the grants: only hosts the owner's list covers", () => {
+    const open = net([], "open-public");
     expect(
-      effectiveEgress(policy({ mode: "sandbox", allowedDomains: ["a.com"] }), sandbox, grants),
+      hostsOf(effectiveEgress(allowlistPolicy(["a.com"]), open, { hosts: ["evil.example.com"] })),
     ).toEqual(["a.com"]);
+    expect(hostsOf(effectiveEgress(allowlistPolicy([]), open, { hosts: ["a.com"] }))).toEqual([]);
+    expect(
+      hostsOf(effectiveEgress(allowlistPolicy(["*.b.com"]), open, { hosts: ["x.b.com", "c.com"] })),
+    ).toEqual(["*.b.com", "x.b.com"]);
+    // and still within the kernel's allowlist
+    expect(
+      hostsOf(
+        effectiveEgress(allowlistPolicy(["*.b.com"]), net(["y.b.com"]), { hosts: ["x.b.com"] }),
+      ),
+    ).toEqual(["y.b.com"]);
   });
 });
 
 describe("grantedHosts", () => {
   it("keeps only exact hosts the kernel's allowlist admits", () => {
     expect(
-      grantedHosts(limits("sandbox", ["a.com", "*.b.com"]), {
-        hosts: ["a.com", "x.b.com", "evil.com", "*.a.com", "10.0.0.1"],
-      }),
+      grantedHosts(
+        { network: net(["a.com", "*.b.com"]) },
+        { hosts: ["a.com", "x.b.com", "evil.com", "*.a.com", "10.0.0.1"] },
+      ),
     ).toEqual(["a.com", "x.b.com"]);
   });
 
   it("admits a public host for an open-public ceiling", () => {
     expect(
-      grantedHosts(limits("sandbox", [], "open-public"), { hosts: ["a.com", "10.0.0.1"] }),
+      grantedHosts({ network: net([], "open-public") }, { hosts: ["a.com", "10.0.0.1"] }),
     ).toEqual(["a.com"]);
   });
 
   it("is empty without grants", () => {
-    expect(grantedHosts(limits("sandbox", ["a.com"]), undefined)).toEqual([]);
+    expect(grantedHosts({ network: net(["a.com"]) }, undefined)).toEqual([]);
   });
 });
 
@@ -141,31 +158,39 @@ describe("policy command", () => {
     throw new Error(`bad test argv ${argv.join(" ")}`);
   };
 
-  it("show prints the defaults when there is no file", async () => {
+  it("show prints the closed missing-file policy when there is no file", async () => {
     const r = await run(["show"]);
     expect(r.code).toBe(0);
-    // the restricted default ceiling of a new setup (B-14)
-    expect(r.out).toContain('"fullAccess": false');
+    // no file (a device set up before rc.58): no running outside the sandbox, the allowlist
+    // network with no host, the workspace reach; never the open default
+    expect(r.out).toContain('"outsideSandbox": false');
+    expect(r.out).toContain('"network": "allowlist"');
     expect(r.out).toContain('"restrictedProjectReach": "workspace"');
     expect(r.out).toContain(
-      "Owner ceiling: Full access denied: conversations here use the restricted profiles only.",
+      "Commands run in the sandbox under every profile, Full access included.",
+    );
+    expect(r.out).toContain(
+      "Owner ceiling: outside the sandbox off: no call runs outside the sandbox here.",
     );
   });
 
   it("describeCeiling explains the owner ceiling, on the machine and in a container", () => {
-    expect(describeCeiling(policy({ mode: "auto" }))[0]).toMatch(/runs commands as you/);
-    expect(describeCeiling(policy({ mode: "auto" }), "docker")[0]).toMatch(/container/);
-    expect(describeCeiling(policy({ mode: "auto" }))[1]).toMatch(/outside the device's workspace/);
-    expect(describeCeiling(policy({ mode: "sandbox" }))[0]).toMatch(/Full access denied/);
-    expect(describeCeiling(policy({ mode: "sandbox" }))[1]).toMatch(
-      /stay in the device's workspace/,
-    );
+    const auto = describeCeiling(policy({ mode: "auto" }));
+    expect(auto[0]).toMatch(/in the sandbox under every profile/);
+    expect(auto[1]).toMatch(/one approved call may run as you/);
+    expect(describeCeiling(policy({ mode: "auto" }), "docker")[1]).toMatch(/container/);
+    expect(auto[2]).toMatch(/Sandbox network: open/);
+    expect(auto[3]).toMatch(/outside the device's workspace/);
+    const sandbox = describeCeiling(policy({ mode: "sandbox" }));
+    expect(sandbox[1]).toMatch(/outside the sandbox off/);
+    expect(sandbox[2]).toMatch(/Sandbox network: allowlist/);
+    expect(sandbox[3]).toMatch(/stay in the device's workspace/);
     expect(describeCeiling(policy({ mode: "sandbox" })).at(-1)).toMatch(
       /capybara-device ceiling set/,
     );
   });
 
-  it("a change of allowed domains says restricted work may reach them, also in Docker mode", async () => {
+  it("a change of allowed domains says sandboxed work may reach them, also in Docker mode", async () => {
     writeCredential(dir, {
       url: "https://x.test",
       connectUrl: "wss://x.test/device/connect",
@@ -180,7 +205,8 @@ describe("policy command", () => {
     const r = await run(["add", "allowedDomains", "a.com"]);
     expect(r.code).toBe(0);
     expect(r.out).toContain(
-      "Restricted work may reach these domains when the organization allows them too.",
+      "Sandboxed work may reach these domains while the network is an allowlist, when the " +
+        "organization allows them too.",
     );
   });
 

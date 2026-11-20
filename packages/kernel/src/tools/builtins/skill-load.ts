@@ -573,8 +573,8 @@ export interface ProjectSkillFile {
 }
 
 /**
- * Reads `<root>/.agents/skills/<name>/SKILL.md` in `s` (the device's mode now, as `Read` checks a
- * path: a mode narrowed since the run start reads nothing) and parses it; its name must be its
+ * Reads `<root>/.agents/skills/<name>/SKILL.md` in `s` (its path checked as `Read` checks one,
+ * {@link checkToolPath}) and parses it; its name must be its
  * directory's. Shared by `Skill` and a person's invocation (`SkillInvoker`), so both read a
  * project skill the same way. A problem with the file or its path throws
  * {@link ProjectSkillReadError}; the sandbox's own failures (offline, lost files, ...) and an abort
@@ -592,7 +592,8 @@ export async function readProjectSkill(
     checkToolPath(path, s);
   } catch (e) {
     if (!(e instanceof ToolError)) throw e;
-    throw new ProjectSkillReadError({ kind: "outside_mode", path, mode: s.mode });
+    // only the fixed roots refuse a path, and they bound paths only in sandbox mode (legacy route)
+    throw new ProjectSkillReadError({ kind: "outside_mode", path, mode: "sandbox" });
   }
   let read: Awaited<ReturnType<SandboxSession["p"]["readFile"]>>;
   try {

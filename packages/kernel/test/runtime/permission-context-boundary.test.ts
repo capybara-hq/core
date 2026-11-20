@@ -15,7 +15,7 @@ import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vites
 import type { AgentDefinition } from "../../src/agents/definition.js";
 import { type KernelConfig, KernelConfigSchema } from "../../src/config/schema.js";
 import type { EventLog } from "../../src/conversations/event-log.js";
-import type { ConversationEvent, PermissionContextV1 } from "../../src/conversations/events.js";
+import type { ConversationEvent, PermissionContextV2 } from "../../src/conversations/events.js";
 import { createBus, createBusSubscriber } from "../../src/ctx/bus.js";
 import type { KernelSchemaDb } from "../../src/db/kernel-schema.js";
 import { createDb } from "../../src/db/pool.js";
@@ -258,8 +258,9 @@ const ofType = async <T extends ConversationEvent["type"]>(type: T, conv = conve
   (await all(conv)).filter((e) => e.type === type) as Extract<ConversationEvent, { type: T }>[];
 
 /** A complete supported v1 snapshot whose working directory tells snapshots apart. */
-const snapshot = (label: string, conv = conversationId): PermissionContextV1 => ({
-  version: 1,
+const snapshot = (label: string, conv = conversationId): PermissionContextV2 => ({
+  version: 2,
+  sandbox: null,
   rootConversationId: conv,
   profileRevision: 0,
   selectedProfile: "request-approval",
@@ -287,7 +288,7 @@ const carries = (req: ModelRequest | undefined, label: string) =>
   JSON.stringify(req).includes(JSON.stringify(textOf(label)).slice(1, -1));
 
 /** Appends `payload` as a recorder would (predecessor identity), into the calling conversation. */
-async function appendContext(conv: string, payload: PermissionContextV1): Promise<number> {
+async function appendContext(conv: string, payload: PermissionContextV2): Promise<number> {
   const prior = (await ofType("permission_context", conv)).at(-1);
   const [e] = await eventLog.append(conv, [
     {

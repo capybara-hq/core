@@ -307,7 +307,7 @@ describe("the composer's options button (phones, §6.16.2)", () => {
     // the pickers stay for 640 and up; CSS shows one of the two
     const pickers = document.querySelector('[data-part="composer-pickers"]') as HTMLElement;
     expect(within(pickers).getAllByRole("button")).toHaveLength(3);
-    expect(phoneCss).toMatch(/\.cb-composer-pickers \{\s*display: none;/);
+    expect(phoneCss).toMatch(/\.cb-composer-pickers,\s*\.cb-composer-mode \{\s*display: none;/);
     expect(phoneCss).toMatch(
       /\.cb-composer-bar > \.cb-composer-options\.cb-btn \{\s*display: inline-flex;/,
     );

@@ -47,7 +47,22 @@ export type ConvMenuEntry =
       disabled?: boolean;
       onSelect(): void;
     }
-  | { kind: "label"; label: string }
+  | {
+      kind: "label";
+      label: string;
+      /** A key hint at the end of the label's line ("⇧Tab to switch"), `faint` (the mode menu's head). */
+      hint?: string;
+    }
+  | {
+      /**
+       * A labelled row of choices drawn as segments (the mode menu's effort, §6.16.3a): each one a
+       * `menuitemradio`; picking one keeps the menu open, ←/→ move between the segments.
+       */
+      kind: "segments";
+      label: string;
+      items: { id: string; label: string; checked?: boolean; disabled?: boolean }[];
+      onSelect(id: string): void;
+    }
   | { kind: "separator" }
   | { kind: "note"; text: string };
 
@@ -185,9 +200,21 @@ function Entry({
     case "label":
       return (
         <RM.Label className="cb-cmenu-label" data-part="menu-label">
-          {e.label}
+          {e.hint === undefined ? (
+            e.label
+          ) : (
+            <>
+              <span className="cb-cmenu-text">{e.label}</span>
+              <span className="cb-cmenu-grow" />
+              <span className="cb-cmenu-hint" data-part="menu-hint">
+                {e.hint}
+              </span>
+            </>
+          )}
         </RM.Label>
       );
+    case "segments":
+      return <Segments e={e} />;
     case "separator":
       return <RM.Separator className="cb-cmenu-sep" />;
     case "note":
@@ -285,8 +312,61 @@ function DescribedItem({
   );
 }
 
+/**
+ * A row of segment items under its label: a `group` named by the label, each segment a
+ * `menuitemradio` the menu's roving focus reaches with ↑/↓ like any item, and ←/→ between them.
+ * Picking one does not close the menu (the person may still change the mode above it).
+ */
+function Segments({ e }: { e: Extract<ConvMenuEntry, { kind: "segments" }> }): JSX.Element {
+  const id = useId();
+  const move = (ev: KeyboardEvent<HTMLDivElement>) => {
+    if (ev.key !== "ArrowLeft" && ev.key !== "ArrowRight") return;
+    const row = ev.currentTarget.parentElement;
+    if (!row) return;
+    const all = [
+      ...row.querySelectorAll<HTMLElement>('[role="menuitemradio"]:not([data-disabled])'),
+    ];
+    const at = all.indexOf(ev.currentTarget);
+    const next = all[at + (ev.key === "ArrowRight" ? 1 : -1)];
+    ev.preventDefault();
+    ev.stopPropagation();
+    next?.focus();
+  };
+  return (
+    <div className="cb-cmenu-segments" data-part="menu-segments">
+      <div className="cb-cmenu-label" data-part="menu-label" id={`${id}-label`}>
+        {e.label}
+      </div>
+      {/* biome-ignore lint/a11y/useSemanticElements: a labelled group of menu items, not a fieldset */}
+      <div className="cb-cmenu-segment-row" role="group" aria-labelledby={`${id}-label`}>
+        {e.items.map((it) => (
+          <RM.Item
+            key={it.id}
+            className="cb-cmenu-segment"
+            data-part="menu-segment"
+            role="menuitemradio"
+            aria-checked={it.checked === true}
+            disabled={it.disabled}
+            onKeyDown={move}
+            onSelect={(ev) => {
+              ev.preventDefault();
+              e.onSelect(it.id);
+            }}
+          >
+            {it.label}
+          </RM.Item>
+        ))}
+      </div>
+    </div>
+  );
+}
+
 const entryKey = (e: ConvMenuEntry, i: number) =>
-  e.kind === "item" ? e.id : e.kind === "label" ? `l${i}:${e.label}` : `${e.kind[0]}${i}`;
+  e.kind === "item"
+    ? e.id
+    : e.kind === "label" || e.kind === "segments"
+      ? `${e.kind[0]}${i}:${e.label}`
+      : `${e.kind[0]}${i}`;
 
 export function ConvMenu({
   trigger,
@@ -345,6 +425,7 @@ export function ConvMenu({
       noteId={noteId}
       inline={inline === true}
       inlineSide={side}
+      size={size}
       sideOffset={sideOffset}
       triggerRef={triggerRef}
       listbox={listbox === true}
@@ -427,7 +508,9 @@ function AnchoredContent({
   listbox,
   onClose,
   onTabOut,
+  size,
 }: {
+  size: "narrow" | "default" | "wide";
   shared: Record<string, unknown>;
   entries: ConvMenuEntry[];
   noteId: string;
@@ -452,8 +535,11 @@ function AnchoredContent({
   const [side, setSide] = useState<"top" | "bottom">(inline ? inlineSide : "bottom");
   const filterable = itemCount(entries) > MENU_FILTER_THRESHOLD;
   const shown = filterable ? filterMenuEntries(entries, query) : entries;
-  const body = shown.filter((e) => e.kind !== "note");
-  const footer = entries.map((e, i) => [e, i] as const).filter(([e]) => e.kind === "note");
+  // notes and segments (the mode menu's effort) stay in view under the scrolling list
+  const body = shown.filter((e) => e.kind !== "note" && e.kind !== "segments");
+  const footer = entries
+    .map((e, i) => [e, i] as const)
+    .filter(([e]) => e.kind === "note" || e.kind === "segments");
   const matches = body.filter(
     (e): e is Extract<ConvMenuEntry, { kind: "item" }> => e.kind === "item",
   );
@@ -566,6 +652,7 @@ function AnchoredContent({
       className="cb-cmenu"
       data-cap-part="menu"
       data-anchored="true"
+      data-size={size === "default" ? undefined : size}
       {...(inline ? { "data-inline": "true" } : {})}
       side={side}
       avoidCollisions={!inline}

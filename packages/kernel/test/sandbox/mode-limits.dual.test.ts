@@ -75,8 +75,8 @@ async function seed() {
 
 const setAutoMode = (orgId: string, mode: "allowed" | "off") =>
   sql`UPDATE capybara.orgs SET settings = ${JSON.stringify({
-    fullAccess: mode,
-    cloudNetwork: { mode: mode === "off" ? "allowlist" : "open" },
+    outsideSandbox: mode,
+    deviceNetwork: mode === "off" ? { ceiling: "allowlist" } : { default: "open" },
   })}::jsonb
     WHERE id = ${orgId}`.execute(raw);
 
@@ -109,9 +109,7 @@ describe("device modes (two replicas)", () => {
     expect(ops.filter((o) => o[0] === "update")).toEqual([["update", first.h.id, "updated"]]);
     expect(ops.filter((o) => o[0] === "create")).toHaveLength(1);
     const updates = (await readFakeSandboxLimits(root)).filter((e) => e.op === "update");
-    expect(updates.map((e) => [e.limits.mode, e.limits.network.kind])).toEqual([
-      ["sandbox", "allowlist"],
-    ]);
+    expect(updates.map((e) => e.limits.network.kind)).toEqual(["allowlist"]);
     const row = await sql<{ instance_limits: unknown }>`SELECT instance_limits
       FROM capybara.device_instances WHERE device_id = ${deviceId}`.execute(raw);
     expect(row.rows[0]?.instance_limits).toMatchObject({
@@ -164,7 +162,7 @@ describe("device modes (two replicas)", () => {
     expect(again.h).toEqual(first);
     expect(again.info).toMatchObject({ fresh: false, restarted: false });
     const applied = (await readFakeSandboxLimits(root)).slice(before);
-    expect(applied.map((e) => [e.op, e.limits.mode])).toEqual([["update", "sandbox"]]);
+    expect(applied.map((e) => [e.op, e.limits.network.kind])).toEqual([["update", "allowlist"]]);
     const row = await sql<{ instance_limits: unknown }>`SELECT instance_limits
       FROM capybara.device_instances WHERE device_id = ${deviceId}`.execute(raw);
     expect(row.rows[0]?.instance_limits).toMatchObject({

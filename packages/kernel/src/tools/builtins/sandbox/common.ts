@@ -5,6 +5,7 @@ import {
   isSandboxOperationOutcomeUnknownError,
   isSandboxPermissionUnsupportedError,
   isSandboxScopeDeniedError,
+  isSandboxScopeValidationError,
   type Logger,
   type SandboxHandle,
   type SandboxPreparation,
@@ -145,8 +146,15 @@ export interface SandboxToolDeps {
 export interface SandboxSession {
   /** The device the call runs in (path leases are taken on it). */
   deviceId: string;
-  /** The mode the device runs at now (auto mode spec §4.1): the file tools' path checks follow it. */
-  mode: SandboxMode;
+  /**
+   * What bounds the file tools' paths ({@link checkToolPath}), never the device's tier or its
+   * outside-sandbox setting (approval-only profiles: the sandbox is the same under every profile):
+   * - `scope`: the operation's admitted scope. On the managed route every native request carries
+   *   it (project roots plus directory grants, protected paths excluded) and the device enforces
+   *   it, as for `Bash`, so the kernel checks only a path's shape; legacy auto mode too.
+   * - `roots`: the instance's fixed roots (the legacy route in sandbox mode only).
+   */
+  pathBound: "scope" | "roots";
   h: SandboxHandle;
   /** The instance's roots: every path the call builds or checks is under one of them. */
   roots: SandboxRoots;
@@ -343,16 +351,18 @@ export function checkPath(path: string, roots: SandboxRoots, field = "path"): st
 }
 
 /**
- * A file tool's path in the mode the device runs at now (auto mode spec §4.1, decision 1): auto
- * mode accepts any clean absolute path on the machine (shape checks only, the review judges a write
- * outside the workspace); sandbox mode keeps the roots ({@link checkPath}).
+ * A file tool's path under the session's {@link SandboxSession.pathBound}: bounded by the
+ * operation's admitted scope, any clean absolute path passes here (shape checks only; the review
+ * proposes a directory crossing for a path outside the scope, and the device refuses one the
+ * scope does not cover, protected paths included); bounded by the fixed roots, a path must lie
+ * under one of them ({@link checkPath}).
  */
 export function checkToolPath(
   path: string,
-  s: Pick<SandboxSession, "roots" | "mode">,
+  s: Pick<SandboxSession, "roots" | "pathBound">,
   field = "path",
 ): string {
-  if (s.mode !== "auto") return checkPath(path, s.roots, field);
+  if (s.pathBound === "roots") return checkPath(path, s.roots, field);
   checkPathShape(path, field);
   return path.length > 1 && path.endsWith("/") ? path.slice(0, -1) : path;
 }
@@ -392,15 +402,15 @@ export function resolveToolPath(path: string, s: Pick<SandboxSession, "workingRo
   return `${s.workingRoot === "/" ? "" : s.workingRoot}/${segments.join("/")}`;
 }
 
-/** {@link checkToolPath} for a writing tool: the skills directory stays read-only in both modes. */
+/** {@link checkToolPath} for a writing tool: the skills directory stays read-only either way. */
 export function checkToolWritable(
   path: string,
-  s: Pick<SandboxSession, "roots" | "mode" | "workingRoot">,
+  s: Pick<SandboxSession, "roots" | "pathBound" | "workingRoot">,
 ): string {
   const p = checkToolPath(resolveToolPath(path, s), s, "file_path");
   if (p === s.roots.skills || p.startsWith(`${s.roots.skills}/`)) {
     const where =
-      s.mode === "auto"
+      s.pathBound === "scope"
         ? "pass another path instead"
         : `pass a path under ${s.roots.workspace} or ${s.roots.tmp} instead`;
     throw new ToolError(
@@ -496,21 +506,19 @@ function legacyPreparationSession(s: SandboxSession): PreparationSession {
 }
 
 /**
- * Full access refused by policy (B-13: `org.*` / `deployment.*`): the organization or the
- * platform has it off. The kernel's own message is never shown.
+ * Running outside the sandbox refused by policy (B-13): the organization
+ * (`org.outside_sandbox_not_allowed`) or the platform (`deployment.*`) has its outside-sandbox
+ * setting off. One text per layer; the kernel's own message is never shown.
  */
-export const FULL_ACCESS_OFF_BY_POLICY_TOOL_TEXT =
-  "Full access is turned off by your organization's or the platform's policy, so nothing ran. Continue with the Request approval or Approve for me permission profile, or ask an org admin (or a super admin) to allow Full access.";
+export const ORG_OUTSIDE_SANDBOX_OFF_TOOL_TEXT =
+  "Running commands outside the sandbox is off in this organization, so nothing ran. Run the command inside the sandbox, or ask an organization admin to allow running outside the sandbox.";
+export const PLATFORM_OUTSIDE_SANDBOX_OFF_TOOL_TEXT =
+  "Running commands outside the sandbox is off on this platform, so nothing ran. Run the command inside the sandbox, or ask a super admin to allow running outside the sandbox.";
 /**
- * The device's owner ceiling does not allow Full access (`device.full_access_not_allowed`).
+ * The device does not allow running outside the sandbox (`device.outside_sandbox_not_allowed`).
  */
-export const FULL_ACCESS_CEILING_TOOL_TEXT =
-  "This device's owner ceiling does not allow Full access, so nothing ran. Ask the device's owner to raise it with `capybara-device ceiling set` on that machine, or continue with the Request approval or Approve for me permission profile.";
-/** The full-access refusal codes off by policy (organization and platform). */
-const FULL_ACCESS_OFF_BY_POLICY_CODES: ReadonlySet<string> = new Set([
-  "org.full_access_not_allowed",
-  "deployment.full_access_not_allowed",
-]);
+export const OUTSIDE_SANDBOX_CEILING_TOOL_TEXT =
+  "This device does not allow running commands outside the sandbox, so nothing ran. Run the command inside the sandbox, or ask the device's owner to allow it on that machine with `capybara-device ceiling set --outside-sandbox on`.";
 /**
  * The legacy retirement gate's refusals (`RetirementPendingError`, permission runtime cutover
  * 8.5): the device's earlier instance may still run background work an earlier version started.
@@ -539,13 +547,23 @@ export const SCOPE_DENIED_TOOL_TEXT =
   "This operation reaches outside what this conversation's permission profile allows on the device (a path outside the directories it may read or write, or a host it may not reach), so it did not run. Keep the call inside the working directory and the directories already granted, or ask the user to grant the directory or choose a broader permission profile, then retry.";
 /** An approved sandbox escalation whose grant no longer matches at admission (nothing ran). */
 export const ESCALATION_GRANT_MISSING_TEXT =
-  'This Bash call was approved to run outside the sandbox, but the approval no longer matches: the device, its Full access ceiling or this conversation\'s permission scope changed since it was approved, so it did not run. Call Bash again with sandbox: "escalated" and a justification to ask again, or call it without sandbox to run it inside the sandbox.';
+  'This Bash call was approved to run outside the sandbox, but the approval no longer matches: the device, its outside-sandbox setting or this conversation\'s permission scope changed since it was approved, so it did not run. Call Bash again with sandbox: "escalated" and a justification to ask again, or call it without sandbox to run it inside the sandbox.';
+/** {@link ESCALATION_GRANT_MISSING_TEXT} as the reason of a refused background start. */
+export const ESCALATION_GRANT_MISSING_LAUNCH_WHY =
+  'its approval to run outside the sandbox no longer matches (the device, its outside-sandbox setting or the permission scope changed since it was approved); call Bash again with sandbox: "escalated" and a justification to ask again';
 /** A staged request the machine never got: it reconnected before the request was sent. */
 export const DEVICE_REQUEST_NOT_SENT_TOOL_TEXT =
   "The device's machine reconnected before this operation was sent, so nothing ran. Retry the tool call.";
 /** The device cannot enforce the conversation's profile (`SandboxPermissionUnsupportedError`). */
 export const PERMISSION_UNSUPPORTED_TOOL_TEXT =
   "This device cannot enforce this conversation's permission profile, so nothing ran. Ask the user to choose another permission profile for the conversation, or to start a new conversation on a device that supports it.";
+/**
+ * A device refused an operation scope as invalid (`SandboxScopeValidationError`): the kernel only
+ * sends scopes it validated, so this is a kernel invariant break (or a skewed device), never the
+ * model's doing; whether anything ran is not proven.
+ */
+export const SCOPE_INVALID_TOOL_TEXT =
+  "The device refused this operation as malformed, which points to a problem in Capybara itself, not in the request. Tell the user the device rejected the operation and that it should be reported; do not retry it unchanged.";
 /** A managed operation whose outcome could not be confirmed (`SandboxOperationOutcomeUnknownError`). */
 export const OUTCOME_UNKNOWN_TOOL_TEXT =
   "The device may or may not have run this operation: its outcome could not be confirmed. Check the device's state (for example with Read, Glob or TaskList) before retrying, and do not repeat an operation that must not run twice.";
@@ -603,6 +621,12 @@ export function mapSandboxError(e: unknown, log: Pick<Logger, "warn"> | undefine
     log?.warn("sandbox escalation grant no longer matches", { err: e });
     return new ToolError(ESCALATION_GRANT_MISSING_TEXT);
   }
+  if (isSandboxScopeValidationError(e)) {
+    log?.warn("kernel invariant broken: the device refused an operation scope as invalid", {
+      err: e,
+    });
+    return new ToolError(SCOPE_INVALID_TOOL_TEXT);
+  }
   if (isSandboxScopeDeniedError(e)) {
     log?.warn("sandbox operation outside its scope", { err: e });
     return new ToolError(SCOPE_DENIED_TOOL_TEXT);
@@ -641,10 +665,12 @@ export function mapSandboxError(e: unknown, log: Pick<Logger, "warn"> | undefine
     if (e.code === "device.files_lost") return new ToolError(ENV_FILES_LOST_TEXT);
     if (e.code === "device.offline") return new ToolError(DEVICE_OFFLINE_TEXT);
     if (e.code === "device.program_outdated") return new ToolError(DEVICE_OUTDATED_TEXT);
-    if (e.code === "device.full_access_not_allowed")
-      return new ToolError(FULL_ACCESS_CEILING_TOOL_TEXT);
-    if (FULL_ACCESS_OFF_BY_POLICY_CODES.has(e.code))
-      return new ToolError(FULL_ACCESS_OFF_BY_POLICY_TOOL_TEXT);
+    if (e.code === "device.outside_sandbox_not_allowed")
+      return new ToolError(OUTSIDE_SANDBOX_CEILING_TOOL_TEXT);
+    if (e.code === "org.outside_sandbox_not_allowed")
+      return new ToolError(ORG_OUTSIDE_SANDBOX_OFF_TOOL_TEXT);
+    if (e.code === "deployment.outside_sandbox_not_allowed")
+      return new ToolError(PLATFORM_OUTSIDE_SANDBOX_OFF_TOOL_TEXT);
     if (e.code === "device.permission_reconcile_required") {
       return new ToolError(RECONCILE_REQUIRED_TEXT, { kind: "unavailable" });
     }
@@ -839,11 +865,13 @@ async function inSandboxWith<T>(
         },
       },
       async (h, p, info, signal) => {
-        // unknown mode: the strict (sandbox) path checks stay (fail closed)
+        // unknown mode: the strict (sandbox) working root rule stays (fail closed)
         const mode = level?.mode ?? "sandbox";
         const s: SandboxSession = {
           deviceId,
-          mode,
+          // the managed route: the admitted scope of each operation bounds the paths, whatever
+          // the device's tier (its outside-sandbox setting decides only escalations)
+          pathBound: sessionPathBound(operations, mode),
           h,
           roots: info.roots,
           // a managed call runs in the working root its device context recorded (admission's),
@@ -940,6 +968,16 @@ export function sessionWorkingRoot(
   const root = workingRootOf(working.project, { mode, reach, ...working });
   return root === working.workspace ? workspace : root;
 }
+
+/**
+ * What bounds a session's file-tool paths ({@link SandboxSession.pathBound}): the admitted scope
+ * on the managed operation route, under every tier; on the legacy route, the fixed roots unless
+ * the device runs in auto mode.
+ */
+export const sessionPathBound = (
+  operations: boolean,
+  mode: SandboxMode,
+): SandboxSession["pathBound"] => (operations || mode === "auto" ? "scope" : "roots");
 
 /** The conversation whose device a call uses (the root conversation's for a sub-agent). */
 export const sandboxConversationOf = (ctx: BuiltinCallContext): string =>

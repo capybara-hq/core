@@ -17,7 +17,7 @@ import {
   convertPolicyFile,
   DEFAULT_POLICY,
   type KeepAwakeMode,
-  policyMode,
+  type OwnerCeilingPolicy,
   readCredential,
   readPolicy,
 } from "../state.js";
@@ -49,13 +49,29 @@ export interface StartDeps {
   tickMs?: number;
 }
 
-/** Printed once when start converted an old-format policy.json to version 2. */
-export function legacyPolicyNotice(mode: "auto" | "sandbox"): string {
+/**
+ * Printed once when start converted an old-format policy.json to version 3 (never wider). A device
+ * that kept the allowlist learns how to open the network.
+ */
+export function legacyPolicyNotice(ceiling: OwnerCeilingPolicy): string {
   return (
-    "policy.json now uses the version 2 owner ceiling; this machine runs in " +
-    `${mode} mode; see \`capybara-device ceiling show\`.`
+    "policy.json now uses the version 3 owner ceiling: commands run in the sandbox under every " +
+    `profile; outside the sandbox ${ceiling.outsideSandbox ? "on" : "off"}, network ` +
+    `${ceiling.network}; see \`capybara-device ceiling show\`.` +
+    (ceiling.network === "allowlist"
+      ? " To open the sandbox network: capybara-device ceiling set --network open"
+      : "")
   );
 }
+
+/**
+ * Printed once when start found no policy.json (a device set up before rc.58, whose `login` wrote
+ * none) and wrote the closed ceiling it already ran with.
+ */
+export const MISSING_POLICY_NOTICE =
+  "policy.json was missing, so this machine keeps the sandbox it had: no network host allowed and " +
+  "no running outside the sandbox (written to policy.json). To open the sandbox network: " +
+  "capybara-device ceiling set --network open";
 
 /** `start`: connect and serve in the foreground until stopped, drained, revoked or replaced. */
 export async function start(deps: StartDeps): Promise<number> {
@@ -237,7 +253,7 @@ export async function start(deps: StartDeps): Promise<number> {
 }
 
 /**
- * The start proper (device protocol 3): the policy store, the program's parts (binder,
+ * The start proper (device protocol 4): the policy store, the program's parts (binder,
  * per-generation backends, per-credential session state), recovery of a persisted binding, then
  * {@link connectStaged}.
  */
@@ -255,9 +271,10 @@ async function serveStaged(
   const { stateDir, out, err } = deps;
   let device: StagedDevice;
   try {
-    const converted = convertPolicyFile(stateDir) === "converted";
+    const conversion = convertPolicyFile(stateDir);
     const policy = new PolicyStore(stateDir);
-    if (converted) out(legacyPolicyNotice(policyMode(policy.current())));
+    if (conversion === "converted") out(legacyPolicyNotice(policy.current().ownerCeiling));
+    if (conversion === "created") out(MISSING_POLICY_NOTICE);
     device = await (deps.createStaged as NonNullable<StartDeps["createStaged"]>)(cred, policy);
   } catch (e) {
     err(`Cannot start: ${(e as Error).message}`);

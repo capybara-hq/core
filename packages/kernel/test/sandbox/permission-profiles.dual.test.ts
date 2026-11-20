@@ -33,7 +33,7 @@ import {
   waitFor,
   waitForTerminal,
 } from "../helpers/runs.js";
-import { FakeMachineV3, ownerReportFor } from "../local-devices/fake-machine-v3.js";
+import { bindAnswer, FakeMachineV3, ownerReportFor } from "../local-devices/fake-machine-v3.js";
 import type { Answer } from "../local-devices/test-holder.js";
 
 /**
@@ -91,7 +91,8 @@ beforeAll(async () => {
         extensionConfig: { "sandbox-fake": { root: sandboxRoot } },
         http: { port: 0, publicUrl: "https://cap.example" },
         auth: { cookieSecure: false },
-        devices: { local: { reconnectGraceSeconds: 30, leaseTtlMs: 6000 } },
+        // every case makes its own device
+        devices: { maxPersonal: 30, local: { reconnectGraceSeconds: 30, leaseTtlMs: 6000 } },
       },
     );
   kA = await startKernel(config(["api", "worker", "gateway"]));
@@ -112,10 +113,12 @@ beforeAll(async () => {
         instructions: "Use the device.",
         model: { provider: "model-fake", model: "fake-1" },
         disabledTools: onlyBuiltins(
-          ["Bash", "Read", "Write", "Edit", "TaskOutput", "TaskStop"].map((name) => ({
-            kind: "builtin" as const,
-            name,
-          })),
+          ["Bash", "Read", "Write", "Edit", "Glob", "Grep", "TaskOutput", "TaskStop"].map(
+            (name) => ({
+              kind: "builtin" as const,
+              name,
+            }),
+          ),
         ),
       },
       visibility: "org",
@@ -249,6 +252,27 @@ async function denyThrough(conv: string, askId: string, terminal: number): Promi
   return (await results(conv)).at(-1) as ToolResult;
 }
 
+/** The device's admission epoch (absent: revision zero). */
+async function deviceEpoch(deviceId: string): Promise<number> {
+  const row = await db
+    .selectFrom("permission_authority_epochs")
+    .select("revision")
+    .where("kind", "=", "device")
+    .where("id", "=", deviceId)
+    .executeTakeFirst();
+  return Number(row?.revision ?? 0);
+}
+
+/** Approves an ask once through replica B. */
+async function approveThrough(askId: string): Promise<void> {
+  const res = await ownerB({
+    method: "POST",
+    url: `/api/v1/orgs/${orgId}/approvals/${askId}/decision`,
+    payload: { decision: "approve", scope: "once" },
+  });
+  expect(res.statusCode, res.body).toBe(200);
+}
+
 /** A restricted scope that can read `root` (a native read may get no write roots at all). */
 const readsWithin = (root: string) =>
   expect.objectContaining({ kind: "scoped", readRoots: expect.arrayContaining([root]) });
@@ -332,10 +356,9 @@ async function matrix(profile: Profile): Promise<void> {
   );
   for (const i of ran) {
     expect(i.scope.profile, i.method).toBe(profile);
-    if (profile === "full-access") {
-      expect(i.scope.filesystem, i.method).toEqual({ kind: "device" });
-      expect(i.scope.network, i.method).toEqual({ kind: "environment" });
-    } else expect(i.scope.filesystem, i.method).toEqual(scopedTo("/workspace"));
+    // the sandbox is the same under every profile: Full access keeps the scoped filesystem
+    expect(i.scope.filesystem, i.method).toEqual(scopedTo("/workspace"));
+    expect(i.scope.network.kind, i.method).not.toBe("environment");
     expect(i.permission_grant_id, i.method).toBeNull();
   }
 
@@ -382,6 +405,34 @@ describe("profile × operation matrix through the owner API on two replicas", ()
   });
   it("Full access: in-project work runs with its scope; outside work follows the profile", async () => {
     await matrix("full-access");
+  });
+
+  // R3 Mac dogfood (2026-11-20): a Read outside the scope asked as a write (detail kind "write",
+  // tool key Write), so the card said the agent wanted to write the file above a read-only scope
+  it("an outside Read asks as a read: its detail and tool key name a read, not a write", async () => {
+    const deviceId = await cloudDevice();
+    const conv = await conversation(deviceId);
+    const bound = await call(conv, "Bash", { command: "echo bound", description: "Bind" }, 1);
+    expect(bound.payload.isError, bound.payload.content).toBe(false);
+    await setProfile(conv, "request-approval");
+    const outside = "/etc/capybara-read/note.txt";
+    await postMessage(ownerA, orgId, conv, `tool:Read:${JSON.stringify({ file_path: outside })}`);
+    const ask = await pendingAsk(conv);
+    const row = await db
+      .selectFrom("approvals")
+      .select("tool_key")
+      .where("id", "=", ask.id)
+      .executeTakeFirstOrThrow();
+    try {
+      expect(ask.detail as Record<string, unknown>).toMatchObject({
+        targetPath: outside,
+        permissionScope: { readDirectories: ["/etc/capybara-read"], writeDirectories: [] },
+      });
+      expect((ask.detail as { kind?: string }).kind).toBe("read");
+      expect(row.tool_key).toBe("Read");
+    } finally {
+      await denyThrough(conv, ask.id, 2);
+    }
   });
 });
 
@@ -495,9 +546,18 @@ describe("a local device's project outside its fixed workspace", () => {
   };
   const PROJECT = "/home/me/code/app";
 
-  it("the first call of a restricted conversation is a Read of the project: the device gets the project as its root", async () => {
+  /**
+   * A protocol 3 machine of the owner whose reach is the OS user and whose outside-sandbox switch
+   * is `outsideSandbox`, answering with `answer`, with the project at {@link PROJECT} added through
+   * replica B and a Request approval conversation bound to it.
+   */
+  async function osUserProject(
+    label: string,
+    outsideSandbox: boolean,
+    answer: (req: KernelReq) => Answer,
+  ): Promise<{ deviceId: string; machine: FakeMachineV3; conv: string; credential: string }> {
     const { deviceId, credential } = await kA.app.get(TransactionHost).run(async () => {
-      const { id } = await kA.app.get(DevicesService).createLocal(orgId, ownerId, "Laptop");
+      const { id } = await kA.app.get(DevicesService).createLocal(orgId, ownerId, label);
       const issued = await kA.app.get(MachinesService).issue({
         orgId,
         deviceId: id,
@@ -509,6 +569,59 @@ describe("a local device's project outside its fixed workspace", () => {
       });
       return { deviceId: id, credential: issued.credential };
     });
+    const machine = new FakeMachineV3(
+      `ws://127.0.0.1:${kA.port}/device/connect`,
+      credential,
+      answer,
+      { hello: false },
+    );
+    machines.push(machine);
+    await machine.opened;
+    const hello: Partial<LegacyDeviceHello> = {
+      roots: ROOTS,
+      home: HOME,
+      features: ["networkReport", "policyOp", "policyOpId", "projects"],
+      policy: { allowedDomains: [] },
+    };
+    machine.hello({
+      ...hello,
+      ownerCeiling: ownerReportFor(
+        { allowedDomains: [] },
+        { outsideSandbox, restrictedProjectReach: "os-user" },
+      ),
+    });
+    await machine.ready;
+    await waitFor(
+      async () =>
+        (
+          await db
+            .selectFrom("device_machines")
+            .select("roots")
+            .where("device_id", "=", deviceId)
+            .where("revoked_at", "is", null)
+            .executeTakeFirst()
+        )?.roots != null,
+      15_000,
+      "hello recorded",
+    );
+    // the owner adds the project through replica B (relative to the home in auto mode)
+    const added = await ownerB({
+      method: "POST",
+      url: `/api/v1/orgs/${orgId}/devices/${deviceId}/projects`,
+      payload: { path: "code/app" },
+    });
+    expect(added.statusCode, added.body).toBe(201);
+    const conv = await conversation(deviceId, "app");
+    await setProfile(conv, "request-approval");
+    return { deviceId, machine, conv, credential };
+  }
+
+  /**
+   * A project outside the workspace (the owner's os-user reach), read first in a restricted
+   * conversation. The owner's outside-sandbox switch decides only whether a call may run outside
+   * the sandbox: it must not change which paths the file tools accept inside the project.
+   */
+  async function firstProjectRead(outsideSandbox: boolean): Promise<void> {
     const answer = (req: KernelReq): Answer => {
       const a = req.args as { path?: string };
       const op = String(req.op).replace(/^browse(\w)/, (_, c: string) => c.toLowerCase());
@@ -536,50 +649,11 @@ describe("a local device's project outside its fixed workspace", () => {
           return { ok: true, result: null };
       }
     };
-    const machine = new FakeMachineV3(
-      `ws://127.0.0.1:${kA.port}/device/connect`,
-      credential,
+    const { machine, conv } = await osUserProject(
+      `Laptop ${outsideSandbox ? "on" : "off"}`,
+      outsideSandbox,
       answer,
-      { hello: false },
     );
-    machines.push(machine);
-    await machine.opened;
-    const hello: Partial<LegacyDeviceHello> = {
-      roots: ROOTS,
-      home: HOME,
-      features: ["networkReport", "policyOp", "policyOpId", "mode", "projects"],
-      policy: { mode: "auto", allowedDomains: [] },
-    };
-    machine.hello({
-      ...hello,
-      ownerCeiling: ownerReportFor(
-        { allowedDomains: [] },
-        { fullAccess: true, restrictedProjectReach: "os-user" },
-      ),
-    });
-    await machine.ready;
-    await waitFor(
-      async () =>
-        (
-          await db
-            .selectFrom("device_machines")
-            .select("roots")
-            .where("device_id", "=", deviceId)
-            .where("revoked_at", "is", null)
-            .executeTakeFirst()
-        )?.roots != null,
-      15_000,
-      "hello recorded",
-    );
-    // the owner adds the project through replica B (relative to the home in auto mode)
-    const added = await ownerB({
-      method: "POST",
-      url: `/api/v1/orgs/${orgId}/devices/${deviceId}/projects`,
-      payload: { path: "code/app" },
-    });
-    expect(added.statusCode, added.body).toBe(201);
-    const conv = await conversation(deviceId, "app");
-    await setProfile(conv, "request-approval");
 
     const read = await call(conv, "Read", { file_path: `${PROJECT}/README.md` }, 1);
     expect(read.payload.isError, read.payload.content).toBe(false);
@@ -618,15 +692,356 @@ describe("a local device's project outside its fixed workspace", () => {
     expect(((write as KernelReq).args as { scope: Scope }).scope.filesystem).toEqual(
       scopedTo(PROJECT),
     );
+  }
+
+  it("the first call of a restricted conversation is a Read of the project: the device gets the project as its root", async () => {
+    await firstProjectRead(true);
+  });
+
+  // R3 Mac dogfood (2026-11-20): with outside-sandbox off (a new install's default) the file tools
+  // kept the fixed roots and refused the project, while Bash in it ran
+  it("the same first Read when the owner keeps every call in the sandbox (outside-sandbox off)", async () => {
+    await firstProjectRead(false);
+  });
+
+  /**
+   * The file tools while the owner keeps every call in the sandbox (outside-sandbox off): bounded
+   * by the operation's admitted scope, as `Bash` is, never by that switch. Every file tool works
+   * in the os-user project with no ask; a directory crossing outside it follows the profile and,
+   * once approved or auto-granted, runs with the granted directory; a protected path stays denied.
+   */
+  async function fileToolsOutsideOff(profile: Profile): Promise<void> {
+    const NOTES = "/home/me/notes";
+    const SECRET = "/home/me/.ssh/id_ed25519";
+    const files = new Map<string, string>([
+      [`${PROJECT}/README.md`, "hello app\n"],
+      [`${NOTES}/todo.txt`, "buy milk\n"],
+    ]);
+    const dirs = new Set([PROJECT, NOTES]);
+    const answer = (req: KernelReq): Answer => {
+      const a = req.args as { path?: string; dataB64?: string; command?: string };
+      const op = String(req.op).replace(/^browse(\w)/, (_, c: string) => c.toLowerCase());
+      switch (op) {
+        case "create":
+          return { ok: true, result: { roots: ROOTS } };
+        case "stat": {
+          if (a.path !== undefined && dirs.has(a.path))
+            return { ok: true, result: { size: 0, isDir: true } };
+          const f = a.path === undefined ? undefined : files.get(a.path);
+          return { ok: true, result: f === undefined ? null : { size: f.length, isDir: false } };
+        }
+        case "list":
+          return { ok: true, result: { entries: [], truncated: false } };
+        case "readFile": {
+          const f = a.path === undefined ? undefined : files.get(a.path);
+          return {
+            ok: true,
+            result:
+              f === undefined
+                ? null
+                : { dataB64: Buffer.from(f).toString("base64"), truncated: false },
+          };
+        }
+        case "writeFile":
+          if (a.path !== undefined && a.dataB64 !== undefined)
+            files.set(a.path, Buffer.from(a.dataB64, "base64").toString());
+          return { ok: true, result: null };
+        case "exec":
+          // Glob runs `find`, Grep runs `grep`, both in the project root
+          return {
+            ok: true,
+            result: {
+              exitCode: 0,
+              stdout: "./README.md\0",
+              stderr: "",
+              truncated: false,
+              timedOut: false,
+            },
+          };
+        default:
+          return { ok: true, result: null };
+      }
+    };
+    const { machine, conv } = await osUserProject(`Laptop off ${profile}`, false, answer);
+    if (profile !== "request-approval") await setProfile(conv, profile);
+    const native = (op: string, path: string) =>
+      machine.frames.filter(
+        (f): f is KernelReq =>
+          f.type === "req" && String(f.op) === op && (f.args as { path?: string }).path === path,
+      );
+    let n = 0;
+
+    // every file tool works in the project, with no ask
+    const read = await call(conv, "Read", { file_path: `${PROJECT}/README.md` }, ++n);
+    expect(read.payload.isError, read.payload.content).toBe(false);
+    expect(read.payload.content).toContain("hello app");
+    const wrote = await call(
+      conv,
+      "Write",
+      { file_path: `${PROJECT}/NEW.md`, content: "one\n" },
+      ++n,
+    );
+    expect(wrote.payload.isError, wrote.payload.content).toBe(false);
+    const edited = await call(
+      conv,
+      "Edit",
+      { file_path: `${PROJECT}/NEW.md`, old_string: "one", new_string: "two" },
+      ++n,
+    );
+    expect(edited.payload.isError, edited.payload.content).toBe(false);
+    expect(files.get(`${PROJECT}/NEW.md`)).toBe("two\n");
+    const globbed = await call(conv, "Glob", { pattern: "**/*.md" }, ++n);
+    expect(globbed.payload.isError, globbed.payload.content).toBe(false);
+    expect(globbed.payload.content).toContain(`${PROJECT}/README.md`);
+    const grepped = await call(conv, "Grep", { pattern: "hello", path: PROJECT }, ++n);
+    expect(grepped.payload.isError, grepped.payload.content).toBe(false);
+    expect(grepped.payload.content).toContain(`${PROJECT}/README.md`);
+    expect(await approvalsOf(conv)).toEqual([]);
+
+    // a directory crossing: Request approval and Approve for me (no review model here) ask the
+    // person, Full access grants it; then the call runs with the granted directory
+    const crossing = async (key: string, input: unknown, kind: "read" | "write") => {
+      await postMessage(ownerA, orgId, conv, `tool:${key}:${JSON.stringify(input)}`);
+      if (profile !== "full-access") {
+        const ask = await pendingAsk(conv);
+        expect(ask.detail as Record<string, unknown>).toMatchObject({ kind });
+        await approveThrough(ask.id);
+      }
+      await waitForTerminal(db, conv, ++n, 60_000);
+      const r = (await results(conv)).at(-1) as ToolResult;
+      expect(r.payload.toolKey).toBe(key);
+      expect(r.payload.isError, r.payload.content).toBe(false);
+      return r;
+    };
+    const outsideRead = await crossing("Read", { file_path: `${NOTES}/todo.txt` }, "read");
+    expect(outsideRead.payload.content).toContain("buy milk");
+    const readReq = native("readFile", `${NOTES}/todo.txt`).at(-1);
+    expect(readReq).toBeDefined();
+    expect(((readReq as KernelReq).args as { scope: Scope }).scope.filesystem).toEqual(
+      readsWithin(NOTES),
+    );
+    await crossing(
+      "Edit",
+      { file_path: `${NOTES}/todo.txt`, old_string: "milk", new_string: "tea" },
+      "write",
+    );
+    expect(files.get(`${NOTES}/todo.txt`)).toBe("buy tea\n");
+    await crossing("Write", { file_path: `${NOTES}/new.txt`, content: "x" }, "write");
+    expect(files.get(`${NOTES}/new.txt`)).toBe("x");
+    const writeReq = native("writeFile", `${NOTES}/new.txt`).at(-1);
+    expect(((writeReq as KernelReq).args as { scope: Scope }).scope.filesystem).toMatchObject({
+      kind: "scoped",
+      writeRoots: expect.arrayContaining([NOTES]),
+    });
+
+    // a protected path stays denied under every profile: nothing asks and nothing reaches it
+    const asks = (await approvalsOf(conv)).length;
+    const secret = await call(conv, "Read", { file_path: SECRET }, ++n);
+    expect(secret.payload.isError).toBe(true);
+    expect(secret.payload.review).toMatchObject({ decision: "deny" });
+    expect(await approvalsOf(conv)).toHaveLength(asks);
+    expect(native("readFile", SECRET)).toEqual([]);
+  }
+
+  /**
+   * An upgrade of capybara-device (or a rebuilt package of the same version): every release
+   * changes the runtime bytes, so the restarted program's verified runtime hash differs from the
+   * one its stored binding attested. The device then starts unbound and says so in its hello; the
+   * kernel must replace the instance (old work revoked, the fence moved on) and bind a new
+   * generation under the new evidence, without the owner logging out and in again.
+   */
+  it("a device restarted with a changed runtime hash is re-probed and rebound on its next call", async () => {
+    const files = new Map([[`${PROJECT}/README.md`, "hello app\n"]]);
+    const runtimeHashes: string[] = [];
+    const answerWith =
+      (runtimeHash: string) =>
+      (req: KernelReq): Answer => {
+        const a = req.args as { path?: string };
+        const op = String(req.op).replace(/^browse(\w)/, (_, c: string) => c.toLowerCase());
+        switch (op) {
+          case "bindInstance": {
+            runtimeHashes.push(runtimeHash);
+            const answer = bindAnswer(req) as { ok: true; result: Record<string, unknown> };
+            const identity = answer.result.runtimeIdentity as Record<string, unknown>;
+            return {
+              ok: true,
+              result: { ...answer.result, runtimeIdentity: { ...identity, runtimeHash } },
+            };
+          }
+          case "create":
+            return { ok: true, result: { roots: ROOTS } };
+          case "stat": {
+            if (a.path === PROJECT) return { ok: true, result: { size: 0, isDir: true } };
+            const f = a.path === undefined ? undefined : files.get(a.path);
+            return { ok: true, result: f === undefined ? null : { size: f.length, isDir: false } };
+          }
+          case "list":
+            return { ok: true, result: { entries: [], truncated: false } };
+          case "readFile": {
+            const f = a.path === undefined ? undefined : files.get(a.path);
+            return {
+              ok: true,
+              result:
+                f === undefined
+                  ? null
+                  : { dataB64: Buffer.from(f).toString("base64"), truncated: false },
+            };
+          }
+          default:
+            return { ok: true, result: null };
+        }
+      };
+    const { deviceId, machine, conv, credential } = await osUserProject(
+      "Laptop upgrade",
+      false,
+      answerWith("a".repeat(64)),
+    );
+    const first = await call(conv, "Read", { file_path: `${PROJECT}/README.md` }, 1);
+    expect(first.payload.isError, first.payload.content).toBe(false);
+    const before = await db
+      .selectFrom("device_instance_bindings")
+      .select(["instance_generation", "status"])
+      .where("device_id", "=", deviceId)
+      .orderBy("installed_at", "desc")
+      .executeTakeFirstOrThrow();
+    expect(before.status).toBe("installed");
+    const helloOverrides = {
+      roots: ROOTS,
+      home: HOME,
+      features: ["networkReport", "policyOp", "policyOpId", "projects"],
+      policy: { allowedDomains: [] },
+      ownerCeiling: ownerReportFor(
+        { allowedDomains: [] },
+        { outsideSandbox: false, restrictedProjectReach: "os-user" },
+      ),
+    };
+    const instanceFence = async () =>
+      (
+        await db
+          .selectFrom("device_instances")
+          .select("generation")
+          .where("device_id", "=", deviceId)
+          .executeTakeFirstOrThrow()
+      ).generation;
+    /** Waits until the hello of the connection `ready` named is recorded (its owner report). */
+    const helloRecorded = (connectionId: string) =>
+      waitFor(
+        async () => {
+          const row = await db
+            .selectFrom("device_machines")
+            .select("owner_report")
+            .where("device_id", "=", deviceId)
+            .where("revoked_at", "is", null)
+            .executeTakeFirst();
+          return (
+            (row?.owner_report as { connectionId?: string } | null)?.connectionId === connectionId
+          );
+        },
+        15_000,
+        "the hello was recorded",
+      );
+
+    // the same program reconnects (a socket blip) with its binding: nothing is replaced
+    const fenceBefore = await instanceFence();
+    const epochBefore = await deviceEpoch(deviceId);
+    machine.close();
+    await machine.closed;
+    const reconnected = new FakeMachineV3(
+      `ws://127.0.0.1:${kA.port}/device/connect`,
+      credential,
+      answerWith("a".repeat(64)),
+      { hello: false },
+    );
+    machines.push(reconnected);
+    await reconnected.opened;
+    const installed = bindAnswer({
+      args: {
+        instanceId: deviceId,
+        instanceGeneration: before.instance_generation,
+        bindingId: "x",
+      },
+    } as unknown as KernelReq) as { ok: true; result: Record<string, unknown> };
+    reconnected.hello({
+      ...helloOverrides,
+      instanceGeneration: before.instance_generation,
+      runtimeIdentity: installed.result.runtimeIdentity,
+      permissionSupport: installed.result.permissionSupport,
+    });
+    await helloRecorded((await reconnected.ready).connectionId);
+    expect(await deviceEpoch(deviceId)).toBe(epochBefore);
+    expect(await instanceFence()).toBe(fenceBefore);
+    const again = await call(conv, "Read", { file_path: `${PROJECT}/README.md` }, 2);
+    expect(again.payload.isError, again.payload.content).toBe(false);
+    expect(
+      (
+        await db
+          .selectFrom("device_instance_bindings")
+          .select("instance_generation")
+          .where("device_id", "=", deviceId)
+          .orderBy("installed_at", "desc")
+          .executeTakeFirstOrThrow()
+      ).instance_generation,
+    ).toBe(before.instance_generation);
+
+    // the program is replaced and restarts: its stored binding no longer verifies, so it is unbound
+    reconnected.close();
+    await reconnected.closed;
+    const upgraded = new FakeMachineV3(
+      `ws://127.0.0.1:${kA.port}/device/connect`,
+      credential,
+      answerWith("d".repeat(64)),
+      { hello: false },
+    );
+    machines.push(upgraded);
+    await upgraded.opened;
+    upgraded.hello({ ...helloOverrides, instanceGeneration: null });
+    await upgraded.ready;
+    // the old generation's admitted work is revoked: the device's admission epoch moved on
+    await waitFor(
+      async () => (await deviceEpoch(deviceId)) > epochBefore,
+      15_000,
+      "the device epoch advanced",
+    );
+
+    // the next call succeeds on a new generation bound under the new runtime evidence
+    const next = await call(conv, "Read", { file_path: `${PROJECT}/README.md` }, 3);
+    expect(next.payload.isError, next.payload.content).toBe(false);
+    expect(next.payload.content).toContain("hello app");
+    const after = await db
+      .selectFrom("device_instance_bindings")
+      .select(["instance_generation", "status", "runtime_identity", "previous_generation"])
+      .where("device_id", "=", deviceId)
+      .orderBy("installed_at", "desc")
+      .executeTakeFirstOrThrow();
+    expect(after.status).toBe("installed");
+    expect(BigInt(after.instance_generation)).toBeGreaterThan(BigInt(before.instance_generation));
+    expect(after.previous_generation).toBe(before.instance_generation);
+    expect((after.runtime_identity as { runtimeHash: string }).runtimeHash).toBe("d".repeat(64));
+    expect(runtimeHashes.at(-1)).toBe("d".repeat(64));
+    expect(upgraded.frames.some((f) => f.type === "req" && String(f.op) === "bindInstance")).toBe(
+      true,
+    );
+  });
+
+  it("Request approval with outside-sandbox off: the file tools follow the admitted scope", async () => {
+    await fileToolsOutsideOff("request-approval");
+  });
+  it("Approve for me with outside-sandbox off: the file tools follow the admitted scope", async () => {
+    await fileToolsOutsideOff("approve-for-me");
+  });
+  it("Full access with outside-sandbox off: the file tools follow the admitted scope", async () => {
+    await fileToolsOutsideOff("full-access");
   });
 });
 
-describe("a device whose runtime cannot enforce the restricted profiles", () => {
-  it("restricted profiles refuse truthfully before any effect; Full access still runs", async () => {
+describe("a device whose runtime cannot enforce its sandbox", () => {
+  it("every profile refuses truthfully before any effect, Full access included", async () => {
     await setFakeSandboxPermissionSupport(sandboxRoot, {
-      version: 1,
+      version: 2,
       restricted: null,
-      fullAccess: true,
+      boundary: "operation",
+      network: { openPublic: false, allowlist: false, perOperationHosts: false },
+      outsideSandbox: true,
       background: true,
       unavailableReason: "No restricted runtime on this test provider",
     });
@@ -662,215 +1077,52 @@ describe("a device whose runtime cannot enforce the restricted profiles", () => 
       await setProfile(conv, "request-approval");
       const again = await call(conv, "Read", { file_path: "/workspace/x.txt" }, 2);
       expect(again.payload.content).toBe(PERMISSION_UNSUPPORTED_TOOL_TEXT);
-      // Full access, explicitly chosen with its consent, runs
+      // Full access keeps the sandbox: on a runtime that only runs outside it, a call under Full
+      // access runs nothing either
       await setProfile(conv, "full-access");
       const full = await call(conv, "Bash", { command: "echo full-ok", description: "Run" }, 3);
-      expect(full.payload.isError, full.payload.content).toBe(false);
-      expect(full.payload.content).toContain("full-ok");
-      expect((await intentsOf(conv)).at(-1)?.scope.filesystem).toEqual({ kind: "device" });
+      expect(full.payload.isError).toBe(true);
+      expect(full.payload.content).toBe(PERMISSION_UNSUPPORTED_TOOL_TEXT);
+      expect((await intentsOf(conv)).filter((i) => i.method === "exec")).toEqual([]);
     } finally {
       await setFakeSandboxPermissionSupport(sandboxRoot, null);
     }
   });
 });
 
-describe("a per-call sandbox escalation across replicas", () => {
-  it("approved on replica B, it runs on replica A outside the sandbox once; the next call is sandboxed", async () => {
-    const deviceId = await cloudDevice();
-    const conv = await conversation(deviceId);
-    const bound = await call(conv, "Bash", { command: "echo bound", description: "Bind" }, 1);
-    expect(bound.payload.isError, bound.payload.content).toBe(false);
-    await setProfile(conv, "request-approval");
-    const justification = "The build writes the system cache outside the project.";
-    await postMessage(
-      ownerA,
-      orgId,
-      conv,
-      `tool:Bash:${JSON.stringify({
-        command: "echo escalated",
-        description: "Escalate",
-        sandbox: "escalated",
-        justification,
-      })}`,
-    );
-    const ask = await pendingAsk(conv);
-    expect(ask.detail as Record<string, unknown>).toMatchObject({
-      kind: "command",
-      command: "echo escalated",
-      escalation: { justification },
-      workingRoot: "/workspace",
-    });
-    const res = await ownerB({
-      method: "POST",
-      url: `/api/v1/orgs/${orgId}/approvals/${ask.id}/decision`,
-      payload: { decision: "approve", scope: "once" },
-    });
-    expect(res.statusCode, res.body).toBe(200);
-    await waitForTerminal(db, conv, 2, 60_000);
-    const ran = (await results(conv)).at(-1) as ToolResult;
-    expect(ran.payload.isError, ran.payload.content).toBe(false);
-    expect(ran.payload.content).toContain("escalated");
-    expect(ran.payload.review).toMatchObject({ by: "person", sandbox: "escalated" });
-    const execs = (await intentsOf(conv)).filter((i) => i.method === "exec");
-    const escalatedExec = execs.at(-1);
-    expect(escalatedExec?.scope).toMatchObject({
-      profile: "request-approval",
-      filesystem: { kind: "device" },
-      network: { kind: "environment" },
-    });
-    expect(escalatedExec?.permission_grant_id).not.toBeNull();
-    // the next call of the conversation runs in the sandbox again: the grant was that call's only
-    const next = await call(conv, "Bash", { command: "echo again", description: "Again" }, 3);
-    expect(next.payload.isError, next.payload.content).toBe(false);
-    const last = (await intentsOf(conv)).filter((i) => i.method === "exec").at(-1);
-    expect(last?.scope.filesystem).toEqual(scopedTo("/workspace"));
-    expect(last?.permission_grant_id).toBeNull();
-    expect((await approvalsOf(conv)).filter((a) => a.status === "pending")).toEqual([]);
-  });
-
-  it("a background escalation runs its start outside the sandbox once; TaskOutput and TaskStop stay sandboxed", async () => {
-    const deviceId = await cloudDevice();
-    const conv = await conversation(deviceId);
-    const bound = await call(conv, "Bash", { command: "echo bound", description: "Bind" }, 1);
-    expect(bound.payload.isError, bound.payload.content).toBe(false);
-    await setProfile(conv, "request-approval");
-    const justification = "The dev server must keep running while the person tests it.";
-    await postMessage(
-      ownerA,
-      orgId,
-      conv,
-      `tool:Bash:${JSON.stringify({
-        command: "sleep 120",
-        description: "Serve",
-        run_in_background: true,
-        sandbox: "escalated",
-        justification,
-      })}`,
-    );
-    const ask = await pendingAsk(conv);
-    expect(ask.detail as Record<string, unknown>).toMatchObject({
-      kind: "command",
-      command: "sleep 120",
-      escalation: { justification, background: true, maxSeconds: expect.any(Number) },
-    });
-    const approved = await ownerB({
-      method: "POST",
-      url: `/api/v1/orgs/${orgId}/approvals/${ask.id}/decision`,
-      payload: { decision: "approve", scope: "once" },
-    });
-    expect(approved.statusCode, approved.body).toBe(200);
-    await waitForTerminal(db, conv, 2, 60_000);
-    const started = (await results(conv)).at(-1) as ToolResult;
-    expect(started.payload.isError, started.payload.content).toBe(false);
-    expect(started.payload.review).toMatchObject({ by: "person", sandbox: "escalated" });
-    const start = (await intentsOf(conv)).filter((i) => i.method === "backgroundStart").at(-1);
-    expect(start?.scope).toMatchObject({
-      profile: "request-approval",
-      filesystem: { kind: "device" },
-      network: { kind: "environment" },
-    });
-    expect(start?.permission_grant_id).not.toBeNull();
-    const grant = await db
-      .selectFrom("permission_call_grants")
-      .select(["id", "scope_kind"])
-      .where("id", "=", start?.permission_grant_id as string)
-      .executeTakeFirstOrThrow();
-    expect(grant.scope_kind).toBe("sandbox-escalation");
-    const task = await waitFor(
-      async () =>
-        db
-          .selectFrom("background_tasks")
-          .select(["id", "status"])
-          .where("conversation_id", "=", conv)
-          .where("status", "=", "running")
-          .executeTakeFirst(),
-      30_000,
-      "the running escalated task",
-    );
-    const before = (await intentsOf(conv)).length;
-    const output = await call(conv, "TaskOutput", { task_id: task.id, block: false }, 3);
-    expect(output.payload.isError, output.payload.content).toBe(false);
-    expect(output.payload.review?.sandbox).toBeUndefined();
-    const stopped = await call(conv, "TaskStop", { task_id: task.id }, 4);
-    expect(stopped.payload.isError, stopped.payload.content).toBe(false);
-    expect(stopped.payload.review?.sandbox).toBeUndefined();
-    // whatever they dispatched ran with the conversation's restricted scope and no grant
-    for (const i of (await intentsOf(conv)).slice(before)) {
-      expect(i.scope.filesystem, i.method).toEqual(readsWithin("/workspace"));
-      expect(i.permission_grant_id, i.method).toBeNull();
-    }
-    expect(await approvalsOf(conv)).toHaveLength(1);
-  });
-
-  it("an escalated background task is stopped when the org turns Full access off", async () => {
-    const deviceId = await cloudDevice();
-    const conv = await conversation(deviceId);
-    const bound = await call(conv, "Bash", { command: "echo bound", description: "Bind" }, 1);
-    expect(bound.payload.isError, bound.payload.content).toBe(false);
-    await setProfile(conv, "request-approval");
-    await postMessage(
-      ownerA,
-      orgId,
-      conv,
-      `tool:Bash:${JSON.stringify({
-        command: "sleep 120",
-        description: "Serve",
-        run_in_background: true,
-        sandbox: "escalated",
-        justification: "Keep the server up.",
-      })}`,
-    );
-    const ask = await pendingAsk(conv);
-    const approved = await ownerB({
-      method: "POST",
-      url: `/api/v1/orgs/${orgId}/approvals/${ask.id}/decision`,
-      payload: { decision: "approve", scope: "once" },
-    });
-    expect(approved.statusCode, approved.body).toBe(200);
-    await waitForTerminal(db, conv, 2, 60_000);
-    const task = await waitFor(
-      async () =>
-        db
-          .selectFrom("background_tasks")
-          .select(["id", "operation_id"])
-          .where("conversation_id", "=", conv)
-          .where("status", "=", "running")
-          .executeTakeFirst(),
-      30_000,
-      "the running escalated task",
-    );
-    const off = await ownerB({
-      method: "PATCH",
-      url: `/api/v1/orgs/${orgId}/settings`,
-      payload: { fullAccess: "off" },
-    });
-    expect(off.statusCode, off.body).toBe(200);
-    try {
-      await waitFor(
-        async () =>
-          (
-            await db
-              .selectFrom("background_tasks")
-              .select("status")
-              .where("id", "=", task.id)
-              .executeTakeFirstOrThrow()
-          ).status === "stopped",
-        30_000,
-        "the escalated task stopped by the org switch",
+describe("a per-call sandbox escalation on a cloud device", () => {
+  // a cloud device has no outside of its sandbox (approval-only profiles design, decision 1):
+  // an escalation is refused before any effect, under every profile; the cross-replica
+  // escalation flows run on a local device (the approval-only profiles dual matrix)
+  it.each(["request-approval", "full-access"] as const)(
+    "under %s it is refused before any effect and asks no one",
+    async (profile) => {
+      const deviceId = await cloudDevice();
+      const conv = await conversation(deviceId);
+      const bound = await call(conv, "Bash", { command: "echo bound", description: "Bind" }, 1);
+      expect(bound.payload.isError, bound.payload.content).toBe(false);
+      await setProfile(conv, profile);
+      const refused = await call(
+        conv,
+        "Bash",
+        {
+          command: "echo escalated",
+          description: "Escalate",
+          sandbox: "escalated",
+          justification: "The build writes the system cache outside the project.",
+        },
+        2,
       );
-      const intent = await db
-        .selectFrom("sandbox_operation_intents")
-        .select("state")
-        .where("operation_id", "=", task.operation_id as string)
-        .executeTakeFirstOrThrow();
-      expect(intent.state).toBe("revoked");
-    } finally {
-      const on = await ownerB({
-        method: "PATCH",
-        url: `/api/v1/orgs/${orgId}/settings`,
-        payload: { fullAccess: "allowed" },
-      });
-      expect(on.statusCode, on.body).toBe(200);
-    }
-  });
+      expect(refused.payload.isError).toBe(true);
+      expect(await approvalsOf(conv)).toEqual([]);
+      expect((await intentsOf(conv)).filter((i) => i.scope.filesystem.kind === "device")).toEqual(
+        [],
+      );
+      expect(
+        (await readFakeSandboxOps(sandboxRoot)).filter(
+          (o) => o[0] === "exec" && o.join(" ").includes("echo escalated"),
+        ),
+      ).toEqual([]);
+    },
+  );
 });

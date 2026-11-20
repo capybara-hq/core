@@ -66,12 +66,12 @@ const ROOTS = {
   skills: "/home/me/.capybara/dev/skills",
   tmp: "/home/me/.capybara/dev/tmp",
 };
-const FEATURES = ["networkReport", "policyOp", "policyOpId", "mode", "projects"] as const;
+const FEATURES = ["networkReport", "policyOp", "policyOpId", "projects"] as const;
 const AUTO: Partial<LegacyDeviceHello> = {
   roots: ROOTS,
   home: HOME,
   features: [...FEATURES],
-  policy: { mode: "auto", allowedDomains: [] },
+  policy: { allowedDomains: [] },
 };
 
 /** Directories the fake machine has; a path ending in `.txt` is a file. */
@@ -217,16 +217,16 @@ async function connect(
   d: { deviceId: string; machineId: string; credential: string },
   hello: Partial<LegacyDeviceHello> = AUTO,
   answer: (req: KernelReq) => Answer = answering(),
+  auto = true,
 ) {
   const machine = new FakeMachine(url, d.credential, answer, { hello: false });
   open.push(machine);
   await machine.opened;
   // an auto-mode machine reports the owner's OS user as its project reach and a Full ceiling
-  const auto = hello.policy?.mode === "auto";
   machine.hello({
     ownerCeiling: ownerReportFor(
       { allowedDomains: hello.policy?.allowedDomains ?? [] },
-      { fullAccess: auto, restrictedProjectReach: auto ? "os-user" : "workspace" },
+      { outsideSandbox: auto, restrictedProjectReach: auto ? "os-user" : "workspace" },
     ),
     ...hello,
   });
@@ -285,10 +285,10 @@ const storedOf = (deviceId: string) =>
  */
 const setLocalMode = (machineId: string, mode: "auto" | "sandbox") =>
   sql`UPDATE capybara.device_machines
-    SET local_policy = ${JSON.stringify({ mode, allowedDomains: [] })}::jsonb,
+    SET local_policy = ${JSON.stringify({ allowedDomains: [] })}::jsonb,
       owner_report = jsonb_set(jsonb_set(owner_report, '{report,restrictedProjectReach}',
         ${JSON.stringify(mode === "auto" ? "os-user" : "workspace")}::jsonb),
-        '{report,fullAccess}', ${JSON.stringify(mode === "auto")}::jsonb)
+        '{report,outsideSandbox}', ${JSON.stringify(mode === "auto")}::jsonb)
     WHERE id = ${machineId}`.execute(raw);
 
 /**
@@ -547,7 +547,7 @@ describe("device projects", () => {
 
   it("a machine without the projects feature offers none and refuses add, never asking it", async () => {
     const d = await owned();
-    const machine = await connect(d, { ...AUTO, features: ["networkReport", "policyOp", "mode"] });
+    const machine = await connect(d, { ...AUTO, features: ["networkReport", "policyOp"] });
     await db
       .insertInto("device_projects")
       .values({ device_id: d.deviceId, name: "old", path: `${HOME}/old`, created_by: d.accountId })
@@ -782,8 +782,8 @@ describe("device projects", () => {
       k.app.get(PermissionCeilingWrites),
     );
     // its files were made in auto mode with the open network, then the device was narrowed to
-    // sandbox mode: the provider fixes limits at its file system, so a files reset is pending and
-    // the instance's applied mode (what modeLevel reports for the model) is still auto
+    // sandbox mode: the kernel-only mode is no dimension of a cloud instance's limits (it has no
+    // outside of its sandbox), so no files reset is pending and modeLevel reports the effective mode
     await db
       .insertInto("device_instances")
       .values({
@@ -799,7 +799,7 @@ describe("device projects", () => {
       })
       .execute();
     await db.updateTable("devices").set({ mode: "sandbox" }).where("id", "=", id).execute();
-    expect((await devices.modeLevel(orgId, id))?.mode).toBe("auto");
+    expect((await devices.modeLevel(orgId, id))?.mode).toBe("sandbox");
     // the ceiling and the scope follow the effective policy: sandbox
     expect(await service.add(orgId, d.accountId, id, { path: "app" })).toMatchObject({
       path: `${workspace}/app`,

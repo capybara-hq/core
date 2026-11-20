@@ -364,9 +364,11 @@ describe("permission query lifecycle without activating product UI", () => {
     {
       state: "supported" as const,
       report: {
-        version: 1 as const,
+        version: 2 as const,
         restricted: null,
-        fullAccess: false,
+        boundary: "operation" as const,
+        network: { openPublic: false, allowlist: false, perOperationHosts: false },
+        outsideSandbox: false,
         background: false,
         unavailableReason: "Runtime unavailable",
       },
@@ -374,7 +376,7 @@ describe("permission query lifecycle without activating product UI", () => {
   ])(
     "preserves the actual availability facts $state independently from the ceiling",
     async (availability) => {
-      const view = permissionPreview({ availability, fullAccessCeiling: false });
+      const view = permissionPreview({ availability, outsideSandboxCeiling: false });
       stubApi({
         "GET /api/v1/orgs/o1/conversation-permission-preview?deviceId=d1": () => json(200, view),
       });

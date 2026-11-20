@@ -66,6 +66,10 @@ export const ACCEPTED: string[] = [
   // size-table rows in place; its reference PNG and side-by-side review wait for the
   // reference-update and visual-update workflows
   "picker-menu",
+  // the composer's mode menu (§6.16.3a, maintainer request 2026-11-19): blocks and size table in
+  // place; the reference PNGs and the side-by-side review wait for the reference-update and
+  // visual-update workflows
+  "mode-menu",
   // phase D (Task 10): accepted by the blind side-by-side review (compare-out-d)
   "command-palette",
   "inline-card",

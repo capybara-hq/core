@@ -28,12 +28,13 @@ import { truncateTables } from "../helpers/db.js";
 import { accountsFor } from "../helpers/identity.js";
 import { SUPPORTS_BOTH, seedInstalledEvidence } from "../helpers/installed-evidence.js";
 import { MODEL_PLUGINS_CONFIG } from "../helpers/model-plugins.js";
+import { storedOwnerReport } from "../helpers/owner-report.js";
 import { permissionFixture } from "../helpers/permission-policy.js";
 import { startKernel, type TestKernel } from "../helpers/runs.js";
 
 // Per-call sandbox escalation (approval profiles design, "Per-call sandbox escalation"): a Bash
 // call with sandbox: "escalated" crosses the sandbox for that call only, decided by the profile's
-// approver within the device's Full access ceiling.
+// approver within the device's outside-sandbox setting.
 
 let pg: TestContainer, redis: TestContainer, k: TestKernel, raw: ReturnType<typeof createDb>;
 beforeAll(async () => {
@@ -296,22 +297,145 @@ it("a fixed deny stays a deny for an escalated command", async () => {
   expect((await f.results())[0]).toMatchObject({ isError: true });
 });
 
-it("Full access asks nobody: the call already runs outside the sandbox", async () => {
+// approval-only profiles design: Full access keeps the sandbox, so its escalation is a real,
+// audited auto-grant within the outside-sandbox ceiling (it replaces "Full access asks nobody: the
+// call already runs outside the sandbox")
+it("Full access auto-grants the escalation: one grant, its event and audit row, and it runs outside", async () => {
   const f = await escalated("full-access");
   const review = vi.spyOn(k.app.get(CommandReviewService), "review");
   await f.step();
   expect(f.effects()).toBe(1);
-  expect(f.scopes[0]).toMatchObject({ profile: "full-access", filesystem: { kind: "device" } });
+  expect(f.scopes[0]).toMatchObject({ filesystem: { kind: "device" } });
   expect(await k.app.get(ApprovalsService).commandForCall(f.runId, f.callId)).toBeNull();
-  expect(await f.db.selectFrom("permission_call_grants").selectAll().execute()).toEqual([]);
+  // the fixed denies were evaluated first, with the profile
   for (const [input] of review.mock.calls) expect(input.permissionProfile).toBe("full-access");
+  const grants = await f.db.selectFrom("permission_call_grants").selectAll().execute();
+  expect(grants).toHaveLength(1);
+  expect(grants[0]).toMatchObject({
+    scope_kind: "sandbox-escalation",
+    source: "full-access",
+    escalation: { justification: JUSTIFICATION },
+  });
+  const reviewed = await f.db
+    .selectFrom("conversation_events")
+    .select(["seq", "payload"])
+    .where("type", "=", "permission_reviewed")
+    .where("run_id", "=", f.runId)
+    .execute();
+  expect(reviewed.map((r) => r.payload)).toMatchObject([
+    { outcome: "allow", decisionSource: "full-access", crossing: "outside-sandbox" },
+  ]);
+  const audits = await f.db
+    .selectFrom("audit_events")
+    .select("detail")
+    .where("action", "=", "permission.crossing_auto_granted")
+    .execute();
+  expect(audits.map((a) => a.detail)).toMatchObject([
+    { kind: "outside-sandbox", callId: f.callId, justification: JUSTIFICATION },
+  ]);
+  expect((await f.results())[0]?.review).toMatchObject({
+    decisionSource: "full-access",
+    sandbox: "escalated",
+    crossing: "outside-sandbox",
+  });
+});
+
+it("an exact retry of a Full access auto-grant returns the same grant; other evidence conflicts", async () => {
+  const f = await escalated("full-access");
+  await f.step();
+  const [first] = await f.db.selectFrom("permission_call_grants").selectAll().execute();
+  const event = await f.db
+    .selectFrom("conversation_events")
+    .select(["seq", "payload"])
+    .where("type", "=", "permission_reviewed")
+    .where("run_id", "=", f.runId)
+    .executeTakeFirstOrThrow();
+  const {
+    outcome: _o,
+    reason: _r,
+    decisionSource: _d,
+    crossing: _c,
+    ...candidate
+  } = event.payload as Record<string, unknown>;
+  const issue = (reviewEventSeq: number) =>
+    k.app.get(TransactionHost).run(async () => {
+      await k.app
+        .get(PermissionAuthorityLock)
+        .acquire(
+          { orgId: f.orgId, deviceId: f.deviceId, rootConversationId: f.conversationId },
+          { kind: "admit" },
+        );
+      return k.app.get(PermissionCallGrants).issueLocked(candidate as never, {
+        source: "full-access",
+        reviewEventSeq,
+        decidedBy: null,
+      });
+    });
+  expect(await issue(Number(event.seq))).toEqual({ id: first?.id });
+  await expect(issue(Number(event.seq) + 1000)).rejects.toThrow();
+  expect(await f.db.selectFrom("permission_call_grants").selectAll().execute()).toHaveLength(1);
+  // the review model's source never stands on a Full access event: its recorded verdict must be
+  // the review model's own
+  await expect(
+    k.app.get(TransactionHost).run(async () => {
+      await k.app
+        .get(PermissionAuthorityLock)
+        .acquire(
+          { orgId: f.orgId, deviceId: f.deviceId, rootConversationId: f.conversationId },
+          { kind: "admit" },
+        );
+      return k.app.get(PermissionCallGrants).issueLocked(candidate as never, {
+        source: "review-model",
+        reviewEventSeq: Number(event.seq),
+        decidedBy: null,
+      });
+    }),
+  ).rejects.toThrow(/requires its recorded allow verdict/);
+});
+
+it("Full access: a sub-agent's escalation goes to the review model, never auto-granted", async () => {
+  const f = await escalated("full-access");
+  const child = await subAgentCall(f);
+  const review = vi.spyOn(k.app.get(CommandReviewService), "review");
+  // no review model mapped: the review model's place falls back to the person
+  const result = await child.step();
+  expect(review.mock.calls[0]?.[0]).toMatchObject({ permissionProfile: "full-access" });
+  expect(review.mock.calls[0]?.[0].parentRunId).toBe(f.runId);
+  expect(result.kind).toBe("suspended");
+  expect(f.effects()).toBe(0);
+  expect(await f.db.selectFrom("permission_call_grants").selectAll().execute()).toEqual([]);
+  expect(
+    await f.db
+      .selectFrom("audit_events")
+      .select("id")
+      .where("action", "=", "permission.crossing_auto_granted")
+      .execute(),
+  ).toEqual([]);
+  const ask = await k.app.get(ApprovalsService).commandForCall(child.runId, child.callId);
+  expect(ask).toMatchObject({ status: "pending", requestedFor: f.accountId, scopes: ["once"] });
+  expect(ask?.command?.escalation).toEqual({ justification: JUSTIFICATION });
+});
+
+it("Full access: a sub-agent's escalation the review model allows is its grant", async () => {
+  const f = await escalated("full-access");
+  const child = await subAgentCall(f);
+  vi.spyOn(k.app.get(CommandReviewService), "review").mockResolvedValue({
+    decision: "allow",
+    by: "classifier",
+    reason: "Starting the requested dev server.",
+    rule: null,
+  });
+  await child.step();
+  expect(f.effects()).toBe(1);
+  const grants = await f.db.selectFrom("permission_call_grants").selectAll().execute();
+  expect(grants).toMatchObject([{ source: "review-model", scope_kind: "sandbox-escalation" }]);
 });
 
 it.each(["request-approval", "approve-for-me"] as const)(
-  "%s: a ceiling that forbids Full access refuses the escalation with what to do instead",
+  "%s: an org that turned running outside the sandbox off refuses the escalation, naming the org admin",
   async (profile) => {
     const f = await escalated(profile);
-    await k.app.get(OrgSettingsService).update(f.orgId, { fullAccess: "off" }, f.accountId);
+    await k.app.get(OrgSettingsService).update(f.orgId, { outsideSandbox: "off" }, f.accountId);
     const review = vi.spyOn(k.app.get(CommandReviewService), "review");
     await f.step();
     expect(f.effects()).toBe(0);
@@ -320,8 +444,9 @@ it.each(["request-approval", "approve-for-me"] as const)(
     const [result] = await f.results();
     expect(result?.isError).toBe(true);
     expect(JSON.stringify(result?.content)).toMatch(
-      /not allowed on this device.*Call Bash without sandbox/,
+      /off in this organization; an organization admin can allow.*Call Bash without sandbox/,
     );
+    expect(JSON.stringify(result?.content)).not.toMatch(/Full access/);
   },
 );
 
@@ -394,7 +519,7 @@ async function platformFull(permission: "off" | "allowed") {
     displayName: "Admin",
     superAdmin: true,
   });
-  await k.app.get(SettingsService).update({ devicesFullAccess: { permission } }, admin.id);
+  await k.app.get(SettingsService).update({ devicesOutsideSandbox: { permission } }, admin.id);
 }
 
 it("a background escalation discloses that it keeps running outside the sandbox, at most its deadline", async () => {
@@ -495,11 +620,11 @@ it.each(["approve-for-me", "request-approval"] as const)(
   },
 );
 
-it("an owner ceiling of sandbox refuses the escalation before any review", async () => {
+it("an owner who turned running outside the sandbox off refuses the escalation, naming the machine command", async () => {
   const f = await escalated("request-approval");
   await f.db
     .updateTable("device_machines")
-    .set({ local_policy: JSON.stringify({ mode: "sandbox", allowedDomains: [] }) })
+    .set({ owner_report: storedOwnerReport({ outsideSandbox: false }) })
     .where("device_id", "=", f.deviceId)
     .execute();
   const review = vi.spyOn(k.app.get(CommandReviewService), "review");
@@ -507,11 +632,11 @@ it("an owner ceiling of sandbox refuses the escalation before any review", async
   expect(f.effects()).toBe(0);
   expect(review).not.toHaveBeenCalled();
   expect(JSON.stringify((await f.results())[0]?.content)).toMatch(
-    /not allowed on this device.*Call Bash without sandbox/,
+    /off on this device; its owner turns it on by running `capybara-device ceiling set --outside-sandbox on`.*Call Bash without sandbox/,
   );
 });
 
-it("a platform Full switch off refuses the escalation before any review", async () => {
+it("a platform outside-sandbox setting off refuses the escalation, naming the super admin", async () => {
   const f = await escalated("request-approval");
   await platformFull("off");
   try {
@@ -519,20 +644,22 @@ it("a platform Full switch off refuses the escalation before any review", async 
     await f.step();
     expect(f.effects()).toBe(0);
     expect(review).not.toHaveBeenCalled();
-    expect(JSON.stringify((await f.results())[0]?.content)).toMatch(/not allowed on this device/);
+    expect(JSON.stringify((await f.results())[0]?.content)).toMatch(
+      /off on this platform; a super admin can allow/,
+    );
   } finally {
     await platformFull("allowed");
   }
 });
 
-it("a runtime that cannot run Full access refuses the escalation with its reason", async () => {
+it("a runtime that cannot run outside its sandbox refuses the escalation with its reason", async () => {
   const f = await escalated("request-approval");
   await seedInstalledEvidence(k, raw, {
     orgId: f.orgId,
     deviceId: f.deviceId,
     provider: "@permission-policy-test",
     version: "test-1",
-    report: { ...SUPPORTS_BOTH, fullAccess: false },
+    report: { ...SUPPORTS_BOTH, outsideSandbox: false },
   });
   const review = vi.spyOn(k.app.get(CommandReviewService), "review");
   await f.step();
@@ -552,7 +679,7 @@ it.each(["org", "platform"] as const)(
     f.setEffectHook(async (scope, method) => {
       if (method !== "exec" || scope.filesystem.kind !== "device") return;
       if (writer === "org")
-        await k.app.get(OrgSettingsService).update(f.orgId, { fullAccess: "off" }, f.accountId);
+        await k.app.get(OrgSettingsService).update(f.orgId, { outsideSandbox: "off" }, f.accountId);
       else await platformFull("off");
       revokedWhileRunning = (await intentsOf(f)).map((i) => i.state);
     });
@@ -596,8 +723,8 @@ it("another member's run in the owner's conversation never escalates on the owne
   expect((await f.results())[0]?.isError).toBe(true);
 });
 
-it("a sub-agent's escalation asks the owner, in the root's permission context", async () => {
-  const f = await escalated("request-approval");
+/** A sub-agent of the fixture's conversation, whose first call is the escalated `Bash`. */
+async function subAgentCall(f: Awaited<ReturnType<typeof escalated>>) {
   const childId = randomUUID(),
     childRunId = randomUUID(),
     childExecution = randomUUID(),
@@ -643,31 +770,179 @@ it("a sub-agent's escalation asks the owner, in the root's permission context", 
       },
     },
   ]);
-  const result = await k.app.get(RunExecution).withClaim(
-    { ...f.claim, conversationId: childId, runId: childRunId, executionId: childExecution },
-    () => true,
-    () =>
-      k.app.get(ToolPipeline).runStep({
-        ...f.ctx,
-        conversationId: childId,
-        runId: childRunId,
-        parent: {
-          conversationId: f.conversationId,
-          runId: f.runId,
-          callId: f.callId,
-          depth: 0,
-          rootConversationId: f.conversationId,
-        },
-      }),
-  );
+  const step = () =>
+    k.app.get(RunExecution).withClaim(
+      { ...f.claim, conversationId: childId, runId: childRunId, executionId: childExecution },
+      () => true,
+      () =>
+        k.app.get(ToolPipeline).runStep({
+          ...f.ctx,
+          conversationId: childId,
+          runId: childRunId,
+          parent: {
+            conversationId: f.conversationId,
+            runId: f.runId,
+            callId: f.callId,
+            depth: 0,
+            rootConversationId: f.conversationId,
+          },
+        }),
+    );
+  return { conversationId: childId, runId: childRunId, callId: childCall, step };
+}
+
+it("a sub-agent's escalation asks the owner, in the root's permission context", async () => {
+  const f = await escalated("request-approval");
+  const child = await subAgentCall(f);
+  const result = await child.step();
   expect(result.kind).toBe("suspended");
   expect(f.effects()).toBe(0);
-  const ask = await k.app.get(ApprovalsService).commandForCall(childRunId, childCall);
+  const ask = await k.app.get(ApprovalsService).commandForCall(child.runId, child.callId);
   expect(ask).toMatchObject({ status: "pending", requestedFor: f.accountId, scopes: ["once"] });
   expect(ask?.command?.escalation).toEqual({ justification: JUSTIFICATION });
   expect(ask?.command?.permissionCandidate?.binding).toMatchObject({
     rootConversationId: f.conversationId,
-    conversationId: childId,
+    conversationId: child.conversationId,
     accountId: f.accountId,
   });
+});
+
+it("Full access: an escalation whose grant is missed at admission is refused, never run sandboxed", async () => {
+  const f = await escalated("full-access");
+  vi.spyOn(k.app.get(PermissionCallGrants), "findForAdmission").mockResolvedValue(null);
+  await f.step();
+  expect(f.effects()).toBe(0);
+  const [result] = await f.results();
+  expect(result?.isError).toBe(true);
+  expect(result?.content).toBe(ESCALATION_GRANT_MISSING_TEXT);
+  expect((result?.review as { sandbox?: unknown } | undefined)?.sandbox).toBeUndefined();
+});
+
+it("Full access: a sensitive consent carried by an auto-granted escalation is recorded with it", async () => {
+  const f = await escalated("full-access", {
+    ...ESCALATED,
+    command: "sudo systemctl restart nginx",
+  });
+  await f.step();
+  expect(f.effects()).toBe(1);
+  const audit = await f.db
+    .selectFrom("audit_events")
+    .select("detail")
+    .where("action", "=", "permission.crossing_auto_granted")
+    .executeTakeFirstOrThrow();
+  expect(audit.detail).toMatchObject({ kind: "outside-sandbox", sensitive: ["ask.sudo"] });
+  const reviewed = await f.db
+    .selectFrom("conversation_events")
+    .select("payload")
+    .where("type", "=", "permission_reviewed")
+    .where("run_id", "=", f.runId)
+    .executeTakeFirstOrThrow();
+  expect(reviewed.payload).toMatchObject({
+    decisionSource: "full-access",
+    sensitive: ["ask.sudo"],
+  });
+  expect((await f.results())[0]?.review).toMatchObject({
+    rule: "ask.sudo",
+    decisionSource: "full-access",
+    sandbox: "escalated",
+  });
+});
+
+// maintainer ruling 2026-11-19: under Full access an escalation that touches credentials goes to
+// the review model (the person when it is missing or unsure), never to an auto-grant
+it("Full access: an escalation carrying a credential consent goes to the review model, not auto-granted", async () => {
+  const f = await escalated("full-access", {
+    ...ESCALATED,
+    command: "cat ~/.ssh/id_ed25519.pub",
+  });
+  const result = await f.step();
+  // no review model mapped: its place falls back to the person
+  expect(result.kind).toBe("suspended");
+  expect(f.effects()).toBe(0);
+  expect(await f.db.selectFrom("permission_call_grants").selectAll().execute()).toEqual([]);
+  expect(
+    await f.db
+      .selectFrom("audit_events")
+      .select("id")
+      .where("action", "=", "permission.crossing_auto_granted")
+      .execute(),
+  ).toEqual([]);
+  const ask = await k.app.get(ApprovalsService).commandForCall(f.runId, f.callId);
+  expect(ask?.status).toBe("pending");
+  expect(ask?.command?.rule).toBe("ask.ssh");
+});
+
+it("Full access: the review model's allow of a credential escalation is its grant", async () => {
+  const f = await escalated("full-access", {
+    ...ESCALATED,
+    command: "cat ~/.ssh/id_ed25519.pub",
+  });
+  vi.spyOn(k.app.get(CommandReviewService), "review").mockResolvedValue({
+    decision: "allow",
+    by: "classifier",
+    reason: "The person asked for the public key.",
+    rule: null,
+    approver: "review-model",
+  });
+  await f.step();
+  expect(f.effects()).toBe(1);
+  expect(await f.db.selectFrom("permission_call_grants").selectAll().execute()).toMatchObject([
+    { source: "review-model", scope_kind: "sandbox-escalation" },
+  ]);
+});
+
+// R3 final review m2: issuance re-derives the credential consent from the recorded command, so a
+// Full access auto-grant never covers a credential escalation even when the pipeline erred
+it("Full access: issuance refuses an auto-grant of a credential escalation the pipeline let through", async () => {
+  const f = await escalated("full-access", {
+    ...ESCALATED,
+    command: "cat ~/.ssh/id_ed25519.pub",
+  });
+  // a pipeline that lost the consent: the review answers that nobody needs to approve
+  vi.spyOn(k.app.get(CommandReviewService), "review").mockResolvedValue({
+    decision: "allow",
+    by: "rule",
+    reason: "Full access grants this crossing within the device's limits.",
+    rule: null,
+    crossing: "outside-sandbox",
+    approver: "none",
+  });
+  await f.step().catch(() => undefined);
+  expect(f.effects()).toBe(0);
+  expect(await f.db.selectFrom("permission_call_grants").selectAll().execute()).toEqual([]);
+  expect(
+    await f.db
+      .selectFrom("audit_events")
+      .select("id")
+      .where("action", "=", "permission.crossing_auto_granted")
+      .execute(),
+  ).toEqual([]);
+});
+
+// R3 final review M1: admission never runs a grant whose write root is a runtime or socket
+// directory, whatever approved it (the candidate builder never proposes one)
+it("admission refuses a granted write root that is a system runtime or socket directory", async () => {
+  const f = await escalated("request-approval", { command: "ls" });
+  vi.spyOn(k.app.get(PermissionCallGrants), "findForAdmission").mockResolvedValue({
+    id: randomUUID(),
+    expansion: {
+      readDirectories: ["/run/user/1000"],
+      writeDirectories: ["/run/user/1000"],
+      hosts: [],
+    },
+    scopeKind: "directories-and-hosts",
+    source: "human",
+  });
+  const admit = vi.spyOn(k.app.get(SandboxOperationAuthority), "resolveInvocation");
+  await f.step().catch(() => undefined);
+  expect(f.effects()).toBe(0);
+  const [result] = await f.results();
+  expect(result?.isError).toBe(true);
+  const admission = admit.mock.results[0];
+  if (!admission) throw new Error("The call was never admitted");
+  const refusal = await (admission.value as Promise<unknown>).then(
+    () => "admitted",
+    (error: Error) => error.message,
+  );
+  expect(refusal).toMatch(/^\/run\/user\/1000 is a system runtime or socket directory \(\/run\)/);
 });

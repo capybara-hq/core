@@ -285,13 +285,13 @@ describe("start order", () => {
 });
 
 it("postcommit-bootstrap-failure-keeps-activation", async () => {
-  const initial = cfg({ roles: ["api"], extensions: [], devices: { fullAccess: "allowed" } });
+  const initial = cfg({ roles: ["api"], extensions: [], devices: { outsideSandbox: "allowed" } });
   const seed = await createKernelApp(initial, { env: {}, logger: silent() });
   await seed.get(KernelDb).deleteFrom("permission_config_publication").execute();
   await seed.get(PermissionConfigPublication).initialize();
   await closeKernelApp(seed);
   const next = structuredClone(initial);
-  next.devices.fullAccess = "off";
+  next.devices.outsideSandbox = "off";
   const registry = await gatedRegistry(Promise.resolve());
   next.packages.npmRegistry = registry.url;
   const records: string[] = [];
@@ -326,7 +326,7 @@ it("postcommit-bootstrap-failure-keeps-activation", async () => {
 });
 
 it("explicit CAS conflict fails before extension or role startup", async () => {
-  const next = cfg({ roles: ["api"], extensions: [], devices: { fullAccess: "allowed" } });
+  const next = cfg({ roles: ["api"], extensions: [], devices: { outsideSandbox: "allowed" } });
   const app = await buildKernelApp(next, {
     env: {},
     logger: silent(),
@@ -337,11 +337,11 @@ it("explicit CAS conflict fails before extension or role startup", async () => {
   await db
     .updateTable("permission_config_publication")
     .set({
-      fingerprint: permissionConfigFingerprint(cfg({ devices: { fullAccess: "off" } })),
+      fingerprint: permissionConfigFingerprint(cfg({ devices: { outsideSandbox: "off" } })),
       projection: JSON.stringify(
         (
           await import("../../src/sandbox/permission-config-publication.js")
-        ).permissionConfigProjection(cfg({ devices: { fullAccess: "off" } })),
+        ).permissionConfigProjection(cfg({ devices: { outsideSandbox: "off" } })),
       ),
     })
     .where("id", "=", "platform")

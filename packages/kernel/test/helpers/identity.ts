@@ -113,7 +113,7 @@ export function settingsFor(
   const config = {
     get: () =>
       ({
-        devices: { fullAccess: undefined },
+        devices: { outsideSandbox: undefined },
         attribution: {},
         sharing: {},
       }) as unknown as KernelConfig,

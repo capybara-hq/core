@@ -13,8 +13,10 @@ import {
   type SandboxPermissionSupport,
   SandboxPermissionUnsupportedError,
   SandboxScopeDeniedError,
+  SandboxScopeValidationError,
 } from "@capybara-hq/plugin-sdk";
 import { build } from "esbuild";
+import type { LinuxFaultInjection } from "../src/exec/linux-operation-worker.js";
 import type { DeviceOwnerCeiling, LocalExecAuthority } from "../src/exec/operation-types.js";
 import { fixtureCeiling, type LinuxDevice, NAMES } from "./linux-docker-fixture.js";
 
@@ -89,15 +91,17 @@ export class HostServer {
   readonly ready: Promise<number>;
   readonly exited: Promise<void>;
 
-  constructor(where: LinuxDevice | { local: string }) {
+  /** `env`: extra variables in the device process's environment (planted secrets, for instance). */
+  constructor(where: LinuxDevice | { local: string }, env: Readonly<Record<string, string>> = {}) {
     this.child =
       "local" in where
-        ? spawn(process.execPath, [where.local])
+        ? spawn(process.execPath, [where.local], { env: { ...process.env, ...env } })
         : spawn("docker", [
             "exec",
             "-i",
             "-u",
             "1000:1000",
+            ...Object.entries(env).flatMap(([name, value]) => ["-e", `${name}=${value}`]),
             where.name,
             "node",
             `${SERVER_DIR}/server.mjs`,
@@ -132,7 +136,9 @@ export class HostServer {
               ? new SandboxPermissionUnsupportedError(message)
               : reply.error.unknown
                 ? new SandboxOperationOutcomeUnknownError(message)
-                : new Error(message),
+                : reply.error.invalid
+                  ? new SandboxScopeValidationError(message)
+                  : new Error(message),
         );
       });
       this.child.stdin.write(`${JSON.stringify({ ...body, id })}\n`);
@@ -174,6 +180,15 @@ export async function hostBackend(
     deniedReadRoots?: string[];
     /** Whether the allowlist proxy may reach the fixture's local endpoints (default true). */
     privateProxyTargets?: boolean;
+    /** The owner's sandbox network (default the fixture's allowlist) and allowed domains. */
+    network?: "open" | "allowlist";
+    allowedDomains?: string[];
+    /** A fixture DoH server that re-resolves fake-IP answers (the backend's test seam). */
+    fakeIpDns?: { endpoints: string[]; caPem: string };
+    /** Test seam: faults the launcher injects (a staged move that cannot finish, a paused mkdir). */
+    faultInjection?: LinuxFaultInjection;
+    /** The owner's restricted project reach (default the workspace). */
+    restrictedProjectReach?: "workspace" | "os-user";
     /** A local-Docker device: the server runs here, its agents in this container. */
     docker?: { container: string; hostRoots: { workspace: string; skills: string; tmp: string } };
   },
@@ -183,6 +198,11 @@ export async function hostBackend(
   const ceiling = {
     ...fixtureCeiling({ workspace: "/workspace", skills: "/home/sandbox/skills", tmp: "/tmp" }),
     restrictedDeniedReadRoots: options.deniedReadRoots ?? [],
+    ...(options.network ? { network: options.network } : {}),
+    ...(options.allowedDomains ? { allowedDomains: options.allowedDomains } : {}),
+    ...(options.restrictedProjectReach
+      ? { restrictedProjectReach: options.restrictedProjectReach }
+      : {}),
   };
   await server.call({
     op: "create",
@@ -193,6 +213,8 @@ export async function hostBackend(
     runtimeHash: RUNTIME_HASH,
     ...(options.restrictedSupported === false ? { restrictedSupported: false } : {}),
     ...(options.privateProxyTargets === false ? { privateProxyTargets: false } : {}),
+    ...(options.fakeIpDns ? { dohTest: options.fakeIpDns } : {}),
+    ...(options.faultInjection ? { faultInjection: options.faultInjection } : {}),
     ...(options.docker
       ? {
           mode: "docker",
@@ -267,4 +289,10 @@ export async function hostBackend(
 export const authorityFor = (operationId: string): LocalExecAuthority => ({
   operationId,
   orgNetwork: { kind: "allowlist", hosts: [NAMES.granted] },
+});
+
+/** The execution authority of an org whose sandbox network is the open public internet. */
+export const openAuthorityFor = (operationId: string): LocalExecAuthority => ({
+  operationId,
+  orgNetwork: { kind: "open-public", hosts: [] },
 });

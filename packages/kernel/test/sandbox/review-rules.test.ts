@@ -1527,6 +1527,38 @@ describe("more home-level run-later and secret locations (project root fix round
     expect(reviewRules("echo x > ~/.local/bin/git", home).outcome).toBe("ask");
   });
 
+  // the persistence vectors the sandbox write denies name (approval-only profiles design, "Fixed
+  // denies"): the review asks about them too, as persistence, so an escalated call or a Full access
+  // skip is never the only record
+  it("X session files, environment.d, user systemd data and KDE autostart ask as persistence", () => {
+    for (const path of [
+      "/Users/u/.xprofile",
+      "/Users/u/.xsessionrc",
+      "/Users/u/.config/environment.d/50-path.conf",
+      "/Users/u/.local/share/systemd/user/x.service",
+      "/Users/u/.config/autostart-scripts/x.sh",
+      "/Users/u/.config/plasma-workspace/env/x.sh",
+    ]) {
+      expect(writeIds(path), path).toEqual({ outcome: "ask", ids: ["ask.persistence"] });
+    }
+    expect(reviewRules("echo x >> ~/.xprofile", home).outcome).toBe("ask");
+  });
+
+  it("every zsh and bash login file asks like a shell rc file, the system ones too", () => {
+    for (const path of [
+      "/Users/u/.zshenv",
+      "/Users/u/.zprofile",
+      "/Users/u/.zlogin",
+      "/Users/u/.bash_login",
+      "/etc/zprofile",
+      "/etc/zlogin",
+      "/etc/zsh/zshrc",
+      "/etc/bash.bash_logout",
+    ]) {
+      expect(writeIds(path), path).toEqual({ outcome: "ask", ids: ["ask.shell-config"] });
+    }
+  });
+
   it("logout and editor rc files ask like shell rc files", () => {
     for (const path of [
       "/Users/u/.bash_logout",

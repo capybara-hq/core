@@ -96,7 +96,7 @@ it("a staged fake machine's hello is recorded with the connection id of its read
     typeof HELLO_V3,
     string,
   ];
-  expect(hello).toMatchObject({ protocol: 3, ownerCeiling: HELLO_V3.ownerCeiling });
+  expect(hello).toMatchObject({ protocol: 4, ownerCeiling: HELLO_V3.ownerCeiling });
   expect(connectionId).toBe(ready.connectionId);
   expect(f.machines.recordHello).not.toHaveBeenCalled();
 });
@@ -106,12 +106,12 @@ it("hello overrides carry v2-only fields (features, policy) on a staged hello", 
   const machine = new FakeMachineV3(f.url, f.credential, undefined, { hello: false });
   cleanups.push(async () => machine.close());
   await machine.opened;
-  machine.hello({ features: ["policyOp"], policy: { mode: "sandbox", allowedDomains: [] } });
+  machine.hello({ features: ["policyOp"], policy: { allowedDomains: ["a.test"] } });
   await machine.ready;
   await expect.poll(() => f.machines.recordHelloV3.mock.calls.length).toBe(1);
   expect((f.machines.recordHelloV3.mock.calls[0] as unknown as unknown[])[1]).toMatchObject({
     features: ["policyOp"],
-    policy: { mode: "sandbox", allowedDomains: [] },
+    policy: { allowedDomains: ["a.test"] },
   });
 });
 
@@ -138,7 +138,7 @@ it("answers a bindInstance with evidence the relay validates against the request
   expect(result).toMatchObject({
     instanceGeneration: "1700000000000",
     bindingId: args.bindingId,
-    permissionSupport: { fullAccess: true, background: true },
+    permissionSupport: { outsideSandbox: true, background: true },
   });
 });
 
@@ -187,7 +187,6 @@ it("a scripted answer reaches the relay and the frames are recorded", async () =
         cpu: 1,
         memoryMb: 512,
         diskMb: 1024,
-        mode: "sandbox",
         network: { kind: "allowlist", hosts: [] },
       },
     },
@@ -198,12 +197,12 @@ it("a scripted answer reaches the relay and the frames are recorded", async () =
 });
 
 it("fakeMachineFor picks the machine and hello of a protocol", () => {
-  expect(fakeMachineFor(3).Machine).toBe(FakeMachineV3);
-  expect(fakeMachineFor(3).protocolHeader).toBe("3");
+  expect(fakeMachineFor(4).Machine).toBe(FakeMachineV3);
+  expect(fakeMachineFor(4).protocolHeader).toBe("4");
   expect(fakeMachineFor(2).protocolHeader).toBe("2");
   expect(fakeMachineFor(2).HELLO.protocol).toBe(2);
-  expect(fakeMachineFor(3).helloWith({ bootId: "b1" })).toMatchObject({
-    protocol: 3,
+  expect(fakeMachineFor(4).helloWith({ bootId: "b1" })).toMatchObject({
+    protocol: 4,
     bootId: "b1",
   });
 });

@@ -39,22 +39,23 @@ describe("the policy lock's release", () => {
     const store = new PolicyStore(dir);
     failClose = true;
     const report = {
-      version: 2 as const,
+      version: 3 as const,
       sequence: 0,
       revision: "rev",
-      fullAccess: false,
+      outsideSandbox: false,
+      network: "allowlist" as const,
       restrictedProjectReach: "workspace" as const,
-      restrictedAllowedDomains: [],
+      allowedDomains: [],
     };
     const res = await serveOperationV3(
       {} as MacOperationBackend,
       { id: "dev" },
-      req({ opId: "op_1", add: ["a.com"], source }),
+      req({ opId: "op_1", remove: ["a.com"], source }),
       new AbortController().signal,
       undefined,
       { store, report: () => report, reconcile: async () => {} },
     );
-    expect(res).toMatchObject({ ok: true, result: { policy: { allowedDomains: ["a.com"] } } });
+    expect(res).toMatchObject({ ok: true, result: { policy: { allowedDomains: [] } } });
     expect(JSON.parse(readFileSync(policyOpsPath(dir), "utf8"))).toEqual([
       { opId: "op_1", outcome: "applied", time: expect.any(String) },
     ]);

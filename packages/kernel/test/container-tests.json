@@ -40,6 +40,7 @@
   "runtime/subagents/subagents.dual.test.ts",
   "runtime/usage-report.dual.test.ts",
   "runtime/waits-dual.test.ts",
+  "sandbox/approval-only-profiles.dual.test.ts",
   "sandbox/concurrent.dual.test.ts",
   "sandbox/mode-limits.dual.test.ts",
   "sandbox/operation-scopes.dual.test.ts",

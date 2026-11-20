@@ -115,25 +115,38 @@ export const PERMISSION_FIXTURE = {
       id: "request-approval",
       label: "请求批准",
       icon: "hand",
-      description: "在项目内直接工作，超出范围时询问你。",
+      description: "在沙箱内直接工作；超出沙箱或执行敏感命令前先问你。",
     },
     {
       id: "approve-for-me",
       label: "帮我批准",
       icon: "shield-check",
-      description: "在项目内直接工作，额外授权交给自动审查。",
+      description: "同样的沙箱；超出范围的请求交给审查模型，拿不准时问你。",
     },
     {
       id: "full-access",
       label: "完全访问",
       icon: "lock-open",
-      description: "使用此设备已授权的完整访问范围，不再逐次确认。",
+      description: "同样的沙箱；在此设备允许的范围内自动批准，不再询问。",
       tag: "请先选择设备",
       disabled: true,
     },
   ],
-  note: "审查模型不可用或无法确定时，仍会询问你。所选权限从本对话的第一次操作起生效。",
+  note: "设备启动时检查。",
   action: { label: "设置审查模型", icon: "settings" },
+} as const;
+
+/**
+ * The composer's mode menu (§6.16.3a): the profiles of {@link PERMISSION_FIXTURE} (Full access
+ * choosable here), the Shift+Tab hint, the effort segments and a locked reason.
+ */
+export const MODE_MENU_FIXTURE = {
+  label: "权限",
+  hint: "⇧Tab 切换",
+  selected: "approve-for-me",
+  /** The effort label; the efforts and the chosen one are the selected model's (`CONV_FIXTURE`). */
+  effortLabel: "思考档位",
+  locked: "跟随主对话的权限",
 } as const;
 
 /** Composer, title bar and panel copy of the reference pages (zh; product copy goes through i18n). */
@@ -230,6 +243,10 @@ export type FixtureTool = {
   diff?: FixtureDiffLine[];
   added?: number;
   removed?: number;
+  /** A crossing Full access granted by itself (§6.16.9 "approved automatically"). */
+  autoGranted?: "directory" | "host" | "outside-sandbox" | "sensitive";
+  /** A command the review admitted to run outside the OS sandbox (§6.16.9). */
+  outsideSandbox?: boolean;
 };
 
 const cmd = (
@@ -255,7 +272,8 @@ export const TOOL_FIXTURES: Record<
   | "diff"
   | "largeOutput"
   | "hookDenied"
-  | "waiting",
+  | "waiting"
+  | "autoGranted",
   FixtureTool[]
 > = {
   // Two separate single calls (each one line, no box).
@@ -489,6 +507,21 @@ export const TOOL_FIXTURES: Record<
       keyArg: "对账口径",
       status: "running",
       waiting: "input",
+    },
+  ],
+  // A long command Full access let run outside the sandbox: the status words are the row's meta,
+  // so the description yields with the ellipsis and the words stay whole.
+  autoGranted: [
+    {
+      id: "t_auto_granted",
+      kind: "command",
+      name: "Bash",
+      description:
+        '抓取路由器管理页的状态码，确认内网服务在沙箱外可以访问：curl -sS -m 5 -o /dev/null -w "HTTP %{http_code}" http://192.168.3.1/',
+      status: "done",
+      extra: "退出码 0",
+      outsideSandbox: true,
+      autoGranted: "outside-sandbox",
     },
   ],
 };

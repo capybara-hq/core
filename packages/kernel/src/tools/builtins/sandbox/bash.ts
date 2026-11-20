@@ -1,4 +1,5 @@
 import {
+  classifyAddress,
   DEFAULT_SANDBOX_ROOTS,
   type ExecResult,
   isSandboxOperationOutcomeUnknownError,
@@ -28,6 +29,7 @@ import type { BuiltinCallContext, BuiltinResult, BuiltinTool } from "../../regis
 import {
   clip,
   display,
+  ESCALATION_GRANT_MISSING_LAUNCH_WHY,
   inSandboxOperations,
   inToolSandbox,
   runBudgetNote,
@@ -91,16 +93,21 @@ const SPEC: ToolSpec = {
     "command exits, and processes it left running are stopped. A background task is lost if the " +
     "sandbox is suspended (it is suspended after it has been running for a while, " +
     "sandbox.limits.maxRunningMinutes).\n\n" +
-    "Commands run inside an OS sandbox that limits which directories they may write and which " +
-    "hosts they may reach. When the sandbox blocks a command you need (for example 'Operation not " +
-    "permitted' writing outside the project, or a dev tool that must reach the machine), retry " +
-    'that one call with sandbox: "escalated" and a justification saying why; the user or a review ' +
-    "model decides, and only that call runs outside the sandbox. Do not escalate by default: try " +
-    "inside the sandbox first. Some devices and organizations do not allow it.\n\n" +
-    "Network access goes through a proxy set in HTTP_PROXY / HTTPS_PROXY / ALL_PROXY; a tool " +
-    "that ignores them fails with 'Operation not permitted' or cannot resolve names; such a tool " +
-    "needs the proxy passed explicitly through its own proxy option. A blocked domain is " +
-    "reported after the output.",
+    "Commands run inside an OS sandbox under every permission profile: it limits which " +
+    "directories they may write, keeps private, LAN, loopback and cloud metadata addresses and " +
+    "the Docker socket closed, and, when the device's network is an allowlist, limits which " +
+    "hosts they may reach. When the sandbox blocks a command you need (for example 'Operation " +
+    "not permitted' writing outside the project, a dev server that must listen on a port, or a " +
+    'service on localhost or the LAN), retry that one call with sandbox: "escalated" and a ' +
+    "justification saying why; this conversation's permission profile decides (the user, a " +
+    "review model, or Full access within the device's limits), and only that call runs outside " +
+    "the sandbox. Do not escalate by default: try inside the sandbox first. Some devices and " +
+    "organizations do not allow it.\n\n" +
+    "Network access goes through a proxy set in HTTP_PROXY / HTTPS_PROXY / ALL_PROXY; HTTP(S)- " +
+    "and SOCKS-aware clients work on any port. A tool that ignores them (plain ssh, for example) " +
+    "fails with 'Operation not permitted' or cannot resolve names; pass the proxy through its " +
+    "own option (for git over ssh, GIT_SSH_COMMAND with a SOCKS ProxyCommand). A blocked domain " +
+    "is reported after the output.",
   inputSchema: {
     type: "object",
     properties: {
@@ -130,7 +137,7 @@ const SPEC: ToolSpec = {
         type: "string",
         enum: [SANDBOX_ESCALATED],
         description:
-          'Set to "escalated" to ask to run this one call outside the OS sandbox (also in the background). Requires justification; the user or a review model approves it first.',
+          "Set to \"escalated\" to ask to run this one call outside the OS sandbox (also in the background). Requires justification; this conversation's permission profile decides first (the user, a review model, or Full access within the device's limits).",
       },
       justification: {
         type: "string",
@@ -414,8 +421,7 @@ export async function runInBackgroundManaged(
 
 /** Why a managed start was refused, in the kernel's own words (never the provider's message). */
 function launchRefusedWhy(e: unknown): string {
-  if (isEscalationGrantMissing(e))
-    return 'its approval to run outside the sandbox no longer matches (the device, its Full access ceiling or the permission scope changed since it was approved); call Bash again with sandbox: "escalated" and a justification to ask again';
+  if (isEscalationGrantMissing(e)) return ESCALATION_GRANT_MISSING_LAUNCH_WHY;
   return launchRefusedText(
     isDeviceRequestNotSent(e)
       ? "not_sent"
@@ -434,12 +440,30 @@ const isRefusal = (e: unknown): boolean =>
 
 /**
  * Sandbox-specific signals in a command's output: the EPERM a Seatbelt or Landlock write denial
- * gives, the read-only bind of the Linux sandbox, Seatbelt's own deny report, and the sandbox
- * proxy refusing a host or a tunnel. A plain "Permission denied" (EACCES) is not one: ssh
- * publickey failures, git 403s and file modes print it too.
+ * gives, the read-only bind of the Linux sandbox and Seatbelt's own deny report.
+ * A plain "Permission denied" (EACCES) is not one: ssh publickey failures, git 403s and file modes
+ * print it too.
  */
 const SANDBOX_DENIED_RE =
-  /Operation not permitted|Read-only file system|Sandbox: \S+\(\d+\) deny\(\d+\)|Connection blocked by network allowlist|blocked-by-allowlist|HTTP code 403 from proxy after CONNECT/;
+  /Operation not permitted|Read-only file system|Sandbox: \S+\(\d+\) deny\(\d+\)/;
+/** The sandbox proxy refusing a host or a tunnel (in curl 7's and curl 8's wording). */
+const SANDBOX_PROXY_REFUSED_RE =
+  /Connection blocked by network allowlist|blocked-by-allowlist|HTTP code 403 from proxy after CONNECT|CONNECT tunnel failed, response 403/;
+/**
+ * curl's direct connect failure, with the address it dialled. A restricted command never reaches
+ * an address in a closed class (private, loopback, link-local, …) directly, so such a failure is
+ * the sandbox's: a client that ignored the proxy variables (or `--noproxy`) dialled it itself, and
+ * Seatbelt or the network namespace gives no message of its own.
+ */
+const DIRECT_CONNECT_FAILED_RE = /Failed to connect to (\S+) port \d+/g;
+const closedAddress = (host: string): boolean => {
+  try {
+    return classifyAddress(host.replace(/^\[(.*)\]$/, "$1")) !== "public";
+  } catch {
+    // a name, not an address: curl names the host it was asked for, not where it resolved
+    return false;
+  }
+};
 /**
  * Credential and auth failures: never a reason to run outside the sandbox, so they never get the
  * escalation hint, whatever else the output says.
@@ -447,21 +471,51 @@ const SANDBOX_DENIED_RE =
 const AUTH_FAILURE_RE =
   /Permission denied \(publickey|Host key verification failed|Authentication failed|authentication required|could not read (?:Username|Password)|Bad credentials|invalid credentials|remote: Permission to \S+ denied|The requested URL returned error: 40[13]|\b401 Unauthorized\b/i;
 /**
- * Whether a finished command failed in a way the OS sandbox may have caused: a host the device
- * refused (`network.blocked`) or a sandbox-specific message, and no credential or auth failure.
+ * How a finished command failed in a way the OS sandbox may have caused: `network` for a host the
+ * device refused (`network.blocked`), the proxy's refusal or a direct connect to a closed address;
+ * `other` for a sandbox-specific message; null when neither, or on a credential or auth failure.
  */
-export const sandboxDenied = (r: ExecResult): boolean => {
-  if (r.exitCode === null || r.exitCode === 0) return false;
+export const sandboxDenial = (r: ExecResult): "network" | "other" | null => {
+  if (r.exitCode === null || r.exitCode === 0) return null;
   const out = `${r.stdout}\n${r.stderr}`;
-  if (AUTH_FAILURE_RE.test(out)) return false;
-  return (r.network?.blocked.length ?? 0) > 0 || SANDBOX_DENIED_RE.test(out);
+  if (AUTH_FAILURE_RE.test(out)) return null;
+  if (
+    (r.network?.blocked.length ?? 0) > 0 ||
+    SANDBOX_PROXY_REFUSED_RE.test(out) ||
+    [...out.matchAll(DIRECT_CONNECT_FAILED_RE)].some((m) => closedAddress(m[1] as string))
+  )
+    return "network";
+  return SANDBOX_DENIED_RE.test(out) ? "other" : null;
 };
+/** Whether a finished command failed in a way the OS sandbox may have caused ({@link sandboxDenial}). */
+export const sandboxDenied = (r: ExecResult): boolean => sandboxDenial(r) !== null;
+/**
+ * The line a restricted `Bash` result ends with when the OS sandbox may have denied it: what the
+ * sandbox closes, then either the invitation to retry escalated (this device and org allow running
+ * outside the sandbox) or why that is not possible here and who can change it (the per-layer
+ * escalation refusal). Empty for an escalated call, a call without escalation facts, or no signal.
+ */
+export function sandboxDenialHint(
+  r: ExecResult,
+  escalation: { escalation?: "available" | "escalated"; refusal?: string },
+): string {
+  if (escalation.escalation !== "available" && escalation.refusal === undefined) return "";
+  const kind = sandboxDenial(r);
+  if (kind === null) return "";
+  const lead =
+    kind === "network"
+      ? "\n[sandbox] The OS sandbox may have blocked this command's connection: private and local addresses are closed inside the sandbox, and so is any host the sandbox network does not allow."
+      : "\n[sandbox] The OS sandbox may have blocked this command.";
+  return escalation.escalation === "available"
+    ? `${lead}${ESCALATION_RETRY_HINT}`
+    : `${lead} Running it outside the sandbox is not possible here: ${escalation.refusal}.`;
+}
 /**
  * {@link SCOPE_DENIED_TOOL_TEXT} followed by {@link ESCALATION_RETRY_HINT}, written out as a literal
  * for the tool design check (a unit test keeps the two copies equal).
  */
 export const SCOPE_DENIED_ESCALATION_TEXT =
-  'This operation reaches outside what this conversation\'s permission profile allows on the device (a path outside the directories it may read or write, or a host it may not reach), so it did not run. Keep the call inside the working directory and the directories already granted, or ask the user to grant the directory or choose a broader permission profile, then retry. If this command must reach outside the sandbox, retry the same Bash call with sandbox: "escalated" and justification: one sentence saying why; the user or the review model decides whether it may run outside the sandbox for this call only.';
+  "This operation reaches outside what this conversation's permission profile allows on the device (a path outside the directories it may read or write, or a host it may not reach), so it did not run. Keep the call inside the working directory and the directories already granted, or ask the user to grant the directory or choose a broader permission profile, then retry. If this command must reach outside the sandbox, retry the same Bash call with sandbox: \"escalated\" and justification: one sentence saying why; this conversation's permission profile decides whether it may run outside the sandbox for this call only (the user, the review model, or Full access within this device's limits).";
 /**
  * A restricted call the scope refused ({@link SCOPE_DENIED_TOOL_TEXT}) where running outside the
  * sandbox is allowed: the refusal also says the call may be retried escalated.
@@ -543,9 +597,12 @@ export function sandboxBashTool(deps: SandboxToolDeps): BuiltinTool {
       const text =
         formatExec(r, seconds, clamped, workspace) +
         lowered +
-        (ctx.sandboxEscalation === "available" && sandboxDenied(r)
-          ? `\n[sandbox] The OS sandbox may have blocked this command.${ESCALATION_RETRY_HINT}`
-          : "");
+        sandboxDenialHint(r, {
+          ...(ctx.sandboxEscalation !== undefined && { escalation: ctx.sandboxEscalation }),
+          ...(ctx.sandboxEscalationRefusal !== undefined && {
+            refusal: ctx.sandboxEscalationRefusal,
+          }),
+        });
       return {
         content: [{ type: "text", text: withNotices(notices, text) }],
         isError: r.timedOut || r.exitCode === null,

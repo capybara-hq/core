@@ -154,7 +154,7 @@ interface Granted {
   connectUrl: string;
   reconnectGraceSeconds: number;
   maxFrameBytes: number;
-  fullAccess: "allowed" | "off";
+  outsideSandbox: "allowed" | "off";
 }
 
 /** Authorize, confirm into a new device named `name`, take the credential. */
@@ -279,7 +279,7 @@ describe("device authorization", () => {
       connectUrl: "wss://cap.example.com/device/connect",
       reconnectGraceSeconds: 120,
       maxFrameBytes: 16 * 1024 * 1024,
-      fullAccess: "allowed",
+      outsideSandbox: "allowed",
     });
 
     // the credential authenticates the machine; it is never an /api credential
@@ -333,12 +333,12 @@ describe("device authorization", () => {
   it("the token says the organization does not allow Full access (login's line)", async () => {
     await db
       .updateTable("orgs")
-      .set({ settings: JSON.stringify({ fullAccess: "off" }) })
+      .set({ settings: JSON.stringify({ outsideSandbox: "off" }) })
       .where("id", "=", orgId)
       .execute();
     const m = await member();
     const g = await login(m.req, "Mode line");
-    expect(g.fullAccess).toBe("off");
+    expect(g.outsideSandbox).toBe("off");
   });
 
   it("token before confirm is authorization_pending", async () => {

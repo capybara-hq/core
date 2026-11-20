@@ -5,39 +5,12 @@ import {
 } from "@capybara-hq/plugin-sdk";
 import { z } from "zod";
 import { createZodDto } from "../infra/validation/create-zod-dto.js";
-import { publicSuffixWildcard } from "./public-suffix.js";
 
 /** A device's name: trimmed, 1-64 characters (unique per person, case-insensitive). */
 export const DeviceName = z.string().trim().min(1).max(64);
 
 export const DeviceNameBody = z.object({ name: DeviceName }).strict();
 export const DeviceParams = z.object({ id: z.string().min(1).max(100) });
-
-/**
- * `PATCH /devices/:id`: a new name, and a cloud device's `mode`: `sandbox` narrows it, `null`
- * follows the org and the platform again (auto when they allow it; hardening spec D2). `auto` is
- * never stored. A local device's mode lives on its machine, so the service refuses a `mode` for it
- * (`device.mode_on_device`). The mode is a person's choice in a web session: an API token gets
- * `device.mode_requires_session`, and the Platform operation (`devices.rename`) omits it.
- */
-export const DevicePatchBody = z
-  .object({
-    name: DeviceName.optional(),
-    mode: z.literal("sandbox").nullable().optional(),
-    /**
-     * B2: a cloud device's explicit Full ceiling. `false` narrows; `true` widens and needs
-     * `confirmWidening: true` (a person in a web session only); it never opens the outer network.
-     */
-    ownerCeiling: z.object({ fullAccess: z.boolean() }).strict().optional(),
-    confirmWidening: z.literal(true).optional(),
-  })
-  .strict()
-  .refine((b) => b.name !== undefined || b.mode !== undefined || b.ownerCeiling !== undefined, {
-    message: "Give at least one of name, mode or ownerCeiling",
-  })
-  .refine((b) => b.mode === undefined || b.ownerCeiling === undefined, {
-    message: "Give either mode or ownerCeiling, not both",
-  });
 
 /** One host of a device's network allowlist (`validateAllowHost`: lowercase, `*.` allowed). */
 const PolicyHost = z
@@ -47,48 +20,73 @@ const PolicyHost = z
     for (const message of validateAllowHost(h)) ctx.addIssue({ code: "custom", message });
   });
 
-/** A host to add: also no `*.` wildcard over a whole public suffix (`*.com`, `*.co.uk`). */
-const AddHost = PolicyHost.superRefine((h, ctx) => {
-  const tooBroad = publicSuffixWildcard(h);
-  if (tooBroad !== null) ctx.addIssue({ code: "custom", message: tooBroad });
-});
+/**
+ * A cloud device's sandbox network (approval-only profiles design, "Settings model"): `open` (the
+ * public internet), `allowlist` (its org's hosts, narrowed to `hosts` when given: a device list
+ * never adds a host, and an empty one follows the org's), `none` (closed), or `null` to follow its
+ * org again. `hosts` only with `allowlist`.
+ */
+export const DeviceNetworkBody = z
+  .object({
+    mode: z.enum(["open", "allowlist", "none"]).nullable(),
+    hosts: z.array(PolicyHost).max(100).optional(),
+  })
+  .strict()
+  .refine((n) => n.hosts === undefined || n.hosts.length === 0 || n.mode === "allowlist", {
+    message: "Give hosts only with the allowlist network",
+  });
 
 /**
- * `POST /devices/:id/policy` (network ask-to-allow spec §7; auto mode spec §4.1): the device
- * owner's change of the machine's local policy. `add` and `remove` change its sandbox-mode
- * allowlist; `mode: "sandbox"` turns the sandbox back on (turning auto mode on is decided on the
- * machine only).
+ * `PATCH /devices/:id`: a new name, and a cloud device's sandbox `network`
+ * ({@link DeviceNetworkBody}), within its org's and the platform's ceilings (`device.network_not_allowed`
+ * above them). A local device's network lives on its machine (`device.ceiling_on_machine`: narrow
+ * it with `POST /devices/:id/policy`, widen it on the machine). Through an API token or the
+ * Platform tool (`devices.set-network`) the network may only narrow.
+ */
+export const DevicePatchBody = z
+  .object({
+    name: DeviceName.optional(),
+    network: DeviceNetworkBody.optional(),
+  })
+  .strict()
+  .refine((b) => b.name !== undefined || b.network !== undefined, {
+    message: "Give at least one of name or network",
+  });
+
+/**
+ * `POST /devices/:id/policy` (approval-only profiles design, "Settings model"): the device owner
+ * narrows the local machine's sandbox from the web: `remove` hosts from its allowlist, and narrow
+ * its owner ceiling (`outsideSandbox: false`, `network: "allowlist"`, `restrictedProjectReach:
+ * "workspace"`). The web never widens it: the owner adds hosts, opens the network or allows
+ * running outside the sandbox on the machine (`capybara-device policy add allowedDomains`,
+ * `capybara-device ceiling set`).
  */
 export const DevicePolicyBody = z
   .object({
-    add: z.array(AddHost).min(1).max(20).optional(),
     remove: z.array(PolicyHost).min(1).max(100).optional(),
-    mode: z.literal("sandbox").optional(),
-    /**
-     * B2: narrow the machine's owner ceiling. Only `fullAccess: false` and `workspace` reach are
-     * accepted: the web never widens it (the owner does, on the machine, with `capybara-device
-     * ceiling set`).
-     */
     ownerCeiling: z
       .object({
-        fullAccess: z.literal(false).optional(),
+        outsideSandbox: z.literal(false).optional(),
+        network: z.literal("allowlist").optional(),
         restrictedProjectReach: z.literal("workspace").optional(),
       })
       .strict()
-      .refine((c) => c.fullAccess !== undefined || c.restrictedProjectReach !== undefined, {
-        message: "Give fullAccess: false or restrictedProjectReach: workspace",
-      })
+      .refine(
+        (c) =>
+          c.outsideSandbox !== undefined ||
+          c.network !== undefined ||
+          c.restrictedProjectReach !== undefined,
+        {
+          message:
+            "Give outsideSandbox: false, network: allowlist or restrictedProjectReach: workspace",
+        },
+      )
       .optional(),
   })
   .strict()
-  .refine(
-    (b) =>
-      b.add !== undefined ||
-      b.remove !== undefined ||
-      b.mode !== undefined ||
-      b.ownerCeiling !== undefined,
-    { message: "Give at least one of add, remove, mode or ownerCeiling" },
-  );
+  .refine((b) => b.remove !== undefined || b.ownerCeiling !== undefined, {
+    message: "Give at least one of remove or ownerCeiling",
+  });
 
 /**
  * A project's name (project root §4.1, `isDeviceProjectName`): 1-64 UTF-16 code units, not `.` or

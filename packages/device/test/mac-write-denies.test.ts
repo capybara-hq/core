@@ -412,3 +412,37 @@ it.runIf(process.platform === "darwin")(
     expect(existsSync(join(project, ".vscode/tasks.json"))).toBe(false);
   },
 );
+
+// The Linux broker stages a guarded directory move under SANDBOX_RESERVED_NAME_PREFIX; the shared
+// write policy denies every such component to all sandboxed writes, on macOS too (any case)
+it.runIf(process.platform === "darwin")(
+  "a restricted macOS command cannot create, write or rename into a reserved staging name",
+  async () => {
+    const project = await mkdtemp(join(root, "reserved-"));
+    await mkdir(join(project, "plain"));
+    const result = await restrictedRun(
+      project,
+      [
+        "mkdir .capybara-staging-a",
+        "printf x > .capybara-staging-b",
+        "mkdir -p deep/.CAPYBARA-STAGING-c",
+        "printf x > deep/.Capybara-Staging-d",
+        "mv plain .capybara-staging-e",
+        "printf ok > ordinary.txt; mkdir capybara-staging-f; true",
+      ].join("; "),
+    );
+    expect(result.exitCode, result.stderr).toBe(0);
+    for (const path of [
+      ".capybara-staging-a",
+      ".capybara-staging-b",
+      "deep/.CAPYBARA-STAGING-c",
+      "deep/.Capybara-Staging-d",
+      ".capybara-staging-e",
+    ])
+      expect(existsSync(join(project, path)), path).toBe(false);
+    expect(existsSync(join(project, "plain"))).toBe(true);
+    // only a component that starts with the prefix is reserved
+    expect(existsSync(join(project, "ordinary.txt"))).toBe(true);
+    expect(existsSync(join(project, "capybara-staging-f"))).toBe(true);
+  },
+);

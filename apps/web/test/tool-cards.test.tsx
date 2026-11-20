@@ -333,7 +333,7 @@ describe("ApprovalCard: a network ask (network ask spec §6.5)", () => {
     connector: null,
     input: { command: "npm install" },
     kind: "network",
-    scopes: ["once", "always"],
+    scopes: ["once"],
     detail: {
       deviceId: "d1",
       hosts: [
@@ -375,7 +375,8 @@ describe("ApprovalCard: a network ask (network ask spec §6.5)", () => {
     });
     const once = await screen.findByRole("button", { name: "这次允许" });
     expect(once.getAttribute("data-variant")).toBe("primary");
-    expect(screen.getByRole("button", { name: "这台设备一直允许" })).toBeTruthy();
+    // device protocol 4: a network ask is granted for this run only, never "always"
+    expect(screen.queryByRole("button", { name: "这台设备一直允许" })).toBeNull();
     expect(
       screen.getByText("这条命令被这台设备的网络规则拦下了：Install the dependencies"),
     ).toBeTruthy();
@@ -397,36 +398,35 @@ describe("ApprovalCard: a network ask (network ask spec §6.5)", () => {
     expect(await screen.findByText(/已允许（这次）/)).toBeTruthy();
   });
 
-  it("a device that takes no remote grants offers only this time, with the device command", async () => {
+  it("offers only this time with the device command, even if a scope list still names always", async () => {
     stubApi({
       "GET /api/v1/orgs/o1/approvals/ap1": () =>
-        json(200, { approval: { ...NET, scopes: ["once"] } }),
+        json(200, { approval: { ...NET, scopes: ["once", "always"] } }),
     });
     const { container } = renderPage(<ApprovalCard orgId="o1" item={netItem()} />, {
       locale: "en",
     });
     await screen.findByRole("button", { name: "Allow this time" });
     expect(screen.queryByRole("button", { name: "Always allow on this device" })).toBeNull();
-    expect(container.querySelector('[data-part="network-remote-off"]')?.textContent).toContain(
+    expect(container.querySelector('[data-part="network-on-machine"]')?.textContent).toContain(
       "capybara-device policy add allowedDomains",
     );
   });
 
-  it("decided from the log, it reads the approval for the fallback from always to this time", async () => {
+  it("decided from the log, it reads the approval for the granted hosts (this time)", async () => {
     stubApi({
       "GET /api/v1/orgs/o1/approvals/ap1": () =>
         json(200, {
           approval: {
             ...NET,
             status: "approved",
-            scope: "always",
+            scope: "once",
             decidedBy: ME.account.id,
             decidedAt: EXPIRES,
             detail: {
               ...NET.detail,
-              grantedHosts: ["registry.npmjs.org", "files.slack.com.evil.io"],
-              outcome: "once_fallback",
-              fallback: "offline",
+              grantedHosts: ["registry.npmjs.org"],
+              outcome: "once",
             },
           },
         }),
@@ -438,17 +438,17 @@ describe("ApprovalCard: a network ask (network ask spec §6.5)", () => {
           approvalId: "ap1",
           callId: "call_1",
           decision: "approved",
-          scope: "always",
+          scope: "once",
           byAccountId: ME.account.id,
         })}
       />,
       { locale: "zh", me: ME },
     );
-    expect(await screen.findByText(/设备离线，已按这次允许/)).toBeTruthy();
-    expect(screen.getByText(/已允许（这次）/)).toBeTruthy();
+    expect(await screen.findByText(/已允许（这次）/)).toBeTruthy();
+    expect(screen.getByText(/registry\.npmjs\.org/)).toBeTruthy();
   });
 
-  it("the card shows why the device change was not confirmed", async () => {
+  it("a pending card shows no device-change attempt line (the deployment never widens a device)", async () => {
     stubApi({
       "GET /api/v1/orgs/o1/approvals/ap1": () =>
         json(200, {
@@ -459,40 +459,8 @@ describe("ApprovalCard: a network ask (network ask spec §6.5)", () => {
         }),
     });
     renderPage(<ApprovalCard orgId="o1" item={netItem()} />, { locale: "zh" });
-    expect(await screen.findByText(zh.approval.network.attempt.unknown)).toBeTruthy();
-    // still pending: the owner may decide again
-    expect(screen.getByRole("button", { name: "这台设备一直允许" })).toBeTruthy();
-    cleanup();
-    stubApi({
-      "GET /api/v1/orgs/o1/approvals/ap1": () =>
-        json(200, {
-          approval: {
-            ...NET,
-            detail: {
-              ...NET.detail,
-              attempt: { outcome: "failed", message: "Remote grants are off." },
-            },
-          },
-        }),
-    });
-    renderPage(<ApprovalCard orgId="o1" item={netItem()} />, { locale: "en" });
-    expect(
-      await screen.findByText(
-        en.approval.network.attempt.failed.replace("{message}", "Remote grants are off."),
-      ),
-    ).toBeTruthy();
-    cleanup();
-    stubApi({
-      "GET /api/v1/orgs/o1/approvals/ap1": () =>
-        json(200, {
-          approval: {
-            ...NET,
-            detail: { ...NET.detail, attempt: { outcome: "applied_undecided", message: "x" } },
-          },
-        }),
-    });
-    renderPage(<ApprovalCard orgId="o1" item={netItem()} />, { locale: "zh" });
-    expect(await screen.findByText(zh.approval.network.attempt.appliedUndecided)).toBeTruthy();
+    await screen.findByRole("button", { name: "这次允许" });
+    expect(screen.queryByText(/设备没有确认这次网络规则的修改/)).toBeNull();
   });
 
   it("skipped: one line", async () => {

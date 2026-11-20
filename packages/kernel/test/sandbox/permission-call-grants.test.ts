@@ -74,17 +74,26 @@ const facts: PermissionReviewSnapshot = {
   baseWriteDirectories: ["/project"],
   baseHosts: [],
   workingRoot: "/project",
-  fullAccessCeiling: true,
+  outsideSandboxCeiling: true,
   broadProjectReach: true,
   fullConsent: false,
   unattended: false,
   availability: { state: "supported" },
+  network: "open-public",
   policy: {
     mode: "auto",
     allowedMode: "auto",
-    localAllowedDomains: [],
     network: { kind: "open-public", hosts: [] },
   } as unknown as PermissionReviewSnapshot["policy"],
+};
+/** The facts of a device whose sandbox network is an allowlist (host crossings exist only there). */
+const allowlistFacts: PermissionReviewSnapshot = {
+  ...facts,
+  network: "allowlist",
+  policy: {
+    ...facts.policy,
+    network: { kind: "allowlist", hosts: ["example.com", "*.example.com"] },
+  } as PermissionReviewSnapshot["policy"],
 };
 const candidate = (toolKey: string, input: unknown, f = facts) =>
   buildPermissionCandidate(
@@ -157,7 +166,11 @@ it("filesystem-root proposal is not a bounded directory", () => {
 });
 it("explicit cd directory and static URL host are exact proposals", () => {
   expect(
-    candidate("Bash", { command: "cd /outside/reports && curl https://Example.com/a" }),
+    candidate(
+      "Bash",
+      { command: "cd /outside/reports && curl https://Example.com/a" },
+      allowlistFacts,
+    ),
   ).toMatchObject({
     kind: "proposal",
     candidate: {
@@ -186,7 +199,7 @@ it("rejects 65 combined roots and accepts 64 without truncating", () => {
 });
 it("rejects 101 combined hosts and accepts 100 without truncating", () => {
   const hostFacts = {
-    ...facts,
+    ...allowlistFacts,
     baseHosts: Array.from({ length: 99 }, (_, i) => `h${i}.example.com`),
   };
   expect(candidate("Bash", { command: "curl https://extra.example.com" }, hostFacts).kind).toBe(
@@ -287,7 +300,7 @@ it("exact binding is required for expansion and exact evidence retries are immut
         baseWriteDirectories: ["/work"],
         baseHosts: [],
         workingRoot: "/work",
-        fullAccessCeiling: view.fullAccessCeiling,
+        outsideSandboxCeiling: view.outsideSandboxCeiling,
         broadProjectReach: view.broadProjectReach,
         unattended: false,
         fullConsent: false,
@@ -497,3 +510,382 @@ it.each(["exec", "backgroundStart"] as const)(
     await expect(dispatch()).rejects.toThrow("no current admitted execution identity");
   },
 );
+
+import {
+  approverForCrossing,
+  crossingOfCandidate,
+  isCredentialConsentRule,
+} from "../../src/sandbox/review/permission-candidate.js";
+
+// approval-only profiles design, "Profiles": a profile only chooses who approves a crossing
+describe("who approves a crossing", () => {
+  it.each([
+    ["request-approval", "directory", false, "person"],
+    ["request-approval", "outside-sandbox", true, "person"],
+    ["approve-for-me", "host", false, "review-model"],
+    ["approve-for-me", "outside-sandbox", true, "review-model"],
+    ["full-access", "directory", false, "none"],
+    ["full-access", "host", true, "none"],
+    ["full-access", "sensitive", true, "none"],
+    ["full-access", "outside-sandbox", false, "none"],
+    // a sub-agent's escalation is never auto-granted
+    ["full-access", "outside-sandbox", true, "review-model"],
+  ] as const)("%s, %s, sub-agent %s: %s", (profile, crossing, subAgent, approver) => {
+    expect(approverForCrossing({ profile, crossing, subAgent })).toBe(approver);
+  });
+
+  // maintainer ruling 2026-11-19: a Full access escalation that touches credentials is reviewed
+  it.each([
+    ["full-access", "outside-sandbox", true, "review-model"],
+    ["full-access", "directory", true, "none"],
+    ["full-access", "sensitive", true, "none"],
+    ["approve-for-me", "outside-sandbox", true, "review-model"],
+    ["request-approval", "outside-sandbox", true, "person"],
+  ] as const)("%s, %s, credential consent %s: %s", (profile, crossing, credential, approver) => {
+    expect(
+      approverForCrossing({ profile, crossing, subAgent: false, credentialConsent: credential }),
+    ).toBe(approver);
+  });
+
+  it("credential consents: ask.credential-*, ask.ssh, ask.secret-file; not sudo or persistence", () => {
+    for (const rule of [
+      "ask.credential-print",
+      "ask.credential-link",
+      "ask.ssh",
+      "ask.secret-file",
+    ])
+      expect(isCredentialConsentRule(rule), rule).toBe(true);
+    for (const rule of ["ask.sudo", "ask.persistence", "ask.shell-config", "unsure.inline-code"])
+      expect(isCredentialConsentRule(rule), rule).toBe(false);
+  });
+
+  it("a candidate's crossing: escalation, directory (also with hosts), host", () => {
+    const scope = (dirs: string[], hosts: string[]) => ({
+      readDirectories: dirs,
+      writeDirectories: [],
+      hosts,
+    });
+    expect(
+      crossingOfCandidate({ scopeKind: "sandbox-escalation", permissionScope: scope([], []) }),
+    ).toBe("outside-sandbox");
+    expect(
+      crossingOfCandidate({
+        scopeKind: "directories-and-hosts",
+        permissionScope: scope(["/x"], ["a.example"]),
+      }),
+    ).toBe("directory");
+    expect(
+      crossingOfCandidate({
+        scopeKind: "directories-and-hosts",
+        permissionScope: scope([], ["a.example"]),
+      }),
+    ).toBe("host");
+  });
+});
+
+describe("candidate building under every profile", () => {
+  const profiles = ["request-approval", "approve-for-me", "full-access"] as const;
+  const build = (toolKey: string, input: unknown, f: PermissionReviewSnapshot) =>
+    buildPermissionCandidate(
+      { toolKey, specHash: "spec", rawInput: input, validatedInput: input },
+      f,
+      ["/home/u"],
+    );
+
+  it.each(
+    profiles.flatMap((profile) =>
+      [
+        ["Write", { file_path: "/home/u/.zshrc" }],
+        ["Write", { file_path: "/home/u/.zlogin" }],
+        ["Write", { file_path: "/home/u/.xprofile" }],
+        ["Write", { file_path: "/home/u/Library/LaunchAgents/evil.plist" }],
+        ["Edit", { file_path: "/home/u/.config/systemd/user/evil.service" }],
+        ["Write", { file_path: "/home/u/.local/share/systemd/user/evil.service" }],
+        ["Write", { file_path: "/home/u/.config/environment.d/evil.conf" }],
+        ["Write", { file_path: "/home/u/.config/autostart/evil.desktop" }],
+        ["Write", { file_path: "/outside/repo/.git/hooks/pre-commit" }],
+        ["Bash", { command: "cd /home/u/Library/LaunchAgents && ls" }],
+        // the PATH-shim directories a later shell runs programs from
+        ["Write", { file_path: "/home/u/.local/bin/ls" }],
+        ["Write", { file_path: "/home/u/.cargo/bin/cargo-x" }],
+        ["Write", { file_path: "/home/u/bin/git" }],
+        ["Bash", { command: "cd /home/u/.local/bin && ls" }],
+        ["Bash", { command: "cd /home/u/bin && ls" }],
+      ].map(([tool, input]) => [profile, tool, input] as const),
+    ),
+  )("%s: a protected location (%s %j) is unsupported before any review", (profile, tool, input) => {
+    const result = build(tool as string, input, { ...facts, profile });
+    expect(result).toMatchObject({ kind: "unsupported", code: "protected-path" });
+    // it names the only way there: one call outside the sandbox, never a profile switch
+    const message = (result as { message: string }).message;
+    expect(message).toMatch(/sandbox: "escalated"/);
+    expect(message).not.toMatch(/choose Full access/);
+  });
+
+  // R3 final review M1: a socket another process made in a write root reaches outside the sandbox
+  it.each([
+    ["Write", { file_path: "/tmp/notes.txt" }, "/tmp"],
+    ["Write", { file_path: "/private/tmp/notes.txt" }, "/private/tmp"],
+    ["Bash", { command: "cd /tmp && ls" }, "/tmp"],
+    ["Write", { file_path: "/tmp/.X11-unix/X1" }, "/tmp/.x11-unix"],
+    ["Write", { file_path: "/tmp/tmux-1000/default" }, "/tmp/tmux-1000"],
+    ["Write", { file_path: "/run/user/1000/bus" }, "/run"],
+    ["Bash", { command: "cd /var/run && ls" }, "/var/run"],
+    ["Write", { file_path: "/private/var/run/x" }, "/private/var/run"],
+    ["Write", { file_path: "/dev/shm/x" }, "/dev"],
+    ["Bash", { command: "cd /proc/self && ls" }, "/proc"],
+    ["Bash", { command: "cd /sys/fs && ls" }, "/sys"],
+    ["Bash", { command: "cd /var && ls" }, "/var/run"],
+  ] as const)(
+    "a runtime or socket directory (%s %j) is never proposed as a write root",
+    (tool, input, hit) => {
+      const result = build(tool, input, facts);
+      expect(result).toMatchObject({ kind: "unsupported", code: "protected-path" });
+      const message = (result as { message: string }).message;
+      expect(message).toContain(`system runtime or socket directory (${hit})`);
+      expect(message).toMatch(/a directory of its own such as \/tmp\/<name>\//);
+    },
+  );
+
+  it("a directory of its own under /tmp is still proposed; reading a runtime directory is no write", () => {
+    expect(build("Write", { file_path: "/tmp/build/out.txt" }, facts)).toMatchObject({
+      kind: "proposal",
+      candidate: { permissionScope: { writeDirectories: ["/tmp/build"] } },
+    });
+    expect(build("Read", { file_path: "/run/user/1000/x" }, facts)).toMatchObject({
+      kind: "proposal",
+      candidate: { permissionScope: { readDirectories: ["/run/user/1000"], writeDirectories: [] } },
+    });
+  });
+
+  it("a protected location where escalation is refused says why instead", () => {
+    const result = build(
+      "Write",
+      { file_path: "/home/u/.zshrc" },
+      { ...facts, escalationRefusal: "running commands outside the sandbox is not allowed" },
+    );
+    expect((result as { message: string }).message).toMatch(/not possible here/);
+  });
+
+  it.each(profiles)("%s: an escalation is a proposal (Full access no longer skips it)", (p) => {
+    const input = { command: "npm run dev", sandbox: "escalated", justification: "Must listen." };
+    expect(build("Bash", input, { ...facts, profile: p })).toMatchObject({
+      kind: "proposal",
+      candidate: { scopeKind: "sandbox-escalation", escalation: { justification: "Must listen." } },
+    });
+  });
+
+  it.each(profiles)("%s: an escalation without the outside-sandbox ceiling is refused", (p) => {
+    const input = { command: "npm run dev", sandbox: "escalated", justification: "Must listen." };
+    expect(
+      build("Bash", input, { ...facts, profile: p, escalationRefusal: "not allowed here" }),
+    ).toMatchObject({ kind: "unsupported", code: "escalation-unavailable" });
+  });
+
+  // T5 review ruling: a host beyond the allowlist ceiling is unavailable under every profile, never
+  // proposed and so never auto-granted by Full access
+  it.each(profiles)("%s: a host beyond the allowlist ceiling is unavailable, not proposed", (p) => {
+    const result = build(
+      "Bash",
+      { command: "curl https://evil.test/x" },
+      { ...allowlistFacts, profile: p },
+    );
+    expect(result).toMatchObject({ kind: "unsupported", code: "unbounded-scope" });
+  });
+
+  it("a host is a crossing only while the network is an allowlist; private names never are", () => {
+    const curl = (url: string) => ({ command: `curl ${url}` });
+    expect(build("Bash", curl("https://api.example.com/x"), facts)).toEqual({ kind: "in-scope" });
+    expect(build("Bash", curl("https://api.example.com/x"), allowlistFacts)).toMatchObject({
+      kind: "proposal",
+      candidate: { permissionScope: { hosts: ["api.example.com"] } },
+    });
+    for (const url of ["http://localhost:3000/", "http://app.localhost/", "http://10.0.0.1/"])
+      expect(build("Bash", curl(url), allowlistFacts), url).toEqual({ kind: "in-scope" });
+  });
+});
+
+import { sql } from "kysely";
+import {
+  type DeviceSandboxOrgLayer,
+  type DeviceSandboxPlatformLayer,
+  hostGrantCeiling,
+  hostGrantRefusal,
+} from "../../src/sandbox/device-sandbox.js";
+
+// The per-call host ceiling (approval-only profiles design, "Per-call host grant"): the candidate
+// builder and grant issuance read the device sandbox's one rule, under every profile
+describe("per-call hosts within the device sandbox's host ceiling", () => {
+  const profiles = ["request-approval", "approve-for-me", "full-access"] as const;
+  const platform: Pick<DeviceSandboxPlatformLayer, "egress" | "allowHosts" | "orgHosts"> = {
+    egress: "allowlist",
+    allowHosts: ["example.com"],
+    orgHosts: "extend",
+  };
+  const ceilingFacts = (
+    profile: (typeof profiles)[number],
+    ceiling: "open" | "allowlist",
+    org: DeviceSandboxOrgLayer = {},
+    owner: { network: "open" | "allowlist"; allowedDomains: string[] } | null = null,
+    network: "allowlist" | "open-public" = "allowlist",
+  ): PermissionReviewSnapshot => {
+    const box = {
+      boundary: "operation" as const,
+      networkMode: network === "allowlist" ? ("allowlist" as const) : ("open" as const),
+      networkCeiling: ceiling,
+      layer: { network: ceiling === "allowlist" ? ("org" as const) : null },
+    };
+    return {
+      ...facts,
+      profile,
+      network,
+      hostCeiling: hostGrantCeiling(box, platform, org, owner),
+      hostRefusal: (host) => hostGrantRefusal(host, box, platform, org, owner),
+    };
+  };
+  const curl = (url: string) => ({ command: `curl ${url}` });
+  const build = (input: unknown, f: PermissionReviewSnapshot) =>
+    buildPermissionCandidate(
+      { toolKey: "Bash", specHash: "spec", rawInput: input, validatedInput: input },
+      f,
+    );
+
+  it.each(profiles)("%s: an org allowlist ceiling is hard and names the org admin", (p) => {
+    const f = ceilingFacts(p, "allowlist", { deviceNetwork: { ceiling: "allowlist" } });
+    const result = build(curl("https://evil.test/x"), f);
+    expect(result).toMatchObject({ kind: "unsupported", code: "unbounded-scope" });
+    expect((result as { message: string }).message).toContain(
+      "an organization admin adds evil.test to the organization's device network list",
+    );
+    expect((result as { message: string }).message).not.toMatch(/limits do not allow/);
+    // within the org's hosts it is a proposal
+    expect(build(curl("https://example.com/x"), f)).toMatchObject({
+      kind: "proposal",
+      candidate: { permissionScope: { hosts: ["example.com"] } },
+    });
+  });
+
+  it.each(profiles)("%s: a host beyond the local owner's list names the owner", (p) => {
+    const f = ceilingFacts(
+      p,
+      "open",
+      {},
+      { network: "allowlist", allowedDomains: ["example.com"] },
+    );
+    const result = build(curl("https://api.test/x"), f);
+    expect(result).toMatchObject({ kind: "unsupported", code: "unbounded-scope" });
+    expect((result as { message: string }).message).toContain(
+      "the device owner adds it on the machine: capybara-device policy add allowedDomains api.test",
+    );
+  });
+
+  it.each(profiles)("%s: an org's excluded host is never grantable", (p) => {
+    const f = ceilingFacts(p, "open", { deviceNetwork: { excludedHosts: ["bad.test"] } });
+    expect(build(curl("https://bad.test/x"), f)).toMatchObject({ kind: "unsupported" });
+    // under an open ceiling any other host is a proposal
+    expect(build(curl("https://other.test/x"), f)).toMatchObject({ kind: "proposal" });
+  });
+
+  // R3 final review m1: an excluded entry is a pattern, as the allowlist entries are
+  it.each(profiles)("%s: an org's excluded wildcard makes its subdomains ungrantable", (p) => {
+    const f = ceilingFacts(p, "open", { deviceNetwork: { excludedHosts: ["*.example.com"] } });
+    expect(build(curl("https://api.example.com/x"), f)).toMatchObject({ kind: "unsupported" });
+    expect(build(curl("https://deep.api.example.com/x"), f)).toMatchObject({ kind: "unsupported" });
+    // the apex is no subdomain, and other hosts stay grantable
+    expect(build(curl("https://example.com/x"), f)).toMatchObject({ kind: "proposal" });
+    expect(build(curl("https://other.test/x"), f)).toMatchObject({ kind: "proposal" });
+    // through the owner's allowlist too: neither an own entry under the exclusion nor an own
+    // wildcard covering an excluded host grants it
+    const owned = ceilingFacts(
+      p,
+      "open",
+      { deviceNetwork: { excludedHosts: ["*.example.com", "bad.other.test"] } },
+      { network: "allowlist", allowedDomains: ["api.example.com", "*.other.test"] },
+    );
+    expect(build(curl("https://api.example.com/x"), owned)).toMatchObject({ kind: "unsupported" });
+    expect(build(curl("https://bad.other.test/x"), owned)).toMatchObject({ kind: "unsupported" });
+    expect(build(curl("https://ok.other.test/x"), owned)).toMatchObject({ kind: "proposal" });
+  });
+
+  it.each(profiles)("%s: an open-public sandbox network proposes no host", (p) => {
+    for (const ceiling of ["open", "allowlist"] as const)
+      expect(
+        build(curl("https://evil.test/x"), ceilingFacts(p, ceiling, {}, null, "open-public")),
+      ).toEqual({ kind: "in-scope" });
+  });
+
+  it("issuance re-checks the live host ceiling: beyond an org allowlist ceiling it refuses", async () => {
+    const f = await fixture("Bash", { command: "curl https://evil.test/x" });
+    await sql`UPDATE capybara.orgs SET settings = ${JSON.stringify({
+      deviceNetwork: { ceiling: "allowlist" },
+    })}::jsonb WHERE id = ${f.orgId}`.execute(raw);
+    const tx = k.app.get(TransactionHost),
+      grants = k.app.get(PermissionCallGrants);
+    await tx.run(async () => {
+      const subject = {
+        orgId: f.orgId,
+        deviceId: f.deviceId,
+        rootConversationId: f.conversationId,
+      };
+      await k.app.get(PermissionAuthorityLock).acquire(subject, { kind: "admit" });
+      const root = await k.app
+        .get(PermissionProfileStore)
+        .readOwnedRoot(f.orgId, f.conversationId, f.accountId);
+      const view = await k.app.get(PermissionFacts).view(f.orgId, f.accountId, root);
+      const vector = await k.app.get(PermissionAuthorityEpochStore).readLocked(subject);
+      const { policy } = await k.app.get(PermissionFacts).readDevice(f.orgId, f.deviceId);
+      const input = { command: "curl https://evil.test/x" };
+      await k.app.get(EventLog).appendIn(f.conversationId, [
+        {
+          type: "assistant_message",
+          runId: f.runId,
+          payload: {
+            step: 2,
+            stopReason: "tool_use",
+            content: [{ type: "tool_call", id: "host", name: "Bash", input }],
+          },
+        },
+      ]);
+      // stale facts that still allowed any host: issuance reads the live ceiling
+      const result = buildPermissionCandidate(
+        { toolKey: "Bash", specHash: "bash-spec", rawInput: input, validatedInput: input },
+        {
+          orgId: f.orgId,
+          rootConversationId: f.conversationId,
+          conversationId: f.conversationId,
+          deviceId: f.deviceId,
+          accountId: f.accountId,
+          runId: f.runId,
+          callId: "host",
+          profile: view.profile,
+          profileRevision: view.revision,
+          scopeRevision: view.scopeRevision ?? "",
+          authorityRevision: permissionScopeHash({ scopeRevision: view.scopeRevision, vector }),
+          baseReadDirectories: ["/work"],
+          baseWriteDirectories: ["/work"],
+          baseHosts: [],
+          workingRoot: "/work",
+          network: "allowlist",
+          outsideSandboxCeiling: view.outsideSandboxCeiling,
+          broadProjectReach: view.broadProjectReach,
+          unattended: false,
+          fullConsent: false,
+          availability: view.availability,
+          policy,
+          hostCeiling: { kind: "any", excluded: [] },
+        },
+      );
+      if (result.kind !== "proposal")
+        throw new Error(`Expected proposal: ${JSON.stringify(result)}`);
+      await expect(
+        grants.issueLocked(result.candidate, {
+          source: "human",
+          approvalId: randomUUID(),
+          decidedBy: f.accountId,
+        }),
+      ).rejects.toThrow(
+        "an organization admin adds evil.test to the organization's device network list",
+      );
+    });
+  });
+});

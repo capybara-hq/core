@@ -6,6 +6,7 @@ import {
   SandboxOperationOutcomeUnknownError,
   SandboxPermissionUnsupportedError,
   SandboxScopeDeniedError,
+  SandboxScopeValidationError,
 } from "@capybara-hq/plugin-sdk";
 import { describe, expect, it, vi } from "vitest";
 import type { MacOperationBackend } from "../src/exec/mac-operation-backend.js";
@@ -46,7 +47,6 @@ describe("dormant v3 dispatch", () => {
       cpu: 1,
       memoryMb: 512,
       diskMb: 1024,
-      mode: "sandbox",
       network: { kind: "allowlist", hosts: ["api.example.com"] },
     };
     const grants = {
@@ -94,6 +94,7 @@ describe("dormant v3 dispatch", () => {
       [new SandboxScopeDeniedError("denied"), "denied"],
       [new SandboxPermissionUnsupportedError("unsupported"), "unsupported"],
       [new SandboxOperationOutcomeUnknownError("unknown"), "unknown"],
+      [new SandboxScopeValidationError("invalid"), "invalid"],
     ] as const) {
       const raw = vi.fn();
       const backend = {
@@ -112,6 +113,22 @@ describe("dormant v3 dispatch", () => {
       ).toMatchObject({ ok: false, error: { kind } });
       expect(raw).not.toHaveBeenCalled();
     }
+  });
+  it("refuses a scope the contract makes invalid with the typed invalid kind, before any factory", async () => {
+    const operation = vi.fn();
+    const backend = { operation } as unknown as MacOperationBackend;
+    // the environment network is legal only with the device filesystem (the escalated pair)
+    const response = await serveOperationV3(
+      backend,
+      handle,
+      request("stat", { scope: { ...scope, network: { kind: "environment" } }, path: "/work/f" }),
+      signal,
+    );
+    expect(response).toMatchObject({
+      ok: false,
+      error: { kind: "invalid", message: expect.stringMatching(/environment/) },
+    });
+    expect(operation).not.toHaveBeenCalled();
   });
   it("preparation exposes its own narrow factory and encodes native bytes", async () => {
     const readFile = vi.fn(async () => ({ data: new Uint8Array([65]), truncated: false })),
@@ -141,7 +158,11 @@ describe("deployment policy ops and keepAwake", () => {
   it("a deployment policy op keeps keepAwake", async () => {
     const dir = mkdtempSync(join(tmpdir(), "device-ops-keep-awake-"));
     try {
-      writePolicy(dir, { ...DEFAULT_POLICY, keepAwake: "connected" });
+      writePolicy(dir, {
+        ...DEFAULT_POLICY,
+        allowedDomains: ["a.com", "b.com"],
+        keepAwake: "connected",
+      });
       const store = new PolicyStore(dir);
       const res = await serveOperationV3(
         {} as MacOperationBackend,
@@ -149,25 +170,26 @@ describe("deployment policy ops and keepAwake", () => {
         request("policy", {
           opId: "op_keep_awake_1",
           source: { approvalId: "a", accountId: "acc", accountName: "Ada", via: "web" },
-          add: ["a.com"],
+          remove: ["a.com"],
         }),
         signal,
         undefined,
         {
           store,
           report: () => ({
-            version: 2,
+            version: 3,
             sequence: 0,
             revision: "rev",
-            fullAccess: false,
+            outsideSandbox: false,
+            network: "allowlist",
             restrictedProjectReach: "workspace",
-            restrictedAllowedDomains: [],
+            allowedDomains: [],
           }),
           reconcile: async () => {},
         } as never,
       );
       expect(res).toMatchObject({ ok: true });
-      expect(readPolicy(dir)).toMatchObject({ allowedDomains: ["a.com"], keepAwake: "connected" });
+      expect(readPolicy(dir)).toMatchObject({ allowedDomains: ["b.com"], keepAwake: "connected" });
     } finally {
       rmSync(dir, { recursive: true, force: true });
     }

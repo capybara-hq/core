@@ -60,7 +60,7 @@ export const HELLO_V3: DeviceHello = stagedHello();
 export const FAKE_OWNER_CEILING: DeviceOwnerCeiling = HELLO_V3.ownerCeiling;
 
 /**
- * A `capybara-device` stand-in speaking the staged (protocol 3) wire over a real WebSocket,
+ * A `capybara-device` stand-in speaking the staged (protocol 4) wire over a real WebSocket,
  * against `LocalDeviceGateway.accept` (or, after the paired activation, the HTTP route):
  * it records the kernel's frames, keeps the `ready` frame apart (its connection id and capacity
  * are in {@link ready}), and answers requests with `answer` (undefined: the test answers with
@@ -89,7 +89,10 @@ export class FakeMachineV3 implements FakeMachineApi {
   ) {
     const autoBind = opts.autoBind ?? true;
     this.ws = new WebSocket(url, {
-      headers: { Authorization: `Bearer ${credential}`, "X-Capybara-Device-Protocol": "3" },
+      headers: {
+        Authorization: `Bearer ${credential}`,
+        "X-Capybara-Device-Protocol": String(DEVICE_PROTOCOL_VERSION),
+      },
       autoPong: opts.autoPong ?? true,
     });
     this.closed = new Promise((resolve) => {
@@ -179,7 +182,7 @@ export function ownerReportFor(
     ...FAKE_OWNER_CEILING,
     sequence: ownerSequence,
     revision: `test-owner-r${ownerSequence}`,
-    restrictedAllowedDomains: [...policy.allowedDomains],
+    allowedDomains: [...policy.allowedDomains],
     ...over,
   };
 }
@@ -237,9 +240,11 @@ export function bindAnswer(req: KernelReq): NonNullable<Answer> {
         instanceGeneration: args.instanceGeneration,
       },
       permissionSupport: {
-        version: 1,
+        version: 2,
         restricted: { filesystem: true, network: true, native: true, concurrentScopes: true },
-        fullAccess: true,
+        boundary: "operation",
+        network: { openPublic: false, allowlist: true, perOperationHosts: true },
+        outsideSandbox: true,
         background: true,
       },
       ownerCeiling: FAKE_OWNER_CEILING,
@@ -247,20 +252,20 @@ export function bindAnswer(req: KernelReq): NonNullable<Answer> {
   } as NonNullable<Answer>;
 }
 
+/** The staged (operation) protocol the fakes speak: the SDK's protocol constant (4). */
+type StagedProtocol = typeof DEVICE_PROTOCOL_VERSION;
+
 /**
- * The protocol under test: the SDK's protocol constant, so the paired activation flips these
- * fixtures with it. `CAPYBARA_TEST_DEVICE_PROTOCOL=3` forces the staged fakes while the constant
- * is still 2 (to see what the activation will need).
+ * The protocol under test: the SDK's protocol constant (the staged fakes).
+ * `CAPYBARA_TEST_DEVICE_PROTOCOL=2` forces the protocol 2 fakes (refused at the upgrade).
  */
-export function deviceProtocolUnderTest(): 2 | 3 {
-  const forced = process.env.CAPYBARA_TEST_DEVICE_PROTOCOL;
-  if (forced === "2" || forced === "3") return Number(forced) as 2 | 3;
-  return (DEVICE_PROTOCOL_VERSION as number) === 3 ? 3 : 2;
+export function deviceProtocolUnderTest(): 2 | StagedProtocol {
+  return process.env.CAPYBARA_TEST_DEVICE_PROTOCOL === "2" ? 2 : DEVICE_PROTOCOL_VERSION;
 }
 
 /** The fake machine pieces of one protocol; a test file takes them from {@link fakeMachine}. */
-export function fakeMachineFor(protocol: 2 | 3) {
-  const staged = protocol === 3;
+export function fakeMachineFor(protocol: 2 | StagedProtocol) {
+  const staged = protocol === DEVICE_PROTOCOL_VERSION;
   return {
     protocol,
     /** The header an upgrade request of this protocol carries. */

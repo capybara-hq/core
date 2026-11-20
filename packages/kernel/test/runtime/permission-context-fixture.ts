@@ -5,7 +5,7 @@ import {
   type SandboxProvider,
 } from "@capybara-hq/plugin-sdk";
 import type { Kysely } from "kysely";
-import type { PermissionContextV1 } from "../../src/conversations/events.js";
+import type { PermissionContextV2 } from "../../src/conversations/events.js";
 import { type KernelSchemaDb, kernelDb } from "../../src/db/kernel-schema.js";
 import { TransactionHost } from "../../src/infra/database/transaction-host.js";
 import { PermissionContextRecorder } from "../../src/runtime/permission-context.service.js";
@@ -15,6 +15,7 @@ import { PermissionAuthorityLock } from "../../src/sandbox/permission-authority-
 import { PermissionFacts } from "../../src/sandbox/permission-facts.js";
 import { PermissionRuntimeReports } from "../../src/sandbox/permission-runtime-reports.js";
 import { SandboxProviders } from "../../src/sandbox/providers.js";
+import { storedOwnerReport } from "../helpers/owner-report.js";
 import type { TestKernel } from "../helpers/runs.js";
 import { seedConversation } from "../helpers/tool-fixtures.js";
 
@@ -26,13 +27,45 @@ const RESTRICTED = {
   concurrentScopes: true,
 } as const;
 export const REPORTS = {
-  both: { version: 1, restricted: RESTRICTED, fullAccess: true, background: false },
-  "restricted-only": { version: 1, restricted: RESTRICTED, fullAccess: false, background: false },
-  "full-only": { version: 1, restricted: null, fullAccess: true, background: false },
-  neither: {
-    version: 1,
+  both: {
+    version: 2,
+    restricted: RESTRICTED,
+    boundary: "operation",
+    network: { openPublic: false, allowlist: true, perOperationHosts: true },
+    outsideSandbox: true,
+    background: false,
+  },
+  "restricted-only": {
+    version: 2,
+    restricted: RESTRICTED,
+    boundary: "operation",
+    network: { openPublic: false, allowlist: true, perOperationHosts: true },
+    outsideSandbox: false,
+    background: false,
+  },
+  "full-only": {
+    version: 2,
     restricted: null,
-    fullAccess: false,
+    boundary: "operation",
+    network: { openPublic: false, allowlist: false, perOperationHosts: false },
+    outsideSandbox: true,
+    background: false,
+  },
+  /** An instance-boundary provider: the instance is the sandbox, nothing runs outside it. */
+  instance: {
+    version: 2,
+    restricted: null,
+    boundary: "instance",
+    network: { openPublic: true, allowlist: true, perOperationHosts: false },
+    outsideSandbox: false,
+    background: false,
+  },
+  neither: {
+    version: 2,
+    restricted: null,
+    boundary: "operation",
+    network: { openPublic: false, allowlist: false, perOperationHosts: false },
+    outsideSandbox: false,
     background: false,
     unavailableReason: "No enforcement on this machine",
   },
@@ -127,12 +160,20 @@ export async function toCloudDevice(
   } = {},
 ) {
   const spy = spyProvider(k, { plugin: CLOUD_PROVIDER, version: CLOUD_VERSION });
+  // a network-off cloud device: its own allowlist over an org whose allowlist is empty
+  await f.db
+    .updateTable("orgs")
+    .set({ settings: JSON.stringify({ deviceNetwork: { base: "none" } }) })
+    .where("id", "=", f.orgId)
+    .execute();
   await f.db
     .updateTable("devices")
     .set({
       source: "cloud",
       provider: CLOUD_PROVIDER,
       outer_network: JSON.stringify({ kind: "allowlist", hosts: [] }),
+      network_mode: "allowlist",
+      network_hosts: "[]",
       ...(opts.sandboxMode && { mode: "sandbox" as const }),
     })
     .where("id", "=", f.deviceId)
@@ -190,6 +231,13 @@ export async function seedContext(k: TestKernel, raw: Kysely<unknown>, seed: Con
     .insertInto("memberships")
     .values({ org_id: s.orgId, account_id: s.accountId, role: "owner" })
     .execute();
+  // the org's allowlist is empty: the base authority names no hosts until a grant adds one (the
+  // device's runtime cannot enforce the open network, so the sandbox network is the allowlist)
+  await db
+    .updateTable("orgs")
+    .set({ settings: JSON.stringify({ deviceNetwork: { base: "none" } }) })
+    .where("id", "=", s.orgId)
+    .execute();
   let deviceOwner = s.accountId;
   if (seed.foreignDevice) {
     deviceOwner = randomUUID();
@@ -228,10 +276,11 @@ export async function seedContext(k: TestKernel, raw: Kysely<unknown>, seed: Con
           os: "darwin",
           arch: "arm64",
           program_version: "0.1.0",
-          features: ["mode", "projects"],
+          features: ["projects"],
           roots: JSON.stringify(ROOTS),
           home: "/home/owner",
-          local_policy: JSON.stringify({ mode: "auto", allowedDomains: [] }),
+          local_policy: JSON.stringify({ allowedDomains: [] }),
+          owner_report: storedOwnerReport(),
         })
         .returning("id")
         .executeTakeFirstOrThrow()
@@ -406,7 +455,7 @@ export function recordUnder(
 export async function contexts(
   raw: Kysely<unknown>,
   conversationId: string,
-): Promise<{ seq: number; runId: string | null; payload: PermissionContextV1; idemKey: string }[]> {
+): Promise<{ seq: number; runId: string | null; payload: PermissionContextV2; idemKey: string }[]> {
   // biome-ignore lint/suspicious/noExplicitAny: the test pool carries no schema types
   const rows = await kernelDb(raw as Kysely<any>)
     .selectFrom("conversation_events")
@@ -418,7 +467,7 @@ export async function contexts(
   return rows.map((r) => ({
     seq: Number(r.seq),
     runId: r.run_id,
-    payload: r.payload as PermissionContextV1,
+    payload: r.payload as PermissionContextV2,
     idemKey: r.idem_key ?? "",
   }));
 }

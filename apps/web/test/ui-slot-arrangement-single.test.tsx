@@ -197,7 +197,12 @@ describe("replaceable slots on /admin/settings", () => {
           sandboxLimitOverrides: {},
           customConnectors: "allow",
           customSkills: "allow",
-          devicesFullAccess: { permission: "allowed", source: "default" },
+          devicesOutsideSandbox: { permission: "allowed", source: "default" },
+          devicesNetwork: {
+            default: "open",
+            ceiling: "open",
+            sources: { default: "default", ceiling: "default" },
+          },
         }),
       "GET /api/v1/admin/components?kind=theme": () => json(200, { components: [] }),
       "GET /api/v1/admin/extensions": () => json(200, { extensions: [], drainSeconds: 30 }),

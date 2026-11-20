@@ -4,19 +4,18 @@ import { afterEach, describe, expect, it } from "vitest";
 import type { ConversationEvent } from "../../src/conversations/events.js";
 import { kernelDb } from "../../src/db/kernel-schema.js";
 import { createDb } from "../../src/db/pool.js";
-import { allowedAlwaysNote, allowedOnceNote } from "../../src/tools/network-asks.js";
+import { allowedOnceNote } from "../../src/tools/network-asks.js";
 import { onlyBuiltins } from "../helpers/disabled-tools.js";
 import { accountsFor } from "../helpers/identity.js";
 import { MODEL_FAKE } from "../helpers/model-plugins.js";
 import { enableExtensions, eventsOf, PW, waitFor } from "../helpers/runs.js";
-import { FakeMachine, HELLO, policyAnswer } from "../local-devices/fake-machine-v3.js";
+import { FakeMachine, HELLO } from "../local-devices/fake-machine-v3.js";
 
 /**
  * A network ask across replicas (network ask-to-allow spec §10.3, Review Focus 4): the command
  * runs on a worker against a device held by replica 0's gateway, the run parks, and the device
- * owner's 「这次允许」 or 「这台设备一直允许」 sent to both replicas at once is taken once (always:
- * one intent, one `policy` op, its outcome and the decision in one transaction), one resume; the
- * command is never run again.
+ * owner's "Allow once" (a run grant, the only offer under device protocol 4) sent to both
+ * replicas at once is taken once, one resume, no `policy` op; the command is never run again.
  */
 
 let h: Harness | undefined;
@@ -30,14 +29,11 @@ afterEach(async () => {
 
 type Json = Record<string, unknown>;
 
-const POLICY = {
-  mode: "auto" as const,
-  allowedDomains: [] as string[],
-};
+const POLICY = { allowedDomains: [] as string[] };
 
 describe("network ask (dual replica)", () => {
-  it.each(["once", "always"] as const)(
-    "asked on one replica, decided %s on both at once: one decision, one resume, one exec (always: one policy op)",
+  it.each(["once"] as const)(
+    "asked on one replica, decided %s on both at once: one decision, one resume, one exec, no policy op",
     async (scope) => {
       h = await createDualReplicaHarness({
         extensions: [MODEL_FAKE],
@@ -105,10 +101,6 @@ describe("network ask (dual replica)", () => {
         credential,
         (req: KernelReq) => {
           if (req.op === "create") return { ok: true, result: { roots: { ...HELLO.roots } } };
-          if (req.op === "policy") {
-            const add = (req.args as { add?: string[] }).add ?? [];
-            return policyAnswer({ ...POLICY, allowedDomains: add });
-          }
           if (req.op !== "exec") return { ok: true, result: null };
           const granted = (req.args as DeviceExecArgs).grants?.hosts ?? [];
           const blocked = granted.includes("files.example.com")
@@ -222,12 +214,10 @@ describe("network ask (dual replica)", () => {
       expect(count("network_blocked")).toBe(1);
       const result = evs.find((e) => e.type === "tool_result");
       expect(result?.type === "tool_result" && result.payload.content).toContain(
-        (scope === "always" ? allowedAlwaysNote : allowedOnceNote)(["files.example.com"]),
+        allowedOnceNote(["files.example.com"]),
       );
-      // one intent, one op sent, one decision audited with the op's outcome
-      expect(machine.frames.filter((f) => f.type === "req" && f.op === "policy")).toHaveLength(
-        scope === "always" ? 1 : 0,
-      );
+      // no op sent, one decision audited
+      expect(machine.frames.filter((f) => f.type === "req" && f.op === "policy")).toEqual([]);
       const audits = await db
         .selectFrom("audit_events")
         .select("action")
@@ -239,11 +229,7 @@ describe("network ask (dual replica)", () => {
         ])
         .orderBy("id")
         .execute();
-      expect(audits.map((x) => x.action)).toEqual(
-        scope === "always"
-          ? ["device.policy_requested", "device.network_allowed", "device.policy_changed"]
-          : ["device.network_allowed"],
-      );
+      expect(audits.map((x) => x.action)).toEqual(["device.network_allowed"]);
       // the command ran once
       const curls = machine.frames.filter(
         (f) =>

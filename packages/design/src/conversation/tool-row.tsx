@@ -8,6 +8,7 @@ import { DiffBlock, type DiffData } from "./diff-block";
 import { Spinner } from "./prose";
 import {
   fillCopy,
+  type ToolAutoGranted,
   type ToolGuard,
   type ToolKind,
   type ToolNotice,
@@ -65,6 +66,12 @@ export type ToolRowData = {
    * in `muted` (§6.16.9).
    */
   outsideSandbox?: boolean;
+  /**
+   * A boundary crossing Full access granted by itself (`tool_result.review.decisionSource:
+   * "full-access"` with a `crossing`): a done or failed row adds the neutral words "Approved
+   * automatically: <kind>" (`tool.autoGranted`) in `muted` (§6.16.9).
+   */
+  autoGranted?: ToolAutoGranted;
   /** The error; its first line is shown after "Failed". */
   error?: string;
   /** The extension whose policy hook denied the call. */
@@ -104,7 +111,10 @@ export function keyArgPreview(s: string): string {
   return lines.length > 1 ? `${first}…` : first;
 }
 
-/** "**name [tool]** preview · extra" plus the failure, one line with an ellipsis (§6.16.9). */
+/**
+ * "**name [tool]** preview · extra" plus the failure, one line with an ellipsis (§6.16.9). The
+ * status words are {@link ToolMeta}, drawn after it.
+ */
 export function ToolLabel({ row }: { row: ToolRowData }): JSX.Element {
   const t = useDesignT();
   const preview =
@@ -149,6 +159,25 @@ export function ToolLabel({ row }: { row: ToolRowData }): JSX.Element {
           {reason ? <span className="cb-muted">{` · ${reason}`}</span> : null}
         </>
       ) : null}
+    </span>
+  );
+}
+
+/**
+ * The row's meta (§6.16.9): the status words after the label (a guard, a notice, ran outside the
+ * sandbox, approved automatically, cancelled), in their own element that never shrinks or wraps,
+ * so a long description yields with the ellipsis and the words stay whole. Null without one.
+ */
+export function ToolMeta({ row }: { row: ToolRowData }): JSX.Element | null {
+  const t = useDesignT();
+  const ended = row.status === "done" || row.status === "failed";
+  const any =
+    (row.status === "done" && (row.guard || row.notice)) ||
+    (ended && (row.outsideSandbox || row.autoGranted)) ||
+    row.status === "cancelled";
+  if (!any) return null;
+  return (
+    <span className="cb-tool-meta" data-part="tool-meta">
       {row.status === "done" && row.guard ? (
         <span className="cb-muted" data-part="guard-word">
           {` · ${t(`tool.guard.${row.guard}`)}`}
@@ -162,6 +191,11 @@ export function ToolLabel({ row }: { row: ToolRowData }): JSX.Element {
       {(row.status === "done" || row.status === "failed") && row.outsideSandbox ? (
         <span className="cb-muted" data-part="sandbox-word">
           {` · ${t("tool.outsideSandbox")}`}
+        </span>
+      ) : null}
+      {(row.status === "done" || row.status === "failed") && row.autoGranted ? (
+        <span className="cb-muted" data-part="auto-granted-word">
+          {` · ${t("tool.autoGranted").replace("{kind}", t(`tool.crossing.${row.autoGranted}`))}`}
         </span>
       ) : null}
       {row.status === "cancelled" ? (
@@ -399,6 +433,7 @@ export function ToolRow({
     <>
       {running ? <Spinner size={16} /> : null}
       <ToolLabel row={row} />
+      <ToolMeta row={row} />
       {end}
     </>
   );

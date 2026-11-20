@@ -22,6 +22,7 @@ import { useDesignT } from "../provider";
 import { isTouchPointer } from "../shell/pointer";
 import { ComposerOptions } from "./composer-options";
 import { ConvMenu, type ConvMenuEntry } from "./menu";
+import { ModeMenu, type ModeMenuProps, nextMode } from "./mode-menu";
 import { findTokenLikeSpans, removeSpans, type TokenLikeKind } from "./token-like";
 
 // The composer (spec §6.16.2): the floating frame that holds the attachment strip, the textarea and
@@ -255,6 +256,13 @@ export type ComposerBoxProps = {
     effort?: PickerProps;
   };
   /**
+   * The mode menu (§6.16.3a): from 640 up one button at the end of the row (before send) holds the
+   * permission profiles and the effort, so the row draws neither `pickers.permission` nor
+   * `pickers.effort` and the model picker reads "<model> · <effort>". Shift+Tab in the textarea
+   * moves to the next choosable mode. Phones keep both pickers in the options sheet.
+   */
+  mode?: ModeMenuProps;
+  /**
    * The selected agent's quick actions (`QuickActions`, §6.16.27): a `zap` button right after the
    * effort picker, given only when the agent has some.
    */
@@ -364,6 +372,7 @@ export function ComposerBox({
   onAttach,
   attachDisabled,
   pickers,
+  mode,
   quickActions,
   agents,
   send,
@@ -449,6 +458,24 @@ export function ComposerBox({
       }
       if (e.key === "Escape") suggested.onDismiss();
     }
+    // Shift+Tab moves to the next mode (§6.16.3a); with no other mode to choose it stays focus
+    // navigation
+    if (
+      mode &&
+      e.key === "Tab" &&
+      e.shiftKey &&
+      !e.altKey &&
+      !e.ctrlKey &&
+      !e.metaKey &&
+      !e.nativeEvent.isComposing
+    ) {
+      const next = nextMode(mode);
+      if (next !== undefined) {
+        e.preventDefault();
+        mode.onPickMode(next);
+        return;
+      }
+    }
     if (onKeyDown && e.key === "Enter" && !e.shiftKey && !e.nativeEvent.isComposing && !gate()) {
       e.preventDefault();
       return;
@@ -480,7 +507,7 @@ export function ComposerBox({
         // any edit that leaves text ends the suggestion for this run
         if (suggestion && e.target.value !== "") suggestion.onDismiss();
       }}
-      {...(onKeyDown || token || suggested ? { onKeyDown: keyDown } : {})}
+      {...(onKeyDown || token || suggested || mode ? { onKeyDown: keyDown } : {})}
       onPaste={(e) => {
         if (findTokenLikeSpans(e.clipboardData?.getData("text/plain") ?? "").length > 0) {
           setWarn(true);
@@ -572,9 +599,21 @@ export function ComposerBox({
         {/* 600 and up: individual pickers; phones: one options button and its bottom sheet (CSS). */}
         <span className="cb-composer-pickers" data-part="composer-pickers">
           {pickers.device ? <Picker {...pickers.device} /> : null}
-          {pickers.permission ? <Picker {...pickers.permission} /> : null}
-          <Picker {...pickers.model} />
-          {pickers.effort ? <Picker {...pickers.effort} /> : null}
+          {mode ? (
+            // the effort lives in the mode menu: the model picker names it ("<model> · <effort>")
+            <Picker
+              {...pickers.model}
+              {...(pickers.effort
+                ? { value: `${pickers.model.value} · ${pickers.effort.value}` }
+                : {})}
+            />
+          ) : (
+            <>
+              {pickers.permission ? <Picker {...pickers.permission} /> : null}
+              <Picker {...pickers.model} />
+              {pickers.effort ? <Picker {...pickers.effort} /> : null}
+            </>
+          )}
         </span>
         <ComposerOptions
           {...(pickers.device ? { device: pickers.device } : {})}
@@ -585,6 +624,11 @@ export function ComposerBox({
         {quickActions ?? null}
         {agents ?? null}
         <span className="cb-grow" />
+        {mode ? (
+          <span className="cb-composer-mode" data-part="composer-mode">
+            <ModeMenu {...mode} />
+          </span>
+        ) : null}
         {suggested && (touch || referenceTouch) ? (
           <Button
             variant="ghost"

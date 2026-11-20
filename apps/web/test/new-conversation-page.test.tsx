@@ -18,6 +18,7 @@ import { bodyOf, json, stubApi } from "./support/api";
 import {
   CONV,
   DEVICES,
+  ENV_SANDBOX,
   envView,
   ev,
   FakeEventSource,
@@ -517,22 +518,19 @@ describe("the device picker (environments design §4.1)", () => {
 
   it("the picker draws no daily auto / sandbox mark on local devices", async () => {
     resetNavigation("/");
-    const mode = (m: string, allowed = "auto") => ({
-      mode: m,
-      allowedMode: allowed,
-      allowedBy: allowed === "auto" ? "org" : null,
-      network: { kind: "allowlist", hosts: [], source: "platform" },
-      local: { reported: m, allowedDomains: [] },
-      pendingNextUse: false,
-      recent: [],
+    const sandbox = (outsideSandbox: boolean) => ({
+      ...ENV_SANDBOX,
+      network: "allowlist",
+      outsideSandbox,
+      layer: { network: "device", outsideSandbox: outsideSandbox ? null : "device" },
     });
     const local = { source: "local", provider: "@local", online: true };
     const devices = {
       ...DEVICES,
       items: [
         ...DEVICES.items,
-        envView("d1", "Laptop", { ...local, mode: mode("auto") }),
-        envView("d2", "Server", { ...local, mode: mode("sandbox") }),
+        envView("d1", "Laptop", { ...local, sandbox: sandbox(true) }),
+        envView("d2", "Server", { ...local, sandbox: sandbox(false) }),
       ],
     };
     await renderRouteWithCache("/", withDevices(devices));
@@ -721,7 +719,7 @@ describe("the first send carries the permission choice (atomic first message, Ta
     const dialog = await screen.findByRole("dialog");
     await user.click(within(dialog).getByRole("button", { name: "Use Full access" }));
     await vi.waitFor(() =>
-      expect(permissionButton().getAttribute("aria-label")).toBe("Permissions: Full access"),
+      expect(permissionButton().getAttribute("aria-label")).toMatch(/^Permissions: Full access/),
     );
   }
   const retryOriginal = () =>
@@ -732,7 +730,7 @@ describe("the first send carries the permission choice (atomic first message, Ta
     const calls = stubApi({ [FIRST]: created() });
     await renderRouteWithCache("/", routes());
     expect(browser).toEqual([]);
-    expect(permissionButton().getAttribute("aria-label")).toBe("Permissions: Approve for me");
+    expect(permissionButton().getAttribute("aria-label")).toMatch(/^Permissions: Approve for me/);
     await userEvent.setup().type(input(), "go{Enter}");
     await vi.waitFor(() => expect(router.replace).toHaveBeenCalledWith("/chat/c9"));
     // never the legacy create, never a create-then-PATCH
@@ -766,10 +764,10 @@ describe("the first send carries the permission choice (atomic first message, Ta
     await user.click(permissionButton());
     await user.click(await screen.findByRole("menuitemradio", { name: /^Full access/ }));
     const dialog = await screen.findByRole("dialog");
-    expect(dialog.textContent).toContain("not root access");
+    expect(dialog.textContent).toContain("Commands still run in the sandbox");
     // cancel changes nothing
     await user.click(within(dialog).getByRole("button", { name: "Cancel" }));
-    expect(permissionButton().getAttribute("aria-label")).toBe("Permissions: Approve for me");
+    expect(permissionButton().getAttribute("aria-label")).toMatch(/^Permissions: Approve for me/);
     await chooseFull(user);
     // unprobed: Full stays choosable and the note says when it is checked, nothing provisioned
     await user.click(permissionButton());
@@ -876,7 +874,7 @@ describe("the first send carries the permission choice (atomic first message, Ta
     await user.type(input(), "go{Enter}");
     // the draft comes back, Full consent is dropped, the device's preview is read again
     await vi.waitFor(() => expect(input()).toHaveProperty("value", "go"));
-    expect(permissionButton().getAttribute("aria-label")).toBe("Permissions: Approve for me");
+    expect(permissionButton().getAttribute("aria-label")).toMatch(/^Permissions: Approve for me/);
     await vi.waitFor(() =>
       expect(calls.some((c) => c.method === "GET" && c.url.endsWith("preview?deviceId=e1"))).toBe(
         true,
@@ -928,7 +926,7 @@ describe("the first send carries the permission choice (atomic first message, Ta
         true,
       ),
     );
-    expect(permissionButton().getAttribute("aria-label")).toBe("Permissions: Approve for me");
+    expect(permissionButton().getAttribute("aria-label")).toMatch(/^Permissions: Approve for me/);
     // settled into its recovery line; nothing resent on its own
     await vi.waitFor(() => expect(retryOriginal()).toHaveLength(1));
     expect(writes(calls)).toEqual([FIRST]);
@@ -973,7 +971,7 @@ describe("the first send carries the permission choice (atomic first message, Ta
     expect(open.getAttribute("href")).toBe("/chat/c9");
     expect(router.replace).not.toHaveBeenCalled();
     expect(input()).toHaveProperty("value", "go");
-    expect(permissionButton().getAttribute("aria-label")).toBe("Permissions: Request approval");
+    expect(permissionButton().getAttribute("aria-label")).toMatch(/^Permissions: Request approval/);
   });
 
   it("a 409 on the original for another device refreshes that device's preview too", async () => {
@@ -1060,12 +1058,12 @@ describe("the first send carries the permission choice (atomic first message, Ta
       [`GET ${ORG}/conversations/c1/permissions`]: () => new Promise<Response>(() => {}),
     });
     await act(() => view.navigate("/chat/c1"));
-    const pickers = await vi.waitFor(() => {
-      const p = document.querySelector('[data-part="composer-pickers"]') as HTMLElement;
+    const mode = await vi.waitFor(() => {
+      const p = document.querySelector('[data-part="composer-mode"]') as HTMLElement;
       expect(within(p).getByText("Request approval")).toBeTruthy();
       return p;
     });
-    expect(within(pickers).queryByText("Approve for me")).toBeNull();
+    expect(within(mode).queryByText("Approve for me")).toBeNull();
     expect(screen.getAllByText("go")).toHaveLength(1);
     expect(writes(calls)).toEqual([FIRST]);
   });

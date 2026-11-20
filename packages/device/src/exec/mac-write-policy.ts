@@ -16,7 +16,7 @@ export interface MacWriteRegexRule {
 
 const META = /[\\^$.|?*+()[\]{}]/g;
 /** A literal name as a regex, every letter matched in either case (APFS is case-insensitive). */
-function ci(name: string): string {
+export function ci(name: string): string {
   let out = "";
   for (const ch of name) {
     const lower = ch.toLowerCase();

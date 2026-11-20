@@ -36,13 +36,13 @@ it.runIf(process.platform === "darwin")(
     for (const d of [stateDir, ...Object.values(roots)]) await mkdir(d, { mode: 0o700 });
     const ceiling: DeviceOwnerCeiling = {
       revision: "fixture",
-      fullAccess: true,
+      outsideSandbox: true,
+      network: "open",
+      allowedDomains: [],
       roots,
       restrictedProjectReach: "os-user",
-      restrictedAllowedDomains: [],
       restrictedDeniedReadRoots: [stateDir],
       preparation: { skillsRoot: roots.skills, attachmentsBase: join(roots.workspace, "a") },
-      fullNetwork: "environment",
     };
     const backend = await createMacOperationBackend(
       {

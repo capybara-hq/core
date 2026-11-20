@@ -111,13 +111,13 @@ describe("activation forwarding", () => {
     const hash = "b".repeat(64);
     writeFileSync(
       join(dir, "startup.env"),
-      'CAPYBARA_DEVICES__FULL_ACCESS=off\nCAPYBARA_ROLES=["worker"]\n',
+      'CAPYBARA_DEVICES__OUTSIDE_SANDBOX=off\nCAPYBARA_ROLES=["worker"]\n',
     );
     const env = {
       CAPYBARA_DB__URL: "postgres://test:test@localhost/test",
       CAPYBARA_REDIS__URL: "redis://localhost:6379",
       CAPYBARA_MASTER_KEY: Buffer.alloc(32).toString("base64"),
-      CAPYBARA_DEVICES__FULL_ACCESS: "allowed",
+      CAPYBARA_DEVICES__OUTSIDE_SANDBOX: "allowed",
     };
     state.mode = "capture";
     state.captured = [];
@@ -160,7 +160,7 @@ describe("activation forwarding", () => {
       ];
       expect(options.permissionConfigActivation).toEqual({ expectedActiveHash: hash });
       expect(config.roles).toEqual(["api"]);
-      expect(config.devices.fullAccess).toBe("allowed");
+      expect(config.devices.outsideSandbox).toBe("allowed");
       expect(options.env?.CAPYBARA_ROLES).toBe('["api"]');
       expect(JSON.stringify(config)).not.toContain(hash);
       expect(JSON.stringify(options.env)).not.toContain(hash);

@@ -30,16 +30,8 @@ export interface NetworkApprovalDetail {
   description: string | null;
   /** The hosts the decision allowed (the checked subset). */
   grantedHosts?: string[];
-  /** `once_fallback`: "always" was chosen but the device took it as "this time". */
-  outcome?: "once" | "always" | "once_fallback";
-  /** Why "always" fell back to "this time". */
-  fallback?: "offline" | "refused" | "unsupported";
-  /**
-   * While pending: the last "always" whose device change did not take effect (`failed`, with the
-   * device's reason), that the device did not confirm (`unknown`), or that the device applied but
-   * whose chooser can no longer decide the request (`applied_undecided`).
-   */
-  attempt?: { outcome: "failed" | "unknown" | "applied_undecided"; message: string };
+  /** A network ask is granted for this run only (device protocol 4 never widens a device). */
+  outcome?: "once";
 }
 
 /**
@@ -65,10 +57,14 @@ export interface CommandAskDetail {
   deviceId: string;
   deviceName: string;
   mode: "auto" | "sandbox";
-  kind: "command" | "write";
-  /** The command text (or the tool key of a write). */
+  /** The exact candidate a permission ask approves: the profile the call was reviewed under. */
+  permissionCandidate?: {
+    binding: { profile: "request-approval" | "approve-for-me" | "full-access" };
+  };
+  kind: "command" | "write" | "read";
+  /** The command text (or the tool key of a write or read). */
   command: string;
-  /** A write's target path. */
+  /** A write's or read's target path. */
   path?: string;
   /** The rule that asked, or null for a classifier ask (offers `once` only). */
   rule: string | null;

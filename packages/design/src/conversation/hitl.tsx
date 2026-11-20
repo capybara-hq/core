@@ -30,14 +30,7 @@ export type ApprovalState =
       reason?: string;
       /** A network ask: the hosts the decision covers (the checked ones when approved). */
       hosts?: string[];
-      /**
-       * A network ask decided "always" that became "this time": the device was offline, or does
-       * not accept remote changes (refused, or a program without the feature).
-       */
-      fallback?: NetworkFallback;
     };
-
-export type NetworkFallback = "offline" | "refused" | "unsupported";
 
 /** A network ask (network ask spec §6.5): a command on a device was refused these hosts. */
 export type NetworkAsk = {
@@ -58,14 +51,24 @@ export const NETWORK_COMMAND_MAX = 300;
  * drawn as code, never markup, and clipped to {@link NETWORK_COMMAND_MAX} characters.
  */
 export type CommandAsk = {
-  /** A shell command (`Bash`) or a file write outside the workspace (`Write` / `Edit`). */
-  kind: "command" | "write";
-  /** The command text (display-clipped), or the tool key of the write. */
+  /**
+   * A shell command (`Bash`), a file write outside the scope (`Write` / `Edit`) or a file read
+   * outside it (`Read`).
+   */
+  kind: "command" | "write" | "read";
+  /** The command text (display-clipped), or the tool key of the write or read. */
   command: string;
-  /** A write's target path. */
+  /** A write's or read's target path. */
   path?: string;
-  /** The review's reason: why this command is held. */
+  /** The review's reason: why this command is held (the kernel's English, model-facing text). */
   reason: string;
+  /**
+   * What the person is asked, worded in the UI's language from the ask's structured facts: shown
+   * in place of {@link reason} when given.
+   */
+  lead?: string;
+  /** Detail text under the lead (the review's own reason where it adds what the lead cannot). */
+  detail?: string;
 };
 
 export type ApprovalBlockProps = {
@@ -425,10 +428,7 @@ function NetworkApproval(p: ApprovalBlockProps & { network: NetworkAsk }): JSX.E
     const shown = s.hosts && s.hosts.length > 0 ? s.hosts : hosts;
     const d = s.decision;
     const approved = d === "approved";
-    const word =
-      d === "approved"
-        ? t(s.scope === "always" ? "hitl.network.allowedAlways" : "hitl.network.allowedOnce")
-        : t(NETWORK_DECIDED[d]);
+    const word = d === "approved" ? t("hitl.network.allowedOnce") : t(NETWORK_DECIDED[d]);
     // who decided: an approval, a denial, a skip (the person who wrote); expiry and cancel name no one
     const who = s.decision === "expired" || s.decision === "cancelled" ? "" : s.who;
     return (
@@ -444,11 +444,6 @@ function NetworkApproval(p: ApprovalBlockProps & { network: NetworkAsk }): JSX.E
           <span className="cb-faint" data-part="tool-key">
             {[shown.join(", "), who].filter(Boolean).join(" · ")}
           </span>
-          {s.fallback ? (
-            <span className="cb-muted" data-part="network-fallback">
-              {` · ${t(s.fallback === "offline" ? "hitl.network.fallbackOffline" : "hitl.network.fallbackRefused")}`}
-            </span>
-          ) : null}
           {s.reason ? (
             <span className="cb-muted">
               {` · ${fillCopy(t("hitl.reasonQuote"), { reason: s.reason })}`}
@@ -467,23 +462,13 @@ function NetworkApproval(p: ApprovalBlockProps & { network: NetworkAsk }): JSX.E
   const description = p.network.description?.trim();
   const picked = one ? hosts : hosts.filter((h) => checked.includes(h));
   const none = picked.length === 0;
+  // device protocol 4 never widens a device from the deployment: a network ask is allowed for
+  // this run only, and widening the device is its owner's command on the machine
+  const scopes = p.scopes.filter((scope) => scope === "once");
   const label = (scope: ApprovalScope) =>
-    p.scopeLabels?.[scope] ??
-    t(
-      scope === "always"
-        ? "hitl.network.always"
-        : scope === "once"
-          ? "hitl.network.once"
-          : SCOPE_LABEL[scope],
-    );
+    p.scopeLabels?.[scope] ?? t(scope === "once" ? "hitl.network.once" : SCOPE_LABEL[scope]);
   const hint = (scope: ApprovalScope): ReactNode =>
-    p.scopeHints?.[scope] ??
-    (scope === "once"
-      ? t("hitl.network.hintOnce")
-      : scope === "always"
-        ? richCopy(t("hitl.network.hintAlways"))
-        : undefined);
-  const remoteOff = !p.scopes.includes("always");
+    p.scopeHints?.[scope] ?? (scope === "once" ? t("hitl.network.hintOnce") : undefined);
 
   let actions: ReactNode;
   if (denying) {
@@ -524,7 +509,7 @@ function NetworkApproval(p: ApprovalBlockProps & { network: NetworkAsk }): JSX.E
   } else {
     actions = (
       <div className="cb-hcard-actions" data-hints="true">
-        {p.scopes.map((scope, i) => (
+        {scopes.map((scope, i) => (
           <ScopeChoice
             key={scope}
             primary={i === 0}
@@ -589,9 +574,9 @@ function NetworkApproval(p: ApprovalBlockProps & { network: NetworkAsk }): JSX.E
         </div>
       )}
       {actions}
-      {remoteOff && !denying ? (
-        <div className="cb-muted cb-small" data-part="network-remote-off">
-          {richCopy(t("hitl.network.remoteOff"), { host: one ? (hosts[0] ?? "") : "<host>" })}
+      {!denying ? (
+        <div className="cb-muted cb-small" data-part="network-on-machine">
+          {richCopy(t("hitl.network.onMachine"), { host: one ? (hosts[0] ?? "") : "<host>" })}
         </div>
       ) : null}
     </div>
@@ -618,8 +603,14 @@ function CommandApproval(p: ApprovalBlockProps & { command: CommandAsk }): JSX.E
   const [reason, setReason] = useState(p.defaultDeny?.reason ?? "");
   const inputId = useId();
   const s = p.state;
-  const write = p.command.kind === "write";
-  const title = write ? t("hitl.command.titleWrite") : t("hitl.command.title");
+  // a file ask (write or read) names its target path
+  const file = p.command.kind !== "command";
+  const title =
+    p.command.kind === "write"
+      ? t("hitl.command.titleWrite")
+      : p.command.kind === "read"
+        ? t("hitl.command.titleRead")
+        : t("hitl.command.title");
 
   if (s.kind === "decided") {
     const approved = s.decision === "approved";
@@ -657,8 +648,8 @@ function CommandApproval(p: ApprovalBlockProps & { command: CommandAsk }): JSX.E
   }
 
   const busy = s.busy === true;
-  // a write names its target path; the command text there is the tool key, which says nothing
-  const shown = write ? (p.command.path ?? p.command.command) : p.command.command;
+  // a file ask names its target path; the command text there is the tool key, which says nothing
+  const shown = file ? (p.command.path ?? p.command.command) : p.command.command;
   const label = (scope: ApprovalScope) =>
     p.scopeLabels?.[scope] ??
     t(
@@ -744,12 +735,17 @@ function CommandApproval(p: ApprovalBlockProps & { command: CommandAsk }): JSX.E
         </span>
       </div>
       <div className="cb-small" data-part="command-reason">
-        {p.command.reason}
+        {p.command.lead ?? p.command.reason}
       </div>
+      {p.command.lead !== undefined && p.command.detail ? (
+        <div className="cb-faint cb-small" data-part="command-detail">
+          {p.command.detail}
+        </div>
+      ) : null}
       <CodeBlock
         text={clipCommand(shown)}
         framed={false}
-        {...(write ? { title: t("hitl.command.path") } : {})}
+        {...(file ? { title: t("hitl.command.path") } : {})}
       />
       {actions}
     </div>

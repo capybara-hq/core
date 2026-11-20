@@ -54,7 +54,6 @@ const LIMITS = {
   cpu: 1,
   memoryMb: 512,
   diskMb: 1024,
-  mode: "sandbox" as const,
   network: { kind: "allowlist" as const, hosts: [] },
 };
 const execArgs = {

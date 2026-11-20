@@ -14,11 +14,6 @@ export interface DeviceProjectScope {
   /** The owner's home a local machine reported; null when unknown (and for a cloud device). */
   home: string | null;
   supported: boolean;
-  /**
-   * A machine without an authenticated owner report whose own policy is auto mode while the
-   * organization allows only sandbox mode: the kernel reads nothing on it unasked.
-   */
-  widerThanAllowed: boolean;
 }
 
 type Scope = DeviceProjectScope;
@@ -26,13 +21,6 @@ type Scope = DeviceProjectScope;
 /** Only the owner's home bounds nothing: OS-user reach on a machine reads what its owner can. */
 const homeBased = (s: Pick<Scope, "source" | "reach">): boolean =>
   s.source === "local" && s.reach === "os-user";
-
-/**
- * The protocol 2 read mode for list/scan on the device (`limits.mode`): the reach, encoded (B2: a
- * restricted OS-user read is never a Full grant; the v3 browse scope carries roots instead).
- */
-export const readModeOf = (s: Pick<Scope, "source" | "reach" | "mode">): SandboxMode =>
-  s.source === "local" ? (s.reach === "os-user" ? "auto" : "sandbox") : s.mode;
 
 /** The base a relative path is resolved against in the scope's mode (project root §4.2). */
 export const baseOf = (s: Scope, workspace: string = s.workspace): string | null =>

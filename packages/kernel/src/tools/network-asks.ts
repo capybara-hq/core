@@ -6,6 +6,7 @@ import {
 } from "@capybara-hq/plugin-sdk";
 import { NETWORK_ASK_MAX_HOSTS, NETWORK_HOST_MAX_CHARS } from "../conversations/events.js";
 import type { NetworkRunState } from "../local-devices/network-grants.js";
+import { ESCALATION_UNATTENDED_WHY } from "../sandbox/review/permission-candidate.js";
 import {
   networkGrantKey,
   type UnattendedRun,
@@ -42,13 +43,9 @@ const pron = (hosts: readonly string[]) => (one(hosts) ? "it" : "them");
 const blockedLead = (hosts: readonly string[]) =>
   `[network] ${list(hosts)} ${one(hosts) ? "was" : "were"} blocked by this device's network policy.`;
 
-/** Asked, allowed this time (a run grant; also the 「一直允许」 that fell back to one). */
+/** Asked, allowed this time (a run grant, the only offer under device protocol 4). */
 export const allowedOnceNote = (hosts: readonly string[]) =>
   `${blockedLead(hosts)} The user allowed ${pron(hosts)} for the rest of this task. Run the command again.`;
-
-/** Asked, allowed on the device from now on. */
-export const allowedAlwaysNote = (hosts: readonly string[]) =>
-  `${blockedLead(hosts)} The user allowed ${pron(hosts)} on this device from now on. Run the command again.`;
 
 /** Asked and declined (also the unchecked hosts of a partial decision, and a host refused earlier in the run). */
 export const deniedNote = (hosts: readonly string[], reason?: string | null) =>
@@ -80,18 +77,11 @@ const localAdd = (hosts: readonly string[]) =>
 
 /**
  * Not asked: the device cannot take network changes from the deployment (Docker mode, or a program
- * too old to take them), so neither a run grant nor 「一直允许」 would reach it; only its owner can
+ * too old to take them), so a run grant would not reach it; only its owner can
  * allow the host locally.
  */
 export const localOnlyNote = (hosts: readonly string[]) =>
   `${blockedLead(hosts).slice(0, -1)}, and this device does not accept network changes from the conversation. The device owner can allow ${pron(hosts)} locally: ${localAdd(hosts)}. Continue without ${pron(hosts)} or tell the user.`;
-
-/**
- * Asked and allowed 「一直允许」, but the device refused the policy op (outcome `refused`): nothing
- * was granted.
- */
-export const alwaysRefusedNote = (hosts: readonly string[]) =>
-  `${blockedLead(hosts)} The user allowed ${pron(hosts)} on this device, but the device does not accept network changes from the deployment; access stays blocked. The device owner can allow ${pron(hosts)} locally: ${localAdd(hosts)}.`;
 
 /** The org layer (spec §6.6): only an org admin can lift it. */
 export const orgLayerNote = (hosts: readonly string[]) =>
@@ -105,11 +95,52 @@ export const platformCeilingNote = (hosts: readonly string[]) =>
     ? `[network] ${list(hosts)} is not in the platform's network allowlist, which limits this organization. Only a super admin can add it; organization admins cannot. Continue without it or tell the user.`
     : `[network] ${list(hosts)} are not in the platform's network allowlist, which limits this organization. Only a super admin can add them; organization admins cannot. Continue without them or tell the user.`;
 
-/** The address layer (spec §6.6): nobody can lift it. */
-export const addressLayerNote = (hosts: readonly string[]) =>
-  one(hosts)
-    ? `[network] ${list(hosts)} is a private or local address, which commands can never reach.`
-    : `[network] ${list(hosts)} are private or local addresses, which commands can never reach.`;
+/**
+ * The address layer (spec §6.6): no host grant lifts it, only running outside the sandbox. `why`,
+ * when running outside the sandbox is not possible for this call, is the escalation refusal's
+ * per-layer text (who turns it on, or that an unattended run cannot ask).
+ */
+export const addressLayerNote = (hosts: readonly string[], why?: string) =>
+  `${
+    one(hosts)
+      ? `[network] ${list(hosts)} is a private or local address.`
+      : `[network] ${list(hosts)} are private or local addresses.`
+  } Private and local addresses are closed inside the sandbox; only a command run outside the sandbox reaches ${pron(hosts)}${
+    why === undefined ? "." : `, but ${why}. Continue without ${pron(hosts)} or tell the user.`
+  }`;
+
+/**
+ * The address layer under the open sandbox network on a device that allows running outside the
+ * sandbox (approval-only profiles design, "Open network"): no host grant reaches a private or
+ * local address from the sandbox, only an escalated call does. No network ask is made.
+ */
+export const addressEscalationNote = (hosts: readonly string[]) =>
+  `${
+    one(hosts)
+      ? `[network] ${list(hosts)} is a private or local address, which the sandbox never reaches.`
+      : `[network] ${list(hosts)} are private or local addresses, which the sandbox never reaches.`
+  } If the command must reach ${pron(hosts)}, retry the same Bash call with sandbox: "escalated" and justification: one sentence saying why; this conversation's permission profile decides whether it may run outside the sandbox for this call only.`;
+
+/**
+ * Whether a private-address block gets {@link addressEscalationNote}: admission's verdict for the
+ * call allows escalation (`available`, the source of the Bash tool's own hint: no
+ * `escalationRefusal`), and the device runs the open sandbox network (under an allowlist, a host
+ * grant is the remedy, not escalation).
+ */
+export function addressEscalationHint(
+  escalation: "available" | "escalated" | undefined,
+  networkMode: "open" | "allowlist" | "none",
+): boolean {
+  return escalation === "available" && networkMode === "open";
+}
+
+/**
+ * Not asked: a per-call grant for the host is unavailable on this device (approval-only profiles
+ * design, "Per-call host grant"), so asking would change nothing; `why` names who can add it
+ * (`hostGrantRefusal`): the device owner on the machine, an organization admin or a super admin.
+ */
+export const unavailableHostNote = (host: string, why: string) =>
+  `[network] ${host} was blocked by this device's network policy and cannot be allowed from this conversation: ${why}. Continue without it or tell the user.`;
 
 /**
  * An unattended run (spec §8.1): the task approves the host, yet the device refused it: the device
@@ -134,14 +165,30 @@ export interface NetworkPlanContext {
    * ceiling spec §D2): only a super admin can add it, so its note names the super admin.
    */
   outsideCeiling?: (host: string) => boolean;
+  /**
+   * Why a per-call grant for a host is unavailable on the device (`hostGrantRefusal`), or null when
+   * one may be granted: an unavailable host is never asked about, its note names who adds it.
+   */
+  refusal?: (host: string) => string | null;
+  /**
+   * {@link addressEscalationHint}: a private-address block of an attended run answers with the
+   * escalation hint.
+   */
+  escalation?: boolean;
+  /**
+   * Why this call could not run outside the sandbox (the escalation refusal's per-layer text):
+   * a private-address block names who could allow it.
+   */
+  escalationRefusal?: string;
 }
 
 /** What to do with a command's refused hosts. */
 export interface NetworkPlan {
-  /** The device-layer hosts to ask the device owner about (empty: no ask). */
+  /**
+   * The device-layer hosts to ask the device owner about (empty: no ask). The ask offers a run
+   * grant only: the deployment never adds a host to a local device.
+   */
   ask: { host: string; port: number }[];
-  /** The scopes the ask offers (a device without remote grants is never asked). */
-  scopes: ("once" | "always")[];
   /** Notes written now, after the command output (one line per outcome). */
   notes: string[];
   /** `missing_grants` keys of an unattended run (`network:<host>`). */
@@ -173,7 +220,12 @@ export function blockedEventHosts(blocked: readonly NetworkBlockedHost[]): Netwo
  * tree's network asks (`run`). The caller asks only for foreground `Bash` on a device; this decides
  * the rest:
  * - `address` and `org` layers: a note each (in an unattended run an `org` host is a missing grant);
+ *   an `address` host under the open network on a device that allows running outside the sandbox
+ *   gets the escalation hint; an `org` host whose grant is unavailable names who adds it;
  *   `unknown`: nothing (the device's trailer explains);
+ * - a `device` host whose per-call grant is unavailable (`ctx.refusal`: beyond a local owner's
+ *   allowlist, or the org's or platform's allowlist ceiling): a note naming who adds it, never an
+ *   ask;
  * - `device` layer on a program without `policyOpId`: nothing (no ask, the trailer explains);
  * - approved by the scheduled task the run serves (`run.taskGranted`) yet refused: a note that
  *   the device ignores the task's grants (never asked, never a missing grant);
@@ -195,23 +247,27 @@ export function planNetworkAsk(
   const taskIgnored: string[] = [];
   const candidates: { host: string; port: number }[] = [];
   const missingGrants: string[] = [];
-  // a machine that reports blocked hosts and takes policy changes under op ids (Docker mode has
-  // no report; a program without op ids cannot take 「一直允许」)
+  const unavailable: string[] = [];
+  // a machine that reports blocked hosts and logs its ops under ids (Docker mode has no report)
   const canAsk =
     ctx.device?.features.includes("networkReport") === true &&
     ctx.device.features.includes("policyOpId");
   for (const b of hostsOf(blocked)) {
     if (b.layer === "address") address.push(b.host);
     else if (b.layer === "org") {
-      if (ctx.outsideCeiling?.(b.host) === true) platform.push(b.host);
+      const why = ctx.refusal?.(b.host) ?? null;
+      if (why !== null) unavailable.push(unavailableHostNote(b.host, why));
+      else if (ctx.outsideCeiling?.(b.host) === true) platform.push(b.host);
       else org.push(b.host);
       if (unattendedRules(ctx.unattended)) missingGrants.push(networkGrantKey(b.host));
     } else if (b.layer === "device") {
       if (!canAsk) continue;
+      const why = ctx.refusal?.(b.host) ?? null;
       // relayer already made an invalid name an address; a wildcard is never asked
       if (b.host.startsWith("*.") || validateAllowHost(b.host).length > 0) {
         address.push(b.host);
-      } else if (run?.taskGranted?.has(b.host)) taskIgnored.push(b.host);
+      } else if (why !== null) unavailable.push(unavailableHostNote(b.host, why));
+      else if (run?.taskGranted?.has(b.host)) taskIgnored.push(b.host);
       else if (run?.refused.has(b.host)) refused.push(b.host);
       else if (unattendedFails(ctx.unattended)) {
         unattended.push(b.host);
@@ -230,33 +286,35 @@ export function planNetworkAsk(
     else if ((run?.asks ?? 0) >= MAX_NETWORK_ASKS_PER_RUN) notes.push(tooManyNote(names));
     else ask = candidates.slice(0, NETWORK_ASK_MAX_HOSTS);
   }
+  notes.push(...unavailable);
   if (org.length > 0) notes.push(orgLayerNote(org));
   if (platform.length > 0) notes.push(platformCeilingNote(platform));
-  if (address.length > 0) notes.push(addressLayerNote(address));
-  return { ask, scopes: ["once", "always"], notes, missingGrants };
+  if (address.length > 0)
+    notes.push(
+      ctx.escalation === true && ctx.unattended == null
+        ? addressEscalationNote(address)
+        : addressLayerNote(
+            address,
+            ctx.unattended != null ? ESCALATION_UNATTENDED_WHY : ctx.escalationRefusal,
+          ),
+    );
+  return { ask, notes, missingGrants };
 }
 
 /**
  * The note of a settled network ask (spec §6.6): one line per outcome. An approval allows
- * `detail.grantedHosts` (once, always, or once after 「一直允许」 fell back) and declines the hosts
+ * `detail.grantedHosts` for the run and declines the hosts
  * left unchecked; `hours` is the ask's own wait (created to expiry). Null while it is pending.
  */
 export function settledNetworkNotes(a: ApprovalRecord, hours: number): string[] | null {
   const asked = (a.detail?.hosts ?? []).map((h) => h.host);
   switch (a.status) {
     case "approved": {
-      // 「一直允许」 the device refused: nothing took effect (compared as a string: the outcome
-      // may predate this build's type)
-      if ((a.detail?.outcome as string | undefined) === "refused") {
-        return [alwaysRefusedNote(asked)];
-      }
       const granted = a.detail?.grantedHosts ?? asked;
       const rest = asked.filter((h) => !granted.includes(h));
       const notes: string[] = [];
       if (granted.length > 0) {
-        notes.push(
-          a.detail?.outcome === "always" ? allowedAlwaysNote(granted) : allowedOnceNote(granted),
-        );
+        notes.push(allowedOnceNote(granted));
       }
       if (rest.length > 0) notes.push(deniedNote(rest));
       return notes;

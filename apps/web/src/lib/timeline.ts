@@ -1197,6 +1197,9 @@ export function buildEventTimeline(
         if (notLoaded && !failed) row.notice = "not_loaded";
         // the review admitted the command outside the OS sandbox (a per-call escalation)
         if (p.review?.sandbox === "escalated") row.outsideSandbox = true;
+        // Full access granted the crossing by itself: the row says so, neutrally, with its kind
+        if (p.review?.decisionSource === "full-access" && p.review.crossing !== undefined)
+          row.autoGranted = p.review.crossing;
         delete row.waiting;
         delete row.waitingFor;
         c.done = true;

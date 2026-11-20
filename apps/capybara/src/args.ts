@@ -101,7 +101,7 @@ export const USAGE = `Usage:
   capybara config migrate-permissions --in <file> --out <file>
                                                Convert a config file (or a Nacos data id's
                                                content saved to a file) to the new permission
-                                               keys (devices.autoMode -> devices.fullAccess),
+                                               keys (devices.fullAccess -> devices.outsideSandbox),
                                                keeping every other key and comment; writes a
                                                new --out file and names the environment
                                                variables to rename. Publish a Nacos result

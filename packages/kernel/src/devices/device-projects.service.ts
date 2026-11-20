@@ -39,7 +39,6 @@ import {
   nameInvalid,
   nameTaken,
   outsideMode,
-  readModeOf,
   tooBroad,
   withinMode,
 } from "./project-rules.js";
@@ -47,7 +46,7 @@ import {
 // it anyway (project root §4.3), so both use the one rule; the home itself may be one
 import { aboveHome } from "./working-root.js";
 
-export { type DeviceProjectScope, readModeOf, withinMode } from "./project-rules.js";
+export { type DeviceProjectScope, withinMode } from "./project-rules.js";
 
 /** The most projects one device keeps (project root §4.1). */
 export const MAX_DEVICE_PROJECTS = 100;
@@ -80,12 +79,7 @@ interface ProjectReader {
 }
 
 /** The raw route's reader over a held provider (gate off): the protocol 2 calls, unchanged. */
-function heldReader(
-  scope: DeviceProjectScope,
-  h: SandboxHandle,
-  p: HeldProvider,
-  workspace: string,
-): ProjectReader {
+function heldReader(h: SandboxHandle, p: HeldProvider, workspace: string): ProjectReader {
   const list = p.list;
   const scan = p.scan;
   return {
@@ -93,11 +87,10 @@ function heldReader(
     browse: false,
     ...(list !== undefined && {
       list: (path: string, limit: number, signal: AbortSignal) =>
-        list.call(p, h, path, { limit, limits: { mode: readModeOf(scope) }, signal }),
+        list.call(p, h, path, { limit, signal }),
     }),
     ...(scan !== undefined && {
-      scan: (base: string, signal: AbortSignal) =>
-        scan.call(p, h, base, { limits: { mode: readModeOf(scope) }, signal }),
+      scan: (base: string, signal: AbortSignal) => scan.call(p, h, base, { signal }),
     }),
     stat: (path, signal) => p.stat(h, path, signal),
   };
@@ -546,7 +539,7 @@ export class DeviceProjectsService {
           holderConversationId: PROJECTS_HOLDER,
           actor: { accountId, conversationId: PROJECTS_HOLDER },
         },
-        (h, p, info, sig) => fn(heldReader(scope, h, p, info.roots.workspace), sig),
+        (h, p, info, sig) => fn(heldReader(h, p, info.roots.workspace), sig),
         signal,
       );
     } catch (e) {

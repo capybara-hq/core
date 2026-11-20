@@ -66,9 +66,11 @@ beforeEach(async () => {
 
 const ROOTS = { ...DEFAULT_SANDBOX_ROOTS, workspace: "/Users/owner/capybara" };
 const support = {
-  version: 1 as const,
+  version: 2 as const,
   restricted: null,
-  fullAccess: true,
+  boundary: "operation" as const,
+  network: { openPublic: false, allowlist: false, perOperationHosts: false },
+  outsideSandbox: true,
   background: true,
   unavailableReason: "Restricted per-instance validation pending",
 };
@@ -88,6 +90,22 @@ const stagedHello = (identity?: ReturnType<typeof identityFor>) => ({
   ...fakeHello(identity),
   roots: ROOTS,
   permissionSupport: support,
+});
+
+/** A hello from a program that holds no binding (a restart whose runtime changed). */
+const unboundHello = () => ({
+  ...fakeHello(),
+  roots: ROOTS,
+  instanceGeneration: null,
+  permissionSupport: {
+    version: 2 as const,
+    restricted: null,
+    boundary: "operation" as const,
+    network: { openPublic: false, allowlist: false, perOperationHosts: false },
+    outsideSandbox: false,
+    background: false,
+    unavailableReason: "Instance is not bound yet",
+  },
 });
 
 async function localDevice() {
@@ -376,12 +394,13 @@ it("a delayed answer for a replaced generation cannot populate the replacement",
         runtimeIdentity: identityFor(replacement),
         permissionSupport: support,
         ownerCeiling: {
-          version: 2,
+          version: 3,
           sequence: 1,
           revision: "owner-1",
-          fullAccess: true,
+          outsideSandbox: true,
+          network: "open",
           restrictedProjectReach: "workspace",
-          restrictedAllowedDomains: [],
+          allowedDomains: [],
         },
       },
     ),
@@ -393,7 +412,7 @@ it("a delayed answer for a replaced generation cannot populate the replacement",
   expect((await f.report()).state).toBe("supported");
 });
 
-it("bound hellos re-report only the installed identity; a changed one stops admission", async () => {
+it("bound hellos re-report only the installed identity; a lost or changed one replaces the instance", async () => {
   const f = await localDevice();
   const g = await f.create();
   deviceAnswers();
@@ -409,45 +428,189 @@ it("bound hellos re-report only the installed identity; a changed one stops admi
   await machines.recordHelloV3(f.machineId, stagedHello(identityFor(g)));
   expect((await f.report()).state).toBe("supported");
   expect(await f.fullRevision()).toEqual(base);
-  // an unbound hello (a process that lost its binding) attests nothing
-  const unbound = {
-    ...fakeHello(),
-    roots: ROOTS,
-    instanceGeneration: null,
-    permissionSupport: {
-      version: 1 as const,
-      restricted: null,
-      fullAccess: false,
-      background: false,
-      unavailableReason: "Instance is not bound yet",
-    },
+  // the machine no longer attesting its installed generation replaces the instance: the row
+  // forgets it (its fence moves on), the device epoch fences old work, and a new generation is
+  // bound on the next use (a restarted program whose runtime changed comes back unbound)
+  const rebind = async () => {
+    const row = await f.db
+      .selectFrom("device_instances")
+      .select(["status", "handle", "generation"])
+      .where("device_id", "=", f.deviceId)
+      .executeTakeFirstOrThrow();
+    expect(row).toMatchObject({ status: "none", handle: null });
+    f.setFence(row.generation);
+    const next = await f.create();
+    await k.app.get(LocalInstanceBindings).bind(f.deviceId, AbortSignal.timeout(5000));
+    expect((await f.report()).state).toBe("supported");
+    return next;
   };
-  await machines.recordHelloV3(f.machineId, unbound);
+  await machines.recordHelloV3(f.machineId, unboundHello());
   expect((await f.report()).state).toBe("unprobed");
+  const afterUnbound = await f.fullRevision();
+  expect(afterUnbound.revision).toBeGreaterThan(base.revision);
+  // nothing proves the new environment yet: consent stays until the install compares it
+  expect(afterUnbound.full_revision).toBe(base.full_revision);
+  // the old generation's identity never attests again: it stays replaced
   await machines.recordHelloV3(f.machineId, stagedHello(identityFor(g)));
-  expect((await f.report()).state).toBe("supported");
-  // a changed helper under the same binding: report invalid, admissions fenced, consent kept
+  expect((await f.report()).state).toBe("unprobed");
+  let current = await rebind();
+  // a changed helper under the same binding: replaced, admissions fenced, consent kept
+  const beforeHelper = await f.fullRevision();
   await machines.recordHelloV3(
     f.machineId,
-    stagedHello(identityFor(g, { helperHash: "d".repeat(64) })),
+    stagedHello(identityFor(current, { helperHash: "d".repeat(64) })),
   );
   expect((await f.report()).state).toBe("unprobed");
   const afterHelper = await f.fullRevision();
-  expect(afterHelper.revision).toBeGreaterThan(base.revision);
-  expect(afterHelper.full_revision).toBe(base.full_revision);
-  // the verified identity is back: supported again without another reset
-  await machines.recordHelloV3(f.machineId, stagedHello(identityFor(g)));
-  expect((await f.report()).state).toBe("supported");
-  // a changed environment (interpreter, OS, boundary) resets Full consent
+  expect(afterHelper.revision).toBeGreaterThan(beforeHelper.revision);
+  expect(afterHelper.full_revision).toBe(beforeHelper.full_revision);
+  current = await rebind();
+  // a changed environment (interpreter, OS, boundary) resets Full consent once: at the install
+  // that proves it, never already at the hello that names it
+  const beforeEnv = await f.fullRevision();
   await machines.recordHelloV3(
     f.machineId,
-    stagedHello(identityFor(g, { imageFingerprint: "e".repeat(64) })),
+    stagedHello(identityFor(current, { imageFingerprint: "e".repeat(64) })),
   );
   expect((await f.report()).state).toBe("unprobed");
-  expect((await f.fullRevision()).full_revision).toBe(base.full_revision + 1);
+  expect((await f.fullRevision()).full_revision).toBe(beforeEnv.full_revision);
+  vi.restoreAllMocks();
+  deviceAnswers((gen) => identityFor(gen, { imageFingerprint: "e".repeat(64) }));
+  current = await rebind();
+  expect((await f.fullRevision()).full_revision).toBe(beforeEnv.full_revision + 1);
   // a hello asserting another generation never attests this instance
-  await machines.recordHelloV3(f.machineId, stagedHello(identityFor(String(Number(g) + 5))));
+  await machines.recordHelloV3(f.machineId, stagedHello(identityFor(String(Number(current) + 5))));
   expect((await f.report()).state).toBe("unprobed");
+});
+
+/** The local instance row's lifecycle fields. */
+async function instanceRow(f: Awaited<ReturnType<typeof localDevice>>) {
+  return f.db
+    .selectFrom("device_instances")
+    .select(["status", "handle", "generation"])
+    .where("device_id", "=", f.deviceId)
+    .executeTakeFirstOrThrow();
+}
+
+it("an unbound hello recorded after its own connection installed the generation leaves it", async () => {
+  const f = await localDevice();
+  await f.create();
+  // the bind answer arrives on connection c1 before that connection's own hello is recorded
+  deviceAnswers();
+  await k.app.get(LocalInstanceBindings).bind(f.deviceId, AbortSignal.timeout(5000));
+  const machines = k.app.get(MachinesService);
+  const base = await f.fullRevision();
+  await machines.recordHelloV3(f.machineId, unboundHello(), "c1");
+  expect(await instanceRow(f)).toMatchObject({ status: "running" });
+  expect((await f.report()).state).toBe("supported");
+  expect(await f.fullRevision()).toEqual(base);
+  // a later connection that comes back unbound still replaces it
+  await machines.recordHelloV3(f.machineId, unboundHello(), "c2");
+  expect(await instanceRow(f)).toMatchObject({ status: "none", handle: null });
+});
+
+it("replacing an unattested generation revokes its admitted and background work", async () => {
+  const f = await localDevice();
+  const g = await f.create();
+  deviceAnswers();
+  await k.app.get(LocalInstanceBindings).bind(f.deviceId, AbortSignal.timeout(5000));
+  const intent = async (state: "admitted" | "background-running") => {
+    const operationId = randomUUID();
+    await f.db
+      .insertInto("sandbox_operation_intents")
+      .values({
+        operation_id: operationId,
+        org_id: f.orgId,
+        account_id: f.accountId,
+        device_id: f.deviceId,
+        ordinal: 0,
+        method: state === "admitted" ? "exec" : "backgroundStart",
+        input_hash: "i",
+        admission_hash: "a",
+        granted_hosts: "[]",
+        input: "{}",
+        scope: "{}",
+        epochs: JSON.stringify({ platform: 0, org: 0, device: 0, root: 0 }),
+        provider: "@local",
+        provider_version: "0.1.0",
+        instance_generation: g,
+        execution_id: randomUUID(),
+        // an acknowledged background start carries its exact ref
+        execution_ref: state === "background-running" ? JSON.stringify({ taskId: "t1" }) : null,
+        deadline: new Date(Date.now() + 60000),
+        retain_until: new Date(Date.now() + 60000),
+        state,
+      })
+      .execute();
+    return operationId;
+  };
+  const ids = [await intent("admitted"), await intent("background-running")];
+  await k.app.get(MachinesService).recordHelloV3(f.machineId, unboundHello(), "c2");
+  const rows = await f.db
+    .selectFrom("sandbox_operation_intents")
+    .select(["operation_id", "state"])
+    .where("operation_id", "in", ids)
+    .execute();
+  expect(rows.map((r) => r.state)).toEqual(["revoked", "revoked"]);
+  const jobs = await f.db
+    .selectFrom("outbox")
+    .select("job_id")
+    .where("job_name", "=", "sandbox-operation-revoke")
+    .execute();
+  expect(jobs.map((j) => j.job_id).sort()).toEqual(
+    ids.map((id) => `sandbox-operation-revoke-${id}`).sort(),
+  );
+});
+
+it("two concurrent unbound hellos replace the instance once", async () => {
+  const f = await localDevice();
+  await f.create();
+  deviceAnswers();
+  await k.app.get(LocalInstanceBindings).bind(f.deviceId, AbortSignal.timeout(5000));
+  const machines = k.app.get(MachinesService);
+  const base = await f.fullRevision();
+  const fence = (await instanceRow(f)).generation;
+  await Promise.all([
+    machines.recordHelloV3(f.machineId, unboundHello(), "c2"),
+    machines.recordHelloV3(f.machineId, unboundHello(), "c3"),
+  ]);
+  const row = await instanceRow(f);
+  expect(row).toMatchObject({ status: "none", handle: null, generation: fence + 1 });
+  const after = await f.fullRevision();
+  expect(Number(after.revision)).toBe(Number(base.revision) + 1);
+  expect(after.full_revision).toBe(base.full_revision);
+});
+
+it("a hello from another machine of the device never replaces the installed generation", async () => {
+  const f = await localDevice();
+  await f.create();
+  deviceAnswers();
+  await k.app.get(LocalInstanceBindings).bind(f.deviceId, AbortSignal.timeout(5000));
+  const before = await instanceRow(f);
+  // a new login: the old machine is revoked and another one is active for the device
+  await f.db
+    .updateTable("device_machines")
+    .set({ revoked_at: new Date() })
+    .where("id", "=", f.machineId)
+    .execute();
+  const other = await f.db
+    .insertInto("device_machines")
+    .values({
+      org_id: f.orgId,
+      device_id: f.deviceId,
+      account_id: f.accountId,
+      credential_hash: randomUUID(),
+      name: "Laptop",
+      os: "linux",
+      arch: "x64",
+      program_version: "0.1.0",
+      roots: JSON.stringify(ROOTS),
+    })
+    .returning("id")
+    .executeTakeFirstOrThrow();
+  await k.app.get(MachinesService).recordHelloV3(other.id, unboundHello(), "c2");
+  // the binding names the machine it was installed for: the new machine's hello leaves it
+  expect(await instanceRow(f)).toEqual(before);
 });
 
 it("a replacement with a changed environment resets Full consent; the same one keeps it", async () => {
@@ -531,13 +694,13 @@ async function realDevice(deviceId: string, credential: string, stateDir?: strin
           pythonPath: "/usr/bin/python3",
           readOwnerCeiling: async () => ({
             revision: "r",
-            fullAccess: true,
+            outsideSandbox: true,
+            network: "allowlist",
             roots,
             restrictedProjectReach: "workspace",
-            restrictedAllowedDomains: [],
+            allowedDomains: [],
             restrictedDeniedReadRoots: [],
             preparation: { skillsRoot: roots.skills, attachmentsBase: join(roots.workspace, "a") },
-            fullNetwork: "environment",
           }),
         },
         { platform: "darwin", watch: () => () => {} },
@@ -548,12 +711,13 @@ async function realDevice(deviceId: string, credential: string, stateDir?: strin
       imageFingerprint: "c".repeat(64),
     }),
     ownerReport: async () => ({
-      version: 2,
+      version: 3,
       sequence: 1,
       revision: "owner-1",
-      fullAccess: true,
+      outsideSandbox: true,
+      network: "open",
       restrictedProjectReach: "workspace",
-      restrictedAllowedDomains: [],
+      allowedDomains: [],
     }),
   });
   return { binder, dir };

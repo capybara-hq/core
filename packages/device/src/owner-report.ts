@@ -83,7 +83,7 @@ function writeState(stateDir: string, state: OwnerReportState): void {
 /**
  * The strict owner report for the policy now (B2), used as the hello, `policy` frame, policy
  * answers and bind answer `ownerCeiling`. Under the policy lock: the strict reader validates the
- * version-2 policy; a newly observed revision advances the sequence, durably written before the
+ * version-3 policy; a newly observed revision advances the sequence, durably written before the
  * report is returned (a crash before that emits no report). A missing, old-format or invalid policy
  * and a corrupt sidecar throw: no report, no widening.
  */
@@ -103,12 +103,13 @@ export function issueOwnerReport(input: {
       writeState(input.stateDir, { sequence, lastPublishedRevision: ceiling.revision });
     }
     return parseOwnerCeilingReport({
-      version: 2,
+      version: 3,
       revision: ceiling.revision,
       sequence,
-      fullAccess: ceiling.fullAccess,
+      outsideSandbox: ceiling.outsideSandbox,
+      network: ceiling.network,
+      allowedDomains: [...ceiling.allowedDomains],
       restrictedProjectReach: ceiling.restrictedProjectReach,
-      restrictedAllowedDomains: [...ceiling.restrictedAllowedDomains],
     });
   });
 }
