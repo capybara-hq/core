@@ -36,6 +36,19 @@ export function deviceSandboxHome(dir: string): string {
   return join(dir, "home");
 }
 
+/**
+ * The directories of the sandbox home made before every restricted command
+ * ({@link prepareSandboxHome}): the XDG base directories of {@link sandboxHomeEnv} and macOS's
+ * per-user cache directory, relative to the home.
+ */
+export const SANDBOX_HOME_DIRECTORIES: readonly string[] = [
+  ".cache",
+  ".config",
+  ".local/share",
+  ".local/state",
+  "Library/Caches",
+];
+
 /** HOME and the XDG base directories of an OS-sandboxed command, all under its sandbox `home`. */
 export function sandboxHomeEnv(home: string): Record<string, string> {
   return {
@@ -84,6 +97,14 @@ export function prepareSandboxHome(
     throw new SandboxScopeDeniedError(
       `The device's sandbox home ${real} is in a system runtime directory`,
     );
+  // The sandbox never creates a directory that leads to a protected entry (`.config` of
+  // `.config/git/config`, `.local` and `.local/share` of `.local/share/systemd`, `Library` of
+  // `Library/LaunchAgents`): it could be a link redirecting the entry. The XDG directories the
+  // command is pointed at, and `Library/Caches`, are therefore made here, outside the sandbox; the
+  // protected entries in them stay denied. A sandboxed command can neither create nor remove those
+  // ancestors, so none of them is a link it planted.
+  for (const rel of SANDBOX_HOME_DIRECTORIES)
+    mkdirSync(join(real, rel), { recursive: true, mode: 0o700 });
   for (const rel of toolHome ? TOOL_HOME_FILES : []) {
     let target: string;
     try {

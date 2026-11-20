@@ -235,7 +235,11 @@ person's own caches **(designer's call)**:
   kept across commands, outside every workspace and project; created again when missing), readable
   and writable inside that command's sandbox like a write root (the mandatory write denies apply
   there too; the real home's protected locations stay denied and the real home is never granted).
-  `XDG_CACHE_HOME`, `XDG_CONFIG_HOME`, `XDG_DATA_HOME` and `XDG_STATE_HOME` point under it; the
+  `XDG_CACHE_HOME`, `XDG_CONFIG_HOME`, `XDG_DATA_HOME` and `XDG_STATE_HOME` point under it, and the
+  device creates those directories and `Library/Caches` before every command: the sandbox refuses
+  to create a directory that leads to a protected entry (`.config` of `.config/git/config`,
+  `.local` of `.local/share/systemd`, `Library` of `Library/LaunchAgents`), so without them pnpm
+  found no writable data directory and fell back to a store in the repository; the
   version manager variables keep pointing at the real home's directories, read only, and asdf's
   global `~/.tool-versions` is linked into `<dir>/home` so managers that look under `HOME` find it.
   An escalated call keeps the person's own environment. The device also sets
