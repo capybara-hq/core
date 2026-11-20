@@ -40,6 +40,7 @@ import {
   cardMessage,
   connectUrl,
   conversationUrl,
+  personFieldsCard,
   questionCard,
   webBase,
 } from "./cards.js";
@@ -1159,6 +1160,13 @@ class Delivery {
   private async approvalCardAt(seq: number, approvalId: string): Promise<void> {
     if (this.base === undefined) {
       await this.send({ text: phrase("handleOnWeb", this.locale) }, this.key(seq));
+      return this.advance(seq);
+    }
+    // secrets are typed on the web only: IM gets a link, never an approval card (no card is
+    // recorded, so `approval_decided` has nothing to update)
+    const bind = await personFieldsCard(this.d, approvalId, this.base, this.locale);
+    if (bind) {
+      await this.send(cardMessage(bind.text, bind), this.key(seq));
       return this.advance(seq);
     }
     const card = await approvalCard(this.d, approvalId, this.base, this.locale, this.s.redact);

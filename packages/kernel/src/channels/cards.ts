@@ -353,6 +353,27 @@ export function commandCardText(
 }
 
 /**
+ * The `bind` card of an approval whose Platform call needs the person to type secrets: the values
+ * pass only through the web, never an IM vendor, so IM gets a link to the conversation instead of
+ * an approval card. Undefined when the approval does not exist or has no person fields.
+ */
+export async function personFieldsCard(
+  d: CardDeps,
+  approvalId: string,
+  base: string,
+  locale: ChannelLocale,
+): Promise<Extract<ChannelCard, { kind: "bind" }> | undefined> {
+  const v = await d.approvals.describe(approvalId);
+  const n = v?.personFields?.length ?? 0;
+  if (!v || n === 0) return undefined;
+  return {
+    kind: "bind",
+    text: phrase("personFieldsOnWeb", locale).replace("{count}", String(n)),
+    url: `${base}${v.conversationPath}`,
+  };
+}
+
+/**
  * The approval card in the approval's current state; undefined when the approval does not exist.
  * A role escalation offers only "once". A network ask names its hosts and command and labels its
  * scopes ({@link networkCardText}); a command review ask names the review's reason and the held

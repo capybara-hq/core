@@ -172,6 +172,11 @@ export const CHANNEL_PHRASES = {
   questionTitle: { zh: "需要你的回答", en: "Your input is needed" },
   /** 连接卡片的随附文本。 */
   connectTitle: { zh: "需要先完成连接器授权", en: "A connector needs to be connected first" },
+  /** A person-field approval (secrets typed on the web): the bind card's text; `{count}` fields. */
+  personFieldsOnWeb: {
+    zh: "需要在网页填写 {count} 项",
+    en: "{count} fields to fill in on the web",
+  },
   /** 部署未配置 http.publicUrl，无法给出网页链接与卡片时的退回文本。 */
   handleOnWeb: {
     zh: "有一条请求需要你到 Capybara 网页上处理。",
