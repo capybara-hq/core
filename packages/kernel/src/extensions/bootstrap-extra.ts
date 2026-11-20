@@ -21,9 +21,26 @@ export type MergedBootstrapManifest = Omit<BootstrapManifest, "plugins"> & {
   plugins: MergedBootstrapEntry[];
   extra?: {
     marketplaces: BootstrapExtraMarketplace[];
+    /** The names of the entries that came from the extra manifest (flagged `extra` in a run's results). */
+    plugins: string[];
     defaultTheme?: { plugin: string; theme: string };
   };
 };
+
+/**
+ * What an extra manifest left in the deployment: the config-managed marketplaces and the entries
+ * the last completed bootstrap run took from an extra manifest (flagged `extra` in its results).
+ * A process without an extra manifest that finds any is configured differently from the ones that
+ * wrote them ({@link missingExtraManifestMessage}).
+ */
+export interface ExtraManifestTraces {
+  marketplaces: string[];
+  plugins: string[];
+}
+
+/** Whether `t` names anything: then a process without an extra manifest must not sync or run. */
+export const hasExtraManifestTraces = (t: ExtraManifestTraces): boolean =>
+  t.marketplaces.length > 0 || t.plugins.length > 0;
 
 /** A git entry of the merged manifest: `required` defaults to false, as for an npm extra entry. */
 export type BootstrapGitRunEntry = BootstrapGitEntry & { required: boolean };
@@ -98,6 +115,7 @@ export function mergeBootstrapManifests(
     plugins,
     extra: {
       marketplaces: extra.marketplaces,
+      plugins: extra.plugins.map((e) => e.name),
       ...(extra.defaultTheme !== undefined && { defaultTheme: extra.defaultTheme }),
     },
   };
@@ -117,24 +135,32 @@ export async function loadBootstrapManifest(o: {
 }
 
 /**
- * A process without an extra manifest found config-managed marketplaces (`names`): another
- * service of the deployment runs with an extra manifest. Bootstrapping or syncing here would
- * demote those marketplaces and strip the extra entries' `required` / `builtin` under the
- * built-in manifest's sha, which the correctly configured services then take as done.
+ * A process without an extra manifest found what one left (`t`): another service of the deployment
+ * runs with an extra manifest, or an earlier `capybara bootstrap` ran with one. Bootstrapping or
+ * syncing here would demote its marketplaces and strip the extra entries' `required` / `builtin`
+ * under the built-in manifest's sha, which the correctly configured services then take as done.
  */
-export function missingExtraManifestMessage(names: readonly string[]): string {
-  return `this service has no extra bootstrap manifest (bootstrap.extraManifest, env CAPYBARA_BOOTSTRAP__EXTRA_MANIFEST), but the deployment has marketplaces an extra manifest manages (${names.join(", ")}): every service (init, api, worker, gateway) must use the same extra manifest. To remove a distribution, point bootstrap.extraManifest at a file whose marketplaces and plugins lists are empty`;
+export function missingExtraManifestMessage(t: ExtraManifestTraces): string {
+  const found = [
+    ...(t.marketplaces.length > 0
+      ? [`marketplaces an extra manifest manages (${t.marketplaces.join(", ")})`]
+      : []),
+    ...(t.plugins.length > 0
+      ? [`plugins the last bootstrap run took from an extra manifest (${t.plugins.join(", ")})`]
+      : []),
+  ].join(" and ");
+  return `this service has no extra bootstrap manifest (bootstrap.extraManifest, env CAPYBARA_BOOTSTRAP__EXTRA_MANIFEST), but the deployment has ${found}: every service (init, api, worker, gateway) must use the same extra manifest. To remove a distribution, point bootstrap.extraManifest at a file whose marketplaces and plugins lists are empty`;
 }
 
 /**
- * The bootstrap step refused under its lock: the manifest has no extra manifest while config-managed
- * marketplaces exist (`marketplaces`; ruling R16). A replica that checked before another replica's
- * sync committed gets here instead of stripping the extra entries' required / builtin. Nothing was
- * written.
+ * The bootstrap step refused under its lock: the manifest has no extra manifest while an extra
+ * manifest left traces (`traces`; rulings R16, R17). A replica that checked before another
+ * replica's sync committed gets here instead of stripping the extra entries' required / builtin.
+ * Nothing was written.
  */
 export class BootstrapExtraMismatchError extends Error {
-  constructor(readonly marketplaces: readonly string[]) {
-    super(missingExtraManifestMessage(marketplaces));
+  constructor(readonly traces: ExtraManifestTraces) {
+    super(missingExtraManifestMessage(traces));
     this.name = "BootstrapExtraMismatchError";
   }
 }

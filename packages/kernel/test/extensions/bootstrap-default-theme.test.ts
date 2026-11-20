@@ -447,6 +447,10 @@ describe("an extra manifest that dropped the distribution", () => {
       lines.find((l) => l.level === "warn" && l.msg.includes("left the extra bootstrap manifest"))
         ?.fields,
     ).toMatchObject({ marketplaces: ["dist"] });
+    // The removal run flagged no extra entry: a later start without any extra manifest runs
+    await stopAll();
+    await boot(OBJECT_STORE_CONFIG, createLogger("error"), null);
+    expect(await runs()).toContain(bootstrapManifestSha256(fx.manifest));
   });
 });
 
@@ -458,7 +462,7 @@ describe("a replica without the extra manifest that raced one with it (ruling R1
     const k = await build(OBJECT_STORE_CONFIG, logger, null);
     const svc = k.app.get(BootstrapService);
     // Its check before the sync ran before the other replica's sync committed: it saw no row
-    vi.spyOn(svc, "configManagedMarketplaces").mockResolvedValueOnce([]);
+    vi.spyOn(svc, "extraManifestTraces").mockResolvedValueOnce({ marketplaces: [], plugins: [] });
     await k.start();
     expect(k.port).toBeGreaterThan(0);
     expect(await marketplaceRows()).toEqual([{ id: "config:dist", managed: "config" }]);
@@ -477,5 +481,51 @@ describe("a replica without the extra manifest that raced one with it (ruling R1
     ).rejects.toBeInstanceOf(BootstrapExtraMismatchError);
     expect(await runs()).toEqual(before);
     expect(await requiredInstall("fake-bootstrap-a")).toBe(true);
+  });
+});
+
+describe("the last bootstrap run tells an extra manifest apart (ruling R17)", () => {
+  it("after an npm-only extra manifest (no marketplace row) a start without it is refused", async () => {
+    // Like compose's init running `capybara bootstrap --extra-manifest`: no managed marketplace
+    await boot();
+    expect(await marketplaceRows()).toEqual([]);
+    expect(await builtinItems()).toEqual(
+      expect.arrayContaining([{ name: "brand", builtin: true }]),
+    );
+    await stopAll();
+    const before = await runs();
+    const { logger, lines } = recordingLogger();
+    const k = await boot(OBJECT_STORE_CONFIG, logger, null);
+    expect(k.port).toBeGreaterThan(0);
+    expect(await runs()).toEqual(before);
+    expect(await builtinItems()).toEqual(
+      expect.arrayContaining([{ name: "brand", builtin: true }]),
+    );
+    const err = lines.find(
+      (l) => l.level === "error" && l.msg.includes("CAPYBARA_BOOTSTRAP__EXTRA_MANIFEST"),
+    );
+    expect(err?.msg).toContain("(brand)");
+    expect(err?.fields).toMatchObject({ marketplaces: [], plugins: ["brand"] });
+    // The step refuses under the lock too
+    await expect(
+      k.app
+        .get(BootstrapService)
+        .run({ manifest: fx.manifest, dir: fx.dir, imports: k.app.get(PluginImport) }),
+    ).rejects.toBeInstanceOf(BootstrapExtraMismatchError);
+    expect(await runs()).toEqual(before);
+  });
+
+  it("an entry the built-in manifest dropped (not from an extra manifest) is not a mismatch", async () => {
+    const k = await boot(OBJECT_STORE_CONFIG, createLogger("error"), null);
+    expect(await requiredInstall("fake-bootstrap-b")).toBe(true);
+    const dropped = { ...fx.manifest, plugins: [] };
+    const r = await k.app
+      .get(BootstrapService)
+      .run({ manifest: dropped, dir: fx.dir, imports: k.app.get(PluginImport) });
+    expect(r.results).toEqual([
+      expect.objectContaining({ name: "fake-bootstrap-b", action: "required_cleared" }),
+    ]);
+    expect(await runs()).toContain(bootstrapManifestSha256(dropped));
+    expect(await requiredInstall("fake-bootstrap-b")).toBe(false);
   });
 });

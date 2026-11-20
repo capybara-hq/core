@@ -4,6 +4,8 @@ import {
   BootstrapExtraMismatchError,
   BootstrapFailedError,
   bootstrapManifestSha256,
+  type ExtraManifestTraces,
+  hasExtraManifestTraces,
   type KernelLogger,
   loadBootstrapManifest,
   missingExtraManifestMessage,
@@ -80,7 +82,8 @@ const entryLine = (r: BootstrapEntryResult): string =>
  * for required entries). Exit code 1 when a required entry fails, a package cannot be obtained
  * (missing, download failed, or not matching its pin: nothing is written then), or anything else
  * goes wrong, and when no extra manifest is given while the deployment has marketplaces an extra
- * manifest manages (another service runs with one; nothing is written).
+ * manifest manages or the last run took entries from one (another service or an earlier
+ * bootstrap ran with one; nothing is written).
  */
 export async function runBootstrap(
   opts: { dir?: string; manifest?: string; extraManifest?: string },
@@ -97,11 +100,12 @@ export async function runBootstrap(
       (config) => openCatalogCli(config, log),
       async (cli) => {
         const extraManifest = bootstrapExtraManifestOf(cli.config, opts.extraManifest);
-        // Without an extra manifest while config-managed marketplaces exist, the run would strip
-        // the extra entries' required / builtin under the built-in manifest's sha: refused
+        // Without an extra manifest while one left traces (config-managed marketplaces, or entries
+        // the last run took from one), the run would strip the extra entries' required / builtin
+        // under the built-in manifest's sha: refused
         if (extraManifest === undefined) {
-          const managed = await cli.bootstrap.configManagedMarketplaces();
-          if (managed.length > 0) return { mismatch: managed };
+          const traces = await cli.bootstrap.extraManifestTraces();
+          if (hasExtraManifestTraces(traces)) return { mismatch: traces };
         }
         const manifest = await loadBootstrapManifest({
           ...(opts.manifest !== undefined && { manifestFile: opts.manifest }),
@@ -126,13 +130,13 @@ export async function runBootstrap(
           ).results;
         } catch (e) {
           // The step's own check under the lock: a kernel with the extra manifest synced after ours
-          if (e instanceof BootstrapExtraMismatchError) return { mismatch: [...e.marketplaces] };
+          if (e instanceof BootstrapExtraMismatchError) return { mismatch: e.traces };
           throw e;
         }
       },
     );
   try {
-    let results: BootstrapEntryResult[] | "done" | { mismatch: string[] };
+    let results: BootstrapEntryResult[] | "done" | { mismatch: ExtraManifestTraces };
     try {
       results = await pass();
     } catch (e) {

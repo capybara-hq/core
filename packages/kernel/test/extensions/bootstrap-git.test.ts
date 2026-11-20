@@ -257,8 +257,8 @@ describe("git entries of the extra bootstrap manifest", () => {
     ]);
     const r = await run(manifest);
     expect(r.results).toEqual([
-      { name: "theme-x", action: "imported", version: "1.0.0" },
-      { name: "ext-x", action: "installed", version: "1.0.0" },
+      { name: "theme-x", action: "imported", version: "1.0.0", extra: true },
+      { name: "ext-x", action: "installed", version: "1.0.0", extra: true },
     ]);
     const themes = await db.selectFrom("platform_themes").select("plugin_name").execute();
     expect(themes).toEqual([{ plugin_name: "theme-x" }]);
@@ -307,7 +307,9 @@ describe("git entries of the extra bootstrap manifest", () => {
         [{ name: "single", url: srv.url("single") }],
       );
       const r = await run(manifest);
-      expect(r.results).toEqual([{ name: "theme-root", action: "imported", version: "1.0.0" }]);
+      expect(r.results).toEqual([
+        { name: "theme-root", action: "imported", version: "1.0.0", extra: true },
+      ]);
       const u = new URL(srv.url("single"));
       expect(await versions()).toEqual([
         expect.objectContaining({
@@ -408,7 +410,9 @@ describe("git entries of the extra bootstrap manifest", () => {
     // the configured token and username are sent, and only to the private origin
     priv.requests.length = 0;
     const r = await run(manifest);
-    expect(r.results).toEqual([{ name: "priv-x", action: "imported", version: "1.0.0" }]);
+    expect(r.results).toEqual([
+      { name: "priv-x", action: "imported", version: "1.0.0", extra: true },
+    ]);
     expect(priv.requests.length).toBeGreaterThan(0);
     expect(priv.requests.every((q) => q.authorized)).toBe(true);
     expect(srv.requests).toEqual([]);
@@ -495,7 +499,9 @@ describe("git entries of the extra bootstrap manifest", () => {
     await writeFile(join(offlineDir, "any-name.tgz"), await packOf(files));
     const manifest = manifestOf([entry], [{ name: "off", url }]);
     const r = await run(manifest, offlineDir);
-    expect(r.results).toEqual([{ name: "theme-off", action: "imported", version: "1.0.0" }]);
+    expect(r.results).toEqual([
+      { name: "theme-off", action: "imported", version: "1.0.0", extra: true },
+    ]);
     // recorded as the managed marketplace's source all the same (no tree oid offline)
     const u = new URL(url);
     expect(await versions()).toEqual([

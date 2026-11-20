@@ -51,6 +51,8 @@ import { writeSnapshot } from "./approvals.js";
 import {
   BootstrapExtraMismatchError,
   type BootstrapGitRunEntry,
+  type ExtraManifestTraces,
+  hasExtraManifestTraces,
   type MergedBootstrapEntry,
   type MergedBootstrapManifest,
 } from "./bootstrap-extra.js";
@@ -146,6 +148,12 @@ export interface BootstrapEntryResult {
    * a single-provider extension point it provides. (A required entry fails instead.)
    */
   leftDisabled?: SingleProviderNote;
+  /**
+   * The entry came from the extra manifest (absent otherwise, and in rows written before this
+   * flag): a later process without an extra manifest that finds it in the last run refuses to run
+   * (ruling R17).
+   */
+  extra?: true;
 }
 
 export interface BootstrapResult {
@@ -523,18 +531,27 @@ export class BootstrapService {
   }
 
   /**
-   * The names of the marketplaces the deployment config manages (`managed = 'config'`, written
-   * from an extra manifest). A process without an extra manifest that finds any is configured
-   * differently from the ones that wrote them ({@link missingExtraManifestMessage}).
+   * What an extra manifest left ({@link ExtraManifestTraces}): the config-managed marketplaces
+   * (`managed = 'config'`) and the entries the last completed run flagged `extra`. A process
+   * without an extra manifest that finds any is configured differently from the ones that wrote
+   * them (rulings R14, R17). An entry a built-in manifest dropped is never flagged, so it is no
+   * trace.
    */
-  async configManagedMarketplaces(): Promise<string[]> {
+  async extraManifestTraces(): Promise<ExtraManifestTraces> {
     const rows = await this.db
       .selectFrom("marketplaces")
       .select("name")
       .where("managed", "=", "config")
       .orderBy("name")
       .execute();
-    return rows.map((r) => r.name);
+    const last = await this.lastRunResults();
+    return {
+      marketplaces: rows.map((r) => r.name),
+      plugins: (last ?? [])
+        .filter((r) => r.extra === true)
+        .map((r) => r.name)
+        .sort(),
+    };
   }
 
   /**
@@ -543,9 +560,10 @@ export class BootstrapService {
    * recorded result without doing anything. `carry`: the results of an earlier, failed run in the
    * same start ({@link BootstrapFailedError.results}); an entry it installed, upgraded or imported
    * keeps that action instead of `kept` in this run's record. A manifest without an extra manifest
-   * while config-managed marketplaces exist throws {@link BootstrapExtraMismatchError}, checked
-   * under the lock before anything is obtained or written (ruling R16): the caller's own check may
-   * have run before another replica's sync committed.
+   * while an extra manifest left traces ({@link extraManifestTraces}) throws
+   * {@link BootstrapExtraMismatchError}, checked under the lock before anything is obtained or
+   * written (ruling R16): the caller's own check may have run before another replica's sync
+   * committed. Every result of an entry from the extra manifest is flagged `extra` (R17).
    */
   async run(o: {
     manifest: MergedBootstrapManifest;
@@ -584,9 +602,10 @@ export class BootstrapService {
       const done = await recorded();
       if (done) return done;
       if (o.manifest.extra === undefined) {
-        const managed = await this.configManagedMarketplaces();
-        if (managed.length > 0) throw new BootstrapExtraMismatchError(managed);
+        const traces = await this.extraManifestTraces();
+        if (hasExtraManifestTraces(traces)) throw new BootstrapExtraMismatchError(traces);
       }
+      const fromExtra = new Set(o.manifest.extra?.plugins);
       const deferBuiltin = o.deferBuiltin === true;
       const isDeferred = (e: MergedBootstrapEntry) => deferBuiltin && e.builtin === true;
       // Every package is obtained and checked before the first write (a deferred entry's by the
@@ -635,7 +654,8 @@ export class BootstrapService {
             manifest: o.manifest,
             tree: gitTrees.get(e.name),
           });
-          results.push(carried(r, o.carry));
+          const c = carried(r, o.carry);
+          results.push(fromExtra.has(e.name) ? { ...c, extra: true } : c);
         } catch (err) {
           this.log.error("bootstrap: a plugin could not be installed", {
             plugin: e.name,
@@ -725,20 +745,22 @@ export class BootstrapService {
     }
   }
 
-  /** The entry names the last completed run handled (undefined before any run completed). */
-  private async lastRunNames(): Promise<Set<string> | undefined> {
+  /** The results of the last completed run (undefined before any run completed). */
+  private async lastRunResults(): Promise<BootstrapEntryResult[] | undefined> {
     const row = await this.db
       .selectFrom("bootstrap_runs")
       .select("results")
       .orderBy("completed_at", "desc")
       .limit(1)
       .executeTakeFirst();
-    if (!row) return undefined;
-    return new Set(
-      (row.results as BootstrapEntryResult[])
-        .filter((r) => r.action !== "required_cleared")
-        .map((r) => r.name),
-    );
+    return row?.results as BootstrapEntryResult[] | undefined;
+  }
+
+  /** The entry names the last completed run handled (undefined before any run completed). */
+  private async lastRunNames(): Promise<Set<string> | undefined> {
+    const results = await this.lastRunResults();
+    if (!results) return undefined;
+    return new Set(results.filter((r) => r.action !== "required_cleared").map((r) => r.name));
   }
 
   private async entry(

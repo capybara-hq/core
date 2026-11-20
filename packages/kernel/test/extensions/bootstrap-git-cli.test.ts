@@ -95,7 +95,9 @@ describe("capybara bootstrap with git entries", () => {
       },
     );
     const r = await cli.bootstrap.run({ manifest, imports: cli.imports });
-    expect(r.results).toEqual([{ name: "cli-ext", action: "installed", version: "1.0.0" }]);
+    expect(r.results).toEqual([
+      { name: "cli-ext", action: "installed", version: "1.0.0", extra: true },
+    ]);
     expect(
       await db.selectFrom("extension_installs").select(["name", "source", "sha256"]).execute(),
     ).toEqual([

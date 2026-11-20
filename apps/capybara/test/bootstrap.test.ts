@@ -464,6 +464,69 @@ describe("capybara bootstrap without the extra manifest other services use", () 
   }, 120_000);
 });
 
+/**
+ * Compose's init runs `capybara bootstrap --extra-manifest` before any start, so an extra manifest
+ * of npm entries leaves no managed marketplace; the last run's results flag its entries (R17).
+ */
+describe("capybara bootstrap without the extra manifest an earlier run used", () => {
+  let pg6: TestContainer;
+  let files: string;
+  beforeAll(async () => {
+    pg6 = await startTestPostgres();
+    files = await mkdtemp(join(tmpdir(), "capybara-bootstrap-r17-"));
+  }, 180_000);
+  afterAll(async () => {
+    await pg6?.stop();
+    await rm(files, { recursive: true, force: true });
+  });
+
+  it("refuses with exit 1 naming the extra plugin and writes nothing", async () => {
+    const entry = (name: string) => boot.entries.find((x) => x.name === name) as BootstrapEntry;
+    const builtin = join(files, "bootstrap.json");
+    await writeFile(builtin, JSON.stringify(fakeManifest([entry(B)])));
+    const extra = join(files, "bootstrap.extra.json");
+    await writeFile(
+      extra,
+      JSON.stringify({ schemaVersion: 1, marketplaces: [], plugins: [entry(A)] }),
+    );
+    const e = { ...env(), CAPYBARA_DB__URL: pg6.url };
+    const first = await runCli(
+      ["bootstrap", "--dir", dir, "--manifest", builtin, "--extra-manifest", extra],
+      e,
+    );
+    expect(first.code, first.stderr).toBe(0);
+    const snapshot = () =>
+      query6(async (db) => ({
+        runs: await db.selectFrom("bootstrap_runs").select("manifest_sha256").execute(),
+        installs: await db
+          .selectFrom("extension_installs")
+          .select(["name", "required"])
+          .orderBy("name")
+          .execute(),
+      }));
+    const before = await snapshot();
+    expect(before.installs).toEqual([
+      { name: A, required: true },
+      { name: B, required: true },
+    ]);
+    const r = await runCli(["bootstrap", "--dir", dir, "--manifest", builtin], e);
+    expect(r.code).toBe(1);
+    expect(r.stderr).toContain("CAPYBARA_BOOTSTRAP__EXTRA_MANIFEST");
+    expect(r.stderr).toContain(`(${A})`);
+    expect(r.stderr).toContain("refusing to run the bootstrap step");
+    expect(await snapshot()).toEqual(before);
+  }, 120_000);
+
+  async function query6<T>(f: (db: ReturnType<typeof kernelDb>) => Promise<T>): Promise<T> {
+    const raw = createDb(pg6.url, 1);
+    try {
+      return await f(kernelDb(raw));
+    } finally {
+      await raw.destroy();
+    }
+  }
+});
+
 describe("bootstrapDirOf", () => {
   it("--dir, else config bootstrap.dir, resolved against the working directory", () => {
     const config = { bootstrap: { dir: "bootstrap" } };

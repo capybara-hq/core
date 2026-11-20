@@ -28,6 +28,7 @@ import {
 import { BootstrapDefaultsService } from "../extensions/bootstrap-defaults.js";
 import {
   BootstrapExtraMismatchError,
+  hasExtraManifestTraces,
   type LoadedBootstrapManifest,
   loadBootstrapManifest,
   missingExtraManifestMessage,
@@ -242,20 +243,21 @@ export class KernelLifecycle
     this.checkpoint();
     // official 清单来源按配置同步（幂等；每个副本启动时都做）
     await this.marketplaces.syncOfficialFromConfig();
-    // No extra manifest here while config-managed marketplaces exist: this service is configured
-    // differently from the one that wrote them. Syncing would demote them, and the bootstrap step
+    // No extra manifest here while one left traces (config-managed marketplaces, or entries the
+    // last bootstrap run took from one): this service is configured differently from the one
+    // that wrote them. Syncing would demote them, and the bootstrap step
     // would clear the extra entries' required / builtin under the built-in manifest's sha, which
     // the correctly configured services then find done and never repair. So both are skipped
     // (decided from the database before either runs); the start goes on with the state as it is
-    const unmanaged =
+    const traces =
       opts.bootstrap?.extraManifest === undefined
-        ? await this.bootstrap.configManagedMarketplaces()
-        : [];
-    const mismatch = unmanaged.length > 0;
+        ? await this.bootstrap.extraManifestTraces()
+        : { marketplaces: [], plugins: [] };
+    const mismatch = hasExtraManifestTraces(traces);
     if (mismatch) {
       this.log.error(
-        `${missingExtraManifestMessage(unmanaged)}. The bootstrap step and the marketplace sync are skipped in this start`,
-        { marketplaces: unmanaged },
+        `${missingExtraManifestMessage(traces)}. The bootstrap step and the marketplace sync are skipped in this start`,
+        { ...traces },
       );
     } else {
       // The extra manifest's marketplaces (an empty list demotes the config-managed rows). Without
@@ -430,7 +432,7 @@ export class KernelLifecycle
       // this start's check. Nothing was written; the start goes on like an R14 mismatch
       if (e instanceof BootstrapExtraMismatchError) {
         this.log.error(`${e.message}. The bootstrap step is skipped in this start`, {
-          marketplaces: e.marketplaces,
+          ...e.traces,
         });
         return false;
       }

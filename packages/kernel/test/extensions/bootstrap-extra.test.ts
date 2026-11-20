@@ -79,6 +79,8 @@ describe("mergeBootstrapManifests", () => {
       { name: "dist", url: "https://example.com/o/r.git" },
     ]);
     expect(merged.extra?.defaultTheme).toEqual({ plugin: "extra-b", theme: "t" });
+    // What a run flags `extra` in its results (ruling R17)
+    expect(merged.extra?.plugins).toEqual(["extra-b", "git-c"]);
   });
 
   it("merge fails bootstrap.extra_conflict on a shared name", () => {
