@@ -98,10 +98,11 @@ export interface PermissionItem {
  * receives the org's IM conversations (Ruling A33), `directory@1` can add people to orgs (creating
  * their accounts and identities), `identity-source@1` decides who can sign in as which account;
  * `context@1` adds text to the model's context in conversations of orgs that enable it (memory
- * plugin spec §6.1); `push-provider@1` receives the title and an in-app path of every push
- * notification and the device tokens it delivers to (mobile app spec §9). A plugin providing any of them has its "provides" group marked sensitive and
- * `sensitive` true in the admin plugin list, for the super admin to approve. Display only: the keys
- * of the permission snapshot do not change.
+ * plugin spec §6.1); `push-provider@1` receives the title and in-app path of every push
+ * notification and the device tokens it delivers to (mobile app spec §9). A plugin providing any
+ * of them has its "provides" group marked sensitive and `sensitive` true in the admin plugin
+ * list, for the super admin to approve. Display only: the keys of the permission snapshot do not
+ * change.
  */
 export const SENSITIVE_EXTENSION_POINTS: readonly string[] = [
   "channel@1",

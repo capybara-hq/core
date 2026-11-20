@@ -34,7 +34,7 @@ export class PushProviderHost {
   covers(plugin: string, appId: string): boolean {
     const provider = this.provider(plugin);
     if (provider === null) return false;
-    return this.appsOf(plugin, provider).includes(appId);
+    return this.appsOf(plugin, provider, "warn").includes(appId);
   }
 
   /** Every covered app id with its providers, sorted by app id, then provider name. */
@@ -42,7 +42,7 @@ export class PushProviderHost {
     const byApp = new Map<string, Set<string>>();
     for (const entry of this.registry.list("push-provider")) {
       if (entry.capability !== PUSH_PROVIDER_EXTENSION_POINT) continue;
-      for (const appId of this.appsOf(entry.plugin, entry.impl as PushProvider)) {
+      for (const appId of this.appsOf(entry.plugin, entry.impl as PushProvider, "debug")) {
         const set = byApp.get(appId) ?? new Set<string>();
         set.add(entry.plugin);
         byApp.set(appId, set);
@@ -62,12 +62,19 @@ export class PushProviderHost {
       .some((e) => e.capability === PUSH_PROVIDER_EXTENSION_POINT);
   }
 
-  /** `apps()` of one provider; a throw is logged with the plugin name only (never config). */
-  private appsOf(plugin: string, provider: PushProvider): readonly string[] {
+  /**
+   * `apps()` of one provider; a throw is logged with the plugin name only (never config). The
+   * public meta lists coverage on every request, so that path logs at debug, not warn.
+   */
+  private appsOf(
+    plugin: string,
+    provider: PushProvider,
+    level: "warn" | "debug",
+  ): readonly string[] {
     try {
       return provider.apps();
     } catch {
-      this.log.warn("push provider apps() failed", { plugin });
+      this.log[level]("push provider apps() failed", { plugin });
       return [];
     }
   }
