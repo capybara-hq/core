@@ -768,13 +768,19 @@ describe("a call reviewed against another root than the held evidence's", () => 
   }
   const BASH = { command: "rm -rf ./build", description: "Clean" };
 
-  it("a workspace review of a project bound after the review (no snapshot yet) runs", async () => {
+  it("a bound project with no snapshot yet is reviewed and run in the bound root", async () => {
     const f = await seed();
-    const against = await reviewedRoot(f);
-    expect(against).toBe(ROOTS.workspace);
     await bindProject(f, OUTSIDE);
-    expect(await reviewedRoot(f)).toBe(ROOTS.workspace);
-    await expectNotStale(f, "Bash", BASH, against as string);
+    const against = await reviewedRoot(f);
+    expect(against).toBe(OUTSIDE);
+    const err = await runTool(f, "Bash", BASH, { over: { reviewedAgainstRoot: OUTSIDE } }).then(
+      () => undefined,
+      (e: unknown) => e,
+    );
+    if (err !== undefined)
+      expect((err as Error).message).not.toBe(MANAGED_DEVICE_CONTEXT_STALE_TEXT);
+    const [paths] = await markedPaths(f);
+    expect(paths).toMatchObject({ workingRoot: OUTSIDE });
   });
 
   it("a workspace review because the project snapshot is unavailable runs", async () => {
