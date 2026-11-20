@@ -25,6 +25,7 @@ import { PolicyStore } from "../src/policy-store.js";
 import { serveOperationV3 } from "../src/server-ops.js";
 import { CREDENTIAL_CHANGED_MESSAGE, connectStaged } from "../src/staged-connect.js";
 import { createStagedDevice, UNBOUND_SUPPORT } from "../src/staged-device.js";
+import { PROGRAM_RUN_ID } from "../src/staged-session.js";
 import { type Credential, DEFAULT_POLICY, FULL_OWNER_CEILING, writePolicy } from "../src/state.js";
 import { FakeKernel } from "./fake-kernel.js";
 
@@ -486,6 +487,8 @@ describe("staged connection (W3-M)", () => {
       protocol: 4,
       instanceGeneration: null,
       transport: { maxFrameBytes: 69632 },
+      // this process's run: every connection it makes names the same one
+      programRunId: PROGRAM_RUN_ID,
     });
     ready(k, 0);
     send(k, 0, "b1", "bindInstance", request(G1, B1, null));

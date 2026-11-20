@@ -158,6 +158,8 @@ class DeviceConnection {
    */
   readonly connectionId = randomUUID();
   private effectiveCap: number | undefined;
+  /** The program run the hello named (`programRunId`), published with the capacity. */
+  private programRunId: string | undefined;
   private ready = false;
   /** Consecutive failed capacity publications on ping (this socket's own state). */
   private publishFailures = 0;
@@ -169,7 +171,11 @@ class DeviceConnection {
     }
     await this.gw.redis.set(
       deviceTransportKey(this.deviceId, this.token),
-      JSON.stringify({ connectionId: this.connectionId, maxFrameBytes: this.effectiveCap }),
+      JSON.stringify({
+        connectionId: this.connectionId,
+        maxFrameBytes: this.effectiveCap,
+        ...(this.programRunId !== undefined && { programRunId: this.programRunId }),
+      }),
       "PX",
       Math.max(this.gw.leaseTtlMs(), this.gw.pingIntervalMs * 3),
     );
@@ -240,6 +246,7 @@ class DeviceConnection {
         return;
       }
       clearTimeout(this.helloTimer);
+      this.programRunId = frame.programRunId;
       this.state = "claiming";
       // set before the first await: a policy frame that follows is recorded after the hello
       this.recorded = (async () => {
