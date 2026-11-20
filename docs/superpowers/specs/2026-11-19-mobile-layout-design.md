@@ -638,7 +638,9 @@ declare global {
   installed app's **name and icon are per deployment (decided)**: name and short name from the
   kernel config `platform.name` (`CAPYBARA_PLATFORM__NAME`, introduced by the desktop spec,
   PR #407, and read through `GET /api/v1/meta`), "Capybara" when unset; the icons from the
-  platform icon setting (§10.2.1); `display: "standalone"`, `start_url: "/"`, `scope: "/"`,
+  platform icon setting (§10.2.1); `display: "standalone"`, `start_url: "/conversations"` (the Chats tab root, so the
+  installed app opens on a tab root with the bottom navigation; `/` is a pushed page on compact,
+  maintainer decision 2026-11-20), `scope: "/"`,
   `theme_color` / `background_color` from the built-in theme's token values, never a plugin
   theme's (a theme is CSS, which the manifest cannot read) **(decided)**. The document
   `<title>` default and the `apple-mobile-web-app-title` follow the same name.
