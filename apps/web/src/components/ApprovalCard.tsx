@@ -15,7 +15,8 @@ import {
 } from "@capybara-hq/design";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useLocale, useTranslations } from "next-intl";
-import { useCallback, useState } from "react";
+import { useCallback, useRef, useState } from "react";
+import { ApiClientError } from "../lib/api";
 import {
   type Approval,
   type ApprovalScope,
@@ -136,13 +137,38 @@ export function ApprovalOutcome({ outcome }: { outcome: Outcome }) {
 }
 
 /**
+ * The per-field problems of a refused person-field approval: `approval.input_leaked` names paths,
+ * `approval.inputs_invalid` names `{ path, problem }`. Null for any other error. The kernel never
+ * echoes a value, so nothing here can show one.
+ */
+function personFieldErrors(e: unknown, leakCopy: string): Record<string, string> | null {
+  if (!(e instanceof ApiClientError)) return null;
+  const fields = (e.rawDetails[0] as { fields?: unknown } | undefined)?.fields;
+  if (!Array.isArray(fields)) return null;
+  const out: Record<string, string> = {};
+  if (e.code === "approval.input_leaked") {
+    for (const f of fields) if (typeof f === "string") out[f] = leakCopy;
+  } else if (e.code === "approval.inputs_invalid") {
+    for (const f of fields) {
+      const { path, problem } = (f ?? {}) as { path?: unknown; problem?: unknown };
+      if (typeof path === "string" && typeof problem === "string") out[path] = problem;
+    }
+  } else return null;
+  return out;
+}
+
+/**
  * 提交审批决定：成功返回处理后的结果；已被处理（`approval.already_decided`）等错误以 toast 告知并返回 null。
  */
 export function useDecide(orgId: string) {
+  // The person's typed values travel in a ref, never as mutation variables: TanStack keeps those
+  // in the mutation cache.
+  const inputsRef = useRef<Record<string, string> | undefined>(undefined);
   const qc = useQueryClient();
   const session = useSession();
   const toast = useToast();
   const errorMessage = useErrorMessage();
+  const leakCopy = useTranslations("approval")("person.leaked");
   const [pending, setPending] = useState<"approve" | "deny">();
   // The answer is the decided approval: it replaces the cached one. The inbox and its count
   // change too, wherever the decision was taken (here in a conversation, or on /inbox).
@@ -158,6 +184,9 @@ export function useDecide(orgId: string) {
         decision: v.decision,
         ...(v.decision === "approve" ? { scope: v.scope } : {}),
         ...(v.decision === "approve" && v.hosts !== undefined ? { hosts: v.hosts } : {}),
+        ...(v.decision === "approve" && inputsRef.current !== undefined
+          ? { inputs: inputsRef.current }
+          : {}),
         ...(v.decision === "deny" && v.reason !== undefined ? { reason: v.reason } : {}),
       }),
     invalidates: () => inboxChangeKeys(orgId),
@@ -171,8 +200,14 @@ export function useDecide(orgId: string) {
       reason?: string,
       /** A network ask's checked hosts. */
       hosts?: string[],
+      /** Person field values (approve only) and where a refused field's problem goes. */
+      person?: {
+        inputs: Record<string, string>;
+        onFieldErrors(errors: Record<string, string>): void;
+      },
     ) => {
       setPending(decision);
+      inputsRef.current = decision === "approve" ? person?.inputs : undefined;
       try {
         const { approval } = await mutateAsync({
           id,
@@ -183,6 +218,12 @@ export function useDecide(orgId: string) {
         });
         return approval;
       } catch (e) {
+        const fieldErrors = person && personFieldErrors(e, leakCopy);
+        if (fieldErrors) {
+          // the card stays pending: each refused field says why, nothing else changes
+          person?.onFieldErrors(fieldErrors);
+          return null;
+        }
         toast.error(errorMessage(e));
         // most likely decided or superseded meanwhile: the card and the inbox read it again
         // (never a second decision)
@@ -190,13 +231,14 @@ export function useDecide(orgId: string) {
           void qc.invalidateQueries({ queryKey });
         return null;
       } finally {
+        inputsRef.current = undefined;
         setPending(undefined);
         // The sidebar's pending count follows at once (a failure most likely means someone
         // already decided: it changed too).
         session.refreshPending?.();
       }
     },
-    [toast, errorMessage, session, mutateAsync, qc, orgId],
+    [toast, errorMessage, session, mutateAsync, qc, orgId, leakCopy],
   );
   return { decide, pending };
 }
@@ -233,6 +275,9 @@ export function ApprovalCard({
   const { me } = useSession();
   const [local, setLocal] = useState<(Outcome & { at: string }) | null>(null);
   const { decide, pending } = useDecide(orgId);
+  // What the person types lives only here: sent once with the approve, cleared after, never cached.
+  const [values, setValues] = useState<Record<string, string>>({});
+  const [fieldErrors, setFieldErrors] = useState<Record<string, string>>({});
   const decided = item.decided;
   // Pending, the approval tells who may decide; not visible = may not decide (assigned to
   // someone else, or the role is too low). A network ask reads it decided too (granted hosts).
@@ -269,8 +314,23 @@ export function ApprovalCard({
     reason?: string,
     hosts?: string[],
   ) {
-    const r = await decide(item.approvalId, decision, scope, reason, hosts);
+    const person = view?.personFields;
+    const r = await decide(
+      item.approvalId,
+      decision,
+      scope,
+      reason,
+      hosts,
+      decision === "approve" && person && person.length > 0
+        ? {
+            inputs: Object.fromEntries(person.map((f) => [f.path, values[f.path] ?? ""])),
+            onFieldErrors: setFieldErrors,
+          }
+        : undefined,
+    );
     if (r) {
+      setValues({});
+      setFieldErrors({});
       setLocal({
         decision: r.status === "pending" ? "cancelled" : r.status,
         ...(r.scope !== null ? { scope: r.scope } : {}),
@@ -318,9 +378,14 @@ export function ApprovalCard({
   const escalation = escalationOf(item, view);
   const detail = view?.kind === "network" ? (view.detail ?? null) : null;
   // a network ask is granted for this run only: an "always" is never offered (device protocol 4)
-  const scopes = view
-    ? scopesFor(view).filter((s) => network === undefined || s !== "always")
-    : (["once"] as const);
+  const personFields = view?.personFields ?? [];
+  // values are typed once for one call: a person-field approval is never remembered
+  const scopes =
+    personFields.length > 0
+      ? (["once"] as const)
+      : view
+        ? scopesFor(view).filter((s) => network === undefined || s !== "always")
+        : (["once"] as const);
   // A permission change replaced the ask before anyone decided it: a final line, never actions.
   if (outcome?.decision === "superseded") {
     return (
@@ -428,6 +493,24 @@ export function ApprovalCard({
         {...(network !== undefined ? { network } : {})}
         {...(command !== undefined ? { command } : {})}
         state={state}
+        {...(personFields.length > 0 && view?.personTarget
+          ? {
+              personTarget: view.personTarget[lang(locale)],
+              approveDisabled: personFields.some((f) => (values[f.path] ?? "") === ""),
+              personFields: personFields.map((f) => ({
+                path: f.path,
+                label: f.label,
+                ...(f.description !== undefined ? { description: f.description } : {}),
+                multiline: f.multiline,
+                value: values[f.path] ?? "",
+                ...(fieldErrors[f.path] !== undefined ? { error: fieldErrors[f.path] } : {}),
+                onChange: (v: string) => {
+                  setValues((o) => ({ ...o, [f.path]: v }));
+                  setFieldErrors(({ [f.path]: _drop, ...rest }) => rest);
+                },
+              })),
+            }
+          : {})}
         onApprove={(scope, hosts) =>
           void onDecide("approve", scope, undefined, network !== undefined ? hosts : undefined)
         }

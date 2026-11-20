@@ -119,6 +119,8 @@ export type ApprovalBlockProps = {
   }[];
   /** What the entered values are saved to (shown above the fields). */
   personTarget?: string;
+  /** Approve stays disabled (Deny does not): person fields not all filled yet. */
+  approveDisabled?: boolean;
   /** `hosts`: a network ask's checked hosts (every host when it has one). */
   onApprove?(scope: ApprovalScope, hosts?: string[]): void;
   onDeny?(reason?: string): void;
@@ -275,7 +277,7 @@ export function ApprovalBlock(p: ApprovalBlockProps): JSX.Element {
           <ScopeChoice
             key={scope}
             primary={i === 0}
-            disabled={busy}
+            disabled={busy || p.approveDisabled === true}
             label={p.scopeLabels?.[scope] ?? t(SCOPE_LABEL[scope])}
             hint={p.scopeHints?.[scope]}
             onClick={() => p.onApprove?.(scope)}

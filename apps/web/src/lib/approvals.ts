@@ -71,8 +71,22 @@ export interface CommandAskDetail {
   reason: string;
 }
 
+/** A secret field the person types on the card (never the model); `isSet` says a value exists. */
+export interface PersonField {
+  path: string;
+  label: string;
+  description?: string;
+  multiline: boolean;
+  required: boolean;
+  isSet: boolean;
+}
+
 export interface Approval {
   id: string;
+  /** Fields the person enters on the card; the values go with the approve decision only. */
+  personFields?: PersonField[];
+  /** What the entered values are saved to. */
+  personTarget?: { zh: string; en: string };
   /** `network`: a device refused a command network hosts; `command`: a command review ask. */
   kind?: "tool" | "network" | "git" | "command";
   /** A network ask's detail; null for other approvals. */
@@ -156,6 +170,8 @@ export const decideApproval = (
     reason?: string;
     /** A network ask: the checked hosts (absent = all; the unchecked ones count as denied). */
     hosts?: string[];
+    /** Person field values by path (approve only); sent once, never kept. */
+    inputs?: Record<string, string>;
   },
 ) =>
   apiFetch<{ approval: Omit<Approval, "toolName" | "connector" | "extension" | "agent"> }>(
