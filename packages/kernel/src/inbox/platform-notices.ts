@@ -39,7 +39,7 @@ export async function addPlatformNotice<K extends PlatformNoticeKind>(
 /**
  * Tells the super admins that `plugin`'s push credentials were refused, unless a notice of that
  * kind naming the plugin is still open. The partial unique index
- * `platform_notices_push_auth_open_idx` (migration 0171) keeps it at one open notice per plugin
+ * `platform_notices_push_auth_open_idx` (migration 0172) keeps it at one open notice per plugin
  * even when deliveries on several replicas fail at once.
  */
 export async function addPushAuthNotice(db: KernelSchemaDb, plugin: string): Promise<void> {
