@@ -284,6 +284,12 @@ Three levels, most specific first:
   falls back to the built-in theme there, briefly for a themes-only plugin, possibly longer for a
   plugin whose extension needs config.
 
+> **Amendment (2026-11-20, [bootstrap extra manifest](2026-11-20-bootstrap-extra-manifest-design.md)):**
+> the extra bootstrap manifest may name a `defaultTheme` (a `builtin` entry of the same file). Every
+> kernel start applies it seed-only: only while the platform default was never set by a person
+> (`updated_by IS NULL`), so a later choice by a super admin, even an explicit "none", wins. The
+> audit row has no actor and detail `{ source: "bootstrap", uiTheme: { id }, defaultTheme }`.
+
 ## 8. Delivering a theme to the web
 
 - **CSS from the kernel**: `GET /api/v1/themes/:id/:version/:revision/theme.css` (`revision` =

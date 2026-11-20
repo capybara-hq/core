@@ -124,7 +124,8 @@ Each line is the rule you must not miss; the skill has the rest.
   never restart; migrations expand-only; bootstrap plugins pinned in `packages/kernel/bootstrap.json`
   (required ones are `builtin`; `builtin: true` entries are builtin but imported after the
   extensions load and may fail without stopping the start; the rest optional preinstalls, off in
-  every org until switched on);
+  every org until switched on; a deployment may add pinned entries through
+  `bootstrap.extraManifest`, merged, never overriding);
   hooks observe or deny, never rewrite; every kernel model call fires `model.request`, an
   extension's `ctx.models.embed` too (`purpose: "embedding"`, no conversation fields) and
   `ctx.models.generateImage` (`purpose: "image"`), and policy hooks fail closed. An extension

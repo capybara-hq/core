@@ -141,9 +141,9 @@ extension needs its `package.json` and built output committed (`plugin-import.ts
 **Source identity.** The catalog must see a `git` entry exactly as an admin import of the same
 marketplace entry, so that later upgrades from the managed marketplace match
 (`assertSameSource`, `sourceIdentity`). The import source is
-`{ kind: "marketplace", marketplaceId: "config:<name>", ref, integrity, detail }` with `detail`
+`{ kind: "bootstrap", ref, integrity, detail }` with `detail`
 the `GitSourceDetail` that `importFromMarketplace` builds for a `path` entry (host and repo from the
-marketplace URL, `path`, `commit`, `followsBranch: false`), whichever of the two ways the bytes
+marketplace URL, `path`, `commit`, `followsBranch: true`, as for an admin import of a `path` entry), whichever of the two ways the bytes
 came. The run still records the entry under `bootstrap:<name>@<version>` in `bootstrap_runs`.
 
 The git read needs no marketplace row and no prior refresh, so it works in `capybara bootstrap`,
@@ -293,7 +293,34 @@ never the token), `marketplace.config_managed`.
    workspace entries.
 6. A `git` entry's `integrity` is defined on the kernel's `packPackageTgz` pack, so the online and
    offline paths are verified against one value; `capybara-plugin` reuses that function.
-7. The catalog records a `git` entry as a marketplace import of the managed marketplace, so admin
-   upgrades from it match.
+7. The catalog records a `git` entry with the git source detail of the managed marketplace, so admin
+   upgrades from it match (see "As built": the import kind stays `bootstrap`).
 8. The default theme is applied by every kernel start (seed-only), not by the bootstrap run, so the
    compose `init` path and retries work.
+
+## As built (2026-11-20)
+
+Rulings taken while implementing; where they differ from the text above, they win.
+
+- **R12, source identity:** git entries are imported with kind `bootstrap`, not `marketplace`. The
+  install source stays `bootstrap`, so manifest version bumps apply, the package stays in PG and
+  keeps the bootstrap pre-approval. Source identity with admin imports from the managed marketplace
+  holds through the git source detail; `followsBranch` in it is `true`, the same as an admin import
+  of a marketplace `path` entry.
+- **R13:** `syncExtraFromConfig` backfills `catalog_items.marketplace_id = 'config:<name>'` for live
+  platform items whose latest version came from a bootstrap git entry of that marketplace (the
+  compose `init` runs `capybara bootstrap` before any start, when the managed row does not exist
+  yet).
+- **R5:** a git entry's integrity is the raw tree pack (`packPackageTgz`), verified before any
+  Claude-plugin or skills-only translation.
+- **R6 / R8:** a git entry's marketplace URL must be in git form (ends with `.git` or is
+  `owner/repo`); every common host accepts `.git` clone URLs.
+- **R9:** the start syncs config-managed marketplaces with one retry on 40P01 / 40001, then warns
+  and continues.
+- **R10:** the bootstrap default-theme audit row has actor NULL and detail
+  `{ source: "bootstrap", uiTheme: { id }, defaultTheme }`.
+- **R7:** a row becoming config-managed drops any `catalog-token:<id>` from secrets.
+- **Git credentials:** username plus token; an empty username means `x-access-token`; the admin form
+  only suggests usernames for known hosts (github.com, `*.ghe.com`, bitbucket.org, gitlab.com); any
+  other host (Gitee, Gitea, self-hosted GitLab) works by entering the username its documentation
+  names.
