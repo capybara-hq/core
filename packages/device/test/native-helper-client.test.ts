@@ -131,6 +131,73 @@ it.runIf(process.platform === "darwin")(
   },
 );
 
+// A kernel read of a project narrows each operation to the one covering path: `AGENTS.md` is a
+// read root that is a regular file, not a directory. Its stat and read pass; a sibling stays out.
+it.runIf(process.platform === "darwin")(
+  "a macOS native read whose only read root is a regular file reads that file and nothing beside it",
+  async () => {
+    const { startMacOperationWorker } = await import("../src/exec/operation-worker.js");
+    const { mkdir } = await import("node:fs/promises");
+    const root = await realpath(await mkdtemp(join(tmpdir(), "cap-mac-native-file-")));
+    const stateDir = join(root, "state");
+    const project = join(root, "project");
+    const agents = join(project, "AGENTS.md");
+    await mkdir(stateDir, { mode: 0o700 });
+    await mkdir(project);
+    await writeFile(agents, "# rules");
+    await writeFile(join(project, "secret"), "secret");
+    const run = async (native: Record<string, unknown>) => {
+      const worker = await startMacOperationWorker(
+        {
+          kind: "native",
+          scope: {
+            operationId: `native-file-${String(native.method)}`,
+            admitBeforeMs: Date.now() + 30000,
+            deviceId: "owned-fixture",
+            rootConversationId: "r",
+            profileRevision: 0,
+            ceilingRevision: "fixture",
+            profile: "approve-for-me" as const,
+            actor: { accountId: "a", conversationId: "r" },
+            tag: "native-file",
+            filesystem: { kind: "scoped" as const, readRoots: [agents], writeRoots: [] },
+            network: { kind: "none" as const },
+          },
+          purpose: "operation",
+          native: native as never,
+          grant: {
+            full: false,
+            readRoots: [agents],
+            writeRoots: [],
+            hosts: [],
+            deniedReadRoots: [stateDir],
+            revision: "fixture",
+          },
+          stateDir,
+          pythonPath: "/usr/bin/python3",
+          runtimeHash: workspace.runtimeHash,
+          beforeLaunch: async () => {},
+          onLaunch: async () => {},
+        },
+        AbortSignal.timeout(15000),
+      );
+      return worker.completion;
+    };
+    try {
+      expect(await run({ method: "readFile", path: agents, maxBytes: 100 })).toEqual({
+        dataB64: Buffer.from("# rules").toString("base64"),
+        truncated: false,
+      });
+      expect(await run({ method: "stat", path: agents })).toMatchObject({ isDir: false, size: 7 });
+      await expect(
+        run({ method: "readFile", path: join(project, "secret"), maxBytes: 100 }),
+      ).rejects.toThrow();
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  },
+);
+
 // One test per method: each case launches five fresh native workers, and running all methods in a
 // single test brushed against the default timeout under parallel load.
 it

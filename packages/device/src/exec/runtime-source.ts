@@ -134,17 +134,22 @@ const STALE_TMP_MS = 24 * 60 * 60 * 1000;
 const packageName = (id: string) => id.slice(0, id.lastIndexOf("@"));
 const sha256 = (bytes: Uint8Array) => createHash("sha256").update(bytes).digest("hex");
 
-/** Everything under `root`, by relative path: type, identity and (for a link) its target. */
+/**
+ * Everything under `root`, by relative path: type, identity and (for a link) its target. Each
+ * directory's entries are visited concurrently: every launch walks the whole staged copy (about a
+ * thousand entries), and one awaited `lstat` after another made that walk most of a native
+ * operation's preparation.
+ */
 async function walkIdentities(root: string): Promise<Map<string, string>> {
   const out = new Map<string, string>();
-  const visit = async (path: string) => {
+  const visit = async (path: string): Promise<void> => {
     const s = await lstat(path, { bigint: true });
     const rel = relative(root, path) || ".";
     if (s.isSymbolicLink()) out.set(rel, `link:${fileIdentity(s)}:${await readlink(path)}`);
     else if (s.isFile()) out.set(rel, `file:${fileIdentity(s)}`);
     else if (s.isDirectory()) {
       out.set(rel, `dir:${fileIdentity(s)}`);
-      for (const name of (await readdir(path)).sort()) await visit(join(path, name));
+      await Promise.all((await readdir(path)).map((name) => visit(join(path, name))));
     } else out.set(rel, "other");
   };
   await visit(root);

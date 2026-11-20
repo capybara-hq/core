@@ -94,6 +94,26 @@ function journalForm(entry: Entry): Entry {
   return { ...entry, result: omitRead(result as { dataB64: string; truncated: boolean }) };
 }
 const RETAINED_READ_BYTES = 64 * 1024 * 1024;
+/** How long a settled entry outlives its retention before the journal drops it. */
+const PRUNE_AFTER_RETENTION_MS = 60 * 60 * 1000;
+/**
+ * Whether the journal may drop `entry` at `at`: settled for good (completed, or unknown with no
+ * launch identity, so no lost process can still run it), never revoked, no cancellation owed, no
+ * output left to clean, and {@link PRUNE_AFTER_RETENTION_MS} past its retention. Its id stays
+ * spent: a duplicate delivery of its request carries the same admission deadline, long past, so
+ * it is refused as expired rather than run again. Without this the journal grows by one entry per
+ * operation forever, every commit rewrites all of them, and admission stops at its capacity.
+ */
+function prunable(entry: Entry, at: number): boolean {
+  return (
+    (entry.state === "completed" || (entry.state === "unknown" && entry.identity === undefined)) &&
+    !entry.revoked &&
+    entry.stop?.outcome !== "cancel-pending" &&
+    (entry.output === undefined || entry.output.cleaned === true) &&
+    entry.admitBeforeMs <= at &&
+    entry.retainUntilMs + PRUNE_AFTER_RETENTION_MS <= at
+  );
+}
 interface Live {
   worker?: MacWorkerHandle;
   controller: AbortController;
@@ -136,6 +156,8 @@ interface Journal {
     predecessor: string;
     deviceId: string;
     generation: string;
+    /** When the commit was made (never earlier than a previous one): what pruning was judged at. */
+    at?: number;
   };
   entries: Entry[];
 }
@@ -223,6 +245,8 @@ export class MacOperationSupervisor {
   private journalBlocked = false;
   private verifiedJournal = JSON.stringify({ version: 1, entries: [] });
   private now: () => number;
+  /** The latest time this supervisor judged retention at: pruning and commits never go back. */
+  private judgedAt = 0;
   private draining = false;
   /** Set by {@link close}: a superseded supervisor never writes the shared journal again. */
   private closed = false;
@@ -347,6 +371,9 @@ export class MacOperationSupervisor {
   private validateSuccessor(prior: Journal, next: Journal): void {
     for (const old of prior.entries) {
       const entry = next.entries.find((e) => e.ref.operationId === old.ref.operationId);
+      // a settled entry the successor pruned (judged at the successor's own commit time)
+      const at = next.transaction?.at;
+      if (!entry && at !== undefined && prunable(old, at)) continue;
       if (
         !entry ||
         JSON.stringify(entry.ref) !== JSON.stringify(old.ref) ||
@@ -493,6 +520,7 @@ export class MacOperationSupervisor {
       predecessor: digest(this.verifiedJournal),
       deviceId: this.options.deviceId,
       generation: this.options.instanceGeneration,
+      at: this.judge(),
     };
     const journal: Journal = {
       version: 1,
@@ -550,8 +578,25 @@ export class MacOperationSupervisor {
     }
   }
 
+  private judge(): number {
+    this.judgedAt = Math.max(this.judgedAt, this.now());
+    return this.judgedAt;
+  }
   private expireRetained(): void {
     let changed = false;
+    const at = this.judge();
+    for (const [id, entry] of this.entries)
+      if (
+        prunable(entry, at) &&
+        !this.live.has(id) &&
+        !this.cancellations.has(id) &&
+        !this.spools.has(id) &&
+        !this.outputReads.has(id) &&
+        !this.controlWrites.has(id)
+      ) {
+        this.entries.delete(id);
+        changed = true;
+      }
     for (const entry of this.entries.values()) {
       if (
         entry.retainUntilMs > this.now() ||
