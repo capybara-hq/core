@@ -76,8 +76,9 @@ The maintainer picked A on the recommendation (2026-11-20).
 - Objects live under the deployment prefix: `deployment/account-avatars/<accountId>/<uploadId>`
   (`StorageService.deployment()`; kernel-added prefix, as the object-storage rules require).
 - The SSO avatar is read from the identity rows (`identities.profile.avatarUrl`, refreshed on every
-  login already): the most recently updated non-local identity with an `https:` `avatarUrl`.
-  Nothing new is stored for it.
+  login already): the most recently refreshed non-local identity with an `https:` `avatarUrl`.
+  `identities` has no `updated_at` today; the migration adds a nullable one, written on insert and
+  on the login refresh (plan review, 2026-11-20).
 - The display name stays `accounts.display_name`: trimmed, 1–64 characters (my call, builder
   check Q3), checked only on the two PATCH routes (`/me/profile`, `/admin/accounts/:id`) and only
   when the name is being changed: a request that resends an unchanged name, or changes only the
@@ -100,8 +101,8 @@ The maintainer picked A on the recommendation (2026-11-20).
 All new routes follow writing-kernel-api (DTOs via `createZodDto`, `@Transactional()` writes,
 audit rows).
 
-- `POST /api/v1/me/avatar/uploads` `{ contentType, size }` → `{ uploadId, url, headers }`: a
-  presigned PUT, png / jpeg / webp, at most 2 MB (the agent-avatar limits), expiry 24 h. When no
+- `POST /api/v1/me/avatar/uploads` `{ contentType, size }` → `{ uploadId, upload, expiresAt }`,
+  `upload` being the object store's `PresignedUpload` as for agent avatars, png / jpeg / webp, at most 2 MB (the agent-avatar limits), expiry 24 h. When no
   object store is configured it answers `storage.unavailable` and the page says so.
 - `PATCH /api/v1/me/profile` `{ displayName?, avatar?: { kind: "upload", uploadId } | null }`:
   - `avatar` upload: the upload must be the caller's, `ready` after a HEAD check of the object
@@ -127,7 +128,8 @@ audit rows).
 - **Responses that carry only an account id** (approvals `decidedBy`, questions `answeredBy`,
   `run_aborted.byAccountId`, schedules `accountId`, background tasks `triggerAccountId`,
   conversations `accountId` where a viewer other than the owner sees it) **gain a person shape**
-  `{ id, name, avatarUrl }` next to the id (my call, builder check Q1). The members list cannot
+  `{ id, name, avatarUrl }` next to the id (REST records inline; responses that return log events
+  get a `people` map beside the events, since the logged payloads never change) (my call, builder check Q1). The members list cannot
   carry this: it needs the `member` role (`org.members.read`), so guests (the IM users who answer
   approval and question cards) and super admins outside the org or in the cross-org admin inbox
   would see nobody. Putting the person into the response the viewer can already read keeps the
@@ -143,9 +145,10 @@ audit rows).
   call: a super admin removing an offensive image is a follow-up if ever needed).
 - Upload cleanup: the hourly attachment cleanup sweep (`@LockedCron`, `WorkerModule`) also deletes
   expired, unbound `account_avatar_uploads` rows and their objects, the same way it does for
-  attachments. Deleting an account cascades the rows; its objects are swept by the same job via a
-  deletion owed through the outbox (builder's choice of exact shape, following the attachments
-  precedent).
+  attachments. Accounts are never deleted today (only disabled); the FK cascade covers the rows if
+  that ever changes, and no outbox job is added now.
+- Errors: uploads reuse the agent avatar's `attachment.*` codes; the one new code is
+  `account.display_name_too_long`.
 
 ### 5.4 Model visibility and replay
 
