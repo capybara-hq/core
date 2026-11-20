@@ -81,7 +81,7 @@ const OFFICIAL_MARKETPLACE_NAME = "Capybara official marketplace";
 const SECRETS_NAMESPACE = "kernel";
 const tokenKey = (id: string) => `catalog-token:${id}`;
 /** The id prefix of a marketplace the deployment config owns (`config:<name>`). */
-const CONFIG_MARKETPLACE_PREFIX = "config:";
+export const CONFIG_MARKETPLACE_PREFIX = "config:";
 
 /** 拉取一份清单的超时。 */
 export const MARKETPLACE_FETCH_TIMEOUT_MS = 30_000;

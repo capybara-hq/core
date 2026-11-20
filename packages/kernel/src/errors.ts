@@ -140,6 +140,8 @@ export const ERROR_CODES = {
   "bootstrap.extra_invalid": 500,
   /** The extra bootstrap manifest names a plugin the built-in manifest already pins. */
   "bootstrap.extra_conflict": 500,
+  /** A git entry's tree cannot be read from its marketplace (the git error, never the token). */
+  "bootstrap.git_read_failed": 502,
   "catalog.invalid_manifest": 422,
   "catalog.no_extension": 409,
   "catalog.dependency_unresolved": 409,

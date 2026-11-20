@@ -150,17 +150,15 @@ describe("readBootstrapExtraManifest / loadBootstrapManifest", () => {
   });
 });
 
-describe("git entries (not supported yet)", () => {
-  it("loadBootstrapManifest refuses them naming the entries, before any package is obtained", async () => {
+describe("git entries", () => {
+  it("loadBootstrapManifest keeps them, required defaulting to false", async () => {
     const file = await write("git.json", {
       schemaVersion: 1,
       marketplaces: [{ name: "dist", url: "https://example.com/o/r.git" }],
       plugins: [gitEntry],
     });
-    await expect(loadBootstrapManifest({ builtin, extraManifest: file })).rejects.toMatchObject({
-      code: "bootstrap.extra_invalid",
-      message: expect.stringContaining("not supported yet: git-c"),
-    });
+    const merged = await loadBootstrapManifest({ builtin, extraManifest: file });
+    expect(merged.plugins.at(-1)).toEqual({ ...gitEntry, required: false });
   });
 });
 

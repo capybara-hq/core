@@ -3,19 +3,31 @@ import { readdir, readFile, stat } from "node:fs/promises";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import {
-  type BootstrapEntry,
+  type BootstrapExtraMarketplace,
   type BootstrapManifest,
   type Logger,
+  PLUGIN_MANIFEST_FILE,
   parseBootstrapManifest,
   SDK_VERSION,
 } from "@capybara-hq/plugin-sdk";
 import { Inject, Injectable, Optional } from "@nestjs/common";
 import { sql } from "kysely";
 import semver from "semver";
-import { marketplaceNetPolicy } from "../catalog/marketplace-fetch.js";
+import { marketplaceGitSource, repoOwner } from "../catalog/catalog.service.js";
+import { normalGitPath, readGitTreeAndOids } from "../catalog/git-source.js";
+import { marketplaceNetPolicy, marketplaceUrlProblem } from "../catalog/marketplace-fetch.js";
+import { CONFIG_MARKETPLACE_PREFIX, marketplaceForm } from "../catalog/marketplaces.service.js";
 import { otherNameOwner } from "../catalog/ownership.js";
-import { catalogPackageError, type PluginImport } from "../catalog/plugin-import.js";
-import { PluginPackageError, readPluginPackage } from "../catalog/plugin-package.js";
+import {
+  catalogPackageError,
+  type PluginImport,
+  type PluginImportSource,
+} from "../catalog/plugin-import.js";
+import {
+  PluginPackageError,
+  readPluginFiles,
+  readPluginPackage,
+} from "../catalog/plugin-package.js";
 import type { KernelConfig } from "../config/schema.js";
 import type { KernelSchemaDb } from "../db/kernel-schema.js";
 import { ApiError, type ErrorCode } from "../errors.js";
@@ -33,8 +45,14 @@ import {
   NpmFetchError,
   PackageTooLargeError,
 } from "../packages/npm.js";
+import { PackageTgzError, packPackageTgz, unpackPackageTgz } from "../packages/tgz.js";
 import { ExtensionAdminOps } from "./admin-ops.js";
 import { writeSnapshot } from "./approvals.js";
+import type {
+  BootstrapGitRunEntry,
+  MergedBootstrapEntry,
+  MergedBootstrapManifest,
+} from "./bootstrap-extra.js";
 import { ExtensionInstalls } from "./installs.js";
 import { PluginApproveLock } from "./locks.js";
 import { ExtensionPackageError, permissionSetOfPackage, readExtensionPackage } from "./package.js";
@@ -53,8 +71,11 @@ import type { SingleProviderNote } from "./single-provider.js";
  *   ({@link resolveBootstrapPackages}): a `*.tgz` file of the optional offline directory whose
  *   sha512 equals the entry's `integrity` (the file name does not matter), else the npm download
  *   of a `source: "npm"` entry (`packages.npmRegistry` / `npmToken` / `maxBytes`, verified against
- *   the pin only). A workspace entry without a matching file is `bootstrap.missing_file`, a failed
- *   download `bootstrap.download_failed`, a download that differs from the pin
+ *   the pin only), or the git read of a `source: "git"` entry of the extra manifest (its tree at the
+ *   pinned commit, packed with `packPackageTgz` and verified against the pin before anything reads
+ *   it; see {@link resolveBootstrapPackages}). A workspace entry without a matching file is
+ *   `bootstrap.missing_file`, a failed download `bootstrap.download_failed` (a failed git read
+ *   `bootstrap.git_read_failed`), a package that differs from the pin
  *   `bootstrap.integrity_mismatch` (all name the plugin), and then nothing is written. Downloading
  *   inside the lock means a fleet starting together downloads once.
  * - The whole run holds the Redis lock `lock:bootstrap` (`LockService`, decision R5 of the Nest
@@ -76,7 +97,10 @@ import type { SingleProviderNote } from "./single-provider.js";
  *   declarative one imported again when its catalog item is gone).
  * - Per entry, by the installed state of its extension:
  *   - not installed (and new, or required): imported into the catalog (source `bootstrap`, ref
- *     `bootstrap:<name>@<version>`, like a marketplace import), installed, approved (snapshot
+ *     `bootstrap:<name>@<version>`, like a marketplace import; a git entry is recorded as the
+ *     managed marketplace `config:<marketplace>` it names, with the git location an admin import of
+ *     that marketplace's `path` entry records, so later imports from it are the same source),
+ *     installed, approved (snapshot
  *     source `bootstrap`, audited `extension.permissions_approved` with `source: "bootstrap"`)
  *     and enabled -> `installed`;
  *   - installed from `bootstrap` at a lower version: upgraded the same way (core's release vouched
@@ -207,20 +231,58 @@ export interface BootstrapResolveOptions {
    * `failed` (by entry name) and the other entries are still obtained. Every other entry's failure
    * throws, so nothing is written.
    */
-  soft?: (e: BootstrapEntry) => boolean;
+  soft?: (e: MergedBootstrapEntry) => boolean;
   failed?: Map<string, ApiError>;
+  /**
+   * The credential of an extra-manifest marketplace (by name) for its git entries; default: the
+   * token `marketplaces.tokens[name]` (never the file or the secrets table) and the manifest's
+   * `username`. It is sent only to that marketplace URL's origin.
+   */
+  gitCredentials?: (marketplace: string) => { token?: string; username?: string };
+  /** Filled with the git tree oid of each git entry read from git (by entry name). */
+  gitTrees?: Map<string, string>;
 }
+
+/**
+ * The marketplace a git entry names, its URL expanded as the managed row's (`config:<name>`) is and
+ * checked as an admin-added one is (`bootstrap.extra_invalid` otherwise).
+ */
+export function bootstrapGitMarketplace(
+  manifest: Pick<MergedBootstrapManifest, "extra">,
+  e: BootstrapGitRunEntry,
+  config: Pick<KernelConfig, "marketplaces">,
+): BootstrapExtraMarketplace {
+  const m = manifest.extra?.marketplaces.find((x) => x.name === e.marketplace);
+  const invalid = (why: string) =>
+    new ApiError(
+      "bootstrap.extra_invalid",
+      `Bootstrap plugin ${e.name} ${e.version}: marketplace ${e.marketplace} ${why}`,
+    );
+  if (m === undefined) throw invalid("is not declared in the extra bootstrap manifest");
+  const { form, url } = marketplaceForm(m.url);
+  if (form !== "git") throw invalid("is not a git repository");
+  const problem = marketplaceUrlProblem(url, config.marketplaces.allowInsecureLoopback);
+  if (problem !== null) throw invalid(`has an unusable url: ${problem}`);
+  return { ...m, url };
+}
+
+/** The managed marketplace's id of an extra-manifest marketplace (the row the kernel start creates). */
+const managedMarketplaceId = (name: string) => `${CONFIG_MARKETPLACE_PREFIX}${name}`;
 
 /**
  * Obtains every entry's tgz, checked against its pinned sha512: from the offline directory when a
  * file there has that sha512, else (a `source: "npm"` entry) downloaded from the npm registry and
- * verified against the pin (the packument's `dist.integrity` is not consulted). Throws an
- * {@link ApiError} naming the plugin for the first entry it cannot obtain
- * (`bootstrap.missing_file`, `bootstrap.download_failed`, `bootstrap.integrity_mismatch`), except
+ * verified against the pin (the packument's `dist.integrity` is not consulted), else (a
+ * `source: "git"` entry) its marketplace's tree at the pinned commit, the files under `path`
+ * re-rooted and packed with `packPackageTgz` (the pin is defined on that pack), refused unless the
+ * pack's sha512 is the pin: nothing of an unverified tree is read, translated or imported. The
+ * marketplace's token and username go only to its URL's origin. Throws an {@link ApiError} naming
+ * the plugin for the first entry it cannot obtain (`bootstrap.missing_file`,
+ * `bootstrap.download_failed`, `bootstrap.git_read_failed`, `bootstrap.integrity_mismatch`), except
  * for the `soft` entries (recorded in `failed`, left out of the result).
  */
 export async function resolveBootstrapPackages(
-  manifest: BootstrapManifest,
+  manifest: MergedBootstrapManifest,
   o: BootstrapResolveOptions,
 ): Promise<Map<string, Uint8Array>> {
   const out = new Map<string, Uint8Array>();
@@ -241,9 +303,10 @@ export async function resolveBootstrapPackages(
   }
   return out;
 
-  async function obtain(e: BootstrapEntry): Promise<Uint8Array> {
+  async function obtain(e: MergedBootstrapEntry): Promise<Uint8Array> {
     const found = offline.get(e.integrity);
     if (found !== undefined) return found;
+    if (e.source === "git") return obtainGit(e);
     if (e.source === "workspace") {
       throw new ApiError(
         "bootstrap.missing_file",
@@ -286,7 +349,63 @@ export async function resolveBootstrapPackages(
       );
     }
   }
+
+  async function obtainGit(e: BootstrapGitRunEntry): Promise<Uint8Array> {
+    const m = bootstrapGitMarketplace(manifest, e, o.config);
+    const u = new URL(m.url);
+    const at = `${e.path} at ${e.commit.slice(0, 12)} of marketplace ${m.name} (${u.origin}${u.pathname})`;
+    const cred = (o.gitCredentials ?? defaultGitCredentials)(m.name);
+    const token = cred.token !== undefined && cred.token !== "" ? cred.token : undefined;
+    const dir = normalGitPath(e.path);
+    let read: Awaited<ReturnType<typeof readGitTreeAndOids>>;
+    try {
+      read = await readGitTreeAndOids(
+        { url: m.url, commit: e.commit, path: e.path },
+        {
+          net: marketplaceNetPolicy(o.config),
+          maxBytes,
+          signal,
+          ...(token !== undefined && {
+            token,
+            tokenOrigin: u.origin,
+            ...(cred.username !== undefined && cred.username !== "" && { username: cred.username }),
+          }),
+          trees: () => [dir],
+        },
+      );
+    } catch (err) {
+      if (signal.aborted) throw err;
+      // git-source messages never carry the token; redacted all the same, it is a credential
+      const reason = errMsg(err);
+      throw new ApiError(
+        "bootstrap.git_read_failed",
+        `Bootstrap plugin ${e.name} ${e.version}: cannot read ${at}: ${token !== undefined ? reason.replaceAll(token, "***") : reason}; to install offline, put its pack (capybara-plugin bootstrap --write) in ${where}`,
+      );
+    }
+    const pack = await packPackageTgz(read.files);
+    const actual = integrityOf(pack);
+    if (actual !== e.integrity) {
+      throw new ApiError(
+        "bootstrap.integrity_mismatch",
+        `Bootstrap plugin ${e.name} ${e.version}: ${at} packs to another sha512 than its pin (expected ${e.integrity.slice(0, 19)}…, got ${actual.slice(0, 19)}…); refusing to install anything`,
+      );
+    }
+    const tree = read.trees.get(dir);
+    if (tree !== undefined) o.gitTrees?.set(e.name, tree);
+    return pack;
+  }
+
+  function defaultGitCredentials(name: string): { token?: string; username?: string } {
+    const tokens = o.config.marketplaces.tokens;
+    const username = manifest.extra?.marketplaces.find((x) => x.name === name)?.username;
+    return {
+      ...(Object.hasOwn(tokens, name) && { token: tokens[name] }),
+      ...(username !== undefined && { username }),
+    };
+  }
 }
+
+const errMsg = (e: unknown) => (e instanceof Error ? e.message : String(e));
 
 /** The registry's origin, for messages (never its credentials or path). */
 function registryOrigin(registry: string): string {
@@ -345,7 +464,14 @@ export const BOOTSTRAP_LOCK_TTL = Symbol("BOOTSTRAP_LOCK_TTL");
 const LOCK_RETRY_MS = 500;
 
 /** What a run imports a declarative entry or an entry's catalog version with. */
-export type BootstrapImports = Pick<PluginImport, "prepare" | "confirm">;
+export type BootstrapImports = Pick<PluginImport, "prepare" | "prepareGit" | "confirm">;
+
+/** A git entry's import: its files (unpacked from the verified pack) and where they came from. */
+interface GitEntryImport {
+  files: Map<string, Uint8Array>;
+  /** Publisher of a skills-only tree (the repo owner, as an admin import names it). */
+  publisher: string;
+}
 
 @Injectable()
 export class BootstrapService {
@@ -396,7 +522,7 @@ export class BootstrapService {
    * keeps that action instead of `kept` in this run's record.
    */
   async run(o: {
-    manifest: BootstrapManifest;
+    manifest: MergedBootstrapManifest;
     /** The offline directory (see {@link resolveBootstrapPackages}); omitted: npm only. */
     dir?: string;
     signal?: AbortSignal;
@@ -432,13 +558,14 @@ export class BootstrapService {
       const done = await recorded();
       if (done) return done;
       const deferBuiltin = o.deferBuiltin === true;
-      const isDeferred = (e: BootstrapEntry) => deferBuiltin && e.builtin === true;
+      const isDeferred = (e: MergedBootstrapEntry) => deferBuiltin && e.builtin === true;
       // Every package is obtained and checked before the first write (a deferred entry's by the
       // later pass). The first pass refuses to write anything when one is missing or tampered;
       // the later pass only fails that entry unless it is required.
       const files = new Map<string, Uint8Array>();
       const fetchFailed = new Map<string, ApiError>();
-      const toObtain: BootstrapEntry[] = [];
+      const toObtain: MergedBootstrapEntry[] = [];
+      const gitTrees = new Map<string, string>();
       for (const e of o.manifest.plugins) {
         if (isDeferred(e)) continue;
         const kept = o.packages?.get(e.name);
@@ -452,7 +579,11 @@ export class BootstrapService {
           config: this.config(),
           signal,
           log: this.log,
-          ...(!deferBuiltin && { soft: (e: BootstrapEntry) => !e.required, failed: fetchFailed }),
+          ...(!deferBuiltin && {
+            soft: (e: MergedBootstrapEntry) => !e.required,
+            failed: fetchFailed,
+          }),
+          gitTrees,
         },
       );
       for (const [name, bytes] of obtained) files.set(name, bytes);
@@ -470,7 +601,10 @@ export class BootstrapService {
         try {
           const fetchErr = fetchFailed.get(e.name);
           if (fetchErr !== undefined) throw fetchErr;
-          const r = await this.entry(e, files.get(e.name) as Uint8Array, handled, o.imports);
+          const r = await this.entry(e, files.get(e.name) as Uint8Array, handled, o.imports, {
+            manifest: o.manifest,
+            tree: gitTrees.get(e.name),
+          });
           results.push(carried(r, o.carry));
         } catch (err) {
           this.log.error("bootstrap: a plugin could not be installed", {
@@ -504,7 +638,7 @@ export class BootstrapService {
    * name over (ruling P3-28), so the entry fails; this warning tells the super admin why and
    * which org holds it (final review M4).
    */
-  private async warnIfHeld(e: BootstrapEntry): Promise<void> {
+  private async warnIfHeld(e: MergedBootstrapEntry): Promise<void> {
     const holder = await otherNameOwner(this.db, e.name, null);
     if (holder?.kind !== "org") return;
     this.log.warn(
@@ -578,34 +712,82 @@ export class BootstrapService {
   }
 
   private async entry(
-    e: BootstrapEntry,
+    e: MergedBootstrapEntry,
     bytes: Uint8Array,
     handled: ReadonlySet<string> | undefined,
     imports: BootstrapImports,
+    /** For a git entry: the manifest (its marketplaces) and the tree oid when read from git now. */
+    at: { manifest: MergedBootstrapManifest; tree: string | undefined },
   ): Promise<BootstrapEntryResult> {
-    const pkg = await readPluginPackage(bytes, {
-      maxBytes: this.config().packages.maxBytes,
-      hostSdkVersion: SDK_VERSION,
-    }).catch((err: unknown) => {
-      throw err instanceof PluginPackageError ? catalogPackageError(err) : err;
-    });
-    if (pkg.manifest.name !== e.name || pkg.manifest.version !== e.version) {
+    let plugin: { name: string; version: string; extension: boolean };
+    let source: PluginImportSource;
+    let git: GitEntryImport | undefined;
+    if (e.source === "git") {
+      const m = bootstrapGitMarketplace(at.manifest, e, this.config());
+      git = { files: await this.unpackGit(e, bytes), publisher: repoOwner(m.url) };
+      plugin = this.gitPlugin(e, git.files);
+      // The source an admin import of the managed marketplace's `path` entry records (same
+      // arguments), so its later versions add to this item
+      const where = marketplaceGitSource(
+        {
+          url: m.url,
+          commit: e.commit,
+          path: e.path,
+          ...(m.ref !== undefined && { ref: m.ref }),
+        },
+        { commit: e.commit, tree: at.tree },
+        false,
+      );
+      const marketplaceId = managedMarketplaceId(m.name);
+      // The managed row is created by the kernel start before its bootstrap step; `capybara
+      // bootstrap` may run before any start, when the item cannot name it yet (a foreign key).
+      // The git location alone makes it the same source; an import from the marketplace names it
+      const managed = await this.db
+        .selectFrom("marketplaces")
+        .select("id")
+        .where("id", "=", marketplaceId)
+        .executeTakeFirst();
+      source = {
+        kind: "bootstrap",
+        ref: `${marketplaceId}:${where.ref}`,
+        integrity: e.integrity,
+        ...(managed !== undefined && { marketplaceId }),
+        detail: where.detail,
+      };
+    } else {
+      const pkg = await readPluginPackage(bytes, {
+        maxBytes: this.config().packages.maxBytes,
+        hostSdkVersion: SDK_VERSION,
+      }).catch((err: unknown) => {
+        throw err instanceof PluginPackageError ? catalogPackageError(err) : err;
+      });
+      plugin = {
+        name: pkg.manifest.name,
+        version: pkg.manifest.version,
+        extension: pkg.manifest.extension !== undefined,
+      };
+      source = {
+        kind: "bootstrap",
+        ref: `bootstrap:${e.name}@${e.version}`,
+        integrity: e.integrity,
+      };
+    }
+    if (plugin.name !== e.name || plugin.version !== e.version) {
       throw new ApiError(
         "catalog.invalid_manifest",
-        `The package for bootstrap entry ${e.name} ${e.version} contains plugin ${pkg.manifest.name} ${pkg.manifest.version}`,
+        `The package for bootstrap entry ${e.name} ${e.version} contains plugin ${plugin.name} ${plugin.version}`,
       );
     }
-    const ref = `bootstrap:${e.name}@${e.version}`;
     // Not new to the manifest: an optional entry left out on purpose stays out (Ruling 5)
     const isNew = handled === undefined || !handled.has(e.name);
     // Required and builtin entries are builtin in the catalog and put back when missing
     const builtin = e.required || e.builtin === true;
-    if (!pkg.manifest.extension) {
+    if (!plugin.extension) {
       await this.markBuiltin(e.name, builtin);
       if (!isNew && !(builtin && !(await this.hasLiveItem(e.name)))) {
         return { name: e.name, action: "kept", version: e.version };
       }
-      const imported = await this.importOnly(e, bytes, ref, imports);
+      const imported = await this.importOnly(e, bytes, source, imports, git);
       await this.markBuiltin(e.name, builtin);
       return { name: e.name, action: imported ? "imported" : "kept", version: e.version };
     }
@@ -630,11 +812,18 @@ export class BootstrapService {
     let result: BootstrapEntryResult;
     let leftDisabled: SingleProviderNote | undefined;
     if (!row) {
-      leftDisabled = await this.deploy(e, bytes, ref, true, imports);
+      leftDisabled = await this.deploy(e, bytes, source, true, imports, git);
       result = { name: e.name, action: "installed", version: e.version };
     } else if (row.source === "bootstrap" && isLower(row.version, e.version)) {
       // The desired state the admin chose is kept; a required plugin is enabled below anyway
-      leftDisabled = await this.deploy(e, bytes, ref, row.desired_state === "enabled", imports);
+      leftDisabled = await this.deploy(
+        e,
+        bytes,
+        source,
+        row.desired_state === "enabled",
+        imports,
+        git,
+      );
       result = { name: e.name, action: "upgraded", version: e.version };
     } else {
       if (
@@ -716,19 +905,90 @@ export class BootstrapService {
       .execute();
   }
 
+  /**
+   * The files of a git entry's verified pack (exactly the tree read at its commit). A tree the tgz
+   * rules refuse is `catalog.invalid_manifest`.
+   */
+  private async unpackGit(e: BootstrapGitRunEntry, bytes: Uint8Array) {
+    try {
+      const unpacked = await unpackPackageTgz(bytes, {
+        maxBytes: this.config().packages.maxBytes,
+      });
+      return new Map<string, Uint8Array>(unpacked.map((f) => [f.path, f.data]));
+    } catch (err) {
+      if (!(err instanceof PackageTgzError)) throw err;
+      throw new ApiError(
+        "catalog.invalid_manifest",
+        `The tree of bootstrap entry ${e.name} ${e.version}: ${err.issues.join("; ")}`,
+      );
+    }
+  }
+
+  /**
+   * Name, version and extension of a git entry's tree: from its `plugin.json`; a tree without one
+   * (a Claude Code or skills-only plugin, never an extension) is named by the entry, which its
+   * import's review is checked against ({@link prepareGitEntry}).
+   */
+  private gitPlugin(
+    e: BootstrapGitRunEntry,
+    files: Map<string, Uint8Array>,
+  ): { name: string; version: string; extension: boolean } {
+    if (!files.has(PLUGIN_MANIFEST_FILE)) {
+      return { name: e.name, version: e.version, extension: false };
+    }
+    try {
+      const { manifest } = readPluginFiles(files, {
+        hostSdkVersion: SDK_VERSION,
+        requirePackageJson: false,
+      });
+      return {
+        name: manifest.name,
+        version: manifest.version,
+        extension: manifest.extension !== undefined,
+      };
+    } catch (err) {
+      throw err instanceof PluginPackageError ? catalogPackageError(err) : err;
+    }
+  }
+
+  /** Stages a git entry from its files as an admin git import would (translation included). */
+  private async prepareGitEntry(
+    e: MergedBootstrapEntry,
+    git: GitEntryImport,
+    source: PluginImportSource,
+    imports: BootstrapImports,
+  ): Promise<Awaited<ReturnType<BootstrapImports["prepare"]>>> {
+    const staged = await imports.prepareGit(null, git.files, source, {
+      fallback: {
+        name: e.name,
+        version: e.version,
+        publisher: git.publisher,
+        entryVersion: e.version,
+      },
+    });
+    const { name, version, pluginVersion } = staged.review;
+    if (name !== e.name || (pluginVersion ?? version) !== e.version) {
+      throw new ApiError(
+        "catalog.invalid_manifest",
+        `The tree of bootstrap entry ${e.name} ${e.version} is plugin ${name} ${pluginVersion ?? version}`,
+      );
+    }
+    return staged;
+  }
+
   /** A declarative plugin: catalog only. Returns false when that version is already imported. */
   private async importOnly(
-    e: BootstrapEntry,
+    e: MergedBootstrapEntry,
     bytes: Uint8Array,
-    ref: string,
+    source: PluginImportSource,
     imports: BootstrapImports,
+    git: GitEntryImport | undefined,
   ): Promise<boolean> {
     try {
-      const { stagingId, review } = await imports.prepare(null, bytes, {
-        kind: "bootstrap",
-        ref,
-        integrity: e.integrity,
-      });
+      const { stagingId, review } =
+        git !== undefined
+          ? await this.prepareGitEntry(e, git, source, imports)
+          : await imports.prepare(null, bytes, source);
       await imports.confirm(null, stagingId, { reviewHash: review.reviewHash });
       return true;
     } catch (err) {
@@ -743,22 +1003,23 @@ export class BootstrapService {
    * package came from a marketplace), the extension is deployed from the package store instead.
    */
   private async deploy(
-    e: BootstrapEntry,
+    e: MergedBootstrapEntry,
     bytes: Uint8Array,
-    ref: string,
+    source: PluginImportSource,
     enable: boolean,
     imports: BootstrapImports,
+    git: GitEntryImport | undefined,
   ): Promise<SingleProviderNote | undefined> {
     let staged: Awaited<ReturnType<BootstrapImports["prepare"]>>;
     try {
-      staged = await imports.prepare(null, bytes, {
-        kind: "bootstrap",
-        ref,
-        integrity: e.integrity,
-      });
+      // A git plugin with an extension is packed again from these files: the verified bytes
+      staged =
+        git !== undefined
+          ? await this.prepareGitEntry(e, git, source, imports)
+          : await imports.prepare(null, bytes, source);
     } catch (err) {
       if (err instanceof ApiError && err.code === "catalog.version_exists") {
-        return this.deployFromStore(e, bytes, ref, enable);
+        return this.deployFromStore(e, bytes, source.ref, enable);
       }
       throw err;
     }
@@ -784,7 +1045,7 @@ export class BootstrapService {
 
   /** The extension of a catalog version already imported: ingest, approve, install (, enable). */
   private async deployFromStore(
-    e: BootstrapEntry,
+    e: MergedBootstrapEntry,
     bytes: Uint8Array,
     ref: string,
     enable: boolean,
@@ -830,7 +1091,7 @@ export class BootstrapService {
    * Enables a bootstrap extension unless another enabled extension provides one of its
    * single-provider extension points (see {@link leftDisabled}).
    */
-  private async enableOrWarn(e: BootstrapEntry): Promise<SingleProviderNote | undefined> {
+  private async enableOrWarn(e: MergedBootstrapEntry): Promise<SingleProviderNote | undefined> {
     const r = await this.ops.enableUnlessOccupied(e.name, null);
     return r.enabled ? undefined : this.leftDisabled(e, r.note);
   }
@@ -843,7 +1104,7 @@ export class BootstrapService {
    * `capybara start` refuses to serve): the deployment cannot run without it, and only the super
    * admin can free the point, by disabling the other provider and running the bootstrap again.
    */
-  private leftDisabled(e: BootstrapEntry, note: SingleProviderNote): SingleProviderNote {
+  private leftDisabled(e: MergedBootstrapEntry, note: SingleProviderNote): SingleProviderNote {
     const block = note.singleProvider;
     if (e.required) {
       const other = block.enabled.name;
@@ -863,7 +1124,7 @@ export class BootstrapService {
   /** The permission snapshot of a stored package (source `bootstrap`), under the approve lock. */
   @Transactional()
   private async approveStored(
-    e: BootstrapEntry,
+    e: MergedBootstrapEntry,
     set: PermissionSet,
     sha256: string,
   ): Promise<void> {
@@ -882,7 +1143,7 @@ export class BootstrapService {
   }
 
   /** Install records still `required` whose entry left the manifest lose `required`. */
-  private async clearRemoved(manifest: BootstrapManifest): Promise<BootstrapEntryResult[]> {
+  private async clearRemoved(manifest: MergedBootstrapManifest): Promise<BootstrapEntryResult[]> {
     const names = manifest.plugins.map((p) => p.name);
     let q = this.db
       .updateTable("extension_installs")

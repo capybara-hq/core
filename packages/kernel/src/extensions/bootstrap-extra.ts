@@ -18,15 +18,21 @@ import { BOOTSTRAP_MANIFEST_FILE, readBootstrapManifest } from "./bootstrap.js";
  * is absent without an extra manifest, so the object (and its sha256) is the built-in manifest's.
  */
 export type MergedBootstrapManifest = Omit<BootstrapManifest, "plugins"> & {
-  plugins: (BootstrapEntry | BootstrapGitEntry)[];
+  plugins: MergedBootstrapEntry[];
   extra?: {
     marketplaces: BootstrapExtraMarketplace[];
     defaultTheme?: { plugin: string; theme: string };
   };
 };
 
-/** What the step can run today: a merged manifest without git entries. */
-export type LoadedBootstrapManifest = BootstrapManifest & Pick<MergedBootstrapManifest, "extra">;
+/** A git entry of the merged manifest: `required` defaults to false, as for an npm extra entry. */
+export type BootstrapGitRunEntry = BootstrapGitEntry & { required: boolean };
+
+/** One entry of the merged manifest. */
+export type MergedBootstrapEntry = BootstrapEntry | BootstrapGitRunEntry;
+
+/** What the bootstrap step runs: the merged manifest. */
+export type LoadedBootstrapManifest = MergedBootstrapManifest;
 
 const errMsg = (e: unknown) => (e instanceof Error ? e.message : String(e));
 
@@ -81,10 +87,12 @@ export function mergeBootstrapManifests(
       );
     }
   }
-  const plugins: (BootstrapEntry | BootstrapGitEntry)[] = [
+  const plugins: MergedBootstrapEntry[] = [
     ...builtin.plugins,
     ...extra.plugins.map((e) =>
-      e.source === "git" ? e : ({ ...e, required: e.required ?? false } as BootstrapEntry),
+      e.source === "git"
+        ? { ...e, required: e.required ?? false }
+        : ({ ...e, required: e.required ?? false } as BootstrapEntry),
     ),
   ];
   return {
@@ -107,16 +115,7 @@ export async function loadBootstrapManifest(o: {
     o.builtin ?? (await readBootstrapManifest(o.manifestFile ?? BOOTSTRAP_MANIFEST_FILE));
   const extra =
     o.extraManifest !== undefined ? await readBootstrapExtraManifest(o.extraManifest) : undefined;
-  const merged = mergeBootstrapManifests(builtin, extra);
-  // Task 7 obtains git entries; until then they must not reach the npm branch of the step
-  const git = merged.plugins.filter((p) => p.source === "git").map((p) => p.name);
-  if (git.length > 0) {
-    throw new ApiError(
-      "bootstrap.extra_invalid",
-      `git entries in the extra bootstrap manifest are not supported yet: ${git.join(", ")}`,
-    );
-  }
-  return merged as LoadedBootstrapManifest;
+  return mergeBootstrapManifests(builtin, extra);
 }
 
 /** Postgres deadlock_detected / serialization_failure: replicas starting together may collide. */

@@ -103,7 +103,7 @@ export async function runBootstrap(
         const dir = bootstrapDirOf(cli.config, opts.dir);
         return (
           await cli.bootstrap.run({
-            // A git entry is obtained by a later change; until then `run` sees npm / workspace ones
+            // git entries are read from their marketplace (no marketplace row needed)
             manifest,
             dir,
             imports: cli.imports,

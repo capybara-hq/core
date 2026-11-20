@@ -289,8 +289,12 @@ export function repoOwner(url: string): string {
  */
 export const gitFallbackVersion = (commit: string): string => `0.0.0-git.g${commit.slice(0, 12)}`;
 
-/** The recorded git location and the `source_ref` text of a git import. */
-function gitSource(
+/**
+ * The recorded git location and the `source_ref` text of a git import. A marketplace `path` entry
+ * passes the marketplace's URL, ref and the entry's path with `pinned` false; the bootstrap step
+ * records an extra-manifest git entry with the same arguments, so both are one source.
+ */
+export function marketplaceGitSource(
   loc: GitLocation,
   read: { commit: string; tree: string | undefined },
   pinned: boolean,
@@ -513,7 +517,7 @@ export class CatalogService {
       });
       // path entries follow the marketplace's ref; git entries follow theirs unless a commit is pinned
       const pinned = "git" in src && src.git.commit !== undefined;
-      const where = gitSource(
+      const where = marketplaceGitSource(
         "path" in src && marketplace.ref !== null ? { ...loc, ref: marketplace.ref } : loc,
         read,
         pinned,
@@ -581,7 +585,7 @@ export class CatalogService {
     };
     const read = await this.readGit(loc, opts.signal !== undefined ? { signal: opts.signal } : {});
     const pinned = input.ref !== undefined && /^[0-9a-f]{40}$/i.test(input.ref);
-    const where = gitSource(loc, read, pinned);
+    const where = marketplaceGitSource(loc, read, pinned);
     const segment =
       where.detail.path === "."
         ? (new URL(url).pathname
