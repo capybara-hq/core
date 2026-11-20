@@ -553,7 +553,7 @@ declare global {
   | `notify@1` | Desktop spec | OS notifications while the shell runs; a click focuses the conversation |
   | `openExternal@1` | Desktop spec | Open an http(s) URL in the system browser |
   | `signIn@1` | Desktop spec (§6.5 there) | `start()`: sign in through the system browser (`/apps/authorize`, PKCE, back through the app's `capybara://auth/callback` scheme; `features.appSignIn` in `/api/v1/meta`). Offered by the desktop shell and by the later mobile app shell, which reuses the same flow (an `ASWebAuthenticationSession` / Custom Tabs style browser session returning through its scheme) |
-  | `chrome@1` | This spec | The web tells the shell its scheme and background token so native chrome (status bar, window background, title bar overlay) matches the theme: `setAppearance({ scheme, background })` |
+  | `chrome@1` | This spec | The web tells the shell its scheme and background token so native chrome (status bar, window background, title bar overlay) matches the theme: `setAppearance({ scheme, background, tokens?, singleScheme? })`. `tokens` (2026-11-20, desktop spec §6.10) is `{ bg, panel, ink, muted, line, accent, onAccent }`, the computed `--cb-*` colors, so a shell's own local pages follow the platform's UI theme; `singleScheme: true` says the UI theme has one scheme (no light / dark toggle anywhere). Both optional and additive: a shell accepts a call with or without them, and validates each token like `background` |
 
   Which shells offer `chrome@1`: the **desktop shell** always (window background and title bar
   follow the theme, desktop spec §7.3); the **mobile shell** later, only if it needs the native
@@ -604,20 +604,22 @@ declare global {
   origin a navigation reaches (an SSO identity provider).
 - A remote page gets **only the declared capabilities**. Nothing generic (no `invoke(name)`,
   no file system, no shell commands, no credentials).
-- **Anything dangerous is confirmed natively** by the shell, in UI the page cannot draw or click:
+- **Anything dangerous is confirmed by the shell**, in UI the page cannot draw or click (an OS
+  dialog, or a separate shell-owned window loading the shell's own page: the desktop's shell
+  dialogs, desktop spec §7.4, decided 2026-11-20):
   connecting the machine as a device, opening a file, anything that widens what the machine
   allows. A capability never returns a secret (a device credential, a sign-in token).
-- **User activation and one dialog at a time.** A capability call that needs a native
+- **User activation and one dialog at a time.** A capability call that needs a shell
   confirmation is refused unless the page has a transient user activation at the moment of the
   call (`navigator.userActivation.isActive`, checked by the shell's injected code before it
-  forwards the call), so a page cannot raise native dialogs on its own. A shell shows **at most
-  one native dialog at a time per profile and origin**; further confirming calls fail with
+  forwards the call), so a page cannot raise confirmations on its own. A shell shows **at most
+  one confirmation at a time per profile and origin**; further confirming calls fail with
   `busy` until it is answered. This applies to every confirming capability alike, in the desktop
   and the mobile shell; the desktop's `device@1` (connect, resume, a widening ceiling request) is
   the first.
 - Client extensions (L2 / L3) run in the page with full trust (client extensions spec §9.6), so
   they can reach the global like the web can. This is accepted: approval is governance, and the
-  native confirmation is the barrier for anything dangerous. `@capybara-hq/plugin-client` does
+  shell's confirmation is the barrier for anything dangerous. `@capybara-hq/plugin-client` does
   not re-export the shell.
 
 ## 10. PWA and notifications (decided: an installable PWA now, push deferred)
@@ -638,7 +640,9 @@ declare global {
   installed app's **name and icon are per deployment (decided)**: name and short name from the
   kernel config `platform.name` (`CAPYBARA_PLATFORM__NAME`, introduced by the desktop spec,
   PR #407, and read through `GET /api/v1/meta`), "Capybara" when unset; the icons from the
-  platform icon setting (§10.2.1); `display: "standalone"`, `start_url: "/"`, `scope: "/"`,
+  platform icon setting (§10.2.1); `display: "standalone"`, `start_url: "/conversations"` (the Chats tab root, so the
+  installed app opens on a tab root with the bottom navigation; `/` is a pushed page on compact,
+  maintainer decision 2026-11-20), `scope: "/"`,
   `theme_color` / `background_color` from the built-in theme's token values, never a plugin
   theme's (a theme is CSS, which the manifest cannot read) **(decided)**. The document
   `<title>` default and the `apple-mobile-web-app-title` follow the same name.

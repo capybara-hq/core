@@ -94,9 +94,19 @@ export const ERROR_CODES = {
   "member.not_found": 404,
   "member.already_exists": 409,
   "member.anonymous_guest": 409,
+  /** A Platform member operation aimed at the actor's own membership (spec §7.2: never offered). */
+  "member.self": 403,
+  /** A Platform member operation touching an owner or granting owner (spec §7.2). */
+  "member.owner_untouchable": 403,
+  /** A Platform member operation raising someone above the actor's own role (spec §7.2). */
+  "member.role_above_actor": 403,
   "invitation.invalid": 404,
   "invitation.expired": 410,
   "invitation.used": 409,
+  /** `orgs.invite` outside an approved Platform call: its link could never be shown. */
+  "invitation.create_needs_approval": 409,
+  /** No invitation link to show: read already, expired, or not a call the reader approved. */
+  "invitation.link_unavailable": 404,
   "extension.not_found": 404,
   /** The extension registers no tool of that name (org tool switches, layering spec A §7). */
   "extension.tool_not_found": 404,
@@ -370,6 +380,15 @@ export const ERROR_CODES = {
   "approval.already_decided": 409,
   "approval.scope_not_allowed": 409,
   "approval.not_yours": 403,
+  /**
+   * An approval with person fields (platform web parity spec §4.2): a value missing or not valid
+   * against its schema node (`details: [{ fields: { path, problem }[] }]`, never a value).
+   */
+  "approval.inputs_invalid": 422,
+  /** An entered value appeared in the conversation (§4.5; `details: [{ fields: path[] }]`). */
+  "approval.input_leaked": 422,
+  /** Inputs for an approval that asks for none, or for a path it does not ask for. */
+  "approval.inputs_not_expected": 400,
   "question.not_found": 404,
   "question.already_answered": 409,
   "tool_output.not_found": 404,

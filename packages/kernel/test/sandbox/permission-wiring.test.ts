@@ -409,8 +409,9 @@ describe("permission reader behavior", () => {
     expect((await f.read()).project).toEqual({ root: "/project", unavailable: true });
     await f.event(f.root.id, 3, "project_root", { unavailable: "missing" });
     expect((await f.read()).project).toBeNull();
+    // no snapshot recorded yet: the binding itself (checked at creation, never changed)
     await f.db.deleteFrom("conversation_events").where("conversation_id", "=", f.root.id).execute();
-    expect((await f.read()).project).toBeNull();
+    expect((await f.read()).project).toEqual({ root: "/project", unavailable: false });
     expect(await k.app.get(PermissionFacts).workingProject(randomUUID(), f.root.id)).toBeNull();
   });
 });

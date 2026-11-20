@@ -1,6 +1,6 @@
 import type { LocalizedName, SuggestedAppearance } from "@capybara-hq/plugin-sdk";
 import { Controller, Delete, Get, HttpCode, Inject, Param, Post, Put } from "@nestjs/common";
-import { z } from "zod";
+import type { z } from "zod";
 import { type ClientBuildSummary, ClientBuilds } from "../client/client-builds.service.js";
 import { ExtensionDisplayNames } from "../extensions/display-name.js";
 import {
@@ -29,53 +29,16 @@ import { AppearanceApplyBody } from "./appearance.schemas.js";
 import { type AppearanceResult, AppearanceService } from "./appearance.service.js";
 import {
   OrgExtensionParams as ExtensionParams,
+  OrgOverridesPut as OverridesPut,
+  OrgOverridesTake as OverridesTake,
+  OrgExtensionPut as PutBody,
   OrgExtensionToolParams as ToolParams,
   OrgToolSwitchPut as ToolSwitchPut,
 } from "./org-extension.schemas.js";
 import { OrgExtensionSwitch } from "./org-extension-switch.js";
 import type { UninstallPreview } from "./plugin-install.js";
 
-const PutBody = z
-  .object({
-    enabled: z.boolean().optional(),
-    config: z.record(z.string(), z.unknown()).optional(),
-    force: z.boolean().optional(),
-    /** The hash of the plugin uninstall preview, to confirm switching the extension's plugin off. */
-    confirm: z.string().optional(),
-  })
-  .strict();
-
 class OrgExtensionPutBody extends createZodDto(PutBody, "OrgExtensionPutBody") {}
-
-const OverrideSecretEntry = z
-  .object({
-    /** A secret record field of the copy some `x-ui.secrets[].path` names. */
-    path: z.string().min(1).max(256),
-    key: z.string().min(1).max(256),
-    /** A string sets the key, `null` removes it. */
-    value: z.string().max(65_536).nullable().optional(),
-    /** Moves the value at this key to `key` first. */
-    renameFrom: z.string().min(1).max(256).optional(),
-  })
-  .strict()
-  .refine((e) => e.value !== undefined || e.renameFrom !== undefined, {
-    message: "an entry needs value or renameFrom",
-  })
-  .refine((e) => e.key !== "__proto__" && e.renameFrom !== "__proto__", {
-    message: "__proto__ is not a valid key",
-  });
-
-const OverridesPut = z
-  .object({
-    /** Overridable field dot path -> new value (`null` clears); secret fields too. */
-    values: z.record(z.string().min(1).max(256), z.unknown()),
-    secretEntries: z.array(OverrideSecretEntry).max(200).optional(),
-  })
-  .strict();
-
-const OverridesTake = z
-  .object({ paths: z.array(z.string().min(1).max(256)).min(1).max(200) })
-  .strict();
 
 class OrgToolSwitchPutBody extends createZodDto(ToolSwitchPut, "OrgToolSwitchPutBody") {}
 

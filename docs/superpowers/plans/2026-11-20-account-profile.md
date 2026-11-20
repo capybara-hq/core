@@ -117,7 +117,7 @@ keys only if they cannot reuse existing ones, and then in the fix dispatch after
 ### Task 1: Data, avatar helper, `avatarUrl` on `Account` views (high risk: migration)
 
 **Files:**
-- Create: `packages/kernel/src/migrations/0169_account_avatar.sql`
+- Create: `packages/kernel/src/migrations/0171_account_avatar.sql`
 - Modify: `packages/kernel/src/db/kernel-schema.ts`: `AccountsTable.avatar`, the new
   `AccountAvatarUploadsTable`, `IdentitiesTable.updated_at`.
 - Create: `packages/kernel/src/identity/account-avatar.ts`
@@ -130,7 +130,7 @@ keys only if they cannot reuse existing ones, and then in the fix dispatch after
   shape.
 - Test: `packages/kernel/test/identity/account-avatar.test.ts` (unit; add to
   `packages/kernel/test/unit-tests.json`), `packages/kernel/test/identity/account-people.test.ts`
-  (integration), `packages/kernel/test/migrations/0169.test.ts`
+  (integration), `packages/kernel/test/migrations/0171.test.ts`
 
 **Interfaces:**
 - Produces (all in `identity/account-avatar.ts`):
@@ -168,7 +168,7 @@ keys only if they cannot reuse existing ones, and then in the fix dispatch after
   limit 1. The TS side still parses it with `safeSsoUrl` (`new URL(…).protocol === "https:"`).
 - `Account` (the principal's type) is unchanged: the per-request auth query gains nothing.
 
-- [ ] **Step 1: Migration test** `0169.test.ts`. It runs twice and is idempotent;
+- [ ] **Step 1: Migration test** `0171.test.ts`. It runs twice and is idempotent;
   `accounts.avatar` is nullable jsonb; `account_avatar_uploads` columns are exactly those of spec
   §5.1 (`id text PK`, `account_id … REFERENCES accounts(id) ON DELETE CASCADE`,
   `storage_key text NOT NULL`, `content_type text NOT NULL`, `size bigint`,
@@ -192,7 +192,7 @@ keys only if they cannot reuse existing ones, and then in the fix dispatch after
     `null` for a fresh local account; `{ kind: "identity", source: "lark:t1" }` with only an SSO
     avatar).
 - [ ] **Step 4:** Run them:
-  `pnpm exec vitest run packages/kernel/test/identity/account-avatar.test.ts packages/kernel/test/identity/account-people.test.ts packages/kernel/test/migrations/0169.test.ts`.
+  `pnpm exec vitest run packages/kernel/test/identity/account-avatar.test.ts packages/kernel/test/identity/account-people.test.ts packages/kernel/test/migrations/0171.test.ts`.
   Expected: FAIL.
 - [ ] **Step 5:** Write the migration (only `ADD COLUMN IF NOT EXISTS` / `CREATE … IF NOT EXISTS`;
   no destructive statement), the schema types, the helper and the `updated_at` writes. Then wire

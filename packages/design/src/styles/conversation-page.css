@@ -1707,6 +1707,10 @@ button.cb-property-row {
   .cb-conv-latest {
     inset-inline-end: var(--cb-space-4);
   }
+  /* The compact class has no StatusBar (mobile layout spec §4): the page draws its own. */
+  .cb-conv-page .cb-statusbar {
+    display: none;
+  }
 }
 /*
  * Phones: the open right area is a page pushed over the conversation (data-right="pushed"), full

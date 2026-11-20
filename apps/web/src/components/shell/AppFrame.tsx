@@ -366,6 +366,8 @@ function ShellFrame({
   const preferences = usePreferences();
   // The account row's scheme toggle; usePreferences leaves it out under a single-scheme theme.
   const schemeToggle = preferences.theme ? { theme: preferences.theme } : {};
+  // A native shell is told so its own pages hide the toggle too (desktop client spec §6.10).
+  const singleScheme = (useResolvedTheme()?.singleScheme ?? null) !== null;
   const [creatingOrg, setCreatingOrg] = useState(false);
   const [leavingOrg, setLeavingOrg] = useState(false);
   // The org dialogs stay open (pending) until the new org's frame arrives, then close.
@@ -689,6 +691,7 @@ function ShellFrame({
               ),
             }}
             {...(banner === null ? {} : { banner })}
+            singleScheme={singleScheme}
           >
             {home ? (
               <OverviewPage
@@ -782,6 +785,7 @@ function ShellFrame({
       ownStatusBar={pathname === HOME_PATH || under(pathname, "/chat")}
       capState={capState}
       {...(banner === null ? {} : { banner })}
+      singleScheme={singleScheme}
     >
       <SessionContext.Provider value={session}>
         <MePanelsContext.Provider value={mePanels}>

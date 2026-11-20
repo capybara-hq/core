@@ -453,7 +453,11 @@ export class PermissionFacts {
    * The project snapshot that decides the working root of the conversation tree rooted at
    * `rootConversationId` (project root spec §4.3): its latest `project_root` event, read only when
    * the conversation is bound to a project (a free conversation reads one row by its key). Null:
-   * free, or bound with no snapshot recorded yet.
+   * free. A bound conversation with no snapshot recorded yet (its first run start could not ask
+   * the device: offline, or the read hit its time limit) works in the bound root: the binding was
+   * checked when the conversation was created and never changes, and `workingRootOf` still
+   * applies the mode, reach and home rules. Only a recorded `unavailable` snapshot (or one
+   * without a root) leaves the project for free mode (spec §4.3).
    */
   async workingProject(orgId: string, rootConversationId: string): Promise<WorkingProject | null> {
     const conv = await this.db
@@ -474,7 +478,8 @@ export class PermissionFacts {
       .orderBy("seq", "desc")
       .limit(1)
       .executeTakeFirst();
-    if (row === undefined || typeof row.root !== "string") return null;
+    if (row === undefined) return { root: conv.project_path, unavailable: false };
+    if (typeof row.root !== "string") return null;
     return { root: row.root, unavailable: row.unavailable !== false };
   }
 

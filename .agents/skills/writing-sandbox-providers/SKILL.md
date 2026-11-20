@@ -630,6 +630,10 @@ suite in `@capybara-hq/testing` checks it):
   host reads the version manager directories of the device user's home (`TOOL_HOME_DIRS`) and asdf's
   global `~/.tool-versions` read only (`restrictedToolHomes`, never a path at, under or holding an
   owner-denied one), even when the owner limited restricted project reach to the workspace.
+- **Packages that ship `.idea` / `.vscode` do not install in the sandbox.** The editor denies hold
+  below `node_modules` too (a directory moved or linked out of it would carry the configuration
+  into a folder the owner opens); pnpm's own tarball ships `iconv-lite/.idea`, so its switch to a
+  pinned version needs the escalation or a global pnpm of that version.
 - **`DockerContainer.ready` is not reset after a `docker rm` or a daemon restart.** The Docker provider keeps
   its readiness flag, so operations on that container fail closed until the provider (the kernel process)
   restarts.

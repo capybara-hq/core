@@ -1,5 +1,26 @@
 # @capybara-hq/device
 
+## 0.1.0-rc.23
+
+### Patch Changes
+
+- ff64a43: Each restricted operation checks the staged sandbox runtime copy with concurrent `lstat` calls
+  instead of one after another (about 75–240 ms down to about 15 ms per operation on macOS). The
+  operation journal drops settled entries an hour past their retention instead of keeping one entry
+  per operation forever, which every commit rewrote and which would stop admission at 10,000.
+- ff64a43: A native read whose read root is a single file works: the device pins the file's parent directory
+  and the native helper reaches only that one name through it (macOS and Linux). A kernel read of a
+  project narrows `AGENTS.md` to itself, and the device refused it with `ENOTDIR`, so a project's
+  `AGENTS.md` never reached a run.
+
+## 0.1.0-rc.22
+
+### Patch Changes
+
+- 1331f58: The device creates the XDG base directories and `Library/Caches` of its sandbox home before each
+  sandboxed command: the sandbox may not create a directory leading to a protected entry (`.config`,
+  `.local`, `Library`), so pnpm found no data directory there and put its store in the repository.
+
 ## 0.1.0-rc.21
 
 ### Patch Changes

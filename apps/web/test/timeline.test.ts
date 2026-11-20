@@ -2012,6 +2012,49 @@ describe("buildTimeline: the device-code card (auto mode spec §6, P-D13)", () =
   });
 });
 
+describe("buildTimeline: the handoff card (platform web parity spec §6)", () => {
+  const view = {
+    kind: "handoff" as const,
+    title: { zh: "连接「Docs」", en: "Connect Docs" },
+    target: { type: "connect" as const, connectorId: "app1" },
+  };
+  const platformCall = (seq: number) =>
+    calls(seq, [
+      {
+        id: "p",
+        name: "Platform",
+        input: { action: "call", operation: "connectors.connect", params: { connectorId: "app1" } },
+      },
+    ]);
+
+  it.each(["zh", "en"] as const)(
+    "puts the card in the viewer's language right after the call's group (%s)",
+    (locale) => {
+      const events = [
+        user(1, "connect docs"),
+        platformCall(2),
+        result(3, "p", "Platform", { content: '{"next":"shown"}', view }),
+      ];
+      const out = buildTimeline(events, [], INFO, locale);
+      expect(kinds(out)).toEqual(["user", "tools", "handoff"]);
+      expect(out.find((e) => e.kind === "handoff")).toMatchObject({
+        callId: "p",
+        title: view.title[locale],
+        target: view.target,
+      });
+    },
+  );
+
+  it("a failed result draws no card", () => {
+    const events = [
+      user(1, "connect docs"),
+      platformCall(2),
+      result(3, "p", "Platform", { content: "nope", isError: true, view }),
+    ];
+    expect(kinds(buildTimeline(events, [], INFO, "en"))).toEqual(["user", "tools"]);
+  });
+});
+
 describe("image slots", () => {
   const GEN = "GenerateImage";
   const gen = (seq: number, id: string, input: Record<string, unknown>) =>

@@ -33,6 +33,12 @@ export type Invitation = {
   revokedAt: Date | null;
 };
 
+/** Extras of {@link InvitationsService.create}. */
+export interface InvitationCreateOptions {
+  auditDetail?: Record<string, unknown>;
+  inTransaction?: (invitation: Invitation, token: string) => Promise<void>;
+}
+
 export type InvitationStatus = "pending" | "accepted" | "expired" | "revoked";
 
 export type AcceptAs =
@@ -70,11 +76,17 @@ export class InvitationsService {
     @Inject(OrgLock) private readonly orgLock: OrgLock,
   ) {}
 
+  /**
+   * `opts.auditDetail` goes into the audit event (a write through the Platform tool says so);
+   * `opts.inTransaction` runs in the creation's transaction with the new invitation and its token
+   * (the Platform tool seals the token there for the person who approved the call).
+   */
   async create(
     orgId: string,
     input: { role: InvitableRole; expiresInHours?: number | undefined },
     actorAccountId: string,
     actorTokenId?: string,
+    opts: InvitationCreateOptions = {},
   ): Promise<{ invitation: Invitation; token: string }> {
     if (!(INVITABLE_ROLES as readonly string[]).includes(input.role)) {
       throw new ApiError("validation_failed", "Role cannot be invited");
@@ -87,7 +99,7 @@ export class InvitationsService {
       );
     }
     const token = TOKEN_PREFIX + randomBytes(32).toString("base64url");
-    return this.createIn(orgId, input.role, hours, token, actorAccountId, actorTokenId);
+    return this.createIn(orgId, input.role, hours, token, actorAccountId, actorTokenId, opts);
   }
 
   @Transactional()
@@ -98,6 +110,7 @@ export class InvitationsService {
     token: string,
     actorAccountId: string,
     actorTokenId: string | undefined,
+    opts: InvitationCreateOptions,
   ): Promise<{ invitation: Invitation; token: string }> {
     const input = { role };
     const { role: actorRole } = await this.orgLock.lockAndAuthorize(
@@ -124,9 +137,11 @@ export class InvitationsService {
       orgId,
       action: "org.invitation.created",
       target: row.id,
-      detail: { role: input.role, expiresAt: row.expires_at.toISOString() },
+      detail: { role: input.role, expiresAt: row.expires_at.toISOString(), ...opts.auditDetail },
     });
-    return { invitation: toInvitation(row), token };
+    const invitation = toInvitation(row);
+    await opts.inTransaction?.(invitation, token);
+    return { invitation, token };
   }
 
   async list(orgId: string): Promise<(Invitation & { status: InvitationStatus })[]> {
@@ -157,6 +172,7 @@ export class InvitationsService {
     id: string,
     actorAccountId: string,
     actorTokenId?: string,
+    auditDetail?: Record<string, unknown>,
   ): Promise<void> {
     await this.orgLock.lockAndAuthorize(orgId, actorAccountId, "org.invitations.manage");
     const row = await this.db
@@ -180,7 +196,7 @@ export class InvitationsService {
       orgId,
       action: "org.invitation.revoked",
       target: id,
-      detail: { role: row.role },
+      detail: { role: row.role, ...auditDetail },
     });
   }
 

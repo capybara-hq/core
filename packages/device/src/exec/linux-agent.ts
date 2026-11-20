@@ -254,6 +254,27 @@ def pin(path):
     return {"path": path, "fd": fd, "dev": info.st_dev, "ino": info.st_ino}
 
 
+def pin_read(path):
+    """Pins an existing read root: a directory as pin() does, or a single regular file (a kernel
+    read narrows AGENTS.md to itself) through its canonical parent directory, the file's name
+    checked below it without following a link. None when it does not exist."""
+    try:
+        return pin(path)
+    except Refused:
+        pass
+    parent = pin(os.path.dirname(path)) if path != "/" else None
+    if parent is None:
+        raise Refused("SCOPE_DENIED", "A granted root is not a directory at its path")
+    try:
+        info = os.stat(os.path.basename(path), dir_fd=parent["fd"], follow_symlinks=False)
+    except OSError:
+        info = None
+    if info is None or not stat.S_ISREG(info.st_mode):
+        os.close(parent["fd"])
+        raise Refused("SCOPE_DENIED", "A granted root is neither a directory nor a file")
+    return {"path": path, "fd": parent["fd"], "dev": info.st_dev, "ino": info.st_ino, "file": True}
+
+
 def establish(path):
     """Creates a missing write root below its nearest existing canonical ancestor, never
     following a link, and pins it."""
@@ -320,9 +341,11 @@ def within(root, path):
     return root == "/" or path == root or path.startswith(root + "/")
 
 
-def pin_roots(request, create_for=None):
+def pin_roots(request, create_for=None, file_roots=False):
     """Pins the request's roots. Returns (read, write, missing): roots that do not exist grant
-    nothing; a write root covering create_for (a native write target) is established first."""
+    nothing; a write root covering create_for (a native write target) is established first.
+    file_roots (native operations only: an exec's Landlock rule on the parent descriptor would
+    open the whole directory) lets a read root be a single file."""
     write, read, missing = [], [], []
     try:
         for path in request["writeRoots"]:
@@ -336,7 +359,7 @@ def pin_roots(request, create_for=None):
         for path in request["readRoots"]:
             if path in request["writeRoots"]:
                 continue
-            entry = pin(path)
+            entry = pin_read(path) if file_roots else pin(path)
             if entry is None:
                 missing.append(path)
             else:
@@ -1176,7 +1199,7 @@ def run_native(request):
         else:
             target = os.path.normpath(body["path"]) if isinstance(body.get("path"), str) else None
             create = target if body.get("method") == "writeFile" else None
-            read, write, missing = pin_roots(request, create)
+            read, write, missing = pin_roots(request, create, file_roots=True)
             pinned = read + write
             covered = [e for e in pinned if target is not None and within(e["path"], target)]
             if not covered and target is not None and any(within(m, target) for m in missing):
@@ -1188,7 +1211,8 @@ def run_native(request):
             folded = [native._fold_parts(p) for p in write_denies(request)]
             native.SYSTEM_WRITE_DENIES.extend(folded)
             native.PREFIX_GUARDED.extend((names, True) for names in folded)
-            roots = {"read": [{"path": e["path"], "fd": e["fd"]} for e in read],
+            roots = {"read": [dict({"path": e["path"], "fd": e["fd"]},
+                                   **({"file": True} if e.get("file") else {})) for e in read],
                      "write": [{"path": e["path"], "fd": e["fd"]} for e in write],
                      "denyWrites": True}
         denied = [d for d in request.get("denied", []) if isinstance(d, str)]

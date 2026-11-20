@@ -144,6 +144,10 @@ export function connectorPolicy(input: {
  *   for a fixed ask, a role escalation or a connector tool whose definition changed;
  * - in `fail` mode an ask still left is refused (`{ refused, missingGrant }`, no approval), and
  *   `AskUserQuestion` is refused; in `wait` mode both ask the creator as in an attended run.
+ *
+ * A call with person fields (`CallPolicy.personFields`) or one only the person may confirm
+ * (`CallPolicy.personOnly`) is a fixed ask: no grant or agent `allow` lets it through (ruling R6).
+ * The pipeline refuses it before this in an unattended run.
  */
 export function createDecidePolicy(
   db: KernelSchemaDb,
@@ -300,8 +304,12 @@ export function createDecidePolicy(
       tool.source.kind === "builtin" &&
       tool.key === BUILTIN.Platform &&
       changesAgentSkills(policyKey);
+    // person fields (platform web parity spec §4.2, R6): the person types values on the card, so
+    // the call asks every time, outside every grant, and no agent `allow` lifts it
     const fixedAsk =
       unattendedSkillChange ||
+      call?.personFields !== undefined ||
+      call?.personOnly === true ||
       isFixedAsk(tool) ||
       (call !== null && !call.remember && (call.policy !== "allow" || agentOverride !== undefined));
     const input: PolicyInput = {

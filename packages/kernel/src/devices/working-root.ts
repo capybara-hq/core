@@ -4,9 +4,8 @@ import type { SandboxMode } from "../sandbox/modes.js";
 
 /**
  * What decides a conversation's working root (project root spec §4.3): the latest `project_root`
- * event of its root conversation (sub-agents inherit their root's binding). Null: the conversation
- * is free, or no run of it has recorded a snapshot yet (a bound conversation before its first run
- * start, an older log).
+ * event of its root conversation (sub-agents inherit their root's binding), or the bound root
+ * itself while no run has recorded one yet. Null: the conversation is free.
  */
 export interface WorkingProject {
   /** The project's root on the device, as the event recorded it. */

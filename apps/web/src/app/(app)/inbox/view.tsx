@@ -775,6 +775,9 @@ function toolApprovalDetail({
   const lead = command === null ? undefined : commandLeadOf({}, approval);
   // decided or superseded meanwhile (a cached item): final, without approve, deny or a scope
   const final = approval.status !== "pending";
+  // Secret fields are typed on the web card only (as the IM card says): no approve here.
+  const personCount = approval.personFields?.length ?? 0;
+  const person = personCount > 0 && !final;
   return {
     title:
       command === null
@@ -834,30 +837,43 @@ function toolApprovalDetail({
       { label: t("requested"), value: <DateTime value={approval.createdAt} /> },
       { label: ta("expires"), value: <DateTime value={approval.expiresAt} /> },
     ],
-    aside: final ? undefined : (
-      <Stack direction="row">
-        <Button onClick={openConversation}>{t("openConversation")}</Button>
-      </Stack>
-    ),
+    // a person approval's one way to the conversation is the primary action
+    aside:
+      final || person ? undefined : (
+        <Stack direction="row">
+          <Button onClick={openConversation}>{t("openConversation")}</Button>
+        </Stack>
+      ),
     actionRow: final
       ? { primary: { label: t("openConversation"), onSelect: openConversation } }
-      : {
-          secondary: {
-            label: ta("deny"),
-            onSelect: () => onDecide("deny"),
-            loading: pending === "deny",
-            disabled: pending !== undefined,
+      : person
+        ? {
+            secondary: {
+              label: ta("deny"),
+              onSelect: () => onDecide("deny"),
+              loading: pending === "deny",
+              disabled: pending !== undefined,
+            },
+            primary: { label: t("openConversation"), onSelect: openConversation },
+          }
+        : {
+            secondary: {
+              label: ta("deny"),
+              onSelect: () => onDecide("deny"),
+              loading: pending === "deny",
+              disabled: pending !== undefined,
+            },
+            primary: {
+              label: ta("approve"),
+              onSelect: () => onDecide("approve"),
+              loading: pending === "approve",
+              disabled: pending !== undefined,
+            },
           },
-          primary: {
-            label: ta("approve"),
-            onSelect: () => onDecide("approve"),
-            loading: pending === "approve",
-            disabled: pending !== undefined,
-          },
-        },
     content: (
       <div data-approval-id={approval.id}>
         <Stack gap={12}>
+          {person && <Text variant="prose">{ta("person.fillOnWeb", { n: personCount })}</Text>}
           {command === null ? (
             <Stack gap={4}>
               <Text variant="small" tone="muted">
@@ -895,7 +911,7 @@ function toolApprovalDetail({
               )}
             </Text>
           ) : null}
-          {!final && (
+          {!final && !person && (
             <ScopePicker
               approval={approval}
               value={scope}

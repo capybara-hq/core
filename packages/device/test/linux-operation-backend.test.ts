@@ -436,6 +436,29 @@ describe.skipIf(unavailable !== null)("Linux host operation backend", () => {
     expect(ok).toMatchObject({ exitCode: 0, stdout: "ok" });
   });
 
+  // A kernel read narrows `AGENTS.md` to itself: a read root that is a regular file.
+  it("a native read whose only read root is a regular file reads it and nothing beside it", async () => {
+    const root = project("file-root");
+    device.run(`printf rules > ${root}/AGENTS.md && printf secret > ${root}/secret`);
+    const agents = `${root}/AGENTS.md`;
+    const scope = () =>
+      scopeFor(backend.deviceId, {
+        profile: "approve-for-me",
+        filesystem: { kind: "scoped", readRoots: [agents], writeRoots: [] },
+        network: { kind: "none" },
+      });
+    const signal = new AbortController().signal;
+    const got = await backend.operation(scope()).readFile(agents, { maxBytes: 10, signal });
+    expect(text(got?.data ?? null)).toBe("rules");
+    expect(await backend.operation(scope()).stat(agents, signal)).toMatchObject({
+      isDir: false,
+      size: 5,
+    });
+    await expect(
+      backend.operation(scope()).readFile(`${root}/secret`, { maxBytes: 10, signal }),
+    ).rejects.toThrow();
+  });
+
   it("a restricted exec's home is the device's sandbox home: writable, kept, the real home not", async () => {
     const root = project("home");
     device.run("mkdir -m 700 /home/sandbox/state-home /home/sandbox/device-home");

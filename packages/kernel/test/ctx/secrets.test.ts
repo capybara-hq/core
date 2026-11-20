@@ -7,6 +7,7 @@ import {
   createKeyring,
   createSecrets,
   initialPasswordAad,
+  platformSealedRevealAad,
   rewrapToCurrentMasterKey,
 } from "../../src/ctx/secrets.js";
 import { migrate } from "../../src/db/migrator.js";
@@ -201,6 +202,7 @@ describe("ctx.secrets", () => {
     expect(await rewrapToCurrentMasterKey(handlesOf(db), ring2)).toEqual({
       dataKeys: 0,
       initialPasswords: 0,
+      sealedReveals: 0,
     });
     expect(await createSecrets(db, createKeyring(k2, []), "ns-rot").get("rotorg", "k")).toBe(
       "persist-me",
@@ -254,6 +256,11 @@ describe("rewrapToCurrentMasterKey", () => {
       DROP CONSTRAINT IF EXISTS account_initial_passwords_account_id_fkey,
       DROP CONSTRAINT IF EXISTS account_initial_passwords_recipient_account_id_fkey,
       DROP CONSTRAINT IF EXISTS account_initial_passwords_conversation_id_fkey`.execute(db);
+    // sealed reveals (invitation links) likewise reference an org, an account and a conversation
+    await sql`ALTER TABLE capybara.platform_sealed_reveals
+      DROP CONSTRAINT IF EXISTS platform_sealed_reveals_org_id_fkey,
+      DROP CONSTRAINT IF EXISTS platform_sealed_reveals_recipient_account_id_fkey,
+      DROP CONSTRAINT IF EXISTS platform_sealed_reveals_conversation_id_fkey`.execute(db);
   });
   afterAll(async () => {
     // Restore the foreign keys exactly as migration 0090 creates them (the seeded rows go first)
@@ -267,12 +274,48 @@ describe("rewrapToCurrentMasterKey", () => {
         FOREIGN KEY (conversation_id) REFERENCES capybara.conversations(id) ON DELETE CASCADE`.execute(
       db,
     );
+    // and as migration 0170 creates them
+    await db.withSchema("capybara").deleteFrom("platform_sealed_reveals").execute();
+    await sql`ALTER TABLE capybara.platform_sealed_reveals
+      ADD CONSTRAINT platform_sealed_reveals_org_id_fkey
+        FOREIGN KEY (org_id) REFERENCES capybara.orgs(id) ON DELETE CASCADE,
+      ADD CONSTRAINT platform_sealed_reveals_recipient_account_id_fkey
+        FOREIGN KEY (recipient_account_id) REFERENCES capybara.accounts(id) ON DELETE CASCADE,
+      ADD CONSTRAINT platform_sealed_reveals_conversation_id_fkey
+        FOREIGN KEY (conversation_id) REFERENCES capybara.conversations(id) ON DELETE CASCADE`.execute(
+      db,
+    );
   });
   beforeEach(async () => {
     await db.withSchema("capybara").deleteFrom("secrets").execute();
     await db.withSchema("capybara").deleteFrom("org_data_keys").execute();
     await db.withSchema("capybara").deleteFrom("account_initial_passwords").execute();
+    await db.withSchema("capybara").deleteFrom("platform_sealed_reveals").execute();
   });
+
+  const sealReveal = async (
+    ring: ReturnType<typeof createKeyring>,
+    id: string,
+    expired = false,
+  ) => {
+    const w = ring.wrap(Buffer.from(`cap_inv_${id}`), platformSealedRevealAad(id));
+    await db
+      .withSchema("capybara")
+      .insertInto("platform_sealed_reveals")
+      .values({
+        id,
+        kind: "invitation_link",
+        org_id: "org",
+        recipient_account_id: "recipient",
+        conversation_id: "conv",
+        run_id: "run",
+        call_id: id,
+        master_key_id: w.masterKeyId,
+        ciphertext: w.data,
+        expires_at: new Date(Date.now() + (expired ? -1 : 1) * 3_600_000),
+      })
+      .execute();
+  };
 
   const sealPassword = async (
     ring: ReturnType<typeof createKeyring>,
@@ -305,6 +348,7 @@ describe("rewrapToCurrentMasterKey", () => {
     expect(await rewrapToCurrentMasterKey(handlesOf(db), ring2, { batchSize: 2 })).toEqual({
       dataKeys: 5,
       initialPasswords: 0,
+      sealedReveals: 0,
     });
     expect(new Set((await dataKeyIds()).values())).toEqual(new Set([ring2.currentId]));
     const onlyNew = createSecrets(db, createKeyring(k2, []), "ns-batch");
@@ -320,6 +364,7 @@ describe("rewrapToCurrentMasterKey", () => {
     expect(await rewrapToCurrentMasterKey(handlesOf(db), ring2)).toEqual({
       dataKeys: 0,
       initialPasswords: 1,
+      sealedReveals: 0,
     });
     const rows = await db
       .withSchema("capybara")
@@ -337,6 +382,38 @@ describe("rewrapToCurrentMasterKey", () => {
         .unwrap(live.master_key_id, Buffer.from(live.ciphertext), initialPasswordAad("acc-live"))
         .toString(),
     ).toBe("pw-acc-live");
+  });
+
+  it("rewraps unexpired invitation links and leaves expired ones to their cleanup", async () => {
+    const ring1 = createKeyring(k1, []);
+    await sealReveal(ring1, "inv-live");
+    await sealReveal(ring1, "inv-expired", true);
+    const ring2 = createKeyring(k2, [k1]);
+    expect(await rewrapToCurrentMasterKey(handlesOf(db), ring2)).toEqual({
+      dataKeys: 0,
+      initialPasswords: 0,
+      sealedReveals: 1,
+    });
+    const rows = await db
+      .withSchema("capybara")
+      .selectFrom("platform_sealed_reveals")
+      .select(["id", "master_key_id", "ciphertext"])
+      .orderBy("id")
+      .execute();
+    expect(rows.map((r) => [r.id, r.master_key_id])).toEqual([
+      ["inv-expired", ring1.currentId],
+      ["inv-live", ring2.currentId],
+    ]);
+    const live = rows[1] as { master_key_id: string; ciphertext: Uint8Array };
+    expect(
+      createKeyring(k2, [])
+        .unwrap(
+          live.master_key_id,
+          Buffer.from(live.ciphertext),
+          platformSealedRevealAad("inv-live"),
+        )
+        .toString(),
+    ).toBe("cap_inv_inv-live");
   });
 
   it("a master key missing from the keyring fails before anything is written, naming ids only", async () => {

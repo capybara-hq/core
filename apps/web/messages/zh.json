@@ -221,7 +221,10 @@
       "not_found": "审批不存在，或你无权处理。",
       "not_yours": "只有设备所有者能允许这台设备访问网络。",
       "already_decided": "该审批已被处理或已过期。",
-      "scope_not_allowed": "此审批只能允许本次。"
+      "scope_not_allowed": "此审批只能允许本次。",
+      "inputs_invalid": "填写的内容有误。",
+      "input_leaked": "这个值在对话里出现过，视为已泄露。请到服务商那里新建一个再填写。",
+      "inputs_not_expected": "这项审批不需要填写内容。"
     },
     "question": {
       "not_found": "该问题不存在，或你无权回答。",
@@ -323,7 +326,10 @@
     "member": {
       "anonymous_guest": "匿名访客不能被授予角色、所有权或智能体，也不能被邀请或移出。",
       "not_found": "成员不存在。",
-      "already_exists": "你已经是这个组织的成员了。"
+      "already_exists": "你已经是这个组织的成员了。",
+      "self": "你自己的成员身份只能由你在网页上修改，不能通过智能体修改。",
+      "owner_untouchable": "所有者和所有权只能由所有者在成员页面修改，不能通过智能体修改。",
+      "role_above_actor": "智能体不能授予高于你自己角色的角色。"
     },
     "attachment": {
       "too_large": "文件太大，超过了单个附件的大小上限。",
@@ -382,8 +388,8 @@
       "recreate_required": "旧版本启动的后台任务可能仍在这台设备之前的实例上运行，且已无法确认该实例已被销毁。请删除这台设备后重新创建。"
     },
     "app_auth": {
-      "code_invalid": "登录链接已失效，请在桌面端重新登录。",
-      "redirect_uri_invalid": "这次登录请求来自平台不接受的应用地址，未发送。请回到 Capybara 桌面端重新发起登录。",
+      "code_invalid": "登录链接已失效，请在 Capybara 应用中重新登录。",
+      "redirect_uri_invalid": "这次登录请求来自平台不接受的应用地址，未发送。请回到 Capybara 应用重新发起登录。",
       "unavailable": "平台暂时无法为应用登录：尚未设置公开地址。请联系超级管理员。"
     },
     "device_sign_in": {
@@ -480,7 +486,9 @@
     "invitation": {
       "invalid": "邀请链接无效或已被撤销。",
       "expired": "邀请已过期。",
-      "used": "这个邀请已经被使用过了。"
+      "used": "这个邀请已经被使用过了。",
+      "link_unavailable": "没有可显示的邀请链接：已经显示过、已过期、邀请已不再待接受，或它不是由你批准的调用创建的。",
+      "create_needs_approval": "请在由你自己批准调用的会话里邀请，或到成员页面邀请。"
     },
     "marketplace": {
       "not_found": "市场不存在。",
@@ -1497,6 +1505,12 @@
     },
     "stats": "第 {n} 轮 · 已用 {elapsed}",
     "contextPct": "上下文 {n}%",
+    "handoff": {
+      "open": "打开",
+      "connect": "连接",
+      "linkBody": "这一步在对应页面上等你处理。",
+      "connectBody": "在浏览器里完成授权，只连接你自己的账号。"
+    },
     "deviceCode": {
       "title": "登录 GitHub",
       "body": "打开 GitHub 并输入下面的一次性代码，完成登录。登录在设备内进行，令牌不会离开设备。",
@@ -2064,6 +2078,15 @@
       "show": "显示初始密码",
       "label": "{login} 的初始密码",
       "hint": "平台为新账号生成了这个密码。它只显示这一次；账号首次登录时必须修改。"
+    },
+    "invitationLink": {
+      "show": "显示邀请链接",
+      "label": "邀请链接",
+      "hint": "把它发给你要邀请的人。它只显示这一次；邀请本身仍可在成员页面查看。"
+    },
+    "person": {
+      "fillOnWeb": "打开对话填写 {n} 项",
+      "leaked": "这个值在对话里出现过，视为已泄露。请到服务商那里新建一个再填写。"
     },
     "title": "需要审批",
     "waiting": "待处理",
@@ -3294,15 +3317,30 @@
     "goHome": "进入 Capybara"
   },
   "appAuth": {
-    "title": "在 {machine} 上的 Capybara 桌面端登录 {platform}？",
-    "subtitle": "只有在你刚从 Capybara 桌面端发起登录时才继续。",
+    "clients": {
+      "desktop": {
+        "title": "在 {machine} 上的 Capybara 桌面端登录 {platform}？",
+        "subtitle": "只有在你刚从 Capybara 桌面端发起登录时才继续。",
+        "machine": "机器",
+        "invalidHint": "这个链接不完整。请回到 Capybara 桌面端重新发起登录。",
+        "redirectUriInvalid": "这次登录请求来自平台不接受的应用地址，未发送。请回到 Capybara 桌面端重新发起登录。",
+        "codeInvalid": "登录链接已失效，请在 Capybara 桌面端重新登录。"
+      },
+      "mobile": {
+        "title": "在 {machine} 上的 Capybara 移动端登录 {platform}？",
+        "subtitle": "只有在你刚从 Capybara 移动端发起登录时才继续。",
+        "machine": "设备",
+        "invalidHint": "这个链接不完整。请回到 Capybara 移动端重新发起登录。",
+        "redirectUriInvalid": "这次登录请求来自平台不接受的应用地址，未发送。请回到 Capybara 移动端重新发起登录。",
+        "codeInvalid": "登录链接已失效，请在 Capybara 移动端重新登录。"
+      }
+    },
     "account": "账号",
-    "machine": "机器",
     "appVersion": "应用版本",
     "confirm": "登录",
     "cancel": "取消",
     "invalidTitle": "无法登录",
-    "invalidHint": "这个链接不完整。请回到 Capybara 桌面端重新发起登录。",
+    "invalidHint": "这个链接不完整。请回到 Capybara 应用重新发起登录。",
     "doneTitle": "已完成",
     "doneHint": "已返回 Capybara，可以关闭此页"
   },
@@ -4244,8 +4282,8 @@
         "accountCreated": "创建了账号",
         "accountUpdated": "修改了账号",
         "accountProfileUpdated": "修改了个人资料",
-        "authAppAuthorized": "授权桌面端登录",
-        "authAppSignedIn": "桌面端已登录",
+        "authAppAuthorized": "授权应用登录",
+        "authAppSignedIn": "应用已登录",
         "platformIconUpdated": "更换了平台图标",
         "platformIconCleared": "恢复了默认平台图标",
         "identityLinked": "关联了外部身份",
@@ -4371,6 +4409,7 @@
         "orgFilePreviewersUpdated": "修改了文件预览方式",
         "orgInvitationAccepted": "接受了邀请",
         "orgInvitationCreated": "邀请了成员",
+        "orgInvitationLinkShown": "查看了邀请链接",
         "orgInvitationRevoked": "撤销了邀请",
         "orgMemberAdded": "添加了成员",
         "orgMemberLeft": "退出了组织",

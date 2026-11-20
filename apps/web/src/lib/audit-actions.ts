@@ -136,6 +136,7 @@ export const AUDIT_ACTION_KEYS: Readonly<Record<string, string>> = {
   "org.file_previewers.updated": "orgFilePreviewersUpdated",
   "org.invitation.accepted": "orgInvitationAccepted",
   "org.invitation.created": "orgInvitationCreated",
+  "org.invitation.link_shown": "orgInvitationLinkShown",
   "org.invitation.revoked": "orgInvitationRevoked",
   "org.member.added": "orgMemberAdded",
   "org.member.left": "orgMemberLeft",

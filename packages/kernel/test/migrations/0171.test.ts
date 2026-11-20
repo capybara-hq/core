@@ -9,11 +9,11 @@ import { createDb } from "../../src/db/pool.js";
 import { KERNEL_MIGRATIONS_DIR } from "../../src/kernel.js";
 
 /**
- * 0169_account_avatar.sql (account profile spec §5.1): `accounts.avatar`, the
+ * 0171_account_avatar.sql (account profile spec §5.1): `accounts.avatar`, the
  * `account_avatar_uploads` table and `identities.updated_at`. Migrates to the migration before it,
- * seeds an account, runs 0169, then again by hand.
+ * seeds an account, runs 0171, then again by hand.
  */
-const FILE = "0169_account_avatar.sql";
+const FILE = "0171_account_avatar.sql";
 
 let pg: Awaited<ReturnType<typeof startTestPostgres>>;
 let db: ReturnType<typeof createDb>;
@@ -74,7 +74,7 @@ afterAll(async () => {
   for (const d of dirs) rmSync(d, { recursive: true, force: true });
 });
 
-describe("0169 account avatar", () => {
+describe("0171 account avatar", () => {
   it("adds a nullable jsonb accounts.avatar, null on existing rows", async () => {
     const col = (await columnsOf("accounts")).find((c) => c.column_name === "avatar");
     expect(col).toMatchObject({ data_type: "jsonb", is_nullable: "YES", default: null });

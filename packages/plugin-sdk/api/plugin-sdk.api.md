@@ -484,6 +484,16 @@ export function checkThemeReadability(_scheme: ThemeScheme, merged: MergedScheme
 export function checkWoff2(bytes: Uint8Array): string | undefined;
 
 // @public
+export interface ChromeCapabilityV1 {
+    setAppearance(input: {
+        scheme: "light" | "dark";
+        background: string;
+        tokens?: ShellChromeTokens;
+        singleScheme?: boolean;
+    }): Promise<void>;
+}
+
+// @public
 export function classifyAddress(ip: string): AddressClass;
 
 // @public
@@ -3677,7 +3687,7 @@ export function sanitizeThemeSvg(bytes: Uint8Array): {
 };
 
 // @public
-export const SDK_VERSION = "0.1.0-rc.41";
+export const SDK_VERSION = "0.1.0-rc.43";
 
 // @public
 export function secret<T extends z.ZodTypeAny>(schema: T): T;
@@ -3873,6 +3883,7 @@ export const SHELL_CAPABILITIES: readonly {
 
 // @public
 export const SHELL_CAPABILITY_KEYS: {
+    readonly chrome: "chrome@1";
     readonly device: "device@1";
     readonly notify: "notify@1";
     readonly openExternal: "openExternal@1";
@@ -3881,6 +3892,17 @@ export const SHELL_CAPABILITY_KEYS: {
 
 // @public
 export type ShellCallError = "busy" | "no_activation" | "cancelled" | "failed";
+
+// @public
+export interface ShellChromeTokens {
+    accent: string;
+    bg: string;
+    ink: string;
+    line: string;
+    muted: string;
+    onAccent: string;
+    panel: string;
+}
 
 // @public
 export interface SignInCapabilityV1 {

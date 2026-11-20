@@ -1,4 +1,4 @@
-import { validateAllowHost } from "@capybara-hq/plugin-sdk";
+import { secret, validateAllowHost } from "@capybara-hq/plugin-sdk";
 import { z } from "zod";
 import type { RouteSchemas } from "../platform/route-schemas.js";
 import { CredentialValue } from "../tools/connectors.schemas.js";
@@ -57,6 +57,11 @@ export const CatalogMarketplaceRequestBody = z
   })
   .strict();
 
+/**
+ * One connector template's input at install (C30): name, slug, endpoint, credential or OAuth
+ * client. The credential and the client secret are secrets (`secret()` meta, ruling R2): a Platform
+ * operation never takes them as params; the person enters them on the confirmation card.
+ */
 export const CatalogConnectorInput = z
   .object({
     name: z.string().trim().min(1).max(80).optional(),
@@ -66,7 +71,7 @@ export const CatalogConnectorInput = z
     client: z
       .object({
         clientId: z.string().min(1).max(500),
-        clientSecret: z.string().min(1).max(4000).optional(),
+        clientSecret: secret(z.string().min(1).max(4000)).optional(),
       })
       .strict()
       .optional(),
@@ -83,6 +88,30 @@ export const OrgPluginInstallBody = z
     extensionConfig: z.record(z.string(), z.unknown()).optional(),
   })
   .strict();
+
+/**
+ * `POST …/catalog/:itemId/connectors` (ruling P2-10): the input of missing connectors, by template
+ * id, as at install.
+ */
+export const OrgPluginConnectorsSchema = z
+  .object({
+    inputs: z.object({ connectors: z.record(z.string(), CatalogConnectorInput) }).strict(),
+  })
+  .strict();
+
+/**
+ * `POST …/connector-templates/:templateId/connectors` (ruling P4-T6-8): one more connector from a
+ * platform connector template, its name and an install's connector input (`config`).
+ */
+export const OrgTemplateConnectorSchema = z
+  .object({
+    name: z.string().trim().min(1).max(80).optional(),
+    config: CatalogConnectorInput.omit({ name: true }),
+  })
+  .strict();
+
+/** `:templateId` of the template connector route (`@Param`). */
+export const ConnectorTemplatePathParams = z.object({ templateId: z.string().min(1) });
 
 /** The switch body: on (with the install inputs), or off (with the preview's hash to confirm). */
 export const OrgPluginSwitchBody = z
@@ -143,6 +172,21 @@ export const ORG_CATALOG_ROUTES: readonly RouteSchemas[] = [
     body: CatalogRequestBody,
   },
   { route: "POST /api/v1/orgs/:orgId/marketplace-requests", body: CatalogMarketplaceRequestBody },
+  {
+    route: "POST /api/v1/orgs/:orgId/catalog/:itemId/install",
+    params: CatalogItemPathParams,
+    body: OrgPluginInstallBody,
+  },
+  {
+    route: "POST /api/v1/orgs/:orgId/catalog/:itemId/connectors",
+    params: CatalogItemPathParams,
+    body: OrgPluginConnectorsSchema,
+  },
+  {
+    route: "POST /api/v1/orgs/:orgId/connector-templates/:templateId/connectors",
+    params: ConnectorTemplatePathParams,
+    body: OrgTemplateConnectorSchema,
+  },
   {
     route: "PUT /api/v1/orgs/:orgId/catalog/:itemId/switch",
     params: CatalogItemPathParams,

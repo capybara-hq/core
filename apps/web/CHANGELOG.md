@@ -1,5 +1,28 @@
 # @capybara-hq/web
 
+## 0.1.0-rc.71
+
+### Patch Changes
+
+- 2c2841e: The Platform tool creates connectors, sets their credentials, installs catalog items with their
+  connector and config secrets, and creates channels, with every secret typed by the person on the
+  confirmation card. Org admins' agents invite, revoke and manage members (never self, never an owner,
+  never above the actor); an invitation link is sealed for the approver and revealed once on the web.
+  Platform results can pop up a handoff card (a link to a web page, or a Connect button for OAuth).
+
+## 0.1.0-rc.70
+
+### Patch Changes
+
+- e788a1a: Person fields: a Platform write that needs a secret takes its field name in `askPerson`, and the
+  person types the value on the approval card on the web; it is sealed, read once by the resumed call
+  and never reaches the conversation, the audit or a log. Agents can now read and set extension
+  deployment config, org config and the org's config copy through the Platform tool.
+- 28520b3: The installed web app (PWA) opens on the conversation list, a tab root with the bottom navigation,
+  instead of the new conversation page; the conversation page draws no status bar on a phone.
+- Updated dependencies [e788a1a]
+  - @capybara-hq/design@0.2.0-rc.25
+
 ## 0.1.0-rc.69
 
 No changes in this release.

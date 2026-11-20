@@ -263,6 +263,8 @@ export class ExtensionDeploymentConfigService {
     actor: string,
     actorTokenId?: string,
     secretEntries: readonly SecretEntry[] = [],
+    /** Merged into the audit detail (a Platform operation's `via: "agent"`). */
+    auditDetail?: Record<string, unknown>,
   ): Promise<DeploymentConfigView> {
     const info = await this.info(plugin);
     if (info.fields.length === 0) {
@@ -304,6 +306,7 @@ export class ExtensionDeploymentConfigService {
       info,
       sources,
       fileValue,
+      auditDetail,
     );
     const stored = saved ?? {};
     if (info.schema) {
@@ -314,19 +317,25 @@ export class ExtensionDeploymentConfigService {
       if (secrets.length > 0) this.log.addSecrets(secrets);
     }
     if (changed.length > 0) {
-      try {
-        await this.bus.publish(PLUGIN_DEPLOYMENT_CONFIG_TOPIC, { plugin });
-      } catch (err) {
-        this.log.warn("cannot publish plugin-deployment-config after saving", { plugin, err });
-      }
-      try {
-        await this.lifecycle.applyConfig(plugin);
-      } catch (err) {
-        this.log.error("applying the plugin deployment config on this replica failed", {
-          plugin,
-          err,
-        });
-      }
+      const applyEverywhere = async () => {
+        try {
+          await this.bus.publish(PLUGIN_DEPLOYMENT_CONFIG_TOPIC, { plugin });
+        } catch (err) {
+          this.log.warn("cannot publish plugin-deployment-config after saving", { plugin, err });
+        }
+        try {
+          await this.lifecycle.applyConfig(plugin);
+        } catch (err) {
+          this.log.error("applying the plugin deployment config on this replica failed", {
+            plugin,
+            err,
+          });
+        }
+      };
+      // Inside a caller's transaction (a Platform write applying the person's sealed values) the
+      // save is not committed yet: replicas re-read only after the commit
+      if (this.txHost.current() !== undefined) afterCommit(applyEverywhere);
+      else await applyEverywhere();
     }
     return this.render(plugin, info, stored, await this.displayNames.get(plugin));
   }
@@ -344,13 +353,20 @@ export class ExtensionDeploymentConfigService {
    * and the extension loads from what remains, or is unloaded and becomes pending configuration
    * when that is missing or invalid (`ExtensionHost.applyDeploymentConfig`), without a restart.
    */
-  async clear(plugin: string, actor: string, actorTokenId?: string): Promise<DeploymentConfigView> {
+  async clear(
+    plugin: string,
+    actor: string,
+    actorTokenId?: string,
+    /** Merged into the audit detail (a Platform operation's `via: "agent"`). */
+    auditDetail?: Record<string, unknown>,
+  ): Promise<DeploymentConfigView> {
     const info = await this.info(plugin);
     await this.clearStored(
       plugin,
       info.fields.map((f) => f.path),
       actor,
       actorTokenId,
+      auditDetail,
     );
     return this.render(plugin, info, {}, await this.displayNames.get(plugin));
   }
@@ -361,6 +377,7 @@ export class ExtensionDeploymentConfigService {
     fieldPaths: readonly string[],
     actor: string,
     actorTokenId: string | undefined,
+    auditDetail: Record<string, unknown> | undefined,
   ): Promise<void> {
     const t = this.db;
     await this.adminLock.lockAndAuthorize(actor);
@@ -403,7 +420,7 @@ export class ExtensionDeploymentConfigService {
       ...(actorTokenId !== undefined && { actorTokenId }),
       action: "extension.config_cleared",
       target: plugin,
-      detail: { clearedPaths },
+      detail: { clearedPaths, ...auditDetail },
     });
     afterCommit(async () => {
       try {
@@ -467,6 +484,7 @@ export class ExtensionDeploymentConfigService {
     info: DeploymentSchemaInfo,
     sources: Record<string, ConfigSourceKind> | undefined,
     fileValue: unknown,
+    auditDetail: Record<string, unknown> | undefined,
   ): Promise<{ saved: Obj | undefined; changed: string[] }> {
     const fieldPaths = info.fields.map((f) => f.path);
     let changed: string[] = [];
@@ -535,7 +553,7 @@ export class ExtensionDeploymentConfigService {
       ...(actorTokenId !== undefined && { actorTokenId }),
       action: "extension.deployment_config_updated",
       target: plugin,
-      detail: { changedPaths: changed },
+      detail: { changedPaths: changed, ...auditDetail },
     });
     return { saved, changed };
   }

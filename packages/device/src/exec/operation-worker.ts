@@ -1,7 +1,16 @@
 import { type ChildProcess, fork, spawn, spawnSync } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import { constants, realpathSync } from "node:fs";
-import { type FileHandle, mkdtemp, open, readdir, realpath, rm, stat } from "node:fs/promises";
+import {
+  type FileHandle,
+  lstat,
+  mkdtemp,
+  open,
+  readdir,
+  realpath,
+  rm,
+  stat,
+} from "node:fs/promises";
 import { homedir, tmpdir } from "node:os";
 import { basename, dirname, join } from "node:path";
 import {
@@ -704,16 +713,29 @@ export async function startMacOperationWorker(
                 "Native grant root changed or contains an unpinned symlink",
               );
             rootAliases.push({ original: path, canonical });
+            // A read root that is an existing file (a kernel read narrows `AGENTS.md` to itself)
+            // pins its parent directory; the helper reaches only the file's name through it.
+            const single =
+              access === "read" &&
+              components.length === 0 &&
+              (await lstat(canonicalAnchor)).isFile();
+            const pinAt = single ? dirname(canonicalAnchor) : canonicalAnchor;
             const file = await open(
-              canonicalAnchor,
+              pinAt,
               constants.O_RDONLY | constants.O_DIRECTORY | constants.O_NOFOLLOW,
             );
             files.push(file);
             const pinned = await file.stat();
-            const current = await stat(canonicalAnchor);
+            const current = await stat(pinAt);
             if (pinned.dev !== current.dev || pinned.ino !== current.ino)
               throw new Error("Pinned root changed during launch");
-            roots.push({ path: canonical, fd: file.fd, access, components });
+            roots.push({
+              path: canonical,
+              fd: file.fd,
+              access,
+              components,
+              ...(single ? { file: true as const } : {}),
+            });
           }
         }
       // Version managers (asdf, nvm, pyenv, ...) read their data under the real home, while HOME
@@ -761,6 +783,12 @@ export async function startMacOperationWorker(
           stdio: ["ignore", "ignore", "ignore", "ipc"],
           env: { PATH: process.env.PATH, HOME: process.env.HOME, TMPDIR: process.env.TMPDIR },
         });
+        // A send to a worker that has just exited fails asynchronously (EPIPE, a closed channel)
+        // as an `error` event; without a listener it would take the whole device program down
+        // with every other operation. The operation itself learns of the exit from `exit`.
+        runtime.on("error", (error) =>
+          request.onDiagnostic?.(`Operation worker channel: ${error.message}`),
+        );
         const runtimeRoots = roots.length
           ? roots.map((r) => r.path)
           : [...request.grant.readRoots, ...request.grant.writeRoots];
@@ -1082,16 +1110,22 @@ export async function startMacOperationWorker(
       await Promise.all(files.map((f) => f.close()));
       if (runtime) {
         const worker = runtime;
+        const exited = () => worker.exitCode !== null || worker.signalCode !== null;
         if (worker.connected) {
           if (registered && (request.kind !== "exec" || execCompleted)) {
             const released = message(worker, "released");
-            worker.send({ type: "release", ...registered });
-            await released;
+            worker.send({ type: "release", ...registered }, () => {});
+            // a worker that exits before answering has released nothing more to release
+            await released.catch(() => undefined);
           }
-          const ended = new Promise<void>((r) => worker.once("exit", () => r()));
-          worker.send({ type: "stop" });
+          // the worker may exit between the check and the send: never wait for an exit already seen
+          const ended = new Promise<void>((r) => {
+            if (exited()) r();
+            else worker.once("exit", () => r());
+          });
+          if (worker.connected) worker.send({ type: "stop" }, () => {});
           await ended;
-        } else if (worker.exitCode === null) worker.kill("SIGTERM");
+        } else if (!exited()) worker.kill("SIGTERM");
       }
       // the sandbox keeps git's sequencer directory (it may hold a kept HEAD) from being removed
       // by the command; once the command is gone, the trusted worker removes it where empty

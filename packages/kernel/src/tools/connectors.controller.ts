@@ -1,4 +1,3 @@
-import { ConnectorAuthSchema, GitSourceSchema } from "@capybara-hq/plugin-sdk";
 import { Controller, Delete, Get, HttpCode, Inject, Param, Patch, Post, Put } from "@nestjs/common";
 import { z } from "zod";
 import type { ConnectionGuideState } from "../extensions/plugin-guides.js";
@@ -20,7 +19,10 @@ import {
   type MemberToolPolicyView,
 } from "./connector-account-policies.js";
 import {
+  ConnectorCreateSchema,
   ConnectorGuideAckSchema,
+  ConnectorPreviewSchema,
+  ConnectorUpdateSchema,
   CredentialValue,
   GitPushPolicyBody,
   MemberToolPoliciesBody,
@@ -54,53 +56,11 @@ function forViewer<T extends ConnectorSummary>(org: OrgContext, c: T): T {
   return view;
 }
 
-const CreateBody = z
-  .object({
-    name: z.string().trim().min(1).max(80),
-    slug: z.string().max(24).optional(),
-    connector: z.string().min(1).max(100),
-    endpoint: z.record(z.string(), z.unknown()),
-    auth: ConnectorAuthSchema,
-    credential: CredentialValue.optional(),
-    /** The git hosts the credential serves in sandboxes (sandbox git credentials spec §6.1). */
-    git: GitSourceSchema.optional(),
-  })
-  .strict();
-
-/** 预览（Ruling A20）：与创建相同的连接器 / 端点 / 认证 / 凭据，认证可缺省（只读端点描述，不列工具）。 */
-const PreviewBody = z
-  .object({
-    name: z.string().trim().min(1).max(80).optional(),
-    slug: z.string().max(24).optional(),
-    connector: z.string().min(1).max(100),
-    endpoint: z.record(z.string(), z.unknown()),
-    auth: ConnectorAuthSchema.optional(),
-    credential: CredentialValue.optional(),
-  })
-  .strict();
-
-const ToolPatch = z
-  .object({
-    status: z.enum(["enabled", "disabled"]).optional(),
-    defaultPolicy: z.enum(["allow", "ask", "deny"]).optional(),
-  })
-  .strict();
+const CreateBody = ConnectorCreateSchema;
+const PreviewBody = ConnectorPreviewSchema;
+const UpdateBody = ConnectorUpdateSchema;
 
 const ReviewBody = z.object({ action: z.enum(["approve", "reject"]) }).strict();
-
-const UpdateBody = z
-  .object({
-    name: z.string().trim().min(1).max(80).optional(),
-    status: z.enum(["active", "disabled"]).optional(),
-    tools: z
-      .record(z.string().max(200), ToolPatch)
-      .refine((v) => Object.keys(v).length <= 1000, { message: "Too many tools" })
-      .optional(),
-    allowUnannotated: z.boolean().optional(),
-    /** Use an org-credential connector for git in sandboxes (spec 2026-11-12 §6.2). */
-    useForGit: z.boolean().optional(),
-  })
-  .strict();
 
 class ConnectorCreateBody extends createZodDto(CreateBody, "ConnectorCreateBody") {}
 class ConnectorPreviewBody extends createZodDto(PreviewBody, "ConnectorPreviewBody") {}

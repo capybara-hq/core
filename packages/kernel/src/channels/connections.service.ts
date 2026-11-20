@@ -547,6 +547,8 @@ export class ChannelConnections implements OnApplicationShutdown {
     input: CreateChannelInput,
     actorAccountId: string,
     actorTokenId?: string,
+    /** Merged into the audit detail (the Platform tool's `via: "agent"`). */
+    auditDetail?: Record<string, unknown>,
   ): Promise<ChannelConnectionView> {
     const channel = this.channel(input.plugin);
     await this.assertEnabled(orgId, input.plugin);
@@ -571,6 +573,7 @@ export class ChannelConnections implements OnApplicationShutdown {
       guideAck,
       actorAccountId,
       actorTokenId,
+      auditDetail,
     });
     this.reportSecrets(schema, full);
     await this.changed(id, false);
@@ -589,6 +592,7 @@ export class ChannelConnections implements OnApplicationShutdown {
     guideAck: GuideAck | null;
     actorAccountId: string;
     actorTokenId: string | undefined;
+    auditDetail: Record<string, unknown> | undefined;
   }) {
     const { orgId, id, input, actorAccountId, actorTokenId } = a;
     await this.orgLock.lockAndAuthorize(orgId, actorAccountId, "channels.manage");
@@ -628,9 +632,33 @@ export class ChannelConnections implements OnApplicationShutdown {
         plugin: input.plugin,
         agentId: input.agentId,
         inboundMode: input.inboundMode ?? "long_connection",
+        ...a.auditDetail,
       },
     });
     return inserted;
+  }
+
+  /**
+   * The read-only refusals of {@link create} that need no write (the Platform tool's precheck): the
+   * plugin provides a channel and is on in the org, the agent exists, and webhook inbound is
+   * available when asked for.
+   */
+  async checkCreate(
+    orgId: string,
+    input: Pick<CreateChannelInput, "plugin" | "agentId" | "inboundMode">,
+  ): Promise<void> {
+    this.channel(input.plugin);
+    await this.assertEnabled(orgId, input.plugin);
+    if (input.inboundMode === "webhook") this.assertWebhookAvailable(input.plugin);
+    await this.assertAgent(orgId, input.agentId);
+  }
+
+  /**
+   * The secret fields (dot paths) the inbound mode requires of the plugin's connection form
+   * (`x-ui.inboundModes`), for the Platform tool's person fields.
+   */
+  modeRequiredFields(plugin: string, mode: InboundMode): string[] {
+    return missingInboundModeFields(this.jsonSchema(plugin), mode, () => false);
   }
 
   /** The read-only refusals of {@link update} that need no write (the Platform tool's precheck). */
@@ -824,6 +852,8 @@ export class ChannelConnections implements OnApplicationShutdown {
     hash: string,
     actorAccountId: string,
     actorTokenId?: string,
+    /** Merged into the audit detail (the Platform tool's `via: "agent"`). */
+    auditDetail?: Record<string, unknown>,
   ): Promise<ChannelConnectionView> {
     const { orgId } = org;
     const current = await this.live(orgId).where("id", "=", id).executeTakeFirst();
@@ -842,7 +872,7 @@ export class ChannelConnections implements OnApplicationShutdown {
         "The plugin's setup guide changed since it was shown; review the new guide first",
       );
     }
-    const row = await this.ackIn(orgId, id, ack, actorAccountId, actorTokenId);
+    const row = await this.ackIn(orgId, id, ack, actorAccountId, actorTokenId, auditDetail);
     return this.viewOf(row);
   }
 
@@ -854,6 +884,7 @@ export class ChannelConnections implements OnApplicationShutdown {
     ack: GuideAck,
     actorAccountId: string,
     actorTokenId: string | undefined,
+    auditDetail: Record<string, unknown> | undefined,
   ) {
     await this.orgLock.lockAndAuthorize(orgId, actorAccountId, "channels.manage");
     const row = await this.db
@@ -871,7 +902,7 @@ export class ChannelConnections implements OnApplicationShutdown {
       orgId,
       action: "channel.guide_confirmed",
       target: id,
-      detail: { guideId: ack.guideId, version: ack.version },
+      detail: { guideId: ack.guideId, version: ack.version, ...auditDetail },
     });
     return row;
   }

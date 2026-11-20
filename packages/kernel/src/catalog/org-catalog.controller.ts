@@ -24,14 +24,15 @@ import type {
   OrgInstallResult,
 } from "./catalog-content.js";
 import {
-  CatalogConnectorInput,
   CatalogGuideQuery,
   CatalogMarketplaceRequestBody,
   CatalogRequestBody,
   CatalogRequestsListQuery,
   NetworkRequestBody,
+  OrgPluginConnectorsSchema,
   OrgPluginInstallBody,
   OrgPluginSwitchBody,
+  OrgTemplateConnectorSchema,
 } from "./org-catalog.schemas.js";
 import { OrgCatalogService, type SwitchResult } from "./org-catalog.service.js";
 import {
@@ -42,23 +43,8 @@ import {
 } from "./plugin-install.js";
 import { CatalogRequestsService, type CatalogRequestView } from "./requests.service.js";
 
-/** The connectors body (ruling P2-10): the input of missing connectors, by template id, as at install. */
-const ConnectorsBody = z
-  .object({
-    inputs: z.object({ connectors: z.record(z.string(), CatalogConnectorInput) }).strict(),
-  })
-  .strict();
-
-/**
- * One more connector from a platform connector template (ruling P4-T6-8): its name and an
- * install's connector input (`config`).
- */
-const TemplateConnectorBody = z
-  .object({
-    name: z.string().trim().min(1).max(80).optional(),
-    config: CatalogConnectorInput.omit({ name: true }),
-  })
-  .strict();
+const ConnectorsBody = OrgPluginConnectorsSchema;
+const TemplateConnectorBody = OrgTemplateConnectorSchema;
 
 /**
  * 条目图标的响应头：图标可能是 SVG（可含脚本），只许网页以 `<img>` 显示；直接打开时 CSP sandbox 禁止脚本与一切外部
