@@ -338,12 +338,13 @@ const fullInput = (input: Record<string, unknown>): string => {
 
 /**
  * Orders a pending approval's buttons for the form factor: the approvals then the deny button, and
- * on touch (spec §6.16.11) the short 「拒绝」 first, so the approval ends the row.
+ * on touch (spec §6.16.11) the short 「拒绝」 first, the wider grants next and the primary approval
+ * (the first scope) last, at the thumb's end of the row.
  */
 function useActionOrder() {
   const touch = useTouch() === true;
   return (approve: ReactNode[], deny: ReactNode, touchDeny: ReactNode): ReactNode[] =>
-    touch ? [touchDeny, ...approve] : [...approve, deny];
+    touch ? [touchDeny, ...approve.slice(1), ...approve.slice(0, 1)] : [...approve, deny];
 }
 
 const SCOPE_LABEL = {

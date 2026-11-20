@@ -130,7 +130,13 @@ describe("the composer pill", () => {
     expect(within(bar).getByRole("button", { name: "添加附件" })).toBeTruthy();
     expect(bar.querySelector(".cb-send")).not.toBeNull();
     expect(document.querySelectorAll("textarea")).toHaveLength(1);
-    expect(document.body.innerHTML).not.toMatch(/voice|语音|mic/i);
+    const labels = [...bar.querySelectorAll("button")].map(
+      (b) => b.getAttribute("aria-label") ?? "",
+    );
+    expect(labels.filter((l) => /voice|dictat|speech|语音|麦克风|听写/i.test(l))).toEqual([]);
+    // the pill's own buttons: attach first, send last
+    expect(labels[0]).toBe("添加附件");
+    expect(labels.at(-1)).toBe("发送");
     cleanup();
     wrap(box({ send: { mode: "stop", onClick: noop } }));
     expect(document.querySelector(".cb-stop")).not.toBeNull();
@@ -143,6 +149,50 @@ describe("the composer pill", () => {
       "utf8",
     );
     expect(source).not.toMatch(/voice/i);
+  });
+});
+
+describe("outside touch the composer and thread keep their base rules", () => {
+  const base = (sel: string) => rules.find((r) => r.at === null && r.selector === sel)?.decls;
+  it("the frame is still a column box with its border, radius and shadow", () => {
+    expect(base(".cb-composer")).toMatchObject({
+      display: "flex",
+      "flex-direction": "column",
+      border: "1px solid var(--cb-line)",
+      "border-radius": "var(--cb-radius-md)",
+      "box-shadow": "var(--cb-shadow-float)",
+    });
+    expect(base(".cb-composer-bar")).toMatchObject({ display: "flex" });
+    expect(
+      rules.some(
+        (r) =>
+          r.at === null && r.selector === ".cb-conv-composer" && r.decls.position === "relative",
+      ),
+    ).toBe(true);
+    expect(base(".cb-hcard-actions")?.["flex-wrap"]).toBe("wrap");
+  });
+  it("no touch rule sits outside the one touch block, and every ::before / grid rule is inside it", () => {
+    const grid = rules.filter(
+      (r) => r.at !== TOUCH_QUERY && r.selector.startsWith(".cb-composer") && r.decls["grid-row"],
+    );
+    expect(grid).toEqual([]);
+  });
+  it("the DOM order of the composer bar is the same", () => {
+    wrap(box());
+    const bar = document.querySelector('[data-part="composer-bar"]') as HTMLElement;
+    const first = bar.firstElementChild as HTMLElement;
+    expect(first.getAttribute("aria-label")).toBe("添加附件");
+    expect(bar.lastElementChild?.className).toContain("cb-send");
+  });
+});
+
+describe("the tool group on touch", () => {
+  it("the summary line is hit high, full width, one line", () => {
+    expect(touch(".cb-tool-group > .cb-tool-line")["min-height"]).toBe("var(--cb-touch-hit)");
+    expect(touch(".cb-tool-group > .cb-tool-line")).toMatchObject({ width: "100%" });
+    expect(touch(".cb-tool-group > .cb-tool-line > .cb-tool-label")).toMatchObject({
+      flex: "1 1 auto",
+    });
   });
 });
 
@@ -201,6 +251,17 @@ describe("the approval card on touch", () => {
     expect(names()).toEqual(["拒绝", "批准"]);
     const approve = screen.getByRole("button", { name: "批准" });
     expect(approve.getAttribute("data-variant")).toBe("primary");
+  });
+
+  it("with three scopes the card stays 拒绝, the wider grants, then 批准 last, in one row", () => {
+    touchDevice();
+    wrap(<ApprovalBlock {...approval} scopes={["once", "session", "always"]} />);
+    expect(names()).toEqual(["拒绝", "本会话内都批准", "总是批准", "批准"]);
+    expect(screen.getByRole("button", { name: "批准" }).getAttribute("data-variant")).toBe(
+      "primary",
+    );
+    // every button has flex-basis 0 and may shrink: they cannot wrap to a second row
+    expect(touch(".cb-hcard-actions > .cb-btn")).toMatchObject({ flex: "1 1 0", "min-width": "0" });
   });
 
   it("keeps 批准 first outside touch", () => {
