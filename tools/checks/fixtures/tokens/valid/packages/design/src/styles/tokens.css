@@ -20,6 +20,7 @@
   --cb-type-body-size: 13px;
   --cb-type-body-line: 20px;
   --cb-layout-sidebar: 256px;
+  --cb-touch-hit: 44px;
   --cb-builtin-dark-bg: #0A0A0A;
   --cb-builtin-dark-panel: #111110;
   --cb-builtin-dark-ink: #E6E6E3;
@@ -52,4 +53,14 @@
   --cb-scrim: rgba(10,10,10,.25);
   --cb-shadow-1: 0 2px 8px rgba(10,10,10,.08);
   color-scheme: light;
+}
+
+@media (pointer: coarse), (any-pointer: coarse) and (not (any-pointer: fine)) {
+  :root {
+    --cb-font: system-ui, sans-serif;
+    --cb-type-body-size: 17px;
+    --cb-type-body-line: 24px;
+    --cb-control-dense: 44px;
+    --cb-radius-sm: 12px;
+  }
 }

@@ -1101,6 +1101,7 @@ a.cb-object-name:hover {
 }
 .cb-copy-field-value > .cb-input {
   flex: 1;
+  font-family: var(--cb-font-code);
 }
 .cb-copy-field-manual {
   display: inline-flex;
@@ -1244,7 +1245,7 @@ a.cb-object-name:hover {
   padding-left: var(--cb-space-2);
   border-left: 1px solid var(--cb-line);
   color: var(--cb-muted);
-  font-family: var(--cb-font);
+  font-family: var(--cb-font-code);
   font-size: var(--cb-type-small-size);
   line-height: var(--cb-type-small-line);
   white-space: pre-wrap;

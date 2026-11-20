@@ -63,4 +63,5 @@ export {
 } from "./size-class";
 export { StatusBar, type StatusBarProps, useStatusBar } from "./status-bar";
 export { backTarget, TopBar, type TopBarProps } from "./top-bar";
+export { TOUCH_QUERY, useTouch } from "./touch";
 export { withViewTransition } from "./view-transition";

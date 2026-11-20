@@ -72,3 +72,22 @@ describe("tokens.css", () => {
     expect(android).toContain("--cb-ease-push: cubic-bezier(0.2, 0, 0, 1);");
   });
 });
+
+describe("the touch tokens", () => {
+  it("are theme-independent variables beside the others", () => {
+    for (const v of [
+      "--cb-font-code:",
+      "--cb-radius-pill: 999px",
+      "--cb-layout-drawer: 320px",
+      "--cb-touch-hit: 44px",
+    ]) {
+      expect(css).toContain(v);
+    }
+  });
+
+  it("the float colors and shadow are themed, so TOKEN_NAMES lists them", () => {
+    for (const name of ["float-ground", "float-line", "shadow-float-touch"]) {
+      expect(TOKEN_NAMES).toContain(name);
+    }
+  });
+});

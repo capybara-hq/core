@@ -1,3 +1,5 @@
+import { readTouch } from "./touch";
+
 /**
  * A touch device (spec §4.3): the primary pointer is coarse, or a coarse pointer and no fine one. Read at the
  * moment of a choice (never in render), so a page can skip moving focus into a text field there:
@@ -5,9 +7,7 @@
  * quick action). False without `matchMedia` (the server, old test environments).
  */
 export function isTouchPointer(): boolean {
-  if (typeof window === "undefined" || typeof window.matchMedia !== "function") return false;
-  const mq = (q: string) => window.matchMedia(q).matches;
-  return mq("(pointer: coarse)") || (mq("(any-pointer: coarse)") && !mq("(any-pointer: fine)"));
+  return readTouch();
 }
 
 /**

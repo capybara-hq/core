@@ -408,7 +408,7 @@ describe("ListDetailList and ListDetailItem (spec §6.47: the list rows, the ope
       "var(--cb-font-prose)",
     );
     expect(d('.cb-kv[data-variant="facts"] .cb-kv-value[data-mono="true"]')?.["font-family"]).toBe(
-      "var(--cb-font)",
+      "var(--cb-font-code)",
     );
   });
 });

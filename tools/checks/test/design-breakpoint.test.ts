@@ -45,6 +45,11 @@ describe("design-breakpoint", () => {
     ]);
   });
 
+  it("the touch query passes, and a stray width beside it still fails", () => {
+    expect(run("ok")).toEqual([]);
+    expect(at("violation-touch")).toEqual([["touch.css", 1]]);
+  });
+
   it("the class queries, 1279 / 1280, the short window, the segment queries and the dynamic units pass", () => {
     expect(run("ok")).toEqual([]);
   });

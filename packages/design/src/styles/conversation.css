@@ -280,7 +280,7 @@ button.cb-tool-line:focus-visible {
   line-height: var(--cb-type-small-line);
 }
 .cb-md .cb-code {
-  font-family: var(--cb-font);
+  font-family: var(--cb-font-code);
   font-size: var(--cb-type-small-size);
   line-height: var(--cb-type-small-line);
 }
@@ -933,6 +933,7 @@ button.cb-tool-toggle:focus-visible {
 }
 .cb-tool-command {
   color: var(--cb-ink);
+  font-family: var(--cb-font-code);
   word-break: break-all;
 }
 .cb-tool-output {
@@ -944,6 +945,7 @@ button.cb-tool-toggle:focus-visible {
   background: var(--cb-bg);
   color: var(--cb-ink);
   font: inherit;
+  font-family: var(--cb-font-code);
   font-size: var(--cb-type-small-size);
   line-height: var(--cb-type-small-line);
   white-space: pre-wrap;
@@ -965,6 +967,7 @@ button.cb-tool-toggle:focus-visible {
 
 .cb-diff {
   padding: var(--cb-space-1) 0;
+  font-family: var(--cb-font-code);
   font-size: var(--cb-type-small-size);
   line-height: var(--cb-type-small-line);
 }
@@ -1152,7 +1155,7 @@ button.cb-tool-toggle:focus-visible {
   overflow-wrap: anywhere;
 }
 .cb-hcard-root-path {
-  font-family: var(--cb-font);
+  font-family: var(--cb-font-code);
   font-size: inherit;
 }
 .cb-hcard-file {

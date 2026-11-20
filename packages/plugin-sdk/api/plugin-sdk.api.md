@@ -4090,8 +4090,8 @@ export const THEME_LIMITS: {
 
 // @public
 export const THEME_OVERRIDABLE: {
-    readonly color: readonly ["bg", "panel", "panel-2", "sidebar", "sidebar-active", "raised", "selected", "hover", "line-soft", "line", "line-strong", "line-card", "scroll-thumb", "ink", "muted", "faint", "disabled", "accent", "accent-hover", "accent-press", "on-accent", "focus-ring", "ok", "fail", "warn", "scrim", "lightbox", "diff-add", "diff-del"];
-    readonly shadow: readonly ["shadow-1", "shadow-2", "shadow-sheet", "shadow-float"];
+    readonly color: readonly ["bg", "panel", "panel-2", "sidebar", "sidebar-active", "raised", "selected", "hover", "line-soft", "line", "line-strong", "line-card", "scroll-thumb", "ink", "muted", "faint", "disabled", "accent", "accent-hover", "accent-press", "on-accent", "focus-ring", "ok", "fail", "warn", "scrim", "lightbox", "float-ground", "float-line", "diff-add", "diff-del"];
+    readonly shadow: readonly ["shadow-1", "shadow-2", "shadow-sheet", "shadow-float", "shadow-float-touch"];
     readonly radius: readonly ["sm", "md", "bubble"];
 };
 
@@ -4220,6 +4220,14 @@ export const THEME_TOKENS: {
         readonly lightbox: {
             readonly dark: "rgba(0,0,0,.88)";
             readonly light: "rgba(10,10,10,.80)";
+        };
+        readonly "float-ground": {
+            readonly dark: "rgba(28,28,26,0.85)";
+            readonly light: "rgba(255,255,255,0.85)";
+        };
+        readonly "float-line": {
+            readonly dark: "rgba(255,255,255,0.08)";
+            readonly light: "rgba(26,26,24,0.08)";
         };
         readonly "diff-add": {
             readonly dark: "rgba(63,212,131,.08)";
@@ -4362,6 +4370,10 @@ export const THEME_TOKENS: {
         readonly "shadow-float": {
             readonly dark: "0 8px 24px rgba(0,0,0,.45)";
             readonly light: "0 8px 24px rgba(26,26,24,.08)";
+        };
+        readonly "shadow-float-touch": {
+            readonly dark: "0 6px 20px rgba(0,0,0,.35)";
+            readonly light: "0 6px 20px rgba(26,26,24,.10)";
         };
     };
     readonly radius: {

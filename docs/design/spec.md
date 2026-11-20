@@ -65,6 +65,8 @@ A **theme** (a plugin's contribution, spec `docs/superpowers/specs/2026-11-08-th
 | `warn` | `#F2C14B` | `#8F6500` | Needs a person: pending approval, unsaved, needs authorization |
 | `scrim` | `rgba(0,0,0,.60)` | `rgba(10,10,10,.25)` | Behind dialogs and sheets |
 | `lightbox` | `rgba(0,0,0,.88)` | `rgba(10,10,10,.80)` | Behind the image viewer (§6.16.20): a heavier dim than `scrim`, the image is the page |
+| `float-ground` | `rgba(28,28,26,0.85)` | `rgba(255,255,255,0.85)` | Touch floating controls: a translucent ground over the page (`ink` and `muted` on it pass 4.5:1 composited over `bg`, both schemes) |
+| `float-line` | `rgba(255,255,255,0.08)` | `rgba(26,26,24,0.08)` | The hairline around a touch floating control |
 | `diff-add` | `rgba(63,212,131,.08)` | `rgba(22,128,63,.10)` | Added lines in a diff (ground only; the text stays `ink`) |
 | `diff-del` | `rgba(255,92,82,.08)` | `rgba(207,34,46,.08)` | Removed lines in a diff (ground only) |
 
@@ -76,34 +78,38 @@ The light accent is `#CC4609`: white text on it has a contrast of 4.72:1 (WCAG A
 
 ### 2.2 Fonts and type
 
-Two fonts, each with a job:
+Three font roles, each with a job:
 
 | Font | Token | Used for |
 |---|---|---|
-| **Sarasa Mono SC** (OFL-1.1) | `--cb-font` | The UI skeleton: navigation, labels, buttons, tables, tool rows, key names, paths, numbers, the status bar |
+| **Sarasa Mono SC** (OFL-1.1) | `--cb-font` | The UI skeleton: navigation, labels, buttons, tables, tool rows, key names, the status bar. On touch it is the system font (below) |
+| **Sarasa Mono SC** (OFL-1.1) | `--cb-font-code` | Code, commands, paths, versions, dates and times, ids: what a person copies or compares. The same stack as `--cb-font` on a pointer device, and Sarasa on touch too |
 | **Inter + Source Han Sans SC** (both OFL-1.1) | `--cb-font-prose` | Prose: running text a person reads as sentences: descriptions (page headers, form sections, object rows, plugin and extension descriptions), field help, dialog bodies, callouts, empty-state text, conversation prose, rendered Markdown, table description lines |
 
 - Weights 400 / 500 / 600, never above 600: hierarchy comes from size and color, not weight. The page title (`h1`) and emphasis (the primary button, the current nav or tab item, object names, `strong`) are 600; section, card, dialog and group titles are 500; everything else is 400. Each font ships a 400 and a 700 face: 500 draws with the regular face and 600 with the bold face (CSS font matching), so a 500 title is set apart by its size and `ink` color alone.
 - Delivery: subsetted to woff2 at build time (`packages/design/scripts/subset-font.py`: ASCII, the 3,755 level-1 common Chinese characters, the characters the UI uses and a symbol table), self-hosted under `packages/design/src/fonts` with their licenses, `font-display: swap`, declared only in `styles/fonts.css`.
 - Fallbacks: `'Sarasa Mono SC', ui-monospace, monospace`; `'Inter', 'Source Han Sans SC', system-ui, sans-serif`.
+- **Touch** (maintainer decision 2026-11-21; `touch.ts`, `TOUCH_QUERY`: a coarse primary pointer, or a coarse pointer and no fine one; `useTouch()` is `null` on the server and during hydration): a phone reads the system font, so `--cb-font` and `--cb-font-prose` become `system-ui, -apple-system, 'PingFang SC', 'Noto Sans SC', sans-serif` and the type sizes take the Touch column below. Everything that was Sarasa because it is code, a command, a path, a version or a time says `font-family: var(--cb-font-code)` (the base rules for `code`, `pre`, `kbd` and `samp`, `DateTime`, the version in the status bar, `KeycapCommand`, `CopyField`, a tool row's command and output, the diff block and the path cells), so it stays Sarasa there. No stylesheet but `fonts.css` and the generated `tokens.css` names Sarasa.
 
-| Name | Size / line height | Weight | Font | Purpose |
-|---|---|---|---|---|
-| `h1` | 20 / 28 | 600 | mono | PageHeader title |
-| `h2` | 16 / 24 | 500 | mono | Section title, card title, Dialog title |
-| `body` | 13 / 20 | 400 | mono | Default text, tables, controls, nav items |
-| `small` | 12 / 16 | 400 | mono | Table header, error messages, group labels, stat labels (field help is the same size in the prose font) |
-| `micro` | 11 / 14 | 400 | mono | Status bar, nav counts |
-| `metric` | 18 / 24 | 400 | mono | Stat card values |
-| `prose` | 15 / 26 | 400 | prose | Conversation prose, rendered Markdown |
-| `prose-small` | 13 / 20 | 400 | prose | Page-header and form-section descriptions, hints and dialog bodies (`Text variant="prose"`) |
+| Name | Size / line height | Touch | Weight | Font | Purpose |
+|---|---|---|---|---|---|
+| `h1` | 20 / 28 | 28 / 34 | 600 | mono | PageHeader title |
+| `h2` | 16 / 24 | 22 / 28 | 500 | mono | Section title, card title, Dialog title |
+| `body` | 13 / 20 | 17 / 24 | 400 | mono | Default text, tables, controls, nav items |
+| `small` | 12 / 16 | 15 / 20 | 400 | mono | Table header, error messages, group labels, stat labels (field help is the same size in the prose font) |
+| `micro` | 11 / 14 | 13 / 18 | 400 | mono | Status bar, nav counts |
+| `metric` | 18 / 24 | 22 / 28 | 400 | mono | Stat card values |
+| `prose` | 15 / 26 | 17 / 26 | 400 | prose | Conversation prose, rendered Markdown |
+| `prose-small` | 13 / 20 | 15 / 22 | 400 | prose | Page-header and form-section descriptions, hints and dialog bodies (`Text variant="prose"`) |
+
+A touch type size is never below 13 (`check:tokens`, `tokens-touch-type`); `micro` (11) stays the smallest size only off touch.
 
 - Numbers always use `font-variant-numeric: tabular-nums`.
 - **Mono is for things a person copies or compares**: ids, paths, numbers, versions, dates and the UI skeleton. A sentence is never mono: a page writes running text as `Text variant="prose"` (or in a component's own prose part).
 - **Dates**: one helper (`formatDateTime`, the `DateTime` component), local time, mono with tabular figures. Two forms only: `full` `YYYY-MM-DD HH:mm` in tables, meta lines and detail fields, with the relative age ("5 分钟前") as the tooltip (`DateTime` draws a `<time>` whose `title` is the age); `compact` `MM-DD HH:mm` in dense lists (the sidebar's untitled conversations "未命名会话 · 11-02 23:42"). Activity lines may say only the relative age ("Grant · 4 分钟前"); no other format (`2026/11/2`, `2026年11月1日`) is used.
 - **Versions** are always mono with one leading `v` ("v0.1.0-rc.0"; `versionLabel`), in titles, tables, meta and sentences alike; request bodies keep the bare version.
 - No italics and no letter-spacing adjustment.
-- `micro` (11) is the smallest size anywhere, at every window width (mono meta lines included); no stylesheet sets a smaller one.
+- `micro` (11) is the smallest size anywhere off touch, at every window width (mono meta lines included); no stylesheet sets a smaller one. On touch the smallest is 13 (the Touch column).
 
 ### 2.3 The five roles of the accent color (only these five)
 
@@ -143,10 +149,11 @@ Every size a component uses is a step of one of these scales, stored in `tokens.
 |---|---|---|---|
 | Control height | `dense` / `default` / `prominent` | 24 / 28 / 32 | `--cb-control-<step>` |
 | Row height (lists, tables, sidebar, menus) | `dense` / `default` / `roomy` (rows with a thumbnail or two lines) | 28 / 32 / 44 | `--cb-row-<step>` |
+| Touch sizes (§4.3 touch column) | `hit` / `float` / `primary` / `prominent` / `composer` / `row` / `row-roomy` / `icon` / `icon-float` | 44 (the hit target) / 48 (a floating button) / 48 (the primary action) / 52 (the one prominent action) / 60 (the composer) / 52 (a list row) / 56 (a row with two lines) / 22 (an icon) / 24 (a floating button's icon) | `--cb-touch-<step>` |
 | Spacing | `1`–`8` | 4, 8, 12, 16, 20, 24, 32, 40 | `--cb-space-<n>` |
 | Inner padding (inside a component, vertical / horizontal) | `dense` / `default` | 4/8 · 6/12 | `--cb-pad-<step>-y`, `--cb-pad-<step>-x` |
 | Type | §2.2 | | `--cb-type-<name>-size`, `--cb-type-<name>-line` |
-| Radius | `sm` / `md` / `bubble` | 4 / 8 / 10 | `--cb-radius-<step>` |
+| Radius | `sm` / `md` / `bubble` / `pill` | 4 / 8 / 10 / 999 (a full round: the floating button, a count badge) | `--cb-radius-<step>` |
 | Layout | `sidebar` / `sidebar-rail` / `content` / `content-pad` / `chat` / `status-bar` / `action-row` / `gutter` | 256 / 48 / 1120 / 32 / 720 / 24 / 40 / 20 | `--cb-layout-<name>` |
 | Layout, cards (§6.34) | `card-min` | 280 (a CardGrid's narrowest card: three columns at the content width, one on a phone) | `--cb-layout-<name>` |
 | Layout, tool policies (§6.36) | `policy-select` | 160 (a ToolPolicyList row's policy select: fits 需审批 / Ask for approval at `dense`) | `--cb-layout-<name>` |
@@ -155,6 +162,8 @@ Every size a component uses is a step of one of these scales, stored in `tokens.
 | Layout, page head (§4.2 "Head rhythm") | `head-path` / `head-description` / `head-tabs` / `head-tabs-content` / `head-content` | 12 / 4 / 16 / 16 / 24 | `--cb-layout-<name>` |
 | Layout, shell (§4) | `content-min` / `bottom-nav` / `top-bar` | 552 (a content area's least width: the narrowest medium window, 600, less the 48 rail) / 56 (the bottom navigation, §6.45) / 44 (the compact top bar, §6.46: `row.roomy`) | `--cb-layout-<name>` |
 | Layout, conversation page | `title-bar` / `properties` / `panel-min` / `panel` / `chat-min` / `tool-output` / `file-card` / `thumb` / `inline-image` / `menu-max-height` / `bubble-clamp` | 48 / 300 / 520 / 560 / 480 / 120 / 240 / 56 / 360 / 328 (ten `row.default` items and the menu's padding) / 208 (eight `type.prose.line` lines: a long user message's clamp, §6.16.6) | `--cb-layout-<name>` |
+
+**Touch column** (maintainer decision 2026-11-21; the same `TOUCH_QUERY` as §2.2, one `@media` block at the end of `tokens.css` after the scheme blocks): the scales above step up on a touch device and every component follows with no rule of its own. `control` `dense` / `default` / `prominent` become 44 / 44 / 52; `row` `dense` / `default` / `roomy` 44 / 44 / 56; `radius` `sm` / `md` / `bubble` 12 / 20 / 20; the type sizes are §2.2's Touch column. Spacing, padding, layout widths and colors do not change. The `touch.*` sizes above are for the touch components only (§6): the floating button is `touch.float` high with `radius.pill`, `touch.icon-float` icon inside, on `float-ground` with a `float-line` hairline and `shadow-float-touch`; the touch composer is `touch.composer` high; the touch drawer is `layout.drawer` (320) wide. `tokens.json` holds the overrides under `touch` (a name must exist at its base: `check:tokens`).
 
 **Density steps.** Controls and rows come in three steps, chosen by context, never by taste:
 
@@ -185,6 +194,7 @@ Every size a component uses is a step of one of these scales, stored in `tokens.
 | `shadow-2` | `0 16px 48px rgba(0,0,0,.50)` | `0 8px 24px rgba(10,10,10,.12)` | Dialog, command palette |
 | `shadow-sheet` | `-16px 0 40px rgba(0,0,0,.40)` | `-4px 0 16px rgba(10,10,10,.08)` | Sheet |
 | `shadow-float` | `0 8px 24px rgba(0,0,0,.45)` | `0 8px 24px rgba(26,26,24,.08)` | The composer |
+| `shadow-float-touch` | `0 6px 20px rgba(0,0,0,.35)` | `0 6px 20px rgba(26,26,24,.10)` | Touch floating controls (on `float-ground`) |
 
 - Layering: Sheet 40 · Dialog 50 · Popover/Menu 60 · Toast 70 · Decoration 80 (`--cb-z-*`; the decoration layer of §4.5 sits above everything).
 - Motion: hover background transitions `motion.hover` (120ms); expand / collapse height transitions `motion.expand` (160ms); overlays fade in with a 4px offset over `motion.overlay` (120ms), `ease-out`, no bounce; the spinner turns once per `motion.spin` (800ms), the streaming cursor blinks every `motion.cursor` (1000ms), a running agent's dot in the agent map pulses every `motion.pulse` (1600ms, §6.16.28), the generating image placeholder's colour field drifts once per `motion.flow` (6000ms, `ease-in-out`, alternate; transform only, §6.16.20). `prefers-reduced-motion: reduce` makes all of them instant, the spinner static, the cursor steady and the placeholder still (§6.11).
@@ -193,7 +203,7 @@ Every size a component uses is a step of one of these scales, stored in `tokens.
 
 ### 2.6 Icons
 
-- One line-icon set site-wide: Lucide (ISC, vendored as paths in `packages/design/src/icons/paths.ts` by `pnpm --filter @capybara-hq/design gen:icons`, license next to it), 24 grid, stroke 1.5, sizes 16 / 14 / 12. The component is `Icon({ name, size, label? })` (§6.12).
+- One line-icon set site-wide: Lucide (ISC, vendored as paths in `packages/design/src/icons/paths.ts` by `pnpm --filter @capybara-hq/design gen:icons`, license next to it), 24 grid, stroke 1.5, sizes 16 / 14 / 12; on touch 22 (`touch.icon`) and 24 inside a floating button (`touch.icon-float`). The component is `Icon({ name, size, label? })` (§6.12).
 - **Characters are not icons**: no `▾ ✓ ◐ › ● ⠿ ▤` and siblings. `apps/web` never imports an icon library (`web-ui-import`); it uses `Icon` from the design package.
 - Icons are decorative (`aria-hidden`) unless they carry a `label`; an icon-only button always has an `aria-label`.
 
@@ -376,6 +386,7 @@ States: `list`, `list-tabs`, `detail`, `form`, `settings`, `settings-avatar`, `o
   - tab rows scroll instead of wrapping (§6.4), and the page head's search takes its own line (§4.2);
   - every DataTable is stacked rows (§6.6) and StatCards are two columns (§6.14);
   - a `Grid columns="list-detail"` (a 220 px list beside a flexible detail, top-aligned: the agent page's prompt files and the open file's editor) is a `ListDetail` (§6.47): the list is the page, and choosing an item pushes the detail full screen;
+  - on a touch device (§2.5 Touch column) every hit target is 44 (`touch.hit`: controls and rows are 44 by their scales, `control.prominent` 52, the primary action `touch.primary` 48), whatever the width; the 40 px rules below are the floor for a narrow window with a pointer;
   - tap targets are at least 40 px: the page head's tabs, the DataTable row menu, the bottom navigation's items (§6.45) and the conversation title bar's buttons (§6.16.1) are 40 high; the top bar's icon buttons (§6.46), the page head's actions (§4.2) and an ObjectRow's action and menu (§6.17) keep their compact look (`default` / `dense`) and reach 40 × 40 through an invisible ring around the button; menus opened from the top bar have 40 high items (§6.46);
   - object lists are compact (§6.17, maintainer decision 2026-11-09): the row menu sits on the name line at the right, the state closes the meta line in its tone, and the row action sits at the right of the meta line, or under it when both do not fit;
   - the page head stacks (§4.2): title and description across the width (the description wraps), the actions under them;
