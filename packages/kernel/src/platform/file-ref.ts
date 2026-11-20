@@ -1,0 +1,248 @@
+import { createHash } from "node:crypto";
+import { posix } from "node:path";
+import { ToolError } from "@capybara-hq/plugin-sdk";
+import { Inject, Injectable } from "@nestjs/common";
+import sharp from "sharp";
+import { z } from "zod";
+import {
+  AttachmentsService,
+  normalizeContentType,
+  sniffMatches,
+} from "../conversations/attachments.service.js";
+import { ApiError } from "../errors.js";
+import { KernelDb } from "../infra/database/kernel-db.js";
+import { rootConversationOf } from "../runtime/subagents/child.js";
+import { SandboxFileReader, SandboxFileTooLargeError } from "../sandbox/sandbox-file-reader.js";
+import { StorageService } from "../storage/storage.service.js";
+import { findConversationFile } from "../tools/builtins/conversation-files.js";
+import { contentTypeFor } from "../tools/builtins/sandbox/deliver.js";
+
+/**
+ * File references (platform web parity spec §5): a `Platform` write the web does with an upload
+ * takes a file the agent already has instead, a conversation file (`fileId`: an attachment, a
+ * generated or delivered artifact, a `read` copy) or a file on the conversation's device (`path`).
+ * The tool resolves it at the policy step (limits, sha256, a thumbnail for an image: the card's
+ * `detail.file`) and again right before the run, which refuses bytes that differ from the ones the
+ * person confirmed.
+ */
+
+/** The longest device path a reference takes (the sandbox tools' bound). */
+export const FILE_REF_PATH_MAX = 4096;
+
+export type FileRef = { fileId: string } | { path: string };
+
+export const FileRefSchema: z.ZodType<FileRef> = z.union([
+  z
+    .object({
+      fileId: z
+        .uuid()
+        .describe(
+          "The id of a file of this conversation: an attachment, a generated image or a delivered file.",
+        ),
+    })
+    .strict(),
+  z
+    .object({
+      path: z
+        .string()
+        .min(1)
+        .max(FILE_REF_PATH_MAX)
+        .refine((p) => p.startsWith("/"), "must be an absolute path")
+        .describe("The absolute path of a file on this conversation's device."),
+    })
+    .strict(),
+]);
+
+/** What an operation accepts: the route's byte limit and content types (absent: any type). */
+export interface FileLimits {
+  maxBytes: number;
+  contentTypes?: readonly string[];
+}
+
+/** A resolved reference: the bytes and what the card shows of them. */
+export interface ResolvedFile {
+  name: string;
+  /** Normalized (lower case, no parameters). */
+  contentType: string;
+  size: number;
+  /** Hex sha256 of {@link bytes}. */
+  sha256: string;
+  bytes: Uint8Array;
+}
+
+/** What the approval card shows of a referenced file (`detail.file`; never the bytes). */
+export interface FileCardDetail {
+  name: string;
+  size: number;
+  sha256: string;
+  contentType: string;
+  /** A WebP data URL (ruling R9); absent for a non-image, an undecodable one or one too large. */
+  thumbnail?: string;
+}
+
+/** Where a reference is resolved: the runtime's ids, never input. */
+export interface FileRefContext {
+  orgId: string;
+  conversationId: string;
+  actorAccountId: string;
+  /** The tool call the read serves (the device reader's activation gate needs it). */
+  callId?: string;
+  signal: AbortSignal;
+}
+
+/** Ruling R9: the thumbnail's longest edge, quality and the most the data URL may take. */
+export const THUMBNAIL_MAX_EDGE = 160;
+const THUMBNAIL_QUALITY = 70;
+export const THUMBNAIL_MAX_CHARS = 24 * 1024;
+
+/** Image types a thumbnail is made of (an SVG is never rendered by the kernel). */
+const THUMBNAIL_TYPES = new Set(["image/png", "image/jpeg", "image/webp", "image/gif"]);
+
+/** Model-visible: the referenced file is over the operation's byte limit. */
+export const fileTooLargeText = (size: number, max: number) =>
+  `The file is ${size} bytes; this operation takes at most ${max}.`;
+/** Model-visible: the referenced file's type is not one the operation takes. */
+export const fileTypeText = (contentType: string, types: readonly string[]) =>
+  `The file is ${contentType}; this operation takes ${types.join(", ")}.`;
+/** Model-visible: the bytes at run time differ from the ones the person confirmed. */
+export const FILE_CHANGED_TEXT =
+  "The file changed after the person confirmed it; call the operation again.";
+const notFoundText = (id: string) =>
+  `File ${id} is not a file of this conversation. Pass the id of an attachment, a generated image or a delivered file of this conversation, or {"path": ...} for a file on its device.`;
+
+const sha256Of = (bytes: Uint8Array): string => createHash("sha256").update(bytes).digest("hex");
+
+/** The card's view of a resolved file, with a thumbnail for an image (R9). */
+export async function fileCardDetail(file: ResolvedFile): Promise<FileCardDetail> {
+  const thumbnail = await thumbnailOf(file);
+  return {
+    name: file.name,
+    size: file.size,
+    sha256: file.sha256,
+    contentType: file.contentType,
+    ...(thumbnail !== null && { thumbnail }),
+  };
+}
+
+/**
+ * A 160 px (longest edge) WebP q70 data URL of an image, or null: not an image type the kernel
+ * decodes, bytes that fail to decode, or a data URL over {@link THUMBNAIL_MAX_CHARS} (ruling R9).
+ */
+export async function thumbnailOf(file: Pick<ResolvedFile, "contentType" | "bytes">) {
+  if (!THUMBNAIL_TYPES.has(file.contentType)) return null;
+  try {
+    const out = await sharp(file.bytes, { failOn: "error" })
+      .autoOrient()
+      .resize({
+        width: THUMBNAIL_MAX_EDGE,
+        height: THUMBNAIL_MAX_EDGE,
+        fit: "inside",
+        withoutEnlargement: true,
+      })
+      .webp({ quality: THUMBNAIL_QUALITY })
+      .toBuffer();
+    const url = `data:image/webp;base64,${out.toString("base64")}`;
+    return url.length <= THUMBNAIL_MAX_CHARS ? url : null;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Resolves file references for the `Platform` tool. `fileId` goes through
+ * `findConversationFile` (the resolver `Read` uses: the conversation and its root, inside the
+ * org); `path` through {@link SandboxFileReader.read} (its device, path and activation rules).
+ * Every refusal is a model-visible `ToolError`.
+ */
+@Injectable()
+export class FileRefs {
+  constructor(
+    @Inject(KernelDb) private readonly db: KernelDb,
+    @Inject(AttachmentsService) private readonly attachments: AttachmentsService,
+    @Inject(StorageService) private readonly storage: StorageService,
+    @Inject(SandboxFileReader) private readonly reader: SandboxFileReader,
+  ) {}
+
+  async resolve(ref: FileRef, limits: FileLimits, ctx: FileRefContext): Promise<ResolvedFile> {
+    const got =
+      "fileId" in ref
+        ? await this.conversationFile(ref.fileId, limits, ctx)
+        : await this.deviceFile(ref.path, limits, ctx);
+    const contentType = normalizeContentType(got.contentType);
+    const types = limits.contentTypes;
+    if (types !== undefined) {
+      if (!types.includes(contentType)) throw new ToolError(fileTypeText(contentType, types));
+      // the bytes must be what the type says (the upload routes sniff the same way)
+      if (!sniffMatches(contentType, got.bytes.subarray(0, 4096))) {
+        throw new ToolError(
+          `The file's bytes are not ${contentType}; this operation takes ${types.join(", ")}.`,
+        );
+      }
+    }
+    return {
+      name: got.name,
+      contentType,
+      size: got.bytes.byteLength,
+      sha256: sha256Of(got.bytes),
+      bytes: got.bytes,
+    };
+  }
+
+  private async conversationFile(id: string, limits: FileLimits, ctx: FileRefContext) {
+    const db = this.db.db;
+    const rootConversationId = await rootConversationOf(db, ctx.conversationId);
+    const file = await findConversationFile(
+      { db, attachments: this.attachments, storage: this.storage },
+      {
+        orgId: ctx.orgId,
+        conversationId: ctx.conversationId,
+        rootConversationId,
+        id,
+        // one byte past the limit tells a file that grew from one that fits
+        maxBytes: limits.maxBytes + 1,
+        signal: ctx.signal,
+      },
+    );
+    if (file === null) throw new ToolError(notFoundText(id));
+    if (file.size > limits.maxBytes) {
+      await file.discard();
+      throw new ToolError(fileTooLargeText(file.size, limits.maxBytes));
+    }
+    const types = limits.contentTypes;
+    const declared = normalizeContentType(file.contentType);
+    if (types !== undefined && !types.includes(declared)) {
+      await file.discard();
+      throw new ToolError(fileTypeText(declared, types));
+    }
+    const bytes = await file.open({ maxBytes: limits.maxBytes + 1 });
+    if (bytes.byteLength > limits.maxBytes) {
+      throw new ToolError(fileTooLargeText(bytes.byteLength, limits.maxBytes));
+    }
+    return { name: file.name, contentType: file.contentType, bytes };
+  }
+
+  private async deviceFile(path: string, limits: FileLimits, ctx: FileRefContext) {
+    try {
+      const bytes = await this.reader.read({
+        orgId: ctx.orgId,
+        conversationId: ctx.conversationId,
+        actorAccountId: ctx.actorAccountId,
+        path,
+        maxBytes: limits.maxBytes,
+        signal: ctx.signal,
+        ...(ctx.callId !== undefined && { callId: ctx.callId }),
+      });
+      const name = posix.basename(path);
+      // a device file has no stored type: the name's, as `Deliver` names it
+      return { name, contentType: contentTypeFor(name), bytes };
+    } catch (e) {
+      if (e instanceof SandboxFileTooLargeError) {
+        throw new ToolError(fileTooLargeText(e.size, limits.maxBytes));
+      }
+      if (e instanceof ApiError && e.code.startsWith("sandbox.file_")) {
+        throw new ToolError(e.message);
+      }
+      throw e;
+    }
+  }
+}
