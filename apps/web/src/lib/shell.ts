@@ -193,12 +193,11 @@ export function shellCapability<T extends object>(key: string): T | undefined {
  * keep in step. Capability keys are `name@major`; a rejected call carries `{ code: ShellCallError }`.
  */
 export const SHELL_CAPABILITY_KEYS = {
+  chrome: "chrome@1",
   device: "device@1",
   notify: "notify@1",
   openExternal: "openExternal@1",
   signIn: "signIn@1",
-  chrome: "chrome@1",
-  nav: "nav@1",
   haptics: "haptics@1",
   share: "share@1",
   menu: "menu@1",
@@ -276,34 +275,37 @@ export interface SignInCapabilityV1 {
   start(): Promise<"signedIn" | "cancelled">;
 }
 
-/** `chrome@1`: the web tells the shell its theme so native chrome matches (layout spec §9.2). */
+/**
+ * The page's main color tokens (the computed `--cb-bg`, `--cb-panel`, `--cb-ink`, `--cb-muted`,
+ * `--cb-line`, `--cb-accent`, `--cb-on-accent`), each a CSS hex or `rgb()` / `rgba()` color. The
+ * shell validates them and uses them only as custom properties of its own pages, never as markup.
+ */
+export interface ShellChromeTokens {
+  bg: string;
+  panel: string;
+  ink: string;
+  muted: string;
+  line: string;
+  accent: string;
+  onAccent: string;
+}
+
+/**
+ * `chrome@1` (mobile layout spec §9.2): the native chrome (window background, title bar, the
+ * shell's own pages) follows the page's theme. `tokens` is sent only when all seven are colors;
+ * `singleScheme` is true under a UI theme with one scheme (no light / dark toggle on either side).
+ */
 export interface ChromeCapabilityV1 {
-  setAppearance(input: { scheme: "light" | "dark"; background: string }): Promise<void>;
+  setAppearance(input: {
+    scheme: "light" | "dark";
+    background: string;
+    tokens?: ShellChromeTokens;
+    singleScheme?: boolean;
+  }): Promise<void>;
   /** The web's first paint is done (mobile app spec §5.2); a shell may leave it out. */
   ready?(): Promise<void>;
 }
 
-export type NavTabId = "chats" | "agents" | "inbox" | "me";
-
-export interface NavItemV1 {
-  id: NavTabId;
-  label: string;
-  count?: number;
-  /** The badge shows `count+`: more than `count` are waiting (`count` is capped at `navCount`). */
-  countMore?: boolean;
-}
-
-export interface NavStateV1 {
-  items: NavItemV1[];
-  current: NavTabId | null;
-  visible: boolean;
-}
-
-/** `nav@1`: the native tab bar (mobile app spec §5.2). */
-export interface NavCapabilityV1 {
-  set(state: NavStateV1): Promise<void>;
-  onSelect(listener: (id: NavTabId) => void): () => void;
-}
 
 export type HapticKind = "selection" | "light" | "success" | "warning";
 
@@ -344,8 +346,6 @@ export interface MenuCapabilityV1 {
 
 /** The shell validates every input against these (and the web keeps within them). */
 export const MOBILE_SHELL_LIMITS = {
-  navLabel: 32,
-  navCount: 9999,
   menuItems: 12,
   menuLabel: 64,
   menuTitle: 128,

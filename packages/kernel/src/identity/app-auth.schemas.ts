@@ -10,6 +10,10 @@ const printable = (max: number) =>
     .max(max)
     .regex(PRINTABLE_RE, { message: "Must contain only printable characters" });
 
+/** The native apps that sign in this way: the desktop app and the mobile app (mobile spec §4.3). */
+export const AppClientSchema = z.enum(["desktop", "mobile"]);
+export type AppClient = z.infer<typeof AppClientSchema>;
+
 /**
  * `POST /api/v1/app-auth/authorize` (desktop client spec §6.5): the person consents on the web to
  * sign a native app in. `codeChallenge` is BASE64URL(SHA-256(verifier)), always 43 characters;
@@ -17,7 +21,7 @@ const printable = (max: number) =>
  */
 export const AppAuthorizeBodySchema = z
   .object({
-    client: z.literal("desktop"),
+    client: AppClientSchema,
     redirectUri: z.string().min(1).max(2048),
     codeChallenge: z.string().regex(/^[A-Za-z0-9_-]{43}$/, {
       message: "Must be the base64url SHA-256 of the code verifier (43 characters)",
@@ -34,7 +38,8 @@ export class AppAuthorizeBodyDto extends createZodDto(AppAuthorizeBodySchema, "A
 
 /**
  * `POST /api/v1/app-auth/token`: the app exchanges the one-time code with its PKCE verifier. Only
- * the shape is checked here; every content failure answers `app_auth.code_invalid` (the service).
+ * the shape is checked here; every content failure answers `app_auth.code_invalid` (the service),
+ * except a disabled account: `auth.account_disabled`.
  */
 export const AppTokenBodySchema = z
   .object({

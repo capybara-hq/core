@@ -6,12 +6,12 @@ import {
   MENU_ITEM_ID,
   type MenuCapabilityV1,
   MOBILE_SHELL_LIMITS,
-  type NavTabId,
   type NotifyCapabilityV1,
   type OpenExternalCapabilityV1,
   SHELL_CAPABILITIES,
   SHELL_CAPABILITY_KEYS,
   type ShellCallError,
+  type ShellChromeTokens,
   type SignInCapabilityV1,
   type ThisMachineStatus,
 } from "../src/index.js";
@@ -19,12 +19,11 @@ import {
 describe("desktop shell capability types", () => {
   it("names the capability keys as name@major", () => {
     expect(SHELL_CAPABILITY_KEYS).toEqual({
+      chrome: "chrome@1",
       device: "device@1",
       notify: "notify@1",
       openExternal: "openExternal@1",
       signIn: "signIn@1",
-      chrome: "chrome@1",
-      nav: "nav@1",
       haptics: "haptics@1",
       share: "share@1",
       menu: "menu@1",
@@ -72,7 +71,7 @@ describe("desktop shell capability types", () => {
   });
 
   it("names the mobile app spec as the owner of the new mobile capabilities", () => {
-    for (const key of ["nav@1", "haptics@1", "share@1", "menu@1"]) {
+    for (const key of ["haptics@1", "share@1", "menu@1"]) {
       const entry = SHELL_CAPABILITIES.find((c) => c.key === key);
       expect(entry?.owner).toContain("mobile app spec");
     }
@@ -80,14 +79,11 @@ describe("desktop shell capability types", () => {
 
   it("types the mobile calls", () => {
     expectTypeOf<ReturnType<MenuCapabilityV1["show"]>>().toEqualTypeOf<Promise<string | null>>();
-    expectTypeOf<NavTabId>().toEqualTypeOf<"chats" | "agents" | "inbox" | "me">();
     expectTypeOf<ChromeCapabilityV1["ready"]>().toEqualTypeOf<(() => Promise<void>) | undefined>();
   });
 
   it("pins the mobile limits and the menu item id", () => {
     expect(MOBILE_SHELL_LIMITS).toEqual({
-      navLabel: 32,
-      navCount: 9999,
       menuItems: 12,
       menuLabel: 64,
       menuTitle: 128,
@@ -97,5 +93,21 @@ describe("desktop shell capability types", () => {
     });
     expect(MENU_ITEM_ID.test("a.b-c_1")).toBe(true);
     expect(MENU_ITEM_ID.test("")).toBe(false);
+  });
+
+  it("takes the scheme and background, and optionally the color tokens and singleScheme", () => {
+    expectTypeOf<Parameters<ChromeCapabilityV1["setAppearance"]>[0]>().toEqualTypeOf<{
+      scheme: "light" | "dark";
+      background: string;
+      tokens?: ShellChromeTokens;
+      singleScheme?: boolean;
+    }>();
+    expectTypeOf<keyof ShellChromeTokens>().toEqualTypeOf<
+      "bg" | "panel" | "ink" | "muted" | "line" | "accent" | "onAccent"
+    >();
+    // an older web sends only the scheme and background
+    expectTypeOf<{ scheme: "dark"; background: string }>().toMatchTypeOf<
+      Parameters<ChromeCapabilityV1["setAppearance"]>[0]
+    >();
   });
 });

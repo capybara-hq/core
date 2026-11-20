@@ -1,5 +1,11 @@
 import { describe, expect, it } from "vitest";
-import { buildRedirect, isAllowedRedirect, s256 } from "../../src/identity/app-auth.js";
+import {
+  appUserAgent,
+  buildRedirect,
+  isAllowedRedirect,
+  s256,
+} from "../../src/identity/app-auth.js";
+import { AppAuthorizeBodySchema } from "../../src/identity/app-auth.schemas.js";
 
 /** The pure helpers of native-app sign-in (desktop client spec §6.5): PKCE and the redirect. */
 
@@ -63,6 +69,40 @@ describe("buildRedirect", () => {
     );
     expect(buildRedirect("capybara://auth/callback?a=1&", { state: "s" })).toBe(
       "capybara://auth/callback?a=1&state=s",
+    );
+  });
+});
+
+describe("AppAuthorizeBodySchema client", () => {
+  const body = (client: string) => ({
+    client,
+    redirectUri: "capybara://auth/callback",
+    codeChallenge: "a".repeat(43),
+    codeChallengeMethod: "S256",
+    state: "st",
+    name: "iPhone",
+    appVersion: "1.0.0",
+  });
+
+  it("accepts the desktop and the mobile app", () => {
+    expect(AppAuthorizeBodySchema.safeParse(body("desktop")).success).toBe(true);
+    expect(AppAuthorizeBodySchema.safeParse(body("mobile")).success).toBe(true);
+  });
+
+  it("refuses any other client", () => {
+    for (const client of ["tablet", "Mobile", ""]) {
+      expect(AppAuthorizeBodySchema.safeParse(body(client)).success, client).toBe(false);
+    }
+  });
+});
+
+describe("appUserAgent", () => {
+  it("names the client, its version and the machine", () => {
+    expect(appUserAgent({ client: "desktop", appVersion: "0.1.0", name: "Ada's MacBook" })).toBe(
+      "Capybara Desktop/0.1.0 (Ada's MacBook)",
+    );
+    expect(appUserAgent({ client: "mobile", appVersion: "1.0.0", name: "iPhone" })).toBe(
+      "Capybara Mobile/1.0.0 (iPhone)",
     );
   });
 });

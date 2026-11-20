@@ -485,10 +485,11 @@ export function checkWoff2(bytes: Uint8Array): string | undefined;
 
 // @public
 export interface ChromeCapabilityV1 {
-    ready?(): Promise<void>;
     setAppearance(input: {
         scheme: "light" | "dark";
         background: string;
+        tokens?: ShellChromeTokens;
+        singleScheme?: boolean;
     }): Promise<void>;
 }
 
@@ -3966,6 +3967,7 @@ export const SHELL_CAPABILITIES: readonly {
 
 // @public
 export const SHELL_CAPABILITY_KEYS: {
+    readonly chrome: "chrome@1";
     readonly device: "device@1";
     readonly notify: "notify@1";
     readonly openExternal: "openExternal@1";
@@ -3979,6 +3981,17 @@ export const SHELL_CAPABILITY_KEYS: {
 
 // @public
 export type ShellCallError = "busy" | "no_activation" | "cancelled" | "failed";
+
+// @public
+export interface ShellChromeTokens {
+    accent: string;
+    bg: string;
+    ink: string;
+    line: string;
+    muted: string;
+    onAccent: string;
+    panel: string;
+}
 
 // @public
 export interface SignInCapabilityV1 {

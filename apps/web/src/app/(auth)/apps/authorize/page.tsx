@@ -1,9 +1,10 @@
 import AppAuthorizeView from "./view";
 
 /**
- * `/apps/authorize?client=desktop&redirect_uri=…&code_challenge=…&code_challenge_method=S256&state=…
- * &name=…&app_version=…` (signed in; the layout sent a signed-out visitor to sign-in and back): the
- * Capybara desktop app opens it in the system browser. The view asks for one confirmation.
+ * `/apps/authorize?client=desktop|mobile&redirect_uri=…&code_challenge=…&code_challenge_method=S256
+ * &state=…&name=…&app_version=…` (signed in; the layout sent a signed-out visitor to sign-in and
+ * back): the Capybara desktop app opens it in the system browser, the mobile app in its system
+ * sign-in sheet. The view validates `client` and asks for one confirmation.
  */
 export default async function AppAuthorizePage({
   searchParams,

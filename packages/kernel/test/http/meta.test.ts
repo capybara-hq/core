@@ -44,6 +44,7 @@ describe("GET /api/v1/meta", () => {
       // device protocol 4 only: a protocol 3 program is refused (426)
       protocols: { device: { min: 4, max: 4 } },
       features: { localDevices: true, appSignIn: false },
+      appRedirectUris: [],
     });
   });
 
@@ -76,6 +77,24 @@ describe("GET /api/v1/meta", () => {
     expect(on.features.appSignIn).toBe(true);
     const off = (await app.inject({ method: "GET", url: "/api/v1/meta" })).json();
     expect(off.features.appSignIn).toBe(false);
+  });
+
+  it("lists auth.appRedirectUris only while app sign-in is available", async () => {
+    const config = app.get(KernelConfigService);
+    const real = config.get();
+    const uris = ["capybara://auth/callback", "https://app.example.com/callback"];
+    const spy = vi.spyOn(config, "get").mockReturnValue({
+      ...real,
+      http: { ...real.http, publicUrl: "https://cap.example.com" },
+      auth: { ...real.auth, appRedirectUris: uris },
+    });
+    const on = (await app.inject({ method: "GET", url: "/api/v1/meta" })).json();
+    spy.mockRestore();
+    expect(on.appRedirectUris).toEqual(uris);
+    // without http.publicUrl the configured list stays hidden: there is no app sign-in
+    expect(real.auth.appRedirectUris).toEqual(["capybara://auth/callback"]);
+    const off = (await app.inject({ method: "GET", url: "/api/v1/meta" })).json();
+    expect(off.appRedirectUris).toEqual([]);
   });
 
   it("returns each platform icon URL, null for the default; icon is icons.app", async () => {
