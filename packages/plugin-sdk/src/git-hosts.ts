@@ -27,7 +27,6 @@ export const GIT_HOST_USERNAMES = {
 
 /** A valid HTTP basic username: `^[A-Za-z0-9._-]{1,64}$`. */
 export const GIT_USERNAME_RE = /^[A-Za-z0-9._-]{1,64}$/;
-const USERNAME_RE = GIT_USERNAME_RE;
 
 /** The username a git marketplace credential is presented with when none is stored. */
 export const GIT_MARKETPLACE_USERNAME_DEFAULT = "x-access-token";
@@ -75,7 +74,7 @@ const GitHostEntrySchema = z.strictObject({
   username: z
     .string()
     .regex(
-      USERNAME_RE,
+      GIT_USERNAME_RE,
       "username must match ^[A-Za-z0-9._-]{1,64}$ (letters, digits, '.', '_', '-')",
     ),
 });

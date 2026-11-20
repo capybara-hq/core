@@ -181,17 +181,6 @@ export function bootstrapFileName(e: BootstrapEntry): string {
   return `${e.name}-${e.version}.tgz`;
 }
 
-/**
- * The extra bootstrap manifest (`bootstrap-extra.v1`): a second manifest a distribution supplies,
- * merged into the built-in one (spec 2026-11-20-bootstrap-extra-manifest §2). It adds
- * `marketplaces` the entries can name, `git` entries (a plugin directory of such a marketplace at
- * a pinned commit) and an optional `defaultTheme`. `required` is optional here (default `false`).
- * Objects are strict. The committed JSON Schema (`schemas/bootstrap-extra.v1.schema.json`) is
- * generated from {@link BootstrapExtraManifestSchema}; the cross-field rules (unique names, a
- * declared marketplace, `defaultTheme` naming a builtin entry, not both `required` and `builtin`)
- * are decided only by {@link parseBootstrapExtraManifest}.
- */
-
 /** Extra manifest format version. */
 export const BOOTSTRAP_EXTRA_MANIFEST_SCHEMA_VERSION = 1;
 
@@ -230,7 +219,16 @@ export interface BootstrapExtraMarketplace {
   username?: string;
 }
 
-/** `bootstrap.extra.json`. */
+/**
+ * The extra bootstrap manifest (`bootstrap-extra.v1`): a second manifest a distribution supplies (the file
+ * `bootstrap.extraManifest` points at), merged into the built-in one (spec 2026-11-20-bootstrap-extra-manifest §2). It adds
+ * `marketplaces` the entries can name, `git` entries (a plugin directory of such a marketplace at
+ * a pinned commit) and an optional `defaultTheme`. `required` is optional here (default `false`).
+ * Objects are strict. The committed JSON Schema (`schemas/bootstrap-extra.v1.schema.json`) is
+ * generated from {@link BootstrapExtraManifestSchema}; the cross-field rules (unique names, a
+ * declared marketplace, `defaultTheme` naming a builtin entry, not both `required` and `builtin`)
+ * are decided only by {@link parseBootstrapExtraManifest}.
+ */
 export interface BootstrapExtraManifest {
   $schema?: string;
   schemaVersion: 1;
@@ -372,6 +370,14 @@ const extraSchema = z
  */
 export const BootstrapExtraManifestSchema: z.ZodType<BootstrapExtraManifest> =
   extraSchema as unknown as z.ZodType<BootstrapExtraManifest>;
+
+// Compile-time guard: the hand-written interfaces and the zod schema must not drift apart.
+type Assert<T extends true> = T;
+// (Checked in the interface -> schema direction: zod writes optional keys as `?: T | undefined`,
+// which `exactOptionalPropertyTypes` does not accept in the other direction.)
+type _BootstrapExtraManifestMatchesSchema = Assert<
+  BootstrapExtraManifest extends z.input<typeof extraSchema> ? true : false
+>;
 
 /**
  * Validates and parses the extra manifest. Invalid input returns `{ errors }` (`<path>: <reason>`,
