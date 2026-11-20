@@ -98,7 +98,7 @@ function BubbleRow({
       <Avatar
         shape="circle"
         size={24}
-        name={author.name}
+        name={author.initialFrom ?? author.name}
         value={author.avatarUrl ? { kind: "image", src: author.avatarUrl } : null}
       />
     </div>

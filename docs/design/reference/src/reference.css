@@ -7235,3 +7235,79 @@ span.r-scal-daynum {
   margin-top: var(--cb-space-1);
   border-top: 1px solid var(--cb-line-soft);
 }
+
+/* ObjectList / ObjectRow (spec §6.17): the loaded rows (the person meta block). */
+.r-olist {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  background: var(--cb-panel);
+  border: 1px solid var(--cb-line-card);
+  border-radius: var(--cb-radius-md);
+}
+.r-orow {
+  display: flex;
+  align-items: center;
+  gap: var(--cb-space-3);
+  min-height: 64px;
+  padding: var(--cb-space-3) var(--cb-space-4);
+  border-top: 1px solid var(--cb-line-soft);
+}
+.r-orow:first-child {
+  border-top: 0;
+}
+.r-orow-mark {
+  display: grid;
+  flex: none;
+  place-items: center;
+  width: 36px;
+  height: 36px;
+  border-radius: var(--cb-radius-md);
+  background: var(--cb-selected);
+  color: var(--cb-ink);
+  font-weight: 600;
+}
+.r-orow-text {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+.r-orow-line {
+  display: flex;
+  align-items: center;
+  gap: var(--cb-space-2);
+}
+.r-orow-name {
+  color: var(--cb-ink);
+  font-weight: 600;
+  text-decoration: none;
+}
+.r-orow-desc,
+.r-orow-meta {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.r-orow-desc {
+  color: var(--cb-muted);
+  font-family: var(--cb-font-prose);
+}
+.r-orow-meta {
+  font-size: var(--cb-type-micro-size);
+  line-height: 16px;
+  color: var(--cb-faint);
+}
+.r-orow-meta-person {
+  display: inline-flex;
+  max-width: 100%;
+  vertical-align: middle;
+}
+.r-orow-state {
+  flex: none;
+  font-size: var(--cb-type-small-size);
+  line-height: var(--cb-type-small-line);
+  white-space: nowrap;
+  color: var(--cb-faint);
+}

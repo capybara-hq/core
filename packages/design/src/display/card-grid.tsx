@@ -533,7 +533,12 @@ function LoadedCard({
                       m
                     ) : "person" in m ? (
                       <span className="cb-object-card-meta-person" data-part="object-card-person">
-                        <PersonName name={m.person.name} avatarUrl={m.person.avatarUrl} size={16} />
+                        <PersonName
+                          name={m.person.name}
+                          avatarUrl={m.person.avatarUrl}
+                          initialFrom={m.person.initialFrom}
+                          size={16}
+                        />
                       </span>
                     ) : (
                       <span className="cb-object-card-meta-part" data-tone={m.tone}>

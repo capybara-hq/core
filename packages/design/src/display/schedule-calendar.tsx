@@ -796,7 +796,7 @@ function ItemLine({ item }: { item: ScheduleCalendarItem }) {
           <Avatar
             shape="circle"
             size={16}
-            name={item.person.name}
+            name={item.person.initialFrom ?? item.person.name}
             value={item.person.avatarUrl ? { kind: "image", src: item.person.avatarUrl } : null}
           />
         </span>

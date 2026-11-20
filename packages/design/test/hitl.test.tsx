@@ -680,7 +680,9 @@ describe("QueuedMessage (§6.16.14)", () => {
 
 describe("a decider as a person (§6.16.11, §6.16.12)", () => {
   const person = { name: "Ada", avatarUrl: null };
-  const decided = (who: string | typeof person): ApprovalBlockProps["state"] => ({
+  const decided = (
+    who: string | (typeof person & { initialFrom?: string }),
+  ): ApprovalBlockProps["state"] => ({
     kind: "decided",
     decision: "approved",
     who,
@@ -722,6 +724,75 @@ describe("a decider as a person (§6.16.11, §6.16.12)", () => {
     );
     expect(container.querySelector('[data-part="person-name-text"]')?.textContent).toBe("Ada");
     expect(container.querySelector('[data-part="tool-line"]')?.textContent).toContain("Ada denied");
+  });
+
+  it("draws a network ask's decider as a PersonName after the hosts", () => {
+    const { container } = wrap(
+      <ApprovalBlock
+        {...pending({
+          network: { hosts: ["files.slack.com"], command: "curl https://files.slack.com" },
+          state: {
+            kind: "decided",
+            decision: "approved",
+            who: person,
+            when: "10-20 14:32",
+            hosts: ["files.slack.com"],
+          },
+        })}
+      />,
+      "en",
+    );
+    const line = container.querySelector('[data-part="tool-line"][data-network="true"]');
+    const key = line?.querySelector('[data-part="tool-key"]') as HTMLElement;
+    expect(key.textContent).toContain("files.slack.com");
+    expect(key.querySelector('[data-part="person-name-text"]')?.textContent).toBe("Ada");
+    expect(findNestedBoxes(document.body).map(describeNestedBox)).toEqual([]);
+  });
+
+  it("draws a command review's decider as a PersonName after the tool key", () => {
+    const { container } = wrap(
+      <ApprovalBlock
+        {...pending({
+          tool: "Bash",
+          toolKey: "Bash",
+          scopes: ["once", "session"],
+          command: { kind: "command", command: "pnpm build", reason: "Builds" },
+          state: {
+            kind: "decided",
+            decision: "approved",
+            who: person,
+            when: "10:36",
+            scope: "once",
+          },
+        })}
+      />,
+      "en",
+    );
+    const line = container.querySelector('[data-part="tool-line"][data-command="true"]');
+    const key = line?.querySelector('[data-part="tool-key"]') as HTMLElement;
+    expect(key.textContent).toContain("Bash");
+    expect(key.querySelector('[data-part="person-name-text"]')?.textContent).toBe("Ada");
+  });
+
+  it("draws who skipped a question (wrote instead) as a PersonName", () => {
+    const { container } = wrap(
+      <QuestionBlock title="Which?" fields={[]} state={{ kind: "skipped", who: person }} />,
+      "en",
+    );
+    const name = container.querySelector('[data-part="person-name"]') as HTMLElement;
+    expect(name.querySelector('[data-part="person-name-text"]')?.textContent).toBe("Ada");
+    expect(name.getAttribute("data-size")).toBe("16");
+  });
+
+  it("draws the viewer as You with their own initial (initialFrom)", () => {
+    const { container } = wrap(
+      <ApprovalBlock
+        {...pending({ state: decided({ ...person, name: "You", initialFrom: "Grant" }) })}
+      />,
+      "en",
+    );
+    expect(container.querySelector('[data-part="person-name-text"]')?.textContent).toBe("You");
+    expect(container.querySelector('[data-part="avatar"]')?.textContent).toBe("G");
   });
 
   it("draws a question's answerer as a PersonName and keeps a string as text", () => {

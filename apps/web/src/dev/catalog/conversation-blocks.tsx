@@ -24,6 +24,7 @@ import {
   MarkdownPreview,
   NetworkBlockedFacts,
   NoPreview,
+  PersonName,
   Prose,
   QuestionBlock,
   QueuedMessage,
@@ -244,6 +245,19 @@ function runRowBlocks(): ReactNode {
           status="stopped"
           parts={RUN_PARTS}
           statusText="已停止 · 你 14:03"
+          facts={RUN_FACTS}
+          links={[RUN_TRAJECTORY]}
+        />
+      </Block>
+      <Block id="run-row-stopped-person">
+        <RunRow
+          status="stopped"
+          parts={RUN_PARTS}
+          statusText={
+            <>
+              已停止 · <PersonName name="Lin" avatarUrl={null} size={16} /> 14:03
+            </>
+          }
           facts={RUN_FACTS}
           links={[RUN_TRAJECTORY]}
         />

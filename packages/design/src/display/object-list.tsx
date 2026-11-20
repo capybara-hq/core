@@ -209,6 +209,7 @@ export function ObjectRow({
                             <PersonName
                               name={m.person.name}
                               avatarUrl={m.person.avatarUrl}
+                              initialFrom={m.person.initialFrom}
                               size={16}
                             />
                           </span>

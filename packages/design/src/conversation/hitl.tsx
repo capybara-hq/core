@@ -28,7 +28,7 @@ function whoNode(who: string | PersonLike): ReactNode {
   return typeof who === "string" ? (
     who
   ) : (
-    <PersonName name={who.name} avatarUrl={who.avatarUrl} size={16} />
+    <PersonName name={who.name} avatarUrl={who.avatarUrl} initialFrom={who.initialFrom} size={16} />
   );
 }
 

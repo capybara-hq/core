@@ -1236,6 +1236,29 @@ function sidebarWithAvatars(): ReturnType<typeof sidebarProps> {
   };
 }
 
+/** Object rows whose meta names a person (spec §6.17, state `person`): the requester's 16 circle. */
+function objectListBlocks(): ReactNode {
+  const row = (mark: string, name: string, description: string, person: string, at: string) => (
+    <ObjectRow
+      mark={{ text: mark }}
+      name={name}
+      href="#"
+      description={description}
+      meta={[{ person: { name: person, avatarUrl: null } }, `申请于 ${at}`]}
+      state={{ label: "待审批", tone: "muted" }}
+      action={{ label: "查看", onSelect: noop }}
+    />
+  );
+  return (
+    <RefBlock id="object-list-person" width={1080} pad>
+      <ObjectList label="待审批的插件">
+        {row("T", "todo", "待办清单：智能体记下要做的事，逐项完成并汇报。", "Mia", "11-20 14:03")}
+        {row("G", "github", "读取仓库、议题和拉取请求，按需评论。", "Lin", "11-19 09:12")}
+      </ObjectList>
+    </RefBlock>
+  );
+}
+
 function personNameBlocks(): ReactNode {
   return (
     <>
@@ -1377,6 +1400,7 @@ export const REFERENCE_BLOCKS = {
   "file-picker": filePickerBlocks,
   avatar: avatarBlocks,
   "person-name": personNameBlocks,
+  "object-list": objectListBlocks,
   ...CONFIG_FORM_BLOCKS,
   ...BOX_BLOCKS,
   ...CARD_GRID_BLOCKS,

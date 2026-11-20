@@ -48,6 +48,14 @@ describe("PersonName (spec §6.50)", () => {
     expect(text.compareDocumentPosition(secondary) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
   });
 
+  it("draws the initial from initialFrom when the name is a replacement word", () => {
+    const { container } = wrap(
+      <PersonName name="You" avatarUrl={null} size={16} initialFrom="Grant" />,
+    );
+    expect(container.querySelector('[data-part="avatar"]')?.textContent).toBe("G");
+    expect(container.querySelector('[data-part="person-name-text"]')?.textContent).toBe("You");
+  });
+
   it("draws no secondary part without secondary", () => {
     const { container } = wrap(<PersonName name="Grant" avatarUrl={null} size={16} />);
     expect(container.querySelector('[data-part="person-name-secondary"]')).toBeNull();
