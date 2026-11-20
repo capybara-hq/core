@@ -183,6 +183,8 @@ services:
   # (the merged manifest must be the same everywhere), e.g. in a compose.override.yaml
   #   volumes: ["./bootstrap-extra.json:/app/bootstrap-extra.json:ro"]
   # and set CAPYBARA_BOOTSTRAP__EXTRA_MANIFEST=/app/bootstrap-extra.json for those services.
+  # Every service (init, api, worker, gateway) must use the same extra manifest; marketplace
+  # tokens go in CAPYBARA_MARKETPLACES__TOKENS (or Nacos), never in the manifest or this file.
   init:
     image: *api-image
     init: true

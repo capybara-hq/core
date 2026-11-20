@@ -119,7 +119,7 @@ A new entry kind `source: "git"`, accepted only in the extra manifest:
 |---|---|
 | `marketplace` | a name from this file's `marketplaces[]` (gives the URL and credentials) |
 | `commit` | 40-hex commit the tree is read at (never a branch) |
-| `path` | the plugin directory inside the repository (`./…`, same rules as a marketplace `path` source) |
+| `path` | the plugin directory inside the repository (`./…`, or `.` / `./` for the root of a single-plugin repository) |
 | `integrity` | sha512 of the **kernel's** canonical pack of that tree (`packPackageTgz`: sorted paths, mode 0644, mtime 0, `package/` prefix) |
 
 **One integrity, one packer.** The kernel already packs a git tree with `packPackageTgz`
@@ -143,12 +143,14 @@ marketplace entry, so that later upgrades from the managed marketplace match
 (`assertSameSource`, `sourceIdentity`). The import source is
 `{ kind: "bootstrap", ref, integrity, detail }` with `detail`
 the `GitSourceDetail` that `importFromMarketplace` builds for a `path` entry (host and repo from the
-marketplace URL, `path`, `commit`, `followsBranch: true`, as for an admin import of a `path` entry), whichever of the two ways the bytes
-came. The run still records the entry under `bootstrap:<name>@<version>` in `bootstrap_runs`.
+marketplace URL, `path`, `commit`, `followsBranch: true`, as for an admin import of a `path`
+entry), whichever of the two ways the bytes came. The run still records the entry under
+`bootstrap:<name>@<version>` in `bootstrap_runs`.
 
 The git read needs no marketplace row and no prior refresh, so it works in `capybara bootstrap`,
-which runs before any kernel start (compose `init`); the `marketplaceId` it records refers to the
-row the kernel start creates (§5) and is valid once that start has run.
+which runs before any kernel start (compose `init`). The import names the managed marketplace on
+the item only when its row exists; otherwise the next kernel start's sync fills it in (R13 in "As
+built": `syncExtraFromConfig` backfills `catalog_items.marketplace_id`).
 
 ### 5. Marketplaces owned by the config
 
@@ -180,7 +182,8 @@ origin only (unchanged rule).
   → `x-access-token`, `bitbucket.org` → `x-token-auth`, `gitlab.com` → `oauth2`), the
   `GIT_HOST_USERNAMES` idea used for connectors. The table is a hint for the form only; the kernel
   sends whatever is stored, so any other host (Gitee, Gitea, a self-hosted GitLab) works by entering
-  the username its documentation names.
+  the username its documentation names. That is about credentials only: a bootstrap git entry's
+  commit must also be fetchable by its sha from the host ("As built": fetchable commits).
 - `GitOptions` gains `username`; `git-source.ts` builds the header from it.
 - Http marketplaces keep `Authorization: Bearer <token>`.
 
@@ -245,7 +248,10 @@ never the token), `marketplace.config_managed`.
   - fresh deployment: built-in plus extra entries installed; theme becomes the platform default;
   - offline: a `git` entry satisfied from the offline dir without network;
   - restart: no re-run, no theme rewrite; super admin's choice (including an explicit `null`) kept;
-  - an extra entry removed from the file → `required_cleared` like a built-in one;
+  - an extra entry removed from the file → `required_cleared` / builtin cleared like a built-in
+    one (`extensions/bootstrap-extra-start.test.ts`);
+  - a service started without the extra manifest while managed marketplaces exist changes nothing
+    (R14);
   - name conflict fails the step;
   - managed marketplace: created, read-only, token from config, username sent.
 - Dual-replica (`container` project, `bootstrap.dual.test.ts`): two kernels start with the extra
@@ -313,8 +319,8 @@ Rulings taken while implementing; where they differ from the text above, they wi
   yet).
 - **R5:** a git entry's integrity is the raw tree pack (`packPackageTgz`), verified before any
   Claude-plugin or skills-only translation.
-- **R6 / R8:** a git entry's marketplace URL must be in git form (ends with `.git` or is
-  `owner/repo`); every common host accepts `.git` clone URLs.
+- **R6 / R8:** a git entry's marketplace URL must be in git form: an https URL ending in `.git`
+  (the SDK accepts only https URLs); every common host accepts `.git` clone URLs.
 - **R9:** the start syncs config-managed marketplaces with one retry on 40P01 / 40001, then warns
   and continues.
 - **R10:** the bootstrap default-theme audit row has actor NULL and detail
@@ -324,3 +330,22 @@ Rulings taken while implementing; where they differ from the text above, they wi
   only suggests usernames for known hosts (github.com, `*.ghe.com`, bitbucket.org, gitlab.com); any
   other host (Gitee, Gitea, self-hosted GitLab) works by entering the username its documentation
   names.
+- **Fetchable commits:** a git entry is read at its 40-hex `commit` with a depth-1 fetch by sha.
+  The commit must be fetchable by its sha from the host: GitHub always allows it; GitLab, Gitea and
+  other hosts only when fetching unadvertised commits is allowed (git's
+  `uploadpack.allowReachableSHA1InWant` or the host's equivalent). Otherwise pin the commit of a
+  tag and keep the tag, or ship the offline packs (`capybara-plugin bootstrap --write --out <dir>`)
+  in the offline directory. A refused commit fails `bootstrap.git_read_failed` with exactly this
+  hint (never the token).
+- **R14, one extra manifest for every service:** a service started without
+  `bootstrap.extraManifest` while config-managed marketplaces exist (`managed = 'config'`) is a
+  configuration mismatch, decided from the database before the sync and the bootstrap step: it
+  demotes nothing, runs neither bootstrap pass and logs an error naming
+  `CAPYBARA_BOOTSTRAP__EXTRA_MANIFEST`; the start itself continues. `capybara bootstrap` refuses
+  the same case with exit 1. Removing a distribution means pointing `bootstrap.extraManifest` at a
+  file whose `marketplaces` and `plugins` lists are empty: its marketplaces are demoted (a warning
+  lists them) and its entries lose `required` / `builtin`.
+- **Repository root:** a git entry's `path` may be `.` / `./` (a single-plugin repository).
+- **Several repositories:** `capybara-plugin bootstrap` reads every git entry from `--root`; a
+  manifest whose git entries come from more than one marketplace is checked and pinned once per
+  repository with `--marketplace <name>` (the other entries are left as they are).
