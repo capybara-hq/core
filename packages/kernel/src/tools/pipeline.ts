@@ -168,6 +168,9 @@ export const approvalExpiredText = (hours: number) =>
   `Approval timed out after ${hours}h; treated as denied.`;
 /** 等待审批期间 run 被中止。 */
 export const APPROVAL_CANCELLED_TEXT = "The run was stopped while waiting for approval.";
+/** A person field refused on the approval card as leaked, for a call that then did not run. */
+export const leakedOnCardText = (path: string): string =>
+  `The person's \`${path}\` appeared in the conversation earlier and was refused as leaked; ask them to rotate it.`;
 /** What the review held: a shell command, a file write, or a file read outside the scope. */
 export type ReviewKind = "command" | "write" | "read";
 /**
@@ -2634,19 +2637,26 @@ export class ToolPipeline {
     return null;
   }
 
-  /** A decided approval other than approved → the model's text; still pending → null (wait). */
+  /**
+   * A decided approval other than approved → the model's text; still pending → null (wait). A
+   * person field refused on the card as leaked is named, so the agent has the key rotated.
+   */
   private refusalText(a: ApprovalRecord): string | null {
-    switch (a.status) {
-      case "denied":
-        return approvalDeniedText(a.denyReason);
-      case "expired":
-        // 按该审批实际的等待时长（创建到到期），不读当前配置（配置可热更新）
-        return approvalExpiredText(approvalHours(a));
-      case "cancelled":
-        return APPROVAL_CANCELLED_TEXT;
-      default:
-        return null;
-    }
+    const text = ((): string | null => {
+      switch (a.status) {
+        case "denied":
+          return approvalDeniedText(a.denyReason);
+        case "expired":
+          // 按该审批实际的等待时长（创建到到期），不读当前配置（配置可热更新）
+          return approvalExpiredText(approvalHours(a));
+        case "cancelled":
+          return APPROVAL_CANCELLED_TEXT;
+        default:
+          return null;
+      }
+    })();
+    if (text === null || a.leakedFields === undefined) return text;
+    return [text, ...a.leakedFields.map(leakedOnCardText)].join("\n");
   }
 
   /**

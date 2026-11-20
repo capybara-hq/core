@@ -10,6 +10,7 @@ import {
 import { createZodDto } from "../infra/validation/create-zod-dto.js";
 import { ZBody, ZQuery } from "../infra/validation/zod-params.js";
 import { CurrentOrg, OrgAction, type OrgContext } from "../orgs/org.guard.js";
+import { PERSON_FIELD_MAX_BYTES, PERSON_FIELDS_MAX } from "../platform/person-fields.js";
 import { CONTROL_OR_HIDDEN_RE } from "../text.js";
 import { ApprovalsListQuerySchema } from "./approvals.schemas.js";
 import {
@@ -22,6 +23,8 @@ import {
 } from "./approvals.service.js";
 
 const ListQuery = ApprovalsListQuerySchema;
+/** The longest input path: the person field paths' own limit (`askPerson`). */
+const INPUT_PATH_MAX_CHARS = 200;
 
 const DecisionBody = z
   .object({
@@ -50,8 +53,22 @@ const DecisionBody = z
       .min(1)
       .max(NETWORK_ASK_MAX_HOSTS)
       .optional(),
+    /**
+     * An approval with person fields only: the values the person entered on the card, by field
+     * path (platform web parity spec §4.2). Never logged, never stored but sealed.
+     */
+    inputs: z
+      .record(z.string().min(1).max(INPUT_PATH_MAX_CHARS), z.string().max(PERSON_FIELD_MAX_BYTES))
+      .refine((r) => Object.keys(r).length <= PERSON_FIELDS_MAX, {
+        message: `At most ${PERSON_FIELDS_MAX} inputs`,
+      })
+      .optional(),
   })
   .strict()
+  .refine((b) => b.inputs === undefined || b.decision === "approve", {
+    path: ["inputs"],
+    message: "Inputs can only be given with approve",
+  })
   .refine((b) => b.reason === undefined || b.decision === "deny", {
     path: ["reason"],
     message: "A reason can only be given with deny",

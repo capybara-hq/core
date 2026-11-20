@@ -19,6 +19,7 @@ import {
   type ReviewRecord,
   type ToolView,
 } from "../conversations/events.js";
+import { ConversationLeakCheck } from "../conversations/leak-check.js";
 import { conversationSourceOf } from "../conversations/source.js";
 import type { ApprovalsTable } from "../db/kernel-schema.js";
 import { ApiError } from "../errors.js";
@@ -36,7 +37,8 @@ import { KernelEvents } from "../infra/events/kernel-events.js";
 import { LockService } from "../infra/lock/lock.service.js";
 import { WithLock } from "../infra/lock/with-lock.decorator.js";
 import { ORG_ROLES, type OrgRole, roleAtLeast } from "../orgs/roles.js";
-import type { PersonFieldSpec } from "../platform/person-fields.js";
+import { checkPersonValue, type PersonFieldSpec } from "../platform/person-fields.js";
+import { SealedInputs } from "../platform/sealed-inputs.js";
 import { RunResume } from "../runtime/run-jobs.js";
 import { rootConversationOf } from "../runtime/subagents/child.js";
 import { PermissionAuthorityLock } from "../sandbox/permission-authority-lock.js";
@@ -222,6 +224,11 @@ export interface ApprovalRecord {
   personFields?: PersonFieldSpec[];
   /** The card's target name with {@link personFields} ("Anthropic: deployment config"). */
   personTarget?: { zh: string; en: string };
+  /**
+   * The person fields whose entered value was refused as leaked (§4.5; paths only): a call that
+   * then ends without running tells the agent to have them rotated.
+   */
+  leakedFields?: string[];
   toolKey: string;
   specHash: string;
   connectorId: string | null;
@@ -351,18 +358,25 @@ export interface ApprovalRequestInput {
 export interface ToolAskDetail {
   personFields: PersonFieldSpec[];
   target: { zh: string; en: string };
+  /** The paths whose entered value the decision refused as leaked (written by the decision). */
+  leakedFields?: string[];
 }
 
 /** A tool ask's person fields from its stored `detail` (none: an ordinary tool ask). */
 function personFieldsOf(
   detail: unknown,
-): Pick<ApprovalRecord, "personFields" | "personTarget"> | null {
+): Pick<ApprovalRecord, "personFields" | "personTarget" | "leakedFields"> | null {
   if (typeof detail !== "object" || detail === null) return null;
   const d = detail as Partial<ToolAskDetail>;
   if (!Array.isArray(d.personFields) || d.personFields.length === 0 || d.target === undefined) {
     return null;
   }
-  return { personFields: d.personFields, personTarget: d.target };
+  return {
+    personFields: d.personFields,
+    personTarget: d.target,
+    ...(Array.isArray(d.leakedFields) &&
+      d.leakedFields.length > 0 && { leakedFields: d.leakedFields }),
+  };
 }
 
 export interface DecisionInput {
@@ -377,6 +391,11 @@ export interface DecisionInput {
    * unchecked ones count as denied (P-D5).
    */
   hosts?: string[] | undefined;
+  /**
+   * An approval with person fields only, with `approve`: the values the person entered, by field
+   * path (platform web parity spec §4.2). Sealed in the decision; never logged or stored as text.
+   */
+  inputs?: Record<string, string> | undefined;
 }
 
 /** Where a decision was made (the device's local audit line and `device.network_*`). */
@@ -470,6 +489,14 @@ export interface ToolGrantView {
 }
 
 const notFound = () => new ApiError("approval.not_found", "Approval not found");
+const inputsNotExpected = () =>
+  new ApiError(
+    "approval.inputs_not_expected",
+    "The inputs name fields this approval does not ask for.",
+  );
+
+/** A decision, or a person-field approval's leak refusal (the leaked paths, still pending). */
+type DecideOutcome = { record: ApprovalRecord; toSeq: number } | { leaked: string[] };
 
 const iso = (v: Date | string): string => new Date(v).toISOString();
 const isRole = (v: string | null): v is OrgRole =>
@@ -562,6 +589,11 @@ export class ApprovalsService {
     @Inject(SandboxService) private readonly sandbox: Pick<SandboxService, "ceilingLimits">,
     /** A decision resumes its waiting run in the decision's transaction. */
     @Inject(RunResume) private readonly resumes: Pick<RunResume, "resumeIn">,
+    /** An entered person value seen in the conversation is refused (§4.5). */
+    @Inject(ConversationLeakCheck)
+    private readonly leakCheck: Pick<ConversationLeakCheck, "leaked">,
+    /** A person's entered values are sealed in the decision's transaction (§4.3). */
+    @Inject(SealedInputs) private readonly sealed: Pick<SealedInputs, "sealIn">,
     @Optional()
     @Inject(PermissionAuthorityLock)
     private readonly permissionLocks?: PermissionAuthorityLock,
@@ -1106,6 +1138,7 @@ export class ApprovalsService {
       .where("org_id", "=", orgId)
       .executeTakeFirst();
     if (!kind) throw notFound();
+    if (body.inputs !== undefined && kind.kind !== "tool") throw inputsNotExpected();
     if (kind.kind === "network") {
       return this.decideNetwork(orgId, id, accountId, body, actorTokenId, via);
     }
@@ -1120,9 +1153,17 @@ export class ApprovalsService {
     if (kind.kind === "command") {
       return this.decideCommand(orgId, id, accountId, body, actorTokenId, via);
     }
-    const { record, toSeq } = await this.decideIn(orgId, id, accountId, body, actorTokenId);
-    await this.announceDecided(record, toSeq);
-    return record;
+    const outcome = await this.decideToolIn(orgId, id, accountId, body, actorTokenId, via);
+    // a leak refusal committed only the leaked paths (the approval stays pending), then refuses
+    if ("leaked" in outcome) {
+      throw new ApiError(
+        "approval.input_leaked",
+        "This value appeared in the conversation, so it counts as leaked. Create a new one at the provider and enter that.",
+        [{ fields: outcome.leaked }],
+      );
+    }
+    await this.announceDecided(outcome.record, outcome.toSeq);
+    return outcome.record;
   }
 
   /**
@@ -1411,7 +1452,40 @@ export class ApprovalsService {
     git?: GitDecision,
     command?: CommandDecision,
   ): Promise<{ record: ApprovalRecord; toSeq: number }> {
-    return this.decideTx(orgId, id, accountId, body, actorTokenId, network, git, command);
+    return this.decideTx(orgId, id, accountId, body, actorTokenId, network, git, command).then(
+      (o) => {
+        // only a tool ask takes inputs (refused for every other kind before)
+        if ("leaked" in o) throw new Error(`approval ${id}: a leak outcome outside a tool ask`);
+        return o;
+      },
+    );
+  }
+
+  /**
+   * A tool ask's decision in its own transaction. With person fields, a leak refusal commits the
+   * leaked paths in `detail.leakedFields` and returns them (the caller refuses after the commit,
+   * the approval still pending); the same transaction cannot both keep that write and throw.
+   */
+  @Transactional({ propagation: "requires_new" })
+  private decideToolIn(
+    orgId: string,
+    id: string,
+    accountId: string,
+    body: DecisionInput,
+    actorTokenId: string | undefined,
+    via: DecisionVia,
+  ): Promise<DecideOutcome> {
+    return this.decideTx(
+      orgId,
+      id,
+      accountId,
+      body,
+      actorTokenId,
+      undefined,
+      undefined,
+      undefined,
+      via,
+    );
   }
 
   /**
@@ -1428,7 +1502,8 @@ export class ApprovalsService {
     network?: NetworkDecision,
     git?: GitDecision,
     command?: CommandDecision,
-  ): Promise<{ record: ApprovalRecord; toSeq: number }> {
+    via: DecisionVia = "web",
+  ): Promise<DecideOutcome> {
     const t = this.db.db;
     // lock order: the conversation, the approval, then the run (as a stop of the waiting run)
     if (!(await this.lockConversationOf(id, orgId))) throw notFound();
@@ -1474,6 +1549,68 @@ export class ApprovalsService {
       await this.permissionGrants.assertCurrent(before.command.permissionCandidate.binding);
     }
     const approved = body.decision === "approve";
+    const person = before.kind === "tool" ? before.personFields : undefined;
+    if (body.inputs !== undefined && (person === undefined || !approved)) {
+      throw inputsNotExpected();
+    }
+    // an approval with person fields (platform web parity spec §4.2, §4.3, R5): approved only by
+    // its person, in a web session, with every asked value, valid and never seen in the
+    // conversation; the values are sealed before the status changes. A deny takes no values.
+    let inputsProvided: string[] | undefined;
+    if (person !== undefined && approved) {
+      if (actorTokenId !== undefined) {
+        throw new ApiError(
+          "auth.session_required",
+          "Values for this approval are entered in a signed-in web session, not with a personal access token.",
+        );
+      }
+      if (via === "im") {
+        throw new ApiError(
+          "auth.session_required",
+          "This approval asks for values entered on the web; it cannot be approved from IM.",
+        );
+      }
+      if (before.requestedFor !== accountId) throw notFound();
+      const inputs = body.inputs ?? {};
+      const asked = new Set(person.map((f) => f.path));
+      if (Object.keys(inputs).some((p) => !asked.has(p))) throw inputsNotExpected();
+      const problems = person.flatMap((f) => {
+        const v = inputs[f.path];
+        const problem = v === undefined ? `${f.label} is required.` : checkPersonValue(f, v);
+        return problem === null ? [] : [{ path: f.path, problem }];
+      });
+      if (problems.length > 0) {
+        throw new ApiError("approval.inputs_invalid", "Some entered values are not valid.", [
+          { fields: problems },
+        ]);
+      }
+      // a read in the decision's transaction: one indexed scan of the conversation tree per value
+      const leaked = await this.leakCheck.leaked(before.conversationId, inputs);
+      if (leaked.length > 0) {
+        await t
+          .updateTable("approvals")
+          .set({
+            detail: JSON.stringify({
+              ...(locked.detail as ToolAskDetail),
+              leakedFields: [...new Set([...(before.leakedFields ?? []), ...leaked])],
+            } satisfies ToolAskDetail),
+          })
+          .where("id", "=", id)
+          .execute();
+        return { leaked };
+      }
+      await this.sealed.sealIn(
+        {
+          approvalId: id,
+          recipientAccountId: accountId,
+          conversationId: before.conversationId,
+          runId: before.runId,
+          callId: before.callId,
+        },
+        inputs,
+      );
+      inputsProvided = person.map((f) => f.path);
+    }
     const reason = approved ? undefined : body.reason?.trim() || undefined;
     const scope: ApprovalScope | null = !approved
       ? null
@@ -1627,6 +1764,7 @@ export class ApprovalsService {
           ...(scope !== null && { scope }),
           byAccountId: accountId,
           ...(reason !== undefined && { reason }),
+          ...(inputsProvided !== undefined && { inputsProvided }),
         },
       },
     ]);
@@ -1708,6 +1846,7 @@ export class ApprovalsService {
         scope,
         ...(body.note !== undefined && { note: body.note }),
         ...(reason !== undefined && { reason }),
+        ...(inputsProvided !== undefined && { inputsProvided }),
       },
     });
     // the run last (lock order: the decided row, then `runs`); a still-running run is resumed by

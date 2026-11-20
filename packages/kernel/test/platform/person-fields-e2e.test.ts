@@ -208,7 +208,7 @@ const approvalRow = (id: string) =>
 const lastResult = async (convId: string) =>
   ofType(await eventsOf(db, convId), "tool_result").at(-1)?.payload;
 
-/** Seals `values` for an approval as the decision would (Task 5 writes them in its route). */
+/** Seals `values` for an approval directly (what the decision route would never write). */
 async function seal(convId: string, approvalId: string, values: Record<string, string>) {
   const row = await approvalRow(approvalId);
   await k.app.get(TransactionHost).run(() =>
@@ -235,12 +235,31 @@ const sealedRows = (approvalId: string) =>
 const CHANGED_TEXT =
   "The target changed after the person confirmed (the fields to enter differ); call the operation again.";
 
-const approve = (approvalId: string) =>
+/** Approves with the person's value (the decision route seals it). */
+const approve = (approvalId: string, inputs: Record<string, string> = { apiKey: SECRET }) =>
   owner({
     method: "POST",
     url: `/api/v1/orgs/${orgId}/approvals/${approvalId}/decision`,
-    payload: { decision: "approve", scope: "once" },
+    payload: { decision: "approve", scope: "once", inputs },
   });
+
+/**
+ * Runs `fn` while the decision's seal writes nothing (a trigger drops the insert): the sealed row
+ * is then whatever the test put there, or none.
+ */
+async function withSealDropped<T>(fn: () => Promise<T>): Promise<T> {
+  await sql`CREATE OR REPLACE FUNCTION capybara.test_drop_sealed() RETURNS trigger
+    LANGUAGE plpgsql AS $$ BEGIN RETURN NULL; END $$`.execute(db);
+  await sql`CREATE TRIGGER test_drop_sealed BEFORE INSERT ON capybara.platform_sealed_inputs
+    FOR EACH ROW EXECUTE FUNCTION capybara.test_drop_sealed()`.execute(db);
+  try {
+    return await fn();
+  } finally {
+    await sql`DROP TRIGGER IF EXISTS test_drop_sealed ON capybara.platform_sealed_inputs`.execute(
+      db,
+    );
+  }
+}
 
 describe("Platform person fields", () => {
   it("asks on a once-only card holding the field specs and no value", async () => {
@@ -276,18 +295,6 @@ describe("Platform person fields", () => {
     const convId = await probeCall({ askPerson: ["apiKey"] });
     const asked = await approvalRequested(convId);
     const row = await approvalRow(asked.payload.approvalId);
-    await k.app.get(TransactionHost).run(() =>
-      k.app.get(SealedInputs).sealIn(
-        {
-          approvalId: row.id,
-          recipientAccountId: ownerId,
-          conversationId: convId,
-          runId: row.run_id,
-          callId: row.call_id,
-        },
-        { apiKey: SECRET },
-      ),
-    );
     const before = seen.length;
     const ok = await approve(row.id);
     expect(ok.statusCode, ok.body).toBe(200);
@@ -320,7 +327,7 @@ describe("Platform person fields", () => {
     const convId = await probeCall({ askPerson: ["apiKey"] });
     const asked = await approvalRequested(convId);
     const before = seen.length;
-    const ok = await approve(asked.payload.approvalId);
+    const ok = await withSealDropped(() => approve(asked.payload.approvalId));
     expect(ok.statusCode, ok.body).toBe(200);
     await waitForTerminal(db, convId, 1, 30_000);
     const result = await lastResult(convId);
@@ -373,9 +380,10 @@ describe("Platform person fields", () => {
   it("refuses sealed values whose fields differ from the card's, applying nothing", async () => {
     const convId = await probeCall({ askPerson: ["apiKey"] });
     const asked = await approvalRequested(convId);
+    // a row whose fields differ from the card's: the route never writes one, so it is put there
     await seal(convId, asked.payload.approvalId, { otherKey: SECRET });
     const before = seen.length;
-    const ok = await approve(asked.payload.approvalId);
+    const ok = await withSealDropped(() => approve(asked.payload.approvalId));
     expect(ok.statusCode, ok.body).toBe(200);
     await waitForTerminal(db, convId, 1, 30_000);
     const result = await lastResult(convId);
@@ -390,7 +398,6 @@ describe("Platform person fields", () => {
   it("a second apply is a programming error, not the expired text", async () => {
     const convId = await probeCall({ values: { baseUrl: "mode:twice" }, askPerson: ["apiKey"] });
     const asked = await approvalRequested(convId);
-    await seal(convId, asked.payload.approvalId, { apiKey: SECRET });
     const ok = await approve(asked.payload.approvalId);
     expect(ok.statusCode, ok.body).toBe(200);
     await waitForTerminal(db, convId, 1, 30_000);
@@ -404,7 +411,6 @@ describe("Platform person fields", () => {
   it("a run that never applies the values says so and logs it", async () => {
     const convId = await probeCall({ values: { baseUrl: "mode:skip" }, askPerson: ["apiKey"] });
     const asked = await approvalRequested(convId);
-    await seal(convId, asked.payload.approvalId, { apiKey: SECRET });
     const ok = await approve(asked.payload.approvalId);
     expect(ok.statusCode, ok.body).toBe(200);
     await waitForTerminal(db, convId, 1, 30_000);

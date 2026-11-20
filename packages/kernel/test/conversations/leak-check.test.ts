@@ -125,6 +125,14 @@ describe("ConversationLeakCheck", () => {
     expect(await check.leaked(c, { k: value })).toEqual(["k"]);
   });
 
+  it("finds a value with non-ASCII and control characters (stored JSON-escaped)", async () => {
+    const c = await conv();
+    const value = "密码-ü-\t-12345";
+    await event(c, 1, "user_message", { content: [{ type: "text", text: `key ${value} end` }] });
+    expect(await check.leaked(c, { k: value })).toEqual(["k"]);
+    expect(await check.leaked(c, { k: "密码-ü-\t-54321" })).toEqual([]);
+  });
+
   it("does not match a value that is only in another conversation", async () => {
     const a = await conv();
     const other = await conv();

@@ -1,4 +1,4 @@
-import { Inject, Injectable } from "@nestjs/common";
+import { Inject, Injectable, Module } from "@nestjs/common";
 import { sql } from "kysely";
 import { KernelDb } from "../infra/database/kernel-db.js";
 import { rootConversationOf } from "../runtime/subagents/child.js";
@@ -44,3 +44,11 @@ export class ConversationLeakCheck {
     return found;
   }
 }
+
+/**
+ * The one {@link ConversationLeakCheck} (the database only), its own module so the tools module
+ * (the approval decision) imports it without importing the conversations module, which imports
+ * the tools module.
+ */
+@Module({ providers: [ConversationLeakCheck], exports: [ConversationLeakCheck] })
+export class ConversationLeakCheckModule {}

@@ -48,6 +48,8 @@ const REPLY_FOR: Partial<Record<ErrorCode, ChannelPhrase>> = {
   "approval.scope_not_allowed": "invalidAction",
   // a network ask clicked by someone other than the device's owner
   "approval.not_yours": "cannotHandle",
+  // an approval with person fields is approved only on the web (platform web parity spec R5)
+  "auth.session_required": "cannotHandle",
 };
 
 /**

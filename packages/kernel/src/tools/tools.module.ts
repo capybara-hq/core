@@ -3,6 +3,7 @@ import { BackgroundModule } from "../background/background.module.js";
 import { ConversationAccessModule } from "../conversations/access.js";
 import { AttachmentsModule } from "../conversations/attachments.module.js";
 import { EventLogModule } from "../conversations/event-log.js";
+import { ConversationLeakCheckModule } from "../conversations/leak-check.js";
 import { DevicesModule } from "../devices/devices.module.js";
 import { ExtensionsModule } from "../extensions/extensions.module.js";
 import { QueueModule } from "../infra/queue/queue.module.js";
@@ -58,6 +59,8 @@ import { ToolRegistry } from "./registry.js";
     PermissionAuthorityModule,
     OperationAuthorityModule,
     EventLogModule,
+    // the approval decision's leak check of a person's card values
+    ConversationLeakCheckModule,
     AttachmentsModule,
     ExtensionsModule,
     StorageModule,

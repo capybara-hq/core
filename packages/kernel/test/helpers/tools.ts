@@ -4,6 +4,7 @@ import type { Redis } from "ioredis";
 import type { Kysely } from "kysely";
 import type { KernelConfig } from "../../src/config/schema.js";
 import type { EventLog } from "../../src/conversations/event-log.js";
+import { ConversationLeakCheck } from "../../src/conversations/leak-check.js";
 import type { Keyring } from "../../src/ctx/secrets.js";
 import type { EffectiveConfigs } from "../../src/extensions/effective-config.js";
 import type { KernelConfigService } from "../../src/infra/config/kernel-config.service.js";
@@ -111,6 +112,13 @@ export function approvalsFor(
       }),
     },
     noResume,
+    new ConversationLeakCheck(h.db),
+    // no person field approval is decided here
+    {
+      sealIn: async () => {
+        throw new Error("no sealed person inputs in a hand-built approvals service");
+      },
+    },
   );
 }
 
