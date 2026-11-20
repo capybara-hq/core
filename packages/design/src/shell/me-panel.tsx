@@ -42,7 +42,7 @@ export type MePanelProps = {
   adminContext?: boolean;
   /** The Workspace group (work context): the sidebar's primary items and Devices, then the extension pages. */
   workspace?: MeRow[];
-  /** The Manage group: org admins' items and the admin entry; in the admin context the console's pages. */
+  /** The Manage group: the sidebar's 更多 items by role and the admin entry; in the admin context the console's pages. */
   manage?: MeRow[];
   /** The admin context's way back (Back to workspace), the last row of the Manage group. */
   back?: MeRow;

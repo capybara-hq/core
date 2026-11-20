@@ -43,8 +43,9 @@ export type FixtureMeItem = {
   href: string;
   icon: string;
   /**
-   * Who sees the row: the workspace rows as the sidebar's `audience` (nav.tsx); every manage row
-   * is for org admins and owners (design spec §6.48).
+   * Who sees the row: the rows as the sidebar's `audience` for the same item (nav.tsx): the manage
+   * rows are the sidebar's 更多 items, 插件, 扩展 and 组织设置 for members up, 渠道 and 评测与运行
+   * for org admins and owners (design spec §6.48).
    */
   audience: "all" | "member" | "admin";
   group: "workspace" | "manage";
@@ -52,8 +53,8 @@ export type FixtureMeItem = {
 
 /**
  * The Me page (design spec §6.48): the workspace group (the primary items the bottom nav has no
- * room for, and devices) and the manage group (the sidebar's other More items, then the admin
- * console entry for super admins).
+ * room for, and devices) and the manage group (the sidebar's other More items by role, then the
+ * admin console entry for super admins).
  */
 export const ME_PANEL_FIXTURE = {
   title: "我",
@@ -98,7 +99,7 @@ export const ME_PANEL_FIXTURE = {
       label: "插件",
       href: "/plugins",
       icon: "catalog",
-      audience: "admin",
+      audience: "member",
       group: "manage",
     },
     {
@@ -106,7 +107,7 @@ export const ME_PANEL_FIXTURE = {
       label: "扩展",
       href: "/extensions",
       icon: "extension",
-      audience: "admin",
+      audience: "member",
       group: "manage",
     },
     {
@@ -130,7 +131,7 @@ export const ME_PANEL_FIXTURE = {
       label: "组织设置",
       href: "/settings/organization",
       icon: "settings",
-      audience: "admin",
+      audience: "member",
       group: "manage",
     },
   ] as FixtureMeItem[],
@@ -162,7 +163,7 @@ export const ME_PANEL_FIXTURE = {
   system: "系统正常 · v0.1.0 · UTC+8",
   /**
    * The audiences each block draws. The super-admin block is an org member who is a super admin:
-   * the workspace rows and, in the manage group, only the admin console entry.
+   * the member's rows, the manage group's member rows and the admin console entry.
    */
   visible: {
     member: ["all", "member"],

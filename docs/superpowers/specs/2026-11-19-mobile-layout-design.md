@@ -191,7 +191,7 @@ settings under 更多), the inbox is where approvals and notices wait:
 | 会话 / Chats | `/conversations` (new compact list route, §5.4) | The conversations grouped by agent, as the sidebar's section; a "new" action to `/` |
 | 智能体 / Agents | `/agents` | The cards page as today |
 | 收件箱 / Inbox | `/inbox` | With the pending count badge (the rail's nav badge: outside the icon's top-right corner, 2px gap, a ring in the bar ground) |
-| 我 / Me | `/me` (new compact page) | Account, org switcher, 工作区 (技能, 连接器, 定时任务, 设备: the rows the role sees on the sidebar) and 管理 (插件, 扩展, 渠道, 评测与运行, 组织设置 for org admins and owners only; 管理后台 for super admins; members see only 工作区: maintainer to confirm: R14), personal settings, system status, sign out; drawn by the shell from the sidebar's data |
+| 我 / Me | `/me` (new compact page) | Account, org switcher, 工作区 (技能, 连接器, 定时任务, 设备: the rows the role sees on the sidebar) and 管理 (the sidebar's 更多 items by role, from the same data: 插件, 扩展 and 组织设置 for members up, read-only, 渠道 and 评测与运行 for org admins and owners; 管理后台 for super admins; R14, confirmed 2026-11-20), personal settings, system status, sign out; drawn by the shell from the sidebar's data |
 
 技能 / 连接器 / 定时任务 are reached from
 Me (and from the agents' pages), as 更多 items are on the sidebar. The current item has no ground

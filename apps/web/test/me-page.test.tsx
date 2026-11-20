@@ -1,11 +1,13 @@
 // `/me` (the compact class's Me tab): the MePanel from the sidebar's own nav, org and account data,
-// by role (design spec §6.48: members see only Workspace, org admins add Manage, super admins the admin
+// by role (design spec §6.48: members add the read-only Manage rows the sidebar shows them, org admins the rest, super admins the admin
 // entry), and the admin context `/admin` draws in place of the console's overview on compact.
-import { act, cleanup, screen, within } from "@testing-library/react";
+import { act, cleanup, render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
+import { NextIntlClientProvider } from "next-intl";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import zh from "../messages/zh.json";
 import MeView from "../src/app/(app)/me/view";
+import { useNav } from "../src/components/shell/nav";
 import type { Me } from "../src/lib/session";
 import { resetNavigation } from "./support/navigation";
 import { ME } from "./support/render";
@@ -44,24 +46,40 @@ describe("/me by role (hiding is cosmetic; the kernel decides)", () => {
     expect(panel().querySelector('[data-part="admin-entry"]')).toBeNull();
   });
 
-  it("an org member sees 工作区 only", () => {
+  it("an org member sees 工作区 and 管理 with the read-only rows the wide sidebar shows (R14)", () => {
     renderFrame(shellOf(as("member")), <MeView />);
-    expect(labels()).toEqual(["工作区", "账户"]);
-    expect(rows("workspace")).toEqual(["skills", "connectors", "schedules", "devices"]);
-    expect(rows("manage")).toEqual([]);
-  });
-
-  it("an org admin sees both groups but no admin entry; the rows are the sidebar's 更多 items", () => {
-    renderFrame(shellOf(as("admin")), <MeView />);
     expect(labels()).toEqual(["工作区", "管理", "账户"]);
-    expect(rows("manage")).toEqual(["plugins", "extensions", "channels", "evals", "settings"]);
+    expect(rows("workspace")).toEqual(["skills", "connectors", "schedules", "devices"]);
+    expect(rows("manage")).toEqual(["plugins", "extensions", "settings"]);
     expect(panel().querySelector('[data-part="admin-entry"]')).toBeNull();
   });
 
-  it("a super admin who is an org member sees 管理 with only 管理后台, entering the admin context", () => {
+  it.each(["guest", "member", "admin"] as const)(
+    "a %s's 管理 rows are the wide sidebar's 更多 items but 设备, the same data (no second list)",
+    (role) => {
+      renderFrame(shellOf(as(role)), <MeView />);
+      const manage = [...panel().querySelectorAll('[data-group="manage"] [data-part="row"]')].map(
+        (e) => [e.getAttribute("data-id"), e.textContent],
+      );
+      cleanup();
+      let sidebar: [string, string][] = [];
+      function Probe() {
+        sidebar = useNav(0, role, false, false).more.map((n) => [n.id, n.label]);
+        return null;
+      }
+      render(
+        <NextIntlClientProvider locale="zh" messages={zh}>
+          <Probe />
+        </NextIntlClientProvider>,
+      );
+      expect(manage).toEqual(sidebar.filter(([id]) => id !== "devices"));
+    },
+  );
+
+  it("a super admin who is an org member sees 管理 with the member rows and 管理后台, entering the admin context", () => {
     renderFrame(shellOf(as("member", true)), <MeView />);
     expect(labels()).toEqual(["工作区", "管理", "账户"]);
-    expect(rows("manage")).toEqual(["admin"]);
+    expect(rows("manage")).toEqual(["plugins", "extensions", "settings", "admin"]);
     const entry = panel().querySelector('[data-part="admin-entry"]') as HTMLElement;
     expect(entry.getAttribute("href")).toBe("/admin");
     expect(entry.querySelector('[data-icon="arrow-up-right"]')).not.toBeNull();
