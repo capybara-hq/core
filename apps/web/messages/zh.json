@@ -586,6 +586,10 @@
       "too_large": "文件太大：最多 1 MiB（SVG 网站图标最多 128 KiB）。",
       "storage_unavailable": "对象存储不可用，无法保存图标。请稍后重试。",
       "not_found": "这个图标尚未上传。"
+    },
+    "push": {
+      "provider_unavailable": "平台没有可用的推送通道覆盖此应用，暂时无法接收通知。请联系超级管理员。",
+      "registration_not_found": "此设备已不再接收通知。"
     }
   },
   "agents": {

@@ -586,6 +586,10 @@
       "too_large": "The file is too large: at most 1 MiB (an SVG favicon at most 128 KiB).",
       "storage_unavailable": "Object storage is unavailable, so the icon cannot be saved. Try again later.",
       "not_found": "This icon has not been uploaded."
+    },
+    "push": {
+      "provider_unavailable": "This app can't receive notifications from this platform: no enabled push channel covers it. Ask your super admin.",
+      "registration_not_found": "This device no longer receives notifications."
     }
   },
   "agents": {
