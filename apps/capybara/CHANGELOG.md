@@ -1,5 +1,13 @@
 # @capybara-hq/capybara
 
+## 0.1.0-rc.69
+
+### Patch Changes
+
+- 6992d56: The permission menu no longer shows "Checked when this device starts" for a device not checked yet.
+- Updated dependencies [dbbd95b]
+  - @capybara-hq/kernel@0.1.0-rc.57
+
 ## 0.1.0-rc.68
 
 No changes in this release.
