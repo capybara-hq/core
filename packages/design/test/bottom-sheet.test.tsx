@@ -26,6 +26,12 @@ describe("the bottom sheet on touch", () => {
     expect(decls(touch, TOUCH_QUERY, ".cb-bsheet-head")?.["border-bottom"]).toBe("0");
   });
 
+  it("gives the close button the 44 px touch hit size", () => {
+    const d = decls(touch, TOUCH_QUERY, ".cb-bsheet-head .cb-icon-btn");
+    expect(d?.["min-width"]).toBe("var(--cb-touch-hit)");
+    expect(d?.["min-height"]).toBe("var(--cb-touch-hit)");
+  });
+
   it("still draws the handle, the head and the body", () => {
     render(
       <DesignProvider locale="en">

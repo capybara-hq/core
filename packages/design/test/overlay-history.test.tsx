@@ -160,4 +160,58 @@ describe("useOverlayHistory", () => {
     await settled();
     expect(back).not.toHaveBeenCalled();
   });
+
+  // I2: the router rewrites history.state (Next's HistoryUpdater replaceState) while an overlay is
+  // open; the decisions come from the module's own stack, not from a marker in the state.
+  it("a replaceState while open does not break back-closes", async () => {
+    render(<Overlays />);
+    await userEvent.click(screen.getByText("open-drawer"));
+    act(() => history.replaceState({ __NA: true }, ""));
+    act(() => history.back());
+    await waitFor(() => expect(hasDrawer()).toBe(false));
+  });
+
+  it("a replaceState while open does not stop the close pop", async () => {
+    render(<Overlays />);
+    await userEvent.click(screen.getByText("open-drawer"));
+    act(() => history.replaceState({ __NA: true }, ""));
+    const back = vi.spyOn(history, "back");
+    await userEvent.keyboard("{Escape}");
+    await waitFor(() => expect(hasDrawer()).toBe(false));
+    await waitFor(() => expect(back).toHaveBeenCalledTimes(1));
+  });
+
+  // I3: a pick that navigates must not pop: the router's push is still pending when the drawer
+  // closes, and a traversal queued now would run after the push and land on the wrong entry.
+  it("a pick closes the drawer without popping its entry", async () => {
+    function Pick() {
+      const [open, setOpen] = useState(true);
+      return (
+        <DesignProvider locale="en">
+          <Drawer open={open} onOpenChange={setOpen} label="Menu">
+            <a href="/next" data-drawer-pick="true" onClick={(e) => e.preventDefault()}>
+              go
+            </a>
+          </Drawer>
+        </DesignProvider>
+      );
+    }
+    render(<Pick />);
+    const back = vi.spyOn(history, "back");
+    await userEvent.click(screen.getByText("go"));
+    await waitFor(() => expect(hasDrawer()).toBe(false));
+    await settled();
+    expect(back).not.toHaveBeenCalled();
+  });
+
+  it("the back after an orphaned pick entry still closes the next drawer first", async () => {
+    render(<Overlays />);
+    await userEvent.click(screen.getByText("open-drawer"));
+    await userEvent.keyboard("{Escape}");
+    await waitFor(() => expect(hasDrawer()).toBe(false));
+    await settled();
+    await userEvent.click(screen.getByText("open-drawer"));
+    act(() => history.back());
+    await waitFor(() => expect(hasDrawer()).toBe(false));
+  });
 });

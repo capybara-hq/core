@@ -1,5 +1,5 @@
 import * as RD from "@radix-ui/react-dialog";
-import { type MouseEvent, type ReactNode, useEffect, useRef } from "react";
+import { type MouseEvent, type ReactNode, useEffect, useRef, useState } from "react";
 import { Icon } from "../icons/icon";
 import { useDragDismiss } from "./drag";
 import { useFocusReturn } from "./focus-return";
@@ -25,7 +25,7 @@ const FIRST_ROW = "a[href], button:not([disabled]), [tabindex]:not([tabindex='-1
 export function Drawer({ open, onOpenChange, label, children }: DrawerProps) {
   const focusReturn = useFocusReturn();
   const panel = useRef<HTMLDivElement | null>(null);
-  useOverlayHistory(open, () => onOpenChange(false));
+  const history = useOverlayHistory(open, () => onOpenChange(false));
   const drag = useDragDismiss({
     axis: "x",
     size: () => panel.current?.offsetWidth ?? 0,
@@ -53,7 +53,10 @@ export function Drawer({ open, onOpenChange, label, children }: DrawerProps) {
           }}
           onCloseAutoFocus={focusReturn.restore}
           onClick={(e: MouseEvent<HTMLElement>) => {
-            if ((e.target as HTMLElement).closest("[data-drawer-pick]")) onOpenChange(false);
+            if ((e.target as HTMLElement).closest("[data-drawer-pick]")) {
+              history.leaveEntry();
+              onOpenChange(false);
+            }
           }}
         >
           <RD.Title className="cb-sr-only">{label}</RD.Title>
@@ -77,9 +80,23 @@ export type DrawerLevelProps = {
  */
 export function DrawerLevel({ title, backLabel, onBack, children }: DrawerLevelProps) {
   const back = useRef<HTMLButtonElement | null>(null);
+  // The row that opened the level (it unmounts with the list): read while rendering, before the
+  // commit removes it, and found again by its label when the level goes.
+  const [opener] = useState(() =>
+    typeof document === "undefined" ? "" : (document.activeElement?.textContent ?? ""),
+  );
   useEffect(() => {
-    back.current?.focus();
-  }, []);
+    const button = back.current;
+    const panel = button?.closest<HTMLElement>('[data-part="drawer"]') ?? null;
+    button?.focus();
+    return () => {
+      queueMicrotask(() => {
+        if (panel === null || !panel.isConnected) return;
+        const rows = [...panel.querySelectorAll<HTMLElement>(FIRST_ROW)];
+        (rows.find((r) => opener !== "" && r.textContent === opener) ?? rows[0])?.focus();
+      });
+    };
+  }, [opener]);
   return (
     <div className="cb-drawer-level" data-part="drawer-level">
       <button

@@ -3946,7 +3946,7 @@ States: `sizes`, `image`, `ellipsis`, `secondary`
 `FloatingIconButton({ icon, label, badge?, onClick?, href? })` is a round button that floats over the page: the chat-first compact shell's menu button (top left, the badge is the pending inbox count) and the back button of a pushed page (mobile layout spec §4.1; touch canvas boards 首页, 会话中, 收件箱).
 
 - **Size**: `control.prominent` (32) round on a fine pointer, `touch.float` (48) under `TOUCH_QUERY` (§2.5); the icon 20, `touch.icon.float` (24) on touch, `ink`, one stroke weight.
-- **Surface**: the `float-ground` translucent ground (with a backdrop blur), a 1px `float-line` hairline, `shadow-float-touch`, `radius.pill`. It is the only box (§1): nothing is drawn inside it but the icon and the badge.
+- **Surface**: the `float-ground` translucent ground (no frosted glass, §1), a 1px `float-line` hairline, `shadow-float-touch`, `radius.pill`. It is the only box (§1): nothing is drawn inside it but the icon and the badge.
 - **Badge** (optional `badge`): `badgeText` of the count: nothing for 0, `99+` above 99, `n+` when truncated. Drawn on the top-right corner (the corner offset -2), 18 high, at least 18 wide, `micro`, `ink` on `selected` with a 2px ring in `bg`. The badge is decoration: the count belongs in `label` ("Menu, 3 pending").
 - **Link**: with `href` it is a link (the design `link`), drawn the same.
 - **States**: `default`; `badge`; press takes the `hover` ground; keyboard focus is a 2px `accent` outline 2px off the edge.

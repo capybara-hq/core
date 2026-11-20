@@ -19,8 +19,6 @@
   box-shadow: var(--cb-shadow-float-touch);
   color: var(--cb-ink);
   cursor: pointer;
-  -webkit-backdrop-filter: blur(16px);
-  backdrop-filter: blur(16px);
 }
 .cb-float-btn > .cb-icon {
   width: 20px;
@@ -138,13 +136,21 @@
   text-decoration: none;
   cursor: pointer;
 }
-.cb-navrow:hover,
 .cb-navrow:active {
   background: var(--cb-hover);
+}
+@media (hover: hover) {
+  .cb-navrow:hover {
+    background: var(--cb-hover);
+  }
 }
 .cb-navrow[data-current="true"] {
   background: var(--cb-selected);
   font-weight: 500;
+}
+/* The count on the current row: the selected ground would swallow it. */
+.cb-navrow[data-current="true"] .cb-navrow-badge {
+  background: var(--cb-panel);
 }
 .cb-navrow:focus-visible {
   outline: 1px solid var(--cb-accent);
@@ -219,5 +225,9 @@
   }
   .cb-sheet-option {
     height: var(--cb-touch-row);
+  }
+  .cb-bsheet-head .cb-icon-btn {
+    min-width: var(--cb-touch-hit);
+    min-height: var(--cb-touch-hit);
   }
 }

@@ -147,4 +147,14 @@ describe("Drawer", () => {
     expect(screen.getByText("Inbox")).toBeTruthy();
     expect(drawer()).not.toBeNull();
   });
+
+  it("puts focus on the row that opened the level when back returns to the list", async () => {
+    render(<Harness />);
+    await userEvent.click(screen.getByText("trigger"));
+    await userEvent.click(screen.getByRole("button", { name: "More" }));
+    await userEvent.click(screen.getByRole("button", { name: "Back" }));
+    await waitFor(() =>
+      expect(document.activeElement).toBe(screen.getByRole("button", { name: "More" })),
+    );
+  });
 });

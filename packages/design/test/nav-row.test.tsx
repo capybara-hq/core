@@ -61,4 +61,16 @@ describe("NavRow", () => {
     expect(row(null)?.decls.border).toBe("0");
     expect(row(TOUCH_QUERY)?.decls["min-height"]).toBe("var(--cb-touch-row)");
   });
+
+  it("keeps the count visible on the current row and the hover ground off touch screens", () => {
+    const rules = parseCss(css("touch.css"));
+    const badge = rules.find(
+      (r) => r.selector === '.cb-navrow[data-current="true"] .cb-navrow-badge',
+    );
+    expect(badge?.decls.background).toBe("var(--cb-panel)");
+    expect(rules.find((r) => r.at === null && r.selector.includes(":hover"))).toBeUndefined();
+    expect(rules.some((r) => r.at === "(hover: hover)" && r.selector === ".cb-navrow:hover")).toBe(
+      true,
+    );
+  });
 });

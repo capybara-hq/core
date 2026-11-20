@@ -1,6 +1,9 @@
+import { readFileSync } from "node:fs";
+import { resolve } from "node:path";
 import { cleanup, fireEvent, render, screen } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { badgeText, DesignProvider, FloatingIconButton, TOUCH_QUERY } from "../src/index";
+import { findNestedBoxes } from "../src/reference/index";
 import { css, parseCss } from "./css-rules";
 
 afterEach(cleanup);
@@ -67,5 +70,27 @@ describe("the floating button's CSS", () => {
     expect(d.border).toBe("1px solid var(--cb-float-line)");
     expect(d["box-shadow"]).toBe("var(--cb-shadow-float-touch)");
     expect(d["border-radius"]).toBe("var(--cb-radius-pill)");
+  });
+});
+
+describe("the floating button is not frosted glass (spec §1)", () => {
+  it("declares no backdrop filter and the spec names no blur for it", () => {
+    expect(css("touch.css")).not.toMatch(/backdrop-filter/);
+    const spec = readFileSync(resolve(import.meta.dirname, "../../../docs/design/spec.md"), "utf8");
+    const section = spec.slice(
+      spec.indexOf("### 6.51 FloatingIconButton"),
+      spec.indexOf("### 6.52"),
+    );
+    expect(section).not.toMatch(/blur/i);
+  });
+
+  it("draws no nested box, with or without a badge", () => {
+    ui(
+      <>
+        <FloatingIconButton icon="menu" label="Menu" badge={{ count: 3 }} />
+        <FloatingIconButton icon="arrow-left" label="Back" href="/x" />
+      </>,
+    );
+    expect(findNestedBoxes(document.body)).toEqual([]);
   });
 });
