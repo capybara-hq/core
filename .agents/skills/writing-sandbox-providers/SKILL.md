@@ -532,7 +532,8 @@ The kernel owns it; the extension implements only primitives. **Do not do schedu
 - **Restricted write policy** (`packages/plugin-sdk/src/sandbox-write-denies.ts`, one source for the
   Linux broker, `native-files.py` with `denyWrites`, the device agent and the macOS runtime's ordered
   regex rules through the pnpm patch of `@anthropic-ai/sandbox-runtime`): mandatory denies (shell,
-  git-global, `.envrc`, `.npmrc`, editor, agent and hook-manager files), the gitdir allowlist, no
+  git-global, `.envrc`, `.npmrc`, editor, agent and hook-manager files; `.idea` / `.vscode` are
+  ordinary below a `node_modules` component, rule 7), the gitdir allowlist, no
   forged repository inside it, no bare-repository `HEAD`, nothing moved out of `.git`. Known
   limitations: a restricted command cannot `git init` or create submodules, worktrees or bare
   repositories; it **can forge a rebase or cherry-pick in progress** (`rebase-merge/`,

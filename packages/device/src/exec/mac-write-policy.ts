@@ -1,6 +1,8 @@
 import { realpathSync } from "node:fs";
 import { basename, dirname, join } from "node:path";
 import {
+  SANDBOX_DEPENDENCY_DIRECTORY,
+  SANDBOX_DEPENDENCY_EXEMPT_NAMES,
   SANDBOX_GIT_ALLOWED_DIRECTORIES,
   SANDBOX_GIT_ALLOWED_FILES,
   SANDBOX_GIT_DENIED_INTERNALS,
@@ -143,11 +145,24 @@ export function macWriteRegexRules(root: string): MacWriteRegexRule[] {
     operations: write,
     regex,
   });
+  // rule 7: the editor entries are ordinary below node_modules. They are denied anywhere, allowed
+  // below a node_modules component, and denied again when one of them comes before node_modules
+  // (`.idea/node_modules/.idea`; stricter than the SDK where node_modules comes first and again
+  // later, which fails closed). Every other mandatory deny follows, so it still decides beneath an
+  // exempt name; so do the later git rules, and the runtime's own `.idea` / `.vscode` denies come
+  // before all of these.
+  const exempt = any(SANDBOX_DEPENDENCY_EXEMPT_NAMES);
+  const dependency = ci(SANDBOX_DEPENDENCY_DIRECTORY);
   const rules: MacWriteRegexRule[] = [
+    deny(`${anywhere}${exempt}(/.*)?$`),
+    allow(`${anywhere}${dependency}/(.*/)?${exempt}(/.*)?$`),
+    deny(`${anywhere}${exempt}/(.*/)?${dependency}(/.*)?$`),
     ...chunked(
       "deny",
       anywhere,
-      SANDBOX_MANDATORY_WRITE_DENIES.map((e) => e.map(ci).join("/")),
+      SANDBOX_MANDATORY_WRITE_DENIES.filter(
+        (e) => !(e.length === 1 && SANDBOX_DEPENDENCY_EXEMPT_NAMES.includes(e[0] as string)),
+      ).map((e) => e.map(ci).join("/")),
       "(/.*)?$",
     ),
     deny(`${anywhere}${head}$`),

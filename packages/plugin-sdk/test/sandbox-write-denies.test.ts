@@ -172,6 +172,18 @@ const DENIED = [
   "/w/.git/index.stash.",
   "/w/.baſhrc",
   "/w/.ﬁx/../.bashrc",
+  // rule 7 holds only below node_modules: elsewhere, and before one, the editor entries stay denied
+  "/w/node_modulesx/a/.idea",
+  "/w/.idea/node_modules/a/.idea/x",
+  "/w/.vscode/node_modules/a/.vscode",
+  "/w/a/.idea/b/node_modules",
+  // and every other rule still decides beneath an exempt name
+  "/w/node_modules/a/.idea/.bashrc",
+  "/w/node_modules/a/.vscode/.git/config",
+  "/w/node_modules/a/.idea/.husky/pre-commit",
+  "/w/node_modules/a/.claude/commands/c.md",
+  "/w/node_modules/a/.npmrc",
+  "/w/node_modules/a/.git/hooks/pre-commit",
   ...PERSISTENCE_DENIED,
 ];
 const ALLOWED = [
@@ -204,12 +216,25 @@ const ALLOWED = [
   "/w/.git/index.stash.12345.lock",
   "/w/.git/packed-refs.new",
   "/w/.git/MERGE_AUTOSTASH",
+  // rule 7: packages ship editor configuration (pnpm's own tarball: iconv-lite/.idea)
+  "/w/node_modules/iconv-lite/.idea",
+  "/w/node_modules/iconv-lite/.idea/workspace.xml",
+  "/w/node_modules/.pnpm/iconv-lite@0.6.3/node_modules/iconv-lite/.idea/x.iml",
+  "/h/.local/share/pnpm/store/v11/links/@/pnpm/10.34.3/h/node_modules/pnpm/dist/node_modules/iconv-lite/.idea/x",
+  "/w/NODE_MODULES/a/.IDEA/x",
+  "/w/node_modules/a/.vscode/settings.json",
   ...PERSISTENCE_ALLOWED,
 ];
 /** Names whose folding differs between toLowerCase and full case folding (and NFKC). */
 const FOLDS = ["Straße", "ſ", "\u212A", "ΣΑΣ", "ς", "ǰ", "ŉ", "ᏸ", "Ꭰ", "ﬃ", "ＡＢＣ", "İ"];
 /** [source, destination, source is a directory, refused, the source directory's entries]. */
 const MOVES: [string, string, boolean, boolean, string[]?][] = [
+  // rule 7: below node_modules an editor directory moves like any other (pnpm renames its staging
+  // directory into place); elsewhere it stays protected
+  ["/w/node_modules/a_tmp/.idea", "/w/node_modules/a/.idea", true, false, ["x.iml"]],
+  ["/w/node_modules/a_tmp", "/w/node_modules/a", true, false, [".idea"]],
+  ["/w/node_modules/a/.idea", "/w/.idea", true, true, []],
+  ["/w/x", "/w/.idea/node_modules/a/.idea", true, true, []],
   // nothing sandboxed moves into or out of a reserved staging name
   ["/w/d", "/w/.capybara-staging-1", true, true, []],
   ["/w/.capybara-staging-1", "/w/d", true, true, []],

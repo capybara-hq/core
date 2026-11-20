@@ -446,3 +446,43 @@ it.runIf(process.platform === "darwin")(
     expect(existsSync(join(project, "capybara-staging-f"))).toBe(true);
   },
 );
+
+// Rule 7 of the SDK policy: below node_modules the editor entries are ordinary (packages ship
+// them: pnpm's own tarball unpacks iconv-lite/.idea), elsewhere and before node_modules they stay
+// denied, and every other deny still decides beneath them, the runtime's own `.idea` and `.vscode`
+// denies included.
+it.runIf(process.platform === "darwin")(
+  "a restricted macOS command writes editor directories a package ships below node_modules only",
+  async () => {
+    const project = await mkdtemp(join(root, "deps-"));
+    const result = await restrictedRun(
+      project,
+      [
+        "mkdir -p node_modules/iconv-lite/.idea && printf x > node_modules/iconv-lite/.idea/x.iml",
+        "mkdir -p node_modules/.pnpm/a/node_modules/a/.vscode && printf x > node_modules/.pnpm/a/node_modules/a/.vscode/s.json",
+        "mkdir -p node_modules/b_tmp/.IDEA && printf x > node_modules/b_tmp/.IDEA/y && mv node_modules/b_tmp node_modules/b",
+        "(mkdir -p .idea && printf x > .idea/workspace.xml) 2>/dev/null",
+        "(mkdir -p sub/.vscode && printf x > sub/.vscode/tasks.json) 2>/dev/null",
+        "(mkdir -p .idea/node_modules/c/.idea && printf x > .idea/node_modules/c/.idea/z) 2>/dev/null",
+        "(printf x > node_modules/iconv-lite/.idea/.zshrc) 2>/dev/null",
+        "(mkdir -p node_modules/d/.idea/.husky && printf x > node_modules/d/.idea/.husky/pre-commit) 2>/dev/null",
+        "true",
+      ].join("; "),
+    );
+    expect(result.exitCode, result.stderr).toBe(0);
+    for (const path of [
+      "node_modules/iconv-lite/.idea/x.iml",
+      "node_modules/.pnpm/a/node_modules/a/.vscode/s.json",
+      "node_modules/b/.IDEA/y",
+    ])
+      expect(existsSync(join(project, path)), `${path}: ${result.stderr}`).toBe(true);
+    for (const path of [
+      ".idea",
+      "sub/.vscode",
+      ".idea/node_modules/c/.idea/z",
+      "node_modules/iconv-lite/.idea/.zshrc",
+      "node_modules/d/.idea/.husky/pre-commit",
+    ])
+      expect(existsSync(join(project, path)), path).toBe(false);
+  },
+);

@@ -3273,6 +3273,12 @@ export interface RunningOperationView {
 }
 
 // @public
+export const SANDBOX_DEPENDENCY_DIRECTORY = "node_modules";
+
+// @public
+export const SANDBOX_DEPENDENCY_EXEMPT_NAMES: readonly string[];
+
+// @public
 export const SANDBOX_EXTENSION_POINT = "sandbox@2";
 
 // @public

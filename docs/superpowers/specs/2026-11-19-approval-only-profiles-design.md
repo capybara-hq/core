@@ -152,6 +152,17 @@ These hold under every profile, Full access included.
   `~/.cargo/bin` (`SANDBOX_MANDATORY_WRITE_DENIES`) and `~/bin` (`SANDBOX_HOME_WRITE_DENIES`, anchored
   at the owner's home only, so a project's own `bin/` stays writable).
 
+**Editor configuration below `node_modules`** (amended 2026-11-20, maintainer decision in
+acceptance): `.idea` and `.vscode` are denied because an editor runs what they configure (a project
+interpreter, run configurations with before-launch tasks, `tasks.json` run on folder open) as the
+owner, outside the sandbox, and they are usually git-ignored, so a review never sees them. An
+editor reads them only at the root of the folder it opens, and packages ship them: pnpm's own
+tarball unpacks `iconv-lite/.idea`, so the deny broke pnpm's switch to a pinned version inside the
+sandbox. Below a `node_modules` component the two names are ordinary (SDK rule 7,
+`SANDBOX_DEPENDENCY_EXEMPT_NAMES`); `.idea` with no `node_modules` before it stays denied, and every
+other deny still decides beneath an exempt name. The macOS rules are stricter where `node_modules`
+also follows an editor name (`.idea/node_modules/…`), which fails closed.
+
 **No write root in a system runtime or socket directory** (R3 final review): the candidate builder,
 admission and the device's root check refuse a write root that is, lies in or contains `/run`,
 `/var/run`, `/private/var/run`, `/dev`, `/proc` or `/sys`, that is `/tmp` or `/private/tmp` itself,

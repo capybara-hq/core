@@ -36,6 +36,13 @@
  * 6. A component starting with {@link SANDBOX_RESERVED_NAME_PREFIX} (the broker's staging and
  *    quarantine names) is denied with everything beneath it.
  *
+ * 7. Below a dependency directory ({@link SANDBOX_DEPENDENCY_DIRECTORY}, `node_modules`) the editor
+ *    configuration entries ({@link SANDBOX_DEPENDENCY_EXEMPT_NAMES}: `.idea`, `.vscode`) are
+ *    ordinary names: an editor reads them only at the root of the folder it opens, and packages
+ *    ship them (pnpm's own tarball carries `iconv-lite/.idea`), so denying them there only breaks
+ *    installs. Only the occurrence matters: `.idea` with no `node_modules` before it stays denied,
+ *    and every other rule applies beneath an exempt name as anywhere else.
+ *
  * Names are compared after Unicode NFKC normalization and full case folding
  * ({@link sandboxFoldName}, identical to Python's `casefold`). Known limitations: a
  * restricted command cannot `git init`, add a submodule or worktree, or create a bare repository;
@@ -278,6 +285,26 @@ export const SANDBOX_PROTECTED_PATH_NAMES: readonly string[] = Object.freeze([
     ),
   ),
 ]);
+
+/** The dependency directory below which {@link SANDBOX_DEPENDENCY_EXEMPT_NAMES} are ordinary (rule 7). */
+export const SANDBOX_DEPENDENCY_DIRECTORY = "node_modules";
+
+/**
+ * The single-component mandatory denies that are ordinary names below a
+ * {@link SANDBOX_DEPENDENCY_DIRECTORY} (rule 7): editor configuration, which no editor reads there.
+ */
+export const SANDBOX_DEPENDENCY_EXEMPT_NAMES: readonly string[] = Object.freeze([
+  ".idea",
+  ".vscode",
+]);
+
+/** Whether the name at `index` of the folded `names` is exempt there (rule 7). */
+function dependencyExempt(names: readonly string[], index: number): boolean {
+  return (
+    SANDBOX_DEPENDENCY_EXEMPT_NAMES.includes(names[index] as string) &&
+    names.slice(0, index).includes(SANDBOX_DEPENDENCY_DIRECTORY)
+  );
+}
 
 /** The multi-component entries and the anchored system paths, as folded name sequences. */
 const PREFIX_GUARDED: readonly { readonly names: readonly string[]; readonly anchored: boolean }[] =
@@ -716,7 +743,11 @@ export function isSandboxWriteDenied(path: string): boolean {
   }
   for (const entry of SANDBOX_MANDATORY_WRITE_DENIES)
     for (let i = 0; i + entry.length <= names.length; i++)
-      if (entry.every((name, j) => names[i + j] === name)) return true;
+      if (
+        entry.every((name, j) => names[i + j] === name) &&
+        !(entry.length === 1 && dependencyExempt(names, i))
+      )
+        return true;
   const git = names.indexOf(".git");
   if (git >= 0) return !gitInternalAllowed(names.slice(git + 1));
   return names[names.length - 1] === "head";
@@ -762,7 +793,9 @@ export function isSandboxMoveDenied(
     if (sourceEntries.some((name) => next.includes(fold(name)))) return true;
   }
   const protectedAt = (names: string[]) =>
-    names.findIndex((n) => SANDBOX_PROTECTED_PATH_NAMES.includes(n));
+    names.findIndex(
+      (n, k) => SANDBOX_PROTECTED_PATH_NAMES.includes(n) && !dependencyExempt(names, k),
+    );
   const i = protectedAt(from);
   const samePrefix = (n: number) =>
     n >= 0 && to.length > n + 1 && from.slice(0, n + 1).every((name, k) => to[k] === name);
@@ -786,10 +819,16 @@ GIT_ALLOWED_FILES = set(${JSON.stringify(SANDBOX_GIT_ALLOWED_FILES)})
 GIT_DANGER = set(${JSON.stringify([...GIT_DANGER])})
 PROTECTED_PATH_NAMES = set(${JSON.stringify(SANDBOX_PROTECTED_PATH_NAMES)})
 RESERVED_NAME_PREFIX = ${JSON.stringify(SANDBOX_RESERVED_NAME_PREFIX)}
+DEPENDENCY_DIRECTORY = ${JSON.stringify(SANDBOX_DEPENDENCY_DIRECTORY)}
+DEPENDENCY_EXEMPT_NAMES = set(${JSON.stringify(SANDBOX_DEPENDENCY_EXEMPT_NAMES)})
 
 
 def _fold_parts(path):
     return [_unicodedata.normalize("NFKC", p).casefold() for p in path.split("/") if p]
+
+
+def _dependency_exempt(names, index):
+    return names[index] in DEPENDENCY_EXEMPT_NAMES and DEPENDENCY_DIRECTORY in names[:index]
 
 
 def _holds_head(head, prefix):
@@ -841,7 +880,7 @@ def write_denied(path):
             return True
     for entry in WRITE_DENIES:
         for i in range(len(names) - len(entry) + 1):
-            if names[i:i + len(entry)] == entry:
+            if names[i:i + len(entry)] == entry and not (len(entry) == 1 and _dependency_exempt(names, i)):
                 return True
     if ".git" in names:
         return not _git_internal_allowed(names[names.index(".git") + 1:])
@@ -882,7 +921,8 @@ def move_denied(source, destination, is_dir, entries=None):
             return True
 
     def protected_at(names):
-        return next((k for k, n in enumerate(names) if n in PROTECTED_PATH_NAMES), -1)
+        return next((k for k, n in enumerate(names)
+                     if n in PROTECTED_PATH_NAMES and not _dependency_exempt(names, k)), -1)
 
     def same_prefix(n):
         return n >= 0 and len(dst) > n + 1 and dst[:n + 1] == src[:n + 1]
