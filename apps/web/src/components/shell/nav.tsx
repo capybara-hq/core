@@ -363,8 +363,9 @@ export function useNav(
   bottom: BottomNavItem[];
   /**
    * The Me page's rows (design spec §6.48): Workspace is the sidebar's primary items the bottom
-   * navigation has no room for, then Devices; Manage is the sidebar's other More items for org admins and
-   * owners only (the sidebar also shows members some of them to read).
+   * navigation has no room for, then Devices; Manage is the sidebar's other More items, so the two never
+   * drift: whatever the role sees under More (members read Plugins, Extensions and Org settings; org
+   * admins and owners add Channels and Evals; a guest has none).
    */
   me: { workspace: SidebarNavItem[]; manage: SidebarNavItem[] };
   adminHref?: string;
@@ -440,7 +441,7 @@ export function useNav(
       ...primary.filter((n) => n.id !== "agents"),
       ...more.filter((n) => n.id === "devices"),
     ],
-    manage: level === "admin" ? more.filter((n) => n.id !== "devices") : [],
+    manage: more.filter((n) => n.id !== "devices"),
   };
   return {
     primary,
