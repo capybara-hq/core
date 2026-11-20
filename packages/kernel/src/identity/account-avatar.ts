@@ -27,7 +27,7 @@ export type AccountView = Account & {
 };
 
 /** The `accounts.avatar` value when it is a well-formed upload reference, else null. */
-function ownAvatar(raw: unknown): AccountAvatar | null {
+export function ownAvatar(raw: unknown): AccountAvatar | null {
   if (typeof raw !== "object" || raw === null) return null;
   const v = raw as { kind?: unknown; uploadId?: unknown };
   return v.kind === "upload" && typeof v.uploadId === "string" && v.uploadId !== ""

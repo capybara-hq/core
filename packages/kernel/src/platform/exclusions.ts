@@ -125,6 +125,12 @@ export const PLATFORM_EXCLUSIONS: readonly {
     reason:
       "Transfers ownership of an org's agent to another person on the platform's behalf, as the org's own transfer route",
   },
+  // accounts
+  {
+    route: "GET /api/v1/accounts/:accountId/avatar",
+    category: "transport",
+    reason: "Streams avatar image bytes",
+  },
   // background
   {
     route: "GET /api/v1/orgs/:orgId/conversations/:id/background-tasks/:taskId/output",
