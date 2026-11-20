@@ -48,6 +48,7 @@ export async function runStart(
     const raw = await source.load();
     config = resolveConfig(raw, env);
     log = createConfiguredLogger(config);
+    const extraManifest = bootstrapExtraManifestOf(config);
     onLogger(log);
     options = {
       source,
@@ -58,9 +59,7 @@ export async function runStart(
       env,
       bootstrap: {
         dir: bootstrapDirOf(config),
-        ...(bootstrapExtraManifestOf(config) !== undefined && {
-          extraManifest: bootstrapExtraManifestOf(config) as string,
-        }),
+        ...(extraManifest !== undefined && { extraManifest }),
       },
       // 启动配置里有的插件部署配置字段在后台只读并显示来源（D8）
       extensionConfigSources: extensionConfigSources(raw, env, configSourceKind(env)),

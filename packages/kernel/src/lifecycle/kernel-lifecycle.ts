@@ -1,5 +1,5 @@
 import {
-  type BootstrapManifest,
+  type BootstrapExtraMarketplace,
   type ExtensionContext,
   SANDBOX_EXTENSION_POINT,
 } from "@capybara-hq/plugin-sdk";
@@ -30,8 +30,9 @@ import {
   bootstrapManifestSha256,
 } from "../extensions/bootstrap.js";
 import {
+  type LoadedBootstrapManifest,
   loadBootstrapManifest,
-  type MergedBootstrapManifest,
+  readBootstrapExtraManifest,
   syncExtraMarketplaces,
 } from "../extensions/bootstrap-extra.js";
 import { ExtensionHost } from "../extensions/host.js";
@@ -125,7 +126,7 @@ export class KernelLifecycle
   /** The packages the first bootstrap pass obtained, so the second downloads nothing again. */
   private bootstrapPackages: ReadonlyMap<string, Uint8Array> | undefined;
   /** The merged bootstrap manifest, read once per start. */
-  private mergedManifest: Promise<MergedBootstrapManifest> | undefined;
+  private mergedManifest: Promise<LoadedBootstrapManifest> | undefined;
 
   constructor(
     @Inject(PermissionConfigPublication)
@@ -245,7 +246,7 @@ export class KernelLifecycle
     // The extra manifest's marketplaces (none configured: demotes the config-managed rows)
     await syncExtraMarketplaces(
       (m) => this.marketplaces.syncExtraFromConfig(m),
-      (await this.manifest()).extra?.marketplaces ?? [],
+      await this.extraMarketplaces(opts.bootstrap !== undefined),
       this.log,
     );
     // The bootstrap plugins (spec §7), once per manifest across replicas (the Redis lock
@@ -360,8 +361,20 @@ export class KernelLifecycle
     return this.listening;
   }
 
+  /**
+   * The marketplaces the extra manifest declares. Without a bootstrap step the built-in manifest
+   * is not read: only the extra file, when one is configured.
+   */
+  private async extraMarketplaces(
+    withBootstrap: boolean,
+  ): Promise<readonly BootstrapExtraMarketplace[]> {
+    if (withBootstrap) return (await this.manifest()).extra?.marketplaces ?? [];
+    const file = this.options.bootstrap?.extraManifest;
+    return file === undefined ? [] : (await readBootstrapExtraManifest(file)).marketplaces;
+  }
+
   /** The built-in manifest (or `options.bootstrapManifest`) merged with the extra manifest, if any. */
-  private manifest(): Promise<MergedBootstrapManifest> {
+  private manifest(): Promise<LoadedBootstrapManifest> {
     this.mergedManifest ??= loadBootstrapManifest({
       ...(this.options.bootstrapManifest !== undefined && {
         builtin: this.options.bootstrapManifest,
@@ -390,8 +403,7 @@ export class KernelLifecycle
     try {
       // The second pass records what the first one did (not `kept` for what it installed)
       await bootstrap.run({
-        // A git entry is obtained by a later change; until then `run` only sees npm / workspace ones
-        manifest: manifest as BootstrapManifest,
+        manifest,
         imports: this.pluginImport,
         ...(dir !== undefined && { dir }),
         signal: this.shutdown.signal,

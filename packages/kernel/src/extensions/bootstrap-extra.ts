@@ -25,6 +25,9 @@ export type MergedBootstrapManifest = Omit<BootstrapManifest, "plugins"> & {
   };
 };
 
+/** What the step can run today: a merged manifest without git entries. */
+export type LoadedBootstrapManifest = BootstrapManifest & Pick<MergedBootstrapManifest, "extra">;
+
 const errMsg = (e: unknown) => (e instanceof Error ? e.message : String(e));
 
 /** Reads and parses an extra manifest; every problem (also a missing file) is `bootstrap.extra_invalid`. */
@@ -99,17 +102,27 @@ export async function loadBootstrapManifest(o: {
   manifestFile?: string;
   builtin?: BootstrapManifest;
   extraManifest?: string;
-}): Promise<MergedBootstrapManifest> {
+}): Promise<LoadedBootstrapManifest> {
   const builtin =
     o.builtin ?? (await readBootstrapManifest(o.manifestFile ?? BOOTSTRAP_MANIFEST_FILE));
   const extra =
     o.extraManifest !== undefined ? await readBootstrapExtraManifest(o.extraManifest) : undefined;
-  return mergeBootstrapManifests(builtin, extra);
+  const merged = mergeBootstrapManifests(builtin, extra);
+  // Task 7 obtains git entries; until then they must not reach the npm branch of the step
+  const git = merged.plugins.filter((p) => p.source === "git").map((p) => p.name);
+  if (git.length > 0) {
+    throw new ApiError(
+      "bootstrap.extra_invalid",
+      `git entries in the extra bootstrap manifest are not supported yet: ${git.join(", ")}`,
+    );
+  }
+  return merged as LoadedBootstrapManifest;
 }
 
 /** Postgres deadlock_detected / serialization_failure: replicas starting together may collide. */
 const isContention = (e: unknown): boolean => {
-  const code = (e as { code?: unknown } | null)?.code;
+  const codeOf = (x: unknown) => (x as { code?: unknown } | null)?.code;
+  const code = codeOf(e) ?? codeOf((e as { cause?: unknown } | null)?.cause);
   return code === "40P01" || code === "40001";
 };
 

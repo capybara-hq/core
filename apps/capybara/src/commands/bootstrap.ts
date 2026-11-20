@@ -104,7 +104,7 @@ export async function runBootstrap(
         return (
           await cli.bootstrap.run({
             // A git entry is obtained by a later change; until then `run` sees npm / workspace ones
-            manifest: manifest as unknown as Parameters<typeof cli.bootstrap.run>[0]["manifest"],
+            manifest,
             dir,
             imports: cli.imports,
             ...(carry !== undefined && { carry }),

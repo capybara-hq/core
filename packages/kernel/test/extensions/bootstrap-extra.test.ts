@@ -150,6 +150,20 @@ describe("readBootstrapExtraManifest / loadBootstrapManifest", () => {
   });
 });
 
+describe("git entries (not supported yet)", () => {
+  it("loadBootstrapManifest refuses them naming the entries, before any package is obtained", async () => {
+    const file = await write("git.json", {
+      schemaVersion: 1,
+      marketplaces: [{ name: "dist", url: "https://example.com/o/r.git" }],
+      plugins: [gitEntry],
+    });
+    await expect(loadBootstrapManifest({ builtin, extraManifest: file })).rejects.toMatchObject({
+      code: "bootstrap.extra_invalid",
+      message: expect.stringContaining("not supported yet: git-c"),
+    });
+  });
+});
+
 describe("syncExtraMarketplaces", () => {
   const log = () => ({ warn: vi.fn() });
   const contention = (code: string) => Object.assign(new Error("boom"), { code });
@@ -171,6 +185,13 @@ describe("syncExtraMarketplaces", () => {
     await expect(syncExtraMarketplaces(sync, [], l)).resolves.toBeUndefined();
     expect(sync).toHaveBeenCalledTimes(2);
     expect(l.warn).toHaveBeenCalledOnce();
+  });
+
+  it("reads the pg code from a wrapped error's cause", async () => {
+    const wrapped = Object.assign(new Error("wrapped"), { cause: contention("40P01") });
+    const sync = vi.fn().mockRejectedValue(wrapped);
+    await syncExtraMarketplaces(sync, [], log());
+    expect(sync).toHaveBeenCalledTimes(2);
   });
 
   it("any other error is thrown", async () => {
