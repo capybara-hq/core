@@ -21,6 +21,7 @@ describe("desktop shell capability types", () => {
       notify: "notify@1",
       openExternal: "openExternal@1",
       signIn: "signIn@1",
+      push: "push@1",
     });
   });
 
