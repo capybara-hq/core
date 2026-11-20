@@ -2,7 +2,11 @@
 
 - Date: 2026-11-20, written against `origin/main` at `dec9a7a51`.
 - Status: approved by the maintainer on 2026-11-20 (with the iPhone Duo edge-to-edge rule of §8
-  and the Safari sign-in sheet of §4.3 confirmed); the designer's calls stand.
+  and the Safari sign-in sheet of §4.3 confirmed); the designer's calls stand. **Amended
+  2026-11-21** by the maintainer's touch decisions: no native tab bar on ordinary phones; native
+  navigation only in the iPhone Duo's strip (outer and inner display) through a new `nav@1`
+  shape; the web's chat-first compact shell and touch set (layout spec §4.1–§4.6). Changed
+  passages are marked **(decided 2026-11-21)**.
 - Related: the mobile layout and Shell environment spec (`2026-11-19-mobile-layout-design.md`,
   "layout spec" below: §4 the compact shell, §7 mobile specifics, §8 foldables, §9 the Shell
   environment, §10 PWA and notifications), the desktop client spec
@@ -32,7 +36,7 @@ itself**, which the browser and the PWA also get.
 
 | | What | Trade-off |
 |---|---|---|
-| **A** (chosen) | Capacitor, one WebView per profile. The shell draws the tab bar natively (UITabBar on iOS, a Material navigation bar on Android) and offers native share, haptics, action menus, push; the web gets a native-feel pass (transitions, gestures, touch feedback, no flashes) | One UI. Push and pop stay web transitions (polished, not native) |
+| **A** (chosen) | Capacitor, one WebView per profile. The shell draws native navigation only in the iPhone Duo's strip (decided 2026-11-21; first planned as a tab bar on every phone) and offers native share, haptics, action menus, push; the web gets a native-feel pass (transitions, gestures, touch feedback, no flashes) and a touch set | One UI. Push and pop stay web transitions (polished, not native) |
 | **B** (later phase) | A native navigation stack where each pushed page is its own WebView (the Hotwire Native model), with a native top bar | Truly native push, pop and swipe-back; costs a WebView per pushed page and a routing contract with the Next client router. Builds on A: nothing in A is thrown away |
 | C | React Native | The most native; rejected for the reasons in §1 |
 
@@ -42,11 +46,15 @@ Goals:
 
 1. An official Capybara app for iOS and Android (App Store, Google Play) that loads a
    deployment's own web, with the Capybara name and icon **(decided, layout spec §10.4)**.
-2. **Native chrome**: the four compact tabs drawn by the OS's own tab bar; native share, haptics
-   and action menus; native sign-in sheet; no white flashes at launch or between pages.
-3. **iPhone Duo**: on the outer display the tabs sit in the system's right strip as in Apple's
-   apps; on the inner display the web's medium / expanded layout (rail or sidebar) takes over and
-   the native tab bar hides. Android foldables follow the same rules.
+2. **Native chrome**: native share, haptics and action menus; native sign-in sheet; no white
+   flashes at launch or between pages. On ordinary phones the navigation is the web's chat-first
+   shell (a menu button and a drawer, layout spec §4.1), with no native tab bar (decided
+   2026-11-21).
+3. **iPhone Duo** (decided 2026-11-21): on both displays the sections (对话, 收件箱, 智能体, 定时任务)
+   sit in the system's right strip as a vertical system tab bar, as in Apple's apps, with a
+   native menu button at the top of the strip on the outer display that opens the web's drawer;
+   the web hides its own section entries while the strip shows. Android, including foldables,
+   has no strip and keeps the web's drawer or sidebar (§6.1).
 4. **Push notifications** for the four categories already decided (layout spec §10.3), delivered
    by the deployment itself to an app whose push credentials the deployment holds.
 5. **Self-built apps**: an organization forks `capybara-hq/clients`, changes one brand file and
@@ -57,7 +65,7 @@ Goals:
 Non-goals:
 
 - Tablets as a designed target (designer's call): the build is universal and an iPad or Android
-  tablet simply shows the web's medium / expanded layout with the native tab bar hidden; no
+  tablet simply shows the web's medium / expanded layout (no strip, so no native navigation); no
   tablet-specific chrome, screenshots or review scope in this design.
 - Approach B (native navigation stack) and a native top bar: a later design.
 - 「连接本机」 on a phone: no `device@1` in the mobile shell.
@@ -77,7 +85,8 @@ Anti-goals (a failure even if it works):
 - A push payload that carries conversation content to Apple or Google when the platform did not
   turn previews on (§9.5).
 - A push credential or a device push token readable by an agent, a log or the audit in clear.
-- Two tab bars at once (native and web), or a double animation on back.
+- Two navigations at once (the strip's sections and the web's section entries), or a double
+  animation on back.
 
 ## 4. The app
 
@@ -96,7 +105,7 @@ the zh / en catalog). The repository rules stay: published core packages only
 (`@capybara-hq/plugin-sdk` for the Shell environment types), tests without real Keychain or OS
 services (injected fakes).
 
-Native code is kept to what Capacitor and its official plugins do not cover: the tab bar host,
+Native code is kept to what Capacitor and its official plugins do not cover: the strip host,
 the origin gate (§5.3), profiles' data stores, the sign-in session and the push hand-off. Each
 native module has a TypeScript-facing contract tested with fakes; the native side gets XCTest /
 JUnit tests for the origin gate and the profile store.
@@ -118,9 +127,10 @@ fails when the native projects drift from it.
 - **Profiles**: several deployments, each in its own data store (iOS `WKWebsiteDataStore` with an
   identifier, iOS 17+; Android: a profile per deployment through `androidx.webkit` multi-profile
   where available, else one deployment at a time with a cleared store on switch — designer's
-  call, measured in the plan). The switcher is a native action sheet from a long press on the 我
-  tab and from the address page; removing a profile deletes its store and its push registration
-  (§9.3).
+  call, measured in the plan). The switcher is a native action sheet, opened from the web's
+  account sheet through `profiles@1.show()` (designer's call 2026-11-21: the 我 tab it hung on is
+  gone) and from the address page and the error state; removing a profile deletes its store and
+  its push registration (§9.3).
 - **Sign-in** is `signIn@1` over the desktop's flow (desktop spec §6.5) in Safari (decided
   2026-11-20): `ASWebAuthenticationSession` on iOS, the Safari sheet over the app that shares
   Safari's cookies, passwords and SSO sessions; Custom Tabs (the default browser) on Android; returning through
@@ -145,7 +155,8 @@ fails when the native projects drift from it.
   last `chrome@1.setAppearance` of the profile.
 - **Back**: iOS enables the WebView's back-forward swipe (`allowsBackForwardNavigationGestures`),
   which moves through the same history the web's back button uses; Android's back gesture goes
-  back in history, and at a tab root moves the app to the background. The web suppresses its own
+  back in history while there is any, else moves the app to the background (decided 2026-11-21:
+  no tab roots any more). The web suppresses its own
   pop animation when the browser already animated (`PopStateEvent.hasUAVisualTransition`), so a
   swipe never animates twice (§7.2).
 - **Errors**: a deployment that cannot be reached shows a native error state with retry and the
@@ -161,9 +172,9 @@ fails when the native projects drift from it.
 | `kind` | `"mobile"` |
 | `platform` | `"ios"` or `"android"` |
 | `shellVersion` | The app's version |
-| `insets` | The native chrome over the WebView beyond the OS safe areas: `bottom` the native tab bar's height while it shows on a phone; `right` on the Duo outer display the strip's width when the WebView does not already report it as `safe-area-inset-right` (§8), else 0; announced with `change` |
+| `insets` | All 0 (decided 2026-11-21): there is no native bottom bar any more, and the strip arrives as `env(safe-area-inset-right)` (§15.1 item 3). A shell whose WebView did not report the strip would put its width in `right`; announced with `change` |
 | `controls` | Absent |
-| `capabilities` | `signIn@1`, `openExternal@1`, `chrome@1`, `nav@1`, `haptics@1`, `share@1`, `menu@1`; `push@1` when the build has push credentials and the deployment's meta lists the build (§9.2) |
+| `capabilities` | `signIn@1`, `openExternal@1`, `chrome@1`, `haptics@1`, `share@1`, `menu@1`; `nav@1` only on iOS while the window has a strip (§6.1, decided 2026-11-21); `profiles@1` unless the build or MDM locks the app to one deployment; `push@1` when the build has push credentials and the deployment's meta lists the build (§9.2) |
 
 `device@1` and `notify@1` are absent (no local device; push replaces in-app OS notifications).
 
@@ -172,8 +183,10 @@ fails when the native projects drift from it.
 | Capability · function | Does |
 |---|---|
 | `chrome@1.ready()` (new function) | The web's first paint is done: the shell drops its splash. Additive; the desktop may ignore it |
-| `nav@1.set({ items, current, visible })` | The four compact tabs (`id` of `chats` / `agents` / `inbox` / `me`, label, count, `countMore`), the current id and whether the bar shows. The shell draws them natively with its own fixed icon per id (no icon data crosses), the count as the OS badge style |
-| `nav@1.onSelect(cb)` | A tab was tapped: the web navigates to that tab's href (the web owns routes) |
+| `nav@1.set({ items, current, menu })` (decided 2026-11-21) | The strip's sections: `items` are the sections the person sees, in the order `chats` (对话), `inbox` (收件箱), `agents` (智能体), `schedules` (定时任务), each `{ id, label, count?, countMore? }`; `current` the section of the page on screen or `null`; `menu` the strip's menu button `{ label, count?, countMore? }` or `null` for none. The shell draws them with its own fixed icon per id (no icon data crosses), counts in the OS badge style. Not confirming, no activation |
+| `nav@1.onSelect(cb)` | A section was tapped, the current one included: the web navigates to that section's route (the web owns routes) |
+| `nav@1.onMenu(cb)` (decided 2026-11-21) | The strip's menu button was tapped: the web opens its drawer |
+| `profiles@1.show()` (designer's call 2026-11-21) | Opens the native profile switcher (the app's deployments, add, remove) and resolves when it closes. Returns nothing, so the page learns nothing about other profiles; needs a user activation; no confirmation of its own |
 | `haptics@1.impact(kind)` | `selection`, `light`, `success`, `warning`; no confirmation |
 | `share@1.share({ title?, text?, url? })` | The OS share sheet; `url` must be on the profile's origin or https; needs a user activation |
 | `menu@1.show({ title?, items, anchor? })` | A native action sheet / menu of plain items (`id`, label, `destructive?`, `disabled?`); resolves the chosen id or null. No nesting, no icons from the page; needs a user activation |
@@ -199,24 +212,49 @@ Clarified (decided 2026-11-21, spike 1.2): see §15, "The origin gate, clarified
 
 ## 6. Native chrome and the web
 
-### 6.1 The tab bar
+### 6.1 Navigation: the strip on the iPhone Duo (decided 2026-11-21)
 
-- When `nav@1` is present, the web stops drawing `BottomNav` and calls `nav@1.set` instead:
-  items from the same `useNav` data, `visible` true exactly when the web would have shown its own
-  bar (compact class, tab root, keyboard closed). The design shell takes the native handler as a
-  prop from apps/web (`lib/shell.ts` adapter; design imports nothing from the shell), and sets
-  `data-native-nav` on the shell so its CSS drops the bar's slot.
-- **iOS**: the shell hosts the WebView in a `UITabBarController`-based container whose four tabs
-  share the one WebView (it moves into the selected tab's view), so the OS places and styles the
-  bar: the standard bar on phones, the vertical bar in the right strip on the iPhone Duo outer
-  display (Apple's default for tab bars, iOS 27.1). If sharing one WebView across tab children
-  proves unworkable in the plan's spike, the fallback is a custom bar placed with
-  `UIViewReservedRegion` (iOS 27.1); either way the result must match Apple's placement.
-- **Android**: a Material 3 `NavigationBar` under the WebView; on a foldable's inner display the
-  web's medium / expanded layout shows and the bar hides (`visible` false).
-- `insets.bottom` carries the bar's height while it shows, so the web's bottom-pinned rows sit
-  above it; on the Duo outer display the bar sits in the strip, which the content already keeps
-  clear (§8), so it adds no bottom inset.
+- **Where native navigation exists.** Only where the window has a strip: the iPhone Duo in the
+  app, on the outer and the inner display. There the shell hosts the profile WebView in a
+  `UITabBarController` whose vertical system tab bar the OS places in the strip (one shared
+  WebView, spike 1.1), with the sections 对话, 收件箱 (badge), 智能体 and 定时任务, and on the outer
+  display a native menu button at the top of the strip that asks the web to open its drawer.
+  Content runs under the strip (§8).
+- **No native tab bar elsewhere.** Ordinary iPhones, iPads and every Android device show none:
+  the web's menu button and drawer (compact) or rail and sidebar (medium, expanded) are the
+  navigation (layout spec §4.1–§4.3). **Android, foldables included, follows the same rule**
+  (designer's call: the decisions name no Android strip; Android has no system strip, and a
+  Material navigation bar would be exactly the bottom tab bar the maintainer ruled out): no strip,
+  so no `nav@1`, so the web's drawer on a folded or compact screen and its sidebar unfolded.
+- **Detecting the strip** (designer's call): by the window, never the device model. The strip is
+  a side region the system reserves: the shell asks iOS 27.1's reserved-region API where it
+  reports one, else reads a trailing safe-area inset with no leading one (a notch in landscape
+  insets both sides equally). One native function, `StripDetector.hasStrip(window)`, re-evaluated
+  on every size and trait change (opening, closing, rotating, a scene resize).
+- **`nav@1` is offered exactly while the window has a strip** (designer's call), so its presence
+  is the strip's visibility: `ShellEnvironmentScript` sets `data-native-nav` on `<html>` before
+  the first paint when it is present (spec decision 4 of §15.5), and the capability appears or
+  disappears with the envelope's `change` when the strip comes or goes. No visibility field and
+  no data on a capability object: the existing capability machinery says it, and a page that
+  reads `nav@1` can only see a strip that exists.
+- **What the web sends** (`set`, §5.2), after hydration and on every change: `items` the
+  sections the person sees (guests see no 定时任务), their labels in the page's language and the
+  inbox's pending count; `current` from the route (`/`, `/chat/…` and `/conversations` are
+  `chats`; `/inbox…` `inbox`; `/agents…` `agents`; `/schedules…` `schedules`; anything else
+  `null`, and the shell leaves its selection as it was); `menu` non-null exactly when the web's
+  class is compact (it has a drawer: the outer display), with the inbox count as its badge as the
+  web's own menu button has it, `null` on medium and expanded (the inner display, where the web
+  shows its sidebar).
+- **Section routes**: `chats` → `/`, `inbox` → `/inbox`, `agents` → `/agents`, `schedules` →
+  `/schedules`. A selection navigates without a slide (as native tab bars switch), a selection of
+  the current section returns to its root, and `onMenu` toggles the drawer.
+- **The web while the strip shows**: on compact it draws no menu button of its own (the floating
+  row's leading slot stays empty on chat surfaces; pushed pages keep their back button) and the
+  drawer drops 收件箱, 智能体 and 定时任务; on medium and expanded the rail and the sidebar keep
+  only search, the recent conversations, the account and the new conversation (layout spec §4.3).
+  The web's section entries and the strip never show together.
+- **Insets**: the strip arrives as `env(safe-area-inset-right)` (§15.1 item 3) and there is no
+  bottom bar, so the shell reports no insets for navigation (§5.1).
 
 ### 6.2 Menus, share and haptics
 
@@ -225,7 +263,8 @@ Clarified (decided 2026-11-21, spike 1.2): see §15, "The origin gate, clarified
   popovers / bottom sheets. Menus whose items are not plain (checkbox groups, inputs) stay web.
 - **Share**: the existing share actions (file shares, a conversation link) use `share@1` when
   present, the Web Share API in a browser that has it, else copy-link as today.
-- **Haptics** (designer's call, small set): a tab switch and a selection change (`selection`),
+- **Haptics** (designer's call, small set): a section switch from the strip (2026-11-21; was a
+  tab switch) and a selection change (`selection`),
   sending a message (`light`), an approval granted (`success`), a destructive confirmation
   (`warning`). The browser path is a no-op.
 
@@ -256,12 +295,15 @@ nothing. Each has a jsdom or visual check where one is possible.
   the iOS / Android navigation defaults (tokens), the outgoing page parallaxed and dimmed.
 - **No double animation**: a pop whose `PopStateEvent.hasUAVisualTransition` is true (Safari's,
   the iOS WebView's and Chromium's back gesture) swaps instantly.
-- Tab switches never animate a slide (as native tab bars do).
+- Section switches from the strip and moves between chat surfaces never animate a slide (as
+  native tab bars switch; decided 2026-11-21: they replace the tab switches of the retired bottom
+  navigation); opening a pushed page from the drawer slides.
 
 ### 7.3 Perceived speed
 
-- Tab roots and the next likely push (a conversation from the list) are prefetched (the route
-  table already prefetches on hover; on touch, on `pointerdown` and when a row scrolls into view).
+- The drawer's entries and the next likely push (a conversation from the recent list) are
+  prefetched (the route table already prefetches on hover; on touch, on `pointerdown` and when a
+  row scrolls into view; 2026-11-21: tab roots are gone).
 - Pages show their template's skeleton at once, never a blank area (the templates have
   skeletons; the pass checks every compact route).
 - Returning from the background resumes streams from the event log (layout spec §7.6, already
@@ -269,8 +311,11 @@ nothing. Each has a jsdom or visual check where one is possible.
 
 ### 7.4 What stays
 
-The design direction (E 终端: its type, colors and mono details) is not changed by this pass; the
-native feel comes from behavior, not from imitating the OS look inside pages.
+The design direction's colors are not changed by this pass, and the native feel comes from
+behavior, not from imitating the OS look inside pages. **Amended 2026-11-21:** on a touch screen
+the type and sizes change through the touch set (layout spec §4.5: the system font, body 17,
+targets of 44, floating surfaces), and mono is kept for code, commands, paths, versions and times
+only; the desktop keeps E 终端 unchanged.
 
 ## 8. iPhone Duo and foldables
 
@@ -279,9 +324,10 @@ native feel comes from behavior, not from imitating the OS look inside pages.
 - **Outer display in the app: edge to edge under the strip (decided 2026-11-20).** The WebView
   covers the whole display, the right strip included, as Apple's own apps draw their background
   under it (the App Store's ground runs to the right edge). Backgrounds and full-bleed grounds (the
-  page, the top bar, the bottom-pinned rows) extend under the strip; content, text and controls
-  stay left of it, padded by the strip's safe-area inset on the right (`--cb-inset-right`, per
-  side). The native tab bar sits in the strip below the status bar (§6.1). The shell sets the
+  page, the floating surfaces' row, the bottom-pinned rows) extend under the strip; content, text
+  and controls stay left of it, padded by the strip's safe-area inset on the right
+  (`--cb-inset-right`, per side). The native strip navigation sits in the strip below the status
+  bar (§6.1). The shell sets the
   WebView to ignore the safe area and passes the strip through `env(safe-area-inset-right)` (or,
   where the WebView does not report it, through `insets.right`, §5.1); the spike of phase 1 (§15.1)
   confirms which on the Device Hub simulator.
@@ -289,11 +335,16 @@ native feel comes from behavior, not from imitating the OS look inside pages.
   `viewport-fit=cover` and pads every side by its own inset, so the day Safari extends content
   under the outer display's side controls (Apple has not decided, layout spec §15), the page runs
   under the strip with no change. Until then the strip stays the system's in Safari and the PWA.
-- **Inner display**: the web shows the rail or the sidebar; `nav@1` reports `visible` false and
-  the native bar hides. Open and close are resizes: the web's class changes and it calls
-  `nav@1.set` again.
-- **Browser and PWA on the Duo**: unchanged from the layout spec: the web bottom bar on the outer
-  display (the strip belongs to Safari or the system), the rail or sidebar inside.
+- **Inner display in the app (decided 2026-11-21)**: the strip's sections stay (the board draws
+  them on both displays) and the content runs under the strip as on the outer display; the web
+  shows the rail or the sidebar with only search, the recent conversations, the account and the
+  new conversation, and sends `menu: null` (no menu button: the sidebar is on screen). Open and
+  close are resizes: the web's class changes and it calls `nav@1.set` again. If the inner display
+  turns out to have no strip, `nav@1` disappears there and the web's full sidebar returns, by the
+  same rule (§6.1).
+- **Browser and PWA on the Duo (decided 2026-11-21)**: no strip access, so the outer display is
+  the phone layout (the menu button and the drawer) and the inner display the rail or the sidebar
+  with their section entries (layout spec §8).
 - The two open questions of layout spec §15 (WKWebView support of the posture and segment APIs,
   `viewport-fit=cover` on the outer display) are answered in the plan's first spike on the Xcode
   27.1 Device Hub simulator and recorded in this spec.
@@ -430,31 +481,38 @@ The four categories of layout spec §10.3, each from its existing kernel event, 
 
 ## 12. Core changes
 
-- `packages/plugin-sdk`: `push-provider@1` contract; the Shell environment types gain `nav@1`, `haptics@1`,
-  `share@1`, `menu@1`, `push@1`, `chrome@1.ready` (changeset, `gen:sdk-api`).
+- `packages/plugin-sdk`: `push-provider@1` contract; the Shell environment types gain `nav@1` (the
+  strip shape of §5.2, decided 2026-11-21), `profiles@1`, `haptics@1`, `share@1`, `menu@1`,
+  `push@1`, `chrome@1.ready` (changeset, `gen:sdk-api`).
 - `packages/kernel`: push registrations and preferences (migration, routes, DTOs, error codes),
   the outbox handler and `cap-push-deliver` worker, the `push-provider@1` host, `features.push` in meta,
   the stale-registration job, `push.previews` config, Platform operations or exclusions for the
   new routes.
-- `packages/design`: the native-feel pass (§7), `data-native-nav`, the menu / share / haptics
-  hooks as props.
-- `apps/web`: the `lib/shell.ts` accessors for the new capabilities, the notification settings
-  page, the in-context push prompt.
+- `packages/design`: the native-feel pass (§7), the touch set and the chat-first compact shell
+  (layout spec §4.1–§4.6, decided 2026-11-21), `data-native-nav` (now: the strip shows) with the
+  section entries it hides, the nav / menu / share / haptics / profiles hooks as props.
+- `apps/web`: the `lib/shell.ts` accessors for the new capabilities, the drawer's nav data and the
+  `desktopOnly` route flags, the notification settings page, the in-context push prompt.
 
 ## 13. Phases (designer's call)
 
 1. **Spikes** (clients): one shared WebView under a tab bar controller on iOS 27.1 incl. the Duo
    simulator; the origin gate on both platforms; Android profiles. Results recorded here.
-2. **Web native-feel pass** (core, ships to browser and PWA at once).
-3. **App shell** (clients): address page, profiles, sign-in, the gate, `chrome@1`, `nav@1`,
-   `haptics@1`, `share@1`, `menu@1`, error states; TestFlight / internal track builds.
+2. **Web native-feel pass** (core, ships to browser and PWA at once), extended 2026-11-21 by the
+   touch set, the chat-first compact shell, the desktop-only gate and the strip-aware section
+   entries (layout spec P4).
+3. **App shell** (clients): address page, profiles, sign-in, the gate, `chrome@1`, `nav@1` (the
+   strip on the iPhone Duo only; no native bar on ordinary phones or Android, decided
+   2026-11-21), `profiles@1`, `haptics@1`, `share@1`, `menu@1`, error states; TestFlight /
+   internal track builds.
 4. **Push** (core kernel + web, plugins `push-apns` / `push-fcm` / the aggregator, clients `push@1`), fork guide
    and release workflow.
 5. Store submission of the official app (maintainer: accounts, certificates, demo deployment).
 
 ## AGENTS.md rules touched
 
-- **SDK public API.** New extension point `push-provider@1` and new Shell environment capability types:
+- **SDK public API.** New extension point `push-provider@1` and new Shell environment capability types
+  (`nav@1` in the strip shape and `profiles@1`, decided 2026-11-21):
   `pnpm gen:sdk-api` and a changeset bumping `@capybara-hq/plugin-sdk`.
 - **Multi-replica discipline.** Push delivery is owed work: an outbox row in the event's
   transaction, a BullMQ job per registration with a deterministic id without `:`, consumers and
@@ -468,8 +526,10 @@ The four categories of layout spec §10.3, each from its existing kernel event, 
   are extension deployment config with secrets.
 - **Extensions / plugins.** A new extension point and three plugins in `capybara-hq/plugins`;
   policy and usage hooks are not involved (no model call).
-- **Web UI.** Pages still write no styles; the pass is design CSS and components; new settings
-  page on a template with `defineQuery` / `useAppMutation`.
+- **Web UI.** Pages still write no styles; the pass, the touch set and the chat-first shell are
+  design CSS, tokens and components (touch sizes from the `touch` token block under the touch
+  query, layout spec §4.5); the strip's presence changes only design shell parts, never a page;
+  new settings page on a template with `defineQuery` / `useAppMutation`.
 - **Language / i18n.** New UI and push texts in zh and en (平台 / 超级管理员 / 智能体).
 - **Dependency direction.** Unchanged: the clients repository depends on published
   `@capybara-hq/plugin-sdk` only; design takes shell handlers as props.
@@ -477,7 +537,8 @@ The four categories of layout spec §10.3, each from its existing kernel event, 
 ## 14. Open questions
 
 1. Sharing one WebView across `UITabBarController` children (§6.1): proven in the spike, else the
-   `UIViewReservedRegion` fallback. Answered in §15.1.
+   `UIViewReservedRegion` fallback. Answered in §15.1. Since 2026-11-21 the controller hosts the
+   WebView only in windows with a strip (§6.1).
 2. Android multi-profile WebView availability on the devices we target (§4.3). Answered in §15.1.
 3. The layout spec's §15 questions, answered on the Duo simulator in phase 1. Answered in §15.1.
 
@@ -493,7 +554,9 @@ spike evidence, unless marked as the maintainer's.
    gate on iOS and Android; all four gate documents pass.
 2. **Tab host: one shared WebView under `UITabBarController`** (designer's call, spike 1.1).
    Reload, blank state, placement, hide/show and focus all passed; `UIViewReservedRegion` is not
-   needed. If wrong: swap the host inside `TabHost.swift`.
+   needed. If wrong: swap the host inside `TabHost.swift`. Amended 2026-11-21: used only where the
+   window has a strip (the iPhone Duo); elsewhere the WebView sits in a plain container with no
+   tab bar (§6.1).
 3. **`insets.right` comes from `env(safe-area-inset-right)`**, the shell reports 0 (designer's
    call, spike 1.4). On the iPhone Duo outer display `env()` reports 84, the strip width, and
    backgrounds under the strip render correctly. The layout spec's §15 questions are answered
@@ -509,6 +572,9 @@ spike evidence, unless marked as the maintainer's.
 - `insets.bottom`: the profile WebView reports the window's safe area (a `WKWebView` subclass
   overriding `safeAreaInsets`), so `env(safe-area-inset-bottom)` excludes the native bar and
   `insets.bottom` is the bar height (§5.1). The spike's `env()` bottom double-counted the bar.
+  **Superseded 2026-11-21:** there is no native bottom bar, so `insets.bottom` is 0 and the
+  subclass is needed only if the strip host's child view double-counts the strip (the plan's
+  strip task measures it).
 - Android profile WebViews never use the default profile while Capacitor runs: `CapacitorCookies`
   wipes default-profile session cookies on Activity start and destroy (named profiles are fine).
   Single-store mode must neutralize that plugin; the config switch alone was not enough.
@@ -551,7 +617,9 @@ both on real devices before release.
 3. `chrome@1.ready` is optional; splash fallback: dropped on `ready()`, the error state, or 3 s
    after the main-frame load.
 4. `data-native-nav` is set on `<html>` before first paint (and on the shell element); CSS drops
-   the bottom-nav slot under either.
+   the bottom-nav slot under either. Amended 2026-11-21: it marks that the strip shows (`nav@1`
+   is present only then, §6.1), and CSS drops the web's section entries and its menu button under
+   it; the bottom navigation is retired.
 5. Capabilities run in the TypeScript runtime in the local Capacitor WebView; native gates frame
    and origin first, the runtime re-checks, validates and gates activation.
 6. The code exchange runs in `WKContentWorld.defaultClient` on iOS and in the page world on
@@ -570,5 +638,8 @@ both on real devices before release.
     share use the official Capacitor plugins.
 13. Build number is `github.run_number`; marketing version comes from `apps/mobile/package.json`.
 14. Tab icons are fixed per id (`chats`, `agents`, `inbox`, `me`) as SF Symbol / Material pairs.
+    Amended 2026-11-21: section icons per id are SF Symbols only (no Android bar): `chats`
+    `bubble.left.and.bubble.right`, `inbox` `tray`, `agents` `person.2`, `schedules` `clock`; the
+    strip's menu button `line.3.horizontal`.
 15. Touch prefetch: apps/web adds `warmRoute`, which runs the route table's queries on
     `pointerdown` and when a conversation row scrolls into view.
