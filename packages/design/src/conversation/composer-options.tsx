@@ -158,7 +158,7 @@ function OptionsGroup({
   onAction,
 }: {
   group: string;
-  /** Touch: the picker's few items as one segmented control (thinking 低 / 中 / 高). */
+  /** Touch: the picker's few items as one segmented control (thinking low / medium / high). */
   segmented: boolean;
   title: string;
   picker: PickerProps;

@@ -338,7 +338,7 @@ const fullInput = (input: Record<string, unknown>): string => {
 
 /**
  * Orders a pending approval's buttons for the form factor: the approvals then the deny button, and
- * on touch (spec §6.16.11) the short 「拒绝」 first, the wider grants next and the primary approval
+ * on touch (spec §6.16.11) the short deny button first, the wider grants next and the primary approval
  * (the first scope) last, at the thumb's end of the row.
  */
 function useActionOrder() {
