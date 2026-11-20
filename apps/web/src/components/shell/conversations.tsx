@@ -184,6 +184,9 @@ export function useConversationGroups(
   const router = useRouter();
   const qc = useQueryClient();
   const warm = useWarm(router);
+  const warmOnTouch = (href: string) => {
+    if (window.matchMedia("(pointer: coarse)").matches) warm(href);
+  };
   const [viewState, setViewState] = useState(DEFAULT_VIEW);
   // Rows and groups paged in past the first page, for one view.
   const [paged, setPaged] = useState<Loaded | null>(null);
@@ -370,8 +373,9 @@ export function useConversationGroups(
     startedAt: new Date(c.createdAt),
     href: `/chat/${encodeURIComponent(c.id)}`,
     activity: c.activity,
-    // a row warms its conversation when it first scrolls into view (mobile spec §7.3)
-    onVisible: warm,
+    // a touch device's row warms its conversation when it first scrolls into view (mobile spec
+    // §7.3); a pointer device warms on hover and press only, so a desktop reload reads nothing
+    onVisible: warmOnTouch,
   });
   // The group titles' avatars come with the groups (the sidebar reads no agents list); an agent
   // without an avatar shows the initial of its name.
