@@ -86,6 +86,7 @@ export { GREETING_TYPE_MS, Greeting, type GreetingProps } from "./greeting";
 export {
   ApprovalBlock,
   type ApprovalBlockProps,
+  type ApprovalFact,
   type ApprovalFile,
   ApprovalFileRow,
   type ApprovalScope,
@@ -95,6 +96,7 @@ export {
   ConnectBlock,
   type ConnectBlockProps,
   clipCommand,
+  middleClip,
   NETWORK_COMMAND_MAX,
   type NetworkAsk,
   NetworkBlockedFacts,
@@ -106,6 +108,7 @@ export {
   type QuestionField,
   type QuestionState,
   safeHttpUrl,
+  WORKING_ROOT_MAX,
 } from "./hitl";
 export { ImageViewer, type ImageViewerImage, type ImageViewerProps } from "./image-viewer";
 export {

@@ -328,8 +328,48 @@ window.__CB_EXTRA__ = ({ F, esc, icon, state, stamp, sidebar }) => {
   // The model-visible tool key after the title: the title is unreviewed text, the key is not.
   const toolKey = (k) => `<span class="r-faint r-small r-tkey">${esc(k)}</span>`;
 
+  // The command ask with its in-card details (spec §6.16.11, "Details inside the card"): the
+  // reason first, the lead, the facts or the working root above the command, the short hint under
+  // the allow button and the notes under the actions; decided, one line with the crossing phrase.
+  const midClip = (s, max = 64) => {
+    const chars = [...s];
+    if (chars.length <= max) return s;
+    const keep = max - 1;
+    const head = Math.floor(keep * 0.4);
+    return `${chars.slice(0, head).join("")}…${chars.slice(chars.length - (keep - head)).join("")}`;
+  };
+  function commandApproval(o) {
+    const X = H.command;
+    if (o.state === "command-allowed")
+      return `<div class="r-tline">${icon("check", 12)}<span class="r-tlabel">已允许（一次） <span class="r-faint">Bash · ${esc(X.decidedNote)} · ${esc(H.decided.who)}</span><span class="r-faint"> · ${esc(X.at)}</span></span></div>`;
+    const scope = o.state === "command-scope";
+    const head = `<div class="r-card-head"><span class="r-dot" aria-hidden="true"></span><strong class="r-strong">智能体想运行这条命令，允许吗？</strong><span class="r-muted r-small">Bash</span>${toolKey("Bash")}</div>`;
+    const reason = scope
+      ? ""
+      : `<figure class="r-reason" data-part="reason"><figcaption class="r-muted r-small" data-part="reason-label">智能体的理由</figcaption><blockquote class="r-reason-text" data-part="reason-text">${esc(X.reason)}</blockquote></figure>`;
+    const lead = `<div class="r-small" data-part="command-reason">${esc(scope ? X.scopeLead : X.lead)}</div>`;
+    const facts = scope
+      ? `<dl class="r-facts" data-part="facts">${X.facts
+          .map(
+            (f) =>
+              `<div class="r-fact"><dt class="r-fact-k" data-part="fact-label">${esc(f.label)}</dt>${f.values.map((v) => `<dd class="r-fact-v" data-part="fact-value">${esc(v)}</dd>`).join("")}</div>`,
+          )
+          .join("")}</dl>`
+      : "";
+    const root = scope
+      ? ""
+      : `<div class="r-muted r-small r-root" data-part="working-root">在 <code class="r-root-path" title="${esc(X.workingRoot)}">${esc(midClip(X.workingRoot))}</code> 运行</div>`;
+    const cmd = `<figure class="r-codeblock" data-framed="false" data-part="code-block"><pre>${esc(scope ? X.scopeCommand : X.command)}</pre></figure>`;
+    // the buttons stay adjacent; the hint is its own line under the whole action row
+    const actions = `<div class="r-card-actions">${btn("允许一次", "primary")}${btn("拒绝", "default")}</div>`;
+    const hint = `<div class="r-muted r-small" data-part="scope-hint">${esc(scope ? X.scopeHint : X.hint)}</div>`;
+    const notes = scope ? "" : `<div class="r-muted r-small" data-part="card-hint">${esc(X.note)}</div>`;
+    return `<div class="r-card" data-pending role="group" aria-label="智能体想运行这条命令，允许吗？">${head}${reason}${lead}${facts}${root}${cmd}${actions}${hint}${notes}</div>`;
+  }
+
   function approval(o) {
     if (String(o.state).startsWith("network")) return networkApproval(o);
+    if (String(o.state).startsWith("command")) return commandApproval(o);
     const A = H.approval;
     const W = H.decided;
     if (o.state === "approved")

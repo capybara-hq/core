@@ -1,6 +1,7 @@
 import { act, cleanup, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import en from "../messages/en.json";
 import zh from "../messages/zh.json";
 import { ApprovalCard } from "../src/components/ApprovalCard";
 import type { Approval, CommandAskDetail } from "../src/lib/approvals";
@@ -400,12 +401,18 @@ const SCOPE = {
   writeDirectories: ["/outside/reports"],
   hosts: ["api.example.com", "files.example.org", "registry.npmjs.org"],
 };
+/** The reach the pending card lists among its facts (design spec §6.16.11), by kind. */
 const scopeOf = (container: HTMLElement) => {
-  const box = container.querySelector('[data-role="permission-scope"]');
-  const values = (k: string) =>
-    [...(box?.querySelectorAll(`[data-scope="${k}"] [data-pre="true"]`) ?? [])].map(
+  const card = container.querySelector('[data-part="approval-block"]');
+  const values = (k: "write" | "read" | "hosts" | "target") => {
+    const labels = [zh.approval.permissionScope[k], en.approval.permissionScope[k]];
+    const fact = [...(card?.querySelectorAll('[data-part="fact"]') ?? [])].find((f) =>
+      labels.includes(f.querySelector('[data-part="fact-label"]')?.textContent ?? ""),
+    );
+    return [...(fact?.querySelectorAll('[data-part="fact-value"]') ?? [])].map(
       (e) => e.textContent,
     );
+  };
   return {
     write: values("write"),
     read: values("read"),
@@ -413,9 +420,15 @@ const scopeOf = (container: HTMLElement) => {
     target: values("target"),
   };
 };
+/** Nothing is drawn below the card (maintainer decision 2026-11-21). */
+const nothingBelow = (container: HTMLElement) => {
+  const root = container.querySelector('[data-role="approval"]');
+  expect(root?.querySelector('[data-role="permission-scope"]')).toBeNull();
+  expect(root?.querySelector('[data-role="sandbox-escalation"]')).toBeNull();
+};
 
 describe("ApprovalCard: exact permission scope and supersession (Task 10D)", () => {
-  it("shows every directory and host whole, the target file apart, from the event before the read", async () => {
+  it("lists every directory and host whole inside the card, from the event before the read", async () => {
     stubApi({
       // the read never answers here: the log's own fields draw the same scope
       "GET /api/v1/orgs/o1/approvals/ap1": () => new Promise<Response>(() => {}),
@@ -439,17 +452,18 @@ describe("ApprovalCard: exact permission scope and supersession (Task 10D)", () 
       write: ["/outside/reports"],
       read: ["/outside/reports", LONG],
       hosts: ["api.example.com", "files.example.org", "registry.npmjs.org"],
-      target: ["/outside/reports/report.txt"],
+      // the target is the path the card already shows: not repeated as a fact
+      target: [],
     });
-    expect(
-      screen.getByText(
-        "Approving grants this access for this operation only. Each directory includes everything inside it.",
-      ),
-    ).toBeTruthy();
+    // the long intro is a short hint under Allow once
+    expect(container.querySelector('[data-part="scope-hint"]')?.textContent).toBe(
+      "This call only; each directory includes everything inside it",
+    );
     // nothing clipped, nothing inferred (no parent, no root), nothing a link
     expect(container.textContent).toContain(LONG);
-    expect(container.querySelector('[data-role="permission-scope"] a')).toBeNull();
+    expect(container.querySelector('[data-part="facts"] a')).toBeNull();
     expect(scopeOf(container).read).not.toContain("/outside");
+    nothingBelow(container);
   });
 
   it("the approval read's scope agrees with the event's", async () => {
@@ -472,6 +486,7 @@ describe("ApprovalCard: exact permission scope and supersession (Task 10D)", () 
     expect(await screen.findByRole("button", { name: "允许一次" })).toBeTruthy();
     expect(screen.queryByRole("button", { name: "本会话允许同类" })).toBeNull();
     expect(scopeOf(container).hosts).toEqual(SCOPE.hosts);
+    // a command shows no path of its own: the target file is a fact
     expect(scopeOf(container).target).toEqual(["/outside/reports/report.txt"]);
     expect(screen.getByText(zh.approval.permissionScope.write)).toBeTruthy();
   });
@@ -506,7 +521,9 @@ describe("ApprovalCard: exact permission scope and supersession (Task 10D)", () 
     expect(screen.getByText("Permissions revision 7")).toBeTruthy();
     expect(screen.queryAllByRole("button")).toEqual([]);
     expect(screen.queryByRole("radiogroup")).toBeNull();
-    expect(scopeOf(container).hosts).toEqual(SCOPE.hosts);
+    // the details belonged to the pending card: the log keeps them
+    expect(container.textContent).not.toContain("api.example.com");
+    nothingBelow(container);
     // decided in the log: nothing is read, nothing is posted
     expect(calls).toEqual([]);
   });
@@ -568,7 +585,7 @@ describe("ApprovalCard: a per-call sandbox escalation", () => {
     escalation: { justification: JUSTIFICATION },
     workingRoot: "/work/app",
   });
-  it("shows the command, the directory, the justification and that only this call leaves the sandbox", async () => {
+  it("leads the card with the justification, names the directory and hints only this call leaves the sandbox", async () => {
     stubApi({
       "GET /api/v1/orgs/o1/approvals/ap1": () =>
         json(200, {
@@ -593,18 +610,26 @@ describe("ApprovalCard: a per-call sandbox escalation", () => {
     expect(await screen.findByRole("button", { name: "允许一次" })).toBeTruthy();
     // a once-only grant: never a session scope
     expect(screen.queryByRole("button", { name: "本会话允许同类" })).toBeNull();
-    const box = container.querySelector('[data-role="sandbox-escalation"]');
-    expect(box?.textContent).toContain(zh.approval.escalation.intro);
-    expect(box?.querySelector('[data-escalation="cwd"]')?.textContent).toContain("/work/app");
-    expect(box?.querySelector('[data-escalation="justification"]')?.textContent).toContain(
-      JUSTIFICATION,
+    const card = container.querySelector('[data-part="approval-block"]');
+    const reason = card?.querySelector('[data-part="reason"]');
+    expect(reason?.querySelector('[data-part="reason-label"]')?.textContent).toBe(
+      zh.approval.escalation.justification,
     );
-    expect(container.textContent).toContain("npm run dev");
-    // an escalation names no directory scope: no empty scope box
-    expect(container.querySelector('[data-role="permission-scope"]')).toBeNull();
-    expect(box?.querySelector("a")).toBeNull();
-    // a foreground command: no background line
-    expect(box?.querySelector('[data-escalation="background"]')).toBeNull();
+    expect(reason?.querySelector('[data-part="reason-text"]')?.textContent).toBe(JUSTIFICATION);
+    expect(reason?.querySelector("a")).toBeNull();
+    expect(card?.querySelector('[data-part="working-root"]')?.textContent).toBe(
+      "在 /work/app 运行",
+    );
+    expect(card?.querySelector('[data-part="scope-hint"]')?.textContent).toBe(
+      zh.approval.escalation.hint,
+    );
+    expect(card?.textContent).toContain("npm run dev");
+    // the long intro is gone; an escalation names no directory scope: no empty facts
+    expect(container.textContent).not.toContain(zh.approval.escalation.intro);
+    expect(card?.querySelector('[data-part="facts"]')).toBeNull();
+    // a foreground command: no background note
+    expect(card?.querySelector('[data-part="card-hint"]')).toBeNull();
+    nothingBelow(container);
   });
   it("says a background command keeps running outside the sandbox, at most N minutes", async () => {
     const background = {
@@ -637,9 +662,7 @@ describe("ApprovalCard: a per-call sandbox escalation", () => {
       { locale: "en" },
     );
     await screen.findByRole("button", { name: "Allow once" });
-    const line = container.querySelector(
-      '[data-role="sandbox-escalation"] [data-escalation="background"]',
-    );
+    const line = container.querySelector('[data-part="approval-block"] [data-part="card-hint"]');
     // 1530 seconds round up to 26 minutes
     expect(line?.textContent).toBe(
       "Approving starts a background process that keeps running outside the sandbox until it exits or is stopped, at most 26 minutes.",
@@ -659,10 +682,9 @@ describe("ApprovalCard: a per-call sandbox escalation", () => {
       />,
       { locale: "zh" },
     );
-    expect(
-      container.querySelector('[data-role="sandbox-escalation"] [data-escalation="background"]')
-        ?.textContent,
-    ).toBe(zh.approval.escalation.background);
+    expect(container.querySelector('[data-part="card-hint"]')?.textContent).toBe(
+      zh.approval.escalation.background,
+    );
   });
   it("speaks English from the log before the read", () => {
     stubApi({ "GET /api/v1/orgs/o1/approvals/ap1": () => new Promise<Response>(() => {}) });
@@ -670,8 +692,40 @@ describe("ApprovalCard: a per-call sandbox escalation", () => {
       <ApprovalCard orgId="o1" item={item({ command: escalationCommand })} />,
       { locale: "en" },
     );
-    expect(container.querySelector('[data-role="sandbox-escalation"]')?.textContent).toContain(
-      "outside the sandbox for this call only",
+    expect(container.querySelector('[data-part="reason-label"]')?.textContent).toBe(
+      "Agent's reason",
     );
+    expect(container.querySelector('[data-part="scope-hint"]')?.textContent).toBe(
+      "This call only; the next one runs in the sandbox again",
+    );
+    expect(container.querySelector('[data-part="working-root"]')?.textContent).toBe(
+      "Runs in /work/app",
+    );
+  });
+  it("decided, one line says it ran outside the sandbox and nothing else stays", () => {
+    stubApi({});
+    const { container } = renderPage(
+      <ApprovalCard
+        orgId="o1"
+        item={item({
+          command: escalationCommand,
+          decided: {
+            approvalId: "ap1",
+            callId: "call_1",
+            decision: "approved",
+            scope: "once",
+            byAccountId: null,
+          },
+          decidedAt: EXPIRES,
+        })}
+      />,
+      { locale: "zh" },
+    );
+    const line = container.querySelector('[data-part="tool-line"]');
+    expect(line?.textContent).toContain(zh.approval.escalation.decided);
+    expect(container.querySelector('[data-part="approval-block"]')).toBeNull();
+    expect(container.textContent).not.toContain(JUSTIFICATION);
+    expect(container.textContent).not.toContain("/work/app");
+    nothingBelow(container);
   });
 });
