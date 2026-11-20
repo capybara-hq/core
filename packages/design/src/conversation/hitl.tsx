@@ -69,7 +69,7 @@ export type ApprovalState =
       kind: "decided";
       /** `skipped`: the person sent a message instead of answering (network asks only). */
       decision: "approved" | "denied" | "expired" | "cancelled" | "skipped";
-      /** A string stays plain text ("你", "系统"); a person is drawn as a PersonName. */
+      /** A string stays plain text (such as "you" or "system"); a person is drawn as a PersonName. */
       who: string | PersonLike;
       when: string;
       scope?: ApprovalScope;

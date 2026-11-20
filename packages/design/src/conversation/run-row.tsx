@@ -14,8 +14,8 @@ export type RunRowProps = {
   /** What follows the label: the model, the duration, the tokens (unknown ones left out). */
   parts: string[];
   /**
-   * The status words after the mark; default 完成 / 失败 / 已停止 by status. A node may hold a
-   * person ("已被 <PersonName> 停止", spec §6.16.23).
+   * The status words after the mark; default "Done" / "Failed" / "Stopped" by status. A node may
+   * hold a person ("Stopped by <PersonName>", spec §6.16.23).
    */
   statusText?: ReactNode;
   /** Optional controlled disclosure, shared with a related status entry. */
