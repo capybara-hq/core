@@ -2236,6 +2236,7 @@ export interface LegacyDeviceHello {
     mode: "os" | "docker";
     os: "darwin" | "linux";
     policy?: DeviceLocalPolicySummary;
+    programRunId?: string;
     programVersion: string;
     protocol: number;
     recentOps?: DevicePolicyOpReport[];

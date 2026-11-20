@@ -14,6 +14,13 @@ import { deviceFeaturesOf } from "./policy-summary.js";
  */
 export type DeviceTargetState = "active" | "revoked" | "deleted";
 
+/** A machine connection as {@link DeviceTargets.current} reads it. */
+export interface DeviceConnectionInfo {
+  connectionId: string;
+  maxFrameBytes: number;
+  programRunId?: string;
+}
+
 const ROOT_KEYS = ["workspace", "skills", "tmp"] as const;
 
 /** Whether two sets of roots name the same three directories. */
@@ -44,6 +51,18 @@ export class DeviceTargets {
   async transport(
     deviceId: string,
   ): Promise<{ connectionId: string; maxFrameBytes: number } | null> {
+    const current = await this.current(deviceId);
+    if (!current) return null;
+    const { connectionId, maxFrameBytes } = current;
+    return { connectionId, maxFrameBytes };
+  }
+
+  /**
+   * {@link transport} plus the program run the connection's hello named (`programRunId`, absent
+   * for a program that does not report one): the relay's evidence that the machine's program
+   * restarted since it sent a request. Never part of a frame.
+   */
+  async current(deviceId: string): Promise<DeviceConnectionInfo | null> {
     const lease = await this.locks.holderOf(deviceLeaseKey(deviceId));
     if (!lease) return null;
     const raw = await this.redis.get(deviceTransportKey(deviceId, lease));
@@ -59,8 +78,16 @@ export class DeviceTargets {
       throw new Error(
         "The machine's connection is not ready yet; retry once capybara-device has reconnected",
       );
-    const { connectionId, maxFrameBytes } = cap as { connectionId: string; maxFrameBytes: number };
-    return { connectionId, maxFrameBytes };
+    const { connectionId, maxFrameBytes, programRunId } = cap as {
+      connectionId: string;
+      maxFrameBytes: number;
+      programRunId?: unknown;
+    };
+    return {
+      connectionId,
+      maxFrameBytes,
+      ...(typeof programRunId === "string" && programRunId !== "" && { programRunId }),
+    };
   }
 
   async state(deviceId: string): Promise<DeviceTargetState> {
