@@ -1,8 +1,4 @@
-import {
-  type BootstrapExtraMarketplace,
-  type ExtensionContext,
-  SANDBOX_EXTENSION_POINT,
-} from "@capybara-hq/plugin-sdk";
+import { type ExtensionContext, SANDBOX_EXTENSION_POINT } from "@capybara-hq/plugin-sdk";
 import {
   type BeforeApplicationShutdown,
   Inject,
@@ -29,10 +25,10 @@ import {
   BootstrapService,
   bootstrapManifestSha256,
 } from "../extensions/bootstrap.js";
+import { BootstrapDefaultsService } from "../extensions/bootstrap-defaults.js";
 import {
   type LoadedBootstrapManifest,
   loadBootstrapManifest,
-  readBootstrapExtraManifest,
   syncExtraMarketplaces,
 } from "../extensions/bootstrap-extra.js";
 import { ExtensionHost } from "../extensions/host.js";
@@ -147,6 +143,7 @@ export class KernelLifecycle
     @Inject(ExtensionLifecycle) private readonly extensionLifecycle: ExtensionLifecycle,
     @Inject(ReplicaStatusStore) private readonly replicaStatus: ReplicaStatusStore,
     @Inject(BootstrapService) private readonly bootstrap: BootstrapService,
+    @Inject(BootstrapDefaultsService) private readonly bootstrapDefaults: BootstrapDefaultsService,
     @Inject(MarketplacesService) private readonly marketplaces: MarketplacesService,
     @Inject(PluginImport) private readonly pluginImport: PluginImport,
     @Inject(KERNEL_BUS)
@@ -246,7 +243,7 @@ export class KernelLifecycle
     // The extra manifest's marketplaces (none configured: demotes the config-managed rows)
     await syncExtraMarketplaces(
       (m) => this.marketplaces.syncExtraFromConfig(m),
-      await this.extraMarketplaces(opts.bootstrap !== undefined),
+      opts.bootstrap !== undefined ? ((await this.manifest()).extra?.marketplaces ?? []) : [],
       this.log,
     );
     // The bootstrap plugins (spec §7), once per manifest across replicas (the Redis lock
@@ -317,6 +314,13 @@ export class KernelLifecycle
       await this.runBootstrap(opts.bootstrap.dir, true);
       this.checkpoint();
     }
+    // The extra manifest's defaults (the platform default theme), at every start whether or not
+    // the step ran in it (compose's `init` usually ran it): its themes exist only once the second
+    // pass imported them. A no-op once applied or once a super admin chose; never fails the start
+    if (opts.bootstrap !== undefined) {
+      await this.bootstrapDefaults.apply((await this.manifest()).extra?.defaultTheme);
+      this.checkpoint();
+    }
     if (opts.source?.watch) {
       // 热更新：重新校验；只应用 hot 字段，其余变化 warn 并列出需重启的键；校验失败保持原配置
       let reload = Promise.resolve();
@@ -359,18 +363,6 @@ export class KernelLifecycle
     if (insecure !== null) this.log.warn(insecure);
     await this.warnIfSetupPending();
     return this.listening;
-  }
-
-  /**
-   * The marketplaces the extra manifest declares. Without a bootstrap step the built-in manifest
-   * is not read: only the extra file, when one is configured.
-   */
-  private async extraMarketplaces(
-    withBootstrap: boolean,
-  ): Promise<readonly BootstrapExtraMarketplace[]> {
-    if (withBootstrap) return (await this.manifest()).extra?.marketplaces ?? [];
-    const file = this.options.bootstrap?.extraManifest;
-    return file === undefined ? [] : (await readBootstrapExtraManifest(file)).marketplaces;
   }
 
   /** The built-in manifest (or `options.bootstrapManifest`) merged with the extra manifest, if any. */

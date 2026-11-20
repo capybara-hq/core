@@ -1,0 +1,273 @@
+import { createHash } from "node:crypto";
+import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import type { BootstrapExtraManifest } from "@capybara-hq/plugin-sdk";
+import { startTestPostgres, startTestRedis, type TestContainer } from "@capybara-hq/testing";
+import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
+import type { KernelConfig } from "../../src/config/schema.js";
+import { type KernelSchemaDb, kernelDb } from "../../src/db/kernel-schema.js";
+import { migrate } from "../../src/db/migrator.js";
+import { createDb } from "../../src/db/pool.js";
+import { KERNEL_MIGRATIONS_DIR } from "../../src/kernel.js";
+import { createLogger, type KernelLogger } from "../../src/log.js";
+import { truncateTables } from "../helpers/db.js";
+import { accountsFor } from "../helpers/identity.js";
+import { bootstrapFixture, packFake, pluginTgz } from "../helpers/plugin-packages.js";
+import { buildKernel, PW, runConfig, session, type TestKernel } from "../helpers/runs.js";
+
+/**
+ * The extra bootstrap manifest's `defaultTheme` (bootstrap extra manifest spec §7): every start
+ * applies it while `uiTheme` is still the migration seed (`{ id: null }`, never saved by anyone),
+ * whether or not the bootstrap step ran in that start; a super admin's choice is never reset.
+ */
+
+let pgc: TestContainer;
+let rd: TestContainer;
+let db: KernelSchemaDb;
+let destroyDb: () => Promise<void>;
+let extensionsDir: string;
+let extraDir: string;
+let fx: Awaited<ReturnType<typeof bootstrapFixture>>;
+let extraManifest: string;
+
+/** A declarative builtin plugin with two themes (no assets). */
+const brandPkg = () =>
+  pluginTgz({
+    manifest: { name: "brand", version: "1.0.0" },
+    files: Object.fromEntries(
+      ["neon", "paper"].map((t) => [
+        `themes/${t}.json`,
+        JSON.stringify({
+          name: { en: `${t} en`, zh: `${t} zh` },
+          schemes: { dark: { radius: { sm: 2 } }, light: { radius: { md: 4 } } },
+        }),
+      ]),
+    ),
+  });
+
+const OBJECT_STORE_CONFIG = {
+  extensionConfig: { "fake-bootstrap-b": { bucket: "bootstrap", secretKey: "s3cret" } },
+};
+
+const kernels: TestKernel[] = [];
+async function stopAll(): Promise<void> {
+  while (kernels.length > 0) await kernels.pop()?.close();
+}
+
+async function boot(
+  overrides: Record<string, unknown> = OBJECT_STORE_CONFIG,
+  logger: KernelLogger = createLogger("error"),
+): Promise<TestKernel> {
+  const config: KernelConfig = runConfig(
+    { pg: pgc.url, redis: rd.url },
+    {
+      roles: ["api", "worker"],
+      extensionHost: { dir: extensionsDir },
+      log: { level: "error" },
+      ...overrides,
+    },
+  );
+  const k = await buildKernel(config, {
+    env: {},
+    logger,
+    bootstrap: { dir: fx.dir, extraManifest },
+    bootstrapManifest: fx.manifest,
+  });
+  kernels.push(k);
+  await k.start();
+  return k;
+}
+
+/** A logger that records warn and error lines and drops the rest. */
+function recordingLogger(): {
+  logger: KernelLogger;
+  lines: { level: string; msg: string; fields?: Record<string, unknown> }[];
+} {
+  const lines: { level: string; msg: string; fields?: Record<string, unknown> }[] = [];
+  const base = createLogger("error");
+  const logger = new Proxy(base, {
+    get(t, k, receiver) {
+      if (k === "warn" || k === "error") {
+        return (msg: string, fields?: Record<string, unknown>) => {
+          lines.push({ level: k, msg, ...(fields !== undefined && { fields }) });
+        };
+      }
+      const v = Reflect.get(t, k);
+      return typeof v === "function" ? v.bind(k === "child" ? receiver : t) : v;
+    },
+  });
+  return { logger, lines };
+}
+
+const themeId = async (name: string) =>
+  (
+    await db
+      .selectFrom("platform_themes")
+      .select("id")
+      .where("plugin_name", "=", "brand")
+      .where("name", "=", name)
+      .executeTakeFirstOrThrow()
+  ).id;
+const uiThemeRow = () =>
+  db
+    .selectFrom("deployment_settings")
+    .select(["value", "updated_by"])
+    .where("key", "=", "uiTheme")
+    .executeTakeFirstOrThrow();
+const bootstrapWrites = async () =>
+  (
+    await db
+      .selectFrom("audit_events")
+      .select(["actor_account_id", "detail"])
+      .where("action", "=", "deployment.settings.updated")
+      .orderBy("id")
+      .execute()
+  ).filter((r) => (r.detail as { source?: string }).source === "bootstrap");
+const platformTheme = async (k: TestKernel) =>
+  (await k.http.inject({ method: "GET", url: "/api/v1/platform/theme" })).json() as {
+    id: string;
+  } | null;
+
+async function adminSession(k: TestKernel) {
+  await accountsFor(db).createLocal({
+    login: "root",
+    password: PW,
+    displayName: "R",
+    superAdmin: true,
+  });
+  return session(k, "root");
+}
+
+beforeAll(async () => {
+  [pgc, rd] = await Promise.all([startTestPostgres(), startTestRedis()]);
+  await migrate(pgc.url, { schema: "capybara", dir: KERNEL_MIGRATIONS_DIR });
+  const raw = createDb(pgc.url, 3);
+  db = kernelDb(raw);
+  destroyDb = () => raw.destroy();
+  extensionsDir = await mkdtemp(join(tmpdir(), "kernel-default-theme-ext-"));
+  extraDir = await mkdtemp(join(tmpdir(), "kernel-default-theme-extra-"));
+  // The built-in manifest: the object store (themes are kept there), a bootstrap plugin itself
+  fx = await bootstrapFixture([{ bytes: await packFake("fake-bootstrap-b") }]);
+  // The extra manifest's builtin theme plugin, found in the offline directory by its sha512
+  const brand = await brandPkg();
+  await writeFile(join(fx.dir, "brand-1.0.0.tgz"), brand);
+  const extra: BootstrapExtraManifest = {
+    schemaVersion: 1,
+    marketplaces: [],
+    plugins: [
+      {
+        name: "brand",
+        source: "npm",
+        npm: "@test/plugin-brand",
+        version: "1.0.0",
+        integrity: `sha512-${createHash("sha512").update(brand).digest("base64")}`,
+        builtin: true,
+      },
+    ],
+    defaultTheme: { plugin: "brand", theme: "neon" },
+  };
+  extraManifest = join(extraDir, "bootstrap.extra.json");
+  await writeFile(extraManifest, JSON.stringify(extra));
+});
+
+afterAll(async () => {
+  await stopAll();
+  await fx?.cleanup();
+  await destroyDb?.();
+  await rm(extensionsDir, { recursive: true, force: true });
+  await rm(extraDir, { recursive: true, force: true });
+  await Promise.all([pgc?.stop(), rd?.stop()]);
+});
+
+beforeEach(async () => {
+  await stopAll();
+  await truncateTables(
+    db,
+    "capybara.bootstrap_runs, capybara.catalog_files, capybara.extension_replica_status, capybara.extension_installs, capybara.extension_blobs, capybara.extension_packages, capybara.extension_permission_snapshots, capybara.extension_name_owners, capybara.extension_org_configs, capybara.extension_catalog_sources, capybara.platform_theme_versions, capybara.platform_themes, capybara.catalog_item_versions, capybara.catalog_items, capybara.plugin_import_staging, capybara.audit_events, capybara.memberships, capybara.orgs, capybara.sessions, capybara.local_passwords, capybara.identities, capybara.accounts",
+  );
+  // The migration seed (truncating accounts cascades to the settings): the built-in theme, saved
+  // by nobody
+  await db
+    .insertInto("deployment_settings")
+    .values({ key: "uiTheme", value: JSON.stringify({ id: null }) })
+    .onConflict((oc) =>
+      oc.column("key").doUpdateSet({ value: JSON.stringify({ id: null }), updated_by: null }),
+    )
+    .execute();
+});
+
+describe("the extra manifest's default theme", () => {
+  it("a fresh deployment with defaultTheme serves it from /api/v1/platform/theme", async () => {
+    const k = await boot();
+    const neon = await themeId("neon");
+    expect(await platformTheme(k)).toMatchObject({ id: neon });
+    expect(await uiThemeRow()).toEqual({ value: { id: neon }, updated_by: null });
+    expect(await bootstrapWrites()).toEqual([
+      {
+        actor_account_id: null,
+        detail: {
+          source: "bootstrap",
+          uiTheme: { id: neon },
+          defaultTheme: { plugin: "brand", theme: "neon" },
+        },
+      },
+    ]);
+  });
+
+  it("a restart does not write again", async () => {
+    await boot();
+    await stopAll();
+    const k = await boot();
+    expect(await platformTheme(k)).toMatchObject({ id: await themeId("neon") });
+    expect(await bootstrapWrites()).toHaveLength(1);
+  });
+
+  it("a super admin's explicit null is kept", async () => {
+    const k = await boot();
+    const admin = await adminSession(k);
+    const r = await admin({
+      method: "PUT",
+      url: "/api/v1/admin/settings",
+      payload: { uiTheme: { id: null } },
+    });
+    expect(r.statusCode, r.body).toBe(200);
+    await stopAll();
+    const again = await boot();
+    expect(await platformTheme(again)).toBeNull();
+    expect((await uiThemeRow()).value).toEqual({ id: null });
+    expect(await bootstrapWrites()).toHaveLength(1);
+  });
+
+  it("a super admin's other theme is kept", async () => {
+    const k = await boot();
+    const paper = await themeId("paper");
+    const admin = await adminSession(k);
+    const r = await admin({
+      method: "PUT",
+      url: "/api/v1/admin/settings",
+      payload: { uiTheme: { id: paper } },
+    });
+    expect(r.statusCode, r.body).toBe(200);
+    await stopAll();
+    const again = await boot();
+    expect(await platformTheme(again)).toMatchObject({ id: paper });
+    expect(await bootstrapWrites()).toHaveLength(1);
+  });
+
+  it("theme row missing on the first start: warning, applied on the next start", async () => {
+    // No object store config: the store does not run, so the theme plugin is not imported
+    const { logger, lines } = recordingLogger();
+    const first = await boot({}, logger);
+    expect(first.port).toBeGreaterThan(0);
+    expect(await platformTheme(first)).toBeNull();
+    expect(await uiThemeRow()).toEqual({ value: { id: null }, updated_by: null });
+    expect(
+      lines.find((l) => l.level === "warn" && l.msg.includes("default theme"))?.fields,
+    ).toMatchObject({ plugin: "brand", theme: "neon" });
+    await stopAll();
+    const k = await boot();
+    expect(await platformTheme(k)).toMatchObject({ id: await themeId("neon") });
+    expect(await bootstrapWrites()).toHaveLength(1);
+  });
+});

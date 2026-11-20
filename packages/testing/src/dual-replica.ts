@@ -36,8 +36,9 @@ export interface DualReplicaOptions {
    * offline directory (its `*.tgz` files are matched to the entries by sha512); the other entries
    * are downloaded from `packages.npmRegistry` (set it in `config`, e.g. to a
    * `startFakeNpmRegistry`). Build both with the kernel tests' `bootstrapFixture` helper.
+   * `extraManifest`: the path of an extra bootstrap manifest merged into `manifest`.
    */
-  bootstrap?: { dir?: string; manifest: BootstrapManifest };
+  bootstrap?: { dir?: string; manifest: BootstrapManifest; extraManifest?: string };
   /**
    * 复用已有的 PostgreSQL（管理员连接串，需能 CREATE DATABASE）。传入则只创建并在 stop() 时删除本 harness 的 `cap_*` 库。
    * Omitted: use the run-wide shared PostgreSQL of the vitest globalSetup (same per-harness database),
@@ -380,6 +381,9 @@ export async function createDualReplicaHarness(opts: DualReplicaOptions): Promis
       ...(opts.bootstrap !== undefined && {
         bootstrap: {
           ...(opts.bootstrap.dir !== undefined && { dir: resolve(opts.bootstrap.dir) }),
+          ...(opts.bootstrap.extraManifest !== undefined && {
+            extraManifest: resolve(opts.bootstrap.extraManifest),
+          }),
         },
         bootstrapManifest: opts.bootstrap.manifest,
       }),

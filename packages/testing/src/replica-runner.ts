@@ -9,7 +9,7 @@ interface RunnerConfig {
   masterKey: string;
   extensions: string[];
   /** The bootstrap step (see `DualReplicaOptions.bootstrap`). */
-  bootstrap?: { dir?: string };
+  bootstrap?: { dir?: string; extraManifest?: string };
   bootstrapManifest?: BootstrapManifest;
   resolveFrom: string;
   extensionConfig: Record<string, unknown>;
