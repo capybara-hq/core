@@ -27,7 +27,7 @@ type Query = Readonly<Record<string, string | undefined>>;
 const needsLogin = (e: unknown) => e instanceof ApiClientError && e.status === 401;
 
 /** The errors whose copy names the app that asked (`appAuth.clients.<client>.<key>`). */
-const CLIENT_ERRORS: Readonly<Record<string, "redirectUriInvalid" | "codeInvalid">> = {
+const CLIENT_ERRORS: Readonly<Partial<Record<string, "redirectUriInvalid" | "codeInvalid">>> = {
   "app_auth.redirect_uri_invalid": "redirectUriInvalid",
   "app_auth.code_invalid": "codeInvalid",
 };

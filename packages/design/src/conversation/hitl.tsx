@@ -16,6 +16,7 @@ import { CodeBlock } from "../display/chat";
 import { initialOf } from "../display/initial";
 import { type PersonLike, PersonName } from "../display/person-name";
 import { Icon } from "../icons/icon";
+import { useHaptics } from "../native";
 import { useDesignT } from "../provider";
 import { PersonFieldRow } from "./person-field";
 import { registrableDomain } from "./registrable";
@@ -447,14 +448,14 @@ export function ApprovalBlock(p: ApprovalBlockProps): JSX.Element {
     actions = (
       <div className="cb-hcard-actions">
         {p.scopes.map((scope, i) => (
-          <Button
+          <ScopeChoice
             key={scope}
-            variant={i === 0 ? "primary" : "default"}
+            primary={i === 0}
             disabled={busy || p.approveDisabled === true}
+            label={p.scopeLabels?.[scope] ?? t(SCOPE_LABEL[scope])}
+            hint={undefined}
             onClick={() => p.onApprove?.(scope)}
-          >
-            {p.scopeLabels?.[scope] ?? t(SCOPE_LABEL[scope])}
-          </Button>
+          />
         ))}
         <Button disabled={busy} onClick={() => setDenying(true)}>
           {t("hitl.denyEllipsis")}
@@ -597,7 +598,10 @@ export function ApprovalFileRow({ file }: { file: ApprovalFile }): JSX.Element {
   );
 }
 
-/** One approve button; with a hint, the hint is a small line under it. */
+/**
+ * One approve button (every approval card's); with a hint, the hint is a small line under it. A
+ * grant plays the `success` haptic.
+ */
 function ScopeChoice({
   primary,
   disabled,
@@ -611,8 +615,16 @@ function ScopeChoice({
   hint: ReactNode | undefined;
   onClick(): void;
 }) {
+  const haptics = useHaptics();
   const button = (
-    <Button variant={primary ? "primary" : "default"} disabled={disabled} onClick={onClick}>
+    <Button
+      variant={primary ? "primary" : "default"}
+      disabled={disabled}
+      onClick={() => {
+        haptics("success");
+        onClick();
+      }}
+    >
       {label}
     </Button>
   );
@@ -962,14 +974,14 @@ function CommandApproval(p: ApprovalBlockProps & { command: CommandAsk }): JSX.E
     actions = (
       <div className="cb-hcard-actions">
         {p.scopes.map((scope, i) => (
-          <Button
+          <ScopeChoice
             key={scope}
-            variant={i === 0 ? "primary" : "default"}
+            primary={i === 0}
             disabled={busy}
+            label={label(scope)}
+            hint={undefined}
             onClick={() => p.onApprove?.(scope)}
-          >
-            {label(scope)}
-          </Button>
+          />
         ))}
         <Button disabled={busy} onClick={() => setDenying(true)}>
           {t("hitl.command.deny")}

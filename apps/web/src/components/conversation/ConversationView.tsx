@@ -35,6 +35,8 @@ import { useAppMutation } from "../../lib/query/mutation";
 import { scheduleQuery } from "../../lib/query/schedules";
 import { useWhoWaits } from "../../lib/query/who-waits";
 import { runParts } from "../../lib/run-row";
+import { browserShare, shareOrCopy } from "../../lib/share";
+import { useShareCapability } from "../../lib/shell";
 import {
   type AgentsSummary,
   dispatchedAny,
@@ -190,6 +192,7 @@ export function useConversationPage(
   const locale = useLocale() === "zh" ? "zh" : "en";
   const session = useSession();
   const toast = useToast();
+  const shareCap = useShareCapability();
   const errorMessage = useErrorMessage();
   const signature = useStatusSignature(`/chat/${conversationId.slice(0, 8)}`);
   const conv = useConversation(orgId, conversationId);
@@ -434,8 +437,17 @@ export function useConversationPage(
       label: t("copyLink"),
       icon: "link",
       onSelect: () =>
-        navigator.clipboard?.writeText(window.location.href).then(
-          () => toast.success(t("copied")),
+        void shareOrCopy(
+          { url: window.location.href },
+          {
+            share: shareCap,
+            webShare: browserShare(),
+            copy: (text) => navigator.clipboard.writeText(text),
+          },
+        ).then(
+          (done) => {
+            if (done === "copied") toast.success(t("copied"));
+          },
           () => {},
         ),
     },

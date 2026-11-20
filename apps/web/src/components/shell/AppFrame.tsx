@@ -320,6 +320,7 @@ function ShellFrame({
 }) {
   const t = useTranslations();
   const router = useRouter();
+  const navigate = useCallback((href: string) => router.push(href), [router]);
   const qc = useQueryClient();
   const pathname = usePathname();
   const errorMessage = useErrorMessage();
@@ -780,6 +781,7 @@ function ShellFrame({
       }}
       commands={commands}
       bottomNav={bottom}
+      onNavigate={navigate}
       pathname={pathname}
       status={status}
       ownStatusBar={pathname === HOME_PATH || under(pathname, "/chat")}

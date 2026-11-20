@@ -16,6 +16,15 @@ export {
 } from "./layout/list-detail";
 export { type ForcedPseudo, ReferenceBlock, ReferenceScreen } from "./layout/reference-block";
 export { ReferenceBoard } from "./layout/reference-board";
+export {
+  isPlainMenu,
+  type NativeHandlers,
+  type NativeHapticKind,
+  type NativeNavHandle,
+  type NativeTabId,
+  useHaptics,
+  useNative,
+} from "./native";
 export * from "./overlays/index";
 export {
   type Brand,

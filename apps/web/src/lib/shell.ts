@@ -1,7 +1,8 @@
 "use client";
 
+import type { NativeHandlers } from "@capybara-hq/design";
 import * as React from "react";
-import { useCallback, useSyncExternalStore } from "react";
+import { useCallback, useMemo, useSyncExternalStore } from "react";
 
 /**
  * The Shell environment adapter (mobile layout spec §9.2–§9.4): the one place in apps/web that
@@ -362,3 +363,46 @@ export const useNotifyCapability = () =>
   useShellCapability(SHELL_CAPABILITY_KEYS.notify) as NotifyCapabilityV1 | undefined;
 export const useSignInCapability = () =>
   useShellCapability(SHELL_CAPABILITY_KEYS.signIn) as SignInCapabilityV1 | undefined;
+export const useHapticsCapability = () =>
+  useShellCapability(SHELL_CAPABILITY_KEYS.haptics) as HapticsCapabilityV1 | undefined;
+export const useShareCapability = () =>
+  useShellCapability(SHELL_CAPABILITY_KEYS.share) as ShareCapabilityV1 | undefined;
+export const useMenuCapability = () =>
+  useShellCapability(SHELL_CAPABILITY_KEYS.menu) as MenuCapabilityV1 | undefined;
+
+/**
+ * The design's native handlers, only for the capabilities the shell has (none in a browser). Each
+ * call runs in the design's event handlers (spec §9.4). A haptic is decoration: a rejection is
+ * swallowed.
+ */
+export function useNativeHandlers(): NativeHandlers {
+  const haptics = useHapticsCapability();
+  const share = useShareCapability();
+  const menu = useMenuCapability();
+  return useMemo(
+    () => ({
+      ...(menu === undefined
+        ? {}
+        : {
+            menu: (input) => {
+              const { anchor: a, ...rest } = input;
+              // the shell takes a whole rect (a DOMRectInit's fields are optional)
+              const anchor =
+                a?.x === undefined || a.y === undefined
+                  ? undefined
+                  : { x: a.x, y: a.y, width: a.width ?? 0, height: a.height ?? 0 };
+              return menu.show(anchor === undefined ? rest : { ...rest, anchor });
+            },
+          }),
+      ...(share === undefined ? {} : { share: (input) => share.share(input) }),
+      ...(haptics === undefined
+        ? {}
+        : {
+            haptics: (kind) => {
+              haptics.impact(kind).catch(() => {});
+            },
+          }),
+    }),
+    [haptics, share, menu],
+  );
+}

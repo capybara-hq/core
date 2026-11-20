@@ -30,6 +30,7 @@ export {
   ShellEnvironmentScript,
   type ShellKind,
   type ShellPlatform,
+  ShellReady,
   useShellEnvironment,
 } from "./shell-environment";
 export { type ShellPage, useRegisterShellPage } from "./shell-page";

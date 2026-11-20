@@ -18,6 +18,8 @@
   --cb-motion-spin: 800ms;
   --cb-motion-pulse: 1600ms;
   --cb-motion-flow: 6000ms;
+  --cb-motion-push: 350ms;
+  --cb-ease-push: cubic-bezier(0.2, 0.9, 0.3, 1);
   --cb-control-dense: 24px;
   --cb-control-default: 28px;
   --cb-control-prominent: 32px;
@@ -235,4 +237,9 @@
   --cb-shadow-sheet: -4px 0 16px rgba(10,10,10,.08);
   --cb-shadow-float: 0 8px 24px rgba(26,26,24,.08);
   color-scheme: light;
+}
+
+:root[data-shell-platform="android"] {
+  --cb-motion-push: 300ms;
+  --cb-ease-push: cubic-bezier(0.2, 0, 0, 1);
 }

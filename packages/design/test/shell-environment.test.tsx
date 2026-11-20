@@ -6,7 +6,7 @@ import { resolve } from "node:path";
 import { act, cleanup, render } from "@testing-library/react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { AppShell, DesignProvider, readShellEnvironment } from "../src/index";
+import { AppShell, DesignProvider, readShellEnvironment, ShellReady } from "../src/index";
 import {
   SHELL_ENVIRONMENT_SCRIPT,
   ShellEnvironmentScript,
@@ -66,6 +66,7 @@ const untouched = () => {
 function clearRoot() {
   root().removeAttribute("data-shell");
   root().removeAttribute("data-shell-platform");
+  root().removeAttribute("data-native-nav");
   for (const p of PROPS) root().style.removeProperty(p);
   root().removeAttribute("data-theme");
 }
@@ -174,6 +175,25 @@ describe("the inline script (before the first paint)", () => {
     expect(a).toContain(SHELL_ENVIRONMENT_SCRIPT.slice(0, 40));
     // no nonce (no proxy, no CSP): no attribute
     expect(renderToStaticMarkup(<ShellEnvironmentScript nonce="" />)).not.toContain("nonce");
+  });
+
+  it("marks <html> with data-native-nav when nav@1 is an own object, and not otherwise", () => {
+    install(fakeShell({ kind: "mobile", platform: "ios", capabilities: { "nav@1": {} } }).shell);
+    runScript();
+    expect(root().hasAttribute("data-native-nav")).toBe(true);
+    for (const capabilities of [
+      {},
+      { "nav@1": null },
+      { "nav@1": "yes" },
+      Object.create({ "nav@1": {} }),
+      undefined,
+    ]) {
+      clearRoot();
+      install(fakeShell({ kind: "mobile", platform: "ios", capabilities }).shell);
+      runScript();
+      expect(root().dataset.shell).toBe("mobile");
+      expect(root().hasAttribute("data-native-nav")).toBe(false);
+    }
   });
 
   it("agrees with readShellEnvironment (the AppShell's reader) on every case", () => {
@@ -400,6 +420,80 @@ describe("the AppShell in a shell (after hydration)", () => {
       }).shell,
     );
     expect(renderShell).not.toThrow();
+  });
+});
+
+describe("ShellReady (chrome@1.ready, once per document)", () => {
+  /** Holds animation frames until a test runs them. */
+  function frames() {
+    const queue: FrameRequestCallback[] = [];
+    vi.spyOn(window, "requestAnimationFrame").mockImplementation((cb) => {
+      queue.push(cb);
+      return queue.length;
+    });
+    vi.spyOn(window, "cancelAnimationFrame").mockImplementation(() => {});
+    return () => {
+      for (const cb of queue.splice(0)) cb(0);
+    };
+  }
+  const ready = (over: Record<string, unknown> = {}) =>
+    fakeShell({ kind: "mobile", platform: "ios", capabilities: { "chrome@1": over } }).shell;
+
+  it("calls ready once after a frame, and not again on a rerender or a remount", () => {
+    const run = frames();
+    const fn = vi.fn();
+    install(ready({ ready: fn }));
+    const view = render(<ShellReady />);
+    expect(fn).not.toHaveBeenCalled();
+    act(run);
+    expect(fn).toHaveBeenCalledTimes(1);
+    view.rerender(<ShellReady />);
+    act(run);
+    view.unmount();
+    render(<ShellReady />);
+    act(run);
+    expect(fn).toHaveBeenCalledTimes(1);
+  });
+
+  it("skips silently when ready is absent, throws or rejects", () => {
+    const run = frames();
+    install(ready({}));
+    expect(() => {
+      render(<ShellReady />);
+      act(run);
+    }).not.toThrow();
+    cleanup();
+    install(
+      ready({
+        ready: () => {
+          throw new Error("native");
+        },
+      }),
+    );
+    expect(() => {
+      render(<ShellReady />);
+      act(run);
+    }).not.toThrow();
+    cleanup();
+    install(ready({ ready: () => Promise.reject(new Error("native")) }));
+    expect(() => {
+      render(<ShellReady />);
+      act(run);
+    }).not.toThrow();
+  });
+
+  it("does nothing in a frame", () => {
+    const run = frames();
+    const fn = vi.fn();
+    install(ready({ ready: fn }));
+    vi.spyOn(window, "top", "get").mockReturnValue({} as Window);
+    render(<ShellReady />);
+    act(run);
+    expect(fn).not.toHaveBeenCalled();
+  });
+
+  it("renders nothing", () => {
+    expect(renderToStaticMarkup(<ShellReady />)).toBe("");
   });
 });
 
