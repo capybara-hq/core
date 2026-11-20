@@ -341,14 +341,14 @@ describe("token", () => {
     }
   });
 
-  it("a disabled account gets no session", async () => {
+  it("a disabled account gets no session and is told so (auth.account_disabled)", async () => {
     const { id, browser } = await person();
     const { code, p } = await consent(browser);
     await db.updateTable("accounts").set({ status: "disabled" }).where("id", "=", id).execute();
     const sessions = await sessionCount(id);
     const { res, jar } = await exchange({ code, codeVerifier: p.verifier, redirectUri: REDIRECT });
-    expect(res.statusCode).toBe(400);
-    expect(errCode(res)).toBe("app_auth.code_invalid");
+    expect(res.statusCode).toBe(403);
+    expect(errCode(res)).toBe("auth.account_disabled");
     expect(jar.get("cap_at")).toBeUndefined();
     expect(await sessionCount(id)).toBe(sessions);
     expect(await auditOf(id, "auth.app_signed_in")).toHaveLength(0);

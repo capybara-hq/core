@@ -1,5 +1,6 @@
 import { describe, expect, expectTypeOf, it } from "vitest";
 import {
+  type ChromeCapabilityV1,
   type DeviceCapabilityV1,
   type DeviceCeilingRequest,
   type NotifyCapabilityV1,
@@ -7,6 +8,7 @@ import {
   SHELL_CAPABILITIES,
   SHELL_CAPABILITY_KEYS,
   type ShellCallError,
+  type ShellChromeTokens,
   type SignInCapabilityV1,
   type ThisMachineStatus,
 } from "../src/index.js";
@@ -14,6 +16,7 @@ import {
 describe("desktop shell capability types", () => {
   it("names the capability keys as name@major", () => {
     expect(SHELL_CAPABILITY_KEYS).toEqual({
+      chrome: "chrome@1",
       device: "device@1",
       notify: "notify@1",
       openExternal: "openExternal@1",
@@ -58,6 +61,22 @@ describe("desktop shell capability types", () => {
     expectTypeOf<{ network: "open" }>().toMatchTypeOf<DeviceCeilingRequest>();
     expectTypeOf<ReturnType<DeviceCapabilityV1["requestCeiling"]>>().toEqualTypeOf<
       Promise<"applied" | "cancelled">
+    >();
+  });
+
+  it("takes the scheme and background, and optionally the color tokens and singleScheme", () => {
+    expectTypeOf<Parameters<ChromeCapabilityV1["setAppearance"]>[0]>().toEqualTypeOf<{
+      scheme: "light" | "dark";
+      background: string;
+      tokens?: ShellChromeTokens;
+      singleScheme?: boolean;
+    }>();
+    expectTypeOf<keyof ShellChromeTokens>().toEqualTypeOf<
+      "bg" | "panel" | "ink" | "muted" | "line" | "accent" | "onAccent"
+    >();
+    // an older web sends only the scheme and background
+    expectTypeOf<{ scheme: "dark"; background: string }>().toMatchTypeOf<
+      Parameters<ChromeCapabilityV1["setAppearance"]>[0]
     >();
   });
 });

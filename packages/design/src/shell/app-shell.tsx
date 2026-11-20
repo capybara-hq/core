@@ -69,6 +69,11 @@ export type AppShellProps = {
    * window height, so the status bar and the page's bottom stay visible.
    */
   banner?: ReactNode;
+  /**
+   * The resolved UI theme has a single scheme (no light / dark toggle): a native shell's
+   * `chrome@1.setAppearance` is told so, and its own pages then use the reported colors only.
+   */
+  singleScheme?: boolean;
   children?: ReactNode;
 };
 
@@ -91,6 +96,7 @@ export function AppShell({
   ownStatusBar,
   capState,
   banner,
+  singleScheme,
   children,
 }: AppShellProps) {
   const t = useDesignT();
@@ -102,7 +108,7 @@ export function AppShell({
   const sizeClass = useSizeClass();
   const short = useShortWindow();
   // Inside a native shell (mobile layout spec §9.3): its kind, after hydration; null in a browser.
-  const shellKind = useShellEnvironment();
+  const shellKind = useShellEnvironment(singleScheme === true);
   const [ownCollapsed, setOwnCollapsed] = useState(false);
   const collapsed = collapsedProp ?? ownCollapsed;
   const setCollapsed = (next: boolean) => {

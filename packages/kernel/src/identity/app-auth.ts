@@ -135,7 +135,7 @@ export class AppAuthService {
    * The app's exchange: the code is taken from Redis with GETDEL before anything else (one use:
    * a wrong verifier or redirect URI burns it too), then checked against `redirectUri` and
    * `S256(codeVerifier)`; the session is created in {@link signIn}. Every failure is
-   * `app_auth.code_invalid`.
+   * `app_auth.code_invalid`, except an account that is not active: `auth.account_disabled`.
    */
   async token(
     body: AppTokenBody,
@@ -169,7 +169,9 @@ export class AppAuthService {
       .where("id", "=", grant.accountId)
       .forShare()
       .executeTakeFirst();
-    if (row?.status !== "active") throw codeInvalid();
+    if (!row) throw codeInvalid();
+    // the app tells the person why (desktop client spec §6.6) instead of a generic failed code
+    if (row.status !== "active") throw new ApiError("auth.account_disabled", "Account is disabled");
     const consenting = await this.db
       .selectFrom("sessions")
       .select("id")
