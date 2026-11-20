@@ -17,6 +17,7 @@ import { ConversationsService } from "./conversations.service.js";
 import { ConversationDeviceStatus } from "./device-status.js";
 import { EventLogModule } from "./event-log.js";
 import { ConversationFiles } from "./files.js";
+import { ConversationLeakCheck } from "./leak-check.js";
 import { ConversationOutputs } from "./outputs-read.js";
 import { PermissionProfileStoreModule } from "./permission-profile-store.module.js";
 import { PermissionProfilesService } from "./permission-profiles.service.js";
@@ -57,6 +58,7 @@ import { ConversationQueue } from "./queue.service.js";
     ConversationArtifacts,
     ConversationFiles,
     ConversationDeviceStatus,
+    ConversationLeakCheck,
   ],
   exports: [
     OperationAuthorityModule,
@@ -70,6 +72,7 @@ import { ConversationQueue } from "./queue.service.js";
     ConversationArtifacts,
     ConversationFiles,
     ConversationDeviceStatus,
+    ConversationLeakCheck,
   ],
 })
 export class ConversationsModule {}
