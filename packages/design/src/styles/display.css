@@ -771,7 +771,8 @@
   text-underline-offset: 2px;
   cursor: pointer;
 }
-.cb-row-link:hover {
+.cb-row-link:hover,
+.cb-row-link:active {
   color: var(--cb-ink);
 }
 

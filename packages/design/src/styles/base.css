@@ -14,9 +14,36 @@
   --cb-inset-left: max(env(safe-area-inset-left, 0px), var(--cb-shell-inset-left, 0px));
 }
 
+/* Touch behaviour (mobile app spec §7.1), for the browser, the PWA and the app alike: no grey tap
+   flash, no double-tap-zoom delay on a control (pinch zoom of the page stays), and no rubber
+   band at the page's edge. Zero specificity: a component's own touch-action (a drag handle's
+   `none`) wins. */
+:where(
+  a,
+  button,
+  [role="button"],
+  [role="tab"],
+  [role="menuitem"],
+  summary,
+  label,
+  input,
+  select,
+  textarea
+) {
+  -webkit-tap-highlight-color: transparent;
+  touch-action: manipulation;
+}
+/* Text you type into stays selectable under chrome that is not (Safari makes an input under a
+   `user-select: none` ancestor untypable). */
+:where(input, textarea, [contenteditable]:not([contenteditable="false"])) {
+  -webkit-user-select: text;
+  user-select: text;
+}
+
 /* Scrollbars (inherited): a quiet thumb on a transparent track in both themes. */
 html {
   scrollbar-color: var(--cb-scroll-thumb) transparent;
+  overscroll-behavior: none;
 }
 
 :root:has(.cb-shell:not(.cb-ref-block .cb-shell)) {

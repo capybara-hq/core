@@ -54,6 +54,7 @@
   padding-left: var(--cb-inset-left);
   background: var(--cb-bg);
   color: var(--cb-ink);
+  overscroll-behavior: none;
 }
 /* Inside a reference block the shell fills the block instead of the window. */
 .cb-ref-block .cb-shell {
@@ -101,6 +102,13 @@
 .cb-shell-bottomnav {
   display: none;
   flex: none;
+}
+/* Chrome is not text to select: no selection, no iOS callout on a long press (§7.1). */
+.cb-shell-topbar,
+.cb-bottomnav {
+  -webkit-touch-callout: none;
+  -webkit-user-select: none;
+  user-select: none;
 }
 @media (max-width: 599px) {
   .cb-shell-topbar {

@@ -248,10 +248,22 @@
   font: inherit;
   white-space: nowrap;
   cursor: pointer;
+  -webkit-touch-callout: none;
+  -webkit-user-select: none;
+  user-select: none;
   transition:
     background-color var(--cb-motion-hover),
     border-color var(--cb-motion-hover),
     color var(--cb-motion-hover);
+}
+/* Pressed (§7.1): the hover ground; the variants below set their own, with more specificity. */
+.cb-btn:active:not(:disabled) {
+  background: var(--cb-hover);
+}
+.cb-icon-btn {
+  -webkit-touch-callout: none;
+  -webkit-user-select: none;
+  user-select: none;
 }
 .cb-btn[data-density="dense"] {
   height: var(--cb-control-dense);
@@ -269,6 +281,10 @@
   color: var(--cb-muted);
 }
 .cb-icon-btn:hover:not(:disabled) {
+  color: var(--cb-ink);
+}
+.cb-icon-btn:active:not(:disabled) {
+  background: var(--cb-hover);
   color: var(--cb-ink);
 }
 .cb-icon-btn[data-density="dense"] {

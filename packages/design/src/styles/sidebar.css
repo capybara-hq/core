@@ -15,6 +15,9 @@
   border-right: 1px solid var(--cb-line-soft);
   background: var(--cb-sidebar);
   color: var(--cb-ink);
+  -webkit-touch-callout: none;
+  -webkit-user-select: none;
+  user-select: none;
 }
 .cb-sidebar .cb-icon-btn {
   color: var(--cb-muted);
@@ -202,6 +205,12 @@
 .cb-sidebar-item:not([aria-current="page"]):hover,
 .cb-sidebar-more:hover,
 .cb-sidebar-archived:hover {
+  background: var(--cb-hover);
+  color: var(--cb-ink);
+}
+/* Pressed (§7.1): the hover ground while a finger is down, the current item keeping its own. */
+.cb-sidebar-item:not([aria-current="page"]):active,
+.cb-sidebar-more:active {
   background: var(--cb-hover);
   color: var(--cb-ink);
 }
@@ -425,6 +434,14 @@
 }
 .cb-sidebar-conv:hover,
 .cb-sidebar-conv[aria-current="page"] {
+  background: transparent;
+  color: var(--cb-ink);
+}
+/* A conversation row is pressed through its title button (the button keeps its transparent ground). */
+.cb-sidebar-row:not([data-current="true"]):has(.cb-sidebar-conv:active) {
+  background: var(--cb-hover);
+}
+.cb-sidebar-conv:active {
   background: transparent;
   color: var(--cb-ink);
 }
