@@ -1,5 +1,16 @@
 # @capybara-hq/kernel
 
+## 0.1.0-rc.58
+
+### Patch Changes
+
+- e788a1a: Person fields: a Platform write that needs a secret takes its field name in `askPerson`, and the
+  person types the value on the approval card on the web; it is sealed, read once by the resumed call
+  and never reaches the conversation, the audit or a log. Agents can now read and set extension
+  deployment config, org config and the org's config copy through the Platform tool.
+- Updated dependencies [e788a1a]
+  - @capybara-hq/plugin-sdk@0.1.0-rc.42
+
 ## 0.1.0-rc.57
 
 ### Patch Changes
