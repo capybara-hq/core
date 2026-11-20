@@ -345,6 +345,12 @@ Rulings taken while implementing; where they differ from the text above, they wi
   the same case with exit 1. Removing a distribution means pointing `bootstrap.extraManifest` at a
   file whose `marketplaces` and `plugins` lists are empty: its marketplaces are demoted (a warning
   lists them) and its entries lose `required` / `builtin`.
+- **R16, the mismatch re-checked under the lock:** the R14 decision runs before `lock:bootstrap`,
+  so replicas starting together could race it. `BootstrapService.run` checks again once it holds
+  the lock: a manifest without an extra manifest while config-managed marketplaces exist throws
+  `BootstrapExtraMismatchError` before anything is obtained or written (the start logs the R14
+  error and goes on; `capybara bootstrap` exits 1), and `syncExtraFromConfig(undefined)` (a
+  process without an extra manifest) never demotes.
 - **Repository root:** a git entry's `path` may be `.` / `./` (a single-plugin repository).
 - **Several repositories:** `capybara-plugin bootstrap` reads every git entry from `--root`; a
   manifest whose git entries come from more than one marketplace is checked and pinned once per
