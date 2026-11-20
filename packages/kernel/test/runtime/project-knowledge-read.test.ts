@@ -300,6 +300,31 @@ describe("readProjectKnowledge", () => {
     expect(p.skills).toEqual([]);
   });
 
+  it("lists the skills while AGENTS.md is still being read (each read is a device round trip)", async () => {
+    const io = device({
+      [`${ROOT}/AGENTS.md`]: "rules",
+      [`${ROOT}/.agents/skills/good/SKILL.md`]: skill("good", "Fine."),
+    });
+    const list = io.list?.bind(io);
+    const read = io.readFile.bind(io);
+    let listed!: () => void;
+    const listing = new Promise<void>((resolve) => {
+      listed = resolve;
+    });
+    io.list = async (p, limit) => {
+      listed();
+      return (list as NonNullable<typeof list>)(p, limit);
+    };
+    // AGENTS.md answers only once the listing has started: a reader that waits for it first hangs
+    io.readFile = async (p, maxBytes) => {
+      if (p === `${ROOT}/AGENTS.md`) await listing;
+      return read(p, maxBytes);
+    };
+    const p = await readProjectKnowledge(io, TARGET);
+    expect(p.agentsMd).toBe("rules");
+    expect(p.skills.map((s) => s.name)).toEqual(["good"]);
+  });
+
   it("keeps AGENTS.md when the skills directory cannot be listed", async () => {
     const lines: string[] = [];
     const p = await readProjectKnowledge(

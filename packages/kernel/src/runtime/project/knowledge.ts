@@ -233,22 +233,27 @@ export async function readProjectKnowledge(
 
   const out: ProjectRootPayload = { project, root, skills: [] };
   const agentsMd = `${root}/AGENTS.md`;
-  try {
-    const read = await files.readFile(agentsMd, AGENTS_MD_MAX_BYTES);
-    // none: a project with skills only, nothing to say (spec §4.7)
-    if (read !== null) {
-      const capped = capAgentsMd(decoder.decode(read.data), read.truncated);
-      out.agentsMd = capped.text;
-      if (capped.cut) out.agentsMdTruncated = true;
-    }
-  } catch (e) {
-    if (r.fatal(e)) throw e;
-    r.log("project AGENTS.md could not be read; left out this run", {
-      path: agentsMd,
-      reason: messageOf(e),
-    });
-  }
-  const skills = await readSkills(files, root, r);
+  // each read is a device round trip of its own: AGENTS.md and the skills go at the same time
+  const [, skills] = await Promise.all([
+    (async () => {
+      try {
+        const read = await files.readFile(agentsMd, AGENTS_MD_MAX_BYTES);
+        // none: a project with skills only, nothing to say (spec §4.7)
+        if (read !== null) {
+          const capped = capAgentsMd(decoder.decode(read.data), read.truncated);
+          out.agentsMd = capped.text;
+          if (capped.cut) out.agentsMdTruncated = true;
+        }
+      } catch (e) {
+        if (r.fatal(e)) throw e;
+        r.log("project AGENTS.md could not be read; left out this run", {
+          path: agentsMd,
+          reason: messageOf(e),
+        });
+      }
+    })(),
+    readSkills(files, root, r),
+  ]);
   out.skills = skills.skills;
   if (skills.truncated) out.skillsTruncated = true;
   return out;

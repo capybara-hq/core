@@ -1,7 +1,16 @@
 import { type ChildProcess, fork, spawn, spawnSync } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import { constants, realpathSync } from "node:fs";
-import { type FileHandle, mkdtemp, open, readdir, realpath, rm, stat } from "node:fs/promises";
+import {
+  type FileHandle,
+  lstat,
+  mkdtemp,
+  open,
+  readdir,
+  realpath,
+  rm,
+  stat,
+} from "node:fs/promises";
 import { homedir, tmpdir } from "node:os";
 import { basename, dirname, join } from "node:path";
 import {
@@ -704,16 +713,29 @@ export async function startMacOperationWorker(
                 "Native grant root changed or contains an unpinned symlink",
               );
             rootAliases.push({ original: path, canonical });
+            // A read root that is an existing file (a kernel read narrows `AGENTS.md` to itself)
+            // pins its parent directory; the helper reaches only the file's name through it.
+            const single =
+              access === "read" &&
+              components.length === 0 &&
+              (await lstat(canonicalAnchor)).isFile();
+            const pinAt = single ? dirname(canonicalAnchor) : canonicalAnchor;
             const file = await open(
-              canonicalAnchor,
+              pinAt,
               constants.O_RDONLY | constants.O_DIRECTORY | constants.O_NOFOLLOW,
             );
             files.push(file);
             const pinned = await file.stat();
-            const current = await stat(canonicalAnchor);
+            const current = await stat(pinAt);
             if (pinned.dev !== current.dev || pinned.ino !== current.ino)
               throw new Error("Pinned root changed during launch");
-            roots.push({ path: canonical, fd: file.fd, access, components });
+            roots.push({
+              path: canonical,
+              fd: file.fd,
+              access,
+              components,
+              ...(single ? { file: true as const } : {}),
+            });
           }
         }
       // Version managers (asdf, nvm, pyenv, ...) read their data under the real home, while HOME
