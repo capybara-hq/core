@@ -15,6 +15,8 @@ export const SHELL_CAPABILITY_KEYS = {
   haptics: "haptics@1",
   share: "share@1",
   menu: "menu@1",
+  nav: "nav@1",
+  profiles: "profiles@1",
 } as const;
 
 export type KeepAwakeMode = "off" | "while-busy" | "connected";
@@ -169,3 +171,43 @@ export const MOBILE_SHELL_LIMITS = {
 
 /** The menu item id pattern, checked on `menu@1.show` (the shell validates every input). */
 export const MENU_ITEM_ID = /^[A-Za-z0-9_.-]{1,64}$/;
+
+export type NavSectionId = "chats" | "inbox" | "agents" | "schedules";
+
+/** The strip's sections in display order. */
+export const NAV_SECTION_ORDER: readonly NavSectionId[] = ["chats", "inbox", "agents", "schedules"];
+
+export interface NavBadgeV1 {
+  count?: number;
+  countMore?: boolean;
+}
+
+export interface NavItemV1 extends NavBadgeV1 {
+  id: NavSectionId;
+  label: string;
+}
+
+export interface NavMenuV1 extends NavBadgeV1 {
+  label: string;
+}
+
+export interface NavStateV1 {
+  /** The sections the person sees, in NAV_SECTION_ORDER (a guest has no `schedules`). */
+  items: NavItemV1[];
+  current: NavSectionId | null;
+  /** The strip's menu button, or null for none (non-null while the web's class is compact). */
+  menu: NavMenuV1 | null;
+}
+
+/** `nav@1`: offered only while the window has a strip (mobile app spec §6.1): presence is visibility. */
+export interface NavCapabilityV1 {
+  set(state: NavStateV1): Promise<void>;
+  onSelect(listener: (id: NavSectionId) => void): () => void;
+  onMenu(listener: () => void): () => void;
+}
+
+/** `profiles@1`: the native profile switcher. */
+export interface ProfilesCapabilityV1 {
+  /** Opens the native profile switcher; resolves when it closes, with nothing. */
+  show(): Promise<void>;
+}

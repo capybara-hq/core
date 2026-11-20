@@ -53,4 +53,6 @@ export const SHELL_CAPABILITIES: readonly { key: string; owner: string }[] = [
   { key: "haptics@1", owner: "mobile app spec (2026-11-20-mobile-app-design.md), §5.2" },
   { key: "share@1", owner: "mobile app spec (2026-11-20-mobile-app-design.md), §5.2" },
   { key: "menu@1", owner: "mobile app spec (2026-11-20-mobile-app-design.md), §5.2" },
+  { key: "nav@1", owner: "mobile app spec (2026-11-20-mobile-app-design.md), §5.2" },
+  { key: "profiles@1", owner: "mobile app spec (2026-11-20-mobile-app-design.md), §5.2" },
 ];

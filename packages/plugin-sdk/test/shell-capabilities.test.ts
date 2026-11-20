@@ -6,8 +6,13 @@ import {
   MENU_ITEM_ID,
   type MenuCapabilityV1,
   MOBILE_SHELL_LIMITS,
+  NAV_SECTION_ORDER,
+  type NavCapabilityV1,
+  type NavSectionId,
+  type NavStateV1,
   type NotifyCapabilityV1,
   type OpenExternalCapabilityV1,
+  type ProfilesCapabilityV1,
   SHELL_CAPABILITIES,
   SHELL_CAPABILITY_KEYS,
   type ShellCallError,
@@ -27,6 +32,8 @@ describe("desktop shell capability types", () => {
       haptics: "haptics@1",
       share: "share@1",
       menu: "menu@1",
+      nav: "nav@1",
+      profiles: "profiles@1",
     });
   });
 
@@ -109,5 +116,13 @@ describe("desktop shell capability types", () => {
     expectTypeOf<{ scheme: "dark"; background: string }>().toMatchTypeOf<
       Parameters<ChromeCapabilityV1["setAppearance"]>[0]
     >();
+  });
+
+  it("types the nav strip and the profile switcher", () => {
+    expectTypeOf<NavSectionId>().toEqualTypeOf<"chats" | "inbox" | "agents" | "schedules">();
+    expectTypeOf<keyof NavStateV1>().toEqualTypeOf<"items" | "current" | "menu">();
+    expectTypeOf<ReturnType<NavCapabilityV1["onMenu"]>>().toEqualTypeOf<() => void>();
+    expectTypeOf<ReturnType<ProfilesCapabilityV1["show"]>>().toEqualTypeOf<Promise<void>>();
+    expect(NAV_SECTION_ORDER).toEqual(["chats", "inbox", "agents", "schedules"]);
   });
 });
