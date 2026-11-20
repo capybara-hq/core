@@ -22,6 +22,10 @@ import {
   requiredLoosened,
   route,
   route2,
+  route3,
+  secretClean,
+  secretNoPersonFields,
+  secretParam,
   staleLoosens,
   typeMismatch,
   undeclaredExtra,
@@ -131,6 +135,21 @@ describe("inputParity", () => {
     const flat = inputParity(flattenedLooser, route2);
     expect(brief(flat)).toEqual([{ op: "things.flat", field: "title" }]);
     expect(flat[0]?.message).toContain("`title` (`spec.title`): maxLength unbounded");
+  });
+
+  it("platform-op-secret-param: a route field with secret() meta is a person field, never a param", () => {
+    expect(inputParity(secretClean, route3)).toEqual([]);
+    const param = inputParity(secretParam, route3);
+    expect(param.map((f) => ({ op: f.op, field: f.field, rule: f.rule }))).toEqual([
+      { op: "things.secret-param", field: "secretEntries", rule: "platform-op-secret-param" },
+    ]);
+    expect(param[0]?.message).toContain("platform-op-secret-param");
+    expect(param[0]?.message).toContain("omits");
+    const unasked = inputParity(secretNoPersonFields, route3);
+    expect(unasked.map((f) => ({ op: f.op, field: f.field, rule: f.rule }))).toEqual([
+      { op: "things.secret-unasked", field: "secretEntries", rule: "platform-op-secret-param" },
+    ]);
+    expect(unasked[0]?.message).toContain("personFields");
   });
 
   it("(d) a mirror of a removed route: not registered here, an orphan for check:platform-ops", () => {

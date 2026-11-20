@@ -1468,6 +1468,11 @@ export const ConversationEventSchema = z.discriminatedUnion("type", [
        * denied call's `tool_result`).
        */
       reason: z.string().max(APPROVAL_DENY_REASON_MAX_CHARS).optional(),
+      /**
+       * The person field paths whose values the person entered with the approval (platform web
+       * parity spec §4.3; display only, never a value).
+       */
+      inputsProvided: z.array(z.string().max(200)).max(32).optional(),
     }),
   ),
   /**

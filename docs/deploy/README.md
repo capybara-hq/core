@@ -860,7 +860,9 @@ restarted with it. Without downtime, in this order:
    prefix, never the key). It needs only PostgreSQL. It is idempotent: a re-run, or a run after a
    failure part way through, rewraps only what is left; a run that prints `0` and `0` confirms the
    rewrap is complete. Expired initial passwords are not rewrapped: nobody can read them any more
-   and the hourly cleanup deletes them.
+   and the hourly cleanup deletes them. Sealed person inputs (values typed on an approval card)
+   are not rewrapped either: their 15-minute TTL is no longer than the wait before the old key is
+   removed (step 5), and a row that can no longer be read fails closed as expired.
 5. **Remove the old key.** Wait at least `auth.accessTokenTtlSeconds` after step 3 finished (15
    minutes by default; web sessions signed with the old key renew themselves), then clear
    `masterKeyPrevious` and restart every replica. Keep the old key with the backups taken before

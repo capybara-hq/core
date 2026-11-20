@@ -369,6 +369,15 @@ export const ERROR_CODES = {
   "approval.already_decided": 409,
   "approval.scope_not_allowed": 409,
   "approval.not_yours": 403,
+  /**
+   * An approval with person fields (platform web parity spec §4.2): a value missing or not valid
+   * against its schema node (`details: [{ fields: { path, problem }[] }]`, never a value).
+   */
+  "approval.inputs_invalid": 422,
+  /** An entered value appeared in the conversation (§4.5; `details: [{ fields: path[] }]`). */
+  "approval.input_leaked": 422,
+  /** Inputs for an approval that asks for none, or for a path it does not ask for. */
+  "approval.inputs_not_expected": 400,
   "question.not_found": 404,
   "question.already_answered": 409,
   "tool_output.not_found": 404,

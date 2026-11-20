@@ -6,6 +6,8 @@ import type { ActorFacts } from "../../src/platform/actor.js";
 import { PLATFORM_UNAVAILABLE_OFF } from "../../src/platform/availability.js";
 import { nextStepFor, OPERATION_ERROR_NEXT, toToolError } from "../../src/platform/errors.js";
 import { defineOperation, type PlatformOperation } from "../../src/platform/operation.js";
+import { configChanges } from "../../src/platform/ops/person-inputs.js";
+import { personFieldParams, secretFieldsOf } from "../../src/platform/person-fields.js";
 import { PlatformOperations } from "../../src/platform/registry.js";
 import { paramsLine, platformTool } from "../../src/tools/builtins/platform.js";
 import type {
@@ -633,6 +635,76 @@ describe("callPolicy: target-dependent class, async summaries, output references
         { ...policyCtx, rawInput: read },
       ),
     ).toMatchObject({ policy: "allow" });
+  });
+});
+
+describe("callPolicy: the card summary of a write with person fields", () => {
+  /** A config write whose target has a required secret (`apiKey`) and an optional one (`token`). */
+  const configOp = defineOperation({
+    id: "extensions.fixture-config",
+    description: "Save a fixture config.",
+    input: z
+      .object({
+        values: z.record(z.string(), z.unknown()).default({}),
+        askPerson: personFieldParams.askPerson,
+        clearSecrets: personFieldParams.clearSecrets,
+      })
+      .strict(),
+    example: { values: {}, askPerson: [], clearSecrets: [] },
+    authz: { orgAction: "org.update" },
+    mirrors: [],
+    confirm: "org",
+    personFields: async () => ({
+      target: { zh: "配置", en: "Config" },
+      ...secretFieldsOf(
+        {
+          type: "object",
+          properties: {
+            baseUrl: { type: "string" },
+            apiKey: { type: "string", "x-secret": true },
+            token: { type: "string", "x-secret": true },
+          },
+          required: ["apiKey"],
+        },
+        new Set(),
+      ),
+    }),
+    summary: (i, c) => {
+      const changes = configChanges(i, c);
+      return { zh: `保存：${changes.zh}`, en: `Save: ${changes.en}` };
+    },
+    run: async () => ({ ok: true }),
+  });
+
+  it("names the required secrets the plan adds, not only askPerson", async () => {
+    const ops = new PlatformOperations();
+    ops.register([configOp] as PlatformOperation[]);
+    const t = platformTool({
+      ops,
+      actor: { facts: async () => ADMIN },
+      docs: { topics: () => [], read: () => null },
+      setting: async () => "on",
+    });
+    const p = await t.callPolicy?.(
+      {
+        action: "call",
+        operation: "extensions.fixture-config",
+        params: { values: { baseUrl: "https://a.example" }, askPerson: ["token"] },
+      },
+      policyCtx,
+    );
+    expect(p?.personFields?.fields.map((f) => f.path)).toEqual(["apiKey", "token"]);
+    expect(p?.summary).toEqual({
+      zh: '保存：设置 baseUrl="https://a.example"；由本人填写 apiKey、token',
+      en: 'Save: sets baseUrl="https://a.example"; the person enters apiKey, token',
+    });
+  });
+
+  it("falls back to askPerson where no plan is at hand", () => {
+    expect(configChanges({ values: {}, askPerson: ["token"], clearSecrets: ["old"] }, {})).toEqual({
+      zh: "由本人填写 token；清除 old",
+      en: "the person enters token; clears old",
+    });
   });
 });
 

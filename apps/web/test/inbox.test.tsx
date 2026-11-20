@@ -165,6 +165,60 @@ describe("收件箱（InboxPage）", () => {
     },
   );
 
+  it.each(LOCALES)(
+    "an approval with person fields has no Approve, one way to the conversation (%s)",
+    async (locale) => {
+      const m = msgs[locale];
+      const { container } = await renderInbox(
+        {
+          [LIST]: () =>
+            json(
+              200,
+              inbox([
+                approval("a", {
+                  personFields: [
+                    {
+                      path: "apiKey",
+                      label: "API key",
+                      multiline: false,
+                      required: true,
+                      isSet: false,
+                    },
+                    {
+                      path: "token",
+                      label: "Token",
+                      multiline: false,
+                      required: true,
+                      isSet: false,
+                    },
+                  ],
+                  personTarget: { zh: "目标", en: "Target" },
+                }),
+              ]),
+            ),
+        },
+        { locale },
+      );
+      await screen.findByRole("list", { name: m.inbox.listLabel });
+      const detail = container.querySelector('[data-approval-id="a"]') as HTMLElement;
+      expect(
+        within(detail).getByText(
+          locale === "zh" ? "打开对话填写 2 项" : "Open the conversation to fill in 2 fields",
+        ),
+      ).toBeTruthy();
+      // one control opens the conversation: the primary action (the conversation fact stays a link)
+      expect(
+        within(detail).queryAllByRole("link", { name: m.inbox.openConversation }),
+      ).toHaveLength(0);
+      const open = screen.getAllByRole("button", { name: m.inbox.openConversation });
+      expect(open).toHaveLength(1);
+      expect(open[0]?.getAttribute("data-variant")).toBe("primary");
+      expect(screen.queryByRole("button", { name: m.approval.approve })).toBeNull();
+      expect(screen.queryByRole("radiogroup", { name: m.approval.scopeLabel })).toBeNull();
+      expect(screen.getByRole("button", { name: m.approval.deny })).toBeTruthy();
+    },
+  );
+
   it("the open item is in the URL hash: opening closes the list's page, back (and the system back) returns", async () => {
     const { container } = await renderInbox({
       [LIST]: () => json(200, inbox([approval("a"), approval("b")])),

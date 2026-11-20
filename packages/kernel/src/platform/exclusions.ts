@@ -36,22 +36,8 @@ export const PLATFORM_EXCLUSIONS: readonly {
   {
     route: "GET /api/v1/admin/extensions/:name/org-overrides",
     category: "secret",
-    reason: "Lists every org's config copy of an extension: cross-org config state",
-  },
-  {
-    route: "GET /api/v1/admin/extensions/:name/config",
-    category: "secret",
-    reason: "Returns deployment config that can include secret fields",
-  },
-  {
-    route: "PUT /api/v1/admin/extensions/:name/config",
-    category: "secret",
-    reason: "Writes deployment config that can include secret fields",
-  },
-  {
-    route: "DELETE /api/v1/admin/extensions/:name/config",
-    category: "secret",
-    reason: "Clears deployment config including secret values; done on the web",
+    reason:
+      "Delivers other orgs' config copies of an extension (which differ, which secrets each holds) to the super admin's browser; an agent works in its own org",
   },
   {
     route: "POST /api/v1/admin/extensions/:name/approve",
@@ -228,32 +214,6 @@ export const PLATFORM_EXCLUSIONS: readonly {
     route: "POST /api/v1/admin/catalog/requests/:id/decide",
     category: "human-only",
     reason: "Decides an org's catalog request as super admin",
-  },
-  {
-    route: "PUT /api/v1/orgs/:orgId/extensions/:extension",
-    category: "secret",
-    reason: "Org extension config may hold secret fields",
-  },
-  {
-    route: "GET /api/v1/orgs/:orgId/extensions/:extension/overrides",
-    category: "secret",
-    reason: "The org's copy of an extension's deployment config, with secret fields as set or not",
-  },
-  {
-    route: "PUT /api/v1/orgs/:orgId/extensions/:extension/overrides",
-    category: "secret",
-    reason: "Saves the org's config copy, including the org's own secrets entered in the same save",
-  },
-  {
-    route: "DELETE /api/v1/orgs/:orgId/extensions/:extension/overrides",
-    category: "secret",
-    reason:
-      "Drops the org's config copy and its secrets; part of the config-copy lifecycle on the web",
-  },
-  {
-    route: "POST /api/v1/orgs/:orgId/extensions/:extension/overrides/take",
-    category: "secret",
-    reason: "Starts an org config copy whose secrets a person enters on the web",
   },
   // org-uploads
   {

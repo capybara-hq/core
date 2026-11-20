@@ -158,6 +158,21 @@ export interface AccountInitialPasswordsTable {
   created_at: Ts;
 }
 
+/** A person's sealed card values for one approval (migration 0169). */
+export interface PlatformSealedInputsTable {
+  approval_id: string;
+  recipient_account_id: string;
+  conversation_id: string;
+  run_id: string;
+  call_id: string;
+  /** The sorted field paths; part of the AAD. */
+  paths: string[];
+  master_key_id: string;
+  ciphertext: Buffer;
+  expires_at: Date | string;
+  created_at: Ts;
+}
+
 export interface IdentitiesTable {
   source: string;
   external_id: string;
@@ -1863,6 +1878,7 @@ export interface KernelDatabase {
   permission_config_publication: PermissionConfigPublicationTable;
   org_data_keys: OrgDataKeysTable;
   account_initial_passwords: AccountInitialPasswordsTable;
+  platform_sealed_inputs: PlatformSealedInputsTable;
   identities: IdentitiesTable;
   local_passwords: LocalPasswordsTable;
   orgs: OrgsTable;

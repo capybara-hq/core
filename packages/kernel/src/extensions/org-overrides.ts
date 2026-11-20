@@ -80,6 +80,8 @@ export interface OrgOverrideSummary {
 interface Actor {
   accountId: string;
   tokenId?: string | undefined;
+  /** Merged into the audit detail (a Platform operation's `via: "agent"`). */
+  auditDetail?: Record<string, unknown> | undefined;
 }
 
 /** What a write needs of the running extension. */
@@ -273,7 +275,7 @@ export class OrgOverrides {
       orgId,
       action: "extension.org_override_saved",
       target: plugin,
-      detail: { changedPaths: changed },
+      detail: { changedPaths: changed, ...actor.auditDetail },
     });
     const secretValues = Object.values(copy.secrets);
     afterCommit(async () => {
@@ -349,7 +351,7 @@ export class OrgOverrides {
       orgId,
       action: "extension.org_override_taken",
       target: plugin,
-      detail: { changedPaths: changed.sort() },
+      detail: { changedPaths: changed.sort(), ...actor.auditDetail },
     });
     afterCommit(() => this.effective.invalidate(orgId, plugin));
     return this.render(orgId, run);
@@ -387,6 +389,7 @@ export class OrgOverrides {
       orgId,
       action: "extension.org_override_reset",
       target: plugin,
+      ...(actor.auditDetail !== undefined && { detail: actor.auditDetail }),
     });
     afterCommit(() => this.effective.invalidate(orgId, plugin));
     return this.render(orgId, run);

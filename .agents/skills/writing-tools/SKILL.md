@@ -564,6 +564,17 @@ section of `.agents/skills/writing-kernel-api`; this section is about how the pi
   approval stores it with the exact input and runs only with that input (approvals bound to input: a re-call
   with other params asks again). A write whose params hold a `{"$output": id}` reference is denied (the card
   would show the reference, not the content): `CallPolicyContext.rawInput` carries the unresolved input.
+- **Person fields** (platform web parity spec §4): an operation with `personFields` names the
+  target's secret fields; the model lists the ones to enter in `askPerson` (and `clearSecrets`), never
+  their values. `callPolicy` plans them (`planPersonFields`: a secret in `values` is refused as leaked,
+  a required unset secret is asked anyway) and returns `CallPolicy.personFields`, which the pipeline
+  honours before `decide`: the call always asks, once (never a grant, a session grant or an `allow`
+  override), an unattended run is refused, and an ask that would go to a role instead of the person is
+  denied. The card is web only: the `requested_for` person approves in a web session with the values
+  (IM cards show a link). The decision seals them (`SealedInputs`, 15 minutes, read once); the resumed
+  call hands them to `run` only as `ctx.personInputs.apply(fn)`, and the result appends one line per
+  entered path (`` `apiKey`: entered by the person ``), never a value. Values that expired return the
+  "expired" text and nothing is applied.
 - **The actor** is the run's trigger account; role, membership and super admin are re-read on every call,
   also right before `run`. No person present (an eval, the org's anonymous guest account) or the org setting
   `platformTool` = `read-only`: writes are unavailable with the reason; `off`: the tool is unavailable.
@@ -593,10 +604,12 @@ section of `.agents/skills/writing-kernel-api`; the short list for a tool change
 
 - `defineOperation` fields: `id`, `description`, `input` (from the route's shared schemas, with `omits` /
   `extras` / `renames` / `loosens`), `example`, `authz` (+ `authzNote`), `mirrors`, `confirm`,
-  `rememberable`, `confirmFor`, `precheck`, `summary`, `errors` (role-keyed `next`), `run`.
+  `rememberable`, `confirmFor`, `precheck`, `personFields` (with `personFieldParams` in the input),
+  `summary`, `errors` (role-keyed `next`), `run`.
 - Checks: `check:platform-ops` (`platform-op-missing`, `-exclusion-reason`, `-later`, `-authz`, `-orphan`,
   `-double`, `-describe`, `-literal`, `-errors`) and the parity test
-  `tools/checks/test/platform-parity.test.ts`.
+  `tools/checks/test/platform-parity.test.ts` (with `platform-op-secret-param`: a route field with
+  `secret()` meta is in `omits` and the operation defines `personFields`).
 - Exclusion categories: `human-only`, `secret`, `transport`, `internal`; there is no `later`
   (`platform-op-later` fails it).
 - A new domain: `PLATFORM_DOMAINS`, `PlatformOpsModule`, `ROUTE_SCHEMAS`, and the domain list in

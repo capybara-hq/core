@@ -28,6 +28,7 @@ import { KernelConfigService } from "../infra/config/kernel-config.service.js";
 import { KernelDb } from "../infra/database/kernel-db.js";
 import type { OrgRole } from "../orgs/roles.js";
 import { readOrgSettings } from "../orgs/settings.service.js";
+import type { PersonFieldSpec } from "../platform/person-fields.js";
 import { estimateTokens } from "../runtime/context/tokens.js";
 import type { ConversationKindForHooks } from "../runtime/hook-calls.js";
 import type { ExecutionClaim } from "../runtime/run-execution.js";
@@ -136,6 +137,12 @@ export interface BuiltinCallContext extends ToolCallContext {
   agentVersion?: number;
   conversationKind?: ConversationKindForHooks;
   parent?: HookParentScope;
+  /**
+   * The approval the call runs under: set only when an approved approval of this call, matching
+   * its definition and input, let it through (absent for a grant or a policy allow). A `Platform`
+   * call with person fields reads the person's sealed values by it.
+   */
+  approvalId?: string;
 }
 
 /** One image the builtin `Read` stored for a call (`tool_result.media`, vision-read design §1.2). */
@@ -219,6 +226,8 @@ export interface CallPolicyContext {
   conversationId: string;
   /** Null outside a run (a builtin called directly). */
   runId: string | null;
+  /** The tool call being decided (a call id is unique within its run). Absent outside the pipeline. */
+  callId?: string;
   /**
    * The call's input as the model sent it, before `{"$output": id}` references were resolved
    * (the approval card shows this form). Absent outside the pipeline.
@@ -249,6 +258,13 @@ export interface CallPolicy {
   summary?: { zh: string; en: string };
   /** With `policy: "deny"`: the actionable English reason returned as the tool error. */
   denyReason?: string;
+  /**
+   * The secret fields the person enters on the approval card for this call (platform web parity
+   * spec §4.2): only the asked ones, specs without values. The pipeline always asks for such a
+   * call (never a grant or an `allow`; ruling R6), refuses it in an unattended run and when the ask
+   * would go to a role instead of the person, and stores the fields in the approval's `detail`.
+   */
+  personFields?: { target: { zh: string; en: string }; fields: PersonFieldSpec[] };
 }
 
 export type ToolPolicy = "allow" | "ask" | "deny";

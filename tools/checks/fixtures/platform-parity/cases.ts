@@ -1,3 +1,4 @@
+import { secret } from "@capybara-hq/plugin-sdk";
 import { z } from "zod";
 
 /** A route both cases mirror: `name` a bounded string, `visibility` required. */
@@ -138,3 +139,62 @@ export const flattenedLooser = op2("things.flat", {
   title: z.string().min(1),
   spec: Spec,
 }, { renames: { thingId: "id", title: "spec.title" } });
+
+/**
+ * A third route whose body carries a secret: `secretEntries[].value` has the SDK's `secret()` meta
+ * (rule `platform-op-secret-param`, platform web parity spec §9).
+ */
+export const route3 = {
+  route: "PUT /api/v1/orgs/:orgId/things/:id/config",
+  params: z.object({ id: z.string().min(1).max(100) }),
+  body: z
+    .object({
+      values: z.record(z.string().min(1).max(256), z.unknown()),
+      secretEntries: z
+        .array(z.object({ key: z.string().min(1).max(256), value: secret(z.string().max(100)) }))
+        .max(10)
+        .optional(),
+    })
+    .strict(),
+};
+
+/** What an operation with person fields declares: its target's secret fields. */
+const personFields = async () => ({ target: { zh: "配置", en: "Config" }, fields: [] });
+
+const op3 = (id: string, shape: z.ZodRawShape, more: Record<string, unknown> = {}) => ({
+  id,
+  input: z.object(shape).strict(),
+  mirrors: [route3.route],
+  renames: { thingId: "id" },
+  ...more,
+});
+const Values = z.record(z.string().min(1).max(256), z.unknown());
+const AskPerson = z.array(z.string().min(1).max(200)).max(32);
+
+/** Clean: the secret field is omitted and the operation asks the person for it. */
+export const secretClean = op3(
+  "things.configure",
+  { thingId: z.string().min(1).max(100), values: Values, askPerson: AskPerson },
+  { omits: ["secretEntries"], extras: ["askPerson"], personFields },
+);
+
+/** The route's `secret()` field taken as a param: the model would see the secret. */
+export const secretParam = op3(
+  "things.secret-param",
+  {
+    thingId: z.string().min(1).max(100),
+    values: Values,
+    secretEntries: z
+      .array(z.object({ key: z.string().min(1).max(256), value: z.string().max(100) }))
+      .max(10)
+      .optional(),
+  },
+  { personFields },
+);
+
+/** The secret field left out, but nothing asks the person for it. */
+export const secretNoPersonFields = op3(
+  "things.secret-unasked",
+  { thingId: z.string().min(1).max(100), values: Values },
+  { omits: ["secretEntries"] },
+);
