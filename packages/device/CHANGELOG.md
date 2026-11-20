@@ -1,5 +1,17 @@
 # @capybara-hq/device
 
+## 0.1.0-rc.24
+
+### Patch Changes
+
+- 8f684ad: A local device's hello names its program run (`programRunId`, random per process). When the machine
+  reconnects as a new run before answering a request, the kernel ends that request's wait at once with
+  a tool error saying capybara-device restarted and the result is lost, instead of waiting out the
+  command's whole timeout plus the reconnect grace.
+- 8b9a6d6: A send to an operation worker that has just exited no longer crashes the whole device program
+  (an unhandled EPIPE took every running command down); teardown no longer waits for an exit it
+  already saw.
+
 ## 0.1.0-rc.23
 
 ### Patch Changes
