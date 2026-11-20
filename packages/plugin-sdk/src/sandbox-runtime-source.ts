@@ -25,7 +25,7 @@ export const SANDBOX_RUNTIME_SOURCE: {
     Object.freeze({
       name: "native-files.py",
       source: NATIVE_FILES_SOURCE,
-      sha256: "9bde40a697fd60f2c9073b7fc35e84b4cffd045463e3ab5116a2c3435fd55df0",
+      sha256: "c1712198af4ffedc0b48f789c28ed4233dc9008521b897300731c4f903168950",
     }),
     Object.freeze({
       name: "linux-sandbox.py",

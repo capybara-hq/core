@@ -114,7 +114,7 @@ Each line is the rule you must not miss; the skill has the rest.
   600–840, expanded ≥ 841), adapted in design templates and the shell, never in pages
   (`design-breakpoint`); native shells are detected only through `window.capybaraShell`
   capabilities, never the user agent (`web-shell-access`); dangerous shell capabilities are
-  confirmed natively.
+  confirmed by the shell in UI the page cannot draw or click (desktop: a shell-owned window).
   [mobile layout](docs/superpowers/specs/2026-11-19-mobile-layout-design.md)
 - **Runtime and replay:** the conversation event log is the single source of truth; everything the
   model sees goes into the log, and history sent to the model is append-only; new model-visible

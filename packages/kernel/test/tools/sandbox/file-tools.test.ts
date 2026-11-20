@@ -648,9 +648,10 @@ describe("the review's facts name the working root", () => {
       workingRoot: "/workspace",
     });
 
-    // bound, before its first run start: no snapshot yet
+    // bound, before any run start recorded a snapshot (the device could not be asked): the bound
+    // root, under the same mode and home rules
     const conv = await boundConversation("/srv/app");
-    expect((await facts(conv))?.workingRoot).toBe("/workspace");
+    expect((await facts(conv))?.workingRoot).toBe("/srv/app");
 
     // a usable snapshot outside the device's workspace (auto mode): the project root
     await appendProjectRoot(conv, { project: "app", root: "/srv/app", skills: [] });

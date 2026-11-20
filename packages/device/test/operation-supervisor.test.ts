@@ -1275,3 +1275,81 @@ it("an unknown exec of a lost process keeps its identity past retention and keep
   f.finish();
   await running;
 });
+
+// A settled entry is dropped an hour past its retention; anything still owed stays. The commit
+// that pruned is accepted as the successor on restart, and the dropped id stays spent.
+it("prunes settled entries past retention, keeps owed ones, and a restart accepts the pruned commit", async () => {
+  const stateDir = await mkdtemp(join(tmpdir(), "cap-supervisor-prune-"));
+  dirs.push(stateDir);
+  const hour = 60 * 60 * 1000;
+  const entry = (operationId: string, extra: Record<string, unknown> = {}) => ({
+    ref: { executionId: `e-${operationId}`, operationId, instanceId: "d", instanceGeneration: "g" },
+    admitBeforeMs: 100,
+    hash: "h",
+    retainUntilMs: 100,
+    state: "completed",
+    revoked: false,
+    ...extra,
+  });
+  const file = join(stateDir, `operation-journal-${digest("d")}.json`);
+  const text = JSON.stringify({
+    version: 1,
+    entries: [
+      entry("settled"),
+      entry("settled-unknown", { state: "unknown" }),
+      entry("recent", { retainUntilMs: 2 * hour }),
+      entry("lost", { state: "unknown", identity: { pid: 123, token: "t" } }),
+      entry("revoked", { revoked: true, stop: { outcome: "stopped" } }),
+      entry("cancel-owed", { state: "unknown", stop: { outcome: "cancel-pending" } }),
+      entry("uncleaned", {
+        output: { locator: { committed: 0 }, state: "complete", interruptedCancellation: false },
+      }),
+    ],
+  });
+  await writeFile(file, text);
+  await writeFile(`${file}.rollback`, text);
+  let now = 1;
+  const options = {
+    stateDir,
+    deviceId: "d",
+    instanceGeneration: "g",
+    now: () => now,
+    start: async (r: MacWorkerRequest) => {
+      await r.beforeLaunch();
+      await r.onLaunch({ pid: 456, token: "child" });
+      return {
+        ready: Promise.resolve(),
+        completion: Promise.resolve({ size: 1, isDir: false }),
+        cancel: async () => {},
+      };
+    },
+  };
+  const stat = (operationId: string, admitBeforeMs: number) => ({
+    kind: "native" as const,
+    native: { method: "stat" as const, path: "/f" },
+    purpose: "operation" as const,
+    scope: { ...scope, operationId, tag: operationId, admitBeforeMs },
+    grant,
+    stateDir,
+    pythonPath: "/usr/bin/python3",
+    beforeLaunch: async () => {},
+    onLaunch: async () => {},
+  });
+  const supervisor = new MacOperationSupervisor(options);
+  await supervisor.execute(stat("new", 30_000), "h-new", signal);
+  // an hour on: a retry's admission sweeps, so the journal's last commit is the pruning one
+  now = hour + 10_000;
+  await expect(supervisor.execute(stat("new", 30_000), "h-new", signal)).rejects.toThrow(/unknown/);
+  const kept = JSON.parse(await readFile(file, "utf8")).entries.map(
+    (e: { ref: { operationId: string } }) => e.ref.operationId,
+  );
+  expect(kept.sort()).toEqual(["cancel-owed", "lost", "new", "recent", "revoked", "uncleaned"]);
+  // the last commit on disk is a successor that dropped entries of its predecessor
+  const restarted = new MacOperationSupervisor(options);
+  expect(await restarted.execute(stat("after", now + 30_000), "h-after", signal)).toEqual({
+    size: 1,
+    isDir: false,
+  });
+  // a duplicate delivery of a pruned operation carries its long-past deadline: never run again
+  await expect(restarted.execute(stat("settled", 100), "h", signal)).rejects.toThrow(/expired/);
+});
