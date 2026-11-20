@@ -258,3 +258,38 @@ export function useShellEnvironment(singleScheme = false): ShellKind | null {
   }, [singleScheme]);
   return kind;
 }
+
+/** The shells told `ready` already: one call per document (a document has one shell global). */
+const readied = new WeakSet<object>();
+
+/**
+ * Tells the native shell the page has drawn (`chrome@1.ready`, mobile app decision 3): once per
+ * document, after hydration, in the next animation frame, so the shell drops its splash over a
+ * painted page. Skips silently outside the top frame, without the capability or its optional
+ * `ready`, and when the call throws or rejects (the shell's own timeout drops the splash then).
+ * Renders nothing.
+ */
+export function ShellReady(): null {
+  useEffect(() => {
+    const shell = shellOf(window);
+    if (shell === null || readied.has(shell)) return;
+    const frame = requestAnimationFrame(() => {
+      if (readied.has(shell)) return;
+      readied.add(shell);
+      try {
+        const caps = shell.capabilities;
+        if (caps === null || typeof caps !== "object" || !Object.hasOwn(caps, "chrome@1")) return;
+        const chrome = (caps as Record<string, unknown>)["chrome@1"];
+        if (chrome === null || typeof chrome !== "object") return;
+        const ready = (chrome as Record<string, unknown>).ready;
+        if (typeof ready !== "function") return;
+        const r = ready.call(chrome);
+        Promise.resolve(r).catch(() => {});
+      } catch {
+        // the shell drops its splash on its own timeout
+      }
+    });
+    return () => cancelAnimationFrame(frame);
+  }, []);
+  return null;
+}

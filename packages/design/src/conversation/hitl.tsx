@@ -7,6 +7,7 @@ import { Callout, type CalloutAction } from "../display/callout";
 import { CodeBlock } from "../display/chat";
 import { initialOf } from "../display/initial";
 import { Icon } from "../icons/icon";
+import { useHaptics } from "../native";
 import { useDesignT } from "../provider";
 import { PersonFieldRow } from "./person-field";
 import { registrableDomain } from "./registrable";
@@ -419,7 +420,10 @@ export function ApprovalFileRow({ file }: { file: ApprovalFile }): JSX.Element {
   );
 }
 
-/** One approve button; with a hint, the hint is a small line under it. */
+/**
+ * One approve button (every approval card's); with a hint, the hint is a small line under it. A
+ * grant plays the `success` haptic.
+ */
 function ScopeChoice({
   primary,
   disabled,
@@ -433,8 +437,16 @@ function ScopeChoice({
   hint: ReactNode | undefined;
   onClick(): void;
 }) {
+  const haptics = useHaptics();
   const button = (
-    <Button variant={primary ? "primary" : "default"} disabled={disabled} onClick={onClick}>
+    <Button
+      variant={primary ? "primary" : "default"}
+      disabled={disabled}
+      onClick={() => {
+        haptics("success");
+        onClick();
+      }}
+    >
       {label}
     </Button>
   );

@@ -1,5 +1,6 @@
 import { type ReactNode, useCallback, useEffect, useId, useMemo, useRef, useState } from "react";
 import type { ConvMenuEntry } from "../conversation/menu";
+import { type NativeNavHandle, type NativeTabId, useHaptics } from "../native";
 import { type CommandGroup, CommandPalette } from "../overlays/index";
 import { useDesignT } from "../provider";
 import { BottomNav, type BottomNavItem, bottomNavCurrent, isTabRoot } from "./bottom-nav";
@@ -27,6 +28,16 @@ export type AppShellProps = {
    * whose root or pushed pages hold it is current.
    */
   pathname?: string;
+  /**
+   * A native shell's tab bar (`nav@1`, mobile app spec §6.1), in place of the web's bottom
+   * navigation: the shell element carries `data-native-nav` (CSS drops the web's bar), the shell
+   * tells the handle the four items, the current one and `visible` (exactly when the web would
+   * have shown its own bar: compact, a tab root, no open keyboard) on every change, and a tap on a
+   * native tab plays the `selection` haptic and navigates to the item's `href` with `onNavigate`.
+   */
+  nativeNav?: NativeNavHandle;
+  /** Client navigation for the native tab bar (apps/web: the router's push). */
+  onNavigate?(href: string): void;
   /**
    * The compact top bar's overflow menu for pages that do not register their own
    * ({@link useRegisterShellPage}); empty or absent: no button.
@@ -86,6 +97,8 @@ export function AppShell({
   sidebar,
   bottomNav,
   pathname,
+  nativeNav,
+  onNavigate,
   menu,
   collapsed: collapsedProp,
   onCollapsedChange,
@@ -223,6 +236,72 @@ export function AppShell({
   }, [pathname, tabRoot]);
   const tabLabel = items.find((i) => i.id === currentTab && tabRoot)?.label;
 
+  // The native tab bar (mobile app spec §6.1): visible exactly when the web would show its own
+  // bar (the slot below, and the CSS that shows it on compact while no keyboard is open).
+  const haptics = useHaptics();
+  const [keyboardOpen, setKeyboardOpen] = useState(false);
+  useEffect(() => {
+    const el = shellRef.current;
+    if (nativeNav === undefined || el === null || typeof MutationObserver === "undefined") return;
+    const read = () => setKeyboardOpen(el.dataset.keyboard === "open");
+    read();
+    const observer = new MutationObserver(read);
+    observer.observe(el, { attributes: true, attributeFilter: ["data-keyboard"] });
+    return () => observer.disconnect();
+  }, [nativeNav]);
+  const navState = {
+    items: items.map(nativeTab),
+    current: currentTab,
+    visible: hydrated && sizeClass === "compact" && items.length > 0 && !pushed && !keyboardOpen,
+  };
+  const navKey = JSON.stringify(navState);
+  const navSent = useRef<{ nav: NativeNavHandle; key: string } | null>(null);
+  // biome-ignore lint/correctness/useExhaustiveDependencies: `navKey` is `navState`, deduped
+  useEffect(() => {
+    if (nativeNav === undefined) return;
+    const sent = navSent.current;
+    if (sent !== null && sent.nav === nativeNav && sent.key === navKey) return;
+    navSent.current = { nav: nativeNav, key: navKey };
+    try {
+      nativeNav.set(navState);
+    } catch {
+      // the shell keeps its last state
+    }
+  }, [nativeNav, navKey]);
+  const navLatest = useRef({ items, onNavigate, haptics, navState });
+  navLatest.current = { items, onNavigate, haptics, navState };
+  useEffect(() => {
+    if (nativeNav === undefined) return;
+    let off: (() => void) | undefined;
+    try {
+      const r = nativeNav.onSelect((id) => {
+        const { items: now, onNavigate: go, haptics: buzz } = navLatest.current;
+        const item = now.find((i) => i.id === id);
+        if (item === undefined) return;
+        buzz("selection");
+        if (go) go(item.href);
+        else window.location.assign(item.href);
+      });
+      if (typeof r === "function") off = r;
+    } catch {
+      // a shell that cannot subscribe: its taps do nothing
+    }
+    return () => {
+      try {
+        off?.();
+      } catch {
+        // already gone
+      }
+      // the page without this shell (an auth page) has no tab bar
+      try {
+        nativeNav.set({ ...navLatest.current.navState, visible: false });
+      } catch {
+        // the shell keeps its last state
+      }
+      navSent.current = null;
+    };
+  }, [nativeNav]);
+
   const openSteps = useCallback(() => {
     stepsPushed.current = true;
     window.history.pushState(window.history.state, "", "#steps");
@@ -322,6 +401,7 @@ export function AppShell({
           data-cap-state={stateTokens}
           data-banner={banner ? "true" : undefined}
           data-short={short ? "true" : undefined}
+          data-native-nav={nativeNav ? "" : undefined}
         >
           {/* The native shell's top band (spec mobile layout §9.3): a window drag region on the
               desktop, drawn only under `<html data-shell>` by CSS. */}
@@ -397,6 +477,30 @@ export function AppShell({
       </StatusBarSetterContext.Provider>
     </ShellPageContext.Provider>
   );
+}
+
+/** The largest count the native tab bar takes (`nav@1`); more is that count, truncated. */
+const MAX_NATIVE_COUNT = 9999;
+/** The longest label the native tab bar takes (`nav@1`). */
+const MAX_NATIVE_LABEL = 32;
+
+/** A bottom navigation item as the native tab bar takes it: within its limits. */
+function nativeTab(item: BottomNavItem): {
+  id: NativeTabId;
+  label: string;
+  count?: number;
+  countMore?: boolean;
+} {
+  const tab: { id: NativeTabId; label: string; count?: number; countMore?: boolean } = {
+    id: item.id,
+    label: [...item.label].slice(0, MAX_NATIVE_LABEL).join(""),
+  };
+  if (item.count !== undefined && Number.isFinite(item.count)) {
+    const count = Math.max(0, Math.min(MAX_NATIVE_COUNT, Math.floor(item.count)));
+    tab.count = count;
+    if (item.countMore || item.count > MAX_NATIVE_COUNT) tab.countMore = true;
+  } else if (item.countMore) tab.countMore = true;
+  return tab;
 }
 
 /** The browser's Navigation API where it has one (not in every engine, and not in jsdom). */

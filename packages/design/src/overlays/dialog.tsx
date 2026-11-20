@@ -5,6 +5,7 @@ import { Button, IconButton } from "../controls/index";
 import { Input } from "../controls/inputs";
 import { Icon } from "../icons/icon";
 import { BoxScope } from "../layout/box";
+import { useHaptics } from "../native";
 import { useDesignT } from "../provider";
 import { useFocusReturn } from "./focus-return";
 
@@ -143,6 +144,7 @@ export function DangerConfirm({
     setError(null);
   }, [open]);
   const ready = typed === confirmName && !confirmDisabled;
+  const haptics = useHaptics();
   return (
     <Dialog
       open={open}
@@ -162,6 +164,8 @@ export function DangerConfirm({
             loading={busy}
             onClick={async () => {
               const current = session.current;
+              // a destructive confirmation plays the `warning` haptic (a native shell's)
+              haptics("warning");
               setBusy(true);
               setError(null);
               try {

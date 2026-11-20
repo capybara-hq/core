@@ -1,6 +1,7 @@
 import { type JSX, type KeyboardEvent, useId, useLayoutEffect, useRef, useState } from "react";
 import { ConvMenu, type ConvMenuEntry } from "../conversation/menu";
 import { Icon } from "../icons/icon";
+import { useHaptics } from "../native";
 import { type Density, useDensity } from "./density";
 
 export type SelectOption = { value: string; label: string; disabled?: boolean };
@@ -89,9 +90,12 @@ export function Select({
     setListName(label.id ? { labelledBy: label.id } : { label: label.textContent ?? "" });
   }, [ariaLabel, ariaLabelledBy]);
 
+  const haptics = useHaptics();
   const pick = (v: string) => {
     if (value === undefined) setOwn(v);
     if (v === current) return;
+    // a change plays the `selection` haptic (a native shell's)
+    haptics("selection");
     const target = { value: v, name: name ?? "" };
     onChange?.({ target, currentTarget: target });
   };

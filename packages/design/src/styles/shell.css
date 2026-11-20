@@ -104,6 +104,11 @@
   display: none;
   flex: none;
 }
+/* A native shell's tab bar replaces the bottom navigation (mobile app spec §6.1): `<html>` from the
+   no-flash script, the shell element from the AppShell. */
+[data-native-nav] .cb-shell-bottomnav {
+  display: none;
+}
 /* Chrome is not text to select: no selection, no iOS callout on a long press (§7.1). */
 .cb-shell-topbar,
 .cb-bottomnav {

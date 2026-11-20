@@ -5,16 +5,18 @@
  * root layout puts first in `<head>`, so it runs before the first paint. It reads the global a
  * native shell injects (`window.capybaraShell`, before any page script) and marks `<html>` with
  * `data-shell`, `data-shell-platform`, `--cb-shell-inset-*` and, when the shell reports window
- * controls, `--cb-shell-controls-x|y|width|height`.
+ * controls, `--cb-shell-controls-x|y|width|height`; with the native tab bar (`nav@1` an own
+ * object of `capabilities`), `data-native-nav`, so the web's bottom navigation never paints under
+ * it.
  *
  * A fixed string: nothing of the page, the request or the user is interpolated into it, so the
  * request's CSP nonce is the only thing that differs between documents. It does nothing outside
  * the top frame, without the global, for another envelope `version`, a global without an `on`
- * function or an unknown `kind`, and it
- * writes only the two attributes and the eight properties above, each from a value it has checked
- * (a finite, non-negative, bounded number; a known platform), whatever the global holds.
- * `readShellEnvironment` in `shell-environment.tsx` applies the same rules after hydration (the
- * tests run both over the same cases).
+ * function or an unknown `kind`, and it writes only the three attributes and the eight properties
+ * above, each from a value it has checked (a finite, non-negative, bounded number; a known
+ * platform; an own object), whatever the global holds. `readShellEnvironment` in
+ * `shell-environment.tsx` applies the same rules after hydration (the tests run both over the
+ * same cases).
  */
 export const SHELL_ENVIRONMENT_SCRIPT =
   "(function(){try{" +
@@ -36,6 +38,9 @@ export const SHELL_ENVIRONMENT_SCRIPT =
   "d.setAttribute('data-shell-platform',platform);" +
   "for(i=0;i<4;i++)st.setProperty('--cb-shell-inset-'+sides[i],px(ins[i]));" +
   "if(rect)for(i=0;i<4;i++)st.setProperty('--cb-shell-controls-'+names[i],px(rect[i]));" +
+  "var caps=s.capabilities,nav=caps&&typeof caps==='object'&&" +
+  "Object.prototype.hasOwnProperty.call(caps,'nav@1')?caps['nav@1']:null;" +
+  "if(nav&&typeof nav==='object')d.setAttribute('data-native-nav','');" +
   "}catch(e){}})();";
 
 /**

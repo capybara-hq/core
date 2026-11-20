@@ -1,6 +1,7 @@
 import { type KeyboardEvent, type RefObject, useEffect, useRef, useState } from "react";
 import type { ControlA11y } from "../controls/a11y";
 import { type Density, useDensity } from "../controls/density";
+import { useHaptics } from "../native";
 import { LinkPendingMark, useDesignLink, useDesignT } from "../provider";
 
 export type TabItem = {
@@ -232,6 +233,12 @@ export function Segmented({
 }) {
   const step = useDensity(density);
   const ref = useRef<HTMLDivElement>(null);
+  const haptics = useHaptics();
+  // a change of the value plays the `selection` haptic (a native shell's); the current one none
+  const change = (next: string) => {
+    if (next !== value) haptics("selection");
+    onChange(next);
+  };
   const onKey = (e: KeyboardEvent) => {
     const idx = options.findIndex((o) => o.value === value);
     let next: { value: string } | undefined;
@@ -240,7 +247,7 @@ export function Segmented({
       next = options[(idx - 1 + options.length) % options.length];
     if (!next) return;
     e.preventDefault();
-    onChange(next.value);
+    change(next.value);
     ref.current?.querySelector<HTMLElement>(`[data-value="${CSS.escape(next.value)}"]`)?.focus();
   };
   return (
@@ -270,7 +277,7 @@ export function Segmented({
             aria-checked={selected}
             tabIndex={selected ? 0 : -1}
             data-state={selected ? "selected" : undefined}
-            onClick={() => onChange(o.value)}
+            onClick={() => change(o.value)}
           >
             {o.label}
           </button>
