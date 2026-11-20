@@ -368,7 +368,10 @@ export async function personFieldsCard(
   if (!v || n === 0) return undefined;
   return {
     kind: "bind",
-    text: phrase("personFieldsOnWeb", locale).replace("{count}", String(n)),
+    text:
+      n === 1
+        ? phrase("personFieldOnWeb", locale)
+        : phrase("personFieldsOnWeb", locale).replace("{count}", String(n)),
     url: `${base}${v.conversationPath}`,
   };
 }

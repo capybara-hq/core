@@ -30,6 +30,16 @@ describe("personFieldsCard", () => {
     });
   });
 
+  it("one person field: the singular text (zh and en)", async () => {
+    const one = view([{ key: "apiKey" }]);
+    expect(await personFieldsCard(deps(one), "a1", "https://cap.example", "zh")).toMatchObject({
+      text: "需要在网页填写 1 项",
+    });
+    expect(await personFieldsCard(deps(one), "a1", "https://cap.example", "en")).toMatchObject({
+      text: "1 field to fill in on the web",
+    });
+  });
+
   it("the text fallback carries the line and the url", async () => {
     const card = await personFieldsCard(deps(view(fields)), "a1", "https://cap.example", "zh");
     const text = renderCardAsText(card as NonNullable<typeof card>, "zh");
