@@ -5,7 +5,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import en from "../messages/en.json";
 import zh from "../messages/zh.json";
 import { useDeviceChoice } from "../src/components/conversation/useSelection";
-import { CEILING_COMMAND } from "../src/components/DeviceModeSection";
+import { SANDBOX_COMMANDS } from "../src/components/DeviceModeSection";
 import { json, lastStubRoutes, stubApi } from "./support/api";
 import { resetNavigation } from "./support/navigation";
 import { renderRouteWithCache } from "./support/query";
@@ -29,15 +29,16 @@ const NO_PROJECTS = {
   [`GET ${BASE}/e1/projects`]: () =>
     json(200, { projects: [], hidden: 0, mode: "auto", base: "/workspace", supported: true }),
 };
-const MODE = {
-  mode: "auto",
-  allowedMode: "auto",
-  allowedBy: "org",
-  network: { kind: "allowlist", hosts: [], source: "platform" },
-  local: { reported: "auto", allowedDomains: [] },
-  sandboxNetwork: null,
-  fullNetwork: null,
-  outerNetwork: null,
+/** A local machine's sandbox (kernel `DeviceSandboxView`): an allowlist, inside the sandbox. */
+const SANDBOX = {
+  network: "allowlist",
+  networkCeiling: "open",
+  hosts: [],
+  ownNetwork: null,
+  allowedDomains: [],
+  outsideSandbox: false,
+  restrictedProjectReach: "os-user",
+  layer: { network: "device", outsideSandbox: "device" },
   pendingNextUse: false,
   pendingFilesReset: false,
   recent: [],
@@ -46,10 +47,10 @@ const report = (over: Record<string, unknown> = {}) => ({
   state: "report",
   revision: "r1",
   sequence: 3,
-  fullAccess: true,
-  effectiveFullAccess: true,
+  outsideSandbox: false,
+  network: "allowlist",
+  allowedDomains: [],
   restrictedProjectReach: "os-user",
-  restrictedAllowedDomains: [],
   observedAt: T,
   stale: false,
   ...over,
@@ -80,10 +81,9 @@ const local = (id: string, over: Record<string, unknown> = {}) => ({
     cpu: 2,
     memoryMb: 2048,
     diskMb: 10240,
-    mode: "sandbox",
     network: { kind: "allowlist", hosts: [] },
   },
-  mode: MODE,
+  sandbox: SANDBOX,
   ownerCeiling: report(),
   reconcileRequired: false,
   createdAt: T,
@@ -268,67 +268,20 @@ describe("本机 on the device page", () => {
     ).toBeTruthy();
   });
 
-  it("another device, or a browser: no 本机 and the CLI line stays", async () => {
+  it("another device, or a browser: no 本机 and the CLI lines stay", async () => {
     installShell({ "device@1": fakeDevice({ ...CONNECTED, deviceId: "other" }).device });
     stubApi(detailRoutes(local("e1")));
     await renderDetail();
     await screen.findByRole("tab", { name: D.detail.tabSettings });
     expect(screen.queryByRole("heading", { name: M.title })).toBeNull();
     await userEvent.setup().click(screen.getByRole("tab", { name: D.detail.tabSettings }));
-    expect(await screen.findByText(CEILING_COMMAND)).toBeTruthy();
+    expect(await screen.findByText(SANDBOX_COMMANDS.outside)).toBeTruthy();
     cleanup();
     Reflect.deleteProperty(window, "capybaraShell");
     stubApi(detailRoutes(local("e1")));
     await renderDetail();
     await screen.findByRole("tab", { name: D.detail.tabSettings });
     expect(screen.queryByRole("heading", { name: M.title })).toBeNull();
-  });
-});
-
-describe("widening on this machine", () => {
-  const narrow = () =>
-    local("e1", {
-      ownerCeiling: report({
-        fullAccess: false,
-        effectiveFullAccess: false,
-        restrictedProjectReach: "workspace",
-      }),
-    });
-  const settings = async () => {
-    const user = userEvent.setup();
-    await user.click(await screen.findByRole("tab", { name: D.detail.tabSettings }));
-    return user;
-  };
-
-  it("requestCeiling replaces the CLI line and keeps the field it does not widen", async () => {
-    const fake = fakeDevice();
-    installShell({ "device@1": fake.device });
-    stubApi(detailRoutes(narrow()));
-    await renderDetail();
-    const user = await settings();
-    await user.click(await screen.findByRole("button", { name: D.ceiling.allowFull }));
-    expect(fake.device.requestCeiling).toHaveBeenCalledWith({
-      fullAccess: true,
-      projectReach: "workspace",
-    });
-    expect(screen.queryByText(CEILING_COMMAND)).toBeNull();
-    await user.click(await screen.findByRole("button", { name: M.widenReach }));
-    expect(fake.device.requestCeiling).toHaveBeenLastCalledWith({
-      fullAccess: false,
-      projectReach: "os-user",
-    });
-  });
-
-  it("a cancelled widening shows nothing", async () => {
-    const fake = fakeDevice(CONNECTED, { requestCeiling: vi.fn(async () => "cancelled") });
-    installShell({ "device@1": fake.device });
-    stubApi(detailRoutes(narrow()));
-    await renderDetail();
-    const user = await settings();
-    await user.click(await screen.findByRole("button", { name: D.ceiling.allowFull }));
-    await waitFor(() => expect(fake.device.requestCeiling).toHaveBeenCalled());
-    expect(screen.queryByText(M.widened)).toBeNull();
-    expect(screen.queryByText(M.failed)).toBeNull();
   });
 });
 

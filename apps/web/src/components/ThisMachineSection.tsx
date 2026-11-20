@@ -11,8 +11,8 @@ import {
 } from "@capybara-hq/design";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useTranslations } from "next-intl";
-import { type ReactNode, useEffect, useState } from "react";
-import { type Device, deviceCeilingOf } from "../lib/devices";
+import { useEffect, useState } from "react";
+import type { Device } from "../lib/devices";
 import { deviceRunningQuery } from "../lib/query/device-running";
 import { keys } from "../lib/query/keys";
 import { useAppMutation } from "../lib/query/mutation";
@@ -177,77 +177,5 @@ function Section({ cap, status }: { cap: DeviceCapabilityV1; status: Connected }
         </Stack>
       </Stack>
     </ContentSection>
-  );
-}
-
-/**
- * The ceiling's widening on this machine's Settings: in the shell, `requestCeiling` (a native
- * confirmation with the program's risk text; applied only on yes) replaces the
- * `capybara-device ceiling set` line; in a browser, and on any other device, the line stays.
- * The request carries both fields, so what is not widened keeps its current value.
- * Known gap: both fields come from the kernel's last owner report; a stale report (the machine
- * changed the other field since) can make this request narrow it. The shell's confirmation shows
- * what is requested, but not the machine's live values.
- */
-export function WidenCeiling({
-  orgId,
-  device,
-  fallback,
-  invalidates,
-}: {
-  orgId: string;
-  device: Device;
-  /** What a browser (and any other device) shows: the CLI line. */
-  fallback: ReactNode;
-  invalidates(): (readonly unknown[])[];
-}) {
-  const t = useTranslations("devices");
-  const tc = useTranslations("devices.ceiling");
-  const here = useIsThisMachine(orgId, device.id);
-  const toast = useToast();
-  const widen = useAppMutation({
-    fn: (req: { fullAccess: boolean; projectReach: "workspace" | "os-user" }) => {
-      if (here === undefined) return Promise.resolve("cancelled" as const);
-      return here.cap.requestCeiling(req);
-    },
-    invalidates: () => [keys.shell().deviceStatus(), ...invalidates()],
-  });
-  if (here === undefined) {
-    return <>{fallback}</>;
-  }
-  const f = deviceCeilingOf(device);
-  const fullNow = f.ownerAllows;
-  const reachNow = f.reach ?? "workspace";
-  const request = async (req: { fullAccess: boolean; projectReach: "workspace" | "os-user" }) => {
-    if (widen.isPending) return;
-    try {
-      const r = await widen.mutateAsync(req);
-      if (r === "applied") toast.success(t("thisMachine.widened"));
-    } catch (e) {
-      if (!isCancelled(e)) toast.error(t("thisMachine.failed"));
-    }
-  };
-  if (fullNow && reachNow === "os-user") return null;
-  return (
-    <Stack direction="row" gap={8} wrap>
-      {!fullNow && (
-        <Button
-          density="dense"
-          disabled={widen.isPending}
-          onClick={() => void request({ fullAccess: true, projectReach: reachNow })}
-        >
-          {tc("allowFull")}
-        </Button>
-      )}
-      {reachNow !== "os-user" && (
-        <Button
-          density="dense"
-          disabled={widen.isPending}
-          onClick={() => void request({ fullAccess: fullNow, projectReach: "os-user" })}
-        >
-          {t("thisMachine.widenReach")}
-        </Button>
-      )}
-    </Stack>
   );
 }
