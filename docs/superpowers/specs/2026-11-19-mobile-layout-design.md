@@ -833,6 +833,15 @@ Neither blocks this design; both are answered at the mobile app shell / real-dev
 2. **`viewport-fit=cover` on the iPhone Duo outer display**: Apple has not decided; we follow
    `env()`. Revisit when Safari ships the behavior.
 
+Answered 2026-11-21 (mobile app spike 1.4, iPhone Duo simulator, iOS 27.2):
+
+1. **Q1:** WKWebView supports neither `navigator.devicePosture` nor `window.viewport.segments`, nor
+   the matching media queries. The native hinge/division APIs work, so the app shell can supply the
+   posture; the web keeps degrading to one screen without it.
+2. **Q2:** in the app WebView, `viewport-fit=cover` content runs under the outer display's strip
+   and `env(safe-area-inset-right)` reports the strip (84 px), so following `env()` is right.
+   Safari itself was not tested.
+
 Settled since the first draft and moved out of this list: long threads (§7.3) and the
 short-window trim (§3.2) (decided); the lock-screen text moved to the later push design (§10.3).
 
