@@ -114,6 +114,12 @@ export {
   readBootstrapManifest,
   resolveBootstrapPackages,
 } from "./extensions/bootstrap.js";
+export {
+  loadBootstrapManifest,
+  type MergedBootstrapManifest,
+  mergeBootstrapManifests,
+  readBootstrapExtraManifest,
+} from "./extensions/bootstrap-extra.js";
 export { type ExtensionCli, openExtensionCli } from "./extensions/cli.js";
 export {
   DEPLOYMENT_SECRETS_ORG,

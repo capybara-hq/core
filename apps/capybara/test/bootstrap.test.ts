@@ -14,7 +14,7 @@ import {
 } from "@capybara-hq/testing";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { skillPlugin } from "../../../packages/kernel/test/catalog/packages.js";
-import { bootstrapDirOf } from "../src/commands/bootstrap.js";
+import { bootstrapDirOf, bootstrapExtraManifestOf } from "../src/commands/bootstrap.js";
 import {
   type BootstrapEntry,
   cleanEnv,
@@ -412,5 +412,14 @@ describe("bootstrapDirOf", () => {
     expect(bootstrapDirOf(config, "/b", "/app")).toBe("/b");
     expect(bootstrapDirOf({ bootstrap: { dir: "x/y" } }, undefined, "/srv")).toBe("/srv/x/y");
     expect(bootstrapDirOf(config)).toBe(resolve(process.cwd(), "bootstrap"));
+  });
+});
+
+describe("bootstrapExtraManifestOf", () => {
+  it("--extra-manifest, else config bootstrap.extraManifest, resolved against the working directory", () => {
+    const config = { bootstrap: { extraManifest: "dist/extra.json" } };
+    expect(bootstrapExtraManifestOf(config, undefined, "/app")).toBe("/app/dist/extra.json");
+    expect(bootstrapExtraManifestOf(config, "/e.json", "/app")).toBe("/e.json");
+    expect(bootstrapExtraManifestOf({ bootstrap: {} }, undefined, "/app")).toBeUndefined();
   });
 });

@@ -12,7 +12,7 @@ import {
 } from "@capybara-hq/kernel";
 import type { Role } from "../args.js";
 import { exitAfterShutdown } from "../shutdown.js";
-import { bootstrapDirOf } from "./bootstrap.js";
+import { bootstrapDirOf, bootstrapExtraManifestOf } from "./bootstrap.js";
 
 /**
  * `capybara start`: loads the config → `startKernelApp`, which builds the kernel application,
@@ -56,7 +56,12 @@ export async function runStart(
       }),
       logger: log,
       env,
-      bootstrap: { dir: bootstrapDirOf(config) },
+      bootstrap: {
+        dir: bootstrapDirOf(config),
+        ...(bootstrapExtraManifestOf(config) !== undefined && {
+          extraManifest: bootstrapExtraManifestOf(config) as string,
+        }),
+      },
       // 启动配置里有的插件部署配置字段在后台只读并显示来源（D8）
       extensionConfigSources: extensionConfigSources(raw, env, configSourceKind(env)),
     };

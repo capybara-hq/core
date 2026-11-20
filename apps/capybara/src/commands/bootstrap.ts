@@ -1,12 +1,11 @@
 import { resolve } from "node:path";
 import {
-  BOOTSTRAP_MANIFEST_FILE,
   type BootstrapEntryResult,
   BootstrapFailedError,
   bootstrapManifestSha256,
   type KernelLogger,
+  loadBootstrapManifest,
   openCatalogCli,
-  readBootstrapManifest,
 } from "@capybara-hq/kernel";
 import { withOpened } from "./extensions.js";
 
@@ -21,6 +20,19 @@ export function bootstrapDirOf(
   cwd: string = process.cwd(),
 ): string {
   return resolve(cwd, given ?? config.bootstrap.dir);
+}
+
+/**
+ * The extra bootstrap manifest: `given` (`--extra-manifest`), else the config key
+ * `bootstrap.extraManifest`, resolved against the working directory; absent when neither is set.
+ */
+export function bootstrapExtraManifestOf(
+  config: { bootstrap: { extraManifest?: string | undefined } },
+  given?: string,
+  cwd: string = process.cwd(),
+): string | undefined {
+  const path = given ?? config.bootstrap.extraManifest;
+  return path === undefined ? undefined : resolve(cwd, path);
 }
 
 export interface BootstrapIo {
@@ -43,7 +55,7 @@ const entryLine = (r: BootstrapEntryResult): string =>
   `${r.name} ${r.version}: ${ACTION_TEXT[r.action]}${r.leftDisabled !== undefined ? `, left disabled: ${r.leftDisabled.message}` : ""}\n`;
 
 /**
- * `capybara bootstrap [--dir <path>] [--manifest <path>]` (package ecosystem spec §7, startup
+ * `capybara bootstrap [--dir <path>] [--manifest <path>] [--extra-manifest <path>]` (package ecosystem spec §7, startup
  * bootstrap spec): installs the plugins the bootstrap manifest pins (default: the `bootstrap.json`
  * shipped with the kernel), each from a `*.tgz` of the offline directory whose sha512 matches
  * (`--dir`, else config `bootstrap.dir`, see {@link bootstrapDirOf}; it may be missing), else
@@ -55,7 +67,8 @@ const entryLine = (r: BootstrapEntryResult): string =>
  * context again and runs once more (a declarative entry's catalog files need the object store,
  * which on a fresh deployment is itself a bootstrap plugin installed by the first pass); the
  * `builtin` entries are left to that second pass, and one that still fails there is a warning like
- * an optional entry. Running
+ * an optional entry. The extra manifest (`--extra-manifest`, else config `bootstrap.extraManifest`) is
+ * merged into the built-in one first. Running
  * replicas pick the new install records up through `kernel.plugins.changed` (published by the
  * install and enable operations).
  *
@@ -67,30 +80,31 @@ const entryLine = (r: BootstrapEntryResult): string =>
  * goes wrong.
  */
 export async function runBootstrap(
-  opts: { dir?: string; manifest?: string },
+  opts: { dir?: string; manifest?: string; extraManifest?: string },
   log: KernelLogger,
   env: NodeJS.ProcessEnv,
   io: BootstrapIo = { stdout: process.stdout, stderr: process.stderr },
 ): Promise<number> {
-  let manifest: Awaited<ReturnType<typeof readBootstrapManifest>>;
-  try {
-    manifest = await readBootstrapManifest(opts.manifest ?? BOOTSTRAP_MANIFEST_FILE);
-  } catch (e) {
-    io.stderr.write(`capybara: bootstrap failed: ${errMsg(e)}\n`);
-    return 1;
-  }
-  const sha = bootstrapManifestSha256(manifest);
+  // Read inside the opened context: the extra manifest's default is a config key
+  let sha = "";
   const pass = (carry?: BootstrapEntryResult[], packages?: ReadonlyMap<string, Uint8Array>) =>
     withOpened(
       log,
       env,
       (config) => openCatalogCli(config, log),
       async (cli) => {
+        const extraManifest = bootstrapExtraManifestOf(cli.config, opts.extraManifest);
+        const manifest = await loadBootstrapManifest({
+          ...(opts.manifest !== undefined && { manifestFile: opts.manifest }),
+          ...(extraManifest !== undefined && { extraManifest }),
+        });
+        sha = bootstrapManifestSha256(manifest);
         if (carry === undefined && (await cli.bootstrap.isDone(sha))) return "done" as const;
         const dir = bootstrapDirOf(cli.config, opts.dir);
         return (
           await cli.bootstrap.run({
-            manifest,
+            // A git entry is obtained by a later change; until then `run` sees npm / workspace ones
+            manifest: manifest as unknown as Parameters<typeof cli.bootstrap.run>[0]["manifest"],
             dir,
             imports: cli.imports,
             ...(carry !== undefined && { carry }),

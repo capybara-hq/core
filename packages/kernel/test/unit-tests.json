@@ -43,6 +43,7 @@
   "evals/recorded-permission-context.test.ts",
   "evals/sets.unit.test.ts",
   "evals/trajectory.test.ts",
+  "extensions/bootstrap-extra.test.ts",
   "extensions/config-issues.test.ts",
   "extensions/config-json-schema.test.ts",
   "extensions/declared-display-name.test.ts",

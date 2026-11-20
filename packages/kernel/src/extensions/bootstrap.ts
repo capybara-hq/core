@@ -170,7 +170,9 @@ export class BootstrapFailedError extends Error {
 }
 
 /** sha256 (hex) of a manifest: of its JSON text as parsed (key order kept). */
-export function bootstrapManifestSha256(manifest: BootstrapManifest): string {
+export function bootstrapManifestSha256(
+  manifest: Omit<BootstrapManifest, "plugins"> & { plugins: readonly object[] },
+): string {
   return createHash("sha256").update(JSON.stringify(manifest)).digest("hex");
 }
 

@@ -1,4 +1,8 @@
-import { type ExtensionContext, SANDBOX_EXTENSION_POINT } from "@capybara-hq/plugin-sdk";
+import {
+  type BootstrapManifest,
+  type ExtensionContext,
+  SANDBOX_EXTENSION_POINT,
+} from "@capybara-hq/plugin-sdk";
 import {
   type BeforeApplicationShutdown,
   Inject,
@@ -24,8 +28,12 @@ import {
   BootstrapFailedError,
   BootstrapService,
   bootstrapManifestSha256,
-  readBootstrapManifest,
 } from "../extensions/bootstrap.js";
+import {
+  loadBootstrapManifest,
+  type MergedBootstrapManifest,
+  syncExtraMarketplaces,
+} from "../extensions/bootstrap-extra.js";
 import { ExtensionHost } from "../extensions/host.js";
 import { ExtensionInstalls } from "../extensions/installs.js";
 import { ExtensionLifecycle } from "../extensions/lifecycle.js";
@@ -116,6 +124,8 @@ export class KernelLifecycle
   private bootstrapCarry: BootstrapEntryResult[] | undefined;
   /** The packages the first bootstrap pass obtained, so the second downloads nothing again. */
   private bootstrapPackages: ReadonlyMap<string, Uint8Array> | undefined;
+  /** The merged bootstrap manifest, read once per start. */
+  private mergedManifest: Promise<MergedBootstrapManifest> | undefined;
 
   constructor(
     @Inject(PermissionConfigPublication)
@@ -232,6 +242,12 @@ export class KernelLifecycle
     this.checkpoint();
     // official 清单来源按配置同步（幂等；每个副本启动时都做）
     await this.marketplaces.syncOfficialFromConfig();
+    // The extra manifest's marketplaces (none configured: demotes the config-managed rows)
+    await syncExtraMarketplaces(
+      (m) => this.marketplaces.syncExtraFromConfig(m),
+      (await this.manifest()).extra?.marketplaces ?? [],
+      this.log,
+    );
     // The bootstrap plugins (spec §7), once per manifest across replicas (the Redis lock
     // `lock:bootstrap`); a bootstrap entry named like a config-declared extension is kept
     if (opts.bootstrap !== undefined) {
@@ -344,6 +360,19 @@ export class KernelLifecycle
     return this.listening;
   }
 
+  /** The built-in manifest (or `options.bootstrapManifest`) merged with the extra manifest, if any. */
+  private manifest(): Promise<MergedBootstrapManifest> {
+    this.mergedManifest ??= loadBootstrapManifest({
+      ...(this.options.bootstrapManifest !== undefined && {
+        builtin: this.options.bootstrapManifest,
+      }),
+      ...(this.options.bootstrap?.extraManifest !== undefined && {
+        extraManifest: this.options.bootstrap.extraManifest,
+      }),
+    });
+    return this.mergedManifest;
+  }
+
   /**
    * Runs the bootstrap step unless it is done for the manifest. A required entry that cannot be
    * completed (or a missing / tampered package: then nothing was installed) stops the start, so the
@@ -355,13 +384,14 @@ export class KernelLifecycle
    * them too; the final pass imports them, and one that fails is logged like an optional entry.
    */
   private async runBootstrap(dir: string | undefined, final = false): Promise<boolean> {
-    const manifest = this.options.bootstrapManifest ?? (await readBootstrapManifest());
+    const manifest = await this.manifest();
     const bootstrap = this.bootstrap;
     if (await bootstrap.isDone(bootstrapManifestSha256(manifest))) return false;
     try {
       // The second pass records what the first one did (not `kept` for what it installed)
       await bootstrap.run({
-        manifest,
+        // A git entry is obtained by a later change; until then `run` only sees npm / workspace ones
+        manifest: manifest as BootstrapManifest,
         imports: this.pluginImport,
         ...(dir !== undefined && { dir }),
         signal: this.shutdown.signal,
