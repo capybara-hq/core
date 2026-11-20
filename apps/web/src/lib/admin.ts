@@ -228,7 +228,7 @@ export interface AdminUsageWeek {
 export interface AuditEvent {
   id: string;
   at: string;
-  actor: { id: string; name: string | null; email: string | null } | null;
+  actor: { id: string; name: string | null; email: string | null; avatarUrl: string | null } | null;
   viaToken: boolean;
   viaAgent: boolean;
   action: string;
@@ -245,6 +245,7 @@ export interface AdminAccount {
   id: string;
   displayName: string;
   email: string | null;
+  avatarUrl: string | null;
   status: "active" | "disabled";
   isSuperAdmin: boolean;
   createdAt: string;

@@ -7,6 +7,7 @@ import { Menu, type MenuItem, menuActions, menuLone } from "../overlays/index";
 import { LinkPendingMark, useDesignLink, useDesignT } from "../provider";
 import { Avatar, type AvatarValue } from "./avatar";
 import { MarkImage } from "./object-mark";
+import { type PersonLike, PersonName } from "./person-name";
 import { SkeletonBox, SkeletonText, useSkeletonAnnounces } from "./skeleton";
 
 export type ObjectRowProps = {
@@ -36,9 +37,10 @@ export type ObjectRowProps = {
   description?: string;
   /**
    * One mono line in `faint`; as a list, the parts are joined with " · " and a `{ label, tone:
-   * "warn" }` part is drawn in `warn` (a sensitive-permission count).
+   * "warn" }` part is drawn in `warn` (a sensitive-permission count); a `{ person }` part is a
+   * `PersonName` 16 (a requester, spec §6.17).
    */
-  meta?: string | (string | { label: string; tone: "warn" })[];
+  meta?: string | (string | { label: string; tone: "warn" } | { person: PersonLike })[];
   /** A mono state label with its color. */
   state?: { label: string; tone: "ok" | "warn" | "fail" | "muted" };
   /** A short mono text at the right (last use). */
@@ -92,8 +94,11 @@ export function ObjectList({
     <ul className="cb-object-list" aria-label={label} aria-busy="true">
       {Array.from({ length: rows }, (_, i) => (
         // biome-ignore lint/suspicious/noArrayIndexKey: the skeleton rows are positional
-        <li key={i} className="cb-object-row" data-skeleton="true">
-          <SkeletonBox part="mark" />
+        <li key={i} className="cb-object-row" data-part="object-row" data-skeleton="true">
+          {/* the loaded row's mark place (same part, same box), holding the mark placeholder */}
+          <span className="cb-object-mark" data-part="object-row-mark" data-skeleton="true">
+            <SkeletonBox part="mark" />
+          </span>
           <span className="cb-object-text">
             <SkeletonText width="30%" />
             <SkeletonText width="55%" />
@@ -139,14 +144,20 @@ export function ObjectRow({
   const slots: (RowButton | undefined)[] = [action, single];
   const hasMeta = meta !== undefined && meta.length > 0;
   return (
-    <li className="cb-object-row">
+    <li className="cb-object-row" data-part="object-row">
       {mark.avatar !== undefined ? (
-        <span className="cb-object-mark" data-kind="avatar" aria-hidden="true">
+        <span
+          className="cb-object-mark"
+          data-part="object-row-mark"
+          data-kind="avatar"
+          aria-hidden="true"
+        >
           <Avatar value={mark.avatar} name={mark.text ?? name} size={28} />
         </span>
       ) : (
         <span
           className="cb-object-mark"
+          data-part="object-row-mark"
           data-tone={mark.tone ?? "neutral"}
           data-kind={mark.image ? "image" : undefined}
           aria-hidden="true"
@@ -202,6 +213,15 @@ export function ObjectRow({
                         {i > 0 ? " · " : null}
                         {typeof m === "string" ? (
                           m
+                        ) : "person" in m ? (
+                          <span className="cb-object-meta-person" data-part="object-row-person">
+                            <PersonName
+                              name={m.person.name}
+                              avatarUrl={m.person.avatarUrl}
+                              initialFrom={m.person.initialFrom}
+                              size={16}
+                            />
+                          </span>
                         ) : (
                           <span className="cb-object-meta-part" data-tone={m.tone}>
                             {m.label}

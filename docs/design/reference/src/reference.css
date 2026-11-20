@@ -371,6 +371,13 @@ textarea {
   min-width: 0;
   display: flex;
 }
+/* An option with a person (spec §6.2): the 16 circle, space.1, the label cut with an ellipsis. */
+.r-select-label-person {
+  display: flex;
+  align-items: center;
+  gap: var(--cb-space-1);
+  min-width: 0;
+}
 .r-select-list {
   top: calc(100% + var(--cb-space-1));
   left: 0;
@@ -1773,6 +1780,47 @@ textarea {
   border-radius: var(--cb-radius-md);
   font-size: var(--cb-type-h1-size);
 }
+/* A person's avatar (spec §6.30): a circle, the initial muted on selected. */
+.r-avatar[data-shape="circle"] {
+  border-radius: 50%;
+}
+.r-avatar[data-shape="circle"][data-kind="initial"] {
+  color: var(--cb-muted);
+}
+.r-avatar[data-shape="circle"][data-size="24"] {
+  font-size: var(--cb-type-small-size);
+}
+
+/* PersonName (spec §6.50). */
+.r-person-name {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--cb-space-1);
+  min-width: 0;
+  max-width: 100%;
+  white-space: nowrap;
+  color: var(--cb-ink);
+}
+.r-person-name[data-size="24"] {
+  gap: var(--cb-space-2);
+}
+.r-person-name-text {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  font-size: var(--cb-type-small-size);
+  line-height: var(--cb-type-small-line);
+}
+.r-person-name[data-size="24"] .r-person-name-text {
+  font-size: var(--cb-type-body-size);
+  line-height: var(--cb-type-body-line);
+}
+.r-person-name-secondary {
+  flex: none;
+  color: var(--cb-muted);
+  font-size: var(--cb-type-small-size);
+  line-height: var(--cb-type-small-line);
+}
 .r-avatar-picker {
   display: flex;
   flex-direction: column;
@@ -2111,6 +2159,28 @@ textarea {
 }
 .r-bubble-sender {
   max-width: 75%;
+  overflow: hidden;
+  color: var(--cb-muted);
+  font-size: var(--cb-type-small-size);
+  line-height: var(--cb-type-small-line);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+/* A message with an author (spec §6.16.6): the 24 circle after the bubble, top-aligned. */
+.r-bubble-row {
+  display: flex;
+  align-items: flex-start;
+  justify-content: flex-end;
+  gap: var(--cb-space-2);
+  width: 100%;
+  min-width: 0;
+}
+.r-bubble-row > .r-avatar {
+  flex: none;
+}
+.r-bubble-author-name {
+  max-width: 75%;
+  margin-inline-end: calc(24px + var(--cb-space-2));
   overflow: hidden;
   color: var(--cb-muted);
   font-size: var(--cb-type-small-size);
@@ -5404,6 +5474,11 @@ textarea {
 .r-ocard-foot > .r-skel-box {
   flex: none;
 }
+.r-ocard-meta-person {
+  display: inline-flex;
+  max-width: 100%;
+  vertical-align: middle;
+}
 .r-ocard-meta {
   flex: 1;
   min-width: 0;
@@ -6206,6 +6281,12 @@ textarea {
   flex: none;
   color: var(--cb-muted);
 }
+/* The creator's 16 circle at the end of a block (spec §6.40). */
+.r-scal-person {
+  display: inline-flex;
+  flex: none;
+  margin-left: auto;
+}
 .r-scal-chip-failed {
   color: var(--cb-fail);
 }
@@ -6960,11 +7041,6 @@ span.r-scal-daynum {
   height: var(--cb-row-roomy);
   font-weight: 600;
 }
-/* The initial avatar: 24, round, on selected (spec §6.48). */
-.r-me-account .r-avatar {
-  border-radius: 50%;
-  font-size: var(--cb-type-small-size);
-}
 /* The ThemeToggle's options (control.dense − 6), the chosen one on selected. */
 .r-me-theme {
   padding: 2px;
@@ -7207,4 +7283,86 @@ span.r-scal-daynum {
 .r-menu-effort {
   margin-top: var(--cb-space-1);
   border-top: 1px solid var(--cb-line-soft);
+}
+
+/* ObjectList / ObjectRow (spec §6.17): the loaded rows (the person meta block). */
+.r-olist {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  background: var(--cb-panel);
+  border: 1px solid var(--cb-line-card);
+  border-radius: var(--cb-radius-md);
+}
+.r-orow {
+  display: flex;
+  align-items: center;
+  gap: var(--cb-space-3);
+  min-height: 64px;
+  padding: var(--cb-space-3) var(--cb-space-4);
+  border-top: 1px solid var(--cb-line-soft);
+}
+.r-orow:first-child {
+  border-top: 0;
+}
+.r-orow-mark {
+  display: grid;
+  flex: none;
+  place-items: center;
+  width: 36px;
+  height: 36px;
+  border-radius: var(--cb-radius-md);
+  background: var(--cb-selected);
+  color: var(--cb-ink);
+  font-weight: 600;
+}
+.r-orow-text {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+.r-orow-line {
+  display: flex;
+  align-items: center;
+  gap: var(--cb-space-2);
+}
+.r-orow-name {
+  color: var(--cb-ink);
+  font-weight: 600;
+  text-decoration: none;
+}
+.r-orow-desc,
+.r-orow-meta {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.r-orow-desc {
+  color: var(--cb-muted);
+  font-family: var(--cb-font-prose);
+}
+.r-orow-meta {
+  font-size: var(--cb-type-micro-size);
+  line-height: 16px;
+  color: var(--cb-faint);
+}
+.r-orow-meta-person {
+  display: inline-flex;
+  max-width: 100%;
+  vertical-align: middle;
+}
+.r-orow-state {
+  flex: none;
+  font-size: var(--cb-type-small-size);
+  line-height: var(--cb-type-small-line);
+  white-space: nowrap;
+  color: var(--cb-faint);
+}
+
+/* The loading object row's mark place (the loaded row's object-row-mark part). */
+.r-lrow-mark {
+  display: flex;
+  flex: none;
 }

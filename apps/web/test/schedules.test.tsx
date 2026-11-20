@@ -6,6 +6,7 @@ import zh from "../messages/zh.json";
 import type { Me } from "../src/lib/session";
 import { bodyOf, json, lastStubRoutes, noContent, stubApi } from "./support/api";
 import { resetNavigation, router } from "./support/navigation";
+import { personAvatarSrc, personInitial } from "./support/person";
 import { renderRouteEmptyCache, renderRouteWithCache } from "./support/query";
 import { ME } from "./support/render";
 import { pickOption } from "./support/select";
@@ -130,8 +131,21 @@ const common = {
   [`GET ${ORG}/models?kind=chat`]: ok(MODELS),
   [`GET ${ORG}/members`]: ok({
     members: [
-      { account: { id: "a1", displayName: "Grant", email: null }, role: "owner", joinedAt: T },
-      { account: { id: "a2", displayName: "Mei", email: null }, role: "member", joinedAt: T },
+      {
+        account: { id: "a1", displayName: "Grant", email: null, avatarUrl: null },
+        role: "owner",
+        joinedAt: T,
+      },
+      {
+        account: {
+          id: "a2",
+          displayName: "Mei",
+          email: null,
+          avatarUrl: "/api/v1/accounts/a2/avatar?v=abc123",
+        },
+        role: "member",
+        joinedAt: T,
+      },
     ],
   }),
   [`GET ${BASE}/chat-targets`]: ok({
@@ -697,10 +711,22 @@ describe("/schedules/[id]", () => {
     });
   });
 
+  it("an org admin on the task of a creator who left: the notice names a former member", async () => {
+    stubApi(routes({ accountId: "gone" }));
+    await renderRouteWithCache("/schedules/s1", lastStubRoutes(), { me: asRole("admin") });
+    const notice = await screen.findByRole("note");
+    expect(within(notice).getByText(en.people.departed)).toBeTruthy();
+    expect(notice.textContent).not.toContain("gone");
+  });
+
   it("an org admin on another member's task: read-only, pause in the action row, no run", async () => {
     stubApi(routes({ accountId: "a2" }));
     await renderRouteWithCache("/schedules/s1", lastStubRoutes(), { me: asRole("admin") });
-    expect(screen.getByText(E.form.readOnly.replace("{name}", "Mei"))).toBeTruthy();
+    const notice = screen.getByRole("note");
+    // one sentence with the person in it (zh punctuation follows the message, not fragments)
+    expect(notice.textContent).toBe(E.form.readOnlyOwner.replace("{name}", "Mei"));
+    expect(within(notice).getByText("Mei")).toBeTruthy();
+    expect(personAvatarSrc(notice)).toBe("/api/v1/accounts/a2/avatar?v=abc123");
     expect(screen.getByRole("textbox", { name: E.form.name })).toHaveProperty("disabled", true);
     expect(screen.queryByRole("button", { name: E.actions.runNow })).toBeNull();
     expect(screen.queryByRole("button", { name: E.form.save })).toBeNull();
@@ -750,6 +776,8 @@ describe("/settings/schedules (org admins)", () => {
     const tasks = within(screen.getByRole("table", { name: S.tasks }));
     expect(tasks.getByText("Daily report")).toBeTruthy();
     expect(tasks.getByText("Mei")).toBeTruthy();
+    const meiRow = tasks.getByText("Mei").closest("tr") as HTMLElement;
+    expect(personAvatarSrc(meiRow)).toBe("/api/v1/accounts/a2/avatar?v=abc123");
     await settle();
     expect(browser).toEqual([]);
   });

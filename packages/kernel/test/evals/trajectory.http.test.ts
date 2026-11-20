@@ -193,6 +193,7 @@ interface Detail {
     kind: string;
   };
   runs: TrajectoryRun[];
+  people: Record<string, { id: string; name: string; avatarUrl: string | null }>;
   currency: string;
 }
 
@@ -243,6 +244,14 @@ describe("GET /orgs/:orgId/trajectories/:conversationId", () => {
       [ownerId, convAlice, orgId],
     ]);
     expect(audit[0]?.detail).toMatchObject({ agentId: agentA });
+  });
+
+  it("carries a people sidecar for the trigger account and the conversation owner", async () => {
+    const res = await detail(alice, convAlice);
+    expect(res.statusCode, res.body).toBe(200);
+    const body = res.json() as Detail;
+    expect(body.runs[0]?.triggerAccountId).toBe(aliceId);
+    expect(body.people).toEqual({ [aliceId]: { id: aliceId, name: "alice", avatarUrl: null } });
   });
 
   it("不存在的对话 404；负责人变更后实时生效", async () => {

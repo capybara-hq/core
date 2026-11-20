@@ -107,6 +107,13 @@ export const ACCEPTED: string[] = [
   // agent avatars (agent profile design §2.3): blocks and size table in place; the reference PNGs
   // and the side-by-side review wait for the reference-update and visual-update workflows
   "avatar",
+  // PersonName (account profile design): blocks and size table in place; the reference PNGs and
+  // the side-by-side review wait for the reference-update and visual-update workflows
+  "person-name",
+  // ObjectRow's person meta (account profile, spec §6.17 state `person`): the block is in place;
+  // the reference PNGs and the side-by-side review wait for the reference-update and visual-update
+  // workflows
+  "object-list",
   // config forms (Task 6): blocks and size tables in place; the reference PNGs and the
   // side-by-side review wait for the reference-update and visual-update workflows
   "repeater",

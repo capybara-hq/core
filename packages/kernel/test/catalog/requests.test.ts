@@ -7,6 +7,7 @@ import {
 } from "@capybara-hq/testing";
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import { KERNEL_VERSION } from "../../src/version.js";
+import { giveUploadAvatar, UPLOAD_AVATAR_URL } from "../helpers/avatar.js";
 import { createOrg, waitFor } from "../helpers/runs.js";
 import {
   auditActions,
@@ -103,6 +104,8 @@ interface RequestView {
   item: { id: string } | null;
   entry: { marketplaceId: string; name: string; version: string | null } | null;
   stagingId: string | null;
+  requestedBy: string | null;
+  requestedByAvatarUrl: string | null;
 }
 type InboxItem = { type: string; id: string; request?: RequestView };
 
@@ -238,6 +241,28 @@ describe("enable: member -> org admin", () => {
     expect(dismiss.statusCode, dismiss.body).toBe(204);
     expect(await inbox(env.mem, "catalog_request_decided")).toEqual([]);
     expect(await auditActions(env)).toContain("catalog.request_decided");
+  });
+
+  it("a request names its requester's avatar URL: null without an upload, the URL with one", async () => {
+    const itemId = await importSkill(env);
+    const r = await request(env.mem, itemId, "enable");
+    expect(r.statusCode, r.body).toBe(201);
+    const created = r.json().request as RequestView;
+    expect(created.requestedByAvatarUrl).toBeNull();
+    await giveUploadAvatar(env.db, env.memId);
+    try {
+      const [item] = await inbox(env.boss, "catalog_request");
+      expect(item?.request?.requestedBy).toBe(env.memId);
+      expect(item?.request?.requestedByAvatarUrl).toEqual(
+        expect.stringContaining(UPLOAD_AVATAR_URL(env.memId)),
+      );
+    } finally {
+      await env.db
+        .updateTable("accounts")
+        .set({ avatar: null })
+        .where("id", "=", env.memId)
+        .execute();
+    }
   });
 
   it("a second pending request of the same kind is 409; an item that is on is 409", async () => {

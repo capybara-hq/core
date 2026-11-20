@@ -4,6 +4,7 @@ import type { OwnerVersion } from "../catalog/platform-components.js";
 import { EventLog } from "../conversations/event-log.js";
 import type { SkillChangeRequestsTable } from "../db/kernel-schema.js";
 import { ApiError } from "../errors.js";
+import { loadPeople } from "../identity/account-avatar.js";
 import { audit } from "../identity/audit.js";
 import { assertCustomAllowed } from "../identity/settings.js";
 import { KernelDb } from "../infra/database/kernel-db.js";
@@ -55,6 +56,7 @@ export interface SkillChangeView {
   requestedBy: string;
   /** The requester's display name (empty when the account no longer exists). */
   requestedByName: string;
+  requestedByAvatarUrl: string | null;
   /** The proposing conversation (null for a share request and a proposal made on the web). */
   requestedInConversation: string | null;
   /** The proposing conversation's web path (no locale prefix), or null. */
@@ -526,12 +528,10 @@ export class SkillChangesService {
       .select(["agents.id", "agent_versions.definition"])
       .where("agents.id", "in", agentIds)
       .execute();
-    const requesters = await this.db
-      .selectFrom("accounts")
-      .select(["id", "display_name"])
-      .where("id", "in", [...new Set(rows.map((r) => r.requested_by_account))])
-      .execute();
-    const requesterNames = new Map(requesters.map((a) => [a.id, a.display_name]));
+    const requesters = await loadPeople(
+      this.db.db,
+      rows.map((r) => r.requested_by_account),
+    );
     const names = new Map(
       agents.map((a) => {
         const n = (a.definition as { name?: unknown } | null)?.name;
@@ -550,7 +550,8 @@ export class SkillChangesService {
       files: r.proposed_version.manifest.files.map((f) => ({ path: f.path, size: f.size })),
       status: r.status,
       requestedBy: r.requested_by_account,
-      requestedByName: requesterNames.get(r.requested_by_account) ?? "",
+      requestedByName: requesters.get(r.requested_by_account)?.name ?? "",
+      requestedByAvatarUrl: requesters.get(r.requested_by_account)?.avatarUrl ?? null,
       requestedInConversation: r.requested_in_conversation,
       conversationPath:
         r.requested_in_conversation === null ? null : `/chat/${r.requested_in_conversation}`,

@@ -2,6 +2,7 @@ import type { Span, StatusMark } from "@capybara-hq/design";
 import { apiFetch } from "./api";
 import type { SubagentEndStatus } from "./conversations";
 import { extensionLabel } from "./extension-label";
+import type { PersonRef } from "./people";
 import { toolLabelOfKey, toolLabelText } from "./tool-label";
 
 /**
@@ -120,6 +121,8 @@ export interface TrajectoryDetail {
   };
   /** 本页的运行，按时间正序。 */
   runs: TrajectoryRun[];
+  /** Every account the runs name (and the conversation's owner), by id; absent = departed. */
+  people: Record<string, PersonRef>;
   currency: string;
   /** 更早一页的游标（作为 `before` 传回）；没有更早的运行为 null。 */
   next?: string | null;

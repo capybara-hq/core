@@ -15,6 +15,7 @@ import {
 } from "../../../../../../components/TrajectoryParts";
 import type { EvalCaseDetail } from "../../../../../../lib/evals";
 import { useHashItem } from "../../../../../../lib/hash-item";
+import type { PersonRef } from "../../../../../../lib/people";
 import { retryOnMountOf } from "../../../../../../lib/query/client";
 import { evalCaseQuery, evalSetQuery } from "../../../../../../lib/query/evals";
 import { useMemberNames } from "../../../../../../lib/query/member-names";
@@ -124,7 +125,7 @@ function CaseTrajectory({
                 {tt("selectHint")}
               </Text>
             ) : (
-              <SpanDetail source={source} currency={detail.currency} people={people} />
+              <SpanDetail source={source} currency={detail.currency} people={asPeople(people)} />
             )}
           </Stack>
         </section>
@@ -132,3 +133,9 @@ function CaseTrajectory({
     />
   );
 }
+
+/** The members' names as people (the case read carries no `people`; the avatar is not drawn). */
+const asPeople = (names: Record<string, string>): Record<string, PersonRef> =>
+  Object.fromEntries(
+    Object.entries(names).map(([id, name]) => [id, { id, name, avatarUrl: null }]),
+  );

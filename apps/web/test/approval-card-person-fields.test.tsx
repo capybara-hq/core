@@ -30,6 +30,7 @@ const APPROVAL = (over: Partial<Approval> = {}): Approval => ({
   status: "pending",
   scope: null,
   decidedBy: null,
+  decidedByPerson: null,
   decidedAt: null,
   expiresAt: EXPIRES,
   createdAt: EXPIRES,

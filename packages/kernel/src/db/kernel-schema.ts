@@ -13,6 +13,7 @@ import type {
 } from "@capybara-hq/plugin-sdk";
 import type { ColumnType, Generated, Kysely } from "kysely";
 import type { ModelRef } from "../agents/definition.js";
+import type { AccountAvatar } from "../identity/account-avatar.js";
 import type { DeviceNetwork } from "../sandbox/modes.js";
 import type { StartingExecutionGrants } from "../sandbox/operation-authority-types.js";
 import type { AuthorityEpochVector } from "../sandbox/permission-authority-epochs.js";
@@ -140,6 +141,21 @@ export interface AccountsTable {
   must_change_password: Generated<boolean>;
   /** 0093: the person's theme id across all their orgs; null follows the org (themes spec §7). */
   theme: ColumnType<string | null, string | null | undefined, string | null>;
+  /** 0169: the person's own avatar; null shows the SSO avatar or the initial (account profile §5.1). */
+  avatar: ColumnType<AccountAvatar | null, string | null | undefined, string | null>;
+}
+
+/** 0169: an account's avatar uploads (bytes in the object store under `deployment/account-avatars/`). */
+export interface AccountAvatarUploadsTable {
+  id: string;
+  account_id: string;
+  storage_key: string;
+  content_type: string;
+  size: ColumnType<string | null, number | string | null | undefined, number | string | null>;
+  status: Generated<"pending" | "ready">;
+  /** Null once bound to the account; an unbound upload expires and is swept. */
+  expires_at: TsNullable;
+  created_at: Ts;
 }
 
 /**
@@ -202,6 +218,8 @@ export interface IdentitiesTable {
   created_at: Ts;
   /** 0019：身份行如何建立（Ruling A18）；null 为旧行，按 `sso` 处理。 */
   linked_via: ColumnType<LinkedVia | null, LinkedVia | null | undefined, LinkedVia | null>;
+  /** 0169: when the row was last written (insert or login refresh); null before 0169. */
+  updated_at: TsNullable;
 }
 
 /** 身份行的建立方式：IM 绑定链接、第三方登录、通讯录同步、本地登录名。 */
@@ -1877,6 +1895,7 @@ export interface PermissionConfigPublicationTable {
 export interface KernelDatabase {
   permission_authority_epochs: PermissionAuthorityEpochsTable;
   accounts: AccountsTable;
+  account_avatar_uploads: AccountAvatarUploadsTable;
   device_permission_reports: DevicePermissionReportsTable;
   /** Migration 0155: per-device generation high-water mark; outlives instance rows. */
   device_generation_high_water: DeviceGenerationHighWaterTable;

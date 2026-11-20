@@ -1,5 +1,5 @@
 import { ScheduleCalendar, type ScheduleCalendarProps } from "@capybara-hq/design";
-import { SCHEDULE_CALENDAR_FIXTURE as F } from "@capybara-hq/design/fixtures";
+import { SCHEDULE_CALENDAR_FIXTURE as F, PERSON_FIXTURE } from "@capybara-hq/design/fixtures";
 import type { ReactNode } from "react";
 import { RefBlock } from "./ref-block";
 
@@ -72,6 +72,10 @@ function scheduleCalendarBlocks(): ReactNode {
       </RefBlock>
       <RefBlock id="schedule-calendar-selected" width={W} pad>
         {calendar({ selectedId: F.selectedId })}
+      </RefBlock>
+      {/* spec §6.40: every block carries its creator's 16 circle, the name in the tooltip */}
+      <RefBlock id="schedule-calendar-person" width={W} pad>
+        {calendar({ items: F.week.items.map((it) => ({ ...it, person: PERSON_FIXTURE })) })}
       </RefBlock>
     </>
   );

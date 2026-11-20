@@ -1,6 +1,6 @@
 import { type ReactNode, useState } from "react";
 import { Button } from "../controls/index";
-import { initialOf } from "../display/initial";
+import { Avatar } from "../display/avatar";
 import { Icon } from "../icons/icon";
 import type { IconName } from "../icons/paths";
 import { BottomSheet, type MenuItem, SheetOptionList } from "../overlays/index";
@@ -31,8 +31,8 @@ export type MeRow = {
 };
 
 export type MePanelProps = {
-  /** The account row: the initial avatar and the name. */
-  account: { name: string };
+  /** The account row: the circle avatar (the initial without `avatarUrl`) and the name. */
+  account: { name: string; avatarUrl?: string | null };
   /** The work context's org switcher (the sidebar's); `null` in the admin context. */
   org: SidebarOrg | null;
   /**
@@ -82,9 +82,12 @@ export function MePanel({
     <div className="cb-me" data-part="me-panel" data-context={adminContext ? "admin" : undefined}>
       <div className="cb-me-head">
         <div className="cb-me-account" data-part="account">
-          <span className="cb-me-avatar" aria-hidden="true">
-            {initialOf(account.name)}
-          </span>
+          <Avatar
+            shape="circle"
+            size={40}
+            name={account.name}
+            value={account.avatarUrl ? { kind: "image", src: account.avatarUrl } : null}
+          />
           <span className="cb-me-ellipsis">{account.name}</span>
         </div>
         {adminContext ? <ContextBlock rail={false} /> : org ? <OrgSheet org={org} /> : null}

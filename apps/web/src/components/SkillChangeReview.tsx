@@ -17,6 +17,7 @@ import { useCallback, useState } from "react";
 import { useRouter } from "../i18n/navigation";
 import type { ApiClientError } from "../lib/api";
 import { type FileChange, lineDiff, pairFiles } from "../lib/diff";
+import type { PersonRef } from "../lib/people";
 import { retryOnMountOf } from "../lib/query/client";
 import { inboxChangeKeys, skillChangeQuery } from "../lib/query/inbox";
 import { keys } from "../lib/query/keys";
@@ -29,11 +30,19 @@ import {
 } from "../lib/skills";
 import { useErrorMessage } from "../lib/use-error-message";
 import { FormError } from "./form-error";
+import { Person } from "./Person";
 import { useSession } from "./shell/session";
 
-/** 发起人：显示名，账号已不存在时退回 id。 */
-export const requesterOf = (c: Pick<SkillChange, "requestedBy" | "requestedByName">) =>
-  c.requestedByName || c.requestedBy;
+/**
+ * The requester as a person; null (drawn as "Former member") once the account no longer exists
+ * (the kernel then names no one: an empty name).
+ */
+export const requesterOf = (
+  c: Pick<SkillChange, "requestedBy" | "requestedByName" | "requestedByAvatarUrl">,
+): PersonRef | null =>
+  c.requestedByName === ""
+    ? null
+    : { id: c.requestedBy, name: c.requestedByName, avatarUrl: c.requestedByAvatarUrl };
 
 /**
  * 决定技能变更（`POST /skill-changes/:id/decide`）：成功返回 true；已被处理等错误以 toast 告知并返回 false。
@@ -158,7 +167,7 @@ function SkillChangeCard({
             keyWidth="10ch"
             rows={[
               { k: t("agent"), v: change.agent.name },
-              { k: t("requester"), v: requesterOf(change) },
+              { k: t("requester"), v: <Person person={requesterOf(change)} size={16} /> },
               {
                 k: t("version"),
                 v:

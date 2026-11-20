@@ -201,6 +201,15 @@ async create(@ZBody(WidgetCreateBody) body: z.infer<typeof CreateSchema>) {}
 
 `createZodDto` (`src/infra/validation/create-zod-dto.ts`) turns a zod schema into a named DTO class; `@ZBody(Dto)` / `@ZQuery(Dto)` / `@ZParam(Dto)` pass the DTO to the global validation pipe (no decorator metadata, so a bare `@Body()` typed with a DTO is never validated and `kc-zod-pipe` rejects it) and feed the OpenAPI document (`http.swagger`, served at `/docs`). A failure returns 400 `validation_failed` with `details` as the list of field problems. Route parameters that need validation go through a `@ZParam` DTO too (decision R20), so `details[].path` names the parameter. Give every string an upper bound (`max`) to prevent oversized input.
 
+## People in responses
+
+A response that shows a person carries their avatar through `identity/account-avatar.ts`: join
+`accounts` and select `avatarColumns(eb, alias, prefix)` (one prefix per person in the row), read it
+with `personAvatarUrl`, or turn ids into `PersonRef { id, name, avatarUrl }` with one `loadPeople`
+call; responses returning log events add a `people` map, never a change to logged payloads. A gone
+account is `null` (or absent from `people`), never an empty name. Avatars are display data: Platform
+operation outputs never carry `avatarUrl` (the model never sees a face).
+
 ## Error codes
 
 - Business errors throw `new ApiError(code, message)` (`src/errors.ts`); register a new code in `ERROR_CODES` first (code -> HTTP status), named `<domain>.<snake>`.

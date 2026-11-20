@@ -3,9 +3,12 @@ import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import en from "../messages/en.json";
 import zh from "../messages/zh.json";
+import { requesterOf as skillChangeRequester } from "../src/components/SkillChangeReview";
+import { requesterOf as catalogRequester } from "../src/lib/catalog";
 import { keys } from "../src/lib/query/keys";
 import { bodyOf, json, lastStubRoutes, noContent, stubApi } from "./support/api";
 import { resetNavigation, router } from "./support/navigation";
+import { personAvatarSrc, personInitial } from "./support/person";
 import { renderRouteEmptyCache, renderRouteWithCache } from "./support/query";
 import type { renderPage } from "./support/render";
 import { expectNoFirstPaintFetch } from "./support/server";
@@ -107,6 +110,7 @@ const skillChange = (id: string, over: Record<string, unknown> = {}) => ({
   status: "pending",
   requestedBy: "a2",
   requestedByName: "Mia",
+  requestedByAvatarUrl: "/api/v1/accounts/a2/avatar?v=abc123",
   requestedInConversation: "c9",
   conversationPath: "/chat/c9",
   decidedBy: null,
@@ -644,6 +648,7 @@ describe("收件箱：技能变更", () => {
       });
       expect(within(card).getAllByText("Shared agent").length).toBeGreaterThan(0);
       expect(within(card).getAllByText("Mia").length).toBeGreaterThan(0);
+      expect(personAvatarSrc(card)).toBe("/api/v1/accounts/a2/avatar?v=abc123");
       // 差异：纯文本，按文件
       const diff = await within(card).findByLabelText(
         m.inbox.skillChange.diffLabel.replace("{path}", "SKILL.md"),
@@ -1344,6 +1349,19 @@ describe("inbox: my scheduled task needs me", () => {
         .length,
     ).toBeGreaterThan(0);
   });
+  it("an admin's pause whose admin has left names a former member", async () => {
+    await renderInbox({
+      [LIST]: () =>
+        json(200, attention({ reason: "admin", pausedBy: null, missing: [], needsRole: [] })),
+    });
+    expect(
+      (
+        await screen.findAllByText(S.reason.admin.replace("{name}", en.people.departed), {
+          exact: false,
+        })
+      ).length,
+    ).toBeGreaterThan(0);
+  });
   it("a failed latest run says so, with its error", async () => {
     await renderInbox({
       [LIST]: () =>
@@ -1381,6 +1399,7 @@ describe("inbox: network requests (network ask spec §5.3)", () => {
     reason: null,
     requestedBy: "a3",
     requestedByName: "Mia",
+    requestedByAvatarUrl: null,
     decidedBy: null,
     decidedAt: null,
     stagingId: null,
@@ -1390,6 +1409,13 @@ describe("inbox: network requests (network ask spec §5.3)", () => {
   const inbox = (type: string, r: ReturnType<typeof request> | null) => ({
     items: r === null ? [] : [{ type, id: r.id, createdAt: T, request: r }],
     truncated: false,
+  });
+
+  it("a requester who left is titled a former member, never a dash or an id", async () => {
+    const r = request({ requestedBy: "gone", requestedByName: null });
+    await renderInbox({ [LIST]: () => json(200, inbox("catalog_request", r)) });
+    expect(await screen.findByText(NR.title.replace("{name}", en.people.departed))).toBeTruthy();
+    expect(document.body.textContent).not.toContain("gone");
   });
 
   it("an org admin sees the hosts, who asked, the note and the conversation; approving decides it", async () => {
@@ -1408,6 +1434,9 @@ describe("inbox: network requests (network ask spec §5.3)", () => {
     expect(within(table).getByText(`${NR.label} · Mia`)).toBeTruthy();
     expect(await screen.findByText(NR.title.replace("{name}", "Mia"))).toBeTruthy();
     expect(screen.getByText("For the weekly export")).toBeTruthy();
+    // the requester without an avatar draws the initial
+    expect(personAvatarSrc(document.body)).toBeNull();
+    expect(personInitial(document.body)).toBe("M");
     expect(screen.getByRole("link", { name: en.inbox.openConversation }).getAttribute("href")).toBe(
       "/chat/c7",
     );
@@ -1488,5 +1517,27 @@ describe("inbox: a task refused domains", () => {
     const missing = within(screen.getByRole("list", { name: S.missing }));
     expect(missing.queryByRole("button", { name: S.addDomain })).toBeNull();
     expect(missing.getAllByText(S.deviceRefusesShort)).toHaveLength(2);
+  });
+});
+
+describe("requesters who left", () => {
+  it("are null (drawn as a former member), never their raw account id", () => {
+    expect(
+      skillChangeRequester({
+        requestedBy: "gone",
+        requestedByName: "",
+        requestedByAvatarUrl: null,
+      }),
+    ).toBeNull();
+    expect(
+      skillChangeRequester({
+        requestedBy: "a2",
+        requestedByName: "Bo",
+        requestedByAvatarUrl: null,
+      }),
+    ).toEqual({ id: "a2", name: "Bo", avatarUrl: null });
+    expect(
+      catalogRequester({ requestedBy: "gone", requestedByName: null, requestedByAvatarUrl: null }),
+    ).toBeNull();
   });
 });

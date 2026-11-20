@@ -18,6 +18,7 @@ import { useTranslations } from "next-intl";
 import { useState } from "react";
 import { ErrorFrame } from "../../../../components/ErrorFrame";
 import { NoAccess } from "../../../../components/NoAccess";
+import { Person } from "../../../../components/Person";
 import {
   DeleteScheduleDialog,
   scheduleColumns,
@@ -311,14 +312,14 @@ function AllTasks({ orgId }: { orgId: string }) {
   const agents = useQuery({ ...agentsQ, retryOnMount: retryOnMountOf(agentsQ.queryKey) }).data;
   const agentName = (id: string) =>
     (agents?.agents ?? []).find((a) => a.id === id)?.definition.name || id;
-  const people = names.kind === "ready" ? names.people : {};
+  const refs = names.kind === "ready" ? names.refs : {};
   const base = scheduleColumns(ts, when, agentName);
   const columns = [
     ...base.slice(0, 1),
     {
       key: "creator",
       header: ts("columns.creator"),
-      cell: (s: ScheduledTaskListItem) => people[s.accountId] ?? s.accountId,
+      cell: (s: ScheduledTaskListItem) => <Person person={refs[s.accountId] ?? null} size={16} />,
     },
     ...base.slice(1),
   ];

@@ -260,6 +260,12 @@ export const ROUTES: readonly RouteEntry[] = [
       orgId === null || !atLeast(me, "guest") ? [] : [q(orgSharesQuery(orgId, "mine"))],
   },
   {
+    // Nothing to read: `me` (the layout's) holds the name and the avatar.
+    pattern: "/account/profile",
+    // No org needed: me (the shell's), and the sign-in sources that name an SSO avatar's origin.
+    queries: ({ me }) => (me === null ? [] : [q(authSourcesQuery())]),
+  },
+  {
     pattern: "/account/preferences",
     // No org needed: my preferences; with an org, its themes (外观: the cards or the lock).
     queries: ({ me, orgId }) =>
@@ -1334,11 +1340,12 @@ export const ROUTES: readonly RouteEntry[] = [
   },
   {
     pattern: "/trajectories/[conversationId]",
-    // Members up (the kernel decides who may see it): the latest runs (audited) and the members.
+    // Members up (the kernel decides who may see it): the latest runs (audited); the response
+    // names the people.
     queries: ({ orgId, me, params }) =>
       orgId === null || params.conversationId === undefined || !atLeast(me, "member")
         ? []
-        : [q(trajectoryQuery(orgId, params.conversationId)), q(membersQuery(orgId))],
+        : [q(trajectoryQuery(orgId, params.conversationId))],
   },
   // Any other path under (app): its page throws `notFound()` (HTTP 404 inside the App Shell).
   { pattern: "/[...rest]", queries: () => [], none: "unknown route: 404" },

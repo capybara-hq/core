@@ -16,6 +16,7 @@ import { z } from "zod";
 import { ModelRef } from "../agents/definition.js";
 import type { NewConversationDevice } from "../devices/conversation-devices.js";
 import type { DeviceView } from "../devices/devices.service.js";
+import type { PersonRef } from "../identity/account-avatar.js";
 import { CurrentPrincipal, type Principal, requireUser } from "../identity/principal.js";
 import { createZodDto } from "../infra/validation/create-zod-dto.js";
 import { ZBody, ZParam, ZQuery } from "../infra/validation/zod-params.js";
@@ -379,9 +380,15 @@ export class ConversationsController {
     @CurrentPrincipal() principal: Principal,
     @CurrentOrg() org: OrgContext,
     @Param("id") id: string,
-  ): Promise<{ conversation: ConversationView }> {
+  ): Promise<{ conversation: ConversationView & { owner: PersonRef | null } }> {
     const p = requireUser(principal);
-    return { conversation: await this.conversations.get(org.orgId, id, p.account.id) };
+    const conversation = await this.conversations.get(org.orgId, id, p.account.id);
+    return {
+      conversation: {
+        ...conversation,
+        owner: await this.conversations.person(conversation.accountId),
+      },
+    };
   }
 
   /**
@@ -396,21 +403,31 @@ export class ConversationsController {
     @CurrentOrg() org: OrgContext,
     @Param("id") id: string,
     @ZQuery(ConversationEventsQueryDto) q: z.infer<typeof EventsQuery>,
-  ): Promise<{ events: ConversationEvent[]; turnsBefore?: number }> {
+  ): Promise<{
+    events: ConversationEvent[];
+    turnsBefore?: number;
+    people: Record<string, PersonRef>;
+  }> {
     const p = requireUser(principal);
     if (q.before !== undefined) {
       const before = q.before === "end" ? null : q.before;
-      return this.conversations.listEventsBefore(org.orgId, id, p.account.id, before, q.limit);
-    }
-    return {
-      events: await this.conversations.listEvents(
+      const page = await this.conversations.listEventsBefore(
         org.orgId,
         id,
         p.account.id,
-        q.after ?? 0,
+        before,
         q.limit,
-      ),
-    };
+      );
+      return { ...page, people: await this.conversations.eventPeople(page.events) };
+    }
+    const events = await this.conversations.listEvents(
+      org.orgId,
+      id,
+      p.account.id,
+      q.after ?? 0,
+      q.limit,
+    );
+    return { events, people: await this.conversations.eventPeople(events) };
   }
 
   /**

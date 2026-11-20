@@ -3,6 +3,8 @@ import { SetupLockModule } from "../admin/setup-lock.js";
 import { ExtensionRegistryModule } from "../extensions/registry.js";
 import { OrgLockModule } from "../orgs/org-lock.js";
 import { PermissionAuthorityModule } from "../sandbox/permission-authority.module.js";
+import { StorageModule } from "../storage/storage.module.js";
+import { AccountAvatarsService } from "./account-avatars.service.js";
 import { AccountsModule } from "./accounts.js";
 import { ApiTokenService } from "./api-tokens.js";
 import { AppAuthService } from "./app-auth.js";
@@ -17,7 +19,8 @@ import { SuperAdminLockModule } from "./super-admin.js";
 
 /**
  * Identity: accounts, sessions, API tokens, deployment settings and the super admin lock,
- * external identities with IM binding and third-party sign-in, native-app sign-in.
+ * external identities with IM binding and third-party sign-in, native-app sign-in, and the
+ * person's own avatar uploads.
  */
 @Module({
   imports: [
@@ -27,8 +30,10 @@ import { SuperAdminLockModule } from "./super-admin.js";
     SetupLockModule,
     SuperAdminLockModule,
     ExtensionRegistryModule,
+    StorageModule,
   ],
   providers: [
+    AccountAvatarsService,
     SessionService,
     ApiTokenService,
     SettingsService,
@@ -41,6 +46,7 @@ import { SuperAdminLockModule } from "./super-admin.js";
   ],
   exports: [
     AccountsModule,
+    AccountAvatarsService,
     SessionService,
     ApiTokenService,
     SettingsService,

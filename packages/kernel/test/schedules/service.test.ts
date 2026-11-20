@@ -24,6 +24,7 @@ import {
 import { ScheduledTaskStore } from "../../src/schedules/store.js";
 import type { ScheduleTrigger } from "../../src/schedules/types.js";
 import type { ResolvedTool } from "../../src/tools/registry.js";
+import { giveUploadAvatar, UPLOAD_AVATAR_URL } from "../helpers/avatar.js";
 import { truncateTables } from "../helpers/db.js";
 import { builtinsOff } from "../helpers/disabled-tools.js";
 import { accountsFor } from "../helpers/identity.js";
@@ -237,6 +238,23 @@ describe("ScheduledTasksService", () => {
   it("guest cannot create", async () => {
     expect(await codeOf(svc.create(orgId, guestId, daily()))).toBe("forbidden");
     expect(await codeOf(svc.create(orgId, randomUUID(), daily()))).toBe("forbidden");
+  });
+
+  it("task views name the creator as a person with an avatar URL", async () => {
+    const a = await svc.create(orgId, aliceId, daily());
+    const b = await svc.create(orgId, bobId, daily());
+    await giveUploadAvatar(db, aliceId);
+    const listed = await svc.list(orgId, me(adminId, "admin"), { all: true });
+    const account = (id: string) => listed.find((t) => t.id === id)?.account;
+    expect(account(a.id)).toEqual({
+      id: aliceId,
+      name: expect.any(String),
+      avatarUrl: expect.stringContaining(UPLOAD_AVATAR_URL(aliceId)),
+    });
+    expect(account(b.id)).toMatchObject({ id: bobId, avatarUrl: null });
+    expect((await svc.get(orgId, me(adminId, "admin"), a.id)).account?.avatarUrl).toEqual(
+      expect.stringContaining(UPLOAD_AVATAR_URL(aliceId)),
+    );
   });
 
   it("admin lists, pauses, deletes others' tasks", async () => {
