@@ -851,19 +851,19 @@ function toolApprovalDetail({
             primary: { label: t("openConversation"), onSelect: openConversation },
           }
         : {
-          secondary: {
-            label: ta("deny"),
-            onSelect: () => onDecide("deny"),
-            loading: pending === "deny",
-            disabled: pending !== undefined,
+            secondary: {
+              label: ta("deny"),
+              onSelect: () => onDecide("deny"),
+              loading: pending === "deny",
+              disabled: pending !== undefined,
+            },
+            primary: {
+              label: ta("approve"),
+              onSelect: () => onDecide("approve"),
+              loading: pending === "approve",
+              disabled: pending !== undefined,
+            },
           },
-          primary: {
-            label: ta("approve"),
-            onSelect: () => onDecide("approve"),
-            loading: pending === "approve",
-            disabled: pending !== undefined,
-          },
-        },
     content: (
       <div data-approval-id={approval.id}>
         <Stack gap={12}>
