@@ -152,6 +152,17 @@ These hold under every profile, Full access included.
   `~/.cargo/bin` (`SANDBOX_MANDATORY_WRITE_DENIES`) and `~/bin` (`SANDBOX_HOME_WRITE_DENIES`, anchored
   at the owner's home only, so a project's own `bin/` stays writable).
 
+**Editor configuration is denied everywhere, `node_modules` included** (decided 2026-11-20 in
+acceptance): `.idea` and `.vscode` are denied because an editor runs what they configure (a project
+interpreter, run configurations with before-launch tasks, `tasks.json` run on folder open) as the
+owner, outside the sandbox, and they are usually git-ignored. Exempting them below `node_modules`
+was rejected: a directory renamed or symlinked out of `node_modules` would carry attacker-written
+configuration into a folder the owner opens, and Seatbelt sees neither a moved directory's contents
+nor a rename's destination. Known limitation: a package that ships one (pnpm's own tarball unpacks
+`iconv-lite/.idea`, which breaks pnpm's switch to a pinned version) cannot be installed by a
+sandboxed command; install it through the escalation, or make the global pnpm the version the
+repository pins.
+
 **No write root in a system runtime or socket directory** (R3 final review): the candidate builder,
 admission and the device's root check refuse a write root that is, lies in or contains `/run`,
 `/var/run`, `/private/var/run`, `/dev`, `/proc` or `/sys`, that is `/tmp` or `/private/tmp` itself,
