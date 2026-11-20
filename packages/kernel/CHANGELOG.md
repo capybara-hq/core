@@ -1,5 +1,20 @@
 # @capybara-hq/kernel
 
+## 0.1.0-rc.59
+
+### Patch Changes
+
+- 2c2841e: The Platform tool creates connectors, sets their credentials, installs catalog items with their
+  connector and config secrets, and creates channels, with every secret typed by the person on the
+  confirmation card. Org admins' agents invite, revoke and manage members (never self, never an owner,
+  never above the actor); an invitation link is sealed for the approver and revealed once on the web.
+  Platform results can pop up a handoff card (a link to a web page, or a Connect button for OAuth).
+- ff64a43: A run start reads the project's `AGENTS.md` and lists its skills at the same time instead of one
+  after the other: each is a device round trip of its own.
+- Updated dependencies [2c2841e]
+- Updated dependencies [ff64a43]
+  - @capybara-hq/plugin-sdk@0.1.0-rc.43
+
 ## 0.1.0-rc.58
 
 ### Patch Changes
