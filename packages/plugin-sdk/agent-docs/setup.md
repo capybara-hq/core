@@ -38,12 +38,15 @@ the person's own decision stays with the person on the web.
   Never ask for a secret in the conversation and never repeat one; if the person pastes one
   anyway, it counts as leaked: tell them to rotate it at the third-party platform. The guide and
   the check results never contain secret values, and no setup operation takes one.
-- **Connecting a personal account** (OAuth consent) happens in the browser on the `webPath` page
-  (for a member, their connections page).
+- **Connecting a personal account** (OAuth consent) happens in the person's browser: call
+  `connectors.connect`, which shows the person a Connect button in the conversation, then check
+  `connectors.get` for the connection state.
 - **Confirming the app was updated** after a guide changed (the drift notice) is the person's
   confirmation: only they know they changed the app at the third party. For a connector,
-  `connectors.guide-ack` puts that statement on its confirmation card; otherwise the person
-  confirms on the target's page.
+  `connectors.guide-ack` puts that statement on its confirmation card (the hash `connectors.get`
+  shows under `setupGuide`); for a channel connection, `channels.guide-ack` does (the `hash` of
+  `setup.read` for the connection, audience admin, its inbound mode). A stale hash is refused
+  before the card: read the guide again and walk the person through the change.
 - **Creating the app** at the third-party platform is outside Capybara: explain it, the person
   does it.
 

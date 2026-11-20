@@ -11,13 +11,16 @@ import {
   ChannelConnections,
   type ChannelConnectionView,
 } from "../../channels/connections.service.js";
+import { ApiError } from "../../errors.js";
 import { PluginGuides } from "../../extensions/plugin-guides.js";
-import { defineOperation } from "../operation.js";
+import { KernelDb } from "../../infra/database/kernel-db.js";
+import { defineOperation, type OperationContext } from "../operation.js";
 import { personFieldParams, secretFieldsOf } from "../person-fields.js";
 import { PlatformOperations } from "../registry.js";
 import { precheckBy, viaAgent } from "./errors.js";
 import { Cursor, pageOf, startOf } from "./paging.js";
 import { nestedConfig, withPersonInputs } from "./person-inputs.js";
+import { roleOf } from "./role.js";
 import { named, orElse } from "./summary.js";
 
 const PAGE = 50;
@@ -57,7 +60,15 @@ export class ChannelsOperations implements OnModuleInit {
     @Inject(PlatformOperations) private readonly registry: PlatformOperations,
     @Inject(ChannelConnections) private readonly channels: ChannelConnections,
     @Inject(PluginGuides) private readonly guides: PluginGuides,
+    @Inject(KernelDb) private readonly kdb: KernelDb,
   ) {}
+
+  /** The actor's org role (the guide reads and the ack take it), `forbidden` when not a member. */
+  private async org(ctx: OperationContext) {
+    const role = await roleOf(this.kdb.db, ctx.orgId, ctx.actorAccountId);
+    if (role === null) throw new ApiError("forbidden", "Insufficient organization role");
+    return { orgId: ctx.orgId, role };
+  }
 
   private async nameOf(orgId: string, id: string): Promise<string> {
     return orElse(async () => named((await this.channels.get(orgId, id)).name), id);
@@ -127,9 +138,9 @@ export class ChannelsOperations implements OnModuleInit {
         run: async (input, ctx) => {
           const schema = this.channels.jsonSchema(input.plugin);
           const inbound = this.channels.inboundInfo(input.plugin);
-          const g = (
-            await this.guides.channelGuides([input.plugin], { orgId: ctx.orgId, role: "admin" })
-          ).get(input.plugin);
+          const g = (await this.guides.channelGuides([input.plugin], await this.org(ctx))).get(
+            input.plugin,
+          );
           return {
             plugin: input.plugin,
             schema,
@@ -265,7 +276,7 @@ export class ChannelsOperations implements OnModuleInit {
       defineOperation({
         id: "channels.guide-ack",
         description:
-          "Record that the person updated the app on the IM platform to the plugin's current setup guide (org admins). The card states what the person confirms. hash is the drift hash of the guide the person was shown (the guide state of the connection on the web); a stale hash is refused.",
+          "Record that the person updated the app on the IM platform to the plugin's current setup guide (org admins). The card states what the person confirms. hash is the guide's hash from setup.read for this connection (audience admin, the connection's inbound mode); a stale hash is refused before the card.",
         input: ChannelPathParams.extend(ChannelGuideAckSchema.shape).strict(),
         example: {
           connectionId: "00000000-0000-4000-8000-000000000000",
@@ -283,14 +294,39 @@ export class ChannelsOperations implements OnModuleInit {
           },
           {
             code: "channel.guide_changed",
-            next: "The plugin's setup guide changed since the hash was taken; have the person review the new guide on the channels page first.",
+            next: "The plugin's setup guide changed since the hash was taken: read it again with setup.read (connectionId, audience admin, the connection's inbound mode), walk the person through it, then call again with the hash it returns.",
           },
           {
             code: "catalog.guide_not_found",
             next: "The plugin has no setup guide the org can see; there is nothing to acknowledge.",
           },
         ],
-        precheck: (i, ctx) => precheckBy(() => this.channels.get(ctx.orgId, i.connectionId)),
+        precheck: async (i, ctx) => {
+          let current: ChannelConnectionView | undefined;
+          const r = await precheckBy(async () => {
+            current = await this.channels.get(ctx.orgId, i.connectionId);
+          });
+          if (!r.ok || current === undefined) return r;
+          // the service's own comparison, read before the card: a stale hash is never confirmed
+          const ack = await this.guides.currentAck(current.plugin, "channel-connection", {
+            mode: current.inboundMode,
+            org: await this.org(ctx),
+          });
+          if (ack === null) {
+            return {
+              ok: false,
+              code: "catalog.guide_not_found",
+              message: "The plugin has no channel setup guide",
+            };
+          }
+          return ack.hash === i.hash
+            ? { ok: true }
+            : {
+                ok: false,
+                code: "channel.guide_changed",
+                message: "The plugin's setup guide changed since it was shown",
+              };
+        },
         summary: async (i, ctx) => {
           const name = await this.nameOf(ctx.orgId, i.connectionId);
           return {
@@ -301,7 +337,7 @@ export class ChannelsOperations implements OnModuleInit {
         run: async (input, ctx) => ({
           channel: detail(
             await this.channels.ackGuide(
-              { orgId: ctx.orgId, role: "admin" },
+              await this.org(ctx),
               input.connectionId,
               input.hash,
               ctx.actorAccountId,

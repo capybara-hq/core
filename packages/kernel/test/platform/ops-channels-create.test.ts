@@ -201,6 +201,7 @@ describe("channels.create refusals and mode fields", () => {
         askPerson: [],
         clearSecrets: [],
       });
+      expect(plan.ok, JSON.stringify(plan)).toBe(true);
       return plan.ok ? plan.ask.map((f) => f.path) : [];
     };
     expect(await asked()).not.toContain("webhookToken");
@@ -216,17 +217,22 @@ describe("channels.create refusals and mode fields", () => {
       ok: false,
       code: "agent.not_found",
     });
-    await owner({
+    const off = await owner({
       method: "PUT",
       url: `/api/v1/orgs/${orgId}/extensions/chan-mini`,
       payload: { enabled: false },
     });
-    expect(await pre({})).toMatchObject({ ok: false, code: "extension.not_enabled" });
-    await owner({
-      method: "PUT",
-      url: `/api/v1/orgs/${orgId}/extensions/chan-mini`,
-      payload: { enabled: true },
-    });
+    try {
+      expect(off.statusCode, off.body).toBe(200);
+      expect(await pre({})).toMatchObject({ ok: false, code: "extension.not_enabled" });
+    } finally {
+      const on = await owner({
+        method: "PUT",
+        url: `/api/v1/orgs/${orgId}/extensions/chan-mini`,
+        payload: { enabled: true },
+      });
+      expect(on.statusCode, on.body).toBe(200);
+    }
   });
 });
 
@@ -298,6 +304,14 @@ describe("channels.guide-ack with a setup guide", () => {
     const v1 = hashOf("a", "b");
     await seedVersion(itemId, "1.1.0", "d");
 
+    // a stale hash is refused before the card, the current one passes
+    const o = op("channels.guide-ack");
+    expect(
+      await o.precheck?.(o.input.parse({ connectionId: id, hash: v1 }), ctxOf()),
+    ).toMatchObject({ ok: false, code: "channel.guide_changed" });
+    expect(
+      await o.precheck?.(o.input.parse({ connectionId: id, hash: hashOf("d", "b") }), ctxOf()),
+    ).toEqual({ ok: true });
     await expect(run("channels.guide-ack", { connectionId: id, hash: v1 })).rejects.toThrow(
       /review the new guide/,
     );

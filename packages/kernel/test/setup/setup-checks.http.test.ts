@@ -692,8 +692,11 @@ describe("setup checks: Platform operations", () => {
       target: unknown;
       webPath: string;
       handover: string;
+      hash: string;
     };
     expect(guide.markdown.startsWith("# Create the fake IM app\n")).toBe(true);
+    // the drift hash channels.guide-ack takes
+    expect(guide.hash).toMatch(/^[0-9a-f]{64}$/);
     expect(guide.markdown).toContain("```yaml\nsocket: true\n```");
     expect(guide.markdown).toContain("- [check pass] The platform accepts the app");
     expect(guide.markdown).not.toContain("webhook: true");
@@ -702,6 +705,7 @@ describe("setup checks: Platform operations", () => {
     expect(guide.target).toEqual({ kind: "channel-connection", id });
     expect(guide.webPath).toBe(`/channels/${id}`);
     expect(guide.handover).toContain(`/channels/${id}`);
+    expect(guide.handover).toContain("channels.guide-ack");
     expect(JSON.stringify(out)).not.toContain(SECRET);
     expect(JSON.stringify(out)).not.toContain(DEPLOY_SECRET);
     const webhook = await callOp("setup.read", { ...base(), connectionId: id, mode: "webhook" });
