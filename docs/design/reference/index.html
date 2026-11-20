@@ -32,7 +32,7 @@
 <body>
 <header>
   <h1>Reference set review</h1>
-  <div>347 blocks × dark | light, rendered at 2× from docs/design/reference/src (sizes are token steps of docs/design/tokens.json).</div>
+  <div>355 blocks × dark | light, rendered at 2× from docs/design/reference/src (sizes are token steps of docs/design/tokens.json).</div>
   <nav><div><a class="g" href="#g-0">UI refresh A: shell, list and form pages</a> <a href="#c-template-list">template-list</a> <a href="#c-template-form">template-form</a> <a href="#c-sidebar">sidebar</a> <a href="#c-page-header">page-header</a> <a href="#c-stat-cards">stat-cards</a> <a href="#c-status-bar">status-bar</a> <a href="#c-action-row">action-row</a> <a href="#c-button">button</a> <a href="#c-input">input</a> <a href="#c-segmented">segmented</a> <a href="#c-switch">switch</a> <a href="#c-filter-chip">filter-chip</a> <a href="#c-table">table</a> <a href="#c-icon">icon</a></div><div><a class="g" href="#g-1">UI refresh B: conversation page</a> <a href="#c-template-conversation">template-conversation</a> <a href="#c-title-bar">title-bar</a> <a href="#c-composer">composer</a> <a href="#c-picker-menu">picker-menu</a> <a href="#c-command-palette">command-palette</a> <a href="#c-prose">prose</a> <a href="#c-thinking-row">thinking-row</a> <a href="#c-user-bubble">user-bubble</a> <a href="#c-run-divider">run-divider</a> <a href="#c-tool-group">tool-group</a> <a href="#c-tool-row">tool-row</a> <a href="#c-diff-block">diff-block</a> <a href="#c-approval-block">approval-block</a> <a href="#c-network-facts">network-facts</a> <a href="#c-question-block">question-block</a> <a href="#c-connect-block">connect-block</a> <a href="#c-queued-message">queued-message</a> <a href="#c-subagent-group">subagent-group</a> <a href="#c-agent-map">agent-map</a> <a href="#c-inline-card">inline-card</a> <a href="#c-property-section">property-section</a> <a href="#c-right-panel">right-panel</a> <a href="#c-file-card">file-card</a> <a href="#c-file-outputs">file-outputs</a> <a href="#c-attachment-strip">attachment-strip</a> <a href="#c-file-preview">file-preview</a> <a href="#c-run-row">run-row</a> <a href="#c-working-line">working-line</a> <a href="#c-greeting">greeting</a> <a href="#c-agent-row">agent-row</a> <a href="#c-quick-actions">quick-actions</a></div><div><a class="g" href="#g-2">Agents: avatar presets and picker</a> <a href="#c-avatar">avatar</a></div><div><a class="g" href="#g-3">Role pass: no access, danger zone, secret reveal</a> <a href="#c-no-access">no-access</a> <a href="#c-danger-zone">danger-zone</a> <a href="#c-secret-reveal">secret-reveal</a> <a href="#c-content-section">content-section</a></div><div><a class="g" href="#g-4">Config forms: repeater, field row, key / value editor</a> <a href="#c-repeater">repeater</a> <a href="#c-field-row">field-row</a> <a href="#c-key-value-editor">key-value-editor</a></div><div><a class="g" href="#g-5">Loading states: skeleton primitives and template loading states</a> <a href="#c-skeleton">skeleton</a> <a href="#c-template-detail">template-detail</a> <a href="#c-template-overview">template-overview</a> <a href="#c-template-inbox">template-inbox</a> <a href="#c-template-trace">template-trace</a> <a href="#c-template-settings">template-settings</a> <a href="#c-template-wizard">template-wizard</a> <a href="#c-template-auth">template-auth</a></div><div><a class="g" href="#g-6">Mobile layout: compact shell, list-detail, sheet drag states</a> <a href="#c-bottom-nav">bottom-nav</a> <a href="#c-top-bar">top-bar</a> <a href="#c-list-detail">list-detail</a> <a href="#c-me-panel">me-panel</a> <a href="#c-sheet">sheet</a></div> <a href="#tokens">tokens</a></nav>
 </header>
 <main>
@@ -864,12 +864,19 @@
     <div class="shot light"><img src="thinking-row-live-light.png" alt="thinking-row-live, light" loading="lazy"></div>
   </div>
 </figure></section>
-<section><h2 id="c-user-bubble">user-bubble <small>6 blocks</small></h2>
+<section><h2 id="c-user-bubble">user-bubble <small>7 blocks</small></h2>
 <figure id="user-bubble-attachments">
   <figcaption><a href="#user-bubble-attachments">user-bubble-attachments</a></figcaption>
   <div class="pair">
     <div class="shot dark"><img src="user-bubble-attachments-dark.png" alt="user-bubble-attachments, dark" loading="lazy"></div>
     <div class="shot light"><img src="user-bubble-attachments-light.png" alt="user-bubble-attachments, light" loading="lazy"></div>
+  </div>
+</figure>
+<figure id="user-bubble-author">
+  <figcaption><a href="#user-bubble-author">user-bubble-author</a></figcaption>
+  <div class="pair">
+    <div class="shot dark"><img src="user-bubble-author-dark.png" alt="user-bubble-author, dark" loading="lazy"></div>
+    <div class="shot light"><img src="user-bubble-author-light.png" alt="user-bubble-author, light" loading="lazy"></div>
   </div>
 </figure>
 <figure id="user-bubble-default">
@@ -1100,7 +1107,7 @@
     <div class="shot light"><img src="diff-block-truncated-light.png" alt="diff-block-truncated, light" loading="lazy"></div>
   </div>
 </figure></section>
-<section><h2 id="c-approval-block">approval-block <small>14 blocks</small></h2>
+<section><h2 id="c-approval-block">approval-block <small>15 blocks</small></h2>
 <figure id="approval-block-approved">
   <figcaption><a href="#approval-block-approved">approval-block-approved</a></figcaption>
   <div class="pair">
@@ -1198,6 +1205,13 @@
     <div class="shot dark"><img src="approval-block-pending-summary-dark.png" alt="approval-block-pending-summary, dark" loading="lazy"></div>
     <div class="shot light"><img src="approval-block-pending-summary-light.png" alt="approval-block-pending-summary, light" loading="lazy"></div>
   </div>
+</figure>
+<figure id="approval-block-person">
+  <figcaption><a href="#approval-block-person">approval-block-person</a></figcaption>
+  <div class="pair">
+    <div class="shot dark"><img src="approval-block-person-dark.png" alt="approval-block-person, dark" loading="lazy"></div>
+    <div class="shot light"><img src="approval-block-person-light.png" alt="approval-block-person, light" loading="lazy"></div>
+  </div>
 </figure></section>
 <section><h2 id="c-network-facts">network-facts <small>2 blocks</small></h2>
 <figure id="network-facts-address">
@@ -1214,7 +1228,7 @@
     <div class="shot light"><img src="network-facts-org-light.png" alt="network-facts-org, light" loading="lazy"></div>
   </div>
 </figure></section>
-<section><h2 id="c-question-block">question-block <small>4 blocks</small></h2>
+<section><h2 id="c-question-block">question-block <small>5 blocks</small></h2>
 <figure id="question-block-answered">
   <figcaption><a href="#question-block-answered">question-block-answered</a></figcaption>
   <div class="pair">
@@ -1227,6 +1241,13 @@
   <div class="pair">
     <div class="shot dark"><img src="question-block-pending-dark.png" alt="question-block-pending, dark" loading="lazy"></div>
     <div class="shot light"><img src="question-block-pending-light.png" alt="question-block-pending, light" loading="lazy"></div>
+  </div>
+</figure>
+<figure id="question-block-person">
+  <figcaption><a href="#question-block-person">question-block-person</a></figcaption>
+  <div class="pair">
+    <div class="shot dark"><img src="question-block-person-dark.png" alt="question-block-person, dark" loading="lazy"></div>
+    <div class="shot light"><img src="question-block-person-light.png" alt="question-block-person, light" loading="lazy"></div>
   </div>
 </figure>
 <figure id="question-block-skipped">
@@ -1681,7 +1702,7 @@
     <div class="shot light"><img src="file-preview-unshared-light.png" alt="file-preview-unshared, light" loading="lazy"></div>
   </div>
 </figure></section>
-<section><h2 id="c-run-row">run-row <small>5 blocks</small></h2>
+<section><h2 id="c-run-row">run-row <small>6 blocks</small></h2>
 <figure id="run-row-failed">
   <figcaption><a href="#run-row-failed">run-row-failed</a></figcaption>
   <div class="pair">
@@ -1708,6 +1729,13 @@
   <div class="pair">
     <div class="shot dark"><img src="run-row-stopped-dark.png" alt="run-row-stopped, dark" loading="lazy"></div>
     <div class="shot light"><img src="run-row-stopped-light.png" alt="run-row-stopped, light" loading="lazy"></div>
+  </div>
+</figure>
+<figure id="run-row-stopped-person">
+  <figcaption><a href="#run-row-stopped-person">run-row-stopped-person</a></figcaption>
+  <div class="pair">
+    <div class="shot dark"><img src="run-row-stopped-person-dark.png" alt="run-row-stopped-person, dark" loading="lazy"></div>
+    <div class="shot light"><img src="run-row-stopped-person-light.png" alt="run-row-stopped-person, light" loading="lazy"></div>
   </div>
 </figure>
 <figure id="run-row-warning">
@@ -1792,12 +1820,19 @@
   </div>
 </figure></section>
 <h1 class="group" id="g-2">Agents: avatar presets and picker</h1>
-<section><h2 id="c-avatar">avatar <small>5 blocks</small></h2>
+<section><h2 id="c-avatar">avatar <small>6 blocks</small></h2>
 <figure id="avatar-initial">
   <figcaption><a href="#avatar-initial">avatar-initial</a></figcaption>
   <div class="pair">
     <div class="shot dark"><img src="avatar-initial-dark.png" alt="avatar-initial, dark" loading="lazy"></div>
     <div class="shot light"><img src="avatar-initial-light.png" alt="avatar-initial, light" loading="lazy"></div>
+  </div>
+</figure>
+<figure id="avatar-person">
+  <figcaption><a href="#avatar-person">avatar-person</a></figcaption>
+  <div class="pair">
+    <div class="shot dark"><img src="avatar-person-dark.png" alt="avatar-person, dark" loading="lazy"></div>
+    <div class="shot light"><img src="avatar-person-light.png" alt="avatar-person, light" loading="lazy"></div>
   </div>
 </figure>
 <figure id="avatar-picker">
@@ -2167,7 +2202,7 @@
     <div class="shot light"><img src="sheet-settling-light.png" alt="sheet-settling, light" loading="lazy"></div>
   </div>
 </figure></section>
-<section><h2 id="c-other">other <small>53 blocks</small></h2>
+<section><h2 id="c-other">other <small>56 blocks</small></h2>
 <figure id="callout-in-box">
   <figcaption><a href="#callout-in-box">callout-in-box</a></figcaption>
   <div class="pair">
@@ -2229,6 +2264,13 @@
   <div class="pair">
     <div class="shot dark"><img src="card-grid-no-description-dark.png" alt="card-grid-no-description, dark" loading="lazy"></div>
     <div class="shot light"><img src="card-grid-no-description-light.png" alt="card-grid-no-description, light" loading="lazy"></div>
+  </div>
+</figure>
+<figure id="card-grid-person">
+  <figcaption><a href="#card-grid-person">card-grid-person</a></figcaption>
+  <div class="pair">
+    <div class="shot dark"><img src="card-grid-person-dark.png" alt="card-grid-person, dark" loading="lazy"></div>
+    <div class="shot light"><img src="card-grid-person-light.png" alt="card-grid-person, light" loading="lazy"></div>
   </div>
 </figure>
 <figure id="copy-field-copied">
@@ -2392,6 +2434,13 @@
     <div class="shot light"><img src="schedule-calendar-month-light.png" alt="schedule-calendar-month, light" loading="lazy"></div>
   </div>
 </figure>
+<figure id="schedule-calendar-person">
+  <figcaption><a href="#schedule-calendar-person">schedule-calendar-person</a></figcaption>
+  <div class="pair">
+    <div class="shot dark"><img src="schedule-calendar-person-dark.png" alt="schedule-calendar-person, dark" loading="lazy"></div>
+    <div class="shot light"><img src="schedule-calendar-person-light.png" alt="schedule-calendar-person, light" loading="lazy"></div>
+  </div>
+</figure>
 <figure id="schedule-calendar-selected">
   <figcaption><a href="#schedule-calendar-selected">schedule-calendar-selected</a></figcaption>
   <div class="pair">
@@ -2446,6 +2495,13 @@
   <div class="pair">
     <div class="shot dark"><img src="select-open-dark.png" alt="select-open, dark" loading="lazy"></div>
     <div class="shot light"><img src="select-open-light.png" alt="select-open, light" loading="lazy"></div>
+  </div>
+</figure>
+<figure id="select-person">
+  <figcaption><a href="#select-person">select-person</a></figcaption>
+  <div class="pair">
+    <div class="shot dark"><img src="select-person-dark.png" alt="select-person, dark" loading="lazy"></div>
+    <div class="shot light"><img src="select-person-light.png" alt="select-person, light" loading="lazy"></div>
   </div>
 </figure>
 <figure id="select-placeholder">
