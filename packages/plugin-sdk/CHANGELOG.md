@@ -1,5 +1,19 @@
 # @capybara-hq/plugin-sdk
 
+## 0.1.0-rc.43
+
+### Patch Changes
+
+- 2c2841e: The Platform tool creates connectors, sets their credentials, installs catalog items with their
+  connector and config secrets, and creates channels, with every secret typed by the person on the
+  confirmation card. Org admins' agents invite, revoke and manage members (never self, never an owner,
+  never above the actor); an invitation link is sealed for the approver and revealed once on the web.
+  Platform results can pop up a handoff card (a link to a web page, or a Connect button for OAuth).
+- ff64a43: A native read whose read root is a single file works: the device pins the file's parent directory
+  and the native helper reaches only that one name through it (macOS and Linux). A kernel read of a
+  project narrows `AGENTS.md` to itself, and the device refused it with `ENOTDIR`, so a project's
+  `AGENTS.md` never reached a run.
+
 ## 0.1.0-rc.42
 
 ### Patch Changes
