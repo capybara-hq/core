@@ -1,5 +1,12 @@
 # @capybara-hq/kernel
 
+## 0.1.0-rc.57
+
+### Patch Changes
+
+- dbbd95b: The kernel logs (warn) why a device could not be asked for projects and why binding a device's
+  instance failed, so a device's own refusal is visible in the logs behind the generic 503.
+
 ## 0.1.0-rc.56
 
 ### Patch Changes
