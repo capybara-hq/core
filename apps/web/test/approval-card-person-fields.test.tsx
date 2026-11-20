@@ -135,7 +135,9 @@ describe("ApprovalCard: person fields", () => {
       await screen.findByText("这个值在对话里出现过，视为已泄露。请到服务商那里新建一个再填写。"),
     ).toBeTruthy();
     expect(screen.getByRole("button", { name: "批准" })).toBeTruthy();
-    expect(((await field()) as HTMLInputElement).value).toBe(SECRET);
+    // the leaked value is cleared, the refusal stays, and Approve waits for a new value
+    expect(((await field()) as HTMLInputElement).value).toBe("");
+    expect(screen.getByRole("button", { name: "批准" }).hasAttribute("disabled")).toBe(true);
   });
 
   it("shows an invalid value's problem under its field", async () => {

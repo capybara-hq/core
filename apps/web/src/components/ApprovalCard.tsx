@@ -203,7 +203,7 @@ export function useDecide(orgId: string) {
       /** Person field values (approve only) and where a refused field's problem goes. */
       person?: {
         inputs: Record<string, string>;
-        onFieldErrors(errors: Record<string, string>): void;
+        onFieldErrors(errors: Record<string, string>, leaked: boolean): void;
       },
     ) => {
       setPending(decision);
@@ -221,7 +221,10 @@ export function useDecide(orgId: string) {
         const fieldErrors = person && personFieldErrors(e, leakCopy);
         if (fieldErrors) {
           // the card stays pending: each refused field says why, nothing else changes
-          person?.onFieldErrors(fieldErrors);
+          person?.onFieldErrors(
+            fieldErrors,
+            e instanceof ApiClientError && e.code === "approval.input_leaked",
+          );
           return null;
         }
         toast.error(errorMessage(e));
@@ -324,7 +327,14 @@ export function ApprovalCard({
       decision === "approve" && person && person.length > 0
         ? {
             inputs: Object.fromEntries(person.map((f) => [f.path, values[f.path] ?? ""])),
-            onFieldErrors: setFieldErrors,
+            onFieldErrors: (errors, leaked) => {
+              setFieldErrors(errors);
+              // a leaked value is cleared (its error stays) so it is never resubmitted by accident
+              if (leaked)
+                setValues((o) =>
+                  Object.fromEntries(Object.entries(o).filter(([path]) => !(path in errors))),
+                );
+            },
           }
         : undefined,
     );

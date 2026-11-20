@@ -165,6 +165,37 @@ describe("收件箱（InboxPage）", () => {
     },
   );
 
+  it.each(LOCALES)("an approval with person fields has no Approve, only the web link (%s)", async (locale) => {
+    const m = msgs[locale];
+    const { container } = await renderInbox(
+      {
+        [LIST]: () =>
+          json(
+            200,
+            inbox([
+              approval("a", {
+                personFields: [
+                  { path: "apiKey", label: "API key", multiline: false, required: true, isSet: false },
+                  { path: "token", label: "Token", multiline: false, required: true, isSet: false },
+                ],
+                personTarget: { zh: "目标", en: "Target" },
+              }),
+            ]),
+          ),
+      },
+      { locale },
+    );
+    await screen.findByRole("list", { name: m.inbox.listLabel });
+    const detail = container.querySelector('[data-approval-id="a"]') as HTMLElement;
+    expect(within(detail).getByText(locale === "zh" ? "需要在网页填写 2 项" : "2 fields to fill in on the web")).toBeTruthy();
+    expect(
+      within(detail).getAllByRole("link", { name: m.inbox.openConversation })[0]?.getAttribute("href"),
+    ).toBe("/chat/c-a");
+    expect(screen.queryByRole("button", { name: m.approval.approve })).toBeNull();
+    expect(screen.queryByRole("radiogroup", { name: m.approval.scopeLabel })).toBeNull();
+    expect(screen.getByRole("button", { name: m.approval.deny })).toBeTruthy();
+  });
+
   it("the open item is in the URL hash: opening closes the list's page, back (and the system back) returns", async () => {
     const { container } = await renderInbox({
       [LIST]: () => json(200, inbox([approval("a"), approval("b")])),

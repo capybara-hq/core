@@ -2079,6 +2079,7 @@
       "hint": "The platform generated it for the new account. It is shown only once; the account must change it at first sign-in."
     },
     "person": {
+      "fillOnWeb": "{n} fields to fill in on the web",
       "leaked": "This value appeared in the conversation, so it counts as leaked. Create a new one at the provider and enter that."
     },
     "title": "Approval required",
