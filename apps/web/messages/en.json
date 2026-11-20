@@ -1824,7 +1824,7 @@
       "mark": "This machine",
       "running": "Running now",
       "runningEmpty": "Nothing is running.",
-      "isolation": { "restricted": "Restricted", "full": "Full access" },
+      "isolation": { "restricted": "In the sandbox", "full": "Outside the sandbox" },
       "pause": "Pause",
       "resume": "Resume",
       "disconnect": "Disconnect",
@@ -1838,8 +1838,6 @@
         "unavailable": "Cannot keep the computer awake: {reason}",
         "cannot": "Keep awake cannot prevent: closing the lid of a Mac on battery without an external display still puts it to sleep; so do choosing Sleep, a critically low battery and thermal emergencies. On Linux, the lid switch is handled by logind, which this service cannot override."
       },
-      "widenReach": "Allow reading what the user can read",
-      "widened": "This computer's access ceiling was widened.",
       "failed": "That did not go through. Try again."
     },
     "sandbox": {
