@@ -30,6 +30,8 @@ export class BootstrapDefaultsService {
     if (defaultTheme === undefined) return;
     const fields = { plugin: defaultTheme.plugin, theme: defaultTheme.theme };
     try {
+      // Resolved outside the transaction; applyBootstrapUiTheme re-validates it under the locks
+      // (assertPlatformDefaultEligible)
       const row = await this.db
         .selectFrom("platform_themes")
         .select("id")

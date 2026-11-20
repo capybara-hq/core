@@ -9,6 +9,7 @@ import type { KernelConfig } from "../../src/config/schema.js";
 import { type KernelSchemaDb, kernelDb } from "../../src/db/kernel-schema.js";
 import { migrate } from "../../src/db/migrator.js";
 import { createDb } from "../../src/db/pool.js";
+import { SettingsService } from "../../src/identity/settings.js";
 import { KERNEL_MIGRATIONS_DIR } from "../../src/kernel.js";
 import { createLogger, type KernelLogger } from "../../src/log.js";
 import { truncateTables } from "../helpers/db.js";
@@ -252,6 +253,29 @@ describe("the extra manifest's default theme", () => {
     await stopAll();
     const again = await boot();
     expect(await platformTheme(again)).toMatchObject({ id: paper });
+    expect(await bootstrapWrites()).toHaveLength(1);
+  });
+
+  it("two concurrent applies on the seed: one applied, one kept, one write", async () => {
+    const k = await boot();
+    const paper = await themeId("paper");
+    // Back to the seed, with no bootstrap write recorded
+    await db
+      .updateTable("deployment_settings")
+      .set({ value: JSON.stringify({ id: null }), updated_by: null })
+      .where("key", "=", "uiTheme")
+      .execute();
+    await db
+      .deleteFrom("audit_events")
+      .where("action", "=", "deployment.settings.updated")
+      .execute();
+    const settings = k.app.get(SettingsService);
+    const outcomes = await Promise.all([
+      settings.applyBootstrapUiTheme(paper),
+      settings.applyBootstrapUiTheme(paper),
+    ]);
+    expect(outcomes.sort()).toEqual(["applied", "kept"]);
+    expect(await uiThemeRow()).toEqual({ value: { id: paper }, updated_by: null });
     expect(await bootstrapWrites()).toHaveLength(1);
   });
 
