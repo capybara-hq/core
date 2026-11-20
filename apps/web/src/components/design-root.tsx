@@ -11,12 +11,23 @@ import {
 } from "@capybara-hq/design";
 import { useLinkStatus } from "next/link";
 import { createContext, type ReactNode, useContext, useEffect } from "react";
-import { Link } from "../i18n/navigation";
+import { Link, useRouter } from "../i18n/navigation";
 import type { AppLocale } from "../i18n/routing";
+import { useWarm } from "../lib/query/warm";
 import { TIME_ZONE_COOKIE } from "../lib/time";
 
 /** Whether the enclosing next/link navigation is pending (called inside each design link). */
 const useLinkPending = () => useLinkStatus().pending;
+
+/**
+ * The design link: next-intl's Link, which also warms its route on `pointerdown` (the route's
+ * queries and code, mobile spec §7.3), so the page is often cached by the time the tap lands.
+ */
+const WarmLink: LinkComponent = (props) => {
+  const router = useRouter();
+  const warm = useWarm(router);
+  return <Link {...props} onPointerDown={() => warm(props.href)} />;
+};
 
 /** The clock `DesignRoot` was given, so `BrandRoot` can provide the same design context again. */
 const ClockContext = createContext<ServerClock | undefined>(undefined);
@@ -50,7 +61,7 @@ export function DesignRoot({
     <ClockContext.Provider value={clock}>
       <DesignProvider
         locale={locale}
-        link={Link as LinkComponent}
+        link={WarmLink}
         useLinkPending={useLinkPending}
         {...(clock !== undefined && { clock })}
       >
