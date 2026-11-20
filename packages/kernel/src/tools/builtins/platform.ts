@@ -399,7 +399,13 @@ export function platformTool(deps: PlatformToolDeps): BuiltinTool {
     }
     const [cls, summary] = await Promise.all([
       classOf(op, params, octx),
-      summaryOf(op, params, octx),
+      summaryOf(
+        op,
+        params,
+        op.personFields === undefined
+          ? octx
+          : { ...octx, personAsk: personFields?.fields.map((f) => f.path) ?? [] },
+      ),
     ]);
     return {
       key,

@@ -8,11 +8,14 @@ import type { DeploymentConfigView } from "../../src/extensions/deployment-confi
 import { DEPLOYMENT_SECRETS_ORG, secretKey } from "../../src/extensions/deployment-config-store.js";
 import { ExtensionHost } from "../../src/extensions/host.js";
 import { PLUGIN_DEPLOYMENT_CONFIG_TOPIC } from "../../src/extensions/lifecycle-topics.js";
+import type { OrgOverrideView } from "../../src/extensions/org-overrides.js";
 import { KERNEL_BUS } from "../../src/infra/tokens.js";
 import { createLogger } from "../../src/log.js";
 import { nextStepFor, toToolError } from "../../src/platform/errors.js";
 import type { OperationContext } from "../../src/platform/operation.js";
+import { copyPersonFields } from "../../src/platform/ops/extensions.ops.js";
 import { deploymentPersonFields } from "../../src/platform/ops/extensions-admin.ops.js";
+import { planPersonFields } from "../../src/platform/person-fields.js";
 import { PlatformOperations } from "../../src/platform/registry.js";
 import { importPlugin, type OrgEnv, startOrgEnv } from "../catalog/org-env.js";
 import { builtinsOff } from "../helpers/disabled-tools.js";
@@ -283,6 +286,46 @@ describe("the org's copy of the overridable fields", () => {
   });
 });
 
+describe("the person fields of the org's copy", () => {
+  it("asks only for secrets under overridable fields; one under a read-only object is refused", () => {
+    const view: OrgOverrideView = {
+      state: "following",
+      schema: {
+        type: "object",
+        properties: {
+          conn: {
+            type: "object",
+            "x-org": "readonly",
+            properties: { host: { type: "string" }, key: { type: "string", "x-secret": true } },
+          },
+          token: { type: "string", "x-secret": true, "x-org": "override" },
+        },
+      },
+      fields: [
+        { path: "conn.host", level: "readonly", secret: false, platform: { value: "h" } },
+        { path: "conn.key", level: "readonly", secret: true, platform: { set: true } },
+        { path: "token", level: "override", secret: true, platform: { set: false } },
+      ],
+      valid: true,
+      issues: [],
+    };
+    const found = copyPersonFields(view);
+    expect(found.fields.map((f) => f.path)).toEqual(["token"]);
+    expect(found.recordOnly).toContain("conn.key");
+    const t = { target: { zh: "副本", en: "Copy" }, ...found };
+    const refused = planPersonFields(t, {
+      values: { conn: { key: "key-Lm40" } },
+      askPerson: [],
+      clearSecrets: [],
+    });
+    expect(refused).toMatchObject({ ok: false });
+    expect(JSON.stringify(refused)).not.toContain("key-Lm40");
+    expect(planPersonFields(t, { askPerson: ["conn.key"], clearSecrets: [] })).toMatchObject({
+      ok: false,
+    });
+  });
+});
+
 type Ev<T extends ConversationEvent["type"]> = Extract<ConversationEvent, { type: T }>;
 const ofType = <T extends ConversationEvent["type"]>(evs: ConversationEvent[], t: T) =>
   evs.filter((e): e is Ev<T> => e.type === t);
@@ -411,10 +454,24 @@ describe("read-only secrets of the deployment config", () => {
     ...over,
   });
 
-  it("are never on the card, and a value for one in values is refused as web only", () => {
+  it("are never on the card, and a value for one in values is extension.config_readonly", () => {
     const t = deploymentPersonFields(view());
     expect(t.fields.map((f) => f.path)).toEqual(["master"]);
     expect(t.recordOnly).toContain("token");
+    for (const values of [{ token: "tok-Zr81" }, { token: null }, { "token.x": "tok-Zr81" }]) {
+      let err: unknown;
+      try {
+        deploymentPersonFields(view(), [], values);
+      } catch (e) {
+        err = e;
+      }
+      expect(err).toMatchObject({ code: "extension.config_readonly" });
+      expect((err as Error).message).toContain("set in the startup config");
+      expect((err as Error).message).toContain("token");
+      expect((err as Error).message).not.toContain("tok-Zr81");
+      expect((err as Error).message).not.toContain("secret record");
+    }
+    expect(() => deploymentPersonFields(view(), [], { region: "eu" })).not.toThrow();
   });
 
   it("naming one in askPerson or clearSecrets is extension.config_readonly before the card", () => {
@@ -444,14 +501,27 @@ describe("extensions.platform-set-config through the Platform tool", () => {
     });
     expect(res.statusCode, res.body).toBe(201);
     const agentId = (res.json() as { agent: { id: string } }).agent.id;
+    // independent of the tests before: no stored deployment secrets, so a stored token can only
+    // come from this call
+    await run("extensions.platform-clear-config", { name: NAME }, ctxOf(env.rootId));
+    expect(
+      await env.db
+        .selectFrom("secrets")
+        .select("key")
+        .where("org_id", "=", DEPLOYMENT_SECRETS_ORG)
+        .where("key", "=", secretKey(NAME, "token"))
+        .executeTakeFirst(),
+    ).toBeUndefined();
 
     // at each publish of the topic, a connection outside the write's transaction looks for the
     // stored secret: before the commit it would not see it
     const bus = env.k.app.get<{ publish(topic: string, msg: unknown): Promise<void> }>(KERNEL_BUS);
     const original = bus.publish.bind(bus);
     const seenAtPublish: boolean[] = [];
+    // armed at the decision, so a late publish of the clear above is not counted
+    let armed = false;
     bus.publish = async (topic, msg) => {
-      if (topic === PLUGIN_DEPLOYMENT_CONFIG_TOPIC) {
+      if (topic === PLUGIN_DEPLOYMENT_CONFIG_TOPIC && armed) {
         const row = await env.db
           .selectFrom("secrets")
           .select("key")
@@ -475,6 +545,7 @@ describe("extensions.platform-set-config through the Platform tool", () => {
         20_000,
         "approval_requested",
       );
+      armed = true;
       const ok = await env.root({
         method: "POST",
         url: `/api/v1/orgs/${env.orgId}/approvals/${asked.payload.approvalId}/decision`,

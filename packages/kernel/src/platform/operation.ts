@@ -45,6 +45,12 @@ export interface OperationContext {
     paths: readonly string[];
     apply<T>(fn: (values: Readonly<Record<string, string>>) => Promise<T>): Promise<T>;
   };
+  /**
+   * At confirmation time, for an operation with `personFields`: the paths the planned card asks
+   * the person for (`askPerson` plus the required secrets without a stored value), so `summary`
+   * names every field the card shows. Absent elsewhere.
+   */
+  personAsk?: readonly string[];
 }
 
 /**
@@ -145,12 +151,6 @@ export interface PlatformOperation<I = unknown> {
    */
   precheck?(input: I, ctx: OperationContext): Promise<PrecheckResult>;
   /**
-   * The bilingual card summary of a write, rendered from the input and kernel reads (names of
-   * the targets, preview counts), never from model text; required unless `confirm` is `read`.
-   * May read PG; the tool falls back to the operation id when it throws. Method syntax so an
-   * operation of any input type is a `PlatformOperation` (the registry's element type).
-   */
-  /**
    * The secret fields of the write's target (platform web parity spec §4.1): read at confirmation
    * time, after availability, and planned against the input's `values`, `askPerson` and
    * `clearSecrets` (`planPersonFields`). Only for writes whose input carries
@@ -158,6 +158,12 @@ export interface PlatformOperation<I = unknown> {
    * make the call always ask the person, once, on the web. Absent: the write has no person fields.
    */
   personFields?(input: I, ctx: OperationContext): Promise<PersonFieldTarget>;
+  /**
+   * The bilingual card summary of a write, rendered from the input and kernel reads (names of
+   * the targets, preview counts), never from model text; required unless `confirm` is `read`.
+   * May read PG; the tool falls back to the operation id when it throws. Method syntax so an
+   * operation of any input type is a `PlatformOperation` (the registry's element type).
+   */
   summary?(
     input: I,
     ctx: OperationContext,

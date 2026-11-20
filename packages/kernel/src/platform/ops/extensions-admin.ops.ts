@@ -22,7 +22,12 @@ import { unavailableReason } from "../../extensions/unavailable.js";
 import { KernelConfigService } from "../../infra/config/kernel-config.service.js";
 import { KernelDb } from "../../infra/database/kernel-db.js";
 import { defineOperation, type PrecheckResult } from "../operation.js";
-import { type PersonFieldTarget, personFieldParams, secretFieldsOf } from "../person-fields.js";
+import {
+  type PersonFieldTarget,
+  pathsTouched,
+  personFieldParams,
+  secretFieldsOf,
+} from "../person-fields.js";
 import { PlatformOperations } from "../registry.js";
 import { precheckBy, viaAgent } from "./errors.js";
 import { assertExtensionNotOtherOrgs, OTHER_ORG, otherOrgExtensions } from "./other-orgs.js";
@@ -42,19 +47,28 @@ const ConfigValues = AdminExtensionConfigBody.shape.values;
 /**
  * The person fields of an extension's deployment config (platform web parity spec §4.1): the
  * secret fields of its form schema, set or not. A secret field the schema walk cannot address (no
- * form schema, a record) or one set in the startup config (read-only here) is never asked, and a
- * value for it in `values` is refused too. Naming a read-only secret in `askPerson` /
- * `clearSecrets` is refused before the card with the route's `extension.config_readonly`, so the
- * person never types a value the write would refuse.
+ * form schema, a record) is never asked, and a value for it in `values` is refused as web only. A
+ * secret set in the startup config (read-only here) is never asked either: naming it in
+ * `askPerson` / `clearSecrets`, or giving it in `values`, is refused before the card with the
+ * route's `extension.config_readonly`, so the person never types a value the write would refuse.
  */
 export function deploymentPersonFields(
   v: DeploymentConfigView,
   named: readonly string[] = [],
+  values?: Readonly<Record<string, unknown>>,
 ): PersonFieldTarget {
   const secrets = v.fields.filter((f) => f.secret);
   const readonly = secrets.filter((f) => f.readonly);
   const ro = new Set(readonly.map((f) => f.path));
-  const hit = named.filter((p) => ro.has(p));
+  const hit = [
+    ...new Set([
+      ...named.filter((p) => ro.has(p)),
+      ...pathsTouched(
+        values,
+        readonly.map((f) => f.path),
+      ),
+    ]),
+  ];
   if (hit.length > 0) {
     throw new ApiError(
       "extension.config_readonly",
@@ -499,15 +513,16 @@ export class ExtensionsAdminOperations implements OnModuleInit {
         ],
         personFields: async (i, ctx) => {
           await assertExtensionNotOtherOrgs(this.kdb.db, i.name, ctx.orgId);
-          return deploymentPersonFields(await this.deploymentConfigs.view(i.name), [
-            ...i.askPerson,
-            ...i.clearSecrets,
-          ]);
+          return deploymentPersonFields(
+            await this.deploymentConfigs.view(i.name),
+            [...i.askPerson, ...i.clearSecrets],
+            i.values,
+          );
         },
-        summary: async (i) => {
+        summary: async (i, ctx) => {
           const v = await this.deploymentConfigs.view(i.name);
           const n = localized(v.displayName, v.plugin);
-          const c = configChanges(i.values, i.askPerson, i.clearSecrets);
+          const c = configChanges(i, ctx);
           return {
             zh: `保存扩展「${n.zh}」的平台部署配置：${c.zh}`,
             en: `Save the platform deployment config of extension "${n.en}": ${c.en}`,

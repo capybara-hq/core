@@ -101,8 +101,8 @@ const hasConfigFields = (schema: OrgExtensionView["orgConfigSchema"]): boolean =
  * Why switching the plugin on needs input first, as the `plugin.needs_input` message, or null: its
  * extension's org config misses required values (an agent fills it in with
  * `extensions.set-org-config`), or connector templates without their connector, or anything else
- * the item's `needs_config` stands for (a person enters it on the Plugins page). Unlike the web's install wizard, an org config form whose required values are all
- * stored does not stop the switch.
+ * the item's `needs_config` stands for (a person enters it on the Plugins page). Unlike the web's
+ * install wizard, an org config form whose required values are all stored does not stop the switch.
  */
 function needsInput(item: OrgCatalogItem, extensions: readonly OrgExtensionView[]): string | null {
   const own = extensions.find((e) => e.catalogItem?.itemId === item.id);

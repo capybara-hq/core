@@ -68,12 +68,26 @@ function withUnaddressed(
   };
 }
 
-/** The person fields of the org's copy (overridable fields): the copy's own secrets, set or not. */
-function copyPersonFields(v: OrgOverrideView): Pick<PersonFieldTarget, "fields" | "recordOnly"> {
+/**
+ * The person fields of the org's copy: the copy's own secrets (under overridable top-level fields),
+ * set or not. A secret under a read-only field is not the org's to set: never asked, and a value
+ * for it in `values` is refused as well.
+ */
+export function copyPersonFields(
+  v: OrgOverrideView,
+): Pick<PersonFieldTarget, "fields" | "recordOnly"> {
   const secrets = v.fields.filter((f) => f.secret);
   const stored = new Set(secrets.filter((f) => f.org?.set === true).map((f) => f.path));
+  // levels are per top-level property (org-levels.ts)
+  const top = (path: string) => path.split(/[.[]/)[0] as string;
+  const overridable = new Set(
+    v.fields.filter((f) => f.level === "override").map((f) => top(f.path)),
+  );
+  const found = secretFieldsOf(v.schema, stored);
+  const fields = found.fields.filter((f) => overridable.has(top(f.path)));
+  const notOurs = found.fields.filter((f) => !overridable.has(top(f.path))).map((f) => f.path);
   return withUnaddressed(
-    secretFieldsOf(v.schema, stored),
+    { fields, recordOnly: [...found.recordOnly, ...notOurs] },
     secrets.map((f) => f.path),
   );
 }
@@ -378,9 +392,9 @@ export class ExtensionsOperations implements OnModuleInit {
             ),
           };
         },
-        summary: async (i) => {
+        summary: async (i, ctx) => {
           const n = await this.nameOf(i.extension);
-          const c = configChanges(i.values, i.askPerson, i.clearSecrets);
+          const c = configChanges(i, ctx);
           return {
             zh: `保存扩展「${n.zh}」的组织配置：${c.zh}`,
             en: `Save the org config of extension "${n.en}": ${c.en}`,
@@ -456,9 +470,9 @@ export class ExtensionsOperations implements OnModuleInit {
             ...copyPersonFields(await this.overrides.view(ctx.orgId, i.extension)),
           };
         },
-        summary: async (i) => {
+        summary: async (i, ctx) => {
           const n = await this.nameOf(i.extension);
-          const c = configChanges(i.values, i.askPerson, i.clearSecrets);
+          const c = configChanges(i, ctx);
           return {
             zh: `保存本组织对扩展「${n.zh}」平台配置的副本：${c.zh}`,
             en: `Save the org's copy of the platform config of extension "${n.en}": ${c.en}`,

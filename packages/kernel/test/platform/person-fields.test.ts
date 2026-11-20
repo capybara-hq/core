@@ -273,6 +273,27 @@ describe("planPersonFields", () => {
     expect(plan({ extra: { name: "n", other: "sk-123456789" } })).toMatchObject({ ok: false });
   });
 
+  it("refuses undeclared keys of a secret object that takes them, keeping its declared fields", () => {
+    const s = configJsonSchema(
+      z.object({
+        so: secret(z.object({ a: z.string() }).catchall(z.string())),
+        sp: secret(z.object({ b: z.string() })),
+      }),
+    );
+    const { fields, recordOnly } = secretFieldsOf(s, new Set());
+    expect(fields.map((f) => f.path)).toEqual(["so.a", "sp.b"]);
+    expect(recordOnly).toEqual(["so"]);
+    const t: PersonFieldTarget = { target: { zh: "测试", en: "Test" }, fields, recordOnly };
+    const plan = (values: Record<string, unknown>) =>
+      planPersonFields(t, { values, askPerson: [], clearSecrets: [] });
+    const other = plan({ so: { other: "sk-123456789" } });
+    expect(other).toMatchObject({ ok: false });
+    expect(JSON.stringify(other)).toContain("`so` is a secret record");
+    expect(JSON.stringify(other)).not.toContain("sk-123456789");
+    // the declared field is still asked on the card
+    expect(plan({})).toMatchObject({ ok: true, ask: [{ path: "so.a" }, { path: "sp.b" }] });
+  });
+
   it("refuses an ask for a field that is not a secret of the target", () => {
     expect(planPersonFields(target(), { askPerson: ["baseUrl"], clearSecrets: [] })).toEqual({
       ok: false,

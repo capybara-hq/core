@@ -197,7 +197,8 @@ function fieldOf(node: Obj, shape: Obj, path: string, required: boolean, isSet: 
  * declaration order. `required` holds when every object along the path lists the next name in
  * its `required`; `isSet` when `stored` holds the path. Secrets the card cannot address go to
  * `recordOnly`: the paths `x-ui.secrets` names, secret nodes that are not strings (records), and
- * secrets inside array items (as `list[].key`). It fails closed on shapes it cannot see through:
+ * secrets inside array items (as `list[].key`), and a secret object that takes undeclared keys
+ * (`additionalProperties`, `patternProperties`) for those keys. It fails closed on shapes it cannot see through:
  * a `$ref`, an `allOf` or a union of two or more non-null branches whose subtree holds a secret
  * puts the node's own path into `recordOnly`.
  */
@@ -239,6 +240,16 @@ export function secretFieldsOf(
       }
     }
     if (isObj(shape.properties)) {
+      // A secret object that also takes undeclared keys (`additionalProperties`,
+      // `patternProperties`): those keys are secrets the card cannot name, so the object is web
+      // only for them and a value under it is refused (its declared fields stay person fields).
+      if (
+        secret &&
+        ((shape.additionalProperties !== undefined && shape.additionalProperties !== false) ||
+          shape.patternProperties !== undefined)
+      ) {
+        recordOnly.add(path);
+      }
       const req = Array.isArray(shape.required) ? shape.required : [];
       for (const [name, child] of Object.entries(shape.properties)) {
         if (!isObj(child)) continue;
@@ -292,6 +303,18 @@ function touches(pairPath: string, secretPath: string): boolean {
     pairPath.startsWith(`${secretPath}.`) ||
     secretPath.startsWith(`${pairPath}.`)
   );
+}
+
+/**
+ * The paths of `paths` that `values` touches (a pair at, below or above one, null included),
+ * flattened like the plan's check: e.g. the read-only fields a call tries to write.
+ */
+export function pathsTouched(
+  values: Readonly<Record<string, unknown>> | undefined,
+  paths: readonly string[],
+): string[] {
+  const pairs = flatten((values ?? {}) as Obj);
+  return paths.filter((p) => pairs.some(([path]) => touches(path, p)));
 }
 
 /** The path the values check guards for a recordOnly path: an array-item secret's array root. */

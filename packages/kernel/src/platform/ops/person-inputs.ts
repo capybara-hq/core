@@ -72,12 +72,19 @@ function pairsOf(values: Readonly<Record<string, unknown>>, prefix = ""): string
 /**
  * The card text of a config write: the non-secret values it sets, the secrets the person enters
  * and the secrets it clears (paths only), e.g. `baseUrl="https://…"; the person enters apiKey`.
+ * The entered secrets are the plan's (`ctx.personAsk`: required secrets the call did not name
+ * included), else the call's `askPerson`.
  */
 export function configChanges(
-  values: Readonly<Record<string, unknown>>,
-  ask: readonly string[],
-  clear: readonly string[],
+  i: {
+    values: Readonly<Record<string, unknown>>;
+    askPerson: readonly string[];
+    clearSecrets: readonly string[];
+  },
+  ctx: Pick<OperationContext, "personAsk">,
 ): { zh: string; en: string } {
+  const { values, clearSecrets: clear } = i;
+  const ask = ctx.personAsk ?? i.askPerson;
   const set = pairsOf(values);
   const zh: string[] = [];
   const en: string[] = [];
