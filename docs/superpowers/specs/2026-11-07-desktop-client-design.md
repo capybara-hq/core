@@ -1,7 +1,9 @@
 # Desktop client
 
-- Date: 2026-11-19, written against `main` at `b9c01fe0` (first draft 2026-11-07).
-- Status: draft for review.
+- Date: 2026-11-19, written against `main` at `b9c01fe0` (first draft 2026-11-07). Amended
+  2026-11-20 for the desktop onboarding design (§6.1, §6.3, §6.5 to §6.10, §7.4, and every place
+  that said "native dialog"), against `main` at `7d371dbb`.
+- Status: D1 and D2 implemented; the 2026-11-20 amendment approved by the maintainer.
 - Pairs with: the mobile layout design (`2026-11-19-mobile-layout-design.md`, branch
   `docs/mobile-layout`), whose §9 **"Shell environment"** owns the `window.capybaraShell` contract:
   its shape and types (in `@capybara-hq/plugin-sdk`), versioning (`version`, capabilities by
@@ -12,8 +14,13 @@
   devices), the device service control design (`2026-11-14-device-service-control-design.md`), the
   permission profiles and auto-mode designs (owner ceiling, Full access, restricted work) and the
   published program `@capybara-hq/device` (`packages/device`).
-- Markers: **(decided)** is the maintainer's answer (discussions of 2026-10-19, 2026-11-07 and
-  2026-11-19); **(designer's call)** is decided here and may be overturned in review.
+- Markers: **(decided)** is the maintainer's answer (discussions of 2026-10-19, 2026-11-07,
+  2026-11-19 and 2026-11-20); **(designer's call)** is decided here and may be overturned in review.
+- Visual source of truth for the app's own pages (2026-11-20): the approved mockups, kept in
+  `capybara-hq/clients` under `apps/desktop/design/onboarding/` (boards `Main`, `Found`, `Waiting`,
+  `FoundLight`, `FoundWindows`, `Errors`, `ErrorsSignIn`, `SignedOut`, `Landed`, `SignOut`,
+  `MainErrors`, and `canvas.json` with the rules and theme notes). Copy in this document quotes
+  them; where they differ, the mockups win for layout and copy, this document for behaviour.
 - Written in English (AGENTS.md "Language"); UI copy is quoted in Chinese where it matters.
 
 ## 1. Why
@@ -28,8 +35,8 @@ A desktop app gives people two things the terminal does not:
 
 1. The deployment's web app in its own window, with OS integration: notifications, a tray, deep
    links, a dock icon.
-2. Connecting this machine from inside that web app in one click (「连接本机」), with an OS
-   confirmation instead of a command line.
+2. Connecting this machine from inside that web app in one click (「连接本机」), with a
+   confirmation the page cannot forge instead of a command line.
 
 This is the opposite of Claude Code, where the agent runs locally and remote access is the add-on.
 It is closer to the Claude desktop app, which loads its web UI from the cloud. The difference is
@@ -43,17 +50,23 @@ keeps working from the browser or an IM channel while the machine is online.
   `capybara-hq/clients` (§5).
 - **Shell**: the desktop app's window that loads a deployment's web app. "Shell" is also the
   general word of the Shell environment contract (desktop now, mobile later).
-- **Address page**: the only page bundled in the app. It asks for a deployment address.
-- **Deployment profile**: one deployment the app knows: its origin, the name discovery returned and
-  a separate browser session.
+- **Small window**: the app's fixed 480×600 window for everything before sign-in and after
+  sign-out (§6.1). It shows only local pages.
+- **Main window**: a profile's window showing the deployment's web app (§6.7).
+- **Local page**: a page bundled in the app and served from its `app://` scheme: the small
+  window's pages, the main window's local pages (§6.8) and the shell dialogs (§7.4). Hand-written
+  HTML and CSS with the design tokens' values; no `@capybara-hq/design` (§6.1).
+- **Deployment profile**: one deployment the app knows: its origin, the name discovery returned, a
+  separate browser session, and the account it is signed in as (§6.3).
 - **Capability**: a `name@major` object of functions on `window.capybaraShell.capabilities`
   (mobile layout §9.2); the desktop's are defined in §8. "Bridge" below means these calls.
 - **Runner**: the `capybara-device start` process serving this machine. The desktop always runs
   it as the login service (§5.2); a terminal or a service installed with the CLI is used as is.
 - **Keep-awake**: the device's setting that stops the computer from idle-sleeping (§9.7).
-- **Native dialog**: an OS message box or menu shown by the app's main process
-  (`dialog.showMessageBox`, the tray menu). Native dialogs are not "UI the desktop draws": they
-  carry no layout or styling of ours, and no web content can answer them.
+- **Shell dialog**: a confirmation drawn by the app in a separate shell-owned window loading a
+  local page (§7.4). The remote page can neither draw nor click it. It replaces every OS message
+  box (`dialog.showMessageBox`) the app used before 2026-11-20 **(decided)**; menus (the app menu,
+  the tray menu) stay native.
 
 ## 3. Goals, non-goals, anti-goals
 
@@ -61,17 +74,20 @@ Goals:
 
 1. Everything the web app does, by loading the deployment's own web app. No second copy of the
    UI, and no version skew between UI and kernel **(decided)**.
-2. **The desktop draws no UI of its own** **(decided)**. The only local page is the address page,
-   plain HTML with no `@capybara-hq/design` dependency. Setup, onboarding, connector OAuth and
-   every setting are the deployment's own web pages in the window.
-   Sign-in happens in the system browser, never in the window (§6.5) **(decided)**.
+2. **The desktop owns its pre-sign-in pages and its dialogs, nothing else** **(decided
+   2026-11-20, superseding "the desktop draws no UI of its own")**. Connecting to a platform,
+   waiting for the browser sign-in, the errors on the way, the signed-out page, the main window's
+   "session expired" and "platform unreachable" pages and every confirmation are local pages
+   (§6.1, §6.8, §7.4); the deployment's web sign-in page never appears in the app. Setup,
+   invitations, connector OAuth and every setting stay the deployment's own web pages in the main
+   window. Sign-in happens in the system browser, never in a window (§6.5) **(decided)**.
 3. The web adapts when it detects the desktop shell through the Shell environment contract (title
    bar insets for the macOS traffic lights, drag regions), by capability detection, never by
    user-agent sniffing **(decided)**.
 4. 「连接本机」: when the shell offers the `device@1` capability, the web's 新建设备 flow offers to
-   connect this machine, and the shell connects it after a native confirmation naming the
+   connect this machine, and the shell connects it after a shell dialog naming the
    platform **(decided)**.
-5. Local policy changes from the web can only tighten; widening needs a native confirmation or an
+5. Local policy changes from the web can only tighten; widening needs a shell dialog or an
    edit on the machine **(decided)**.
 6. The device keeps serving when the window closes or the app quits: it runs as a login service,
    and the app is only its UI **(decided)**.
@@ -84,9 +100,10 @@ Non-goals:
   considered and rejected as too heavy **(decided)**.
 - Bundling the web app, or any React Native or native UI framework **(decided)**: the UI exists
   only as the deployment's web app (self-hosted kernels differ in version; plugin UI is web only).
-- Local settings windows, a start page or an activity window rendered by the app **(decided)**.
-  What runs on this machine, pausing and disconnecting are shown by the deployment's device page
-  through the bridge (§8, §9.6); the tray menu offers the same few actions natively.
+- Local settings windows, a platform list page or an activity window rendered by the app
+  **(decided)**. What runs on this machine, pausing and disconnecting are shown by the deployment's
+  device page through the bridge (§8, §9.6); the tray menu offers the same few actions natively;
+  switching platforms lives in the 「平台」 menu (§6.9).
 - A local per-command confirmation ("ask me when I am at the machine"). Approvals live in the
   deployment (the `request-approval` / `approve-for-me` permission profiles); a second, local
   approval path would split the record **(designer's call)**.
@@ -103,7 +120,9 @@ Anti-goals (a failure even if it works):
 - The shell environment available outside the top frame of the profile's exact origin (mobile
   layout §9.4).
 - A remote page that connects the machine, resumes a paused runner or widens the local policy
-  without a native confirmation.
+  without a shell dialog (§7.4).
+- A remote page that can draw something the person takes for a shell dialog and that the shell
+  then acts on, or that can click a shell dialog.
 - Any inbound port on the machine. The runner's control socket (§4.2) is a local Unix socket, not
   a network listener.
 - Two runners serving one deployment on one machine.
@@ -150,12 +169,12 @@ CLI's live `status`) reaches a runner, whoever started it.
 ```
 ┌──────────────────── Desktop app (Electron, apps/desktop) ────────────────────┐
 │ main process                                                                 │
-│   profiles · windows · tray · deep links · updates · native dialogs         │
+│   profiles · windows · tray · deep links · updates · shell dialogs          │
 │   bridge (IPC, origin-checked) · runs device CLI commands                    │
 │        │                                   │                                 │
 │        │ control.sock · service install    │ BrowserWindow per profile        │
 │        ▼                                   ▼                                 │
-│                                           renderer: address page (app://)    │
+│                                           renderer: local pages (app://)     │
 │                                           renderer: deployment web app       │
 └────────┼──────────────────────────────────────────┼───────────────────────────┘
          ▼                                          │
@@ -215,21 +234,54 @@ Packaging facts that follow from the current program:
 
 ## 6. Connecting to a deployment
 
-### 6.1 Address page
+### 6.1 The small window and its pages (decided 2026-11-20)
 
-- Plain HTML, CSS and a small script served from the app's `app://` scheme, with a strict CSP and
-  no network access except the discovery call **(decided: no `@capybara-hq/design`)**. It follows
-  the OS light or dark appearance with two hand-written color sets; zh and en strings (§12).
-- One field: the deployment address as typed into a browser. Normalization (in `packages/shell`):
-  add `https://` when no scheme is given, keep the port, keep a path prefix (as `normalizeUrl` in
-  the device does).
-- **`http` only for loopback** (`localhost`, `127.0.0.1`, `::1`); every other address must be
-  `https`, and certificate errors cannot be bypassed (the connector rule: https only, loopback
-  exempt).
-- The page calls discovery (§6.2), shows the deployment's name when it has one, saves the profile
-  and loads the deployment in the shell. From then on every screen is the deployment's; a profile
-  without a session lands on the deployment's sign-in page, which offers only the browser sign-in
-  (§6.5).
+Before sign-in and after sign-out the app shows one **small window**: 480×600, not resizable, no
+fullscreen (the zoom button disabled), its content a local page. It replaces the 2026-11-19
+address page (which was plain HTML with no design) and the deployment's sign-in page in the
+window, which the app never shows any more.
+
+- **Local pages** are hand-written HTML, CSS and small scripts served from the app's `app://`
+  scheme in the app's own local partition, with a strict CSP and no network access of their own
+  (discovery and every other call run in the main process). They do not depend on
+  `@capybara-hq/design` (the clients rule): the CSS carries the E 终端 tokens' values (dark `#0A0A0A`
+  ground, light `#FAF9F6`, accent `#FF6A13` dark / `#CC4609` light; the product's mono font, Sarasa
+  Mono SC, with system fallbacks) as custom properties, overridden by the platform's own colors
+  when the web reported them (§6.10). zh and en strings come from the `packages/shell` catalog
+  (§12).
+- **No Capybara branding beyond a footer** **(decided)**: the pages show the deployment's icon
+  and name from `/api/v1/meta` (a default icon and the host when unset) and, at the bottom, a
+  small 「Capybara 桌面端 <version>」 (the host on the pages that already named the platform). No
+  decorative side panel.
+- **Controls**: the bottom-right corner holds the language menu and the light / dark toggle, the
+  same pair as the web's auth-page PreferenceBar (§6.10). Nothing is placed in the top corners: the
+  macOS traffic lights sit top left and Windows caption buttons top right; local pages keep clear
+  of the `controls` rectangle the shell reports for the window (§7.3), and the whole top band
+  drags the window.
+
+The pages, in the order a first launch meets them (boards `Main`, `Found`, `Waiting`):
+
+1. **连接平台**: 「连接到你的平台」, one field 平台地址 with `https://` shown before the input, and
+   「继续 ↵」. Normalization (in `packages/shell`): add `https://` when no scheme is given, keep the
+   port, keep a path prefix (as `normalizeUrl` in the device does). **`http` only for loopback**
+   (`localhost`, `127.0.0.1`, `::1`); every other address must be `https`, and certificate errors
+   cannot be bypassed (the connector rule: https only, loopback exempt). 继续 calls discovery
+   (§6.2) from the main process.
+2. **找到平台**: the deployment's icon (72 px, rounded) and 「登录到 <平台名称>」, under it the host
+   with a green dot and 「换一个地址」 (back to page 1, the field keeping the address), the primary
+   「在浏览器中登录」 and one line saying the browser's passwords, SSO and password managers work
+   as usual and the app returns by itself. The profile is not saved yet (§6.3).
+3. **等待浏览器**: 「在浏览器中完成登录」 with 「在浏览器里确认「在 <机器名> 上登录」后，会自动回到这里。」,
+   a three-step list (已打开浏览器 ✓ · 等待你在浏览器里确认 with the blinking block cursor · 回到这里，
+   进入新会话), 「重新打开浏览器」 (opens the same authorize URL again; the attempt is unchanged),
+   「复制登录链接」 (the same URL to the clipboard, for another browser) and 「取消」 (ends the attempt,
+   back to page 2).
+4. On the callback (§6.5) the small window closes and the profile's **main window** opens
+   straight on the deployment's `/`, the new conversation (§6.7).
+
+Errors before sign-in stay inline in the same small window, which keeps its size (§6.6). The
+signed-out page (board `SignedOut`) is §6.9.
+
 
 ### 6.2 Discovery endpoint (kernel change)
 
@@ -245,7 +297,8 @@ GET /api/v1/meta   (@Public, cache-control: no-store)
     "device": { "min": 3, "max": 3 }  // DEVICE_PROTOCOL_VERSION range of the gateway
   },
   "icon": "/api/v1/platform/icon/app?v=<sha256>",  // null while the platform icon is the default
-  "features": { "localDevices": true, "appSignIn": true }
+  "features": { "localDevices": true, "appSignIn": true },
+  "appRedirectUris": ["capybara://auth/callback"]   // 2026-11-20; [] while appSignIn is false
 }
 ```
 
@@ -262,22 +315,36 @@ GET /api/v1/meta   (@Public, cache-control: no-store)
   kernel) counts as "not a Capybara deployment or too old".
 - The route gets a Platform-tool exclusion (category `transport`: pre-sign-in discovery for
   clients, nothing for an agent to do).
+- **`appRedirectUris`** (added 2026-11-20, **designer's call**): `auth.appRedirectUris` as
+  configured, or `[]` while `features.appSignIn` is false (no `http.publicUrl`). The redirect
+  URIs are not secret, and an app that finds its own URI missing can say 「这个平台还没有允许桌面端
+  登录」 in its own window (§6.6) instead of leaving the person on an error in the browser that
+  never returns. An older kernel without the field: the app does not pre-check.
 
 ### 6.3 Profiles
 
 - Several profiles, each with its own Electron session partition (cookies, storage, cache).
   Switching profiles switches windows, not accounts inside one session.
-- The profile switcher is in the app menu and the tray. The last used profile opens at start;
-  「添加平台」 opens the address page.
+- **A profile is saved when its first sign-in completes** **(designer's call, 2026-11-20)**. Until
+  then the small window holds a provisional profile (its id and partition exist so the token
+  exchange has a cookie jar); an abandoned attempt saves nothing and its partition is cleared.
+- A profile records, besides its origin and name: `signedIn` (set on a completed sign-in, cleared
+  on sign-out, §6.9), the account it is signed in as (display name and login or email, from the
+  token response; never a token), the main window's bounds (§6.7) and the last colors the web
+  reported (§6.10).
+- At start: the last used profile opens: its main window when `signedIn`, else the small window's
+  signed-out page (§6.9). No profile: the small window's page 1.
+- The profile switcher is the app menu's 「平台」 menu (§6.9) and the tray; there is no list page
+  **(decided)**. 「添加平台…」 opens the small window's page 1.
 - Removing a profile clears its partition and, if this machine is connected to that deployment,
-  asks natively whether to disconnect and log the device out too.
+  asks in a shell dialog (§7.4) whether to disconnect and log the device out too.
 
 ### 6.4 Managed configuration and deep links
 
 - A managed configuration (macOS managed preferences; later the Windows registry or a JSON file
   next to the app) may list profiles, lock the app to them (`lockDeployments: true`), turn
   automatic updates off or point them at an internal feed, and turn 「连接本机」 off.
-- Deep links: `capybara://connect?url=<address>` opens the address page prefilled and **never
+- Deep links: `capybara://connect?url=<address>` opens the small window's page 1 prefilled and **never
   connects silently**: the person sees the address and confirms (a crafted link could otherwise
   send someone to a look-alike deployment). `capybara://open?url=<deployment page>` focuses the
   matching profile and navigates there when the URL is on its origin.
@@ -291,9 +358,10 @@ security keys already are, and the app only receives a one-time code.
 
 **Flow**
 
-1. The person clicks 「在浏览器中登录」 on the deployment's sign-in page in the window
-   (`signIn@1.start()`, §8). The main process creates `state` and a `code_verifier` (32 random
-   bytes each), keeps them with the profile for 10 minutes, and opens the system browser at
+1. The person clicks 「在浏览器中登录」 in the small window (§6.1 page 2, or the signed-out page,
+   or the main window's expired page, §6.8). The main process creates `state` and a
+   `code_verifier` (32 random bytes each), keeps them with the profile for 10 minutes, and opens
+   the system browser at
    `<origin>/apps/authorize?client=desktop&redirect_uri=capybara://auth/callback&code_challenge=<S256>&code_challenge_method=S256&state=<state>&name=<machine name>`.
 2. The web page `/apps/authorize` (an auth route like `/devices/link`) signs the person in if
    needed (password or SSO, unchanged), then shows one confirmation: 「在 <机器名> 上的 Capybara
@@ -307,8 +375,9 @@ security keys already are, and the app only receives a one-time code.
    (mix-up defence, RFC 9207), and drops the pending entry (one use).
 4. The main process calls `POST /api/v1/app-auth/token` with `{ code, codeVerifier, redirectUri }`
    through the profile's own session (Electron `net.fetch` of that partition), so the kernel's
-   `Set-Cookie` lands in the partition's cookie jar; the body carries only the account. The window
-   reloads, signed in. No token passes through a renderer or the app's own storage.
+   `Set-Cookie` lands in the partition's cookie jar; the body carries only the account. The small
+   window closes and the main window opens on `/` (from the expired page: back on the page the
+   person was on, §6.8). No token passes through a renderer or the app's own storage.
 
 **Redirect: a custom scheme, not loopback** **(designer's call)**. A loopback redirect needs a
 listening port on the machine, which §3 rules out, and a firewall prompt on some systems. The
@@ -321,7 +390,7 @@ process. The callback page in the browser says 「已返回 Capybara，可以关
 | Route | Access | Does |
 |---|---|---|
 | `POST /api/v1/app-auth/authorize` | Signed-in person, human only (`HUMAN_ONLY`), CSRF header | Body `{ client, redirectUri, codeChallenge, codeChallengeMethod: "S256", state, name, appVersion }` (`appVersion` feeds the session's user agent **(decided)**; `deny: true` for a cancel). Refuses a `redirectUri` not in `auth.appRedirectUris` and any method but S256. Issues `code` (`cap_ac_` + 32 random bytes), stores its sha256 in Redis for 60 s with the account, the browser session id, `client`, `redirectUri`, `codeChallenge` and `name`; answers `{ redirect }` (the URI with `code`, `state`, `iss`). Audit `auth.app_authorized` (client, name) |
-| `POST /api/v1/app-auth/token` | `@Public`, rate-limited per IP like `/auth/login` | Body `{ code, codeVerifier, redirectUri }`. `GETDEL` of the code (one use; a second try is `app_auth.code_invalid`), checks expiry, `redirectUri` and `S256(codeVerifier)`; refuses a disabled account; creates a session with `SessionService.create` and sets `cap_at` / `cap_rt` like `/auth/login`; answers `{ account }`. Audit `auth.app_signed_in` (client, name, session id) |
+| `POST /api/v1/app-auth/token` | `@Public`, rate-limited per IP like `/auth/login` | Body `{ code, codeVerifier, redirectUri }`. `GETDEL` of the code (one use; a second try is `app_auth.code_invalid`), checks expiry, `redirectUri` and `S256(codeVerifier)`; refuses a disabled account with `auth.account_disabled` (2026-11-20; it was `app_auth.code_invalid`, so the app could not tell the person why, §6.6); creates a session with `SessionService.create` and sets `cap_at` / `cap_rt` like `/auth/login`; answers `{ account }`. Audit `auth.app_signed_in` (client, name, session id) |
 
 - **Binding**: the code is bound to its PKCE challenge, to the redirect URI, to this deployment
   (the exchange works only on the kernel that issued it; `iss` lets the app check where it came
@@ -336,20 +405,128 @@ process. The callback page in the browser says 「已返回 Capybara，可以关
   `Capybara Desktop/<version> (<machine name>)` so it is recognisable wherever sessions are shown.
   Revoking it, a password change (which revokes sessions) or a disabled account end it as any
   session.
-- **Sign-out and expiry**: the web's sign-out calls `/api/v1/auth/logout` as in a browser; the
-  window lands on the sign-in page, which offers the browser flow again. When the refresh fails
-  (expired or revoked), the same happens: the person re-runs the browser flow. The shell removes
+- **Sign-out and expiry** (2026-11-20): the web's sign-out calls `/api/v1/auth/logout` as in a
+  browser and the shell completes it (§6.9); an expired or revoked session shows the main window's
+  local 「登录已过期」 page (§6.8). Neither shows the deployment's sign-in page. The shell removes
   the profile's cookies when the profile is removed.
 - **Enforcement in the window**: the shell blocks requests from the profile's window to
   `POST /api/v1/auth/login` and `GET /api/v1/auth/sso/*/start` (a `webRequest` filter on the
   partition), so even a web version that shows the form cannot sign in inside the window. The app
-  refuses a deployment whose `/api/v1/meta` lacks `features.appSignIn` (「该平台版本过旧」).
+  refuses a deployment whose `/api/v1/meta` lacks `features.appSignIn` (「这个平台的版本太旧」, §6.6).
+- **`signIn@1` stays offered** to the web (§8): a web page may still start the flow (an older
+  web's sign-in page if the shell ever showed one). The app's own pages call the same main-process
+  flow directly.
 - **Platform-tool exclusions**: both routes. `authorize`: interactive consent by the person in
   the browser; `token`: transport (an app exchanges a one-time code, nothing for an agent to do).
 - **Reused for the device (D2)**: the window's session is what makes 「连接本机」 a single
   confirmation: the device's `/devices/link` page opens in the profile's partition, already signed
   in (§9.2). Confirming a device code is a deployment page's consent, not a sign-in, so it stays
   in the window.
+
+### 6.6 Errors before sign-in (decided 2026-11-20; detection designer's calls)
+
+Every error before sign-in is shown inline in the small window, which keeps its size; nothing
+opens a dialog. Copy from the boards `Errors` and `ErrorsSignIn`:
+
+**Connect stage** (page 1: the field turns red, the message sits under it, the button's label
+changes):
+
+| Case | Detected by | Message | Button |
+|---|---|---|---|
+| Unreachable | Discovery fails to connect (DNS, refused, timeout 10 s) | 连接不上 <host>。检查地址是否拼错，或者网络、VPN 是否已连接。 | 重试 |
+| Not a Capybara deployment | `/api/v1/meta` answers 404, non-JSON or a body that is not the meta shape | 这个地址不是 Capybara 平台。确认组织给你的地址是否正确。 | 继续 |
+| Too old | The meta shape lacks `features.appSignIn` | 这个平台的版本太旧，还不支持桌面端登录。请联系平台管理员升级。 | 继续 |
+| Not https | `http://` to anything but loopback (normalization refuses it before any request) | 只能连接 https 地址（本机 localhost 除外）。 | 继续 |
+| Invalid certificate | The TLS handshake fails a certificate check (`net::ERR_CERT_*`) | 证书无效，无法安全连接到 <host>。请联系平台管理员。 | 重试 |
+
+**Sign-in stage** (page 2's layout with an alert box above the primary button, 「换一个地址」
+below it):
+
+| Case | Detected by | Message | Button |
+|---|---|---|---|
+| Timeout | No callback within the attempt's 10 minutes | 登录超时了（10 分钟内没有完成）。重新开始一次就好。 | 重新登录 |
+| Cancelled in the browser | Callback `error=access_denied` | 你在浏览器里取消了登录。 | 重新登录 |
+| App sign-in not allowed | Before opening the browser: `features.appSignIn` false, or the app's redirect URI missing from `appRedirectUris` (§6.2); after: the exchange answers `app_auth.unavailable` or `app_auth.redirect_uri_invalid` | 这个平台还没有允许桌面端登录。请联系平台管理员开启。 | 重试 |
+| Account unusable | The exchange answers `auth.account_disabled` | 这个账号无法登录 <平台名称>：可能已被停用，或不在任何组织里。换个账号登录，或联系平台管理员。 | 换个账号登录 |
+| Link invalid or used | The exchange answers `app_auth.code_invalid`, or a callback arrives for a `state` this app no longer holds while the small window waits for the same issuer | 这个登录链接已经失效或用过了。从这里重新开始登录。 | 重新登录 |
+
+Any other failure (the exchange times out, an unexpected status) uses the link-invalid copy. An
+account that signs in but belongs to no org lands in the main window on the web's own no-org page.
+
+### 6.7 The main window (decided 2026-11-20)
+
+- After sign-in the small window closes and the profile's main window opens on `/`. The main
+  window is freely resizable and remembers its size and position per profile (first 1280×800,
+  centered; a saved position that is off every display is centered again).
+- It keeps the existing drag regions (sidebar head, top bar, conversation title bar, in design
+  CSS) and the traffic-light clearance through the Shell environment's `controls` rectangle
+  (§7.3); later Windows builds report their caption buttons the same way.
+
+### 6.8 Errors after sign-in stay in the main window (decided 2026-11-20)
+
+The app never goes back to the small window for an error after sign-in. The two local pages
+below cover the main window's web contents (a local view on top; the web contents are hidden
+while it shows); the window keeps its size. Board `MainErrors`.
+
+- **Session expired.** The web sends a signed-out page to `/login` (a server redirect, a
+  `router.replace` from the session guard, or a full navigation). The shell watches the main
+  frame's navigations on the profile origin; a navigation to the deployment's `/login` that is
+  not the end of a sign-out (§6.9) is stopped where Electron allows it (`will-navigate`,
+  `will-redirect`) and in any case replaced by the local page: the platform icon, the host,
+  「登录已过期」, 「重新登录后，会回到刚才的页面。」, primary 「在浏览器中重新登录」 (§6.5; on success
+  the window loads the `returnTo` of the intercepted URL, a same-origin path, else the last page
+  the window showed, else `/`), and 「退出登录」 | 「切换平台」 (退出登录 is §6.9's sign-out without
+  its confirmation, since the session is already gone; 切换平台 opens the 「平台」 menu as a
+  popup). No web sidebar is shown.
+- **Platform unreachable.** A main-frame load that fails with a network error (not an abort), or a
+  main document answered with 502, 503 or 504, shows the local page 「平台暂时连不上」 with
+  「可能在升级或维护，也可能是网络、VPN 断了。恢复后自动回到刚才的页面。」, the host and how long it
+  has been unreachable, primary 「重试」 and 「退出登录」 | 「切换平台」. The shell probes
+  `/api/v1/meta` in the background (every 5 s for a minute, then every 30 s) and reloads the page
+  that failed when it answers.
+- **Short network blips are the web's own**: while the document stays loaded, the web's
+  reconnecting banner handles a dropped stream; the shell changes nothing.
+
+### 6.9 Sign-out and the 「平台」 menu (decided 2026-11-20)
+
+- **The web's account menu 「退出登录」 keeps working** and completes the sign-out: the web posts
+  `/api/v1/auth/logout` and navigates to `/login`. The shell sees the successful logout request on
+  the profile's partition (a `webRequest` completion for that route on the profile origin) and
+  treats the next navigation to `/login` as the end of a sign-out, not an expiry.
+- **The app menu gains 「平台」**: the profiles (the current one checked; switch with ⌘1…⌘9),
+  「添加平台…」, 「退出登录 <平台>…」 and 「移除这个平台…」. 退出登录 asks in a shell dialog (§7.4;
+  board `SignOut`): the platform icon, 「退出 <平台>？」, 「这台电脑作为设备会继续保持连接，进行中的
+  任务不受影响。要断开设备，请在设备页操作。」, 取消 / 退出登录; on yes the shell posts the logout
+  through the partition's fetch.
+- **After sign-out**, from either entry: the profile is marked signed out, its main windows close
+  and the small window shows 「已退出 <平台>」 (board `SignedOut`): the platform icon, the account
+  and 「这台电脑仍作为设备连接着」 when this machine is that deployment's device, primary
+  「在浏览器中重新登录」 (§6.5, back to the main window on `/`), and 「添加其他平台」 |
+  「移除这个平台」. The profile stays.
+- **Removing a platform** clears its partition (cookies, storage, cache) and its saved state; if
+  this machine is its device, a shell dialog asks whether to disconnect too (§9.3). With no profile
+  left the small window shows page 1.
+
+### 6.10 Theme and language: one setting, shared with the web (decided 2026-11-20)
+
+- **The source of truth is the web's own cookies in the profile's partition**: `cb-theme`
+  (`light` | `dark`, design's `THEME_COOKIE`) and `NEXT_LOCALE` (the web's language cookie).
+- **A local page's toggle writes those cookies** for the profile's origin (the same attributes the
+  web writes: path `/`, one year, `SameSite=Lax`), so the main window renders that way at once.
+  A language or theme chosen in a local page repaints every local page of the profile.
+- **A toggle in the web** writes the cookie as today and notifies the shell through
+  `chrome@1.setAppearance`, which now also carries the main color tokens (layout spec §9.2):
+  `{ scheme, background, tokens?: { bg, panel, ink, muted, line, accent, onAccent }, singleScheme? }`.
+  The shell keeps the last report per profile and uses it for the local pages, the window
+  background and the title bar, so a platform UI theme (including a single-scheme one such as
+  cyberpunk) carries over. Under `singleScheme: true` neither side shows the light / dark toggle
+  and the local pages use the reported colors. The language needs no message: the shell reads
+  `NEXT_LOCALE` when it renders a local page.
+- **Before any profile exists** the small window follows the OS appearance and language; a choice
+  made there is kept by the app and seeds the new profile's cookies when it is created.
+- The shell validates the reported tokens (each a CSS hex or `rgb()`/`rgba()` color, the same
+  rule as `background`) and never injects them as markup: they become custom properties of the
+  local pages.
 
 ## 7. The shell
 
@@ -395,12 +572,40 @@ values:
 | `shellVersion` | The app's version |
 | `insets` | macOS with `titleBarStyle: "hiddenInset"`: `top` 28 (the title bar band holding the traffic lights at their default position), `right` / `bottom` / `left` 0. In fullscreen: `top` 0, announced with `change` |
 | `controls` | macOS: the traffic lights' rectangle at the app's fixed `trafficLightPosition`, including their margins: `{ x: 0, y: 0, width: 80, height: 28 }` (exact values measured once on the built window, **designer's call**); `null` in fullscreen, announced with `change`. Later Windows / Linux builds report their title-bar overlay buttons the same way |
-| `capabilities` | `notify@1`, `openExternal@1` and `signIn@1` always; `chrome@1` (mobile layout §9.2: window background and title bar follow the theme); `device@1` when 「连接本机」 is available: macOS or Linux, not turned off by managed configuration, and the deployment's `/api/v1/meta` says `localDevices` with a `device` range the bundled program speaks |
+| `capabilities` | `notify@1`, `openExternal@1` and `signIn@1` always; `chrome@1` (mobile layout §9.2: window background, title bar and the local pages follow the theme and its color tokens, §6.10); `device@1` when 「连接本机」 is available: macOS or Linux, not turned off by managed configuration, and the deployment's `/api/v1/meta` says `localDevices` with a `device` range the bundled program speaks |
 
 The AppShell clears the window controls from `--cb-shell-controls-*` (mobile layout §9.3); no
 geometry is keyed on `data-shell-platform`. The desktop's remaining choice, realized in design CSS
 **(designer's call)**: the sidebar head, the top bar and the conversation title bar are drag
-regions, every interactive element in them `no-drag`. The shell adds no drag regions of its own.
+regions, every interactive element in them `no-drag`. The shell adds no drag regions of its own
+to the web; its local pages carry their own (the top band, §6.1).
+
+### 7.4 Shell dialogs (decided 2026-11-20; window details designer's calls)
+
+The app shows no OS message box anywhere **(decided)**. Every confirmation is drawn by the app,
+and the ones that must be unforgeable by the page (connecting this machine, resuming the runner, a
+widening ceiling request, a higher keep-awake mode: §8, §9; mobile layout §9.4) are shown in a
+**separate shell-owned window** loading a local page, which the remote page can neither draw nor
+click:
+
+- **The window**: a frameless child of the calling window (modal: on macOS a sheet under the title
+  bar, elsewhere the parent is disabled while it shows), 400 px wide, its height fitted to the
+  content (bounded); with no parent (a tray action) a standalone window centered on the active
+  display, above other windows. It loads `app://` in the app's local partition with its own
+  preload; no deployment content runs in it and the profile's partition is not used.
+- **What it shows**: the platform icon and name (§6.1), a title, the detail text (for device
+  dialogs the program's own text, as the native dialogs showed it: §9.1, §9.5, §9.7), and the
+  buttons (cancel first, the confirming button last and primary; a destructive action in the
+  danger color). Board `SignOut` is the reference layout. The dialog's content comes from the main
+  process (it is never taken from the page that asked) and the answer goes back only to the main
+  process over a channel accepted only from that dialog window's webContents.
+- **Rules kept from the native dialogs**: a confirming capability call still needs a transient
+  user activation in the page; at most one shell dialog per profile at a time (further confirming
+  calls answer `busy`); closing the window (Esc, the parent closing) is a cancel; the default
+  button is cancel, so a stray Enter never confirms a widening. The confirming button takes no
+  click in the first 500 ms after the dialog shows, so a click aimed at the page cannot land on it.
+- **Other dialogs** (sign out, remove a platform and disconnect) use the same window; they are not
+  page-initiated, but one mechanism keeps one look.
 
 ## 8. The desktop's capabilities
 
@@ -413,15 +618,15 @@ browser. Every call returns plain data, never a credential.
 |---|---|
 | `notify@1.notify({ title, body, path? })` | OS notification; a click focuses the shell and navigates to `path` (same origin only) |
 | `openExternal@1.open(url)` | Opens an http(s) URL in the system browser |
-| `signIn@1.start()` | Starts the browser sign-in of §6.5 for this profile; resolves `signedIn` (the window then reloads), `cancelled` or an error code. Needs a user activation; nothing is confirmed natively (it grants the page nothing) |
+| `signIn@1.start()` | Starts the browser sign-in of §6.5 for this profile; resolves `signedIn` (the window then reloads), `cancelled` or an error code. Needs a user activation; nothing is confirmed (it grants the page nothing) |
 | `device@1.status()` / `device@1.onStatus(cb)` | For this machine: `not_connected`, `connected_elsewhere` (logged in to another deployment: its origin only), or connected to this deployment with `deviceId`, `orgId`, run mode (`os` / `docker`), connection state (`starting`, `online`, `offline` + reason, `draining`, `stopped`), the keep-awake mode and whether an assertion is held (§9.7), the last wake. From `status --json` and the control socket |
 | `device@1.running()` | What runs on this machine now (control socket `running`): tag, conversation id, account id, isolation, started at; no command text |
-| `device@1.connect({ orgId, deviceId? })` | Asks natively first (§9.1); on yes, runs the authorization of §9.2; resolves `connected`, `cancelled` or an error code |
+| `device@1.connect({ orgId, deviceId? })` | Asks in a shell dialog first (§9.1, §7.4); on yes, runs the authorization of §9.2; resolves `connected`, `cancelled` or an error code |
 | `device@1.pause()` | Drain: no new operations, the runner stops when the running ones finish; the service stays stopped |
-| `device@1.resume()` | `service start`; asks natively first, like connect |
+| `device@1.resume()` | `service start`; asks in a shell dialog first, like connect |
 | `device@1.disconnect()` | `service stop` (or `stop` for a terminal runner): stops now, running operations end |
-| `device@1.requestCeiling({ outsideSandbox?, network?, projectReach? })` | Changes the owner ceiling fields it names, as `capybara-device ceiling set` does (`--outside-sandbox on\|off`, `--network open\|allowlist`, `--project-reach workspace\|os-user`); a field left out is never touched, so a stale value on the page cannot narrow it, and an empty request is refused. The shell reads the ceiling again (`ceiling show --json`) and compares: a narrowing applies at once (`ceiling set …` without `--yes`), a widening shows the native confirmation naming each widened field with the program's risk text (§9.5) and applies only on yes; a narrowing that became a widening meanwhile is refused by the program under its lock |
-| `device@1.setKeepAwake(mode)` | A lower mode (`off` < `while-busy` < `connected`) applies at once; a higher one asks natively first (§9.7) |
+| `device@1.requestCeiling({ outsideSandbox?, network?, projectReach? })` | Changes the owner ceiling fields it names, as `capybara-device ceiling set` does (`--outside-sandbox on\|off`, `--network open\|allowlist`, `--project-reach workspace\|os-user`); a field left out is never touched, so a stale value on the page cannot narrow it, and an empty request is refused. The shell reads the ceiling again (`ceiling show --json`) and compares: a narrowing applies at once (`ceiling set …` without `--yes`), a widening shows the shell dialog naming each widened field with the program's risk text (§9.5) and applies only on yes; a narrowing that became a widening meanwhile is refused by the program under its lock |
+| `device@1.setKeepAwake(mode)` | A lower mode (`off` < `while-busy` < `connected`) applies at once; a higher one asks in a shell dialog first (§9.7) |
 
 Deliberately absent: the credential, file access, command execution, `policy add`
 `allowedDomains` from the page (the deployment already has its own narrowing-only policy
@@ -429,7 +634,12 @@ operations through the device protocol), and logging the device out (revoking is
 existing kernel action, which stops the runner through the protocol).
 
 The confirming calls (`connect`, `resume`, a widening `requestCeiling`, a higher `setKeepAwake`) follow the confirmation
-rule of mobile layout §9.4: a user activation, one native dialog at a time, `busy` otherwise.
+rule of mobile layout §9.4: a user activation, one shell dialog at a time (§7.4), `busy` otherwise.
+
+`chrome@1.setAppearance` (owned by the layout spec, §9.2 there) carries, since 2026-11-20, the
+optional `tokens` and `singleScheme` fields the desktop uses for its local pages (§6.10). The
+desktop accepts a call without them (an older web): the local pages then use the built-in colors
+of the reported scheme.
 
 ## 9. 「连接本机」
 
@@ -441,7 +651,7 @@ rule of mobile layout §9.4: a user activation, one native dialog at a time, `bu
    page instead; if it is connected to another deployment, it says so and offers nothing but the
    terminal steps.
 2. A click calls `device@1.connect({ orgId })` with the org the person is in.
-3. The shell shows a **native confirmation** **(decided)**, parented to the window: 「允许
+3. The shell shows a **shell dialog** (§7.4; native until 2026-11-20) **(decided)**, parented to the window: 「允许
    <平台名称>（<host>）在这台电脑上运行命令吗？」 with a detail line: what a local device is, that
    it starts restricted (no Full access, the device's workspace only) and that it can be
    disconnected from the tray at any time; that it keeps serving while the app is closed (a login
@@ -468,7 +678,7 @@ rule of mobile layout §9.4: a user activation, one native dialog at a time, `bu
 - The control socket (and the program's pid file behind it) tells the shell whether a runner
   lives. An existing runner (a CLI-installed service, a terminal) is used, never doubled.
 - A machine user is connected to one deployment at a time (§4.2). Connecting to a second one asks
-  natively to disconnect the first (`logout`, after stopping its runner); the first deployment's
+  in a shell dialog to disconnect the first (`logout`, after stopping its runner); the first deployment's
   device stays registered there until someone deletes it.
 
 ### 9.4 Lifecycle
@@ -485,7 +695,7 @@ rule of mobile layout §9.4: a user activation, one native dialog at a time, `bu
 - Through the bridge the web may read status, list what runs, pause, disconnect and narrow the
   owner ceiling **(decided)**.
 - Widening (running outside the sandbox allowed, the open network, project reach `os-user`) and
-  resuming need a native confirmation; the widening dialog names each widened field and shows the
+  resuming need a shell dialog; the widening dialog names each widened field and shows the
   device program's own risk text (`CEILING_WIDENING_TEXT`, which covers all three) and the shell
   then runs
   `capybara-device ceiling set` with only the requested fields and `--yes`. Editing `policy.json`
@@ -505,7 +715,7 @@ rule of mobile layout §9.4: a user activation, one native dialog at a time, `bu
 - The device list and the conversation's device picker mark this machine 「本机」.
 - The tray icon shows not connected, online, offline, paused and busy. Its native menu: the
   profiles, the connection state, the number of running operations, 暂停 / 恢复 / 断开 (resume with
-  the same native confirmation), keep-awake, open the device page, quit (the device keeps
+  the same shell dialog), keep-awake, open the device page, quit (the device keeps
   running).
 
 ### 9.7 Keep-awake (decided; modes and confirmation designer's calls)
@@ -523,7 +733,7 @@ and headless servers have it too; the desktop surfaces it through `device@1`.
   may still sleep and the screen still locks. Linux: `systemd-inhibit --what=idle:sleep --mode=block`
   around a child that lives as long as the assertion; without `systemd-inhibit` or when logind
   refuses, the status says `unavailable` with the reason and nothing pretends.
-- **What it cannot prevent**, stated in the CLI's output, the device page and the native dialog:
+- **What it cannot prevent**, stated in the CLI's output, the device page and the shell dialog:
   closing the lid of a Mac on battery without an external display (clamshell) still sleeps; so do
   choosing Sleep, a critically low battery and thermal emergencies; on Linux, the lid switch as
   logind handles it (taking `handle-lid-switch` needs privileges the user service lacks).
@@ -534,7 +744,7 @@ and headless servers have it too; the desktop surfaces it through `device@1`.
   status and `commands.log`, so the device page can say 「电脑曾休眠」 rather than an unexplained
   gap. No new protocol frame.
 - **Remote may lower, not raise** **(designer's call)**: through `device@1` the web may set a lower
-  mode at once; a higher mode needs the native confirmation of mobile layout §9.4. Raising it
+  mode at once; a higher mode needs the shell dialog (§7.4) under the rule of mobile layout §9.4. Raising it
   changes the machine's power behaviour and battery life and lengthens the time the machine is
   reachable for remote commands, which is a widening in the sense of §9.5; lowering only narrows
   both. The deployment's policy operations do not touch `keepAwake`. Raising it from the CLI
@@ -571,8 +781,8 @@ conversation.
   Dock stays Capybara (one app icon cannot stand for several platforms, and switching on focus
   would flicker). The icon comes from `/api/v1/meta` `icon` (§6.2), fetched by the main process,
   accepted only as a PNG of at most 1 MB, cached per profile by its hash. The tray icon stays the
-  Capybara template image, and the address page shows the platform icon next to the name once
-  discovery answers.
+  Capybara template image, and the small window shows the platform icon once discovery answers
+  (§6.1).
 - Updates: automatic from GitHub Releases by default; managed configuration may turn them off or
   point at an internal feed. An update that changes the bundled device runs `service restart` when
   the service runs the app's copy (§5.2).
@@ -581,24 +791,29 @@ conversation.
 
 ## 12. Internationalization
 
-The app's own strings are few: the address page, native dialogs, the tray and app menus. They live
+The app's own strings: the local pages (§6.1, §6.8), the shell dialogs (§7.4), the tray and app
+menus. They live
 in one zh / en catalog in `packages/shell` with a key-sync check like core's `check:i18n`, and
 follow the repository terms: 平台, 超级管理员, 智能体, 设备 / 本地设备 / 本机; never 企业 or the
-Latin word `agent`. The language follows the OS; everything else is the deployment's i18n.
+Latin word `agent`. The language of the local pages is the profile's `NEXT_LOCALE` cookie
+(§6.10), before any profile the app's own choice, else the OS; menus follow the same choice once a
+profile exists. Everything else is the deployment's i18n.
 
 ## 13. Security summary
 
 | Threat | Measure |
 |---|---|
-| A malicious or compromised page drives the machine | No execution, files or credential in the bridge; connect, resume and widening need a native confirmation under the rule of mobile layout §9.4; the Shell environment security rule (mobile layout §9.4) |
-| A page connects the machine silently | Native dialog naming the platform and host before any login (§9.1) |
-| A page loosens the local policy | Only narrowing applies directly; widening shows the program's risk text natively (§9.5) |
+| A malicious or compromised page drives the machine | No execution, files or credential in the bridge; connect, resume and widening need a shell dialog (§7.4) under the rule of mobile layout §9.4; the Shell environment security rule (mobile layout §9.4) |
+| A page connects the machine silently | Shell dialog naming the platform and host before any login (§9.1) |
+| A page fakes or clicks a confirmation | Shell dialogs are a separate window in the app's local partition: the page cannot draw into it or send it input; their content comes from the main process, their answer only from that window; cancel is the default and the confirming button ignores clicks for 500 ms (§7.4) |
+| A page loosens the local policy | Only narrowing applies directly; widening shows the program's risk text in a shell dialog (§9.5) |
+| A page forges theme colors into the local pages | Tokens are validated as colors and set as custom properties, never as markup (§6.10) |
 | A misled agent runs harmful commands | Unchanged: the permission profile, the owner ceiling, the restricted runtime, the deployment's command review; plus one-click pause and disconnect from the tray |
 | A stolen sign-in code or a hijacked `capybara://` scheme | PKCE (the verifier never leaves the main process), 60 s single-use codes stored by hash, `state` and `iss` checked, redirect URIs allowlisted (§6.5) |
 | A crafted deep link points to a look-alike deployment | Deep links prefill only; the address and the discovery name are shown (§6.4) |
 | Device credential theft from disk | Unchanged from the CLI (0600 file, never in a renderer); revocable from the device page; keychain later (§4.2) |
 | Tampered app or runtime injection | Code signing, notarization, fuses, ASAR integrity; the device package unmodified and attested (§5.2, §7.2) |
-| A page keeps the machine awake | Raising keep-awake needs a native confirmation; lowering is free (§9.7) |
+| A page keeps the machine awake | Raising keep-awake needs a shell dialog; lowering is free (§9.7) |
 | Two runners fight over one deployment | The program's pid file and the control socket; the app uses an existing runner (§9.3) |
 
 ## 14. Core changes
@@ -613,13 +828,16 @@ Latin word `agent`. The language follows the OS; everything else is the deployme
 | `apps/web` `/devices/link` | Honour `org=<orgId>`: preselect the org and 新建设备 named after the machine (§9.2) |
 | `packages/device` | The gaps of §4.2: the control socket and live `status --json`; `login --json`; `ceiling show --json`; `service status --json`; keep-awake (`keepAwake` policy field, `keep-awake` command, the macOS and Linux assertions, wake notes in status and `commands.log`); README and tests; a changeset |
 | `docs/architecture.md` | `capybara-hq/clients` (desktop, later mobile) as an external app in its own repository |
+| `packages/kernel` (2026-11-20) | `/api/v1/meta` gains `appRedirectUris` (§6.2); the app token exchange answers `auth.account_disabled` for a disabled account (§6.5) |
+| `packages/design` + `packages/plugin-sdk` (2026-11-20) | `chrome@1.setAppearance` carries `tokens` (bg, panel, ink, muted, line, accent, onAccent: the computed `--cb-*` values) and `singleScheme` (layout spec §9.2); the SDK's `ChromeCapabilityV1` type gains the optional fields (`pnpm gen:sdk-api`, changeset) and apps/web's mirror follows |
 
 ## 15. Phases
 
 | Phase | Content | Depends on |
 |---|---|---|
 | **D1 Shell** (macOS) | `capybara-hq/clients` with `apps/desktop` and `packages/shell`; address page; `/api/v1/meta`; browser sign-in (§6.5, kernel and web); profiles; shell security; navigation rules; the Shell environment values; `notify@1`, `openExternal@1`, `chrome@1`; deep links; managed configuration; signing and updates | `/api/v1/meta`; the app-auth routes; the AppShell side of the Shell environment (mobile layout design) |
-| **D2 Connect this machine** | Bundled Node and device package; the login service from the app; `device@1`; native dialogs; 「连接本机」 and the device page's 本机 section in core web; `/devices/link?org=`; keep-awake; tray | The `packages/device` gaps of §4.2 |
+| **D2 Connect this machine** | Bundled Node and device package; the login service from the app; `device@1`; native dialogs (shell dialogs since 2026-11-20); 「连接本机」 and the device page's 本机 section in core web; `/devices/link?org=`; keep-awake; tray | The `packages/device` gaps of §4.2 |
+| **D1.5 Onboarding** (2026-11-20) | The small window and its pages (§6.1, §6.6), first sign-in saves the profile (§6.3), the main window's bounds (§6.7), the expired and unreachable pages (§6.8), sign-out and the 「平台」 menu (§6.9), theme and language (§6.10), shell dialogs (§7.4); the core pieces in §14 | D1, D2 |
 | D3 Windows and Linux | Builds, signing, installers; `device@1` on Linux (WSL / Docker on Windows) | D2 |
 | Later | Mobile (Capacitor) in the same repository; several connected deployments per machine user; keychain credential; a virtual-machine sandbox mode; local MCP servers on the device (own design) | — |
 
@@ -647,6 +865,15 @@ changes.
   state directory (§3, §4.2).
 - **Config**: the new fields `platform.name` (§6.2) and `auth.appRedirectUris` (§6.5), with the
   `CAPYBARA_` naming and regenerated `docs/config.md`.
+- **Mobile and shells** (2026-11-20): "dangerous shell capabilities are confirmed natively"
+  becomes "confirmed by the shell in UI the page cannot draw or click": the desktop's shell
+  dialogs are a separate shell-owned window, not an OS message box (§7.4; mobile layout §9.4
+  amended the same way).
+- **SDK public API** (2026-11-20): `ChromeCapabilityV1.setAppearance` gains the optional `tokens`
+  and `singleScheme` fields (§6.10, layout spec §9.2): `pnpm gen:sdk-api` and a changeset bumping
+  `@capybara-hq/plugin-sdk`; apps/web's `lib/shell.ts` mirror follows.
+- **Platform tool** (2026-11-20): `GET /api/v1/meta` changes its output only (`appRedirectUris`);
+  its `transport` exclusion stays.
 
 ## 16. Decisions and open questions
 
@@ -655,10 +882,11 @@ Decided by the maintainer:
 1. Electron (§5.1); macOS first (§11); the maintainer arranges signing and the app id (§11).
 2. Repository `capybara-hq/clients` (desktop now, mobile later, shared `packages/shell`); no React
    Native (§5.1).
-3. The desktop draws no UI: only the plain-HTML address page; setup and onboarding are the
-   deployment's web in the window (§3, §6.1, §7.1).
+3. ~~The desktop draws no UI: only the plain-HTML address page~~ (superseded by 11). Setup and
+   invitations are the deployment's web in the window (§3, §7.1).
 4. The web adapts through the Shell environment contract (mobile layout §9; the desktop values in §7.3).
-5. 「连接本机」 in the 新建设备 flow, with a native confirmation naming the platform (§9.1).
+5. 「连接本机」 in the 新建设备 flow, with a confirmation naming the platform (§9.1; a shell dialog
+   since 2026-11-20).
 6. Remote can only tighten; no local settings windows (§9.5, §3).
 7. `/api/v1/meta` returns the platform name before sign-in, from a config field (§6.2).
 8. The device runs as a login service the app installs and attaches to; the window closing never
@@ -666,5 +894,14 @@ Decided by the maintainer:
 9. Sign-in only in the system browser: authorization code with PKCE, a deep link back, a one-time
    code exchanged for the window's session (§6.5).
 10. Only the official app is published; a brand of one's own means a fork (§11).
+11. 2026-11-20, the onboarding design (mockups approved, "写进设计文档开始实施"): the desktop owns its
+    pre-sign-in pages in a small fixed 480×600 window and never shows the deployment's sign-in page
+    (§6.1); the main window is resizable and remembers its bounds (§6.7); no large Capybara
+    branding, only the platform's icon and name and a version footer (§6.1); errors before sign-in
+    inline in the small window (§6.6), after sign-in in the main window as local pages (§6.8);
+    sign-out from the web's menu or the new 「平台」 menu, ending on the small window's signed-out
+    page (§6.9); no native OS dialogs, unforgeable confirmations in a separate shell-owned window
+    (§7.4); theme and language one shared setting through the web's cookies and `chrome@1` tokens
+    (§6.10); platform switching only in the 「平台」 menu (§6.3, §6.9).
 
 Open: none at the moment.
