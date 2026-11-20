@@ -33,7 +33,7 @@ function sourceFiles(dir: string): string[] {
   );
 }
 
-const rendersIframe = /<iframe\b|createElement\(\s*["'`]iframe["'`]|jsx\(\s*["'`]iframe["'`]/;
+const rendersIframe = /<iframe\b|(?:createElement|jsxs?|jsxDEV)\(\s*["'`]iframe["'`]/;
 
 function sandboxOf(node: React.ReactElement): string | null {
   const { container } = render(<DesignProvider locale="en">{node}</DesignProvider>);
@@ -58,17 +58,31 @@ describe("every iframe is sandboxed without same-origin", () => {
     }
   });
 
-  it.each([
-    ["EmbedFrame", <EmbedFrame key="e" src="/plugin-ui/p/x" title="x" onMessage={() => {}} />],
-    [
-      "EmbedFrame fill",
-      <EmbedFrame key="f" fill src="/plugin-ui/p/x" title="x" onMessage={() => {}} />,
+  // Adding a site means adding a render case: every listed file must have one here.
+  const RENDER_CASES: Record<string, [string, React.ReactElement][]> = {
+    "display/embed.tsx": [
+      ["EmbedFrame", <EmbedFrame key="e" src="/plugin-ui/p/x" title="x" onMessage={() => {}} />],
+      [
+        "EmbedFrame fill",
+        <EmbedFrame key="f" fill src="/plugin-ui/p/x" title="x" onMessage={() => {}} />,
+      ],
     ],
-    ["HtmlDocumentFrame", <HtmlDocumentFrame key="h" src="/api/v1/html/t" title="x.html" />],
-  ])("%s renders a sandbox attribute without allow-same-origin", (_name, node) => {
-    const sandbox = sandboxOf(node);
-    expect(sandbox).not.toBeNull();
-    expect((sandbox as string).trim()).not.toBe("");
-    expect((sandbox as string).split(/\s+/)).not.toContain("allow-same-origin");
+    "display/html-frame.tsx": [
+      ["HtmlDocumentFrame", <HtmlDocumentFrame key="h" src="/api/v1/html/t" title="x.html" />],
+    ],
+  };
+
+  it("has a render case for every listed site", () => {
+    expect(Object.keys(RENDER_CASES).sort()).toEqual([...IFRAME_SITES].sort());
   });
+
+  it.each(Object.values(RENDER_CASES).flat())(
+    "%s renders a sandbox attribute without allow-same-origin",
+    (_name, node) => {
+      const sandbox = sandboxOf(node);
+      expect(sandbox).not.toBeNull();
+      expect((sandbox as string).trim()).not.toBe("");
+      expect((sandbox as string).split(/\s+/)).not.toContain("allow-same-origin");
+    },
+  );
 });

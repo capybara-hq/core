@@ -20,7 +20,7 @@ function sourceFiles(dir: string): string[] {
   );
 }
 
-const rendersIframe = /<iframe\b|createElement\(\s*["'`]iframe["'`]|jsx\(\s*["'`]iframe["'`]/;
+const rendersIframe = /<iframe\b|(?:createElement|jsxs?|jsxDEV)\(\s*["'`]iframe["'`]/;
 
 describe("apps/web renders no iframe of its own", () => {
   it("has no <iframe> or createElement('iframe') in src", () => {
