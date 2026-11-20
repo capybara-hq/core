@@ -46,14 +46,16 @@ const git = async (root: string, args: string[]) =>
  * not the kernel's HTTP reader whose URL rules refuse `file://`). The mapping is the kernel's git
  * import: every blob under the directory, paths re-rooted at it; symlinks and submodules refused.
  */
-async function readTree(
+export async function readTree(
   root: string,
   commit: string,
   path: string,
 ): Promise<Map<string, Uint8Array>> {
   const dir = path.replace(/^\.\//, "").replace(/\/+$/, "");
+  // `.` and `./` are the repository root, as in the kernel: no pathspec, nothing to strip
+  const atRoot = dir === "" || dir === ".";
   const listing = (
-    await git(root, ["ls-tree", "-r", "-z", "--full-tree", commit, "--", dir])
+    await git(root, ["ls-tree", "-r", "-z", "--full-tree", commit, ...(atRoot ? [] : ["--", dir])])
   ).toString("utf8");
   const files = new Map<string, Uint8Array>();
   for (const rec of listing.split("\0")) {
@@ -63,7 +65,10 @@ async function readTree(
     const p = rec.slice(tab + 1);
     if (mode === "120000") throw new Error(`${p} is a symlink`);
     if (type !== "blob") throw new Error(`${p} is a ${type}`);
-    files.set(p.slice(dir.length + 1), new Uint8Array(await git(root, ["cat-file", "blob", oid])));
+    files.set(
+      atRoot ? p : p.slice(dir.length + 1),
+      new Uint8Array(await git(root, ["cat-file", "blob", oid])),
+    );
   }
   if (files.size === 0) throw new Error(`no files under ${path}`);
   return new Map([...files.entries()].sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0)));

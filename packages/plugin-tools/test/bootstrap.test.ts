@@ -1,9 +1,25 @@
-import { execFileSync } from "node:child_process";
+import { execFile, execFileSync } from "node:child_process";
 import { createHash } from "node:crypto";
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import {
+  chmodSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  rmSync,
+  symlinkSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { promisify } from "node:util";
+import { packPackageTgz, readGitTree } from "@capybara-hq/kernel";
+import {
+  type FakeNpmRegistry,
+  startFakeGitServer,
+  startFakeNpmRegistry,
+} from "@capybara-hq/testing";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { readTree } from "../src/bootstrap/check.js";
 import { bootstrapCommand } from "../src/bootstrap/cli.js";
 import { syncBootstrapExtra } from "../src/bootstrap/index.js";
 
@@ -93,5 +109,166 @@ describe("capybara-plugin bootstrap", () => {
 
   it("needs exactly one of --check and --write", async () => {
     expect(await quiet(() => bootstrapCommand([], root))).toBe(2);
+  });
+});
+
+/** A fresh local repository with `files` committed (and optionally more set up before it). */
+function repoWith(
+  files: Record<string, string>,
+  before: (dir: string) => void = () => {},
+  afterAdd: (dir: string) => void = () => {},
+): { dir: string; head: string } {
+  const dir = mkdtempSync(join(tmpdir(), "bootstrap-extra-repo-"));
+  const g = (...a: string[]) => execFileSync("git", ["-C", dir, ...a], { encoding: "utf8" }).trim();
+  g("init", "-q");
+  g("config", "user.email", "t@example.com");
+  g("config", "user.name", "t");
+  g("config", "commit.gpgsign", "false");
+  for (const [p, c] of Object.entries(files)) {
+    mkdirSync(join(dir, p, ".."), { recursive: true });
+    writeFileSync(join(dir, p), c);
+  }
+  before(dir);
+  g("add", ".");
+  afterAdd(dir);
+  g("commit", "-q", "-m", "c");
+  return { dir, head: g("rev-parse", "HEAD") };
+}
+
+const PLUGIN_JSON = JSON.stringify({
+  schemaVersion: 1,
+  name: "demo",
+  version: "2.0.0",
+  publisher: "T",
+});
+
+describe("bootstrap git entries: root paths, parity and refusals", () => {
+  it("reads a plugin at the repository root (`./`, `.`) with every path intact", async () => {
+    // the manifest schema refuses these paths, but the kernel treats them as the root: keep parity
+    const r = repoWith({ ".capybara-plugin/plugin.json": PLUGIN_JSON, "a/b.txt": "x" });
+    try {
+      for (const path of ["./", ".", ""]) {
+        const files = await readTree(r.dir, r.head, path);
+        expect([...files.keys()]).toEqual([".capybara-plugin/plugin.json", "a/b.txt"]);
+      }
+    } finally {
+      rmSync(r.dir, { recursive: true, force: true });
+    }
+  });
+
+  it("computes the integrity the kernel's git reader and packer give (mapping parity)", async () => {
+    const srv = await startFakeGitServer();
+    const clone = mkdtempSync(join(tmpdir(), "bootstrap-extra-clone-"));
+    try {
+      const commit = await srv.commit("o/parity", {
+        "README.md": "outside the plugin",
+        "plugins/demo/.capybara-plugin/plugin.json": PLUGIN_JSON,
+        "plugins/demo/skills/s/SKILL.md": "---\nname: s\n---\nbody\n",
+        "plugins/demo/deep/er/file.txt": "nested",
+        "plugins/demo/z.txt": "z",
+        "plugins/demo-other/x.txt": "sibling with a shared prefix",
+      });
+      // async: the fake server runs in this process, a sync call would block it
+      await promisify(execFile)("git", ["clone", "-q", srv.url("o/parity"), clone]);
+      chmodSync(clone, 0o755);
+      const f = join(clone, "bootstrap.extra.json");
+      writeFileSync(
+        f,
+        JSON.stringify({
+          schemaVersion: 1,
+          marketplaces: [{ name: "mine", url: "https://git.example.com/o/r.git" }],
+          plugins: [entry({ path: "./plugins/demo" })],
+        }),
+      );
+      expect((await syncBootstrapExtra({ root: clone, file: f, write: true })).findings).toEqual(
+        [],
+      );
+      const pinned = JSON.parse(readFileSync(f, "utf8")).plugins[0] as Record<string, string>;
+      expect(pinned.commit).toBe(commit);
+      const files = await readGitTree(
+        { url: srv.url("o/parity"), commit, path: "./plugins/demo" },
+        {
+          net: { allowInsecureLoopback: true, allowPrivateHosts: [], trustedOrigins: [] },
+          signal: AbortSignal.timeout(60_000),
+          maxBytes: 10 * 1024 * 1024,
+        },
+      );
+      expect([...files.keys()]).toContain("deep/er/file.txt");
+      expect(pinned.integrity).toBe(sha(await packPackageTgz(files)));
+    } finally {
+      await srv.stop();
+      rmSync(clone, { recursive: true, force: true });
+    }
+  });
+
+  it("refuses a symlink and a submodule under the plugin path", async () => {
+    const link = repoWith({ "p/.capybara-plugin/plugin.json": PLUGIN_JSON }, (d) =>
+      symlinkSync("/etc/passwd", join(d, "p/link")),
+    );
+    const sub = repoWith(
+      { "p/.capybara-plugin/plugin.json": PLUGIN_JSON },
+      () => {},
+      (d) =>
+        execFileSync("git", [
+          "-C",
+          d,
+          "update-index",
+          "--add",
+          "--cacheinfo",
+          `160000,${"1".repeat(40)},p/mod`,
+        ]),
+    );
+    try {
+      for (const r of [link, sub]) {
+        const f = join(r.dir, "bootstrap.extra.json");
+        writeFileSync(
+          f,
+          JSON.stringify({
+            schemaVersion: 1,
+            marketplaces: [{ name: "mine", url: "https://git.example.com/o/r.git" }],
+            plugins: [entry({ path: "./p", commit: r.head })],
+          }),
+        );
+        const res = await syncBootstrapExtra({ root: r.dir, file: f, write: false });
+        expect(res.findings.map((x) => x.rule)).toEqual(["bootstrap-extra-path"]);
+      }
+    } finally {
+      rmSync(link.dir, { recursive: true, force: true });
+      rmSync(sub.dir, { recursive: true, force: true });
+    }
+  });
+});
+
+describe("bootstrap --network", () => {
+  let reg: FakeNpmRegistry;
+  const prev = process.env.NPM_CONFIG_REGISTRY;
+  const tgz = new Uint8Array([1, 2, 3, 4]);
+  beforeAll(async () => {
+    reg = await startFakeNpmRegistry({
+      packages: [{ name: "@capybara-hq/plugin-x", version: "1.0.0", tgz }],
+    });
+    process.env.NPM_CONFIG_REGISTRY = reg.url;
+  });
+  afterAll(async () => {
+    if (prev === undefined) delete process.env.NPM_CONFIG_REGISTRY;
+    else process.env.NPM_CONFIG_REGISTRY = prev;
+    await reg.stop();
+  });
+  const npm = (integrity: string) => ({
+    name: "x",
+    source: "npm",
+    npm: "@capybara-hq/plugin-x",
+    version: "1.0.0",
+    integrity,
+  });
+
+  it("passes a matching npm entry and reports a mismatching one", async () => {
+    writeManifest([npm(sha(tgz))]);
+    expect(
+      (await syncBootstrapExtra({ root, file, write: false, network: true })).findings,
+    ).toEqual([]);
+    writeManifest([npm(sha(new Uint8Array([9])))]);
+    const r = await syncBootstrapExtra({ root, file, write: false, network: true });
+    expect(r.findings.map((f) => f.rule)).toEqual(["bootstrap-extra-integrity"]);
   });
 });
