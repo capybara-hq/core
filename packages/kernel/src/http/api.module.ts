@@ -92,6 +92,7 @@ import { OrgsModule } from "../orgs/orgs.module.js";
 import { OrgSettingsController } from "../orgs/settings.controller.js";
 import { PlatformModule } from "../platform/platform.module.js";
 import { SealedRevealsController } from "../platform/sealed-reveals.controller.js";
+import { PushHostModule } from "../push/provider-host.js";
 import { RuntimeModule } from "../runtime/runtime.module.js";
 import { ConversationStreamController } from "../runtime/stream.controller.js";
 import { SchedulesController } from "../schedules/schedules.controller.js";
@@ -243,6 +244,7 @@ const CONTROLLERS: Type[] = [
     PlatformModule,
     AdminModule,
     ExtensionsModule,
+    PushHostModule,
     CatalogModule,
     // a plugin's suggested appearance (its own module: it writes through the org settings)
     AppearanceModule,

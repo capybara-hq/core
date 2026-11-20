@@ -28,6 +28,7 @@ const TRACKED_EXTENSION_POINTS: Record<string, TrackOptions> = {
   "model-provider": {},
   "web-search": {},
   "web-fetch": {},
+  "push-provider": {},
 };
 
 /**
