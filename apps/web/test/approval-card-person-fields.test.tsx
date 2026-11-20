@@ -36,7 +36,14 @@ const APPROVAL = (over: Partial<Approval> = {}): Approval => ({
   conversationPath: "/chat/c1",
   initiatorAccountId: "a1",
   personFields: [
-    { path: "apiKey", label: "API key", multiline: false, required: true, isSet: false },
+    {
+      path: "apiKey",
+      label: { zh: "API 密钥", en: "API key" },
+      description: { zh: "在服务商控制台创建", en: "Create it in the provider console" },
+      multiline: false,
+      required: true,
+      isSet: false,
+    },
   ],
   personTarget: { zh: "Anthropic：平台配置", en: "Anthropic: deployment config" },
   ...over,
@@ -115,6 +122,19 @@ describe("ApprovalCard: person fields", () => {
     ).not.toContain(SECRET);
   });
 
+  it.each([
+    ["zh", "API 密钥", "在服务商控制台创建"],
+    ["en", "API key", "Create it in the provider console"],
+  ] as const)(
+    "shows the label and description in the viewer's language (%s)",
+    async (locale, label, help) => {
+      stubApi({ "GET /api/v1/orgs/o1/approvals/ap1": () => json(200, { approval: APPROVAL() }) });
+      renderPage(<ApprovalCard orgId="o1" item={item} />, { locale });
+      expect(await screen.findByLabelText(label)).toBeTruthy();
+      expect(screen.getByText(help)).toBeTruthy();
+    },
+  );
+
   it("shows the leak copy under the field and stays pending", async () => {
     stubApi({
       "GET /api/v1/orgs/o1/approvals/ap1": () => json(200, { approval: APPROVAL() }),
@@ -129,14 +149,14 @@ describe("ApprovalCard: person fields", () => {
     });
     renderPage(<ApprovalCard orgId="o1" item={item} />, { locale: "zh" });
     const user = userEvent.setup();
-    await user.type(await screen.findByLabelText("API key"), SECRET);
+    await user.type(await screen.findByLabelText("API 密钥"), SECRET);
     await user.click(screen.getByRole("button", { name: "批准" }));
     expect(
       await screen.findByText("这个值在对话里出现过，视为已泄露。请到服务商那里新建一个再填写。"),
     ).toBeTruthy();
     expect(screen.getByRole("button", { name: "批准" })).toBeTruthy();
     // the leaked value is cleared, the refusal stays, and Approve waits for a new value
-    expect(((await field()) as HTMLInputElement).value).toBe("");
+    expect(((await screen.findByLabelText("API 密钥")) as HTMLInputElement).value).toBe("");
     expect(screen.getByRole("button", { name: "批准" }).hasAttribute("disabled")).toBe(true);
   });
 

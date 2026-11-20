@@ -1,6 +1,14 @@
 import type { ConnectorAuth } from "../tools/credentials.js";
 import type { PersonFieldSpec } from "./person-fields.js";
 
+/** The fixed card labels of connector credentials. */
+const LABELS = {
+  token: { zh: "令牌", en: "Token" },
+  username: { zh: "用户名", en: "Username" },
+  password: { zh: "密码", en: "Password" },
+  clientSecret: { zh: "客户端密钥", en: "Client secret" },
+} as const;
+
 /**
  * The person fields of a connector (platform web parity ruling R3). Credentials are not in a
  * connector's `endpointSchema` (`endpointCredentialIssues` refuses them there), so the secret
@@ -12,7 +20,7 @@ import type { PersonFieldSpec } from "./person-fields.js";
  *
  * `none`, a dynamically registered client and custom `headers` have none: header names come from
  * the auth preset (text an admin or the model wrote), never a card label, so header credentials
- * are entered on the web. Labels are fixed English; every schema is a non-empty string.
+ * are entered on the web. Labels are fixed, in both languages; every schema is a non-empty string.
  */
 export function connectorPersonFields(
   auth: ConnectorAuth,
@@ -20,7 +28,7 @@ export function connectorPersonFields(
 ): PersonFieldSpec[] {
   const field = (
     path: string,
-    label: string,
+    label: { zh: string; en: string },
     required: boolean,
     maxLength?: number,
   ): PersonFieldSpec => ({
@@ -34,18 +42,18 @@ export function connectorPersonFields(
   switch (auth.type) {
     case "bearer":
     case "api_key":
-      return [field("credential.token", "Token", true)];
+      return [field("credential.token", LABELS.token, true)];
     case "basic":
       return [
-        field("credential.username", "Username", true),
-        field("credential.password", "Password", true),
+        field("credential.username", LABELS.username, true),
+        field("credential.password", LABELS.password, true),
       ];
     case "oauth_client":
       // the bound of the create's OAuth client parse (`OAuthClientCredential`)
-      return [field("client.clientSecret", "Client secret", true, 4000)];
+      return [field("client.clientSecret", LABELS.clientSecret, true, 4000)];
     case "oauth_code":
       return auth.client === "manual"
-        ? [field("client.clientSecret", "Client secret", false, 4000)]
+        ? [field("client.clientSecret", LABELS.clientSecret, false, 4000)]
         : [];
     default:
       return [];
@@ -89,8 +97,8 @@ export function connectorCredential(
 /** A connector template whose connector a write creates: its id, card name and auth method. */
 export interface TemplateTarget {
   id: string;
-  /** The template's display name (from the plugin), for the card labels. */
-  name: string;
+  /** The template's display name (from the plugin) in both languages, for the card labels. */
+  name: { zh: string; en: string };
   auth: ConnectorAuth;
 }
 
@@ -104,7 +112,7 @@ export function templatePersonFields(templates: readonly TemplateTarget[]): Pers
     connectorPersonFields(t.auth, new Set()).map((f) => ({
       ...f,
       path: `connectors.${t.id}.${f.path}`,
-      label: `${t.name}: ${f.label}`,
+      label: { zh: `${t.name.zh}：${f.label.zh}`, en: `${t.name.en}: ${f.label.en}` },
     })),
   );
 }

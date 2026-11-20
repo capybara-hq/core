@@ -20,15 +20,30 @@ describe("connectorPersonFields", () => {
       { type: "api_key", ownership: "personal", in: "header", name: "X-Api-Key" },
     ] as const) {
       expect(brief(connectorPersonFields(auth, none))).toEqual([
-        { path: "credential.token", label: "Token", required: true, isSet: false },
+        {
+          path: "credential.token",
+          label: { zh: "令牌", en: "Token" },
+          required: true,
+          isSet: false,
+        },
       ]);
     }
   });
 
   it("asks a username and a password for basic", () => {
     expect(brief(connectorPersonFields({ type: "basic", ownership: "org" }, none))).toEqual([
-      { path: "credential.username", label: "Username", required: true, isSet: false },
-      { path: "credential.password", label: "Password", required: true, isSet: false },
+      {
+        path: "credential.username",
+        label: { zh: "用户名", en: "Username" },
+        required: true,
+        isSet: false,
+      },
+      {
+        path: "credential.password",
+        label: { zh: "密码", en: "Password" },
+        required: true,
+        isSet: false,
+      },
     ]);
   });
 
@@ -41,7 +56,12 @@ describe("connectorPersonFields", () => {
         ),
       ),
     ).toEqual([
-      { path: "client.clientSecret", label: "Client secret", required: true, isSet: false },
+      {
+        path: "client.clientSecret",
+        label: { zh: "客户端密钥", en: "Client secret" },
+        required: true,
+        isSet: false,
+      },
     ]);
     expect(
       brief(
@@ -51,7 +71,12 @@ describe("connectorPersonFields", () => {
         ),
       ),
     ).toEqual([
-      { path: "client.clientSecret", label: "Client secret", required: false, isSet: false },
+      {
+        path: "client.clientSecret",
+        label: { zh: "客户端密钥", en: "Client secret" },
+        required: false,
+        isSet: false,
+      },
     ]);
   });
 

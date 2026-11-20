@@ -81,8 +81,8 @@ describe("secretFieldsOf", () => {
       }),
     );
     const [f] = secretFieldsOf(s, new Set()).fields;
-    expect(f?.label).toBe("API key");
-    expect(f?.description).toBe("Create one in the console");
+    expect(f?.label).toEqual({ zh: "接口密钥", en: "API key" });
+    expect(f?.description).toEqual({ zh: "在控制台创建", en: "Create one in the console" });
     expect(f?.multiline).toBe(false);
     expect(JSON.stringify(f?.schema)).not.toContain("dont-publish");
     expect(f?.schema).not.toHaveProperty("default");
@@ -99,7 +99,32 @@ describe("secretFieldsOf", () => {
       },
       new Set(),
     ).fields;
-    expect(fields).toMatchObject([{ path: "key", label: "key", multiline: true }]);
+    expect(fields).toMatchObject([
+      { path: "key", label: { zh: "key", en: "key" }, multiline: true },
+    ]);
+  });
+
+  it("a plain title gives the English label and the x-ui label its Chinese one", () => {
+    const fields = secretFieldsOf(
+      {
+        type: "object",
+        properties: {
+          apiKey: {
+            type: "string",
+            title: "API key",
+            "x-secret": true,
+            "x-ui": { label: { zh: "API 密钥", en: "API key" } },
+          },
+          token: { type: "string", title: "Token", "x-secret": true },
+        },
+      },
+      new Set(),
+    ).fields;
+    expect(fields.map((f) => f.label)).toEqual([
+      { zh: "API 密钥", en: "API key" },
+      // no Chinese text anywhere: the English serves both
+      { zh: "Token", en: "Token" },
+    ]);
   });
 
   it("finds a nullable secret either way round", () => {
@@ -358,7 +383,7 @@ describe("planPersonFields", () => {
 describe("checkPersonValue", () => {
   const spec = (node: Record<string, unknown>): PersonFieldSpec => ({
     path: "apiKey",
-    label: "apiKey",
+    label: { zh: "apiKey", en: "apiKey" },
     multiline: false,
     required: true,
     isSet: false,

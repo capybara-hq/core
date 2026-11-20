@@ -106,11 +106,14 @@ const entersText = (ctx: Pick<OperationContext, "personAsk">) => {
 /** A template as the person-field helpers take it. */
 const targetOf = (t: {
   id: string;
-  displayName: { en: string } | null | undefined;
+  displayName: { en: string; zh?: string } | null | undefined;
   auth: unknown;
 }): TemplateTarget => ({
   id: t.id,
-  name: named(t.displayName?.en ?? t.id),
+  name: {
+    zh: named(t.displayName?.zh ?? t.displayName?.en ?? t.id),
+    en: named(t.displayName?.en ?? t.id),
+  },
   auth: t.auth as ConnectorAuth,
 });
 
@@ -124,7 +127,7 @@ function templatesRefusal(
   params: Readonly<Record<string, TemplateParams>> | undefined,
 ): PrecheckResult {
   for (const t of templates) {
-    const where = `Connector template ${t.name} (${t.id})`;
+    const where = `Connector template ${t.name.en} (${t.id})`;
     const why = headersWebOnly(t.auth, where);
     if (why !== null) return { ok: false, code: "platform.secret_record_web_only", message: why };
     const client = clientProblem(t.auth, params?.[t.id]?.client, where);

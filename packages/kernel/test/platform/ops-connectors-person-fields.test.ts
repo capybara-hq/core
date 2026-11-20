@@ -249,7 +249,7 @@ describe("connectors.create", () => {
     const t = await personFieldsOf("connectors.create", params());
     expect(t.target.en).toBe("Connector Docs (org)");
     expect(t.fields.map((f) => [f.path, f.label, f.required])).toEqual([
-      ["credential.token", "Token", true],
+      ["credential.token", { zh: "令牌", en: "Token" }, true],
     ]);
     // the credential is no param
     expect(op("connectors.create").input.safeParse({ ...params(), credential: {} }).success).toBe(
@@ -467,7 +467,7 @@ describe("a plugin with a template connector", () => {
     expect(t.fields.map((f) => [f.path, f.required])).toEqual([
       [`connectors.${TEMPLATE_ID}.credential.token`, true],
     ]);
-    expect(t.fields[0]?.label).toBe("GitHub MCP: Token");
+    expect(t.fields[0]?.label).toEqual({ zh: "GitHub 连接器：令牌", en: "GitHub MCP: Token" });
 
     const agentId = await platformAgent("Installer");
     const { paths, result } = await callWithCard(

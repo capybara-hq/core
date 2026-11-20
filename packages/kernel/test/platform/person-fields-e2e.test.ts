@@ -62,7 +62,13 @@ const TARGET_SCHEMA = {
   type: "object",
   properties: {
     baseUrl: { type: "string" },
-    apiKey: { type: "string", "x-secret": true, title: "API key" },
+    apiKey: {
+      type: "string",
+      "x-secret": true,
+      title: "API key",
+      // the shape of the prod case: a plain title and a localized x-ui label
+      "x-ui": { label: { zh: "API 密钥", en: "API key" } },
+    },
   },
 };
 
@@ -337,10 +343,14 @@ describe("Platform person fields", () => {
     const row = await approvalRow(asked.payload.approvalId);
     expect(row.scopes).toEqual(["once"]);
     const detail = row.detail as {
-      personFields: { path: string; label: string }[];
+      personFields: { path: string; label: { zh: string; en: string } }[];
       target: { zh: string; en: string };
     };
-    expect(detail.personFields[0]).toMatchObject({ path: "apiKey", label: "API key" });
+    // both languages reach the approval detail; the zh card shows the zh label
+    expect(detail.personFields[0]).toMatchObject({
+      path: "apiKey",
+      label: { zh: "API 密钥", en: "API key" },
+    });
     expect(detail.target).toEqual({ zh: "探针配置", en: "Probe config" });
     expect(JSON.stringify(row.input)).not.toContain(SECRET);
 

@@ -74,8 +74,9 @@ export interface CommandAskDetail {
 /** A secret field the person types on the card (never the model); `isSet` says a value exists. */
 export interface PersonField {
   path: string;
-  label: string;
-  description?: string;
+  /** The schema's label in both languages; the card shows the viewer's. */
+  label: { zh: string; en: string };
+  description?: { zh: string; en: string };
   multiline: boolean;
   required: boolean;
   isSet: boolean;

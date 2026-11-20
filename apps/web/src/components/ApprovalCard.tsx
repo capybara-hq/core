@@ -514,8 +514,10 @@ export function ApprovalCard({
               approveDisabled: personFields.some((f) => (values[f.path] ?? "") === ""),
               personFields: personFields.map((f) => ({
                 path: f.path,
-                label: f.label,
-                ...(f.description !== undefined ? { description: f.description } : {}),
+                label: f.label[lang(locale)],
+                ...(f.description !== undefined
+                  ? { description: f.description[lang(locale)] }
+                  : {}),
                 multiline: f.multiline,
                 value: values[f.path] ?? "",
                 ...(fieldErrors[f.path] !== undefined ? { error: fieldErrors[f.path] } : {}),
