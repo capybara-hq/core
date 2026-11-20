@@ -5,6 +5,7 @@ import {
   AdminExtensionNamePathParams,
 } from "../../admin/extensions.schemas.js";
 import { type CatalogItemView, CatalogService } from "../../catalog/catalog.service.js";
+import { ApiError } from "../../errors.js";
 import { ExtensionAdminOps } from "../../extensions/admin-ops.js";
 import { ExtensionAdmin } from "../../extensions/admin-view.js";
 import {
@@ -41,16 +42,33 @@ const ConfigValues = AdminExtensionConfigBody.shape.values;
 /**
  * The person fields of an extension's deployment config (platform web parity spec §4.1): the
  * secret fields of its form schema, set or not. A secret field the schema walk cannot address (no
- * form schema, a record) is web only, so a value for it in `values` is refused too.
+ * form schema, a record) or one set in the startup config (read-only here) is never asked, and a
+ * value for it in `values` is refused too. Naming a read-only secret in `askPerson` /
+ * `clearSecrets` is refused before the card with the route's `extension.config_readonly`, so the
+ * person never types a value the write would refuse.
  */
-function deploymentPersonFields(v: DeploymentConfigView): PersonFieldTarget {
+export function deploymentPersonFields(
+  v: DeploymentConfigView,
+  named: readonly string[] = [],
+): PersonFieldTarget {
   const secrets = v.fields.filter((f) => f.secret);
+  const readonly = secrets.filter((f) => f.readonly);
+  const ro = new Set(readonly.map((f) => f.path));
+  const hit = named.filter((p) => ro.has(p));
+  if (hit.length > 0) {
+    throw new ApiError(
+      "extension.config_readonly",
+      `These deployment config fields of extension ${v.plugin} are set in the startup config (file, Nacos or environment) and are read-only here: ${hit.join(", ")}`,
+      hit.map((path) => ({ path, source: readonly.find((f) => f.path === path)?.source })),
+    );
+  }
   const found = secretFieldsOf(v.schema, new Set(secrets.filter((f) => f.set).map((f) => f.path)));
-  const asked = new Set(found.fields.map((f) => f.path));
+  const fields = found.fields.filter((f) => !ro.has(f.path));
+  const asked = new Set(fields.map((f) => f.path));
   const n = localized(v.displayName, v.plugin);
   return {
     target: { zh: `扩展「${n.zh}」的部署配置`, en: `${n.en}: deployment config` },
-    fields: found.fields,
+    fields,
     recordOnly: [
       ...new Set([...found.recordOnly, ...secrets.map((f) => f.path).filter((p) => !asked.has(p))]),
     ],
@@ -481,7 +499,10 @@ export class ExtensionsAdminOperations implements OnModuleInit {
         ],
         personFields: async (i, ctx) => {
           await assertExtensionNotOtherOrgs(this.kdb.db, i.name, ctx.orgId);
-          return deploymentPersonFields(await this.deploymentConfigs.view(i.name));
+          return deploymentPersonFields(await this.deploymentConfigs.view(i.name), [
+            ...i.askPerson,
+            ...i.clearSecrets,
+          ]);
         },
         summary: async (i) => {
           const v = await this.deploymentConfigs.view(i.name);

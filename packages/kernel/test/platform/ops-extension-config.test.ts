@@ -4,10 +4,15 @@ import { sql } from "kysely";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { z } from "zod";
 import type { ConversationEvent } from "../../src/conversations/events.js";
+import type { DeploymentConfigView } from "../../src/extensions/deployment-config.js";
+import { DEPLOYMENT_SECRETS_ORG, secretKey } from "../../src/extensions/deployment-config-store.js";
 import { ExtensionHost } from "../../src/extensions/host.js";
+import { PLUGIN_DEPLOYMENT_CONFIG_TOPIC } from "../../src/extensions/lifecycle-topics.js";
+import { KERNEL_BUS } from "../../src/infra/tokens.js";
 import { createLogger } from "../../src/log.js";
 import { nextStepFor, toToolError } from "../../src/platform/errors.js";
 import type { OperationContext } from "../../src/platform/operation.js";
+import { deploymentPersonFields } from "../../src/platform/ops/extensions-admin.ops.js";
 import { PlatformOperations } from "../../src/platform/registry.js";
 import { importPlugin, type OrgEnv, startOrgEnv } from "../catalog/org-env.js";
 import { builtinsOff } from "../helpers/disabled-tools.js";
@@ -379,5 +384,117 @@ describe("extensions.set-org-config through the Platform tool (acceptance 1 and 
     expect(lines.join("\n")).not.toContain(ORG_KEY);
     expect(lines.join("\n")).not.toContain(PLATFORM_TOKEN);
     expect(lines.join("\n")).not.toContain(COPY_TOKEN);
+  });
+});
+
+describe("read-only secrets of the deployment config", () => {
+  const view = (over: Partial<DeploymentConfigView> = {}): DeploymentConfigView => ({
+    plugin: NAME,
+    displayName: null,
+    version: "1.0.0",
+    configurable: true,
+    fields: [
+      { path: "token", secret: true, hot: false, source: "env", readonly: true, set: true },
+      { path: "master", secret: true, hot: false, source: "unset", readonly: false, set: false },
+    ],
+    schema: {
+      type: "object",
+      properties: {
+        token: { type: "string", "x-secret": true },
+        master: { type: "string", "x-secret": true },
+      },
+    },
+    valid: true,
+    validated: true,
+    issues: [],
+    orgMustConfigure: [],
+    ...over,
+  });
+
+  it("are never on the card, and a value for one in values is refused as web only", () => {
+    const t = deploymentPersonFields(view());
+    expect(t.fields.map((f) => f.path)).toEqual(["master"]);
+    expect(t.recordOnly).toContain("token");
+  });
+
+  it("naming one in askPerson or clearSecrets is extension.config_readonly before the card", () => {
+    for (const named of [["token"], ["master", "token"]]) {
+      expect(() => deploymentPersonFields(view(), named)).toThrow(
+        expect.objectContaining({ code: "extension.config_readonly" }),
+      );
+    }
+    expect(() => deploymentPersonFields(view(), ["master"])).not.toThrow();
+  });
+});
+
+describe("extensions.platform-set-config through the Platform tool", () => {
+  it("applies the sealed value in the consume transaction and publishes only after the commit", async () => {
+    const res = await env.root({
+      method: "POST",
+      url: `/api/v1/orgs/${env.orgId}/agents`,
+      payload: {
+        definition: {
+          name: "Platform configurer",
+          instructions: "Be helpful.",
+          model: { provider: "model-fake", model: "fake-1" },
+          disabledTools: builtinsOff("Platform"),
+        },
+        visibility: "private",
+      },
+    });
+    expect(res.statusCode, res.body).toBe(201);
+    const agentId = (res.json() as { agent: { id: string } }).agent.id;
+
+    // at each publish of the topic, a connection outside the write's transaction looks for the
+    // stored secret: before the commit it would not see it
+    const bus = env.k.app.get<{ publish(topic: string, msg: unknown): Promise<void> }>(KERNEL_BUS);
+    const original = bus.publish.bind(bus);
+    const seenAtPublish: boolean[] = [];
+    bus.publish = async (topic, msg) => {
+      if (topic === PLUGIN_DEPLOYMENT_CONFIG_TOPIC) {
+        const row = await env.db
+          .selectFrom("secrets")
+          .select("key")
+          .where("org_id", "=", DEPLOYMENT_SECRETS_ORG)
+          .where("key", "=", secretKey(NAME, "token"))
+          .executeTakeFirst();
+        seenAtPublish.push(row !== undefined);
+      }
+      return original(topic, msg);
+    };
+    try {
+      const convId = await createConv(env.root, env.orgId, agentId);
+      const call = {
+        action: "call",
+        operation: "extensions.platform-set-config",
+        params: { name: NAME, values: { region: "ap" }, askPerson: ["token"] },
+      };
+      await postMessage(env.root, env.orgId, convId, `tool:Platform:${JSON.stringify(call)}`);
+      const asked = await waitFor(
+        async () => ofType(await eventsOf(env.db, convId), "approval_requested")[0],
+        20_000,
+        "approval_requested",
+      );
+      const ok = await env.root({
+        method: "POST",
+        url: `/api/v1/orgs/${env.orgId}/approvals/${asked.payload.approvalId}/decision`,
+        payload: { decision: "approve", scope: "once", inputs: { token: PLATFORM_TOKEN } },
+      });
+      expect(ok.statusCode, ok.body).toBe(200);
+      await waitForTerminal(env.db, convId, 1, 30_000);
+      const result = ofType(await eventsOf(env.db, convId), "tool_result").at(-1)?.payload;
+      expect(result?.isError, result?.content).toBe(false);
+      expect(result?.content).toContain("`token`: entered by the person");
+      await waitFor(async () => seenAtPublish.length > 0, 10_000, "the config topic published");
+      expect(seenAtPublish).toEqual([true]);
+      const view = (await run("extensions.platform-config", { name: NAME }, ctxOf(env.rootId))) as {
+        fields: Field[];
+      };
+      expect(view.fields.find((f) => f.path === "token")).toMatchObject({ set: true });
+      expect(view.fields.find((f) => f.path === "region")).toMatchObject({ value: "ap" });
+      expect(lines.join("\n")).not.toContain(PLATFORM_TOKEN);
+    } finally {
+      bus.publish = original;
+    }
   });
 });

@@ -351,6 +351,21 @@ describe("marketplaces", () => {
 });
 
 describe("plugins in the org", () => {
+  it("a needs_config plugin missing its connector gets the Plugins page text, never the org config ops", async () => {
+    const item = await seedPlugin(env, { name: "tpl-needs", skills: [] });
+    await setScope(env, item, "all");
+    const rows = (await run("plugins.list", {}, ctxOf(env.bossId))) as {
+      items: { id: string; state: string }[];
+    };
+    expect(rows.items.find((r) => r.id === item)?.state).toBe("needs_config");
+    const pre = await precheck(
+      "plugins.set-enabled",
+      { itemId: item, enabled: true },
+      ctxOf(env.bossId),
+    );
+    expect(pre).toEqual({ ok: false, code: "plugin.needs_input", message: NEEDS_INPUT });
+  });
+
   it("enabling a plugin that needs connector inputs is refused with the Plugins page pointer", async () => {
     const item = await importTemplate(env);
     const e = await failure(

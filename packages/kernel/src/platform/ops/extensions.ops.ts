@@ -308,6 +308,8 @@ export class ExtensionsOperations implements OnModuleInit {
           },
         ],
         run: async (input, ctx) => {
+          // the web's Extensions page reads both: the org's own config (`config.org`) comes with the
+          // org extension list, the copy of the platform's overridable fields from the overrides route
           const v = await this.viewOf(ctx.orgId, input.extension);
           return {
             extension: v.plugin,
@@ -396,7 +398,7 @@ export class ExtensionsOperations implements OnModuleInit {
             ),
           );
           // a config-only write never previews (only switching off does)
-          if (r.kind !== "done") return { applied: false };
+          if (r.kind !== "done") throw new Error("a config-only org extension write previewed");
           const v = r.view;
           return {
             extension: v.plugin,
