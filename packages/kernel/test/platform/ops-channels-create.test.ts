@@ -1,5 +1,6 @@
 import { randomUUID } from "node:crypto";
 import { fileURLToPath } from "node:url";
+import { setupGuideHash } from "@capybara-hq/plugin-sdk";
 import {
   type FakeChannelServer,
   startFakeChannelServer,
@@ -26,6 +27,7 @@ import {
   startKernel,
   type TestKernel,
 } from "../helpers/runs.js";
+import { channelGuideDoc, seedGuideFiles } from "../helpers/setup-guides.js";
 
 /**
  * Channel creation through the `Platform` tool (platform web parity spec §4, §7.2, Task 11): the
@@ -173,6 +175,136 @@ describe("channels.create", () => {
       inputsProvided: ["appSecret"],
     });
     expect(JSON.stringify(rows)).not.toContain(SECRET);
+  });
+});
+
+describe("channels.create refusals and mode fields", () => {
+  const base = () => ({
+    plugin: "chan-mini",
+    name: "Mode bot",
+    agentId,
+    values: { platformUrl: im.url, appId: "cli_1" },
+  });
+
+  it("asks a secret the inbound mode requires without it being listed", async () => {
+    const o = op("channels.create");
+    const asked = async (inboundMode?: string) => {
+      const t = await o.personFields?.(
+        o.input.parse({ ...base(), ...(inboundMode && { inboundMode }) }),
+        ctxOf(),
+      );
+      const plan = planPersonFields(t as NonNullable<typeof t>, {
+        askPerson: [],
+        clearSecrets: [],
+      });
+      return plan.ok ? plan.ask.map((f) => f.path) : [];
+    };
+    expect(await asked()).not.toContain("webhookToken");
+    expect(await asked("webhook")).toContain("webhookToken");
+  });
+
+  it("refuses an unknown agent and a plugin that is off before the card", async () => {
+    const o = op("channels.create");
+    const pre = (over: Record<string, unknown>) =>
+      o.precheck?.(o.input.parse({ ...base(), ...over }), ctxOf());
+    expect(await pre({})).toEqual({ ok: true });
+    expect(await pre({ agentId: "no-such-agent" })).toMatchObject({
+      ok: false,
+      code: "agent.not_found",
+    });
+    await owner({
+      method: "PUT",
+      url: `/api/v1/orgs/${orgId}/extensions/chan-mini`,
+      payload: { enabled: false },
+    });
+    expect(await pre({})).toMatchObject({ ok: false, code: "extension.not_enabled" });
+    await owner({
+      method: "PUT",
+      url: `/api/v1/orgs/${orgId}/extensions/chan-mini`,
+      payload: { enabled: true },
+    });
+  });
+});
+
+describe("channels.guide-ack with a setup guide", () => {
+  const hashOf = (socket: string, webhook: string) =>
+    setupGuideHash(channelGuideDoc(socket, webhook), {
+      place: "channel-connection",
+      guideId: "app",
+      mode: "long_connection",
+      audience: "admin",
+    });
+  const seedVersion = async (itemId: string, version: string, socket: string) => {
+    const files = await seedGuideFiles(db, { "guides/app.md": channelGuideDoc(socket, "b") });
+    await db
+      .insertInto("catalog_item_versions")
+      .values({
+        item_id: itemId,
+        version,
+        manifest: JSON.stringify({
+          schemaVersion: 1,
+          name: "chan-mini",
+          version,
+          publisher: "Acme",
+          description: "IM",
+          setupGuides: [{ id: "app", place: "channel-connection" }],
+        }),
+        source: "file",
+        source_ref: "upload",
+        object_prefix: null,
+        files: JSON.stringify(files),
+        size: 1000,
+      })
+      .execute();
+    await db
+      .updateTable("catalog_items")
+      .set({ latest_version: version })
+      .where("id", "=", itemId)
+      .execute();
+  };
+
+  it("records the ack on the current hash and refuses a stale one", async () => {
+    const itemId = randomUUID();
+    await db
+      .insertInto("catalog_items")
+      .values({
+        id: itemId,
+        name: "chan-mini",
+        package_name: "@acme/plugin-chan-mini",
+        publisher: "Acme",
+        description: "IM",
+        latest_version: "1.0.0",
+        policy: "allow",
+        disabled: false,
+      })
+      .execute();
+    await seedVersion(itemId, "1.0.0", "a");
+    const created = (await run(
+      "channels.create",
+      {
+        plugin: "chan-mini",
+        name: "Guide bot",
+        agentId,
+        values: { platformUrl: im.url, appId: "cli_2" },
+        askPerson: ["appSecret"],
+      },
+      ctxOf({ personInputs: { paths: ["appSecret"], apply: (fn) => fn({ appSecret: SECRET }) } }),
+    )) as { channel: { id: string } };
+    const id = created.channel.id;
+    const v1 = hashOf("a", "b");
+    await seedVersion(itemId, "1.1.0", "d");
+
+    await expect(run("channels.guide-ack", { connectionId: id, hash: v1 })).rejects.toThrow(
+      /review the new guide/,
+    );
+    const ok = (await run("channels.guide-ack", {
+      connectionId: id,
+      hash: hashOf("d", "b"),
+    })) as { channel: { id: string } };
+    expect(ok.channel.id).toBe(id);
+    const rows = await audits("channel.guide_confirmed");
+    expect(rows).toHaveLength(1);
+    expect(rows[0]?.detail).toMatchObject({ via: "agent", operation: "channels.guide-ack" });
   });
 });
 

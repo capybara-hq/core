@@ -175,6 +175,10 @@ export class ChannelsOperations implements OnModuleInit {
             next: "Switch the extension on in the org first (plugins.set-enabled).",
           },
           {
+            code: "extension.config_invalid",
+            next: "Read the form with channels.schema and correct values (the error's details name the fields); fields required in webhook mode come from inboundMode, secret ones are asked with askPerson.",
+          },
+          {
             code: "channel.verify_failed",
             next: "The plugin could not verify the credentials; the person re-enters them on a new call (check the non-secret values and the app on the IM platform).",
           },
@@ -187,8 +191,23 @@ export class ChannelsOperations implements OnModuleInit {
             next: "The plugin or the deployment cannot receive webhooks; keep inboundMode long_connection, or ask the super admin to set channels.webhookBaseUrl.",
           },
         ],
+        precheck: (i, ctx) =>
+          precheckBy(() =>
+            this.channels.checkCreate(ctx.orgId, {
+              plugin: i.plugin,
+              agentId: i.agentId,
+              inboundMode: i.inboundMode,
+            }),
+          ),
         personFields: async (i) => {
           const found = secretFieldsOf(this.channels.jsonSchema(i.plugin), new Set());
+          // a secret the chosen inbound mode requires is asked even when not listed
+          const modal = new Set(
+            this.channels.modeRequiredFields(i.plugin, i.inboundMode ?? "long_connection"),
+          );
+          found.fields = found.fields.map((f) =>
+            modal.has(f.path) ? { ...f, required: true } : f,
+          );
           return {
             target: {
               zh: `渠道连接「${named(i.name)}」（${named(i.plugin)}）`,

@@ -638,6 +638,29 @@ export class ChannelConnections implements OnApplicationShutdown {
     return inserted;
   }
 
+  /**
+   * The read-only refusals of {@link create} that need no write (the Platform tool's precheck): the
+   * plugin provides a channel and is on in the org, the agent exists, and webhook inbound is
+   * available when asked for.
+   */
+  async checkCreate(
+    orgId: string,
+    input: Pick<CreateChannelInput, "plugin" | "agentId" | "inboundMode">,
+  ): Promise<void> {
+    this.channel(input.plugin);
+    await this.assertEnabled(orgId, input.plugin);
+    if (input.inboundMode === "webhook") this.assertWebhookAvailable(input.plugin);
+    await this.assertAgent(orgId, input.agentId);
+  }
+
+  /**
+   * The secret fields (dot paths) the inbound mode requires of the plugin's connection form
+   * (`x-ui.inboundModes`), for the Platform tool's person fields.
+   */
+  modeRequiredFields(plugin: string, mode: InboundMode): string[] {
+    return missingInboundModeFields(this.jsonSchema(plugin), mode, () => false);
+  }
+
   /** The read-only refusals of {@link update} that need no write (the Platform tool's precheck). */
   async checkUpdate(orgId: string, id: string, patch: UpdateChannelInput): Promise<void> {
     const current = await this.live(orgId).where("id", "=", id).executeTakeFirst();
