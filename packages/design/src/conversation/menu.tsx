@@ -510,7 +510,7 @@ function AnchoredContent({
   onTabOut,
   size,
 }: {
-  size: "narrow" | "default" | "wide";
+  size: "narrow" | "default" | "wide" | "touch";
   shared: Record<string, unknown>;
   entries: ConvMenuEntry[];
   noteId: string;
