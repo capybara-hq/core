@@ -46,10 +46,13 @@ export const reviewUrl = (stagingId: string) => `/admin/plugins/import?staging=$
 export const importHandoff = (result: unknown): HandoffView | null => {
   const r = result as { stagingId?: unknown; review?: { name?: unknown } } | null;
   if (typeof r?.stagingId !== "string") return null;
-  const name = named(typeof r.review?.name === "string" ? r.review.name : "?");
+  const name = typeof r.review?.name === "string" ? named(r.review.name) : null;
   return {
     kind: "handoff",
-    title: { zh: `审阅插件 ${name} 的权限`, en: `Review the permissions of plugin ${name}` },
+    title:
+      name === null
+        ? { zh: "审阅插件的权限", en: "Review the plugin's permissions" }
+        : { zh: `审阅插件 ${name} 的权限`, en: `Review the permissions of plugin ${name}` },
     target: { type: "link", url: reviewUrl(r.stagingId) },
   };
 };

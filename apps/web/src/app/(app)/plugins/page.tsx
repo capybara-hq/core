@@ -13,5 +13,7 @@ export default async function PluginsPage({
 } = {}) {
   const staging = (await searchParams)?.staging;
   // `?staging=<id>`: an upload staged by the Platform tool; its review opens (org admins)
-  return <PluginsView staging={typeof staging === "string" && staging !== "" ? staging : null} />;
+  const id = typeof staging === "string" && staging !== "" ? staging : null;
+  // keyed by the staged upload: client navigation to another `?staging=` reopens the dialog
+  return <PluginsView key={id ?? ""} staging={id} />;
 }

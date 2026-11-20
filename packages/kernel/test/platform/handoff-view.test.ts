@@ -290,22 +290,30 @@ describe("handoffs of import and upload operations", () => {
     });
   });
 
-  it("extensions.upload-package links the extensions page", () => {
-    expect(handoffOf("extensions.upload-package", { review: { name: "crm" } })).toEqual({
-      kind: "handoff",
-      title: { zh: "审阅扩展 crm 的权限", en: "Review the permissions of extension crm" },
-      target: { type: "link", url: "/admin/extensions" },
+  it("extensions.upload-package has no card and names the CLI install", () => {
+    const o = op("extensions.upload-package");
+    expect(o.handoff).toBeUndefined();
+    expect(o.description).toContain("capybara extensions install");
+    expect(o.description).not.toContain("admin console");
+  });
+
+  it("a staged import without a plugin name gets a generic title", () => {
+    expect(handoffOf("plugins.import-npm", { stagingId: "s-1" })?.title).toEqual({
+      zh: "审阅插件的权限",
+      en: "Review the plugin's permissions",
     });
   });
 
   it("extensions.pending-permissions links the page of what waits, nothing when nothing waits", () => {
-    const url = (items: unknown[]) => {
-      const v = handoffOf("extensions.pending-permissions", { items });
+    const url = (items: unknown[], total = items.length) => {
+      const v = handoffOf("extensions.pending-permissions", { items, total });
       return v?.target.type === "link" ? v.target.url : null;
     };
     expect(url([])).toBeNull();
     expect(url([{ kind: "extension", id: "crm" }])).toBe("/admin/extensions/crm");
     expect(url([{ kind: "plugin", id: "p1" }])).toBe("/admin/plugins/pending");
+    // one extension on this page of a larger waiting set
+    expect(url([{ kind: "extension", id: "crm" }], 60)).toBe("/admin/plugins/pending");
     expect(
       url([
         { kind: "extension", id: "crm" },

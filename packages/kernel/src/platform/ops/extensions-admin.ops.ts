@@ -255,9 +255,15 @@ export class ExtensionsAdminOperations implements OnModuleInit {
           };
         },
         handoff: (_i, result) => {
-          const rows = (result as { items?: { kind?: unknown; id?: unknown }[] } | null)?.items;
+          const r = result as {
+            items?: { kind?: unknown; id?: unknown }[];
+            total?: unknown;
+          } | null;
+          const rows = r?.items;
           if (rows === undefined || rows.length === 0) return null;
-          const onlyExtension = rows.length === 1 && rows[0]?.kind === "extension";
+          // the one extension's page only when the whole waiting set is that extension
+          const onlyExtension =
+            r?.total === 1 && rows.length === 1 && rows[0]?.kind === "extension";
           const id = rows[0]?.id;
           return {
             kind: "handoff",
@@ -278,7 +284,7 @@ export class ExtensionsAdminOperations implements OnModuleInit {
       defineOperation({
         id: "extensions.upload-package",
         description:
-          "Store an extension package in the deployment's package store (super admin): a .tgz extension package of this conversation, e.g. one you packed in the sandbox and delivered with Deliver, passed as file: { fileId }; at most the deployment's package limit. Returns its review: name, version, sha256, the permissions it asks for and those added or removed against the approved ones, migration warnings. Nothing is installed or run: the person installs it in the admin console (Extensions), where they review and approve its permissions.",
+          "Store an extension package in the deployment's package store (super admin): a .tgz extension package of this conversation, e.g. one you packed in the sandbox and delivered with Deliver, passed as file: { fileId }; at most the deployment's package limit. Returns its review: name, version, sha256, the permissions it asks for and those added or removed against the approved ones, migration warnings. Nothing is installed or run. The web has no page for a stored package: the person installs it with the capybara CLI (`capybara extensions install <file.tgz>`, which shows the permission review and asks them to confirm) or with the super admin API (POST /admin/extensions/:name/install).",
         input: z.object({ file: FileRefSchema }).strict(),
         example: { file: { fileId: "0b9f2c4e-1d3a-4c55-9e0a-7a2f6d1c8b11" } },
         authz: { superAdmin: true },
@@ -333,17 +339,7 @@ export class ExtensionsAdminOperations implements OnModuleInit {
               removedPermissions: r.removed,
               warnings: r.warnings,
             },
-            next: "Nothing is installed: the person installs the package in the admin console (Extensions), reviewing and approving its permissions there.",
-          };
-        },
-        handoff: (_i, result) => {
-          const name = (result as { review?: { name?: unknown } } | null)?.review?.name;
-          if (typeof name !== "string") return null;
-          const n = named(name);
-          return {
-            kind: "handoff",
-            title: { zh: `审阅扩展 ${n} 的权限`, en: `Review the permissions of extension ${n}` },
-            target: { type: "link", url: "/admin/extensions" },
+            next: "Nothing is installed. Tell the person to install it with `capybara extensions install <file.tgz>` (it shows the permission review and asks for confirmation) or the super admin API POST /admin/extensions/:name/install; the web has no page for it.",
           };
         },
       }),
