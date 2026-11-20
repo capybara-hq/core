@@ -51,7 +51,8 @@ export class PushRetryableError extends Error {
  * - A message failing `validatePushMessage` -> `invalid`, no send, an error log with the ids only
  *   (a retry would carry the same message).
  * - The registration is read when the job runs: gone (removed, its session revoked, pruned) ->
- *   `dropped`, no send.
+ *   `dropped`, no send. Reassigned to another account since the job was rendered (the same token
+ *   posted by someone else keeps the row id) -> `dropped`, no send, the registration kept.
  * - Its provider not loaded on this replica: when a live replica reports it loaded (a rolling
  *   deploy, a reload in progress) the job is retried; otherwise the provider is disabled or
  *   uninstalled -> `dropped`, no send, the registration kept. A provider whose deployment config
@@ -100,14 +101,23 @@ export class PushDelivery {
     }
     const row = await this.kdb.db
       .selectFrom("push_registrations")
-      .select(["id", "platform", "app_id", "provider", "token_hash", "master_key_id"])
-      .select("token_ciphertext")
+      .select(["id", "account_id", "platform", "app_id", "provider", "token_hash"])
+      .select(["master_key_id", "token_ciphertext"])
       // exact (microseconds): a JS Date would cut it to milliseconds
       .select(sql<string>`last_seen_at::text`.as("seen"))
       .where("id", "=", data.registrationId)
       .executeTakeFirst();
     if (row === undefined) {
       this.log.debug("push delivery dropped: the registration is gone", fields);
+      return "dropped";
+    }
+    if (row.account_id !== data.accountId) {
+      // the token moved to another account (the phone changed hands): the message was rendered
+      // for the previous one and must not reach the new one (review focus 3)
+      this.log.info(
+        "push delivery dropped: the registration now belongs to another account",
+        fields,
+      );
       return "dropped";
     }
     const plugin = row.provider;

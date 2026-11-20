@@ -46,8 +46,8 @@ export class PushRegistrationsService {
 
   /**
    * Registers (or refreshes) an install for `accountId` from `sessionId`. A provider that is not
-   * loaded or does not cover the app id → 422 `push.provider_unavailable`; a session revoked since
-   * the request was authenticated → 401 `auth.session_revoked`. Beyond
+   * loaded or does not cover the app id → 422 `push.provider_unavailable`; a session revoked
+   * since the request was authenticated → 401 `auth.session_revoked`. Beyond
    * `PUSH_LIMITS.registrationsPerAccount` the least recently seen of the account are deleted.
    * Audited (`push.registered`) for a new row or a row taken from another account.
    */
@@ -226,6 +226,7 @@ export class PushRegistrationsService {
       .set({
         account_id: accountId,
         session_id: sessionId,
+        platform: body.platform,
         locale: body.locale,
         device_name: body.deviceName,
         last_seen_at: sql<Date>`now()`,

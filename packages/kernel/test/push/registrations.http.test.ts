@@ -279,10 +279,12 @@ describe("POST /api/v1/me/push-registrations", () => {
       .where("id", "=", id)
       .execute();
     const before = await rowOrThrow(id);
-    expect(await register(req, token, { locale: "en", deviceName: "Pixel 10" })).toBe(id);
+    expect(
+      await register(req, token, { platform: "ios", locale: "en", deviceName: "Pixel 10" }),
+    ).toBe(id);
     const after = await rowOrThrow(id);
     expect(after.last_seen_at.getTime()).toBeGreaterThan(before.last_seen_at.getTime());
-    expect(after).toMatchObject({ locale: "en", device_name: "Pixel 10" });
+    expect(after).toMatchObject({ platform: "ios", locale: "en", device_name: "Pixel 10" });
     // the sealed token still opens under the same id
     expect(k.app.get(PushTokenStore).open(after)).toBe(token);
     expect(await auditsOf("push.registered")).toHaveLength(1);

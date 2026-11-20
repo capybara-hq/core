@@ -64,6 +64,7 @@ export class PushFanout {
       data: {
         eventId: data.eventId,
         registrationId: reg.id,
+        accountId: reg.account_id,
         message: renderPushMessage(push, reg.locale, cfg.push.previews, origin),
       },
       orgId: resolved.orgId,

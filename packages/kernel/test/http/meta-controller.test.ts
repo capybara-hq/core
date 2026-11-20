@@ -6,7 +6,13 @@ import type { PlatformIconService } from "../../src/themes/platform-icon.service
 
 function controller(publicUrl: string | undefined) {
   const coverage = vi.fn(() => [{ appId: "com.a", providers: ["push-a"] }]);
-  const config = { get: () => ({ platform: {}, http: { publicUrl } }) };
+  const config = {
+    get: () => ({
+      platform: {},
+      http: { publicUrl },
+      auth: { appRedirectUris: ["capybara://auth"] },
+    }),
+  };
   const icons = { current: async () => null };
   const c = new MetaController(
     config as unknown as KernelConfigService,

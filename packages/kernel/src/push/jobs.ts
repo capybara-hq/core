@@ -38,7 +38,13 @@ export type PushFanoutData = {
 };
 
 /**
- * Data of a {@link PUSH_DELIVER_JOB}: the registration by id and the rendered message. Never the
- * token: it is opened from the registration row when the job runs.
+ * Data of a {@link PUSH_DELIVER_JOB}: the registration by id, the account it was rendered for and
+ * the rendered message. Never the token: it is opened from the registration row when the job runs.
+ * A registration whose token moved to another account since (review focus 3) is not sent to.
  */
-export type PushDeliverData = { eventId: string; registrationId: string; message: PushMessage };
+export type PushDeliverData = {
+  eventId: string;
+  registrationId: string;
+  accountId: string;
+  message: PushMessage;
+};

@@ -512,6 +512,18 @@ describe("recipients when the fanout runs", () => {
     });
   });
 
+  it("a background task a person (or a deletion) stopped pushes nothing", async () => {
+    const conv = await seedConv(ids.member1 as string);
+    const runId = await seedRun(conv, ids.member1 as string);
+    const data = await seedEvent(
+      conv,
+      "background_task_finished",
+      { status: "stopped", stoppedBy: "person" },
+      runId,
+    );
+    expect(await fanout().run(data)).toBe(0);
+  });
+
   it("previews titles: the conversation title leads the body", async () => {
     const config = k.app.get(KernelConfigService);
     await config.apply({ ...cfg, push: { previews: "titles" } });

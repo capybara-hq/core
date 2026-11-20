@@ -139,6 +139,7 @@ async function owe(
   registrationId: string,
   eventId = conversationEventId(randomUUID(), 1),
   msg: PushMessage = message,
+  accountId: string = alice.id,
 ) {
   const jobId = pushDeliverJobId(eventId, registrationId);
   await k.app.get(TransactionHost).run(async () => {
@@ -146,7 +147,7 @@ async function owe(
       queue: PUSH_QUEUE,
       name: PUSH_DELIVER_JOB,
       jobId,
-      data: { eventId, registrationId, message: msg },
+      data: { eventId, registrationId, accountId, message: msg },
     });
   });
   return { jobId, eventId };
@@ -354,7 +355,9 @@ describe("push delivery", () => {
     const retried = await waitFor(
       async () => {
         const job = await queue.getJob(jobId);
-        return job !== undefined && (await job.getState()) === "delayed" ? job : null;
+        if (job === undefined || (await job.getState()) !== "delayed") return null;
+        // read again: the snapshot above may predate the failed attempt
+        return (await queue.getJob(jobId)) ?? null;
       },
       10_000,
       "the first attempt retried",
@@ -393,5 +396,22 @@ describe("push delivery", () => {
     } finally {
       await host.reload("fake-push");
     }
+  });
+
+  it("drops a delivery rendered for the previous account once the token moved to another", async () => {
+    const bob = await accountsFor(db).createLocal({ login: "bob", password: PW, displayName: "B" });
+    const id = await register("plain-handed-over");
+    // bob posts alice's token on the same phone: the upsert keeps the row id and reassigns it
+    await db
+      .updateTable("push_registrations")
+      .set({ account_id: bob.id })
+      .where("id", "=", id)
+      .execute();
+    // a delivery rendered for alice before the reassignment runs now
+    const { jobId } = await owe(id, conversationEventId(randomUUID(), 3), message, alice.id);
+    const job = await settled(jobId);
+    expect(job.returnvalue).toBe("dropped");
+    expect(sendsTo(id)).toHaveLength(0);
+    expect(await registrationExists(id)).toBe(true);
   });
 });

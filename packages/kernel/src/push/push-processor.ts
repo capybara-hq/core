@@ -93,7 +93,8 @@ export class PushProcessor extends WorkerHost<Worker<PushJobData>> {
 
 /**
  * The push queue's consumer (fanout and delivery) and the stale registration prune; imported only
- * by the worker role (`WorkerModule`). The queue itself is registered by {@link PushModule} (every role owes jobs).
+ * by the worker role (`WorkerModule`). The queue itself is registered by {@link PushModule} (every
+ * role owes jobs).
  */
 @Module({
   imports: [PushModule, PushHostModule, ExtensionsModule],
