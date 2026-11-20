@@ -417,6 +417,32 @@ describe("account avatar cleanup", () => {
     expect(await k.app.get(AccountAvatarsService).objectUrl(adaId, bound)).toMatch(/^https?:/);
   });
 
+  it("prepare never revives an expired upload, pending or ready", async () => {
+    const avatars = k.app.get(AccountAvatarsService);
+    const pending = await uploadPng(ada);
+    const ready = await uploadPng(ada);
+    await avatars.prepare(adaId, ready);
+    await db
+      .updateTable("account_avatar_uploads")
+      .set({ expires_at: sql<Date>`now() - interval '1 minute'` })
+      .where("id", "in", [pending, ready])
+      .execute();
+    for (const uploadId of [pending, ready]) {
+      const res = await patchProfile(ada, { avatar: { kind: "upload", uploadId } });
+      expect(res.statusCode).toBe(404);
+      expect(code(res)).toBe("attachment.not_found");
+      await expect(avatars.prepare(adaId, uploadId)).rejects.toMatchObject({
+        code: "attachment.not_found",
+      });
+      expect((await uploadRow(uploadId))?.expired).toBe(true);
+    }
+    expect(await storedAvatar(adaId)).toBeNull();
+    // the cleanup then removes both
+    expect(await avatars.deleteExpired()).toBe(2);
+    expect(await uploadRow(pending)).toBeUndefined();
+    expect(await uploadRow(ready)).toBeUndefined();
+  });
+
   it("deleting the account removes its upload rows", async () => {
     await db.insertInto("accounts").values({ id: "acc-gone", display_name: "Gone" }).execute();
     await db

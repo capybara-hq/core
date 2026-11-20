@@ -158,7 +158,8 @@ export class AccountAvatarsService {
       .updateTable("account_avatar_uploads")
       .set({ expires_at: sql<Date>`now() + make_interval(hours => ${AGENT_AVATAR_TTL_HOURS})` })
       .where("id", "=", uploadId)
-      .where("expires_at", "is not", null)
+      // never revives a row that expired since the SELECT: the cleanup may be deleting its object
+      .where("expires_at", ">", sql<Date>`now()`)
       .execute();
   }
 
@@ -264,53 +265,49 @@ export class AccountAvatarsService {
   }
 
   /**
-   * Deletes expired uploads (`expires_at < now()`), bound ones never: each batch of 100 is claimed
-   * with `FOR UPDATE SKIP LOCKED` in its own transaction, so a concurrent {@link bind} of a claimed
-   * row waits and then finds it gone; each object is deleted, then its row. A failed object delete
+   * Deletes expired uploads (`expires_at < now()`), bound ones never, in batches of 100: the rows
+   * are read without a lock, each object is deleted outside any transaction, then its row
+   * (`DELETE … WHERE id AND expires_at < now()`). This needs no claim because an expired row can
+   * never come back: {@link prepare} extends only an unexpired expiry and {@link bind} refuses an
+   * expired row, so nothing binds a row whose object is being deleted. A failed object delete
    * keeps the row for the next run. Does nothing without an object store. Returns the rows deleted.
    */
   async deleteExpired(): Promise<number> {
     if (!this.storage.available) return 0;
-    let deleted = 0;
-    const failed: string[] = [];
-    for (;;) {
-      const r = await this.deleteBatch(failed);
-      deleted += r.deleted;
-      if (r.claimed < CLEANUP_BATCH) return deleted;
-    }
-  }
-
-  @Transactional()
-  private async deleteBatch(failed: string[]): Promise<{ claimed: number; deleted: number }> {
-    const trx = this.db.db;
-    const claimed = await trx
-      .selectFrom("account_avatar_uploads")
-      .select(["id", "account_id", "storage_key"])
-      .where("expires_at", "<", sql<Date>`now()`)
-      .$if(failed.length > 0, (q) => q.where("id", "not in", failed))
-      .orderBy("expires_at")
-      .limit(CLEANUP_BATCH)
-      .forUpdate()
-      .skipLocked()
-      .execute();
     const store = this.storage.deployment();
     let deleted = 0;
-    for (const r of claimed) {
-      try {
-        await store.delete(r.storage_key);
-      } catch (err) {
-        failed.push(r.id);
-        this.log.warn("cannot delete expired account avatar upload; will retry", {
-          accountId: r.account_id,
-          uploadId: r.id,
-          err,
-        });
-        continue;
+    // rows this run already handled (deleted, failed, or gone meanwhile): never read twice
+    const seen: string[] = [];
+    for (;;) {
+      const batch = await this.db
+        .selectFrom("account_avatar_uploads")
+        .select(["id", "account_id", "storage_key"])
+        .where("expires_at", "<", sql<Date>`now()`)
+        .$if(seen.length > 0, (q) => q.where("id", "not in", seen))
+        .orderBy("expires_at")
+        .limit(CLEANUP_BATCH)
+        .execute();
+      for (const r of batch) {
+        seen.push(r.id);
+        try {
+          await store.delete(r.storage_key);
+        } catch (err) {
+          this.log.warn("cannot delete expired account avatar upload; will retry", {
+            accountId: r.account_id,
+            uploadId: r.id,
+            err,
+          });
+          continue;
+        }
+        const gone = await this.db
+          .deleteFrom("account_avatar_uploads")
+          .where("id", "=", r.id)
+          .where("expires_at", "<", sql<Date>`now()`)
+          .executeTakeFirst();
+        deleted += Number(gone.numDeletedRows);
       }
-      await trx.deleteFrom("account_avatar_uploads").where("id", "=", r.id).execute();
-      deleted++;
+      if (batch.length < CLEANUP_BATCH) return deleted;
     }
-    return { claimed: claimed.length, deleted };
   }
 }
 
