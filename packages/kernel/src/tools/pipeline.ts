@@ -2672,7 +2672,7 @@ export class ToolPipeline {
         case "denied":
           return approvalDeniedText(a.denyReason);
         case "expired":
-          // 按该审批实际的等待时长（创建到到期），不读当前配置（配置可热更新）
+          // Use the approval's own wait (creation to expiry), not the current config: it can be hot-reloaded
           return approvalExpiredText(approvalHours(a));
         case "cancelled":
           return APPROVAL_CANCELLED_TEXT;
