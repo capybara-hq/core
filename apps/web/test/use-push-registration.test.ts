@@ -88,36 +88,35 @@ describe("usePushRegistration", () => {
     await waitFor(() => expect(result.current.state).toBe("granted"));
   });
 
-  it("granted with a rotated token re-posts without a click", async () => {
-    const { calls } = installPush({
-      permission: "granted",
-      registrationId: "r0",
-      tokenChanged: true,
-    });
-    const { result } = mount(usePushRegistration);
-    await waitFor(() => expect(calls).toEqual(["register", "registered:r1"]));
-    expect(result.current.state).toBe("granted");
+  it("autoRegister: granted posts the current token on every mount, once per mount", async () => {
+    for (const status of [
+      { permission: "granted", registrationId: null, tokenChanged: false },
+      { permission: "granted", registrationId: "r0", tokenChanged: false },
+      { permission: "granted", registrationId: "r0", tokenChanged: true },
+    ] as const) {
+      const { push, calls } = installPush(status);
+      const requests = stubApi({ [POST]: () => json(201, { id: "r1" }) });
+      const { result, unmount } = mount(() => usePushRegistration({ autoRegister: true }));
+      await waitFor(() => expect(calls).toEqual(["register", "registered:r1"]));
+      expect(result.current.state).toBe("granted");
+      // a re-render and a second status read never post again
+      await waitFor(() => expect(push.status).toHaveBeenCalled());
+      expect(requests.filter((c) => c.method === "POST")).toHaveLength(1);
+      unmount();
+    }
   });
 
-  it("granted without a registration id registers silently on mount", async () => {
-    const { calls } = installPush({
-      permission: "granted",
-      registrationId: null,
-      tokenChanged: false,
-    });
-    mount(usePushRegistration);
-    await waitFor(() => expect(calls).toEqual(["register", "registered:r1"]));
-  });
-
-  it("granted and registered does nothing", async () => {
+  it("without autoRegister a granted install posts nothing (only the frame does)", async () => {
     const { push } = installPush({
       permission: "granted",
-      registrationId: "r0",
-      tokenChanged: false,
+      registrationId: null,
+      tokenChanged: true,
     });
+    const requests = stubApi({});
     const { result } = mount(usePushRegistration);
     await waitFor(() => expect(result.current.state).toBe("granted"));
     expect(push.register).not.toHaveBeenCalled();
+    expect(requests).toEqual([]);
   });
 
   it("denied is exposed and register() is never called", async () => {
@@ -172,6 +171,17 @@ describe("useForgetPushRegistration (before sign-out)", () => {
     const { result } = mount(useForgetPushRegistration);
     await result.current();
     expect(calls).toEqual(["unregister"]);
+  });
+
+  it("does not wait for a hung shell", async () => {
+    installPush(
+      { permission: "granted", registrationId: "r9", tokenChanged: false },
+      { status: () => new Promise(() => {}), unregister: () => new Promise(() => {}) },
+    );
+    const requests = stubApi({});
+    const { result } = mount(() => useForgetPushRegistration(1));
+    await result.current();
+    expect(requests).toEqual([]);
   });
 
   it("with no registration id only the shell is told", async () => {

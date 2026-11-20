@@ -15,13 +15,15 @@ export type PushState = "unavailable" | "prompt" | "granted" | "denied";
  * This install's push registration (mobile app spec §9.3, plan decisions 2 and 4): `unavailable`
  * without `push@1` (the browser, a shell without push) and until the shell has answered `status()`.
  * `enable()` runs from a click: `register()` (the OS prompt when the permission is `prompt`), `POST`
- * the registration, tell the shell its id (`registered`). With the permission `granted` and no
- * registration id (or a rotated token) the hook registers again by itself on mount, without a
- * click: `register()` shows nothing then, and each start refreshes the server's `last_seen_at`.
+ * the registration, tell the shell its id (`registered`). With the permission `granted` and
+ * `autoRegister` (the workspace frame only, one instance), the hook posts the current token again
+ * on every mount, without a click (plan decision 4): `register()` shows nothing then, the upsert
+ * refreshes the server's `last_seen_at` (what the 60-day rule measures) and repairs a registration
+ * the server deleted (stale purge, revoked session, another account).
  * `disable()` forgets this profile's registration in the shell only; removing it from the
- * deployment is the settings page's 「移除」 and the sign-out.
+ * deployment is the settings page's Remove button and the sign-out.
  */
-export function usePushRegistration(): {
+export function usePushRegistration(o: { autoRegister?: boolean } = {}): {
   state: PushState;
   enable(): Promise<void>;
   disable(): Promise<void>;
@@ -64,8 +66,8 @@ export function usePushRegistration(): {
         if (cancelled) return;
         setPermission(status.permission);
         if (
+          o.autoRegister === true &&
           status.permission === "granted" &&
-          (status.registrationId === null || status.tokenChanged) &&
           registeredFor.current !== cap
         ) {
           registeredFor.current = cap;
@@ -78,7 +80,7 @@ export function usePushRegistration(): {
     return () => {
       cancelled = true;
     };
-  }, [cap, post]);
+  }, [cap, post, o.autoRegister]);
 
   const enable = useCallback(async () => {
     if (cap === undefined) return;
@@ -108,27 +110,50 @@ export function usePushRegistration(): {
   };
 }
 
+/** How long a sign-out waits for the shell to answer before it goes on without it. */
+const SHELL_WAIT_MS = 3000;
+
+/** `p`, or `undefined` when it has not settled within `ms` (the timer clears with it). */
+function within<T>(p: Promise<T>, ms: number): Promise<T | undefined> {
+  return new Promise((resolve) => {
+    const timer = setTimeout(() => resolve(undefined), ms);
+    p.then(
+      (v) => {
+        clearTimeout(timer);
+        resolve(v);
+      },
+      () => {
+        clearTimeout(timer);
+        resolve(undefined);
+      },
+    );
+  });
+}
+
 /**
  * Before a sign-out: deletes this install's registration on the deployment (the session is still
- * valid) and tells the shell to forget it (`unregister()`). Never throws: a failed `DELETE` (the
- * kernel also drops a revoked session's registrations) must not keep the person signed in.
+ * valid) and tells the shell to forget it (`unregister()`). Never throws and never waits longer
+ * than {@link SHELL_WAIT_MS} for the shell: a failed `DELETE` (the kernel also drops a revoked
+ * session's registrations) or a hung shell must not keep the person signed in.
  */
-export function useForgetPushRegistration(): () => Promise<void> {
+export function useForgetPushRegistration(waitMs: number = SHELL_WAIT_MS): () => Promise<void> {
   const cap = usePushCapability();
   return useCallback(async () => {
     if (cap === undefined) return;
-    try {
-      const { registrationId } = await cap.status();
-      if (registrationId !== null) {
-        try {
-          await deletePushRegistration(registrationId);
-        } catch {
-          // the kernel's session revocation removes it anyway
-        }
+    const status = await within(
+      Promise.resolve().then(() => cap.status()),
+      waitMs,
+    );
+    if (status?.registrationId != null) {
+      try {
+        await deletePushRegistration(status.registrationId);
+      } catch {
+        // the kernel's session revocation removes it anyway
       }
-      await cap.unregister();
-    } catch {
-      // a shell that cannot answer does not block signing out
     }
-  }, [cap]);
+    await within(
+      Promise.resolve().then(() => cap.unregister()),
+      waitMs,
+    );
+  }, [cap, waitMs]);
 }

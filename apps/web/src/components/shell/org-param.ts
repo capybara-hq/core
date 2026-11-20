@@ -34,7 +34,9 @@ export function useOrgParam(me: Me): void {
     handled.current = true;
     params.delete("org");
     const rest = params.toString();
-    const clean = `${pathname}${rest === "" ? "" : `?${rest}`}${window.location.hash}`;
+    // leading slashes collapse to one: `//host` would be a protocol-relative redirect
+    const path = `/${pathname.replace(/^\/+/, "")}`;
+    const clean = `${path}${rest === "" ? "" : `?${rest}`}${window.location.hash}`;
     if (org === me.currentOrgId || !me.memberships.some((m) => m.orgId === org)) {
       router.replace(clean);
       return;

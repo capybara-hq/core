@@ -30,9 +30,9 @@ import { useErrorMessage } from "../../../../lib/use-error-message";
 import { usePushRegistration } from "../../../../lib/use-push-registration";
 
 /**
- * `/account/notifications` (SettingsPage; every signed-in person): 通知. The devices that receive
- * push (name, last seen, 移除; the one this install registered is marked), 在此设备开启通知 where the
- * shell offers `push@1`, and the four category switches (`PUT` sends the one key that changed).
+ * `/account/notifications` (SettingsPage; every signed-in person): Notifications. The devices that
+ * receive push (name, last seen, Remove; the one this install registered is marked), the "Turn on
+ * for this device" button where the shell offers `push@1`, and the four category switches (`PUT` sends the one key that changed).
  * From the query cache (the layout prefetched both reads on a first load).
  */
 export default function NotificationsView() {

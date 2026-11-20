@@ -97,6 +97,14 @@ describe("?org= on an app route", () => {
     expect(calls).toEqual([]);
   });
 
+  it("never turns a leading // path into a protocol-relative redirect", async () => {
+    resetNavigation("//evil.com");
+    window.history.replaceState(null, "", "/chat/c1?org=o2");
+    stubApi({ "PUT /api/v1/me/current-org": () => noContent() });
+    renderFrame(shellOf(twoOrgs));
+    await vi.waitFor(() => expect(replaceBrowser).toHaveBeenCalledWith("/evil.com"));
+  });
+
   it("without the parameter nothing is called", () => {
     const calls = stubApi({});
     renderFrame(shellOf(twoOrgs));
