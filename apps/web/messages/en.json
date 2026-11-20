@@ -220,7 +220,10 @@
       "not_found": "The approval does not exist or you cannot handle it.",
       "not_yours": "Only the device owner can allow network access on this device.",
       "already_decided": "This approval has already been handled or has expired.",
-      "scope_not_allowed": "This approval can only be allowed once."
+      "scope_not_allowed": "This approval can only be allowed once.",
+      "inputs_invalid": "Some entered values are invalid.",
+      "input_leaked": "This value appeared in the conversation, so it counts as leaked. Create a new one at the provider and enter that.",
+      "inputs_not_expected": "This approval does not take entered values."
     },
     "question": {
       "not_found": "The question does not exist or you cannot answer it.",

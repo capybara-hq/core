@@ -220,7 +220,10 @@
       "not_found": "审批不存在，或你无权处理。",
       "not_yours": "只有设备所有者能允许这台设备访问网络。",
       "already_decided": "该审批已被处理或已过期。",
-      "scope_not_allowed": "此审批只能允许本次。"
+      "scope_not_allowed": "此审批只能允许本次。",
+      "inputs_invalid": "填写的内容有误。",
+      "input_leaked": "这个值在对话里出现过，视为已泄露。请到服务商那里新建一个再填写。",
+      "inputs_not_expected": "这项审批不需要填写内容。"
     },
     "question": {
       "not_found": "该问题不存在，或你无权回答。",
