@@ -503,6 +503,8 @@ function AddSource({ onAdded }: { onAdded(): void }) {
   const [username, setUsername] = useState("");
   // Once the admin edits the username, a suggestion never overwrites it
   const [usernameTouched, setUsernameTouched] = useState(false);
+  // The value the last suggestion filled in: the field follows the host while it still holds it
+  const [lastSuggested, setLastSuggested] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<Problem>();
   const create = useAppMutation({
@@ -530,6 +532,7 @@ function AddSource({ onAdded }: { onAdded(): void }) {
       setToken("");
       setUsername("");
       setUsernameTouched(false);
+      setLastSuggested("");
       onAdded();
     } catch (e) {
       setError(problem(e));
@@ -559,9 +562,15 @@ function AddSource({ onAdded }: { onAdded(): void }) {
             placeholder={form === "git" ? "owner/repo" : "https://"}
             onChange={(e) => {
               setUrl(e.target.value);
-              // Pre-fill an empty, untouched username from the host (never overwrite one)
-              if (form === "git" && !usernameTouched && username === "") {
-                setUsername(suggestGitUsernameForUrl(e.target.value) ?? "");
+              // Follow the host: fill an empty username or replace the last suggestion (never a typed value)
+              if (
+                form === "git" &&
+                !usernameTouched &&
+                (username === "" || username === lastSuggested)
+              ) {
+                const next = suggestGitUsernameForUrl(e.target.value) ?? "";
+                setUsername(next);
+                setLastSuggested(next);
               }
             }}
           />

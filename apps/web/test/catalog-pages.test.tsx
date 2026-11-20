@@ -2304,9 +2304,11 @@ describe("/admin/plugins/sources: git username and config-managed sources", () =
       const url = within(add).getByRole("textbox", { name: s.url });
       await user.type(url, "https://bitbucket.org/acme/m.git");
       expect(username.value).toBe("x-token-auth");
-      // A host without a suggestion leaves an untouched field empty
+      // The suggestion follows the host; a host without one empties it again
       await user.clear(url);
-      await user.clear(username);
+      await user.type(url, "https://gitlab.com/acme/m.git");
+      expect(username.value).toBe("oauth2");
+      await user.clear(url);
       await user.type(url, "https://gitee.com/acme/m.git");
       expect(username.value).toBe("");
     },

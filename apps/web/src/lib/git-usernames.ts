@@ -1,7 +1,7 @@
 /**
  * The Basic auth username a git host documents for a token, to pre-fill a marketplace's username
  * field. A local copy of `suggestGitUsername` in `packages/plugin-sdk/src/git-hosts.ts` (the web app
- * never imports the SDK); `test/git-usernames.test.ts` pins the two together. An empty result means
+ * never imports the SDK); `test/git-usernames.test.ts` pins the values of this copy. An empty result means
  * no suggestion: the admin enters what the host's documentation names.
  */
 export function suggestGitUsernameForHost(host: string): string | undefined {
