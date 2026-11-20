@@ -126,7 +126,105 @@ export type ApprovalBlockProps = {
   onDeny?(reason?: string): void;
   /** Start in the deny form with this reason (a restored draft). */
   defaultDeny?: { reason: string };
+  /**
+   * The requester's own words for the call, the pending card's leading statement (plain text,
+   * never clipped); `label` attributes them (default "智能体的理由" / "Agent's reason").
+   */
+  reason?: { text: string; label?: string };
+  /** Where the call runs: one small line above the command (middle-truncated, full on hover). */
+  workingRoot?: string;
+  /** Facts about what approving grants, as a compact list above the input; values never clipped. */
+  facts?: ApprovalFact[];
+  /** Further small notes under the actions (each one line of plain text). */
+  notes?: string[];
+  /** A short phrase of what was crossed, added to the decided line after the word. */
+  decidedNote?: string;
 };
+
+/** One fact of a pending approval: a label and its values (one per line). */
+export type ApprovalFact = { label: string; values: string[] };
+
+/** Paths longer than this are middle-truncated in the working-root line. */
+export const WORKING_ROOT_MAX = 64;
+
+/** Keeps the start and the end of a long path: "/Users/grant/Proj…/packages/importer". */
+export function middleClip(text: string, max: number = WORKING_ROOT_MAX): string {
+  const chars = [...text];
+  if (chars.length <= max) return text;
+  const keep = Math.max(2, max - 1);
+  const head = Math.floor(keep * 0.4);
+  const tail = keep - head;
+  return `${chars.slice(0, head).join("")}…${chars.slice(chars.length - tail).join("")}`;
+}
+
+/** The requester's reason: a small attribution over the words in the prose font. */
+function ApprovalReason({ reason }: { reason: { text: string; label?: string } }): JSX.Element {
+  const t = useDesignT();
+  return (
+    <figure className="cb-hcard-reason" data-part="reason">
+      <figcaption className="cb-muted cb-small" data-part="reason-label">
+        {reason.label ?? t("hitl.reasonLabel")}
+      </figcaption>
+      <blockquote className="cb-hcard-reason-text" data-part="reason-text">
+        {reason.text}
+      </blockquote>
+    </figure>
+  );
+}
+
+/** The facts list: label and values as a compact grid, every value on its own line. */
+function ApprovalFacts({ facts }: { facts: ApprovalFact[] }): JSX.Element | null {
+  const shown = facts.filter((f) => f.values.length > 0);
+  if (shown.length === 0) return null;
+  return (
+    <dl className="cb-hcard-facts" data-part="facts">
+      {shown.map((f, i) => (
+        // biome-ignore lint/suspicious/noArrayIndexKey: the facts are fixed per render
+        <div key={i} className="cb-hcard-fact" data-part="fact">
+          <dt className="cb-hcard-fact-label" data-part="fact-label">
+            {f.label}
+          </dt>
+          {f.values.map((v, j) => (
+            // biome-ignore lint/suspicious/noArrayIndexKey: an exact list may repeat a value
+            <dd key={j} className="cb-hcard-fact-value" data-part="fact-value">
+              {v}
+            </dd>
+          ))}
+        </div>
+      ))}
+    </dl>
+  );
+}
+
+/** "在 <path> 运行": the path mono and middle-truncated, the full path as its title. */
+function WorkingRoot({ path }: { path: string }): JSX.Element {
+  const t = useDesignT();
+  const [before, after = ""] = t("hitl.workingRoot").split("{path}");
+  return (
+    <div className="cb-muted cb-small cb-hcard-root" data-part="working-root">
+      {before}
+      <code className="cb-hcard-root-path" data-part="working-root-path" title={path}>
+        {middleClip(path)}
+      </code>
+      {after}
+    </div>
+  );
+}
+
+/** The notes under the actions. */
+function ApprovalNotes({ notes }: { notes: string[] | undefined }): JSX.Element | null {
+  if (notes === undefined || notes.length === 0) return null;
+  return (
+    <>
+      {notes.map((n, i) => (
+        // biome-ignore lint/suspicious/noArrayIndexKey: the notes are fixed per render
+        <div key={i} className="cb-muted cb-small" data-part="card-hint">
+          {n}
+        </div>
+      ))}
+    </>
+  );
+}
 
 const valueText = (v: unknown): string => {
   if (typeof v === "string") return v;
@@ -190,7 +288,7 @@ export function ApprovalBlock(p: ApprovalBlockProps): JSX.Element {
           <span className="cb-tool-label">
             {fillCopy(t("hitl.approvedBy"), { who: s.who, tool: p.tool })}{" "}
             <span className="cb-faint" data-part="tool-key">
-              {[p.toolKey, scope, s.when].filter(Boolean).join(" · ")}
+              {[p.toolKey, p.decidedNote, scope, s.when].filter(Boolean).join(" · ")}
             </span>
           </span>
         </div>
@@ -311,11 +409,14 @@ export function ApprovalBlock(p: ApprovalBlockProps): JSX.Element {
           {p.toolKey}
         </span>
       </div>
+      {p.reason ? <ApprovalReason reason={p.reason} /> : null}
       {p.summary ? (
         <div className="cb-small" data-part="summary">
           {p.summary}
         </div>
       ) : null}
+      {p.facts ? <ApprovalFacts facts={p.facts} /> : null}
+      {p.workingRoot !== undefined ? <WorkingRoot path={p.workingRoot} /> : null}
       {args.length === 0 ? (
         <div className="cb-muted cb-small">{t("hitl.noArgs")}</div>
       ) : (
@@ -370,6 +471,7 @@ export function ApprovalBlock(p: ApprovalBlockProps): JSX.Element {
         </div>
       ) : null}
       {actions}
+      {denying ? null : <ApprovalNotes notes={p.notes} />}
     </div>
   );
 }
@@ -673,7 +775,7 @@ function CommandApproval(p: ApprovalBlockProps & { command: CommandAsk }): JSX.E
         <span className="cb-tool-label">
           {word}{" "}
           <span className="cb-faint" data-part="tool-key">
-            {[p.toolKey, who].filter(Boolean).join(" · ")}
+            {[p.toolKey, p.decidedNote, who].filter(Boolean).join(" · ")}
           </span>
           {s.reason ? (
             <span className="cb-muted">
@@ -737,7 +839,10 @@ function CommandApproval(p: ApprovalBlockProps & { command: CommandAsk }): JSX.E
     );
   } else {
     actions = (
-      <div className="cb-hcard-actions">
+      <div
+        className="cb-hcard-actions"
+        data-hints={p.scopeHints && Object.keys(p.scopeHints).length > 0 ? "true" : undefined}
+      >
         {p.scopes.map((scope, i) => (
           <ScopeChoice
             key={scope}
@@ -773,6 +878,7 @@ function CommandApproval(p: ApprovalBlockProps & { command: CommandAsk }): JSX.E
           {p.toolKey}
         </span>
       </div>
+      {p.reason ? <ApprovalReason reason={p.reason} /> : null}
       <div className="cb-small" data-part="command-reason">
         {p.command.lead ?? p.command.reason}
       </div>
@@ -781,12 +887,15 @@ function CommandApproval(p: ApprovalBlockProps & { command: CommandAsk }): JSX.E
           {p.command.detail}
         </div>
       ) : null}
+      {p.facts ? <ApprovalFacts facts={p.facts} /> : null}
+      {p.workingRoot !== undefined ? <WorkingRoot path={p.workingRoot} /> : null}
       <CodeBlock
         text={clipCommand(shown)}
         framed={false}
         {...(file ? { title: t("hitl.command.path") } : {})}
       />
       {actions}
+      {denying ? null : <ApprovalNotes notes={p.notes} />}
     </div>
   );
 }

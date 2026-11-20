@@ -668,6 +668,69 @@ function approvalBlocks(): ReactNode {
         />
       </Block>
       {networkApprovalBlocks()}
+      {commandApprovalBlocks()}
+    </>
+  );
+}
+
+/** Command asks with their details inside the card (spec §6.16.11, "Details inside the card"). */
+function commandApprovalBlocks(): ReactNode {
+  const X = H.command;
+  const ask = (command: string, lead: string) => ({
+    kind: "command" as const,
+    command,
+    reason: lead,
+    lead,
+  });
+  return (
+    <>
+      <Block id="approval-block-command-escalation">
+        <ApprovalBlock
+          tool="Bash"
+          toolKey="Bash"
+          input={{}}
+          scopes={["once"]}
+          command={ask(X.command, X.lead)}
+          reason={{ text: X.reason }}
+          workingRoot={X.workingRoot}
+          scopeHints={{ once: X.hint }}
+          notes={[X.note]}
+          state={{ kind: "pending" }}
+          onApprove={noop}
+          onDeny={noop}
+        />
+      </Block>
+      <Block id="approval-block-command-scope">
+        <ApprovalBlock
+          tool="Bash"
+          toolKey="Bash"
+          input={{}}
+          scopes={["once"]}
+          command={ask(X.scopeCommand, X.scopeLead)}
+          facts={X.facts}
+          scopeHints={{ once: X.scopeHint }}
+          state={{ kind: "pending" }}
+          onApprove={noop}
+          onDeny={noop}
+        />
+      </Block>
+      <Block id="approval-block-command-allowed">
+        <ApprovalBlock
+          tool="Bash"
+          toolKey="Bash"
+          input={{}}
+          scopes={["once"]}
+          command={ask(X.command, X.lead)}
+          decidedNote={X.decidedNote}
+          state={{
+            kind: "decided",
+            decision: "approved",
+            scope: "once",
+            who: H.decided.who,
+            when: X.at,
+          }}
+        />
+      </Block>
     </>
   );
 }

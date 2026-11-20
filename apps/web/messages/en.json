@@ -2177,12 +2177,15 @@
       "write": "Read and write",
       "read": "Read only",
       "hosts": "Network hosts",
-      "target": "Target file (for reference)"
+      "target": "Target file (for reference)",
+      "hint": "This call only; each directory includes everything inside it"
     },
     "escalation": {
       "intro": "Approving runs this command outside the sandbox for this call only, with full access to this device's files and network. The next call runs in the sandbox again.",
       "cwd": "Runs in",
-      "justification": "Why the agent asks",
+      "justification": "Agent's reason",
+      "hint": "This call only; the next one runs in the sandbox again",
+      "decided": "outside the sandbox",
       "background": "Approving starts a background process that keeps running outside the sandbox until it exits or is stopped.",
       "backgroundLimit": "Approving starts a background process that keeps running outside the sandbox until it exits or is stopped, at most {minutes, plural, one {# minute} other {# minutes}}."
     },

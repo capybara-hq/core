@@ -10,7 +10,7 @@
 <body>
 <main class="r-page">
 <h1>Approval block</h1>
-<p>The only accent-outlined card: title, then the tool as "connector: title" and always its model-visible key (faint), every argument as key / value (key arguments first, long values capped, "show full input" opens the JSON), one button per allowed scope, a kernel-rendered one-sentence summary above the arguments when the call has one (Platform operations), Deny with an optional reason, the policy on the right. Handled: one line with who, the tool and its key, scope, when and the reason. The network ask (a device refused a command network hosts): the hosts with their registrable domain, the command, a checkbox per host when there are several, 这次允许 (primary) with its hint, Deny, and the machine command that allows a host on the device for good (the deployment never widens a device); decided, one line with the word, the hosts and who.</p>
+<p>The only accent-outlined card: title, then the tool as "connector: title" and always its model-visible key (faint), every argument as key / value (key arguments first, long values capped, "show full input" opens the JSON), one button per allowed scope, a kernel-rendered one-sentence summary above the arguments when the call has one (Platform operations), Deny with an optional reason, the policy on the right. Handled: one line with who, the tool and its key, scope, when and the reason. The network ask (a device refused a command network hosts): the hosts with their registrable domain, the command, a checkbox per host when there are several, 这次允许 (primary) with its hint, Deny, and the machine command that allows a host on the device for good (the deployment never widens a device); decided, one line with the word, the hosts and who. The command ask carries its details inside the card: the agent's reason first as an attributed quote, the lead, the facts of a crossing (or the working root, middle-truncated) right above the command, the short hint under 允许一次 and a note under the actions; decided, one line with the crossing phrase and nothing below it.</p>
 <div class="r-blocks">
 <section data-ref-block="approval-block-pending" style="width:752px" data-pad>
   <template data-fixture="approval-block" data-opts='{"state": "pending"}'></template>
@@ -47,6 +47,15 @@
 </section>
 <section data-ref-block="approval-block-network-skipped" style="width:752px" data-pad>
   <template data-fixture="approval-block" data-opts='{"state": "network-skipped"}'></template>
+</section>
+<section data-ref-block="approval-block-command-escalation" style="width:752px" data-pad>
+  <template data-fixture="approval-block" data-opts='{"state": "command-escalation"}'></template>
+</section>
+<section data-ref-block="approval-block-command-scope" style="width:752px" data-pad>
+  <template data-fixture="approval-block" data-opts='{"state": "command-scope"}'></template>
+</section>
+<section data-ref-block="approval-block-command-allowed" style="width:752px" data-pad>
+  <template data-fixture="approval-block" data-opts='{"state": "command-allowed"}'></template>
 </section>
 </div>
 </main>

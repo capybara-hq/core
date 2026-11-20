@@ -2,6 +2,8 @@
 
 import {
   ApprovalBlock,
+  type ApprovalBlockProps,
+  type ApprovalFact,
   type ApprovalState,
   type CommandAsk as CommandAskBlock,
   type NetworkAsk,
@@ -39,8 +41,6 @@ import { lang, PLATFORM_PREFIX, toolLabel, toolLabelOfKey, toolLabelText } from 
 import { useErrorMessage } from "../lib/use-error-message";
 import { InitialPasswordReveal } from "./InitialPasswordReveal";
 import { InvitationLinkReveal } from "./InvitationLinkReveal";
-import { PermissionScopeDetail } from "./PermissionScopeDetail";
-import { SandboxEscalationDetail } from "./SandboxEscalationDetail";
 import { useSession } from "./shell/session";
 
 /**
@@ -391,6 +391,9 @@ export function ApprovalCard({
         };
   const scope = permissionScopeOf(item, view);
   const escalation = escalationOf(item, view);
+  // The crossing's details live inside the pending card (design spec §6.16.11, maintainer
+  // decision 2026-11-21); decided or superseded, only its one line remains.
+  const details = useCardDetails(scope, escalation, command?.path);
   const detail = view?.kind === "network" ? (view.detail ?? null) : null;
   // a network ask is granted for this run only: an "always" is never offered (device protocol 4)
   const personFields = view?.personFields ?? [];
@@ -426,17 +429,6 @@ export function ApprovalCard({
             <Text variant="small" tone="muted">
               {t("superseded.revision", { n: outcome.revision })}
             </Text>
-          )}
-          {scope !== undefined && (
-            <PermissionScopeDetail scope={scope.permissionScope} targetPath={scope.targetPath} />
-          )}
-          {escalation !== undefined && (
-            <SandboxEscalationDetail
-              justification={escalation.justification}
-              workingRoot={escalation.workingRoot}
-              background={escalation.background}
-              maxSeconds={escalation.maxSeconds}
-            />
           )}
         </Stack>
       </div>
@@ -532,18 +524,8 @@ export function ApprovalCard({
           void onDecide("approve", scope, undefined, network !== undefined ? hosts : undefined)
         }
         onDeny={(reason) => void onDecide("deny", "once", reason)}
+        {...details}
       />
-      {scope !== undefined && (
-        <PermissionScopeDetail scope={scope.permissionScope} targetPath={scope.targetPath} />
-      )}
-      {escalation !== undefined && (
-        <SandboxEscalationDetail
-          justification={escalation.justification}
-          workingRoot={escalation.workingRoot}
-          background={escalation.background}
-          maxSeconds={escalation.maxSeconds}
-        />
-      )}
       {revealsPassword && <InitialPasswordReveal orgId={orgId} approvalId={item.approvalId} />}
       {revealsInvitation && <InvitationLinkReveal orgId={orgId} approvalId={item.approvalId} />}
     </div>
@@ -675,6 +657,57 @@ export function permissionScopeOf(
     permissionScope: from.permissionScope,
     ...(from.targetPath !== undefined ? { targetPath: from.targetPath } : {}),
   };
+}
+
+/**
+ * What a crossing puts inside the pending card (design spec §6.16.11, "Details inside the card"):
+ * an escalation leads with the agent's justification (plain text, never clipped), names the
+ * directory it runs in above the command, says under Allow once that only this call leaves the
+ * sandbox, adds a note when it starts a background process (its deadline in whole minutes, rounded
+ * up), and its decided line says it ran outside the sandbox. A permission crossing lists its exact
+ * reach above the command (every directory and host, nothing inferred; the target file only when
+ * it is not the path the card already shows) and hints that a directory includes its contents.
+ */
+function useCardDetails(
+  scope: ReturnType<typeof permissionScopeOf>,
+  escalation: ReturnType<typeof escalationOf>,
+  shownPath: string | undefined,
+): Pick<
+  ApprovalBlockProps,
+  "reason" | "workingRoot" | "facts" | "scopeHints" | "notes" | "decidedNote"
+> {
+  const t = useTranslations("approval");
+  if (escalation !== undefined) {
+    const { justification, workingRoot, background, maxSeconds } = escalation;
+    return {
+      reason: { text: justification, label: t("escalation.justification") },
+      ...(workingRoot !== undefined ? { workingRoot } : {}),
+      scopeHints: { once: t("escalation.hint") },
+      ...(background === true
+        ? {
+            notes: [
+              maxSeconds !== undefined
+                ? t("escalation.backgroundLimit", { minutes: Math.ceil(maxSeconds / 60) })
+                : t("escalation.background"),
+            ],
+          }
+        : {}),
+      decidedNote: t("escalation.decided"),
+    };
+  }
+  if (scope !== undefined) {
+    const { permissionScope: reach, targetPath } = scope;
+    const facts: ApprovalFact[] = [
+      { label: t("permissionScope.write"), values: reach.writeDirectories },
+      { label: t("permissionScope.read"), values: reach.readDirectories },
+      { label: t("permissionScope.hosts"), values: reach.hosts },
+      ...(targetPath !== undefined && targetPath !== shownPath
+        ? [{ label: t("permissionScope.target"), values: [targetPath] }]
+        : []),
+    ];
+    return { facts, scopeHints: { once: t("permissionScope.hint") } };
+  }
+  return {};
 }
 
 /**

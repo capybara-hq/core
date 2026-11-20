@@ -586,6 +586,25 @@ export const HITL_FIXTURE: {
     orgHost: string;
     addressHost: string;
   };
+  /**
+   * Command asks with their in-card details (design spec §6.16.11, "Details inside the card"): a
+   * per-call sandbox escalation (the reason, the working root, the hint and the background note) and
+   * a permission crossing (its facts), and the decided line's crossing phrase.
+   */
+  command: {
+    command: string;
+    lead: string;
+    reason: string;
+    workingRoot: string;
+    hint: string;
+    note: string;
+    scopeLead: string;
+    scopeCommand: string;
+    facts: { label: string; values: string[] }[];
+    scopeHint: string;
+    decidedNote: string;
+    at: string;
+  };
   decided: {
     who: string;
     approved: { tool: string; toolKey: string; at: string; scope: string };
@@ -631,6 +650,24 @@ export const HITL_FIXTURE: {
     description: "下载 Slack 导出的对账文件",
     orgHost: "api.foo.com",
     addressHost: "10.0.0.5",
+  },
+  command: {
+    command: "docker compose -f docker/compose.dev.yaml up -d postgres",
+    lead: "智能体想让这条命令在沙箱外运行一次：它会以你的身份在这台设备上运行。",
+    reason: "沙箱里没有 Docker 套接字，本地数据库只能在沙箱外启动；启动后我再回到沙箱里跑迁移。",
+    workingRoot:
+      "/Users/grant/Projects/acme-ledger/services/reconciliation-worker/packages/importer",
+    hint: "仅这一次调用；下次仍在沙箱内运行",
+    note: "批准后会启动一个后台进程，它在沙箱外持续运行，直到自行退出或被停止，最长 30 分钟。",
+    scopeLead: "这条命令需要智能体现在范围之外的目录。允许后，仅这一次调用获得下面列出的访问范围。",
+    scopeCommand: "rsync -a /Users/grant/Downloads/statements/ ./data/statements/",
+    facts: [
+      { label: "读写", values: ["/Users/grant/Projects/acme-ledger/data"] },
+      { label: "只读", values: ["/Users/grant/Downloads/statements", "/Users/grant/.config/acme"] },
+    ],
+    scopeHint: "仅这一次调用；每个目录包含其中的全部内容",
+    decidedNote: "在沙箱外运行",
+    at: "23:56",
   },
   decided: {
     who: "grant",

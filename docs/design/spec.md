@@ -1918,9 +1918,12 @@ States: `default`, `truncated`
 - **Decided**: collapses to a tool line that names the key too: approved — `check` 12, "<who> 批准了 <tool>" and " <key> · <scope> · <time>" in `faint`; denied — `x` 12, "<who> 拒绝了 <tool>", " <key>" in `faint`, " · 「<reason>」" in `muted` and the time in `faint`. A request the person answered with a message reads "批准请求已跳过：<tool>" / "Approval request skipped: <tool>" (network asks only, below).
 - **Network ask** (network ask spec §6.5): a command on a device was refused network hosts by the device's own policy, and the device owner is asked. Same accent card, no tool, key or argument grid. Head: the `accent` dot and the title (600): one host "智能体想访问 `files.slack.com`，允许吗？" / "The agent wants to reach `files.slack.com`. Allow?", the host as inline code; n hosts "智能体想访问 n 个域名，允许吗？" / "The agent wants to reach n domains. Allow?". Body: "这条命令被这台设备的网络规则拦下了：<description>" / "This command was blocked by this device's network rules: <description>" (without a description the sentence ends there). The command read-only in code style (the full-input box of a tool approval), clipped to 300 characters with an ellipsis. Then the hosts, one per line: the registrable domain (600; e.g. **evil.io** in `files.slack.com.evil.io`, the last two labels, three under a known multi-label suffix such as `co.uk`, `com.cn`: a display aid, never a security decision) and the full host as inline code; with more than one host each line is a checkbox, all checked, and the decision covers the checked ones (none checked disables both allow buttons, Deny stays). Actions: "这次允许" / "Allow this time" (primary, the first and focused one) with a `small` `muted` hint under it, "到智能体这次回复结束为止有效" / "Until the agent finishes this reply", and "拒绝" / "Deny" (default), which opens the same reason form as a tool approval. There is no "always": the deployment never widens a device (device protocol 4, approval-only profiles design), so under the actions one `small` `muted` line (`network-on-machine`) names the owner's command on the machine: "要让这台设备一直允许，请在设备上运行 `capybara-device policy add allowedDomains <host>`" / "To always allow it on this device, run `capybara-device policy add allowedDomains <host>` on the device" (the host when there is one, `<host>` for several). Host, command and description are model-controlled: always plain text or code, never markup.
 - **Network ask decided**: a tool line with `check` 12 (allowed) or `x` 12 and the word: "已允许（这次）" / "Allowed (this time)", "已拒绝" / "Denied", "已过期" / "Expired", "已跳过" / "Skipped" (the person sent a message instead of answering), "已取消" / "Cancelled"; then the hosts it covers (the granted ones when allowed) and who in `faint` (expired and cancelled name no one); a denial's reason and the time as for tool approvals.
+- **Command ask** (auto mode spec §5.4, approval profiles design): the command review holds a shell command, or a file read or write outside the scope, until the person allows it. Same accent card, no argument grid. Head: the `accent` dot, the question (600: "智能体想运行这条命令，允许吗？" / "The agent wants to run this command. Allow?", or the read / write question), the tool and its key as for a tool approval. Then the lead (`small`, `command-reason`: what is asked, worded by the page from the ask's facts), the review's own reason under it in `faint` when it adds what the lead cannot, and the command read-only in code style (unframed, clipped to 300 characters; a read or write shows its path under the title "路径" / "Path"). Actions: "允许一次" / "Allow once" (primary), "本会话允许同类" / "Allow this kind for this conversation" when offered, "拒绝" / "Deny" (the same reason form).
+- **Details inside the card** (maintainer decision 2026-11-21; any pending approval but a network ask may carry them, all optional, all plain text the page passes, nothing boxed inside the card): **reason**: the requester's own words as the card's leading statement, right under the head: a `small` `muted` attribution ("智能体的理由" / "Agent's reason") over the words in the prose font (`prose`), quoted by a 2px `line-strong` rule on the left, wrapping, never clipped, never a link. **Facts**: a compact list above the input (the command, or the argument grid): one row per fact, its label `small` `faint`, its values `small` mono `ink`, one per line, wrapping, never clipped or summarized (a permission crossing's read-write directories, read-only directories, hosts and target file). **Working root**: one `small` `muted` line right above the command, "在 <path> 运行" / "Runs in <path>", the path mono and middle-truncated past 64 characters with the full path as its title. **Hints**: the consequence of approving is a short `scope-hint` under its button (the page's `scopeHints`, e.g. "仅这一次调用；下次仍在沙箱内运行" / "This call only; the next one runs in the sandbox again"), and further notes (a background process that keeps running) are `small` `muted` lines under the actions (`card-hint`). The details belong to the pending card only: decided or superseded, the card is its one line, with an optional short phrase of what was crossed after the word ("已允许（一次） Bash · 在沙箱外运行 · <who> · <time>"); the conversation log keeps the rest.
+- **Command ask decided**: a tool line with `check` 12 (allowed) or `x` 12 and the word: "已允许（一次）" / "Allowed (once)", "已允许（本会话同类）" / "Allowed (this kind for this conversation)", "已拒绝" / "Denied", "已过期" / "Expired", "已取消" / "Cancelled"; then in `faint` the key, the crossing phrase when given and who (expired and cancelled name no one); a denial's reason in `muted` and the time in `faint`.
 
 <!-- states: approval-block -->
-States: `pending`, `pending-once`, `pending-summary`, `deny-reason`, `approved`, `denied`, `network`, `network-hosts`, `network-once`, `network-allowed`, `network-denied`, `network-skipped`
+States: `pending`, `pending-once`, `pending-summary`, `deny-reason`, `approved`, `denied`, `network`, `network-hosts`, `network-once`, `network-allowed`, `network-denied`, `network-skipped`, `command-escalation`, `command-scope`, `command-allowed`
 
 <!-- size-table: approval-block -->
 | Part | State | Property | Value |
@@ -1953,6 +1956,26 @@ States: `pending`, `pending-once`, `pending-summary`, `deny-reason`, `approved`,
 | tool-line | network-allowed | height | row.dense |
 | tool-key | network-allowed | color | color.faint |
 | tool-line | network-skipped | color | color.muted |
+| approval-block | command-escalation | border-top-color | color.accent |
+| reason-label | command-escalation | font-size | type.small |
+| reason-label | command-escalation | color | color.muted |
+| reason-text | command-escalation | font-size | type.prose |
+| reason-text | command-escalation | color | color.ink |
+| reason | command-escalation | border-left-color | color.line-strong |
+| reason | command-escalation | padding-left | space.3 |
+| working-root | command-escalation | font-size | type.small |
+| working-root | command-escalation | color | color.muted |
+| scope-hint | command-escalation | color | color.muted |
+| card-hint | command-escalation | font-size | type.small |
+| card-hint | command-escalation | color | color.muted |
+| fact-label | command-scope | font-size | type.small |
+| fact-label | command-scope | color | color.faint |
+| fact-value | command-scope | font-size | type.small |
+| fact-value | command-scope | color | color.ink |
+| button[data-variant=primary] | command-scope | height | control.default |
+| tool-line | command-allowed | height | row.dense |
+| tool-line | command-allowed | color | color.muted |
+| tool-key | command-allowed | color | color.faint |
 
 #### 6.16.11a Network facts
 

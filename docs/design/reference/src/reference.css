@@ -2408,6 +2408,51 @@ textarea {
   flex-direction: column;
   gap: var(--cb-space-2);
 }
+/* Details inside the approval card (spec §6.16.11): the reason as a quote, the facts, the root. */
+.r-reason {
+  display: flex;
+  flex-direction: column;
+  gap: var(--cb-space-1);
+  margin: 0;
+  padding-left: var(--cb-space-3);
+  border-left: 2px solid var(--cb-line-strong);
+}
+.r-reason-text {
+  margin: 0;
+  color: var(--cb-ink);
+  font-family: var(--cb-font-prose);
+  font-size: var(--cb-type-prose-size);
+  line-height: var(--cb-type-prose-line);
+  overflow-wrap: anywhere;
+}
+.r-facts {
+  display: grid;
+  grid-template-columns: max-content minmax(0, 1fr);
+  column-gap: var(--cb-space-3);
+  row-gap: var(--cb-space-1);
+  margin: 0;
+  font-size: var(--cb-type-small-size);
+  line-height: var(--cb-type-small-line);
+}
+.r-fact {
+  display: contents;
+}
+.r-fact-k {
+  grid-column: 1;
+  color: var(--cb-faint);
+}
+.r-fact-v {
+  grid-column: 2;
+  margin: 0;
+  color: var(--cb-ink);
+  overflow-wrap: anywhere;
+}
+.r-root {
+  overflow-wrap: anywhere;
+}
+.r-root-path {
+  font: inherit;
+}
 .r-opts {
   display: flex;
   flex-direction: column;

@@ -250,16 +250,18 @@ test.describe("permission profiles", () => {
     const convId = conversationIdOf(page);
     expect((await permissionsOf(page, orgId, convId)).profile).toBe("request-approval");
 
-    // The command ask: the file, the exact directory it would grant (once), the target apart.
+    // The command ask: the file (its path is the card's), and inside the card the exact
+    // directory it would grant (once) with the short hint under Allow once.
     const approval = page.locator('[data-role="approval"]');
     await expect(approval).toHaveCount(1);
     const card = approval.getByRole("group", { name: designZh("hitl.command.titleWrite") });
     await expect(card).toBeVisible();
     await expect(card.getByText(target).first()).toBeVisible();
-    const scope = approval.locator('[data-role="permission-scope"]');
-    await expect(scope.getByText(zh.approval.permissionScope.intro)).toBeVisible();
-    await expect(scope.locator('[data-scope="write"]')).toContainText("/etc/capybara-e2e");
-    await expect(scope.locator('[data-scope="target"]')).toContainText(target);
+    const granted = card.locator('[data-part="fact"]', {
+      has: page.getByText(zh.approval.permissionScope.write, { exact: true }),
+    });
+    await expect(granted.locator('[data-part="fact-value"]')).toContainText("/etc/capybara-e2e");
+    await expect(card.getByText(zh.approval.permissionScope.hint)).toBeVisible();
     const write = toolGroup(page, "Write");
     await expect(write).toHaveAttribute("data-tool-status", "pending");
 
