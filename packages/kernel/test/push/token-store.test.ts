@@ -84,12 +84,15 @@ describe("PushTokenStore", () => {
     const store = new PushTokenStore(createKeyring(k1, []));
     await insertRegistration(store, "r-a", `${TOKEN}-a`);
     const row = await rowOf("r-a");
-    expect(() => store.open({ ...row, id: "r-b" })).toThrow(/decryption failed/);
+    let error: unknown;
     try {
       store.open({ ...row, id: "r-b" });
     } catch (e) {
-      expect((e as Error).message).not.toContain(TOKEN);
+      error = e;
     }
+    expect(error).toBeInstanceOf(Error);
+    expect((error as Error).message).toMatch(/decryption failed/);
+    expect((error as Error).message).not.toContain(TOKEN);
   });
 
   it("after rotating the master key, rewrap reports the token and it opens with the new key only", async () => {
@@ -110,8 +113,13 @@ describe("PushTokenStore", () => {
 describe("0170_push.sql", () => {
   it("applies again cleanly", async () => {
     const text = readFileSync(join(KERNEL_MIGRATIONS_DIR, FILE), "utf8");
-    await sql.raw(`set search_path to capybara; ${text}`).execute(db);
-    await sql.raw(`set search_path to capybara; ${text}`).execute(db);
+    // `set local` ends with the transaction, so the pooled connection keeps its search path
+    const apply = () =>
+      db
+        .transaction()
+        .execute((trx) => sql.raw(`set local search_path to capybara; ${text}`).execute(trx));
+    await apply();
+    await apply();
     await migrate(pg.url, { schema: "capybara", dir: KERNEL_MIGRATIONS_DIR });
   });
 

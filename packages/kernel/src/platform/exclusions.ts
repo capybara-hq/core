@@ -486,6 +486,22 @@ export const PLATFORM_EXCLUSIONS: readonly {
     reason: "Revokes a personal access token",
   },
   {
+    route: "POST /api/v1/me/push-registrations",
+    category: "human-only",
+    reason: "Registers the person's own app install for push; a device action of the person's app",
+  },
+  {
+    route: "DELETE /api/v1/me/push-registrations/:id",
+    category: "human-only",
+    reason:
+      "Removes one of the person's app installs from push (sign-out, profile removal, settings)",
+  },
+  {
+    route: "GET /api/v1/me/push-registrations",
+    category: "human-only",
+    reason: "Lists the person's own app installs that receive push, for the settings page",
+  },
+  {
     route: "GET /api/v1/auth/sources",
     category: "internal",
     reason: "Login source list the web sign-in page renders; no agent use",
