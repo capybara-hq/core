@@ -194,7 +194,28 @@ Both are single-select, brokered extension points: a deployment installs only on
 
 ### Push channels (`push-provider@1`)
 
-`provides: [PUSH_PROVIDER_EXTENSION_POINT]` and `ctx.provide(PUSH_PROVIDER_EXTENSION_POINT, provider)` makes the plugin one push channel (the provider key is the plugin's name: `push-apns`, `push-fcm`, `push-jpush`). It is a brokered, multi-select and sensitive point (review and `capybara extensions review` mark it): other extensions cannot `requires` it, the kernel's push domain (`packages/kernel/src/push`) is the only consumer and calls exactly the extension a registration names, if it is enabled and its `apps()` covers the registration's app id. Key points: config is `{ deployment }` only (credentials are platform deployment config, `secret()` fields, no org level); `apps()` is synchronous and derived from config; `send({ registrations, message })` returns one result per registration (`delivered`, `unregistered` = the token is dead and the kernel deletes the registration, `failed` with a `PushError` kind `auth` / `rate_limited` / `transient`) and **never retries inside the extension** (the `cap-push-deliver` queue retries); the message carries `collapseId` (map it to the channel's collapse key); a push token is never put in an error, a log or a result message (the kernel validates the messages a provider returns); cache short-lived vendor auth tokens in `ctx.kv` with a TTL below their lifetime. Credentials are checked by a setup check declared in `permissions.setupChecks` and shown by a guide with place `extension-deployment` (target `{ kind: "extension-deployment", plugin, config }`, platform routes on `AdminExtensionsController`, run with locale `en`, and the result is model-visible, so it carries no secret); an `auth` result also opens the platform notice `push_auth_failed`. Test with `fake-push` and `describePushProviderConformance` from `@capybara-hq/testing`.
+`provides: [PUSH_PROVIDER_EXTENSION_POINT]` and `ctx.provide(PUSH_PROVIDER_EXTENSION_POINT,
+provider)` makes the plugin one push channel (the provider key is the plugin's name: `push-apns`,
+`push-fcm`, `push-jpush`). It is a brokered, multi-select and sensitive point (review and `capybara
+extensions review` mark it): other extensions cannot `requires` it, the kernel's push domain
+(`packages/kernel/src/push`) is the only consumer and calls exactly the extension a registration
+names, if it is enabled and its `apps()` covers the registration's app id. Key points: config is `{
+deployment }` only (credentials are platform deployment config, `secret()` fields, no org level);
+`apps()` is synchronous and derived from config; `send({ registrations, message })` returns one
+result per registration (`delivered`, `unregistered` = the token is dead and the kernel deletes the
+registration, `failed` with a `PushError` kind `auth` / `rate_limited` / `transient`) and **never
+retries inside the extension** (the `cap-push-deliver` queue retries); the message carries
+`collapseId`, the same for every send of one event to one device (map it to the channel's collapse
+key, so a resend of the same event after a crash or a timeout replaces the notification); a push
+token is never put in an error, a log or a result message (the kernel checks results with
+`checkPushResults` and never reads a failed result's message); cache short-lived vendor auth tokens
+in `ctx.kv` with a TTL below their lifetime. Credentials are checked by a setup check declared in
+`permissions.setupChecks` and shown by a guide with place `extension-deployment` (target `{ kind:
+"extension-deployment", plugin, config }`, platform routes on `AdminExtensionsController`, run with
+locale `en`, and the result is model-visible, so it carries no secret); the setup check is
+read-only: only a delivery's `auth` result opens the platform notice `push_auth_failed` (one open
+per plugin). Test with `fake-push` and `describePushProviderConformance` from
+`@capybara-hq/testing`.
 
 ### Channels, login, directory (`channel@1` / `identity-source@1` / `directory@1`)
 

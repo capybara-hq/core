@@ -476,7 +476,7 @@ The four categories of layout spec §10.3, each from its existing kernel event, 
 
 Decided in `docs/superpowers/plans/2026-11-20-push-notifications.md`, inside this spec's intent.
 
-1. Setup checks gain a platform place, `extension-deployment`, with super admin routes; an `auth` result writes the platform notice `push_auth_failed` that links to the extension page.
+1. Setup checks gain a platform place, `extension-deployment`, with super admin routes; the check stays read-only (R12). Only a delivery's `auth` result writes the platform notice `push_auth_failed` (one open per plugin), which links to the extension page.
 2. The shell learns the registration id: `push@1.registered(id)` after the POST, and `status()` returns `{ permission, registrationId, tokenChanged }`.
 3. Registrations follow their session: revoking a session deletes its registrations, so a password change removes the other devices' and keeps the one in hand (refines §9.3).
 4. `register()` needs a user activation only when the OS prompt would show; with `granted` it returns the current token, and the web re-posts on every start (R10), which refreshes `last_seen_at`.
@@ -488,7 +488,7 @@ Decided in `docs/superpowers/plans/2026-11-20-push-notifications.md`, inside thi
 10. The fanout gate: the event's transaction owes `push-fanout` only while a `push-provider` is loaded.
 11. The aggregator is JPush (below); its plugin is `push-jpush`.
 12. P1 ruling: JPush covers Huawei, Honor, Xiaomi, OPPO, vivo, Meizu and FCM with documented fields, HTTP Basic auth `appKey:masterSecret` (stateless) against `api.jpush.cn`, and an explicit dead-token code (1003 / 1011). Getui was not chosen: its FCM path is undocumented, its invalid-cid signal is a message string only, and it needs a sign/token cycle with a one-day token.
-13. R9: `PushMessage` carries `collapseId` so a channel can replace an earlier push for the same conversation.
+13. R9: `PushMessage` carries `collapseId` (the event id), the same for every send of one event to one device, so a channel replaces a resend of the same event (after a crash or a timeout); it never replaces an earlier push of the conversation.
 14. R10: the web re-posts the registration on every app start while the permission is granted.
 
 ## 14. Open questions
