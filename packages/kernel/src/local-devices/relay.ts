@@ -246,15 +246,11 @@ export class LocalDeviceRelay {
   /**
    * The negotiated transport of the machine's current connection, for a staged call. Liveness is
    * checked first (ruling R27): no holder throws `device.not_found` for a deleted device,
-   * `device.forbidden` for a revoked machine and `device.offline` otherwise.
+   * `device.forbidden` for a revoked machine and `device.offline` otherwise. It carries the program
+   * run the connection's hello named (`programRunId`, when reported): kernel-internal evidence a
+   * staged call keeps, never put into a frame. Every staged call reads its connection here.
    */
-  async connection(deviceId: string): Promise<{ connectionId: string; maxFrameBytes: number }> {
-    const { connectionId, maxFrameBytes } = await this.currentConnection(deviceId);
-    return { connectionId, maxFrameBytes };
-  }
-
-  /** {@link connection} with the program run its hello named (never put into a frame). */
-  private async currentConnection(deviceId: string): Promise<DeviceConnectionInfo> {
+  async connection(deviceId: string): Promise<DeviceConnectionInfo> {
     if (await this.holderLive(deviceId)) {
       const current = await this.targets.current(deviceId);
       if (current) return current;
@@ -330,7 +326,7 @@ export class LocalDeviceRelay {
     const { signal } = opts;
     signal.throwIfAborted();
     // liveness first: a deleted device or a revoked machine keeps its typed error (R27)
-    const current = staged ? await this.currentConnection(deviceId) : undefined;
+    const current = staged ? await this.connection(deviceId) : undefined;
     const connection = current && {
       connectionId: current.connectionId,
       maxFrameBytes: current.maxFrameBytes,
