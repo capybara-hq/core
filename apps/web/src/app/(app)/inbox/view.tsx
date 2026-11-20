@@ -905,7 +905,10 @@ function toolApprovalDetail({
   };
 }
 
-/** 技能变更（收件箱只列出当前用户作为负责人能决定的）：卡片显示差异；批准 / 拒绝。 */
+/**
+ * A skill change (the inbox lists only those the current user may decide as its owner): the card
+ * shows the diff; approve / reject.
+ */
 function skillChangeDetail({
   orgId,
   change,
@@ -1026,8 +1029,8 @@ function conversationLinkOf(request: CatalogRequest): string | null {
 
 /**
  * A member's request to allow hosts in the org's sandbox network (org admins, network ask spec
- * §5.3): the hosts, who asked and why, the conversation it came from; 批准 adds the hosts to the
- * org's list (an org following the platform's list keeps its own copy from then on), 驳回 sends
+ * §5.3): the hosts, who asked and why, the conversation it came from; approve adds the hosts to the
+ * org's list (an org following the platform's list keeps its own copy from then on), reject sends
  * the optional reason typed here.
  */
 function networkRequestDetail({
@@ -1167,8 +1170,8 @@ function networkDecidedDetail({
 
 /**
  * A connector setup request (org admins, ruling P4-7): the agent, the requester and the connectors
- * it still needs; 配置 opens the configure dialog (per connector: pick or create, then bind; the
- * request closes on the last bind), 驳回 sends the optional reason typed here.
+ * it still needs; configure opens the configure dialog (per connector: pick or create, then bind; the
+ * request closes on the last bind), reject sends the optional reason typed here.
  */
 function setupRequestDetail({
   request,
