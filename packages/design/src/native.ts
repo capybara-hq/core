@@ -102,9 +102,11 @@ export type NativeMenuAction = {
 /**
  * The trigger props of a menu that opens as the platform's action sheet (`menu` given): the
  * sheet opens on the click (Radix's own pointerdown is cancelled; a touch pointerdown is no user
- * activation) or on Enter, Space and ↓ (one sheet per Space press: its keyup click is skipped), anchored to the trigger's rect. A pick runs its action
- * (an unknown or disabled id runs nothing), a dismissal nothing, and a throw or rejection calls
- * `fallback` (the design's own menu). One sheet at a time. Without `menu`: no props.
+ * activation) or on Enter, Space and ↓ (one sheet per Space press: its keyup click is skipped; a
+ * press whose keyup never comes is forgotten on blur or the next pointerdown), anchored to the
+ * trigger's rect. A pick runs its action (an unknown or disabled id runs nothing), a dismissal
+ * nothing, and a throw or rejection calls `fallback` (the design's own menu). One sheet at a time.
+ * Without `menu`: no props.
  */
 export function useNativeMenuTrigger(
   menu: NativeHandlers["menu"] | undefined,
@@ -112,6 +114,7 @@ export function useNativeMenuTrigger(
   fallback: () => void,
 ): {
   onPointerDown?(e: { preventDefault(): void }): void;
+  onBlur?(): void;
   onClick?(e: { currentTarget: HTMLElement }): void;
   onKeyDown?(e: KeyboardEvent<HTMLElement>): void;
   onKeyUp?(e: KeyboardEvent<HTMLElement>): void;
@@ -151,7 +154,15 @@ export function useNativeMenuTrigger(
       });
   };
   return {
-    onPointerDown: (e) => e.preventDefault(),
+    onPointerDown: (e) => {
+      e.preventDefault();
+      // a pointer press is never the Space press's own click
+      spacePress.current = false;
+    },
+    // focus left before the Space keyup (it never reaches this trigger now)
+    onBlur: () => {
+      spacePress.current = false;
+    },
     onClick: (e) => {
       if (spacePress.current) return;
       show(e.currentTarget);

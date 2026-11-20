@@ -1,7 +1,7 @@
 // Native menus (mobile app spec §6.3): on a phone inside a shell with `menu@1`, a plain menu (only
 // plain actions) opens as the platform's own action sheet, anchored to its trigger; anything else,
 // a wider window or a native failure opens the design's own menu.
-import { act, cleanup, render, screen } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen } from "@testing-library/react";
 import { userEvent } from "@testing-library/user-event";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
@@ -110,6 +110,27 @@ describe("Menu with native.menu", () => {
     await act(async () => {});
     expect(menu).toHaveBeenCalledTimes(2);
   });
+
+  it.each([
+    ["blur", (el: HTMLElement) => fireEvent.blur(el)],
+    ["pointerdown", (el: HTMLElement) => fireEvent.pointerDown(el)],
+  ])(
+    "a Space press whose keyup was lost is forgotten on %s: the next tap opens the sheet",
+    async (_name, forget) => {
+      window.matchMedia = matchMediaFor(390).matchMedia;
+      const menu = vi.fn(async () => null);
+      const trigger = renderMenu(items, { menu });
+      trigger.focus();
+      fireEvent.keyDown(trigger, { key: " " });
+      await act(async () => {});
+      expect(menu).toHaveBeenCalledTimes(1);
+      // the keyup never comes (focus moved, the app went to the background)
+      forget(trigger);
+      fireEvent.click(trigger);
+      await act(async () => {});
+      expect(menu).toHaveBeenCalledTimes(2);
+    },
+  );
 
   it("a dismissal (null) runs nothing", async () => {
     window.matchMedia = matchMediaFor(390).matchMedia;

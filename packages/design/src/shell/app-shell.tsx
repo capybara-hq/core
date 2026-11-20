@@ -225,13 +225,30 @@ export function AppShell({
   // when two pushes follow each other (the CSS animations are named by both).
   const [slide, setSlide] = useState<{ direction: "push" | "pop"; n: number } | null>(null);
   const lastRoute = useRef({ pathname, tabRoot });
+  // A history move the browser animated itself (a back swipe: `hasUAVisualTransition`, mobile app
+  // spec §4.4), keyed by the URL it landed on: the route change it causes swaps at once, so the
+  // page never animates twice. A later navigation changes the URL, so a gesture that changed no
+  // route never swallows the next slide.
+  const uaTransition = useRef<string | null>(null);
+  useEffect(() => {
+    const onPop = (e: PopStateEvent) => {
+      const animated = (e as PopStateEvent & { hasUAVisualTransition?: boolean })
+        .hasUAVisualTransition;
+      uaTransition.current = animated === true ? window.location.href : null;
+    };
+    window.addEventListener("popstate", onPop);
+    return () => window.removeEventListener("popstate", onPop);
+  }, []);
   useEffect(() => {
     const last = lastRoute.current;
     if (last.pathname === pathname) return;
     lastRoute.current = { pathname, tabRoot };
-    // A pushed page slides in from the end edge; the way back to a root slides back.
+    const animated = uaTransition.current === window.location.href;
+    uaTransition.current = null;
+    // A pushed page slides in from the end edge and the way back to a root slides back; a move
+    // between tab roots (the web's or the native tab bar) and a move the browser animated do not.
     setSlide((prev) =>
-      tabRoot && last.tabRoot
+      animated || (tabRoot && last.tabRoot)
         ? null
         : { direction: tabRoot ? "pop" : "push", n: ((prev?.n ?? 0) + 1) % 2 },
     );
@@ -265,13 +282,18 @@ export function AppShell({
   const navSent = useRef<string | null>(null);
   const navLatest = useRef({ nav: nativeNav, items, onNavigate, haptics, navState });
   navLatest.current = { nav: nativeNav, items, onNavigate, haptics, navState };
-  // the page without this shell (an auth page) has no tab bar: hidden once the shell goes
+  // The last handle the shell had: the hide below reaches it after `nativeNav` went undefined
+  // while the shell stays mounted (`navLatest` then holds no handle).
+  const navHandle = useRef(nativeNav);
+  if (nativeNav !== undefined) navHandle.current = nativeNav;
+  // the page without this shell (an auth page) has no tab bar: hidden once the shell or its handle
+  // goes
   useEffect(() => {
     if (!hasNav) return;
     return () => {
-      const { nav, navState: last } = navLatest.current;
+      const { navState: last } = navLatest.current;
       try {
-        nav?.set({ ...last, visible: false });
+        navHandle.current?.set({ ...last, visible: false });
       } catch {
         // the shell keeps its last state
       }

@@ -54,4 +54,21 @@ describe("tokens.css", () => {
       expect(css).toContain(v);
     }
   });
+
+  it("the push motion tokens: the iOS navigation default, Material emphasized on Android", () => {
+    const t = json as unknown as {
+      motion: Record<string, string>;
+      ease: Record<string, string>;
+      platform: { android: { motion: Record<string, string>; ease: Record<string, string> } };
+    };
+    expect(t.motion.push).toBe("350ms");
+    expect(t.ease.push).toBe("cubic-bezier(0.2, 0.9, 0.3, 1)");
+    expect(t.platform.android.motion.push).toBe("300ms");
+    expect(t.platform.android.ease.push).toBe("cubic-bezier(0.2, 0, 0, 1)");
+    expect(css).toContain("--cb-motion-push: 350ms;");
+    expect(css).toContain("--cb-ease-push: cubic-bezier(0.2, 0.9, 0.3, 1);");
+    const android = css.match(/:root\[data-shell-platform="android"\]\s*\{([^}]*)\}/)?.[1];
+    expect(android).toContain("--cb-motion-push: 300ms;");
+    expect(android).toContain("--cb-ease-push: cubic-bezier(0.2, 0, 0, 1);");
+  });
 });

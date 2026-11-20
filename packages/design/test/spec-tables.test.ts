@@ -162,3 +162,20 @@ describe("checkSpecTables", () => {
     );
   });
 });
+
+describe("the motion tokens in the design spec", () => {
+  it("§2.5 names motion.push and ease.push with tokens.json's values, Android's included", () => {
+    const spec = repo("docs/design/spec.md");
+    const t = tokens as {
+      motion: Record<string, string>;
+      ease: Record<string, string>;
+      platform: { android: { motion: Record<string, string>; ease: Record<string, string> } };
+    };
+    const line = spec.split("\n").find((l) => l.startsWith("- Push motion:")) ?? "";
+    expect(line).toContain(`\`motion.push\` (${t.motion.push})`);
+    expect(line).toContain(`\`ease.push\` (\`${t.ease.push}\``);
+    expect(line).toContain(`${t.platform.android.motion.push}`);
+    expect(line).toContain(`\`${t.platform.android.ease.push}\``);
+    expect(line).toContain('data-shell-platform="android"');
+  });
+});

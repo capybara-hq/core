@@ -177,6 +177,23 @@ describe("the native tab bar (nav@1)", () => {
     expect(fake.listeners.size).toBe(0);
   });
 
+  it("a nativeNav that goes away while the shell stays hides the bar on the previous handle", () => {
+    window.matchMedia = matchMediaFor(390).matchMedia;
+    const fake = fakeNav();
+    const view = render(shell(fake.nav, "/conversations"));
+    expect(fake.nav.set).toHaveBeenLastCalledWith(expect.objectContaining({ visible: true }));
+    view.rerender(
+      <DesignProvider locale="zh">
+        <AppShell sidebar={sidebar} status={status} bottomNav={items} pathname="/conversations">
+          <div>内容</div>
+        </AppShell>
+      </DesignProvider>,
+    );
+    expect(fake.nav.set).toHaveBeenCalledTimes(2);
+    expect(fake.nav.set).toHaveBeenLastCalledWith(expect.objectContaining({ visible: false }));
+    expect(fake.listeners.size).toBe(0);
+  });
+
   it("without a nativeNav the shell carries no data-native-nav", () => {
     window.matchMedia = matchMediaFor(390).matchMedia;
     render(

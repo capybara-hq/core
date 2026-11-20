@@ -137,30 +137,40 @@
   }
 }
 
-/* A push slides in from the end edge and a pop slides back over motion.expand (spec §4.6): a CSS
-   animation named by direction and parity, so two pushes in a row both run; a browser with view
-   transitions animates the back button instead (view-transition.ts), and reduced motion has none. */
+/* A push slides in from the end edge and a pop slides back (spec §4.6), over motion.push with
+   ease.push: the iOS navigation default, Material emphasized under data-shell-platform="android"
+   (tokens.css; mobile app spec §7.2). A CSS animation named by direction and parity, so two pushes
+   in a row both run; a pop brings the page back from the parallax and dim it left at (-30%,
+   brightness 0.9). A browser with view transitions animates the back button instead
+   (view-transition.ts): the top page leaves over the page underneath. A pop the browser animated
+   itself (a back gesture) carries no data-nav (app-shell.tsx), and reduced motion has none. */
 @media (max-width: 599px) and (prefers-reduced-motion: no-preference) {
   .cb-shell-main[data-nav="push-0"] {
-    animation: cb-push-0 var(--cb-motion-expand) ease-out;
+    animation: cb-push-0 var(--cb-motion-push) var(--cb-ease-push);
   }
   .cb-shell-main[data-nav="push-1"] {
-    animation: cb-push-1 var(--cb-motion-expand) ease-out;
+    animation: cb-push-1 var(--cb-motion-push) var(--cb-ease-push);
   }
   .cb-shell-main[data-nav="pop-0"] {
-    animation: cb-pop-0 var(--cb-motion-expand) ease-out;
+    animation: cb-pop-0 var(--cb-motion-push) var(--cb-ease-push);
   }
   .cb-shell-main[data-nav="pop-1"] {
-    animation: cb-pop-1 var(--cb-motion-expand) ease-out;
+    animation: cb-pop-1 var(--cb-motion-push) var(--cb-ease-push);
   }
   :root[data-cb-transition] .cb-shell-main[data-nav] {
     animation: none;
   }
   :root[data-cb-transition="pop"]::view-transition-old(root) {
-    animation: cb-pop-out var(--cb-motion-expand) ease-out both;
+    z-index: 1;
+    animation: cb-pop-out var(--cb-motion-push) var(--cb-ease-push) both;
   }
   :root[data-cb-transition="pop"]::view-transition-new(root) {
-    animation: cb-pop-0 var(--cb-motion-expand) ease-out both;
+    animation: cb-pop-under var(--cb-motion-push) var(--cb-ease-push) both;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .cb-shell-main[data-nav] {
+    animation: none;
   }
 }
 @keyframes cb-push-0 {
@@ -177,20 +187,25 @@
 }
 @keyframes cb-pop-0 {
   from {
-    transform: translateX(-24px);
-    opacity: 0;
+    transform: translateX(-30%);
+    filter: brightness(0.9);
   }
 }
 @keyframes cb-pop-1 {
   from {
-    transform: translateX(-24px);
-    opacity: 0;
+    transform: translateX(-30%);
+    filter: brightness(0.9);
+  }
+}
+@keyframes cb-pop-under {
+  from {
+    transform: translateX(-30%);
+    filter: brightness(0.9);
   }
 }
 @keyframes cb-pop-out {
   to {
-    transform: translateX(24px);
-    opacity: 0;
+    transform: translateX(100%);
   }
 }
 
