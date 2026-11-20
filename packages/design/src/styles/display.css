@@ -605,6 +605,23 @@
   text-overflow: ellipsis;
   white-space: nowrap;
 }
+/* An open item's facts in a list-detail region (spec §6.47): small type, mono keys, prose values
+   (a tool key stays mono). */
+.cb-kv[data-variant="facts"] {
+  gap: var(--cb-space-1);
+  font-size: var(--cb-type-small-size);
+  line-height: var(--cb-type-small-line);
+}
+.cb-kv[data-variant="facts"] .cb-kv-key {
+  font-family: var(--cb-font);
+}
+.cb-kv[data-variant="facts"] .cb-kv-value {
+  color: var(--cb-ink);
+  font-family: var(--cb-font-prose);
+}
+.cb-kv[data-variant="facts"] .cb-kv-value[data-mono="true"] {
+  font-family: var(--cb-font);
+}
 /* Two columns of pairs (spec §6.5): key and value space.3 apart, the columns space.7 (32 px)
    apart, each key column as wide as its widest key, so the gaps never vary from row to row. */
 .cb-kv[data-columns="2"] {
@@ -619,7 +636,7 @@
 .cb-kv[data-columns="2"] > .cb-kv-row:nth-child(2n) > .cb-kv-key {
   margin-left: calc(var(--cb-space-7) - var(--cb-space-3));
 }
-@media (max-width: 639px) {
+@media (max-width: 599px) {
   .cb-kv[data-columns="2"] {
     grid-template-columns: max-content minmax(0, 1fr);
   }
@@ -1953,7 +1970,7 @@ a.cb-attachment:hover {
   font-size: var(--cb-type-small-size);
   line-height: var(--cb-type-small-line);
 }
-@media (max-width: 639px) {
+@media (max-width: 599px) {
   .cb-nameplate {
     flex-direction: column;
     align-items: flex-start;
@@ -2015,4 +2032,42 @@ a.cb-attachment:hover {
   font: inherit;
   font-size: var(--cb-type-small-size);
   line-height: var(--cb-type-small-line);
+}
+
+/* IconPreview (§6.49): one icon on a light and a dark ground, the grounds the same in both themes. */
+.cb-icon-preview {
+  display: flex;
+  column-gap: var(--cb-space-3);
+}
+.cb-icon-preview-item {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  row-gap: var(--cb-space-1);
+  margin: 0;
+}
+.cb-icon-preview-tile {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 64px;
+  height: 64px;
+  border: 1px solid var(--cb-line);
+  border-radius: var(--cb-radius-md);
+}
+.cb-icon-preview-tile[data-ground="light"] {
+  background: var(--cb-preview-light);
+}
+.cb-icon-preview-tile[data-ground="dark"] {
+  background: var(--cb-preview-dark);
+}
+.cb-icon-preview-image {
+  width: var(--cb-space-8);
+  height: var(--cb-space-8);
+  object-fit: contain;
+}
+.cb-icon-preview-label {
+  color: var(--cb-muted);
+  font-size: var(--cb-type-micro-size);
+  line-height: var(--cb-type-micro-line);
 }

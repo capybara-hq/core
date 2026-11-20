@@ -1,6 +1,6 @@
 "use client";
 
-import type { CommandGroup, IconName, SidebarNavItem } from "@capybara-hq/design";
+import type { BottomNavItem, CommandGroup, IconName, SidebarNavItem } from "@capybara-hq/design";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useTranslations } from "next-intl";
 import { useCallback } from "react";
@@ -9,7 +9,7 @@ import { adminInboxCountQuery } from "../../lib/query/admin";
 import { retryOnMountOf } from "../../lib/query/client";
 import { keys } from "../../lib/query/keys";
 import { extensionPagesQuery, inboxCountQuery } from "../../lib/query/shell";
-import { type UiContributionItem, uiLocale } from "../../lib/ui";
+import { type UiCompactForm, type UiContributionItem, uiLocale } from "../../lib/ui";
 import { ADMIN_PAGES, type AdminExtensionPage, type AdminPageId } from "../admin-nav";
 import { useOfferedContributions } from "../extension-ui/ClientComponentBlock";
 
@@ -236,6 +236,21 @@ export function useAdminInboxCount(enabled: boolean): number | undefined {
 export const pluginPageHref = (plugin: string, id: string) =>
   `/p/${encodeURIComponent(plugin)}/${encodeURIComponent(id)}`;
 
+/** An extension page of the Extensions group; `compact` `hidden`: not listed on the compact class. */
+export type ExtensionNavItem = {
+  id: string;
+  label: string;
+  href: string;
+  compact: UiCompactForm;
+};
+
+/**
+ * The entries a compact list shows: the Me panel is the compact class's navigation, so a page
+ * whose compact form is `hidden` is left out of it (the wide sidebar lists every page).
+ */
+export const shownOnCompact = <T extends { compact?: UiCompactForm }>(items: readonly T[]): T[] =>
+  items.filter((i) => i.compact !== "hidden");
+
 /**
  * The sidebar's Extensions group: the page contributions (slot `org.page`) of the current org's
  * enabled extensions, schema views, embeds and client components, labelled by the page title; when
@@ -243,10 +258,7 @@ export const pluginPageHref = (plugin: string, id: string) =>
  * its code may run (not in safe mode, under the kill switch or after the crash budget). Empty
  * while loading, without pages or on a failed read (the group is then hidden).
  */
-export function useExtensions(
-  orgId: string,
-  locale: string,
-): { id: string; label: string; href: string }[] {
+export function useExtensions(orgId: string, locale: string): ExtensionNavItem[] {
   const query = extensionPagesQuery(orgId);
   const pages =
     useQuery({ ...query, retryOnMount: retryOnMountOf(query.queryKey) }).data ?? NO_PAGES;
@@ -256,10 +268,7 @@ export function useExtensions(
 const NO_PAGES: UiContributionItem[] = [];
 
 /** The Extensions group's items for `pages`. */
-function extensionItems(
-  pages: readonly UiContributionItem[],
-  locale: string,
-): { id: string; label: string; href: string }[] {
+function extensionItems(pages: readonly UiContributionItem[], locale: string): ExtensionNavItem[] {
   const lang = uiLocale(locale);
   const titles = pages.map((p) => p.title[lang]);
   return pages.map((p) => {
@@ -269,6 +278,7 @@ function extensionItems(
       id: `${p.plugin}/${p.id}`,
       label: shared ? `${title} · ${p.plugin}` : title,
       href: pluginPageHref(p.plugin, p.id),
+      compact: p.compact ?? "kept",
     };
   });
 }
@@ -349,6 +359,14 @@ export function useNav(
   more: SidebarNavItem[];
   /** The brand row's inbox button (count only while something is pending). */
   inbox: { href: string; count?: number; countMore?: boolean };
+  /** The compact class's four navigation items (design spec §6.45), in their fixed order. */
+  bottom: BottomNavItem[];
+  /**
+   * The Me page's rows (design spec §6.48): Workspace is the sidebar's primary items the bottom
+   * navigation has no room for, then Devices; Manage is the sidebar's other More items for org admins and
+   * owners only (the sidebar also shows members some of them to read).
+   */
+  me: { workspace: SidebarNavItem[]; manage: SidebarNavItem[] };
   adminHref?: string;
   commands: CommandGroup[];
 } {
@@ -408,5 +426,76 @@ export function useNav(
       ],
     },
   ].filter((g) => g.items.length > 0);
-  return { primary, more, inbox, ...(superAdmin ? { adminHref: "/admin" } : {}), commands };
+  const bottom = bottomItems(
+    {
+      chats: t("nav.chats"),
+      agents: t("nav.agents"),
+      inbox: t("nav.inbox"),
+      me: t("nav.me"),
+    },
+    inbox,
+  );
+  const me = {
+    workspace: [
+      ...primary.filter((n) => n.id !== "agents"),
+      ...more.filter((n) => n.id === "devices"),
+    ],
+    manage: level === "admin" ? more.filter((n) => n.id !== "devices") : [],
+  };
+  return {
+    primary,
+    more,
+    inbox,
+    bottom,
+    me,
+    ...(superAdmin ? { adminHref: "/admin" } : {}),
+    commands,
+  };
+}
+
+/**
+ * The routes the Me tab holds besides `/me` itself (its pushed pages, design spec §4.6): every
+ * workspace route that is no other tab's, so Me stays current on them.
+ */
+const ME_PAGES = [
+  "/skills",
+  "/connectors",
+  "/schedules",
+  "/devices",
+  "/plugins",
+  "/extensions",
+  "/channels",
+  "/evals",
+  "/trajectories",
+  "/settings",
+  "/account",
+  "/admin",
+  "/p",
+];
+
+/** The compact bottom navigation's four items (design spec §6.45); the inbox carries the count. */
+function bottomItems(
+  label: Record<BottomNavItem["id"], string>,
+  inbox: { count?: number; countMore?: boolean },
+): BottomNavItem[] {
+  return [
+    // the new conversation (`/`) and a conversation are pushed pages the Conversations tab holds
+    {
+      id: "chats",
+      label: label.chats,
+      href: "/conversations",
+      icon: "chats",
+      also: ["/chat", "/"],
+    },
+    { id: "agents", label: label.agents, href: "/agents", icon: "agent" },
+    {
+      id: "inbox",
+      label: label.inbox,
+      href: "/inbox",
+      icon: "inbox",
+      ...(inbox.count !== undefined ? { count: inbox.count } : {}),
+      ...(inbox.countMore ? { countMore: true } : {}),
+    },
+    { id: "me", label: label.me, href: "/me", icon: "user", also: ME_PAGES },
+  ];
 }

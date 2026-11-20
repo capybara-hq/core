@@ -1,7 +1,10 @@
-import type { ReactNode } from "react";
+import { type ReactNode, useCallback, useRef } from "react";
+import { IconButton } from "../controls/index";
 import { SkeletonGroup, SkeletonText } from "../display/index";
+import { Icon } from "../icons/icon";
 import { useDesignT } from "../provider";
 import { Body, type PageHeaderProps } from "../shell/index";
+import { useRegisterShellPage } from "../shell/shell-page";
 import { LoadingCards, LoadingStats, loadingHeader, TemplateHead } from "./frame";
 
 /** Waterfall rows and stat slots a loading trace page draws when it is not told how many (§5.11). */
@@ -41,14 +44,28 @@ export function TracePage({
   header,
   waterfall,
   detail,
+  open,
+  onBack,
   loading,
 }: {
   header: PageHeaderProps;
   waterfall: ReactNode;
   detail: ReactNode;
+  /**
+   * Whether a span is open (spec §5.11, compact): the waterfall is the page until it is, then the
+   * span is pushed as its own screen (`onBack` closes it; inside an `AppShell` the top bar's back
+   * does). Medium and expanded draw both whatever it is. Default false.
+   */
+  open?: boolean;
+  onBack?: () => void;
   loading?: { spans?: number; stats?: number };
 }) {
   const t = useDesignT();
+  const isOpen = open === true;
+  const back = useRef(onBack);
+  back.current = onBack;
+  const shellBack = useCallback(() => back.current?.(), []);
+  useRegisterShellPage(isOpen && onBack ? { onBack: shellBack } : {});
   const known = (header.metrics ?? []).length > 0;
   const page = (
     <>
@@ -56,11 +73,23 @@ export function TracePage({
         {loading && !known ? <LoadingStats count={loading.stats ?? LOADING_STATS} /> : null}
       </TemplateHead>
       <Body layout="single" width="content">
-        <div className="cb-trace">
+        <div className="cb-trace" data-open={isOpen ? "true" : "false"}>
           <div className="cb-trace-waterfall">
             {loading ? <LoadingWaterfall rows={loading.spans ?? LOADING_SPANS} /> : waterfall}
           </div>
-          <div className="cb-trace-detail">{loading ? <LoadingCards count={1} /> : detail}</div>
+          <div className="cb-trace-detail">
+            {onBack ? (
+              <div className="cb-trace-back" data-part="back-bar">
+                <IconButton
+                  label={t("shell.back")}
+                  icon={<Icon name="chevron-left" />}
+                  density="default"
+                  onClick={onBack}
+                />
+              </div>
+            ) : null}
+            {loading ? <LoadingCards count={1} /> : detail}
+          </div>
         </div>
       </Body>
     </>

@@ -40,10 +40,22 @@ export function WizardPage({
   children?: ReactNode;
 }) {
   const t = useDesignT();
+  const shown = Math.min(current + 1, steps.length);
   const page = (
     <>
       <TemplateHead header={loading ? loadingHeader(header) : header} />
       <Body layout="centered" loose width="content">
+        {/* Compact shows this count in place of the step list (hidden there), so it carries the
+            step's name for assistive technology: "Step 2 of 4: <label>". */}
+        <p className="cb-steps-count" data-part="step-count">
+          <span aria-hidden="true">{`${shown} / ${steps.length}`}</span>
+          <span className="cb-sr-only">
+            {t("shell.stepOf")
+              .replace("{n}", String(shown))
+              .replace("{m}", String(steps.length))
+              .replace("{label}", () => steps[shown - 1] ?? "")}
+          </span>
+        </p>
         <ol className="cb-steps" aria-label={t("shell.steps")}>
           {steps.map((label, i) => {
             const state = i < current ? "done" : i === current ? "current" : "todo";

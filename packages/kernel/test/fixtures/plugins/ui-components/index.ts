@@ -25,7 +25,14 @@ export default defineExtension({
       slot: "conversation.properties.section",
       kind: "component",
     },
-    { id: "brand", title: t("品牌", "Brand"), slot: "shell.brand", kind: "component" },
+    {
+      id: "brand",
+      title: t("品牌", "Brand"),
+      slot: "shell.brand",
+      kind: "component",
+      // wider than the slot's own `hidden`: the resolved form stays `hidden` (spec §5.6)
+      compact: "kept",
+    },
     { id: "empty", title: t("问候", "Greeting"), slot: "conversation.empty", kind: "component" },
     {
       id: "frame",
@@ -46,7 +53,13 @@ export default defineExtension({
       slot: "agent.detail.section",
       kind: "component",
     },
-    { id: "pagex", title: t("页面", "Page extra"), slot: "org.page", kind: "component" },
+    {
+      id: "pagex",
+      title: t("页面", "Page extra"),
+      slot: "org.page",
+      kind: "component",
+      compact: "hidden",
+    },
     {
       id: "plain",
       title: t("普通", "Plain"),

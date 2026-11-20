@@ -76,7 +76,7 @@ import {
   SUGGESTION_FIXTURE,
   TOOL_FIXTURES,
 } from "@capybara-hq/design/fixtures";
-import { type ReactNode, useState } from "react";
+import { type ReactNode, useEffect, useState } from "react";
 import { FormError } from "../../components/form-error";
 import { Block, bytes, csvText, NEW_CONVERSATION_AGENTS, NOW, toRow } from "./conversation-blocks";
 import { COMMANDS } from "./fixtures";
@@ -1288,6 +1288,35 @@ function TemplateBlock({ state, live }: { state: TemplateState; live?: boolean }
         : "panel",
   );
   const [panel, setPanel] = useState<string>(state === "subagent-panel" ? "subagent" : "files");
+  // The live page keeps the right area in the URL hash, as the app does (`#properties`,
+  // `#panel=files`): a resize through the size classes, or a reload, keeps it; on a phone it is
+  // the pushed page and back clears the hash.
+  useEffect(() => {
+    if (!live) return;
+    const read = () => {
+      const h = window.location.hash.slice(1);
+      if (h === "properties") setRight("properties");
+      else if (h.startsWith("panel=")) {
+        setPanel(h.slice("panel=".length));
+        setRight("panel");
+      }
+    };
+    read();
+    window.addEventListener("hashchange", read);
+    return () => window.removeEventListener("hashchange", read);
+  }, [live]);
+  useEffect(() => {
+    if (!live) return;
+    const hash =
+      right === "properties" ? "#properties" : right === "panel" ? `#panel=${panel}` : "";
+    if (window.location.hash !== hash) {
+      window.history.replaceState(
+        null,
+        "",
+        `${window.location.pathname}${window.location.search}${hash}`,
+      );
+    }
+  }, [live, right, panel]);
   const isNew = state === "new";
   const { onOpenCommands: _, ...sidebar } = sidebarProps(
     isNew ? { active: "new" } : { activeConversation: "cnv_r1", activeTitle: C.title },

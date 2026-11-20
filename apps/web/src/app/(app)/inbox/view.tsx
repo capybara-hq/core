@@ -3,23 +3,23 @@
 import {
   type ActionRowProps,
   Button,
-  Card,
-  CellTitle,
   CodeBlock,
-  type Column,
   clipCommand,
-  DataTable,
   DateTime,
   Field,
+  formatDateTime,
   InboxPage,
   ItemList,
-  KeyValue,
   LinkButton,
+  type ListDetailFact,
+  ListDetailList,
   Stack,
   StatusMark,
   Text,
   Textarea,
+  TextLink,
   useStatusBar,
+  useTimeZone,
   useToast,
   versionLabel,
 } from "@capybara-hq/design";
@@ -56,6 +56,7 @@ import {
   requestSubject,
   requestVersion,
 } from "../../../lib/catalog";
+import { useHashItem } from "../../../lib/hash-item";
 import {
   dismissNotice,
   hasNotice,
@@ -119,7 +120,10 @@ function Inbox({
   const rows = (inbox?.items ?? []).filter((i) => isShowable(i) && !decided.has(subjectOf(i)));
   const truncated = inbox?.truncated === true;
   const [activeId, setActiveId] = useState<string>();
-  const active = rows.find((a) => a.id === activeId) ?? rows[0];
+  // The two-level stack (spec §6.47): the list is the page until an item is opened; the open item
+  // is in the URL hash, so the system back closes it and `#item=<id>` deep-links.
+  const hashItem = useHashItem();
+  const active = rows.find((a) => a.id === (hashItem.id ?? activeId)) ?? rows[0];
   const [scope, setScope] = useState<ApprovalScope>("once");
   const approvals = useDecide(orgId);
   const changes = useDecideSkillChange(orgId);
@@ -193,6 +197,7 @@ function Inbox({
     setRejectReason("");
   }, [active?.id]);
 
+  const timeZone = useTimeZone();
   const labels: Labels = {
     skillChange: { share: t("skillChange.kind.share"), version: t("skillChange.kind.version") },
     request: td("label"),
@@ -207,30 +212,6 @@ function Inbox({
     network: tnr("label"),
     networkDecided: tnr("decidedLabel"),
   };
-  const columns: Column<InboxItem>[] = [
-    {
-      // A neutral header: the rows are requests and notices alike
-      key: "item",
-      header: t("columns.item"),
-      cell: (item) => {
-        const r = rowOf(item, labels, locale);
-        return (
-          <CellTitle
-            title={r.title}
-            {...(r.trailing !== null ? { trailing: r.trailing } : {})}
-            {...(r.description !== "" ? { description: r.description } : {})}
-          />
-        );
-      },
-    },
-    {
-      key: "at",
-      header: t("columns.time"),
-      tone: "muted",
-      cell: (item) => <DateTime value={item.createdAt} />,
-    },
-  ];
-
   /**
    * An item was handled (or failed as already handled elsewhere: it is no longer pending): it is
    * hidden and the first item is selected. A decision invalidated the inbox itself; a failure
@@ -240,6 +221,7 @@ function Inbox({
     if (message !== null) toast.success(message);
     setDecided((s) => new Set(s).add(id));
     setActiveId(undefined);
+    hashItem.close();
     if (message === null) {
       for (const queryKey of inboxChangeKeys(orgId)) void qc.invalidateQueries({ queryKey });
     }
@@ -421,17 +403,13 @@ function Inbox({
     return (
       <InboxPage
         header={{ path: [...here, { label: "inbox" }], title: t("title") }}
-        // The loaded inbox opens its first item: the inspector (its facts) and the decision row
-        inspectorTitle={t("inspectorTitle")}
+        // The loaded inbox opens its first item: its facts and the decision row
+        factsLabel={t("inspectorTitle")}
         actionRow={{
           secondary: { label: ta("deny"), onSelect: () => {} },
           primary: { label: ta("approve"), onSelect: () => {} },
         }}
-        loading={{
-          list: "records",
-          table: { label: t("listLabel"), columns, rowHeight: "dense", framed: false },
-          inspector: { rows: 4, keyWidth: "10ch" },
-        }}
+        loading={{ facts: { rows: 4, keyWidth: "10ch" } }}
       />
     );
   }
@@ -455,25 +433,36 @@ function Inbox({
           count: `${rows.length}${truncated ? "+" : ""}`,
         }}
         {...(rows.length === 0 ? { empty: { text: t("empty"), hint: t("emptyHint") } } : {})}
+        open={hashItem.id !== null && rows.some((a) => a.id === hashItem.id)}
+        onBack={hashItem.close}
         list={
-          <DataTable<InboxItem>
+          <ListDetailList
             label={t("listLabel")}
-            rowHeight="dense"
-            framed={false}
-            columns={columns}
-            rows={rows}
-            rowKey={(a) => a.id}
-            rowLabel={(a) => rowOf(a, labels, locale).title}
-            {...(active ? { activeKey: active.id } : {})}
-            onOpen={(a) => setActiveId(a.id)}
-            state="ready"
-            empty={{ title: t("empty"), hint: t("emptyHint") }}
+            items={rows.map((item) => {
+              const r = rowOf(item, labels, locale);
+              return {
+                id: item.id,
+                title: r.title,
+                ...(r.trailing !== null ? { trailing: r.trailing } : {}),
+                ...(r.description !== "" ? { meta: r.description } : {}),
+                at: formatDateTime(item.createdAt, "compact", timeZone),
+                ...(waitsForMe(item) ? { waiting: true } : {}),
+              };
+            })}
+            current={active?.id}
+            onOpen={(id) => {
+              setActiveId(id);
+              hashItem.open(id);
+            }}
           />
         }
         {...(detail
           ? {
-              inspectorTitle: t("inspectorTitle"),
-              inspector: detail.inspector,
+              title: detail.title,
+              ...(detail.status !== undefined ? { status: detail.status } : {}),
+              facts: detail.facts,
+              factsLabel: t("inspectorTitle"),
+              ...(detail.aside !== undefined ? { aside: detail.aside } : {}),
               actionRow: detail.actionRow,
             }
           : {})}
@@ -490,6 +479,13 @@ function Inbox({
     </>
   );
 }
+
+/** An item that waits for my decision (the row's warn dot, spec §6.47); notices and answers don't. */
+const waitsForMe = (i: InboxItem): boolean =>
+  i.type === "tool_approval" ||
+  i.type === "skill_change" ||
+  i.type === "schedule_attention" ||
+  i.type === "catalog_request";
 
 /** The id of what an item asks to decide (the approval, the skill change, the request, the notice). */
 const subjectOf = (i: InboxItem): string =>
@@ -650,74 +646,69 @@ function scheduleDetail({
 }): Detail {
   const reason = scheduleReason(a, tsa);
   return {
-    inspector: (
-      <KeyValue
-        keyWidth="10ch"
-        rows={[
-          { k: tsa("task"), v: a.name },
-          { k: tsa("reasonLabel"), v: reason },
-          { k: t("requested"), v: <DateTime value={createdAt} /> },
-        ]}
-      />
-    ),
+    facts: [
+      { label: tsa("task"), value: a.name },
+      { label: tsa("reasonLabel"), value: reason },
+      { label: t("requested"), value: <DateTime value={createdAt} /> },
+    ],
     actionRow: { primary: { label: tsa("open"), onSelect: onOpen } },
+    title: a.name,
+    status: <StatusMark status="waiting" label={tsa("label")} />,
     content: (
-      <Card title={a.name} actions={<StatusMark status="waiting" label={tsa("label")} />}>
-        <Stack gap={12}>
-          <Text variant="prose">{reason}</Text>
-          {a.error !== null && a.error !== undefined && <Text variant="prose">{a.error}</Text>}
-          {a.deviceRefuses === true && <Text variant="prose">{tsa("deviceRefuses")}</Text>}
-          {a.missing.length > 0 && (
-            <ItemList
-              label={tsa("missing")}
-              rows={a.missing.map((k) => {
-                const host = networkGrantHost(k);
-                if (host !== null) {
-                  if ((a.needsAdmin ?? []).includes(k)) {
-                    return { id: k, title: host, status: { label: tsa("needsAdmin") } };
-                  }
-                  if (a.deviceRefuses === true) {
-                    return { id: k, title: host, status: { label: tsa("deviceRefusesShort") } };
-                  }
-                  return {
-                    id: k,
-                    title: host,
-                    actions: (
-                      <Button density="dense" disabled={pending} onClick={() => onAdd(k)}>
-                        {tsa("addDomain")}
-                      </Button>
-                    ),
-                  };
+      <Stack gap={12}>
+        <Text variant="prose">{reason}</Text>
+        {a.error !== null && a.error !== undefined && <Text variant="prose">{a.error}</Text>}
+        {a.deviceRefuses === true && <Text variant="prose">{tsa("deviceRefuses")}</Text>}
+        {a.missing.length > 0 && (
+          <ItemList
+            label={tsa("missing")}
+            rows={a.missing.map((k) => {
+              const host = networkGrantHost(k);
+              if (host !== null) {
+                if ((a.needsAdmin ?? []).includes(k)) {
+                  return { id: k, title: host, status: { label: tsa("needsAdmin") } };
                 }
-                const slug = connectionOf(k);
-                if (slug !== null) {
-                  return {
-                    id: k,
-                    title: slug,
-                    actions: (
-                      <LinkButton href="/account/connections" density="dense">
-                        {tsa("connect", { slug })}
-                      </LinkButton>
-                    ),
-                  };
-                }
-                if (a.needsRole.includes(k)) {
-                  return { id: k, title: k, status: { label: tsa("needsRole") } };
+                if (a.deviceRefuses === true) {
+                  return { id: k, title: host, status: { label: tsa("deviceRefusesShort") } };
                 }
                 return {
                   id: k,
-                  title: k,
+                  title: host,
                   actions: (
                     <Button density="dense" disabled={pending} onClick={() => onAdd(k)}>
-                      {tsa("add")}
+                      {tsa("addDomain")}
                     </Button>
                   ),
                 };
-              })}
-            />
-          )}
-        </Stack>
-      </Card>
+              }
+              const slug = connectionOf(k);
+              if (slug !== null) {
+                return {
+                  id: k,
+                  title: slug,
+                  actions: (
+                    <LinkButton href="/account/connections" density="dense">
+                      {tsa("connect", { slug })}
+                    </LinkButton>
+                  ),
+                };
+              }
+              if (a.needsRole.includes(k)) {
+                return { id: k, title: k, status: { label: tsa("needsRole") } };
+              }
+              return {
+                id: k,
+                title: k,
+                actions: (
+                  <Button density="dense" disabled={pending} onClick={() => onAdd(k)}>
+                    {tsa("add")}
+                  </Button>
+                ),
+              };
+            })}
+          />
+        )}
+      </Stack>
     ),
   };
 }
@@ -732,10 +723,16 @@ function knownApproval(listed: Approval, cached: Approval | undefined): Approval
     : listed;
 }
 
-/** 选中项的三块：内容区、Inspector、ActionRow。 */
+/**
+ * The open item (spec §6.47, §5.7): its title and status, its facts (translated labels), what
+ * belongs with them, the content after them and the decision row.
+ */
 interface Detail {
+  title: string;
+  status?: ReactNode;
+  facts: ListDetailFact[];
+  aside?: ReactNode | undefined;
   content: ReactNode;
-  inspector: ReactNode;
   actionRow: ActionRowProps;
 }
 
@@ -775,20 +772,67 @@ function toolApprovalDetail({
   // decided or superseded meanwhile (a cached item): final, without approve, deny or a scope
   const final = approval.status !== "pending";
   return {
-    inspector: (
-      <Stack gap={16}>
-        <KeyValue
-          keyWidth="10ch"
-          rows={[
-            { k: ta("agent"), v: approval.agent.name },
-            { k: t("conversation"), v: approval.conversationId },
-            { k: t("requested"), v: <DateTime value={approval.createdAt} /> },
-            { k: ta("expires"), v: <DateTime value={approval.expiresAt} /> },
-          ]}
-        />
-        <Stack direction="row">
-          <Button onClick={openConversation}>{t("openConversation")}</Button>
-        </Stack>
+    title:
+      command === null
+        ? toolLabelText(approvalToolLabel(approval, locale))
+        : ta(
+            command.kind === "write"
+              ? "command.titleWrite"
+              : command.kind === "read"
+                ? "command.titleRead"
+                : "command.title",
+          ),
+    status: final ? (
+      <StatusMark
+        status={
+          approval.status === "approved"
+            ? "success"
+            : approval.status === "denied"
+              ? "failed"
+              : "cancelled" // as ApprovalCard: expired, cancelled, skipped, superseded
+        }
+        label={ta(`decision.${approval.status as Exclude<typeof approval.status, "pending">}`)}
+      />
+    ) : (
+      <StatusMark status="waiting" label={ta("waiting")} />
+    ),
+    // Translated labels only (spec §6.47); the tool key is the one mono value.
+    facts: [
+      { label: ta("tool"), value: approval.toolKey, mono: true },
+      ...(approval.connector ? [{ label: ta("connector"), value: approval.connector.name }] : []),
+      ...(command === null
+        ? []
+        : [
+            { label: ta("command.device"), value: command.deviceName },
+            {
+              label: ta("command.reason"),
+              value:
+                lead === undefined ? (
+                  command.reason
+                ) : (
+                  <Stack gap={4}>
+                    <Text variant="small">{ta(`command.lead.${lead.key}`, lead.values)}</Text>
+                    {lead.detail ? (
+                      <Text variant="small" tone="muted">
+                        {command.reason}
+                      </Text>
+                    ) : null}
+                  </Stack>
+                ),
+            },
+          ]),
+      { label: ta("agent"), value: approval.agent.name },
+      // a link, never the raw id
+      {
+        label: t("conversation"),
+        value: <TextLink href={approval.conversationPath}>{t("openConversation")}</TextLink>,
+      },
+      { label: t("requested"), value: <DateTime value={approval.createdAt} /> },
+      { label: ta("expires"), value: <DateTime value={approval.expiresAt} /> },
+    ],
+    aside: final ? undefined : (
+      <Stack direction="row">
+        <Button onClick={openConversation}>{t("openConversation")}</Button>
       </Stack>
     ),
     actionRow: final
@@ -809,121 +853,62 @@ function toolApprovalDetail({
         },
     content: (
       <div data-approval-id={approval.id}>
-        <Card
-          title={
-            command === null
-              ? toolLabelText(approvalToolLabel(approval, locale))
-              : ta(
-                  command.kind === "write"
-                    ? "command.titleWrite"
-                    : command.kind === "read"
-                      ? "command.titleRead"
-                      : "command.title",
-                )
-          }
-          actions={
-            final ? (
-              <StatusMark
-                status={
-                  approval.status === "approved"
-                    ? "success"
-                    : approval.status === "denied"
-                      ? "failed"
-                      : "cancelled" // as ApprovalCard: expired, cancelled, skipped, superseded
-                }
-                label={ta(
-                  `decision.${approval.status as Exclude<typeof approval.status, "pending">}`,
-                )}
-              />
-            ) : (
-              <StatusMark status="waiting" label={ta("waiting")} />
-            )
-          }
-        >
-          <Stack gap={12}>
-            <KeyValue
-              keyWidth="10ch"
-              rows={[
-                { k: ta("tool"), v: approval.toolKey },
-                ...(approval.connector ? [{ k: ta("connector"), v: approval.connector.name }] : []),
-                ...(command === null
-                  ? []
-                  : [
-                      { k: ta("command.device"), v: command.deviceName },
-                      {
-                        k: ta("command.reason"),
-                        v:
-                          lead === undefined ? (
-                            command.reason
-                          ) : (
-                            <Stack gap={4}>
-                              <Text variant="small">
-                                {ta(`command.lead.${lead.key}`, lead.values)}
-                              </Text>
-                              {lead.detail ? (
-                                <Text variant="small" tone="muted">
-                                  {command.reason}
-                                </Text>
-                              ) : null}
-                            </Stack>
-                          ),
-                      },
-                    ]),
-              ]}
-            />
-            {command === null ? (
-              <Stack gap={4}>
-                <Text variant="small" tone="muted">
-                  {ta("input")}
-                </Text>
-                <ApprovalInput input={approval.input} />
-              </Stack>
-            ) : (
-              <CodeBlock
-                text={clipCommand(shown ?? "")}
-                framed={false}
-                {...(file ? { title: ta("command.path") } : {})}
-              />
-            )}
-            {command?.permissionScope !== undefined && command.escalation === undefined && (
-              <PermissionScopeDetail
-                scope={command.permissionScope}
-                targetPath={command.targetPath}
-              />
-            )}
-            {command?.escalation !== undefined && (
-              <SandboxEscalationDetail
-                justification={command.escalation.justification}
-                workingRoot={command.workingRoot}
-                background={command.escalation.background}
-                maxSeconds={command.escalation.maxSeconds}
-              />
-            )}
-            {approval.status === "superseded" ? (
-              <Text variant="prose" tone="muted">
-                {ta(
-                  approval.supersededReason === "authority-changed"
-                    ? "superseded.authorityChanged"
-                    : "superseded.user",
-                )}
+        <Stack gap={12}>
+          {command === null ? (
+            <Stack gap={4}>
+              <Text variant="small" tone="muted">
+                {ta("input")}
               </Text>
-            ) : null}
-            {!final && (
-              <ScopePicker
-                approval={approval}
-                value={scope}
-                onChange={setScope}
-                disabled={pending !== undefined}
-              />
-            )}
-          </Stack>
-        </Card>
+              <ApprovalInput input={approval.input} />
+            </Stack>
+          ) : (
+            <CodeBlock
+              text={clipCommand(shown ?? "")}
+              framed={false}
+              {...(file ? { title: ta("command.path") } : {})}
+            />
+          )}
+          {command?.permissionScope !== undefined && command.escalation === undefined && (
+            <PermissionScopeDetail
+              scope={command.permissionScope}
+              targetPath={command.targetPath}
+            />
+          )}
+          {command?.escalation !== undefined && (
+            <SandboxEscalationDetail
+              justification={command.escalation.justification}
+              workingRoot={command.workingRoot}
+              background={command.escalation.background}
+              maxSeconds={command.escalation.maxSeconds}
+            />
+          )}
+          {approval.status === "superseded" ? (
+            <Text variant="prose" tone="muted">
+              {ta(
+                approval.supersededReason === "authority-changed"
+                  ? "superseded.authorityChanged"
+                  : "superseded.user",
+              )}
+            </Text>
+          ) : null}
+          {!final && (
+            <ScopePicker
+              approval={approval}
+              value={scope}
+              onChange={setScope}
+              disabled={pending !== undefined}
+            />
+          )}
+        </Stack>
       </div>
     ),
   };
 }
 
-/** 技能变更（收件箱只列出当前用户作为负责人能决定的）：卡片显示差异；批准 / 拒绝。 */
+/**
+ * A skill change (the inbox lists only those the current user may decide as its owner): the card
+ * shows the diff; approve / reject.
+ */
 function skillChangeDetail({
   orgId,
   change,
@@ -938,17 +923,21 @@ function skillChangeDetail({
   t: Translate;
 }): Detail {
   return {
-    inspector: (
-      <KeyValue
-        keyWidth="10ch"
-        rows={[
-          { k: t("skillChange.agent"), v: change.agent.name },
-          { k: t("skillChange.requester"), v: requesterOf(change) },
-          { k: t("conversation"), v: change.requestedInConversation },
-          { k: t("requested"), v: <DateTime value={change.createdAt} /> },
-        ]}
-      />
-    ),
+    facts: [
+      { label: t("skillChange.agent"), value: change.agent.name },
+      { label: t("skillChange.requester"), value: requesterOf(change) },
+      // a link where the reader may open it (the requester), else a dash, never the raw id
+      {
+        label: t("conversation"),
+        value:
+          change.conversationPath === null ? (
+            "—"
+          ) : (
+            <TextLink href={change.conversationPath}>{t("openConversation")}</TextLink>
+          ),
+      },
+      { label: t("requested"), value: <DateTime value={change.createdAt} /> },
+    ],
     actionRow: {
       secondary: {
         label: t("skillChange.reject"),
@@ -963,6 +952,7 @@ function skillChangeDetail({
         disabled: pending !== undefined,
       },
     },
+    title: change.name,
     content: <SkillChangeReview key={change.id} orgId={orgId} change={change} />,
   };
 }
@@ -987,16 +977,11 @@ function directoryRequestDetail({
   const name = displayNameOf(subject, locale);
   const version = requestVersion(request);
   return {
-    inspector: (
-      <KeyValue
-        keyWidth="10ch"
-        rows={[
-          { k: td("requester"), v: directoryRequester(request) },
-          { k: td("version"), v: version === null ? "—" : versionLabel(version) },
-          { k: t("requested"), v: <DateTime value={request.createdAt} /> },
-        ]}
-      />
-    ),
+    facts: [
+      { label: td("requester"), value: directoryRequester(request) },
+      { label: td("version"), value: version === null ? "—" : versionLabel(version) },
+      { label: t("requested"), value: <DateTime value={request.createdAt} /> },
+    ],
     actionRow: {
       secondary: {
         label: td("reject"),
@@ -1011,30 +996,27 @@ function directoryRequestDetail({
         disabled: pending !== undefined,
       },
     },
+    title: td("title", { name }),
+    status: <StatusMark status="waiting" label={td("label")} />,
     content: (
-      <Card
-        title={td("title", { name })}
-        actions={<StatusMark status="waiting" label={td("label")} />}
-      >
-        <Stack gap={8}>
-          {request.note !== "" && (
-            <Stack gap={4}>
-              <Text variant="small" tone="muted">
-                {td("note")}
-              </Text>
-              <Text variant="prose">{request.note}</Text>
-            </Stack>
-          )}
-          <Text variant="small" tone="muted">
-            {td("hint")}
-          </Text>
-          {subject.id !== null && (
-            <Text>
-              <Link href={`/plugins/${subject.id}`}>{td("openItem")}</Link>
+      <Stack gap={8}>
+        {request.note !== "" && (
+          <Stack gap={4}>
+            <Text variant="small" tone="muted">
+              {td("note")}
             </Text>
-          )}
-        </Stack>
-      </Card>
+            <Text variant="prose">{request.note}</Text>
+          </Stack>
+        )}
+        <Text variant="small" tone="muted">
+          {td("hint")}
+        </Text>
+        {subject.id !== null && (
+          <Text>
+            <Link href={`/plugins/${subject.id}`}>{td("openItem")}</Link>
+          </Text>
+        )}
+      </Stack>
     ),
   };
 }
@@ -1047,8 +1029,8 @@ function conversationLinkOf(request: CatalogRequest): string | null {
 
 /**
  * A member's request to allow hosts in the org's sandbox network (org admins, network ask spec
- * §5.3): the hosts, who asked and why, the conversation it came from; 批准 adds the hosts to the
- * org's list (an org following the platform's list keeps its own copy from then on), 驳回 sends
+ * §5.3): the hosts, who asked and why, the conversation it came from; approve adds the hosts to the
+ * org's list (an org following the platform's list keeps its own copy from then on), reject sends
  * the optional reason typed here.
  */
 function networkRequestDetail({
@@ -1073,16 +1055,11 @@ function networkRequestDetail({
   const hosts = request.network?.hosts ?? [];
   const chat = conversationLinkOf(request);
   return {
-    inspector: (
-      <KeyValue
-        keyWidth="10ch"
-        rows={[
-          { k: td("requester"), v: directoryRequester(request) },
-          { k: tnr("hosts"), v: String(hosts.length) },
-          { k: t("requested"), v: <DateTime value={request.createdAt} /> },
-        ]}
-      />
-    ),
+    facts: [
+      { label: td("requester"), value: directoryRequester(request) },
+      { label: tnr("hosts"), value: String(hosts.length) },
+      { label: t("requested"), value: <DateTime value={request.createdAt} /> },
+    ],
     actionRow: {
       secondary: {
         label: td("reject"),
@@ -1097,38 +1074,35 @@ function networkRequestDetail({
         disabled: pending !== undefined,
       },
     },
+    title: tnr("title", { name: directoryRequester(request) }),
+    status: <StatusMark status="waiting" label={tnr("label")} />,
     content: (
-      <Card
-        title={tnr("title", { name: directoryRequester(request) })}
-        actions={<StatusMark status="waiting" label={tnr("label")} />}
-      >
-        <Stack gap={12}>
-          <ItemList label={tnr("hosts")} rows={hosts.map((h) => ({ id: h, title: h }))} />
-          {request.note !== "" && (
-            <Stack gap={4}>
-              <Text variant="small" tone="muted">
-                {td("note")}
-              </Text>
-              <Text variant="prose">{request.note}</Text>
-            </Stack>
-          )}
-          <Text variant="prose">{tnr("hint")}</Text>
-          {chat !== null && (
-            <Text>
-              <Link href={chat}>{t("openConversation")}</Link>
+      <Stack gap={12}>
+        <ItemList label={tnr("hosts")} rows={hosts.map((h) => ({ id: h, title: h }))} />
+        {request.note !== "" && (
+          <Stack gap={4}>
+            <Text variant="small" tone="muted">
+              {td("note")}
             </Text>
-          )}
-          <Field label={tnr("reasonLabel")} optional help={tnr("reasonHelp")}>
-            <Textarea
-              name="reason"
-              rows={2}
-              maxLength={500}
-              value={reason}
-              onChange={(e) => setReason(e.target.value)}
-            />
-          </Field>
-        </Stack>
-      </Card>
+            <Text variant="prose">{request.note}</Text>
+          </Stack>
+        )}
+        <Text variant="prose">{tnr("hint")}</Text>
+        {chat !== null && (
+          <Text>
+            <Link href={chat}>{t("openConversation")}</Link>
+          </Text>
+        )}
+        <Field label={tnr("reasonLabel")} optional help={tnr("reasonHelp")}>
+          <Textarea
+            name="reason"
+            rows={2}
+            maxLength={500}
+            value={reason}
+            onChange={(e) => setReason(e.target.value)}
+          />
+        </Field>
+      </Stack>
     ),
   };
 }
@@ -1156,56 +1130,48 @@ function networkDecidedDetail({
   const hosts = (request.network?.hosts ?? []).join(", ");
   const chat = conversationLinkOf(request);
   return {
-    inspector: (
-      <KeyValue
-        keyWidth="10ch"
-        rows={[
-          { k: tdd("status"), v: approved ? tdd("approved") : tdd("rejected") },
-          { k: t("requested"), v: <DateTime value={request.createdAt} /> },
-          ...(request.decidedAt !== null
-            ? [{ k: tdd("decidedAt"), v: <DateTime value={request.decidedAt} /> }]
-            : []),
-        ]}
-      />
-    ),
+    facts: [
+      { label: tdd("status"), value: approved ? tdd("approved") : tdd("rejected") },
+      { label: t("requested"), value: <DateTime value={request.createdAt} /> },
+      ...(request.decidedAt !== null
+        ? [{ label: tdd("decidedAt"), value: <DateTime value={request.decidedAt} /> }]
+        : []),
+    ],
     actionRow: {
       primary: { label: tdd("dismiss"), onSelect: onDismiss, loading: pending, disabled: pending },
     },
+    title: tnr(approved ? "titleApproved" : "titleRejected", { hosts }),
+    status: (
+      <StatusMark
+        status={approved ? "success" : "failed"}
+        label={approved ? tdd("approved") : tdd("rejected")}
+      />
+    ),
     content: (
-      <Card
-        title={tnr(approved ? "titleApproved" : "titleRejected", { hosts })}
-        actions={
-          <StatusMark
-            status={approved ? "success" : "failed"}
-            label={approved ? tdd("approved") : tdd("rejected")}
-          />
-        }
-      >
-        <Stack gap={8}>
-          <Text variant="prose">{approved ? tnr("hintApproved") : tnr("hintRejected")}</Text>
-          {!approved && request.reason !== null && request.reason !== "" && (
-            <Stack gap={4}>
-              <Text variant="small" tone="muted">
-                {tdd("reason")}
-              </Text>
-              <Text variant="prose">{request.reason}</Text>
-            </Stack>
-          )}
-          {chat !== null && (
-            <Text>
-              <Link href={chat}>{t("openConversation")}</Link>
+      <Stack gap={8}>
+        <Text variant="prose">{approved ? tnr("hintApproved") : tnr("hintRejected")}</Text>
+        {!approved && request.reason !== null && request.reason !== "" && (
+          <Stack gap={4}>
+            <Text variant="small" tone="muted">
+              {tdd("reason")}
             </Text>
-          )}
-        </Stack>
-      </Card>
+            <Text variant="prose">{request.reason}</Text>
+          </Stack>
+        )}
+        {chat !== null && (
+          <Text>
+            <Link href={chat}>{t("openConversation")}</Link>
+          </Text>
+        )}
+      </Stack>
     ),
   };
 }
 
 /**
  * A connector setup request (org admins, ruling P4-7): the agent, the requester and the connectors
- * it still needs; 配置 opens the configure dialog (per connector: pick or create, then bind; the
- * request closes on the last bind), 驳回 sends the optional reason typed here.
+ * it still needs; configure opens the configure dialog (per connector: pick or create, then bind; the
+ * request closes on the last bind), reject sends the optional reason typed here.
  */
 function setupRequestDetail({
   request,
@@ -1233,17 +1199,12 @@ function setupRequestDetail({
   const connectors = request.connectors ?? [];
   const agent = request.agent?.name ?? "—";
   return {
-    inspector: (
-      <KeyValue
-        keyWidth="10ch"
-        rows={[
-          { k: td("requester"), v: directoryRequester(request) },
-          { k: ts("agent"), v: agent },
-          { k: ts("count"), v: String(connectors.length) },
-          { k: t("requested"), v: <DateTime value={request.createdAt} /> },
-        ]}
-      />
-    ),
+    facts: [
+      { label: td("requester"), value: directoryRequester(request) },
+      { label: ts("agent"), value: agent },
+      { label: ts("count"), value: String(connectors.length) },
+      { label: t("requested"), value: <DateTime value={request.createdAt} /> },
+    ],
     actionRow: {
       secondary: {
         label: ts("reject"),
@@ -1257,46 +1218,43 @@ function setupRequestDetail({
         disabled: pending !== undefined || connectors.length === 0,
       },
     },
+    title: ts("title", { agent }),
+    status: <StatusMark status="waiting" label={ts("label")} />,
     content: (
-      <Card
-        title={ts("title", { agent })}
-        actions={<StatusMark status="waiting" label={ts("label")} />}
-      >
-        <Stack gap={12}>
-          <Text variant="prose">{ts("hint")}</Text>
-          <ItemList
-            label={ts("connectors")}
-            rows={connectors.map((c) => ({
-              id: c.key,
-              title: c.label,
-              meta:
-                "template" in c.source
-                  ? ts("fromTemplate", {
-                      name:
-                        c.source.template.displayName !== null
-                          ? displayNameOf(
-                              { name: c.label, displayName: c.source.template.displayName },
-                              locale,
-                            )
-                          : c.label,
-                    })
-                  : ts("needs", {
-                      protocol: c.source.needs.protocol,
-                      endpoint: c.source.needs.endpoint,
-                    }),
-            }))}
+      <Stack gap={12}>
+        <Text variant="prose">{ts("hint")}</Text>
+        <ItemList
+          label={ts("connectors")}
+          rows={connectors.map((c) => ({
+            id: c.key,
+            title: c.label,
+            meta:
+              "template" in c.source
+                ? ts("fromTemplate", {
+                    name:
+                      c.source.template.displayName !== null
+                        ? displayNameOf(
+                            { name: c.label, displayName: c.source.template.displayName },
+                            locale,
+                          )
+                        : c.label,
+                  })
+                : ts("needs", {
+                    protocol: c.source.needs.protocol,
+                    endpoint: c.source.needs.endpoint,
+                  }),
+          }))}
+        />
+        <Field label={ts("reasonLabel")} optional help={ts("reasonHelp")}>
+          <Textarea
+            name="reason"
+            rows={2}
+            maxLength={500}
+            value={reason}
+            onChange={(e) => setReason(e.target.value)}
           />
-          <Field label={ts("reasonLabel")} optional help={ts("reasonHelp")}>
-            <Textarea
-              name="reason"
-              rows={2}
-              maxLength={500}
-              value={reason}
-              onChange={(e) => setReason(e.target.value)}
-            />
-          </Field>
-        </Stack>
-      </Card>
+        </Field>
+      </Stack>
     ),
   };
 }
@@ -1324,51 +1282,41 @@ function setupDecidedDetail({
   const agent = request.agent;
   const name = agent?.name ?? "—";
   return {
-    inspector: (
-      <KeyValue
-        keyWidth="10ch"
-        rows={[
-          { k: tdd("status"), v: approved ? tdd("approved") : tdd("rejected") },
-          { k: ts("agent"), v: name },
-          { k: t("requested"), v: <DateTime value={request.createdAt} /> },
-          ...(request.decidedAt !== null
-            ? [{ k: tdd("decidedAt"), v: <DateTime value={request.decidedAt} /> }]
-            : []),
-        ]}
-      />
-    ),
+    facts: [
+      { label: tdd("status"), value: approved ? tdd("approved") : tdd("rejected") },
+      { label: ts("agent"), value: name },
+      { label: t("requested"), value: <DateTime value={request.createdAt} /> },
+      ...(request.decidedAt !== null
+        ? [{ label: tdd("decidedAt"), value: <DateTime value={request.decidedAt} /> }]
+        : []),
+    ],
     actionRow: {
       primary: { label: tdd("dismiss"), onSelect: onDismiss, loading: pending, disabled: pending },
     },
+    title: ts(approved ? "titleApproved" : "titleRejected", { agent: name }),
+    status: (
+      <StatusMark
+        status={approved ? "success" : "failed"}
+        label={approved ? tdd("approved") : tdd("rejected")}
+      />
+    ),
     content: (
-      <Card
-        title={ts(approved ? "titleApproved" : "titleRejected", { agent: name })}
-        actions={
-          <StatusMark
-            status={approved ? "success" : "failed"}
-            label={approved ? tdd("approved") : tdd("rejected")}
-          />
-        }
-      >
-        <Stack gap={8}>
-          <Text variant="prose">{approved ? ts("hintApproved") : ts("hintRejected")}</Text>
-          {!approved && request.reason !== null && request.reason !== "" && (
-            <Stack gap={4}>
-              <Text variant="small" tone="muted">
-                {tdd("reason")}
-              </Text>
-              <Text variant="prose">{request.reason}</Text>
-            </Stack>
-          )}
-          {agent !== null && agent !== undefined && !agent.deleted && (
-            <Text>
-              <Link href={`/agents/${encodeURIComponent(agent.id)}?s=tools`}>
-                {ts("openAgent")}
-              </Link>
+      <Stack gap={8}>
+        <Text variant="prose">{approved ? ts("hintApproved") : ts("hintRejected")}</Text>
+        {!approved && request.reason !== null && request.reason !== "" && (
+          <Stack gap={4}>
+            <Text variant="small" tone="muted">
+              {tdd("reason")}
             </Text>
-          )}
-        </Stack>
-      </Card>
+            <Text variant="prose">{request.reason}</Text>
+          </Stack>
+        )}
+        {agent !== null && agent !== undefined && !agent.deleted && (
+          <Text>
+            <Link href={`/agents/${encodeURIComponent(agent.id)}?s=tools`}>{ts("openAgent")}</Link>
+          </Text>
+        )}
+      </Stack>
     ),
   };
 }
@@ -1393,48 +1341,40 @@ function decidedRequestDetail({
   const name = displayNameOf(subject, locale);
   const approved = request.status === "approved";
   return {
-    inspector: (
-      <KeyValue
-        keyWidth="10ch"
-        rows={[
-          { k: tdd("status"), v: approved ? tdd("approved") : tdd("rejected") },
-          { k: t("requested"), v: <DateTime value={request.createdAt} /> },
-          ...(request.decidedAt !== null
-            ? [{ k: tdd("decidedAt"), v: <DateTime value={request.decidedAt} /> }]
-            : []),
-        ]}
-      />
-    ),
+    facts: [
+      { label: tdd("status"), value: approved ? tdd("approved") : tdd("rejected") },
+      { label: t("requested"), value: <DateTime value={request.createdAt} /> },
+      ...(request.decidedAt !== null
+        ? [{ label: tdd("decidedAt"), value: <DateTime value={request.decidedAt} /> }]
+        : []),
+    ],
     actionRow: {
       primary: { label: tdd("dismiss"), onSelect: onDismiss, loading: pending, disabled: pending },
     },
+    title: tdd(approved ? "titleApproved" : "titleRejected", { name }),
+    status: (
+      <StatusMark
+        status={approved ? "success" : "failed"}
+        label={approved ? tdd("approved") : tdd("rejected")}
+      />
+    ),
     content: (
-      <Card
-        title={tdd(approved ? "titleApproved" : "titleRejected", { name })}
-        actions={
-          <StatusMark
-            status={approved ? "success" : "failed"}
-            label={approved ? tdd("approved") : tdd("rejected")}
-          />
-        }
-      >
-        <Stack gap={8}>
-          <Text variant="prose">{approved ? tdd("hintApproved") : tdd("hintRejected")}</Text>
-          {!approved && request.reason !== null && request.reason !== "" && (
-            <Stack gap={4}>
-              <Text variant="small" tone="muted">
-                {tdd("reason")}
-              </Text>
-              <Text variant="prose">{request.reason}</Text>
-            </Stack>
-          )}
-          {subject.id !== null && (
-            <Text>
-              <Link href={`/plugins/${encodeURIComponent(subject.id)}`}>{tdd("openItem")}</Link>
+      <Stack gap={8}>
+        <Text variant="prose">{approved ? tdd("hintApproved") : tdd("hintRejected")}</Text>
+        {!approved && request.reason !== null && request.reason !== "" && (
+          <Stack gap={4}>
+            <Text variant="small" tone="muted">
+              {tdd("reason")}
             </Text>
-          )}
-        </Stack>
-      </Card>
+            <Text variant="prose">{request.reason}</Text>
+          </Stack>
+        )}
+        {subject.id !== null && (
+          <Text>
+            <Link href={`/plugins/${encodeURIComponent(subject.id)}`}>{tdd("openItem")}</Link>
+          </Text>
+        )}
+      </Stack>
     ),
   };
 }
@@ -1457,12 +1397,10 @@ function noticeDetail({
 }): Detail {
   const line = noticeLine(notice, tnn, locale);
   return {
-    inspector: (
-      <KeyValue
-        keyWidth="10ch"
-        rows={[...line.rows, { k: t("requested"), v: <DateTime value={notice.createdAt} /> }]}
-      />
-    ),
+    facts: [
+      ...line.rows.map((r) => ({ label: r.k, value: r.v })),
+      { label: t("requested"), value: <DateTime value={notice.createdAt} /> },
+    ],
     actionRow: {
       primary: {
         label: tnn("dismiss"),
@@ -1471,11 +1409,8 @@ function noticeDetail({
         disabled: pending,
       },
     },
-    content: (
-      <Card title={line.title}>
-        <Text variant="prose">{line.hint}</Text>
-      </Card>
-    ),
+    title: line.title,
+    content: <Text variant="prose">{line.hint}</Text>,
   };
 }
 

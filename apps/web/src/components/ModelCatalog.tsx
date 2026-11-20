@@ -400,11 +400,16 @@ export function ModelProviders({
   providers,
   selected,
   onSelect,
+  open,
+  onBack,
   children,
 }: {
   providers: ProviderRow[];
   selected: string | undefined;
   onSelect(plugin: string): void;
+  /** Whether a provider is open (the URL's `?provider=`): below the grid's fit the list is the page until it is. */
+  open?: boolean;
+  onBack?(): void;
   children: ReactNode;
 }) {
   const t = useTranslations("models.providers");
@@ -437,7 +442,12 @@ export function ModelProviders({
     },
   ];
   return (
-    <Grid columns="list-detail" divided>
+    <Grid
+      columns="list-detail"
+      divided
+      {...(open !== undefined ? { open, label: t("label") } : {})}
+      {...(onBack ? { onBack } : {})}
+    >
       <DataTable<ProviderRow>
         label={t("label")}
         rowHeight="roomy"

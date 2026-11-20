@@ -1,0 +1,23 @@
+@media (min-width: 960px) {
+  .a {
+    gap: 4px;
+  }
+}
+@media (min-width: 600px) and (max-width: 900px), print {
+  .a {
+    gap: 4px;
+  }
+}
+@media (max-width: 40em) {
+  .a {
+    gap: 4px;
+  }
+}
+@media (max-height: 500px) {
+  .a {
+    gap: 4px;
+  }
+}
+.b {
+  max-height: calc(100vh - 8px);
+}

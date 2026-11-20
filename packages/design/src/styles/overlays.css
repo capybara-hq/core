@@ -151,6 +151,10 @@
   display: inline-flex;
   gap: 4px;
 }
+/* The head of a draggable side sheet drags it toward its edge (§6.7). */
+.cb-sheet[data-drag] .cb-sheet-head {
+  touch-action: none;
+}
 .cb-sheet-tabs {
   padding: 0 16px;
 }
@@ -284,7 +288,7 @@
   translate: -50% 0;
   pointer-events: auto;
 }
-@media (max-width: 639px) {
+@media (max-width: 599px) {
   .cb-toast-region {
     width: calc(100vw - 2 * var(--cb-space-4));
   }

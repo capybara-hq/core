@@ -1,7 +1,7 @@
 "use client";
 
 import { useLocale, useTranslations } from "next-intl";
-import { type UiContributionItem, uiLocale } from "../lib/ui";
+import { type UiCompactForm, type UiContributionItem, uiLocale } from "../lib/ui";
 import { useOfferedPlatformPages } from "./extension-ui/ClientComponentBlock";
 import { usePlatformPages } from "./extension-ui/ExtensionSlot";
 
@@ -27,7 +27,12 @@ export const adminPageHref = (plugin: string, id: string) =>
   `/admin/p/${encodeURIComponent(plugin)}/${encodeURIComponent(id)}`;
 
 /** An extension page of the admin console (slot `platform.page`), as a nav item. */
-export type AdminExtensionPage = { id: string; label: string; href: string };
+export type AdminExtensionPage = {
+  id: string;
+  label: string;
+  href: string;
+  compact: UiCompactForm;
+};
 
 /** The nav items of `pages`, labelled by title (with the plugin name when two share a title). */
 export function adminExtensionItems(
@@ -43,6 +48,7 @@ export function adminExtensionItems(
       id: `${p.plugin}/${p.id}`,
       label: shared ? `${title} · ${p.plugin}` : title,
       href: adminPageHref(p.plugin, p.id),
+      compact: p.compact ?? "kept",
     };
   });
 }

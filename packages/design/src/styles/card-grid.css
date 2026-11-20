@@ -157,7 +157,7 @@
 .cb-object-card-meta-part[data-tone="fail"] {
   color: var(--cb-fail);
 }
-@media (max-width: 639px) {
+@media (max-width: 599px) {
   .cb-card-grid {
     grid-template-columns: 1fr;
   }

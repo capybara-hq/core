@@ -30,6 +30,7 @@ import {
   useTrajectoryMetrics,
 } from "../../../../components/TrajectoryParts";
 import { addEvalCase } from "../../../../lib/evals";
+import { useHashItem } from "../../../../lib/hash-item";
 import { canUpdateOrg } from "../../../../lib/org-settings";
 import { evalSetsQuery } from "../../../../lib/query/evals";
 import { keys } from "../../../../lib/query/keys";
@@ -106,7 +107,9 @@ function TrajectoryView({
   );
   const [loadingEarlier, setLoadingEarlier] = useState(false);
   const [earlierError, setEarlierError] = useState<string | null>(null);
-  const [selected, setSelected] = useState<string | null>(null);
+  // The open span is in the URL hash (`#span=<id>`): on compact it is its own screen (spec §5.11).
+  const hashSpan = useHashItem("span");
+  const selected = hashSpan.id;
   const [adding, setAdding] = useState(false);
   const qc = useQueryClient();
 
@@ -158,6 +161,8 @@ function TrajectoryView({
             ],
           }),
         }}
+        open={hashSpan.id !== null && sources.has(hashSpan.id)}
+        onBack={hashSpan.close}
         waterfall={
           <Stack gap={0}>
             {conv.parent !== undefined ? (
@@ -180,7 +185,7 @@ function TrajectoryView({
               label={t("detail.waterfall")}
               spans={spans}
               selectedId={selectedId}
-              onSelect={setSelected}
+              onSelect={hashSpan.open}
               labels={{ empty: t("detail.empty") }}
             />
           </Stack>

@@ -16,9 +16,9 @@ import {
   ItemList,
   ItemListItem,
   KeyValue,
+  ListDetailList,
   ListPage,
   ObjectCard,
-  ObjectList,
   ObjectRow,
   OverviewPage,
   RadioGroup,
@@ -203,7 +203,7 @@ function overviewBlocks(): ReactNode {
 
 const INBOX_HEADER = { path: PATH.slice(0, 1), title: "待我处理", actions: ACTIONS.slice(0, 1) };
 const FILTERS = <Text tone="muted">全部 · 审批 · 提问</Text>;
-const ITEMS = ["删除生产分支", "发送周报邮件", "更新客户表格"];
+const ITEMS = ["删除生产分支", "发送周报邮件", "更新客户表格", "归档旧会话"];
 
 function inboxBlocks(): ReactNode {
   return (
@@ -213,11 +213,17 @@ function inboxBlocks(): ReactNode {
           header={INBOX_HEADER}
           filters={FILTERS}
           list={
-            <ObjectList label="待处理">
-              {ITEMS.map((name) => (
-                <ObjectRow key={name} mark={{ text: name }} name={name} description="等待审批" />
-              ))}
-            </ObjectList>
+            <ListDetailList
+              label="待处理"
+              items={ITEMS.map((name, i) => ({
+                id: String(i),
+                title: name,
+                meta: "等待审批",
+                at: "14:02",
+                waiting: true,
+              }))}
+              onOpen={() => {}}
+            />
           }
         >
           {sections}
@@ -227,45 +233,7 @@ function inboxBlocks(): ReactNode {
         <InboxPage
           header={loadingHeader(PATH.slice(0, 1), 1)}
           filters={FILTERS}
-          loading={{ rows: 4 }}
-        />
-      </RefBlock>
-    </>
-  );
-}
-
-// The inbox whose list is a DataTable (the real /inbox: rowHeight="dense", framed={false}).
-type Item = { id: string; title: string };
-const RECORDS: Item[] = ITEMS.map((title, i) => ({ id: String(i), title }));
-const COLUMNS: Column<Item>[] = [{ key: "title", header: "事项", cell: (r) => r.title }];
-const TABLE = { label: "待处理", columns: COLUMNS, rowHeight: "dense", framed: false } as const;
-
-function inboxRecordsBlocks(): ReactNode {
-  return (
-    <>
-      <RefBlock id="template-inbox-default-records" width={W} height={H}>
-        <InboxPage
-          header={INBOX_HEADER}
-          filters={FILTERS}
-          list={
-            <DataTable<Item>
-              label={TABLE.label}
-              rowHeight="dense"
-              framed={false}
-              columns={COLUMNS}
-              rows={RECORDS}
-              rowKey={(r) => r.id}
-            />
-          }
-        >
-          {sections}
-        </InboxPage>
-      </RefBlock>
-      <RefBlock id="template-inbox-loading-records" width={W} height={H}>
-        <InboxPage
-          header={loadingHeader(PATH.slice(0, 1), 1)}
-          filters={FILTERS}
-          loading={{ list: "records", table: TABLE }}
+          loading={{ rows: ITEMS.length }}
         />
       </RefBlock>
     </>
@@ -711,10 +679,5 @@ export const TEMPLATE_LOADING_BLOCKS = {
   "template-auth": authBlocks,
   "template-detail": detailBlocks,
   "template-overview": overviewBlocks,
-  "template-inbox": () => (
-    <>
-      {inboxBlocks()}
-      {inboxRecordsBlocks()}
-    </>
-  ),
+  "template-inbox": inboxBlocks,
 } as const;

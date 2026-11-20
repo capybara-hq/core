@@ -110,6 +110,12 @@ Each line is the rule you must not miss; the skill has the rest.
   (`pnpm check:web-ui`); the new conversation is the workspace home at `/` (the setup layout while
   the org is not ready; `/chat` redirects there permanently with its query, maintainer decision
   2026-11-07), a conversation is `/chat/<id>`. [writing-web-ui](.agents/skills/writing-web-ui/SKILL.md)
+- **Mobile and shells:** layout follows size classes by window width only (compact < 600, medium
+  600–840, expanded ≥ 841), adapted in design templates and the shell, never in pages
+  (`design-breakpoint`); native shells are detected only through `window.capybaraShell`
+  capabilities, never the user agent (`web-shell-access`); dangerous shell capabilities are
+  confirmed natively.
+  [mobile layout](docs/superpowers/specs/2026-11-19-mobile-layout-design.md)
 - **Runtime and replay:** the conversation event log is the single source of truth; everything the
   model sees goes into the log, and history sent to the model is append-only; new model-visible
   input needs a `DriftReason`. Run the zero-drift fixture tests before and after changing request

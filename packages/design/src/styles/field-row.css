@@ -95,7 +95,7 @@
   flex: 1 1 12rem;
   min-width: 0;
 }
-@media (max-width: 639px) {
+@media (max-width: 599px) {
   .cb-field-row-fields {
     flex-direction: column;
     align-items: stretch;

@@ -46,7 +46,7 @@ afterAll(async () => {
 type Json = Record<string, unknown>;
 
 describe("界面刷新（双副本）", () => {
-  it("副本 0 invalidate → 副本 1 的对话 / 组织 SSE 收到 event: ui；fake-tools-ui 写入后 tasks 视图与刷新", async () => {
+  it("replica 0 invalidate: replica 1's conversation and org SSE receive event: ui; the tasks view and its refresh after a fake-tools-ui write", async () => {
     h = await createDualReplicaHarness({
       extensions: [MODEL_FAKE, UI_PROBE, TOOLS_UI],
       pgUrl: pgc.url,
@@ -205,6 +205,7 @@ describe("界面刷新（双副本）", () => {
       slot: "conversation.panel",
       kind: "view",
       icon: "puzzle",
+      compact: "drawer",
     });
 
     // ---- 组织流：非成员 404、未登录 401 ----

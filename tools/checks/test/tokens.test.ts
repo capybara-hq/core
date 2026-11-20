@@ -304,7 +304,7 @@ describe("rendering", () => {
     expect(renderThemeTokensTs(tokens)).toBe(readFileSync(join(root, SDK_PATH), "utf8"));
   });
 
-  it("the SDK file excludes avatar and color-mix tokens from the overridable list", () => {
+  it("the SDK file excludes avatar, preview-ground and color-mix tokens from the overridable list", () => {
     const text = readFileSync(join(repoRoot, JSON_PATH), "utf8");
     const { tokens } = parseTokens(text, "tokens.json");
     if (!tokens) throw new Error("repository tokens.json must parse");
@@ -312,6 +312,9 @@ describe("rendering", () => {
     const overridable = ts.slice(ts.indexOf("THEME_OVERRIDABLE"), ts.indexOf("THEME_CONTRAST"));
     expect(overridable).not.toContain("avatar-capybara-ground");
     expect(overridable).not.toContain("accent-tint");
+    // the icon preview's grounds are the same in both themes: a theme never overrides them
+    expect(overridable).not.toContain('"preview-light"');
+    expect(overridable).not.toContain('"preview-dark"');
     expect(overridable).toContain('"bg"');
   });
 

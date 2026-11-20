@@ -30,8 +30,10 @@ export const PLUGIN_CLIENT_EXPORTS: readonly string[] = [
   "usePrefersReducedMotion",
   "useRunState",
   "useSignIn",
+  "useSizeClass",
   "useTheme",
   "useView",
+  "useViewportSegments",
 ];
 
 /** The design components a client bundle may use. */

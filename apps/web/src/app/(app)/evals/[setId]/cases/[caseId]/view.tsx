@@ -14,6 +14,7 @@ import {
   useTrajectoryMetrics,
 } from "../../../../../../components/TrajectoryParts";
 import type { EvalCaseDetail } from "../../../../../../lib/evals";
+import { useHashItem } from "../../../../../../lib/hash-item";
 import { retryOnMountOf } from "../../../../../../lib/query/client";
 import { evalCaseQuery, evalSetQuery } from "../../../../../../lib/query/evals";
 import { useMemberNames } from "../../../../../../lib/query/member-names";
@@ -76,7 +77,9 @@ function CaseTrajectory({
   const runs = detail.trajectory;
   const { spans, sources } = indexTrajectory(runs, useSpanLabels());
   const metrics = useTrajectoryMetrics(runs, detail.currency);
-  const [selected, setSelected] = useState<string | null>(null);
+  // The open span is in the URL hash (`#span=<id>`): on compact it is its own screen (spec §5.11).
+  const hashSpan = useHashItem("span");
+  const selected = hashSpan.id;
   const own = `run:${detail.case.sourceRunId}`;
   const selectedId =
     selected !== null && sources.has(selected)
@@ -94,6 +97,8 @@ function CaseTrajectory({
         title: t("case.title", { title: detail.case.title }),
         metrics,
       }}
+      open={hashSpan.id !== null && sources.has(hashSpan.id)}
+      onBack={hashSpan.close}
       waterfall={
         <Stack gap={0}>
           {detail.parent !== undefined ? (
@@ -103,7 +108,7 @@ function CaseTrajectory({
             label={tt("waterfall")}
             spans={spans}
             selectedId={selectedId}
-            onSelect={setSelected}
+            onSelect={hashSpan.open}
             labels={{ empty: tt("empty") }}
           />
         </Stack>

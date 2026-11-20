@@ -1,7 +1,7 @@
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { cleanup, render, screen } from "@testing-library/react";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   AuthPage,
   type Column,
@@ -12,7 +12,6 @@ import {
   DetailPage,
   FormPage,
   FormSection,
-  type InboxLoading,
   InboxPage,
   ListPage,
   ObjectRow,
@@ -23,7 +22,10 @@ import {
   WizardPage,
 } from "../src/index";
 
-afterEach(cleanup);
+afterEach(() => {
+  cleanup();
+  vi.restoreAllMocks();
+});
 const zh = (ui: React.ReactElement) => render(<DesignProvider locale="zh">{ui}</DesignProvider>);
 
 const header = { path: [{ label: "capybara" }, { label: "agents" }], title: "研究助手" };
@@ -297,7 +299,7 @@ describe("InboxPage loading", () => {
     expect(document.querySelector('[data-template="InboxPage"]')).not.toBeNull();
     // The rail's filters are static: they stay; the list is four 64 px rows by default.
     expect(screen.getByText("REAL FILTERS")).toBeTruthy();
-    expect(count(".cb-body-rail")).toBe(1);
+    expect(count('[data-part="list-pane"]')).toBe(1);
     expect(count('[data-part="loading-row"]')).toBe(4);
     expect(screen.getAllByRole("status")).toHaveLength(1);
   });
@@ -307,55 +309,33 @@ describe("InboxPage loading", () => {
     expect(count('[data-part="loading-row"]')).toBe(6);
   });
 
-  it("loading rows sit in the object list's own container", () => {
+  it("loading rows take the ListDetailList row's box (spec §5.7, §6.47)", () => {
     zh(<InboxPage header={header} filters={<p>F</p>} loading={{ rows: 2 }} />);
     const list = document.querySelector('[data-part="loading-list"]');
-    expect(list?.className).toBe("cb-object-list");
+    expect(list?.className).toBe("cb-ld-list");
     const rows = list?.querySelectorAll('[data-part="loading-row"]') ?? [];
     expect(rows).toHaveLength(2);
-    // The first row is the list's first child, so it takes no top border.
-    expect(rows[0]).toBe(list?.firstElementChild);
+    for (const r of rows) {
+      expect(r.className).toBe("cb-ld-row");
+      expect(r.querySelector(".cb-ld-dot")).not.toBeNull();
+      expect(r.querySelector(".cb-ld-time")).not.toBeNull();
+    }
   });
 
-  it("a records list draws the DataTable loading state in the caller's table shape", () => {
+  it("facts draws small KeyValue placeholders in the facts block; the action row stays disabled", () => {
     zh(
       <InboxPage
         header={header}
-        filters={<p>F</p>}
-        loading={{
-          list: "records",
-          table: {
-            label: "待处理",
-            columns: [{ key: "t", header: "事项", cell: () => null }],
-            rowHeight: "dense",
-            framed: false,
-          },
-        }}
-      />,
-    );
-    expect(count('[data-part="loading-row"]')).toBe(0);
-    expect(document.querySelector('[data-empty="loading"]')).not.toBeNull();
-    expect(screen.getByText("事项")).toBeTruthy();
-    expect(screen.getByText("F")).toBeTruthy();
-    expect(document.querySelector(".cb-table-panel")).not.toBeNull();
-    // The page's group announces once; the table adds none (spec §6.29).
-    expect(screen.getAllByRole("status")).toHaveLength(1);
-    expect(screen.getAllByText("正在加载")).toHaveLength(1);
-  });
-
-  it("inspector draws KeyValue placeholders in the inspector column; the action row stays disabled", () => {
-    zh(
-      <InboxPage
-        header={header}
-        inspectorTitle="详情"
+        factsLabel="详情"
         actionRow={{
           secondary: { label: "拒绝", onSelect: () => {} },
           primary: { label: "批准", onSelect: () => {} },
         }}
-        loading={{ rows: 2, inspector: { rows: 3, keyWidth: "10ch" } }}
+        loading={{ rows: 2, facts: { rows: 3, keyWidth: "10ch" } }}
       />,
     );
-    expect(count(".cb-body-inspector")).toBe(1);
+    expect(count('[data-part="list-detail-facts"]')).toBe(1);
+    expect(parts("loading-inspector")[0]?.getAttribute("data-variant")).toBe("facts");
     expect(parts("loading-inspector-row")).toHaveLength(3);
     const key = document.querySelector('[data-part="loading-inspector-row"] dt') as HTMLElement;
     expect(key.style.width).toBe("10ch");
@@ -365,20 +345,9 @@ describe("InboxPage loading", () => {
     expect(screen.getAllByRole("status")).toHaveLength(1);
   });
 
-  it("without inspector the loading inbox has no inspector column", () => {
+  it("without facts the loading inbox has no facts block", () => {
     zh(<InboxPage header={header} loading={{}} />);
-    expect(count(".cb-body-inspector")).toBe(0);
-  });
-
-  it("takes a page's own typed columns without a cast", () => {
-    type Row = { id: string; title: string };
-    const columns: Column<Row>[] = [{ key: "title", header: "事项", cell: (r) => r.title }];
-    const loading: InboxLoading = {
-      list: "records",
-      table: { label: "待处理", columns, rowHeight: "dense", framed: false },
-    };
-    zh(<InboxPage header={header} loading={loading} />);
-    expect(screen.getByText("事项")).toBeTruthy();
+    expect(count('[data-part="list-detail-facts"]')).toBe(0);
   });
 
   it("without loading, the filters sit above the list", () => {
@@ -881,7 +850,7 @@ describe("SettingsPage loading", () => {
     );
   });
 
-  it("the list-detail grid collapses to one column below 640; label-less rows keep their ends on their line", () => {
+  it("the list-detail grid collapses to one column below its 580 fit; label-less rows keep their ends on their line", () => {
     const controls = readFileSync(
       resolve(import.meta.dirname, "../src/styles/controls.css"),
       "utf8",
@@ -890,7 +859,8 @@ describe("SettingsPage loading", () => {
     expect(controls.slice(wide, controls.indexOf("}", wide))).toContain(
       "grid-template-columns: 220px minmax(0, 1fr)",
     );
-    const narrow = controls.indexOf("@media (max-width: 639px)", wide);
+    // by the grid's own frame (a container query), not the window's
+    const narrow = controls.indexOf("@container cb-grid (max-width: 579px)", wide);
     expect(narrow).toBeGreaterThan(wide);
     expect(controls.slice(narrow, controls.indexOf("}\n}", narrow))).toContain(
       "grid-template-columns: minmax(0, 1fr)",

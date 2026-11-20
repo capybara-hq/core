@@ -234,3 +234,29 @@ describe("component contributions", () => {
     expect(result?.payload.card).toEqual({ plugin: "ui-components", view: "card" });
   });
 });
+
+describe("compact form of a contribution (mobile layout spec §5.6)", () => {
+  type Compact = Item & { compact?: string };
+  const compactOf = async (query: string, id: string) => {
+    const r = await owner({ method: "GET", url: `${ui}/contributions${query}` });
+    expect(r.statusCode, r.body).toBe(200);
+    return (r.json() as { items: Compact[] }).items.find((i) => i.id === id)?.compact;
+  };
+
+  it("a contribution narrows its slot's form, the slot's is the default", async () => {
+    expect(await compactOf("?slot=org.page", "pagex")).toBe("hidden");
+    expect(await compactOf("?slot=conversation.properties.section", "hud")).toBe("kept");
+  });
+
+  it("a contribution cannot widen a hidden slot", async () => {
+    const use = (v: { use: string } | null) =>
+      owner({
+        method: "PATCH",
+        url: `/api/v1/orgs/${orgId}/settings`,
+        payload: { uiArrangement: { "shell.brand": v } },
+      });
+    expect((await use({ use: "ui-components/brand" })).statusCode).toBe(200);
+    expect(await compactOf("?slot=shell.brand", "brand")).toBe("hidden");
+    expect((await use(null)).statusCode).toBe(200);
+  });
+});

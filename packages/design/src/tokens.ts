@@ -29,6 +29,8 @@ export const TOKEN_NAMES = [
   "fail",
   "warn",
   "scrim",
+  "preview-light",
+  "preview-dark",
   "lightbox",
   "diff-add",
   "diff-del",
@@ -121,6 +123,9 @@ export const SIZES = {
     "calendar-hour": 48,
     "calendar-day-min": 76,
     "calendar-cell": 112,
+    "content-min": 552,
+    "bottom-nav": 56,
+    "top-bar": 44,
   },
 } as const;
 

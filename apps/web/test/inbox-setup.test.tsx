@@ -97,7 +97,9 @@ const binds = (calls: Call[]) =>
     .filter((c) => c.method === "POST" && c.url.includes("/pending-connectors/"))
     .map((c) => ({ url: c.url, body: bodyOf(c) }));
 
-beforeEach(() => resetNavigation("/inbox"));
+beforeEach(() => {
+  resetNavigation("/inbox");
+});
 afterEach(() => {
   cleanup();
   vi.unstubAllGlobals();

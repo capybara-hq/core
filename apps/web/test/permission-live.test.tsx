@@ -611,6 +611,26 @@ describe("an owner's child follows its root's profile (Important 1)", () => {
     expect(reopened.url).toContain("after=10");
   });
 
+  it("back in the foreground a dropped root stream reopens from the cursor; an open one stays", async () => {
+    mount(() => inherited());
+    await renderRouteWithCache("/chat/c2", chatRoutes("c2", childRow, inherited(), childEvents), {
+      locale: "en",
+    });
+    await waitFor(() => expect(rootStream()).toBeDefined());
+    const roots = () =>
+      FakeEventSource.instances.filter((e) => e.url.includes("/conversations/c1/stream"));
+    const first = rootStream() as FakeEventSource;
+    act(() => first.emit("open"));
+    act(() => first.emit("event", profileEvent(10, 3)));
+    act(() => void window.dispatchEvent(new Event("online")));
+    expect(roots()).toHaveLength(1);
+    // a suspended page: the browser dropped it without an event
+    first.readyState = 2;
+    act(() => void window.dispatchEvent(new Event("pageshow")));
+    expect(roots()).toHaveLength(2);
+    expect(roots().at(-1)?.url).toContain("after=10");
+  });
+
   it("unmount during the recovery's root row read never reopens the stream", async () => {
     let rowRead = 0;
     const held = deferred<Response>();

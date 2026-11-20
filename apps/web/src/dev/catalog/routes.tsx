@@ -162,6 +162,16 @@ export const REFERENCE_COMPONENTS = [
   "theme-swatch-group",
   // a device's head and its two modes (auto mode design §4, plan Task 10)
   "device-nameplate",
+  // the compact shell (mobile layout spec §4; design spec §6.45–§6.48)
+  "bottom-nav",
+  "top-bar",
+  "me-panel",
+  // the two-level stack and the two panes (mobile layout spec §5.2, design spec §6.47)
+  "list-detail",
+  // the follow-finger bottom sheet's drag states (spec §6.7; mobile layout spec §7.4)
+  "sheet",
+  // the app icon on a light and a dark ground (spec §6.49; mobile layout spec §10.2.1)
+  "icon-preview",
 ] as const;
 
 export type ReferenceComponent = (typeof REFERENCE_COMPONENTS)[number];

@@ -81,6 +81,7 @@ export {
   HtmlDocumentFrame,
   type HtmlDocumentFrameProps,
 } from "./html-frame";
+export { IconPreview, type IconPreviewProps } from "./icon-preview";
 export {
   ImpactPreview,
   type ImpactPreviewGroup,

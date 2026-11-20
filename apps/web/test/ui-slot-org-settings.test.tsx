@@ -25,6 +25,7 @@ const section: UiContributionItem = {
   slot: "org.settings.section",
   kind: "view",
   icon: "puzzle",
+  compact: "kept" as const,
 };
 
 function api(items: UiContributionItem[]) {

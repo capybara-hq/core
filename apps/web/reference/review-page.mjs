@@ -91,6 +91,10 @@ const GROUPS = [
       "template-auth",
     ],
   },
+  {
+    title: "Mobile layout: compact shell, list-detail, sheet drag states",
+    components: ["bottom-nav", "top-bar", "list-detail", "me-panel", "sheet"],
+  },
 ];
 const COMPONENTS = GROUPS.flatMap((g) => g.components);
 const esc = (s) => String(s).replace(/[&<>"]/g, (c) => `&#${c.charCodeAt(0)};`);

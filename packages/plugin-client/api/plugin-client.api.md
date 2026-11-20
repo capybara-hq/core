@@ -247,6 +247,9 @@ export interface SignIn {
 }
 
 // @public
+export type SizeClass = "compact" | "medium" | "expanded";
+
+// @public
 export interface SlotComponentProps {
     "agent.detail.section": {
         agentId: string;
@@ -283,7 +286,7 @@ export interface SlotComponentProps {
     "shell.brand": {
         builtin: ReactNode;
         collapsed: boolean;
-        panel: "full" | "rail" | "drawer";
+        panel: "full" | "rail";
     };
     "shell.overlay": Record<string, never>;
 }
@@ -388,6 +391,9 @@ export function useRunState(): {
 export function useSignIn(): SignIn;
 
 // @public
+export function useSizeClass(): SizeClass | null;
+
+// @public
 export function useTheme(): {
     key: string | null;
     scheme: "dark" | "light";
@@ -397,11 +403,22 @@ export function useTheme(): {
 export function useView(): ViewState;
 
 // @public
+export function useViewportSegments(): ViewportSegment[] | null;
+
+// @public
 export const ViewBlocks: ComponentType<ViewBlocksProps>;
 
 // @public
 export interface ViewBlocksProps {
     view: UiView;
+}
+
+// @public
+export interface ViewportSegment {
+    height: number;
+    width: number;
+    x: number;
+    y: number;
 }
 
 // @public

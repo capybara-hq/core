@@ -21,7 +21,8 @@ test("超级管理员：顶栏「管理」→ 组织 → 设置运行并发并�
   // the admin console's entry sits above the account row (super admins)
   await page.getByRole("link", { name: "管理后台" }).click();
   await expect(page).toHaveURL(/\/admin$/);
-  await expect(page.locator('[data-template="OverviewPage"]')).toBeVisible();
+  // /admin renders the compact Me page and the regular overview (CSS shows one): the visible one
+  await expect(page.locator('[data-template="OverviewPage"]:visible')).toBeVisible();
   // the 组织 number is the link to the orgs page
   await page.getByRole("link", { name: new RegExp(`^${A.overview.metrics.orgs} \\d`) }).click();
   await expect(page).toHaveURL(/\/admin\/orgs$/);

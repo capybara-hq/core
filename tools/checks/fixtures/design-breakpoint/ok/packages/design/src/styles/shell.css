@@ -1,0 +1,50 @@
+/* the three size classes, the right area's fit threshold and the short window */
+@media (max-width: 599px) {
+  .a {
+    gap: 4px;
+  }
+}
+@media (min-width: 600px) and (max-width: 840px) {
+  .a {
+    gap: 8px;
+  }
+}
+@media (min-width: 841px) {
+  .a {
+    gap: 12px;
+  }
+}
+@media (max-width: 1279px) {
+  .b {
+    display: none;
+  }
+}
+@media (min-width: 1280px), (max-height: 479px) {
+  .b {
+    display: block;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .c {
+    transition: none;
+  }
+}
+.d {
+  height: 100dvh;
+  min-height: calc(100svh - 8px);
+}
+@media (horizontal-viewport-segments: 2) {
+  .e {
+    margin-left: calc(env(viewport-segment-left 1 0) - env(viewport-segment-right 0 0));
+  }
+}
+@media (vertical-viewport-segments: 2) {
+  .e {
+    margin-top: calc(env(viewport-segment-top 0 1) - env(viewport-segment-bottom 0 0));
+  }
+}
+@media (max-width: 1279px) and (not (horizontal-viewport-segments: 2)) {
+  .e {
+    display: none;
+  }
+}

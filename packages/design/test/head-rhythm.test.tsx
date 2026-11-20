@@ -214,7 +214,10 @@ const ALLOWED: Record<string, Record<string, string[]>> = {
   '.cb-template-head-frame[data-width="content"]': { margin: ["0 auto"] },
   ".cb-pageheader-path": { gap: ["var(--cb-space-2)"] },
   ".cb-pageheader-row": { gap: ["var(--cb-space-3)"] },
-  ".cb-pageheader-path + .cb-pageheader-row": { "margin-top": ["var(--cb-layout-head-path)"] },
+  // `0`: a short window drops the path row, so the title row has no row above it (spec §4.7)
+  ".cb-pageheader-path + .cb-pageheader-row": {
+    "margin-top": ["var(--cb-layout-head-path)", "0"],
+  },
   ".cb-pageheader-notice": { "margin-top": ["var(--cb-layout-head-tabs)"] },
   ".cb-pageheader-description": { margin: ["var(--cb-layout-head-description) 0 0"] },
   ".cb-pageheader-tabs": {
@@ -245,11 +248,6 @@ const BODY_ALLOWED: Record<string, { prop: string; value: string; why: string }>
     prop: "padding",
     value: "var(--cb-space-4) var(--cb-layout-gutter)",
     why: "a full-width padded body; no template uses it (they are content width)",
-  },
-  '.cb-template[data-template="InboxPage"] .cb-body-content[data-padded="true"]': {
-    prop: "padding",
-    value: "var(--cb-space-4)",
-    why: "the inbox's middle column inside its split; the split itself (the rail) starts at the gap",
   },
   ".cb-template-head-frame > .cb-stat-cards": {
     prop: "margin-top",

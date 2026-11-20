@@ -18,9 +18,9 @@ export type SetupPageProps = {
     adminHref?: string;
   };
   status: AppShellProps["status"];
-  /** The page title in the drawer menu bar (below 960). */
+  /** The page title in the compact top bar (below 600) until the page head registers its own. */
   title?: string;
-  /** Draw as below 960 (drawer open in place) or as the rail (the reference set and the catalog). */
+  /** Draw as the rail of the medium class (the reference set and the catalog). */
   reference?: AppShellProps["reference"];
   /** A shell-wide notice row (safe mode's banner), as {@link AppShellProps.banner}. */
   banner?: ReactNode;
@@ -30,8 +30,8 @@ export type SetupPageProps = {
 
 /**
  * T13 Setup: the guided setup layout (web-SSR spec §4), drawn by the app frame while the current
- * org cannot run yet. The shell's geometry (sidebar | content area | status bar, the same rail and
- * drawer) with the setup sidebar: the setup home and the steps are its navigation; no search, no
+ * org cannot run yet. The shell's geometry (sidebar | content area | status bar, the same rail;
+ * below 600 the steps are a menu in the top bar) with the setup sidebar: the setup home and the steps are its navigation; no search, no
  * inbox, no conversations, no command palette. The page brings its own template and page head.
  */
 export function SetupPage({ sidebar, status, title, reference, banner, children }: SetupPageProps) {

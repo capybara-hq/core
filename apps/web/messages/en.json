@@ -25,6 +25,7 @@
     "loginLabel": "Username",
     "passwordLabel": "Password",
     "submit": "Sign in",
+    "browserSignIn": "Sign in with your browser",
     "subtitle": "Sign in with your username and password.",
     "or": "Or sign in with",
     "sso": "Sign in with {name}",
@@ -1770,7 +1771,20 @@
       "waiting": "Waiting for the machine to log in… It appears in the device list once confirmed, and comes online after step 3.",
       "connected": "{name} connected.",
       "close": "Close",
-      "startStep": "3. Start the connection to keep the device online (to connect at login: capybara-device service install)"
+      "startStep": "3. Start the connection to keep the device online (to connect at login: capybara-device service install)",
+      "connectMachine": "Connect this machine",
+      "connectFailed": "Could not connect this machine. Try again.",
+      "thisMachineConnected": "This computer is connected to this platform: {state}.",
+      "thisMachineOtherOrg": "This computer is connected to another of your organizations.",
+      "connectedElsewhere": "This computer is connected to another platform ({origin}). Use the commands below to connect it here.",
+      "openDevice": "Open device",
+      "connection": {
+        "starting": "Starting",
+        "online": "Online",
+        "offline": "Offline",
+        "draining": "Finishing tasks",
+        "stopped": "Stopped"
+      }
     },
     "detail": {
       "demotedNote": "This was your personal device before the platform changed its sandbox provider. When the platform switches back to {provider}, it becomes your default device again, with its files.",
@@ -1804,6 +1818,27 @@
       "deleteDanger": "Deleting {name} also deletes its files and ends its processes, with no way back.",
       "deleteDangerDefault": "Deleting {name} also deletes its files and ends its processes, with no way back. A new empty device is created the next time one is needed.",
       "deleteDangerLocal": "Deleting {name} disconnects its machine, with no way back. The files on the machine stay."
+    },
+    "thisMachine": {
+      "title": "This machine",
+      "mark": "This machine",
+      "running": "Running now",
+      "runningEmpty": "Nothing is running.",
+      "isolation": { "restricted": "In the sandbox", "full": "Outside the sandbox" },
+      "pause": "Pause",
+      "resume": "Resume",
+      "disconnect": "Disconnect",
+      "wakeNote": "The computer was asleep",
+      "keepAwake": {
+        "title": "Keep awake",
+        "off": "Off",
+        "whileBusy": "While running",
+        "connected": "Always",
+        "held": "Holding the computer awake.",
+        "unavailable": "Cannot keep the computer awake: {reason}",
+        "cannot": "Keep awake cannot prevent: closing the lid of a Mac on battery without an external display still puts it to sleep; so do choosing Sleep, a critically low battery and thermal emergencies. On Linux, the lid switch is handled by logind, which this service cannot override."
+      },
+      "failed": "That did not go through. Try again."
     },
     "sandbox": {
       "title": "Sandbox",
@@ -1992,7 +2027,25 @@
     "admin": "Admin console",
     "plugins": "Plugins",
     "extensions": "Extensions",
-    "schedules": "Scheduled tasks"
+    "schedules": "Scheduled tasks",
+    "chats": "Conversations",
+    "me": "Me"
+  },
+  "conversations": {
+    "title": "Conversations",
+    "description": "Your conversations, grouped by agent.",
+    "list": "Conversations",
+    "new": "New conversation",
+    "empty": "No conversations yet",
+    "loadMore": "Load more",
+    "moreOf": "More with {agent}",
+    "running": "Running",
+    "waiting": "Waiting for you"
+  },
+  "me": {
+    "title": "Me",
+    "adminTitle": "Admin console",
+    "back": "Back to workspace"
   },
   "shell": {
     "noOrg": "Select organization",
@@ -2157,6 +2210,16 @@
       }
     }
   },
+  "shellNotify": {
+    "title": "Needs your attention",
+    "tool_approval": "A tool call is waiting for your approval",
+    "skill_change": "A skill change is waiting for your decision",
+    "catalog_request": "A catalog request is waiting for you",
+    "catalog_request_decided": "Your request has been decided",
+    "schedule_attention": "A scheduled task needs you",
+    "other": "There is something new in your inbox"
+  },
+
   "inbox": {
     "title": "Inbox",
     "listLabel": "Pending items",
@@ -2170,10 +2233,6 @@
     "openConversation": "Open conversation",
     "approved": "Approved",
     "denied": "Denied",
-    "columns": {
-      "item": "Item",
-      "time": "Requested"
-    },
     "truncated": "Only the newest items are shown. Handle some to see the rest.",
     "skillChange": {
       "kind": {
@@ -4107,10 +4166,6 @@
       "truncated": "Only the newest items are shown. Handle some to see the rest.",
       "filtered": "Showing only: {type}",
       "clearFilter": "Show all",
-      "columns": {
-        "item": "Item",
-        "time": "Time"
-      },
       "open": "Open",
       "org": "Organization",
       "plugin": "Plugin",
@@ -6473,6 +6528,8 @@
     "uploadLabel": "Upload {name}",
     "restore": "Restore default",
     "uploaded": "Icon uploaded.",
+    "previewLight": "Light",
+    "previewDark": "Dark",
     "restored": "Default icon restored."
   },
   "clientExtensions": {

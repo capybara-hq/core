@@ -19,13 +19,14 @@ import { Icon } from "../icons/icon";
 import { useInBox } from "../layout/box";
 import { Menu, menuActions } from "../overlays/menus";
 import { useDesignT } from "../provider";
+import { SIZE_CLASS_QUERIES } from "../shell/size-class";
 import { useMediaQuery } from "../shell/use-media-query";
 import { CellTitle } from "./cell-title";
 import { EmptyArea } from "./empty";
 import type { DataTableProps } from "./types";
 
 /**
- * Explicit table roles (spec §6.6): below 640 the stacked rows give the table's elements block,
+ * Explicit table roles (spec §6.6): below 600 the stacked rows give the table's elements block,
  * grid and flex display, and WebKit then drops their implicit table semantics. Spread from here
  * because the roles look redundant to a linter that only sees the elements.
  */
@@ -99,9 +100,9 @@ export function DataTable<T>({
   // One box is enough (spec §1, §6.6): inside a box the table has no ground of its own.
   const box = useInBox();
   const framed = framedProp ?? box === null;
-  // Below 640 the rows stack (spec §6.6): the header row is only read by screen readers, so its
+  // Below 600 the rows stack (spec §6.6): the header row is only read by screen readers, so its
   // sort buttons and select-all checkbox move to a compact bar above the rows.
-  const narrow = useMediaQuery("(max-width: 639px)");
+  const narrow = useMediaQuery(SIZE_CLASS_QUERIES.compact);
   const bodyRef = useRef<HTMLTableSectionElement>(null);
   const [focusKey, setFocusKey] = useState<string | undefined>();
 
@@ -395,7 +396,7 @@ export function DataTable<T>({
                           ) : null}
                           {columns.map((c, ci) => {
                             const content = c.cell(row);
-                            // Below 640 the rows stack (spec §6.6): the first cell is the card's
+                            // Below 600 the rows stack (spec §6.6): the first cell is the card's
                             // title line, every other cell is labelled with its column header.
                             const lead = ci === 0;
                             const list = c.wrap ? stringList(content) : null;

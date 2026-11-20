@@ -31,6 +31,8 @@ export const THEME_TOKENS = {
     "fail": { dark: "#FF5C52", light: "#C8302A" },
     "warn": { dark: "#F2C14B", light: "#8F6500" },
     "scrim": { dark: "rgba(0,0,0,.60)", light: "rgba(10,10,10,.25)" },
+    "preview-light": { dark: "#FAF9F6", light: "#FAF9F6" },
+    "preview-dark": { dark: "#0A0A0A", light: "#0A0A0A" },
     "lightbox": { dark: "rgba(0,0,0,.88)", light: "rgba(10,10,10,.80)" },
     "diff-add": { dark: "rgba(63,212,131,.08)", light: "rgba(22,128,63,.10)" },
     "diff-del": { dark: "rgba(255,92,82,.08)", light: "rgba(207,34,46,.08)" },

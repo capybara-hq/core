@@ -1,5 +1,5 @@
 /*
- * Sidebar v3 (spec §6.13): full 256 / rail 48 / drawer; two contexts (work, admin). Every block on
+ * Sidebar v3 (spec §6.13): full 256 / rail 48; two contexts (work, admin). Every block on
  * an 8px rhythm: padding 12 / 8 / 8, blocks space.2 apart. Part names follow the size table.
  */
 
@@ -659,7 +659,7 @@
   background: var(--cb-line-soft);
 }
 
-/* Rail: icons only; conversations behind the expand button (it opens the drawer). */
+/* Rail: icons only; the conversations behind the 会话 button (a side sheet on medium). */
 .cb-sidebar[data-mode="rail"] {
   align-items: center;
   width: var(--cb-layout-sidebar-rail);
@@ -711,9 +711,11 @@
 .cb-sidebar[data-mode="rail"] .cb-sidebar-item[aria-current="page"]:hover {
   background: var(--cb-hover);
 }
-/* The signed rail reference: the badge sits 2px inside the icon box's corner, 14 wide at least.
-   It overlaps the icon, so the selected ground (translucent in light) is drawn over an opaque
-   sidebar layer; the background color stays `selected` (spec §6.13 measures it) under both. */
+/* The nav badge (spec §6.13 "Nav badge"): 14 wide at least, `type.micro.line` high, one look on
+   the rail and the bottom navigation. The full sidebar's brand-row inbox keeps the inset form
+   (2px inside its box's top right). The selected ground is translucent in light, so it is drawn
+   over an opaque sidebar layer; the background color stays `selected` (spec §6.13 measures it)
+   under both. */
 .cb-sidebar-badge {
   position: absolute;
   top: 2px;
@@ -730,6 +732,17 @@
   line-height: var(--cb-type-micro-line);
   text-align: center;
 }
+/* On the rail the badge sits above the icon's top-right corner, never over the glyph: its bottom
+   edge 2px over the icon's top edge and its right edge 4px inside the rail's edge (a centered 16
+   icon leaves no room beside it), the 2px ring in the rail's ground filling the gap. The item is
+   centered in the 48 rail, so the rail's edge is 24 from the item's center. */
+.cb-sidebar[data-mode="rail"] .cb-sidebar-badge {
+  top: auto;
+  right: calc(50% - 20px);
+  bottom: calc(50% + 10px);
+  box-shadow: 0 0 0 2px var(--cb-sidebar);
+  font-family: var(--cb-font-mono);
+}
 .cb-sidebar-fill {
   flex: 1;
 }
@@ -740,92 +753,21 @@
   padding: 0;
 }
 
-/* Drawer: the full sidebar over a scrim, from the left. */
+/* The rail's Conversations sheet layer: over the content, from the rail's edge. */
 .cb-sidebar-layer {
   position: fixed;
   inset: 0;
   z-index: var(--cb-z-sheet);
 }
-.cb-sidebar-layer[data-inline="true"] {
-  position: absolute;
-}
-.cb-sidebar-scrim {
-  position: absolute;
-  inset: 0;
-  background: var(--cb-scrim);
-}
-.cb-sidebar-drawer {
+.cb-sidebar-sheet {
   position: absolute;
   inset: 0 auto 0 0;
   display: flex;
   box-shadow: var(--cb-shadow-float);
   outline: none;
 }
-/* The drawer is the touch form of the sidebar (below 960, phones included): its rows are 40 px
-   tap targets (spec §6.13), and a conversation row's menu is a 40 px square. */
-.cb-sidebar-drawer .cb-sidebar .cb-sidebar-item,
-.cb-sidebar-drawer .cb-sidebar .cb-sidebar-row,
-.cb-sidebar-drawer .cb-sidebar .cb-sidebar-back,
-.cb-sidebar-drawer .cb-sidebar .cb-sidebar-group-head,
-.cb-sidebar-drawer .cb-sidebar .cb-sidebar-archived {
-  height: 40px;
-}
-/* The drawer's middle (the org switcher, the nav, the conversations) is one scroll region between
-   the fixed top row and the bottom block; the conversations inside it are not a scroller of their
-   own. It runs over the sidebar's side padding like the conversations' box, for the scrollbar. */
-.cb-sidebar-scroll {
-  display: flex;
-  flex: 1;
-  flex-direction: column;
-  gap: var(--cb-space-2);
-  min-height: 0;
-  margin: 0 calc(-1 * var(--cb-space-2));
-  padding: 0 var(--cb-space-2);
-  overflow-y: auto;
-  scrollbar-width: thin;
-  scrollbar-color: var(--cb-scroll-thumb) transparent;
-}
-.cb-sidebar-scroll > .cb-sidebar-convs {
-  flex: none;
-  min-height: auto;
-  overflow: visible;
-}
-/* In the drawer 更多 is a disclosure (maintainer decision 2026-11-09): its items are listed in
-   place under it, one level in (the indent is the icon's width and its gap), and the chevron turns
-   down while it is open. */
-.cb-sidebar-chevron {
-  display: inline-flex;
-  flex: none;
-}
-.cb-sidebar-item[data-part="more-toggle"][aria-expanded="true"] .cb-sidebar-chevron {
-  transform: rotate(90deg);
-}
 @media (prefers-reduced-motion: no-preference) {
-  .cb-sidebar-chevron {
-    transition: transform var(--cb-motion-hover);
-  }
-}
-.cb-sidebar-sub {
-  display: flex;
-  flex-direction: column;
-  gap: 2px;
-}
-.cb-sidebar-item[data-depth="1"] {
-  padding-left: calc(var(--cb-pad-dense-x) + 16px + var(--cb-space-2));
-}
-.cb-sidebar-sub-sep {
-  height: 1px;
-  border: 0;
-  margin: var(--cb-space-1) 0 var(--cb-space-1)
-    calc(var(--cb-pad-dense-x) + 16px + var(--cb-space-2));
-  background: var(--cb-line-soft);
-}
-.cb-sidebar-drawer .cb-sidebar .cb-sidebar-row-menu {
-  width: 40px;
-  height: 40px;
-}
-@media (prefers-reduced-motion: no-preference) {
-  .cb-sidebar-drawer {
+  .cb-sidebar-sheet {
     animation: cb-sidebar-in var(--cb-motion-overlay) ease-out;
   }
 }
@@ -840,17 +782,44 @@
   }
 }
 
+/* The rail's Conversations sheet (spec §6.13): beside the rail over the content, no scrim; the layer
+   lets clicks through, only the sheet takes them. */
+.cb-sidebar-layer[data-sheet="true"] {
+  pointer-events: none;
+}
+.cb-sidebar-layer[data-sheet="true"] .cb-sidebar-sheet {
+  inset: 0 auto 0 var(--cb-layout-sidebar-rail);
+  pointer-events: auto;
+}
+.cb-sidebar[data-variant="sheet"] .cb-sidebar-sheet-title {
+  margin: 0;
+  padding-left: var(--cb-pad-dense-x);
+  font-size: var(--cb-type-body-size);
+  font-weight: 600;
+}
+
 /*
- * Before hydration (no explicit mode) both the full and the rail panel are drawn; the window width
- * picks one, so the first paint is right: full from 1280, rail 960–1279, neither below 960 (the
- * drawer opens from AppShell's menu bar).
+ * Before hydration (no explicit mode) both the full and the rail panel are drawn; the size class
+ * and the person's choice (`data-collapsed`, from the cb-sidebar cookie) pick one, so the first
+ * paint is right: the full sidebar from 841 unless collapsed, the rail on medium and when
+ * collapsed, neither below 600 (the bottom navigation and the Me page hold its content). The rail's expand
+ * button is for the expanded class only.
  */
-@media (max-width: 1279px) {
+@media (max-width: 840px) {
   .cb-sidebar[data-responsive="true"][data-mode="full"] {
     display: none;
   }
+  .cb-sidebar[data-responsive="true"] [data-rail-for="expanded"] {
+    display: none;
+  }
 }
-@media (min-width: 1280px), (max-width: 959px) {
+@media (min-width: 841px) {
+  .cb-sidebar[data-responsive="true"][data-mode="full"][data-collapsed="true"],
+  .cb-sidebar[data-responsive="true"][data-mode="rail"]:not([data-collapsed="true"]) {
+    display: none;
+  }
+}
+@media (max-width: 599px) {
   .cb-sidebar[data-responsive="true"][data-mode="rail"] {
     display: none;
   }
@@ -918,7 +887,7 @@
   bottom: 16px;
   display: flex;
 }
-@media (max-width: 639px) {
+@media (max-width: 599px) {
   .cb-auth-prefs {
     right: 16px;
   }

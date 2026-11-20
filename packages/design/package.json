@@ -19,6 +19,12 @@
       "import": "./dist/theme.js",
       "default": "./dist/theme.js"
     },
+    "./shell-environment": {
+      "@capybara-hq/source": "./src/shell/shell-environment-script.tsx",
+      "types": "./dist/shell/shell-environment-script.d.ts",
+      "import": "./dist/shell/shell-environment-script.js",
+      "default": "./dist/shell/shell-environment-script.js"
+    },
     "./fixtures": {
       "@capybara-hq/source": "./src/fixtures/index.ts",
       "types": "./dist/fixtures/index.d.ts",

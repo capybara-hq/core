@@ -12,6 +12,7 @@ import { type Device, deviceCeilingMark, deviceState } from "../../../lib/device
 import { devicesQuery } from "../../../lib/query/devices";
 import { usePageQuery } from "../../../lib/query/page-query";
 import { useWorkspace } from "../../../lib/query/workspace";
+import { useThisMachineDeviceId } from "../../../lib/use-this-machine";
 import NotFound from "../not-found";
 
 /**
@@ -36,6 +37,7 @@ function Devices({ orgId }: { orgId: string }) {
   const t = useTranslations("devices");
   const [creating, setCreating] = useState(false);
   const list = usePageQuery(devicesQuery(orgId));
+  const thisMachine = useThisMachineDeviceId(orgId);
   if (list.kind === "notFound") return <NotFound />;
   if (list.kind === "error") return <ErrorFrame reset={list.retry} />;
   // 新建设备 is always there: without a cloud sandbox it still connects a device
@@ -69,7 +71,7 @@ function Devices({ orgId }: { orgId: string }) {
         {...(callout ? { callout } : {})}
       >
         {items.map((e) => (
-          <DeviceCard key={e.id} device={e} />
+          <DeviceCard key={e.id} device={e} thisMachine={e.id === thisMachine} />
         ))}
       </ListPage>
       {creating && (
@@ -83,7 +85,7 @@ function Devices({ orgId }: { orgId: string }) {
   );
 }
 
-function DeviceCard({ device: e }: { device: Device }) {
+function DeviceCard({ device: e, thisMachine }: { device: Device; thisMachine: boolean }) {
   const t = useTranslations("devices");
   const nameOf = useDeviceName();
   const state = deviceState(e);
@@ -95,6 +97,8 @@ function DeviceCard({ device: e }: { device: Device }) {
       href={`/devices/${encodeURIComponent(e.id)}`}
       description={t(`source.${e.source}`)}
       meta={[
+        // the shell says this device is the machine the app runs on (desktop client spec §9.6)
+        ...(thisMachine ? [t("thisMachine.mark")] : []),
         state === "filesLost" || state === "unavailable"
           ? { label: t(`state.${state}`), tone: "warn" as const }
           : t(`state.${state}`),

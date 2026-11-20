@@ -179,9 +179,36 @@ export interface StreamHandlers {
 const CLOSED = 2;
 
 /**
- * 打开会话事件流（`GET .../conversations/:id/stream?after=<seq>`，经同源代理）。
- * 断线时浏览器自动重连并带上 `Last-Event-ID`（内核优先于 `after` 使用它）；
- * 服务端发 `event: error` 帧后立即关闭，不再重连。返回关闭函数。
+ * The page came back to the foreground (mobile layout spec §7.6): `visibilitychange` to visible,
+ * `pageshow` (a back-forward cache restore) or `online`. A phone suspends a background page and
+ * drops its EventSource without always telling it; the listener checks its stream then. Returns
+ * unsubscribe.
+ */
+export function onForeground(listener: () => void): () => void {
+  const onVisibility = () => {
+    if (document.visibilityState === "visible") listener();
+  };
+  document.addEventListener("visibilitychange", onVisibility);
+  window.addEventListener("pageshow", listener);
+  window.addEventListener("online", listener);
+  return () => {
+    document.removeEventListener("visibilitychange", onVisibility);
+    window.removeEventListener("pageshow", listener);
+    window.removeEventListener("online", listener);
+  };
+}
+
+/** Closes a stream; `isClosed()` says whether it is closed (by the caller, an error or the browser). */
+export type StreamCloser = (() => void) & { isClosed(): boolean };
+
+/**
+ * Opens a conversation's event stream (`GET .../conversations/:id/stream?after=<seq>`, through
+ * the same-origin proxy). After a drop the browser reconnects by itself with `Last-Event-ID` (the
+ * kernel prefers it over `after`); an `event: error` frame from the server closes it for good, with
+ * no reconnect. Returns the closer.
+ * The closer's `isClosed()` is true once the stream is closed by the caller, by an error frame or
+ * by the browser (`readyState` CLOSED). A connection dropped silently (a suspended background page)
+ * may still read as open: {@link onForeground} reopens on return rather than relying on it.
  * Live drafts (`event: draft`, delta offsets) go through {@link LiveDrafts}: a reconnect resumes a
  * streaming reply without a gap or a repeat.
  */
@@ -195,7 +222,7 @@ export function openConversationStream(
    * live drafts (`draft` / `delta` frames) are ignored, so no draft is ever read for them.
    */
   opts: { eventsOnly?: boolean } = {},
-): () => void {
+): StreamCloser {
   const es = new EventSource(streamUrl(orgId, conversationId, afterSeq));
   let closed = false;
   const live = new LiveDrafts(
@@ -300,7 +327,7 @@ export function openConversationStream(
       handlers.onError?.({});
     }
   });
-  return close;
+  return Object.assign(close, { isClosed: () => closed || es.readyState === CLOSED });
 }
 
 // ---------------------------------------------------------------------------

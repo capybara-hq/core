@@ -607,6 +607,8 @@ export interface SignInCapabilityV1 { start(): Promise<"signedIn" | "cancelled">
   - `useNotifyCapability(): NotifyCapabilityV1 | undefined`
   - `useSignInCapability(): SignInCapabilityV1 | undefined`
   - each one `useShellCapability(SHELL_CAPABILITY_KEYS.x) as … | undefined`.
+  - Confirming calls go through the hook's object inside event-driven mutations (a click's
+    `useAppMutation`); the shell enforces the user activation (mobile layout spec §9.4).
 
 - [ ] **Step 1: Tests.**
   - With a fake `window.capybaraShell` offering `signIn@1`, the login page shows only
@@ -644,6 +646,8 @@ export interface SignInCapabilityV1 { start(): Promise<"signedIn" | "cancelled">
 - [ ] **Step 2:** Run them. Expected: FAIL.
 - [ ] **Step 3:** Implement. Status comes from `device.status()` / `onStatus` through a
   `defineQuery` keyed `["shell", "device-status"]`, invalidated by `onStatus`.
+  Confirming calls (`connect`, `resume`) go through the hook's object inside event-driven
+  mutations; the shell enforces activation.
 - [ ] **Step 4:** Run the tests, `pnpm check:web-ui` and `pnpm check:i18n`. Expected: PASS.
 - [ ] **Step 5:** Commit:
   `git commit -m "feat(web): connect this machine from the desktop shell"`.

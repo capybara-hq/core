@@ -10,7 +10,7 @@
 <body>
 <main class="r-page">
 <h1>Sidebar</h1>
-<p>Sidebar v3: the work, admin and setup contexts; full (256), rail (48, below 1280) and drawer (below 960). The org switcher, 新会话 · 智能体 · 技能 · 连接器 (no home item), 更多 (插件, 扩展, 渠道, 评测与运行, 组织设置), conversations grouped by agent with state dots, the archived entry, 管理后台 above the account row.</p>
+<p>Sidebar v3: the work, admin and setup contexts; full (256, from 841, with the collapse toggle ending the brand row), rail (48: the medium class, or collapsed by the person; the medium rail has no expand button, both have the 会话 button under 新会话). No drawer: below 600 the bottom navigation and the Me page take its place. The org switcher, 新会话 · 智能体 · 技能 · 连接器 (no home item), 更多 (插件, 扩展, 渠道, 评测与运行, 组织设置), conversations grouped by agent with state dots, the archived entry, 管理后台 above the account row.</p>
 <div class="r-blocks">
 <section data-ref-block="sidebar-default" style="width:var(--cb-layout-sidebar);height:820px">
   <template data-fixture="sidebar" data-opts='{"active": "agents", "activeConversation": "cnv_r2"}'></template>
@@ -60,11 +60,11 @@
 <section data-ref-block="sidebar-admin" style="width:var(--cb-layout-sidebar);height:820px">
   <template data-fixture="sidebar" data-opts='{"context": "admin", "active": "accounts"}'></template>
 </section>
+<section data-ref-block="sidebar-rail-medium" style="width:200px;height:820px">
+  <template data-fixture="rail" data-opts='{"active": "agents", "medium": true, "inboxCount": 12}'></template>
+</section>
 <section data-ref-block="sidebar-rail" style="width:200px;height:820px">
   <template data-fixture="rail" data-opts='{"active": "agents", "hover": "agents", "tooltip": "智能体", "tooltipTop": 237}'></template>
-</section>
-<section data-ref-block="sidebar-drawer" style="width:640px;height:820px">
-  <template data-fixture="drawer" data-opts='{"active": "connectors", "activeConversation": "cnv_r2"}'></template>
 </section>
 <section data-ref-block="sidebar-setup" style="width:var(--cb-layout-sidebar);height:820px">
   <template data-fixture="sidebar" data-opts='{"context": "setup", "active": "agent"}'></template>
@@ -83,9 +83,6 @@
 </section>
 <section data-ref-block="sidebar-pending" style="width:var(--cb-layout-sidebar);height:820px">
   <template data-fixture="sidebar" data-opts='{"context": "setup", "active": "agent", "pending": "channels"}'></template>
-</section>
-<section data-ref-block="sidebar-setup-drawer" style="width:640px;height:820px">
-  <template data-fixture="setupDrawer" data-opts='{"active": "home"}'></template>
 </section>
 </div>
 </main>

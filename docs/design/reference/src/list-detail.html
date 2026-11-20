@@ -1,0 +1,29 @@
+<!doctype html>
+<html lang="zh-CN" data-theme="dark">
+<head>
+<meta charset="utf-8">
+<title>ListDetail · reference</title>
+<link rel="stylesheet" href="/design/styles/fonts.css">
+<link rel="stylesheet" href="/design/styles/tokens.css">
+<link rel="stylesheet" href="reference.css">
+</head>
+<body>
+<main class="r-page">
+<h1>ListDetail</h1>
+<p>The one behavior of a region that shows a list beside the open item (spec §6.47; mobile layout spec §5.2), drawn with the inbox: on compact the list is the page (compact-list, a tab root with the bottom navigation) and an item is pushed full screen (compact-detail: the pushed top bar with back, the item, the decision row sticky at the bottom, no bottom navigation); on medium, when the template frame is at least 320 + 360 wide, two panes (two-pane: the list column 320 with a `line-soft` divider and the current row on the `accent-tint` ground with the 2 px accent marker, the detail at least 360).</p>
+<div class="r-blocks">
+<section data-ref-block="list-detail-compact-list" style="width:390px;height:844px">
+  <template data-fixture="list-detail" data-opts='{"mode": "compact-list"}'></template>
+</section>
+<section data-ref-block="list-detail-compact-detail" style="width:390px;height:844px">
+  <template data-fixture="list-detail" data-opts='{"mode": "compact-detail"}'></template>
+</section>
+<section data-ref-block="list-detail-two-pane" style="width:720px;height:560px">
+  <template data-fixture="list-detail" data-opts='{"mode": "two-pane"}'></template>
+</section>
+</div>
+</main>
+<script src="mobile-shell.js"></script>
+<script src="fill.js"></script>
+</body>
+</html>

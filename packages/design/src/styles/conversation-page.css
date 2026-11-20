@@ -155,6 +155,18 @@ span.cb-title-btn {
 .cb-cmenu[data-size="narrow"] {
   min-width: 160px;
 }
+/* The compact top bar's overflow menu: 40 high items (tap targets), their icons 16 and `muted`. */
+.cb-cmenu[data-size="touch"] .cb-cmenu-item {
+  height: 40px;
+}
+.cb-cmenu[data-size="touch"] .cb-cmenu-item > .cb-icon {
+  width: 16px;
+  height: 16px;
+  color: var(--cb-muted);
+}
+.cb-cmenu[data-size="touch"] .cb-cmenu-item[data-tone="fail"] > .cb-icon {
+  color: var(--cb-fail);
+}
 .cb-cmenu[data-size="wide"] {
   min-width: 260px;
 }
@@ -481,7 +493,7 @@ span.cb-title-btn {
   color: var(--cb-ink);
 }
 /* The agents chip (§6.16.29): a picker-styled ghost button whose status dot leads the label;
- * below 640 the dot (or the agent icon) and the count alone. */
+ * below 600 the dot (or the agent icon) and the count alone. */
 .cb-agents-chip.cb-btn .cb-btn-body {
   gap: var(--cb-space-2);
 }
@@ -523,7 +535,7 @@ span.cb-title-btn {
 .cb-composer-bar .cb-picker.cb-btn[data-short="true"] {
   flex: none;
 }
-/* 640 and up the pickers sit in the row; the options button is a phone's (§6.16.2). */
+/* 600 and up the pickers sit in the row; the options button is a phone's (§6.16.2). */
 .cb-composer-pickers {
   display: contents;
 }
@@ -576,7 +588,7 @@ span.cb-title-btn {
 .cb-mode-button.cb-btn .cb-icon {
   flex: none;
 }
-@media (max-width: 639px) {
+@media (max-width: 599px) {
   .cb-composer-pickers,
   .cb-composer-mode {
     display: none;
@@ -614,13 +626,79 @@ span.cb-title-btn {
   outline: none;
   animation: cb-fade-in var(--cb-motion) ease-out;
 }
+/* The grab handle and the head drag the sheet (§6.7): touch-action none on them only. */
+.cb-bsheet-grab {
+  flex: none;
+  display: flex;
+  justify-content: center;
+  padding-top: var(--cb-space-2);
+  touch-action: none;
+}
+.cb-bsheet-handle {
+  width: var(--cb-space-7);
+  height: var(--cb-space-1);
+  border-radius: var(--cb-radius-sm);
+  background: var(--cb-line-strong);
+}
+.cb-bsheet[data-drag="dragging"] .cb-bsheet-handle {
+  background: var(--cb-muted);
+}
 .cb-bsheet-head {
   flex: none;
   display: flex;
   align-items: center;
   gap: var(--cb-space-2);
-  padding: var(--cb-space-2) var(--cb-space-1) var(--cb-space-2) var(--cb-space-4);
+  height: var(--cb-row-roomy);
+  padding: 0 var(--cb-space-1) 0 var(--cb-space-4);
   border-bottom: 1px solid var(--cb-line-soft);
+  touch-action: none;
+}
+/* Dragging follows the finger with no transition; a release travels over motion.expand (§6.7). */
+.cb-bsheet[data-drag="dragging"],
+.cb-sheet[data-drag="dragging"],
+.cb-conv-sheet[data-drag="dragging"],
+.cb-sidebar-sheet[data-drag="dragging"] {
+  animation: none;
+  transition: none;
+}
+.cb-bsheet[data-drag="settling"],
+.cb-sheet[data-drag="settling"],
+.cb-conv-sheet[data-drag="settling"],
+.cb-sidebar-sheet[data-drag="settling"] {
+  animation: none;
+  transition: transform var(--cb-motion-expand) ease-out;
+}
+/* Side sheets drag along x only: vertical pans stay the browser's. */
+.cb-conv-sheet[data-drag],
+.cb-sidebar-sheet[data-drag] {
+  touch-action: pan-y;
+}
+.cb-conv-scrim[data-drag="dragging"],
+.cb-bsheet-scrim[data-drag="dragging"] {
+  animation: none;
+}
+.cb-conv-scrim[data-drag="settling"],
+.cb-bsheet-scrim[data-drag="settling"] {
+  animation: none;
+  transition: opacity var(--cb-motion-expand) ease-out;
+}
+/* A sheet drawn in a fixed drag state over a page, clipped by its stage (the reference blocks). */
+.cb-bsheet-stage {
+  position: relative;
+  width: 100%;
+  height: 100%;
+  overflow: hidden;
+}
+.cb-bsheet-page {
+  height: 100%;
+}
+.cb-bsheet-scrim.cb-bsheet-static {
+  position: absolute;
+  animation: none;
+}
+.cb-bsheet.cb-bsheet-static {
+  position: absolute;
+  animation: none;
 }
 .cb-bsheet .cb-grow {
   flex: 1;
@@ -642,7 +720,41 @@ span.cb-title-btn {
   min-height: 0;
   overflow-y: auto;
   overscroll-behavior: contain;
-  padding: var(--cb-space-2) var(--cb-space-2) calc(var(--cb-space-4) + env(safe-area-inset-bottom));
+  padding: var(--cb-space-2) var(--cb-space-2) calc(var(--cb-space-4) + var(--cb-inset-bottom));
+}
+/* A Filter sheet's single-choice options (§6.7). */
+.cb-sheet-option {
+  display: flex;
+  align-items: center;
+  gap: var(--cb-space-2);
+  height: 40px;
+  padding: 0 var(--cb-space-2);
+  border-radius: var(--cb-radius-sm);
+  color: var(--cb-ink);
+  cursor: pointer;
+}
+.cb-sheet-option[data-checked="true"] {
+  background: var(--cb-selected);
+}
+.cb-sheet-option:has(:focus-visible) {
+  outline: 1px solid var(--cb-accent);
+  outline-offset: -1px;
+}
+.cb-sheet-option-check {
+  display: inline-flex;
+  flex: none;
+  width: 14px;
+  height: 14px;
+}
+.cb-sheet-option-label {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.cb-sheet-option-count {
+  color: var(--cb-muted);
 }
 .cb-options-group + .cb-options-group {
   margin-top: var(--cb-space-2);
@@ -756,7 +868,7 @@ span.cb-title-btn {
   margin: var(--cb-space-1) 0 0;
   padding: 0 var(--cb-space-2);
 }
-@media (max-width: 639px) {
+@media (max-width: 599px) {
   .cb-agents-chip-label,
   .cb-agents-chip-activity {
     display: none;
@@ -1031,6 +1143,7 @@ button.cb-property-row {
 /* ── ConversationPage (§5.4) ── */
 
 .cb-conv-page {
+  position: relative;
   display: flex;
   flex: 1;
   flex-direction: row;
@@ -1167,7 +1280,7 @@ button.cb-property-row {
 .cb-conv-new-composer > .cb-file-drop {
   margin-top: var(--cb-space-3);
 }
-/* The quick actions listed on the page are a phone's (below); 640 and up the zap menu offers them. */
+/* The quick actions listed on the page are a phone's (below); 600 and up the zap menu offers them. */
 .cb-conv-new-quick {
   display: none;
 }
@@ -1203,19 +1316,69 @@ button.cb-property-row {
  * window (useMediaQuery reads false there) and draw it inline until the first client render. Hide
  * the inline area until then, so it never widens the page (no horizontal scroll, no flash).
  */
-@media (max-width: 1279px) {
+@media (max-width: 1279px) and (not (horizontal-viewport-segments: 2)) and (
+    not (vertical-viewport-segments: 2)
+  ) {
   .cb-conv-page[data-layout="auto"]:not([data-sheet]) .cb-conv-panel,
   .cb-conv-page[data-layout="auto"]:not([data-sheet]) .cb-conv-cols > [data-part="properties"] {
     display: none;
   }
 }
 /*
- * Phones (below 640, spec §5.4): the middle column has no minimum and fills the window, with 16 px
+ * Two viewport segments (spec §8). The `env()` values are viewport-relative while the page sits
+ * right of the sidebar, so the right area (the inline panel, or the properties column) is anchored
+ * from the trailing edge with the second segment's own size, the hinge is the gap before it, and
+ * the thread takes the rest. With no right area the thread fills the page (nothing to split). The
+ * media features are the authority; `data-segments="2"` mirrors `useViewportSegments()` only.
+ */
+@media (horizontal-viewport-segments: 2) {
+  .cb-conv-page .cb-conv-main {
+    flex: 1 1 0;
+    min-width: 0;
+  }
+  .cb-conv-page .cb-conv-panel {
+    flex: 0 0 env(viewport-segment-width 1 0);
+    min-width: 0;
+    margin-left: calc(env(viewport-segment-left 1 0) - env(viewport-segment-right 0 0));
+  }
+  .cb-conv-page .cb-conv-cols > .cb-properties {
+    flex: 0 0 env(viewport-segment-width 1 0);
+    box-sizing: border-box;
+    min-width: 0;
+    margin-left: calc(env(viewport-segment-left 1 0) - env(viewport-segment-right 0 0));
+  }
+}
+@media (vertical-viewport-segments: 2) {
+  .cb-conv-page {
+    flex-direction: column;
+  }
+  .cb-conv-page .cb-conv-main {
+    flex: 1 1 0;
+    min-width: 0;
+  }
+  .cb-conv-page .cb-conv-panel {
+    flex: 0 0 env(viewport-segment-height 0 1);
+    min-width: 0;
+    margin-top: calc(env(viewport-segment-top 0 1) - env(viewport-segment-bottom 0 0));
+  }
+  .cb-conv-page .cb-conv-cols {
+    flex-direction: column;
+  }
+  .cb-conv-page .cb-conv-cols > .cb-properties {
+    /* the status bar under the columns is part of the page's last segment: it takes its height */
+    flex: 0 0 calc(env(viewport-segment-height 0 1) - var(--cb-layout-status-bar));
+    box-sizing: border-box;
+    min-height: 0;
+    margin-top: calc(env(viewport-segment-top 0 1) - env(viewport-segment-bottom 0 0));
+  }
+}
+/*
+ * Phones (below 600, spec §5.4): the middle column has no minimum and fills the window, with 16 px
  * gutters for the title bar, the thread and the composer, so the composer, its send button and
  * the user bubbles never run past the right edge. Title-bar buttons are 40 px tap targets; the
  * right padding is space.1 so an icon's glyph lines up with the 16 px content edge.
  */
-@media (max-width: 639px) {
+@media (max-width: 599px) {
   .cb-conv-main {
     min-width: 0;
   }
@@ -1224,6 +1387,13 @@ button.cb-property-row {
   }
   .cb-conv-composer {
     padding-inline: var(--cb-space-4);
+    /* pinned at the window's bottom on a pushed page: above the home indicator (spec §4.7) */
+    padding-bottom: calc(var(--cb-space-3) + var(--cb-inset-bottom));
+  }
+  /* A tab root's bottom navigation pads the inset already; an open keyboard covers it. */
+  .cb-shell-main:has(~ .cb-shell-bottomnav) .cb-conv-composer,
+  .cb-shell[data-keyboard="open"] .cb-conv-composer {
+    padding-bottom: var(--cb-space-3);
   }
   .cb-title-bar {
     padding-inline: var(--cb-space-4) var(--cb-space-1);
@@ -1513,4 +1683,86 @@ button.cb-property-row {
   gap: var(--cb-space-1);
   color: var(--cb-warn);
   white-space: nowrap;
+}
+
+/*
+ * The latest button (spec §7.2): an icon button on the composer's top edge, end side, drawn only
+ * while the reader is away from the bottom and new content has arrived.
+ */
+.cb-conv-composer {
+  position: relative;
+}
+.cb-conv-latest {
+  position: absolute;
+  inset-inline-end: var(--cb-layout-gutter);
+  bottom: 100%;
+  z-index: 1;
+  display: flex;
+  margin-bottom: var(--cb-space-2);
+  border: 1px solid var(--cb-line);
+  border-radius: var(--cb-radius-md);
+  background: var(--cb-panel);
+}
+@media (max-width: 599px) {
+  .cb-conv-latest {
+    inset-inline-end: var(--cb-space-4);
+  }
+}
+/*
+ * Phones: the open right area is a page pushed over the conversation (data-right="pushed"), full
+ * screen under the OS insets, with a back bar; the conversation keeps its scroll underneath.
+ */
+.cb-conv-pushed {
+  position: fixed;
+  inset: 0;
+  z-index: var(--cb-z-sheet);
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  padding-top: var(--cb-inset-top);
+  padding-bottom: var(--cb-inset-bottom);
+  background: var(--cb-panel-2);
+}
+/* Inside an AppShell the shell's top bar is the back: the page sits in the content area. */
+.cb-conv-pushed[data-shell="true"] {
+  position: static;
+  flex: 1;
+  padding: 0;
+  z-index: auto;
+}
+/* The conversation under a pushed section in a shell: laid out but out of view (display: none would
+   drop the thread's scroll position); the pushed section takes the flow. */
+.cb-conv-main[data-covered="true"] {
+  visibility: hidden;
+  position: absolute;
+  inset: 0;
+  min-width: 0;
+}
+.cb-conv-pushed-bar {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: var(--cb-space-2);
+  height: var(--cb-row-roomy);
+  padding: 0 var(--cb-space-2);
+  border-bottom: 1px solid var(--cb-line-soft);
+}
+.cb-conv-pushed-body {
+  flex: 1;
+  min-height: 0;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  overflow-y: auto;
+}
+.cb-conv-pushed-body > .cb-properties {
+  width: 100%;
+  gap: 0;
+  padding: var(--cb-space-2) var(--cb-space-4);
+}
+.cb-conv-pushed-body > .cb-rpanel {
+  flex: 1;
+  width: 100%;
+  min-width: 0;
+  border-left: 0;
 }

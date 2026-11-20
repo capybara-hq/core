@@ -5,6 +5,7 @@ import { expect, test } from "@playwright/test";
 // path (as fidelity.spec.ts does).
 import { parseStateLists, resolveToken } from "../../../packages/design/src/reference/index";
 import { openReference, THEMES } from "./reference-page";
+import { heightFor, MATRIX_WIDTHS } from "./size-matrix";
 
 /**
  * The head rhythm across the templates (design spec §4.2 "Head rhythm", acceptance item S). Every
@@ -61,98 +62,107 @@ test("every template has a head-rhythm block", () => {
 });
 
 for (const theme of THEMES) {
-  test(`head rhythm (${theme})`, async ({ page }) => {
-    await openReference(page, COMPONENT, theme, ORIGIN);
-    const measured: Record<string, Offsets> = {};
-    for (const state of states) {
-      measured[state] = await page.evaluate((id) => {
-        const b = document.querySelector(`[data-ref-block="${id}"]`);
-        if (!b) throw new Error(`no block ${id}`);
-        const top = b.getBoundingClientRect().top;
-        const box = (sel: string) => {
-          const el = b.querySelector(sel);
-          if (!el) return null;
-          const r = el.getBoundingClientRect();
-          return { top: r.top - top, bottom: r.bottom - top };
-        };
-        const need = (sel: string) => {
-          const r = box(sel);
-          if (!r) throw new Error(`${id}: no ${sel}`);
-          return r;
-        };
-        const path = need('[data-part="path"]');
-        const row = need('[data-part="page-header-row"]');
-        const header = need('[data-part="page-header"]');
-        const stats = box('[data-part="template-head"] [data-part="stat-cards"]');
-        const tabsEl = b.querySelector('[data-part="page-header-tabs"], [data-part="page-tabs"]');
-        const tabs = box('[data-part="page-header-tabs"], [data-part="page-tabs"]');
-        // The nearest earlier sibling with a box (a hidden announcement or an empty slot has none).
-        let above = tabsEl?.previousElementSibling ?? null;
-        while (above && above.getBoundingClientRect().height === 0) {
-          above = above.previousElementSibling;
+  // Medium and expanded only: on compact (below 600) the head stacks (title, description and
+  // actions across the width, spec §4.2) and the blocks' fixed widths mix container and viewport
+  // rules, so the rhythm tokens do not apply there.
+  for (const width of MATRIX_WIDTHS.filter((w) => w >= 600)) {
+    test(`head rhythm (${theme}, ${width})`, async ({ page }) => {
+      await page.setViewportSize({ width, height: heightFor(width) });
+      await openReference(page, COMPONENT, theme, ORIGIN);
+      const measured: Record<string, Offsets> = {};
+      for (const state of states) {
+        measured[state] = await page.evaluate((id) => {
+          const b = document.querySelector(`[data-ref-block="${id}"]`);
+          if (!b) throw new Error(`no block ${id}`);
+          const top = b.getBoundingClientRect().top;
+          const box = (sel: string) => {
+            const el = b.querySelector(sel);
+            if (!el) return null;
+            const r = el.getBoundingClientRect();
+            return { top: r.top - top, bottom: r.bottom - top };
+          };
+          const need = (sel: string) => {
+            const r = box(sel);
+            if (!r) throw new Error(`${id}: no ${sel}`);
+            return r;
+          };
+          const path = need('[data-part="path"]');
+          const row = need('[data-part="page-header-row"]');
+          const header = need('[data-part="page-header"]');
+          const stats = box('[data-part="template-head"] [data-part="stat-cards"]');
+          const tabsEl = b.querySelector('[data-part="page-header-tabs"], [data-part="page-tabs"]');
+          const tabs = box('[data-part="page-header-tabs"], [data-part="page-tabs"]');
+          // The nearest earlier sibling with a box (a hidden announcement or an empty slot has none).
+          let above = tabsEl?.previousElementSibling ?? null;
+          while (above && above.getBoundingClientRect().height === 0) {
+            above = above.previousElementSibling;
+          }
+          const frame = b.querySelector('[data-part="content"]');
+          // the first child with a box (the wizard's step count is display: none above 599 px)
+          const first = Array.from(frame?.children ?? []).find(
+            (el) => el.getBoundingClientRect().height > 0,
+          );
+          const firsts = [first, b.querySelector('[data-part="rail"]')]
+            .filter((el): el is Element => el != null)
+            .map((el) => el.getBoundingClientRect().top - top);
+          if (firsts.length === 0) throw new Error(`${id}: no content block`);
+          return {
+            path: path.top,
+            pathBottom: path.bottom,
+            row: row.top,
+            rowBottom: row.bottom,
+            headBottom: stats ? stats.bottom : header.bottom,
+            tabs: tabs ? tabs.top : null,
+            tabsBottom: tabs ? tabs.bottom : null,
+            aboveTabs: above ? above.getBoundingClientRect().bottom - top : null,
+            content: Math.min(...firsts),
+          };
+        }, `${COMPONENT}-${state}`);
+      }
+
+      const failures: string[] = [];
+      const near = (a: number, b: number) => Math.abs(a - b) <= 1;
+      const same = (what: keyof Offsets, group: string[]) => {
+        const [first, ...rest] = group;
+        if (first === undefined) return;
+        const want = measured[first]?.[what];
+        for (const s of rest) {
+          const got = measured[s]?.[what];
+          if (want == null || got == null || !near(want, got)) {
+            failures.push(`${what}: ${first} ${want} but ${s} ${got}`);
+          }
         }
-        const frame = b.querySelector('[data-part="content"]');
-        const first = frame?.firstElementChild;
-        const firsts = [first, b.querySelector('[data-part="rail"]')]
-          .filter((el): el is Element => el != null)
-          .map((el) => el.getBoundingClientRect().top - top);
-        if (firsts.length === 0) throw new Error(`${id}: no content block`);
-        return {
-          path: path.top,
-          pathBottom: path.bottom,
-          row: row.top,
-          rowBottom: row.bottom,
-          headBottom: stats ? stats.bottom : header.bottom,
-          tabs: tabs ? tabs.top : null,
-          tabsBottom: tabs ? tabs.bottom : null,
-          aboveTabs: above ? above.getBoundingClientRect().bottom - top : null,
-          content: Math.min(...firsts),
-        };
-      }, `${COMPONENT}-${state}`);
-    }
+      };
+      const gap = (state: string, what: string, from: number | null, to: number, token: string) => {
+        const want = px(token);
+        if (from == null || !near(to - from, want)) {
+          failures.push(
+            `${state} ${what}: layout.${token} = ${want}px, got ${from == null ? "no row" : to - from}`,
+          );
+        }
+      };
 
-    const failures: string[] = [];
-    const near = (a: number, b: number) => Math.abs(a - b) <= 1;
-    const same = (what: keyof Offsets, group: string[]) => {
-      const [first, ...rest] = group;
-      if (first === undefined) return;
-      const want = measured[first]?.[what];
-      for (const s of rest) {
-        const got = measured[s]?.[what];
-        if (want == null || got == null || !near(want, got)) {
-          failures.push(`${what}: ${first} ${want} but ${s} ${got}`);
+      const plain = states.filter((s) => !TABBED.includes(s) && !AVATAR.includes(s));
+      // The path and the title row sit at the same y on every template, the avatar's too.
+      same("path", states);
+      same("row", states);
+      // Same head, same first block: the untabbed templates together, the tabbed ones together.
+      same("content", plain);
+      same("tabs", TABBED);
+      same("content", TABBED);
+
+      for (const s of states) {
+        const m = measured[s] as Offsets;
+        gap(s, "path → title row", m.pathBottom, m.row, "head-path");
+        if (TABBED.includes(s)) {
+          gap(s, "head → tabs", m.aboveTabs, m.tabs ?? Number.NaN, "head-tabs");
+          gap(s, "tabs → content", m.tabsBottom, m.content, "head-tabs-content");
+        } else {
+          if (m.tabs != null) failures.push(`${s}: a tab row the block should not have`);
+          gap(s, "head → content", m.headBottom, m.content, "head-content");
         }
       }
-    };
-    const gap = (state: string, what: string, from: number | null, to: number, token: string) => {
-      const want = px(token);
-      if (from == null || !near(to - from, want)) {
-        failures.push(
-          `${state} ${what}: layout.${token} = ${want}px, got ${from == null ? "no row" : to - from}`,
-        );
-      }
-    };
-
-    const plain = states.filter((s) => !TABBED.includes(s) && !AVATAR.includes(s));
-    // The path and the title row sit at the same y on every template, the avatar's too.
-    same("path", states);
-    same("row", states);
-    // Same head, same first block: the untabbed templates together, the tabbed ones together.
-    same("content", plain);
-    same("tabs", TABBED);
-    same("content", TABBED);
-
-    for (const s of states) {
-      const m = measured[s] as Offsets;
-      gap(s, "path → title row", m.pathBottom, m.row, "head-path");
-      if (TABBED.includes(s)) {
-        gap(s, "head → tabs", m.aboveTabs, m.tabs ?? Number.NaN, "head-tabs");
-        gap(s, "tabs → content", m.tabsBottom, m.content, "head-tabs-content");
-      } else {
-        if (m.tabs != null) failures.push(`${s}: a tab row the block should not have`);
-        gap(s, "head → content", m.headBottom, m.content, "head-content");
-      }
-    }
-    expect(failures).toEqual([]);
-  });
+      expect(failures).toEqual([]);
+    });
+  }
 }

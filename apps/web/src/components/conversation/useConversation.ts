@@ -42,9 +42,11 @@ import {
   type CompactionProgress,
   type ConversationChange,
   initialChatState,
+  onForeground,
   openConversationStream,
   type PromptSuggestion,
   reduceChat,
+  type StreamCloser,
   type StreamDelta,
   type SubagentProgress,
   visibleSuggestion,
@@ -229,8 +231,12 @@ export function useConversation(orgId: string, conversationId: string): Conversa
     };
     const groups = keys.org(orgId).conversationGroupsAll();
     let disposed = false;
-    let close: (() => void) | undefined;
+    let close: StreamCloser | undefined;
     let failures = 0;
+    /** A reopen after the browser gave up is under way (the session refresh before it). */
+    let reopening = false;
+    /** The server stopped the stream with an error frame: nothing reopens it. */
+    let stopped = false;
     /** The row was read again once for a title generated before the stream was open. */
     // A conversation seeded from the create answer changed nothing outside the log since (send
     // spec 2.1): its first open is no catch-up and reads no side key. Only the first: a later
@@ -374,18 +380,46 @@ export function useConversation(orgId: string, conversationId: string): Conversa
         onSuggestion: (p) => setSuggestionFrame((cur) => acceptSuggestion(cur, p)),
         onError: ({ code }) => {
           if (disposed) return;
-          if (code !== undefined) return fail(new ApiClientError(0, code, code));
+          if (code !== undefined) {
+            stopped = true;
+            return fail(new ApiClientError(0, code, code));
+          }
           if (++failures > MAX_REOPEN) return setErrorText(t("streamLost"));
           // Most likely the access token expired: refresh through apiFetch, then resume.
-          qc.fetchQuery({ ...conversationQuery(orgId, conversationId), staleTime: 0 }).then(() => {
-            if (!disposed) open();
-          }, fail);
+          reopening = true;
+          qc.fetchQuery({ ...conversationQuery(orgId, conversationId), staleTime: 0 }).then(
+            () => {
+              reopening = false;
+              if (!disposed) open();
+            },
+            (e: unknown) => {
+              reopening = false;
+              fail(e);
+            },
+          );
         },
       });
     };
     open();
+    // Back in the foreground (mobile layout spec §7.6): a phone suspends a background page and
+    // drops its stream, sometimes silently, and the reopens above may have given up meanwhile. A
+    // closed stream reopens from the cached last seq and the reads that moved on their own while
+    // the page was away (the inbox, the sidebar's groups, the files) are read again; an open
+    // stream is left alone.
+    const lost = t("streamLost");
+    const offForeground = onForeground(() => {
+      if (disposed || stopped || reopening || (close !== undefined && !close.isClosed())) return;
+      close?.();
+      failures = 0;
+      setErrorText((cur) => (cur === lost ? undefined : cur));
+      open();
+      for (const k of inboxChangeKeys(orgId)) invalidate(k);
+      invalidate(groups);
+      invalidate(c.files());
+    });
     return () => {
       disposed = true;
+      offForeground();
       if (scheduled !== null) cancelFrame(scheduled);
       close?.();
     };

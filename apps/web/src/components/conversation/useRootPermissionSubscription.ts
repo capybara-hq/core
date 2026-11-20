@@ -7,7 +7,7 @@ import { retryOnMountOf } from "../../lib/query/client";
 import { conversationQuery } from "../../lib/query/conversation";
 import { keys } from "../../lib/query/keys";
 import { raisePermissionWatermark, refreshPermissionViews } from "../../lib/query/permission-state";
-import { openConversationStream } from "../../lib/stream";
+import { onForeground, openConversationStream, type StreamCloser } from "../../lib/stream";
 
 /** Consecutive reopen attempts after the browser gave up the root stream (reset by any open). */
 const MAX_REOPEN = 3;
@@ -30,6 +30,8 @@ const MAX_REOPEN = 3;
  * - A root profile event raises the root's watermark before its views are read again.
  * - The browser giving up: the root row is read again (refreshing the session), then the stream
  *   reopens from the retained cursor, a bounded number of times. A server error frame stops it.
+ * - Back in the foreground (`visibilitychange` to visible, `pageshow`, `online`): a closed stream
+ *   (dropped by a suspended page, or given up) reopens from the cursor; an open one is left alone.
  * - Another org, account, viewed conversation or root, or unmount: the stream closes and late
  *   callbacks of the old one change nothing.
  */
@@ -54,8 +56,11 @@ export function useRootPermissionSubscription(o: {
     const rowKey = keys.org(orgId).conversation(rootId).row();
     let cursor = qc.getQueryData<Conversation>(rowKey)?.lastSeq ?? 0;
     let disposed = false;
-    let close: (() => void) | undefined;
+    let close: StreamCloser | undefined;
     let failures = 0;
+    // a reopen after a give-up is under way / the server stopped the stream: no foreground reopen
+    let reopening = false;
+    let stopped = false;
     const scope = { accountId, orgId, rootId };
     // the viewed child's own key too, even before its cached view names the root
     const refresh = () =>
@@ -85,13 +90,20 @@ export function useRootPermissionSubscription(o: {
           onError: ({ code }) => {
             if (disposed) return;
             // a server error frame (access revoked, signed out): stop; the views stay as read
-            if (code !== undefined) return;
+            if (code !== undefined) {
+              stopped = true;
+              return;
+            }
             if (++failures > MAX_REOPEN) return;
+            reopening = true;
             qc.fetchQuery({ ...conversationQuery(orgId, rootId), staleTime: 0 }).then(
               () => {
+                reopening = false;
                 if (!disposed) open();
               },
-              () => {},
+              () => {
+                reopening = false;
+              },
             );
           },
         },
@@ -99,8 +111,16 @@ export function useRootPermissionSubscription(o: {
       );
     };
     open();
+    // Back in the foreground (mobile layout spec §7.6): a closed stream reopens from the cursor.
+    const offForeground = onForeground(() => {
+      if (disposed || stopped || reopening || (close !== undefined && !close.isClosed())) return;
+      close?.();
+      failures = 0;
+      open();
+    });
     return () => {
       disposed = true;
+      offForeground();
       close?.();
     };
   }, [ready, orgId, accountId, viewedId, rootId, qc]);

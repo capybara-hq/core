@@ -4120,6 +4120,14 @@ export const THEME_TOKENS: {
             readonly dark: "rgba(0,0,0,.60)";
             readonly light: "rgba(10,10,10,.25)";
         };
+        readonly "preview-light": {
+            readonly dark: "#FAF9F6";
+            readonly light: "#FAF9F6";
+        };
+        readonly "preview-dark": {
+            readonly dark: "#0A0A0A";
+            readonly light: "#0A0A0A";
+        };
         readonly lightbox: {
             readonly dark: "rgba(0,0,0,.88)";
             readonly light: "rgba(10,10,10,.80)";

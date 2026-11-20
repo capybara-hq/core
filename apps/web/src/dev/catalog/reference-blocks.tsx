@@ -37,7 +37,6 @@ import {
   SecretReveal,
   Segmented,
   Select,
-  SetupPage,
   SIZES,
   Sidebar,
   SkeletonBox,
@@ -71,19 +70,21 @@ import {
 import { createContext, type ReactNode, useContext } from "react";
 import { BOX_BLOCKS } from "./box-blocks";
 import { CARD_GRID_BLOCKS } from "./card-grid-blocks";
+import { COMPACT_SHELL_BLOCKS } from "./compact-shell-blocks";
 import { CONFIG_FORM_BLOCKS } from "./config-form-blocks";
 import { CONVERSATION_BLOCKS } from "./conversation-blocks";
 import { CONVERSATION_PAGE_BLOCKS } from "./conversation-page-blocks";
 import { DEVICE_BLOCKS } from "./device-blocks";
 import { COMMANDS } from "./fixtures";
 import { headRhythmBlocks } from "./head-rhythm-blocks";
+import { SHEET_BLOCKS } from "./overlays";
 import { OVERVIEW_SECTION_BLOCKS } from "./overview-section-blocks";
 import { RefBlock } from "./ref-block";
 import { SCHEDULE_CALENDAR_BLOCKS } from "./schedule-calendar-blocks";
 import { SHARE_BLOCKS } from "./share-blocks";
 import { type SidebarFixture, sidebarProps, statusFixture } from "./shell-fixture";
 import { listLoadingBlocks, TEMPLATE_LOADING_BLOCKS } from "./template-loading-blocks";
-import { SetupHomeBody, setupFrameProps } from "./templates/setup";
+import { listDetailBlocks } from "./templates/inbox";
 import { THEME_SWATCH_BLOCKS } from "./theme-swatch-blocks";
 import { TREND_CHART_BLOCKS } from "./trend-chart-blocks";
 
@@ -558,45 +559,6 @@ function PendingSidebar() {
   );
 }
 
-/** Below 960: the setup home behind the scrim, the setup drawer open over it. */
-function SetupDrawerPage() {
-  return (
-    <SetupPage
-      {...setupFrameProps(here, "admin", "home")}
-      title="开始之前"
-      reference={{ drawer: true }}
-    >
-      <SetupHomeBody />
-    </SetupPage>
-  );
-}
-
-/** Below 960: the list page behind the scrim, the drawer open over it (the reference's stage). */
-function DrawerPage() {
-  const { onOpenCommands: _, ...sidebar } = sidebarProps(
-    { active: "connectors", activeConversation: "cnv_r2" },
-    here,
-  );
-  return (
-    <AppShell
-      sidebar={sidebar}
-      commands={[]}
-      status={statusFixture("/connectors")}
-      title={LIST_PAGE_FIXTURE.title}
-      reference={{ drawer: true }}
-    >
-      <ListPage
-        header={{
-          path: LP,
-          title: LIST_PAGE_FIXTURE.title,
-          description: LIST_PAGE_FIXTURE.description,
-          metrics: LIST_PAGE_FIXTURE.metrics,
-        }}
-      />
-    </AppShell>
-  );
-}
-
 function sidebarBlocks(): ReactNode {
   const base = { active: "agents", activeConversation: "cnv_r2" };
   return (
@@ -632,6 +594,10 @@ function sidebarBlocks(): ReactNode {
       <SidebarBlock id="sidebar-many-groups" active="agents" groups="many" />
       <SidebarBlock id="sidebar-guest" {...base} level="guest" />
       <SidebarBlock id="sidebar-admin" context="admin" active="accounts" />
+      {/* The rail of the medium class: no expand button, Conversations opens a sheet */}
+      <RefBlock id="sidebar-rail-medium" width={200} height={SIDEBAR_H}>
+        <Sidebar {...sidebarProps({ active: "agents" }, here)} mode="rail" railMedium />
+      </RefBlock>
       <RefBlock
         id="sidebar-rail"
         width={200}
@@ -639,9 +605,6 @@ function sidebarBlocks(): ReactNode {
         force={{ pseudo: ["hover"], selector: navAt("agents") }}
       >
         <Sidebar {...sidebarProps({ active: "agents" }, here)} mode="rail" railTooltip="agents" />
-      </RefBlock>
-      <RefBlock id="sidebar-drawer" width={640} height={SIDEBAR_H}>
-        <DrawerPage />
       </RefBlock>
       {/* The setup context (web-SSR spec §4) */}
       <SidebarBlock id="sidebar-setup" context="setup" active="agent" />
@@ -664,9 +627,6 @@ function sidebarBlocks(): ReactNode {
           mode="rail"
           railTooltip="model"
         />
-      </RefBlock>
-      <RefBlock id="sidebar-setup-drawer" width={640} height={SIDEBAR_H}>
-        <SetupDrawerPage />
       </RefBlock>
       <RefBlock id="sidebar-pending" width={SIDEBAR_W} height={SIDEBAR_H}>
         <PendingSidebar />
@@ -870,6 +830,10 @@ function actionRowBlocks(): ReactNode {
       </RefBlock>
       <RefBlock id="action-row-clean" width={LIST}>
         <FormActionRow clean />
+      </RefBlock>
+      {/* the compact form (§4.4): sticky, the primary on its own full-width line */}
+      <RefBlock id="action-row-compact" width={390}>
+        <FormActionRow />
       </RefBlock>
     </>
   );
@@ -1349,5 +1313,8 @@ export const REFERENCE_BLOCKS = {
   ...SCHEDULE_CALENDAR_BLOCKS,
   ...THEME_SWATCH_BLOCKS,
   ...DEVICE_BLOCKS,
+  ...COMPACT_SHELL_BLOCKS,
+  ...SHEET_BLOCKS,
   ...SHARE_BLOCKS,
+  "list-detail": listDetailBlocks,
 } as const;

@@ -1,4 +1,4 @@
-import { act, cleanup, screen, within } from "@testing-library/react";
+import { act, cleanup, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import en from "../messages/en.json";
@@ -137,7 +137,7 @@ describe("收件箱（InboxPage）", () => {
       expect(server.map((c) => c.url)).toContain("/api/v1/orgs/o1/inbox");
       expect(calls).toEqual([]);
       expect(container.querySelector('[data-template="InboxPage"]')).not.toBeNull();
-      const table = await screen.findByRole("table", { name: m.inbox.listLabel });
+      const table = await screen.findByRole("list", { name: m.inbox.listLabel });
       expect(within(table).getByText("Fixture [tool_a]")).toBeTruthy();
       expect(within(table).getByText("Fixture [tool_b]")).toBeTruthy();
       // 默认选中第一条
@@ -165,6 +165,66 @@ describe("收件箱（InboxPage）", () => {
     },
   );
 
+  it("the open item is in the URL hash: opening closes the list's page, back (and the system back) returns", async () => {
+    const { container } = await renderInbox({
+      [LIST]: () => json(200, inbox([approval("a"), approval("b")])),
+    });
+    const table = await screen.findByRole("list", { name: msgs.en.inbox.listLabel });
+    const region = () => container.querySelector('[data-part="list-detail"]');
+    expect(region()?.getAttribute("data-open")).toBe("false");
+    const user = userEvent.setup();
+    await user.click(within(table).getByText("Fixture [tool_b]"));
+    expect(window.location.hash).toBe("#item=b");
+    expect(region()?.getAttribute("data-open")).toBe("true");
+    expect(container.querySelector('[data-approval-id="b"]')).not.toBeNull();
+    await user.click(screen.getAllByRole("button", { name: "Back" })[0] as HTMLElement);
+    await waitFor(() => expect(region()?.getAttribute("data-open")).toBe("false"));
+    expect(window.location.hash).toBe("");
+  });
+
+  it("open, then the system back, then a decision stays on /inbox (no stale history step)", async () => {
+    window.history.replaceState(null, "", "/inbox");
+    let pending = [approval("a"), approval("b")];
+    await renderInbox({
+      [LIST]: () => json(200, inbox(pending)),
+      "POST /api/v1/orgs/o1/approvals/a/decision": () => {
+        pending = pending.filter((x) => x.id !== "a");
+        return json(200, { approval: { ...approval("a"), status: "approved", scope: "once" } });
+      },
+    });
+    const table = await screen.findByRole("list", { name: msgs.en.inbox.listLabel });
+    const user = userEvent.setup();
+    await user.click(within(table).getByText("Fixture [tool_a]"));
+    expect(window.location.hash).toBe("#item=a");
+    await act(async () => {
+      window.history.back();
+      await waitFor(() => expect(window.location.hash).toBe(""));
+      window.dispatchEvent(new PopStateEvent("popstate"));
+    });
+    const back = vi.spyOn(window.history, "back");
+    const row = screen.getByRole("region", { name: "Pending changes" });
+    await user.click(within(row).getByRole("button", { name: msgs.en.approval.approve }));
+    expect(await screen.findByText(msgs.en.inbox.approved)).toBeTruthy();
+    expect(back).not.toHaveBeenCalled();
+    expect(window.location.pathname).toBe("/inbox");
+    back.mockRestore();
+    window.history.replaceState(null, "", "/");
+  });
+
+  it("/inbox#item=<id> deep-links to the item", async () => {
+    window.history.replaceState(null, "", "/inbox#item=b");
+    const { container } = await renderInbox({
+      [LIST]: () => json(200, inbox([approval("a"), approval("b")])),
+    });
+    await waitFor(() =>
+      expect(container.querySelector('[data-part="list-detail"]')?.getAttribute("data-open")).toBe(
+        "true",
+      ),
+    );
+    expect(container.querySelector('[data-approval-id="b"]')).not.toBeNull();
+    window.history.replaceState(null, "", "/");
+  });
+
   it.each(LOCALES)("选中第二条、选「以后都允许」批准 → POST 后重读列表（%s）", async (locale) => {
     const m = msgs[locale];
     let pending = [approval("a"), approval("b")];
@@ -180,7 +240,7 @@ describe("收件箱（InboxPage）", () => {
       { locale, session: { refreshPending } },
     );
     const user = userEvent.setup();
-    const table = await screen.findByRole("table", { name: m.inbox.listLabel });
+    const table = await screen.findByRole("list", { name: m.inbox.listLabel });
     await user.click(within(table).getByText("Fixture [tool_b]"));
     expect(container.querySelector('[data-approval-id="b"]')).not.toBeNull();
     await user.click(screen.getByLabelText(new RegExp(m.approval.scope.always)));
@@ -216,7 +276,7 @@ describe("收件箱（InboxPage）", () => {
       },
       { locale: "zh" },
     );
-    await screen.findByRole("table", { name: zh.inbox.listLabel });
+    await screen.findByRole("list", { name: zh.inbox.listLabel });
     const row = screen.getByRole("region", { name: "待提交改动" });
     await userEvent.setup().click(within(row).getByRole("button", { name: zh.approval.deny }));
     expect(await screen.findByText(zh.errors.approval.already_decided)).toBeTruthy();
@@ -476,11 +536,11 @@ describe("收件箱：技能变更", () => {
         },
         { locale },
       );
-      const table = await screen.findByRole("table", { name: m.inbox.listLabel });
+      const table = await screen.findByRole("list", { name: m.inbox.listLabel });
       expect(within(table).getByText("Fixture [tool_a]")).toBeTruthy();
       await userEvent
         .setup()
-        .click(within(table).getByText("notes-style", { selector: ".cb-cell-title-name" }));
+        .click(within(table).getByText("notes-style", { selector: '[data-part="list-title"]' }));
       const card = await vi.waitFor(() => {
         const el = container.querySelector('[data-skill-change-id="sc1"]') as HTMLElement | null;
         if (!el) throw new Error("no card");
@@ -513,10 +573,10 @@ describe("收件箱：技能变更", () => {
       [LIST]: () => json(200, inbox([], [skillChange("sc1", { requestedBy: "a1" })])),
       [DETAIL]: () => json(200, { skillChange: detail({ requestedBy: "a1" }) }),
     });
-    const table = await screen.findByRole("table", { name: en.inbox.listLabel });
+    const table = await screen.findByRole("list", { name: en.inbox.listLabel });
     await userEvent
       .setup()
-      .click(within(table).getByText("notes-style", { selector: ".cb-cell-title-name" }));
+      .click(within(table).getByText("notes-style", { selector: '[data-part="list-title"]' }));
     const card = await vi.waitFor(() => {
       const el = container.querySelector('[data-skill-change-id="sc1"]') as HTMLElement | null;
       if (!el) throw new Error("no card");
@@ -651,10 +711,10 @@ describe("inbox: skill change kinds", () => {
       },
       { locale },
     );
-    const table = await screen.findByRole("table", { name: m.inbox.listLabel });
+    const table = await screen.findByRole("list", { name: m.inbox.listLabel });
     const rowOf = (name: string) =>
       within(table)
-        .getAllByRole("row")
+        .getAllByRole("listitem")
         .find((r) => r.textContent?.includes(name)) as HTMLElement;
     expect(rowOf("alpha").textContent).toContain(
       `${m.inbox.skillChange.kind.share} · Shared agent`,
@@ -702,8 +762,8 @@ describe("inbox: my decided requests", () => {
       },
       { locale },
     );
-    const table = await screen.findByRole("table", { name: m.inbox.listLabel });
-    expect(within(table).getByText("crm", { selector: ".cb-cell-title-name" })).toBeTruthy();
+    const table = await screen.findByRole("list", { name: m.inbox.listLabel });
+    expect(within(table).getByText("crm", { selector: '[data-part="list-title"]' })).toBeTruthy();
     expect(
       within(table).getByText(
         `${m.inbox.requestDecided.label} · ${m.inbox.requestDecided.approved}`,
@@ -761,9 +821,9 @@ describe("the inbox from the cache", () => {
     });
     expect(document.querySelector("[aria-busy='true']")).not.toBeNull();
     expect(screen.queryByText("Fixture [tool_a]")).toBeNull();
-    // the loaded inbox opens its first item: the inspector's four facts and the decision row,
-    // its buttons disabled until the item is here
-    expect(document.querySelector(".cb-body-inspector")).not.toBeNull();
+    // the loaded inbox opens its first item: its four facts and the decision row, its buttons
+    // disabled until the item is here
+    expect(document.querySelector('[data-part="list-detail-facts"]')).not.toBeNull();
     expect(document.querySelectorAll('[data-part="loading-inspector-row"]')).toHaveLength(4);
     expect(document.querySelectorAll('[data-part="action-row"]')).toHaveLength(1);
     const approve = screen.getByRole("button", { name: en.approval.approve }) as HTMLButtonElement;
@@ -903,15 +963,11 @@ describe("inbox: org notices of phase 3 (org admins)", () => {
         },
         { locale },
       );
-      const table = await screen.findByRole("table", { name: msgs[locale].inbox.listLabel });
+      const table = await screen.findByRole("list", { name: msgs[locale].inbox.listLabel });
       // The row leads with the item's name; what kind of notice it is comes second
-      const name = within(table).getByText(c.row, { selector: ".cb-cell-title-name" });
-      const row = name.closest("tr") as HTMLElement;
+      const name = within(table).getByText(c.row, { selector: '[data-part="list-title"]' });
+      const row = name.closest("li") as HTMLElement;
       expect(row.textContent).toContain(c.label(n));
-      // a neutral column header: rows are requests and notices alike
-      expect(
-        within(table).getByRole("columnheader", { name: msgs[locale].inbox.columns.item }),
-      ).toBeTruthy();
       expect(await screen.findByText(c.title(n, ""))).toBeTruthy();
       if (c.extra) expect(screen.getAllByText(c.extra(n)).length).toBeGreaterThan(0);
       await userEvent.setup().click(screen.getByRole("button", { name: n.dismiss }));
@@ -1023,11 +1079,11 @@ describe("inbox: org notices of phase 3 (org admins)", () => {
         },
         { locale },
       );
-      const table = await screen.findByRole("table", { name: msgs[locale].inbox.listLabel });
+      const table = await screen.findByRole("list", { name: msgs[locale].inbox.listLabel });
       const name = within(table).getByText(displayName[locale]);
       expect(name.getAttribute("title")).toBe(displayName[locale]);
-      const version = within(name.closest("tr") as HTMLElement).getByText("v0.1.0");
-      expect(version.getAttribute("data-part")).toBe("cell-title-trailing");
+      const version = within(name.closest("li") as HTMLElement).getByText("v0.1.0");
+      expect(version.getAttribute("data-part")).toBe("list-trailing");
       expect(within(table).queryByText("acc-minutes", { exact: false })).toBeNull();
       expect(
         await screen.findByText(
@@ -1076,13 +1132,13 @@ describe("inbox: org notices of phase 3 (org admins)", () => {
         },
         { locale },
       );
-      const table = await screen.findByRole("table", { name: msgs[locale].inbox.listLabel });
+      const table = await screen.findByRole("list", { name: msgs[locale].inbox.listLabel });
       const names = within(table).getAllByText(displayName[locale], {
-        selector: ".cb-cell-title-name",
+        selector: '[data-part="list-title"]',
       });
       expect(names).toHaveLength(2);
       expect(within(table).queryByText("acc-crm", { exact: false })).toBeNull();
-      expect(within(names[1]?.closest("tr") as HTMLElement).getByText("v1.1.0")).toBeTruthy();
+      expect(within(names[1]?.closest("li") as HTMLElement).getByText("v1.1.0")).toBeTruthy();
       expect(
         await screen.findByText(
           n.itemSharedTitle.replace("{name}", displayName[locale]).replace("{org}", "Beta"),
@@ -1108,9 +1164,9 @@ describe("inbox: org notices of phase 3 (org admins)", () => {
           truncated: false,
         }),
     });
-    const table = await screen.findByRole("table", { name: msgs.en.inbox.listLabel });
+    const table = await screen.findByRole("list", { name: msgs.en.inbox.listLabel });
     expect(within(table).getByText(n.unknownLabel)).toBeTruthy();
-    expect(within(table).getAllByRole("row")).toHaveLength(2);
+    expect(within(table).getAllByRole("listitem")).toHaveLength(1);
   });
 });
 
@@ -1150,7 +1206,7 @@ describe("inbox: my scheduled task needs me", () => {
         },
         { locale },
       );
-      const table = await screen.findByRole("table", { name: m.inbox.listLabel });
+      const table = await screen.findByRole("list", { name: m.inbox.listLabel });
       expect(
         within(table).getByText(
           `${m.inboxSchedule.label} · ${m.inboxSchedule.reason.missing_grants}`,
@@ -1251,8 +1307,8 @@ describe("inbox: network requests (network ask spec §5.3)", () => {
       },
       "GET /api/v1/orgs/o1/inbox/count": () => json(200, { count: 0, more: false }),
     });
-    const table = await screen.findByRole("table", { name: en.inbox.listLabel });
-    expect(within(table).getByText("files.slack.com", { selector: ".cb-cell-title-name" }));
+    const table = await screen.findByRole("list", { name: en.inbox.listLabel });
+    expect(within(table).getByText("files.slack.com", { selector: '[data-part="list-title"]' }));
     expect(within(table).getByText(`${NR.label} · Mia`)).toBeTruthy();
     expect(await screen.findByText(NR.title.replace("{name}", "Mia"))).toBeTruthy();
     expect(screen.getByText("For the weekly export")).toBeTruthy();

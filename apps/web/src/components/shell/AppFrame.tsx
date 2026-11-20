@@ -2,14 +2,17 @@
 
 import {
   AppShell,
+  ClassSwap,
   initialOf,
   Logo,
   type MenuItem,
+  type MeRow,
   OverviewPage,
   SetupPage,
   type SidebarBrandVariant,
   type SidebarContext,
   type SidebarConversations,
+  type SidebarNavItem,
   useToast,
 } from "@capybara-hq/design";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
@@ -42,7 +45,9 @@ import { markSigningOut, resetSession } from "../../lib/query/workspace";
 import { HOME_PATH } from "../../lib/routes";
 import { logout, type Me, type Membership, setCurrentOrg } from "../../lib/session";
 import { broadcastSession, useSessionSync } from "../../lib/session-sync";
+import { sidebarCookie } from "../../lib/sidebar-cookie";
 import { useErrorMessage } from "../../lib/use-error-message";
+import { useShellNotifications } from "../../lib/use-shell-notifications";
 import { useAdminExtensionPages } from "../admin-nav";
 import { CreateOrgDialog } from "../CreateOrgDialog";
 import { useShellBanner } from "../client-ext/registry";
@@ -53,10 +58,13 @@ import { LeaveOrgDialog } from "../LeaveOrgDialog";
 import { usePluginPendingCount } from "../PluginsHead";
 import { useResolvedTheme } from "../theme-root";
 import { noOrgConversations, useConversationGroups } from "./conversations";
+import { AdminMePage, type MePanels, MePanelsContext } from "./me";
 import {
   activeAdminOf,
   activeNavOf,
+  type ExtensionNavItem,
   navLevelOf,
+  shownOnCompact,
   statusPrompt,
   useAdminInboxCount,
   useAdminItems,
@@ -109,6 +117,12 @@ function useMotionToken(): "full" | "reduced" | null {
     () => null,
   );
 }
+
+/** The person's sidebar form (the rail or the full sidebar), and the setter that remembers it. */
+const SidebarChoiceContext = createContext<{
+  collapsed: boolean;
+  choose(collapsed: boolean): void;
+}>({ collapsed: false, choose: () => {} });
 
 /** Whether the document is the first workspace document of the sign-in (the layout's flag). */
 const NewSignInContext = createContext(false);
@@ -174,18 +188,31 @@ const under = (pathname: string, prefix: string) =>
 export function AppFrame({
   version,
   newSignIn = false,
+  sidebarCollapsed = false,
   children,
 }: {
   version: string;
   /** The first workspace document of the sign-in (`sign-in=new`, client extensions spec §7.3). */
   newSignIn?: boolean;
+  /** The `cb-sidebar` cookie the layout read: the person chose the rail (spec §4.1). */
+  sidebarCollapsed?: boolean;
   children: ReactNode;
 }) {
+  // Held here, which stays mounted across navigations; the cookie keeps it for the next document.
+  const [collapsed, setCollapsed] = useState(sidebarCollapsed);
+  const choose = useCallback((next: boolean) => {
+    setCollapsed(next);
+    // biome-ignore lint/suspicious/noDocumentCookie: written in the event handler; the Cookie Store API is async and not everywhere
+    document.cookie = sidebarCookie(next);
+  }, []);
+  const sidebar = useMemo(() => ({ collapsed, choose }), [collapsed, choose]);
   return (
     <NewSignInContext.Provider value={newSignIn}>
-      <RunStateProvider>
-        <Frame version={version}>{children}</Frame>
-      </RunStateProvider>
+      <SidebarChoiceContext.Provider value={sidebar}>
+        <RunStateProvider>
+          <Frame version={version}>{children}</Frame>
+        </RunStateProvider>
+      </SidebarChoiceContext.Provider>
     </NewSignInContext.Provider>
   );
 }
@@ -214,7 +241,7 @@ function Frame({ version, children }: { version: string; children: ReactNode }) 
 type Sections = {
   conversations: SidebarConversations;
   pending: { count: number; more: boolean; refresh(): void };
-  extensions: { id: string; label: string; href: string }[];
+  extensions: ExtensionNavItem[];
 };
 
 /** The frame of an account with a current org: readiness and the sidebar sections. */
@@ -246,6 +273,8 @@ function OrgFrame({
   });
   const pending = usePendingApprovals(orgId);
   const extensions = useExtensions(orgId, locale);
+  // native notifications for new inbox items, in the desktop shell only
+  useShellNotifications(orgId);
   // Persistent sections never remount, so `refetchOnMount` never fires for them: each path change
   // refetches their stale queries (fresh ones stay as they are). A read already in flight (the
   // poll's) is reused, not cancelled and sent again.
@@ -295,6 +324,7 @@ function ShellFrame({
   const errorMessage = useErrorMessage();
   const toast = useToast();
   const capState = useCapState();
+  const sidebarChoice = useContext(SidebarChoiceContext);
   // Safe mode's banner (from the client host): a row of the shell, so nothing is clipped
   const banner = useShellBanner();
   const orgId = currentOrg?.orgId ?? null;
@@ -306,23 +336,31 @@ function ShellFrame({
   const brandReplaced = brandCode || brandWinner.status !== "none";
   const conversations = sections?.conversations ?? noOrgConversations(pathname);
   const pending = sections?.pending ?? NO_PENDING;
-  const { primary, more, inbox, adminHref, commands } = useNav(
-    pending.count,
-    navLevelOf(me),
-    pending.more,
-    me.account.isSuperAdmin,
-  );
+  const {
+    primary,
+    more,
+    inbox,
+    adminHref,
+    commands,
+    bottom,
+    me: meNav,
+  } = useNav(pending.count, navLevelOf(me), pending.more, me.account.isSuperAdmin);
   const extensions = sections?.extensions ?? [];
   // Under /admin (super admins only) the 收件箱 item shows what waits on the platform and the 插件
   // item what waits in its 待确认 tab; the persistent sidebar refetches the stale counts on each
   // path change.
   const adminContext = me.account.isSuperAdmin && under(pathname, "/admin");
+  const adminPages = useAdminExtensionPages(adminContext);
   const adminItems = useAdminItems(
     {
       inbox: useAdminInboxCount(adminContext),
       plugins: usePluginPendingCount(adminContext),
     },
-    useAdminExtensionPages(adminContext),
+    adminPages,
+  );
+  // the Me panel is the compact class's navigation: pages that are hidden on compact are not in it
+  const hiddenOnCompact = new Set(
+    adminPages.filter((p) => p.compact === "hidden").map((p) => `ext:${p.id}`),
   );
   const preferences = usePreferences();
   // The account row's scheme toggle; usePreferences leaves it out under a single-scheme theme.
@@ -521,6 +559,79 @@ function ShellFrame({
     ...(timeZone === "" ? {} : { timeZone }),
   };
 
+  // The Me page's panels (design spec §6.48): the same nav, org and account data as the sidebar.
+  const toRow = (n: SidebarNavItem): MeRow => ({
+    id: n.id,
+    label: n.label,
+    icon: n.icon,
+    href: n.href,
+  });
+  const languageValue = preferences.language.options.find(
+    (o) => o.value === preferences.language.value,
+  )?.label;
+  const accountRows: MeRow[] = [
+    {
+      id: "account",
+      label: t("shell.accountSettings"),
+      icon: "user",
+      href: "/account/preferences",
+    },
+    {
+      id: "language",
+      label: t("common.language"),
+      icon: "languages",
+      menu: languageMenu.submenu ?? [],
+      ...(languageValue === undefined ? {} : { value: languageValue }),
+    },
+    ...(preferences.theme
+      ? [{ id: "theme", label: t("common.theme"), icon: "sun" as const, theme: preferences.theme }]
+      : []),
+    { id: "sign-out", label: t("common.logout"), icon: "log-out", onSelect: () => void onLogout() },
+  ];
+  const system = [version, timeZone].filter((v) => v !== "").join(" · ");
+  const mePanels: MePanels = {
+    work: {
+      account: { name: me.account.displayName },
+      org: sidebarOrg(orgItems),
+      workspace: [
+        ...meNav.workspace.map(toRow),
+        ...shownOnCompact(extensions).map((x) => ({
+          id: `ext:${x.id}`,
+          label: x.label,
+          icon: "extension" as const,
+          href: x.href,
+        })),
+      ],
+      manage: [
+        ...meNav.manage.map(toRow),
+        ...(adminHref === undefined
+          ? []
+          : [
+              {
+                id: "admin",
+                label: t("nav.admin"),
+                icon: "admin" as const,
+                href: adminHref,
+                external: true,
+              },
+            ]),
+      ],
+      accountRows,
+      system,
+    },
+    admin: me.account.isSuperAdmin
+      ? {
+          account: { name: me.account.displayName },
+          org: null,
+          adminContext: true,
+          manage: adminItems.filter((i) => !hiddenOnCompact.has(i.id)).map(toRow),
+          back: { id: "back", label: t("me.back"), icon: "arrow-left", href: HOME_PATH },
+          accountRows,
+          system,
+        }
+      : null,
+  };
+
   const dialogs = (
     <>
       {me.canCreateOrg ? (
@@ -643,6 +754,8 @@ function ShellFrame({
   return (
     // The conversation page draws its own status bar under its middle column (spec §5.2).
     <AppShell
+      collapsed={sidebarChoice.collapsed}
+      onCollapsedChange={sidebarChoice.choose}
       sidebar={{
         context,
         // A new conversation starts at the composer; nothing is created before the first send.
@@ -654,15 +767,25 @@ function ShellFrame({
         ...(brand === undefined ? {} : { brand }),
       }}
       commands={commands}
+      bottomNav={bottom}
+      pathname={pathname}
       status={status}
       ownStatusBar={pathname === HOME_PATH || under(pathname, "/chat")}
       capState={capState}
       {...(banner === null ? {} : { banner })}
     >
       <SessionContext.Provider value={session}>
-        <SetupContext.Provider value={{ active: false, readiness: setupState, recheck: reload }}>
-          {children}
-        </SetupContext.Provider>
+        <MePanelsContext.Provider value={mePanels}>
+          <SetupContext.Provider value={{ active: false, readiness: setupState, recheck: reload }}>
+            {/* The admin console has no overview page of its own on the compact class: the Me
+                page in the admin context takes `/admin`'s place (design spec §6.48). */}
+            {inAdmin && pathname === "/admin" ? (
+              <ClassSwap compact={<AdminMePage />}>{children}</ClassSwap>
+            ) : (
+              children
+            )}
+          </SetupContext.Provider>
+        </MePanelsContext.Provider>
         {dialogs}
       </SessionContext.Provider>
       {workspaceOrg === null ? null : (

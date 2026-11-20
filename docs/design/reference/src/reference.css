@@ -470,7 +470,7 @@ textarea {
   color: var(--cb-ink);
 }
 
-/* ── Sidebar (full 256 / rail 48 / drawer) ───────────────────────────────── */
+/* ── Sidebar (full 256 / rail 48) ─────────────────────────────────────────── */
 
 .r-sidebar {
   width: var(--cb-layout-sidebar);
@@ -949,7 +949,7 @@ textarea {
   line-height: var(--cb-type-micro-line);
 }
 
-/* Rail: icons only, conversations behind the expand button (opens the drawer). */
+/* Rail: icons only, conversations behind the 会话 button (a side sheet). */
 .r-sidebar[data-mode="rail"] {
   width: var(--cb-layout-sidebar-rail);
   padding: var(--cb-space-3) var(--cb-space-1) var(--cb-space-2);
@@ -978,6 +978,7 @@ textarea {
   border: 0;
   background: transparent;
 }
+/* The full brand row's inset inbox badge (the rail uses the nav badge below). */
 .r-rail-badge {
   position: absolute;
   top: 2px;
@@ -990,6 +991,37 @@ textarea {
   font-size: var(--cb-type-micro-size);
   line-height: var(--cb-type-micro-line);
   text-align: center;
+}
+/* Nav badge (spec §6.13): the rail's and the bottom navigation's count, one size, outside the
+   icon's top-right corner (left edge 2px past the icon, vertical center on its top edge), with a
+   2px ring in the rail or bar ground. .r-badged wraps the icon so the badge is placed from it. */
+.r-badged {
+  position: relative;
+  display: inline-flex;
+}
+.r-nav-badge {
+  position: absolute;
+  left: calc(100% + 2px);
+  top: calc(-1 * var(--cb-type-micro-line) / 2);
+  min-width: 14px;
+  height: var(--cb-type-micro-line);
+  padding: 0 3px;
+  border-radius: var(--cb-radius-sm);
+  background: var(--cb-selected);
+  box-shadow: 0 0 0 2px var(--cb-sidebar);
+  color: var(--cb-ink);
+  font-family: var(--cb-font);
+  font-size: var(--cb-type-micro-size);
+  line-height: var(--cb-type-micro-line);
+  text-align: center;
+}
+/* The rail form: the rail leaves 16 beside a centered icon, too little for a badge, its gap and
+   its ring, so the badge sits above the corner (bottom edge 2px over the icon's top edge), its
+   right edge 4px inside the rail (the ring and 2px clear), the count capped at 9+. */
+.r-nav-badge[data-rail="true"] {
+  left: auto;
+  top: calc(-1 * (var(--cb-type-micro-line) + 2px));
+  right: calc((var(--cb-layout-sidebar-rail) - 16px) / -2 + 4px);
 }
 .r-sidebar[data-mode="rail"] .r-sb-foot {
   padding: var(--cb-space-2) 0 0;
@@ -1014,46 +1046,10 @@ textarea {
   z-index: var(--cb-z-popover);
 }
 
-/* Drawer: below 960 the sidebar opens over the page from the menu button. */
-.r-drawer-stage {
-  position: relative;
-  height: 100%;
-}
-.r-drawer-page {
-  height: 100%;
-  display: flex;
-  flex-direction: column;
-}
-.r-drawer-bar {
-  display: flex;
-  align-items: center;
-  gap: var(--cb-space-2);
-  height: var(--cb-row-roomy);
-  padding: 0 var(--cb-space-3);
-  border-bottom: 1px solid var(--cb-line-soft);
-}
-.r-drawer-bar-end {
-  margin-left: auto;
-}
-.r-drawer-body {
-  flex: 1;
-  min-height: 0;
-  display: flex;
-  flex-direction: column;
-  gap: var(--cb-space-3);
-  padding: var(--cb-space-6) var(--cb-layout-gutter);
-}
 .r-scrim {
   position: absolute;
   inset: 0;
   background: var(--cb-scrim);
-}
-.r-drawer {
-  position: absolute;
-  inset: 0 auto 0 0;
-  display: flex;
-  box-shadow: var(--cb-shadow-float);
-  z-index: var(--cb-z-sheet);
 }
 
 /* ── Page header ─────────────────────────────────────────────────────────── */
@@ -2656,7 +2652,7 @@ textarea {
   padding: 0 var(--cb-space-2);
 }
 /* The agents chip (§6.16.29): a picker whose status dot leads the label, space.2 before it;
- * below 640 the dot (or the agent icon) and the count alone. */
+ * on compact (below 600) the dot (or the agent icon) and the count alone. */
 .r-agents-chip {
   gap: var(--cb-space-2);
   flex: none;
@@ -3679,7 +3675,7 @@ textarea {
   overflow-wrap: anywhere;
 }
 
-/* ── Phones (below 640; spec §4.3): the `narrow` blocks, drawn 390 wide ── */
+/* ── Phones (compact, below 600; spec §4.3): the `narrow` blocks, drawn 390 wide ── */
 
 .r-icon-btn[data-step="touch"] {
   width: 40px;
@@ -6659,6 +6655,465 @@ span.r-scal-daynum {
   align-items: center;
   justify-content: center;
   color: var(--cb-muted);
+}
+
+/* ── Mobile layout (spec §4.6, §6.45–§6.48, §6.7): BottomNav, TopBar, ListDetail, MePanel, sheet ── */
+
+/* A compact page: the top bar, the scrolling body, then the bottom navigation or a sticky row. */
+.r-screen {
+  display: flex;
+  flex-direction: column;
+  width: 100%;
+  height: 100%;
+}
+.r-screen[data-auto] {
+  height: auto;
+}
+.r-ld-scroll {
+  flex: 1;
+  min-height: 0;
+  overflow: hidden;
+}
+
+/* BottomNav: four items of layout.bottom-nav, the sidebar ground, a line-soft top line. */
+.r-bn {
+  position: relative;
+  flex: none;
+  display: flex;
+  height: var(--cb-layout-bottom-nav);
+  background: var(--cb-sidebar);
+}
+.r-bn::before {
+  content: "";
+  position: absolute;
+  inset: 0 0 auto 0;
+  height: 1px;
+  background: var(--cb-line-soft);
+  z-index: 1;
+}
+.r-bn-item {
+  flex: 1 1 0;
+  min-width: 40px;
+  min-height: 40px;
+  height: var(--cb-layout-bottom-nav);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: var(--cb-space-1);
+  color: var(--cb-muted);
+  text-decoration: none;
+}
+.r-bn-item[aria-current="page"] {
+  color: var(--cb-ink);
+}
+.r-bn-item[aria-current="page"] .r-bn-label {
+  font-weight: 500;
+}
+.r-bn-label {
+  max-width: 100%;
+  padding: 0 var(--cb-space-1);
+  overflow: hidden;
+  font-size: var(--cb-type-micro-size);
+  line-height: var(--cb-type-micro-line);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* TopBar: layout.top-bar high, back (pushed), the title, search and the overflow menu. */
+.r-tb {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: var(--cb-space-3);
+  height: var(--cb-layout-top-bar);
+  padding: 0 var(--cb-space-2) 0 var(--cb-space-4);
+  border-bottom: 1px solid var(--cb-line-soft);
+  background: var(--cb-bg);
+}
+.r-tb[data-pushed="true"] {
+  padding-left: var(--cb-space-2);
+}
+.r-tb-title {
+  flex: 1;
+  min-width: 0;
+  margin: 0;
+  color: var(--cb-ink);
+  font-size: var(--cb-type-body-size);
+  line-height: var(--cb-type-body-line);
+  font-weight: 600;
+}
+/* The ordinary icon button (control.default, radius sm); the 40 x 40 tap target is a ring. */
+.r-tb-btn {
+  position: relative;
+  flex: none;
+}
+.r-tb-btn::after {
+  content: "";
+  position: absolute;
+  inset: -6px;
+}
+.r-tb-btn[aria-pressed="true"] {
+  background: var(--cb-selected);
+  color: var(--cb-ink);
+}
+.r-tb-stage {
+  position: relative;
+  height: 100%;
+}
+.r-tb-menu {
+  top: calc(var(--cb-layout-top-bar) / 2 + var(--cb-control-default) / 2 + 2px);
+  right: var(--cb-space-2);
+}
+.r-tb-menu .r-menu-item {
+  height: 40px;
+  text-decoration: none;
+}
+
+/* ListDetail: the list rows (64 high), the current row on the selected-row ground, the two panes. */
+.r-ld-list {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.r-ld-row {
+  display: flex;
+  box-sizing: border-box;
+  align-items: center;
+  gap: var(--cb-space-3);
+  height: 64px;
+  padding: 0 var(--cb-space-4);
+  border-top: 1px solid var(--cb-line-soft);
+}
+.r-ld-row:first-child {
+  border-top: 0;
+}
+.r-ld-row[aria-current="true"] {
+  background: var(--cb-accent-tint);
+  box-shadow: inset 2px 0 0 var(--cb-accent);
+}
+.r-ld-dot {
+  flex: none;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+}
+.r-ld-dot[data-state="warn"] {
+  background: var(--cb-warn);
+}
+.r-ld-text {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+}
+.r-ld-title {
+  color: var(--cb-ink);
+}
+.r-ld-meta {
+  color: var(--cb-muted);
+  font-size: var(--cb-type-small-size);
+  line-height: var(--cb-type-small-line);
+}
+.r-ld-at {
+  flex: none;
+  color: var(--cb-faint);
+  font-size: var(--cb-type-micro-size);
+  line-height: var(--cb-type-micro-line);
+}
+.r-ld-body {
+  padding: var(--cb-space-4);
+}
+.r-ld-h {
+  margin: 0 0 var(--cb-space-3);
+  font-size: var(--cb-type-h2-size);
+  line-height: var(--cb-type-h2-line);
+  font-weight: 500;
+}
+.r-ld-facts {
+  display: grid;
+  grid-template-columns: 8ch minmax(0, 1fr);
+  gap: var(--cb-space-1) var(--cb-space-3);
+  margin: 0;
+  font-size: var(--cb-type-small-size);
+  line-height: var(--cb-type-small-line);
+}
+.r-ld-k {
+  color: var(--cb-muted);
+  font-family: var(--cb-font);
+}
+.r-ld-v {
+  margin: 0;
+  color: var(--cb-ink);
+  font-family: var(--cb-font-prose);
+  word-break: break-word;
+}
+.r-ld-v[data-mono] {
+  font-family: var(--cb-font);
+  word-break: break-all;
+}
+/* The compact ActionRow (spec §4.4): the primary a full-width line at the bottom, the other
+   actions side by side in equal widths on the line above, every button 40 high. */
+.r-actionrow[data-compact] {
+  flex-direction: column;
+  align-items: stretch;
+  gap: var(--cb-space-2);
+  height: auto;
+  padding: var(--cb-space-2) var(--cb-space-4);
+}
+.r-actionrow-line {
+  display: flex;
+  gap: var(--cb-space-2);
+}
+.r-actionrow[data-compact] .r-actionrow-text {
+  flex: none;
+  font-size: var(--cb-type-small-size);
+  line-height: var(--cb-type-small-line);
+}
+.r-actionrow[data-compact] .r-btn {
+  flex: 1 1 0;
+  min-width: 0;
+  height: 40px;
+}
+.r-ld-panes {
+  display: flex;
+  width: 100%;
+  height: 100%;
+}
+.r-ld-listcol {
+  flex: none;
+  width: 320px;
+  border-right: 1px solid var(--cb-line-soft);
+}
+.r-ld-detailcol {
+  flex: 1 1 0;
+  min-width: 360px;
+  display: flex;
+  flex-direction: column;
+}
+
+/* MePanel: the account and org head, groups of row.roomy rows split by line-soft, in no box. */
+.r-me {
+  display: flex;
+  flex-direction: column;
+  gap: var(--cb-space-4);
+  padding: var(--cb-space-4) var(--cb-space-4) var(--cb-space-6);
+}
+.r-me-head {
+  display: flex;
+  flex-direction: column;
+  gap: var(--cb-space-2);
+}
+.r-me-account {
+  display: flex;
+  align-items: center;
+  gap: var(--cb-space-2);
+  height: var(--cb-row-roomy);
+  font-weight: 600;
+}
+/* The initial avatar: 24, round, on selected (spec §6.48). */
+.r-me-account .r-avatar {
+  border-radius: 50%;
+  font-size: var(--cb-type-small-size);
+}
+/* The ThemeToggle's options (control.dense − 6), the chosen one on selected. */
+.r-me-theme {
+  padding: 2px;
+}
+.r-me-theme-opt {
+  display: inline-grid;
+  place-items: center;
+  width: calc(var(--cb-control-dense) - 6px);
+  height: calc(var(--cb-control-dense) - 6px);
+  border-radius: var(--cb-radius-sm);
+  color: var(--cb-muted);
+}
+.r-me-theme-opt[aria-checked="true"] {
+  background: var(--cb-selected);
+  color: var(--cb-ink);
+}
+.r-me-group {
+  display: flex;
+  flex-direction: column;
+}
+.r-me-label {
+  display: flex;
+  align-items: flex-end;
+  height: var(--cb-row-dense);
+  margin: 0;
+  color: var(--cb-faint);
+  font-size: var(--cb-type-micro-size);
+  font-weight: 400;
+  letter-spacing: 0.06em;
+  line-height: var(--cb-type-micro-line);
+}
+.r-me-row {
+  display: flex;
+  align-items: center;
+  gap: var(--cb-space-3);
+  width: 100%;
+  height: var(--cb-row-roomy);
+  padding: 0;
+  border: 0;
+  border-top: 1px solid var(--cb-line-soft);
+  background: transparent;
+  color: var(--cb-ink);
+  font: inherit;
+  text-align: left;
+  text-decoration: none;
+}
+.r-me-group > .r-me-row:first-child,
+.r-me-label + .r-me-row {
+  border-top: 0;
+}
+.r-me-row .cb-icon {
+  flex: none;
+  color: var(--cb-muted);
+}
+.r-me-row > .r-ellipsis {
+  flex: 1;
+}
+.r-me-row > .cb-icon:last-child {
+  color: var(--cb-faint);
+}
+.r-me-value {
+  color: var(--cb-muted);
+}
+.r-me-row .r-me-theme-opt .cb-icon {
+  color: inherit;
+}
+.r-me-system {
+  margin: 0;
+  color: var(--cb-muted);
+  font-size: var(--cb-type-micro-size);
+  line-height: var(--cb-type-micro-line);
+}
+
+/* Sheet drag states: --r-drag is the share of the sheet's height the finger has dragged it down. */
+.r-sh-stage {
+  position: relative;
+  width: 100%;
+  height: 100%;
+  overflow: hidden;
+}
+.r-sh-page {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+}
+.r-sh-rows {
+  padding: var(--cb-space-4);
+}
+.r-sh-scrim {
+  position: absolute;
+  inset: 0;
+  background: var(--cb-scrim);
+  opacity: calc(1 - var(--r-drag));
+}
+.r-sh {
+  position: absolute;
+  inset: auto 0 0 0;
+  display: flex;
+  flex-direction: column;
+  border-top: 1px solid var(--cb-line-strong);
+  border-radius: var(--cb-radius-md) var(--cb-radius-md) 0 0;
+  background: var(--cb-panel);
+  box-shadow: var(--cb-shadow-1);
+  transform: translateY(calc(var(--r-drag) * 100%));
+}
+.r-sh-handle-zone {
+  display: flex;
+  justify-content: center;
+  padding-top: var(--cb-space-2);
+}
+.r-sh-handle {
+  width: var(--cb-space-7);
+  height: var(--cb-space-1);
+  border-radius: var(--cb-radius-sm);
+  background: var(--cb-line-strong);
+}
+.r-sh[data-drag="dragging"] .r-sh-handle {
+  background: var(--cb-muted);
+}
+.r-sh-head {
+  display: flex;
+  align-items: center;
+  gap: var(--cb-space-2);
+  height: var(--cb-row-roomy);
+  padding: 0 var(--cb-space-1) 0 var(--cb-space-4);
+  border-bottom: 1px solid var(--cb-line-soft);
+}
+.r-sh-title {
+  flex: 1;
+  margin: 0;
+  font-size: var(--cb-type-body-size);
+  line-height: var(--cb-type-body-line);
+  font-weight: 600;
+}
+.r-sh-body {
+  padding: var(--cb-space-2) var(--cb-space-2) var(--cb-space-4);
+}
+.r-sh-option {
+  display: flex;
+  align-items: center;
+  gap: var(--cb-space-2);
+  height: 40px;
+  padding: 0 var(--cb-space-2);
+  border-radius: var(--cb-radius-sm);
+}
+.r-sh-option[aria-checked="true"] {
+  background: var(--cb-selected);
+}
+.r-sh-check {
+  flex: none;
+  width: 14px;
+  height: 14px;
+}
+.r-sh-option > .r-ellipsis {
+  flex: 1;
+}
+.r-sh-count {
+  color: var(--cb-muted);
+}
+
+/* IconPreview (§6.49): one icon on a light and a dark ground, the same in both themes. */
+.r-ip {
+  display: flex;
+  column-gap: var(--cb-space-3);
+}
+.r-ip-item {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  row-gap: var(--cb-space-1);
+  margin: 0;
+}
+.r-ip-tile {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 64px;
+  height: 64px;
+  border: 1px solid var(--cb-line);
+  border-radius: var(--cb-radius-md);
+}
+.r-ip-tile[data-ground="light"] {
+  background: var(--cb-preview-light);
+  color: var(--cb-accent);
+}
+.r-ip-tile[data-ground="dark"] {
+  background: var(--cb-preview-dark);
+  color: var(--cb-accent);
+}
+.r-ip-image {
+  width: var(--cb-space-8);
+  height: var(--cb-space-8);
+  fill: currentColor;
+}
+.r-ip-label {
+  color: var(--cb-muted);
+  font-size: var(--cb-type-micro-size);
+  line-height: var(--cb-type-micro-line);
 }
 
 /* §6.16.3a the mode menu: hangs from the mode button, its end edge on the button's; the head's

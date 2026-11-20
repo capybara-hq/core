@@ -313,6 +313,24 @@ describe("the (app) layout's client code (client extensions spec §9.6, §10.1, 
     });
   });
 
+  it("the cb-sidebar cookie tells the frame the person collapsed the sidebar", async () => {
+    shellRoutesWith({});
+    req.headers = new Headers({ "x-cap-path": "/agents", cookie: "cap_at=a; cb-sidebar=rail" });
+    expect(find(await AppLayout({ children: <p>x</p> }), "AppFrame")?.props).toMatchObject({
+      sidebarCollapsed: true,
+    });
+    shellRoutesWith({});
+    req.headers = new Headers({ "x-cap-path": "/agents", cookie: "cap_at=a" });
+    expect(find(await AppLayout({ children: <p>x</p> }), "AppFrame")?.props).toMatchObject({
+      sidebarCollapsed: false,
+    });
+    shellRoutesWith({});
+    req.headers = new Headers({ "x-cap-path": "/agents", cookie: "cb-sidebar=full" });
+    expect(find(await AppLayout({ children: <p>x</p> }), "AppFrame")?.props).toMatchObject({
+      sidebarCollapsed: false,
+    });
+  });
+
   it("safe mode renders no client code but still knows the set (the banner)", async () => {
     shellRoutesWith({ [`GET ${O}/ui/client`]: () => json(200, SET) });
     req.headers = new Headers({ "x-cap-path": "/agents?safe-ui=1", "x-nonce": "n" });

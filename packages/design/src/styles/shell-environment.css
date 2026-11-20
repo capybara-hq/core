@@ -1,0 +1,91 @@
+/*
+ * The Shell environment (mobile layout spec §9.3, desktop client spec §7.3): inside a native shell
+ * `<html>` carries `data-shell` and the shell's insets and window controls as properties
+ * (`--cb-shell-inset-*`, `--cb-shell-controls-x|y|width|height`). Nothing here is keyed on the
+ * platform: the geometry comes from the properties alone.
+ */
+
+/* The top band the shell's chrome covers: its top inset, or further down to the controls
+   rectangle's bottom edge when the controls reach below it (a shell reporting controls and no top
+   inset). Sides need no rule: the band runs across the whole window. */
+:root[data-shell] {
+  --cb-shell-band: max(
+    var(--cb-inset-top),
+    calc(var(--cb-shell-controls-y, 0px) + var(--cb-shell-controls-height, 0px))
+  );
+}
+
+/* The whole shell starts below the band (the banner, the sidebar, the content column and the
+   compact top bar alike), so the top bar pads nothing more; on medium and expanded the shell pads
+   the bottom inset too (the compact class pads it in its bottom bars). */
+:root[data-shell] .cb-shell {
+  padding-top: var(--cb-shell-band);
+}
+:root[data-shell] .cb-shell-topbar {
+  padding-top: 0;
+}
+@media (min-width: 600px) {
+  :root[data-shell] .cb-shell {
+    padding-bottom: var(--cb-inset-bottom);
+  }
+}
+
+/* Window drag regions (desktop client spec §7.3): the band itself (a real element, `.cb-shell-band`,
+   drawn by the AppShell: a pseudo-element's drag region is not reliably honoured), the sidebar's
+   brand row, the compact top bar and the conversation title bar move the window; every control
+   inside them stays clickable. */
+.cb-shell-band {
+  display: none;
+}
+:root[data-shell="desktop"] .cb-shell-band {
+  display: block;
+  position: absolute;
+  inset: 0 0 auto;
+  height: var(--cb-shell-band);
+  -webkit-app-region: drag;
+  app-region: drag;
+}
+:root[data-shell="desktop"] :is(.cb-sidebar-top, .cb-topbar, .cb-title-bar) {
+  -webkit-app-region: drag;
+  app-region: drag;
+}
+:root[data-shell="desktop"]
+  :is(.cb-sidebar-top, .cb-topbar, .cb-title-bar)
+  :is(a, button, input, select, textarea, summary, label, [role], [tabindex]) {
+  -webkit-app-region: no-drag;
+  app-region: no-drag;
+}
+
+/* Overlays are portaled under <body>, over the band: a drag region under them would swallow their
+   clicks, so each overlay root is no-drag (its scrim too: while a modal is open the window does
+   not drag from the band). */
+:root[data-shell="desktop"]
+:is(
+  .cb-scrim,
+  .cb-dialog,
+  .cb-sheet,
+  .cb-bsheet,
+  .cb-bsheet-scrim,
+  .cb-menu,
+  .cb-popover,
+  .cb-cmenu,
+  .cb-tooltip,
+  .cb-palette,
+  .cb-toast-region,
+  .cb-viewer,
+  .cb-conv-sheet,
+  .cb-conv-scrim,
+  .cb-sidebar-layer,
+  .cb-conv-pushed
+) {
+  -webkit-app-region: no-drag;
+  app-region: no-drag;
+}
+/* Full-height overlays start below the band, clear of the window controls. */
+:root[data-shell="desktop"] :is(.cb-sheet, .cb-conv-sheet, .cb-viewer, .cb-sidebar-layer) {
+  top: var(--cb-shell-band);
+}
+/* (a pushed right area outside an AppShell; inside one the shell already starts below the band) */
+:root[data-shell="desktop"] .cb-conv-pushed:not([data-shell="true"]) {
+  padding-top: var(--cb-shell-band);
+}

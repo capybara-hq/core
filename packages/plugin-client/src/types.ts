@@ -21,6 +21,17 @@ export interface UiView {
   data?: JsonValue;
 }
 
+/** The window's size class, by width only (mobile layout spec §3). */
+export type SizeClass = "compact" | "medium" | "expanded";
+
+/** One screen of a window that spans two (folded or dual-screen display), in CSS px. */
+export interface ViewportSegment {
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+}
+
 export type RunState = "idle" | "running" | "waiting" | "failed";
 
 export type ClientRole = "owner" | "admin" | "member" | "guest" | "superAdmin";
@@ -99,12 +110,12 @@ export interface SlotComponentProps {
   "org.settings.section": Record<string, never>;
   "platform.page": Record<string, never>;
   "shell.brand": {
-    /** The built-in brand (the Logo, its wordmark only in the full sidebar and the drawer). */
+    /** The built-in brand (the Logo, its wordmark only in the full sidebar). */
     builtin: ReactNode;
     /** The sidebar is the rail. */
     collapsed: boolean;
     /** The sidebar panel this node is drawn in; the host renders the brand once per drawn panel. */
-    panel: "full" | "rail" | "drawer";
+    panel: "full" | "rail";
   };
   "shell.overlay": Record<string, never>;
   "conversation.empty": { builtin: ReactNode; agentId: string | null; greeting: string };

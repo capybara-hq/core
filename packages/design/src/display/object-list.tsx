@@ -182,7 +182,7 @@ export function ObjectRow({
         </span>
         {description ? <span className="cb-object-desc">{description}</span> : null}
         {hasMeta || state ? (
-          // Below 640 the state is drawn at the end of this line (spec §4.3, §6.17): the CSS reads
+          // Below 600 the state is drawn at the end of this line (spec §4.3, §6.17): the CSS reads
           // it from `data-state` / `data-state-tone`, so the label stays one node in the DOM (the
           // row's own state label, hidden on phones). A row with a state and no meta keeps an
           // empty meta line for it, drawn only on phones.
@@ -221,7 +221,7 @@ export function ObjectRow({
       ) : null}
       {trailing ? <span className="cb-object-trailing">{trailing}</span> : null}
       {action || single ? (
-        // The row's buttons in one group: one flex item below 640 (it moves to the meta line,
+        // The row's buttons in one group: one flex item below 600 (it moves to the meta line,
         // or wraps under it as a whole), `display: contents` above, so the row lays them out.
         <span className="cb-object-actions">
           {slots.map((a, i) =>

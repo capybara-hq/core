@@ -301,7 +301,7 @@ test("member: 用它创建 is private and sends a setup request -> the admin con
 
   // 3. the admin finds the request in the inbox and configures it from the dialog
   await page.goto("/inbox");
-  const list = page.getByRole("table", { name: zh.inbox.listLabel });
+  const list = page.getByRole("list", { name: zh.inbox.listLabel });
   await list.getByText(mine).first().click();
   await page.getByRole("button", { name: zh.inbox.setup.configure, exact: true }).click();
   const all = page.getByRole("dialog", { name: fill(A.pending.listTitle, { agent: mine }) });

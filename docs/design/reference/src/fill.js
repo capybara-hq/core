@@ -27,6 +27,15 @@
   const LOGO =
     '<svg class="r-logo" width="28" height="20" viewBox="0 0 14 10" shape-rendering="crispEdges" aria-hidden="true"><path d="M10 0h1v1h-1zM9 1h3v1h-3zM3 2h11v1h-11zM2 3h9v1h-9zM12 3h2v1h-2zM1 4h13v1h-13zM1 5h13v1h-13zM1 6h12v1h-12zM2 7h10v1h-10zM2 8h2v1h-2zM6 8h1v1h-1zM9 8h2v1h-2zM2 9h2v1h-2zM6 9h1v1h-1zM9 9h2v1h-2z"/></svg>';
 
+  // The `chats` icon joins the icon set with the BottomNav implementation (Lucide messages-square);
+  // until then the reference set draws it from here.
+  if (!ICONS.chats) {
+    ICONS.chats = [
+      '<path d="M16 10a2 2 0 0 1-2 2H6.828a2 2 0 0 0-1.414.586l-2.202 2.202A.71.71 0 0 1 2 14.286V4a2 2 0 0 1 2-2h10a2 2 0 0 1 2 2z"/>',
+      '<path d="M20 9a2 2 0 0 1 2 2v10.286a.71.71 0 0 1-1.212.502l-2.202-2.202A2 2 0 0 0 17.172 19H10a2 2 0 0 1-2-2v-1"/>',
+    ];
+  }
+
   const VISIBLE = {
     guest: ["all"],
     member: ["all", "member"],
@@ -46,8 +55,12 @@
     const label = n.count !== undefined ? `${n.label}，${n.count} 项待处理` : n.label;
     const size = extra.includes("r-nav-sub") ? 14 : 16;
     if (o.mode === "rail") {
-      const badge = n.count !== undefined ? `<span class="r-rail-badge">${n.count}</span>` : "";
-      return `<a class="r-nav-item r-rail-item${extra}" href="#" aria-label="${esc(label)}"${current}${state(st)}>${icon(n.icon)}${badge}</a>`;
+      // The nav badge (spec §6.13): placed from the icon, outside its top-right corner.
+      const glyph =
+        n.count !== undefined
+          ? `<span class="r-badged">${icon(n.icon)}<span class="r-nav-badge" data-part="rail-badge" data-rail="true">${n.count > 9 ? "9+" : n.count}</span></span>`
+          : icon(n.icon);
+      return `<a class="r-nav-item r-rail-item${extra}" href="#" aria-label="${esc(label)}"${current}${state(st)}>${glyph}</a>`;
     }
     return `<a class="r-nav-item${extra}" href="#" aria-label="${esc(label)}"${current}${state(st)}>${icon(n.icon, size)}<span class="r-ellipsis">${esc(n.label)}</span>${count}</a>`;
   }
@@ -225,22 +238,39 @@
     // Search and the inbox: brand-row icon buttons (rail icons under the expand button).
     const inboxItem = F.NAV_FIXTURE.find((n) => n.place === "brand");
     const inboxLabel = inboxItem
-      ? inboxItem.count
-        ? `${inboxItem.label}，${inboxItem.count} 项待处理`
+      ? (o.inboxCount ?? inboxItem.count)
+        ? `${inboxItem.label}，${o.inboxCount ?? inboxItem.count} 项待处理`
         : inboxItem.label
       : "";
-    const inboxBadge = inboxItem?.count ? `<span class="r-rail-badge">${inboxItem.count}</span>` : "";
+    // The rail's inbox takes the nav badge outside the icon's corner; the full brand row keeps
+    // the inset badge (its icon buttons sit 2 apart, spec §6.13).
+    // `inboxCount` overrides the sample count; the rail caps its badge at 9+ (spec §6.13).
+    const inboxCount = o.inboxCount ?? inboxItem?.count;
+    const railCount = inboxCount > 9 ? "9+" : inboxCount;
+    const inboxGlyph = !inboxCount
+      ? icon("inbox")
+      : rail
+        ? `<span class="r-badged">${icon("inbox")}<span class="r-nav-badge" data-part="inbox-badge" data-rail="true">${railCount}</span></span>`
+        : `${icon("inbox")}<span class="r-rail-badge" data-part="inbox-badge">${inboxCount}</span>`;
     const tools = admin || setup
       ? ""
       : `<button class="r-icon-btn${rail ? " r-rail-item" : ""}" aria-label="${esc(C.search)} ${esc(C.searchShortcut)}">${icon("search")}</button>${
           inboxItem
-            ? `<a class="r-icon-btn r-sb-inbox${rail ? " r-rail-item" : ""}" href="#" aria-label="${esc(inboxLabel)}"${o.active === "inbox" ? ' aria-current="page"' : ""}>${icon("inbox")}${inboxBadge}</a>`
+            ? `<a class="r-icon-btn r-sb-inbox${rail ? " r-rail-item" : ""}" href="#" aria-label="${esc(inboxLabel)}"${o.active === "inbox" ? ' aria-current="page"' : ""}>${inboxGlyph}</a>`
             : ""
         }`;
+    // The collapse toggle (spec §3.3, §6.13): the full sidebar's head ends with it, the collapsed
+    // rail starts with its mirror, expand. The medium rail (`o.medium`) has no expand: the full
+    // sidebar does not fit there.
+    const toggle = rail
+      ? o.medium
+        ? ""
+        : `<button class="r-icon-btn r-rail-item" aria-label="${esc(C.expand)}">${icon("panel-left")}</button>`
+      : `<button class="r-icon-btn" aria-label="${esc(C.collapse)}" title="${esc(C.collapse)} ⌘\\">${icon("panel-left")}</button>`;
     const top = rail
       ? `<div class="r-sb-top">${LOGO}</div>
-         <div class="r-sb-rail-tools"><button class="r-icon-btn r-rail-item" aria-label="${esc(C.expand)}">${icon("panel-left")}</button>${tools}</div>`
-      : `<div class="r-sb-top">${LOGO}<span class="r-wordmark">CAPYBARA</span><span class="r-sb-top-tools">${tools}${o.mode === "drawer" ? `<button class="r-icon-btn" aria-label="关闭导航">${icon("x")}</button>` : ""}</span></div>`;
+         <div class="r-sb-rail-tools">${toggle}${tools}</div>`
+      : `<div class="r-sb-top">${LOGO}<span class="r-wordmark">CAPYBARA</span><span class="r-sb-top-tools">${tools}${toggle}</span></div>`;
     let nav;
     if (setup) {
       nav = setupNav(o);
@@ -257,13 +287,17 @@
       const moreToggle = rail
         ? `<button class="r-nav-item r-rail-item r-nav-more" aria-label="${esc(F.MORE_LABEL)}" aria-haspopup="menu"${active}>${icon("more-horizontal")}</button>`
         : `<button class="r-nav-item r-nav-more" aria-haspopup="menu" aria-expanded="${o.moreOpen === true}"${active}>${icon("more-horizontal")}<span class="r-ellipsis">${esc(F.MORE_LABEL)}</span>${icon("chevron-right", 12)}</button>`;
-      // 更多 opens a flyout menu to the right of the sidebar, extension pages after a separator.
+      // More opens a flyout menu to the right of the sidebar, extension pages after a separator.
       const flyItem = (n) =>
         `<a class="r-menu-item" href="#"${n.id === o.active ? ' aria-current="page"' : ""}><span class="r-menu-label">${esc(n.label)}</span></a>`;
       const flyout = o.moreOpen
         ? `<div class="r-menu r-nav-flyout" role="menu" aria-label="${esc(F.MORE_LABEL)}">${more.map(flyItem).join("")}${more.length > 0 && ext.length > 0 ? '<div class="r-menu-sep"></div>' : ""}${ext.map(flyItem).join("")}</div>`
         : "";
-      nav = `${newConv}${primary.map((n) => navItem(n, o)).join("")}<div class="r-nav-more-wrap">${moreToggle}${flyout}</div>`;
+      // The rail holds no conversation list: the Conversations button opens it as a side sheet (spec §6.13).
+      const chats = rail
+        ? navItem({ id: "conversations", label: C.conversations, icon: "chats" }, o)
+        : "";
+      nav = `${newConv}${chats}${primary.map((n) => navItem(n, o)).join("")}<div class="r-nav-more-wrap">${moreToggle}${flyout}</div>`;
     }
     const navBlock = `<nav class="r-sb-nav" aria-label="主导航">${nav}</nav>`;
     const context = admin ? adminBlock(o) : orgBlock(o);
@@ -368,6 +402,11 @@
     // Loading (spec §5.3): the row stays, nothing to count, the buttons disabled.
     if (o.loading) {
       return `<div class="r-actionrow"><span class="r-actionrow-text"></span><button class="r-btn" data-variant="default" disabled>${esc(A.discard)}</button><button class="r-btn" data-variant="primary" disabled>${esc(A.save)}</button></div>`;
+    }
+    // Compact (spec §4.4): the unsaved line, the one secondary alone on its full-width line, the
+    // primary alone on the bottom line.
+    if (o.compact) {
+      return `<div class="r-actionrow" data-part="action-row" data-compact><span class="r-actionrow-text"><span class="r-dot" aria-hidden="true"></span> ${esc(A.unsaved)}</span><div class="r-actionrow-line"><button class="r-btn" data-variant="default" data-part="action-secondary">${esc(A.discard)}</button></div><div class="r-actionrow-line"><button class="r-btn" data-variant="primary" data-part="action-primary">${esc(A.save)}</button></div></div>`;
     }
     if (o.clean) {
       return `<div class="r-actionrow"><span class="r-actionrow-text">${esc(A.clean)}</span><button class="r-btn" data-variant="primary" disabled>${esc(A.save)}</button></div>`;
@@ -534,18 +573,6 @@
     return `<div class="r-tpl" aria-busy="true"><div class="r-tpl-head" data-stats>${head}<div class="r-stats">${stat.repeat(4)}</div></div><div class="r-tpl-body"><div class="r-trace"><div class="r-trace-wf"><div class="r-wf">${Array.from({ length: 11 }, (_, i) => row(i)).join("")}</div></div><div class="r-trace-detail">${card}</div></div></div></div>`;
   }
 
-  function drawer(o) {
-    return `<div class="r-drawer-stage"><div class="r-drawer-page"><div class="r-drawer-bar"><button class="r-icon-btn" aria-label="${esc(F.SIDEBAR_COPY.menu)}" aria-expanded="true">${icon("menu")}</button><span class="r-ellipsis">${esc(F.LIST_PAGE_FIXTURE.title)}</span><button class="r-icon-btn r-drawer-bar-end" aria-label="${esc(F.SIDEBAR_COPY.search)} ${esc(F.SIDEBAR_COPY.searchShortcut)}">${icon("search")}</button></div><div class="r-drawer-body">${pageHeader({ description: true })}${stats({})}</div>${statusBar({ noPageStatus: true })}</div><div class="r-scrim"></div><div class="r-drawer" role="dialog" aria-modal="true" aria-label="导航">${sidebar({ ...o, mode: "drawer" })}</div></div>`;
-  }
-
-  // Below 960 in the setup frame: the setup home behind the scrim, the setup drawer over it; the
-  // drawer bar has no search (no command palette in the setup frame).
-  function setupDrawer(o) {
-    const S = F.SETUP_COPY;
-    const head = `<header class="r-ph"><nav class="r-ph-crumb" aria-label="路径"><span>${esc(F.ORG_SWITCHER_FIXTURE.slug)}</span><span aria-hidden="true">/</span><span class="r-ink">${esc(S.home)}</span></nav><div class="r-ph-row"><div class="r-ph-text"><h1 class="r-ph-title">${esc(S.home)}</h1></div></div></header>`;
-    return `<div class="r-drawer-stage"><div class="r-drawer-page"><div class="r-drawer-bar"><button class="r-icon-btn" aria-label="${esc(F.SIDEBAR_COPY.menu)}" aria-expanded="true">${icon("menu")}</button><span class="r-ellipsis">${esc(S.home)}</span></div><div class="r-drawer-body">${head}</div>${statusBar({ noPageStatus: true })}</div><div class="r-scrim"></div><div class="r-drawer" role="dialog" aria-modal="true" aria-label="导航">${sidebar({ ...o, context: "setup", mode: "drawer" })}</div></div>`;
-  }
-
   function rail(o) {
     const tip = o.tooltip
       ? `<span class="r-tooltip" role="tooltip" style="top:${o.tooltipTop}px">${esc(o.tooltip)}</span>`
@@ -597,8 +624,6 @@
   const RENDER = {
     sidebar,
     rail,
-    setupDrawer,
-    drawer,
     "page-header": pageHeader,
     stats,
     "status-bar": statusBar,
@@ -617,7 +642,7 @@
 
   // The conversation-page renderers (conversation.js, UI refresh B) when the page loads them.
   if (window.__CB_EXTRA__) {
-    Object.assign(RENDER, window.__CB_EXTRA__({ F, esc, icon, state, stamp, sidebar, statusBar }));
+    Object.assign(RENDER, window.__CB_EXTRA__({ F, esc, icon, state, stamp, sidebar, statusBar, table }));
   }
 
   for (const t of document.querySelectorAll("template[data-fixture]")) {

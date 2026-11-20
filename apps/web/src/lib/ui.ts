@@ -45,7 +45,12 @@ export interface UiContributionItem {
   path?: string;
   /** From `UI_ICONS`; `puzzle` when the manifest names none. */
   icon: UiIcon;
+  /** The form on a compact screen: the slot's, narrowed by the contribution's (spec §5.6). */
+  compact: UiCompactForm;
 }
+
+/** What a contribution becomes on a compact screen: drawn, handed to the owner's sheet, or not drawn. */
+export type UiCompactForm = "kept" | "drawer" | "hidden";
 
 /**
  * 嵌入令牌（`POST .../ui/embeds/:plugin/:id/token`）：`src` 是同源代理下的页面地址；

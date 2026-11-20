@@ -17,6 +17,8 @@ export type LinkComponent = ComponentType<{
   /** The size-table part (spec §9.2) and the roving-focus key (Sidebar). */
   "data-part"?: string;
   "data-rove"?: string;
+  /** The item's id (the bottom navigation's and the Me page's rows). */
+  "data-id"?: string;
   "data-state"?: string;
   "data-optional"?: string;
 }>;

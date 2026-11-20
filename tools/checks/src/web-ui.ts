@@ -1,6 +1,7 @@
 import { existsSync, readdirSync, readFileSync } from "node:fs";
 import { dirname, join, relative, resolve, sep } from "node:path";
 import { BOX_PENDING, type BoxPending, boxFindings } from "./box-in-box.js";
+import { breakpointFindings } from "./design-breakpoint.js";
 import {
   collectImports,
   type Finding,
@@ -1372,11 +1373,12 @@ function checkDesign(designSrcDir: string): Finding[] {
 
   for (const f of listCssFiles(designSrcDir)) {
     if (f === tokens) continue;
-    const lines = stripCssComments(readFileSync(f, "utf8")).split("\n");
-    lines.forEach((text, i) => {
+    const css = stripCssComments(readFileSync(f, "utf8"));
+    css.split("\n").forEach((text, i) => {
       const m = COLOR.exec(text);
       if (m) out.push({ file: f, line: i + 1, rule, message: message(m[0]) });
     });
+    out.push(...breakpointFindings(f, css));
   }
   for (const { file, isTest } of listSourceFiles(designSrcDir)) {
     const p = parseFile(file);

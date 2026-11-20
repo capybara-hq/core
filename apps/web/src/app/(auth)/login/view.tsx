@@ -1,8 +1,10 @@
 "use client";
 
-import { AuthPage, Stack } from "@capybara-hq/design";
+import { AuthPage, Button, Stack } from "@capybara-hq/design";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useTranslations } from "next-intl";
+import { useState } from "react";
+import { FormError } from "../../../components/form-error";
 import {
   InsecureOriginNotice,
   LoginErrorNotice,
@@ -14,8 +16,11 @@ import { navigateBrowser } from "../../../lib/browser";
 import { usePreferences } from "../../../lib/preferences";
 import { authSourcesQuery } from "../../../lib/query/auth";
 import { retryOnMountOf } from "../../../lib/query/client";
+import { useAppMutation } from "../../../lib/query/mutation";
 import { resetSession } from "../../../lib/query/workspace";
 import { broadcastSession } from "../../../lib/session-sync";
+import type { SignInCapabilityV1 } from "../../../lib/shell";
+import { useSignInCapability } from "../../../lib/shell";
 
 /**
  * `/login`: local sign-in and the third-party sign-in buttons (AuthPage). `returnTo` (a safe site
@@ -36,6 +41,22 @@ export default function LoginView({
   const preferences = usePreferences();
   const query = authSourcesQuery();
   const sources = useQuery({ ...query, retryOnMount: retryOnMountOf(query.queryKey) });
+  // Inside the desktop shell (undefined on the server and before hydration: the form renders then).
+  const browserSignIn = useSignInCapability();
+  if (browserSignIn !== undefined) {
+    return (
+      <AuthPage title={t("title")} subtitle={t("subtitle")} preferences={preferences}>
+        <BrowserSignIn
+          capability={browserSignIn}
+          error={error}
+          onSuccess={() => {
+            broadcastSession("signed-in");
+            void resetSession(qc, () => navigateBrowser(returnTo));
+          }}
+        />
+      </AuthPage>
+    );
+  }
   if (sources.data === undefined && !sources.isError) {
     return (
       <AuthPage
@@ -61,5 +82,48 @@ export default function LoginView({
         <SsoButtons returnTo={returnTo} sources={sources.data ?? []} />
       </Stack>
     </AuthPage>
+  );
+}
+
+/**
+ * The desktop shell's only sign-in: the system browser (`signIn@1`). The click starts the call
+ * (the shell enforces the user activation); `cancelled` leaves the page as it is, a failure shows
+ * the generic sign-in error.
+ */
+function BrowserSignIn({
+  capability,
+  error,
+  onSuccess,
+}: {
+  capability: SignInCapabilityV1;
+  error: LoginErrorCode | null;
+  onSuccess: () => void;
+}) {
+  const t = useTranslations("login");
+  const [failed, setFailed] = useState(false);
+  // A new session: the page drops the whole cache before it navigates, nothing to invalidate.
+  const { mutateAsync: start, isPending } = useAppMutation({
+    fn: () => capability.start(),
+    invalidates: () => [],
+  });
+  async function onClick() {
+    setFailed(false);
+    let result: "signedIn" | "cancelled";
+    try {
+      result = await start();
+    } catch {
+      setFailed(true);
+      return;
+    }
+    if (result === "signedIn") onSuccess();
+  }
+  return (
+    <Stack gap={16}>
+      {error !== null && <LoginErrorNotice code={error} />}
+      {failed && <FormError message={t("ssoError.unknown")} />}
+      <Button variant="primary" density="prominent" loading={isPending} onClick={onClick}>
+        {t("browserSignIn")}
+      </Button>
+    </Stack>
   );
 }

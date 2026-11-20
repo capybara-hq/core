@@ -1,7 +1,7 @@
 // biome-ignore-all lint/correctness/useJsxKeyInIterable: 用例表是 [名称, 元素] 元组，不是渲染列表
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
-import { act, cleanup, render, screen } from "@testing-library/react";
+import { act, cleanup, render, screen, within } from "@testing-library/react";
 import { userEvent } from "@testing-library/user-event";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import * as design from "../src/index";
@@ -77,7 +77,7 @@ describe("页面模板根节点与页头", () => {
     ],
     [
       "InboxPage",
-      <InboxPage header={header} list={<div>l</div>} inspector={<div>i</div>}>
+      <InboxPage header={header} list={<div>l</div>} facts={[{ label: "键", value: "i" }]}>
         x
       </InboxPage>,
     ],
@@ -191,7 +191,7 @@ describe("FormPage", () => {
     expect(rule).toContain("margin-left: calc(240px + var(--cb-space-7))");
     const narrow =
       css.match(
-        /@media \(max-width: 959px\) \{[^@]*\.cb-form-section ~ \.cb-danger-zone \{[^}]*\}/,
+        /@media \(max-width: 840px\) \{[^@]*\.cb-form-section ~ \.cb-danger-zone \{[^}]*\}/,
       )?.[0] ?? "";
     expect(narrow).toContain("margin-left: 0");
   });
@@ -421,22 +421,6 @@ describe("WizardPage", () => {
 });
 
 describe("其他模板行为", () => {
-  it("InboxPage passes onInspectorClose through", async () => {
-    const onClose = vi.fn();
-    zh(
-      <InboxPage
-        header={header}
-        list={<div>l</div>}
-        inspector={<div>i</div>}
-        onInspectorClose={onClose}
-      >
-        x
-      </InboxPage>,
-    );
-    await userEvent.click(screen.getByRole("button", { name: "关闭" }));
-    expect(onClose).toHaveBeenCalledTimes(1);
-  });
-
   it("InboxPage with no items: one page empty state instead of the list + detail split", () => {
     zh(
       <InboxPage header={header} list={<div>l</div>} empty={{ text: "没有待处理的事项" }}>
@@ -453,13 +437,13 @@ describe("其他模板行为", () => {
     expect(document.querySelector(".cb-body")?.getAttribute("data-layout")).toBe("single");
   });
 
-  it("InboxPage: the split is capped at the content width, inside the content padding", () => {
-    const css = readFileSync(resolve(import.meta.dirname, "../src/styles/shell.css"), "utf8");
+  it("InboxPage: the pane pair is capped at the content width, inside the content padding", () => {
+    const css = readFileSync(resolve(import.meta.dirname, "../src/styles/templates.css"), "utf8");
     expect(css).toMatch(
-      /\.cb-template\[data-template="InboxPage"\] \.cb-body:not\(\[data-layout="single"\]\) \{[^}]*padding: 0 var\(--cb-content-pad\);[^}]*scrollbar-gutter: stable;/,
+      /\.cb-inbox-frame \{[^}]*padding: 0 var\(--cb-content-pad\);[^}]*scrollbar-gutter: stable;/,
     );
     expect(css).toMatch(
-      /\.cb-template\[data-template="InboxPage"\] \.cb-body-row \{[^}]*max-width: var\(--cb-layout-content\);[^}]*margin: 0 auto;/,
+      /\.cb-inbox-content \{[^}]*max-width: var\(--cb-layout-content\);[^}]*margin: 0 auto;/,
     );
   });
 
@@ -517,7 +501,7 @@ describe("其他模板行为", () => {
 
   it("SettingsPage on phones: the scrolling sub-nav draws its focus ring inside the item", () => {
     const css = readFileSync(resolve(import.meta.dirname, "../src/styles/templates.css"), "utf8");
-    const phone = css.slice(css.indexOf("@media (max-width: 639px) {\n  .cb-settings-nav {") + 1);
+    const phone = css.slice(css.indexOf("@media (max-width: 599px) {\n  .cb-settings-nav {") + 1);
     expect(phone).toMatch(/^[^@]*\.cb-settings-nav-item:focus-visible \{\s*outline-offset: -2px;/);
   });
 
@@ -801,14 +785,25 @@ describe("SetupPage (the guided setup layout)", () => {
     expect(screen.queryByRole("dialog")).toBeNull();
   });
 
-  it("the drawer bar below 960 has the menu button and no search", () => {
-    zh(
-      <SetupPage sidebar={sidebar} status={status} reference={{ drawer: true }} title="开始之前" />,
-    );
-    const bar = document.querySelector('[data-part="drawer-bar"]') as HTMLElement;
-    expect(bar.querySelector('[aria-label="打开导航"]')).not.toBeNull();
+  it("the compact top bar pushes the steps as a page of their own; back closes it", async () => {
+    window.history.replaceState(null, "", "/setup");
+    zh(<SetupPage sidebar={sidebar} status={status} title="开始之前" />);
+    const bar = document.querySelector('[data-part="top-bar"]') as HTMLElement;
+    expect(bar.querySelector('[aria-label="打开导航"]')).toBeNull();
     expect(bar.querySelector('[aria-label^="搜索"]')).toBeNull();
-    expect(bar.textContent).toContain("开始之前");
+    expect(bar.getAttribute("data-pushed")).toBe("false");
+    expect(document.querySelector('[data-part="setup-steps"]')).toBeNull();
+    await userEvent.click(within(bar).getByRole("button", { name: "步骤" }));
+    expect(window.location.hash).toBe("#steps");
+    const steps = document.querySelector('[data-part="setup-steps"]') as HTMLElement;
+    expect(within(steps).getByRole("link", { name: "开始之前" })).toBeTruthy();
+    expect(within(steps).getAllByRole("link").length).toBeGreaterThan(1);
+    // the setup home is hidden while the steps page is open, and the shell shows back
+    expect(document.querySelector(".cb-setup-body")?.getAttribute("data-steps-open")).toBe("true");
+    expect(bar.getAttribute("data-pushed")).toBe("true");
+    await userEvent.click(within(bar).getByRole("button", { name: "返回" }));
+    await vi.waitFor(() => expect(document.querySelector('[data-part="setup-steps"]')).toBeNull());
+    expect(window.location.hash).toBe("");
   });
 });
 
@@ -828,8 +823,8 @@ describe("PendingState (the neutral loading state)", () => {
   });
 });
 
-describe("InboxPage list column (plugin acceptance fix batch 1)", () => {
-  it("the rail is the list column, 320 wide on the inbox (wider than a filter rail's 240)", () => {
+describe("InboxPage list column", () => {
+  it("the list is a 320 column beside a detail of at least 360 (ListDetail)", () => {
     render(
       <DesignProvider locale="zh">
         <InboxPage header={{ path: [{ label: "admin" }], title: "收件箱" }} list={<div>l</div>}>
@@ -837,10 +832,9 @@ describe("InboxPage list column (plugin acceptance fix batch 1)", () => {
         </InboxPage>
       </DesignProvider>,
     );
-    expect(document.querySelector(".cb-body-rail")?.getAttribute("data-part")).toBe("rail");
-    const css = readFileSync(resolve(import.meta.dirname, "../src/styles/shell.css"), "utf8");
-    const at = css.indexOf('.cb-template[data-template="InboxPage"] .cb-body-rail {');
-    expect(at).toBeGreaterThanOrEqual(0);
-    expect(css.slice(at, css.indexOf("}", at))).toContain("width: 320px");
+    const list = document.querySelector('[data-part="list-detail"]') as HTMLElement;
+    expect(list.getAttribute("data-fit")).toBe("680");
+    expect(list.style.getPropertyValue("--cb-ld-list")).toBe("320px");
+    expect(document.querySelector('[data-part="list-pane"]')?.textContent).toBe("l");
   });
 });

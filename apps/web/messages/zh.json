@@ -25,6 +25,7 @@
     "loginLabel": "用户名",
     "passwordLabel": "密码",
     "submit": "登录",
+    "browserSignIn": "在浏览器中登录",
     "subtitle": "使用账号与密码登录。",
     "or": "或使用以下方式登录",
     "sso": "使用 {name} 登录",
@@ -1758,7 +1759,20 @@
       "waiting": "正在等待机器登录…确认后它会出现在设备列表里，运行第 3 步后变为在线。",
       "connected": "已连接 {name}。",
       "close": "关闭",
-      "startStep": "3. 启动连接，保持设备在线（开机自动连接：capybara-device service install）"
+      "startStep": "3. 启动连接，保持设备在线（开机自动连接：capybara-device service install）",
+      "connectMachine": "连接本机",
+      "connectFailed": "无法连接本机，请重试。",
+      "thisMachineConnected": "这台电脑已连接到这个平台：{state}。",
+      "thisMachineOtherOrg": "这台电脑已连接到你的另一个组织。",
+      "connectedElsewhere": "这台电脑已连接到另一个平台（{origin}）。请用下面的命令连接到这里。",
+      "openDevice": "打开设备",
+      "connection": {
+        "starting": "正在启动",
+        "online": "在线",
+        "offline": "离线",
+        "draining": "正在结束任务",
+        "stopped": "已停止"
+      }
     },
     "detail": {
       "demotedNote": "这是平台更换沙箱提供方之前你的个人设备。平台换回{provider}后，它会重新成为你的默认设备，文件也随之回来。",
@@ -1792,6 +1806,27 @@
       "deleteDanger": "删除 {name} 会同时删除它的文件并结束其中的进程，且无法恢复。",
       "deleteDangerDefault": "删除 {name} 会同时删除它的文件并结束其中的进程，且无法恢复。下次需要时会新建一个空的设备。",
       "deleteDangerLocal": "删除 {name} 会断开它的机器，且无法恢复。机器上的文件会保留。"
+    },
+    "thisMachine": {
+      "title": "本机",
+      "mark": "本机",
+      "running": "正在运行",
+      "runningEmpty": "目前没有正在运行的任务。",
+      "isolation": { "restricted": "沙箱内", "full": "沙箱外" },
+      "pause": "暂停",
+      "resume": "恢复",
+      "disconnect": "断开",
+      "wakeNote": "电脑曾休眠",
+      "keepAwake": {
+        "title": "保持唤醒",
+        "off": "关闭",
+        "whileBusy": "运行时",
+        "connected": "始终",
+        "held": "正在保持电脑唤醒。",
+        "unavailable": "无法保持唤醒：{reason}",
+        "cannot": "保持唤醒无法阻止：没有外接显示器、使用电池的 Mac 合上盖子仍会休眠；手动选择睡眠、电量极低和过热保护也会休眠。在 Linux 上，合盖由 logind 处理，本服务无权覆盖。"
+      },
+      "failed": "操作没有完成，请重试。"
     },
     "sandbox": {
       "title": "沙箱",
@@ -1980,7 +2015,25 @@
     "admin": "管理后台",
     "plugins": "插件",
     "extensions": "扩展",
-    "schedules": "定时任务"
+    "schedules": "定时任务",
+    "chats": "会话",
+    "me": "我"
+  },
+  "conversations": {
+    "title": "会话",
+    "description": "你的会话，按智能体分组。",
+    "list": "会话",
+    "new": "新会话",
+    "empty": "还没有会话",
+    "loadMore": "加载更多",
+    "moreOf": "与 {agent} 的更多会话",
+    "running": "运行中",
+    "waiting": "等待我"
+  },
+  "me": {
+    "title": "我",
+    "adminTitle": "管理后台",
+    "back": "回到工作区"
   },
   "shell": {
     "noOrg": "选择组织",
@@ -2145,6 +2198,16 @@
       }
     }
   },
+  "shellNotify": {
+    "title": "需要你处理",
+    "tool_approval": "一个工具调用在等你批准",
+    "skill_change": "一项技能变更在等你决定",
+    "catalog_request": "一个目录申请在等你处理",
+    "catalog_request_decided": "你的申请有了结果",
+    "schedule_attention": "一个定时任务需要你处理",
+    "other": "收件箱里有新消息"
+  },
+
   "inbox": {
     "title": "收件箱",
     "listLabel": "待处理事项",
@@ -2158,10 +2221,6 @@
     "openConversation": "打开会话",
     "approved": "已批准",
     "denied": "已拒绝",
-    "columns": {
-      "item": "事项",
-      "time": "时间"
-    },
     "truncated": "只显示最新的事项，处理掉一些后可看到其余的。",
     "skillChange": {
       "kind": {
@@ -4095,10 +4154,6 @@
       "truncated": "只显示最新的事项。处理一些后可以看到其余的。",
       "filtered": "只显示：{type}",
       "clearFilter": "显示全部",
-      "columns": {
-        "item": "事项",
-        "time": "时间"
-      },
       "open": "前往处理",
       "org": "组织",
       "plugin": "插件",
@@ -6461,6 +6516,8 @@
     "uploadLabel": "上传{name}",
     "restore": "恢复默认",
     "uploaded": "图标已上传。",
+    "previewLight": "浅色",
+    "previewDark": "深色",
     "restored": "已恢复默认图标。"
   },
   "clientExtensions": {

@@ -1,9 +1,11 @@
 import * as RD from "@radix-ui/react-dialog";
 import {
   type CSSProperties,
+  type HTMLAttributes,
   type KeyboardEvent,
   type PointerEvent,
   type ReactNode,
+  type Ref,
   useCallback,
   useEffect,
   useRef,
@@ -12,15 +14,19 @@ import {
 import { IconButton } from "../controls/button";
 import { AgentRowLoading } from "../conversation/agent-row";
 import { PropertiesPanel, PropertySection, RightPanel } from "../conversation/panels";
-import { RightFullContext } from "../conversation/right-full";
+import { RightFullContext, RightPushedContext } from "../conversation/right-full";
 import { ThreadHistory, type ThreadHistoryProps } from "../conversation/thread-history";
 import { NewTitleBar, TitleBar, type TitleBarProps } from "../conversation/title-bar";
 import { WorkingLine } from "../conversation/working-line";
 import { SkeletonGroup, SkeletonText } from "../display/skeleton";
 import { Icon } from "../icons/icon";
 import { BoxScope } from "../layout/box";
+import { useDragDismiss } from "../overlays/drag";
 import { useFocusReturn } from "../overlays/focus-return";
 import { useDesignT } from "../provider";
+import { useViewportSegments } from "../shell/segments";
+import { useHasShell, useRegisterShellPage } from "../shell/shell-page";
+import { INLINE_RIGHT_AREA_BELOW, useSizeClass } from "../shell/size-class";
 import { StatusBar } from "../shell/status-bar";
 import { useMediaQuery } from "../shell/use-media-query";
 import { useFollowBottom } from "./follow-bottom";
@@ -86,7 +92,7 @@ export type ConversationPageProps = {
    * A new conversation (nothing created yet; spec §5.4, agent profile design §4): top to bottom
    * the greeting (else the agent's name and description), the agents row and the composer (the
    * selected agent's quick actions are a button in the composer's control row, §6.16.27). Below
-   * 640 the greeting and the agents row (one scrolling line) sit at the top, the quick actions are
+   * 600 the greeting and the agents row (one scrolling line) sit at the top, the quick actions are
    * listed under them and the composer is pinned at the bottom, as on a conversation.
    */
   newConversation?: {
@@ -98,8 +104,8 @@ export type ConversationPageProps = {
     agents?: ReactNode;
     /**
      * `QuickActionList` (§6.16.27): the selected agent's quick actions listed between the agents
-     * row and the composer, below 640 only (a phone, where the composer has no `zap` button);
-     * 640 and up the composer's `zap` menu offers them. Absent when the agent has none.
+     * row and the composer, below 600 only (a phone, where the composer has no `zap` button);
+     * 600 and up the composer's `zap` menu offers them. Absent when the agent has none.
      */
     quickActions?: ReactNode;
   };
@@ -214,7 +220,7 @@ function useInlineFocus(
     }
     const area = root.current?.querySelector<HTMLElement>(
       shown === "panel"
-        ? '[data-part="panel-slot"] > aside, [data-part="panel-full"] > aside'
+        ? '[data-part="panel-slot"] > aside, [data-part="panel-full"] > aside, [data-part="pushed-body"] > aside'
         : '[data-part="properties"]',
     );
     if (area && !area.contains(document.activeElement)) area.focus({ preventScroll: true });
@@ -241,9 +247,28 @@ export function ConversationPage({
   reference,
 }: ConversationPageProps) {
   const t = useDesignT();
-  const narrowWindow = useMediaQuery("(max-width: 1279px)");
-  const sheet = layout === "sheet" || (layout === "auto" && narrowWindow);
-  const scroll = useFollowBottom<HTMLDivElement>();
+  const segments = useViewportSegments();
+  // Two segments: the right area is the second segment's pane, whatever the window's width.
+  const narrowWindow = useMediaQuery(INLINE_RIGHT_AREA_BELOW) && !segments;
+  const compact = useSizeClass() === "compact";
+  const sheetLayout = layout === "sheet" || (layout === "auto" && narrowWindow);
+  const [unseen, setUnseen] = useState(false);
+  const follow = useFollowBottom<HTMLDivElement>(setUnseen);
+  const scrollEl = useRef<HTMLDivElement | null>(null);
+  const scroll = useCallback(
+    (el: HTMLDivElement | null) => {
+      scrollEl.current = el;
+      return follow(el);
+    },
+    [follow],
+  );
+  // One tap on the latest button: to the bottom (a reversed column's origin, scrollTop 0, is the
+  // bottom); the scroll event lets the hook resume following and hide the button.
+  const toLatest = () => {
+    const el = scrollEl.current;
+    if (!el) return;
+    el.scrollTop = getComputedStyle(el).flexDirection === "column-reverse" ? 0 : el.scrollHeight;
+  };
   const root = useRef<HTMLDivElement>(null);
   const [content, setContent] = useState(0);
   const [width, setWidth] = useState(PANEL_DEFAULT);
@@ -357,7 +382,18 @@ export function ConversationPage({
           )}
         </div>
       </div>
-      <div className="cb-conv-composer">{composerNode}</div>
+      <div className="cb-conv-composer">
+        {unseen ? (
+          <div className="cb-conv-latest" data-part="latest">
+            <IconButton
+              label={t("conv.latest")}
+              icon={<Icon name="arrow-down" size={16} />}
+              onClick={toLatest}
+            />
+          </div>
+        ) : null}
+        {composerNode}
+      </div>
     </div>
   );
 
@@ -399,7 +435,32 @@ export function ConversationPage({
     (newConversation !== undefined && loading?.agents === true);
   const open = rightNode != null && right !== "none";
   const full = rightFull === true && right === "panel" && open;
-  useInlineFocus(root, full ? "panel" : sheet ? "sheet" : open ? right : "none");
+  // On a phone (auto layout) the open right area is a page pushed over the conversation, full
+  // screen, kept by the URL hash the page owns: back closes it. Inside an AppShell it also hides
+  // the bottom navigation.
+  const pushed = layout === "auto" && compact && open;
+  const sheet = sheetLayout && !pushed;
+  const closeRight = useRef(onCloseRight);
+  closeRight.current = onCloseRight;
+  const pushedBack = useCallback(() => closeRight.current(), []);
+  // Inside an AppShell the shell's top bar is the one back (and shows the title) and the right
+  // area sits in normal flow under it; without one the page draws its own cover and back bar.
+  const inShell = useHasShell();
+  useRegisterShellPage(
+    pushed
+      ? { onBack: pushedBack, title: right === "properties" ? t("props.label") : t("panel.label") }
+      : {},
+  );
+  useEffect(() => {
+    if (!pushed) return;
+    const onKey = (e: globalThis.KeyboardEvent) => {
+      if (e.key === "Escape" && !e.defaultPrevented) closeRight.current();
+    };
+    document.addEventListener("keydown", onKey);
+    return () => document.removeEventListener("keydown", onKey);
+  }, [pushed]);
+  const inlineArea = open ? right : "none";
+  useInlineFocus(root, pushed ? inlineArea : full ? "panel" : sheet ? "sheet" : inlineArea);
   useEffect(() => {
     if (!full || !onRightFullChange) return;
     const onKey = (e: globalThis.KeyboardEvent) => {
@@ -415,27 +476,40 @@ export function ConversationPage({
       ref={root}
       className="cb-template cb-conv-page"
       data-template="ConversationPage"
-      data-right={right}
+      data-right={pushed ? "pushed" : right}
       data-right-full={full ? "true" : undefined}
       data-layout={layout}
+      data-segments={segments ? "2" : undefined}
       data-sheet={sheet ? "true" : undefined}
+      data-shell={pushed && inShell ? "true" : undefined}
     >
       <SkeletonGroup label={t("table.loading")} active={anyLoading}>
-        <div className="cb-conv-main" data-part="conv-main">
+        <div
+          className="cb-conv-main"
+          data-part="conv-main"
+          // covered by the pushed page: out of the tab order and the reading order. In a shell it
+          // stays laid out under the pushed section (`data-covered`, not `hidden`), so the thread
+          // keeps its scroll position when the right area closes.
+          {...(pushed
+            ? inShell
+              ? { inert: true, "aria-hidden": true, "data-covered": "true" }
+              : { inert: true }
+            : {})}
+        >
           {newConversation ? (
             <NewTitleBar />
           ) : (
             <TitleBar {...titleBar} {...(loading?.title ? { loading: true } : {})} />
           )}
           <div className="cb-conv-cols">
-            {full ? (
+            {full && !pushed ? (
               <div className="cb-conv-panel-full" data-part="panel-full">
                 <RightFullContext.Provider value={true}>{panelNode}</RightFullContext.Provider>
               </div>
             ) : (
               center
             )}
-            {!sheet && right === "properties" ? propertiesNode : null}
+            {!sheet && !pushed && right === "properties" ? propertiesNode : null}
           </div>
           <StatusBar
             context={status.context}
@@ -447,7 +521,7 @@ export function ConversationPage({
             announceFirst={(status.right?.length ?? 0) > 0}
           />
         </div>
-        {!full && !sheet && right === "panel" && open ? (
+        {!full && !sheet && !pushed && right === "panel" && open ? (
           <div
             className="cb-conv-panel"
             data-part="panel-slot"
@@ -473,6 +547,33 @@ export function ConversationPage({
             {panelNode}
           </div>
         ) : null}
+        {pushed ? (
+          <section
+            className="cb-conv-pushed"
+            data-part="pushed"
+            data-shell={inShell ? "true" : undefined}
+            aria-label={t("panel.label")}
+          >
+            {inShell ? null : (
+              <div className="cb-conv-pushed-bar" data-part="pushed-bar">
+                <IconButton
+                  label={t("panel.back")}
+                  icon={<Icon name="chevron-left" size={16} />}
+                  density="default"
+                  onClick={onCloseRight}
+                />
+                {right === "properties" ? (
+                  <span className="cb-rpanel-title-text cb-rpanel-title-plain">
+                    {t("props.label")}
+                  </span>
+                ) : null}
+              </div>
+            )}
+            <div className="cb-conv-pushed-body" data-part="pushed-body">
+              <RightPushedContext.Provider value={true}>{rightNode}</RightPushedContext.Provider>
+            </div>
+          </section>
+        ) : null}
         {sheet ? (
           // Kept mounted in sheet mode so closing runs Radix's close path (focus goes back to the
           // title-bar icon that opened it).
@@ -497,14 +598,14 @@ export function ConversationPage({
               </>
             ) : (
               <RD.Portal>
-                <RD.Overlay className="cb-conv-scrim" data-part="scrim" />
-                <SheetContent
+                <DraggableRightSheet
                   label={t("panel.label")}
                   focusReturn={focusReturn}
                   head={right === "properties" ? propertiesHead : undefined}
+                  onDismiss={onCloseRight}
                 >
                   {rightNode}
-                </SheetContent>
+                </DraggableRightSheet>
               </RD.Portal>
             )}
           </RD.Root>
@@ -514,22 +615,66 @@ export function ConversationPage({
   );
 }
 
+/**
+ * The right area as a side sheet (spec §6.7): the scrim and the sheet, which follows the finger
+ * to the right; a release past 40 % of its width closes it, the scrim fading as it goes.
+ */
+function DraggableRightSheet({
+  label,
+  focusReturn,
+  head,
+  onDismiss,
+  children,
+}: {
+  label: string;
+  focusReturn: ReturnType<typeof useFocusReturn>;
+  head?: ReactNode;
+  onDismiss(): void;
+  children?: ReactNode;
+}) {
+  const sheet = useRef<HTMLDivElement | null>(null);
+  const drag = useDragDismiss({
+    axis: "x",
+    size: () => sheet.current?.offsetWidth ?? 0,
+    onDismiss,
+  });
+  return (
+    <>
+      <RD.Overlay className="cb-conv-scrim" data-part="scrim" {...drag.scrimProps} />
+      <SheetContent
+        label={label}
+        focusReturn={focusReturn}
+        head={head}
+        contentRef={sheet}
+        {...drag.handleProps}
+        {...drag.panelProps}
+      >
+        {children}
+      </SheetContent>
+    </>
+  );
+}
+
 function SheetContent({
   inline,
   label,
   focusReturn,
   head,
+  contentRef,
   children,
-}: {
+  ...rest
+}: HTMLAttributes<HTMLDivElement> & {
   inline?: boolean;
+  contentRef?: Ref<HTMLDivElement>;
   label: string;
   focusReturn: ReturnType<typeof useFocusReturn>;
   /** A head row drawn above the content (the properties sheet's title and ×). */
   head?: ReactNode;
-  children?: ReactNode;
 }) {
   return (
     <RD.Content
+      {...rest}
+      ref={contentRef}
       className="cb-conv-sheet"
       data-part="sheet"
       data-inline={inline ? "true" : undefined}

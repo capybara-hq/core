@@ -883,6 +883,12 @@ export const ROUTES: readonly RouteEntry[] = [
     },
   },
   {
+    pattern: "/conversations",
+    // The compact class's Conversations tab: the first page of the groups, the sidebar's own read (the
+    // layout prefetches it as shell data too).
+    queries: ({ orgId }) => (orgId === null ? [] : [q(conversationGroupsQuery(orgId))]),
+  },
+  {
     pattern: "/devices",
     queries: ({ orgId }) => (orgId === null ? [] : [q(devicesQuery(orgId))]),
   },
@@ -1033,6 +1039,11 @@ export const ROUTES: readonly RouteEntry[] = [
     pattern: "/login",
     // The sign-in sources, and the session (`null` signed out) the login layout redirects on.
     queries: () => [q(authSourcesQuery()), q(maybeMeQuery())],
+  },
+  {
+    pattern: "/me",
+    queries: () => [],
+    none: "reads nothing of its own: the Me page draws the sidebar's data, which the layout prefetches as shell data",
   },
   {
     pattern: "/p/[plugin]/[id]",

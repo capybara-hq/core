@@ -14,13 +14,15 @@ import { Logo } from "../display/logo";
 import { Tooltip } from "../display/tooltip";
 import { Icon } from "../icons/icon";
 import type { IconName } from "../icons/paths";
+import { useDragDismiss } from "../overlays/drag";
 import { useFocusReturn } from "../overlays/focus-return";
 import { Menu, type MenuItem } from "../overlays/index";
 import { LinkPendingMark, useDesignLink, useDesignT } from "../provider";
 import { SIZES } from "../tokens";
 import { type PreferenceBarProps, ThemeToggle } from "./preference-bar";
 import { Conversations, type SidebarConversations, useRoving } from "./sidebar-conversations";
-import { useHydrated, useMediaQuery } from "./use-media-query";
+import { type SizeClass, useSizeClass } from "./size-class";
+import { useHydrated } from "./use-media-query";
 
 export {
   type SidebarActivity,
@@ -109,8 +111,8 @@ export type SidebarContext =
       adminHref?: string;
     };
 
-/** The panel a `brand` is drawn in: the full sidebar, the rail (collapsed) or the drawer. */
-export type SidebarBrandVariant = { collapsed: boolean; panel: "full" | "rail" | "drawer" };
+/** The panel a `brand` is drawn in: the full sidebar or the rail (collapsed). */
+export type SidebarBrandVariant = { collapsed: boolean; panel: "full" | "rail" };
 
 export type SidebarProps = {
   context: SidebarContext;
@@ -133,23 +135,26 @@ export type SidebarProps = {
   /** The account row: the avatar and name open the account menu. */
   account: { name: string; menu: MenuItem[] };
   /**
-   * The theme switch, drawn after the account (full sidebar or open drawer); the rail has no room,
+   * The theme switch, drawn after the account (the full sidebar); the rail has no room,
    * so there it is the account menu's first item. The language is the caller's account submenu.
    */
   theme?: PreferenceBarProps["theme"];
   onOpenCommands(): void;
-  /** Default from media queries: below 1280 `rail`, below 960 `drawer`. */
-  mode?: "full" | "rail" | "drawer";
   /**
-   * The drawer's open state (rail and drawer modes). AppShell controls it from its menu button;
-   * without it the sidebar keeps its own (the rail's expand button opens it).
+   * Default from the size class (spec §4.1): `full` from 841 unless `collapsed`, `rail` on medium
+   * (and collapsed), `none` below 600 (the compact shell's bottom navigation and Me page hold its
+   * content; the sidebar has no drawer form).
    */
-  drawer?: { open: boolean; onOpenChange(open: boolean): void };
+  mode?: "full" | "rail" | "none";
   /**
-   * Draw the open drawer inside the nearest positioned box instead of as a modal over the page
-   * (the reference set and the catalog only).
+   * The person's choice of the rail on the expanded class (the `cb-sidebar` cookie, read by the
+   * app layout so the first paint draws it); the full sidebar's collapse toggle and the rail's
+   * expand button call `onCollapsedChange`.
    */
-  drawerInline?: boolean;
+  collapsed?: boolean;
+  onCollapsedChange?(collapsed: boolean): void;
+  /** Draw the rail of the medium class (no expand button, a Conversations button): the reference set only. */
+  railMedium?: boolean;
   /** The rail item whose tooltip is drawn open (the reference set and the catalog only). */
   railTooltip?: string;
   /** Draw the 更多 flyout open (the reference set and the catalog only). */
@@ -159,20 +164,34 @@ export type SidebarProps = {
 const countText = (n: { count?: number; countMore?: boolean }): string =>
   (n.count ?? 0) > 99 ? "99+" : `${n.count ?? 0}${n.countMore ? "+" : ""}`;
 
-type Variant = "full" | "rail" | "panel";
+/**
+ * The count on the rail's nav badge (spec §6.13 "Nav badge"): capped at `9+`, since the 48 rail has
+ * no room for more beside the icon. The full count stays in the accessible name.
+ */
+const railCountText = (n: { count?: number; countMore?: boolean }): string =>
+  (n.count ?? 0) > 9 ? "9+" : `${n.count ?? 0}${n.countMore ? "+" : ""}`;
+
+type Variant = "full" | "rail";
+
+/** The collapse / expand shortcut, shown in the toggle's tooltip (the key handler is AppShell's). */
+export const COLLAPSE_SHORTCUT = "⌘\\";
 
 /**
- * The sidebar's breakpoints (spec §6.13): the rail below 1280, the drawer below 960. The one place
- * the sidebar and the App Shell read them from (sidebar.css uses the same widths).
+ * The sidebar mode the size class gives (spec §4.1): the full sidebar on the expanded class unless
+ * the person collapsed it, the rail on medium, none below 600. The one place the sidebar and
+ * the App Shell read it from; `full` before hydration (both panels are drawn then, CSS shows one).
  */
-export const SIDEBAR_RAIL_QUERY = "(max-width: 1279px)";
-export const SIDEBAR_DRAWER_QUERY = "(max-width: 959px)";
+export function sidebarModeOf(
+  sizeClass: SizeClass | null,
+  collapsed: boolean,
+): "full" | "rail" | "none" {
+  if (sizeClass === "compact") return "none";
+  if (sizeClass === "medium") return "rail";
+  return sizeClass === "expanded" && collapsed ? "rail" : "full";
+}
 
-/** The sidebar mode the window width gives: `full` before hydration (both panels drawn then). */
-export function useSidebarWidthMode(): "full" | "rail" | "drawer" {
-  const rail = useMediaQuery(SIDEBAR_RAIL_QUERY);
-  const narrow = useMediaQuery(SIDEBAR_DRAWER_QUERY);
-  return narrow ? "drawer" : rail ? "rail" : "full";
+export function useSidebarWidthMode(collapsed: boolean): "full" | "rail" | "none" {
+  return sidebarModeOf(useSizeClass(), collapsed);
 }
 
 /**
@@ -185,93 +204,110 @@ export function useSidebarWidthMode(): "full" | "rail" | "drawer" {
  */
 export function Sidebar(p: SidebarProps) {
   const hydrated = useHydrated();
-  const widthMode = useSidebarWidthMode();
+  const sizeClass = useSizeClass();
+  const widthMode = useSidebarWidthMode(p.collapsed ?? false);
   const responsive = p.mode === undefined && !hydrated;
   const mode = p.mode ?? widthMode;
-  const [ownOpen, setOwnOpen] = useState(false);
-  const open = p.drawer?.open ?? ownOpen;
-  const setOpen = (o: boolean) => {
-    if (p.drawer) p.drawer.onOpenChange(o);
-    else setOwnOpen(o);
-  };
+  // The medium rail has no expand button; both rails open the conversations as a side sheet.
+  const mediumRail = p.railMedium ?? (p.mode === undefined && sizeClass === "medium");
+  const [sheetOpen, setSheetOpen] = useState(false);
 
-  // A route change (another nav item or conversation becomes current) closes the drawer.
+  // A route change (another nav item or conversation becomes current) closes the sheet.
   const route = `${p.activeNav}|${p.conversations?.activeId ?? ""}`;
   const lastRoute = useRef(route);
-  // biome-ignore lint/correctness/useExhaustiveDependencies: runs on route changes only
   useEffect(() => {
     if (lastRoute.current === route) return;
     lastRoute.current = route;
-    if (p.drawer) {
-      if (p.drawer.open) p.drawer.onOpenChange(false);
-    } else setOwnOpen(false);
+    setSheetOpen(false);
   }, [route]);
+  // The sheet belongs to the rail: leaving it (another class, the sidebar expanded) closes it.
+  useEffect(() => {
+    if (mode !== "rail") setSheetOpen(false);
+  }, [mode]);
 
-  const drawer =
-    mode === "full" || responsive ? null : (
-      <RD.Root open={open} onOpenChange={setOpen} modal={!p.drawerInline}>
-        {p.drawerInline ? (
-          open ? (
-            <DrawerLayer p={p} inline onClose={() => setOpen(false)} />
-          ) : null
-        ) : (
-          <RD.Portal>
-            <DrawerLayer p={p} onClose={() => setOpen(false)} />
-          </RD.Portal>
-        )}
+  const hasSessions = p.context.kind === "work" && p.conversations !== undefined;
+  const sessions = hasSessions
+    ? { open: sheetOpen, onToggle: () => setSheetOpen((v) => !v) }
+    : undefined;
+
+  const sheet =
+    sessions !== undefined && mode === "rail" && !responsive ? (
+      <RD.Root open={sheetOpen} onOpenChange={setSheetOpen} modal={false}>
+        <RD.Portal>
+          <SheetLayer p={p} onClose={() => setSheetOpen(false)} />
+        </RD.Portal>
       </RD.Root>
-    );
+    ) : null;
 
-  // Fixed slots (full, rail, drawer), so the panel that stays keeps its state after hydration.
+  // Fixed slots (full, rail), so the panel that stays keeps its state after hydration.
   return (
     <>
       {responsive || mode === "full" ? (
         <SidebarPanel p={p} variant="full" responsive={responsive} />
       ) : null}
       {responsive || mode === "rail" ? (
-        <SidebarPanel p={p} variant="rail" responsive={responsive} onExpand={() => setOpen(true)} />
+        <SidebarPanel
+          p={p}
+          variant="rail"
+          responsive={responsive}
+          mediumRail={mediumRail}
+          sessions={sessions}
+        />
       ) : null}
-      {drawer}
+      {sheet}
     </>
   );
 }
 
-function DrawerLayer({
-  p,
-  inline,
-  onClose,
-}: {
-  p: SidebarProps;
-  inline?: boolean;
-  onClose(): void;
-}) {
+/**
+ * The rail's Conversations sheet (spec §6.13): the conversation section over the content from the
+ * rail's edge, `layout.sidebar` wide, with no scrim. Esc, the close button, a choice of a
+ * conversation and a click outside dismiss it.
+ */
+function SheetLayer({ p, onClose }: { p: SidebarProps; onClose(): void }) {
   const t = useDesignT();
-  // The opener (AppShell's menu button, the rail's expand button) is not a Radix trigger.
   const focusReturn = useFocusReturn();
+  const panel = useRef<HTMLDivElement | null>(null);
+  // A drag toward the rail dismisses it (spec §6.7, §6.13).
+  const drag = useDragDismiss({
+    axis: "x",
+    size: () => panel.current?.offsetWidth ?? 0,
+    onDismiss: onClose,
+    direction: -1,
+  });
+  const conversations = p.conversations;
+  if (conversations === undefined) return null;
   return (
-    <div className="cb-sidebar-layer" data-inline={inline ? "true" : undefined}>
-      <div className="cb-sidebar-scrim" aria-hidden="true" onClick={onClose} />
+    <div className="cb-sidebar-layer" data-sheet="true">
       <RD.Content
-        className="cb-sidebar-drawer"
+        ref={panel}
+        className="cb-sidebar-sheet"
+        data-part="conversations-sheet"
         aria-describedby={undefined}
-        onOpenAutoFocus={(e) => {
-          // Drawn in place (reference set): nothing to move focus into.
-          if (inline) e.preventDefault();
-          else focusReturn.capture();
-        }}
+        {...drag.handleProps}
+        {...drag.panelProps}
+        onOpenAutoFocus={focusReturn.capture}
         onCloseAutoFocus={focusReturn.restore}
+        onInteractOutside={(e) => {
+          // The rail's Conversations button toggles the sheet itself.
+          if ((e.target as HTMLElement | null)?.closest('[data-part="conversations-button"]'))
+            e.preventDefault();
+        }}
         onEscapeKeyDown={(e) => {
-          // Esc in the rename or filter input belongs to that input, not to the drawer.
           const target = e.target as HTMLElement | null;
           if (target?.closest('[data-part="rename"], [data-part="filter"]')) e.preventDefault();
         }}
         onClick={(e: MouseEvent<HTMLElement>) => {
-          // Following a link closes the drawer (the route changes).
           if ((e.target as HTMLElement).closest("a[href]")) onClose();
         }}
       >
-        <RD.Title className="cb-sr-only">{t("shell.nav")}</RD.Title>
-        <SidebarPanel p={p} variant="panel" onClose={onClose} />
+        <div className="cb-sidebar" data-mode="full" data-variant="sheet">
+          <div className="cb-sidebar-top" data-part="sheet-head">
+            <RD.Title className="cb-sidebar-sheet-title">{t("sidebar.conversations")}</RD.Title>
+            <IconButton label={t("sidebar.close")} icon={<Icon name="x" />} onClick={onClose} />
+          </div>
+          <Conversations c={conversations} newHref={p.newConversation?.href ?? "/"} />
+        </div>
       </RD.Content>
     </div>
   );
@@ -281,15 +317,17 @@ function SidebarPanel({
   p,
   variant,
   responsive,
-  onExpand,
-  onClose,
+  mediumRail,
+  sessions,
 }: {
   p: SidebarProps;
   variant: Variant;
   /** Drawn before hydration next to the other variant; CSS media queries pick one. */
   responsive?: boolean;
-  onExpand?: () => void;
-  onClose?: () => void;
+  /** The rail of the medium class: no expand button. */
+  mediumRail?: boolean;
+  /** The rail's Conversations button (work context with conversations). */
+  sessions?: { open: boolean; onToggle(): void } | undefined;
 }) {
   const t = useDesignT();
   const rail = variant === "rail";
@@ -304,7 +342,7 @@ function SidebarPanel({
       {ctx.kind === "setup" ? (
         <SetupNav p={p} ctx={ctx} rail={rail} />
       ) : (
-        <SidebarNav p={p} rail={rail} inDrawer={variant === "panel"} />
+        <SidebarNav p={p} rail={rail} sessions={rail ? sessions : undefined} />
       )}
       {ctx.kind === "work" && !rail && p.conversations ? (
         <Conversations c={p.conversations} newHref={p.newConversation?.href ?? "/"} />
@@ -320,25 +358,25 @@ function SidebarPanel({
       data-cap-part="sidebar"
       data-mode={rail ? "rail" : "full"}
       data-context={ctx.kind}
+      data-collapsed={p.collapsed ? "true" : undefined}
       data-responsive={responsive ? "true" : undefined}
     >
       <div className="cb-sidebar-top" data-part="brand-row" data-cap-part="sidebar.brand">
         {p.brand ? (
-          p.brand({
-            collapsed: rail,
-            panel: rail ? "rail" : variant === "panel" ? "drawer" : "full",
-          })
+          p.brand({ collapsed: rail, panel: rail ? "rail" : "full" })
         ) : (
           <Logo scale={2} wordmark={!rail} />
         )}
         {rail ? null : (
           <span className="cb-sidebar-top-tools">
             {ctx.kind === "work" ? <BrandTools p={p} rail={false} /> : null}
-            {variant === "panel" ? (
+            {variant === "full" && p.onCollapsedChange ? (
               <IconButton
-                label={t("sidebar.close")}
-                icon={<Icon name="x" />}
-                onClick={() => onClose?.()}
+                label={t("shell.railCollapse")}
+                title={`${t("shell.railCollapse")} ${COLLAPSE_SHORTCUT}`}
+                icon={<Icon name="panel-left" />}
+                part="collapse-toggle"
+                onClick={() => p.onCollapsedChange?.(true)}
               />
             ) : null}
           </span>
@@ -346,26 +384,21 @@ function SidebarPanel({
       </div>
       {rail ? (
         <div className="cb-sidebar-rail-tools">
-          <Tooltip content={t("sidebar.expand")}>
-            <IconButton
-              label={t("sidebar.expand")}
-              icon={<Icon name="panel-left" />}
-              onClick={() => onExpand?.()}
-            />
-          </Tooltip>
+          {mediumRail && !responsive ? null : (
+            <Tooltip content={`${t("sidebar.expand")} ${COLLAPSE_SHORTCUT}`}>
+              <IconButton
+                label={t("sidebar.expand")}
+                icon={<Icon name="panel-left" />}
+                part="expand-toggle"
+                data-rail-for={responsive ? "expanded" : undefined}
+                onClick={() => p.onCollapsedChange?.(false)}
+              />
+            </Tooltip>
+          )}
           {ctx.kind === "work" ? <BrandTools p={p} rail /> : null}
         </div>
       ) : null}
-      {variant === "panel" ? (
-        // The drawer (maintainer decision 2026-11-09): the top row and the bottom block stay put,
-        // everything between scrolls as one region, so an expanded 更多 pushes the conversations
-        // down instead of squeezing their list.
-        <div className="cb-sidebar-scroll" data-part="drawer-scroll">
-          {middle}
-        </div>
-      ) : (
-        middle
-      )}
+      {middle}
       {ctx.kind !== "admin" && ctx.adminHref !== undefined ? (
         <AdminEntry href={ctx.adminHref} rail={rail} />
       ) : null}
@@ -394,8 +427,7 @@ function BrandTools({ p, rail }: { p: SidebarProps; rail: boolean }) {
         {node}
       </RailTip>
     ) : (
-      // In the brand row the native title is the tooltip: a Radix Tooltip opened by focus would
-      // take the drawer's Escape.
+      // In the brand row the native title is the tooltip.
       node
     );
   const pending = inbox && (inbox.count ?? 0) > 0 ? countText(inbox) : null;
@@ -433,7 +465,7 @@ function BrandTools({ p, rail }: { p: SidebarProps; rail: boolean }) {
               <Icon name="inbox" />
               {pending === null ? null : (
                 <span className="cb-sidebar-badge" data-part="inbox-badge" aria-hidden="true">
-                  {pending}
+                  {rail ? railCountText(inbox ?? {}) : pending}
                 </span>
               )}
             </Link>,
@@ -462,7 +494,16 @@ function RailTip({
 }
 
 /** The org switcher: a 40 block on `bg`, the initial on `ink`, name and `~/<slug> · <role>`. */
-function OrgSwitcher({ org, rail }: { org: SidebarOrg; rail: boolean }) {
+export function OrgSwitcher({
+  org,
+  rail,
+  onOpen,
+}: {
+  org: SidebarOrg;
+  rail: boolean;
+  /** Opens the org list another way than the popover menu (the Me page's bottom sheet). */
+  onOpen?: () => void;
+}) {
   const t = useDesignT();
   const label = t("sidebar.orgSwitch").replace("{org}", org.name);
   const initial = (
@@ -489,6 +530,21 @@ function OrgSwitcher({ org, rail }: { org: SidebarOrg; rail: boolean }) {
       {org.menu.length > 0 ? <Icon name="chevrons-up-down" size={14} /> : null}
     </>
   );
+  if (onOpen !== undefined && org.menu.length > 0) {
+    return (
+      <button
+        type="button"
+        className="cb-sidebar-org"
+        data-part="org-switcher"
+        aria-label={label}
+        aria-haspopup="dialog"
+        title={org.name}
+        onClick={onOpen}
+      >
+        {content}
+      </button>
+    );
+  }
   if (org.menu.length === 0) {
     return (
       <div className="cb-sidebar-org" data-part="org-switcher" data-static="true" title={org.name}>
@@ -511,7 +567,27 @@ function OrgSwitcher({ org, rail }: { org: SidebarOrg; rail: boolean }) {
   return <Menu items={org.menu} trigger={button} />;
 }
 
-/** The admin context block: static, the shield in the accent tint, and the way back. */
+/** The admin context's block: static, the shield in the accent tint (the Me page's too). */
+export function ContextBlock({ rail }: { rail: boolean }) {
+  const t = useDesignT();
+  return (
+    <div className="cb-sidebar-org" data-part="context-block" data-static="true">
+      <span className="cb-sidebar-org-initial" data-tone="accent" aria-hidden="true">
+        <Icon name="admin" size={14} />
+      </span>
+      {rail ? (
+        <span className="cb-sr-only">{t("sidebar.admin")}</span>
+      ) : (
+        <span className="cb-sidebar-org-text">
+          <span className="cb-sidebar-org-name">{t("sidebar.admin")}</span>
+          <span className="cb-sidebar-org-meta">{t("sidebar.adminScope")}</span>
+        </span>
+      )}
+    </div>
+  );
+}
+
+/** The admin context block and the way back. */
 function AdminBlock({
   back,
   rail,
@@ -524,19 +600,7 @@ function AdminBlock({
   const backLabel = back.slug === null ? t("sidebar.back") : `${t("sidebar.back")} ~/${back.slug}`;
   return (
     <div className="cb-sidebar-context">
-      <div className="cb-sidebar-org" data-part="context-block" data-static="true">
-        <span className="cb-sidebar-org-initial" data-tone="accent" aria-hidden="true">
-          <Icon name="admin" size={14} />
-        </span>
-        {rail ? (
-          <span className="cb-sr-only">{t("sidebar.admin")}</span>
-        ) : (
-          <span className="cb-sidebar-org-text">
-            <span className="cb-sidebar-org-name">{t("sidebar.admin")}</span>
-            <span className="cb-sidebar-org-meta">{t("sidebar.adminScope")}</span>
-          </span>
-        )}
-      </div>
+      <ContextBlock rail={rail} />
       {rail ? (
         <RailTip label={backLabel}>
           <Link
@@ -587,13 +651,17 @@ function AdminEntry({ href, rail }: { href: string; rail: boolean }) {
   );
 }
 
-/**
- * The nav items. `inDrawer` (the drawer, the sidebar's touch form): 更多 is a disclosure that
- * lists its items in place under it, one level in (a flyout to the right would land over the
- * scrim and past the screen's edge; maintainer decision 2026-11-09); the full sidebar and the
- * rail keep the flyout.
- */
-function SidebarNav({ p, rail, inDrawer }: { p: SidebarProps; rail: boolean; inDrawer?: boolean }) {
+/** The nav items; More opens a flyout beside the sidebar or the rail. */
+function SidebarNav({
+  p,
+  rail,
+  sessions,
+}: {
+  p: SidebarProps;
+  rail: boolean;
+  /** The rail's Conversations button: toggles the side sheet. */
+  sessions?: { open: boolean; onToggle(): void } | undefined;
+}) {
   const t = useDesignT();
   const Link = useDesignLink();
   const ctx = p.context;
@@ -604,16 +672,12 @@ function SidebarNav({ p, rail, inDrawer }: { p: SidebarProps; rail: boolean; inD
   const hasMore = work && more.length + moreExtensions.length > 0;
   const activeInMore = [...more, ...moreExtensions].some((n) => n.id === p.activeNav);
   const [moreOpen, setMoreOpen] = useState(p.moreOpen ?? false);
-  // In the drawer 更多 opens expanded while the current page is one of its items.
-  const [expanded, setExpanded] = useState(activeInMore || (p.moreOpen ?? false));
-  const subId = `cb-sidebar-more-${useId().replace(/[^\w-]/g, "")}`;
-  const sub = inDrawer && hasMore && expanded ? [...more, ...moreExtensions] : [];
   const newHref = work ? p.newConversation?.href : undefined;
   const keys = [
     ...(newHref !== undefined ? ["new"] : []),
+    ...(sessions ? ["conversations"] : []),
     ...primary.map((n) => n.id),
     ...(hasMore ? ["more"] : []),
-    ...sub.map((n) => n.id),
   ];
   const roving = useRoving(p.activeNav === "" ? undefined : p.activeNav);
   const tip = (key: string, label: string, node: ReactElement) =>
@@ -628,7 +692,6 @@ function SidebarNav({ p, rail, inDrawer }: { p: SidebarProps; rail: boolean; inD
     key: string,
     n: { label: string; href: string; icon: IconName; count?: number; countMore?: boolean },
     part: "nav-item" | "new-conversation" = "nav-item",
-    depth?: 1,
   ) => {
     const count = n.count ? countText(n) : null;
     const name =
@@ -642,7 +705,6 @@ function SidebarNav({ p, rail, inDrawer }: { p: SidebarProps; rail: boolean; inD
         className="cb-sidebar-item"
         data-part={part}
         data-cap-part="sidebar.item"
-        data-depth={depth}
         data-rove={key}
         tabIndex={roving.tabIndexOf(key, keys)}
         {...(key === p.activeNav ? { "aria-current": "page" as const } : {})}
@@ -652,7 +714,7 @@ function SidebarNav({ p, rail, inDrawer }: { p: SidebarProps; rail: boolean; inD
         {rail ? null : <span className="cb-sidebar-label">{n.label}</span>}
         {count === null ? null : rail ? (
           <span className="cb-sidebar-badge" data-part="rail-badge" aria-hidden="true">
-            {count}
+            {railCountText(n)}
           </span>
         ) : (
           <span className="cb-sidebar-count" data-part="nav-count" aria-hidden="true">
@@ -717,44 +779,25 @@ function SidebarNav({ p, rail, inDrawer }: { p: SidebarProps; rail: boolean; inD
       {newHref !== undefined
         ? item("new", { label: t("sidebar.new"), href: newHref, icon: "plus" }, "new-conversation")
         : null}
-      {primary.map((n) => item(n.id, n))}
-      {hasMore && inDrawer ? (
-        <>
+      {sessions ? (
+        <RailTip label={t("sidebar.conversations")}>
           <button
             type="button"
             className="cb-sidebar-item"
-            data-part="more-toggle"
-            data-rove="more"
-            data-active={activeInMore && !expanded ? "true" : undefined}
-            aria-expanded={expanded}
-            aria-controls={subId}
-            tabIndex={roving.tabIndexOf("more", keys)}
-            onClick={() => setExpanded((v) => !v)}
+            data-part="conversations-button"
+            data-rove="conversations"
+            tabIndex={roving.tabIndexOf("conversations", keys)}
+            aria-label={t("sidebar.conversations")}
+            aria-expanded={sessions.open}
+            aria-haspopup="dialog"
+            onClick={sessions.onToggle}
           >
-            <Icon name="more-horizontal" />
-            <span className="cb-sidebar-label">{moreLabel}</span>
-            <span className="cb-sidebar-chevron" data-part="more-chevron" aria-hidden="true">
-              <Icon name="chevron-right" size={12} />
-            </span>
+            <Icon name="chats" size={16} />
           </button>
-          {expanded ? (
-            // biome-ignore lint/a11y/useSemanticElements: a fieldset is a form control group
-            <div
-              id={subId}
-              className="cb-sidebar-sub"
-              data-part="more-items"
-              role="group"
-              aria-label={moreLabel}
-            >
-              {more.map((n) => item(n.id, n, "nav-item", 1))}
-              {more.length > 0 && moreExtensions.length > 0 ? (
-                <hr className="cb-sidebar-sub-sep" />
-              ) : null}
-              {moreExtensions.map((n) => item(n.id, n, "nav-item", 1))}
-            </div>
-          ) : null}
-        </>
-      ) : hasMore ? (
+        </RailTip>
+      ) : null}
+      {primary.map((n) => item(n.id, n))}
+      {hasMore ? (
         <Menu
           key="more"
           items={moreItems}

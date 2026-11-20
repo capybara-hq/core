@@ -146,7 +146,7 @@ export function ClientHost({
   /**
    * One error of a plugin: reported once per kind and contribution, counted by the budget. A
    * contribution's error counts once per document like its report (one brand drawn in the rail and
-   * in the open drawer must not spend the budget on its first crash); an error of no contribution
+   * in the full sidebar must not spend the budget on its first crash); an error of no contribution
    * (a listener, an uncaught error) counts each time.
    */
   const counted = useRef(new Set<string>());

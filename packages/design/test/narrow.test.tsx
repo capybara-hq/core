@@ -6,7 +6,7 @@ import { type Column, DataTable, DesignProvider } from "../src/index";
 
 /**
  * Phone widths (spec §4.3 "Narrow windows"): jsdom cannot lay anything out, so these tests read
- * the stylesheets' rules (inside `@media (max-width: 639px)` where the behaviour is narrow-only)
+ * the stylesheets' rules (inside `@media (max-width: 599px)` where the behaviour is narrow-only)
  * and the DOM the stacked table needs.
  */
 afterEach(cleanup);
@@ -15,7 +15,7 @@ const STYLES = resolve(import.meta.dirname, "../src/styles");
 const css = (file: string) => readFileSync(resolve(STYLES, file), "utf8");
 
 /** The bodies of every `@media <query> {…}` block in `text`, joined. */
-function media(text: string, query = "(max-width: 639px)"): string {
+function media(text: string, query = "(max-width: 599px)"): string {
   const open = `@media ${query} {`;
   let out = "";
   let at = text.indexOf(open);
@@ -151,33 +151,46 @@ describe("SettingsPage sub-nav below 640", () => {
     expect(nav).toContain("overflow-x: auto;");
   });
 
-  it("is sticky only on phones (the 200 px rail above 640 is not)", () => {
+  it("is sticky only on phones (the 200 px rail from 600 is not)", () => {
     const wide = css("templates.css").replace(/@media[^{]*\{(?:[^{}]*\{[^{}]*\})*[^{}]*\}/g, "");
     expect(decls(wide, ".cb-settings-nav")).not.toContain("position: sticky;");
   });
 });
 
-describe("the sidebar drawer", () => {
-  const sidebar = css("sidebar.css");
-
-  it("scrolls its middle as one region; the conversations inside it do not scroll on their own", () => {
-    const region = decls(sidebar, ".cb-sidebar-scroll");
-    expect(region).toContain("overflow-y: auto;");
-    expect(region).toContain("min-height: 0;");
-    expect(region).toContain("flex: 1;");
-    const convs = decls(sidebar, ".cb-sidebar-scroll > .cb-sidebar-convs");
-    expect(convs).toContain("flex: none;");
-    expect(convs).toContain("overflow: visible;");
+describe("size-class widths in the stylesheets", () => {
+  it("a label column that does not fit stacks by a container query on the body, and below 841", () => {
+    const templates = css("templates.css");
+    const shell = css("shell.css");
+    expect(decls(shell, ".cb-body-content")).toContain("container: cb-body / inline-size;");
+    for (const [sel, width] of [
+      [".cb-form-section", "791px"],
+      [".cb-settings-grid", "751px"],
+    ] as const) {
+      expect(media(templates, "(max-width: 840px)")).toContain(sel);
+      expect(media(templates, `(max-width: 840px)`)).not.toContain("959");
+      expect(templates).toContain(`@container cb-body (max-width: ${width}) {`);
+    }
   });
 
-  it("indents the 更多 items one level and turns the chevron while open", () => {
-    expect(decls(sidebar, '.cb-sidebar-item[data-depth="1"]')).toContain("padding-left:");
-    expect(
-      decls(
-        sidebar,
-        '.cb-sidebar-item[data-part="more-toggle"][aria-expanded="true"] .cb-sidebar-chevron',
-      ),
-    ).toContain("transform: rotate(90deg);");
+  it("the compact chrome (top bar, bottom navigation) is shown below 600 only", () => {
+    const shell = css("shell.css");
+    expect(decls(shell, ".cb-shell-topbar")).toContain("display: none;");
+    const compact = media(shell, "(max-width: 599px)");
+    expect(decls(compact, ".cb-shell-topbar")).toContain("display: block;");
+    expect(decls(compact, ".cb-shell-bottomnav")).toContain("display: block;");
+  });
+
+  it("a short window hides the status bar on every class", () => {
+    const hidden = media(css("shell.css"), "(max-height: 479px)");
+    expect(decls(hidden, ".cb-statusbar")).toContain("display: none;");
+  });
+
+  it("a short window drops the path row on compact only (its top bar carries back; R26)", () => {
+    // medium and expanded (844 × 390 is expanded) have no top bar: the path row is their way up
+    const any = media(css("shell.css"), "(max-height: 479px)");
+    expect(decls(any, ".cb-pageheader-path")).not.toContain("display: none;");
+    const compact = media(css("shell.css"), "(max-width: 599px) and (max-height: 479px)");
+    expect(decls(compact, ".cb-pageheader-path")).toContain("display: none;");
   });
 });
 
@@ -257,7 +270,6 @@ describe("tap targets below 640 are at least 40 px", () => {
     .join("\n");
 
   for (const sel of [
-    ".cb-shell-drawerbar .cb-icon-btn",
     ".cb-title-bar .cb-icon-btn",
     ".cb-pageheader-tabs .cb-tab",
     ".cb-table-menu .cb-btn",
@@ -284,22 +296,6 @@ describe("tap targets below 640 are at least 40 px", () => {
 
   it("the conversation title button", () => {
     expect(decls(narrow, ".cb-title-btn")).toContain("height: 40px;");
-  });
-
-  it("sidebar rows in the drawer (the drawer is the touch form, below 960)", () => {
-    const sidebar = css("sidebar.css");
-    for (const sel of [
-      ".cb-sidebar-drawer .cb-sidebar .cb-sidebar-item",
-      ".cb-sidebar-drawer .cb-sidebar .cb-sidebar-row",
-      ".cb-sidebar-drawer .cb-sidebar .cb-sidebar-back",
-      ".cb-sidebar-drawer .cb-sidebar .cb-sidebar-group-head",
-      ".cb-sidebar-drawer .cb-sidebar .cb-sidebar-archived",
-    ]) {
-      expect(decls(sidebar, sel), sel).toContain("height: 40px;");
-    }
-    const menu = decls(sidebar, ".cb-sidebar-drawer .cb-sidebar .cb-sidebar-row-menu");
-    expect(menu).toContain("width: 40px;");
-    expect(menu).toContain("height: 40px;");
   });
 });
 

@@ -369,7 +369,9 @@ const ROUTES: Routes = {
   "GET /api/v1/admin/model-purposes": () => json(200, { purposes: [] }),
 };
 
-beforeEach(() => resetNavigation("/admin"));
+beforeEach(() => {
+  resetNavigation("/admin");
+});
 afterEach(cleanup);
 
 const settle = () => act(() => new Promise((r) => setTimeout(r, 20)));

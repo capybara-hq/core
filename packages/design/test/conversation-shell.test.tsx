@@ -4,6 +4,7 @@ import { act, cleanup, render, screen, within } from "@testing-library/react";
 import { userEvent } from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
+  AppShell,
   ComposerBox,
   type ComposerBoxProps,
   ContextSection,
@@ -23,6 +24,8 @@ import {
   type TitleBarProps,
   titleBarFit,
 } from "../src/index";
+import { ShellPageContext } from "../src/shell/shell-page";
+import { css, parseCss } from "./css-rules";
 
 afterEach(() => {
   cleanup();
@@ -682,5 +685,227 @@ describe("final review a11y (m11, m13, m14)", () => {
     expect(ids.map((id) => document.getElementById(id)?.textContent)).toEqual([
       "From the next message",
     ]);
+  });
+});
+
+describe("ConversationPage on a phone (§5.4, mobile layout spec §5.4)", () => {
+  function phone(compact: boolean) {
+    vi.stubGlobal(
+      "matchMedia",
+      (q: string) =>
+        ({
+          matches: compact ? q === "(max-width: 599px)" || q === "(max-width: 1279px)" : false,
+          media: q,
+          addEventListener: () => {},
+          removeEventListener: () => {},
+        }) as unknown as MediaQueryList,
+    );
+  }
+
+  it("the open right area is a pushed full-screen page with a back control, not a dialog", async () => {
+    phone(true);
+    const onCloseRight = vi.fn();
+    wrap(<ConversationPage {...page({ right: "properties", layout: "auto", onCloseRight })} />);
+    const root = document.querySelector('[data-template="ConversationPage"]') as HTMLElement;
+    expect(root.getAttribute("data-right")).toBe("pushed");
+    const pushed = document.querySelector('[data-part="pushed"]') as HTMLElement;
+    expect(pushed).not.toBeNull();
+    expect(within(pushed).getByTestId("properties")).toBeTruthy();
+    expect(screen.queryByRole("dialog")).toBeNull();
+    await userEvent.click(within(pushed).getByRole("button", { name: "返回" }));
+    expect(onCloseRight).toHaveBeenCalledTimes(1);
+  });
+
+  it("a panel is pushed too, and Esc goes back", async () => {
+    phone(true);
+    const onCloseRight = vi.fn();
+    wrap(<ConversationPage {...page({ right: "panel", layout: "auto", onCloseRight })} />);
+    const pushed = document.querySelector('[data-part="pushed"]') as HTMLElement;
+    expect(within(pushed).getByTestId("panel")).toBeTruthy();
+    await userEvent.keyboard("{Escape}");
+    expect(onCloseRight).toHaveBeenCalledTimes(1);
+  });
+
+  it("closed, nothing is pushed and data-right stays none", () => {
+    phone(true);
+    wrap(<ConversationPage {...page({ right: "none", layout: "auto" })} />);
+    const root = document.querySelector('[data-template="ConversationPage"]') as HTMLElement;
+    expect(root.getAttribute("data-right")).toBe("none");
+    expect(document.querySelector('[data-part="pushed"]')).toBeNull();
+  });
+
+  it("a wider window keeps the sheet (medium) and is never pushed", () => {
+    vi.stubGlobal(
+      "matchMedia",
+      (q: string) =>
+        ({
+          matches: q === "(max-width: 1279px)",
+          media: q,
+          addEventListener: () => {},
+          removeEventListener: () => {},
+        }) as unknown as MediaQueryList,
+    );
+    wrap(<ConversationPage {...page({ right: "properties", layout: "auto" })} />);
+    expect(document.querySelector('[data-part="pushed"]')).toBeNull();
+    expect(screen.getByRole("dialog")).toBeTruthy();
+  });
+
+  it("an explicit layout never pushes", () => {
+    phone(true);
+    wrap(<ConversationPage {...page({ right: "properties", layout: "sheet" })} />);
+    expect(document.querySelector('[data-part="pushed"]')).toBeNull();
+  });
+
+  it("without a shell the page draws its own cover and back bar and the thread is inert", () => {
+    phone(true);
+    wrap(<ConversationPage {...page({ right: "properties", layout: "auto" })} />);
+    const pushed = document.querySelector('[data-part="pushed"]') as HTMLElement;
+    expect(pushed.getAttribute("data-shell")).toBeNull();
+    expect(pushed.querySelector('[data-part="pushed-bar"]')).not.toBeNull();
+    expect(document.querySelector('[data-part="conv-main"]')?.hasAttribute("inert")).toBe(true);
+  });
+
+  it("inside a shell there is one back: the shell's, registered with onBack and a title", () => {
+    phone(true);
+    const register = vi.fn();
+    const onCloseRight = vi.fn();
+    wrap(
+      <ShellPageContext.Provider value={register}>
+        <ConversationPage {...page({ right: "properties", layout: "auto", onCloseRight })} />
+      </ShellPageContext.Provider>,
+    );
+    const pushed = document.querySelector('[data-part="pushed"]') as HTMLElement;
+    expect(pushed.getAttribute("data-shell")).toBe("true");
+    expect(pushed.querySelector('[data-part="pushed-bar"]')).toBeNull();
+    expect(within(pushed).queryByRole("button", { name: "返回" })).toBeNull();
+    // covered, not removed from the layout (its scroll position survives): inert and hidden from
+    // assistive technology
+    const main = document.querySelector('[data-part="conv-main"]') as HTMLElement;
+    expect(main.hasAttribute("hidden")).toBe(false);
+    expect(main.hasAttribute("inert")).toBe(true);
+    expect(main.getAttribute("aria-hidden")).toBe("true");
+    expect(main.getAttribute("data-covered")).toBe("true");
+    const last = register.mock.calls.filter((c) => c[1] !== null).at(-1)?.[1] as {
+      onBack: () => void;
+      title: string;
+    };
+    expect(last.title).toBe("属性面板");
+    last.onBack();
+    expect(onCloseRight).toHaveBeenCalledTimes(1);
+  });
+
+  it("closing a pushed right area in a shell keeps the conversation's scroll position", () => {
+    phone(true);
+    const register = vi.fn();
+    const at = (right: "none" | "properties") => (
+      <DesignProvider locale="zh">
+        <ShellPageContext.Provider value={register}>
+          <ConversationPage {...page({ right, layout: "auto" })} />
+        </ShellPageContext.Provider>
+      </DesignProvider>
+    );
+    const { rerender } = render(at("none"));
+    const thread = document.querySelector('[data-part="thread"]') as HTMLElement;
+    thread.scrollTop = 480;
+    rerender(at("properties"));
+    rerender(at("none"));
+    const after = document.querySelector('[data-part="thread"]') as HTMLElement;
+    expect(after).toBe(thread);
+    expect(after.scrollTop).toBe(480);
+    // the covered conversation stays laid out (display: none would drop its scroll position)
+    const rules = parseCss(css("conversation-page.css"));
+    const covered = rules.filter((r) => r.selector.includes(".cb-conv-main[data-covered"));
+    expect(covered.map((r) => r.decls.visibility)).toContain("hidden");
+    expect(covered.map((r) => r.decls.position)).toContain("absolute");
+    expect(covered.some((r) => r.decls.display === "none")).toBe(false);
+    expect(rules.some((r) => r.selector === ".cb-conv-main[hidden]")).toBe(false);
+  });
+
+  describe("a pushed RightPanel with its own back, in a shell", () => {
+    const sidebar = {
+      context: { kind: "work" as const, org: null, primary: [], more: [] },
+      activeNav: "",
+      account: { name: "grant", menu: [] },
+    };
+    const status = { context: "demo", version: "0.1.0", timeZone: "UTC" };
+    const inShell = (
+      panelBack: (() => void) | undefined,
+      onCloseRight: () => void,
+      open = true,
+    ) => (
+      <DesignProvider locale="zh">
+        <AppShell sidebar={sidebar} status={status} pathname="/chat/9f3a">
+          <ConversationPage
+            {...page({
+              right: open ? "panel" : "none",
+              layout: "auto",
+              onCloseRight,
+              panel: (
+                <RightPanel
+                  title="子智能体"
+                  onClose={onCloseRight}
+                  {...(panelBack ? { onBack: panelBack } : {})}
+                >
+                  body
+                </RightPanel>
+              ),
+            })}
+          />
+        </AppShell>
+      </DesignProvider>
+    );
+    const shellBack = () =>
+      document.querySelector('[data-part="top-bar"] button[aria-label="返回"]') as HTMLElement;
+
+    it("the shell's back steps within the panel first (opened from the conversation)", async () => {
+      phone(true);
+      const panelBack = vi.fn();
+      const onCloseRight = vi.fn();
+      const { rerender } = render(inShell(panelBack, onCloseRight, false));
+      rerender(inShell(panelBack, onCloseRight));
+      await userEvent.click(shellBack());
+      expect(panelBack).toHaveBeenCalledTimes(1);
+      expect(onCloseRight).not.toHaveBeenCalled();
+    });
+
+    it("the same when the page loads with the panel open (a deep link)", async () => {
+      phone(true);
+      const panelBack = vi.fn();
+      const onCloseRight = vi.fn();
+      render(inShell(panelBack, onCloseRight));
+      await userEvent.click(shellBack());
+      expect(panelBack).toHaveBeenCalledTimes(1);
+      expect(onCloseRight).not.toHaveBeenCalled();
+    });
+
+    it("at the panel's root (no onBack) the shell's back closes the right area", async () => {
+      phone(true);
+      const onCloseRight = vi.fn();
+      render(inShell(undefined, onCloseRight));
+      await userEvent.click(shellBack());
+      expect(onCloseRight).toHaveBeenCalledTimes(1);
+    });
+  });
+
+  it("a pushed RightPanel draws no ×, full-screen button or back chevron of its own", () => {
+    phone(true);
+    wrap(
+      <ConversationPage
+        {...page({
+          right: "panel",
+          layout: "auto",
+          panel: (
+            <RightPanel title="文件" onClose={noop} onFullscreen={noop} onBack={noop}>
+              body
+            </RightPanel>
+          ),
+        })}
+      />,
+    );
+    const pushed = document.querySelector('[data-part="pushed"]') as HTMLElement;
+    expect(within(pushed).getByText("文件")).toBeTruthy();
+    expect(within(pushed).queryByRole("button", { name: "关闭" })).toBeNull();
+    expect(within(pushed).queryByRole("button", { name: "全屏" })).toBeNull();
+    expect(within(pushed).queryAllByRole("button", { name: "返回" })).toHaveLength(1);
   });
 });

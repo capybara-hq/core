@@ -145,20 +145,12 @@ test("below 1280 the panel is a sheet; Esc closes it and focus returns to the ic
   await expect(files).toBeFocused();
 });
 
-for (const width of [1440, 1279, 959, 640, 390]) {
-  test(`no horizontal page scroll at ${width}`, async ({ page }) => {
-    await openTemplate(page, width);
-    const overflow = await page.evaluate(
-      () => document.documentElement.scrollWidth - document.documentElement.clientWidth,
-    );
-    expect(overflow).toBeLessThanOrEqual(0);
-  });
-}
-
 // A phone (spec §5.4): the middle column has no minimum, so the composer (and its send button)
 // sits inside the window's 16 px gutters instead of running past the right edge.
 test("390: the composer stays inside the 16 px gutters", async ({ page }) => {
   await openTemplate(page, 390);
+  // the demo opens the file panel, a pushed page on a phone: go back to the conversation
+  await page.getByRole("button", { name: "返回" }).click();
   const box = await page.locator('[data-part="composer"]').first().boundingBox();
   expect(box).not.toBeNull();
   if (!box) return;
@@ -229,3 +221,64 @@ test("the skill bubble's disclosure chevron is muted like its label (§6.16.6)",
   });
   expect(colors.caret).toBe(colors.want);
 });
+
+// ── The conversation per size class (mobile layout spec §5.4, §7.2) ────────────────────────────
+
+/** Which form the right area takes: inline beside the thread, a side sheet, or a pushed page. */
+async function rightForm(page: Page): Promise<"inline" | "sheet" | "pushed" | "none"> {
+  if ((await page.locator('[data-part="pushed"]').count()) > 0) return "pushed";
+  if ((await page.getByRole("dialog").count()) > 0) return "sheet";
+  if ((await page.locator('[data-part="panel-slot"]').count()) > 0) return "inline";
+  return "none";
+}
+
+test("resize keeps the right area", async ({ page }) => {
+  await openTemplate(page, 1300);
+  await page.goto(`${TEMPLATE}#properties`);
+  await page.waitForLoadState("networkidle");
+  const expected: [number, "inline" | "sheet" | "pushed"][] = [
+    [1300, "inline"],
+    [900, "sheet"],
+    [700, "sheet"],
+    [500, "pushed"],
+    [1300, "inline"],
+  ];
+  for (const [width, form] of expected) {
+    await page.setViewportSize({ width, height: 900 });
+    // properties is inline as its own column (data-part="properties"), else the sheet / pushed page
+    await expect.poll(() => rightForm(page)).toBe(form === "inline" ? "none" : form);
+    if (form === "inline") await expect(page.locator('[data-part="properties"]')).toBeVisible();
+    await expect.poll(() => page.evaluate(() => window.location.hash)).toBe("#properties");
+  }
+});
+
+test("the pushed right area goes back and clears the hash", async ({ page }) => {
+  await openTemplate(page, 500);
+  await page.goto(`${TEMPLATE}#properties`);
+  await page.waitForLoadState("networkidle");
+  const pushed = page.locator('[data-part="pushed"]');
+  await expect(pushed).toBeVisible();
+  // inside the shell the one back is the top bar's, and the page fills the content area
+  const box = await pushed.boundingBox();
+  expect(box?.width).toBe(500);
+  expect(box?.height).toBeGreaterThan(500);
+  await expect(pushed.getByRole("button", { name: "关闭" })).toHaveCount(0);
+  await page.getByRole("button", { name: "返回" }).click();
+  await expect(pushed).toHaveCount(0);
+  await expect.poll(() => page.evaluate(() => window.location.hash)).toBe("");
+});
+
+for (const width of [1440, 1279, 959, 841, 840, 640, 600, 390, 382]) {
+  test(`no horizontal page scroll at ${width}`, async ({ page }) => {
+    await openTemplate(page, width);
+    for (const hash of ["", "#properties", "#panel=files"]) {
+      await page.goto(`${TEMPLATE}${hash}`);
+      await page.waitForLoadState("networkidle");
+      const overflow = await page.evaluate(() => ({
+        doc: document.documentElement.scrollWidth - document.documentElement.clientWidth,
+        body: document.body.scrollWidth - document.body.clientWidth,
+      }));
+      expect(overflow, `hash ${hash || "(none)"}`).toEqual({ doc: 0, body: 0 });
+    }
+  });
+}

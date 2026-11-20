@@ -27,7 +27,7 @@ export type SettingsNavGroup = {
  * `description` and `tabs` open the content column instead of the head (tabs first), so the head
  * has one height and the sub-nav sits at the same y on every settings page, its top aligned with
  * the content's. Below
- * 640 the sub-nav is a compact control: one horizontally scrolling row of its items (no group
+ * 600 the sub-nav is a compact control: one horizontally scrolling row of its items (no group
  * labels, 40 px tap targets) above the content, the current item scrolled into view.
  *
  * `loading` draws the page's frame while its data is on the way (spec §5.4): the header keeps its

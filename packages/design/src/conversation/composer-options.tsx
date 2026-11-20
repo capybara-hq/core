@@ -1,12 +1,13 @@
 import * as RD from "@radix-ui/react-dialog";
 import { type JSX, useId, useState } from "react";
-import { Button, IconButton } from "../controls/button";
+import { Button } from "../controls/button";
 import { Badge } from "../display/basic";
 import { Icon } from "../icons/icon";
+import { BottomSheetContent } from "../overlays/bottom-sheet";
 import { useDesignT } from "../provider";
 import type { PickerProps } from "./composer";
 
-// The composer's options button (spec §6.16.2, phones): below 640 the device, permission, model
+// The composer's options button (spec §6.16.2, phones): below 600 the device, permission, model
 // and effort pickers collapse into one compact button with a bottom sheet group per picker.
 
 /**
@@ -68,31 +69,22 @@ export function ComposerOptions({
   ];
   const body = (
     <>
-      <header className="cb-bsheet-head" data-part="bsheet-head">
-        <RD.Title className="cb-bsheet-title">{name}</RD.Title>
-        <span className="cb-grow" />
-        <RD.Close asChild>
-          <IconButton label={t("overlay.close")} icon={<Icon name="x" size={16} />} />
-        </RD.Close>
-      </header>
-      <div className="cb-bsheet-body" data-part="bsheet-body">
-        {groups.map((g) => (
-          <OptionsGroup
-            key={g.key}
-            group={g.key}
-            title={g.title}
-            picker={g.picker}
-            onInspect={() => {
-              setOpen(false);
-              g.picker.locked?.warning?.onInspect();
-            }}
-            onAction={(action) => {
-              setOpen(false);
-              action?.onSelect();
-            }}
-          />
-        ))}
-      </div>
+      {groups.map((g) => (
+        <OptionsGroup
+          key={g.key}
+          group={g.key}
+          title={g.title}
+          picker={g.picker}
+          onInspect={() => {
+            setOpen(false);
+            g.picker.locked?.warning?.onInspect();
+          }}
+          onAction={(action) => {
+            setOpen(false);
+            action?.onSelect();
+          }}
+        />
+      ))}
     </>
   );
   return (
@@ -136,16 +128,13 @@ export function ComposerOptions({
           <Icon name="chevron-down" size={12} />
         </Button>
       </RD.Trigger>
-      <RD.Portal>
-        <RD.Overlay className="cb-bsheet-scrim" data-part="bsheet-scrim" />
-        <RD.Content
-          className="cb-bsheet"
-          data-part="composer-options-sheet"
-          aria-describedby={undefined}
-        >
-          {body}
-        </RD.Content>
-      </RD.Portal>
+      <BottomSheetContent
+        title={name}
+        part="composer-options-sheet"
+        onDismiss={() => setOpen(false)}
+      >
+        {body}
+      </BottomSheetContent>
     </RD.Root>
   );
 }

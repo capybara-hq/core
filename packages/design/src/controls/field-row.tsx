@@ -5,7 +5,7 @@ import { useDesignT } from "../provider";
 /**
  * A compact row of small fields (spec §6.27): one model of an endpoint's model list. Labels are
  * drawn on the first row only (`first`), later rows keep them as the fields' accessible names;
- * below 640 the row stacks with every label drawn. `advanced` fields sit behind a per-row
+ * below 600 the row stacks with every label drawn. `advanced` fields sit behind a per-row
  * "高级" / "Advanced" disclosure at the row's end.
  */
 export function FieldRow({

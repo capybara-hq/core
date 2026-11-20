@@ -143,7 +143,10 @@ test("an admin uploads a skill package, on for a new agent by default; the Skill
 
   // 2. 详情：SKILL.md 正文按纯文本显示
   await expect(page).toHaveURL(/\/skills\/[^/]+$/);
-  await expect(page.locator("pre")).toContainText("# Notes");
+  // scoped to the code block: a dev-mode error overlay carries a `pre` of its own
+  await expect(page.getByRole("figure", { name: "SKILL.md" }).locator("pre")).toContainText(
+    "# Notes",
+  );
 
   // 3. A new agent has the org's skills on by default; unticking one writes disabledSkills,
   // ticking it again clears it

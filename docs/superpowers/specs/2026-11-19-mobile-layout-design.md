@@ -1,7 +1,8 @@
 # Mobile and foldable layout, and the shell environment
 
 - Date: 2026-11-19, written against `origin/main` at `5f6c3541a`.
-- Status: draft for maintainer review.
+- Status: approved by the maintainer on 2026-11-20 (the review applied); the provisional rulings
+  are marked "maintainer to confirm: R<n>".
 - Related: the design spec (`docs/design/spec.md`, the only UI spec: §4 App Shell, §4.3 the
   phone rules, §5 templates, §6.13 Sidebar, §6.16 conversation components, §7.3 state tokens),
   the writing-web-ui and writing-extension-ui skills, UI slots
@@ -10,8 +11,8 @@
   (`2026-11-12-transactional-outbox-design.md`), and the desktop client
   (`2026-11-07-desktop-client-design.md`, being rewritten on `docs/desktop-client`), which fills
   in the **Shell environment** of §9 for its Electron shell.
-- Markers: **(decided)** is a maintainer decision of 2026-11-19; **(designer's call)** is decided
-  here and open to review. Unmarked text restates current code, AGENTS.md or the design spec.
+- Markers: **(decided)** is a maintainer decision of 2026-11-19 or of the 2026-11-20 approval;
+  **(designer's call)** is decided here and approved with the spec on 2026-11-20. Unmarked text restates current code, AGENTS.md or the design spec.
 
 ## 1. Why
 
@@ -120,8 +121,10 @@ reload and without losing state (the URL hash keeps the right area, §5.4).
 
 Width decides the class; height only trims chrome. A window **shorter than 480 px** (a phone in
 landscape, the iPhone Duo at its shortest reported height, 368) sets `data-short` on the shell:
-the StatusBar hides, the PageHeader drops its path row (the back button keeps the way up, §4.1),
-and the bottom navigation (compact only) shows icons without labels. This is not orientation:
+the StatusBar hides, the PageHeader drops its path row on compact only (the top bar's back button
+keeps the way up, §4.1; medium and expanded have no top bar, and a phone in landscape at 844 × 390
+is expanded, so they keep the path row: maintainer to confirm: R26),
+and the bottom navigation (compact only) shows icons without labels at its full 56 height. This is not orientation:
 a short desktop window gets the same.
 
 ### 3.3 Two width rules (decided)
@@ -136,25 +139,27 @@ The whole width layout is two rules beside the classes:
    panel) sits beside the thread from 1280; below that, in every class, it opens as a sheet (a
    side sheet on medium and expanded, a pushed page on compact, §5.4). 1280 is the one fit
    threshold left in the design CSS. Between 841 and 1279 the thread keeps the width the sidebar
-   leaves it (585 at 841 with the full sidebar, above `layout.chat-min` 480).
+   leaves it (585 at 841 with the full sidebar, above `layout.chat-min` 480). A body's side
+   column (facet rail, label column, settings sub-nav, inbox list) is inline only while its
+   template frame leaves `layout.content-min` beside it (a container query; design spec §4.3).
 
 Compared with today: 640 becomes 600, the 960 drawer becomes the medium rail and the compact
 bottom navigation, and below 1280 the sidebar no longer turns into the rail by itself (only by
 the person's toggle).
 
-## 4. The App Shell per class (decided, details designer's call)
+## 4. The App Shell per class (decided)
 
 | | compact | medium | expanded |
 |---|---|---|---|
 | Navigation | **Bottom navigation** (4 items, §4.2) | **Navigation rail**: today's icon rail (`layout.sidebar-rail`, 48), the conversations behind a rail button (§4.3) | **The full sidebar**, collapsible to the rail by the person (§3.3) |
 | Page | Full screen; deeper pages are **pushed** (bottom nav hidden, back in the bar) | One pane, or list-detail two panes when both fit (§5.2) | Today's layouts (§4.3 of the design spec) |
-| Sidebar content (org switcher, more, account, admin entry) | The **Me** tab (a full page) and bottom sheets | Rail popovers, as today's rail | As today |
+| Sidebar content (org switcher, more, account, admin entry) | The **Me** tab (a full page: 工作区 and 管理 groups) and bottom sheets | Rail popovers, as today's rail | As today |
 | Right area (conversation) | A full-screen page pushed over the conversation (§5.4) | A side sheet with a follow-finger dismiss | Inline from 1280, a side sheet below (§3.3) |
 | Drawer menu bar | Replaced by the **top bar** (§4.1) | None (the rail holds the menu) | None |
 | StatusBar | Hidden (its system status moves to the Me page) | Shown | Shown |
-| ActionRow | Sticky at the bottom, above the safe area | As today | As today |
+| ActionRow | Sticky at the bottom, above the safe area: the primary a full-width line, the other actions side by side above it, on every ActionRow, forms included (maintainer to confirm: R16) | As today | As today |
 
-### 4.1 Compact: top bar and push model (designer's call)
+### 4.1 Compact: top bar and push model (decided)
 
 - **Tab roots and pushed pages.** A route is a *tab root* when it is the target of a bottom-nav
   item (§4.2); every other route is *pushed*. The shell knows the nav items, so no page declares
@@ -162,7 +167,8 @@ the person's toggle).
   button** in the top bar.
 - **The top bar** (one row, `row.roomy`, today's drawer bar's place): back (pushed pages) or
   nothing (tab roots), the page title, and at the end search (the command palette) and the page's
-  overflow menu. Back goes to the previous in-app history entry when there is one, else to the
+  overflow menu; its icon buttons are ordinary `control.default` rounded squares (pressed ground
+  included) with a 40 × 40 tap ring, and the title is `body` 600. Back goes to the previous in-app history entry when there is one, else to the
   **last linked segment of the page's `path`** (every page head has a path, `web-ui-page-path`
   enforces it), so a deep link opened from a notification still has a way up.
 - **Transitions.** A push slides in from the end edge, a pop slides back (CSS view transitions
@@ -184,28 +190,33 @@ settings under 更多), the inbox is where approvals and notices wait:
 |---|---|---|
 | 会话 / Chats | `/conversations` (new compact list route, §5.4) | The conversations grouped by agent, as the sidebar's section; a "new" action to `/` |
 | 智能体 / Agents | `/agents` | The cards page as today |
-| 收件箱 / Inbox | `/inbox` | With the pending count badge (the brand row's count today) |
-| 我 / Me | `/me` (new compact page) | Account, org switcher, the 更多 items the role sees, personal settings, the admin entry for super admins, system status, sign out; drawn by the shell from the sidebar's data |
+| 收件箱 / Inbox | `/inbox` | With the pending count badge (the rail's nav badge: outside the icon's top-right corner, 2px gap, a ring in the bar ground) |
+| 我 / Me | `/me` (new compact page) | Account, org switcher, 工作区 (技能, 连接器, 定时任务, 设备: the rows the role sees on the sidebar) and 管理 (插件, 扩展, 渠道, 评测与运行, 组织设置 for org admins and owners only; 管理后台 for super admins; members see only 工作区: maintainer to confirm: R14), personal settings, system status, sign out; drawn by the shell from the sidebar's data |
 
 技能 / 连接器 / 定时任务 are reached from
-Me (and from the agents' pages), as 更多 items are on the sidebar.
+Me (and from the agents' pages), as 更多 items are on the sidebar. The current item has no ground
+of its own: icon and label in `ink`, the label weight 500, the others `muted`; icons are 16.
+The **compact admin navigation is the Me page's 管理 group** (maintainer decision 2026-11-20):
+there is no admin overview page for it; in the admin context the same Me page lists the console's
+pages, 回到工作区 last. Design spec §6.48 lists which role sees which row.
 
 `/me` is built on the `OverviewPage` template with a design `MePanel` component, so it passes
 `web-ui-template` **(decided)**.
 
-### 4.3 Medium: the rail (designer's call)
+### 4.3 Medium: the rail (decided)
 
 Today's rail, unchanged in look, gains one button: **conversations**, which opens the
-conversations list as a side sheet over the content (a pane beside a conversation when the
+conversations list as a side sheet over the content (`layout.sidebar` wide, no scrim) (a pane beside a conversation when the
 window has two segments, §8). The account row's popover holds the org switcher and 更多, as the
 rail's does today. The content minimum width (`560`, design spec §4.3) drops to **552**
-(600 − the 48 rail), so the narrowest medium window fits; at 841 the full sidebar leaves 585, so
-expanded needs nothing more. The conversation's `layout.chat-min` (480) fits both.
+(600 − the 48 rail), so the narrowest medium window fits; at 841 the full sidebar leaves 585, and
+side columns that do not fit beside it take their narrow form by container (§3.3). The conversation's `layout.chat-min` (480) fits both.
 
 ### 4.4 Expanded
 
 Today's shell with the full sidebar from 841 and the person's collapse toggle (§3.3), and the
-shell environment insets (§9.3).
+shell environment insets (§9.3). "As today" in §5.1 means as today while the side column fits
+its frame (§3.3), else its narrow form.
 
 ## 5. Templates per class (decided: templates declare it, pages do not change)
 
@@ -217,18 +228,21 @@ target.
 
 | Template | compact | medium | expanded |
 |---|---|---|---|
-| `ListPage` (objects / cards / records) | Single column; rows compact (§4.3 today), cards one per row, records stacked; facet rail behind a "Filter" button and bottom sheet | Cards two per row; facet rail as a Filter sheet | As today |
+| `ListPage` (objects / cards / records) | Single column; rows compact (§4.3 today), cards one per row, records stacked; facet rail behind a "Filter" button and bottom sheet | Cards two per row once two `layout.card-min` columns fit, else one; facet rail as a Filter sheet | As today (facet rail inline while it fits, §3.3) |
 | `DetailPage` | Pushed; facts first, PageTabs scroll; band head stacks | As today, one column | As today |
-| `FormPage` | Single column (labels above fields), **sticky ActionRow** above the safe area | Labels above fields | As today (label column) |
-| `SettingsPage` | Sub-nav as the sticky sideways row (maintainer decision 2026-11-09, kept) | Sub-nav stacked above content (today's < 960 form) | As today |
+| `FormPage` | Single column (labels above fields), **sticky ActionRow** above the safe area | Labels above fields | As today (label column while it fits, §3.3) |
+| `SettingsPage` | Sub-nav as the sticky sideways row (maintainer decision 2026-11-09, kept) | Sub-nav stacked above content (today's < 960 form) | As today (sub-nav inline while it fits, §3.3) |
 | `WizardPage` | Single column, step bar as "2 / 4" text, sticky previous / next | As today | As today |
-| `InboxPage` | **Two-level stack**: the list is the page, an item is pushed full screen with its decision buttons sticky at the bottom | **List-detail**: two panes when both fit (list 320 + detail ≥ 360), else the stack | Rail + content + inspector, as today |
+| `InboxPage` | **Two-level stack**: the list (a `ListDetailList`, on every class: maintainer to confirm: R24) is the page, an item is pushed full screen with its decision buttons sticky at the bottom (the primary a full-width line, the others side by side above; its facts inline, with translated labels, never raw payload keys) | **List-detail**: two panes when both fit (list 320 + detail ≥ 360), else the stack; the list a `ListDetailList`, the facts inline (R24) | The list (320, a `ListDetailList`, never a DataTable) + the open item, its facts inline (a 400 column from a 1100 frame, else above the content; never a Sheet: maintainer to confirm: R24) and no rail collapse button (maintainer to confirm: R20) |
 | `ConversationPage` | §5.4 | §5.4 | As today |
 | `TracePage` | Waterfall full width; a span is pushed as its own screen | Waterfall, detail below | As today |
 | `OverviewPage` | StatCards 2 × 2, sections stacked | StatCards in a row of up to 4 | As today |
 | `AuthPage`, `StatusPage`, `OnboardingPage` | Full width with 16 gutters, safe areas | Centered | As today |
 | `SetupPage` | Bottom navigation replaced by the steps as a pushed list (the setup home is the tab root) | Rail with the steps | As today |
 | `SharedFilePage` | Top bar compact (name, download), the file full screen | As today | As today |
+
+The scheduled-task calendar shows its week grid from a 580 template frame, else the agenda (a
+container query; design spec §6.40), so a 600 window beside the rail gets the agenda.
 
 ### 5.2 List-detail (decided: collapses to a two-level stack on compact)
 
@@ -314,7 +328,8 @@ Each slot in `UI_SLOTS` (`packages/plugin-sdk/src/ui-slots.ts`) gains a required
 | `shell.overlay` | `kept` | Must stay `pointer-events: none` and clear of the bottom nav and safe areas |
 
 - `drawer` means "the slot's content moves into a sheet or pushed page"; `hidden` means the slot
-  is not rendered on compact. A **contribution may narrow** its slot's form in its manifest
+  is not rendered on compact. Only `conversation.panel` has a sheet or pushed page to move into:
+  `drawer` on any other slot (a contribution narrowing a `kept` slot) behaves as `kept`. A **contribution may narrow** its slot's form in its manifest
   (`ui.<contribution>.compact`, `kept` → `drawer` → `hidden`), never widen it (designer's call).
   The field is `compact?` on the SDK's `UiContribution`, where contributions are declared, not a
   separate manifest key **(decided)**.
@@ -719,16 +734,21 @@ state lists, size tables, reference blocks, the blind side-by-side review, `ACCE
 - **Playwright** (`apps/web/visual/compact.interaction.spec.ts`, designer's call): for every
   template's catalog page at 382 and 390, with JavaScript on and off (the first paint, as the
   writing-web-ui skill requires): no horizontal page scroll
-  (`scrollingElement.scrollWidth <= innerWidth`); every interactive element has a 40 × 40 hit
-  area; the primary action is reachable without horizontal scrolling; nothing is covered by the
+  (`scrollingElement.scrollWidth <= innerWidth`); the controls design spec §4.3 lists (the top
+  bar, the bottom navigation, the page head's tabs and actions, ObjectRow, the row menu, the title
+  bar's buttons) have a 40 × 40 hit area, every other interactive element is counted, not failed
+  (maintainer to confirm: R22); the primary action is reachable without horizontal scrolling; nothing is covered by the
   bottom navigation at the end of a scroll; text fields are at least 16 px on a coarse pointer.
 - **jsdom** (`findCompactViolations` in `@capybara-hq/design/reference`, next to
   `findNestedBoxes`): structural rules on the rendered DOM: no action reachable only by hover,
   `title` or a context menu; every icon-only control has an accessible name; a list-detail region
   in its compact form has a back control.
 - **Segments**: `useViewportSegments` and the segment split are unit-tested with a fake
-  `window.viewport.segments` and `matchMedia`; a Chromium run with display-feature emulation is
-  added if it proves stable; the Duo simulator check is manual and part of P2's acceptance.
+  `window.viewport.segments` and `matchMedia`; a headless Chromium run with display-feature
+  emulation (`apps/web/visual/segments.interaction.spec.ts`) checks the two-pane regions and the
+  conversation's right area against the hinge; a Chromium that cannot emulate display features
+  fails it, never a silent skip (`CAPYBARA_SKIP_FOLD_EMULATION=1` skips it knowingly); the Duo
+  simulator check is manual and part of P2's acceptance.
 
 ### 11.4 Static checks (designer's call)
 

@@ -1,0 +1,31 @@
+<!doctype html>
+<html lang="zh-CN" data-theme="dark">
+<head>
+<meta charset="utf-8">
+<title>IconPreview · reference</title>
+<link rel="stylesheet" href="/design/styles/fonts.css">
+<link rel="stylesheet" href="/design/styles/tokens.css">
+<link rel="stylesheet" href="reference.css">
+</head>
+<body>
+<main class="r-page">
+<h1>IconPreview</h1>
+<p>An uploaded app icon on a light and a dark ground side by side (spec §6.49; mobile layout spec §10.2.1): two 64 px tiles `space.3` apart, `radius.md`, a `line` border, the icon at `space.8` (40) centered. The grounds are `preview-light` and `preview-dark`, the same in both themes. With labels, a `micro` `muted` caption sits `space.1` under each tile.</p>
+<div class="r-blocks">
+<section data-ref-block="icon-preview-default" style="width:240px" data-pad>
+  <div class="r-ip" data-part="icon-preview">
+    <figure class="r-ip-item"><div class="r-ip-tile" data-part="icon-preview-tile" data-ground="light"><svg class="r-ip-image" data-part="icon-preview-image" width="40" height="40" viewBox="0 0 14 10" shape-rendering="crispEdges" aria-hidden="true"><path d="M10 0h1v1h-1zM9 1h3v1h-3zM3 2h11v1h-11zM2 3h9v1h-9zM12 3h2v1h-2zM1 4h13v1h-13zM1 5h13v1h-13zM1 6h12v1h-12zM2 7h10v1h-10zM2 8h2v1h-2zM6 8h1v1h-1zM9 8h2v1h-2zM2 9h2v1h-2zM6 9h1v1h-1zM9 9h2v1h-2z"/></svg></div></figure>
+    <figure class="r-ip-item"><div class="r-ip-tile" data-part="icon-preview-tile" data-ground="dark"><svg class="r-ip-image" data-part="icon-preview-image" width="40" height="40" viewBox="0 0 14 10" shape-rendering="crispEdges" aria-hidden="true"><path d="M10 0h1v1h-1zM9 1h3v1h-3zM3 2h11v1h-11zM2 3h9v1h-9zM12 3h2v1h-2zM1 4h13v1h-13zM1 5h13v1h-13zM1 6h12v1h-12zM2 7h10v1h-10zM2 8h2v1h-2zM6 8h1v1h-1zM9 8h2v1h-2zM2 9h2v1h-2zM6 9h1v1h-1zM9 9h2v1h-2z"/></svg></div></figure>
+  </div>
+</section>
+<section data-ref-block="icon-preview-labelled" style="width:240px" data-pad>
+  <div class="r-ip" data-part="icon-preview">
+    <figure class="r-ip-item"><div class="r-ip-tile" data-part="icon-preview-tile" data-ground="light" role="img" aria-label="浅色背景"><svg class="r-ip-image" data-part="icon-preview-image" width="40" height="40" viewBox="0 0 14 10" shape-rendering="crispEdges" aria-hidden="true"><path d="M10 0h1v1h-1zM9 1h3v1h-3zM3 2h11v1h-11zM2 3h9v1h-9zM12 3h2v1h-2zM1 4h13v1h-13zM1 5h13v1h-13zM1 6h12v1h-12zM2 7h10v1h-10zM2 8h2v1h-2zM6 8h1v1h-1zM9 8h2v1h-2zM2 9h2v1h-2zM6 9h1v1h-1zM9 9h2v1h-2z"/></svg></div><figcaption class="r-ip-label" data-part="icon-preview-label">浅色背景</figcaption></figure>
+    <figure class="r-ip-item"><div class="r-ip-tile" data-part="icon-preview-tile" data-ground="dark" role="img" aria-label="深色背景"><svg class="r-ip-image" data-part="icon-preview-image" width="40" height="40" viewBox="0 0 14 10" shape-rendering="crispEdges" aria-hidden="true"><path d="M10 0h1v1h-1zM9 1h3v1h-3zM3 2h11v1h-11zM2 3h9v1h-9zM12 3h2v1h-2zM1 4h13v1h-13zM1 5h13v1h-13zM1 6h12v1h-12zM2 7h10v1h-10zM2 8h2v1h-2zM6 8h1v1h-1zM9 8h2v1h-2zM2 9h2v1h-2zM6 9h1v1h-1zM9 9h2v1h-2z"/></svg></div><figcaption class="r-ip-label" data-part="icon-preview-label">深色背景</figcaption></figure>
+  </div>
+</section>
+</div>
+</main>
+<script src="fill.js"></script>
+</body>
+</html>

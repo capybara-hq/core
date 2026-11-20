@@ -39,7 +39,7 @@
   display: flex;
   gap: var(--cb-space-5);
 }
-@media (max-width: 639px) {
+@media (max-width: 599px) {
   .cb-detail-band-skeleton {
     flex-direction: column;
     align-items: flex-start;
@@ -99,7 +99,15 @@
   grid-template-columns: minmax(0, 1fr);
   gap: var(--cb-space-3);
 }
-@media (max-width: 959px) {
+/* A label column beside its fields needs the body to leave content-min for the fields (spec §4.3
+   "side columns fit"): a container query on the body's content box, and always below 841. */
+@media (max-width: 840px) {
+  .cb-form-section {
+    grid-template-columns: minmax(0, 1fr);
+    gap: var(--cb-space-3);
+  }
+}
+@container cb-body (max-width: 791px) {
   .cb-form-section {
     grid-template-columns: minmax(0, 1fr);
     gap: var(--cb-space-3);
@@ -137,7 +145,13 @@
 .cb-settings-content > .cb-form-section + .cb-form-section {
   margin-top: 0;
 }
-@media (max-width: 959px) {
+@media (max-width: 840px) {
+  .cb-settings-grid {
+    grid-template-columns: minmax(0, 1fr);
+    gap: var(--cb-space-4);
+  }
+}
+@container cb-body (max-width: 751px) {
   .cb-settings-grid {
     grid-template-columns: minmax(0, 1fr);
     gap: var(--cb-space-4);
@@ -191,7 +205,7 @@
    content, so the content starts on the first screen. It sticks to the top of the scrolling body
    (right under the fixed head) on the page ground with its hairline, so the sections stay one tap
    away and the row never slides out half clipped (maintainer decision 2026-11-09). */
-@media (max-width: 639px) {
+@media (max-width: 599px) {
   .cb-settings-nav {
     position: sticky;
     top: 0;
@@ -353,7 +367,7 @@
 .cb-auth-footer {
   color: var(--cb-muted);
 }
-@media (max-width: 639px) {
+@media (max-width: 599px) {
   /* both columns: the right one's [data-side] rule is more specific than a bare .cb-auth-side */
   .cb-auth-side,
   .cb-auth-side[data-side="right"] {
@@ -695,7 +709,7 @@ a.cb-object-name:hover {
 .cb-object-trailing {
   color: var(--cb-faint);
 }
-/* The row's buttons: one group on phones (below), laid out by the row itself above 640. */
+/* The row's buttons: one group on phones (below), laid out by the row itself from 600. */
 .cb-object-actions {
   display: contents;
 }
@@ -703,14 +717,14 @@ a.cb-object-name:hover {
 .cb-object-meta[data-empty="true"] {
   display: none;
 }
-/* Phones (below 640, spec §4.3, §6.17): line 1 is the mark, the name and chips, and the ⋯ menu at
+/* Phones (below 600, spec §4.3, §6.17): line 1 is the mark, the name and chips, and the ⋯ menu at
    the right; the description and the meta line sit under the name, and the state closes the meta
    line in its tone (read from the meta's data-state, so the label is one node); the row action,
    dense, sits at the right of the meta line, or under it as a whole when both do not fit. The text
    column dissolves into the row (display: contents), so its lines and the row's buttons wrap as
    one flex row; DOM (and tab) order stays name, action, menu. The skeleton rows keep the mark and
    the text column side by side. */
-@media (max-width: 639px) {
+@media (max-width: 599px) {
   .cb-object-row {
     flex-wrap: wrap;
   }
@@ -725,7 +739,7 @@ a.cb-object-name:hover {
     display: contents;
   }
   /* The mark overhangs line 1 (a dense control high) into the indent of the lines below, as the
-     text column sits beside it above 640. */
+     text column sits beside it from 600. */
   .cb-object-row:not([data-skeleton="true"]) > .cb-object-mark {
     align-self: flex-start;
     margin-bottom: calc(var(--cb-control-dense) - 36px);
@@ -1012,7 +1026,12 @@ a.cb-object-name:hover {
 .cb-settings-content .cb-form-section ~ .cb-danger-zone {
   margin-left: 0;
 }
-@media (max-width: 959px) {
+@media (max-width: 840px) {
+  .cb-form-section ~ .cb-danger-zone {
+    margin-left: 0;
+  }
+}
+@container cb-body (max-width: 791px) {
   .cb-form-section ~ .cb-danger-zone {
     margin-left: 0;
   }
@@ -1250,4 +1269,533 @@ a.cb-object-name:hover {
 /* A loading switch's box: no box of its own (the switch's 32 x 20 slot sets the size). */
 .cb-loading-slot {
   display: inline-flex;
+}
+
+/* Wizard step bar on compact (spec §5.1): "2 / 4" text instead of the bar. */
+.cb-steps-count {
+  display: none;
+  margin: 0 0 var(--cb-space-4);
+  color: var(--cb-muted);
+  font-size: var(--cb-type-small-size);
+  line-height: var(--cb-type-small-line);
+}
+@media (max-width: 599px) {
+  .cb-steps-count {
+    display: block;
+  }
+  .cb-steps {
+    display: none;
+  }
+}
+
+/* ActionRow, compact form (spec §4.4, maintainer decision 2026-11-20): sticky above the bottom inset
+   and the keyboard; the primary fills the bottom line, the other actions share the line above it in
+   equal widths, every button 40 high, the row growing to fit. */
+@media (max-width: 599px) {
+  .cb-actionrow {
+    position: sticky;
+    bottom: 0;
+    z-index: 1;
+    height: auto;
+    row-gap: var(--cb-space-2);
+    /* the buttons span the row: no gutter kept for a scrollbar the row never has */
+    scrollbar-gutter: auto;
+    padding: var(--cb-space-2) var(--cb-space-4)
+      calc(var(--cb-space-2) + var(--cb-inset-bottom) + var(--cb-keyboard-inset, 0px));
+  }
+  .cb-actionrow .cb-actionrow-frame {
+    flex-direction: column;
+    align-items: stretch;
+    gap: var(--cb-space-2);
+    max-width: none;
+  }
+  .cb-actionrow .cb-actionrow-info {
+    flex: none;
+    font-size: var(--cb-type-small-size);
+    line-height: var(--cb-type-small-line);
+  }
+  /* no unsaved / errors text: no empty line (and gap) above the buttons */
+  .cb-actionrow .cb-actionrow-info:empty {
+    display: none;
+  }
+  .cb-actionrow .cb-actionrow-actions {
+    flex-direction: column;
+    align-items: stretch;
+    gap: var(--cb-space-2);
+  }
+  .cb-actionrow .cb-actionrow-others {
+    display: flex;
+    gap: var(--cb-space-2);
+  }
+  .cb-actionrow .cb-actionrow-others > *,
+  .cb-actionrow .cb-actionrow-primary > * {
+    flex: 1 1 0;
+    min-width: 0;
+    width: 100%;
+    height: 40px;
+  }
+}
+.cb-actionrow-others,
+.cb-actionrow-primary {
+  display: contents;
+}
+@media (max-width: 599px) {
+  .cb-actionrow .cb-actionrow-primary {
+    display: flex;
+  }
+  /* On a tab root the bottom navigation below the page already pads the bottom inset. */
+  .cb-shell-main:has(~ .cb-shell-bottomnav) .cb-actionrow {
+    padding-bottom: calc(var(--cb-space-2) + var(--cb-keyboard-inset, 0px));
+  }
+}
+
+/* ListDetail (spec §6.47): two panes while the region (`.cb-ld`, a container) fits list + detail,
+   else the two-level stack. Both forms are always drawn; the container query below picks one, one
+   rule set per fit (`data-fit` = listMin + detailMin, LIST_DETAIL_FITS). */
+.cb-ld {
+  container: cb-ld / inline-size;
+  display: flex;
+  flex: 1;
+  min-width: 0;
+  min-height: 0;
+}
+.cb-listdetail {
+  display: grid;
+  flex: 1;
+  grid-template-columns: var(--cb-ld-list) minmax(0, 1fr);
+  grid-template-rows: minmax(0, 1fr) auto;
+  min-width: 0;
+  min-height: 0;
+}
+.cb-listdetail-list {
+  grid-column: 1;
+  grid-row: 1;
+  min-width: 0;
+  overflow: auto;
+  border-right: 1px solid var(--cb-line-soft);
+}
+/* Two panes keep the detail at its least width (detailMin); the stack and segments let go. */
+.cb-listdetail-detail {
+  display: flex;
+  grid-column: 2;
+  grid-row: 1;
+  flex-direction: column;
+  min-width: var(--cb-ld-detail, 0);
+  min-height: 0;
+}
+.cb-listdetail-footer {
+  grid-column: 1 / -1;
+  grid-row: 2;
+  min-width: 0;
+}
+.cb-listdetail-bar {
+  display: none;
+  flex: none;
+  align-items: center;
+  height: var(--cb-row-roomy);
+  padding: 0 var(--cb-space-2);
+  border-bottom: 1px solid var(--cb-line-soft);
+}
+.cb-listdetail-body {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  min-height: 0;
+}
+@container cb-ld (max-width: 579px) {
+  .cb-listdetail[data-fit="580"] {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .cb-listdetail[data-fit="580"] > .cb-listdetail-list,
+  .cb-listdetail[data-fit="580"] > .cb-listdetail-detail {
+    grid-column: 1;
+    min-width: 0;
+    border-right: 0;
+  }
+  .cb-listdetail[data-fit="580"][data-open="true"] > .cb-listdetail-list,
+  .cb-listdetail[data-fit="580"][data-open="false"] > .cb-listdetail-detail,
+  .cb-listdetail[data-fit="580"][data-open="false"] > .cb-listdetail-footer {
+    display: none;
+  }
+  .cb-listdetail[data-fit="580"] > .cb-listdetail-detail > .cb-listdetail-bar {
+    display: flex;
+  }
+  .cb-listdetail[data-fit="580"][data-divided="true"] > .cb-listdetail-list,
+  .cb-listdetail[data-fit="580"][data-divided="true"] > .cb-listdetail-detail {
+    padding-inline: 0;
+  }
+}
+@container cb-ld (max-width: 679px) {
+  .cb-listdetail[data-fit="680"] {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .cb-listdetail[data-fit="680"] > .cb-listdetail-list,
+  .cb-listdetail[data-fit="680"] > .cb-listdetail-detail {
+    grid-column: 1;
+    min-width: 0;
+    border-right: 0;
+  }
+  .cb-listdetail[data-fit="680"][data-open="true"] > .cb-listdetail-list,
+  .cb-listdetail[data-fit="680"][data-open="false"] > .cb-listdetail-detail,
+  .cb-listdetail[data-fit="680"][data-open="false"] > .cb-listdetail-footer {
+    display: none;
+  }
+  .cb-listdetail[data-fit="680"] > .cb-listdetail-detail > .cb-listdetail-bar {
+    display: flex;
+  }
+  .cb-listdetail[data-fit="680"][data-divided="true"] > .cb-listdetail-list,
+  .cb-listdetail[data-fit="680"][data-divided="true"] > .cb-listdetail-detail {
+    padding-inline: 0;
+  }
+}
+/* A divided region (a form card's list + editor): the divider sits space.4 from each pane. */
+.cb-listdetail[data-divided="true"] > .cb-listdetail-list {
+  padding-right: var(--cb-space-4);
+}
+.cb-listdetail[data-divided="true"] > .cb-listdetail-detail {
+  padding-left: var(--cb-space-4);
+}
+/* Two viewport segments (mobile layout spec §8): the media features are the authority for first
+   paint (`data-segments="2"` only mirrors `useViewportSegments()` for script). The `env()` values
+   are viewport-relative while the region sits right of the sidebar and below the top bar, so the
+   second segment's track is anchored from the trailing edge (its size is the segment's own) and
+   the first takes the rest; the hinge is the gap between them. `--cb-segment-trail` is a frame's
+   inline-end inset and `--cb-segment-trail-block` its bottom inset (the vertical form); both
+   default to 0, which is exact only where the region reaches the viewport's trailing edge. The
+   inbox frame sets the inline one to its content padding: its content is capped at 1120 and
+   centred, so that is exact up to about 1440 wide; every other ListDetail consumer uses 0. Both
+   panes are drawn in the two-pane form, overriding the stack at any width. */
+@media (horizontal-viewport-segments: 2) {
+  .cb-listdetail[data-fit] {
+    grid-template-columns:
+      minmax(0, 1fr)
+      minmax(0, calc(env(viewport-segment-width 1 0) - var(--cb-segment-trail, 0px)));
+    grid-template-rows: minmax(0, 1fr) auto;
+    column-gap: calc(env(viewport-segment-left 1 0) - env(viewport-segment-right 0 0));
+  }
+  .cb-listdetail[data-fit][data-open] > .cb-listdetail-list {
+    display: block;
+    grid-column: 1;
+    grid-row: 1;
+    border-right: 0;
+  }
+  .cb-listdetail[data-fit][data-open] > .cb-listdetail-detail {
+    display: flex;
+    grid-column: 2;
+    grid-row: 1;
+    min-width: 0;
+  }
+  .cb-listdetail[data-fit][data-open] > .cb-listdetail-footer {
+    display: block;
+    grid-column: 1 / -1;
+    grid-row: 2;
+  }
+  .cb-listdetail[data-fit] > .cb-listdetail-detail > .cb-listdetail-bar {
+    display: none;
+  }
+  .cb-listdetail[data-fit][data-divided="true"] > .cb-listdetail-list {
+    padding-inline: 0 var(--cb-space-4);
+  }
+  .cb-listdetail[data-fit][data-divided="true"] > .cb-listdetail-detail {
+    padding-inline: var(--cb-space-4) 0;
+  }
+}
+/* Vertical: the first row takes what the second segment leaves (1fr), then the hinge, then the
+   detail, whose row is the second segment minus the footer (`--cb-ld-footer-h`, measured by
+   ListDetail while it has a footer; 0 without) and the frame's bottom inset, then the footer. */
+@media (vertical-viewport-segments: 2) {
+  .cb-listdetail[data-fit] {
+    grid-template-columns: minmax(0, 1fr);
+    grid-template-rows:
+      minmax(0, 1fr)
+      calc(env(viewport-segment-top 0 1) - env(viewport-segment-bottom 0 0))
+      minmax(
+        0,
+        calc(
+          env(viewport-segment-height 0 1) -
+          var(--cb-segment-trail-block, 0px) -
+          var(--cb-ld-footer-h, 0px)
+        )
+      )
+      auto;
+  }
+  .cb-listdetail[data-fit][data-open] > .cb-listdetail-list {
+    display: block;
+    grid-column: 1;
+    grid-row: 1;
+    border-right: 0;
+  }
+  .cb-listdetail[data-fit][data-open] > .cb-listdetail-detail {
+    display: flex;
+    grid-column: 1;
+    grid-row: 3;
+    min-width: 0;
+  }
+  .cb-listdetail[data-fit][data-open] > .cb-listdetail-footer {
+    display: block;
+    grid-column: 1;
+    grid-row: 4;
+  }
+  .cb-listdetail[data-fit] > .cb-listdetail-detail > .cb-listdetail-bar {
+    display: none;
+  }
+  .cb-listdetail[data-fit][data-divided="true"] > .cb-listdetail-list,
+  .cb-listdetail[data-fit][data-divided="true"] > .cb-listdetail-detail {
+    padding-inline: var(--cb-space-4);
+  }
+}
+/* Inside the shell on compact the top bar is the one back (the open item is a pushed page); the
+   reference set's compact frame stands in for the shell. */
+@media (max-width: 599px) {
+  .cb-shell .cb-listdetail[data-fit] > .cb-listdetail-detail > .cb-listdetail-bar,
+  .cb-ref-screen .cb-listdetail[data-fit] > .cb-listdetail-detail > .cb-listdetail-bar {
+    display: none;
+  }
+}
+/* The list of a list-detail region (spec §6.47): 64 px rows split by line-soft, a 6 px state dot
+   slot, the title over the meta, the time at the end; the current row is the selected row. */
+.cb-ld-list {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.cb-ld-row {
+  display: flex;
+  align-items: center;
+  gap: var(--cb-space-3);
+  box-sizing: border-box;
+  width: 100%;
+  height: 64px;
+  padding: 0 var(--cb-space-4);
+  border: 0;
+  border-top: 1px solid var(--cb-line-soft);
+  background: transparent;
+  color: var(--cb-ink);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+  transition: background-color var(--cb-motion-hover);
+}
+li:first-child > .cb-ld-row {
+  border-top: 0;
+}
+.cb-ld-row:hover {
+  background: var(--cb-hover);
+}
+.cb-ld-row:focus-visible {
+  outline: 1px solid var(--cb-accent);
+  outline-offset: -1px;
+}
+.cb-ld-row[aria-current="true"] {
+  background: var(--cb-accent-tint);
+  box-shadow: inset 2px 0 0 var(--cb-accent);
+}
+.cb-ld-dot {
+  flex: none;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+}
+.cb-ld-dot[data-state="warn"] {
+  background: var(--cb-warn);
+}
+.cb-ld-text {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  min-width: 0;
+}
+.cb-ld-title,
+.cb-ld-meta {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.cb-ld-head {
+  display: flex;
+  gap: var(--cb-space-2);
+  min-width: 0;
+}
+.cb-ld-title {
+  min-width: 0;
+  color: var(--cb-ink);
+}
+.cb-ld-trailing {
+  flex: none;
+  color: var(--cb-muted);
+}
+.cb-ld-meta {
+  color: var(--cb-muted);
+  font-size: var(--cb-type-small-size);
+  line-height: var(--cb-type-small-line);
+}
+.cb-ld-time {
+  flex: none;
+  color: var(--cb-faint);
+  font-size: var(--cb-type-micro-size);
+  line-height: var(--cb-type-micro-line);
+}
+/* The open item (spec §6.47, §5.7): a page body padded space.4 that scrolls, the h2 title (and
+   its status) space.3 above the facts, the content after them, the decision row pinned at the
+   bottom of the pane; from a 1100 region the facts are a 400 column beside the content. */
+.cb-ld-item {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  min-height: 0;
+}
+.cb-ld-item-body {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  gap: var(--cb-space-3);
+  min-height: 0;
+  padding: var(--cb-space-4);
+  overflow: auto;
+}
+.cb-ld-item-head {
+  display: flex;
+  align-items: center;
+  gap: var(--cb-space-3);
+  min-width: 0;
+}
+/* The pane's decision row ends at the pane's own padding (the body above keeps no gutter). */
+.cb-ld-item > .cb-actionrow {
+  scrollbar-gutter: auto;
+}
+.cb-ld-item-title {
+  flex: 1;
+  min-width: 0;
+  margin: 0;
+  color: var(--cb-ink);
+  font-size: var(--cb-type-h2-size);
+  line-height: var(--cb-type-h2-line);
+  font-weight: 500;
+}
+.cb-ld-item-facts,
+.cb-ld-item-content {
+  display: flex;
+  flex-direction: column;
+  gap: var(--cb-space-3);
+  min-width: 0;
+}
+@container cb-ld (min-width: 1100px) {
+  .cb-ld-item-body[data-facts="true"] {
+    display: grid;
+    grid-template-areas: "head head" "content facts";
+    grid-template-columns: minmax(0, 1fr) 400px;
+    gap: var(--cb-space-3) var(--cb-space-4);
+    align-content: start;
+  }
+  .cb-ld-item-body[data-facts="true"] > .cb-ld-item-head {
+    grid-area: head;
+  }
+  .cb-ld-item-body[data-facts="true"] > .cb-ld-item-content {
+    grid-area: content;
+  }
+  .cb-ld-item-body[data-facts="true"] > .cb-ld-item-facts {
+    grid-area: facts;
+    padding-left: var(--cb-space-4);
+    border-left: 1px solid var(--cb-line-soft);
+  }
+}
+/* InboxPage: the pane pair is capped at the content width inside the content padding, like every
+   frame, and reserves the head's scrollbar gutter, so its left edge is the head's. */
+.cb-inbox-frame {
+  --cb-segment-trail: var(--cb-content-pad);
+  /* the shell's status bar under the page */
+  --cb-segment-trail-block: var(--cb-layout-status-bar);
+  display: flex;
+  flex: 1;
+  box-sizing: border-box;
+  min-height: 0;
+  padding: 0 var(--cb-content-pad);
+  overflow: hidden;
+  scrollbar-gutter: stable;
+}
+/* On two segments the trailing edge must be known: no reserved scrollbar gutter (its width is the
+   platform's), only the content padding, which `--cb-segment-trail` carries. */
+@media (horizontal-viewport-segments: 2) {
+  .cb-inbox-frame {
+    scrollbar-gutter: auto;
+  }
+}
+.cb-inbox-content {
+  display: flex;
+  flex: 1;
+  min-width: 0;
+  max-width: var(--cb-layout-content);
+  margin: 0 auto;
+}
+/* TracePage on compact (spec §5.11): the waterfall is the page, an open span its own screen. */
+.cb-trace-back {
+  display: none;
+  margin-bottom: var(--cb-space-2);
+}
+@media (max-width: 599px) {
+  .cb-trace[data-open="true"] > .cb-trace-waterfall,
+  .cb-trace[data-open="false"] > .cb-trace-detail {
+    display: none;
+  }
+  .cb-trace-back {
+    display: block;
+  }
+  .cb-shell .cb-trace-back {
+    display: none;
+  }
+  .cb-trace-detail {
+    padding-top: 0;
+    border-top: 0;
+  }
+}
+
+/* Setup on compact (spec §5.5): the setup home is the tab root, the steps a pushed page over it. The
+   body and the steps page are both drawn; the steps page shows only on compact while it is open. */
+.cb-setup-steps-page {
+  display: none;
+}
+.cb-setup-body {
+  display: contents;
+}
+@media (max-width: 599px) {
+  .cb-setup-body[data-steps-open="true"] {
+    display: none;
+  }
+  .cb-setup-steps-page[data-open="true"] {
+    display: block;
+  }
+}
+.cb-setup-steps-list {
+  margin: 0;
+  padding: 0 var(--cb-space-4);
+  list-style: none;
+}
+.cb-setup-step {
+  display: flex;
+  align-items: center;
+  gap: var(--cb-space-3);
+  min-height: var(--cb-row-roomy);
+  border-top: 1px solid var(--cb-line-soft);
+  color: var(--cb-ink);
+  text-decoration: none;
+}
+li:first-child > .cb-setup-step {
+  border-top: 0;
+}
+.cb-setup-step[aria-current="page"] {
+  background: var(--cb-accent-tint);
+  box-shadow: inset 2px 0 0 var(--cb-accent);
+}
+.cb-setup-step[aria-disabled="true"] {
+  color: var(--cb-muted);
+}
+.cb-setup-step-text {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+.cb-setup-step-reason {
+  color: var(--cb-faint);
+  font-size: var(--cb-type-small-size);
+  line-height: var(--cb-type-small-line);
 }

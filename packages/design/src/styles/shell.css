@@ -1,6 +1,7 @@
 /*
- * App Shell (spec §4): Sidebar | content column. The content column holds the drawer menu bar
- * (below 960), the page (template) and the StatusBar; the ActionRow sits at the template's bottom.
+ * App Shell (spec §4): Sidebar | content column. The content column holds the top bar (below 600),
+ * the page (template), the StatusBar and the bottom navigation (below 600); the ActionRow sits at
+ * the template's bottom.
  */
 
 /* 以链接渲染的按钮（Link 组件不能带 data-*） */
@@ -48,6 +49,9 @@
   height: 100dvh;
   min-height: 0;
   overflow: clip;
+  /* the landscape notch, or a shell's side chrome (spec §4.7) */
+  padding-right: var(--cb-inset-right);
+  padding-left: var(--cb-inset-left);
   background: var(--cb-bg);
   color: var(--cb-ink);
 }
@@ -58,7 +62,7 @@
 /* A shell-wide banner (safe mode) is the shell's first row, across both columns; the sidebar and
    the content column share the second row, so the shell keeps the window height and nothing at its
    bottom (the status bar, the composer) is clipped. The content column keeps the second column
-   when no sidebar panel is drawn (the drawer below 960). */
+   when no sidebar panel is drawn (below 600). */
 .cb-shell[data-banner="true"] {
   display: grid;
   grid-template-columns: auto minmax(0, 1fr);
@@ -90,44 +94,342 @@
   min-height: 0;
 }
 
-/* Drawer menu bar: below 960 only (spec §4). */
-.cb-shell-drawerbar {
+/* Compact chrome (spec §4, §4.6, §4.7): the top bar above the page and the bottom navigation
+   under it, both drawn always and shown below 600 by these rules, so the server render is right at
+   every width. The OS insets (`--cb-inset-*`, §4.7) pad them; the bars keep their token heights. */
+.cb-shell-topbar,
+.cb-shell-bottomnav {
+  display: none;
+  flex: none;
+}
+@media (max-width: 599px) {
+  .cb-shell-topbar {
+    display: block;
+    padding-top: var(--cb-inset-top);
+    background: var(--cb-bg);
+  }
+  .cb-shell-bottomnav {
+    display: block;
+    padding-bottom: var(--cb-inset-bottom);
+    background: var(--cb-sidebar);
+  }
+  /* The keyboard hides the bottom navigation (spec §4.3). */
+  .cb-shell[data-keyboard="open"] .cb-shell-bottomnav {
+    display: none;
+  }
+  /* The compact class has no StatusBar: its system status is on the Me page (spec §4). */
+  .cb-shell-column > .cb-statusbar {
+    display: none;
+  }
+}
+
+/* A push slides in from the end edge and a pop slides back over motion.expand (spec §4.6): a CSS
+   animation named by direction and parity, so two pushes in a row both run; a browser with view
+   transitions animates the back button instead (view-transition.ts), and reduced motion has none. */
+@media (max-width: 599px) and (prefers-reduced-motion: no-preference) {
+  .cb-shell-main[data-nav="push-0"] {
+    animation: cb-push-0 var(--cb-motion-expand) ease-out;
+  }
+  .cb-shell-main[data-nav="push-1"] {
+    animation: cb-push-1 var(--cb-motion-expand) ease-out;
+  }
+  .cb-shell-main[data-nav="pop-0"] {
+    animation: cb-pop-0 var(--cb-motion-expand) ease-out;
+  }
+  .cb-shell-main[data-nav="pop-1"] {
+    animation: cb-pop-1 var(--cb-motion-expand) ease-out;
+  }
+  :root[data-cb-transition] .cb-shell-main[data-nav] {
+    animation: none;
+  }
+  :root[data-cb-transition="pop"]::view-transition-old(root) {
+    animation: cb-pop-out var(--cb-motion-expand) ease-out both;
+  }
+  :root[data-cb-transition="pop"]::view-transition-new(root) {
+    animation: cb-pop-0 var(--cb-motion-expand) ease-out both;
+  }
+}
+@keyframes cb-push-0 {
+  from {
+    transform: translateX(24px);
+    opacity: 0;
+  }
+}
+@keyframes cb-push-1 {
+  from {
+    transform: translateX(24px);
+    opacity: 0;
+  }
+}
+@keyframes cb-pop-0 {
+  from {
+    transform: translateX(-24px);
+    opacity: 0;
+  }
+}
+@keyframes cb-pop-1 {
+  from {
+    transform: translateX(-24px);
+    opacity: 0;
+  }
+}
+@keyframes cb-pop-out {
+  to {
+    transform: translateX(24px);
+    opacity: 0;
+  }
+}
+
+/* ClassSwap: the compact variant below 600, the other above; the wrappers have no box. */
+.cb-class-swap {
+  display: contents;
+}
+.cb-class-swap[data-for="compact"] {
+  display: none;
+}
+@media (max-width: 599px) {
+  .cb-class-swap[data-for="compact"] {
+    display: contents;
+  }
+  .cb-class-swap[data-for="regular"] {
+    display: none;
+  }
+}
+
+/* TopBar (spec §6.46): layout.top-bar high, back (pushed pages), the page's name, search and the
+   overflow menu. Padded 0 space.2 at the end and, on a tab root, space.4 at the start (the title
+   on the 16 px content edge). The buttons are the ordinary ghost icon buttons (control.default
+   squares, radius sm); each reaches a 40 x 40 tap target through an invisible ring that does not
+   change the box, so a hover or pressed ground fills the rounded square only. */
+.cb-topbar {
   display: flex;
   flex: none;
   align-items: center;
+  gap: var(--cb-space-3);
+  box-sizing: border-box;
+  height: var(--cb-layout-top-bar);
+  padding: 0 var(--cb-space-2) 0 var(--cb-space-4);
+  border-bottom: 1px solid var(--cb-line-soft);
+  background: var(--cb-bg);
+}
+.cb-topbar[data-pushed="true"] {
+  padding-left: var(--cb-space-2);
+}
+.cb-topbar-title {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  color: var(--cb-ink);
+  font-size: var(--cb-type-body-size);
+  font-weight: 600;
+  line-height: var(--cb-type-body-line);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.cb-topbar .cb-icon-btn {
+  position: relative;
+  flex: none;
+  color: var(--cb-muted);
+  text-decoration: none;
+}
+.cb-topbar .cb-icon-btn::after {
+  content: "";
+  position: absolute;
+  inset: -7px;
+}
+.cb-topbar .cb-icon-btn[aria-pressed="true"] {
+  background: var(--cb-selected);
+  color: var(--cb-ink);
+}
+
+/* BottomNav (spec §6.45): four items of layout.bottom-nav on the sidebar ground with a line-soft
+   top line (a pseudo-element, so the bar stays 56); no box, shadow or radius. An item is a quarter
+   of the width, an icon 16 over a micro label; the current one has no ground of its own: ink, the
+   label weight 500. */
+.cb-bottomnav {
+  position: relative;
+  display: flex;
+  height: var(--cb-layout-bottom-nav);
+  background: var(--cb-sidebar);
+}
+.cb-bottomnav::before {
+  content: "";
+  position: absolute;
+  inset: 0 0 auto 0;
+  z-index: 1;
+  height: 1px;
+  background: var(--cb-line-soft);
+}
+.cb-bottomnav-item {
+  position: relative;
+  display: flex;
+  flex: 1 1 0;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: var(--cb-space-1);
+  min-width: 40px;
+  height: var(--cb-layout-bottom-nav);
+  min-height: 40px;
+  color: var(--cb-muted);
+  text-decoration: none;
+  -webkit-tap-highlight-color: transparent;
+}
+.cb-bottomnav-item:active {
+  background: var(--cb-hover);
+}
+.cb-bottomnav-item:focus-visible {
+  outline: 1px solid var(--cb-accent);
+  outline-offset: -1px;
+}
+.cb-bottomnav-label {
+  max-width: 100%;
+  padding: 0 var(--cb-space-1);
+  overflow: hidden;
+  font-size: var(--cb-type-micro-size);
+  line-height: var(--cb-type-micro-line);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.cb-bottomnav-item[aria-current="page"] {
+  color: var(--cb-ink);
+}
+.cb-bottomnav-item[aria-current="page"] .cb-bottomnav-label {
+  font-weight: 500;
+}
+.cb-bottomnav-icon {
+  position: relative;
+  display: inline-flex;
+}
+/* A short window (height below 480) keeps the icons and the 56 height; the names stay as
+   accessible names (spec §4.7). */
+.cb-shell[data-short="true"] .cb-bottomnav-label,
+.cb-bottomnav[data-short="true"] .cb-bottomnav-label {
+  display: none;
+}
+/* The nav badge outside the icon's top-right corner (spec §6.13 "Nav badge"): its left edge 2px
+   past the icon's right edge, its vertical center on the icon's top edge, a 2px ring in the
+   bar's ground filling the gap. Same size and look as the rail's. */
+.cb-bottomnav-badge {
+  position: absolute;
+  top: 0;
+  left: calc(100% + 2px);
+  min-width: 14px;
+  padding: 0 3px;
+  border-radius: var(--cb-radius-sm);
+  background-color: var(--cb-selected);
+  background-image:
+    linear-gradient(var(--cb-selected), var(--cb-selected)),
+    linear-gradient(var(--cb-sidebar), var(--cb-sidebar));
+  box-shadow: 0 0 0 2px var(--cb-sidebar);
+  color: var(--cb-ink);
+  font-size: var(--cb-type-micro-size);
+  line-height: var(--cb-type-micro-line);
+  text-align: center;
+  transform: translateY(-50%);
+}
+
+/* MePanel (spec §6.48): the account and org head, groups of row.roomy rows split by line-soft
+   hairlines, in no box. */
+.cb-me {
+  display: flex;
+  flex-direction: column;
+  gap: var(--cb-space-4);
+  box-sizing: border-box;
+  width: 100%;
+  padding: 0 0 var(--cb-space-6);
+}
+.cb-me-head {
+  display: flex;
+  flex-direction: column;
+  gap: var(--cb-space-2);
+}
+.cb-me-account {
+  display: flex;
+  align-items: center;
   gap: var(--cb-space-2);
   height: var(--cb-row-roomy);
-  padding: 0 var(--cb-space-3);
-  border-bottom: 1px solid var(--cb-line-soft);
+  font-weight: 600;
 }
-.cb-shell-drawerbar .cb-icon-btn {
-  color: var(--cb-muted);
-}
-/* Phones: 40 px tap targets, the icons' glyphs on the 16 px content edge. */
-@media (max-width: 639px) {
-  .cb-shell-drawerbar {
-    padding: 0 var(--cb-space-1);
-  }
-  .cb-shell-drawerbar .cb-icon-btn {
-    min-width: 40px;
-    min-height: 40px;
-  }
-}
-.cb-shell-drawerbar-end {
-  display: flex;
+.cb-me-avatar {
+  display: inline-grid;
   flex: none;
-  margin-left: auto;
+  place-items: center;
+  width: var(--cb-control-dense);
+  height: var(--cb-control-dense);
+  border-radius: 50%;
+  background: var(--cb-selected);
+  color: var(--cb-ink);
+  font-size: var(--cb-type-small-size);
+  font-weight: 600;
+  line-height: 1;
 }
-.cb-shell-drawerbar-title {
+.cb-me-ellipsis {
   min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
-@media (min-width: 960px) {
-  .cb-shell-drawerbar[data-responsive="true"] {
-    display: none;
-  }
+.cb-me-group {
+  display: flex;
+  flex-direction: column;
+}
+.cb-me-label {
+  display: flex;
+  align-items: flex-end;
+  height: var(--cb-row-dense);
+  margin: 0;
+  color: var(--cb-faint);
+  font-size: var(--cb-type-micro-size);
+  font-weight: 400;
+  letter-spacing: 0.06em;
+  line-height: var(--cb-type-micro-line);
+}
+.cb-me-row {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: var(--cb-space-3);
+  box-sizing: border-box;
+  width: 100%;
+  height: var(--cb-row-roomy);
+  padding: 0;
+  border: 0;
+  border-top: 1px solid var(--cb-line-soft);
+  background: transparent;
+  color: var(--cb-ink);
+  font: inherit;
+  font-size: var(--cb-type-body-size);
+  text-align: left;
+  text-decoration: none;
+  cursor: pointer;
+}
+.cb-me-label + .cb-me-row {
+  border-top: 0;
+}
+.cb-me-row > .cb-icon {
+  flex: none;
+  color: var(--cb-muted);
+}
+/* The trailing icon (chevron, outward arrow); a link's pending mark may follow it. */
+.cb-me-row > .cb-icon:not(:first-child) {
+  color: var(--cb-faint);
+}
+.cb-me-row > .cb-me-ellipsis {
+  flex: 1;
+}
+.cb-me-row:focus-visible {
+  outline: 1px solid var(--cb-accent);
+  outline-offset: -1px;
+}
+.cb-me-value {
+  color: var(--cb-muted);
+}
+.cb-me-system {
+  margin: 0;
+  color: var(--cb-muted);
+  font-size: var(--cb-type-micro-size);
+  line-height: var(--cb-type-micro-line);
 }
 
 /* The tabs row (spec §2.4): the views with counts, the search at the right end. */
@@ -159,9 +461,9 @@
   width: 240px;
   max-width: 100%;
 }
-/* Phones (below 640): the search takes its own full-width line above the tabs, and the tabs
+/* Phones (below 600): the search takes its own full-width line above the tabs, and the tabs
    scroll on theirs; the tabs are 40 px tap targets. */
-@media (max-width: 639px) {
+@media (max-width: 599px) {
   /* The placeholders follow the loaded parts' phone sizes (40 px tabs), so nothing moves. */
   .cb-pageheader-tabs .cb-pageheader-tab-slots {
     height: 40px;
@@ -187,12 +489,12 @@
 .cb-template {
   --cb-content-pad: var(--cb-layout-content-pad);
 }
-@media (max-width: 639px) {
+@media (max-width: 599px) {
   .cb-template {
     --cb-content-pad: 16px;
   }
 }
-/* One head for every template (spec §4.3): side padding 32 (16 below 640), top 20, so the head
+/* One head for every template (spec §4.3): side padding 32 (16 below 600), top 20, so the head
    sits at the same x and y on every page. Head rhythm (spec §4.2): the body starts
    layout.head-content below the head, or layout.head-tabs-content below its tab row; the body
    adds no space of its own above its first block, so these are the only head-to-content gaps. */
@@ -353,11 +655,11 @@ a.cb-pageheader-path-seg:hover {
 .cb-pageheader-fold {
   display: contents;
 }
-/* Phones (below 640, spec §4.2, §4.3): the title and the description take the full width (the
+/* Phones (below 600, spec §4.2, §4.3): the title and the description take the full width (the
    description wraps), and the actions go under them, start-aligned: the primary as a button, the
    others folded into ⋯ when there are several. The buttons keep their default height and reach a
    40 px tap target through an invisible ring around them. */
-@media (max-width: 639px) {
+@media (max-width: 599px) {
   .cb-pageheader-actions[data-responsive="true"] [data-fold="inline"] {
     display: none;
   }
@@ -395,7 +697,7 @@ a.cb-pageheader-path-seg:hover {
     min-width: 40px;
   }
 }
-@media (min-width: 640px) {
+@media (min-width: 600px) {
   .cb-pageheader-actions[data-responsive="true"] [data-fold="menu"] {
     display: none;
   }
@@ -406,8 +708,8 @@ a.cb-pageheader-path-seg:hover {
   display: flex;
   gap: var(--cb-space-2);
 }
-/* Phones (below 640): two columns, so four metrics are 2 × 2 and their labels keep their words. */
-@media (max-width: 639px) {
+/* Phones (below 600): two columns, so four metrics are 2 × 2 and their labels keep their words. */
+@media (max-width: 599px) {
   .cb-stat-cards {
     display: grid;
     grid-template-columns: repeat(2, minmax(0, 1fr));
@@ -479,34 +781,11 @@ a.cb-stat-card:focus-visible {
   flex: 1;
   min-height: 0;
 }
-/* InboxPage: the rail + content + inspector split is capped at the content width inside the
-   content padding, like every frame, and reserves the same scrollbar gutter as the head (overflow:
-   hidden makes it a scroll container; the columns scroll on their own), so its left edge is the
-   head's. */
-.cb-template[data-template="InboxPage"] .cb-body:not([data-layout="single"]) {
-  box-sizing: border-box;
-  padding: 0 var(--cb-content-pad);
-  overflow: hidden;
-  scrollbar-gutter: stable;
-}
-.cb-template[data-template="InboxPage"] .cb-body-row {
-  width: 100%;
-  max-width: var(--cb-layout-content);
-  margin: 0 auto;
-}
-.cb-template[data-template="InboxPage"] .cb-body-tools {
-  padding-inline: 0;
-}
 .cb-body-rail {
   flex: none;
   width: 240px;
   overflow: auto;
   border-right: 1px solid var(--cb-line-soft);
-}
-/* The inbox's rail is its list column: a row leads with the item's name and keeps its version
-   whole, so it is wider than a filter rail (spec §5.7). */
-.cb-template[data-template="InboxPage"] .cb-body-rail {
-  width: 320px;
 }
 .cb-body-inspector {
   flex: none;
@@ -515,8 +794,10 @@ a.cb-stat-card:focus-visible {
   border-left: 1px solid var(--cb-line-soft);
 }
 .cb-body-content {
+  /* The template frame's fit queries (spec §4.3): `@container cb-body`. */
+  container: cb-body / inline-size;
   flex: 1;
-  min-width: min(560px, 100%);
+  min-width: min(var(--cb-layout-content-min), 100%);
   overflow: auto;
   /* Same gutter as .cb-template-head: the column keeps its x whether or not the page scrolls. */
   scrollbar-gutter: stable;
@@ -526,7 +807,7 @@ a.cb-stat-card:focus-visible {
   display: flex;
   flex: 1;
   flex-direction: column;
-  min-width: min(560px, 100%);
+  min-width: min(var(--cb-layout-content-min), 100%);
   min-height: 0;
 }
 .cb-body-main > .cb-body-content {
@@ -547,10 +828,6 @@ a.cb-stat-card:focus-visible {
 }
 .cb-body-frame[data-width="full"] {
   height: 100%;
-}
-/* InboxPage's middle column: the split already sits inside the content padding. */
-.cb-template[data-template="InboxPage"] .cb-body-content[data-padded="true"] {
-  padding: var(--cb-space-4);
 }
 .cb-body-frame[data-width="content"] {
   display: flex;
@@ -689,19 +966,10 @@ a.cb-stat-card:focus-visible {
   color: var(--cb-fail);
 }
 
-/* Body before hydration: CSS picks the inline rail / inspector or their toolbar buttons. */
+/* Body before hydration: CSS picks the inline inspector or its toolbar button by window width (the
+   right area, spec §5.4). */
 .cb-body-tool {
   display: contents;
-}
-@media (max-width: 959px) {
-  .cb-body [data-responsive="from-960"] {
-    display: none;
-  }
-}
-@media (min-width: 960px) {
-  .cb-body [data-responsive="below-960"] {
-    display: none;
-  }
 }
 @media (max-width: 1279px) {
   .cb-body [data-responsive="from-1280"] {
@@ -710,6 +978,22 @@ a.cb-stat-card:focus-visible {
 }
 @media (min-width: 1280px) {
   .cb-body [data-responsive="below-1280"] {
+    display: none;
+  }
+}
+/* The facet rail's fit (spec §4.3 "side columns fit"): inline only while the body leaves
+   layout.content-min (552) beside the 240 rail, else the Filter button and its sheet. A container
+   query on the body, so the sidebar, the rail, a second viewport segment and a nested pane count. */
+.cb-body {
+  container: cb-frame / inline-size;
+}
+@container cb-frame (max-width: 791px) {
+  .cb-body [data-rail-fit="inline"] {
+    display: none;
+  }
+}
+@container cb-frame (min-width: 792px) {
+  .cb-body [data-rail-fit="button"] {
     display: none;
   }
 }
@@ -789,4 +1073,22 @@ a.cb-stat-card:focus-visible {
   border-bottom: 1px solid var(--cb-line);
   background: var(--cb-panel);
   color: var(--cb-ink);
+}
+
+/* A short window (height below 480, spec §4.7; the shell's `data-short`): the StatusBar is hidden
+   whatever the width; the PageHeader drops its path row on compact only, where the top bar carries
+   back (medium and expanded have no top bar: the path row is their way up). The query is the first
+   paint's; the attribute follows it after hydration for plugin CSS. */
+@media (max-height: 479px) {
+  .cb-statusbar {
+    display: none;
+  }
+}
+@media (max-width: 599px) and (max-height: 479px) {
+  .cb-pageheader-path {
+    display: none;
+  }
+  .cb-pageheader-path + .cb-pageheader-row {
+    margin-top: 0;
+  }
 }

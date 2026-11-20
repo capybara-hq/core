@@ -82,7 +82,7 @@ export type QuickActionListProps = {
  * The selected agent's quick actions listed on a phone's new conversation (§5.4, §6.16.27): a
  * heading over plain rows (no box), one tappable row per title in the agent's order, filling the
  * space between the agents row and the composer pinned at the bottom. A tap calls `onPick`, as
- * choosing it from the `zap` menu does. No items: nothing. `ConversationPage` shows it below 640
+ * choosing it from the `zap` menu does. No items: nothing. `ConversationPage` shows it below 600
  * only, and hides the composer's `zap` button there.
  */
 export function QuickActionList({

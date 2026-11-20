@@ -16,7 +16,15 @@ import {
 import type { ClientExtension } from "../define.js";
 import { clientHost, DESIGN_NAMES, type SelectProps, setClientHost } from "../design.js";
 import type { ComponentSlotId } from "../slots.generated.js";
-import type { CapybaraEvent, ClientApi, ClientRole, RunState, UiView } from "../types.js";
+import type {
+  CapybaraEvent,
+  ClientApi,
+  ClientRole,
+  RunState,
+  SizeClass,
+  UiView,
+  ViewportSegment,
+} from "../types.js";
 
 export interface FakeHostOptions {
   slot: ComponentSlotId;
@@ -37,6 +45,10 @@ export interface FakeHostOptions {
   reducedMotion?: boolean;
   /** The id `useSignIn()` and the listeners' `api.signIn` carry; default "test-sign-in". */
   signInId?: string;
+  /** What `useSizeClass()` returns; default null. */
+  sizeClass?: SizeClass | null;
+  /** What `useViewportSegments()` returns; default null. */
+  viewportSegments?: ViewportSegment[] | null;
 }
 
 export interface FakeHost {
@@ -134,6 +146,8 @@ export function renderWithFakeHost(element: ReactElement, options: FakeHostOptio
       storage,
       assetUrl,
       signIn,
+      sizeClass: options.sizeClass ?? null,
+      viewportSegments: options.viewportSegments ?? null,
       subscribe,
     };
     const value: HostContextValue = {

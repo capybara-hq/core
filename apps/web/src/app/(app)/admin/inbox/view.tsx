@@ -2,18 +2,17 @@
 
 import {
   type ActionRowProps,
-  Card,
-  CellTitle,
-  type Column,
-  DataTable,
   DateTime,
+  formatDateTime,
   InboxPage,
-  KeyValue,
   LinkButton,
+  type ListDetailFact,
+  ListDetailList,
   Stack,
   StatusMark,
   Text,
   useStatusBar,
+  useTimeZone,
   useToast,
   versionLabel,
 } from "@capybara-hq/design";
@@ -38,6 +37,7 @@ import {
   requestSubject,
   requestVersion,
 } from "../../../../lib/catalog";
+import { useHashItem } from "../../../../lib/hash-item";
 import { adminInboxQuery } from "../../../../lib/query/admin";
 import { keys } from "../../../../lib/query/keys";
 import { useAppMutation } from "../../../../lib/query/mutation";
@@ -92,33 +92,15 @@ function AdminInbox({
     [inbox, type],
   );
   const [activeId, setActiveId] = useState<string>();
-  const active = rows.find((i) => i.id === activeId) ?? rows[0];
+  // The two-level stack (spec §6.47): the list is the page until an item is opened; the open item
+  // is in the URL hash, so the system back closes it and `#item=<id>` deep-links.
+  const hashItem = useHashItem();
+  const active = rows.find((i) => i.id === (hashItem.id ?? activeId)) ?? rows[0];
   // Nothing while the inbox loads (not "0 pending")
   // The total, not the shown rows: the list stops at 100
   useStatusBar(inbox === null ? null : `· ${t("pendingCount", { n: inbox.total })}`);
 
-  const columns: Column<PlatformInboxItem>[] = [
-    {
-      key: "item",
-      header: t("columns.item"),
-      cell: (item) => {
-        const r = rowOf(item, t, locale);
-        return (
-          <CellTitle
-            title={r.title}
-            {...(r.trailing !== null ? { trailing: r.trailing } : {})}
-            description={r.description}
-          />
-        );
-      },
-    },
-    {
-      key: "at",
-      header: t("columns.time"),
-      tone: "muted",
-      cell: (item) => <DateTime value={item.createdAt} />,
-    },
-  ];
+  const timeZone = useTimeZone();
   // Dismissing a platform notice changes the inbox, its count and the overview's total
   const dismiss = useAppMutation({
     fn: (id: string) => dismissPlatformNotice(id),
@@ -153,13 +135,9 @@ function AdminInbox({
     return (
       <InboxPage
         header={header}
-        inspectorTitle={t("inspectorTitle")}
+        factsLabel={t("inspectorTitle")}
         actionRow={{ primary: { label: t("open"), onSelect: () => {} } }}
-        loading={{
-          list: "records",
-          table: { label: t("listLabel"), columns, rowHeight: "dense", framed: false },
-          inspector: { rows: 3, keyWidth: "10ch" },
-        }}
+        loading={{ facts: { rows: 3, keyWidth: "10ch" } }}
       />
     );
   }
@@ -173,25 +151,36 @@ function AdminInbox({
         count: `${type === null ? inbox.total : (inbox.byType[type] ?? rows.length)}`,
       }}
       {...(rows.length === 0 ? { empty: { text: t("empty"), hint: t("emptyHint") } } : {})}
+      open={hashItem.id !== null && rows.some((i) => i.id === hashItem.id)}
+      onBack={hashItem.close}
       list={
-        <DataTable<PlatformInboxItem>
+        <ListDetailList
           label={t("listLabel")}
-          rowHeight="dense"
-          framed={false}
-          columns={columns}
-          rows={rows}
-          rowKey={(i) => i.id}
-          rowLabel={(i) => rowOf(i, t, locale).title}
-          {...(active ? { activeKey: active.id } : {})}
-          onOpen={(i) => setActiveId(i.id)}
-          state="ready"
-          empty={{ title: t("empty"), hint: t("emptyHint") }}
+          items={rows.map((item) => {
+            const r = rowOf(item, t, locale);
+            return {
+              id: item.id,
+              title: r.title,
+              ...(r.trailing !== null ? { trailing: r.trailing } : {}),
+              meta: r.description,
+              at: formatDateTime(item.createdAt, "compact", timeZone),
+              // everything here waits for a super admin but a transfer, which is a notice
+              ...(item.type !== "ownership_transferred" ? { waiting: true } : {}),
+            };
+          })}
+          current={active?.id}
+          onOpen={(id) => {
+            setActiveId(id);
+            hashItem.open(id);
+          }}
         />
       }
       {...(active !== undefined && detail !== null
         ? {
-            inspectorTitle: t("inspectorTitle"),
-            inspector: detail.inspector,
+            title: detail.title,
+            ...(detail.status !== undefined ? { status: detail.status } : {}),
+            facts: detail.facts,
+            factsLabel: t("inspectorTitle"),
             actionRow: open(active),
           }
         : {})}
@@ -299,178 +288,128 @@ function transferredTitle(n: PlatformNotice, t: Translate): string {
   });
 }
 
-/** The selected item: the content card and the inspector's facts. */
+/** The selected item (spec §6.47): its title and status, its facts and the content after them. */
 function detailOf(
   item: PlatformInboxItem,
   t: Translate,
   locale: string,
-): { content: ReactNode; inspector: ReactNode } {
+): { title: string; status?: ReactNode; facts: ListDetailFact[]; content: ReactNode } {
   switch (item.type) {
     case "catalog_request": {
       const r = item.request;
       const version = requestVersion(r);
       return {
-        inspector: (
-          <KeyValue
-            keyWidth="10ch"
-            rows={[
-              { k: t("org"), v: r.orgName },
-              { k: t("request.requester"), v: requesterOf(r) },
-              { k: t("request.version"), v: version === null ? "—" : versionLabel(version) },
-              { k: t("time"), v: <DateTime value={r.createdAt} /> },
-            ]}
-          />
-        ),
+        facts: [
+          { label: t("org"), value: r.orgName },
+          { label: t("request.requester"), value: requesterOf(r) },
+          { label: t("request.version"), value: version === null ? "—" : versionLabel(version) },
+          { label: t("time"), value: <DateTime value={r.createdAt} /> },
+        ],
+        title: titleOf(item, t, locale),
+        status: <StatusMark status="waiting" label={t("waiting")} />,
         content: (
-          <Card
-            title={titleOf(item, t, locale)}
-            actions={<StatusMark status="waiting" label={t("waiting")} />}
-          >
-            <Stack gap={8}>
-              {r.note !== "" && (
-                <Stack gap={4}>
-                  <Text variant="small" tone="muted">
-                    {t("request.note")}
-                  </Text>
-                  <Text variant="prose">{r.note}</Text>
-                </Stack>
-              )}
-              <Text variant="prose">{t(`request.hint.${r.kind}`, { org: r.orgName })}</Text>
-            </Stack>
-          </Card>
+          <Stack gap={8}>
+            {r.note !== "" && (
+              <Stack gap={4}>
+                <Text variant="small" tone="muted">
+                  {t("request.note")}
+                </Text>
+                <Text variant="prose">{r.note}</Text>
+              </Stack>
+            )}
+            <Text variant="prose">{t(`request.hint.${r.kind}`, { org: r.orgName })}</Text>
+          </Stack>
         ),
       };
     }
     case "permission_confirmation": {
       const i = item.item;
       return {
-        inspector: (
-          <KeyValue
-            keyWidth="10ch"
-            rows={[
-              { k: t("plugin"), v: i.name },
-              { k: t("permission.version"), v: versionLabel(i.latestVersion) },
-            ]}
-          />
-        ),
+        facts: [
+          { label: t("plugin"), value: i.name },
+          { label: t("permission.version"), value: versionLabel(i.latestVersion) },
+        ],
+        title: titleOf(item, t, locale),
+        status: <StatusMark status="waiting" label={t("waiting")} />,
         content: (
-          <Card
-            title={titleOf(item, t, locale)}
-            actions={<StatusMark status="waiting" label={t("waiting")} />}
-          >
-            <Text variant="prose">
-              {i.builtin ? t("permission.hintBuiltin") : t("permission.hint")}
-            </Text>
-          </Card>
+          <Text variant="prose">
+            {i.builtin ? t("permission.hintBuiltin") : t("permission.hint")}
+          </Text>
         ),
       };
     }
     case "scope_sync_failed": {
       const f = item.failure;
       return {
-        inspector: (
-          <KeyValue
-            keyWidth="10ch"
-            rows={[
-              { k: t("plugin"), v: f.item.name },
-              { k: t("org"), v: f.org.name },
-              { k: t("sync.code"), v: f.code },
-              { k: t("time"), v: <DateTime value={f.failedAt} /> },
-            ]}
-          />
-        ),
+        facts: [
+          { label: t("plugin"), value: f.item.name },
+          { label: t("org"), value: f.org.name },
+          { label: t("sync.code"), value: f.code },
+          { label: t("time"), value: <DateTime value={f.failedAt} /> },
+        ],
+        title: titleOf(item, t, locale),
+        status: <StatusMark status="failed" label={t("failed")} />,
         content: (
-          <Card
-            title={titleOf(item, t, locale)}
-            actions={<StatusMark status="failed" label={t("failed")} />}
-          >
-            <Stack gap={8}>
-              <Text variant="prose">{t(`sync.hint.${f.op}`, { org: f.org.name })}</Text>
-              <Stack gap={4}>
-                <Text variant="small" tone="muted">
-                  {t("sync.message")}
-                </Text>
-                <Text variant="prose">{f.message}</Text>
-              </Stack>
+          <Stack gap={8}>
+            <Text variant="prose">{t(`sync.hint.${f.op}`, { org: f.org.name })}</Text>
+            <Stack gap={4}>
+              <Text variant="small" tone="muted">
+                {t("sync.message")}
+              </Text>
+              <Text variant="prose">{f.message}</Text>
             </Stack>
-          </Card>
+          </Stack>
         ),
       };
     }
     case "extension_disabled": {
       const d = item.disabled;
       return {
-        inspector: (
-          <KeyValue
-            keyWidth="10ch"
-            rows={[
-              { k: t("plugin"), v: d.item.name },
-              { k: t("extensionDisabled.version"), v: versionLabel(d.extension.version) },
-              { k: t("extensionDisabled.since"), v: <DateTime value={d.since} /> },
-            ]}
-          />
-        ),
-        content: (
-          <Card
-            title={titleOf(item, t, locale)}
-            actions={<StatusMark status="waiting" label={t("waiting")} />}
-          >
-            <Text variant="prose">{t("extensionDisabled.hint")}</Text>
-          </Card>
-        ),
+        facts: [
+          { label: t("plugin"), value: d.item.name },
+          { label: t("extensionDisabled.version"), value: versionLabel(d.extension.version) },
+          { label: t("extensionDisabled.since"), value: <DateTime value={d.since} /> },
+        ],
+        title: titleOf(item, t, locale),
+        status: <StatusMark status="waiting" label={t("waiting")} />,
+        content: <Text variant="prose">{t("extensionDisabled.hint")}</Text>,
       };
     }
     case "org_upload_pending": {
       const i = item.item;
       const version = i.pendingVersion ?? i.latestVersion;
       return {
-        inspector: (
-          <KeyValue
-            keyWidth="10ch"
-            rows={[
-              { k: t("org"), v: ownerOrgOf(i)?.name ?? "—" },
-              { k: t("plugin"), v: i.name },
-              {
-                k: t("permission.version"),
-                v: i.awaitingConfirmation
-                  ? `${versionLabel(version)} · ${t("orgUpload.newPlugin")}`
-                  : `${versionLabel(i.latestVersion)} → ${versionLabel(version)}`,
-              },
-              { k: t("time"), v: <DateTime value={item.createdAt} /> },
-            ]}
-          />
-        ),
-        content: (
-          <Card
-            title={titleOf(item, t, locale)}
-            actions={<StatusMark status="waiting" label={t("waiting")} />}
-          >
-            <Text variant="prose">{t("orgUpload.hint")}</Text>
-          </Card>
-        ),
+        facts: [
+          { label: t("org"), value: ownerOrgOf(i)?.name ?? "—" },
+          { label: t("plugin"), value: i.name },
+          {
+            label: t("permission.version"),
+            value: i.awaitingConfirmation
+              ? `${versionLabel(version)} · ${t("orgUpload.newPlugin")}`
+              : `${versionLabel(i.latestVersion)} → ${versionLabel(version)}`,
+          },
+          { label: t("time"), value: <DateTime value={item.createdAt} /> },
+        ],
+        title: titleOf(item, t, locale),
+        status: <StatusMark status="waiting" label={t("waiting")} />,
+        content: <Text variant="prose">{t("orgUpload.hint")}</Text>,
       };
     }
     case "ownership_transferred": {
       const d = item.notice.detail;
       return {
-        inspector: (
-          <KeyValue
-            keyWidth="10ch"
-            rows={[
-              { k: t("org"), v: d.fromOrg.name },
-              { k: t("time"), v: <DateTime value={item.createdAt} /> },
-            ]}
-          />
-        ),
+        facts: [
+          { label: t("org"), value: d.fromOrg.name },
+          { label: t("time"), value: <DateTime value={item.createdAt} /> },
+        ],
+        title: transferredTitle(item.notice, t),
         content: (
-          <Card title={transferredTitle(item.notice, t)}>
-            <Stack gap={8}>
-              <Text variant="prose">{t("transferred.usedBy", { count: d.usedBy })}</Text>
-              <Text variant="prose" tone="muted">
-                {t("transferred.hint")}
-              </Text>
-            </Stack>
-          </Card>
+          <Stack gap={8}>
+            <Text variant="prose">{t("transferred.usedBy", { count: d.usedBy })}</Text>
+            <Text variant="prose" tone="muted">
+              {t("transferred.hint")}
+            </Text>
+          </Stack>
         ),
       };
     }

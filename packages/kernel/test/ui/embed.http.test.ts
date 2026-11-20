@@ -126,7 +126,7 @@ describe("嵌入令牌", () => {
     ui = `/api/v1/orgs/${orgId}/ui`;
   });
 
-  it("贡献列表给出 embed 的 path", async () => {
+  it("the contribution list gives an embed's path", async () => {
     await enable(owner, orgId, "fake-embed");
     const r = await owner({ method: "GET", url: `${ui}/contributions` });
     expect(r.statusCode).toBe(200);
@@ -139,6 +139,7 @@ describe("嵌入令牌", () => {
         kind: "embed",
         path: "/ui/panel",
         icon: "puzzle",
+        compact: "kept",
       },
       {
         plugin: "fake-embed",
@@ -148,6 +149,7 @@ describe("嵌入令牌", () => {
         kind: "embed",
         path: "/ui/panel-conv",
         icon: "puzzle",
+        compact: "drawer",
       },
     ]);
   });

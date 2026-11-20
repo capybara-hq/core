@@ -36,6 +36,7 @@ const winner = (id: string, slot: UiSlotId): UiContributionItem => ({
   slot,
   kind: "component",
   icon: "puzzle",
+  compact: "kept" as const,
 });
 
 const setOf = (components: { id: string; slot: string }[]): ClientExtensionsResponse => {
@@ -64,10 +65,7 @@ const flush = () =>
 
 const BUILTIN = <span data-testid="builtin">CAPYBARA</span>;
 
-const brandSlot = (
-  collapsed = false,
-  panel: "full" | "rail" | "drawer" = collapsed ? "rail" : "full",
-) => (
+const brandSlot = (collapsed = false, panel: "full" | "rail" = collapsed ? "rail" : "full") => (
   <ExtensionSlot
     slot="shell.brand"
     args={{ orgId: "o1" }}
@@ -160,15 +158,11 @@ describe("ReplaceableSlot", () => {
     ClientHost.load = vi.fn(async () =>
       moduleOf({ brand: { slot: "shell.brand", render: Brand as ComponentType<never> } }),
     );
-    const view = renderSlot(
-      [winner("brand", "shell.brand")],
-      BRAND_SET,
-      brandSlot(false, "drawer"),
-    );
+    const view = renderSlot([winner("brand", "shell.brand")], BRAND_SET, brandSlot(true, "rail"));
     await flush();
     const brand = () => screen.getByTestId("fake-client-brand");
-    expect(brand().getAttribute("data-panel")).toBe("drawer");
-    expect(brand().getAttribute("data-collapsed")).toBe("false");
+    expect(brand().getAttribute("data-panel")).toBe("rail");
+    expect(brand().getAttribute("data-collapsed")).toBe("true");
     view.again(brandSlot(false, "full"));
     await flush();
     expect(brand().getAttribute("data-panel")).toBe("full");

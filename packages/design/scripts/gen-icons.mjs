@@ -72,6 +72,7 @@ const ICONS = {
   paperclip: "paperclip",
   menu: "menu",
   "panel-left": "panel-left",
+  chats: "messages-square",
   "log-out": "log-out",
   languages: "languages",
   sun: "sun",

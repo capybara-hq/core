@@ -6,7 +6,15 @@ import {
   PluginClientContextError,
   type ViewState,
 } from "./context.js";
-import type { CapybaraEvent, CapybaraEventType, ClientStorage, RunState, SignIn } from "./types.js";
+import type {
+  CapybaraEvent,
+  CapybaraEventType,
+  ClientStorage,
+  RunState,
+  SignIn,
+  SizeClass,
+  ViewportSegment,
+} from "./types.js";
 
 function useHost(hook: string): HostContextValue {
   const host = useContext(HostContext);
@@ -89,4 +97,18 @@ export function useAssetUrl(): (path: string) => string {
  */
 export function useSignIn(): SignIn {
   return useHost("useSignIn").api.signIn;
+}
+
+/**
+ * The window's size class (`compact` below 600 CSS px, `medium` up to 840, else `expanded`),
+ * live as the window changes; `null` until the host knows it. Layout that can be expressed in CSS
+ * should be: this is for behavior that cannot.
+ */
+export function useSizeClass(): SizeClass | null {
+  return useHost("useSizeClass").api.sizeClass;
+}
+
+/** The two screens of a window that spans a folded or dual-screen display, else `null`. */
+export function useViewportSegments(): ViewportSegment[] | null {
+  return useHost("useViewportSegments").api.viewportSegments;
 }

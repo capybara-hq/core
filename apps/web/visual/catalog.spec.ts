@@ -1,5 +1,6 @@
 import { expect, type Page, test } from "@playwright/test";
-import { CATALOG_ROUTES } from "../src/dev/catalog/routes";
+import { CATALOG_ROUTES, TEMPLATE_ROUTES } from "../src/dev/catalog/routes";
+import { heightFor, MATRIX_WIDTHS, SHORT_WINDOW } from "./size-matrix";
 
 const THEMES = ["dark", "light"] as const;
 type Theme = (typeof THEMES)[number];
@@ -11,10 +12,25 @@ const NARROW: Record<string, number[]> = {
   "templates/detail": [1024, 900],
 };
 
+/**
+ * Every template's page is drawn at the width matrix of mobile layout spec §11.1 (382, 390, 768,
+ * 951 and 1440, each at its own height) and once at the short window of §3.2 (844 x 390). The
+ * 1440 shot keeps its name; the others carry the width (and `short`) as a suffix.
+ */
+const TEMPLATES = new Set<string>(TEMPLATE_ROUTES);
+const matrixWidths = (route: string) =>
+  TEMPLATES.has(route) ? MATRIX_WIDTHS.filter((w) => w !== 1440) : [];
+
 const shotName = (route: string, theme: Theme, suffix = "") =>
   `${route.replaceAll("/", "-")}${suffix}-${theme}.png`;
 
-async function open(page: Page, route: string, theme: Theme, width = 1440) {
+async function open(
+  page: Page,
+  route: string,
+  theme: Theme,
+  width = 1440,
+  height = heightFor(width),
+) {
   await page.context().addCookies([
     {
       name: "cb-theme",
@@ -22,7 +38,7 @@ async function open(page: Page, route: string, theme: Theme, width = 1440) {
       url: `http://localhost:${process.env.CAPYBARA_VISUAL_PORT ?? "3100"}`,
     },
   ]);
-  await page.setViewportSize({ width, height: 900 });
+  await page.setViewportSize({ width, height });
   if (route === "overlays/toast") await page.clock.install();
   await page.goto(`/dev/ui/${route}`);
   await page.waitForLoadState("networkidle");
@@ -60,10 +76,17 @@ for (const theme of THEMES) {
       test(route, async ({ page }) => {
         await open(page, route, theme);
         await expect(page).toHaveScreenshot(shotName(route, theme), { fullPage: true });
-        for (const width of NARROW[route] ?? []) {
-          await page.setViewportSize({ width, height: 900 });
+        for (const width of [...matrixWidths(route), ...(NARROW[route] ?? [])]) {
+          await page.setViewportSize({ width, height: heightFor(width) });
           await page.evaluate(() => document.fonts.ready);
           await expect(page).toHaveScreenshot(shotName(route, theme, `-${width}`), {
+            fullPage: true,
+          });
+        }
+        if (TEMPLATES.has(route)) {
+          await page.setViewportSize(SHORT_WINDOW);
+          await page.evaluate(() => document.fonts.ready);
+          await expect(page).toHaveScreenshot(shotName(route, theme, "-short"), {
             fullPage: true,
           });
         }

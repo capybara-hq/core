@@ -1,4 +1,6 @@
 import {
+  type CompactForm,
+  effectiveCompact,
   type FormAnswer,
   type Logger,
   UI_ARRANGEABLE_SLOTS,
@@ -61,6 +63,8 @@ export interface UiContributionItem {
   path?: string;
   /** From `UI_ICONS`; `puzzle` when the manifest names none. */
   icon: UiIcon;
+  /** The form on a compact screen: the slot's, narrowed by the contribution's (spec §5.6). */
+  compact: CompactForm;
 }
 
 /** A list slot of an arrangement listing: where its entry comes from and its items in order. */
@@ -283,6 +287,7 @@ function listed(entries: LoadedUiContribution[]): UiContributionItem[] {
       kind: c.kind,
       ...(c.kind === "embed" && c.path !== undefined && { path: c.path }),
       icon: c.icon ?? "puzzle",
+      compact: effectiveCompact(s.compact, c.compact),
     }));
 }
 

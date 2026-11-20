@@ -29,8 +29,8 @@ const wrap = (ui: React.ReactElement, locale: "zh" | "en" = "zh") =>
   render(<DesignProvider locale={locale}>{ui}</DesignProvider>);
 
 const css = readFileSync(resolve(__dirname, "../src/styles/conversation-page.css"), "utf8");
-/** The body of the `@media (max-width: 639px)` blocks, joined. */
-const phoneCss = [...css.matchAll(/@media \(max-width: 639px\) \{([\s\S]*?)\n\}/g)]
+/** The body of the `@media (max-width: 599px)` blocks, joined. */
+const phoneCss = [...css.matchAll(/@media \(max-width: 599px\) \{([\s\S]*?)\n\}/g)]
   .map((m) => m[1])
   .join("\n");
 
