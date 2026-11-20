@@ -34,7 +34,8 @@ export class AppAuthorizeBodyDto extends createZodDto(AppAuthorizeBodySchema, "A
 
 /**
  * `POST /api/v1/app-auth/token`: the app exchanges the one-time code with its PKCE verifier. Only
- * the shape is checked here; every content failure answers `app_auth.code_invalid` (the service).
+ * the shape is checked here; every content failure answers `app_auth.code_invalid` (the service),
+ * except a disabled account: `auth.account_disabled`.
  */
 export const AppTokenBodySchema = z
   .object({
