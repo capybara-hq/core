@@ -58,6 +58,8 @@ const DecisionBody = z
      * path (platform web parity spec §4.2). Never logged, never stored but sealed.
      */
     inputs: z
+      // the value's max counts characters (a cheap upper bound); the 16 KiB byte limit is
+      // checkPersonValue's, in the decision
       .record(z.string().min(1).max(INPUT_PATH_MAX_CHARS), z.string().max(PERSON_FIELD_MAX_BYTES))
       .refine((r) => Object.keys(r).length <= PERSON_FIELDS_MAX, {
         message: `At most ${PERSON_FIELDS_MAX} inputs`,

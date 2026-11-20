@@ -11,6 +11,7 @@ import { createLogger } from "../../src/log.js";
 import { defineOperation, type PlatformOperation } from "../../src/platform/operation.js";
 import { personFieldParams, secretFieldsOf } from "../../src/platform/person-fields.js";
 import { PlatformOperations } from "../../src/platform/registry.js";
+import { Waits } from "../../src/runtime/waits.js";
 import { ApprovalsService } from "../../src/tools/approvals.service.js";
 import { builtinsOff } from "../helpers/disabled-tools.js";
 import { accountsFor } from "../helpers/identity.js";
@@ -213,10 +214,7 @@ describe("the decision route with person inputs", () => {
     const { convId, approvalId } = await probeCall();
     const secret = value("ok");
     const before = seen.length;
-    const t0 = performance.now();
     const ok = await approveWith(approvalId, { apiKey: secret });
-    const ms = performance.now() - t0;
-    console.log(`decision with inputs, small conversation: ${ms.toFixed(1)} ms`);
     expect(ok.statusCode, ok.body).toBe(200);
     expect(ok.body).not.toContain(secret);
     await waitForTerminal(db, convId, 1, 30_000);
@@ -306,6 +304,16 @@ describe("the decision route with person inputs", () => {
     expect(row.status).toBe("pending");
     expect((row.detail as { leakedFields?: string[] }).leakedFields).toEqual(["apiKey"]);
     expect(await sealedCount()).toBe(0);
+    // only the leaked paths were committed: no decision event, no decision audit
+    expect(ofType(await eventsOf(db, convId), "approval_decided")).toEqual([]);
+    expect(
+      await db
+        .selectFrom("audit_events")
+        .select("id")
+        .where("action", "=", "approval.decided")
+        .where("target", "=", approvalId)
+        .execute(),
+    ).toEqual([]);
     const fresh = value("fresh");
     const before = seen.length;
     const ok = await approveWith(approvalId, { apiKey: fresh });
@@ -325,6 +333,41 @@ describe("the decision route with person inputs", () => {
     await waitForTerminal(db, convId, 2, 30_000);
     const result = await lastResult(convId);
     expect(result?.isError).toBe(true);
+    expect(result?.content).toContain(LEAKED_TEXT);
+    expect(result?.content).not.toContain(leaked);
+  });
+
+  it("a leak refusal followed by expiry: the result carries the copy", async () => {
+    const leaked = value("leak3");
+    const { convId, approvalId } = await probeCall(`key: ${leaked}`);
+    expect(errorOf(await approveWith(approvalId, { apiKey: leaked })).code).toBe(
+      "approval.input_leaked",
+    );
+    await sql`UPDATE capybara.approvals SET expires_at = now() - interval '1 second'
+      WHERE id = ${approvalId}`.execute(db);
+    await k.app.get(Waits).expire("approval", approvalId);
+    expect(await statusOf(approvalId)).toBe("expired");
+    await waitForTerminal(db, convId, 2, 30_000);
+    const result = await lastResult(convId);
+    expect(result?.isError).toBe(true);
+    expect(result?.content).toContain("Approval timed out");
+    expect(result?.content).toContain(LEAKED_TEXT);
+  });
+
+  it("a leak refusal followed by a stop: the cancelled result carries the copy", async () => {
+    const leaked = value("leak4");
+    const { convId, approvalId } = await probeCall(`key: ${leaked}`);
+    expect(errorOf(await approveWith(approvalId, { apiKey: leaked })).code).toBe(
+      "approval.input_leaked",
+    );
+    const res = await owner({
+      method: "POST",
+      url: `/api/v1/orgs/${orgId}/conversations/${convId}/abort`,
+    });
+    expect(res.statusCode, res.body).toBe(202);
+    await waitForTerminal(db, convId, 2, 30_000);
+    const result = await lastResult(convId);
+    expect(result?.content).toContain("The run was stopped while waiting for approval.");
     expect(result?.content).toContain(LEAKED_TEXT);
     expect(result?.content).not.toContain(leaked);
   });
@@ -445,7 +488,7 @@ describe("the decision route with person inputs", () => {
     expect(seen.slice(before)).toEqual([{ value: fresh }]);
   });
 
-  it("measures the decision on a 5,000-event conversation tree (no assertion)", async () => {
+  it("decides with inputs on a 5,000-event conversation tree", async () => {
     const { convId, approvalId } = await probeCall();
     // the events go into a sub-agent conversation of the tree: the leak check reads the whole
     // tree, and the waiting run's own log stays as it is
@@ -466,11 +509,8 @@ describe("the decision route with person inputs", () => {
       SELECT ${child}, g, 'tool_result',
         jsonb_build_object('type', 'tool_result', 'output', repeat('lorem ipsum ', 80) || g)
       FROM generate_series(1, 5000) g`.execute(db);
-    const t0 = performance.now();
     const ok = await approveWith(approvalId, { apiKey: value("big") });
-    const ms = performance.now() - t0;
     expect(ok.statusCode, ok.body).toBe(200);
-    console.log(`decision with inputs, 5000-event tree: ${ms.toFixed(1)} ms`);
     await waitForTerminal(db, convId, 1, 30_000);
   });
 

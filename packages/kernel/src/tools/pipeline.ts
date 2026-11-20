@@ -171,6 +171,14 @@ export const APPROVAL_CANCELLED_TEXT = "The run was stopped while waiting for ap
 /** A person field refused on the approval card as leaked, for a call that then did not run. */
 export const leakedOnCardText = (path: string): string =>
   `The person's \`${path}\` appeared in the conversation earlier and was refused as leaked; ask them to rotate it.`;
+/**
+ * A call that ended without running: its text, then the leaked-on-card line per person field the
+ * approval card refused as leaked (`detail.leakedFields`), so the agent has the key rotated.
+ */
+export const withLeakedOnCard = (text: string, leakedFields: readonly string[] | undefined) =>
+  leakedFields === undefined || leakedFields.length === 0
+    ? text
+    : [text, ...leakedFields.map(leakedOnCardText)].join("\n");
 /** What the review held: a shell command, a file write, or a file read outside the scope. */
 export type ReviewKind = "command" | "write" | "read";
 /**
@@ -2655,8 +2663,7 @@ export class ToolPipeline {
           return null;
       }
     })();
-    if (text === null || a.leakedFields === undefined) return text;
-    return [text, ...a.leakedFields.map(leakedOnCardText)].join("\n");
+    return text === null ? null : withLeakedOnCard(text, a.leakedFields);
   }
 
   /**
