@@ -15,7 +15,6 @@ import {
   useHapticsCapability,
   useMenuCapability,
   useNativeHandlers,
-  useNavCapability,
   useNotifyCapability,
   useShareCapability,
   useShellCapability,
@@ -356,7 +355,6 @@ describe("typed capability accessors", () => {
 
 describe("the mobile capability accessors", () => {
   const caps = {
-    "nav@1": { set: vi.fn(async () => {}), onSelect: vi.fn(() => () => {}) },
     "haptics@1": { impact: vi.fn(async () => {}) },
     "share@1": { share: vi.fn(async () => {}) },
     "menu@1": { show: vi.fn(async () => null) },
@@ -364,7 +362,6 @@ describe("the mobile capability accessors", () => {
 
   function Accessors() {
     const a = [
-      useNavCapability(),
       useHapticsCapability(),
       useShareCapability(),
       useMenuCapability(),
@@ -376,11 +373,11 @@ describe("the mobile capability accessors", () => {
     const f = fakeShell();
     install(f.shell);
     render(<Accessors />);
-    expect(screen.getByTestId("a").textContent).toBe("----");
-    act(() => f.change({ "nav@1": caps["nav@1"] }));
-    expect(screen.getByTestId("a").textContent).toBe("+---");
+    expect(screen.getByTestId("a").textContent).toBe("---");
+    act(() => f.change({ "haptics@1": caps["haptics@1"] }));
+    expect(screen.getByTestId("a").textContent).toBe("+--");
     act(() => f.change(caps));
-    expect(screen.getByTestId("a").textContent).toBe("++++");
+    expect(screen.getByTestId("a").textContent).toBe("+++");
   });
 
   it("useNativeHandlers holds menu only when menu@1 is present", () => {

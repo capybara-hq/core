@@ -1,6 +1,6 @@
 "use client";
 
-import type { NativeHandlers, NativeNavHandle } from "@capybara-hq/design";
+import type { NativeHandlers } from "@capybara-hq/design";
 import * as React from "react";
 import { useCallback, useMemo, useSyncExternalStore } from "react";
 
@@ -363,39 +363,12 @@ export const useNotifyCapability = () =>
   useShellCapability(SHELL_CAPABILITY_KEYS.notify) as NotifyCapabilityV1 | undefined;
 export const useSignInCapability = () =>
   useShellCapability(SHELL_CAPABILITY_KEYS.signIn) as SignInCapabilityV1 | undefined;
-export const useNavCapability = () =>
-  useShellCapability(SHELL_CAPABILITY_KEYS.nav) as NavCapabilityV1 | undefined;
 export const useHapticsCapability = () =>
   useShellCapability(SHELL_CAPABILITY_KEYS.haptics) as HapticsCapabilityV1 | undefined;
 export const useShareCapability = () =>
   useShellCapability(SHELL_CAPABILITY_KEYS.share) as ShareCapabilityV1 | undefined;
 export const useMenuCapability = () =>
   useShellCapability(SHELL_CAPABILITY_KEYS.menu) as MenuCapabilityV1 | undefined;
-
-/**
- * The native tab bar as the design takes it (`nav@1` adapted): `set` is a state push that is not
- * confirming (the shell needs no activation for it), so a rejection is dropped. The handle keeps
- * its reference while the capability object does.
- */
-export function useNativeNavHandle(): NativeNavHandle | undefined {
-  const nav = useNavCapability();
-  return useMemo(
-    () =>
-      nav === undefined
-        ? undefined
-        : {
-            set: (state) => {
-              try {
-                nav.set(state).catch(() => {});
-              } catch {
-                // a shell that throws leaves the bar as it was
-              }
-            },
-            onSelect: (listener) => nav.onSelect(listener),
-          },
-    [nav],
-  );
-}
 
 /**
  * The design's native handlers, only for the capabilities the shell has (none in a browser). Each
