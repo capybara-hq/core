@@ -6,7 +6,14 @@ import { runJob } from "../infra/queue/run-job.js";
 import { KERNEL_LOGGER } from "../infra/tokens.js";
 import type { KernelLogger } from "../log.js";
 import { PushDelivery } from "./delivery.js";
-import { PUSH_DELIVER_JOB, PUSH_QUEUE, type PushDeliverData } from "./jobs.js";
+import { PushFanout } from "./fanout.js";
+import {
+  PUSH_DELIVER_JOB,
+  PUSH_FANOUT_JOB,
+  PUSH_QUEUE,
+  type PushDeliverData,
+  type PushFanoutData,
+} from "./jobs.js";
 import { PushHostModule } from "./provider-host.js";
 import { PushModule } from "./push.module.js";
 import { PushStaleJob } from "./stale.job.js";
@@ -15,11 +22,11 @@ import { PushStaleJob } from "./stale.job.js";
 const PUSH_CONCURRENCY = 8;
 
 /** Data of any job on {@link PUSH_QUEUE}. */
-type PushJobData = PushDeliverData;
+type PushJobData = PushDeliverData | PushFanoutData;
 
 /**
- * The consumer of {@link PUSH_QUEUE} (`cap-push-deliver`): `push-deliver` jobs go to
- * {@link PushDelivery}, each inside `runJob`. Worker role only (`PushWorkersModule`); built with
+ * The consumer of {@link PUSH_QUEUE} (`cap-push-deliver`): `push-fanout` jobs go to
+ * {@link PushFanout}, `push-deliver` jobs to {@link PushDelivery}, each inside `runJob`. Worker role only (`PushWorkersModule`); built with
  * `autorun: false` and started by the worker role after the extensions loaded, so no job runs
  * before its provider could be loaded. A retry logs a warning and the last failed attempt an
  * error, with ids and the failure only (never the token).
@@ -29,6 +36,7 @@ type PushJobData = PushDeliverData;
 export class PushProcessor extends WorkerHost<Worker<PushJobData>> {
   constructor(
     @Inject(PushDelivery) private readonly delivery: PushDelivery,
+    @Inject(PushFanout) private readonly fanout: PushFanout,
     @Inject(KERNEL_LOGGER) private readonly log: KernelLogger,
   ) {
     super();
@@ -37,8 +45,10 @@ export class PushProcessor extends WorkerHost<Worker<PushJobData>> {
   process(job: Job<PushJobData>): Promise<unknown> {
     return runJob(PUSH_QUEUE, job, async () => {
       switch (job.name) {
+        case PUSH_FANOUT_JOB:
+          return this.fanout.run(job.data as PushFanoutData);
         case PUSH_DELIVER_JOB:
-          return this.delivery.deliver(job.data);
+          return this.delivery.deliver(job.data as PushDeliverData);
         default:
           throw new UnrecoverableError(`unknown push job ${job.name}`);
       }
@@ -65,7 +75,7 @@ export class PushProcessor extends WorkerHost<Worker<PushJobData>> {
       jobId: job.id,
       job: job.name,
       eventId: job.data.eventId,
-      registrationId: job.data.registrationId,
+      ...("registrationId" in job.data && { registrationId: job.data.registrationId }),
       attempt: job.attemptsMade,
       error: err.message,
     };
@@ -81,12 +91,12 @@ export class PushProcessor extends WorkerHost<Worker<PushJobData>> {
 }
 
 /**
- * The push queue's consumer and the stale registration prune; imported only by the worker role
+ * The push queue's consumer (fanout and delivery) and the stale registration prune; imported only by the worker role
  * (`WorkerModule`). The queue itself is registered by {@link PushModule} (every role owes jobs).
  */
 @Module({
   imports: [PushModule, PushHostModule, ExtensionsModule],
-  providers: [PushDelivery, PushProcessor, PushStaleJob],
+  providers: [PushDelivery, PushFanout, PushProcessor, PushStaleJob],
   exports: [PushProcessor],
 })
 export class PushWorkersModule {}

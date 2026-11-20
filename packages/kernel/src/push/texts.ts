@@ -1,0 +1,74 @@
+import { PUSH_LIMITS, type PushMessage } from "@capybara-hq/plugin-sdk";
+import type { PushCategory, PushTextKey } from "./triggers.js";
+
+/** The push copy (mobile app spec §9.5): the body's fixed sentence per key and locale. */
+const PUSH_TEXTS: Record<PushTextKey, { en: string; zh: string }> = {
+  approval: { en: "needs your approval", zh: "需要你的审批" },
+  question: { en: "has a question for you", zh: "有问题需要你回答" },
+  connect: { en: "needs you to connect an account", zh: "需要你连接账号" },
+  runFinished: { en: "finished", zh: "已完成" },
+  runFailed: { en: "failed", zh: "运行失败" },
+  backgroundFinished: { en: "a background task ended", zh: "后台任务已结束" },
+  subagentFinished: { en: "a sub-agent finished", zh: "子智能体已完成" },
+  scheduleRan: { en: "your scheduled task ran", zh: "你的定时任务已运行" },
+  scheduleFailed: { en: "your scheduled task failed", zh: "你的定时任务运行失败" },
+};
+
+/** Every push text key. */
+export const PUSH_TEXT_KEYS = Object.keys(PUSH_TEXTS) as readonly PushTextKey[];
+
+/** The sentence of `key` in `locale`. */
+export function pushText(key: PushTextKey, locale: "zh" | "en"): string {
+  return PUSH_TEXTS[key][locale];
+}
+
+/** An event's push as the fanout resolved it (`recipients.ts`), with the event id. */
+export interface ResolvedPush {
+  /** `conv-<conversationId>-<seq>` or `sched-<taskRunId>`: the message's collapse id. */
+  eventId: string;
+  orgId: string;
+  accountIds: string[];
+  category: PushCategory;
+  /** In-app path with `?org=` (plan decision 8). */
+  path: string;
+  /** The root conversation id, or `schedule-<taskId>`. */
+  threadId: string;
+  /** The agent's display name (the task's name for a schedule). */
+  title: string;
+  /** Shown only with `push.previews: "titles"`. */
+  conversationTitle: string | null;
+  text: PushTextKey;
+}
+
+/** `s` cut to `max` UTF-16 units, never splitting a surrogate pair. */
+function cut(s: string, max: number): string {
+  if (s.length <= max) return s;
+  const out = s.slice(0, max);
+  return /[\uD800-\uDBFF]$/.test(out) ? out.slice(0, -1) : out;
+}
+
+/**
+ * The message of `r` for one registration's locale. `title` is the agent's (or task's) name cut
+ * to `PUSH_LIMITS.titleChars`; `body` is the fixed sentence, led by the conversation title only
+ * with previews `titles` (`<title>: <sentence>`, zh `<title>：<sentence>`), cut to
+ * `PUSH_LIMITS.bodyChars`. Message and tool text are never part of it. `collapseId` is the event id,
+ * so a resend of the same event replaces the notification on the device. No badge (decision 7).
+ */
+export function renderPushMessage(
+  r: ResolvedPush,
+  locale: "zh" | "en",
+  previews: "off" | "titles",
+  origin: string,
+): PushMessage {
+  const sentence = pushText(r.text, locale);
+  const lead = previews === "titles" && r.conversationTitle ? r.conversationTitle : null;
+  const body = lead === null ? sentence : `${lead}${locale === "zh" ? "：" : ": "}${sentence}`;
+  return {
+    title: cut(r.title, PUSH_LIMITS.titleChars),
+    body: cut(body, PUSH_LIMITS.bodyChars),
+    path: r.path,
+    threadId: r.threadId,
+    collapseId: r.eventId,
+    origin,
+  };
+}

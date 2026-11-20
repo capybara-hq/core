@@ -86,6 +86,8 @@
   "platform/setup-ops.test.ts",
   "portfolio.test.ts",
   "push/provider-host.test.ts",
+  "push/texts.unit.test.ts",
+  "push/triggers.unit.test.ts",
   "runtime/absorb-background.test.ts",
   "runtime/absorb-subagent.test.ts",
   "runtime/claude-tools.test.ts",
