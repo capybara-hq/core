@@ -10,7 +10,7 @@ import {
   useDesignLocale,
 } from "@capybara-hq/design";
 import { useLinkStatus } from "next/link";
-import { createContext, type ReactNode, useContext, useEffect } from "react";
+import { createContext, type PointerEvent, type ReactNode, useContext, useEffect } from "react";
 import { Link, useRouter } from "../i18n/navigation";
 import type { AppLocale } from "../i18n/routing";
 import { useWarm } from "../lib/query/warm";
@@ -26,7 +26,17 @@ const useLinkPending = () => useLinkStatus().pending;
 const WarmLink: LinkComponent = (props) => {
   const router = useRouter();
   const warm = useWarm(router);
-  return <Link {...props} onPointerDown={() => warm(props.href)} />;
+  const own = (props as { onPointerDown?: (e: PointerEvent<HTMLAnchorElement>) => void })
+    .onPointerDown;
+  return (
+    <Link
+      {...props}
+      onPointerDown={(e) => {
+        own?.(e);
+        warm(props.href);
+      }}
+    />
+  );
 };
 
 /** The clock `DesignRoot` was given, so `BrandRoot` can provide the same design context again. */

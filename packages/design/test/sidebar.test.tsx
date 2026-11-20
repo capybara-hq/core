@@ -1,6 +1,6 @@
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
-import { cleanup, fireEvent, render, screen, within } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen, within } from "@testing-library/react";
 import { userEvent } from "@testing-library/user-event";
 import { type ReactElement, StrictMode, useState } from "react";
 import { renderToString } from "react-dom/server";
@@ -1417,5 +1417,54 @@ describe("Link pending state", () => {
     expect(document.querySelector('[data-part="link-pending"]')?.getAttribute("data-pending")).toBe(
       "true",
     );
+  });
+});
+
+describe("a conversation row's onVisible", () => {
+  class FakeObserver {
+    static all: FakeObserver[] = [];
+    els = new Set<Element>();
+    constructor(private readonly cb: IntersectionObserverCallback) {
+      FakeObserver.all.push(this);
+    }
+    observe(el: Element) {
+      this.els.add(el);
+    }
+    unobserve(el: Element) {
+      this.els.delete(el);
+    }
+    disconnect() {
+      this.els.clear();
+    }
+    show() {
+      const targets = [...this.els];
+      this.cb(
+        targets.map((target) => ({ target, isIntersecting: true }) as IntersectionObserverEntry),
+        this as unknown as IntersectionObserver,
+      );
+    }
+  }
+
+  it("fires with the row's href the first time it is in view, once", () => {
+    FakeObserver.all = [];
+    vi.stubGlobal("IntersectionObserver", FakeObserver);
+    const onVisible = vi.fn();
+    const g = group("a1", "A", 2);
+    const withHook: SidebarGroup = {
+      ...g,
+      conversations: g.conversations.map((c) => ({ ...c, onVisible })),
+    };
+    const p = props();
+    zh(<Sidebar {...p} conversations={{ ...p.conversations, groups: [withHook] }} />);
+    expect(onVisible).not.toHaveBeenCalled();
+    act(() => {
+      for (const o of FakeObserver.all) o.show();
+    });
+    expect(onVisible.mock.calls.map(([h]) => h)).toEqual(["/chat/a1-c1", "/chat/a1-c2"]);
+    act(() => {
+      for (const o of FakeObserver.all) o.show();
+    });
+    expect(onVisible).toHaveBeenCalledTimes(2);
+    vi.unstubAllGlobals();
   });
 });

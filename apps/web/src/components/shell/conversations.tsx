@@ -23,7 +23,7 @@ import {
   moreConversationsQuery,
   moreGroupsQuery,
 } from "../../lib/query/shell";
-import { useWarmRowsInView } from "../../lib/query/warm";
+import { useWarm } from "../../lib/query/warm";
 import { HOME_PATH, newConversationPath } from "../../lib/routes";
 
 /** The conversation id of a `/chat/<id>` route. */
@@ -183,6 +183,7 @@ export function useConversationGroups(
 ): SidebarConversations {
   const router = useRouter();
   const qc = useQueryClient();
+  const warm = useWarm(router);
   const [viewState, setViewState] = useState(DEFAULT_VIEW);
   // Rows and groups paged in past the first page, for one view.
   const [paged, setPaged] = useState<Loaded | null>(null);
@@ -369,6 +370,8 @@ export function useConversationGroups(
     startedAt: new Date(c.createdAt),
     href: `/chat/${encodeURIComponent(c.id)}`,
     activity: c.activity,
+    // a row warms its conversation when it first scrolls into view (mobile spec §7.3)
+    onVisible: warm,
   });
   // The group titles' avatars come with the groups (the sidebar reads no agents list); an agent
   // without an avatar shows the initial of its name.
@@ -382,8 +385,6 @@ export function useConversationGroups(
     onNew: () => onNew(g.agent.id),
   }));
   const next = mine?.next ?? null;
-  // A row warms its conversation the first time it scrolls into view (mobile spec §7.3).
-  useWarmRowsInView(orgId, mine?.groups);
   return {
     state,
     groups,

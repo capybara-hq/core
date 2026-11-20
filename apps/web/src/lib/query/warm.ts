@@ -2,12 +2,15 @@
 
 import { useDesignLocale } from "@capybara-hq/design";
 import { type QueryClient, QueryClientContext } from "@tanstack/react-query";
-import { useCallback, useContext, useEffect, useRef } from "react";
-import { useRouter } from "../../i18n/navigation";
+import { useCallback, useContext, useRef } from "react";
 import type { Me } from "../session";
 import { uiLocale } from "../ui";
 import { matchRoute, type RouteCtx, UNKNOWN_ROUTE } from "./routes";
 import { meQuery } from "./shell";
+
+/** A route Next was asked to prefetch is not asked again for this long. */
+const PREFETCH_AGAIN_MS = 5_000;
+const prefetched = new Map<string, number>();
 
 /** What `warmRoute` needs of the router (`router.prefetch`). */
 export type Prefetcher = { prefetch(href: string): void };
@@ -28,7 +31,11 @@ export async function warmRoute(
   if (path === null) return;
   const match = matchRoute(path);
   if (match === null || match.entry.pattern === UNKNOWN_ROUTE) return;
-  router?.prefetch(path);
+  const last = prefetched.get(path);
+  if (last === undefined || Date.now() - last > PREFETCH_AGAIN_MS) {
+    prefetched.set(path, Date.now());
+    router?.prefetch(path);
+  }
   const queries = match.entry.queries({ ...ctx, params: match.params, search: match.search });
   await Promise.all(queries.map((q) => qc.prefetchQuery({ ...q, retry: false }).catch(() => {})));
 }
@@ -78,37 +85,4 @@ export function useWarm(router?: Prefetcher): (href: string) => void {
     },
     [qc, locale],
   );
-}
-
-/**
- * Warms each conversation row (the `[data-part="conversation"]` links in the document) once, the
- * first time it scrolls into view. `rows` changes when rows may have been added.
- */
-export function useWarmRowsInView(scope: string, rows: unknown): void {
-  const router = useRouter();
-  const warm = useWarm(router);
-  const warmRef = useRef(warm);
-  warmRef.current = warm;
-  const done = useRef({ scope, hrefs: new Set<string>() });
-  if (done.current.scope !== scope) done.current = { scope, hrefs: new Set() };
-  // biome-ignore lint/correctness/useExhaustiveDependencies: `rows` re-scans the document
-  useEffect(() => {
-    if (typeof IntersectionObserver === "undefined") return;
-    const seen = done.current.hrefs;
-    const io = new IntersectionObserver((entries) => {
-      for (const e of entries) {
-        if (!e.isIntersecting) continue;
-        const href = (e.target as HTMLElement).getAttribute("href");
-        io.unobserve(e.target);
-        if (href === null || seen.has(href)) continue;
-        seen.add(href);
-        warmRef.current(href);
-      }
-    });
-    for (const el of document.querySelectorAll('[data-part="conversation"][href^="/chat/"]')) {
-      const href = el.getAttribute("href");
-      if (href !== null && !seen.has(href)) io.observe(el);
-    }
-    return () => io.disconnect();
-  }, [scope, rows]);
 }

@@ -1,6 +1,6 @@
 // Touch prefetch (mobile spec §7.3): a link warms its route's queries on pointerdown, a
 // conversation row does it when it scrolls into view, each at most once while fresh.
-import { useDesignLink } from "@capybara-hq/design";
+import { Sidebar, useDesignLink } from "@capybara-hq/design";
 import { QueryClientProvider } from "@tanstack/react-query";
 import { act, cleanup, fireEvent, render, screen } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -129,20 +129,19 @@ describe("a conversation row in view", () => {
       </QueryClientProvider>
     );
   }
+  // the real sidebar draws the rows; each reports through `onVisible`
   function Harness() {
-    const c = useConversationGroups("o1", "/");
+    const conversations = useConversationGroups("o1", "/");
     return (
-      <ul>
-        {c.groups.flatMap((g) =>
-          g.conversations.map((x) => (
-            <li key={x.id}>
-              <a data-part="conversation" href={x.href}>
-                {x.title}
-              </a>
-            </li>
-          )),
-        )}
-      </ul>
+      <Sidebar
+        context={{ kind: "work", org: null, primary: [], more: [] }}
+        newConversation={{ href: "/agents" }}
+        activeNav=""
+        account={{ name: "Grant", menu: [] }}
+        onOpenCommands={() => {}}
+        conversations={conversations}
+        mode="full"
+      />
     );
   }
 
@@ -152,7 +151,7 @@ describe("a conversation row in view", () => {
     const chat = stubApiWithGroups();
     const client = seeded();
     render(<Rows client={client} />);
-    await screen.findByText("One");
+    await screen.findByRole("link", { name: "One" });
     expect(reads(chat, "/conversations/c1/queue")).toBe(0);
     await act(async () => {
       for (const o of FakeObserver.all) o.show();
