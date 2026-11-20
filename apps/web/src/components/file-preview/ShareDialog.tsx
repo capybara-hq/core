@@ -21,7 +21,9 @@ import { type ReactNode, useState } from "react";
 import type { FileOutput } from "../../lib/files";
 import { useCreateShare, useRefreshShare, useRevokeShare } from "../../lib/query/share-mutations";
 import { fileSharesQuery } from "../../lib/query/shares";
+import { browserShare, shareOrCopy } from "../../lib/share";
 import { SHARE_EXPIRIES, type ShareExpiry, type ShareView, shareUrl } from "../../lib/shares";
+import { useShareCapability } from "../../lib/shell";
 import { useErrorMessage } from "../../lib/use-error-message";
 import { FormError } from "../form-error";
 
@@ -64,6 +66,7 @@ export function ShareDialog({
   onOpenChange(open: boolean): void;
 }) {
   const t = useTranslations("shares.dialog");
+  const share = useShareCapability();
   const tc = useTranslations("common");
   const toast = useToast();
   const timeZone = useTimeZone();
@@ -103,8 +106,15 @@ export function ShareDialog({
   };
   const copy = async (s: ShareView) => {
     try {
-      await navigator.clipboard.writeText(link(s));
-      toast.success(t("copied"));
+      const done = await shareOrCopy(
+        { url: link(s) },
+        {
+          share,
+          webShare: browserShare(),
+          copy: (text) => navigator.clipboard.writeText(text),
+        },
+      );
+      if (done === "copied") toast.success(t("copied"));
     } catch {
       // No usable clipboard: the link stays readable in the row's meta line.
     }

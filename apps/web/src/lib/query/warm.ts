@@ -31,10 +31,15 @@ export async function warmRoute(
   if (path === null) return;
   const match = matchRoute(path);
   if (match === null || match.entry.pattern === UNKNOWN_ROUTE) return;
-  const last = prefetched.get(path);
-  if (last === undefined || Date.now() - last > PREFETCH_AGAIN_MS) {
-    prefetched.set(path, Date.now());
-    router?.prefetch(path);
+  if (router !== undefined) {
+    const now = Date.now();
+    const last = prefetched.get(path);
+    if (last === undefined || now - last > PREFETCH_AGAIN_MS) {
+      // only entries inside the window matter: drop the rest so the map stays small
+      for (const [p, at] of prefetched) if (now - at > PREFETCH_AGAIN_MS) prefetched.delete(p);
+      prefetched.set(path, now);
+      router.prefetch(path);
+    }
   }
   const queries = match.entry.queries({ ...ctx, params: match.params, search: match.search });
   await Promise.all(queries.map((q) => qc.prefetchQuery({ ...q, retry: false }).catch(() => {})));

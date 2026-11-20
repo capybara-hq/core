@@ -2,6 +2,8 @@
 // reads `window.capybaraShell` (`lib/shell.ts`), capability by `name@major` and absent = the
 // browser; the event-handler accessor that refuses a call during a render (plan Review Focus 4);
 // and the root layout: the viewport and the no-flash script carrying the request's nonce.
+
+import type { NativeHandlers } from "@capybara-hq/design";
 import { act, cleanup, fireEvent, render, screen } from "@testing-library/react";
 import { useState } from "react";
 import { flushSync } from "react-dom";
@@ -10,7 +12,12 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   shellCapability,
   useDeviceCapability,
+  useHapticsCapability,
+  useMenuCapability,
+  useNativeHandlers,
+  useNavCapability,
   useNotifyCapability,
+  useShareCapability,
   useShellCapability,
   useSignInCapability,
 } from "../src/lib/shell";
@@ -344,5 +351,71 @@ describe("typed capability accessors", () => {
     expect(screen.getByTestId("typed").textContent).toBe("-++");
     act(() => f.change({ "device@1": {} }));
     expect(screen.getByTestId("typed").textContent).toBe("+--");
+  });
+});
+
+describe("the mobile capability accessors", () => {
+  const caps = {
+    "nav@1": { set: vi.fn(async () => {}), onSelect: vi.fn(() => () => {}) },
+    "haptics@1": { impact: vi.fn(async () => {}) },
+    "share@1": { share: vi.fn(async () => {}) },
+    "menu@1": { show: vi.fn(async () => null) },
+  };
+
+  function Accessors() {
+    const a = [
+      useNavCapability(),
+      useHapticsCapability(),
+      useShareCapability(),
+      useMenuCapability(),
+    ];
+    return <p data-testid="a">{a.map((x) => (x === undefined ? "-" : "+")).join("")}</p>;
+  }
+
+  it("each is undefined without its key and the object after a change adds it", () => {
+    const f = fakeShell();
+    install(f.shell);
+    render(<Accessors />);
+    expect(screen.getByTestId("a").textContent).toBe("----");
+    act(() => f.change({ "nav@1": caps["nav@1"] }));
+    expect(screen.getByTestId("a").textContent).toBe("+---");
+    act(() => f.change(caps));
+    expect(screen.getByTestId("a").textContent).toBe("++++");
+  });
+
+  it("useNativeHandlers holds menu only when menu@1 is present", () => {
+    const seen: NativeHandlers[] = [];
+    function H() {
+      seen.push(useNativeHandlers());
+      return null;
+    }
+    const f = fakeShell({ capabilities: { "haptics@1": caps["haptics@1"] } });
+    install(f.shell);
+    render(<H />);
+    const last = () => seen[seen.length - 1] as NativeHandlers;
+    expect(last().menu).toBeUndefined();
+    expect(last().share).toBeUndefined();
+    expect(last().haptics).toBeDefined();
+    act(() => f.change({ "haptics@1": caps["haptics@1"], "menu@1": caps["menu@1"] }));
+    expect(last().menu).toBeDefined();
+  });
+
+  it("the haptics handler swallows a rejected impact", async () => {
+    const impact = vi.fn(() => Promise.reject(new Error("no")));
+    const seen: NativeHandlers[] = [];
+    function H() {
+      seen.push(useNativeHandlers());
+      return null;
+    }
+    install(fakeShell({ capabilities: { "haptics@1": { impact } } }).shell);
+    render(<H />);
+    const unhandled = vi.fn();
+    process.on("unhandledRejection", unhandled);
+    (seen[seen.length - 1] as NativeHandlers).haptics?.("selection");
+    await Promise.resolve();
+    await new Promise((r) => setImmediate(r));
+    process.off("unhandledRejection", unhandled);
+    expect(impact).toHaveBeenCalledWith("selection");
+    expect(unhandled).not.toHaveBeenCalled();
   });
 });

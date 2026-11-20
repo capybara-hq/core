@@ -45,6 +45,7 @@ import { markSigningOut, resetSession } from "../../lib/query/workspace";
 import { HOME_PATH } from "../../lib/routes";
 import { logout, type Me, type Membership, setCurrentOrg } from "../../lib/session";
 import { broadcastSession, useSessionSync } from "../../lib/session-sync";
+import { useNativeNavHandle } from "../../lib/shell";
 import { sidebarCookie } from "../../lib/sidebar-cookie";
 import { useErrorMessage } from "../../lib/use-error-message";
 import { useShellNotifications } from "../../lib/use-shell-notifications";
@@ -319,6 +320,8 @@ function ShellFrame({
 }) {
   const t = useTranslations();
   const router = useRouter();
+  const nativeNav = useNativeNavHandle();
+  const navigate = useCallback((href: string) => router.push(href), [router]);
   const qc = useQueryClient();
   const pathname = usePathname();
   const errorMessage = useErrorMessage();
@@ -771,6 +774,8 @@ function ShellFrame({
       }}
       commands={commands}
       bottomNav={bottom}
+      {...(nativeNav === undefined ? {} : { nativeNav })}
+      onNavigate={navigate}
       pathname={pathname}
       status={status}
       ownStatusBar={pathname === HOME_PATH || under(pathname, "/chat")}

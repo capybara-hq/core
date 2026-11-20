@@ -7,6 +7,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { DesignRoot } from "../src/components/design-root";
 import { useConversationGroups } from "../src/components/shell/conversations";
 import { meQuery } from "../src/lib/query/shell";
+import { warmRoute } from "../src/lib/query/warm";
 import { json, stubApi } from "./support/api";
 import { snapshotDefaults } from "./support/conversation";
 import { resetNavigation, router } from "./support/navigation";
@@ -79,6 +80,24 @@ describe("warmRoute on pointerdown", () => {
       await new Promise((r) => setTimeout(r, 0));
     });
     expect(calls.length).toBe(before);
+  });
+
+  it("a warm without a router does not use up the prefetch window", async () => {
+    stubChat();
+    const client = seeded();
+    const ctx = {
+      params: {},
+      search: new URLSearchParams(),
+      me: ME,
+      orgId: "o1",
+      locale: "en" as const,
+      cookie: () => undefined,
+      now: Date.now(),
+    };
+    await warmRoute(client, "/chat/c9", ctx);
+    const prefetch = vi.fn();
+    await warmRoute(client, "/chat/c9", ctx, { prefetch });
+    expect(prefetch).toHaveBeenCalledWith("/chat/c9");
   });
 
   it.each([["https://example.com/chat/c1"], ["//example.com/chat/c1"], ["/no/such/page"]])(

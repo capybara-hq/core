@@ -1,7 +1,8 @@
 "use client";
 
+import type { NativeHandlers, NativeNavHandle } from "@capybara-hq/design";
 import * as React from "react";
-import { useCallback, useSyncExternalStore } from "react";
+import { useCallback, useMemo, useSyncExternalStore } from "react";
 
 /**
  * The Shell environment adapter (mobile layout spec §9.2–§9.4): the one place in apps/web that
@@ -362,3 +363,73 @@ export const useNotifyCapability = () =>
   useShellCapability(SHELL_CAPABILITY_KEYS.notify) as NotifyCapabilityV1 | undefined;
 export const useSignInCapability = () =>
   useShellCapability(SHELL_CAPABILITY_KEYS.signIn) as SignInCapabilityV1 | undefined;
+export const useNavCapability = () =>
+  useShellCapability(SHELL_CAPABILITY_KEYS.nav) as NavCapabilityV1 | undefined;
+export const useHapticsCapability = () =>
+  useShellCapability(SHELL_CAPABILITY_KEYS.haptics) as HapticsCapabilityV1 | undefined;
+export const useShareCapability = () =>
+  useShellCapability(SHELL_CAPABILITY_KEYS.share) as ShareCapabilityV1 | undefined;
+export const useMenuCapability = () =>
+  useShellCapability(SHELL_CAPABILITY_KEYS.menu) as MenuCapabilityV1 | undefined;
+
+/**
+ * The native tab bar as the design takes it (`nav@1` adapted): `set` is a state push that is not
+ * confirming (the shell needs no activation for it), so a rejection is dropped. The handle keeps
+ * its reference while the capability object does.
+ */
+export function useNativeNavHandle(): NativeNavHandle | undefined {
+  const nav = useNavCapability();
+  return useMemo(
+    () =>
+      nav === undefined
+        ? undefined
+        : {
+            set: (state) => {
+              try {
+                nav.set(state).catch(() => {});
+              } catch {
+                // a shell that throws leaves the bar as it was
+              }
+            },
+            onSelect: (listener) => nav.onSelect(listener),
+          },
+    [nav],
+  );
+}
+
+/**
+ * The design's native handlers, only for the capabilities the shell has (none in a browser). Each
+ * call runs in the design's event handlers (spec §9.4). A haptic is decoration: a rejection is
+ * swallowed.
+ */
+export function useNativeHandlers(): NativeHandlers {
+  const haptics = useHapticsCapability();
+  const share = useShareCapability();
+  const menu = useMenuCapability();
+  return useMemo(
+    () => ({
+      ...(menu === undefined
+        ? {}
+        : {
+            menu: (input) => {
+              const { anchor: a, ...rest } = input;
+              // the shell takes a whole rect (a DOMRectInit's fields are optional)
+              const anchor =
+                a?.x === undefined || a.y === undefined
+                  ? undefined
+                  : { x: a.x, y: a.y, width: a.width ?? 0, height: a.height ?? 0 };
+              return menu.show(anchor === undefined ? rest : { ...rest, anchor });
+            },
+          }),
+      ...(share === undefined ? {} : { share: (input) => share.share(input) }),
+      ...(haptics === undefined
+        ? {}
+        : {
+            haptics: (kind) => {
+              haptics.impact(kind).catch(() => {});
+            },
+          }),
+    }),
+    [haptics, share, menu],
+  );
+}

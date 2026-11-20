@@ -5,6 +5,7 @@ import {
   DesignProvider,
   type LinkComponent,
   type ServerClock,
+  ShellReady,
   ToastProvider,
   useDesignLink,
   useDesignLocale,
@@ -14,6 +15,7 @@ import { createContext, type PointerEvent, type ReactNode, useContext, useEffect
 import { Link, useRouter } from "../i18n/navigation";
 import type { AppLocale } from "../i18n/routing";
 import { useWarm } from "../lib/query/warm";
+import { useNativeHandlers } from "../lib/shell";
 import { TIME_ZONE_COOKIE } from "../lib/time";
 
 /** Whether the enclosing next/link navigation is pending (called inside each design link). */
@@ -67,14 +69,18 @@ export function DesignRoot({
     // biome-ignore lint/suspicious/noDocumentCookie: the Cookie Store API is async and not everywhere
     document.cookie = `${TIME_ZONE_COOKIE}=${zone}; max-age=31536000; path=/; samesite=lax`;
   }, [serverZone]);
+  const native = useNativeHandlers();
   return (
     <ClockContext.Provider value={clock}>
       <DesignProvider
         locale={locale}
+        native={native}
         link={WarmLink}
         useLinkPending={useLinkPending}
         {...(clock !== undefined && { clock })}
       >
+        {/* once per document: the native shell drops its splash (chrome@1.ready) */}
+        <ShellReady />
         <ToastProvider>{children}</ToastProvider>
       </DesignProvider>
     </ClockContext.Provider>
@@ -89,9 +95,11 @@ export function DesignRoot({
  */
 export function BrandRoot({ brand, children }: { brand: Brand | null; children: ReactNode }) {
   const clock = useContext(ClockContext);
+  const native = useNativeHandlers();
   return (
     <DesignProvider
       locale={useDesignLocale()}
+      native={native}
       link={useDesignLink()}
       useLinkPending={useLinkPending}
       {...(clock !== undefined && { clock })}
