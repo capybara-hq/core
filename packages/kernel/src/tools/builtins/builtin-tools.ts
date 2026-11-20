@@ -197,6 +197,17 @@ export class BuiltinTools {
         setting: async (orgId) => (await readOrgSettings(db.db, orgId)).platformTool,
         log,
         sealed: sealedInputs,
+        approvalPersonPaths: async (approvalId) => {
+          const row = await db.db
+            .selectFrom("approvals")
+            .select(["kind", "detail"])
+            .where("id", "=", approvalId)
+            .executeTakeFirst();
+          const fields = (row?.detail as { personFields?: unknown } | null | undefined)
+            ?.personFields;
+          if (row?.kind !== "tool" || !Array.isArray(fields) || fields.length === 0) return null;
+          return fields.map((f) => String((f as { path?: unknown }).path));
+        },
       }),
       // the clock in the run context's time zone (the run context carries only the date)
       currentTimeTool({

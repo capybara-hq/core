@@ -147,6 +147,11 @@ export interface PlatformToolDeps {
   log?: Pick<KernelLogger, "warn"> & Partial<Pick<KernelLogger, "debug">>;
   /** The person's sealed card values (`personInputs`); absent: no write has person fields. */
   sealed?: Pick<SealedInputs, "consume">;
+  /**
+   * The person field paths an approval's card showed (its stored `detail.personFields`), or null
+   * when it has none: what an approved call's values are bound to.
+   */
+  approvalPersonPaths?(approvalId: string): Promise<string[] | null>;
 }
 
 const json = (value: unknown, summary: { zh: string; en: string }): BuiltinResult => ({
@@ -259,6 +264,14 @@ const personInputsMissingText = (id: string) =>
  */
 const personRefusedText = (id: string, message: string) =>
   `Operation ${id} cannot run as approved: ${message} Correct the params, then call the operation again.`;
+/**
+ * Model-visible: the fields to enter differ between the card the person confirmed, the values they
+ * sealed and the call as it runs now.
+ */
+const PERSON_FIELDS_CHANGED_TEXT =
+  "The target changed after the person confirmed (the fields to enter differ); call the operation again.";
+/** Model-visible result line: the approved call's operation never applied the person's values. */
+const unusedValuesText = (id: string) => `The values the person entered were not used by ${id}.`;
 /** The result line of one field the person entered (never its value). */
 const enteredLine = (path: string) => `\`${path}\`: entered by the person`;
 const outputRefText = (id: string) =>
@@ -503,30 +516,51 @@ export function platformTool(deps: PlatformToolDeps): BuiltinTool {
     };
     /** The paths whose values the handler applied (the result's lines). */
     let entered: readonly string[] = [];
+    /** Whether the handler called `personInputs.apply` (once at most). */
+    let applied = false;
     let result: unknown;
     try {
       const person = await personFieldsOf(op, params, octx);
+      // what the card showed (the approval's stored specs) binds what runs: the run-time plan
+      // must ask exactly those fields, and the sealed values must carry exactly them
+      const approvalId = ctx.approvalId;
+      const shown =
+        approvalId === undefined || deps.approvalPersonPaths === undefined
+          ? null
+          : await deps.approvalPersonPaths(approvalId);
+      if (person === null && shown !== null) throw new PersonFieldsChanged();
       if (person !== null) {
-        const approvalId = ctx.approvalId;
         const sealed = deps.sealed;
         if (approvalId === undefined || sealed === undefined) {
           throw new ToolError(personInputsMissingText(op.id));
         }
+        // an approval made before the call had person fields (the target changed since)
+        if (shown === null) throw new PersonFieldsChanged();
+        const asked = person.fields.map((p) => p.path);
+        if (!sameSet(asked, shown)) throw new PersonFieldsChanged();
         octx.personInputs = {
-          paths: person.fields.map((p) => p.path),
-          apply: (fn) =>
+          paths: shown,
+          apply: (fn) => {
+            if (applied) throw new Error("personInputs.apply called twice");
+            applied = true;
             // the person who typed the values is the run's trigger account, the approval's
             // `requested_for` (a role escalation is refused before the card, R5)
-            sealed.consume(approvalId, ctx.accountId, async (values) => {
+            return sealed.consume(approvalId, ctx.accountId, async (values) => {
+              // a throw here rolls the row's delete back: nothing is applied
+              if (!sameSet(Object.keys(values), shown) || !sameSet(asked, shown)) {
+                throw new PersonFieldsChanged();
+              }
               const out = await fn(values);
               entered = Object.keys(values).sort();
               return out;
-            }),
+            });
+          },
         };
       }
       result = await op.run(params, octx);
     } catch (e) {
       if (e instanceof SealedInputsExpiredError) throw new ToolError(PERSON_INPUTS_EXPIRED_TEXT);
+      if (e instanceof PersonFieldsChanged) throw new ToolError(PERSON_FIELDS_CHANGED_TEXT);
       if (e instanceof PersonFieldsRefused)
         throw new ToolError(personRefusedText(op.id, e.message));
       // a service refusal after the approval (a race the precheck could not see) still names the
@@ -534,11 +568,17 @@ export function platformTool(deps: PlatformToolDeps): BuiltinTool {
       throw toToolError(e, (code) => nextStepFor(op.errors, code, role));
     }
     const summary = { zh: `调用平台操作 ${op.id}`, en: `Called ${op.id}` };
-    if (entered.length === 0) return json(asResult(result), summary);
+    const lines = entered.map(enteredLine);
+    if (octx.personInputs !== undefined && !applied) {
+      // an operation bug: the person typed values the write never used (they expire unread)
+      deps.log?.warn("platform operation did not use the person's values", { operation: op.id });
+      lines.push(unusedValuesText(op.id));
+    }
+    if (lines.length === 0) return json(asResult(result), summary);
     return {
       content: [
         { type: "text", text: JSON.stringify(asResult(result)) },
-        { type: "text", text: entered.map(enteredLine).join("\n") },
+        { type: "text", text: lines.join("\n") },
       ],
       display: { summary },
     };
@@ -576,6 +616,15 @@ export function platformTool(deps: PlatformToolDeps): BuiltinTool {
 
 /** A person-field plan that refuses the call (model-visible English). */
 class PersonFieldsRefused extends Error {}
+
+/** The fields to enter differ from what the person confirmed ({@link PERSON_FIELDS_CHANGED_TEXT}). */
+class PersonFieldsChanged extends Error {}
+
+const sameSet = (a: readonly string[], b: readonly string[]): boolean => {
+  const sa = new Set(a);
+  const sb = new Set(b);
+  return sa.size === sb.size && [...sa].every((x) => sb.has(x));
+};
 
 /** The `askPerson` / `clearSecrets` of a validated input (both default to [] in the schema). */
 const pathsOf = (params: unknown, key: "askPerson" | "clearSecrets"): string[] => {

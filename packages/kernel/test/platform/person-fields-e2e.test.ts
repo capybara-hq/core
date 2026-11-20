@@ -84,13 +84,20 @@ const probe = defineOperation({
     target: { zh: "探针配置", en: "Probe config" },
     ...secretFieldsOf(TARGET_SCHEMA, new Set()),
   }),
-  run: async (_input, ctx) => {
+  run: async (input, ctx) => {
     const pi = ctx.personInputs;
     if (pi === undefined) {
       seen.push({ paths: null, value: null });
       return { stored: true };
     }
+    // `baseUrl` picks a misbehaving handler: one that never applies, or applies twice
+    const mode = input.values.baseUrl;
+    if (mode === "mode:skip") {
+      seen.push({ paths: pi.paths, value: null });
+      return { stored: false };
+    }
     const value = await pi.apply(async (values) => values.apiKey ?? null);
+    if (mode === "mode:twice") await pi.apply(async () => null);
     seen.push({ paths: pi.paths, value });
     return { stored: true };
   },
@@ -200,6 +207,33 @@ const approvalRow = (id: string) =>
 
 const lastResult = async (convId: string) =>
   ofType(await eventsOf(db, convId), "tool_result").at(-1)?.payload;
+
+/** Seals `values` for an approval as the decision would (Task 5 writes them in its route). */
+async function seal(convId: string, approvalId: string, values: Record<string, string>) {
+  const row = await approvalRow(approvalId);
+  await k.app.get(TransactionHost).run(() =>
+    k.app.get(SealedInputs).sealIn(
+      {
+        approvalId: row.id,
+        recipientAccountId: ownerId,
+        conversationId: convId,
+        runId: row.run_id,
+        callId: row.call_id,
+      },
+      values,
+    ),
+  );
+}
+
+const sealedRows = (approvalId: string) =>
+  db
+    .selectFrom("platform_sealed_inputs")
+    .select("approval_id")
+    .where("approval_id", "=", approvalId)
+    .execute();
+
+const CHANGED_TEXT =
+  "The target changed after the person confirmed (the fields to enter differ); call the operation again.";
 
 const approve = (approvalId: string) =>
   owner({
@@ -334,6 +368,56 @@ describe("Platform person fields", () => {
     const convId = await probeCall({ askPerson: ["apiKey"] }, allowed);
     const asked = await approvalRequested(convId);
     expect((await approvalRow(asked.payload.approvalId)).scopes).toEqual(["once"]);
+  });
+
+  it("refuses sealed values whose fields differ from the card's, applying nothing", async () => {
+    const convId = await probeCall({ askPerson: ["apiKey"] });
+    const asked = await approvalRequested(convId);
+    await seal(convId, asked.payload.approvalId, { otherKey: SECRET });
+    const before = seen.length;
+    const ok = await approve(asked.payload.approvalId);
+    expect(ok.statusCode, ok.body).toBe(200);
+    await waitForTerminal(db, convId, 1, 30_000);
+    const result = await lastResult(convId);
+    expect(result?.isError).toBe(true);
+    expect(result?.content).toContain(CHANGED_TEXT);
+    expect(result?.content).not.toContain(SECRET);
+    expect(seen.slice(before)).toEqual([]);
+    // the delete rolled back with the refusal
+    expect(await sealedRows(asked.payload.approvalId)).toHaveLength(1);
+  });
+
+  it("a second apply is a programming error, not the expired text", async () => {
+    const convId = await probeCall({ values: { baseUrl: "mode:twice" }, askPerson: ["apiKey"] });
+    const asked = await approvalRequested(convId);
+    await seal(convId, asked.payload.approvalId, { apiKey: SECRET });
+    const ok = await approve(asked.payload.approvalId);
+    expect(ok.statusCode, ok.body).toBe(200);
+    await waitForTerminal(db, convId, 1, 30_000);
+    const result = await lastResult(convId);
+    expect(result?.isError).toBe(true);
+    expect(result?.content).not.toContain(EXPIRED_TEXT);
+    expect(result?.content).not.toContain(SECRET);
+    expect(lines.join("\n")).toContain("personInputs.apply called twice");
+  });
+
+  it("a run that never applies the values says so and logs it", async () => {
+    const convId = await probeCall({ values: { baseUrl: "mode:skip" }, askPerson: ["apiKey"] });
+    const asked = await approvalRequested(convId);
+    await seal(convId, asked.payload.approvalId, { apiKey: SECRET });
+    const ok = await approve(asked.payload.approvalId);
+    expect(ok.statusCode, ok.body).toBe(200);
+    await waitForTerminal(db, convId, 1, 30_000);
+    const result = await lastResult(convId);
+    expect(result?.isError).toBe(false);
+    expect(result?.content).toContain(`The values the person entered were not used by ${OP}.`);
+    expect(result?.content).not.toContain("entered by the person");
+    expect(
+      lines.some(
+        (l) => l.includes("platform operation did not use the person's values") && l.includes(OP),
+      ),
+    ).toBe(true);
+    expect(lines.join("\n")).not.toContain(SECRET);
   });
 
   it("refuses the call in an unattended run (R6)", async () => {
