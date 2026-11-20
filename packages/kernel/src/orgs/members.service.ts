@@ -1,6 +1,7 @@
 import { Inject, Injectable } from "@nestjs/common";
 import type { KernelSchemaDb } from "../db/kernel-schema.js";
 import { ApiError } from "../errors.js";
+import { avatarColumns, personAvatarUrl } from "../identity/account-avatar.js";
 import type { Account } from "../identity/accounts.js";
 import { audit } from "../identity/audit.js";
 import { afterCommit } from "../infra/database/after-commit.js";
@@ -12,7 +13,7 @@ import { OrgLock } from "./org-lock.js";
 import type { OrgRole } from "./roles.js";
 
 export interface Member {
-  account: Pick<Account, "id" | "displayName" | "email">;
+  account: Pick<Account, "id" | "displayName" | "email"> & { avatarUrl: string | null };
   role: OrgRole;
   joinedAt: Date;
   /** 该组织的匿名访客（渠道连接的匿名策略用）：不能改角色、移出、转让所有权或指派为 agent 负责人。 */
@@ -76,20 +77,26 @@ export class MembersService {
           .onRef("org_anonymous_accounts.org_id", "=", "memberships.org_id")
           .onRef("org_anonymous_accounts.account_id", "=", "memberships.account_id"),
       )
-      .select([
+      .select((eb) => [
         "accounts.id",
         "accounts.display_name",
         "accounts.email",
         "memberships.role",
         "memberships.created_at",
         "org_anonymous_accounts.account_id as anonymous_id",
+        ...avatarColumns(eb, "accounts", "account"),
       ])
       .where("memberships.org_id", "=", orgId)
       .orderBy("memberships.created_at")
       .orderBy("accounts.id")
       .execute();
     return rows.map((r) => ({
-      account: { id: r.id, displayName: r.display_name, email: r.email },
+      account: {
+        id: r.id,
+        displayName: r.display_name,
+        email: r.email,
+        avatarUrl: personAvatarUrl(r, "account", r.id),
+      },
       role: r.role,
       joinedAt: r.created_at,
       anonymous: r.anonymous_id !== null,

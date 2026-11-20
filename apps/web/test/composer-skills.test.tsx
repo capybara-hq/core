@@ -343,7 +343,14 @@ describe("a lone /", () => {
       await renderChatRoute({
         locale,
         me: {
-          account: { id: "a2", displayName: "Mia", email: null, isSuperAdmin: false },
+          account: {
+            id: "a2",
+            displayName: "Mia",
+            email: null,
+            isSuperAdmin: false,
+            avatarUrl: null,
+            avatarSource: null,
+          },
           via: "session",
           currentOrgId: "o1",
           memberships: [{ orgId: "o1", slug: "acme", name: "Acme", role: "member" }],

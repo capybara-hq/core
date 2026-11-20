@@ -6,6 +6,7 @@ import { useState } from "react";
 import { type Agent, avatarValue } from "../lib/agents";
 import { modelLabel } from "../lib/extension-label";
 import { canEditAgent, canUpdateOrg } from "../lib/org-settings";
+import { type PersonRef, useViewerPerson } from "../lib/people";
 import { newConversationPath } from "../lib/routes";
 import type { Me } from "../lib/session";
 import { SaveAsTemplateDialog } from "./SaveAsTemplateDialog";
@@ -37,16 +38,17 @@ export function matchesAgent(a: Agent, query: string): boolean {
  * a member who owns it). The owner is changed on the agent page only, never from the list
  * (acceptance item P; ruling P4-16 as amended). 另存为模板 (org admins, ruling P4-9) opens the
  * agent page's dialog.
- * `ownerName` is the owner's display name when the members list is readable (members up).
+ * `owner` is the owner as a person when the members list is readable (members up); the viewer's own
+ * card reads "Me" with their avatar.
  */
 export function AgentCard({
   agent,
   me,
-  ownerName,
+  owner: ownerPerson,
 }: {
   agent: Agent;
   me: Me;
-  ownerName: string | undefined;
+  owner: PersonRef | undefined;
 }) {
   const t = useTranslations("agents");
   const [saving, setSaving] = useState(false);
@@ -57,7 +59,8 @@ export function AgentCard({
   const canViewRuns = editable && (level === "admin" || (level === "member" && mine));
   const name = agent.definition.name;
   const page = `/agents/${encodeURIComponent(agent.id)}`;
-  const owner = mine ? t("ownerMe") : ownerName;
+  const viewer = useViewerPerson(t("ownerMe"));
+  const owner: PersonRef | undefined = mine ? viewer : ownerPerson;
   const description = agent.profile.description;
   return (
     <>
@@ -67,7 +70,7 @@ export function AgentCard({
         href={page}
         {...(description !== "" ? { description } : {})}
         // Visibility is plain metadata, never a chip; the owner only when it can be named
-        meta={[...(owner !== undefined ? [owner] : []), t(`scope.${agent.visibility}`)]}
+        meta={[...(owner !== undefined ? [{ person: owner }] : []), t(`scope.${agent.visibility}`)]}
         primary={{ label: t("chat"), href: newConversationPath(agent.id) }}
         menu={[
           ...(editable ? [{ label: t("settings"), href: page }] : []),

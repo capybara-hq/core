@@ -2,6 +2,7 @@
 
 import {
   type ActionRowProps,
+  ApprovalFileRow,
   Button,
   CodeBlock,
   clipCommand,
@@ -36,6 +37,7 @@ import { PendingConnectorDialog } from "../../../components/agent/PendingConnect
 import { ErrorFrame } from "../../../components/ErrorFrame";
 import { NoAccess } from "../../../components/NoAccess";
 import { PermissionScopeDetail } from "../../../components/PermissionScopeDetail";
+import { Person } from "../../../components/Person";
 import { SandboxEscalationDetail } from "../../../components/SandboxEscalationDetail";
 import {
   requesterOf,
@@ -149,6 +151,7 @@ function Inbox({
   const tdd = useTranslations("inbox.requestDecided");
   const tsa = useTranslations("inboxSchedule");
   const tnr = useTranslations("inbox.network");
+  const departed = useTranslations("people")("departed");
   // Approving a refused tool for my task changes the task's grants and the inbox
   const addGrantMutation = useAppMutation({
     fn: (v: { taskId: string; toolKey: string }) => addScheduleGrants(orgId, v.taskId, [v.toolKey]),
@@ -208,7 +211,7 @@ function Inbox({
     approved: tdd("approved"),
     rejected: tdd("rejected"),
     schedule: tsa("label"),
-    scheduleReason: (a) => scheduleReason(a, tsa),
+    scheduleReason: (a) => scheduleReason(a, tsa, departed),
     network: tnr("label"),
     networkDecided: tnr("decidedLabel"),
   };
@@ -309,6 +312,7 @@ function Inbox({
             onOpen: () => router.push(`/schedules/${encodeURIComponent(active.attention.taskId)}`),
             tsa,
             t,
+            departed,
           })
         : hasNotice(active)
           ? noticeDetail({
@@ -338,6 +342,7 @@ function Inbox({
                   tnr,
                   td,
                   t,
+                  departed,
                 })
               : active.type === "catalog_request_decided" && isSetupRequest(active.request)
                 ? setupDecidedDetail({
@@ -613,12 +618,9 @@ function rowOf(
 }
 
 /** Why a task needs me, in one line. */
-function scheduleReason(a: ScheduleAttention, tsa: Translate): string {
-  if (a.reason === "admin") {
-    return a.pausedBy !== null && a.pausedBy.name !== ""
-      ? tsa("reason.admin", { name: a.pausedBy.name })
-      : tsa("reason.adminUnknown");
-  }
+function scheduleReason(a: ScheduleAttention, tsa: Translate, departed: string): string {
+  // an admin pause always names its admin: null is one who has left ("Former member")
+  if (a.reason === "admin") return tsa("reason.admin", { name: a.pausedBy?.name ?? departed });
   return tsa(`reason.${a.reason}`);
 }
 
@@ -635,6 +637,7 @@ function scheduleDetail({
   onOpen,
   tsa,
   t,
+  departed,
 }: {
   attention: ScheduleAttention;
   createdAt: string;
@@ -643,8 +646,10 @@ function scheduleDetail({
   onOpen(): void;
   tsa: Translate;
   t: Translate;
+  /** "Former member": the name of an admin who has left. */
+  departed: string;
 }): Detail {
-  const reason = scheduleReason(a, tsa);
+  const reason = scheduleReason(a, tsa, departed);
   return {
     facts: [
       { label: tsa("task"), value: a.name },
@@ -870,6 +875,19 @@ function toolApprovalDetail({
       <div data-approval-id={approval.id}>
         <Stack gap={12}>
           {person && <Text variant="prose">{ta("person.fillOnWeb", { n: personCount })}</Text>}
+          {/* the file the call takes: the person decides on these bytes, not the bare fileId */}
+          {approval.file !== undefined && (
+            <ApprovalFileRow
+              file={{
+                name: approval.file.name,
+                size: approval.file.size,
+                sha256: approval.file.sha256,
+                ...(approval.file.thumbnail !== undefined
+                  ? { thumbnail: approval.file.thumbnail }
+                  : {}),
+              }}
+            />
+          )}
           {command === null ? (
             <Stack gap={4}>
               <Text variant="small" tone="muted">
@@ -941,7 +959,10 @@ function skillChangeDetail({
   return {
     facts: [
       { label: t("skillChange.agent"), value: change.agent.name },
-      { label: t("skillChange.requester"), value: requesterOf(change) },
+      {
+        label: t("skillChange.requester"),
+        value: <Person person={requesterOf(change)} size={16} />,
+      },
       // a link where the reader may open it (the requester), else a dash, never the raw id
       {
         label: t("conversation"),
@@ -994,7 +1015,7 @@ function directoryRequestDetail({
   const version = requestVersion(request);
   return {
     facts: [
-      { label: td("requester"), value: directoryRequester(request) },
+      { label: td("requester"), value: <Person person={directoryRequester(request)} size={16} /> },
       { label: td("version"), value: version === null ? "—" : versionLabel(version) },
       { label: t("requested"), value: <DateTime value={request.createdAt} /> },
     ],
@@ -1058,6 +1079,7 @@ function networkRequestDetail({
   tnr,
   td,
   t,
+  departed,
 }: {
   request: CatalogRequest;
   pending: "approve" | "reject" | undefined;
@@ -1067,12 +1089,14 @@ function networkRequestDetail({
   tnr: Translate;
   td: Translate;
   t: Translate;
+  /** "Former member": the name of a requester who has left. */
+  departed: string;
 }): Detail {
   const hosts = request.network?.hosts ?? [];
   const chat = conversationLinkOf(request);
   return {
     facts: [
-      { label: td("requester"), value: directoryRequester(request) },
+      { label: td("requester"), value: <Person person={directoryRequester(request)} size={16} /> },
       { label: tnr("hosts"), value: String(hosts.length) },
       { label: t("requested"), value: <DateTime value={request.createdAt} /> },
     ],
@@ -1090,7 +1114,7 @@ function networkRequestDetail({
         disabled: pending !== undefined,
       },
     },
-    title: tnr("title", { name: directoryRequester(request) }),
+    title: tnr("title", { name: directoryRequester(request)?.name ?? departed }),
     status: <StatusMark status="waiting" label={tnr("label")} />,
     content: (
       <Stack gap={12}>
@@ -1216,7 +1240,7 @@ function setupRequestDetail({
   const agent = request.agent?.name ?? "—";
   return {
     facts: [
-      { label: td("requester"), value: directoryRequester(request) },
+      { label: td("requester"), value: <Person person={directoryRequester(request)} size={16} /> },
       { label: ts("agent"), value: agent },
       { label: ts("count"), value: String(connectors.length) },
       { label: t("requested"), value: <DateTime value={request.createdAt} /> },

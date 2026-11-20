@@ -2,6 +2,7 @@ import type { z } from "zod";
 import type { ToolView } from "../conversations/events.js";
 import type { OrgAction } from "../orgs/roles.js";
 import type { ErrorRole } from "./errors.js";
+import type { FileLimits, FileRef, ResolvedFile } from "./file-ref.js";
 import type { PersonFieldTarget } from "./person-fields.js";
 
 /**
@@ -52,6 +53,13 @@ export interface OperationContext {
    * names every field the card shows. Absent elsewhere.
    */
   personAsk?: readonly string[];
+  /**
+   * The file the call's {@link PlatformOperation.fileRef} names (platform web parity spec §5),
+   * resolved and checked against its limits. In `run`: read again right before it, and the same
+   * bytes the person confirmed (the tool refuses a different sha256 before `run`). In `summary`:
+   * the bytes the card shows. Absent when the operation takes no file for this input.
+   */
+  file?: ResolvedFile;
 }
 
 /**
@@ -176,12 +184,27 @@ export interface PlatformOperation<I = unknown> {
    */
   personFields?(input: I, ctx: OperationContext): Promise<PersonFieldTarget>;
   /**
+   * The file this input takes in place of an upload (platform web parity spec §5), with the
+   * mirrored route's byte limit and content types; null: none for this input (another variant).
+   * The tool resolves it at the policy step (a file over the limit or of another type is refused
+   * before the card; the card shows its name, size, sha256 and an image's thumbnail, and the
+   * approval binds the sha256), and again before `run`, which gets it as `ctx.file`.
+   */
+  fileRef?(input: I): { ref: FileRef; limits: FileLimits } | null;
+  /**
    * Why the operation takes none of its mirrored route's secret fields (`secret()` meta, left in
    * `omits`) and asks the person for none, e.g. a preview without the credential, or a switch that
    * refuses a plugin needing input (`plugins.install` takes it). Rule `platform-op-secret-param`
    * otherwise requires {@link personFields}.
    */
   withoutSecrets?: string;
+  /**
+   * Why the operation sends the person to the web (its description names a place where they
+   * confirm, review, approve or decide) yet pops no {@link handoff} card: no web page shows it.
+   * Rule `platform-op-handoff` otherwise requires `handoff`; the opt-out is stale once the
+   * description stops sending the person there.
+   */
+  noHandoff?: string;
   /**
    * The bilingual card summary of a write, rendered from the input and kernel reads (names of
    * the targets, preview counts), never from model text; required unless `confirm` is `read`.

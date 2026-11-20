@@ -388,7 +388,12 @@ no plugin can take the name.
   (`devices.provider`), not by the deployment's one sandbox extension, so cloud and local
   devices coexist. Handle ids are the device id (parsed from `cap-device-<deviceId>`).
 - **Relay.** Calls become requests on `capk:device-req:<deviceId>` and results come back under
-  `capk:device-res:<requestId>`; no holder means `device.offline` at once. See
+  `capk:device-res:<requestId>`; no holder means `device.offline` at once. A waiting staged call
+  ends at its deadline plus `reconnectGraceSeconds`, or at the next holder poll once the machine is
+  connected as another program run (the hello's `programRunId`, random per process: the results a
+  program keeps for a reconnect live in its memory), with `DeviceProgramRestartedError`; the
+  operation path records it as an unknown outcome and the model gets
+  `DEVICE_PROGRAM_RESTARTED_TOOL_TEXT`. See
   `packages/kernel/src/local-devices` and spec §13.4. The handle carries the org's limits from `create`; a
   handle without them answers `SandboxGoneError`, which rebuilds the instance.
 - **Offline-safe destroys.** `destroy`, `destroyByName`, `destroyFileSystem` and

@@ -1,10 +1,20 @@
-import { type JSX, type KeyboardEvent, type ReactNode, useId, useRef, useState } from "react";
+import {
+  Fragment,
+  type JSX,
+  type KeyboardEvent,
+  type ReactNode,
+  useId,
+  useRef,
+  useState,
+} from "react";
 import { Button } from "../controls/button";
 import { Input } from "../controls/inputs";
 import { Checkbox, Switch } from "../controls/toggles";
+import { formatBytes } from "../display/attachments";
 import { Callout, type CalloutAction } from "../display/callout";
 import { CodeBlock } from "../display/chat";
 import { initialOf } from "../display/initial";
+import { type PersonLike, PersonName } from "../display/person-name";
 import { Icon } from "../icons/icon";
 import { useDesignT } from "../provider";
 import { PersonFieldRow } from "./person-field";
@@ -14,6 +24,42 @@ import { fillCopy } from "./tool-copy";
 // Human-in-the-loop blocks (spec §6.16.11–§6.16.13): the pending approval (the only accent card),
 // questions (AskUserQuestion and connector elicitation) and connect requests, and their one-line forms
 // once handled.
+
+/** A `who`: plain text stays text, a person is a 16 PersonName (spec §6.16.11, §6.16.12). */
+function whoNode(who: string | PersonLike): ReactNode {
+  return typeof who === "string" ? (
+    who
+  ) : (
+    <PersonName name={who.name} avatarUrl={who.avatarUrl} initialFrom={who.initialFrom} size={16} />
+  );
+}
+
+/** Fills `{who}` with a node and the other placeholders with text. */
+function fillWho(tpl: string, who: string | PersonLike, vars: Record<string, string>): ReactNode {
+  const parts = tpl.split(/(\{\w+\})/);
+  return parts.map((part, i) => {
+    const m = part.match(/^\{(\w+)\}$/);
+    // biome-ignore lint/suspicious/noArrayIndexKey: the template's parts keep their order
+    if (!m) return <Fragment key={i}>{part}</Fragment>;
+    const k = m[1] as string;
+    // biome-ignore lint/suspicious/noArrayIndexKey: the template's parts keep their order
+    if (k === "who") return <Fragment key={i}>{whoNode(who)}</Fragment>;
+    // biome-ignore lint/suspicious/noArrayIndexKey: the template's parts keep their order
+    return <Fragment key={i}>{vars[k] ?? part}</Fragment>;
+  });
+}
+
+/** Text parts and a person's node joined by " · ", the empty ones left out. */
+function joinDots(items: (string | ReactNode | undefined | "")[]): ReactNode {
+  const shown = items.filter((x) => x !== undefined && x !== "" && x !== null && x !== false);
+  return shown.map((x, i) => (
+    // biome-ignore lint/suspicious/noArrayIndexKey: the parts keep their order
+    <Fragment key={i}>
+      {i > 0 ? " · " : null}
+      {x}
+    </Fragment>
+  ));
+}
 
 // ── Approval ────────────────────────────────────────────────────────────────
 
@@ -25,7 +71,8 @@ export type ApprovalState =
       kind: "decided";
       /** `skipped`: the person sent a message instead of answering (network asks only). */
       decision: "approved" | "denied" | "expired" | "cancelled" | "skipped";
-      who: string;
+      /** A string stays plain text (such as "you" or "system"); a person is drawn as a PersonName. */
+      who: string | PersonLike;
       when: string;
       scope?: ApprovalScope;
       reason?: string;
@@ -119,6 +166,11 @@ export type ApprovalBlockProps = {
   }[];
   /** What the entered values are saved to (shown above the fields). */
   personTarget?: string;
+  /**
+   * The file the call takes in place of an upload (name, size, the sha256 the approval binds, an
+   * image's WebP data URL): a row above the actions so the person sees what they approve.
+   */
+  file?: { name: string; size: number; sha256: string; thumbnail?: string | undefined };
   /** Approve stays disabled (Deny does not): person fields not all filled yet. */
   approveDisabled?: boolean;
   /** `hosts`: a network ask's checked hosts (every host when it has one). */
@@ -188,7 +240,7 @@ export function ApprovalBlock(p: ApprovalBlockProps): JSX.Element {
         <div className="cb-tool-line" data-part="tool-line" data-decision="approved">
           <Icon name="check" size={12} />
           <span className="cb-tool-label">
-            {fillCopy(t("hitl.approvedBy"), { who: s.who, tool: p.tool })}{" "}
+            {fillWho(t("hitl.approvedBy"), s.who, { tool: p.tool })}{" "}
             <span className="cb-faint" data-part="tool-key">
               {[p.toolKey, scope, s.when].filter(Boolean).join(" · ")}
             </span>
@@ -198,7 +250,7 @@ export function ApprovalBlock(p: ApprovalBlockProps): JSX.Element {
     }
     const lead =
       s.decision === "denied"
-        ? fillCopy(t("hitl.deniedBy"), { who: s.who, tool: p.tool })
+        ? fillWho(t("hitl.deniedBy"), s.who, { tool: p.tool })
         : fillCopy(
             t(
               s.decision === "expired"
@@ -348,6 +400,7 @@ export function ApprovalBlock(p: ApprovalBlockProps): JSX.Element {
           ) : null}
         </div>
       )}
+      {p.file ? <ApprovalFileRow file={p.file} /> : null}
       {p.personFields && p.personFields.length > 0 ? (
         <div className="cb-hcard-person" data-part="person-fields">
           <span className="cb-muted cb-small" data-part="person-note">
@@ -370,6 +423,44 @@ export function ApprovalBlock(p: ApprovalBlockProps): JSX.Element {
         </div>
       ) : null}
       {actions}
+    </div>
+  );
+}
+
+/** Only a WebP data URL is shown as the thumbnail (the kernel makes nothing else). */
+const THUMBNAIL_URL = /^data:image\/webp;base64,[A-Za-z0-9+/=]+$/;
+
+/** What {@link ApprovalFileRow} shows of the file an approval takes. */
+export type ApprovalFile = NonNullable<ApprovalBlockProps["file"]>;
+
+/**
+ * The file an approval takes: its thumbnail (an image), name, size and the sha256's first 12 hex.
+ * The approval block draws it; the inbox's approval detail shows the same row.
+ */
+export function ApprovalFileRow({ file }: { file: ApprovalFile }): JSX.Element {
+  const t = useDesignT();
+  const thumb = file.thumbnail !== undefined && THUMBNAIL_URL.test(file.thumbnail);
+  return (
+    <div className="cb-hcard-file" data-part="file">
+      {thumb ? (
+        <img
+          className="cb-hcard-file-thumb"
+          data-part="file-thumbnail"
+          src={file.thumbnail}
+          alt=""
+        />
+      ) : null}
+      <span className="cb-hcard-file-text">
+        <span className="cb-hcard-file-name" data-part="file-name" title={file.name}>
+          {file.name}
+        </span>
+        <span className="cb-muted cb-small" data-part="file-meta">
+          {fillCopy(t("hitl.fileMeta"), {
+            size: formatBytes(file.size),
+            sha: file.sha256.slice(0, 12),
+          })}
+        </span>
+      </span>
     </div>
   );
 }
@@ -469,7 +560,7 @@ function NetworkApproval(p: ApprovalBlockProps & { network: NetworkAsk }): JSX.E
     const approved = d === "approved";
     const word = d === "approved" ? t("hitl.network.allowedOnce") : t(NETWORK_DECIDED[d]);
     // who decided: an approval, a denial, a skip (the person who wrote); expiry and cancel name no one
-    const who = s.decision === "expired" || s.decision === "cancelled" ? "" : s.who;
+    const who = s.decision === "expired" || s.decision === "cancelled" ? "" : whoNode(s.who);
     return (
       <div
         className="cb-tool-line"
@@ -481,7 +572,7 @@ function NetworkApproval(p: ApprovalBlockProps & { network: NetworkAsk }): JSX.E
         <span className="cb-tool-label">
           {word}{" "}
           <span className="cb-faint" data-part="tool-key">
-            {[shown.join(", "), who].filter(Boolean).join(" · ")}
+            {joinDots([shown.join(", "), who])}
           </span>
           {s.reason ? (
             <span className="cb-muted">
@@ -661,7 +752,7 @@ function CommandApproval(p: ApprovalBlockProps & { command: CommandAsk }): JSX.E
     const who =
       s.decision === "expired" || s.decision === "cancelled" || s.decision === "skipped"
         ? ""
-        : s.who;
+        : whoNode(s.who);
     return (
       <div
         className="cb-tool-line"
@@ -673,7 +764,7 @@ function CommandApproval(p: ApprovalBlockProps & { command: CommandAsk }): JSX.E
         <span className="cb-tool-label">
           {word}{" "}
           <span className="cb-faint" data-part="tool-key">
-            {[p.toolKey, who].filter(Boolean).join(" · ")}
+            {joinDots([p.toolKey, who])}
           </span>
           {s.reason ? (
             <span className="cb-muted">
@@ -871,9 +962,9 @@ export type QuestionAnswer = Record<string, string | number | boolean | string[]
 
 export type QuestionState =
   | { kind: "pending"; busy?: boolean }
-  | { kind: "answered"; pairs: [string, string][]; who?: string }
+  | { kind: "answered"; pairs: [string, string][]; who?: string | PersonLike }
   /** The run's starter sent a message instead of answering. */
-  | { kind: "skipped"; who?: string }
+  | { kind: "skipped"; who?: string | PersonLike }
   /** The run ended (stopped, failed) before an answer. */
   | { kind: "cancelled" }
   | { kind: "expired" };
@@ -1186,7 +1277,12 @@ export function QuestionBlock(p: QuestionBlockProps): JSX.Element {
 
   if (s.kind !== "pending") {
     const by = s.kind === "answered" || s.kind === "skipped" ? s.who : undefined;
-    const who = by ? <span className="cb-faint">{` · ${by}`}</span> : null;
+    const who = by ? (
+      <span className="cb-faint">
+        {" · "}
+        {whoNode(by)}
+      </span>
+    ) : null;
     let answer: ReactNode;
     if (s.kind === "answered") {
       const single = s.pairs.length === 1;

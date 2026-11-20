@@ -234,3 +234,32 @@ export const staleWithoutSecrets = {
   mirrors: [route.route],
   withoutSecrets: "nothing secret here",
 };
+
+/** An upload route (presigned) and the create route that takes its id: one operation mirrors both. */
+export const uploadRoute = {
+  route: "POST /api/v1/orgs/:orgId/things/uploads",
+  body: z.object({ name: z.string().min(1).max(200), size: z.number().int().min(1) }).strict(),
+};
+export const createRoute = {
+  route: "POST /api/v1/orgs/:orgId/things/from-upload",
+  body: z.object({ uploadId: z.string().min(1).max(100), shareable: z.boolean().optional() }).strict(),
+};
+
+/** Fields of either route: `shareable` the create route's, the upload fields left out. */
+export const twoRoutes = {
+  id: "things.create-from-file",
+  input: z.object({ file: z.object({ fileId: z.uuid() }).strict(), shareable: z.boolean() }).strict(),
+  mirrors: [uploadRoute.route, createRoute.route],
+  omits: ["name", "size", "uploadId"],
+  extras: ["file"],
+};
+
+/** The same, with the create route's `uploadId` neither taken nor in `omits`. */
+export const twoRoutesMissing = { ...twoRoutes, id: "things.missing", omits: ["name", "size"] };
+
+/** The same, with a `shareable` looser than the create route's (a string). */
+export const twoRoutesMismatch = {
+  ...twoRoutes,
+  id: "things.mismatch",
+  input: z.object({ file: z.object({ fileId: z.uuid() }).strict(), shareable: z.string() }).strict(),
+};

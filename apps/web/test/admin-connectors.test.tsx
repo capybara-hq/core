@@ -13,6 +13,7 @@ import { APP_PAGES } from "../src/components/shell/path";
 import { adminConnectorsQuery } from "../src/lib/query/admin-items";
 import { bodyOf, json, stubApi } from "./support/api";
 import { resetNavigation, router } from "./support/navigation";
+import { personAvatarSrc, personInitial } from "./support/person";
 import { renderRouteEmptyCache, renderRouteWithCache } from "./support/query";
 import { ME } from "./support/render";
 import { pickOption } from "./support/select";
@@ -58,6 +59,7 @@ const row = (over: Record<string, unknown> = {}) => ({
   toolsSyncedAt: T,
   createdBy: "u1",
   createdByName: "Grant",
+  createdByAvatarUrl: "/api/v1/accounts/u1/avatar?v=abc123",
   createdAt: T,
   updatedAt: T,
   ...over,
@@ -77,6 +79,7 @@ const ROWS = [
     toolCount: 0,
     toolsSyncedAt: null,
     createdByName: "Lin",
+    createdByAvatarUrl: null,
   }),
 ];
 const DETAIL = {
@@ -135,6 +138,10 @@ describe("/admin/connectors", () => {
       C.columns.createdBy,
     ]);
     const first = within(table).getByText("Jira").closest("tr") as HTMLElement;
+    expect(personAvatarSrc(first)).toBe("/api/v1/accounts/u1/avatar?v=abc123");
+    const lin = within(table).getByText("Billing API").closest("tr") as HTMLElement;
+    expect(personAvatarSrc(lin)).toBeNull();
+    expect(personInitial(lin)).toBe("L");
     expect(within(first).getByText("Acme")).toBeTruthy();
     expect(within(first).getByText("mcp")).toBeTruthy();
     expect(within(first).getByText("jira-kit")).toBeTruthy();
@@ -264,6 +271,7 @@ describe("/admin/connectors/[id]", () => {
     expect(screen.getByText("mcp")).toBeTruthy();
     expect(screen.getByText(C.fromPlatform)).toBeTruthy();
     // auth: type and ownership only
+    expect(personAvatarSrc(document.body)).toBe("/api/v1/accounts/u1/avatar?v=abc123");
     expect(screen.getByText(C.detail.auth.bearer)).toBeTruthy();
     expect(screen.getByText(C.detail.ownership.personal)).toBeTruthy();
     // the endpoint view as given (large fields as size and sha256)

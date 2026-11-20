@@ -64,7 +64,7 @@ async function fixture() {
   const gateway = new LocalDeviceGateway(machines, locks, bus, redis, config, log);
   const targets = new DeviceTargets({} as KernelDb, redis, locks);
   const relay = new LocalDeviceRelay(redis, bus, locks, config, log, {
-    transport: targets.transport.bind(targets),
+    current: targets.current.bind(targets),
     state: async () => "active",
   });
   const server = new WebSocketServer({ port: 0, host: "127.0.0.1" });

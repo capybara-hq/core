@@ -201,6 +201,15 @@ async create(@ZBody(WidgetCreateBody) body: z.infer<typeof CreateSchema>) {}
 
 `createZodDto` (`src/infra/validation/create-zod-dto.ts`) turns a zod schema into a named DTO class; `@ZBody(Dto)` / `@ZQuery(Dto)` / `@ZParam(Dto)` pass the DTO to the global validation pipe (no decorator metadata, so a bare `@Body()` typed with a DTO is never validated and `kc-zod-pipe` rejects it) and feed the OpenAPI document (`http.swagger`, served at `/docs`). A failure returns 400 `validation_failed` with `details` as the list of field problems. Route parameters that need validation go through a `@ZParam` DTO too (decision R20), so `details[].path` names the parameter. Give every string an upper bound (`max`) to prevent oversized input.
 
+## People in responses
+
+A response that shows a person carries their avatar through `identity/account-avatar.ts`: join
+`accounts` and select `avatarColumns(eb, alias, prefix)` (one prefix per person in the row), read it
+with `personAvatarUrl`, or turn ids into `PersonRef { id, name, avatarUrl }` with one `loadPeople`
+call; responses returning log events add a `people` map, never a change to logged payloads. A gone
+account is `null` (or absent from `people`), never an empty name. Avatars are display data: Platform
+operation outputs never carry `avatarUrl` (the model never sees a face).
+
 ## Error codes
 
 - Business errors throw `new ApiError(code, message)` (`src/errors.ts`); register a new code in `ERROR_CODES` first (code -> HTTP status), named `<domain>.<snake>`.
@@ -412,7 +421,13 @@ approvals and requests, confirming extension permissions, roles, the super-admin
 setup), `secret` (a route that delivers a secret to a browser: SSO / OAuth callbacks, the
 initial-password reveal, other orgs' config copies; "it carries a secret" is no reason: that is a
 person field), `transport`
-(uploads, downloads, streams, presigned URLs), `internal` (the web's own plumbing). A `@SessionOnly()`
+(downloads, streams, embeds, health, public share pages; never an upload: a file reaches an operation
+as a file reference `{ fileId }`, and `platform-op-upload` fails an exclusion whose reason or category
+says upload, multipart or raw bytes, except the three attachment routes, which are `internal` and name
+"a person's file into a conversation"), `internal` (a helper of a web screen; its reason names the
+operation that gives the same facts, or says no agent use). An operation whose description sends the
+person to confirm, review, approve or decide on the web defines `handoff` (the link card, display
+only), or `noHandoff: "<reason>"` when no web page shows it (`platform-op-handoff`). A `@SessionOnly()`
 route is `human-only` or `secret`, never mirrored (`platform-op-session-only`). A controller that
 switches a mirrored route to a schema not in its `ROUTE_SCHEMAS` entry is caught only by review: the
 parity test compares the registered schemas, and tying a `@ZBody` / `@ZQuery` DTO back to that entry

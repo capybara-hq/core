@@ -1,0 +1,31 @@
+<!doctype html>
+<html lang="zh-CN" data-theme="dark">
+<head>
+<meta charset="utf-8">
+<title>PersonName · reference</title>
+<link rel="stylesheet" href="/design/styles/fonts.css">
+<link rel="stylesheet" href="/design/styles/tokens.css">
+<link rel="stylesheet" href="reference.css">
+</head>
+<body>
+<main class="r-page">
+<h1>PersonName</h1>
+<p>A person as a circle avatar and the name (spec §6.50): 16 in lines, cells and options, 24 in rows that lead with the person; the name ellipsized on one line, an optional muted secondary text after it.</p>
+<div class="r-blocks">
+<section data-ref-block="person-name-sizes" style="width:640px" data-pad>
+  <div class="r-avatar-row" data-gap="12"><span class="r-person-name" data-part="person-name" data-size="24"><span class="r-avatar" data-part="avatar" data-kind="initial" data-shape="circle" data-size="24" aria-hidden="true">G</span><span class="r-person-name-text" data-part="person-name-text" title="Grant">Grant</span></span><span class="r-person-name" data-part="person-name" data-size="16"><span class="r-avatar" data-part="avatar" data-kind="initial" data-shape="circle" data-size="16" aria-hidden="true">G</span><span class="r-person-name-text" data-part="person-name-text" title="Grant">Grant</span></span></div>
+</section>
+<section data-ref-block="person-name-image" style="width:640px" data-pad>
+  <div class="r-avatar-row" data-gap="12"><span class="r-person-name" data-part="person-name" data-size="24"><span class="r-avatar" data-part="avatar" data-kind="image" data-shape="circle" data-size="24" aria-hidden="true"><img src="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Crect width='24' height='24' fill='gray'/%3E%3Ccircle cx='12' cy='9' r='4' fill='silver'/%3E%3Cpath d='M4 24c0-5 4-8 8-8s8 3 8 8z' fill='silver'/%3E%3C/svg%3E" alt="" style="width:100%;height:100%;object-fit:cover"></span><span class="r-person-name-text" data-part="person-name-text" title="Grant">Grant</span></span><span class="r-person-name" data-part="person-name" data-size="16"><span class="r-avatar" data-part="avatar" data-kind="image" data-shape="circle" data-size="16" aria-hidden="true"><img src="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24'%3E%3Crect width='24' height='24' fill='gray'/%3E%3Ccircle cx='12' cy='9' r='4' fill='silver'/%3E%3Cpath d='M4 24c0-5 4-8 8-8s8 3 8 8z' fill='silver'/%3E%3C/svg%3E" alt="" style="width:100%;height:100%;object-fit:cover"></span><span class="r-person-name-text" data-part="person-name-text" title="Grant">Grant</span></span></div>
+</section>
+<section data-ref-block="person-name-ellipsis" style="width:200px" data-pad>
+  <span class="r-person-name" data-part="person-name" data-size="24"><span class="r-avatar" data-part="avatar" data-kind="initial" data-shape="circle" data-size="24" aria-hidden="true">A</span><span class="r-person-name-text" data-part="person-name-text" title="A member with a very long display name indeed">A member with a very long display name indeed</span></span>
+</section>
+<section data-ref-block="person-name-secondary" style="width:640px" data-pad>
+  <div class="r-avatar-row" data-gap="12"><span class="r-person-name" data-part="person-name" data-size="24"><span class="r-avatar" data-part="avatar" data-kind="initial" data-shape="circle" data-size="24" aria-hidden="true">G</span><span class="r-person-name-text" data-part="person-name-text" title="Grant">Grant</span><span class="r-person-name-secondary" data-part="person-name-secondary">grant@example.com</span></span><span class="r-person-name" data-part="person-name" data-size="16"><span class="r-avatar" data-part="avatar" data-kind="initial" data-shape="circle" data-size="16" aria-hidden="true">G</span><span class="r-person-name-text" data-part="person-name-text" title="Grant">Grant</span><span class="r-person-name-secondary" data-part="person-name-secondary">owner</span></span></div>
+</section>
+</div>
+</main>
+<script src="fill.js"></script>
+</body>
+</html>

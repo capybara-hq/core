@@ -24,6 +24,7 @@ import { conversationSourceOf } from "../conversations/source.js";
 import type { ApprovalsTable } from "../db/kernel-schema.js";
 import { ApiError } from "../errors.js";
 import { clipText } from "../extensions/hooks.js";
+import { loadPeople, type PersonRef } from "../identity/account-avatar.js";
 import { audit } from "../identity/audit.js";
 import { sha256Hex } from "../identity/hash.js";
 import { KernelConfigService } from "../infra/config/kernel-config.service.js";
@@ -37,6 +38,7 @@ import { KernelEvents } from "../infra/events/kernel-events.js";
 import { LockService } from "../infra/lock/lock.service.js";
 import { WithLock } from "../infra/lock/with-lock.decorator.js";
 import { ORG_ROLES, type OrgRole, roleAtLeast } from "../orgs/roles.js";
+import type { FileCardDetail } from "../platform/file-ref.js";
 import { checkPersonValue, type PersonFieldSpec } from "../platform/person-fields.js";
 import { SealedInputs } from "../platform/sealed-inputs.js";
 import { RunResume } from "../runtime/run-jobs.js";
@@ -225,6 +227,11 @@ export interface ApprovalRecord {
   /** The card's target name with {@link personFields} ("Anthropic: deployment config"). */
   personTarget?: { zh: string; en: string };
   /**
+   * A tool ask whose call takes a file in place of an upload (platform web parity spec §5): its
+   * name, size, sha256, type and an image's thumbnail. Absent otherwise.
+   */
+  file?: FileCardDetail;
+  /**
    * The person fields whose entered value was refused as leaked (§4.5; paths only): a call that
    * then ends without running tells the agent to have them rotated.
    */
@@ -325,6 +332,8 @@ export interface ApprovalView extends ApprovalPublicRecord {
   parentConversationId?: string;
   /** 发起本次运行的人。 */
   initiatorAccountId: string;
+  /** The person who decided (next to `decidedBy`); null while pending or when the account is gone. */
+  decidedByPerson: PersonRef | null;
 }
 
 /** 新建审批（Task 9 的 loop 在策略为 `ask` 时调用）。 */
@@ -350,8 +359,12 @@ export interface ApprovalRequestInput {
   summary?: { zh: string; en: string };
   /** The scopes the decider may choose; unset: derived (see {@link ApprovalRecord.scopes}). */
   scopes?: ApprovalScope[];
-  /** A tool ask's person fields and their target (stored in `detail`; specs only, no values). */
-  detail?: ToolAskDetail;
+  /**
+   * A tool ask's person fields and their target (specs only, no values) and the file it takes
+   * (stored in `detail`).
+   */
+  detail?: Omit<ToolAskDetail, "personFields" | "target"> &
+    Partial<Pick<ToolAskDetail, "personFields" | "target">>;
 }
 
 /** A tool ask's `detail`: the person fields the card asks for and the target they belong to. */
@@ -360,6 +373,16 @@ export interface ToolAskDetail {
   target: { zh: string; en: string };
   /** The paths whose entered value the decision refused as leaked (written by the decision). */
   leakedFields?: string[];
+  /** The file the call takes in place of an upload (its sha256 is what the approval binds). */
+  file?: FileCardDetail;
+}
+
+/** A tool ask's file from its stored `detail` (none: the call takes no file). */
+function fileOf(detail: unknown): Pick<ApprovalRecord, "file"> | null {
+  if (typeof detail !== "object" || detail === null) return null;
+  const f = (detail as { file?: unknown }).file;
+  if (typeof f !== "object" || f === null) return null;
+  return { file: f as FileCardDetail };
 }
 
 /** A tool ask's person fields from its stored `detail` (none: an ordinary tool ask). */
@@ -519,6 +542,7 @@ function toRecord(r: Selectable<ApprovalsTable>): ApprovalRecord {
     git: r.kind === "git" ? ((r.detail as GitAskDetail | null) ?? null) : null,
     command: r.kind === "command" ? ((r.detail as CommandAskDetail | null) ?? null) : null,
     ...(r.kind === "tool" && personFieldsOf(r.detail)),
+    ...(r.kind === "tool" && fileOf(r.detail)),
     toolKey: r.tool_key,
     specHash: r.spec_hash,
     connectorId: r.connector_id,
@@ -2463,6 +2487,10 @@ export class ApprovalsService {
       roots.set(p, await rootConversationOf(db.db, p));
     }
     const names = await this.agentNames([...new Set(ctxRows.map((r) => r.agent_id))]);
+    const people = await loadPeople(
+      db.db,
+      recs.flatMap((r) => (r.decidedBy === null ? [] : [r.decidedBy])),
+    );
     const connectorIds = [
       ...new Set(recs.flatMap((r) => (r.connectorId === null ? [] : [r.connectorId]))),
     ];
@@ -2495,6 +2523,7 @@ export class ApprovalsService {
       return [
         {
           ...publicRecord(r),
+          decidedByPerson: r.decidedBy === null ? null : (people.get(r.decidedBy) ?? null),
           toolName:
             prefix !== undefined && r.toolKey.startsWith(prefix)
               ? r.toolKey.slice(prefix.length)

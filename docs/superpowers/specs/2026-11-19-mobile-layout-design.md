@@ -187,7 +187,9 @@ the native strip and the web hides its own section entries (mobile app spec §6.
   - centre: on the home the agent picker pill (the new conversation's agent); in a conversation
     the title pill (the title, then the agent and the device), which opens the properties page;
   - trailing: the page's overflow menu when it has one (in a conversation: properties, the agent
-    map and the conversation actions; on a pushed page the head actions that do not fit).
+    map and the conversation actions; on a pushed page the head actions that do not fit). The
+    home's trailing slot stays empty: there is no incognito conversation (无痕会话) button
+    (decided 2026-11-21).
   On a pushed page the page head starts below that row, its title in the touch title size; the
   path row stays hidden on compact (back keeps the way up). Search lives in the drawer.
 - **Back** goes to the previous in-app history entry when there is one, else to the **last
@@ -197,7 +199,10 @@ the native strip and the web hides its own section entries (mobile app spec §6.
   where the browser has them, an instant swap otherwise; nothing under `prefers-reduced-motion`).
   Moving between chat surfaces (a recent conversation from the drawer, the new conversation)
   swaps without a slide. The left edge is left to the browser's own swipe-back (iOS Safari,
-  Android back gesture): the web adds no edge gesture of its own.
+  Android back gesture): the web adds no edge gesture of its own. System back (Android back, the
+  iOS edge swipe) closes an open drawer or sheet first, then navigates back: while a drawer or a
+  bottom sheet is open the web holds one history entry for it, so back pops that entry and
+  closes the overlay (decided 2026-11-21, §15).
 - **The keyboard**: the floating composer rides above it (`data-keyboard="open"`, §7.1); the
   floating buttons stay.
 - **One compact shell** (designer's call): a narrow desktop window gets the same chat-first shell
@@ -303,10 +308,10 @@ Colors are unchanged: the palette of design spec §2.1, dark `#0A0A0A` / accent 
 **Components** (`packages/design`; pages do not change):
 
 - **Floating icon button**: 48 round, floating surface, optional badge (the nav badge style).
-- **Floating composer**: a pill at least 60 high holding attach, the input, voice and send (a 48
+- **Floating composer**: a pill at least 60 high holding attach, the input and send (a 48
   accent circle; stop while a run is going), floating above the bottom inset and the keyboard;
   above it, the conversation settings chip (model · thinking · device) that opens the settings
-  sheet. Voice shows only when a voice input exists (open question 3).
+  sheet. There is no voice button: dictation is the system keyboard's (§15, decided 2026-11-21).
 - **Large list row**: 52 / 56, a leading icon or avatar, the title and a secondary line, a
   trailing count, action or chevron; rows sit on the page ground with no dividers and no card
   box (a list on touch is rows, not a box of rows).
@@ -689,14 +694,16 @@ declare global {
   | `notify@1` | Desktop spec | OS notifications while the shell runs; a click focuses the conversation |
   | `openExternal@1` | Desktop spec | Open an http(s) URL in the system browser |
   | `signIn@1` | Desktop spec (§6.5 there) | `start()`: sign in through the system browser (`/apps/authorize`, PKCE, back through the app's `capybara://auth/callback` scheme; `features.appSignIn` in `/api/v1/meta`). Offered by the desktop shell and by the later mobile app shell, which reuses the same flow (an `ASWebAuthenticationSession` / Custom Tabs style browser session returning through its scheme) |
-  | `chrome@1` | This spec | The web tells the shell its scheme and background token so native chrome (status bar, window background, title bar overlay) matches the theme: `setAppearance({ scheme, background, tokens?, singleScheme? })`. `tokens` (2026-11-20, desktop spec §6.10) is `{ bg, panel, ink, muted, line, accent, onAccent }`, the computed `--cb-*` colors, so a shell's own local pages follow the platform's UI theme; `singleScheme: true` says the UI theme has one scheme (no light / dark toggle anywhere). Both optional and additive: a shell accepts a call with or without them, and validates each token like `background` |
+  | `chrome@1` | This spec | The web tells the shell its scheme and background token so native chrome (status bar, window background, title bar overlay) matches the theme: `setAppearance({ scheme, background, tokens?, singleScheme? })`. `tokens` (2026-11-20, desktop spec §6.10) is `{ bg, panel, ink, muted, line, accent, onAccent }`, the computed `--cb-*` colors, so a shell's own local pages follow the platform's UI theme; `singleScheme: true` says the UI theme has one scheme (no light / dark toggle anywhere). Both optional and additive: a shell accepts a call with or without them, and validates each token like `background`. `ready()` once per document after the first paint (optional; mobile app spec §5.2) |
   | `nav@1` | Mobile app spec (§5.2 there; decided 2026-11-21) | The native strip's sections on the iPhone Duo in the app: `set({ items, current, menu })`, `onSelect`, `onMenu`; offered exactly while the window has a strip, so its presence is the strip's visibility |
   | `profiles@1` | Mobile app spec (§5.2 there; designer's call 2026-11-21) | `show()`: the native profile switcher (the app's deployments), opened from the account sheet; the page learns nothing about other profiles |
+  | `haptics@1` | Mobile app spec (§5.2 there) | `impact(kind)`: `selection`, `light`, `success` or `warning` |
+  | `share@1` | Mobile app spec (§5.2 there) | `share({ title?, text?, url? })`: the system share sheet |
+  | `menu@1` | Mobile app spec (§5.2 there) | `show({ title?, items, anchor? })`: a native menu resolving the chosen item id or null |
 
   Which shells offer `chrome@1`: the **desktop shell** always (window background and title bar
-  follow the theme, desktop spec §7.3); the **mobile shell** later, only if it needs the native
-  status bar's appearance (the web's `theme-color` and `black-translucent` status bar may be
-  enough in a WebView). Without it the native chrome keeps the shell's defaults.
+  follow the theme, desktop spec §7.3); the **mobile shell** always (status bar, WebView
+  background, splash). Without it the native chrome keeps the shell's defaults.
 
   A new capability is added here (name, owner) by the spec that defines it.
 
@@ -986,21 +993,26 @@ Recorded so review sees them; the design above resolves each.
 
 ## 15. Open questions
 
-None blocks this design; 1 and 2 are answered at the mobile app shell / real-device stage, 3 and
-4 (added 2026-11-21) by the maintainer.
+None blocks this design; 1 and 2 are answered at the mobile app shell / real-device stage.
 
 1. **WKWebView** support of the Device Posture and Viewport Segments APIs (the Capacitor shell):
    unknown until Apple says; the design degrades to one screen without them.
 2. **`viewport-fit=cover` on the iPhone Duo outer display**: Apple has not decided; we follow
    `env()`. Revisit when Safari ships the behavior.
-3. **Voice input in the floating composer.** The boards draw a voice button; no voice input
-   exists today, and the OS keyboard's dictation already covers speech. A web voice input means
-   audio leaving the page to some recognizer, which needs its own small design (which provider,
-   which deployment setting). Until then the composer draws no voice button (§4.5).
-4. **System back while the drawer or a sheet is open** (Android's back gesture, the browser's
-   back): today it navigates under the open overlay. Holding one history entry while an overlay
-   is open would let back close it, at the cost of an extra entry and a swipe animation on iOS.
-   Proposed: compact only, the drawer and bottom sheets hold one entry; the maintainer decides.
+
+Maintainer decisions 2026-11-21 (the touch open questions):
+
+1. **Voice input: none this round.** The floating composer has no separate microphone button: it
+   is attach, the input and send, and relies on the system keyboard's dictation. A
+   voice-conversation mode is a later design (audio leaving the page needs its own small design:
+   provider, deployment setting).
+2. **System back closes an open drawer or sheet first, then navigates back** (Android back, the
+   iOS edge swipe). Compact only: the drawer and each bottom sheet hold one history entry while
+   open (pushed on open, popped on close), so back closes the overlay; the cost of the extra
+   entry is accepted.
+3. **The iPhone Duo inner display has the right strip too**, so native strip navigation applies
+   there as well (mobile app spec §6.1, §8).
+4. **No incognito conversation (无痕会话) button**: the home's top-right stays empty.
 
 Answered 2026-11-21 (mobile app spike 1.4, iPhone Duo simulator, iOS 27.2):
 

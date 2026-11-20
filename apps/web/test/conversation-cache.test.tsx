@@ -16,6 +16,7 @@ import {
   conversationFollowUps,
   type EventWindow,
   eventsQuery,
+  learnPeople,
   renameWithRow,
   seedNewConversation,
   toolInfoQuery,
@@ -81,6 +82,98 @@ describe("appendEvents", () => {
     const qc = testQueryClient();
     expect(appendEvents(qc, "o1", "c1", [msg(1)]).added).toBe(0);
     expect(qc.getQueryData(eventsQuery("o1", "c1").queryKey)).toBeUndefined();
+  });
+});
+
+describe("learnPeople", () => {
+  const key = eventsQuery("o1", "c1").queryKey;
+  const stopped = (seq: number, by: string) =>
+    ev(seq, "run_aborted", { byAccountId: by, reason: "user" }, "r1");
+  const bo = { id: "a2", name: "Bo", avatarUrl: null };
+
+  it("reads an unknown account a streamed event names, through that one event's people", async () => {
+    const calls = stubApi({
+      "GET /api/v1/orgs/o1/conversations/c1/events": () =>
+        json(200, { events: [stopped(3, "a2")], people: { a2: bo } }),
+    });
+    const qc = testQueryClient();
+    qc.setQueryData(key, { ...win([msg(1), msg(2)]), people: {} });
+    await learnPeople(qc, "o1", "c1", stopped(3, "a2"));
+    expect(calls.map((c) => c.url)).toEqual([
+      "/api/v1/orgs/o1/conversations/c1/events?after=2&limit=1",
+    ]);
+    expect(qc.getQueryData<EventWindow>(key)?.people).toEqual({ a2: bo });
+  });
+
+  it("reads the author of a streamed message and whom a streamed approval is for", async () => {
+    let reads = 0;
+    const calls = stubApi({
+      "GET /api/v1/orgs/o1/conversations/c1/events": () =>
+        json(200, {
+          events: [],
+          people: reads++ === 0 ? { a2: bo } : { a3: { ...bo, id: "a3" } },
+        }),
+    });
+    const qc = testQueryClient();
+    qc.setQueryData(key, { ...win([msg(1)]), people: {} });
+    await learnPeople(qc, "o1", "c1", userMsg(2, "hi", { authorAccountId: "a2" }));
+    expect(Object.keys(qc.getQueryData<EventWindow>(key)?.people ?? {})).toContain("a2");
+    await learnPeople(qc, "o1", "c1", ev(3, "approval_requested", { requestedFor: "a3" }, "r1"));
+    expect(calls).toHaveLength(2);
+    expect(Object.keys(qc.getQueryData<EventWindow>(key)?.people ?? {}).sort()).toEqual([
+      "a2",
+      "a3",
+    ]);
+  });
+
+  it("reads an unknown account once while its read runs, and again after it ends", async () => {
+    let release: () => void = () => {};
+    const gate = new Promise<void>((r) => {
+      release = r;
+    });
+    const calls = stubApi({
+      "GET /api/v1/orgs/o1/conversations/c1/events": async () => {
+        await gate;
+        return json(200, { events: [], people: {} });
+      },
+    });
+    const qc = testQueryClient();
+    qc.setQueryData(key, { ...win([msg(1)]), people: {} });
+    const first = learnPeople(qc, "o1", "c1", stopped(2, "a2"));
+    // a second frame naming the same id while the read runs triggers nothing
+    await learnPeople(qc, "o1", "c1", stopped(3, "a2"));
+    expect(calls).toHaveLength(1);
+    // another conversation's read of the same id is its own
+    qc.setQueryData(eventsQuery("o1", "c2").queryKey, { ...win([msg(1)]), people: {} });
+    const other = stubApi({
+      "GET /api/v1/orgs/o1/conversations/c1/events": async () => {
+        await gate;
+        return json(200, { events: [], people: {} });
+      },
+      "GET /api/v1/orgs/o1/conversations/c2/events": () => json(200, { events: [], people: {} }),
+    });
+    await learnPeople(qc, "o1", "c2", stopped(2, "a2"));
+    expect(other.map((c) => c.url.split("?")[0])).toEqual([
+      "/api/v1/orgs/o1/conversations/c2/events",
+    ]);
+    release();
+    await first;
+    // the read ended without naming a2 (departed): a later frame may read again
+    const again = stubApi({
+      "GET /api/v1/orgs/o1/conversations/c1/events": () => json(200, { events: [], people: {} }),
+    });
+    await learnPeople(qc, "o1", "c1", stopped(4, "a2"));
+    expect(again).toHaveLength(1);
+  });
+
+  it("reads nothing for a known account or a window no read filled", async () => {
+    const calls = stubApi({});
+    const qc = testQueryClient();
+    qc.setQueryData(key, { ...win([msg(1)]), people: { a2: bo } });
+    await learnPeople(qc, "o1", "c1", stopped(2, "a2"));
+    qc.setQueryData(key, win([msg(1)]));
+    await learnPeople(qc, "o1", "c1", stopped(2, "a9"));
+    expect(calls).toEqual([]);
   });
 });
 

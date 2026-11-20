@@ -485,6 +485,7 @@ export function checkWoff2(bytes: Uint8Array): string | undefined;
 
 // @public
 export interface ChromeCapabilityV1 {
+    ready?(): Promise<void>;
     setAppearance(input: {
         scheme: "light" | "dark";
         background: string;
@@ -1800,6 +1801,14 @@ export interface GitSource {
 export const GitSourceSchema: z.ZodType<GitSource>;
 
 // @public
+export type HapticKind = "selection" | "light" | "success" | "warning";
+
+// @public
+export interface HapticsCapabilityV1 {
+    impact(kind: HapticKind): Promise<void>;
+}
+
+// @public
 export function hasControlChars(s: string): boolean;
 
 // @public
@@ -2236,6 +2245,7 @@ export interface LegacyDeviceHello {
     mode: "os" | "docker";
     os: "darwin" | "linux";
     policy?: DeviceLocalPolicySummary;
+    programRunId?: string;
     programVersion: string;
     protocol: number;
     recentOps?: DevicePolicyOpReport[];
@@ -2445,6 +2455,34 @@ type MediaSource_2 = {
 export { MediaSource_2 as MediaSource }
 
 // @public
+export const MENU_ITEM_ID: RegExp;
+
+// @public
+export interface MenuCapabilityV1 {
+    show(input: MenuInputV1): Promise<string | null>;
+}
+
+// @public
+export interface MenuInputV1 {
+    anchor?: {
+        x: number;
+        y: number;
+        width: number;
+        height: number;
+    };
+    items: MenuItemV1[];
+    title?: string;
+}
+
+// @public
+export interface MenuItemV1 {
+    destructive?: boolean;
+    disabled?: boolean;
+    id: string;
+    label: string;
+}
+
+// @public
 export type MergedScheme = {
     color: Record<string, string>;
     shadow: Record<string, string>;
@@ -2456,6 +2494,16 @@ export function mergeThemeSchemes(theme: Pick<ThemeFile, "schemes">): Partial<Re
 
 // @public
 export function missingInboundModeFields(schema: JsonSchema, mode: ChannelInboundMode, has: (field: string) => boolean): string[];
+
+// @public
+export const MOBILE_SHELL_LIMITS: {
+    readonly menuItems: 12;
+    readonly menuLabel: 64;
+    readonly menuTitle: 128;
+    readonly shareTitle: 256;
+    readonly shareText: 4000;
+    readonly url: 2048;
+};
 
 // @public
 export const MODEL_PROVIDER_EXTENSION_POINT_V2 = "model-provider@2";
@@ -3863,6 +3911,11 @@ export type SetupGuideVariableType = "url" | "text" | "token";
 export const SHA512_INTEGRITY_RE: RegExp;
 
 // @public
+export interface ShareCapabilityV1 {
+    share(input: ShareInputV1): Promise<void>;
+}
+
+// @public
 export interface ShareEmbedClaims extends EmbedClaimsBase {
     accountId?: undefined;
     agentId?: undefined;
@@ -3873,6 +3926,13 @@ export interface ShareEmbedClaims extends EmbedClaimsBase {
     role?: undefined;
     scope: "share";
     shareId: string;
+}
+
+// @public
+export interface ShareInputV1 {
+    text?: string;
+    title?: string;
+    url?: string;
 }
 
 // @public
@@ -3888,6 +3948,9 @@ export const SHELL_CAPABILITY_KEYS: {
     readonly notify: "notify@1";
     readonly openExternal: "openExternal@1";
     readonly signIn: "signIn@1";
+    readonly haptics: "haptics@1";
+    readonly share: "share@1";
+    readonly menu: "menu@1";
 };
 
 // @public

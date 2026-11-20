@@ -10,6 +10,7 @@ import {
   FormSection,
   Input,
   KeyValue,
+  PersonName,
   Select,
   Stack,
   Text,
@@ -445,7 +446,13 @@ function BasicsEdit() {
                   orgMembers.map((m) => (
                     <Checkbox
                       key={m.account.id}
-                      label={m.account.displayName}
+                      label={
+                        <PersonName
+                          name={m.account.displayName}
+                          avatarUrl={m.account.avatarUrl}
+                          size={16}
+                        />
+                      }
                       checked={b.memberIds.includes(m.account.id)}
                       disabled={pending}
                       onChange={(on) =>

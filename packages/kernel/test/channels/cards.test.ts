@@ -224,6 +224,27 @@ describe("a Platform confirmation card", () => {
     expect(en?.inputPreview).toBe("Add marketplace source https://x");
   });
 
+  it("a file call lists the file as text: name, size and the first 12 hex of the sha256", async () => {
+    const sha256 = "0123456789abcdef".repeat(4);
+    const withFile = {
+      ...view,
+      file: { name: "crm.tgz", size: 1536, sha256, contentType: "application/gzip" },
+    };
+    const zh = await approvalCard(deps(withFile), "ap1", "https://cap.example", "zh");
+    expect(zh?.inputPreview).toBe(
+      "添加市场源 https://x\n文件：crm.tgz（1.5 KB，sha256 0123456789ab）",
+    );
+    const en = await approvalCard(deps(withFile), "ap1", "https://cap.example", "en");
+    expect(en?.inputPreview).toBe(
+      "Add marketplace source https://x\nFile: crm.tgz (1.5 KB, sha256 0123456789ab)",
+    );
+    // a name cannot add lines or break out of the code span
+    const evil = { ...withFile, file: { ...withFile.file, name: "a`\nb.tgz", size: 12 } };
+    const card = await approvalCard(deps(evil), "ap1", "https://cap.example", "en");
+    expect(card?.inputPreview).toContain("File: a b.tgz (12 B,");
+    expect(card?.inputPreview.split("\n")).toHaveLength(2);
+  });
+
   it("a call without a summary shows the tool title and key argument, and the approval's scopes", async () => {
     const plain = {
       ...view,

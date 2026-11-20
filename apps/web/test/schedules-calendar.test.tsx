@@ -9,6 +9,7 @@ import { addDays, dayIn, rangeBounds, startOfDay } from "../src/lib/schedule-cal
 import type { Me } from "../src/lib/session";
 import { json, stubApi } from "./support/api";
 import { resetNavigation } from "./support/navigation";
+import { personAvatarSrc, personInitial } from "./support/person";
 import { renderRouteEmptyCache, renderRouteWithCache } from "./support/query";
 import { ME } from "./support/render";
 import { expectNoFirstPaintFetch } from "./support/server";
@@ -154,8 +155,19 @@ const routes = (over: Record<string, () => unknown> = {}) => ({
   [`GET ${CAL}`]: ok(ANSWER),
   [`GET ${ORG}/members`]: ok({
     members: [
-      { account: { id: ME.account.id, displayName: "Grant", email: null }, role: "owner" },
-      { account: { id: "a2", displayName: "Mei", email: null }, role: "member" },
+      {
+        account: { id: ME.account.id, displayName: "Grant", email: null, avatarUrl: null },
+        role: "owner",
+      },
+      {
+        account: {
+          id: "a2",
+          displayName: "Mei",
+          email: null,
+          avatarUrl: "/api/v1/accounts/a2/avatar?v=abc123",
+        },
+        role: "member",
+      },
     ],
   }),
   ...over,
@@ -499,11 +511,57 @@ describe("/schedules?view=calendar", () => {
     expect(calendarReads(calls).at(-1)).toMatchObject({ all: "true" });
     expect(window.location.search).toBe("?scope=all");
     expect(block("run=tr9")?.getAttribute("aria-label")).toContain("Helper · Mei");
+    // the block carries the creator as an avatar only
+    expect(
+      block("run=tr9")
+        ?.querySelector('[data-part="schedule-calendar-person"] img')
+        ?.getAttribute("src"),
+    ).toBe("/api/v1/accounts/a2/avatar?v=abc123");
     await user.click(block("run=tr9") as HTMLElement);
     const sheet = await screen.findByRole("dialog");
     expect(within(sheet).getByText("Mei sync", { selector: "h2" })).toBeTruthy();
     expect(within(sheet).queryByRole("link", { name: C.panel.openConversation })).toBeNull();
     expect(within(sheet).getByText(C.panel.creator)).toBeTruthy();
+    expect(personAvatarSrc(sheet)).toBe("/api/v1/accounts/a2/avatar?v=abc123");
+  });
+
+  it("a creator who left reads a former member on the block and in the sheet, never the id", async () => {
+    const org = {
+      ...ANSWER,
+      tasks: [...ANSWER.tasks, calTask({ id: "s2", name: "Gone sync", accountId: "gone" })],
+      items: [
+        ...ANSWER.items,
+        run({
+          id: "tr9",
+          taskId: "s2",
+          scheduledFor: "2026-11-12T02:00:00.000Z",
+          status: "failed",
+          conversationId: null,
+          error: null,
+          missingGrants: null,
+        }),
+      ],
+    };
+    const calls = stubApi(
+      routes({
+        [`GET ${CAL}`]: () =>
+          json(200, calls.at(-1)?.url.includes("all=true") ? org : ANSWER) as never,
+        [`GET ${BASE}?all=true`]: ok({
+          items: [listTask(), listTask({ id: "s2", accountId: "gone" })],
+        }),
+      }),
+    );
+    await load("/schedules?view=calendar", { me: asRole("admin") });
+    const user = userEvent.setup();
+    await user.click(screen.getByRole("radio", { name: C.all }));
+    await vi.waitFor(() => expect(block("run=tr9")).not.toBeNull());
+    expect(block("run=tr9")?.getAttribute("aria-label")).toContain(
+      `Helper · ${en.people.departed}`,
+    );
+    expect(block("run=tr9")?.getAttribute("aria-label")).not.toContain("gone");
+    await user.click(block("run=tr9") as HTMLElement);
+    const sheet = await screen.findByRole("dialog");
+    expect(within(sheet).getByText(en.people.departed)).toBeTruthy();
   });
 
   it("a cut range warns and draws the rest as not loaded", async () => {

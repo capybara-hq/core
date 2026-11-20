@@ -68,6 +68,24 @@ describe("MePanel", () => {
     );
   });
 
+  it("the account row draws a circle avatar at 40: the initial, or the image when given", () => {
+    const { unmount } = zh(<MePanel {...base()} />);
+    const avatar = () =>
+      document.querySelector('[data-part="account"] [data-part="avatar"]') as HTMLElement;
+    expect(avatar().getAttribute("data-shape")).toBe("circle");
+    expect(avatar().getAttribute("data-size")).toBe("40");
+    expect(avatar().textContent).toBe("G");
+    unmount();
+    zh(
+      <MePanel
+        {...base({ account: { name: "grant", avatarUrl: "/api/v1/accounts/a1/avatar?v=1" } })}
+      />,
+    );
+    expect(avatar().querySelector("img")?.getAttribute("src")).toBe(
+      "/api/v1/accounts/a1/avatar?v=1",
+    );
+  });
+
   it("a group with no row draws neither its label nor its rows", () => {
     zh(<MePanel {...base({ workspace: [], manage: [] })} />);
     expect(labels()).toEqual(["账户"]);

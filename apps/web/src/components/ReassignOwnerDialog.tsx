@@ -92,6 +92,7 @@ export function ReassignOwnerDialog({
                 label: m.account.email
                   ? `${m.account.displayName} · ${m.account.email}`
                   : m.account.displayName,
+                person: { avatarUrl: m.account.avatarUrl },
               })),
             ]}
           />

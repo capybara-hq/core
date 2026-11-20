@@ -36,7 +36,17 @@ import {
  *   `orgAdmin` or `member` step, so every role of the org gets one;
  * - platform-op-session-only: a `@SessionOnly()` route (a web session only, never a token) mirrored
  *   by an operation, or excluded under a category other than `human-only` / `secret`: such a route
- *   is either a person's own act or carries a secret, so the agent never gets it.
+ *   is either a person's own act or carries a secret, so the agent never gets it;
+ * - platform-op-upload: an exclusion whose reason or category mentions `upload`, `multipart` or
+ *   `raw bytes` (platform web parity spec §7.1, §9): "it is an upload" is no reason, since files
+ *   reach an operation as file references (also `presigned`, `binary`, `file body`, `file content`,
+ *   and a `transport` exclusion of an `/upload(s)` route). Only the three attachment routes are exempt, and they
+ *   must be `internal` with a reason naming "a person's file into a conversation";
+ * - platform-op-handoff: an operation whose description sends a person to the web to confirm,
+ *   review, approve or decide (a sentence with such a word, by stem, and a web place: the web, a
+ *   web page or app, the console, the inbox, "the <X> page") must define `handoff`, the link card
+ *   that sends the person there (spec §6, §9), or `noHandoff: "<reason>"` when no web page shows
+ *   it; the reason is non-empty and the opt-out is stale once the description stops matching.
  */
 export const PLATFORM_OP_RULES = [
   "platform-op-missing",
@@ -49,7 +59,49 @@ export const PLATFORM_OP_RULES = [
   "platform-op-literal",
   "platform-op-errors",
   "platform-op-session-only",
+  "platform-op-upload",
+  "platform-op-handoff",
 ] as const;
+
+/** The only routes that may carry an upload reason: a person's file into a conversation. */
+const ATTACHMENT_ROUTES: ReadonlySet<string> = new Set([
+  "POST /api/v1/orgs/:orgId/attachments",
+  "POST /api/v1/orgs/:orgId/attachments/:id/finalize",
+  "GET /api/v1/orgs/:orgId/attachments/limits",
+]);
+const ATTACHMENT_REASON = "a person's file into a conversation";
+const UPLOAD_WORDS = /upload|multipart|raw bytes|presigned|binary|file body|file content/i;
+const UPLOAD_PATH = /\/uploads?(\/|$)/;
+/**
+ * A person's decision word, by stem: confirm, confirmation, review, approve, decided, accept, and
+ * "sign(s) off".
+ */
+const DECISION_WORD = /\b(confirm|review|approv|decid|accept)\w*|\bsign\w* off\b/i;
+/**
+ * Where a person acts: the web, a web page or app, the web or admin UI, the browser, a screen, the
+ * console, the inbox, "the <X> page", or a relative web path (`/plugins?staging=…`).
+ */
+const WEB_PLACE =
+  /\b(on|in) the web\b|\bweb (page|app|ui)\b|\badmin ui\b|\bbrowser\b|\bscreens?\b|\bthe (admin )?console\b|\bthe inbox\b|\bthe [\w'-]+(?: [\w'-]+)? page\b|(?:^|\s)\/[a-z]/i;
+/**
+ * The confirmation (approval) card named as the place of the decision. The card is shown on the
+ * web, so in a sentence that names it a bare "on / in the web" is the card's place and is taken out
+ * before looking for a web place; any other web place (a page, the inbox, a path…) still counts. A
+ * bare "the card" names no card: "confirms the card, then reviews it on the web" is a hand-off.
+ */
+const ON_THE_CARD = /\b(confirmation|approval) card\b/i;
+const ON_THE_WEB = /\b(on|in) the web\b/gi;
+
+/** Whether one sentence of a description sends a person to a web place to decide something. */
+export function sendsPersonToWeb(description: string): boolean {
+  return description
+    .split(/(?<=[.;!?])\s+/)
+    .some(
+      (s) =>
+        DECISION_WORD.test(s) &&
+        WEB_PLACE.test(ON_THE_CARD.test(s) ? s.replace(ON_THE_WEB, "") : s),
+    );
+}
 
 const KERNEL_SRC = "packages/kernel/src";
 
@@ -250,6 +302,27 @@ function readOps(p: ParsedFile, out: Finding[]): Op[] {
       add(
         "platform-op-describe",
         `${id}: a write (confirm \`${confirm ?? "?"}\`) needs a \`summary\``,
+      );
+    }
+    const sends = description !== undefined && sendsPersonToWeb(description);
+    const noHandoff = prop(obj, "noHandoff");
+    const noHandoffReason = stringValue(noHandoff?.value);
+    if (
+      noHandoff !== undefined &&
+      (noHandoffReason === undefined || noHandoffReason.trim() === "")
+    ) {
+      add("platform-op-handoff", `${id}: \`noHandoff\` needs a non-empty string literal reason`);
+    } else if (noHandoff !== undefined && prop(obj, "handoff")) {
+      add("platform-op-handoff", `${id}: defines both \`handoff\` and \`noHandoff\`: keep one`);
+    } else if (noHandoff !== undefined && !sends) {
+      add(
+        "platform-op-handoff",
+        `${id}: stale \`noHandoff\`: the description no longer sends the person to the web, remove it`,
+      );
+    } else if (noHandoff === undefined && sends && !prop(obj, "handoff")) {
+      add(
+        "platform-op-handoff",
+        `${id}: the description sends the person to decide on the web, so the operation must define \`handoff\` (the link card), or \`noHandoff: "<reason>"\` when no web page shows it`,
       );
     }
     const errors = prop(obj, "errors");
@@ -503,6 +576,25 @@ export function checkPlatformOps(root: string): Finding[] {
         ...at,
         rule: "platform-op-exclusion-reason",
         message: `\`${e.route}\` has no reason`,
+      });
+    }
+    const uploadish = UPLOAD_WORDS.test(`${e.category ?? ""} ${e.reason ?? ""}`);
+    if (ATTACHMENT_ROUTES.has(e.route)) {
+      if (
+        e.category !== "internal" ||
+        !(e.reason ?? "").toLowerCase().includes(ATTACHMENT_REASON)
+      ) {
+        out.push({
+          ...at,
+          rule: "platform-op-upload",
+          message: `\`${e.route}\` is an attachment route: it must be \`internal\` with a reason naming "${ATTACHMENT_REASON}"`,
+        });
+      }
+    } else if (uploadish || (e.category === "transport" && UPLOAD_PATH.test(e.route))) {
+      out.push({
+        ...at,
+        rule: "platform-op-upload",
+        message: `\`${e.route}\`: "upload" is no reason to exclude a route (files reach operations as file references): add its operation, or state the real reason (the person must be the actor, or nothing an agent acts on)`,
       });
     }
     if (e.category === "later") {

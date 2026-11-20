@@ -24,6 +24,7 @@ import type {
   ToolInfo,
 } from "./conversations";
 import type { OrgRole } from "./members";
+import type { PersonRef } from "./people";
 import { PersonWaits } from "./person-waits";
 import { toolLabel, toolLabelOfKey, toolLabelText } from "./tool-label";
 
@@ -212,7 +213,8 @@ export interface QuestionItem {
   callId: string;
   form: InputForm;
   expiresAt: string;
-  answered: QuestionOutcome | null;
+  /** `byPerson`: the answerer as a question read names them (a sub-agent's wait), when known. */
+  answered: (QuestionOutcome & { byPerson?: PersonRef | null }) | null;
 }
 
 export interface ConnectItem {
@@ -298,6 +300,8 @@ export type TimelineEntry =
       skill?: { label: string; mode: "inline" | "fork" };
       /** An inline invocation's rendered text, sent in the person's name (`content[0]`). */
       instructions?: string;
+      /** The person who wrote it (a person's message; absent for an agent's dispatch). */
+      authorAccountId?: string;
       /** A plain message a later fork's run took in: answered after that sub-agent ("/review"). */
       waitsFor?: string;
       /**
@@ -1039,6 +1043,7 @@ export function buildEventTimeline(
             text,
             files,
             attachments: e.payload.attachments ?? [],
+            authorAccountId: e.payload.authorAccountId,
           };
           if (skill) {
             entry.skill = { label: `/${skill.name}`, mode: skill.mode };

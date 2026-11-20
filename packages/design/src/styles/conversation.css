@@ -366,6 +366,28 @@ button.cb-tool-line:focus-visible {
   text-overflow: ellipsis;
   white-space: nowrap;
 }
+/* A message with an author (spec §6.16.6): the 24 circle after the bubble, top-aligned. */
+.cb-bubble-row {
+  display: flex;
+  align-items: flex-start;
+  justify-content: flex-end;
+  gap: var(--cb-space-2);
+  width: 100%;
+  min-width: 0;
+}
+.cb-bubble-row > .cb-avatar {
+  flex: none;
+}
+.cb-bubble-author-name {
+  max-width: 75%;
+  margin-inline-end: calc(24px + var(--cb-space-2));
+  overflow: hidden;
+  color: var(--cb-muted);
+  font-size: var(--cb-type-small-size);
+  line-height: var(--cb-type-small-line);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
 .cb-bubble-details {
   display: flex;
   flex-direction: column;
@@ -1081,6 +1103,30 @@ button.cb-tool-toggle:focus-visible {
   -webkit-line-clamp: 3;
   line-clamp: 3;
   overflow: hidden;
+}
+.cb-hcard-file {
+  display: flex;
+  align-items: center;
+  gap: var(--cb-space-3);
+  min-width: 0;
+}
+.cb-hcard-file-thumb {
+  flex: none;
+  width: var(--cb-space-8);
+  height: var(--cb-space-8);
+  object-fit: cover;
+  border-radius: var(--cb-radius-sm);
+}
+.cb-hcard-file-text {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+.cb-hcard-file-name {
+  font-weight: 600;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 .cb-hcard-person {
   display: flex;

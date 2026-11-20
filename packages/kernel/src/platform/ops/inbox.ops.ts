@@ -14,6 +14,7 @@ import { roleAtLeast } from "../../orgs/roles.js";
 import { defineOperation, type PrecheckResult } from "../operation.js";
 import { PlatformOperations } from "../registry.js";
 import { approvalRow } from "./approvals.ops.js";
+import { listCard } from "./list-handoff.js";
 import { Cursor, pageOf, startOf } from "./paging.js";
 import { named, orElse } from "./summary.js";
 
@@ -294,6 +295,11 @@ export class InboxOperations implements OnModuleInit {
             truncated: view.truncated,
           };
         },
+        handoff: (_i, result) =>
+          listCard(result, "/inbox", {
+            zh: "打开收件箱处理待办",
+            en: "Open the inbox to decide what waits",
+          }),
       }),
       defineOperation({
         id: "inbox.dismiss-notice",
@@ -330,6 +336,8 @@ export class InboxOperations implements OnModuleInit {
           await this.inbox.dismissNotice(ctx.orgId, ctx.actorAccountId, input.id);
           return { dismissed: input.id };
         },
+        noHandoff:
+          "A dismissal: nothing waits for the person afterwards, the sentence only says where approvals are decided.",
       }),
       defineOperation({
         id: "inbox.platform-list",
@@ -379,6 +387,11 @@ export class InboxOperations implements OnModuleInit {
             otherOrgItems: view.items.length - shown.length,
           };
         },
+        handoff: (_i, result) =>
+          listCard(result, "/admin/inbox", {
+            zh: "打开平台收件箱处理待办",
+            en: "Open the platform inbox to decide what waits",
+          }),
       }),
       defineOperation({
         id: "inbox.platform-dismiss-notice",

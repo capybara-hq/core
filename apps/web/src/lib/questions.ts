@@ -1,5 +1,6 @@
 import { apiFetch } from "./api";
 import type { FormAnswer, InputForm } from "./conversations";
+import type { PersonRef } from "./people";
 
 /**
  * 内核输入请求 API（`packages/kernel/src/tools/questions.controller.ts`）与 `InputForm` 的纯函数
@@ -16,6 +17,8 @@ export interface Question {
   status: QuestionStatus;
   answer: FormAnswer | null;
   answeredBy: string | null;
+  /** The person who answered (null while open or when the account is gone). */
+  answeredByPerson: PersonRef | null;
   expiresAt: string;
 }
 

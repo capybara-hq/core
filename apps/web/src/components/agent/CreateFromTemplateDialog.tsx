@@ -11,6 +11,7 @@ import {
   Field,
   Input,
   ItemList,
+  PersonName,
   type PresetId,
   Select,
   Skeleton,
@@ -272,7 +273,13 @@ export function CreateFromTemplateDialog({
                     .map((m) => (
                       <Checkbox
                         key={m.account.id}
-                        label={m.account.displayName}
+                        label={
+                          <PersonName
+                            name={m.account.displayName}
+                            avatarUrl={m.account.avatarUrl}
+                            size={16}
+                          />
+                        }
                         checked={memberIds.includes(m.account.id)}
                         onChange={(on) =>
                           setMemberIds((cur) =>

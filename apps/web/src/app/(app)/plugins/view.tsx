@@ -47,14 +47,14 @@ import NotFound from "../not-found";
  * (the layout prefetched the catalog, and for org admins the extensions and the entries, on a
  * first load).
  */
-export default function PluginsView() {
+export default function PluginsView({ staging }: { staging: string | null }) {
   const ws = useWorkspace({ min: "member", setup: "step" });
   if (ws.kind === "pending" || ws.kind === "noOrg") return null;
   if (ws.kind === "noAccess") return <NoAccess need={ws.need} />;
-  return <Plugins orgId={ws.orgId} me={ws.me} />;
+  return <Plugins orgId={ws.orgId} me={ws.me} staging={staging} />;
 }
 
-function Plugins({ orgId, me }: { orgId: string; me: Me }) {
+function Plugins({ orgId, me, staging }: { orgId: string; me: Me; staging: string | null }) {
   const scope = usePagePath("org");
   const t = useTranslations("plugins");
   const tc = useTranslations("catalog");
@@ -64,7 +64,7 @@ function Plugins({ orgId, me }: { orgId: string; me: Me }) {
   const componentsLabel = useComponentsLabel();
   const ownerLabel = useOwnerLabel(orgId);
   const [tab, setTab] = useState<"plugins" | "market">("plugins");
-  const [uploading, setUploading] = useState(false);
+  const [uploading, setUploading] = useState(staging !== null && canUpdateOrg(me));
   const list = usePageQuery(orgCatalogQuery(orgId));
   // Org admins: the extensions (a row's 组织配置, whether 启用 asks for input) and the entries
   // (the 市场 tab), both sections
@@ -129,7 +129,12 @@ function Plugins({ orgId, me }: { orgId: string; me: Me }) {
   };
   if (list.kind === "loading") return <ListPage header={header} variant="objects" loading />;
   const upload = uploading && (
-    <OrgPluginUploadDialog orgId={orgId} me={me} onClose={() => setUploading(false)} />
+    <OrgPluginUploadDialog
+      orgId={orgId}
+      me={me}
+      {...(staging !== null ? { stagingId: staging } : {})}
+      onClose={() => setUploading(false)}
+    />
   );
   if (active === "market") {
     return (

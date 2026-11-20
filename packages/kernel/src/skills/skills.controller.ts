@@ -1,11 +1,7 @@
-import { hasControlChars, MEDIA_NAME_MAX_CHARS } from "@capybara-hq/plugin-sdk";
 import { Controller, Delete, Get, HttpCode, Inject, Param, Post, Put } from "@nestjs/common";
-import { z } from "zod";
+import type { z } from "zod";
 import { OwnedItems, type OwnedSkillDeletePreview } from "../catalog/owned-items.js";
-import {
-  type CreatedAttachment,
-  SKILL_PACKAGE_UPLOAD_MAX_BYTES,
-} from "../conversations/attachments.service.js";
+import type { CreatedAttachment } from "../conversations/attachments.service.js";
 import {
   CurrentPrincipal,
   type Principal,
@@ -15,7 +11,12 @@ import {
 import { createZodDto } from "../infra/validation/create-zod-dto.js";
 import { ZBody, ZParam } from "../infra/validation/zod-params.js";
 import { CurrentOrg, OrgAction, type OrgContext } from "../orgs/org.guard.js";
-import { SkillCreateBody, SkillIdParams, SkillShareableSchema } from "./skills.schemas.js";
+import {
+  SkillCreateBody,
+  SkillIdParams,
+  SkillShareableSchema,
+  SkillUploadBody as UploadBody,
+} from "./skills.schemas.js";
 import {
   type SkillDetail,
   type SkillSummary,
@@ -23,17 +24,7 @@ import {
   type UploadedSkill,
 } from "./skills.service.js";
 
-const UploadBody = z
-  .object({
-    name: z
-      .string()
-      .min(1)
-      .max(MEDIA_NAME_MAX_CHARS)
-      .refine((s) => !hasControlChars(s), "name must not contain control characters"),
-    size: z.number().int().min(1).max(SKILL_PACKAGE_UPLOAD_MAX_BYTES),
-  })
-  .strict();
-class SkillUploadBody extends createZodDto(UploadBody, "SkillUploadBody") {}
+class SkillUploadBodyDto extends createZodDto(UploadBody, "SkillUploadBody") {}
 class SkillCreateBodyDto extends createZodDto(SkillCreateBody, "SkillCreateBody") {}
 const ShareableBody = SkillShareableSchema;
 class SkillIdParamsDto extends createZodDto(SkillIdParams, "SkillIdParams") {}
@@ -69,7 +60,7 @@ export class SkillsController {
   async createUpload(
     @CurrentPrincipal() principal: Principal,
     @CurrentOrg() org: OrgContext,
-    @ZBody(SkillUploadBody) body: z.infer<typeof UploadBody>,
+    @ZBody(SkillUploadBodyDto) body: z.infer<typeof UploadBody>,
   ): Promise<CreatedAttachment> {
     const p = requireUser(principal);
     return this.skills.createUpload(org.orgId, p.account.id, body);

@@ -1,6 +1,7 @@
 import { Inject, Injectable } from "@nestjs/common";
 import { sql } from "kysely";
 import { ApiError } from "../errors.js";
+import { type AccountAvatar, avatarColumns, personAvatarUrl } from "../identity/account-avatar.js";
 import { KernelDb } from "../infra/database/kernel-db.js";
 import type { ConnectorAuth } from "./credentials.js";
 import { endpointView } from "./endpoint.js";
@@ -25,6 +26,7 @@ export interface AdminConnectorRow {
   toolsSyncedAt: Date | null;
   createdBy: string;
   createdByName: string;
+  createdByAvatarUrl: string | null;
   createdAt: Date;
   updatedAt: Date;
 }
@@ -76,7 +78,7 @@ export class AdminConnectors {
       .innerJoin("orgs as o", "o.id", "c.org_id")
       .innerJoin("accounts as a", "a.id", "c.created_by")
       .leftJoin("platform_connector_templates as pt", "pt.id", "c.platform_template_id")
-      .select([
+      .select((eb) => [
         "c.id",
         "c.org_id",
         "o.name as org_name",
@@ -90,6 +92,7 @@ export class AdminConnectors {
         "c.tools_synced_at",
         "c.created_by",
         "a.display_name as created_by_name",
+        ...avatarColumns(eb, "a", "creator"),
         "c.created_at",
         "c.updated_at",
         sql<number>`(SELECT count(*)::int FROM capybara.connector_tools t
@@ -168,6 +171,8 @@ function toRow(r: {
   tools_synced_at: Date | null;
   created_by: string;
   created_by_name: string;
+  creator_avatar: AccountAvatar | null;
+  creator_sso_avatar_url: string | null;
   created_at: Date;
   updated_at: Date;
   tool_count: number;
@@ -187,6 +192,7 @@ function toRow(r: {
     toolsSyncedAt: r.tools_synced_at,
     createdBy: r.created_by,
     createdByName: r.created_by_name,
+    createdByAvatarUrl: personAvatarUrl(r, "creator", r.created_by),
     createdAt: r.created_at,
     updatedAt: r.updated_at,
   };
