@@ -217,6 +217,7 @@ interface View {
   id: string;
   conversationId: string;
   subagentId: string | null;
+  trigger: { id: string; name: string; avatarUrl: string | null } | null;
   status: string;
   stopping: boolean;
   description: string;
