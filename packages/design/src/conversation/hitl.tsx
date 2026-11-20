@@ -211,6 +211,32 @@ function WorkingRoot({ path }: { path: string }): JSX.Element {
   );
 }
 
+/**
+ * The scope hints of a tool or command approval: small lines under the whole action row, so the
+ * buttons stay adjacent. With more than one hinted scope each line names its button.
+ */
+function ScopeHintLines({
+  scopes,
+  hints,
+  label,
+}: {
+  scopes: ApprovalScope[];
+  hints: Partial<Record<ApprovalScope, string>> | undefined;
+  label(scope: ApprovalScope): string;
+}): JSX.Element | null {
+  const shown = scopes.filter((scope) => (hints?.[scope] ?? "") !== "");
+  if (shown.length === 0) return null;
+  return (
+    <>
+      {shown.map((scope) => (
+        <div key={scope} className="cb-muted cb-small" data-part="scope-hint">
+          {shown.length > 1 ? `${label(scope)} · ${hints?.[scope]}` : hints?.[scope]}
+        </div>
+      ))}
+    </>
+  );
+}
+
 /** The notes under the actions. */
 function ApprovalNotes({ notes }: { notes: string[] | undefined }): JSX.Element | null {
   if (notes === undefined || notes.length === 0) return null;
@@ -367,19 +393,16 @@ export function ApprovalBlock(p: ApprovalBlockProps): JSX.Element {
     );
   } else {
     actions = (
-      <div
-        className="cb-hcard-actions"
-        data-hints={p.scopeHints && Object.keys(p.scopeHints).length > 0 ? "true" : undefined}
-      >
+      <div className="cb-hcard-actions">
         {p.scopes.map((scope, i) => (
-          <ScopeChoice
+          <Button
             key={scope}
-            primary={i === 0}
+            variant={i === 0 ? "primary" : "default"}
             disabled={busy || p.approveDisabled === true}
-            label={p.scopeLabels?.[scope] ?? t(SCOPE_LABEL[scope])}
-            hint={p.scopeHints?.[scope]}
             onClick={() => p.onApprove?.(scope)}
-          />
+          >
+            {p.scopeLabels?.[scope] ?? t(SCOPE_LABEL[scope])}
+          </Button>
         ))}
         <Button disabled={busy} onClick={() => setDenying(true)}>
           {t("hitl.denyEllipsis")}
@@ -471,6 +494,13 @@ export function ApprovalBlock(p: ApprovalBlockProps): JSX.Element {
         </div>
       ) : null}
       {actions}
+      {denying ? null : (
+        <ScopeHintLines
+          scopes={p.scopes}
+          hints={p.scopeHints}
+          label={(scope) => p.scopeLabels?.[scope] ?? t(SCOPE_LABEL[scope])}
+        />
+      )}
       {denying ? null : <ApprovalNotes notes={p.notes} />}
     </div>
   );
@@ -839,19 +869,16 @@ function CommandApproval(p: ApprovalBlockProps & { command: CommandAsk }): JSX.E
     );
   } else {
     actions = (
-      <div
-        className="cb-hcard-actions"
-        data-hints={p.scopeHints && Object.keys(p.scopeHints).length > 0 ? "true" : undefined}
-      >
+      <div className="cb-hcard-actions">
         {p.scopes.map((scope, i) => (
-          <ScopeChoice
+          <Button
             key={scope}
-            primary={i === 0}
+            variant={i === 0 ? "primary" : "default"}
             disabled={busy}
-            label={label(scope)}
-            hint={p.scopeHints?.[scope]}
             onClick={() => p.onApprove?.(scope)}
-          />
+          >
+            {label(scope)}
+          </Button>
         ))}
         <Button disabled={busy} onClick={() => setDenying(true)}>
           {t("hitl.command.deny")}
@@ -895,6 +922,7 @@ function CommandApproval(p: ApprovalBlockProps & { command: CommandAsk }): JSX.E
         {...(file ? { title: t("hitl.command.path") } : {})}
       />
       {actions}
+      {denying ? null : <ScopeHintLines scopes={p.scopes} hints={p.scopeHints} label={label} />}
       {denying ? null : <ApprovalNotes notes={p.notes} />}
     </div>
   );

@@ -98,21 +98,54 @@ describe("ApprovalBlock: details inside the pending card", () => {
     expect(part(en.container, "working-root")?.textContent).toBe("Runs in /work/app");
   });
 
-  it("puts the short hint under the approve button and the notes under the actions", () => {
+  it("keeps the buttons adjacent and puts the hint, then the notes, under the action row", () => {
     const { container } = wrap(<ApprovalBlock {...escalation()} />);
-    const choice = part(container, "scope-choice");
-    expect(choice?.querySelector("button")?.textContent).toBe("允许一次");
-    expect(part(choice as Element, "scope-hint")?.textContent).toBe(
-      "仅这一次调用；下次仍在沙箱内运行",
-    );
-    const hints = [...container.querySelectorAll('[data-part="card-hint"]')];
-    expect(hints.map((h) => h.textContent)).toEqual(["批准后会启动一个后台进程。"]);
+    const once = screen.getByRole("button", { name: "允许一次" });
+    const deny = screen.getByRole("button", { name: "拒绝" });
+    // siblings in one row: no hint column widens the allow button
+    expect(once.parentElement).toBe(deny.parentElement);
+    expect(once.nextElementSibling).toBe(deny);
+    expect(part(container, "scope-choice")).toBeNull();
+    const row = once.parentElement as HTMLElement;
+    const hint = part(container, "scope-hint");
+    expect(row.contains(hint)).toBe(false);
+    expect(hint?.textContent).toBe("仅这一次调用；下次仍在沙箱内运行");
+    const note = part(container, "card-hint");
+    expect(note?.textContent).toBe("批准后会启动一个后台进程。");
+    // row, hint, note: in this order, all children of the card
+    const card = part(container, "approval-block") as HTMLElement;
+    const kids = [...card.children];
+    expect(kids.indexOf(row)).toBeLessThan(kids.indexOf(hint as Element));
+    expect(kids.indexOf(hint as Element)).toBeLessThan(kids.indexOf(note as Element));
   });
 
-  it("the deny form hides the notes; cancelling brings them back", async () => {
+  it("a tool approval with several hinted scopes names each button in its hint line", () => {
+    const { container } = wrap(
+      <ApprovalBlock
+        {...without(
+          escalation({
+            tool: "Acme: send",
+            toolKey: "acme__send",
+            input: { text: "hi" },
+            scopes: ["once", "session"],
+            scopeHints: { once: "只这一次", session: "直到会话结束" },
+          }),
+          "command",
+        )}
+      />,
+    );
+    const once = screen.getByRole("button", { name: "批准" });
+    expect(once.nextElementSibling?.textContent).toBe("本会话内都批准");
+    expect(
+      [...container.querySelectorAll('[data-part="scope-hint"]')].map((e) => e.textContent),
+    ).toEqual(["批准 · 只这一次", "本会话内都批准 · 直到会话结束"]);
+  });
+
+  it("the deny form hides the hint and the notes; cancelling brings them back", async () => {
     const { container } = wrap(<ApprovalBlock {...escalation()} />);
     await userEvent.click(screen.getByRole("button", { name: "拒绝" }));
     expect(part(container, "card-hint")).toBeNull();
+    expect(part(container, "scope-hint")).toBeNull();
     // the reason stays: the person denies knowing why it was asked
     expect(part(container, "reason")).not.toBeNull();
     await userEvent.click(screen.getByRole("button", { name: "取消" }));

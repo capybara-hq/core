@@ -2408,6 +2408,10 @@ textarea {
   flex-direction: column;
   gap: var(--cb-space-2);
 }
+/* The command ask's question is 600, as the implementation draws every pending card title. */
+.r-card-head .r-strong {
+  font-weight: 600;
+}
 /* Details inside the approval card (spec §6.16.11): the reason as a quote, the facts, the root. */
 .r-reason {
   display: flex;
