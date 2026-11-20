@@ -90,7 +90,7 @@ changesets like `apps/desktop`). Capacitor (current major) with its iOS (Swift) 
 tab-bar WebView mostly fight Capacitor's single configured WebView, the app becomes plain native
 shells (Swift and Kotlin hosting the WebViews), keeping Capacitor only for the local pages or
 dropping it; the capabilities, the gate and everything else in this spec stay the same. The
-ruling is recorded here after the spikes; the app's own TypeScript (address page, bridge glue) reuses
+ruling is recorded in §15.1; the app's own TypeScript (address page, bridge glue) reuses
 `packages/shell` (address normalization, `GET /api/v1/meta` parsing, PKCE, the sign-in callback,
 the zh / en catalog). The repository rules stay: published core packages only
 (`@capybara-hq/plugin-sdk` for the Shell environment types), tests without real Keychain or OS
@@ -195,6 +195,8 @@ previewers) and other origins get nothing. The plan proves the mechanism on both
 `message.frameInfo`; Android: `WebViewCompat.addWebMessageListener` with the origin allow-list),
 with a test page that tries the bridge from a frame and from a navigated-to origin.
 
+Clarified (decided 2026-11-21, spike 1.2): see §15, "The origin gate, clarified".
+
 ## 6. Native chrome and the web
 
 ### 6.1 The tab bar
@@ -281,7 +283,7 @@ native feel comes from behavior, not from imitating the OS look inside pages.
   stay left of it, padded by the strip's safe-area inset on the right (`--cb-inset-right`, per
   side). The native tab bar sits in the strip below the status bar (§6.1). The shell sets the
   WebView to ignore the safe area and passes the strip through `env(safe-area-inset-right)` (or,
-  where the WebView does not report it, through `insets.right`, §5.1); the spike of phase 1
+  where the WebView does not report it, through `insets.right`, §5.1); the spike of phase 1 (§15.1)
   confirms which on the Device Hub simulator.
 - **The same in the browser and the PWA** where WebKit allows it: the web already sets
   `viewport-fit=cover` and pads every side by its own inset, so the day Safari extends content
@@ -475,6 +477,98 @@ The four categories of layout spec §10.3, each from its existing kernel event, 
 ## 14. Open questions
 
 1. Sharing one WebView across `UITabBarController` children (§6.1): proven in the spike, else the
-   `UIViewReservedRegion` fallback.
-2. Android multi-profile WebView availability on the devices we target (§4.3).
-3. The layout spec's §15 questions, answered on the Duo simulator in phase 1.
+   `UIViewReservedRegion` fallback. Answered in §15.1.
+2. Android multi-profile WebView availability on the devices we target (§4.3). Answered in §15.1.
+3. The layout spec's §15 questions, answered on the Duo simulator in phase 1. Answered in §15.1.
+
+## 15. Spike results (2026-11-21)
+
+Phase 1 spikes ran on iOS 27.2 simulators and Android API 37 (WebView 145), API 35 (WebView 124)
+and API 24 (WebView 53). No fallback of §14 was triggered. Rulings are the designer's call, from
+spike evidence, unless marked as the maintainer's.
+
+### 15.1 The four open questions of §14
+
+1. **Capacitor kept** (designer's call, spike 1.2, 2026-11-21). Capacitor 8.6.2 coexists with the
+   gate on iOS and Android; all four gate documents pass.
+2. **Tab host: one shared WebView under `UITabBarController`** (designer's call, spike 1.1).
+   Reload, blank state, placement, hide/show and focus all passed; `UIViewReservedRegion` is not
+   needed. If wrong: swap the host inside `TabHost.swift`.
+3. **`insets.right` comes from `env(safe-area-inset-right)`**, the shell reports 0 (designer's
+   call, spike 1.4). On the iPhone Duo outer display `env()` reports 84, the strip width, and
+   backgrounds under the strip render correctly. The layout spec's §15 questions are answered
+   there.
+4. **Android: multi-profile where supported, single-store fallback elsewhere** (designer's call,
+   spike 1.3). `MULTI_PROFILE` passes on WebView 124 and 145 (isolation, persistence, delete and
+   recreate cold) and is absent on WebView 53. The minimum WebView is **supported on 124, not on
+   53**; the gate is the runtime feature check (`WebViewFeature.MULTI_PROFILE`), not a version
+   number. The single store follows decision 9 below.
+
+### 15.2 Further rulings (designer's call, spike)
+
+- `insets.bottom`: the profile WebView reports the window's safe area (a `WKWebView` subclass
+  overriding `safeAreaInsets`), so `env(safe-area-inset-bottom)` excludes the native bar and
+  `insets.bottom` is the bar height (§5.1). The spike's `env()` bottom double-counted the bar.
+- Android profile WebViews never use the default profile while Capacitor runs: `CapacitorCookies`
+  wipes default-profile session cookies on Activity start and destroy (named profiles are fine).
+  Single-store mode must neutralize that plugin; the config switch alone was not enough.
+- Android requires `WebViewFeature.DOCUMENT_START_SCRIPT` and `WEB_MESSAGE_LISTENER`. Without
+  them (WebView 53) the app shows an "unsupported WebView" state and loads no remote origin; it
+  never uses `addJavascriptInterface`.
+- Store deletion is deferred: iOS removes a data store after its WebView is released (with retry);
+  Android records pending deletions and runs `deleteProfile` at the next cold start before any
+  `getOrCreateProfile` (an in-use profile throws). Profiles are created right after add.
+- Android profile WebViews handle `onRenderProcessGone`: recreate and show the error state.
+- The injected script gates on `self.origin` (the document origin, `"null"` when opaque), never
+  `location.origin`; the native check stays the boundary. Stored origins are normalized
+  (lowercase host, punycode). Android replies "denied" on a drop, like iOS.
+- Popups never get a WebView: `window.open` and `target=_blank` go to the browser sheet (§4.4) on
+  both platforms.
+
+### 15.3 The origin gate, clarified (decided 2026-11-21, spike 1.2)
+
+Frames with an opaque origin get nothing. A same-origin unsandboxed frame or window shares the top
+document's trust (same-origin policy). Core therefore keeps every iframe sandboxed without
+`allow-same-origin`, enforced by a guard test. Client extensions run in the top document and see
+`capybaraShell` (extensions are full trust).
+
+Threat note: the consent page's client label is informational; the redirect allow-list is the
+boundary.
+
+### 15.4 Not measured
+
+The back swipe and the Duo inner portrait mode could not be measured in the simulators: hand check
+both on real devices before release.
+
+### 15.5 Decisions added by the plan
+
+1. Mobile client in the kernel: `AppAuthorizeBodySchema.client` accepts `"desktop"` and
+   `"mobile"`; the session user agent is `Capybara Mobile/<appVersion> (<name>)`; the consent page
+   names the client.
+2. Capability shapes and limits live in `MOBILE_SHELL_LIMITS` (nav label 1..32, count 0..9999,
+   menu 1..12 items, share title/text/url 256/4000/2048); the menu anchor is a CSS-px rect;
+   `share@1.share` resolves `void`.
+3. `chrome@1.ready` is optional; splash fallback: dropped on `ready()`, the error state, or 3 s
+   after the main-frame load.
+4. `data-native-nav` is set on `<html>` before first paint (and on the shell element); CSS drops
+   the bottom-nav slot under either.
+5. Capabilities run in the TypeScript runtime in the local Capacitor WebView; native gates frame
+   and origin first, the runtime re-checks, validates and gates activation.
+6. The code exchange runs in `WKContentWorld.defaultClient` on iOS and in the page world on
+   Android (accepted: the same trust as the page itself).
+7. In-WebView sign-in is blocked by a generated `WKContentRuleList` plus navigation cancel on iOS,
+   and `shouldInterceptRequest` plus the service-worker client on Android, sharing one vector file.
+8. A brand with `lockToPreset: true` wins over MDM; otherwise valid managed values override the
+   brand's; while locked, other profiles are hidden and never loaded.
+9. Android single-store fallback asks before switching a platform (it signs out of the current
+   one).
+10. Android sign-in cancel: an attempt pending on activity resume with no callback resolves
+    `cancelled`.
+11. Brand generation writes `Brand.xcconfig`, `brand.properties`, icon/splash sets and
+    `brand-assets.sha256`; a drift check compares them.
+12. Menus are custom native (action sheet with iPad popover, Material bottom sheet); haptics and
+    share use the official Capacitor plugins.
+13. Build number is `github.run_number`; marketing version comes from `apps/mobile/package.json`.
+14. Tab icons are fixed per id (`chats`, `agents`, `inbox`, `me`) as SF Symbol / Material pairs.
+15. Touch prefetch: apps/web adds `warmRoute`, which runs the route table's queries on
+    `pointerdown` and when a conversation row scrolls into view.
