@@ -65,6 +65,7 @@ export function useAccountNav(): NavGroup[] {
         { id: "connections", label: t("connections"), href: "/account/connections" },
         { id: "grants", label: t("grants"), href: "/account/grants" },
         { id: "identities", label: t("identities"), href: "/account/identities" },
+        { id: "notifications", label: t("notifications"), href: "/account/notifications" },
         { id: "myShares", label: t("myShares"), href: "/account/shares" },
       ],
     },

@@ -22,6 +22,10 @@ export const keys = {
       identities: (): readonly unknown[] => [...all, "identities"],
       /** The account's preferences (its time zone). */
       preferences: (): readonly unknown[] => [...all, "preferences"],
+      /** The account's push registrations (devices that receive notifications). */
+      pushRegistrations: (): readonly unknown[] => [...all, "pushRegistrations"],
+      /** The account's four push switches. */
+      pushPreferences: (): readonly unknown[] => [...all, "pushPreferences"],
     };
   },
   org(orgId: string) {

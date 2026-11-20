@@ -97,6 +97,7 @@ import { setupRequestQuery } from "./from-template";
 import { inboxQuery, skillChangeQuery } from "./inbox";
 import { membersQuery } from "./members";
 import { permissionPreviewQuery } from "./permissions";
+import { pushPreferencesQuery, pushRegistrationsQuery } from "./push";
 import {
   chatTargetsQuery,
   conversationSchedulesQuery,
@@ -251,6 +252,14 @@ export const ROUTES: readonly RouteEntry[] = [
     // No org needed: my identities, and the sign-in sources (which plugins offer 验证).
     queries: ({ me }) =>
       me === null ? [] : [q(identitiesQuery(me.account.id)), q(authSourcesQuery())],
+  },
+  {
+    pattern: "/account/notifications",
+    // No org needed: my registrations and the four switches.
+    queries: ({ me }) =>
+      me === null
+        ? []
+        : [q(pushRegistrationsQuery(me.account.id)), q(pushPreferencesQuery(me.account.id))],
   },
   {
     pattern: "/account/shares",

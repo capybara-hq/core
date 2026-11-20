@@ -155,6 +155,8 @@ export const AUDIT_ACTION_KEYS: Readonly<Record<string, string>> = {
   "plugin.org_installed": "pluginOrgInstalled",
   "plugin.org_uninstalled": "pluginOrgUninstalled",
   "plugin.scope_sync_failed": "pluginScopeSyncFailed",
+  "push.registered": "pushRegistered",
+  "push.unregistered": "pushUnregistered",
   "schedule.created": "scheduleCreated",
   "schedule.deleted": "scheduleDeleted",
   "schedule.grants_changed": "scheduleGrantsChanged",

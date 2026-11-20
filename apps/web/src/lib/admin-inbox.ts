@@ -36,7 +36,8 @@ export type PlatformInboxItem =
   | { type: "scope_sync_failed"; id: string; createdAt: string; failure: ScopeSyncFailure }
   | { type: "extension_disabled"; id: string; createdAt: string; disabled: ExtensionDisabled }
   | { type: "org_upload_pending"; id: string; createdAt: string; item: CatalogItem }
-  | { type: "ownership_transferred"; id: string; createdAt: string; notice: PlatformNotice };
+  | { type: "ownership_transferred"; id: string; createdAt: string; notice: PlatformNotice }
+  | { type: "push_auth_failed"; id: string; createdAt: string; notice: PushAuthNotice };
 
 /**
  * A platform notice (kernel `platform_notices`): a deleted org's (or owner's) shared item now
@@ -55,6 +56,17 @@ export interface PlatformNotice {
   };
 }
 
+/**
+ * A push provider's credentials were refused on a delivery (kernel `push_auth_failed` notice): at
+ * most one open per plugin, shown until a super admin dismisses it.
+ */
+export interface PushAuthNotice {
+  id: string;
+  kind: "push_auth_failed";
+  createdAt: string;
+  detail: { plugin: string };
+}
+
 /** The inbox's item types, in the order the overview lists them. */
 export const PLATFORM_INBOX_TYPES = [
   "catalog_request",
@@ -63,6 +75,7 @@ export const PLATFORM_INBOX_TYPES = [
   "extension_disabled",
   "ownership_transferred",
   "org_upload_pending",
+  "push_auth_failed",
 ] as const satisfies readonly PlatformInboxItem["type"][];
 
 export type PlatformInboxType = PlatformInboxItem["type"];
@@ -105,6 +118,8 @@ export function platformInboxHref(item: PlatformInboxItem): string {
       return `/admin/plugins/${encodeURIComponent(item.failure.item.id)}`;
     case "extension_disabled":
       return `/admin/plugins/${encodeURIComponent(item.disabled.item.id)}`;
+    case "push_auth_failed":
+      return `/admin/extensions/${encodeURIComponent(item.notice.detail.plugin)}`;
     case "ownership_transferred": {
       const ref = item.notice.detail.ref;
       const base =
@@ -132,6 +147,7 @@ export function platformInboxTypeHref(type: PlatformInboxType): string {
     case "scope_sync_failed":
     case "extension_disabled":
     case "ownership_transferred":
+    case "push_auth_failed":
       return `/admin/inbox?type=${type}`;
   }
 }

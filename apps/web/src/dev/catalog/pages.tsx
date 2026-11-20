@@ -54,6 +54,7 @@ const INBOX: PlatformInboxView = {
     extension_disabled: 0,
     ownership_transferred: 0,
     org_upload_pending: 0,
+    push_auth_failed: 0,
   },
 };
 
