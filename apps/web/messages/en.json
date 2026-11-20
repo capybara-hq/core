@@ -259,6 +259,9 @@
       "needs_config": "This extension needs to be configured in this organization first"
     },
     "bootstrap": {
+      "extra_conflict": "A plugin in the deployment's extra bootstrap manifest has the same name as a built-in one.",
+      "extra_invalid": "The deployment's extra bootstrap manifest is invalid; see the server log or the error message.",
+      "git_read_failed": "A plugin could not be read from its git marketplace.",
       "download_failed": "A bootstrap plugin pinned by the deployment could not be downloaded from the npm registry. Check the registry (packages.npmRegistry) or put the package in the bootstrap directory.",
       "integrity_mismatch": "The package of a bootstrap plugin does not match its pinned sha512; the deployment refused to install it. The registry or the file may have been tampered with.",
       "missing_file": "A bootstrap package pinned by the deployment is missing from the bootstrap directory."
@@ -493,6 +496,7 @@
       "entry_deprecated": "The marketplace marks this version as deprecated, so it cannot be installed. Choose another version.",
       "package_mismatch": "The downloaded package does not match the marketplace entry.",
       "builtin": "The official marketplace comes from the deployment config; it can only be enabled or disabled here.",
+      "config_managed": "This marketplace is configured by the deployment; here it can only be switched on or off.",
       "git_failed": "Reading the git repository failed (the server, the ref or the commit). The message says which.",
       "git_too_large": "The git repository is over the size or file limits for plugins.",
       "git_unsupported_entry": "The git repository contains a symlink or a submodule, which plugins may not use.",

@@ -1384,6 +1384,8 @@ describe("config-declared names and the lock", () => {
         },
         confirm: (...a: Parameters<PluginImport["confirm"]>) =>
           k.app.get(PluginImport).confirm(...a),
+        prepareGit: (...a: Parameters<PluginImport["prepareGit"]>) =>
+          k.app.get(PluginImport).prepareGit(...a),
       };
       const run = bootstrap.run({ manifest: fx.manifest, dir: fx.dir, imports });
       running = run;
@@ -1417,6 +1419,8 @@ describe("config-declared names and the lock", () => {
         },
         confirm: (...a: Parameters<PluginImport["confirm"]>) =>
           k.app.get(PluginImport).confirm(...a),
+        prepareGit: (...a: Parameters<PluginImport["prepareGit"]>) =>
+          k.app.get(PluginImport).prepareGit(...a),
       };
       await expect(bootstrap.run({ manifest: fx.manifest, dir: fx.dir, imports })).rejects.toThrow(
         "lock lost: lock:bootstrap",
