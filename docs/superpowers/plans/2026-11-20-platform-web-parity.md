@@ -530,7 +530,7 @@ Suggested waves (execution may refine them in the ledger):
 **Interfaces:**
 - Produces:
   ```ts
-  export const FileRefSchema: z.ZodType<FileRef>; // { fileId: uuid } | { path: absolute string ≤ 4096 }
+  export const FileRefSchema: z.ZodType<FileRef>; // { fileId: uuid } only (R12)
   export interface FileLimits { maxBytes: number; contentTypes?: readonly string[] }
   export interface ResolvedFile { name: string; contentType: string; size: number; sha256: string; bytes: Uint8Array }
   export class FileRefs { // @Injectable
@@ -538,13 +538,13 @@ Suggested waves (execution may refine them in the ledger):
   }
   // card detail: { name, size, sha256, contentType, thumbnail?: string /* data URL, R9 */ }
   ```
-  - `fileId` goes through `findConversationFile`; `path` through `SandboxFileReader.read` (its device and path rules).
+  - `fileId` goes through `findConversationFile` (R12: device files are delivered with Deliver first).
   - Over the limit → `ToolError` "The file is <n> bytes; this operation takes at most <max>." Wrong type → "…takes <types>."
   - At run time a different sha256 → `ToolError` "The file changed after the person confirmed it; call the operation again."
 
 - [ ] **Step 1: Write the failing tests:**
   - A conversation attachment resolves with its sha256.
-  - A device path resolves through the sandbox-fake device.
+  - A `{ path }` is refused with "Deliver the file first, then pass its fileId." (R12).
   - An over-limit file is denied before the card (no approval row).
   - An image gets a thumbnail ≤ 24 KiB.
   - **Review Focus 5.** The device file is rewritten after approval → the change error, and nothing is stored.
@@ -574,7 +574,7 @@ Suggested waves (execution may refine them in the ledger):
 
 - [ ] **Step 1: Write the failing tests:**
   - **Acceptance 3.** Avatar from a `GenerateImage` artifact.
-  - **Acceptance 4.** A skill zip at a device path → the org has the skill.
+  - **Acceptance 4.** A skill zip delivered from the device with Deliver, passed by `fileId` → the org has the skill (R12).
   - Each other op runs on a fixture package.
   - A 3 MiB avatar is denied before the card.
 - [ ] **Step 2:** Run. Expected: FAIL.
