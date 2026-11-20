@@ -135,18 +135,11 @@ function containsSecret(node: unknown, root: Obj, seen = new Set<unknown>()): bo
   return false;
 }
 
-/**
- * Whether the walker cannot see through the node: a `$ref`, an `allOf`, or an `anyOf` / `oneOf`
- * with two or more non-null branches.
- */
-function isOpaque(node: Obj): boolean {
-  if (node.$ref !== undefined || node.allOf !== undefined) return true;
-  for (const branches of [node.anyOf, node.oneOf]) {
-    if (!Array.isArray(branches)) continue;
-    const rest = branches.filter((b) => !(isObj(b) && b.type === "null"));
-    if (rest.length >= 2) return true;
-  }
-  return false;
+/** A shallow copy of a node without some keywords. */
+function without(node: Obj, keys: readonly string[]): Obj {
+  const out: Obj = { ...node };
+  for (const k of keys) delete out[k];
+  return out;
 }
 
 /** Whether the node only accepts strings (or strings and null). */
@@ -226,9 +219,24 @@ export function secretFieldsOf(
   ) => {
     const shape = shapeOf(node);
     const secret = inSecret || node["x-secret"] === true || shape["x-secret"] === true;
-    if (!secret && (isOpaque(node) || isOpaque(shape))) {
-      if (containsSecret(node, jsonSchema)) recordOnly.add(path);
-      return;
+    if (!secret) {
+      // Fail closed: the walker descends only `properties` and `items`. A secret anywhere else
+      // in the node (`$ref`, `allOf`, unions, `additionalProperties`, `patternProperties`,
+      // `prefixItems`, `if` / `then` / `else`, `not`, …) makes the whole node web-only. `$defs` are
+      // reached only through a `$ref`, which containsSecret follows.
+      const descended = isObj(shape.properties)
+        ? ["properties"]
+        : isObj(shape.items)
+          ? ["items"]
+          : [];
+      const outer = shape === node ? {} : without(node, ["anyOf", "oneOf"]);
+      if (
+        containsSecret(outer, jsonSchema) ||
+        containsSecret(without(shape, [...descended, "x-ui", "$defs", "definitions"]), jsonSchema)
+      ) {
+        recordOnly.add(path);
+        return;
+      }
     }
     if (isObj(shape.properties)) {
       const req = Array.isArray(shape.required) ? shape.required : [];
@@ -259,38 +267,45 @@ export type PersonFieldPlan =
   | { ok: true; ask: PersonFieldSpec[]; clear: string[] }
   | { ok: false; message: string };
 
-/** The value at a dot path, reading own properties only. */
-function ownPath(obj: unknown, path: string): unknown {
-  let node = obj;
-  for (const seg of path.split(".")) {
-    if (!isObj(node) || FORBIDDEN_SEGMENTS.has(seg) || !Object.hasOwn(node, seg)) return undefined;
-    node = node[seg];
+/**
+ * Every (dot path, leaf value) pair of `values`, keyed by dot path or nesting objects: own
+ * properties only, plain objects descended, arrays, scalars and null leaves.
+ */
+function flatten(values: Obj, prefix = "", out: [string, unknown][] = []): [string, unknown][] {
+  for (const [key, v] of Object.entries(values)) {
+    const path = prefix === "" ? key : `${prefix}.${key}`;
+    // An empty object carries nothing: no pair.
+    if (isObj(v)) flatten(v, path, out);
+    else out.push([path, v]);
   }
-  return node;
+  return out;
 }
 
 /**
- * Whether `values` (keyed by dot path, or nesting objects) carries a value at `path`: a flat key,
- * a parent key holding a nested object, or a key under the path. `""` (an opaque root) matches
- * any key.
+ * Whether a pair at `pairPath` touches the secret at `secretPath`: at it, below it, or above it
+ * (a leaf in place of the object holding it). `""` (an opaque root) touches every pair.
  */
-function valueAt(values: Obj, path: string): unknown {
-  for (const [key, v] of Object.entries(values)) {
-    if (path === "") return v;
-    if (key === path) return v;
-    if (path.startsWith(`${key}.`)) {
-      const inner = ownPath(v, path.slice(key.length + 1));
-      if (inner !== undefined) return inner;
-    }
-    if (key.startsWith(`${path}.`) && v !== undefined) return v;
-  }
-  return undefined;
+function touches(pairPath: string, secretPath: string): boolean {
+  return (
+    secretPath === "" ||
+    pairPath === secretPath ||
+    pairPath.startsWith(`${secretPath}.`) ||
+    secretPath.startsWith(`${pairPath}.`)
+  );
+}
+
+/** The path the values check guards for a recordOnly path: an array-item secret's array root. */
+function guardedPath(path: string): string {
+  const cut = path.indexOf("[]");
+  return cut < 0 ? path : path.slice(0, cut).replace(/\.$/, "");
 }
 
 /**
  * Plans the person fields of one call (spec §4.1). Refusals are English for the model:
- * - a secret field (or a secret record) present in `values` -> the leaked-secret copy, naming
- *   only the path, never the value;
+ * - a non-null value in `values` at, below or above a secret field or a recordOnly path (an
+ *   array-item secret: its array root) -> the leaked-secret copy, naming only the path, never the
+ *   value; `values` is flattened once, so flat, nested and prefix keys all count; a null at a
+ *   secret field -> pointed to clearSecrets;
  * - an `askPerson` / `clearSecrets` path that is not a secret field of the target;
  * - a path both asked and cleared;
  * - more than {@link PERSON_FIELDS_MAX} fields to ask.
@@ -301,16 +316,11 @@ export function planPersonFields(
   p: { values?: Record<string, unknown>; askPerson: string[]; clearSecrets: string[] },
 ): PersonFieldPlan {
   const byPath = new Map(t.fields.map((f) => [f.path, f]));
-  const values = p.values ?? {};
+  const pairs = flatten(p.values ?? {});
+  const leaks = (secretPath: string) =>
+    pairs.some(([path, v]) => v !== null && v !== undefined && touches(path, secretPath));
   for (const f of t.fields) {
-    const v = valueAt(values, f.path);
-    if (v === null) {
-      return {
-        ok: false,
-        message: `To clear \`${f.path}\`, leave it out of values and list it in clearSecrets.`,
-      };
-    }
-    if (v !== undefined) {
+    if (leaks(f.path)) {
       return {
         ok: false,
         message: `Secret fields are entered by the person on the confirmation card; leave \`${f.path}\` out of values and list it in askPerson. A value passed in params has been seen by the model and counts as leaked: tell the person to rotate it.`,
@@ -318,13 +328,18 @@ export function planPersonFields(
     }
   }
   for (const path of t.recordOnly ?? []) {
-    // A secret inside array items: anything at the array (its root before the first `[]`) counts.
-    const cut = path.indexOf("[]");
-    const v = valueAt(values, cut < 0 ? path : path.slice(0, cut));
-    if (v !== undefined && (v !== null || cut >= 0)) {
+    if (leaks(guardedPath(path))) {
       return {
         ok: false,
         message: `\`${path}\` is a secret record the person enters on the web page; leave it out of values. A value passed in params has been seen by the model and counts as leaked: tell the person to rotate it.`,
+      };
+    }
+  }
+  for (const f of t.fields) {
+    if (pairs.some(([path, v]) => v === null && path === f.path)) {
+      return {
+        ok: false,
+        message: `To clear \`${f.path}\`, leave it out of values and list it in clearSecrets.`,
       };
     }
   }

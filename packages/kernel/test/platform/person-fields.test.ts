@@ -217,10 +217,60 @@ describe("planPersonFields", () => {
       expect(JSON.stringify(plan({ port: 8080 }))).not.toContain("8080");
     // Anything at the array root of an array-item secret: flat, nested and prefix keys.
     expect(plan({ list: [{ name: "x", key: "sk-123456789" }] })).toMatchObject({ ok: false });
-    expect(plan({ list: null })).toMatchObject({ ok: false });
+    // A null clears the list and carries no secret.
+    expect(plan({ list: null })).toEqual({ ok: true, ask: [], clear: [] });
     expect(plan({ a: { list: [{ key: "sk-123456789" }] } })).toMatchObject({ ok: false });
     expect(plan({ "a.list": [] })).toMatchObject({ ok: false });
     expect(plan({})).toEqual({ ok: true, ask: [], clear: [] });
+  });
+
+  it("a null at a recordOnly path does not mask a secret under a dotted key, in either order", () => {
+    const s = configJsonSchema(
+      z.object({
+        auth: z.discriminatedUnion("kind", [
+          z.object({ kind: z.literal("token"), token: secret(z.string()) }),
+          z.object({ kind: z.literal("basic"), password: secret(z.string()) }),
+        ]),
+      }),
+    );
+    const t: PersonFieldTarget = {
+      target: { zh: "测试", en: "Test" },
+      ...secretFieldsOf(s, new Set()),
+    };
+    const plan = (values: Record<string, unknown>) =>
+      planPersonFields(t, { values, askPerson: [], clearSecrets: [] });
+    expect(plan({ auth: null, "auth.token": "sk-123456789" })).toMatchObject({ ok: false });
+    expect(plan({ "auth.token": "sk-123456789", auth: null })).toMatchObject({ ok: false });
+    expect(plan({ auth: null })).toEqual({ ok: true, ask: [], clear: [] });
+  });
+
+  it("a null at a secret field does not mask the same secret under a nested key", () => {
+    const r = planPersonFields(target(), {
+      values: { "nested.token": null, nested: { token: "tok-123456789" } },
+      askPerson: ["apiKey"],
+      clearSecrets: [],
+    });
+    expect(r.ok).toBe(false);
+    if (!r.ok) expect(r.message).toContain("leaked");
+  });
+
+  it("refuses values for secrets under records, tuples and additionalProperties", () => {
+    const s = configJsonSchema(
+      z.object({
+        keys: z.record(z.string(), secret(z.string())),
+        pair: z.tuple([z.string(), secret(z.string())]),
+        extra: z.object({ name: z.string() }).catchall(secret(z.string())),
+      }),
+    );
+    const { fields, recordOnly } = secretFieldsOf(s, new Set());
+    expect(fields).toEqual([]);
+    expect(recordOnly).toEqual(["keys", "pair", "extra"]);
+    const t: PersonFieldTarget = { target: { zh: "测试", en: "Test" }, fields, recordOnly };
+    const plan = (values: Record<string, unknown>) =>
+      planPersonFields(t, { values, askPerson: [], clearSecrets: [] });
+    expect(plan({ "keys.github": "sk-123456789" })).toMatchObject({ ok: false });
+    expect(plan({ pair: ["a", "sk-123456789"] })).toMatchObject({ ok: false });
+    expect(plan({ extra: { name: "n", other: "sk-123456789" } })).toMatchObject({ ok: false });
   });
 
   it("refuses an ask for a field that is not a secret of the target", () => {
