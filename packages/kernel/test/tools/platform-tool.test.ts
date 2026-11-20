@@ -198,14 +198,7 @@ beforeEach(() => {
   setting = "on";
   const ops = new PlatformOperations();
   targetClassCtx = [];
-  ops.register([
-    listOp,
-    personalOp,
-    orgOp,
-    targetedOp,
-    neverOp,
-    peopleOp,
-  ] as PlatformOperation[]);
+  ops.register([listOp, personalOp, orgOp, targetedOp, neverOp, peopleOp] as PlatformOperation[]);
   tool = platformTool({
     ops,
     actor: {
@@ -421,7 +414,9 @@ describe("browse, search, describe, read", () => {
 describe("call", () => {
   it("never shows the model a person's avatar: names stay, an agent's avatar stays", async () => {
     const out = await run({ action: "call", operation: "admin.fixture-people" });
-    expect(JSON.stringify(out)).not.toMatch(/"(avatarUrl|\w+AvatarUrl)":(null|"\/api\/v1\/accounts)/);
+    expect(JSON.stringify(out)).not.toMatch(
+      /"(avatarUrl|\w+AvatarUrl)":(null|"\/api\/v1\/accounts)/,
+    );
     expect(out).toEqual({
       agents: [
         { id: "a1", ownerName: "Ada" },
