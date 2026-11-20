@@ -90,7 +90,7 @@ changesets like `apps/desktop`). Capacitor (current major) with its iOS (Swift) 
 tab-bar WebView mostly fight Capacitor's single configured WebView, the app becomes plain native
 shells (Swift and Kotlin hosting the WebViews), keeping Capacitor only for the local pages or
 dropping it; the capabilities, the gate and everything else in this spec stay the same. The
-ruling is recorded here after the spikes; the app's own TypeScript (address page, bridge glue) reuses
+ruling is recorded in §15.1; the app's own TypeScript (address page, bridge glue) reuses
 `packages/shell` (address normalization, `GET /api/v1/meta` parsing, PKCE, the sign-in callback,
 the zh / en catalog). The repository rules stay: published core packages only
 (`@capybara-hq/plugin-sdk` for the Shell environment types), tests without real Keychain or OS
@@ -283,7 +283,7 @@ native feel comes from behavior, not from imitating the OS look inside pages.
   stay left of it, padded by the strip's safe-area inset on the right (`--cb-inset-right`, per
   side). The native tab bar sits in the strip below the status bar (§6.1). The shell sets the
   WebView to ignore the safe area and passes the strip through `env(safe-area-inset-right)` (or,
-  where the WebView does not report it, through `insets.right`, §5.1); the spike of phase 1
+  where the WebView does not report it, through `insets.right`, §5.1); the spike of phase 1 (§15.1)
   confirms which on the Device Hub simulator.
 - **The same in the browser and the PWA** where WebKit allows it: the web already sets
   `viewport-fit=cover` and pads every side by its own inset, so the day Safari extends content
@@ -477,15 +477,15 @@ The four categories of layout spec §10.3, each from its existing kernel event, 
 ## 14. Open questions
 
 1. Sharing one WebView across `UITabBarController` children (§6.1): proven in the spike, else the
-   `UIViewReservedRegion` fallback.
-2. Android multi-profile WebView availability on the devices we target (§4.3).
-3. The layout spec's §15 questions, answered on the Duo simulator in phase 1.
+   `UIViewReservedRegion` fallback. Answered in §15.1.
+2. Android multi-profile WebView availability on the devices we target (§4.3). Answered in §15.1.
+3. The layout spec's §15 questions, answered on the Duo simulator in phase 1. Answered in §15.1.
 
 ## 15. Spike results (2026-11-21)
 
-Phase 1 spikes ran on iOS 27.2 simulators and Android API 35 (WebView 124 and 145) and API 24
-(WebView 53). No fallback of §14 was triggered. Rulings are the coordinator's (designer's call,
-spike) unless marked as the maintainer's.
+Phase 1 spikes ran on iOS 27.2 simulators and Android API 37 (WebView 145), API 35 (WebView 124)
+and API 24 (WebView 53). No fallback of §14 was triggered. Rulings are the designer's call, from
+spike evidence, unless marked as the maintainer's.
 
 ### 15.1 The four open questions of §14
 
