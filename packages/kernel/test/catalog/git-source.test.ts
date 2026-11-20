@@ -370,6 +370,57 @@ describe("readGitTree", () => {
     expect(srv.requests.length).toBeGreaterThan(0);
     expect(srv.requests.every((r) => r.authorization === undefined)).toBe(true);
   });
+
+  it("sends Basic x-token-auth:<token> when username is x-token-auth", async () => {
+    const commit = await srv.commit("auth-user", { "a.txt": "x" });
+    const url = srv.url("auth-user");
+    srv.requests.length = 0;
+    await readGitTree(
+      { url, commit },
+      opts({ token: "s3cret", tokenOrigin: new URL(url).origin, username: "x-token-auth" }),
+    );
+    expect(srv.requests.length).toBeGreaterThan(0);
+    const basic = `Basic ${Buffer.from("x-token-auth:s3cret").toString("base64")}`;
+    expect(srv.requests.every((r) => r.authorization === basic)).toBe(true);
+  });
+
+  it("defaults the username to x-access-token", async () => {
+    const commit = await srv.commit("auth-default", { "a.txt": "x" });
+    const url = srv.url("auth-default");
+    srv.requests.length = 0;
+    await readGitTree({ url, commit }, opts({ token: "s3cret", tokenOrigin: new URL(url).origin }));
+    expect(srv.requests.length).toBeGreaterThan(0);
+    const basic = `Basic ${Buffer.from("x-access-token:s3cret").toString("base64")}`;
+    expect(srv.requests.every((r) => r.authorization === basic)).toBe(true);
+  });
+
+  it("sends no authorization to another origin (a redirect to a second server)", async () => {
+    const other = await startFakeGitServer();
+    try {
+      await other.commit("moved", { "a.txt": "x" });
+      await srv.commit("auth-redirect", { "a.txt": "x" });
+      const url = srv.url("auth-redirect");
+      const tokenOpts = opts({
+        token: "s3cret",
+        tokenOrigin: new URL(url).origin,
+        username: "x-token-auth",
+      });
+      srv.requests.length = 0;
+      srv.redirectNext(other.url("moved"));
+      const e = await resolveGitCommit({ url }, tokenOpts).catch((x) => x);
+      // The redirect is refused, so the second origin never sees the request, let alone the token
+      expect(e).toBeInstanceOf(GitSourceError);
+      expect(e.netCode).toBe("marketplace.redirect");
+      expect(srv.requests.length).toBe(1);
+      expect(other.requests).toEqual([]);
+      // Asked directly with the first origin's token, the second server gets no credential
+      await resolveGitCommit({ url: other.url("moved") }, tokenOpts);
+      expect(other.requests.length).toBeGreaterThan(0);
+      expect(other.requests.every((r) => r.authorization === undefined)).toBe(true);
+    } finally {
+      await other.stop();
+    }
+  });
 });
 
 describe("scanPack", () => {

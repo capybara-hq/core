@@ -58,9 +58,14 @@ export function gitUrlIdentity(url: string, path: string | undefined): string {
 
 export type GitLocation = { url: string; ref?: string; commit?: string; path?: string };
 
+/** The Basic auth username when a marketplace stores none (GitHub's). */
+const GIT_USERNAME_DEFAULT = "x-access-token";
+
 export type GitOptions = {
   net: NetPolicy;
   token?: string;
+  /** The Basic auth username sent with `token` (default {@link GIT_USERNAME_DEFAULT}). */
+  username?: string;
   /** The token is sent only to this origin (the marketplace URL's). */
   tokenOrigin?: string;
   signal: AbortSignal;
@@ -177,7 +182,7 @@ function startOp(loc: GitLocation, o: GitOptions): Op {
   const auth =
     o.token === undefined
       ? undefined
-      : `Basic ${Buffer.from(`x-access-token:${o.token}`).toString("base64")}`;
+      : `Basic ${Buffer.from(`${o.username || GIT_USERNAME_DEFAULT}:${o.token}`).toString("base64")}`;
   const http: HttpClient = {
     async request(req: GitHttpRequest): Promise<GitHttpResponse> {
       const target = new URL(req.url);
