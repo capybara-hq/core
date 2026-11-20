@@ -294,7 +294,12 @@ describe("parseBootstrapExtraManifest", () => {
     expect(extraErrors(m).some((e) => e.startsWith("plugins.0.commit"))).toBe(true);
   });
 
-  it.each(["plugins/x", "../x", "./../x"])("rejects the path %s", (path) => {
+  it.each([".", "./"])("accepts the repository root %s as path", (path) => {
+    const m = extra({ plugins: [gitEntry({ path })], defaultTheme: undefined });
+    expect(extraErrors(m)).toEqual([]);
+  });
+
+  it.each(["plugins/x", "../x", "./../x", "", "./.", ".."])("rejects the path %s", (path) => {
     const m = extra({ plugins: [gitEntry({ path })], defaultTheme: undefined });
     expect(extraErrors(m).some((e) => e.startsWith("plugins.0.path"))).toBe(true);
   });

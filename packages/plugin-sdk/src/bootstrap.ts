@@ -193,7 +193,7 @@ export interface BootstrapGitEntry {
   marketplace: string;
   /** 40-hex commit the tree is read at (never a branch). */
   commit: string;
-  /** The plugin directory inside the repository: `./<path>`. */
+  /** The plugin directory inside the repository: `./<path>`, or `.` / `./` for its root. */
   path: string;
   /** Exact semver. */
   version: string;
@@ -265,9 +265,14 @@ const extraEntry = z.discriminatedUnion("source", [
     path: z
       .string()
       .max(512)
-      .refine((p) => p.startsWith("./") && isSafePackagePath(p.slice(2)), {
-        message: 'path must start with "./" and stay inside the repository',
-      }),
+      // "." / "./": the repository root (a single-plugin repository)
+      .refine(
+        (p) => p === "." || p === "./" || (p.startsWith("./") && isSafePackagePath(p.slice(2))),
+        {
+          message:
+            'path must be "." (the repository root) or start with "./" and stay inside the repository',
+        },
+      ),
   }),
 ]);
 

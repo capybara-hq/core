@@ -144,13 +144,38 @@ const PLUGIN_JSON = JSON.stringify({
 
 describe("bootstrap git entries: root paths, parity and refusals", () => {
   it("reads a plugin at the repository root (`./`, `.`) with every path intact", async () => {
-    // the manifest schema refuses these paths, but the kernel treats them as the root: keep parity
+    // the kernel treats these as the root too (the manifest schema takes `.` and `./`): parity
     const r = repoWith({ ".capybara-plugin/plugin.json": PLUGIN_JSON, "a/b.txt": "x" });
     try {
       for (const path of ["./", ".", ""]) {
         const files = await readTree(r.dir, r.head, path);
         expect([...files.keys()]).toEqual([".capybara-plugin/plugin.json", "a/b.txt"]);
       }
+    } finally {
+      rmSync(r.dir, { recursive: true, force: true });
+    }
+  });
+
+  it("--write pins an entry whose path is the repository root", async () => {
+    const r = repoWith({ ".capybara-plugin/plugin.json": PLUGIN_JSON, "a/b.txt": "x" });
+    try {
+      const f = join(r.dir, "bootstrap.extra.json");
+      writeFileSync(
+        f,
+        JSON.stringify({
+          schemaVersion: 1,
+          marketplaces: [{ name: "mine", url: "https://git.example.com/o/r.git" }],
+          plugins: [entry({ path: "." })],
+        }),
+      );
+      expect((await syncBootstrapExtra({ root: r.dir, file: f, write: true })).findings).toEqual(
+        [],
+      );
+      const pinned = JSON.parse(readFileSync(f, "utf8")).plugins[0] as Record<string, string>;
+      expect(pinned).toMatchObject({ path: ".", commit: r.head, version: "2.0.0" });
+      expect((await syncBootstrapExtra({ root: r.dir, file: f, write: false })).findings).toEqual(
+        [],
+      );
     } finally {
       rmSync(r.dir, { recursive: true, force: true });
     }

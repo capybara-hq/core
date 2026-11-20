@@ -293,6 +293,34 @@ describe("git entries of the extra bootstrap manifest", () => {
     expect(srv.requests.every((q) => q.authorization === undefined)).toBe(true);
   });
 
+  it("a git entry at the repository root (path . or ./) is read from the root", async () => {
+    // A single-plugin repository: the plugin is the whole tree
+    const theme = themeFiles("theme-root", "1.0.0");
+    const commit = await srv.commit("single", theme);
+    for (const path of [".", "./"]) {
+      await truncateTables(
+        db,
+        "capybara.bootstrap_runs, capybara.platform_themes, capybara.catalog_files, capybara.catalog_item_versions, capybara.catalog_items",
+      );
+      const manifest = manifestOf(
+        [await gitEntry("theme-root", "single", commit, theme, { path })],
+        [{ name: "single", url: srv.url("single") }],
+      );
+      const r = await run(manifest);
+      expect(r.results).toEqual([{ name: "theme-root", action: "imported", version: "1.0.0" }]);
+      const u = new URL(srv.url("single"));
+      expect(await versions()).toEqual([
+        expect.objectContaining({
+          name: "theme-root",
+          marketplace_id: "config:single",
+          // the same source as an admin import of the repository root
+          source_ref: `config:single:${u.origin}${u.pathname}@${commit}`,
+          source_detail: expect.objectContaining({ path: ".", commit }),
+        }),
+      ]);
+    }
+  });
+
   it("the catalog version records the managed marketplace source, and importFromMarketplace of the same entry is the same source", async () => {
     const { commit, theme } = await distCommit();
     const entry = await gitEntry("theme-x", "dist", commit, theme);
