@@ -1,7 +1,8 @@
 # Mobile app shell and push notifications
 
 - Date: 2026-11-20, written against `origin/main` at `dec9a7a51`.
-- Status: draft for the maintainer's review.
+- Status: approved by the maintainer on 2026-11-20 (with the iPhone Duo edge-to-edge rule of §8
+  and the Safari sign-in sheet of §4.3 confirmed); the designer's calls stand.
 - Related: the mobile layout and Shell environment spec (`2026-11-19-mobile-layout-design.md`,
   "layout spec" below: §4 the compact shell, §7 mobile specifics, §8 foldables, §9 the Shell
   environment, §10 PWA and notifications), the desktop client spec
@@ -120,8 +121,9 @@ fails when the native projects drift from it.
   call, measured in the plan). The switcher is a native action sheet from a long press on the 我
   tab and from the address page; removing a profile deletes its store and its push registration
   (§9.3).
-- **Sign-in** is `signIn@1` over the desktop's flow (desktop spec §6.5) with the platform's
-  browser session: `ASWebAuthenticationSession` on iOS, Custom Tabs on Android, returning through
+- **Sign-in** is `signIn@1` over the desktop's flow (desktop spec §6.5) in Safari (decided
+  2026-11-20): `ASWebAuthenticationSession` on iOS, the Safari sheet over the app that shares
+  Safari's cookies, passwords and SSO sessions; Custom Tabs (the default browser) on Android; returning through
   `<scheme>://auth/callback`. The scheme of every build is registered in the deployment's
   `auth.appRedirectUris` (the official one by default, a fork's by its super admin).
 - **No sign-in inside the WebView** (designer's call, as the desktop): the WebView refuses the
@@ -159,7 +161,7 @@ fails when the native projects drift from it.
 | `kind` | `"mobile"` |
 | `platform` | `"ios"` or `"android"` |
 | `shellVersion` | The app's version |
-| `insets` | The native chrome over the WebView beyond the OS safe areas: `bottom` the native tab bar's height while it shows on a phone; `right` (outer Duo display) 0, since the system strip is already outside the WebView's safe area; announced with `change` |
+| `insets` | The native chrome over the WebView beyond the OS safe areas: `bottom` the native tab bar's height while it shows on a phone; `right` on the Duo outer display the strip's width when the WebView does not already report it as `safe-area-inset-right` (§8), else 0; announced with `change` |
 | `controls` | Absent |
 | `capabilities` | `signIn@1`, `openExternal@1`, `chrome@1`, `nav@1`, `haptics@1`, `share@1`, `menu@1`; `push@1` when the build has push credentials and the deployment's meta lists the build (§9.2) |
 
@@ -211,8 +213,8 @@ with a test page that tries the bridge from a frame and from a navigated-to orig
 - **Android**: a Material 3 `NavigationBar` under the WebView; on a foldable's inner display the
   web's medium / expanded layout shows and the bar hides (`visible` false).
 - `insets.bottom` carries the bar's height while it shows, so the web's bottom-pinned rows sit
-  above it; on the Duo outer display the bar is outside the WebView's area and contributes no
-  inset.
+  above it; on the Duo outer display the bar sits in the strip, which the content already keeps
+  clear (§8), so it adds no bottom inset.
 
 ### 6.2 Menus, share and haptics
 
@@ -272,9 +274,19 @@ native feel comes from behavior, not from imitating the OS look inside pages.
 
 - The size classes already cover the displays (layout spec §8): outer 382 px wide is compact,
   inner portrait medium, inner landscape expanded.
-- **Outer display in the app**: the native tab bar sits in the system strip (§6.1); the WebView
-  fills the area left of it with the OS safe areas per side (asymmetric insets are already
-  handled per side by `--cb-inset-*`).
+- **Outer display in the app: edge to edge under the strip (decided 2026-11-20).** The WebView
+  covers the whole display, the right strip included, as Apple's own apps draw their background
+  under it (the App Store's ground runs to the right edge). Backgrounds and full-bleed grounds (the
+  page, the top bar, the bottom-pinned rows) extend under the strip; content, text and controls
+  stay left of it, padded by the strip's safe-area inset on the right (`--cb-inset-right`, per
+  side). The native tab bar sits in the strip below the status bar (§6.1). The shell sets the
+  WebView to ignore the safe area and passes the strip through `env(safe-area-inset-right)` (or,
+  where the WebView does not report it, through `insets.right`, §5.1); the spike of phase 1
+  confirms which on the Device Hub simulator.
+- **The same in the browser and the PWA** where WebKit allows it: the web already sets
+  `viewport-fit=cover` and pads every side by its own inset, so the day Safari extends content
+  under the outer display's side controls (Apple has not decided, layout spec §15), the page runs
+  under the strip with no change. Until then the strip stays the system's in Safari and the PWA.
 - **Inner display**: the web shows the rail or the sidebar; `nav@1` reports `visible` false and
   the native bar hides. Open and close are resizes: the web's class changes and it calls
   `nav@1.set` again.
