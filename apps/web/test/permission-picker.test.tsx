@@ -195,12 +195,9 @@ describe("the permission choice in the composer", () => {
       "Same sandbox; a review model decides requests to go beyond it and asks you when unsure.",
       "Same sandbox; approves whatever this device allows, without asking. Credential reads outside the sandbox and sub-agents' requests to run outside it still go to the review model.",
     ]);
-    // the head hints the shortcut; no standing explanation closes the menu, only the transient
-    // fact that this (unprobed) device is checked when it starts
+    // the head hints the shortcut; no explanation closes the menu, not even for an unprobed device
     expect(menu.textContent).toContain("⇧Tab to switch");
-    expect([...menu.querySelectorAll('[data-part="menu-note"]')].map((n) => n.textContent)).toEqual(
-      ["Checked when this device starts."],
-    );
+    expect(menu.querySelectorAll('[data-part="menu-note"]')).toHaveLength(0);
     // the effort sits under the profiles
     expect(within(menu).getByRole("group", { name: "Effort" })).toBeTruthy();
   });
@@ -345,13 +342,13 @@ describe("unavailable choices and their reasons", () => {
     },
   );
 
-  it("an unprobed device stays selectable and says it is checked when it starts, without any provisioning", async () => {
+  it("an unprobed device stays selectable with no note, without any provisioning", async () => {
     const user = userEvent.setup();
     const { calls } = mount({ deviceId: "d1" });
     await waitFor(() => expect(calls).toHaveLength(1));
     const menu = await openMenu(user);
     expect(rows(menu).every((r) => r.getAttribute("aria-disabled") === null)).toBe(true);
-    expect(menu.textContent).toContain("Checked when this device starts.");
+    expect(menu.querySelectorAll('[data-part="menu-note"]')).toHaveLength(0);
     expect(calls.map((c) => [c.method, c.url])).toEqual([
       ["GET", "/api/v1/orgs/o1/conversation-permission-preview?deviceId=d1"],
     ]);

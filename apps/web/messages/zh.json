@@ -1633,9 +1633,6 @@
         "checkFailed": "无法检查此设备",
         "unsupported": "此设备不支持"
       },
-      "note": {
-        "unprobed": "设备启动时检查。"
-      },
       "configureReview": "设置审查模型",
       "locked": {
         "inherited": "跟随主对话的权限",
