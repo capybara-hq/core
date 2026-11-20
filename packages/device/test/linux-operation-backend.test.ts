@@ -436,6 +436,50 @@ describe.skipIf(unavailable !== null)("Linux host operation backend", () => {
     expect(ok).toMatchObject({ exitCode: 0, stdout: "ok" });
   });
 
+  it("a restricted exec's home is the device's sandbox home: writable, kept, the real home not", async () => {
+    const root = project("home");
+    device.run("mkdir -m 700 /home/sandbox/state-home /home/sandbox/device-home");
+    const homed = new HostServer(device);
+    servers.push(homed);
+    const sandboxHome = "/home/sandbox/device-home/home";
+    const withHome = await hostBackend(homed, {
+      stateDir: "/home/sandbox/state-home",
+      deviceId: "device-home",
+      sandboxHome,
+    });
+    const run = async (command: string) => {
+      const scope = scopeFor(withHome.deviceId, {
+        profile: "approve-for-me",
+        filesystem: { kind: "scoped", readRoots: [], writeRoots: [root] },
+        network: { kind: "none" },
+      });
+      return withHome.operation(scope, authorityFor(scope.operationId)).exec({
+        command,
+        cwd: root,
+        timeoutMs: 10_000,
+        maxOutputBytes: 1000,
+        signal: new AbortController().signal,
+      });
+    };
+    const first = await run(
+      [
+        'printf "%s|%s" "$HOME" "$XDG_DATA_HOME"',
+        'mkdir -p "$XDG_DATA_HOME" && printf kept > "$XDG_DATA_HOME/state"',
+        "(printf y > /home/sandbox/written) 2>/dev/null && printf w > wrote-real",
+        "true",
+      ].join("; "),
+    );
+    expect(first).toMatchObject({
+      exitCode: 0,
+      stdout: `${sandboxHome}|${sandboxHome}/.local/share`,
+    });
+    expect(await read(`${root}/wrote-real`)).toBeNull();
+    expect(await read("/home/sandbox/written")).toBeNull();
+    expect(await read(`${root}/.local/share/state`)).toBeNull();
+    const second = await run('cat "$XDG_DATA_HOME/state"');
+    expect(second).toMatchObject({ exitCode: 0, stdout: "kept" });
+  });
+
   it("the allowlist proxy: its own token, web ports only, globally routable addresses only", async () => {
     const root = project("proxy");
     // a local web server on port 80, which the granted name resolves to (a loopback address)

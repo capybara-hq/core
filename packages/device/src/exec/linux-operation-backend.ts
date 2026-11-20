@@ -137,6 +137,7 @@ export async function createLinuxOperationBackend(
       filesLock: hostFilesLock(options.stateDir),
       baseEnv: dependencies.baseEnv ?? hostCommandEnv,
       toolHome: dependencies.toolHome ?? { home: homedir(), env: process.env },
+      ...(options.sandboxHome ? { sandboxHome: options.sandboxHome } : {}),
       ...(dependencies.allowPrivateProxyTargets ? { allowPrivateProxyTargets: true } : {}),
       ...(dependencies.fakeIpDnsTest ? { fakeIpDnsTest: dependencies.fakeIpDnsTest } : {}),
       ...(dependencies.faultInjection ? { faultInjection: dependencies.faultInjection } : {}),

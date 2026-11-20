@@ -6,6 +6,7 @@ import {
   realpath,
   rename,
   rm,
+  stat,
   symlink,
   writeFile,
 } from "node:fs/promises";
@@ -212,6 +213,61 @@ describe("Linux operation worker", () => {
     });
     // read only: never a write root
     expect(sent?.writeRoots).not.toContain(join(home, ".asdf"));
+  });
+
+  it("a restricted exec on the host has the device's sandbox home: HOME, XDG, read and write", async () => {
+    const device = await realpath(await mkdtemp(join(tmpdir(), "cap-sandbox-home-")));
+    dirs.push(device);
+    const home = join(device, "home");
+    const fake = await fakeTransport("exit");
+    await (
+      await linuxOperationWorker({
+        ...fake,
+        baseEnv: env,
+        acquireRuntime: gate,
+        sandboxHome: home,
+      })(
+        execRequest(false, {
+          grant: { ...grant(false), readRoots: ["/repo"] },
+          args: {
+            command: "work",
+            cwd: "/repo",
+            timeoutMs: 10_000,
+            maxOutputBytes: 1 << 20,
+            // the call's own environment wins
+            env: { XDG_CACHE_HOME: "/repo/.cache" },
+          },
+        }),
+        new AbortController().signal,
+      )
+    ).completion;
+    const [sent] = await fake.lines();
+    expect(sent).toMatchObject({
+      readRoots: ["/repo", home],
+      writeRoots: ["/work", home],
+      env: {
+        HOME: home,
+        XDG_CACHE_HOME: "/repo/.cache",
+        XDG_CONFIG_HOME: join(home, ".config"),
+        XDG_DATA_HOME: join(home, ".local/share"),
+        XDG_STATE_HOME: join(home, ".local/state"),
+        TMPDIR: "/work",
+      },
+    });
+    expect((await stat(home)).mode & 0o777).toBe(0o700);
+    // an escalated call keeps the OS user's environment and gets no extra root
+    const full = await fakeTransport("exit");
+    await (
+      await linuxOperationWorker({
+        ...full,
+        baseEnv: () => ({ PATH: "/bin", HOME: "/home/owner" }),
+        acquireRuntime: gate,
+        sandboxHome: home,
+      })(execRequest(true), new AbortController().signal)
+    ).completion;
+    const [fullSent] = await full.lines();
+    expect(fullSent).not.toHaveProperty("writeRoots");
+    expect(fullSent?.env).toEqual({ PATH: "/bin", HOME: "/home/owner" });
   });
 
   it("Full access and a worker without a host home add no version manager roots", async () => {

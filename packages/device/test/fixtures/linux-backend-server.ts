@@ -91,7 +91,12 @@ async function handle(message: Record<string, unknown>): Promise<unknown> {
         );
       } else
         backend = await createHostOperationBackend(
-          { ...common, roots: ceiling.roots, readOwnerCeiling: read },
+          {
+            ...common,
+            roots: ceiling.roots,
+            readOwnerCeiling: read,
+            ...(message.sandboxHome ? { sandboxHome: String(message.sandboxHome) } : {}),
+          },
           { platform: "linux", linux },
         );
       return backend.permissionSupport({ id: deviceId }, signal);

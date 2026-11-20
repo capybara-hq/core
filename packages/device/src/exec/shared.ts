@@ -1,6 +1,19 @@
-import { existsSync, mkdirSync, realpathSync, statSync, writeFileSync } from "node:fs";
+import {
+  chmodSync,
+  existsSync,
+  lstatSync,
+  mkdirSync,
+  realpathSync,
+  statSync,
+  symlinkSync,
+  writeFileSync,
+} from "node:fs";
 import { isAbsolute, join, normalize } from "node:path";
-import type { SandboxRoots } from "@capybara-hq/plugin-sdk";
+import {
+  type SandboxRoots,
+  SandboxScopeDeniedError,
+  sandboxRuntimeDirectoryOf,
+} from "@capybara-hq/plugin-sdk";
 
 /** The file that marks a directory as a device directory this program has used. */
 const ROOT_MARKER = ".capybara-device";
@@ -13,8 +26,84 @@ export function osRoots(dir: string): SandboxRoots {
 }
 
 /**
+ * The device's sandbox home, `<dir>/home`: HOME (and the XDG base directories) of every
+ * OS-sandboxed command on the host. It is the device's own, kept across commands and outside every
+ * workspace and project: a command's working directory may be the person's repository (a project),
+ * where per-user state (a package manager's store, caches, configuration) must not land. Not a
+ * root: losing it loses only that state, so it is created again when missing.
+ */
+export function deviceSandboxHome(dir: string): string {
+  return join(dir, "home");
+}
+
+/** HOME and the XDG base directories of an OS-sandboxed command, all under its sandbox `home`. */
+export function sandboxHomeEnv(home: string): Record<string, string> {
+  return {
+    HOME: home,
+    XDG_CACHE_HOME: join(home, ".cache"),
+    XDG_CONFIG_HOME: join(home, ".config"),
+    XDG_DATA_HOME: join(home, ".local", "share"),
+    XDG_STATE_HOME: join(home, ".local", "state"),
+  };
+}
+
+/**
+ * Makes the sandbox `home` ready for a restricted command and returns its canonical path, the one
+ * the sandbox grants read and write: created private (0700) when missing, refused when it is not a
+ * directory of this user (a link included), lies at or under an owner-denied path or contains one,
+ * or is a system runtime directory. A global version pin of the real home that the command may read
+ * (`toolHome.readFiles`, {@link restrictedToolHomes}) is linked into it by name, so a manager that
+ * looks for it under HOME (asdf, mise: `~/.tool-versions`) still finds it when the working
+ * directory is not under the real home; a file the command put there itself is kept.
+ */
+export function prepareSandboxHome(
+  home: string,
+  deniedReadRoots: readonly string[],
+  toolHome?: { home: string; readFiles: readonly string[] },
+): string {
+  try {
+    mkdirSync(home, { mode: 0o700 });
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== "EEXIST") throw error;
+  }
+  const info = lstatSync(home);
+  if (!info.isDirectory() || (process.getuid && info.uid !== process.getuid()))
+    throw new SandboxScopeDeniedError(
+      `The device's sandbox home ${home} is not a directory of this user`,
+    );
+  if ((info.mode & 0o777) !== 0o700) chmodSync(home, 0o700);
+  const real = realpathSync(home);
+  const inside = (path: string, root: string) =>
+    root === "/" || path === root || path.startsWith(`${root}/`);
+  for (const path of [home, real])
+    if (deniedReadRoots.some((d) => inside(path, d) || inside(d, path)))
+      throw new SandboxScopeDeniedError(
+        `The device's sandbox home ${path} is, or contains, a path the owner denies`,
+      );
+  if (sandboxRuntimeDirectoryOf(real) !== null)
+    throw new SandboxScopeDeniedError(
+      `The device's sandbox home ${real} is in a system runtime directory`,
+    );
+  for (const rel of toolHome ? TOOL_HOME_FILES : []) {
+    let target: string;
+    try {
+      target = realpathSync(join((toolHome as { home: string }).home, rel));
+    } catch {
+      continue;
+    }
+    if (!toolHome?.readFiles.includes(target)) continue;
+    try {
+      lstatSync(join(real, rel));
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code === "ENOENT") symlinkSync(target, join(real, rel));
+    }
+  }
+  return real;
+}
+
+/**
  * The data directories of version managers, relative to the home: the OS sandbox sets HOME to the
- * workspace, so their shims would look there and fail ("unknown command: python3. Perhaps you
+ * device's sandbox home ({@link deviceSandboxHome}), so their shims would look there and fail ("unknown command: python3. Perhaps you
  * have to reshim?"). mise's follows XDG_DATA_HOME when the device's environment sets it. mise's
  * configuration directory (`~/.config/mise`) is never granted: its `config.toml` may hold tokens
  * (an `[env]` section). A mise-managed tool still runs from the data directory with a project pin
@@ -55,8 +144,8 @@ function isDir(path: string): boolean {
  * the device's environment `env` sets to an absolute path is passed on; an unset one points at its
  * default directory under the real `home` when that is a directory. The sandbox only reads them
  * (they are never made writable); the secret paths stay denied. asdf's global `.tool-versions`
- * is still found: asdf walks up from the working directory, and the device directory is under the
- * home.
+ * is still found: asdf walks up from the working directory (under the home, it reaches the real
+ * one) and then looks under HOME, where {@link prepareSandboxHome} links it.
  */
 export function toolHomeEnv(
   home: string,

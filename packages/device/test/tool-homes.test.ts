@@ -1,9 +1,23 @@
-import { mkdirSync, mkdtempSync, realpathSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import {
+  lstatSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  readlinkSync,
+  realpathSync,
+  rmSync,
+  statSync,
+  symlinkSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import {
+  deviceSandboxHome,
+  prepareSandboxHome,
   restrictedToolHomes,
+  sandboxHomeEnv,
   TOOL_HOME_DIRS,
   TOOL_HOME_FILES,
   toolHomeEnv,
@@ -11,8 +25,8 @@ import {
 import { deniedSecretPaths } from "../src/policy.js";
 
 /**
- * Version managers inside the OS sandbox (HOME is the workspace there): their data directories are
- * pointed at the real home, read only.
+ * Version managers inside the OS sandbox (HOME is the device's sandbox home there): their data
+ * directories are pointed at the real home, read only.
  */
 describe("toolHomeEnv", () => {
   let home: string;
@@ -172,5 +186,78 @@ describe("restrictedToolHomes", () => {
         const file = join(home, rel);
         expect(file === d || file.startsWith(`${d}/`)).toBe(false);
       }
+  });
+});
+
+/**
+ * A restricted command's HOME: the device's own sandbox home `<dir>/home`, persistent and outside
+ * every workspace and project (a project's working directory is the person's repository, where a
+ * tool's per-user state must not land).
+ */
+describe("the sandbox home", () => {
+  let dir: string;
+  beforeEach(() => {
+    dir = realpathSync(mkdtempSync(join(tmpdir(), "device-sandbox-home-")));
+  });
+  afterEach(() => rmSync(dir, { recursive: true, force: true }));
+
+  it("is <dir>/home, next to the workspace, skills and tmp roots", () => {
+    expect(deviceSandboxHome("/devices/one")).toBe("/devices/one/home");
+  });
+
+  it("sets HOME and every XDG base directory under it", () => {
+    expect(sandboxHomeEnv("/devices/one/home")).toEqual({
+      HOME: "/devices/one/home",
+      XDG_CACHE_HOME: "/devices/one/home/.cache",
+      XDG_CONFIG_HOME: "/devices/one/home/.config",
+      XDG_DATA_HOME: "/devices/one/home/.local/share",
+      XDG_STATE_HOME: "/devices/one/home/.local/state",
+    });
+  });
+
+  it("is created private (0700) and kept across commands", () => {
+    const home = join(dir, "home");
+    expect(prepareSandboxHome(home, [])).toBe(home);
+    expect(statSync(home).mode & 0o777).toBe(0o700);
+    writeFileSync(join(home, "kept"), "x");
+    expect(prepareSandboxHome(home, [])).toBe(home);
+    expect(readFileSync(join(home, "kept"), "utf8")).toBe("x");
+  });
+
+  it("returns the canonical path when the device directory is reached through a link", () => {
+    mkdirSync(join(dir, "real"));
+    symlinkSync(join(dir, "real"), join(dir, "linked"));
+    expect(prepareSandboxHome(join(dir, "linked", "home"), [])).toBe(join(dir, "real", "home"));
+  });
+
+  it("refuses a home that is a link, or a denied path, or contains one", () => {
+    mkdirSync(join(dir, "elsewhere"));
+    symlinkSync(join(dir, "elsewhere"), join(dir, "home"));
+    expect(() => prepareSandboxHome(join(dir, "home"), [])).toThrow(/not a directory/);
+    rmSync(join(dir, "home"));
+    expect(() => prepareSandboxHome(join(dir, "home"), [dir])).toThrow(/denies/);
+    expect(() => prepareSandboxHome(join(dir, "home"), [join(dir, "home", ".ssh")])).toThrow(
+      /denies/,
+    );
+  });
+
+  it("links asdf's global .tool-versions when the real one is granted, and keeps the command's own", () => {
+    const real = join(dir, "real-home");
+    mkdirSync(real);
+    writeFileSync(join(real, ".tool-versions"), "nodejs 22.12.0\n");
+    const homes = restrictedToolHomes(real, {}, []);
+    const home = join(dir, "home");
+    prepareSandboxHome(home, [], { home: real, readFiles: homes.readFiles });
+    expect(lstatSync(join(home, ".tool-versions")).isSymbolicLink()).toBe(true);
+    expect(readlinkSync(join(home, ".tool-versions"))).toBe(join(real, ".tool-versions"));
+    // a file the command wrote there itself is never replaced
+    rmSync(join(home, ".tool-versions"));
+    writeFileSync(join(home, ".tool-versions"), "own\n");
+    prepareSandboxHome(home, [], { home: real, readFiles: homes.readFiles });
+    expect(readFileSync(join(home, ".tool-versions"), "utf8")).toBe("own\n");
+    // not granted (absent, or denied): no link
+    const other = join(dir, "other");
+    prepareSandboxHome(other, [], { home: real, readFiles: [] });
+    expect(() => lstatSync(join(other, ".tool-versions"))).toThrow();
   });
 });
