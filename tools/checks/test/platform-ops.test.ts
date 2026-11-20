@@ -59,10 +59,7 @@ describe("checkPlatformOps", () => {
         "platform-op-upload",
         "platform-op-upload",
         "platform-op-upload",
-        "platform-op-handoff",
-        "platform-op-handoff",
-        "platform-op-handoff",
-        "platform-op-handoff",
+        ...Array<string>(12).fill("platform-op-handoff"),
       ].sort(),
     );
     const has = (rule: string, file: string, line: number, text: string) =>
@@ -133,6 +130,19 @@ describe("checkPlatformOps", () => {
     has("platform-op-handoff", ops, lineOf(ops, 'id: "skills.stale"'), "stale");
     // a person confirming on the web needs the link card
     has("platform-op-handoff", ops, lineOf(ops, 'id: "skills.import"'), "handoff");
+    // the card named loosely, then a web place; the wider web places and decision words
+    for (const id of [
+      "skills.card-then-web",
+      "skills.admin-ui",
+      "skills.web-ui",
+      "skills.browser",
+      "skills.screen",
+      "skills.path",
+      "skills.accept",
+      "skills.sign-off",
+    ]) {
+      has("platform-op-handoff", ops, lineOf(ops, `id: "${id}"`), "handoff");
+    }
   });
 
   it("holds on the real kernel tree", () => {

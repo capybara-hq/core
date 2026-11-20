@@ -72,19 +72,35 @@ const ATTACHMENT_ROUTES: ReadonlySet<string> = new Set([
 const ATTACHMENT_REASON = "a person's file into a conversation";
 const UPLOAD_WORDS = /upload|multipart|raw bytes|presigned|binary|file body|file content/i;
 const UPLOAD_PATH = /\/uploads?(\/|$)/;
-/** A person's decision word, by stem: confirm, confirms, confirmation, review, approve, decided... */
-const DECISION_WORD = /\b(confirm|review|approv|decid)\w*/i;
-/** Where a person acts: the web, a web page or app, the console, the inbox, "the <X> page". */
+/**
+ * A person's decision word, by stem: confirm, confirmation, review, approve, decided, accept, and
+ * "sign(s) off".
+ */
+const DECISION_WORD = /\b(confirm|review|approv|decid|accept)\w*|\bsign\w* off\b/i;
+/**
+ * Where a person acts: the web, a web page or app, the web or admin UI, the browser, a screen, the
+ * console, the inbox, "the <X> page", or a relative web path (`/plugins?staging=…`).
+ */
 const WEB_PLACE =
-  /\b(on|in) the web\b|\bweb (page|app)\b|\bthe (admin )?console\b|\bthe inbox\b|\bthe [\w'-]+(?: [\w'-]+)? page\b/i;
-/** The card itself is the place a confirmation card is on: not a hand-off to another page. */
-const ON_THE_CARD = /\b(confirmation|approval) card\b|\bthe card\b/i;
+  /\b(on|in) the web\b|\bweb (page|app|ui)\b|\badmin ui\b|\bbrowser\b|\bscreens?\b|\bthe (admin )?console\b|\bthe inbox\b|\bthe [\w'-]+(?: [\w'-]+)? page\b|(?:^|\s)\/[a-z]/i;
+/**
+ * The confirmation (approval) card named as the place of the decision. The card is shown on the
+ * web, so in a sentence that names it a bare "on / in the web" is the card's place and is taken out
+ * before looking for a web place; any other web place (a page, the inbox, a path…) still counts. A
+ * bare "the card" names no card: "confirms the card, then reviews it on the web" is a hand-off.
+ */
+const ON_THE_CARD = /\b(confirmation|approval) card\b/i;
+const ON_THE_WEB = /\b(on|in) the web\b/gi;
 
 /** Whether one sentence of a description sends a person to a web place to decide something. */
 export function sendsPersonToWeb(description: string): boolean {
   return description
     .split(/(?<=[.;!?])\s+/)
-    .some((s) => DECISION_WORD.test(s) && WEB_PLACE.test(s) && !ON_THE_CARD.test(s));
+    .some(
+      (s) =>
+        DECISION_WORD.test(s) &&
+        WEB_PLACE.test(ON_THE_CARD.test(s) ? s.replace(ON_THE_WEB, "") : s),
+    );
 }
 
 const KERNEL_SRC = "packages/kernel/src";

@@ -96,6 +96,18 @@ export const ops = [
     summary: () => ({ zh: "存放", en: "Store" }),
     run: async () => ({}),
   }),
+  // deciding on the approval card, which is shown on the web: no hand-off
+  defineOperation({
+    id: "skills.on-card",
+    description: "Change it; the person confirms it on the approval card, on the web.",
+    input: z.object({}),
+    example: {},
+    authz: { orgAction: "skills.manage" },
+    mirrors: [],
+    confirm: "org",
+    summary: () => ({ zh: "修改", en: "Change" }),
+    run: async () => ({}),
+  }),
   // sends the person to the web with no page to link: an explicit opt-out with its reason
   defineOperation({
     id: "skills.optout",
