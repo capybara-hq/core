@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto";
 import {
   type DeviceHello,
   type DeviceResponse,
@@ -12,6 +13,13 @@ import type { MacOperationBackend } from "./exec/mac-operation-backend.js";
 import { DrainPendingError } from "./exec/operation-supervisor.js";
 import { type StagedOwnerPolicy, serveOperationV3 } from "./server-ops.js";
 import type { Credential } from "./state.js";
+
+/**
+ * This process's run of the program, the same on every connection it makes: the results kept for
+ * a reconnect live in this process, so a new value tells the kernel that requests sent to the old
+ * run will never be answered (it ends their wait at once instead of at their deadline).
+ */
+export const PROGRAM_RUN_ID = randomUUID();
 
 /** Held answers a session keeps at most while no socket is ready; the oldest is dropped first. */
 export const MAX_HELD_ANSWERS = 64;
@@ -289,6 +297,7 @@ export function serveStagedSession(
     ...report,
     // the host's OS boot identity: the deployment's evidence that the host restarted (8.5)
     ...(bootId !== undefined && { bootId }),
+    programRunId: report.programRunId ?? PROGRAM_RUN_ID,
     transport: { maxFrameBytes: credential.maxFrameBytes },
   };
   let ready: KernelReady | undefined;

@@ -11,6 +11,7 @@ import { describe, expect, it } from "vitest";
 import { ApiError } from "../../../src/errors.js";
 import { InstanceBindingError } from "../../../src/local-devices/instance-bindings.js";
 import { DeviceRequestNotSentError } from "../../../src/local-devices/relay.js";
+import { DeviceProgramRestartedError } from "../../../src/sandbox/request-not-sent.js";
 import {
   recreateRequired,
   replaceRequired,
@@ -18,6 +19,7 @@ import {
   retirementPending,
 } from "../../../src/sandbox/sandbox.service.js";
 import {
+  DEVICE_PROGRAM_RESTARTED_TOOL_TEXT,
   DEVICE_REQUEST_NOT_SENT_TOOL_TEXT,
   ESCALATION_GRANT_MISSING_LAUNCH_WHY,
   ESCALATION_GRANT_MISSING_TEXT,
@@ -163,6 +165,19 @@ describe("sandbox tool errors", () => {
       "request not sent",
       new DeviceRequestNotSentError("provider secret relay"),
       DEVICE_REQUEST_NOT_SENT_TOOL_TEXT,
+    ],
+    [
+      // the operation path records it unknown and keeps the relay's error as the cause
+      "outcome unknown after the program restarted",
+      new SandboxOperationOutcomeUnknownError("provider secret state", {
+        cause: new DeviceProgramRestartedError("exec"),
+      }),
+      DEVICE_PROGRAM_RESTARTED_TOOL_TEXT,
+    ],
+    [
+      "program restarted (a call outside an operation)",
+      new DeviceProgramRestartedError("backgroundStatus"),
+      DEVICE_PROGRAM_RESTARTED_TOOL_TEXT,
     ],
   ])("%s is an actionable tool error", (_name, err, text) => {
     const mapped = mapSandboxError(err, undefined);
