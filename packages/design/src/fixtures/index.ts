@@ -657,7 +657,7 @@ export const SELECT_FIXTURE = {
 
 /** A select whose options are people (spec §6.2 "Options with a person"). */
 export const SELECT_PERSON_FIXTURE = {
-  label: "负责人",
+  label: "所有者",
   options: [
     { value: "ada", label: "Ada Lovelace" },
     { value: "grace", label: "Grace Hopper" },
