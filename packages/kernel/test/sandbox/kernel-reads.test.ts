@@ -786,10 +786,10 @@ describe("admission's working root follows the command review's fallbacks", () =
     ]);
   };
 
-  it("a bound project before its first snapshot works in the workspace", async () => {
+  it("a bound project before its first snapshot works in the bound root", async () => {
     const f = await seed();
     await bindProject(f);
-    expect(await workingRoot(f)).toBe(WS);
+    expect(await workingRoot(f)).toBe(APP);
   });
 
   it("a usable snapshot of the bound root makes it the working root", async () => {

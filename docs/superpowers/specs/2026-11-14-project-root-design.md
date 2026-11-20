@@ -187,6 +187,11 @@ a phased rollout)**. A local device reports its owner's home directory in its he
   re-added with another path counts as removed), is outside the device's current mode or above the
   owner's home, or whose directory is gone continues in free mode, with a notice in the conversation **(designer's call:
   losing a project must never fail a run)**.
+- **No snapshot yet is not a lost project** (amended 2026-11-20, acceptance): when the run start
+  could not ask the device (offline, or the read hit its time limit), nothing is recorded and the
+  conversation works in its bound root, under the same mode, reach and home rules. Only a recorded
+  `unavailable` snapshot moves it to free mode. Before, a new conversation whose first read timed
+  out ran its whole first run in the device's workspace while the composer showed the project.
 
 ### 4.4 Reading the project knowledge
 
