@@ -53,8 +53,9 @@ export interface FakePushOptions {
 /**
  * The scripted provider, by token prefix: `dead:` unregistered; `auth:` failed auth; `rate:`
  * failed rate_limited (`retryAfterMs` 1000); `flaky:<n>:` transient for the first n calls of that
- * token, then delivered; `throw:` a plain Error; `net:` a thrown transient PushError; `hang:` waits for the signal; anything else
- * delivered. Result messages never contain the token. Usable without a kernel.
+ * token, then delivered; `throw:` a plain Error; `net:` a thrown transient PushError; `hang:`
+ * waits for the signal; anything else delivered. Result messages never contain the token. Usable
+ * without a kernel.
  */
 export function makeFakePush(opts: FakePushOptions = {}): {
   provider: PushProvider;

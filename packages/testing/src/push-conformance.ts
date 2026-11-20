@@ -207,7 +207,7 @@ export function describePushProviderConformance(t: PushConformanceTarget): void 
       const h = await t.make();
       try {
         const first = h.provider.apps();
-        expect(h.provider.apps()).toEqual(first);
+        expect(h.provider.apps()).toBe(first);
         expect(Array.isArray(first)).toBe(true);
         expect(h.requests()).toEqual([]);
       } finally {

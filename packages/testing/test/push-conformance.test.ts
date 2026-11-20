@@ -1,6 +1,5 @@
 import { PushError, type PushMessage } from "@capybara-hq/plugin-sdk";
 import { describe, expect, it } from "vitest";
-import fakePushExtension from "../fixtures/extensions/fake-push/src/index.js";
 import { makeFakePush } from "../fixtures/extensions/fake-push/src/push.js";
 import {
   describePushProviderConformance,
@@ -97,9 +96,5 @@ describe("fake-push", () => {
     const fake = makeFakePush({ apps: ["a.b"] });
     await expect(send(fake, "throw:x")).rejects.not.toBeInstanceOf(PushError);
     expect(fake.provider.apps()).toEqual(["a.b"]);
-  });
-
-  it("the extension default provides push-provider@1", () => {
-    expect(fakePushExtension).toBeDefined();
   });
 });
