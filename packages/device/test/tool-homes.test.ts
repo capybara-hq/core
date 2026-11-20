@@ -17,6 +17,7 @@ import {
   deviceSandboxHome,
   prepareSandboxHome,
   restrictedToolHomes,
+  SANDBOX_HOME_DIRECTORIES,
   sandboxHomeEnv,
   TOOL_HOME_DIRS,
   TOOL_HOME_FILES,
@@ -222,6 +223,20 @@ describe("the sandbox home", () => {
     writeFileSync(join(home, "kept"), "x");
     expect(prepareSandboxHome(home, [])).toBe(home);
     expect(readFileSync(join(home, "kept"), "utf8")).toBe("x");
+  });
+
+  it("makes the XDG directories its environment names, which the sandbox cannot create", () => {
+    const home = join(dir, "home");
+    prepareSandboxHome(home, []);
+    const env = sandboxHomeEnv(home);
+    for (const key of ["XDG_CACHE_HOME", "XDG_CONFIG_HOME", "XDG_DATA_HOME", "XDG_STATE_HOME"])
+      expect(statSync(env[key] as string).isDirectory(), key).toBe(true);
+    for (const rel of SANDBOX_HOME_DIRECTORIES)
+      expect(statSync(join(home, rel)).isDirectory(), rel).toBe(true);
+    // a second command finds them as they were
+    writeFileSync(join(env.XDG_CONFIG_HOME as string, "kept"), "x");
+    prepareSandboxHome(home, []);
+    expect(readFileSync(join(env.XDG_CONFIG_HOME as string, "kept"), "utf8")).toBe("x");
   });
 
   it("returns the canonical path when the device directory is reached through a link", () => {
