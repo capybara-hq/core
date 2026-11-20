@@ -90,8 +90,8 @@ const authorize = (browser: Req, payload: Record<string, unknown>) =>
   browser({ method: "POST", url: "/api/v1/app-auth/authorize", payload });
 
 /** Consents and returns the code from the redirect (and the redirect's parameters). */
-async function consent(browser: Req, p = pkce()) {
-  const res = await authorize(browser, authorizeBody(p));
+async function consent(browser: Req, p = pkce(), extra: Record<string, unknown> = {}) {
+  const res = await authorize(browser, authorizeBody(p, extra));
   expect(res.statusCode, res.body).toBe(200);
   const redirect = (res.json() as { redirect: string }).redirect;
   const q = new URL(redirect).searchParams;
@@ -215,7 +215,7 @@ describe("authorize", () => {
       { name: "evil\nname" },
       { appVersion: "" },
       { appVersion: "1".repeat(33) },
-      { client: "mobile" },
+      { client: "tablet" },
     ]) {
       const res = await authorize(browser, authorizeBody(pkce(), extra));
       expect(res.statusCode, JSON.stringify(extra)).toBe(400);
@@ -268,6 +268,35 @@ describe("token", () => {
     expect(audit).toHaveLength(1);
     expect(audit[0]?.detail).toEqual({ client: "desktop", name: NAME, sessionId: rows[0]?.id });
     expect(await redis.exists(codeKey(code))).toBe(0);
+  });
+
+  it("the mobile app signs in with its own user agent and audit client", async () => {
+    const { id, browser } = await person();
+    const { code, p } = await consent(browser, pkce(), {
+      client: "mobile",
+      name: "iPhone",
+      appVersion: "1.0.0",
+    });
+    const authorized = await auditOf(id, "auth.app_authorized");
+    expect(authorized.map((a) => a.detail)).toEqual([{ client: "mobile", name: "iPhone" }]);
+    const body = { code, codeVerifier: p.verifier, redirectUri: REDIRECT };
+    const { res } = await exchange(body);
+    expect(res.statusCode, res.body).toBe(200);
+    const rows = await db
+      .selectFrom("sessions")
+      .select(["id", "user_agent"])
+      .where("account_id", "=", id)
+      .where("user_agent", "=", "Capybara Mobile/1.0.0 (iPhone)")
+      .execute();
+    expect(rows).toHaveLength(1);
+    const audit = await auditOf(id, "auth.app_signed_in");
+    expect(audit.map((a) => a.detail)).toEqual([
+      { client: "mobile", name: "iPhone", sessionId: rows[0]?.id },
+    ]);
+    // a replayed code still fails
+    const again = (await exchange(body)).res;
+    expect(again.statusCode).toBe(400);
+    expect(errCode(again)).toBe("app_auth.code_invalid");
   });
 
   it("a second exchange of the same code fails", async () => {

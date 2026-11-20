@@ -115,7 +115,7 @@ describe("/apps/authorize", () => {
   });
 
   it.each([
-    ["app_auth.redirect_uri_invalid", 400, en.errors.app_auth.redirect_uri_invalid],
+    ["app_auth.redirect_uri_invalid", 400, en.appAuth.clients.desktop.redirectUriInvalid],
     ["app_auth.unavailable", 503, en.errors.app_auth.unavailable],
   ])("%s shows an error and never navigates", async (code, status, copy) => {
     stubApi({ ...ROUTES, [AUTHORIZE]: () => json(status, { error: { code, message: "x" } }) });
@@ -133,6 +133,51 @@ describe("/apps/authorize", () => {
   it("a missing parameter shows an error and calls no API", async () => {
     const bad = new URLSearchParams(QUERY);
     bad.delete("state");
+    const calls = stubApi(ROUTES);
+    await renderAuthRouteWithCache(`/apps/authorize?${bad.toString()}`, lastStubRoutes());
+    expect(await screen.findByText(en.appAuth.clients.desktop.invalidHint)).toBeTruthy();
+    expect(screen.queryByRole("button", { name: en.appAuth.confirm })).toBeNull();
+    expect(calls.filter((c) => c.method === "POST")).toHaveLength(0);
+  });
+
+  it("names the mobile app on its consent and posts client mobile (zh)", async () => {
+    const mobile = new URLSearchParams(QUERY);
+    mobile.set("client", "mobile");
+    mobile.set("name", "iPhone");
+    mobile.set("app_version", "1.0.0");
+    const calls = stubApi({ ...ROUTES, "GET /api/v1/meta": () => json(200, { name: "Acme" }) });
+    await renderAuthRouteWithCache(`/apps/authorize?${mobile.toString()}`, lastStubRoutes(), {
+      locale: "zh",
+    });
+    expect(await screen.findByText("在 iPhone 上的 Capybara 移动端登录 Acme？")).toBeTruthy();
+    expect(screen.getByText(zh.appAuth.clients.mobile.subtitle)).toBeTruthy();
+    await userEvent.setup().click(screen.getByRole("button", { name: "登录" }));
+    expect(await screen.findByText(zh.appAuth.doneHint)).toBeTruthy();
+    expect(bodyOf(calls.find((c) => c.method === "POST"))).toEqual({
+      ...BODY,
+      client: "mobile",
+      name: "iPhone",
+      appVersion: "1.0.0",
+    });
+  });
+
+  it("a refused redirect names the mobile app in its error (en)", async () => {
+    const mobile = new URLSearchParams(QUERY);
+    mobile.set("client", "mobile");
+    stubApi({
+      ...ROUTES,
+      [AUTHORIZE]: () =>
+        json(400, { error: { code: "app_auth.redirect_uri_invalid", message: "x" } }),
+    });
+    await renderAuthRouteWithCache(`/apps/authorize?${mobile.toString()}`, lastStubRoutes());
+    await userEvent.setup().click(await screen.findByRole("button", { name: en.appAuth.confirm }));
+    expect(await screen.findByText(en.appAuth.clients.mobile.redirectUriInvalid)).toBeTruthy();
+    expect(navigateBrowser).not.toHaveBeenCalled();
+  });
+
+  it("an unknown client shows the invalid hint and posts nothing", async () => {
+    const bad = new URLSearchParams(QUERY);
+    bad.set("client", "x");
     const calls = stubApi(ROUTES);
     await renderAuthRouteWithCache(`/apps/authorize?${bad.toString()}`, lastStubRoutes());
     expect(await screen.findByText(en.appAuth.invalidHint)).toBeTruthy();
