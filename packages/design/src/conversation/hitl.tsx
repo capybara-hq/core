@@ -128,7 +128,7 @@ export type ApprovalBlockProps = {
   defaultDeny?: { reason: string };
   /**
    * The requester's own words for the call, the pending card's leading statement (plain text,
-   * never clipped); `label` attributes them (default "智能体的理由" / "Agent's reason").
+   * never clipped); `label` attributes them (default: the design i18n's "Agent's reason").
    */
   reason?: { text: string; label?: string };
   /** Where the call runs: one small line above the command (middle-truncated, full on hover). */
@@ -196,7 +196,7 @@ function ApprovalFacts({ facts }: { facts: ApprovalFact[] }): JSX.Element | null
   );
 }
 
-/** "在 <path> 运行": the path mono and middle-truncated, the full path as its title. */
+/** "Runs in <path>": the path mono and middle-truncated, the full path as its title. */
 function WorkingRoot({ path }: { path: string }): JSX.Element {
   const t = useDesignT();
   const [before, after = ""] = t("hitl.workingRoot").split("{path}");
