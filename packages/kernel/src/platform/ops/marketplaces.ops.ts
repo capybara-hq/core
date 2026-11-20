@@ -39,6 +39,8 @@ const source = (m: MarketplaceView) => ({
   form: m.form,
   ref: m.ref,
   builtin: m.builtin,
+  managed: m.managed,
+  username: m.username,
   enabled: m.enabled,
   disabledByConfig: m.disabledByConfig,
   lastStatus: m.lastStatus,
@@ -98,6 +100,14 @@ export class MarketplacesOperations implements OnModuleInit {
         ok: false,
         code: "marketplace.builtin",
         message: "The official marketplace can only be enabled or disabled",
+      };
+    }
+    if (m.managed === "config" && !onlyEnabled) {
+      return {
+        ok: false,
+        code: "marketplace.config_managed",
+        message:
+          "This marketplace is configured by the deployment and can only be enabled or disabled",
       };
     }
     return { ok: true, source: m };
@@ -173,8 +183,13 @@ export class MarketplacesOperations implements OnModuleInit {
       defineOperation({
         id: "marketplaces.add",
         description:
-          "Add a custom marketplace source to the platform (super admin): a name and an https URL of a marketplace.json, or a git repository (…/*.git or owner/repo) with an optional ref. Sources that need a token or mirrors are added on the web.",
-        input: MarketplaceAddBody.pick({ name: true, url: true, ref: true }).strict(),
+          "Add a custom marketplace source to the platform (super admin): a name and an https URL of a marketplace.json, or a git repository (…/*.git or owner/repo) with an optional ref and the username its git token is sent with (empty: x-access-token). Sources that need a token or mirrors are added on the web.",
+        input: MarketplaceAddBody.pick({
+          name: true,
+          url: true,
+          ref: true,
+          username: true,
+        }).strict(),
         example: { name: "Team plugins", url: "https://plugins.example.com/marketplace.json" },
         authz: { superAdmin: true },
         mirrors: ["POST /api/v1/admin/marketplaces"],
@@ -223,6 +238,7 @@ export class MarketplacesOperations implements OnModuleInit {
                 name: input.name,
                 url: input.url,
                 ...(input.ref !== undefined && { ref: input.ref }),
+                ...(input.username !== undefined && { username: input.username }),
               },
               { auditDetail: viaAgent("marketplaces.add", ctx) },
             ),
@@ -260,7 +276,7 @@ export class MarketplacesOperations implements OnModuleInit {
       defineOperation({
         id: "marketplaces.update",
         description:
-          "Edit a marketplace source (super admin): name, url, form, ref (null: follow the remote HEAD), mirrors, enabled. The official one takes only enabled. A token is set on the web.",
+          "Edit a marketplace source (super admin): name, url, form, ref (null: follow the remote HEAD), mirrors, username (the git token's username; null: x-access-token), enabled. The official one and those configured by the deployment take only enabled. A token is set on the web.",
         input: z
           .object({
             marketplaceId: MarketplaceId,
@@ -279,6 +295,10 @@ export class MarketplacesOperations implements OnModuleInit {
           {
             code: "marketplace.builtin",
             next: "The official marketplace can only be enabled or disabled; it cannot be edited or removed.",
+          },
+          {
+            code: "marketplace.config_managed",
+            next: "This source is configured by the deployment (its extra bootstrap manifest); it can only be enabled or disabled here. Whoever runs the deployment changes the rest.",
           },
           {
             code: "validation_failed",
@@ -319,7 +339,7 @@ export class MarketplacesOperations implements OnModuleInit {
       defineOperation({
         id: "marketplaces.remove",
         description:
-          "Remove a custom marketplace source (super admin): its entries and token go; plugins imported from it stay in the catalog. The official one cannot be removed (disable it with marketplaces.update).",
+          "Remove a custom marketplace source (super admin): its entries and token go; plugins imported from it stay in the catalog. The official one and those configured by the deployment cannot be removed (disable them with marketplaces.update).",
         input: z.object({ marketplaceId: MarketplaceId }).strict(),
         example: { marketplaceId: "3f1c2a9e-5b7d-4e21-9c0a-1d2e3f4a5b6c" },
         authz: { superAdmin: true },
@@ -331,6 +351,10 @@ export class MarketplacesOperations implements OnModuleInit {
           {
             code: "marketplace.builtin",
             next: "The official marketplace can only be enabled or disabled; it cannot be edited or removed.",
+          },
+          {
+            code: "marketplace.config_managed",
+            next: "This source is configured by the deployment (its extra bootstrap manifest); it can only be enabled or disabled here. Whoever runs the deployment changes the rest.",
           },
         ],
         precheck: async (i) => {

@@ -394,6 +394,21 @@ describe("readGitTree", () => {
     expect(srv.requests.every((r) => r.authorization === basic)).toBe(true);
   });
 
+  it("refuses a username outside GIT_USERNAME_RE before any request", async () => {
+    const commit = await srv.commit("auth-bad-user", { "a.txt": "x" });
+    const url = srv.url("auth-bad-user");
+    srv.requests.length = 0;
+    // A ':' would move the split of the Basic credential
+    const e = await readGitTree(
+      { url, commit },
+      opts({ token: "s3cret", tokenOrigin: new URL(url).origin, username: "evil:user" }),
+    ).catch((x) => x);
+    expect(e).toBeInstanceOf(GitSourceError);
+    expect(e.code).toBe("marketplace.git_failed");
+    expect(e.message).toBe("invalid git username");
+    expect(srv.requests).toEqual([]);
+  });
+
   it("sends no authorization to another origin (a redirect to a second server)", async () => {
     const other = await startFakeGitServer();
     try {

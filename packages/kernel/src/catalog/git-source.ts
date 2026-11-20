@@ -2,6 +2,7 @@ import * as fsp from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { inflateSync } from "node:zlib";
+import { GIT_MARKETPLACE_USERNAME_DEFAULT, GIT_USERNAME_RE } from "@capybara-hq/plugin-sdk";
 import git, { type GitHttpRequest, type GitHttpResponse, type HttpClient } from "isomorphic-git";
 import { NetDeniedError, type NetPolicy } from "../net/public-address.js";
 import { NetBodyTooLargeError, safeFetch } from "../net/safe-fetch.js";
@@ -58,13 +59,13 @@ export function gitUrlIdentity(url: string, path: string | undefined): string {
 
 export type GitLocation = { url: string; ref?: string; commit?: string; path?: string };
 
-/** The Basic auth username when a marketplace stores none (GitHub's). */
-const GIT_USERNAME_DEFAULT = "x-access-token";
-
 export type GitOptions = {
   net: NetPolicy;
   token?: string;
-  /** The Basic auth username sent with `token` (default {@link GIT_USERNAME_DEFAULT}). */
+  /**
+   * The Basic auth username sent with `token` (empty or absent:
+   * {@link GIT_MARKETPLACE_USERNAME_DEFAULT}); one outside `GIT_USERNAME_RE` is refused.
+   */
   username?: string;
   /** The token is sent only to this origin (the marketplace URL's). */
   tokenOrigin?: string;
@@ -178,11 +179,15 @@ function startOp(loc: GitLocation, o: GitOptions): Op {
   const problem = marketplaceUrlProblem(loc.url, o.net.allowInsecureLoopback);
   if (problem !== null) throw failed(`invalid git URL: ${problem}`);
   const signal = AbortSignal.any([o.signal, AbortSignal.timeout(GIT_LIMITS.timeoutMs)]);
+  // A ':' in the username would move the split of the Basic credential
+  if (o.username !== undefined && o.username !== "" && !GIT_USERNAME_RE.test(o.username)) {
+    throw failed("invalid git username");
+  }
   const state = { overLimit: false };
   const auth =
     o.token === undefined
       ? undefined
-      : `Basic ${Buffer.from(`${o.username || GIT_USERNAME_DEFAULT}:${o.token}`).toString("base64")}`;
+      : `Basic ${Buffer.from(`${o.username || GIT_MARKETPLACE_USERNAME_DEFAULT}:${o.token}`).toString("base64")}`;
   const http: HttpClient = {
     async request(req: GitHttpRequest): Promise<GitHttpResponse> {
       const target = new URL(req.url);

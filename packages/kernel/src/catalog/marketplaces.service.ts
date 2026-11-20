@@ -1,6 +1,8 @@
 import { randomUUID } from "node:crypto";
 import {
+  type BootstrapExtraMarketplace,
   CATALOG_ITEM_NAME_RE,
+  GIT_USERNAME_RE,
   type MarketplaceEntry,
   type MarketplaceManifest,
   type MarketplaceSource,
@@ -78,6 +80,8 @@ const OFFICIAL_MARKETPLACE_NAME = "Capybara official marketplace";
 /** 企业清单的可选令牌：secrets 的 namespace `kernel`、org `_deployment`、键 `catalog-token:<id>`（preflight #65）。 */
 const SECRETS_NAMESPACE = "kernel";
 const tokenKey = (id: string) => `catalog-token:${id}`;
+/** The id prefix of a marketplace the deployment config owns (`config:<name>`). */
+const CONFIG_MARKETPLACE_PREFIX = "config:";
 
 /** 拉取一份清单的超时。 */
 export const MARKETPLACE_FETCH_TIMEOUT_MS = 30_000;
@@ -119,6 +123,13 @@ export interface MarketplaceView {
   enabled: boolean;
   /** official 被配置关闭（离线模式）；企业清单恒为 false。 */
   disabledByConfig: boolean;
+  /**
+   * `config`: owned by the deployment config (bootstrap.extraManifest; only `enabled` can change
+   * here, its token comes from `marketplaces.tokens`); null for official and custom marketplaces.
+   */
+  managed: "config" | null;
+  /** The Basic auth username sent with the git token (null: `x-access-token`). */
+  username: string | null;
   hasToken: boolean;
   etag: string | null;
   lastRefreshedAt: string | null;
@@ -202,6 +213,13 @@ type RefreshOutcome =
   | "not_modified"
   | undefined;
 
+/** A marketplace's credential: a token (Bearer over http, Basic `username:token` over git). */
+export interface MarketplaceCredentials {
+  token?: string;
+  /** The Basic auth username (absent: `x-access-token`). */
+  username?: string;
+}
+
 export interface ActorOpts {
   actorTokenId?: string;
   /** Merged into the audit detail (a write made through the Platform tool: `via`, …). */
@@ -221,6 +239,10 @@ interface SourceRow {
   owner_name: string | null;
   mirrors: string[];
   builtin: boolean;
+  /** 0169: `config` when the deployment config owns the row. */
+  managed: "config" | null;
+  /** 0169: the Basic auth username of the git token (null: the default). */
+  username: string | null;
   enabled: boolean;
   etag: string | null;
   last_refreshed_at: Date | null;
@@ -247,6 +269,12 @@ const builtinErr = (what: string) =>
   new ApiError(
     "marketplace.builtin",
     `The official marketplace is configured in marketplaces.official.*; it cannot be ${what} here (only enabled or disabled)`,
+  );
+
+const configManagedErr = (what: string) =>
+  new ApiError(
+    "marketplace.config_managed",
+    `This marketplace is configured by the deployment (bootstrap.extraManifest); it cannot be ${what} here (only enabled or disabled)`,
   );
 
 /** Entry versions newest first; `''` (no version) last. */
@@ -741,6 +769,92 @@ export class MarketplacesService {
       .execute();
   }
 
+  /**
+   * Upserts the marketplaces of the extra bootstrap manifest (spec 2026-11-20 §5): one row
+   * `config:<name>` each with `managed = 'config'`; name, URL (its form per
+   * {@link marketplaceForm}), ref and username follow the file, the admin's enable switch is left
+   * alone, and a changed URL, form or ref drops the ETag and the last commit. The token stays in
+   * `marketplaces.tokens[name]`, never in the secrets table. A managed row whose name left the
+   * file is kept as an ordinary custom marketplace (`managed = NULL`, so no token). Called by
+   * every replica at start; idempotent. An invalid entry -> {@link ConfigError}, nothing written.
+   */
+  @Transactional()
+  async syncExtraFromConfig(marketplaces: readonly BootstrapExtraMarketplace[]): Promise<void> {
+    const rows = marketplaces
+      .map((m) => this.extraMarketplaceRow(m))
+      // one lock order for every replica
+      .sort((a, b) => (a.id < b.id ? -1 : a.id > b.id ? 1 : 0));
+    const ids = rows.map((r) => r.id);
+    if (new Set(ids).size !== ids.length) {
+      throw new ConfigError(
+        "invalid configuration:\n  - bootstrap.extraManifest: marketplace names must be unique",
+      );
+    }
+    const t = this.db;
+    const same = sql<boolean>`marketplaces.url = excluded.url AND marketplaces.form = excluded.form AND marketplaces.ref IS NOT DISTINCT FROM excluded.ref`;
+    for (const r of rows) {
+      await t
+        .insertInto("marketplaces")
+        .values({ ...r, mirrors: "[]", builtin: false, enabled: true, managed: "config" })
+        .onConflict((oc) =>
+          oc.column("id").doUpdateSet({
+            name: r.name,
+            url: r.url,
+            form: r.form,
+            ref: r.ref,
+            username: r.username,
+            mirrors: "[]",
+            builtin: false,
+            managed: "config",
+            etag: sql<string | null>`CASE WHEN ${same} THEN marketplaces.etag ELSE NULL END`,
+            last_commit: sql<
+              string | null
+            >`CASE WHEN ${same} THEN marketplaces.last_commit ELSE NULL END`,
+          }),
+        )
+        .execute();
+    }
+    let gone = t.updateTable("marketplaces").set({ managed: null }).where("managed", "=", "config");
+    if (ids.length > 0) gone = gone.where("id", "not in", ids);
+    await gone.execute();
+  }
+
+  /** The row of one extra-manifest marketplace, checked as an admin add is (else ConfigError). */
+  private extraMarketplaceRow(m: BootstrapExtraMarketplace): {
+    id: string;
+    name: string;
+    url: string;
+    form: MarketplaceForm;
+    ref: string | null;
+    username: string | null;
+  } {
+    const bad = (what: string) =>
+      new ConfigError(`invalid configuration:\n  - bootstrap.extraManifest marketplaces: ${what}`);
+    if (!CATALOG_ITEM_NAME_RE.test(m.name)) {
+      throw bad(`name ${JSON.stringify(m.name)} must match ^[a-z0-9][a-z0-9-]{0,63}$`);
+    }
+    if (m.username !== undefined && m.username !== "" && !GIT_USERNAME_RE.test(m.username)) {
+      throw bad(`${m.name}: username must match ^[A-Za-z0-9._-]{1,64}$`);
+    }
+    const { form, url } = marketplaceForm(m.url);
+    const ref = m.ref ?? null;
+    try {
+      this.checkUrls(url, []);
+      this.checkGitFields(form, ref, []);
+    } catch (e) {
+      if (e instanceof ApiError) throw bad(`${m.name}: ${e.message}`);
+      throw e;
+    }
+    return {
+      id: `${CONFIG_MARKETPLACE_PREFIX}${m.name}`,
+      name: m.name,
+      url,
+      form,
+      ref,
+      username: m.username === undefined || m.username === "" ? null : m.username,
+    };
+  }
+
   /** 全部来源（official 在前，其余按创建时间）。 */
   async list(): Promise<MarketplaceView[]> {
     const rows = (await this.db
@@ -777,6 +891,8 @@ export class MarketplacesService {
       ref?: string;
       mirrors?: string[];
       token?: string;
+      /** The Basic auth username of the git token (empty: the default `x-access-token`). */
+      username?: string;
     },
     opts: ActorOpts = {},
   ): Promise<MarketplaceView> {
@@ -785,8 +901,9 @@ export class MarketplacesService {
     this.checkUrls(url, input.mirrors ?? []);
     this.checkGitFields(form, input.ref ?? null, input.mirrors ?? []);
     if (input.token !== undefined) this.checkToken(input.token);
+    const username = this.checkUsername(input.username);
     const id = randomUUID();
-    await this.writeAdd(actor, id, { ...input, name, form, url }, opts);
+    await this.writeAdd(actor, id, { ...input, name, form, url, username }, opts);
     return this.get(id);
   }
 
@@ -825,6 +942,7 @@ export class MarketplacesService {
       ref?: string;
       mirrors?: string[];
       token?: string;
+      username: string | null;
     },
     opts: ActorOpts,
   ): Promise<void> {
@@ -842,6 +960,7 @@ export class MarketplacesService {
         mirrors: JSON.stringify(input.mirrors ?? []),
         builtin: false,
         enabled: true,
+        username: input.username,
         created_by: actor,
       })
       .execute();
@@ -859,6 +978,7 @@ export class MarketplacesService {
         form,
         ...(input.ref !== undefined && { ref: input.ref }),
         mirrors: input.mirrors ?? [],
+        ...(input.username !== null && { username: input.username }),
         hasToken: input.token !== undefined,
         ...opts.auditDetail,
       },
@@ -867,12 +987,13 @@ export class MarketplacesService {
 
   /**
    * Updates a custom marketplace (audit `marketplace.updated`, listing the changed fields, the
-   * token's value never recorded; not written when unchanged). `token: null` clears the token.
-   * Official only takes `enabled`, any other field -> `marketplace.builtin`. Changing the URL, form
-   * or ref clears the ETag and the last commit (the next refresh reads everything again); a new URL
-   * gets its form from {@link marketplaceForm} unless `form` is given. `ref: null` follows the
-   * remote HEAD. Switching the form clears the other form's field (the ref when becoming http,
-   * the mirrors when becoming git) unless the patch sets it.
+   * token's value never recorded; not written when unchanged). `token: null` clears the token,
+   * `username: null` or `""` the username. Official only takes `enabled`, any other field ->
+   * `marketplace.builtin`; a config-managed marketplace likewise -> `marketplace.config_managed`.
+   * Changing the URL, form or ref clears the ETag and the last commit (the next refresh reads
+   * everything again); a new URL gets its form from {@link marketplaceForm} unless `form` is
+   * given. `ref: null` follows the remote HEAD. Switching the form clears the other form's field
+   * (the ref when becoming http, the mirrors when becoming git) unless the patch sets it.
    */
   async update(
     actor: string,
@@ -885,6 +1006,7 @@ export class MarketplacesService {
       mirrors?: string[];
       enabled?: boolean;
       token?: string | null;
+      username?: string | null;
     },
     opts: ActorOpts = {},
   ): Promise<MarketplaceView> {
@@ -905,6 +1027,7 @@ export class MarketplacesService {
       mirrors?: string[];
       enabled?: boolean;
       token?: string | null;
+      username?: string | null;
     },
     opts: ActorOpts,
   ): Promise<void> {
@@ -917,17 +1040,16 @@ export class MarketplacesService {
       .forUpdate()
       .executeTakeFirst()) as unknown as SourceRow | undefined;
     if (!row) throw notFound();
-    if (
-      row.builtin &&
-      (name !== undefined ||
-        patch.url !== undefined ||
-        patch.form !== undefined ||
-        patch.ref !== undefined ||
-        patch.mirrors !== undefined ||
-        patch.token !== undefined)
-    ) {
-      throw builtinErr("changed");
-    }
+    const editsMore =
+      name !== undefined ||
+      patch.url !== undefined ||
+      patch.form !== undefined ||
+      patch.ref !== undefined ||
+      patch.mirrors !== undefined ||
+      patch.token !== undefined ||
+      patch.username !== undefined;
+    if (row.builtin && editsMore) throw builtinErr("changed");
+    if (row.managed === "config" && editsMore) throw configManagedErr("changed");
     const target =
       patch.url !== undefined || patch.form !== undefined
         ? marketplaceForm(patch.url ?? row.url, patch.form)
@@ -941,6 +1063,8 @@ export class MarketplacesService {
     this.checkUrls(target.url, mirrors);
     this.checkGitFields(target.form, ref, mirrors);
     if (typeof patch.token === "string") this.checkToken(patch.token);
+    const username =
+      patch.username === undefined ? row.username : this.checkUsername(patch.username ?? undefined);
     const changed: string[] = [];
     const set: Record<string, unknown> = {};
     if (name !== undefined && name !== row.name) {
@@ -966,6 +1090,10 @@ export class MarketplacesService {
     if (JSON.stringify(mirrors) !== JSON.stringify(row.mirrors)) {
       set.mirrors = JSON.stringify(mirrors);
       changed.push("mirrors");
+    }
+    if (username !== row.username) {
+      set.username = username;
+      changed.push("username");
     }
     if (patch.enabled !== undefined && patch.enabled !== row.enabled) {
       set.enabled = patch.enabled;
@@ -999,6 +1127,7 @@ export class MarketplacesService {
         ...(set.url !== undefined && { url: set.url }),
         ...(set.form !== undefined && { form: set.form }),
         ...(set.ref !== undefined && { ref: set.ref }),
+        ...(set.username !== undefined && { username: set.username }),
         ...opts.auditDetail,
       },
     });
@@ -1007,7 +1136,8 @@ export class MarketplacesService {
   /**
    * Deletes a custom marketplace (audit `marketplace.removed`): its cached entries and token
    * are deleted; imported catalog items are kept (their marketplace becomes null). Official can
-   * only be disabled -> `marketplace.builtin`.
+   * only be disabled -> `marketplace.builtin`; a config-managed one ->
+   * `marketplace.config_managed`.
    */
   @Transactional()
   async remove(actor: string, id: string, opts: ActorOpts = {}): Promise<void> {
@@ -1015,12 +1145,13 @@ export class MarketplacesService {
     await this.adminLock.lockAndAuthorize(actor);
     const row = await t
       .selectFrom("marketplaces")
-      .select(["builtin", "name", "url"])
+      .select(["builtin", "managed", "name", "url"])
       .where("id", "=", id)
       .forUpdate()
       .executeTakeFirst();
     if (!row) throw notFound();
     if (row.builtin) throw builtinErr("deleted");
+    if (row.managed === "config") throw configManagedErr("deleted");
     await t.deleteFrom("marketplaces").where("id", "=", id).execute();
     await this.secrets().delete(DEPLOYMENT_SECRETS_ORG, tokenKey(id));
     await audit(t, {
@@ -1064,9 +1195,8 @@ export class MarketplacesService {
           : "This marketplace is disabled; enable it before refreshing",
       );
     }
-    const token = row.builtin
-      ? undefined
-      : ((await this.secrets().get(DEPLOYMENT_SECRETS_ORG, tokenKey(id))) ?? undefined);
+    const creds = await this.credentialsOf(row);
+    const token = creds.token;
     const tokenOrigin = new URL(row.url).origin;
     const errors: string[] = [];
     // the API code of each failed URL (undefined: an ordinary fetch failure)
@@ -1077,7 +1207,7 @@ export class MarketplacesService {
     let outcome: RefreshOutcome;
     if (row.form === "git") {
       try {
-        outcome = await this.fetchGit(row, token, signal);
+        outcome = await this.fetchGit(row, creds, signal);
       } catch (e) {
         if (!(e instanceof GitSourceError || e instanceof MarketplaceInvalidError)) throw e;
         if (e instanceof MarketplaceInvalidError) sawInvalid = true;
@@ -1123,7 +1253,7 @@ export class MarketplacesService {
         : await this.resolveHeads(
             id,
             outcome === "not_modified" ? undefined : outcome.manifest.plugins,
-            { url: row.url, token },
+            { url: row.url, ...creds },
             signal,
           );
     const lastError = status === "error" ? errors.join("\n").slice(0, MAX_ERROR_CHARS) : null;
@@ -1185,7 +1315,7 @@ export class MarketplacesService {
    */
   private async fetchGit(
     row: SourceRow,
-    token: string | undefined,
+    creds: MarketplaceCredentials,
     signal: AbortSignal,
   ): Promise<
     | {
@@ -1204,7 +1334,11 @@ export class MarketplacesService {
       net: marketplaceNetPolicy(config),
       maxBytes: config.packages.maxBytes,
       signal,
-      ...(token !== undefined && { token, tokenOrigin: new URL(row.url).origin }),
+      ...(creds.token !== undefined && {
+        token: creds.token,
+        tokenOrigin: new URL(row.url).origin,
+        ...(creds.username !== undefined && { username: creds.username }),
+      }),
     };
     const loc = { url: row.url, ...(row.ref !== null && { ref: row.ref }) };
     const commit = await resolveGitCommit(loc, options);
@@ -1368,7 +1502,7 @@ export class MarketplacesService {
   private async resolveHeads(
     id: string,
     fresh: MarketplaceEntry[] | undefined,
-    m: { url: string; token: string | undefined },
+    m: { url: string } & MarketplaceCredentials,
     signal: AbortSignal,
   ): Promise<Map<string, { commit: string; tree: string | null }>> {
     const config = this.config.get();
@@ -1403,7 +1537,11 @@ export class MarketplacesService {
             net: marketplaceNetPolicy(config),
             maxBytes: config.packages.maxBytes,
             signal: AbortSignal.any([signal, AbortSignal.timeout(timeoutMs)]),
-            ...(m.token !== undefined && { token: m.token, tokenOrigin: new URL(m.url).origin }),
+            ...(m.token !== undefined && {
+              token: m.token,
+              tokenOrigin: new URL(m.url).origin,
+              ...(m.username !== undefined && { username: m.username }),
+            }),
           };
           try {
             const commit = await resolveGitCommit(
@@ -1660,9 +1798,40 @@ export class MarketplacesService {
     return { contentType: checked.contentType, data };
   }
 
-  /** The token of a custom marketplace (undefined without one; official never has one). */
-  async token(id: string): Promise<string | undefined> {
-    return (await this.secrets().get(DEPLOYMENT_SECRETS_ORG, tokenKey(id))) ?? undefined;
+  /**
+   * The git / http credential of a marketplace: none for official; a config-managed one's token
+   * from `marketplaces.tokens[name]` (never the secrets table); a custom one's from secrets. The
+   * username is the stored one (absent: the default `x-access-token`). Missing -> `{}`.
+   */
+  async credentials(id: string): Promise<MarketplaceCredentials> {
+    const row = await this.db
+      .selectFrom("marketplaces")
+      .select(["id", "builtin", "managed", "username"])
+      .where("id", "=", id)
+      .executeTakeFirst();
+    return row === undefined ? {} : this.credentialsOf(row);
+  }
+
+  private async credentialsOf(
+    row: Pick<SourceRow, "id" | "builtin" | "managed" | "username">,
+  ): Promise<MarketplaceCredentials> {
+    if (row.builtin) return {};
+    const token =
+      row.managed === "config"
+        ? this.configToken(row.id)
+        : ((await this.secrets().get(DEPLOYMENT_SECRETS_ORG, tokenKey(row.id))) ?? undefined);
+    return {
+      ...(token !== undefined && { token }),
+      ...(row.username !== null && { username: row.username }),
+    };
+  }
+
+  /** The `marketplaces.tokens` entry of a config-managed marketplace (`config:<name>`). */
+  private configToken(id: string): string | undefined {
+    if (!id.startsWith(CONFIG_MARKETPLACE_PREFIX)) return undefined;
+    const tokens = this.config.get().marketplaces.tokens;
+    const name = id.slice(CONFIG_MARKETPLACE_PREFIX.length);
+    return Object.hasOwn(tokens, name) ? tokens[name] : undefined;
   }
 
   /** Refreshes every effective marketplace (maintenance job `catalogs-refresh`), one failing not stopping the rest. */
@@ -2000,7 +2169,12 @@ export class MarketplacesService {
       builtin: r.builtin,
       enabled: sourceEffective(r, config),
       disabledByConfig: r.builtin && !config.marketplaces.official.enabled,
-      hasToken: hasToken.has(tokenKey(r.id)),
+      managed: r.managed,
+      username: r.username,
+      hasToken:
+        r.managed === "config"
+          ? this.configToken(r.id) !== undefined
+          : hasToken.has(tokenKey(r.id)),
       etag: r.etag,
       lastRefreshedAt: r.last_refreshed_at?.toISOString() ?? null,
       lastStatus: r.last_status,
@@ -2052,6 +2226,15 @@ export class MarketplacesService {
     if (ref !== null && (ref.length < 1 || ref.length > 256 || /[\s\0]/.test(ref))) {
       throw new ApiError("validation_failed", "ref must be 1–256 characters without spaces");
     }
+  }
+
+  /** A username outside `GIT_USERNAME_RE` -> `validation_failed`; empty or absent -> null. */
+  private checkUsername(username: string | undefined): string | null {
+    if (username === undefined || username === "") return null;
+    if (!GIT_USERNAME_RE.test(username)) {
+      throw new ApiError("validation_failed", "username must match ^[A-Za-z0-9._-]{1,64}$");
+    }
+    return username;
   }
 
   private checkToken(token: string): void {

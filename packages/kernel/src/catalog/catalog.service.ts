@@ -500,11 +500,15 @@ export class CatalogService {
           ...(src.git.path !== undefined && { path: src.git.path }),
         };
       }
-      const token = marketplace.builtin
-        ? undefined
-        : await this.marketplaces.token(input.marketplaceId);
+      const { token, username } = marketplace.builtin
+        ? {}
+        : await this.marketplaces.credentials(input.marketplaceId);
       const read = await this.readGit(loc, {
-        ...(token !== undefined && { token, tokenOrigin: new URL(marketplace.url).origin }),
+        ...(token !== undefined && {
+          token,
+          tokenOrigin: new URL(marketplace.url).origin,
+          ...(username !== undefined && { username }),
+        }),
         ...(opts.signal !== undefined && { signal: opts.signal }),
       });
       // path entries follow the marketplace's ref; git entries follow theirs unless a commit is pinned
@@ -605,7 +609,7 @@ export class CatalogService {
   /** Resolves the commit and reads the plugin's files; git failures become API errors. */
   private async readGit(
     loc: GitLocation,
-    o: Pick<GitOptions, "token" | "tokenOrigin"> & { signal?: AbortSignal },
+    o: Pick<GitOptions, "token" | "tokenOrigin" | "username"> & { signal?: AbortSignal },
   ): Promise<{ commit: string; files: Map<string, Uint8Array>; tree: string | undefined }> {
     const config = this.config.get();
     const options: GitOptions = {
@@ -614,6 +618,7 @@ export class CatalogService {
       signal: o.signal ?? new AbortController().signal,
       ...(o.token !== undefined && { token: o.token }),
       ...(o.tokenOrigin !== undefined && { tokenOrigin: o.tokenOrigin }),
+      ...(o.username !== undefined && { username: o.username }),
     };
     try {
       const commit = await resolveGitCommit(loc, options);

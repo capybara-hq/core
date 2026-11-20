@@ -269,6 +269,7 @@ export const ERROR_CODES = {
   "marketplace.entry_deprecated": 409,
   "marketplace.package_mismatch": 409,
   "marketplace.builtin": 409,
+  "marketplace.config_managed": 409,
   "marketplace.git_failed": 502,
   "marketplace.git_too_large": 422,
   "marketplace.git_unsupported_entry": 422,
