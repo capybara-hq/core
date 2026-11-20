@@ -169,6 +169,10 @@ export const REFERENCE_COMPONENTS = [
   "bottom-nav",
   "top-bar",
   "me-panel",
+  // the touch components (design spec §6.51–§6.53; mobile app plan Task 25)
+  "floating-button",
+  "drawer",
+  "nav-row",
   // the two-level stack and the two panes (mobile layout spec §5.2, design spec §6.47)
   "list-detail",
   // the follow-finger bottom sheet's drag states (spec §6.7; mobile layout spec §7.4)

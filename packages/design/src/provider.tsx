@@ -22,6 +22,10 @@ export type LinkComponent = ComponentType<{
   "data-id"?: string;
   "data-state"?: string;
   "data-optional"?: string;
+  /** A touch row's own attributes (NavRow, FloatingIconButton): current, drawer pick, section. */
+  "data-current"?: string | undefined;
+  "data-drawer-pick"?: string | undefined;
+  "data-nav-section"?: string | undefined;
 }>;
 
 const DefaultLink: LinkComponent = ({ href, children, ...rest }) => (

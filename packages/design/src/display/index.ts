@@ -109,6 +109,8 @@ export {
   Markdown,
   type MarkdownProps,
 } from "./markdown";
+export { badgeText, type NavBadge } from "./nav-badge";
+export { NavRow, type NavRowProps } from "./nav-row";
 export { ObjectList, ObjectRow, type ObjectRowProps } from "./object-list";
 export { ObjectMark, type ObjectMarkSize } from "./object-mark";
 export { Pagination, type PaginationProps } from "./pagination";

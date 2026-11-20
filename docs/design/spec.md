@@ -1098,6 +1098,7 @@ Selection rules: the user needs to decide → Dialog; view / edit one object wit
   - **Dragging**: the sheet follows the finger along its axis with no transition (a bottom sheet down, a right side sheet to the right, the rail's conversation sheet to the left; never past its rest position); where the sheet has a scrim (a bottom sheet does; the side sheets have none by default) it fades by the share of the sheet's size dragged (opacity `1 − share`).
   - **Settling**: on release the sheet travels to its dismissed or its rest position over `motion.expand`, `ease-out`. A release past **40%** of the sheet's size, or above a velocity threshold, dismisses; otherwise it springs back. Under `prefers-reduced-motion: reduce` the sheet still drags and then snaps without animation.
   - Esc, the scrim and the close button still close it and focus returns as for any overlay (§6.11); full-page transitions are reserved for pushes (§4.6).
+  - **Touch form** (`TOUCH_QUERY`, §2.5; maintainer decisions 2026-11-21): the sheet's top corners are `radius.md` (20 on touch), its option rows `touch.row` (52) high, its head has no hairline under it; the handle, the head, the body and the drag behaviour are unchanged. A `BottomSheet` also holds one history entry while open on a compact touch window (§6.52 "System back").
 
 <!-- states: sheet -->
 States: `dragging`, `settling`
@@ -2917,6 +2918,8 @@ States: `default`, `running`, `waiting`, `hover`, `narrow`
 - **Pending**: while an action of the row runs (a switch, a preview call), the row's buttons are disabled until it settles; the running one shows the Button's loading state (`action.loading`: the `spinner` before its label, `aria-busy`), or, when the running action came from the menu (`busy`), the menu button draws the `spinner` in place of `more-horizontal` (`aria-busy`; a lone menu item drawn as a button carries the loading state itself). Never a click that seems to do nothing.
 - **Loading** (`ObjectList.loading`, `true` for 3 rows or a row count; `ListPage.loading` on a list page): the panel draws skeleton rows in the row's shape instead of its rows (the same `.cb-object-row` box, 64 px at least, with its divider and first-row rule): a `mark` box (36 × 36, radius `md`, §6.29) and a name line and a description line in the text column, `body` bars 30% and 55% wide in the one bar look (§6.29), and the list is `aria-busy` with a hidden "正在加载 / Loading" (none of its own inside a skeleton group, which announces once). It wins over `empty`, so no empty state flashes before the first answer; a `records` ListPage draws the DataTable's loading state in the caller's table shape, else a Skeleton (§6.29), instead.
 
+- **Touch** (`TOUCH_QUERY`, §2.5): a row is `touch.row` (52) high, `touch.row.roomy` (56) when it has a second line (description or meta), with no `line-soft` divider; the list draws no `line-card` border, radius or ground (the rows sit straight on the page: one box is enough, §1). Outside the touch query the rules above stand.
+
 <!-- states: object-list -->
 States: `person`
 
@@ -3335,6 +3338,8 @@ States: `guide`, `flush`, `divided`
 - **Item rows** (`ItemListItem`): rows that hold more than a line, where a card per item would have stood (a model purpose, a quick action, an inline sub-agent, a permission group). The title line (at least `control.dense` high, gap `space.2`): the title in `body` 500 `ink` (a link with `href`), its mono id `code` (`small`, `muted`: `eval`), `marks` (a `Badge`, a muted state word: 已覆盖), and the `actions` at the right (dense). Then `meta`, lines `space.1` apart (`small`, `muted` by default: who declares it, the deployment default; a `warn` line carries its icon). Then the body (fields, a list, a warning and its borderless code, §6.9), `space.3` below, its parts `space.3` apart. A row with a body is a `group` named by its title, so its fields read as that row's. `invalid` draws a 2px `fail` bar on the row's left (in the box's padding; at the card's edge when flush).
 - **Inset**: `card` (default) inside a padded box (a Card body, a form card that holds other fields, a Sheet): the rows reach the box's padding (no padding of their own at the sides; item rows `space.3` above and below, the first and last `space.2` so they meet the box's padding). `flush`: the list alone in a flush box (a `flush` FormSection): plain rows padded `space.2` `space.4`, item rows `space.4` on every side, so the hairlines run to the card's edges, as a SwitchList's do (§6.3).
 - **A review row** (PermissionReview): one item row per category, the category as the title, the 「敏感」 `Badge` as a mark, its reasons as meta lines, its entries as `small` `muted` lines in the body; a danger block (destructive migration statements) is a row whose meta is a `warn` line with the `circle-alert` icon (`Text variant="small" tone="warn" icon="circle-alert"`) and whose body is the code (a CodeBlock, borderless inside the box).
+
+- **Touch** (`TOUCH_QUERY`, §2.5): a row is `touch.row` (52) high, `touch.row.roomy` (56) with a meta line, with no `line-soft` divider. Outside the touch query the rules above stand.
 
 <!-- states: item-list -->
 States: `rows`, `fields`, `review`
@@ -3935,6 +3940,75 @@ States: `sizes`, `image`, `ellipsis`, `secondary`
 | person-name-text | ellipsis | height | 20 |
 | person-name[data-size=24] person-name-secondary | secondary | font-size | type.small |
 | person-name[data-size=24] person-name-secondary | secondary | color | color.muted |
+
+### 6.51 FloatingIconButton
+
+`FloatingIconButton({ icon, label, badge?, onClick?, href? })` is a round button that floats over the page: the chat-first compact shell's menu button (top left, the badge is the pending inbox count) and the back button of a pushed page (mobile layout spec §4.1; touch canvas boards 首页, 会话中, 收件箱).
+
+- **Size**: `control.prominent` (32) round on a fine pointer, `touch.float` (48) under `TOUCH_QUERY` (§2.5); the icon 20, `touch.icon.float` (24) on touch, `ink`, one stroke weight.
+- **Surface**: the `float-ground` translucent ground (with a backdrop blur), a 1px `float-line` hairline, `shadow-float-touch`, `radius.pill`. It is the only box (§1): nothing is drawn inside it but the icon and the badge.
+- **Badge** (optional `badge`): `badgeText` of the count: nothing for 0, `99+` above 99, `n+` when truncated. Drawn on the top-right corner (the corner offset -2), 18 high, at least 18 wide, `micro`, `ink` on `selected` with a 2px ring in `bg`. The badge is decoration: the count belongs in `label` ("Menu, 3 pending").
+- **Link**: with `href` it is a link (the design `link`), drawn the same.
+- **States**: `default`; `badge`; press takes the `hover` ground; keyboard focus is a 2px `accent` outline 2px off the edge.
+
+<!-- states: floating-button -->
+States: `default`, `badge`
+
+<!-- size-table: floating-button -->
+| Part | State | Property | Value |
+|---|---|---|---|
+| float-btn | default | width | control.prominent |
+| float-btn | default | height | control.prominent |
+| float-btn | default | border-top-left-radius | radius.pill |
+| float-btn | badge | width | control.prominent |
+| float-badge | badge | min-width | 18 |
+| float-badge | badge | height | 18 |
+
+### 6.52 Drawer
+
+`Drawer({ open, onOpenChange, label, children })` and `DrawerLevel({ title, backLabel, onBack, children })` are the chat-first compact shell's menu (mobile layout spec §4.2; touch canvas board 抽屉): a panel from the start edge over a scrim, holding search, the section entries, the recent conversations and the account (the shell composes them from `NavRow`, §6.53).
+
+- **Panel**: `layout.drawer` (320, at most 86% of the window) wide, full height (the safe-area insets pad it), on the `panel` ground with a 1px `line-strong` end line and `shadow-float-touch`; it scrolls vertically inside. A `role="dialog"` with `aria-modal="true"` and `aria-label` = `label`.
+- **Scrim**: the `scrim` ground over the page, as the bottom sheet's (§6.7).
+- **Opening**: the menu button (§6.51) is the only way in: while closed the drawer draws nothing and no element on the screen edge listens for a swipe (the edge belongs to the system back gesture). The panel enters over `motion.overlay`, none under reduced motion. Focus moves to the first row.
+- **Closing**: Escape, the scrim, a pick (a link, or a `NavRow` that goes somewhere; a row with a chevron that opens a level is not a pick) and a drag along x toward the start edge past 40% of the panel's width (or above the velocity threshold; the helper of §6.7), anywhere on the panel; a short drag springs back; under `prefers-reduced-motion: reduce` the drag then snaps. Focus returns to the menu button.
+- **System back** (mobile app plan Decision 25): on a compact touch window opening pushes one history entry carrying a marker in `history.state`, a `popstate` to an entry without the marker closes it, and every other close pops the entry with `history.back()` once. A bottom sheet opened over the drawer holds its own entry: back closes the sheet, then the drawer. Medium, expanded and fine-pointer windows push nothing.
+- **Levels** (plan Decision 18): `DrawerLevel` replaces the list inside the same panel (技能、连接器、设备…): a back row (the arrow `arrow-left` and the level's `title`, accessible name `backLabel`) as a `NavRow`-sized row on top, then the level's rows. The drawer stays open; back returns to the list and focus lands on the back row on entry.
+
+<!-- states: drawer -->
+States: `open`, `level`
+
+<!-- size-table: drawer -->
+| Part | State | Property | Value |
+|---|---|---|---|
+| drawer | open | width | layout.drawer |
+| drawer | open | background-color | color.panel |
+| nav-row | open | min-height | row.default |
+| drawer | level | width | layout.drawer |
+| drawer-back | level | min-height | row.default |
+
+### 6.53 NavRow
+
+`NavRow({ icon?, label, href?, onSelect?, badge?, current?, trailing? })` is a large navigation row: the drawer's entries (搜索, 收件箱, 智能体, 定时任务, 技能、连接器、设备…, an inbox row's count) and the level rows (touch canvas boards 抽屉, 收件箱).
+
+- **Row**: a link (with `href`, drawn through the design `link`) or a button; the icon (20, `touch.icon` 22 on touch, `muted`), `space.3` apart from the label (`ink`, one line, ellipsis), then the optional count and an optional `chevron-right` (`trailing="chevron"`). `row.default` high (44) on a fine pointer, `touch.row` (52) under `TOUCH_QUERY` (§2.5); padded `space.4` at the sides. No divider and no box: rows sit on the drawer's own surface (§1).
+- **Count** (`badge`): `badgeText`, `micro`, `ink` on `selected`, `radius.pill`, at least 20 wide; the row's neighbours do not move.
+- **Current** (`current`): `aria-current="page"`, the `selected` ground and weight 500.
+- **States**: `default`; `current`; `badge`; press and hover take the `hover` ground; focus is the 1px `accent` inset outline of a nav item (§2.5).
+- **Pick**: a link or button row that goes somewhere carries `data-drawer-pick`, which closes the drawer (§6.52); a button row with a chevron opens a level and carries none.
+
+<!-- states: nav-row -->
+States: `default`, `current`, `badge`
+
+<!-- size-table: nav-row -->
+| Part | State | Property | Value |
+|---|---|---|---|
+| nav-row | default | min-height | row.default |
+| nav-row | default | color | color.ink |
+| nav-row[aria-current=page] | current | background-color | color.selected |
+| nav-row[aria-current=page] | current | font-weight | 500 |
+| navrow-badge | badge | min-width | 20 |
+| navrow-badge | badge | font-size | type.micro |
 
 ## 7. Copy and internationalization
 - All UI text goes through next-intl, in both Chinese and English. Text shown to the model (prompts, tool descriptions) is always English, and the prompt field in a form must say so.

@@ -10,6 +10,7 @@ export {
 } from "./bottom-nav";
 export { ClassSwap } from "./class-swap";
 export { DecorationLayer } from "./decoration-layer";
+export { FloatingIconButton, type FloatingIconButtonProps } from "./floating-button";
 export { MePanel, type MePanelProps, type MeRow } from "./me-panel";
 export {
   assertHeader,
