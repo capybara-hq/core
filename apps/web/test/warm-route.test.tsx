@@ -167,6 +167,13 @@ describe("a conversation row in view", () => {
   it("warms its conversation once, however often it re-enters the view", async () => {
     FakeObserver.all = [];
     vi.stubGlobal("IntersectionObserver", FakeObserver);
+    // a touch device: only its rows warm on scroll
+    vi.stubGlobal("matchMedia", (query: string) => ({
+      matches: query === "(pointer: coarse)",
+      media: query,
+      addEventListener: () => {},
+      removeEventListener: () => {},
+    }));
     const chat = stubApiWithGroups();
     const client = seeded();
     render(<Rows client={client} />);
