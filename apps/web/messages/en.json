@@ -1838,7 +1838,8 @@
         "unavailable": "Cannot keep the computer awake: {reason}",
         "cannot": "Keep awake cannot prevent: closing the lid of a Mac on battery without an external display still puts it to sleep; so do choosing Sleep, a critically low battery and thermal emergencies. On Linux, the lid switch is handled by logind, which this service cannot override."
       },
-      "failed": "That did not go through. Try again."
+      "failed": "That did not go through. Try again.",
+      "widened": "Changed on this computer."
     },
     "sandbox": {
       "title": "Sandbox",
@@ -1901,6 +1902,12 @@
       "removed": "{host} removed.",
       "localHostsHelp": "Hosts can be removed here; only the computer's owner adds one, on the computer.",
       "widenLocal": "Only the computer's owner widens these, on the computer:",
+      "widenHere": "Widen these on this computer; a confirmation from the computer follows:",
+      "widen": {
+        "network": "Open the network",
+        "outside": "Allow running outside the sandbox",
+        "reach": "Widen the project reach"
+      },
       "command": {
         "network": "Open the network:",
         "outside": "Allow running outside the sandbox:",

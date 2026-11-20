@@ -276,12 +276,132 @@ describe("本机 on the device page", () => {
     expect(screen.queryByRole("heading", { name: M.title })).toBeNull();
     await userEvent.setup().click(screen.getByRole("tab", { name: D.detail.tabSettings }));
     expect(await screen.findByText(SANDBOX_COMMANDS.outside)).toBeTruthy();
+    expect(screen.queryByRole("button", { name: D.sandbox.widen.outside })).toBeNull();
     cleanup();
     Reflect.deleteProperty(window, "capybaraShell");
     stubApi(detailRoutes(local("e1")));
     await renderDetail();
     await screen.findByRole("tab", { name: D.detail.tabSettings });
     expect(screen.queryByRole("heading", { name: M.title })).toBeNull();
+  });
+});
+
+describe("widening on this machine", () => {
+  const W = D.sandbox.widen;
+  /** The machine keeps its sandbox narrow on every field the shell can widen. */
+  const narrow = () =>
+    local("e1", {
+      sandbox: { ...SANDBOX, restrictedProjectReach: "workspace" },
+      ownerCeiling: report({ restrictedProjectReach: "workspace" }),
+    });
+  const settings = async () => {
+    const user = userEvent.setup();
+    await user.click(await screen.findByRole("tab", { name: D.detail.tabSettings }));
+    return user;
+  };
+
+  it("each widening asks the shell for that one field only; adding a host stays a CLI line", async () => {
+    const fake = fakeDevice();
+    installShell({ "device@1": fake.device });
+    stubApi(detailRoutes(narrow()));
+    await renderDetail();
+    const user = await settings();
+    await user.click(await screen.findByRole("button", { name: W.network }));
+    await waitFor(() =>
+      expect(fake.device.requestCeiling).toHaveBeenLastCalledWith({ network: "open" }),
+    );
+    expect(await screen.findByText(M.widened)).toBeTruthy();
+    await user.click(screen.getByRole("button", { name: W.outside }));
+    await waitFor(() =>
+      expect(fake.device.requestCeiling).toHaveBeenLastCalledWith({ outsideSandbox: true }),
+    );
+    await user.click(screen.getByRole("button", { name: W.reach }));
+    await waitFor(() =>
+      expect(fake.device.requestCeiling).toHaveBeenLastCalledWith({ projectReach: "os-user" }),
+    );
+    expect(fake.device.requestCeiling).toHaveBeenCalledTimes(3);
+    // the shell's calls replace their CLI lines; the host has no shell call
+    expect(screen.queryByText(SANDBOX_COMMANDS.network)).toBeNull();
+    expect(screen.queryByText(SANDBOX_COMMANDS.outside)).toBeNull();
+    expect(screen.queryByText(SANDBOX_COMMANDS.reach)).toBeNull();
+    expect(screen.getByText(SANDBOX_COMMANDS.host)).toBeTruthy();
+  });
+
+  it("offers only what the machine itself still keeps narrow", async () => {
+    installShell({ "device@1": fakeDevice().device });
+    stubApi(
+      detailRoutes(
+        local("e1", {
+          // the open network is limited by the org, not the machine; the reach is already wide
+          sandbox: {
+            ...SANDBOX,
+            networkCeiling: "allowlist",
+            layer: { network: "org", outsideSandbox: "device" },
+          },
+        }),
+      ),
+    );
+    await renderDetail();
+    await settings();
+    expect(await screen.findByRole("button", { name: W.outside })).toBeTruthy();
+    expect(screen.queryByRole("button", { name: W.network })).toBeNull();
+    expect(screen.queryByRole("button", { name: W.reach })).toBeNull();
+  });
+
+  it("with nothing the shell can widen, the host line keeps the owner's lead-in", async () => {
+    installShell({ "device@1": fakeDevice().device });
+    stubApi(
+      detailRoutes(
+        local("e1", {
+          sandbox: {
+            ...SANDBOX,
+            networkCeiling: "allowlist",
+            outsideSandbox: true,
+            layer: { network: "org", outsideSandbox: "device" },
+          },
+        }),
+      ),
+    );
+    await renderDetail();
+    await settings();
+    expect(await screen.findByText(SANDBOX_COMMANDS.host)).toBeTruthy();
+    expect(screen.getByText(D.sandbox.widenLocal)).toBeTruthy();
+    expect(screen.queryByText(D.sandbox.widenHere)).toBeNull();
+  });
+
+  it("a declined or cancelled widening shows nothing; a failed one says so", async () => {
+    const fake = fakeDevice(CONNECTED, {
+      requestCeiling: vi
+        .fn()
+        .mockResolvedValueOnce("cancelled")
+        .mockRejectedValueOnce({ code: "cancelled" })
+        .mockRejectedValueOnce({ code: "failed" }),
+    });
+    installShell({ "device@1": fake.device });
+    stubApi(detailRoutes(narrow()));
+    await renderDetail();
+    const user = await settings();
+    await user.click(await screen.findByRole("button", { name: W.outside }));
+    await waitFor(() => expect(fake.device.requestCeiling).toHaveBeenCalledTimes(1));
+    await user.click(screen.getByRole("button", { name: W.outside }));
+    await waitFor(() => expect(fake.device.requestCeiling).toHaveBeenCalledTimes(2));
+    expect(screen.queryByText(M.widened)).toBeNull();
+    expect(screen.queryByText(M.failed)).toBeNull();
+    await user.click(screen.getByRole("button", { name: W.outside }));
+    expect(await screen.findByText(M.failed)).toBeTruthy();
+  });
+
+  it("a shell whose device@1 lacks requestCeiling keeps the CLI lines", async () => {
+    const { requestCeiling: _, ...device } = fakeDevice().device;
+    installShell({ "device@1": device });
+    stubApi(detailRoutes(narrow()));
+    await renderDetail();
+    await screen.findByRole("heading", { name: M.title });
+    await settings();
+    expect(await screen.findByText(SANDBOX_COMMANDS.outside)).toBeTruthy();
+    expect(screen.getByText(SANDBOX_COMMANDS.network)).toBeTruthy();
+    expect(screen.getByText(SANDBOX_COMMANDS.reach)).toBeTruthy();
+    expect(screen.queryByRole("button", { name: W.outside })).toBeNull();
   });
 });
 

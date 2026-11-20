@@ -1826,7 +1826,8 @@
         "unavailable": "无法保持唤醒：{reason}",
         "cannot": "保持唤醒无法阻止：没有外接显示器、使用电池的 Mac 合上盖子仍会休眠；手动选择睡眠、电量极低和过热保护也会休眠。在 Linux 上，合盖由 logind 处理，本服务无权覆盖。"
       },
-      "failed": "操作没有完成，请重试。"
+      "failed": "操作没有完成，请重试。",
+      "widened": "已在这台电脑上更改。"
     },
     "sandbox": {
       "title": "沙箱",
@@ -1889,6 +1890,12 @@
       "removed": "已移除 {host}。",
       "localHostsHelp": "这里只能移除主机；添加只能由电脑的所有者在电脑上进行。",
       "widenLocal": "只有电脑的所有者能在电脑上放宽：",
+      "widenHere": "在这台电脑上放宽，随后由电脑弹出确认：",
+      "widen": {
+        "network": "开放网络",
+        "outside": "允许在沙箱外运行",
+        "reach": "放宽项目范围"
+      },
       "command": {
         "network": "开放网络：",
         "outside": "允许在沙箱外运行：",

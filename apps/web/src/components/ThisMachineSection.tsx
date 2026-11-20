@@ -16,7 +16,7 @@ import type { Device } from "../lib/devices";
 import { deviceRunningQuery } from "../lib/query/device-running";
 import { keys } from "../lib/query/keys";
 import { useAppMutation } from "../lib/query/mutation";
-import type { DeviceCapabilityV1, KeepAwakeMode } from "../lib/shell";
+import type { DeviceCapabilityV1, DeviceCeilingRequest, KeepAwakeMode } from "../lib/shell";
 import { type Connected, useIsThisMachine } from "../lib/use-this-machine";
 
 /** How often the running list is read again (an operation starting or ending is no status change). */
@@ -178,4 +178,45 @@ function Section({ cap, status }: { cap: DeviceCapabilityV1; status: Connected }
       </Stack>
     </ContentSection>
   );
+}
+
+/**
+ * Widening on this machine from its device page (desktop client spec §9.5): `request` asks the
+ * shell for the fields it names (the page sends one) (a native confirmation with the device program's risk text; applied only on
+ * yes), toasts when applied, says nothing when the person declines. `undefined` in a browser, on
+ * another device, and in a shell whose `device@1` has no `requestCeiling`: the page then shows the
+ * `capybara-device ceiling set` lines. The device's owner report reaches the kernel with its next
+ * heartbeat, so the page may show the old ceiling (and the button) for a moment after an applied
+ * widening; asking again then changes nothing and needs no confirmation.
+ */
+export function useShellWidening(
+  orgId: string,
+  deviceId: string,
+  invalidates: () => (readonly unknown[])[],
+): { request(req: DeviceCeilingRequest): void; pending: boolean } | undefined {
+  const t = useTranslations("devices.thisMachine");
+  const toast = useToast();
+  const here = useIsThisMachine(orgId, deviceId);
+  const cap = here?.cap;
+  const offered = cap !== undefined && typeof cap.requestCeiling === "function";
+  const widen = useAppMutation({
+    fn: (req: DeviceCeilingRequest) =>
+      offered ? cap.requestCeiling(req) : Promise.resolve("cancelled" as const),
+    invalidates: () => [keys.shell().deviceStatus(), ...invalidates()],
+  });
+  if (!offered) return undefined;
+  return {
+    pending: widen.isPending,
+    request: (req) => {
+      if (widen.isPending) return;
+      void widen.mutateAsync(req).then(
+        (r) => {
+          if (r === "applied") toast.success(t("widened"));
+        },
+        (e: unknown) => {
+          if (!isCancelled(e)) toast.error(t("failed"));
+        },
+      );
+    },
+  };
 }
