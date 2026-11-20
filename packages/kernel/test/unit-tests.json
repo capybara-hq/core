@@ -78,6 +78,7 @@
   "orgs/security-settings.test.ts",
   "platform/agent-docs.test.ts",
   "platform/availability.test.ts",
+  "platform/person-fields.test.ts",
   "platform/registry.test.ts",
   "platform/setup-ops.test.ts",
   "portfolio.test.ts",
