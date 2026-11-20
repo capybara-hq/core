@@ -833,11 +833,13 @@ function toolApprovalDetail({
       { label: t("requested"), value: <DateTime value={approval.createdAt} /> },
       { label: ta("expires"), value: <DateTime value={approval.expiresAt} /> },
     ],
-    aside: final ? undefined : (
-      <Stack direction="row">
-        <Button onClick={openConversation}>{t("openConversation")}</Button>
-      </Stack>
-    ),
+    // a person approval's one way to the conversation is the primary action
+    aside:
+      final || person ? undefined : (
+        <Stack direction="row">
+          <Button onClick={openConversation}>{t("openConversation")}</Button>
+        </Stack>
+      ),
     actionRow: final
       ? { primary: { label: t("openConversation"), onSelect: openConversation } }
       : person
@@ -867,12 +869,7 @@ function toolApprovalDetail({
     content: (
       <div data-approval-id={approval.id}>
         <Stack gap={12}>
-          {person && (
-            <Stack gap={4}>
-              <Text variant="prose">{ta("person.fillOnWeb", { n: personCount })}</Text>
-              <TextLink href={approval.conversationPath}>{t("openConversation")}</TextLink>
-            </Stack>
-          )}
+          {person && <Text variant="prose">{ta("person.fillOnWeb", { n: personCount })}</Text>}
           {command === null ? (
             <Stack gap={4}>
               <Text variant="small" tone="muted">

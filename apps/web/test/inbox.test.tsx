@@ -166,7 +166,7 @@ describe("收件箱（InboxPage）", () => {
   );
 
   it.each(LOCALES)(
-    "an approval with person fields has no Approve, only the web link (%s)",
+    "an approval with person fields has no Approve, one way to the conversation (%s)",
     async (locale) => {
       const m = msgs[locale];
       const { container } = await renderInbox(
@@ -203,14 +203,16 @@ describe("收件箱（InboxPage）", () => {
       const detail = container.querySelector('[data-approval-id="a"]') as HTMLElement;
       expect(
         within(detail).getByText(
-          locale === "zh" ? "需要在网页填写 2 项" : "2 fields to fill in on the web",
+          locale === "zh" ? "打开对话填写 2 项" : "Open the conversation to fill in 2 fields",
         ),
       ).toBeTruthy();
+      // one control opens the conversation: the primary action (the conversation fact stays a link)
       expect(
-        within(detail)
-          .getAllByRole("link", { name: m.inbox.openConversation })[0]
-          ?.getAttribute("href"),
-      ).toBe("/chat/c-a");
+        within(detail).queryAllByRole("link", { name: m.inbox.openConversation }),
+      ).toHaveLength(0);
+      const open = screen.getAllByRole("button", { name: m.inbox.openConversation });
+      expect(open).toHaveLength(1);
+      expect(open[0]?.getAttribute("data-variant")).toBe("primary");
       expect(screen.queryByRole("button", { name: m.approval.approve })).toBeNull();
       expect(screen.queryByRole("radiogroup", { name: m.approval.scopeLabel })).toBeNull();
       expect(screen.getByRole("button", { name: m.approval.deny })).toBeTruthy();
