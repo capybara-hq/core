@@ -361,11 +361,7 @@ describe("the mobile capability accessors", () => {
   };
 
   function Accessors() {
-    const a = [
-      useHapticsCapability(),
-      useShareCapability(),
-      useMenuCapability(),
-    ];
+    const a = [useHapticsCapability(), useShareCapability(), useMenuCapability()];
     return <p data-testid="a">{a.map((x) => (x === undefined ? "-" : "+")).join("")}</p>;
   }
 
