@@ -64,6 +64,8 @@ async function fixture() {
   let launchGate: Promise<void> | undefined;
   // a worker whose cancellation never settles (a wedged process)
   let hangCancel = false;
+  // the backends' clock: retention expiry is driven by moving it
+  let clock = 1;
   const hold = () => {
     let release!: () => void;
     const gate = new Promise<void>((r) => {
@@ -93,7 +95,7 @@ async function fixture() {
       },
       {
         platform: "darwin",
-        now: () => 1,
+        now: () => clock,
         watch: () => () => {},
         startWorker: async (r) => {
           await launchGate;
@@ -176,7 +178,7 @@ async function fixture() {
     if (!bound) throw new Error("unbound");
     const operation = await bound.backend
       .forExecution({ operationId, orgNetwork: { kind: "open-public", hosts: [] } })
-      .operation(bound.handle, scope(operationId), signal());
+      .operation(bound.handle, { ...scope(operationId), admitBeforeMs: clock + 999 }, signal());
     return operation.exec({
       command: "fixture",
       timeoutMs: 10000,
@@ -193,6 +195,9 @@ async function fixture() {
     startExec,
     hangCancel: () => {
       hangCancel = true;
+    },
+    setNow: (n: number) => {
+      clock = n;
     },
     finishers,
     startTask,
@@ -333,6 +338,45 @@ describe("device binding", () => {
     expect(JSON.parse(await readFile(bindingFile(f.root, "d"), "utf8")).instanceGeneration).toBe(
       G1,
     );
+  });
+
+  it("completed work whose retention expired never blocks a newer generation", async () => {
+    const f = await fixture();
+    const b = f.binder();
+    await b.bind(request(G1, B1, null), signal());
+    const first = f.startExec(b, "exec-1");
+    await vi.waitFor(() => expect(f.finishers.length).toBe(1));
+    f.finishers[0]?.();
+    await first;
+    // past the completed exec's retention, the next admission expires its retained payload
+    f.setNow(120_000);
+    const second = f.startExec(b, "exec-2");
+    await vi.waitFor(() => expect(f.finishers.length).toBe(2));
+    f.finishers[1]?.();
+    await second;
+    // an upgraded runtime restarts unbound; the expired, completed entries stay settled
+    f.setRuntime({ ...verified, runtimeHash: "e".repeat(64) });
+    const restarted = f.binder();
+    expect(await restarted.recover()).toBeUndefined();
+    const answer = await restarted.bind(request(G2, B2, G1), signal());
+    expect(answer.instanceGeneration).toBe(G2);
+  });
+
+  it("a live binder binds a newer generation after its completed work expired", async () => {
+    const f = await fixture();
+    const b = f.binder();
+    await b.bind(request(G1, B1, null), signal());
+    const first = f.startExec(b, "exec-1");
+    await vi.waitFor(() => expect(f.finishers.length).toBe(1));
+    f.finishers[0]?.();
+    await first;
+    f.setNow(120_000);
+    const second = f.startExec(b, "exec-2");
+    await vi.waitFor(() => expect(f.finishers.length).toBe(2));
+    f.finishers[1]?.();
+    await second;
+    const answer = await b.bind(request(G2, B2, G1), signal());
+    expect(answer.instanceGeneration).toBe(G2);
   });
 
   it("a bind exact-stops the older generation's live background tasks, then binds (W3-M)", async () => {

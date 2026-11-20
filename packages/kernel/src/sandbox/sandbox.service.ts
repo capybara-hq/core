@@ -2303,7 +2303,12 @@ export class SandboxService {
       // binding id again on every retry, refuses while a legacy obligation is open and runs
       // outside any transaction; a failure releases the lease.
       const binder = p.binder;
-      if (binder) await runOutsideTransaction(() => binder.bind(env, sig));
+      if (binder)
+        await runOutsideTransaction(() => binder.bind(env, sig)).catch((err: unknown) => {
+          // the caller's answer may be generic: the device's own refusal is kept for ops here
+          this.log.warn("cannot bind the device's instance", { deviceId: env, err });
+          throw err;
+        });
       const shared = await lease.downgrade();
       await this.register(env, shared.token);
       return {
