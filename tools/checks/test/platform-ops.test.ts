@@ -57,6 +57,11 @@ describe("checkPlatformOps", () => {
         "platform-op-upload",
         "platform-op-upload",
         "platform-op-upload",
+        "platform-op-upload",
+        "platform-op-upload",
+        "platform-op-handoff",
+        "platform-op-handoff",
+        "platform-op-handoff",
         "platform-op-handoff",
       ].sort(),
     );
@@ -121,6 +126,11 @@ describe("checkPlatformOps", () => {
       lineOf(exc, "presigned upload"),
       "a person's file into a conversation",
     );
+    has("platform-op-upload", exc, lineOf(exc, 'skills/g"') - 1, "skills/g");
+    has("platform-op-upload", exc, lineOf(exc, 'skills/uploads"') - 1, "skills/uploads");
+    has("platform-op-handoff", ops, lineOf(ops, 'id: "skills.inbox"'), "handoff");
+    has("platform-op-handoff", ops, lineOf(ops, 'id: "skills.blank"'), "non-empty");
+    has("platform-op-handoff", ops, lineOf(ops, 'id: "skills.stale"'), "stale");
     // a person confirming on the web needs the link card
     has("platform-op-handoff", ops, lineOf(ops, 'id: "skills.import"'), "handoff");
   });

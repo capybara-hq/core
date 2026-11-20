@@ -840,6 +840,8 @@ export class AgentsOperations implements OnModuleInit {
           );
           return { created: r.created, request: await this.requests.view(r.id) };
         },
+        noHandoff:
+          "The asker is not the one who decides: the request lands in the org admins' inbox, and the admins are told there.",
       }),
       defineOperation({
         id: "agents.connector-setup-status",

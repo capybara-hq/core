@@ -39,10 +39,14 @@ import {
  *   is either a person's own act or carries a secret, so the agent never gets it;
  * - platform-op-upload: an exclusion whose reason or category mentions `upload`, `multipart` or
  *   `raw bytes` (platform web parity spec §7.1, §9): "it is an upload" is no reason, since files
- *   reach an operation as file references. Only the three attachment routes are exempt, and they
+ *   reach an operation as file references (also `presigned`, `binary`, `file body`, `file content`,
+ *   and a `transport` exclusion of an `/upload(s)` route). Only the three attachment routes are exempt, and they
  *   must be `internal` with a reason naming "a person's file into a conversation";
- * - platform-op-handoff: an operation whose description says a person confirms or reviews "on the
- *   web" must define `handoff`, the link card that sends the person there (spec §6, §9).
+ * - platform-op-handoff: an operation whose description sends a person to the web to confirm,
+ *   review, approve or decide (a sentence with such a word, by stem, and a web place: the web, a
+ *   web page or app, the console, the inbox, "the <X> page") must define `handoff`, the link card
+ *   that sends the person there (spec §6, §9), or `noHandoff: "<reason>"` when no web page shows
+ *   it; the reason is non-empty and the opt-out is stale once the description stops matching.
  */
 export const PLATFORM_OP_RULES = [
   "platform-op-missing",
@@ -66,9 +70,22 @@ const ATTACHMENT_ROUTES: ReadonlySet<string> = new Set([
   "GET /api/v1/orgs/:orgId/attachments/limits",
 ]);
 const ATTACHMENT_REASON = "a person's file into a conversation";
-const UPLOAD_WORDS = /upload|multipart|raw bytes/i;
-const ON_THE_WEB = /\bon the web\b/i;
-const CONFIRM_OR_REVIEW = /\b(confirm|confirms|confirmed|review|reviews|reviewed)\b/i;
+const UPLOAD_WORDS = /upload|multipart|raw bytes|presigned|binary|file body|file content/i;
+const UPLOAD_PATH = /\/uploads?(\/|$)/;
+/** A person's decision word, by stem: confirm, confirms, confirmation, review, approve, decided... */
+const DECISION_WORD = /\b(confirm|review|approv|decid)\w*/i;
+/** Where a person acts: the web, a web page or app, the console, the inbox, "the <X> page". */
+const WEB_PLACE =
+  /\b(on|in) the web\b|\bweb (page|app)\b|\bthe (admin )?console\b|\bthe inbox\b|\bthe [\w'-]+(?: [\w'-]+)? page\b/i;
+/** The card itself is the place a confirmation card is on: not a hand-off to another page. */
+const ON_THE_CARD = /\b(confirmation|approval) card\b|\bthe card\b/i;
+
+/** Whether one sentence of a description sends a person to a web place to decide something. */
+export function sendsPersonToWeb(description: string): boolean {
+  return description
+    .split(/(?<=[.;!?])\s+/)
+    .some((s) => DECISION_WORD.test(s) && WEB_PLACE.test(s) && !ON_THE_CARD.test(s));
+}
 
 const KERNEL_SRC = "packages/kernel/src";
 
@@ -271,15 +288,25 @@ function readOps(p: ParsedFile, out: Finding[]): Op[] {
         `${id}: a write (confirm \`${confirm ?? "?"}\`) needs a \`summary\``,
       );
     }
+    const sends = description !== undefined && sendsPersonToWeb(description);
+    const noHandoff = prop(obj, "noHandoff");
+    const noHandoffReason = stringValue(noHandoff?.value);
     if (
-      description !== undefined &&
-      ON_THE_WEB.test(description) &&
-      CONFIRM_OR_REVIEW.test(description) &&
-      !prop(obj, "handoff")
+      noHandoff !== undefined &&
+      (noHandoffReason === undefined || noHandoffReason.trim() === "")
     ) {
+      add("platform-op-handoff", `${id}: \`noHandoff\` needs a non-empty string literal reason`);
+    } else if (noHandoff !== undefined && prop(obj, "handoff")) {
+      add("platform-op-handoff", `${id}: defines both \`handoff\` and \`noHandoff\`: keep one`);
+    } else if (noHandoff !== undefined && !sends) {
       add(
         "platform-op-handoff",
-        `${id}: the description sends the person to confirm or review on the web, so the operation must define \`handoff\` (the link card); if no web page shows it, say so instead`,
+        `${id}: stale \`noHandoff\`: the description no longer sends the person to the web, remove it`,
+      );
+    } else if (noHandoff === undefined && sends && !prop(obj, "handoff")) {
+      add(
+        "platform-op-handoff",
+        `${id}: the description sends the person to decide on the web, so the operation must define \`handoff\` (the link card), or \`noHandoff: "<reason>"\` when no web page shows it`,
       );
     }
     const errors = prop(obj, "errors");
@@ -547,7 +574,7 @@ export function checkPlatformOps(root: string): Finding[] {
           message: `\`${e.route}\` is an attachment route: it must be \`internal\` with a reason naming "${ATTACHMENT_REASON}"`,
         });
       }
-    } else if (uploadish) {
+    } else if (uploadish || (e.category === "transport" && UPLOAD_PATH.test(e.route))) {
       out.push({
         ...at,
         rule: "platform-op-upload",

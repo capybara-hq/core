@@ -284,7 +284,7 @@ export class ExtensionsAdminOperations implements OnModuleInit {
       defineOperation({
         id: "extensions.upload-package",
         description:
-          "Store an extension package in the deployment's package store (super admin): a .tgz extension package of this conversation, e.g. one you packed in the sandbox and delivered with Deliver, passed as file: { fileId }; at most the deployment's package limit. Returns its review: name, version, sha256, the permissions it asks for and those added or removed against the approved ones, migration warnings. Nothing is installed or run. The web has no page for a stored package: the person installs it with the capybara CLI (`capybara extensions install <file.tgz>`, which shows the permission review and asks them to confirm) or with the super admin API (POST /admin/extensions/:name/install).",
+          "Store an extension package in the deployment's package store (super admin): a .tgz extension package of this conversation, e.g. one you packed in the sandbox and delivered with Deliver, passed as file: { fileId }; at most the deployment's package limit. Returns its review: name, version, sha256, the permissions it asks for and those added or removed against the approved ones, migration warnings. Nothing is installed or run. No web page shows a stored package: the person installs it with the capybara CLI (`capybara extensions install <file.tgz>`, which shows the permission review and asks them to confirm) or with the super admin API (POST /admin/extensions/:name/install).",
         input: z.object({ file: FileRefSchema }).strict(),
         example: { file: { fileId: "0b9f2c4e-1d3a-4c55-9e0a-7a2f6d1c8b11" } },
         authz: { superAdmin: true },
@@ -342,6 +342,8 @@ export class ExtensionsAdminOperations implements OnModuleInit {
             next: "Nothing is installed. Tell the person to install it with `capybara extensions install <file.tgz>` (it shows the permission review and asks for confirmation) or the super admin API POST /admin/extensions/:name/install; the web has no page for it.",
           };
         },
+        noHandoff:
+          "No web page shows a stored package; the person confirms its permissions with the capybara CLI or the super admin API.",
       }),
       defineOperation({
         id: "extensions.platform-get",
@@ -426,6 +428,18 @@ export class ExtensionsAdminOperations implements OnModuleInit {
           return {
             extension: row(v),
             next: "Replicas load it in the background; check its state with extensions.platform-get.",
+          };
+        },
+        handoff: (input, result) => {
+          const state = (result as { extension?: { state?: unknown } } | null)?.extension?.state;
+          if (state !== "pending_approval") return null;
+          return {
+            kind: "handoff",
+            title: {
+              zh: "审阅并确认扩展的权限",
+              en: "Review and confirm the extension's permissions",
+            },
+            target: { type: "link", url: `/admin/extensions/${encodeURIComponent(input.name)}` },
           };
         },
       }),

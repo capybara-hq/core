@@ -84,4 +84,29 @@ export const ops = [
     summary: () => ({ zh: "存放", en: "Store" }),
     run: async () => ({}),
   }),
+  // a confirmation card is no web place: no handoff needed
+  defineOperation({
+    id: "skills.secret",
+    description: "Save a key; the person types it on the confirmation card on the web.",
+    input: z.object({}),
+    example: {},
+    authz: { orgAction: "skills.manage" },
+    mirrors: [],
+    confirm: "org",
+    summary: () => ({ zh: "存放", en: "Store" }),
+    run: async () => ({}),
+  }),
+  // sends the person to the web with no page to link: an explicit opt-out with its reason
+  defineOperation({
+    id: "skills.optout",
+    description: "Store a package. No web page shows it: the person confirms it with the CLI.",
+    input: z.object({}),
+    example: {},
+    authz: { orgAction: "skills.manage" },
+    mirrors: [],
+    confirm: "org",
+    noHandoff: "No web page shows a stored package.",
+    summary: () => ({ zh: "存放", en: "Store" }),
+    run: async () => ({}),
+  }),
 ];

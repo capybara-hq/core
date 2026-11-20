@@ -37,6 +37,12 @@ export class SkillsController {
 
   @Post("e")
   e() {}
+
+  @Post("g")
+  g() {}
+
+  @Post("uploads")
+  uploads() {}
 }
 
 @Controller("api/v1/orgs/:orgId/attachments")

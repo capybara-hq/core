@@ -4,6 +4,7 @@ import { ApprovalPathParams, ApprovalsListQuerySchema } from "../../tools/approv
 import { ApprovalsService, type ApprovalView } from "../../tools/approvals.service.js";
 import { defineOperation } from "../operation.js";
 import { PlatformOperations } from "../registry.js";
+import { listCard } from "./list-handoff.js";
 import { Cursor, pageOf, startOf } from "./paging.js";
 
 /** Where a person decides an approval: never through an agent (spec §6.4, §14.1 item 2). */
@@ -86,6 +87,11 @@ export class ApprovalsOperations implements OnModuleInit {
           );
           return pageOf(all.map(approvalRow), startOf(input.cursor), 50);
         },
+        handoff: (_i, result) =>
+          listCard(result, "/inbox", {
+            zh: "去收件箱处理待审批的调用",
+            en: "Decide the waiting approvals in the inbox",
+          }),
       }),
       defineOperation({
         id: "approvals.get",

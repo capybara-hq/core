@@ -21,6 +21,17 @@ export const PLATFORM_EXCLUSIONS = [
   // platform-op-upload: "upload" is no reason (reason, then category)
   { route: "POST /api/v1/orgs/:orgId/skills/d", category: "transport", reason: "Uploads the file as multipart bytes." },
   { route: "POST /api/v1/orgs/:orgId/skills/e", category: "upload", reason: "Takes a file." },
+  // platform-op-upload: reworded (presigned / file content), and a transport route of /uploads
+  {
+    route: "POST /api/v1/orgs/:orgId/skills/g",
+    category: "transport",
+    reason: "Accepts the file content in one request.",
+  },
+  {
+    route: "POST /api/v1/orgs/:orgId/skills/uploads",
+    category: "transport",
+    reason: "Takes bytes.",
+  },
   // platform-op-upload: an attachment route is internal and names a person's file into a conversation
   { route: "POST /api/v1/orgs/:orgId/attachments", category: "transport", reason: "Creates a presigned upload" },
   // platform-op-literal: route is not a literal

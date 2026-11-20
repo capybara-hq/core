@@ -295,6 +295,66 @@ describe("handoffs of import and upload operations", () => {
     expect(ToolViewSchema.safeParse(card).success).toBe(true);
   });
 
+  it("plugins.upload-review links the staged upload like plugins.upload", () => {
+    expect(handoffOf("plugins.upload-review", staged)).toEqual(handoffOf("plugins.upload", staged));
+    expect(handoffOf("plugins.upload-review", {})).toBeNull();
+  });
+
+  it("connectors.refresh links the connector's page only when tools wait for review", () => {
+    const id = (op("connectors.refresh").example as { connectorId: string }).connectorId;
+    expect(
+      handoffOf("connectors.refresh", { changes: { added: ["a"], changed: [], removed: [] } }),
+    ).toMatchObject({
+      target: { type: "link", url: `/connectors/${id}` },
+    });
+    expect(
+      handoffOf("connectors.refresh", { changes: { added: [], changed: ["b"], removed: [] } }),
+    ).not.toBeNull();
+    expect(
+      handoffOf("connectors.refresh", { changes: { added: [], changed: [], removed: ["c"] } }),
+    ).toBeNull();
+  });
+
+  it("extensions.platform-enable links the extension's page only while permissions wait", () => {
+    const name = (op("extensions.platform-enable").example as { name: string }).name;
+    expect(
+      handoffOf("extensions.platform-enable", { extension: { state: "pending_approval" } }),
+    ).toMatchObject({
+      target: { type: "link", url: `/admin/extensions/${name}` },
+    });
+    expect(handoffOf("extensions.platform-enable", { extension: { state: "enabled" } })).toBeNull();
+  });
+
+  it("skills.get-change links the inbox only while the change is pending", () => {
+    expect(handoffOf("skills.get-change", { skillChange: { state: "pending" } })).toMatchObject({
+      target: { type: "link", url: "/inbox" },
+    });
+    expect(handoffOf("skills.get-change", { skillChange: { state: "approved" } })).toBeNull();
+  });
+
+  it.each([
+    ["approvals.waiting", "/inbox"],
+    ["requests.pending", "/inbox"],
+    ["inbox.list", "/inbox"],
+    ["requests.platform-list", "/admin/inbox"],
+    ["inbox.platform-list", "/admin/inbox"],
+  ])("%s links its inbox when rows wait, and none when empty", (id, url) => {
+    expect(handoffOf(id, { items: [{}] })).toMatchObject({ target: { type: "link", url } });
+    expect(handoffOf(id, { items: [] })).toBeNull();
+  });
+
+  it("opt-outs: upload-package, dismiss-notice and request-connector-setup state why", () => {
+    for (const id of [
+      "extensions.upload-package",
+      "inbox.dismiss-notice",
+      "agents.request-connector-setup",
+    ]) {
+      const o = op(id);
+      expect(o.handoff).toBeUndefined();
+      expect((o.noHandoff ?? "").length).toBeGreaterThan(10);
+    }
+  });
+
   it("plugins.upload links the org's Plugins page with the staged upload", () => {
     expect(handoffOf("plugins.upload", staged)).toEqual({
       kind: "handoff",

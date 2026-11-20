@@ -607,7 +607,7 @@ section of `.agents/skills/writing-kernel-api`; the short list for a tool change
   `rememberable`, `confirmFor`, `precheck`, `personFields` (with `personFieldParams` in the input),
   `withoutSecrets`, `summary`, `errors` (role-keyed `next`), `run`.
 - Checks: `check:platform-ops` (`platform-op-missing`, `-exclusion-reason`, `-later`, `-authz`, `-orphan`,
-  `-double`, `-describe`, `-literal`, `-errors`, `-session-only`, `-upload`, `-handoff`) and the parity test
+  `-double`, `-describe`, `-literal`, `-errors`, `-session-only`, `-upload`, `-handoff`; `noHandoff` is the reasoned opt-out) and the parity test
   `tools/checks/test/platform-parity.test.ts` (with `platform-op-secret-param`: a route field with
   `secret()` meta is in `omits` and the operation defines `personFields` or a `withoutSecrets` reason).
 - Exclusion categories: `human-only`, `secret`, `transport`, `internal`; there is no `later`

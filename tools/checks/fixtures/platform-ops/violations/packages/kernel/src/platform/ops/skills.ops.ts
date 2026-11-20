@@ -111,4 +111,41 @@ export const ops = [
     summary: () => ({ zh: "x", en: "x" }),
     run: async () => ({}),
   }),
+  // platform-op-handoff: the inbox is a web place, review a decision word
+  defineOperation({
+    id: "skills.inbox",
+    description: "List what waits. Review each one in the inbox.",
+    input: z.object({}),
+    example: {},
+    authz: { orgAction: "skills.read" },
+    mirrors: [],
+    confirm: "read",
+    run: async () => ({}),
+  }),
+  // platform-op-handoff: a blank noHandoff reason
+  defineOperation({
+    id: "skills.blank",
+    description: "Stage it; the person confirms on the web.",
+    input: z.object({}),
+    example: {},
+    authz: { orgAction: "skills.manage" },
+    mirrors: [],
+    confirm: "org",
+    noHandoff: " ",
+    summary: () => ({ zh: "x", en: "x" }),
+    run: async () => ({}),
+  }),
+  // platform-op-handoff: a stale noHandoff (the description sends nobody to the web)
+  defineOperation({
+    id: "skills.stale",
+    description: "Stage it.",
+    input: z.object({}),
+    example: {},
+    authz: { orgAction: "skills.manage" },
+    mirrors: [],
+    confirm: "org",
+    noHandoff: "No page shows it.",
+    summary: () => ({ zh: "x", en: "x" }),
+    run: async () => ({}),
+  }),
 ];

@@ -199,6 +199,13 @@ export interface PlatformOperation<I = unknown> {
    */
   withoutSecrets?: string;
   /**
+   * Why the operation sends the person to the web (its description names a place where they
+   * confirm, review, approve or decide) yet pops no {@link handoff} card: no web page shows it.
+   * Rule `platform-op-handoff` otherwise requires `handoff`; the opt-out is stale once the
+   * description stops sending the person there.
+   */
+  noHandoff?: string;
+  /**
    * The bilingual card summary of a write, rendered from the input and kernel reads (names of
    * the targets, preview counts), never from model text; required unless `confirm` is `read`.
    * May read PG; the tool falls back to the operation id when it throws. Method syntax so an

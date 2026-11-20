@@ -417,8 +417,8 @@ as a file reference `{ fileId }`, and `platform-op-upload` fails an exclusion wh
 says upload, multipart or raw bytes, except the three attachment routes, which are `internal` and name
 "a person's file into a conversation"), `internal` (a helper of a web screen; its reason names the
 operation that gives the same facts, or says no agent use). An operation whose description sends the
-person to confirm or review on the web defines `handoff` (the link card, display only;
-`platform-op-handoff`); `extensions.upload-package` has none, since no web page shows a stored package. A `@SessionOnly()`
+person to confirm, review, approve or decide on the web defines `handoff` (the link card, display
+only), or `noHandoff: "<reason>"` when no web page shows it (`platform-op-handoff`). A `@SessionOnly()`
 route is `human-only` or `secret`, never mirrored (`platform-op-session-only`). A controller that
 switches a mirrored route to a schema not in its `ROUTE_SCHEMAS` entry is caught only by review: the
 parity test compares the registered schemas, and tying a `@ZBody` / `@ZQuery` DTO back to that entry

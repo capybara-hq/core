@@ -377,6 +377,19 @@ export class ConnectorsOperations implements OnModuleInit {
           );
           return { connector: detail(r.connector), issues: r.issues, changes: r.changes };
         },
+        handoff: (input, result) => {
+          const c = (result as { changes?: { added?: unknown[]; changed?: unknown[] } } | null)
+            ?.changes;
+          if ((c?.added?.length ?? 0) + (c?.changed?.length ?? 0) === 0) return null;
+          return {
+            kind: "handoff",
+            title: {
+              zh: "审阅连接器新增或变更的工具",
+              en: "Review the connector's new or changed tools",
+            },
+            target: { type: "link", url: `/connectors/${encodeURIComponent(input.connectorId)}` },
+          };
+        },
       }),
       defineOperation<z.infer<typeof SetGitPushPolicyInput>>({
         id: "connectors.set-git-push-policy",
@@ -476,7 +489,7 @@ export class ConnectorsOperations implements OnModuleInit {
       defineOperation<z.infer<typeof CreateInput>>({
         id: "connectors.create",
         description:
-          "Create a custom connector (org admins): name, connector kind (connectors.kinds), endpoint and auth method; it connects, lists the tools and stores them for review. The credential is never a param: the person enters it on the confirmation card (bearer and api_key: credential.token; basic: credential.username and credential.password; oauth_client, or oauth_code with client manual: client.clientSecret, with the client id in client). Required credential fields are asked even when not listed in askPerson. Custom header credentials are entered by a person in the connector's settings in the web app. Preview first with connectors.preview.",
+          "Create a custom connector (org admins): name, connector kind (connectors.kinds), endpoint and auth method; it connects, lists the tools and stores them for review. The credential is never a param: the person enters it on the confirmation card (bearer and api_key: credential.token; basic: credential.username and credential.password; oauth_client, or oauth_code with client manual: client.clientSecret, with the client id in client). Required credential fields are asked even when not listed in askPerson. Custom header credentials are entered on the web. Preview first with connectors.preview.",
         input: CreateInput,
         example: {
           name: "Docs",
