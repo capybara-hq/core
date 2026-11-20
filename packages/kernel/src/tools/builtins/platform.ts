@@ -149,9 +149,13 @@ export interface PlatformToolDeps {
   sealed?: Pick<SealedInputs, "consume">;
   /**
    * The person field paths an approval's card showed (its stored `detail.personFields`), or null
-   * when it has none: what an approved call's values are bound to.
+   * when it has none or is not this call's approved approval in the org: what an approved call's
+   * values are bound to.
    */
-  approvalPersonPaths?(approvalId: string): Promise<string[] | null>;
+  approvalPersonPaths?(
+    approvalId: string,
+    call: { orgId: string; runId: string; callId: string },
+  ): Promise<string[] | null>;
 }
 
 const json = (value: unknown, summary: { zh: string; en: string }): BuiltinResult => ({
@@ -525,9 +529,15 @@ export function platformTool(deps: PlatformToolDeps): BuiltinTool {
       // must ask exactly those fields, and the sealed values must carry exactly them
       const approvalId = ctx.approvalId;
       const shown =
-        approvalId === undefined || deps.approvalPersonPaths === undefined
+        approvalId === undefined ||
+        deps.approvalPersonPaths === undefined ||
+        ctx.runId === undefined
           ? null
-          : await deps.approvalPersonPaths(approvalId);
+          : await deps.approvalPersonPaths(approvalId, {
+              orgId: ctx.orgId,
+              runId: ctx.runId,
+              callId: ctx.callId,
+            });
       if (person === null && shown !== null) throw new PersonFieldsChanged();
       if (person !== null) {
         const sealed = deps.sealed;

@@ -197,11 +197,16 @@ export class BuiltinTools {
         setting: async (orgId) => (await readOrgSettings(db.db, orgId)).platformTool,
         log,
         sealed: sealedInputs,
-        approvalPersonPaths: async (approvalId) => {
+        approvalPersonPaths: async (approvalId, call) => {
+          // only this call's own approved approval in this org (anything else: none, fails closed)
           const row = await db.db
             .selectFrom("approvals")
             .select(["kind", "detail"])
             .where("id", "=", approvalId)
+            .where("org_id", "=", call.orgId)
+            .where("run_id", "=", call.runId)
+            .where("call_id", "=", call.callId)
+            .where("status", "=", "approved")
             .executeTakeFirst();
           const fields = (row?.detail as { personFields?: unknown } | null | undefined)
             ?.personFields;
