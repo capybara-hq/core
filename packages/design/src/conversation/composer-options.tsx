@@ -2,9 +2,11 @@ import * as RD from "@radix-ui/react-dialog";
 import { type JSX, useId, useState } from "react";
 import { Button } from "../controls/button";
 import { Badge } from "../display/basic";
+import { Segmented } from "../display/tabs";
 import { Icon } from "../icons/icon";
 import { BottomSheetContent } from "../overlays/bottom-sheet";
 import { useDesignT } from "../provider";
+import { useTouch } from "../shell/touch";
 import type { PickerProps } from "./composer";
 
 // The composer's options button (spec §6.16.2, phones): below 600 the device, permission, model
@@ -51,6 +53,7 @@ export function ComposerOptions({
 }: ComposerOptionsProps): JSX.Element {
   const t = useDesignT();
   const [open, setOpen] = useState(false);
+  const touch = useTouch() === true;
   const full = [
     model.value,
     effort?.value,
@@ -73,6 +76,7 @@ export function ComposerOptions({
         <OptionsGroup
           key={g.key}
           group={g.key}
+          segmented={touch && g.key === "effort"}
           title={g.title}
           picker={g.picker}
           onInspect={() => {
@@ -134,6 +138,11 @@ export function ComposerOptions({
         onDismiss={() => setOpen(false)}
       >
         {body}
+        {touch ? (
+          <p className="cb-options-sheet-note" data-part="options-note">
+            {t("composer.options.note")}
+          </p>
+        ) : null}
       </BottomSheetContent>
     </RD.Root>
   );
@@ -142,12 +151,15 @@ export function ComposerOptions({
 /** One group of the options sheet: a picker's items as radios, or its locked value read-only. */
 function OptionsGroup({
   group,
+  segmented,
   title,
   picker,
   onInspect,
   onAction,
 }: {
   group: string;
+  /** Touch: the picker's few items as one segmented control (thinking 低 / 中 / 高). */
+  segmented: boolean;
   title: string;
   picker: PickerProps;
   onInspect(): void;
@@ -179,6 +191,8 @@ function OptionsGroup({
             </Button>
           ) : null}
         </p>
+      ) : segmented && picker.groups.length === 1 ? (
+        <SegmentedItems title={title} picker={picker} />
       ) : (
         <div className="cb-options-list" role="radiogroup" aria-labelledby={titleId}>
           {picker.groups.map((g, gi) => (
@@ -270,5 +284,23 @@ function OptionsGroup({
       ) : null}
       {picker.note && !picker.locked ? <p className="cb-options-note">{picker.note}</p> : null}
     </section>
+  );
+}
+
+/** A picker's items as a `Segmented`: a change picks the item (and plays the selection haptic). */
+function SegmentedItems({ title, picker }: { title: string; picker: PickerProps }): JSX.Element {
+  const items = picker.groups.flatMap((g) => g.items);
+  const checked = items.find((i) => i.checked)?.id ?? "";
+  return (
+    <Segmented
+      fill
+      label={title}
+      value={checked}
+      options={items.map((i) => ({ value: i.id, label: i.label }))}
+      onChange={(id) => {
+        const item = items.find((i) => i.id === id);
+        if (item && item.disabled !== true && picker.disabled !== true) picker.onPick(id);
+      }}
+    />
   );
 }

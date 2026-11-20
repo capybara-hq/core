@@ -2255,3 +2255,9 @@ button.cb-file-card:focus-visible {
 .cb-run-status[data-status="warning"] .cb-run-mark {
   color: var(--cb-warn);
 }
+
+/* The command an approval card asks about: the code font role (spec §6.16.11). */
+.cb-hcard-command {
+  min-width: 0;
+  font-family: var(--cb-font-code);
+}
