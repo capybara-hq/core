@@ -66,7 +66,8 @@ export class SealedInputs {
         paths,
         master_key_id: masterKeyId,
         ciphertext: data,
-        expires_at: new Date(Date.now() + SEALED_INPUT_TTL_MS),
+        // the DB clock, the same one consume and the cleanup compare against
+        expires_at: sql<Date>`now() + make_interval(secs => ${SEALED_INPUT_TTL_MS / 1000})`,
       })
       .execute();
   }
@@ -91,16 +92,18 @@ export class SealedInputs {
       .executeTakeFirst();
     if (row === undefined) throw new SealedInputsExpiredError();
     let values: Record<string, string>;
+    let plain: Buffer | undefined;
     try {
-      const plain = this.keyring.unwrap(
+      plain = this.keyring.unwrap(
         row.master_key_id,
         Buffer.from(row.ciphertext),
         platformSealedInputAad(row.approval_id, row.paths),
       );
       values = JSON.parse(plain.toString("utf8")) as Record<string, string>;
-      plain.fill(0);
     } catch {
       throw new SealedInputsExpiredError();
+    } finally {
+      plain?.fill(0);
     }
     return apply(values);
   }

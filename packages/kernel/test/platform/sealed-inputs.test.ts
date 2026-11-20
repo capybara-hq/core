@@ -53,8 +53,8 @@ const store = () => k.app.get(SealedInputs);
 const inTx = <T>(fn: () => Promise<T>) => k.app.get(TransactionHost).run(fn);
 const read = (values: Readonly<Record<string, string>>) => Promise.resolve({ ...values });
 
-/** An approval (with its org, account, conversation and run) whose values are sealed. */
-async function sealed(values: Record<string, string> = { apiKey: "k-123456789" }) {
+/** An approval with its org, account, conversation and run; nothing sealed yet. */
+async function approval() {
   const seed = await seedConversation(raw);
   const db = kernelDb(raw);
   const runId = randomUUID();
@@ -90,19 +90,21 @@ async function sealed(values: Record<string, string> = { apiKey: "k-123456789" }
       expires_at: new Date(Date.now() + 3600000),
     })
     .execute();
-  await inTx(() =>
-    store().sealIn(
-      {
-        approvalId,
-        recipientAccountId: seed.accountId,
-        conversationId: seed.conversationId,
-        runId,
-        callId,
-      },
-      values,
-    ),
-  );
-  return { ...seed, db, approvalId };
+  const row = {
+    approvalId,
+    recipientAccountId: seed.accountId,
+    conversationId: seed.conversationId,
+    runId,
+    callId,
+  };
+  return { ...seed, db, approvalId, row };
+}
+
+/** An approval whose values are sealed. */
+async function sealed(values: Record<string, string> = { apiKey: "k-123456789" }) {
+  const a = await approval();
+  await inTx(() => store().sealIn(a.row, values));
+  return a;
 }
 
 const rowCount = async (approvalId: string) =>
@@ -184,16 +186,10 @@ it("binds the paths into the AAD: altered paths fail to unwrap and count as expi
 });
 
 it("sealIn needs the caller's transaction", async () => {
-  await expect(
-    store().sealIn(
-      {
-        approvalId: randomUUID(),
-        recipientAccountId: randomUUID(),
-        conversationId: randomUUID(),
-        runId: randomUUID(),
-        callId: randomUUID(),
-      },
-      { apiKey: "x" },
-    ),
-  ).rejects.toThrow();
+  // valid FK targets: only the missing transaction can fail the call
+  const a = await approval();
+  await expect(store().sealIn(a.row, { apiKey: "k-123456789" })).rejects.toThrow(
+    'propagation "mandatory": no transaction in context',
+  );
+  expect(await rowCount(a.approvalId)).toBe(0);
 });
