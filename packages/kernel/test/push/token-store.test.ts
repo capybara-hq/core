@@ -13,10 +13,10 @@ import { PushTokenStore } from "../../src/push/token-store.js";
 import { databaseHandles } from "../helpers/database.js";
 
 /**
- * Push registrations (mobile app spec §9.3): migration 0170_push.sql and the store that seals a
+ * Push registrations (mobile app spec §9.3): migration 0171_push.sql and the store that seals a
  * device's push token with the master keyring (AAD bound to the registration id).
  */
-const FILE = "0170_push.sql";
+const FILE = "0171_push.sql";
 const TOKEN = "fcm-token-0123456789-abcdefghijklmnopqrstuvwxyz";
 
 let pg: Awaited<ReturnType<typeof startTestPostgres>>;
@@ -110,7 +110,7 @@ describe("PushTokenStore", () => {
   });
 });
 
-describe("0170_push.sql", () => {
+describe("0171_push.sql", () => {
   it("applies again cleanly", async () => {
     const text = readFileSync(join(KERNEL_MIGRATIONS_DIR, FILE), "utf8");
     // `set local` ends with the transaction, so the pooled connection keeps its search path
