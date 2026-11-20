@@ -3052,6 +3052,7 @@
   },
   "setupGuide": {
     "title": "Setup guide",
+    "deploymentHint": "Save the deployment config above first; the checks below then verify it on this server.",
     "hint": "Create the app on the platform with the plugin's instructions; the text below is filled in for this channel, ready to copy and paste.",
     "modeLabel": "Inbound mode",
     "modes": {

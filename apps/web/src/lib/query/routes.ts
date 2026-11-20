@@ -120,8 +120,8 @@ import {
   pluginInstallsQuery,
   serviceTokensQuery,
 } from "./settings";
-import { memberGuideQuery, setupGuideQuery } from "./setup";
-import { setupCheckStatesQuery } from "./setup-checks";
+import { deploymentGuidesQuery, memberGuideQuery, setupGuideQuery } from "./setup";
+import { deploymentCheckStatesQuery, setupCheckStatesQuery } from "./setup-checks";
 import { orgSharesQuery, shareMetaQuery } from "./shares";
 import { conversationGroupsQuery, maybeMeQuery, readinessQuery } from "./shell";
 import { skillQuery, skillsQuery } from "./skills";
@@ -297,20 +297,30 @@ export const ROUTES: readonly RouteEntry[] = [
   {
     pattern: "/admin/extensions/[name]",
     // The list (the extension is found in it) and its deployment config (the Config tab); for an
-    // extension with client code, the settings too (界面代码 says whether it is stopped), and the
-    // orgs when its reports name any (each report row shows the org's name).
+    // extension in the list, its platform setup guides (the Config tab) and each guide's cached
+    // check states; for an extension with client code, the settings too (界面代码 says whether it
+    // is stopped), and the orgs when its reports name any (each report row shows the org's name).
     queries: ({ me, params }) =>
       superAdmin(me) && params.name !== undefined
         ? [q(adminExtensionsQuery()), q(extensionConfigQuery(params.name))]
         : [],
     // biome-ignore lint/suspicious/noThenProperty: RouteEntry's `then` step (controller ruling)
-    then: async ({ me, params }, qc) => {
+    then: async ({ me, params, locale }, qc) => {
       if (!superAdmin(me) || params.name === undefined) return;
+      const name = params.name;
       const list = qc.getQueryData<{ extensions: AdminExtension[] }>(
         adminExtensionsQuery().queryKey,
       );
-      const ext = list?.extensions.find((e) => e.name === params.name);
-      if (ext?.client == null) return;
+      const ext = list?.extensions.find((e) => e.name === name);
+      if (ext === undefined) return;
+      const guidesQuery = deploymentGuidesQuery(name, labelLocale(locale));
+      await qc.prefetchQuery({ ...guidesQuery, retry: false });
+      await Promise.all(
+        (qc.getQueryData<{ id: string }[]>(guidesQuery.queryKey) ?? []).map((g) =>
+          qc.prefetchQuery({ ...deploymentCheckStatesQuery(name, g.id), retry: false }),
+        ),
+      );
+      if (ext.client == null) return;
       await Promise.all([
         qc.prefetchQuery({ ...deploymentSettingsQuery(), retry: false }),
         ...((ext.clientReports ?? []).some((r) => r.orgId !== null)

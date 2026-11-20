@@ -1167,7 +1167,8 @@ describe("core fixtures", () => {
         } else if (/\.ts$/.test(e.name)) {
           const text = await readFile(full, "utf8");
           // a setup check's `place` (setup guides v2) names a guide place, not a UI place
-          const uiPlace = /\bplace:\s*"(?!channel-connection"|connector-template")|"place"\s*:/;
+          const uiPlace =
+            /\bplace:\s*"(?!channel-connection"|connector-template"|extension-deployment")|"place"\s*:/;
           if (uiPlace.test(text)) offenders.push(full);
         }
       }

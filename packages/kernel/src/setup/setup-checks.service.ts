@@ -6,6 +6,7 @@ import {
   type SetupCheckResult,
   type SetupCheckTarget,
   type SetupCheckText,
+  type SetupGuidePlace,
   validateSetupCheckResult,
 } from "@capybara-hq/plugin-sdk";
 import { Inject, Injectable, Optional } from "@nestjs/common";
@@ -95,6 +96,11 @@ const REASONS = {
       `The ${plugin} plugin is not enabled in this organization; an org admin enables it under Plugins.`,
       `插件 ${plugin} 没有在本组织启用；组织管理员可以在「插件」里启用。`,
     ),
+  notRunningDeployment: (plugin: string) =>
+    text(
+      `The ${plugin} extension is not running on this server; check its status and deployment config on this page.`,
+      `扩展 ${plugin} 没有在这台服务器上运行；请在本页面查看它的状态和部署配置。`,
+    ),
   needsConfig: (plugin: string) =>
     text(
       `The ${plugin} plugin needs configuration in this organization; an org admin configures it under Plugins.`,
@@ -133,18 +139,25 @@ interface CheckKeys {
   lock: string;
 }
 
+/** The cache scope of the `extension-deployment` place in Redis keys (an org id elsewhere). */
+const DEPLOYMENT_SCOPE = "deployment";
+
 /** What a prepared request knows: the rendered guide and its target. */
 interface Prepared {
-  caller: CheckCaller;
+  /** The org of an org place; null for `extension-deployment` (the platform). */
+  orgId: string | null;
+  /** The caller (person or the agent's trigger account). */
+  accountId: string;
   plugin: string;
   itemId: string;
   version: string;
-  place: "channel-connection" | "connector-template";
+  place: SetupGuidePlace;
   /** The connector template of a `connector-template` guide; null for other places. */
   template: string | null;
   mode: string | null;
   audience: "admin" | "member";
-  target: { kind: "channel-connection" | "connector"; id: string };
+  /** The deployment's target is the plugin itself (`id` = the plugin name). */
+  target: { kind: "channel-connection" | "connector" | "extension-deployment"; id: string };
   checks: string[];
   /** Cache keys carry the account (member audience: every member's own answer). */
   perAccount: boolean;
@@ -216,7 +229,8 @@ export class SetupChecksService {
     @Inject(LockService)
     private readonly locks: Pick<LockService, "lease" | "releaseIf" | "takeSlot" | "releaseSlot">,
     @Inject(KEYRING) private readonly keyring: Keyring,
-    @Inject(PluginGuides) private readonly guides: Pick<PluginGuides, "render">,
+    @Inject(PluginGuides)
+    private readonly guides: Pick<PluginGuides, "render" | "renderForDeployment">,
     @Inject(SetupCheckRegistry) private readonly registry: SetupCheckRegistry,
     @Inject(ExtensionRegistry) private readonly extensions: Pick<ExtensionRegistry, "current">,
     @Inject(EffectiveConfigs) private readonly effective: Pick<EffectiveConfigs, "get">,
@@ -245,7 +259,42 @@ export class SetupChecksService {
     guideId: string,
     q: CheckSelection,
   ): Promise<Record<string, SetupCheckState>> {
-    const p = await this.prepare(caller, itemId, guideId, q);
+    return this.statesOf(await this.prepare(caller, itemId, guideId, q));
+  }
+
+  /**
+   * The cached state of every check of an extension's `extension-deployment` guide (`GET
+   * /admin/extensions/:name/guides/:guideId/checks`, super admins: the route's guard); nothing
+   * runs. Cached for the deployment, shared by every super admin.
+   */
+  async deploymentStates(
+    accountId: string,
+    plugin: string,
+    guideId: string,
+  ): Promise<Record<string, SetupCheckState>> {
+    return this.statesOf(await this.prepareDeployment(accountId, plugin, guideId));
+  }
+
+  /**
+   * Runs one check of an extension's `extension-deployment` guide (`POST
+   * /admin/extensions/:name/guides/:guideId/checks/:checkId/run`, super admins: the route's
+   * guard) with the extension's platform deployment config, `orgId: null`. The cache, single
+   * flight, cooldown and concurrency cap are the org places', keyed by the deployment; the
+   * per-account limit is shared with every other run. A kernel check (`capybara:*`) does not apply
+   * here.
+   */
+  async deploymentRun(
+    accountId: string,
+    plugin: string,
+    guideId: string,
+    checkId: string,
+    body: { force?: boolean | undefined },
+  ): Promise<SetupCheckState> {
+    const p = await this.prepareDeployment(accountId, plugin, guideId, checkId);
+    return this.runPrepared(p, checkId, body);
+  }
+
+  private async statesOf(p: Prepared): Promise<Record<string, SetupCheckState>> {
     const ids = [...new Set(p.checks)];
     const out: Record<string, SetupCheckState> = {};
     if (ids.length === 0) return out;
@@ -300,11 +349,19 @@ export class SetupChecksService {
     body: CheckSelection & { force?: boolean | undefined },
   ): Promise<SetupCheckState> {
     const p = await this.prepare(caller, itemId, guideId, body, checkId);
+    return this.runPrepared(p, checkId, body);
+  }
+
+  private async runPrepared(
+    p: Prepared,
+    checkId: string,
+    body: { force?: boolean | undefined },
+  ): Promise<SetupCheckState> {
     // the per-account budget, for the HTTP route and the Platform tool alike (an answer from the
     // cache counts too); Redis down: nothing runs
     let allowed: boolean;
     try {
-      allowed = await this.allowRun(caller.accountId);
+      allowed = await this.allowRun(p.accountId);
     } catch (err) {
       this.log.warn("setup checks: Redis unavailable", { err: describeCheckError(err, (s) => s) });
       return unknownState(REASONS.unavailable);
@@ -313,16 +370,20 @@ export class SetupChecksService {
       throw new ApiError("rate_limited", "Too many setup check runs; try again in a minute");
     }
     // a plugin check: the extension must run here, be on in the org and have a valid effective
-    // config before its registration is even looked at (nothing is called otherwise)
+    // config (the deployment: run here, its loaded deployment config) before its registration is
+    // even looked at (nothing is called otherwise)
     let config: unknown;
     if (!checkId.startsWith("capybara:")) {
-      const gate = await this.pluginGate(caller.orgId, p.plugin);
+      const gate =
+        p.orgId === null ? this.deploymentGate(p.plugin) : await this.pluginGate(p.orgId, p.plugin);
       if ("state" in gate) return gate.state;
       config = gate.config;
     }
     const check = this.registry.resolve(p.plugin, checkId);
     if (!check) return unknownState(REASONS.unregistered);
     if (check.place !== "any" && check.place !== p.place) return unknownState(REASONS.otherPlace);
+    // kernel checks are about an org's targets; the deployment has none
+    if (check.source === "kernel" && p.orgId === null) return unknownState(REASONS.otherPlace);
     const keys = this.keys(p, checkId);
     const revision = await this.revision(p, accountScoped(p, checkId));
     const fingerprint = this.fingerprint(p, revision);
@@ -345,7 +406,7 @@ export class SetupChecksService {
       );
     }
     const token = randomUUID();
-    const orgSlots = `capk:setup-check-org:${caller.orgId}`;
+    const orgSlots = `capk:setup-check-org:${p.orgId ?? DEPLOYMENT_SCOPE}`;
     let locked = false;
     let slot = false;
     try {
@@ -422,7 +483,8 @@ export class SetupChecksService {
       ]);
     }
     return {
-      caller,
+      orgId: caller.orgId,
+      accountId: caller.accountId,
       plugin: guide.plugin,
       itemId: guide.itemId,
       version: guide.version,
@@ -434,6 +496,49 @@ export class SetupChecksService {
       checks,
       perAccount: guide.audience === "member",
     };
+  }
+
+  /**
+   * The deployment guide (`PluginGuides.renderForDeployment`: the extension's catalog item has an
+   * `extension-deployment` guide with that id, else 404), then the check's presence in it (404
+   * `catalog.check_not_found`). The caller is a super admin (the route's and the operation's
+   * guard); the target is the plugin's own deployment.
+   */
+  private async prepareDeployment(
+    accountId: string,
+    plugin: string,
+    guideId: string,
+    checkId?: string,
+  ): Promise<Prepared> {
+    const guide = await this.guides.renderForDeployment(plugin, guideId, { locale: "en" });
+    const checks = guide.checks.map((c) => c.id);
+    if (checkId !== undefined && !checks.includes(checkId)) {
+      throw new ApiError("catalog.check_not_found", "The check is not in this setup guide");
+    }
+    return {
+      orgId: null,
+      accountId,
+      plugin: guide.plugin,
+      itemId: guide.itemId,
+      version: guide.version,
+      place: guide.place,
+      template: null,
+      mode: null,
+      audience: "admin",
+      target: { kind: "extension-deployment", id: guide.plugin },
+      checks,
+      perAccount: false,
+    };
+  }
+
+  /**
+   * A deployment check runs only where its extension runs on this replica (so its deployment
+   * config is valid and loaded): that config, as the extension's `ctx.config` holds it.
+   */
+  private deploymentGate(plugin: string): { config: unknown } | { state: SetupCheckState } {
+    const inst = this.extensions.current(plugin);
+    if (!inst) return { state: unknownState(REASONS.notRunningDeployment(plugin)) };
+    return { config: inst.config };
   }
 
   /**
@@ -464,13 +569,13 @@ export class SetupChecksService {
   /** The Redis keys of a check of the prepared target (spec §10.7). */
   private keys(p: Prepared, checkId: string): CheckKeys {
     const base = [
-      p.caller.orgId,
+      p.orgId ?? DEPLOYMENT_SCOPE,
       p.target.kind,
       p.target.id,
       p.plugin,
       checkId,
       p.mode ?? "-",
-      ...(accountScoped(p, checkId) ? [p.caller.accountId] : []),
+      ...(accountScoped(p, checkId) ? [p.accountId] : []),
     ].join(":");
     return {
       result: `capk:setup-check:${base}`,
@@ -481,23 +586,35 @@ export class SetupChecksService {
 
   /**
    * The input revision of a prepared target (spec §10.4): the target's and its credentials'
-   * `updated_at`, the org's extension config and copy revisions; never a value.
+   * `updated_at`, the org's extension config and copy revisions; never a value. The deployment's:
+   * a keyed digest of the extension's loaded deployment config.
    */
   private async revision(p: Prepared, scoped: boolean): Promise<string> {
+    // the deployment's only input is its loaded config, secrets included: the loaded config
+    // digest (`configHash`) leaves secrets out, and a replaced key must not answer from the cache.
+    // A keyed HMAC of it, so the revision can neither be reversed nor confirm a guessed secret
+    if (p.orgId === null) {
+      const loaded = this.extensions.current(p.plugin)?.config;
+      return createHmac("sha256", this.keyring.deriveKey("setup-check-fingerprint").current)
+        .update(`${DEPLOYMENT_SCOPE}\0${JSON.stringify(loaded ?? null)}`)
+        .digest("hex");
+    }
+    const orgId = p.orgId;
+    const op = { ...p, orgId };
     const target =
       p.target.kind === "channel-connection"
-        ? await this.channelRevision(p)
-        : await this.connectorRevision(p, scoped);
+        ? await this.channelRevision(op)
+        : await this.connectorRevision(op, scoped);
     const org = await this.db
       .selectFrom("extension_org_configs")
       .select("updated_at")
-      .where("org_id", "=", p.caller.orgId)
+      .where("org_id", "=", orgId)
       .where("plugin", "=", p.plugin)
       .executeTakeFirst();
     const copy = await this.db
       .selectFrom("extension_org_overrides")
       .select("updated_at")
-      .where("org_id", "=", p.caller.orgId)
+      .where("org_id", "=", orgId)
       .where("plugin", "=", p.plugin)
       .executeTakeFirst();
     const iso = (d: Date | string | undefined) =>
@@ -505,22 +622,25 @@ export class SetupChecksService {
     return [target, iso(org?.updated_at), iso(copy?.updated_at)].join("|");
   }
 
-  private channelRevision(p: Prepared): Promise<string> {
-    return this.channels.checkRevision(p.caller.orgId, p.plugin, p.target.id);
+  private channelRevision(p: Prepared & { orgId: string }): Promise<string> {
+    return this.channels.checkRevision(p.orgId, p.plugin, p.target.id);
   }
 
-  private async connectorRevision(p: Prepared, scoped: boolean): Promise<string> {
+  private async connectorRevision(
+    p: Prepared & { orgId: string },
+    scoped: boolean,
+  ): Promise<string> {
     const row = await this.db
       .selectFrom("connectors")
       .select("updated_at")
       .where("id", "=", p.target.id)
-      .where("org_id", "=", p.caller.orgId)
+      .where("org_id", "=", p.orgId)
       .executeTakeFirst();
     // the client and org credential rows, and the caller's own row for account-scoped checks
     const creds = await this.credentials.checkRevision(
-      p.caller.orgId,
+      p.orgId,
       p.target.id,
-      scoped ? p.caller.accountId : null,
+      scoped ? p.accountId : null,
     );
     return `${row ? new Date(row.updated_at).toISOString() : "-"}|${creds}`;
   }
@@ -597,16 +717,17 @@ export class SetupChecksService {
     const secrets = [
       ...material.secrets,
       ...this.configSecrets(p.plugin, config),
-      ...(await this.orgConfigSecrets(p.caller.orgId, p.plugin)),
+      ...(p.orgId === null ? [] : await this.orgConfigSecrets(p.orgId, p.plugin)),
     ];
     const redact = checkRedactor(secrets);
-    const fields = { plugin: p.plugin, checkId: check.id, orgId: p.caller.orgId };
+    const fields = { plugin: p.plugin, checkId: check.id, orgId: p.orgId };
     const timeout = AbortSignal.timeout(this.timeoutMs);
     let answer: { value: unknown } | { error: unknown } | "timeout" | "unloaded";
     if (check.source === "plugin") {
       const signal = AbortSignal.any([timeout, check.signal]);
-      // the org's language: a result is cached for every viewer of the org
-      const { locale } = await readOrgSettings(this.db.db, p.caller.orgId);
+      // the org's language: a result is cached for every viewer of the org (the deployment's for
+      // every super admin, in English; a result carries both languages when the plugin wrote them)
+      const locale = p.orgId === null ? "en" : (await readOrgSettings(this.db.db, p.orgId)).locale;
       answer = await raceSignal(
         signal,
         // the in-flight tracker merges the instance's abort into the signal the check gets
@@ -617,10 +738,12 @@ export class SetupChecksService {
         () => (check.signal.aborted ? "unloaded" : "timeout"),
       );
     } else {
+      // refused for the deployment before the lock (`runPrepared`)
+      if (p.orgId === null) throw new Error("a kernel check has no deployment target");
       const signal = timeout;
       const args: KernelCheckArgs = Object.freeze({
-        orgId: p.caller.orgId,
-        accountId: p.caller.accountId,
+        orgId: p.orgId,
+        accountId: p.accountId,
         mode: p.mode,
         target: kernelTarget(p, material),
         signal,
@@ -666,14 +789,17 @@ export class SetupChecksService {
    * The target material: for a channel connection its revision and stored secret values (and, for
    * a plugin check, the connection config decrypted exactly as `channel@1` verify gets it); for a
    * connector its credentials' values (redaction only), the manual OAuth client id and the
-   * template id. A `result` when the material cannot be read (the check is not called).
+   * template id; for the deployment nothing (its config's secrets are added by the caller). A
+   * `result` when the material cannot be read (the check is not called).
    */
   private async material(
     p: Prepared,
     check: ResolvedSetupCheck,
   ): Promise<(Material & { connectionConfig?: unknown }) | { result: SetupCheckResult }> {
+    if (p.orgId === null) return { secrets: [] };
+    const orgId = p.orgId;
     if (p.target.kind === "channel-connection") {
-      const stored = await this.channels.checkSecrets(p.caller.orgId, p.plugin, p.target.id);
+      const stored = await this.channels.checkSecrets(orgId, p.plugin, p.target.id);
       if (check.source === "kernel") return { secrets: stored };
       let rt: Awaited<ReturnType<ChannelConnections["runtime"]>>;
       try {
@@ -691,7 +817,7 @@ export class SetupChecksService {
         throw err;
       }
       // the connection of this org on the check's plugin only (render checked it; checked again)
-      if (rt.row.orgId !== p.caller.orgId || rt.row.plugin !== p.plugin) {
+      if (rt.row.orgId !== orgId || rt.row.plugin !== p.plugin) {
         throw new ApiError("channel.not_found", "Channel connection not found");
       }
       return {
@@ -707,7 +833,7 @@ export class SetupChecksService {
       .innerJoin("platform_connector_templates as t", "t.id", "c.platform_template_id")
       .select(["c.auth", "t.template_id"])
       .where("c.id", "=", p.target.id)
-      .where("c.org_id", "=", p.caller.orgId)
+      .where("c.org_id", "=", orgId)
       .where("c.deleted_at", "is", null)
       .where("t.catalog_item_id", "=", p.itemId)
       .where("t.template_id", "=", p.template)
@@ -715,7 +841,7 @@ export class SetupChecksService {
       .executeTakeFirst();
     if (!row) throw new ApiError("connector.not_found", "Connector not found");
     const auth = row.auth as unknown as ConnectorAuth;
-    const m = await this.credentials.checkMaterial(p.caller.orgId, p.target.id);
+    const m = await this.credentials.checkMaterial(orgId, p.target.id);
     const manual = auth.type === "oauth_code" && auth.client === "manual";
     return {
       secrets: m.secrets,
@@ -756,6 +882,23 @@ export class SetupChecksService {
     locale: "en" | "zh",
     signal: AbortSignal,
   ): SetupCheckArgs {
+    if (p.orgId === null) {
+      // the extension's own deployment config, as its ctx.config holds it, in a frozen copy: what
+      // the check gets cannot change the kernel's object or another call's
+      const own = deepFreeze(structuredClone(config));
+      return Object.freeze({
+        orgId: null,
+        config: own,
+        locale,
+        mode: null,
+        target: Object.freeze({
+          kind: "extension-deployment" as const,
+          plugin: p.plugin,
+          config: own,
+        }),
+        signal,
+      });
+    }
     const target: SetupCheckTarget =
       p.target.kind === "channel-connection"
         ? Object.freeze({
@@ -768,10 +911,10 @@ export class SetupChecksService {
             connectorId: p.target.id,
             templateId: m.templateId ?? "",
             clientId: m.clientId ?? null,
-            accountId: p.perAccount ? p.caller.accountId : null,
+            accountId: p.perAccount ? p.accountId : null,
           });
     return Object.freeze({
-      orgId: p.caller.orgId,
+      orgId: p.orgId,
       config,
       locale,
       mode: p.mode,

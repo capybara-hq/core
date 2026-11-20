@@ -1,6 +1,7 @@
 import type { ConnectorSummary } from "../connectors";
 import {
   getAdminSetupGuide,
+  getDeploymentGuides,
   getSetupGuide,
   type SetupGuideQuery,
   type SetupGuideRef,
@@ -31,6 +32,14 @@ export const adminSetupGuideQuery = (ref: SetupGuideRef, locale: "en" | "zh") =>
   defineQuery({
     key: keys.deployment().adminSetupGuide(ref.itemId, ref.guideId, ref.version ?? "", locale),
     fn: () => getAdminSetupGuide(ref, { locale }).then((r) => r.guide),
+    freshness: "deployment",
+  });
+
+/** An extension's platform setup guides (super admins, its page): no org, no target. */
+export const deploymentGuidesQuery = (plugin: string, locale: "en" | "zh") =>
+  defineQuery({
+    key: keys.deployment().deploymentGuides(plugin, locale),
+    fn: () => getDeploymentGuides(plugin, { locale }).then((r) => r.guides),
     freshness: "deployment",
   });
 

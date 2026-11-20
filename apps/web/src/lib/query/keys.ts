@@ -557,6 +557,20 @@ export const keys = {
         version: string,
         locale: string,
       ): readonly unknown[] => [...all, "adminSetupGuide", itemId, guideId, version, locale],
+      /** An extension's platform setup guides (`extension-deployment`), per language. */
+      deploymentGuides: (plugin: string, locale: string): readonly unknown[] => [
+        ...all,
+        "deploymentGuides",
+        plugin,
+        locale,
+      ],
+      /** The cached check states of an extension's platform setup guide. */
+      deploymentChecks: (plugin: string, guideId: string): readonly unknown[] => [
+        ...all,
+        "deploymentChecks",
+        plugin,
+        guideId,
+      ],
       /** The admin overview's numbers (also the prefix of its 待处理 lists). */
       adminOverview: (): readonly unknown[] => [...all, "adminOverview"],
       /**

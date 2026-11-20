@@ -679,7 +679,67 @@ export class PluginGuides {
     this.warnSkipped(row);
     const guide = guidesOf(row.manifest).guides.find((g) => g.id === guideId);
     if (!guide) throw guideNotFound();
-    const docs = await this.documents(row, guide, q.locale ?? "en");
+    return this.renderPlatformDoc(row, guide, q.locale ?? "en");
+  }
+
+  /**
+   * The `extension-deployment` guides of an extension, rendered for the platform (the super
+   * admin's extension page, `GET /admin/extensions/:name/guides`): the guides of that place in the
+   * latest version of the catalog item of the same name, admin audience, no org and no target.
+   * None when the extension has no catalog item; a guide that cannot be rendered is left out and
+   * logged.
+   */
+  async deploymentGuides(
+    plugin: string,
+    q: { locale?: "en" | "zh" | undefined },
+  ): Promise<RenderedSetupGuide[]> {
+    const [row] = await this.latest("name", [plugin]);
+    if (!row) return [];
+    this.warnSkipped(row);
+    const out: RenderedSetupGuide[] = [];
+    for (const guide of guidesOf(row.manifest).guides) {
+      if (guide.place !== "extension-deployment") continue;
+      try {
+        out.push(await this.renderPlatformDoc(row, guide, q.locale ?? "en"));
+      } catch (err) {
+        if (!(err instanceof ApiError)) throw err;
+        this.log.warn("setup guide left out of the list", {
+          plugin,
+          guideId: guide.id,
+          code: err.code,
+        });
+      }
+    }
+    return out;
+  }
+
+  /**
+   * One `extension-deployment` guide of an extension rendered for the platform (the deployment
+   * checks' guide). 404 `catalog.guide_not_found` when the extension's catalog item has no guide
+   * of that place with that id.
+   */
+  async renderForDeployment(
+    plugin: string,
+    guideId: string,
+    q: { locale?: "en" | "zh" | undefined },
+  ): Promise<RenderedSetupGuide> {
+    const [row] = await this.latest("name", [plugin]);
+    const guide =
+      row &&
+      guidesOf(row.manifest).guides.find(
+        (g) => g.id === guideId && g.place === "extension-deployment",
+      );
+    if (!row || !guide) throw guideNotFound();
+    return this.renderPlatformDoc(row, guide, q.locale ?? "en");
+  }
+
+  /** A guide rendered without an org: the admin audience, no target, `orgName` unresolved. */
+  private async renderPlatformDoc(
+    row: ItemRow,
+    guide: PluginSetupGuide,
+    locale: "en" | "zh",
+  ): Promise<RenderedSetupGuide> {
+    const docs = await this.documents(row, guide, locale);
     const resolution = await resolvePlace({
       db: this.db,
       config: this.config.get(),

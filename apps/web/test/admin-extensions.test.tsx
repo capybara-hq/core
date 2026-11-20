@@ -142,10 +142,16 @@ const rowNames = () =>
     .map((r) => r.querySelector(".cb-cell-title-name")?.textContent);
 const tableRow = (name: string) => screen.getByRole("row", { name: new RegExp(name) });
 
-/** The extension list and, for a Sheet, the deployment config of each. */
+/** The extension list and, for a Sheet, the deployment config of each (no platform guides). */
 function listRoutes(extensions: View[]) {
   return stubApi({
     "GET /api/v1/admin/extensions": () => json(200, { extensions, drainSeconds: 30 }),
+    ...Object.fromEntries(
+      extensions.map((v) => [
+        `GET /api/v1/admin/extensions/${String(v.name)}/guides`,
+        () => json(200, { guides: [] }),
+      ]),
+    ),
     ...Object.fromEntries(
       extensions.map((v) => [
         `GET /api/v1/admin/extensions/${String(v.name)}/config`,
@@ -331,6 +337,7 @@ describe("/admin/extensions (ListPage + DataTable by capability, details in a Sh
       });
       const calls = stubApi({
         "GET /api/v1/admin/extensions": () => json(200, { extensions: [view], drainSeconds: 30 }),
+        "GET /api/v1/admin/extensions/openai-compatible/guides": () => json(200, { guides: [] }),
         "GET /api/v1/admin/extensions/openai-compatible/config": () =>
           json(200, {
             plugin: "openai-compatible",
@@ -492,6 +499,7 @@ describe("/admin/extensions (ListPage + DataTable by capability, details in a Sh
       });
       const calls = stubApi({
         "GET /api/v1/admin/extensions": () => json(200, { extensions: [view], drainSeconds: 30 }),
+        "GET /api/v1/admin/extensions/openai-compatible/guides": () => json(200, { guides: [] }),
         "GET /api/v1/admin/extensions/openai-compatible/config": () =>
           json(200, configView(!calls.some((c) => c.method === "DELETE"))),
         "DELETE /api/v1/admin/extensions/openai-compatible/config": () =>
@@ -867,6 +875,7 @@ describe("/admin/extensions (ListPage + DataTable by capability, details in a Sh
   it("the config in the Sheet: a nested object is a subsection, the Sheet the one box (acceptance item AB)", async () => {
     stubApi({
       "GET /api/v1/admin/extensions": () => json(200, { extensions: [plugin()], drainSeconds: 30 }),
+      "GET /api/v1/admin/extensions/demo/guides": () => json(200, { guides: [] }),
       "GET /api/v1/admin/extensions/demo/config": () =>
         json(200, {
           plugin: "demo",
@@ -914,6 +923,7 @@ describe("/admin/extensions (ListPage + DataTable by capability, details in a Sh
     });
     const calls = stubApi({
       "GET /api/v1/admin/extensions": () => json(200, { extensions: [pending], drainSeconds: 30 }),
+      "GET /api/v1/admin/extensions/demo/guides": () => json(200, { guides: [] }),
       "GET /api/v1/admin/extensions/demo/config": () =>
         json(200, {
           plugin: "demo",
@@ -999,6 +1009,7 @@ function detailRoutes(view: View, extra: Record<string, (c: Call) => Response> =
   return stubApi({
     "GET /api/v1/admin/extensions": () => json(200, { extensions: [view], drainSeconds: 45 }),
     // the detail page reads the deployment config on the server too
+    [`GET /api/v1/admin/extensions/${String(view.name)}/guides`]: () => json(200, { guides: [] }),
     [`GET /api/v1/admin/extensions/${String(view.name)}/config`]: () =>
       json(200, {
         plugin: view.name,
@@ -1013,6 +1024,82 @@ function detailRoutes(view: View, extra: Record<string, (c: Call) => Response> =
     ...extra,
   });
 }
+
+describe("platform setup guides on the extension page (place extension-deployment)", () => {
+  const GUIDES = "/api/v1/admin/extensions/demo/guides";
+  const CHECKS = `${GUIDES}/demo-key/checks`;
+  const RUN = `${CHECKS}/demo-key/run`;
+  const guide = {
+    itemId: "i1",
+    plugin: "demo",
+    version: "1.0.0",
+    id: "demo-key",
+    place: "extension-deployment",
+    locale: "en",
+    title: "Connect the push service",
+    modes: [],
+    mode: null,
+    audiences: [],
+    audience: "admin",
+    blocks: [
+      { kind: "markdown", text: "Save the key in the deployment config." },
+      { kind: "check", id: "demo-key", label: "The push service accepts the key" },
+    ],
+    checks: [{ id: "demo-key", label: "The push service accepts the key", source: "plugin" }],
+    unresolved: [],
+    hash: "b".repeat(64),
+    target: null,
+  };
+
+  it("the config tab shows each guide in its card with live rows run against the deployment", async () => {
+    params.current = { name: "demo" };
+    const calls = detailRoutes(plugin(), {
+      [`GET ${GUIDES}`]: () => json(200, { guides: [guide] }),
+      [`GET ${CHECKS}`]: () => json(200, { results: { "demo-key": { status: "not_run" } } }),
+      [`POST ${RUN}`]: () =>
+        json(200, {
+          result: {
+            status: "failing",
+            reason: { en: "The push service refused the key [REDACTED]." },
+            checkedAt: HEARTBEAT,
+          },
+        }),
+    });
+    const { container } = await renderRouteWithCache(detailPage(), lastStubRoutes(), {
+      locale: "en",
+    });
+    const user = userEvent.setup();
+    await user.click(
+      await screen.findByRole("tab", { name: en.admin.extensions.detail.tabs.config }),
+    );
+    expect(await screen.findByText("Connect the push service")).toBeTruthy();
+    expect(screen.getByText(en.setupGuide.deploymentHint)).toBeTruthy();
+    // a row without a fresh result runs once, with no target in the body
+    const row = await screen.findByRole("group", { name: "The push service accepts the key" });
+    await vi.waitFor(() =>
+      expect(within(row).getByText("The push service refused the key [REDACTED].")).toBeTruthy(),
+    );
+    const runs = calls.filter((c) => c.method === "POST" && c.url === RUN);
+    expect(runs.map(bodyOf)).toEqual([{}]);
+    // the guides and the states came with the page (no browser read of them)
+    expect(calls.filter((c) => c.method === "GET" && c.url.startsWith(GUIDES))).toEqual([]);
+    // no 让智能体协助 (the org's setup operations do not reach a platform guide)
+    expect(screen.queryByRole("button", { name: en.setupGuide.askAgent.action })).toBeNull();
+    expect(findNestedBoxes(container)).toEqual([]);
+  });
+
+  it("an extension without platform guides shows only its config", async () => {
+    params.current = { name: "demo" };
+    detailRoutes(plugin(), { [`GET ${GUIDES}`]: () => json(200, { guides: [] }) });
+    await renderRouteWithCache(detailPage(), lastStubRoutes(), { locale: "en" });
+    const user = userEvent.setup();
+    await user.click(
+      await screen.findByRole("tab", { name: en.admin.extensions.detail.tabs.config }),
+    );
+    expect(await screen.findByText(en.admin.extensions.config.none)).toBeTruthy();
+    expect(screen.queryByText(en.setupGuide.title)).toBeNull();
+  });
+});
 
 describe("plugin icons on the admin extension pages (maintainer decision 2026-11-08)", () => {
   const ICON = "/api/v1/admin/catalog/items/i1/icon?v=1.0.0";
@@ -1371,6 +1458,7 @@ describe("/admin/extensions/[name] (DetailPage)", () => {
       const p = msgs[locale].admin.extensions;
       const sf = msgs[locale].configForm;
       const calls = detailRoutes(plugin(), {
+        "GET /api/v1/admin/extensions/demo/guides": () => json(200, { guides: [] }),
         "GET /api/v1/admin/extensions/demo/config": () =>
           json(200, {
             plugin: "demo",
@@ -1470,6 +1558,7 @@ describe("/admin/extensions/[name] (DetailPage)", () => {
       issues: [],
     };
     const calls = detailRoutes(plugin(), {
+      "GET /api/v1/admin/extensions/demo/guides": () => json(200, { guides: [] }),
       "GET /api/v1/admin/extensions/demo/config": () => json(200, view),
       "PUT /api/v1/admin/extensions/demo/config": () => json(200, view),
     });
@@ -1501,6 +1590,7 @@ describe("/admin/extensions/[name] (DetailPage)", () => {
   it("pending config without hints: opens on the form, lists what is missing; endpoints as a repeater, keys as a record", async () => {
     const p = msgs.en.admin.extensions;
     const calls = detailRoutes(plugin({ status: "pending_config", configValid: false }), {
+      "GET /api/v1/admin/extensions/demo/guides": () => json(200, { guides: [] }),
       "GET /api/v1/admin/extensions/demo/config": () =>
         json(200, {
           plugin: "demo",
@@ -1644,6 +1734,7 @@ describe("two-level extension config on the admin side", () => {
   it.each(LOCALES)("the config tab tags each field with the org level (%s)", async (locale) => {
     const m = msgs[locale];
     detailRoutes(plugin(), {
+      "GET /api/v1/admin/extensions/demo/guides": () => json(200, { guides: [] }),
       "GET /api/v1/admin/extensions/demo/config": () => json(200, LAYERED),
       "GET /api/v1/admin/extensions/demo/org-overrides": () => json(200, { overrides: [] }),
     });
@@ -1660,6 +1751,7 @@ describe("two-level extension config on the admin side", () => {
   it("the config tab lists the orgs that hold a copy: when, what differs, secrets by state, nothing to edit", async () => {
     const m = en.admin.extensions.orgCopies;
     detailRoutes(plugin(), {
+      "GET /api/v1/admin/extensions/demo/guides": () => json(200, { guides: [] }),
       "GET /api/v1/admin/extensions/demo/config": () => json(200, LAYERED),
       "GET /api/v1/admin/extensions/demo/org-overrides": () => json(200, COPIES),
     });
@@ -1678,6 +1770,7 @@ describe("two-level extension config on the admin side", () => {
 
   it("no org has a copy: says so", async () => {
     detailRoutes(plugin(), {
+      "GET /api/v1/admin/extensions/demo/guides": () => json(200, { guides: [] }),
       "GET /api/v1/admin/extensions/demo/config": () => json(200, LAYERED),
       "GET /api/v1/admin/extensions/demo/org-overrides": () => json(200, { overrides: [] }),
     });

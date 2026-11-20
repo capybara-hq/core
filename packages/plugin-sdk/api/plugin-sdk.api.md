@@ -3830,14 +3830,14 @@ export const SETUP_GUIDE_LIMITS: {
 export const SETUP_GUIDE_PLACE_INFO: Readonly<Record<SetupGuidePlace, SetupGuidePlaceInfo>>;
 
 // @public
-export const SETUP_GUIDE_PLACES: readonly ["channel-connection", "connector-template"];
+export const SETUP_GUIDE_PLACES: readonly ["channel-connection", "connector-template", "extension-deployment"];
 
 // @public
 export interface SetupCheckArgs {
     readonly config: unknown;
     readonly locale: "en" | "zh";
     readonly mode: string | null;
-    readonly orgId: string;
+    readonly orgId: string | null;
     readonly signal: AbortSignal;
     readonly target: SetupCheckTarget;
 }
@@ -3869,6 +3869,10 @@ export type SetupCheckTarget = {
     readonly templateId: string;
     readonly clientId: string | null;
     readonly accountId: string | null;
+} | {
+    readonly kind: "extension-deployment";
+    readonly plugin: string;
+    readonly config: unknown;
 };
 
 // @public

@@ -10,6 +10,7 @@ import {
 import { ExtensionInstalls, type PackageReview } from "../extensions/installs.js";
 import { type OrgOverrideSummary, OrgOverrides } from "../extensions/org-overrides.js";
 import type { AdminExtensionView } from "../extensions/permission-view.js";
+import { PluginGuides, type RenderedSetupGuide } from "../extensions/plugin-guides.js";
 import {
   CurrentPrincipal,
   type Principal,
@@ -18,8 +19,18 @@ import {
   SuperAdmin,
 } from "../identity/principal.js";
 import { KernelConfigService } from "../infra/config/kernel-config.service.js";
+import { Throttled } from "../infra/throttler/throttler.guard.js";
 import { createZodDto } from "../infra/validation/create-zod-dto.js";
-import { ZBody, ZParam } from "../infra/validation/zod-params.js";
+import { ZBody, ZParam, ZQuery } from "../infra/validation/zod-params.js";
+import type { SetupCheckState } from "../setup/setup-check-registry.js";
+import {
+  DeploymentCheckPathParams,
+  DeploymentCheckRunBody,
+  DeploymentGuidePathParams,
+  DeploymentGuidesPathParams,
+  DeploymentGuidesQuery,
+} from "../setup/setup-checks.schemas.js";
+import { SetupChecksService } from "../setup/setup-checks.service.js";
 import { AdminExtensionConfigBody } from "./extensions.schemas.js";
 
 const ApproveSchema = z.object({
@@ -48,6 +59,26 @@ class ExtensionNpmImportBody extends createZodDto(NpmSchema, "ExtensionNpmImport
 /** The `:name` route parameter of the org-overrides list (decision R20). */
 const NameParams = z.object({ name: z.string().min(1).max(64) });
 class AdminExtensionNameParamsDto extends createZodDto(NameParams, "AdminExtensionNameParams") {}
+class DeploymentGuidesParamsDto extends createZodDto(
+  DeploymentGuidesPathParams,
+  "DeploymentGuidesPathParams",
+) {}
+class DeploymentGuidesQueryDto extends createZodDto(
+  DeploymentGuidesQuery,
+  "DeploymentGuidesQuery",
+) {}
+class DeploymentGuideParamsDto extends createZodDto(
+  DeploymentGuidePathParams,
+  "DeploymentGuidePathParams",
+) {}
+class DeploymentCheckParamsDto extends createZodDto(
+  DeploymentCheckPathParams,
+  "DeploymentCheckPathParams",
+) {}
+class DeploymentCheckRunBodyDto extends createZodDto(
+  DeploymentCheckRunBody,
+  "DeploymentCheckRunBody",
+) {}
 
 /**
  * Deployment-level extension management (`/api/v1/admin/extensions/*`, super admins): package
@@ -68,6 +99,8 @@ export class AdminExtensionsController {
     // 字段名不能与路由方法同名（如 `config`）：实例字段会遮住原型上的处理函数
     @Inject(KernelConfigService) private readonly kernelConfig: KernelConfigService,
     @Inject(OrgOverrides) private readonly orgOverrides: OrgOverrides,
+    @Inject(PluginGuides) private readonly pluginGuides: PluginGuides,
+    @Inject(SetupChecksService) private readonly setupChecks: SetupChecksService,
   ) {}
 
   /**
@@ -108,6 +141,61 @@ export class AdminExtensionsController {
     @ZParam(AdminExtensionNameParamsDto) { name }: z.infer<typeof NameParams>,
   ): Promise<{ overrides: OrgOverrideSummary[] }> {
     return { overrides: await this.orgOverrides.listForPlugin(name) };
+  }
+
+  /**
+   * The extension's `extension-deployment` setup guides (setup place of the push notifications
+   * plan, task C8), rendered for the platform in `locale`: the guides of that place in the latest
+   * version of its catalog item, admin audience, no org and no target. Empty without a catalog item
+   * or such a guide. Guide text never carries a config value.
+   */
+  @Get(":name/guides")
+  async guides(
+    @ZParam(DeploymentGuidesParamsDto) { name }: z.infer<typeof DeploymentGuidesPathParams>,
+    @ZQuery(DeploymentGuidesQueryDto) q: z.infer<typeof DeploymentGuidesQuery>,
+  ): Promise<{ guides: RenderedSetupGuide[] }> {
+    return { guides: await this.pluginGuides.deploymentGuides(name, q) };
+  }
+
+  /**
+   * The cached state of each check of a deployment guide (shared by every super admin); never
+   * runs anything. Only the fixed fields of {@link SetupCheckState} leave the kernel.
+   */
+  @Get(":name/guides/:guideId/checks")
+  async guideChecks(
+    @CurrentPrincipal() principal: Principal,
+    @ZParam(DeploymentGuideParamsDto) params: z.infer<typeof DeploymentGuidePathParams>,
+  ): Promise<{ results: Record<string, SetupCheckState> }> {
+    const p = requireUser(principal);
+    return {
+      results: await this.setupChecks.deploymentStates(p.account.id, params.name, params.guideId),
+    };
+  }
+
+  /**
+   * Runs one check of a deployment guide against the extension's platform deployment config
+   * unless a fresh result is cached (`force`: rerun, once per 10 s per check). The result is
+   * redacted by the config's secret values. 30 runs a minute per account (429 `rate_limited`),
+   * shared with the org check routes and the `Platform` tool.
+   */
+  @Post(":name/guides/:guideId/checks/:checkId/run")
+  @HttpCode(200)
+  @Throttled("setup-check")
+  async runGuideCheck(
+    @CurrentPrincipal() principal: Principal,
+    @ZParam(DeploymentCheckParamsDto) params: z.infer<typeof DeploymentCheckPathParams>,
+    @ZBody(DeploymentCheckRunBodyDto) body: z.infer<typeof DeploymentCheckRunBody>,
+  ): Promise<{ result: SetupCheckState }> {
+    const p = requireUser(principal);
+    return {
+      result: await this.setupChecks.deploymentRun(
+        p.account.id,
+        params.name,
+        params.guideId,
+        params.checkId,
+        body,
+      ),
+    };
   }
 
   /**

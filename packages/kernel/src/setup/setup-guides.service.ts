@@ -89,6 +89,8 @@ export const setupWebPath = {
   /** A member's connector section: the connector's row on their connections page (§9.3). */
   memberConnections: () => "/account/connections",
   template: (itemId: string) => `/connectors/install?template=${enc(itemId)}`,
+  /** The super admin's extension page (`extension-deployment` guides). */
+  extension: (plugin: string) => `/admin/extensions/${enc(plugin)}`,
 };
 
 /**
@@ -99,6 +101,7 @@ function webPathOf(g: RenderedSetupGuide): string {
   if (g.audience === "member") return setupWebPath.memberConnections();
   if (g.target?.kind === "channel-connection") return setupWebPath.connection(g.target.id);
   if (g.target?.kind === "connector") return setupWebPath.connector(g.target.id);
+  if (g.place === "extension-deployment") return setupWebPath.extension(g.plugin);
   return g.place === "channel-connection"
     ? setupWebPath.newConnection()
     : setupWebPath.template(g.itemId);

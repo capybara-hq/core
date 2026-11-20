@@ -13,6 +13,7 @@ import {
   ExtensionDeploymentConfigService,
 } from "../../extensions/deployment-config.js";
 import type { AdminExtensionView } from "../../extensions/permission-view.js";
+import { PluginGuides } from "../../extensions/plugin-guides.js";
 import {
   SINGLE_PROVIDER_ENABLED,
   SINGLE_PROVIDER_REQUIRED,
@@ -21,6 +22,14 @@ import {
 import { unavailableReason } from "../../extensions/unavailable.js";
 import { KernelConfigService } from "../../infra/config/kernel-config.service.js";
 import { KernelDb } from "../../infra/database/kernel-db.js";
+import {
+  DeploymentCheckPathParams,
+  DeploymentCheckRunBody,
+  DeploymentGuidePathParams,
+  DeploymentGuidesPathParams,
+  DeploymentGuidesQuery,
+} from "../../setup/setup-checks.schemas.js";
+import { SetupChecksService } from "../../setup/setup-checks.service.js";
 import { defineOperation, type PrecheckResult } from "../operation.js";
 import {
   type PersonFieldTarget,
@@ -173,6 +182,9 @@ export class ExtensionsAdminOperations implements OnModuleInit {
     @Inject(CatalogService) private readonly catalog: CatalogService,
     @Inject(ExtensionDeploymentConfigService)
     private readonly deploymentConfigs: ExtensionDeploymentConfigService,
+    @Inject(PluginGuides) private readonly guides: Pick<PluginGuides, "deploymentGuides">,
+    @Inject(SetupChecksService)
+    private readonly checks: Pick<SetupChecksService, "deploymentStates" | "deploymentRun">,
   ) {}
 
   /** The view of `name` for a precheck, or the refusal (unknown, startup-declared). */
@@ -582,6 +594,97 @@ export class ExtensionsAdminOperations implements OnModuleInit {
             viaAgent("extensions.platform-clear-config", ctx),
           );
           return { config: view };
+        },
+      }),
+      defineOperation({
+        id: "extensions.platform-guides",
+        description:
+          "Read an extension's platform setup guides (super admin): the guides it ships for its deployment config (for example a push provider's credentials), rendered with the steps and the checks as check rows (run them with extensions.platform-check). Secrets are never in a guide: the person types each one into the deployment config form in the admin console (Extensions → the extension), or on the confirmation card of extensions.platform-set-config. Empty when the extension ships none.",
+        input: DeploymentGuidesPathParams.extend(DeploymentGuidesQuery.shape).strict(),
+        example: { name: "push-apns" },
+        authz: { superAdmin: true },
+        mirrors: ["GET /api/v1/admin/extensions/:name/guides"],
+        confirm: "read",
+        errors: [
+          {
+            code: "extension.not_found",
+            next: "Check the extension name with extensions.platform-list.",
+          },
+        ],
+        run: async (input, ctx) => {
+          await assertExtensionNotOtherOrgs(this.kdb.db, input.name, ctx.orgId);
+          return { guides: await this.guides.deploymentGuides(input.name, input) };
+        },
+      }),
+      defineOperation({
+        id: "extensions.platform-check-status",
+        description:
+          "Read the cached state of every check of an extension's platform setup guide, by check id: ok, failing, unknown, running or not_run, with the reason and fix to show the person. Runs nothing; run a check with extensions.platform-check.",
+        input: DeploymentGuidePathParams.strict(),
+        example: { name: "push-apns", guideId: "apns-key" },
+        authz: { superAdmin: true },
+        mirrors: ["GET /api/v1/admin/extensions/:name/guides/:guideId/checks"],
+        confirm: "read",
+        errors: [
+          {
+            code: "extension.not_found",
+            next: "Check the extension name with extensions.platform-list.",
+          },
+          {
+            code: "catalog.guide_not_found",
+            next: "The extension has no platform setup guide with that id; list them with extensions.platform-guides.",
+          },
+        ],
+        run: async (input, ctx) => {
+          await assertExtensionNotOtherOrgs(this.kdb.db, input.name, ctx.orgId);
+          return {
+            results: await this.checks.deploymentStates(
+              ctx.actorAccountId,
+              input.name,
+              input.guideId,
+            ),
+          };
+        },
+      }),
+      defineOperation({
+        id: "extensions.platform-check",
+        description:
+          "Run one check of an extension's platform setup guide against its deployment config and return its state: ok, failing (with a reason and a fix to explain), unknown, or running (try again in a moment). A fresh cached result is returned as is; force reruns it, at most once per 10 seconds per check. A check only reads, and its result never carries a secret; run it after the person says they saved the config.",
+        input: DeploymentCheckPathParams.extend(DeploymentCheckRunBody.shape).strict(),
+        example: { name: "push-apns", guideId: "apns-key", checkId: "key-works" },
+        authz: { superAdmin: true },
+        mirrors: ["POST /api/v1/admin/extensions/:name/guides/:guideId/checks/:checkId/run"],
+        confirm: "read",
+        errors: [
+          {
+            code: "extension.not_found",
+            next: "Check the extension name with extensions.platform-list.",
+          },
+          {
+            code: "catalog.guide_not_found",
+            next: "The extension has no platform setup guide with that id; list them with extensions.platform-guides.",
+          },
+          {
+            code: "catalog.check_not_found",
+            next: "That check is not in the guide; read the check ids with extensions.platform-check-status.",
+          },
+          {
+            code: "rate_limited",
+            next: "This person ran 30 checks in the last minute; wait a minute before running another, and read the cached states with extensions.platform-check-status meanwhile.",
+          },
+        ],
+        run: async (input, ctx) => {
+          await assertExtensionNotOtherOrgs(this.kdb.db, input.name, ctx.orgId);
+          const { name, guideId, checkId, ...body } = input;
+          return {
+            result: await this.checks.deploymentRun(
+              ctx.actorAccountId,
+              name,
+              guideId,
+              checkId,
+              body,
+            ),
+          };
         },
       }),
     ]);
