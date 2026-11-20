@@ -116,7 +116,9 @@ audit rows).
   `responseContentType` from the row) for an upload, or 302 to the SSO `https:` URL; 404 when the
   person has no image avatar. `cache-control: private, max-age=60`. **Who may read:** the account
   itself, a super admin, or anyone who shares an active membership in some org with that account;
-  everyone else gets 404 (no existence leak). Not reachable with embed tokens.
+  everyone else gets 404 (no existence leak). Not reachable with embed tokens. A disabled account's
+  avatar stays readable by its co-members (it still appears in shared history); leaving the org
+  makes it 404, which matches "已离开的成员" (implementation review, 2026-11-20).
 - **Every person shape gains `avatarUrl: string | null`**: `/api/v1/accounts/<id>/avatar?v=<ver>`
   when the person has an image avatar (own or SSO), else `null`. `<ver>` is a short hash of the
   avatar value (upload id or SSO URL), so a change busts browser caches. `null` means "draw the
@@ -143,9 +145,10 @@ audit rows).
   platform-web-parity line later turns `/me` writes into operations, this route goes with them.
 - The admin route `PATCH /admin/accounts/:id` keeps changing names; it does not set avatars (my
   call: a super admin removing an offensive image is a follow-up if ever needed).
-- Upload cleanup: the hourly attachment cleanup sweep (`@LockedCron`, `WorkerModule`) also deletes
-  expired, unbound `account_avatar_uploads` rows and their objects, the same way it does for
-  attachments. Accounts are never deleted today (only disabled); the FK cascade covers the rows if
+- Upload cleanup: an hourly `AccountAvatarCleanupJob` (`@LockedCron`, `WorkerModule`) deletes
+  expired, unbound `account_avatar_uploads` rows and their objects the way the attachment sweep
+  does: objects are deleted outside any transaction, then the row `WHERE expires_at < now()`; an
+  expired upload is never revived. Accounts are never deleted today (only disabled); the FK cascade covers the rows if
   that ever changes, and no outbox job is added now.
 - Errors: uploads reuse the agent avatar's `attachment.*` codes; the one new code is
   `account.display_name_too_long`.
@@ -186,10 +189,10 @@ New keys in zh and en for the page, its actions, the SSO line, the size / type e
 ## 6. Conversation speaker
 
 A web conversation belongs to one person, so the user bubbles show no sender today. Under P3 the
-user bubble shows its **author's avatar (24)** at its side (my call) in the conversation page and
-in the trajectory viewer; the trajectory viewer also shows the author's name, since its reader is
-usually not the author. These are the only two views that render bubbles (shares are snapshots of
-files, and the public share page is out, §3). The author is
+user bubble shows its **author's avatar (24)** at its side (my call) on the conversation page, the
+only view that renders user bubbles (the trajectory viewer renders runs and steps, not messages;
+shares are snapshots of files, and the public share page is out, §3). In a shared conversation the
+author's name shows too when the author is not the viewer. The author is
 `user_message.payload.authorAccountId`; the conversation and trajectory responses carry the person
 shape for it (§5.3). Messages of a parent
 agent keep their current sender treatment. Anonymous-guest IM conversations show the guest initial
