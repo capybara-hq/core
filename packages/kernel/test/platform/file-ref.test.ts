@@ -13,6 +13,9 @@ import {
   FileRefSchema,
   THUMBNAIL_MAX_CHARS,
   THUMBNAIL_MAX_EDGE,
+  THUMBNAIL_MAX_INPUT_BYTES,
+  THUMBNAIL_MAX_INPUT_PIXELS,
+  thumbnailOf,
 } from "../../src/platform/file-ref.js";
 import { defineOperation, type PlatformOperation } from "../../src/platform/operation.js";
 import { PlatformOperations } from "../../src/platform/registry.js";
@@ -382,5 +385,30 @@ describe("Platform file references", () => {
     expect(result?.isError).toBe(true);
     expect(result?.content).toContain(CHANGED_TEXT);
     expect(seen.slice(before)).toEqual([]);
+  });
+});
+
+describe("thumbnails stay bounded", () => {
+  it("makes none of an image over the byte limit or decoding to more than the pixel limit", async () => {
+    const small = await sharp({
+      create: { width: 64, height: 64, channels: 3, background: { r: 9, g: 9, b: 9 } },
+    })
+      .png()
+      .toBuffer();
+    expect(await thumbnailOf({ contentType: "image/png", bytes: new Uint8Array(small) })).toMatch(
+      /^data:image\/webp;base64,/,
+    );
+    const heavy = new Uint8Array(THUMBNAIL_MAX_INPUT_BYTES + 1);
+    heavy.set(small);
+    expect(await thumbnailOf({ contentType: "image/png", bytes: heavy })).toBeNull();
+    // a solid image compresses to a few KiB but decodes past the pixel limit
+    const side = Math.ceil(Math.sqrt(THUMBNAIL_MAX_INPUT_PIXELS)) + 1;
+    const bomb = await sharp({
+      create: { width: side, height: side, channels: 3, background: { r: 0, g: 0, b: 0 } },
+    })
+      .png({ compressionLevel: 9 })
+      .toBuffer();
+    expect(bomb.byteLength).toBeLessThan(THUMBNAIL_MAX_INPUT_BYTES);
+    expect(await thumbnailOf({ contentType: "image/png", bytes: new Uint8Array(bomb) })).toBeNull();
   });
 });

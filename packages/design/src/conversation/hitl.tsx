@@ -384,8 +384,14 @@ export function ApprovalBlock(p: ApprovalBlockProps): JSX.Element {
 /** Only a WebP data URL is shown as the thumbnail (the kernel makes nothing else). */
 const THUMBNAIL_URL = /^data:image\/webp;base64,[A-Za-z0-9+/=]+$/;
 
-/** The file an approval takes: its thumbnail (an image), name, size and the sha256's first 12 hex. */
-function ApprovalFileRow({ file }: { file: NonNullable<ApprovalBlockProps["file"]> }): JSX.Element {
+/** What {@link ApprovalFileRow} shows of the file an approval takes. */
+export type ApprovalFile = NonNullable<ApprovalBlockProps["file"]>;
+
+/**
+ * The file an approval takes: its thumbnail (an image), name, size and the sha256's first 12 hex.
+ * The approval block draws it; the inbox's approval detail shows the same row.
+ */
+export function ApprovalFileRow({ file }: { file: ApprovalFile }): JSX.Element {
   const t = useDesignT();
   const thumb = file.thumbnail !== undefined && THUMBNAIL_URL.test(file.thumbnail);
   return (

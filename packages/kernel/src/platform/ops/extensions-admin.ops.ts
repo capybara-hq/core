@@ -284,7 +284,7 @@ export class ExtensionsAdminOperations implements OnModuleInit {
       defineOperation({
         id: "extensions.upload-package",
         description:
-          "Store an extension package in the deployment's package store (super admin): a .tgz extension package of this conversation, e.g. one you packed in the sandbox and delivered with Deliver, passed as file: { fileId }; at most the deployment's package limit. Returns its review: name, version, sha256, the permissions it asks for and those added or removed against the approved ones, migration warnings. Nothing is installed or run. No web page shows a stored package: the person installs it with the capybara CLI (`capybara extensions install <file.tgz>`, which shows the permission review and asks them to confirm) or with the super admin API (POST /admin/extensions/:name/install).",
+          "Store an extension package in the deployment's package store (super admin): a .tgz extension package of this conversation, e.g. one you packed in the sandbox and delivered with Deliver, passed as file: { fileId }; at most the deployment's package limit. Returns its review: name, version, sha256, the permissions it asks for and those added or removed against the approved ones, migration warnings. Nothing is installed or run. No web page shows a stored package: the person installs the stored package with the super admin API (`POST /api/v1/admin/extensions/:name/install` with `{ sha256 }` from the review), or with the capybara CLI (`capybara extensions install <file.tgz>`, which shows the permission review and asks them to confirm) after downloading the .tgz from this conversation.",
         input: z.object({ file: FileRefSchema }).strict(),
         example: { file: { fileId: "0b9f2c4e-1d3a-4c55-9e0a-7a2f6d1c8b11" } },
         authz: { superAdmin: true },
@@ -319,8 +319,8 @@ export class ExtensionsAdminOperations implements OnModuleInit {
         summary: (_i, ctx) => {
           const f = named(ctx.file?.name ?? "?");
           return {
-            zh: `把扩展包「${f}」存入平台的包存储（安装在网页上进行）`,
-            en: `Store the extension package "${f}" in the platform's package store (installed on the web)`,
+            zh: `把扩展包「${f}」存入平台的包存储（尚未安装）`,
+            en: `Store the extension package "${f}" in the platform's package store (nothing is installed yet)`,
           };
         },
         run: async (_input, ctx) => {
@@ -339,11 +339,11 @@ export class ExtensionsAdminOperations implements OnModuleInit {
               removedPermissions: r.removed,
               warnings: r.warnings,
             },
-            next: "Nothing is installed. Tell the person to install it with `capybara extensions install <file.tgz>` (it shows the permission review and asks for confirmation) or the super admin API POST /admin/extensions/:name/install; the web has no page for it.",
+            next: `Nothing is installed yet; the web has no page for a stored package. Tell the person to install it with the super admin API: POST /api/v1/admin/extensions/${r.name}/install with { "sha256": "${r.sha256}" }; or with \`capybara extensions install <file.tgz>\` (it shows the permission review and asks for confirmation) after downloading the .tgz from this conversation.`,
           };
         },
         noHandoff:
-          "No web page shows a stored package; the person confirms its permissions with the capybara CLI or the super admin API.",
+          "No web page shows a stored package; the person installs it and confirms its permissions with the super admin API or the capybara CLI.",
       }),
       defineOperation({
         id: "extensions.platform-get",

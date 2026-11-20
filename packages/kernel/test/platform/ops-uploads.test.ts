@@ -278,11 +278,15 @@ describe("acceptance: files instead of uploads", () => {
         },
       ],
     );
-    const { file, result } = await confirmed(conv, 2, "skills.create-from-file", {
+    const { file, summary, result } = await confirmed(conv, 2, "skills.create-from-file", {
       file: { fileId: delivered?.artifactId },
     });
     expect(result?.isError, result?.content).toBe(false);
     expect(file?.name).toBe("weekly-report.zip");
+    // the card names the skill SKILL.md declares and that it is a new one
+    expect(summary?.en).toBe(
+      'Create org skill "weekly-report" from the package "weekly-report.zip"',
+    );
     const list = await root({ method: "GET", url: `/api/v1/orgs/${orgId}/skills` });
     const skills = (list.json() as { skills: { name: string; currentVersion: number }[] }).skills;
     expect(skills.find((s) => s.name === "weekly-report")).toMatchObject({ currentVersion: 1 });
@@ -354,6 +358,15 @@ describe("the other upload operations on fixture packages", () => {
       "triage",
     );
     await viaAgent("skill.created", "agents.upload-skill");
+    // a second card for the same name says it adds a version
+    const o = op("agents.upload-skill");
+    const again = await o.summary?.(
+      o.input.parse({ agentId, file: { fileId: randomUUID() } }),
+      ctxOf(fileOf("triage.zip", "application/zip", skillZip("triage"))),
+    );
+    expect(again?.en).toBe(
+      'Add a new version of skill "triage" of agent "Builder" from the package "triage.zip"',
+    );
   });
 
   it("agents.upload-skill is refused in a sub-agent conversation, as agents.register-skill", async () => {
@@ -437,6 +450,9 @@ describe("the other upload operations on fixture packages", () => {
       fileOf("greeter.tgz", "application/octet-stream", pkg),
     )) as { review: { name: string; sha256: string }; next: string };
     expect(out.review).toMatchObject({ name: "greeter", sha256: sha256(pkg) });
+    expect(out.next).toContain(
+      `POST /api/v1/admin/extensions/greeter/install with { "sha256": "${sha256(pkg)}" }`,
+    );
     expect(out.next).toContain("capybara extensions install");
     const row = await db
       .selectFrom("extension_packages")

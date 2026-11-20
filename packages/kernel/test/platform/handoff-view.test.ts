@@ -325,11 +325,17 @@ describe("handoffs of import and upload operations", () => {
     expect(handoffOf("extensions.platform-enable", { extension: { state: "enabled" } })).toBeNull();
   });
 
-  it("skills.get-change links the inbox only while the change is pending", () => {
-    expect(handoffOf("skills.get-change", { skillChange: { state: "pending" } })).toMatchObject({
-      target: { type: "link", url: "/inbox" },
-    });
-    expect(handoffOf("skills.get-change", { skillChange: { state: "approved" } })).toBeNull();
+  it("skills.get-change links the inbox only for an org admin while the change is pending", () => {
+    expect(
+      handoffOf("skills.get-change", { skillChange: { state: "pending", canDecide: true } }),
+    ).toMatchObject({ target: { type: "link", url: "/inbox" } });
+    // the requester reads it but cannot decide it
+    expect(
+      handoffOf("skills.get-change", { skillChange: { state: "pending", canDecide: false } }),
+    ).toBeNull();
+    expect(
+      handoffOf("skills.get-change", { skillChange: { state: "approved", canDecide: false } }),
+    ).toBeNull();
   });
 
   it.each([
@@ -363,11 +369,24 @@ describe("handoffs of import and upload operations", () => {
     });
   });
 
-  it("extensions.upload-package has no card and names the CLI install", () => {
+  it("extensions.upload-package has no card and names the API install first, then the CLI", () => {
     const o = op("extensions.upload-package");
     expect(o.handoff).toBeUndefined();
-    expect(o.description).toContain("capybara extensions install");
+    expect(o.description).toContain("POST /api/v1/admin/extensions/:name/install");
+    expect(o.description.indexOf("/install")).toBeLessThan(
+      o.description.indexOf("capybara extensions install"),
+    );
+    expect(o.description).toContain("after downloading the .tgz from this conversation");
     expect(o.description).not.toContain("admin console");
+  });
+
+  it('a staged org upload without a plugin name gets a generic title, never "plugin ?"', () => {
+    for (const id of ["plugins.upload", "plugins.upload-review"]) {
+      expect(handoffOf(id, { stagingId: "s-1" })?.title).toEqual({
+        zh: "确认插件的上传",
+        en: "Confirm the plugin upload",
+      });
+    }
   });
 
   it("a staged import without a plugin name gets a generic title", () => {

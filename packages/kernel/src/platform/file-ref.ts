@@ -84,6 +84,13 @@ export const THUMBNAIL_MAX_EDGE = 160;
 const THUMBNAIL_QUALITY = 70;
 export const THUMBNAIL_MAX_CHARS = 24 * 1024;
 
+/**
+ * The most an image may weigh, and the most pixels it may decode to, for a thumbnail: a card is
+ * drawn at the policy step of every call, so a large or decompression-bomb image gets none.
+ */
+export const THUMBNAIL_MAX_INPUT_BYTES = 10 * 1024 * 1024;
+export const THUMBNAIL_MAX_INPUT_PIXELS = 40_000_000;
+
 /** Image types a thumbnail is made of (an SVG is never rendered by the kernel). */
 const THUMBNAIL_TYPES = new Set(["image/png", "image/jpeg", "image/webp", "image/gif"]);
 
@@ -115,12 +122,18 @@ export async function fileCardDetail(file: ResolvedFile): Promise<FileCardDetail
 
 /**
  * A 160 px (longest edge) WebP q70 data URL of an image, or null: not an image type the kernel
- * decodes, bytes that fail to decode, or a data URL over {@link THUMBNAIL_MAX_CHARS} (ruling R9).
+ * decodes, bytes over {@link THUMBNAIL_MAX_INPUT_BYTES} or decoding to more than
+ * {@link THUMBNAIL_MAX_INPUT_PIXELS}, bytes that fail to decode, or a data URL over
+ * {@link THUMBNAIL_MAX_CHARS} (ruling R9).
  */
 export async function thumbnailOf(file: Pick<ResolvedFile, "contentType" | "bytes">) {
   if (!THUMBNAIL_TYPES.has(file.contentType)) return null;
+  if (file.bytes.byteLength > THUMBNAIL_MAX_INPUT_BYTES) return null;
   try {
-    const out = await sharp(file.bytes, { failOn: "error" })
+    const out = await sharp(file.bytes, {
+      failOn: "error",
+      limitInputPixels: THUMBNAIL_MAX_INPUT_PIXELS,
+    })
       .autoOrient()
       .resize({
         width: THUMBNAIL_MAX_EDGE,
@@ -154,16 +167,6 @@ export class FileRefs {
   async resolve(ref: FileRef, limits: FileLimits, ctx: FileRefContext): Promise<ResolvedFile> {
     const got = await this.conversationFile(ref.fileId, limits, ctx);
     const contentType = normalizeContentType(got.contentType);
-    const types = limits.contentTypes;
-    if (types !== undefined) {
-      if (!types.includes(contentType)) throw new ToolError(fileTypeText(contentType, types));
-      // the bytes must be what the type says (the upload routes sniff the same way)
-      if (!sniffMatches(contentType, got.bytes.subarray(0, 4096))) {
-        throw new ToolError(
-          `The file's bytes are not ${contentType}; this operation takes ${types.join(", ")}.`,
-        );
-      }
-    }
     return {
       name: got.name,
       contentType,
@@ -201,7 +204,15 @@ export class FileRefs {
     }
     const bytes = await file.open({ maxBytes: limits.maxBytes + 1 });
     if (bytes.byteLength > limits.maxBytes) {
+      await file.discard();
       throw new ToolError(fileTooLargeText(bytes.byteLength, limits.maxBytes));
+    }
+    // the bytes must be what the type says (the upload routes sniff the same way)
+    if (types !== undefined && !sniffMatches(declared, bytes.subarray(0, 4096))) {
+      await file.discard();
+      throw new ToolError(
+        `The file's bytes are not ${declared}; this operation takes ${types.join(", ")}.`,
+      );
     }
     return { name: file.name, contentType: file.contentType, bytes };
   }

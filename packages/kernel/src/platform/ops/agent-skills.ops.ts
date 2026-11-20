@@ -34,7 +34,7 @@ import {
 } from "../operation.js";
 import { PlatformOperations } from "../registry.js";
 import { precheckBy, viaAgent } from "./errors.js";
-import { named, orElse } from "./summary.js";
+import { named, orElse, skillPackageName } from "./summary.js";
 
 const AgentId = AgentSkillsListParams.shape.agentId;
 const DESCRIPTION_MAX = 200;
@@ -51,6 +51,11 @@ const subagentRefusal = () =>
   new ApiError(
     "skill.subagent_register",
     "A sub-agent cannot register skills on its agent; only the agent the person talks with can.",
+  );
+const subagentUploadRefusal = () =>
+  new ApiError(
+    "skill.subagent_register",
+    "A sub-agent cannot add skills to an agent; only the agent the person talks with can.",
   );
 const subagentShareRefusal = () =>
   new ApiError(
@@ -151,7 +156,7 @@ export class AgentSkillsOperations implements OnModuleInit {
   /** The refusals of `agents.upload-skill`: a sub-agent conversation, then an actor not the owner. */
   private async uploadCheck(agentId: string, ctx: OperationContext): Promise<void> {
     if ((await rootConversationOf(this.db.db, ctx.conversationId)) !== ctx.conversationId) {
-      throw subagentRefusal();
+      throw subagentUploadRefusal();
     }
     await this.agentSkills.assertOwner(ctx.orgId, agentId, ctx.actorAccountId);
   }
@@ -420,10 +425,31 @@ export class AgentSkillsOperations implements OnModuleInit {
             i.agentId,
           );
           const f = named(ctx.file?.name ?? "?");
-          return {
-            zh: `把技能包「${f}」上传为智能体「${agent}」的技能`,
-            en: `Upload the skill package "${f}" as a skill of agent "${agent}"`,
-          };
+          // the name SKILL.md declares, and whether the agent has its own skill of that name
+          const name = await skillPackageName(ctx.file?.bytes);
+          if (name === null) {
+            return {
+              zh: `把技能包「${f}」上传为智能体「${agent}」的技能`,
+              en: `Upload the skill package "${f}" as a skill of agent "${agent}"`,
+            };
+          }
+          const n = named(name);
+          const exists = await orElse(
+            async () =>
+              (await this.skills.listOwnForAgent(ctx.orgId, i.agentId)).some(
+                (s) => s.name === name && !s.shared,
+              ),
+            false,
+          );
+          return exists
+            ? {
+                zh: `给智能体「${agent}」的技能「${n}」新增一个版本（技能包「${f}」）`,
+                en: `Add a new version of skill "${n}" of agent "${agent}" from the package "${f}"`,
+              }
+            : {
+                zh: `为智能体「${agent}」添加技能「${n}」（技能包「${f}」）`,
+                en: `Add skill "${n}" to agent "${agent}" from the package "${f}"`,
+              };
         },
         run: async (input, ctx) => {
           const f = ctx.file;
@@ -681,6 +707,9 @@ export class AgentSkillsOperations implements OnModuleInit {
         ],
         run: async (input, ctx) => {
           const d = await this.changes.get(ctx.orgId, input.changeId, ctx.actorAccountId);
+          // org admins decide a change; the person who asked only reads it
+          const canDecide =
+            d.status === "pending" && (await isOrgAdmin(this.db.db, ctx.orgId, ctx.actorAccountId));
           return {
             skillChange: {
               id: d.id,
@@ -696,15 +725,20 @@ export class AgentSkillsOperations implements OnModuleInit {
               conversationPath: d.conversationPath,
               decidedAt: d.decidedAt,
               createdAt: d.createdAt,
+              canDecide,
               ...(d.status === "pending" && {
-                next: "Review the files and decide it on the web, in the inbox.",
+                next: canDecide
+                  ? "Review the files and decide it on the web, in the inbox."
+                  : "It waits for an org admin's decision in their inbox.",
               }),
             },
           };
         },
+        // the link card only for whoever can decide it (an org admin), on a pending change
         handoff: (_i, result) => {
-          const c = (result as { skillChange?: { state?: unknown } } | null)?.skillChange;
-          if (c?.state !== "pending") return null;
+          const c = (result as { skillChange?: { state?: unknown; canDecide?: unknown } } | null)
+            ?.skillChange;
+          if (c?.state !== "pending" || c.canDecide !== true) return null;
           return {
             kind: "handoff",
             title: {

@@ -34,7 +34,12 @@ import {
   templatePersonFields,
 } from "../connector-person-fields.js";
 import { FileRefSchema } from "../file-ref.js";
-import { defineOperation, type OperationContext, type PrecheckResult } from "../operation.js";
+import {
+  defineOperation,
+  type HandoffView,
+  type OperationContext,
+  type PrecheckResult,
+} from "../operation.js";
 import {
   type PersonFieldSpec,
   PersonFieldsRefused,
@@ -170,10 +175,29 @@ const installRow = (i: PluginInstallView) => ({
 });
 
 /**
+ * The link card to the org's Plugins page with a staged upload (`plugins.upload`,
+ * `plugins.upload-review`); without the plugin's name the title names none.
+ */
+export const uploadHandoff = (result: unknown): HandoffView | null => {
+  const r = result as { stagingId?: unknown; review?: { name?: unknown } } | null;
+  if (typeof r?.stagingId !== "string") return null;
+  const name = typeof r.review?.name === "string" ? named(r.review.name) : null;
+  return {
+    kind: "handoff",
+    title:
+      name === null
+        ? { zh: "确认插件的上传", en: "Confirm the plugin upload" }
+        : { zh: `确认插件 ${name} 的上传`, en: `Confirm the upload of plugin ${name}` },
+    target: { type: "link", url: `/plugins?staging=${encodeURIComponent(r.stagingId)}` },
+  };
+};
+
+/**
  * The org's own plugin operations of the `Platform` tool (spec §14.2): the org's plugin installs
  * (list, uninstall; installing with inputs and creating missing connectors, their secrets entered
- * by the person on the card, platform web parity spec §7.2), its staged uploads (read; uploading is a byte transport and confirming is done
- * by a person on the web), and the plugins it owns (share, delete after a preview, withdraw a
+ * by the person on the card, platform web parity spec §7.2), its staged uploads (staging a package
+ * of the conversation, reading one; confirming is done by a person on the web), and the plugins it
+ * owns (share, delete after a preview, withdraw a
  * pending upload). Org admins; the services re-check the role under the org lock.
  */
 @Injectable()
@@ -412,16 +436,7 @@ export class OrgPluginsOperations implements OnModuleInit {
             next: "Nothing is added yet: the person confirms the upload on the web (Plugins page).",
           };
         },
-        handoff: (_i, result) => {
-          const r = result as { stagingId?: unknown; review?: { name?: unknown } } | null;
-          if (typeof r?.stagingId !== "string") return null;
-          const name = named(typeof r.review?.name === "string" ? r.review.name : "?");
-          return {
-            kind: "handoff",
-            title: { zh: `确认插件 ${name} 的上传`, en: `Confirm the upload of plugin ${name}` },
-            target: { type: "link", url: `/plugins?staging=${encodeURIComponent(r.stagingId)}` },
-          };
-        },
+        handoff: (_i, result) => uploadHandoff(result),
       }),
       defineOperation({
         id: "plugins.upload-review",
@@ -454,16 +469,7 @@ export class OrgPluginsOperations implements OnModuleInit {
             next: "The person confirms the upload on the web (Plugins page).",
           };
         },
-        handoff: (_i, result) => {
-          const r = result as { stagingId?: unknown; review?: { name?: unknown } } | null;
-          if (typeof r?.stagingId !== "string") return null;
-          const name = named(typeof r.review?.name === "string" ? r.review.name : "?");
-          return {
-            kind: "handoff",
-            title: { zh: `确认插件 ${name} 的上传`, en: `Confirm the upload of plugin ${name}` },
-            target: { type: "link", url: `/plugins?staging=${encodeURIComponent(r.stagingId)}` },
-          };
-        },
+        handoff: (_i, result) => uploadHandoff(result),
       }),
       defineOperation({
         id: "plugins.set-shareable",

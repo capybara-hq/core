@@ -19,7 +19,7 @@ import { FileRefSchema } from "../file-ref.js";
 import { defineOperation } from "../operation.js";
 import { PlatformOperations } from "../registry.js";
 import { precheckBy, viaAgent } from "./errors.js";
-import { named, orElse } from "./summary.js";
+import { named, orElse, skillPackageName } from "./summary.js";
 
 const NoInput = z.object({}).strict();
 const SkillId = z.object({ skillId: SkillPathParams.shape.id.max(100) }).strict();
@@ -115,17 +115,37 @@ export class SkillsOperations implements OnModuleInit {
             contentTypes: [SKILL_PACKAGE_CONTENT_TYPE],
           },
         }),
-        summary: (i, ctx) => {
+        summary: async (i, ctx) => {
           const f = named(ctx.file?.name ?? "?");
+          // the name SKILL.md declares, and whether the org has its own skill of that name
+          const name = await skillPackageName(ctx.file?.bytes);
+          const exists =
+            name !== null &&
+            (await orElse(
+              async () =>
+                (
+                  await this.skills.list(ctx.orgId)
+                ).some((s) => s.name === name && s.origin === "org"),
+              false,
+            ));
+          const what =
+            name === null
+              ? { zh: "创建或更新组织技能", en: "Create or update an org skill" }
+              : exists
+                ? {
+                    zh: `给组织技能「${named(name)}」新增一个版本`,
+                    en: `Add a new version of org skill "${named(name)}"`,
+                  }
+                : {
+                    zh: `创建组织技能「${named(name)}」`,
+                    en: `Create org skill "${named(name)}"`,
+                  };
           return i.shareable === true
             ? {
-                zh: `用技能包「${f}」创建或更新组织技能，并允许共享给其他组织`,
-                en: `Create or update an org skill from the package "${f}", shareable with other orgs`,
+                zh: `${what.zh}（技能包「${f}」），并允许共享给其他组织`,
+                en: `${what.en} from the package "${f}", shareable with other orgs`,
               }
-            : {
-                zh: `用技能包「${f}」创建或更新组织技能`,
-                en: `Create or update an org skill from the package "${f}"`,
-              };
+            : { zh: `${what.zh}（技能包「${f}」）`, en: `${what.en} from the package "${f}"` };
         },
         run: async (input, ctx) => {
           const f = ctx.file;

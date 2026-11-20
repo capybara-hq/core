@@ -578,9 +578,15 @@ describe("skills.get-change", () => {
     });
     expect(JSON.stringify(r)).not.toContain("Steps.");
     expect(String(r.skillChange.next)).toContain("decide it on the web, in the inbox");
+    expect(r.skillChange.canDecide).toBe(true);
     // another org admin and the requester read it; a member who did not ask does not
     await run("skills.get-change", { changeId }, ctxOf(adminId));
-    await run("skills.get-change", { changeId }, ctxOf(memberId));
+    const asked = (await run("skills.get-change", { changeId }, ctxOf(memberId))) as {
+      skillChange: Record<string, unknown>;
+    };
+    // the requester cannot decide it: no link card, the admins' step
+    expect(asked.skillChange.canDecide).toBe(false);
+    expect(String(asked.skillChange.next)).toContain("waits for an org admin");
     await expect(run("skills.get-change", { changeId }, ctxOf(otherId))).rejects.toThrow(
       /inbox\.list/,
     );
