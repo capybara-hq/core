@@ -1083,7 +1083,7 @@ describe("platform setup guides on the extension page (place extension-deploymen
     expect(runs.map(bodyOf)).toEqual([{}]);
     // the guides and the states came with the page (no browser read of them)
     expect(calls.filter((c) => c.method === "GET" && c.url.startsWith(GUIDES))).toEqual([]);
-    // no 让智能体协助 (the org's setup operations do not reach a platform guide)
+    // no "ask the agent to help" action (the org's setup operations do not reach a platform guide)
     expect(screen.queryByRole("button", { name: en.setupGuide.askAgent.action })).toBeNull();
     expect(findNestedBoxes(container)).toEqual([]);
   });

@@ -135,14 +135,18 @@ async function register(
 }
 
 /** Owes one delivery through the outbox in a transaction of its own; returns its job id. */
-async function owe(registrationId: string, eventId = conversationEventId(randomUUID(), 1)) {
+async function owe(
+  registrationId: string,
+  eventId = conversationEventId(randomUUID(), 1),
+  msg: PushMessage = message,
+) {
   const jobId = pushDeliverJobId(eventId, registrationId);
   await k.app.get(TransactionHost).run(async () => {
     await k.app.get(OutboxService).add<PushDeliverData>({
       queue: PUSH_QUEUE,
       name: PUSH_DELIVER_JOB,
       jobId,
-      data: { eventId, registrationId, message },
+      data: { eventId, registrationId, message: msg },
     });
   });
   return { jobId, eventId };
@@ -237,6 +241,27 @@ describe("push delivery", () => {
     expect(await job.getState()).toBe("failed");
     expect(job.attemptsMade).toBe(5);
     expect(sendsTo(id)).toHaveLength(5);
+    expect(await registrationExists(id)).toBe(true);
+  });
+
+  it("ends the job without a send when the message is invalid, logging ids only", async () => {
+    const id = await register("plain-invalid");
+    for (const bad of [
+      { ...message, path: "chat/c1" },
+      { ...message, collapseId: "conv:c1:1" },
+      { ...message, title: "t".repeat(101) },
+    ]) {
+      const { jobId, eventId } = await owe(id, conversationEventId(randomUUID(), 1), bad);
+      const job = await settled(jobId);
+      expect(await job.getState()).toBe("completed");
+      expect(job.returnvalue).toBe("invalid");
+      expect(job.attemptsMade).toBe(1);
+      const line = lines.find((l) => l.includes("the message is invalid") && l.includes(eventId));
+      expect(line).toBeDefined();
+      expect(line).toContain(id);
+      expect(line).not.toContain("plain-invalid");
+    }
+    expect(sendsTo(id)).toHaveLength(0);
     expect(await registrationExists(id)).toBe(true);
   });
 

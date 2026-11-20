@@ -307,8 +307,9 @@ export const ROUTES: readonly RouteEntry[] = [
     pattern: "/admin/extensions/[name]",
     // The list (the extension is found in it) and its deployment config (the Config tab); for an
     // extension in the list, its platform setup guides (the Config tab) and each guide's cached
-    // check states; for an extension with client code, the settings too (界面代码 says whether it
-    // is stopped), and the orgs when its reports name any (each report row shows the org's name).
+    // check states; for an extension with client code, the settings too (the client code section
+    // says whether it is stopped), and the orgs when its reports name any (each report row shows
+    // the org's name).
     queries: ({ me, params }) =>
       superAdmin(me) && params.name !== undefined
         ? [q(adminExtensionsQuery()), q(extensionConfigQuery(params.name))]

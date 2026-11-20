@@ -10,10 +10,12 @@ import { getQueueToken } from "@nestjs/bullmq";
 import type { Queue } from "bullmq";
 import { sql } from "kysely";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import type { KernelConfig } from "../../src/config/schema.js";
 import { EventLog } from "../../src/conversations/event-log.js";
 import type { ConversationEvent } from "../../src/conversations/events.js";
 import { type KernelSchemaDb, kernelDb } from "../../src/db/kernel-schema.js";
 import { createDb } from "../../src/db/pool.js";
+import { KernelConfigService } from "../../src/infra/config/kernel-config.service.js";
 import { KernelDb } from "../../src/infra/database/kernel-db.js";
 import { TransactionHost } from "../../src/infra/database/transaction-host.js";
 import { OutboxService } from "../../src/infra/outbox/outbox.service.js";
@@ -60,6 +62,7 @@ const ORIGIN = "https://cap.example";
 let pgc: TestContainer;
 let rd: TestContainer;
 let k: TestKernel;
+let cfg: KernelConfig;
 let raw: ReturnType<typeof createDb>;
 let db: KernelSchemaDb;
 let queue: Queue;
@@ -89,15 +92,14 @@ const inTx = <T>(fn: () => Promise<T>) => k.app.get(TransactionHost).run(fn);
 
 beforeAll(async () => {
   [pgc, rd] = await Promise.all([startTestPostgres(), startTestRedis()]);
-  k = await startKernel(
-    runConfig(
-      { pg: pgc.url, redis: rd.url },
-      {
-        extensions: [MODEL_FAKE, fakeExtensionEntry("fake-push")],
-        http: { port: 0, publicUrl: `${ORIGIN}/` },
-      },
-    ),
+  cfg = runConfig(
+    { pg: pgc.url, redis: rd.url },
+    {
+      extensions: [MODEL_FAKE, fakeExtensionEntry("fake-push")],
+      http: { port: 0, publicUrl: `${ORIGIN}/` },
+    },
   );
+  k = await startKernel(cfg);
   raw = createDb(pgc.url, 5);
   db = kernelDb(raw);
   queue = k.app.get<Queue>(getQueueToken(PUSH_QUEUE), { strict: false });
@@ -481,6 +483,52 @@ describe("recipients when the fanout runs", () => {
     expect(await fanout().run(data)).toBe(0);
   });
 
+  it("a connect request goes to the run's trigger account", async () => {
+    const conv = await seedConv(ids.owner as string);
+    const runId = await seedRun(conv, ids.member1 as string);
+    const data = await seedEvent(
+      conv,
+      "connection_required",
+      { step: 0, callId: "c1", appId: "a1", appName: "Docs" },
+      runId,
+    );
+    expect(await fanout().run(data)).toBe(1);
+    const got = await delivered(data.eventId, 1);
+    expect([...got.keys()]).toEqual([ids["reg-member1"]]);
+    expect(got.get(ids["reg-member1"] as string)?.body).toBe("needs you to connect an account");
+  });
+
+  it("a sub-agent's finish in the root log reaches the root's owner", async () => {
+    const root = await seedConv(ids.member1 as string);
+    const runId = await seedRun(root, ids.owner as string);
+    const data = await seedEvent(root, "subagent_finished", { status: "completed" }, runId);
+    expect(await fanout().run(data)).toBe(1);
+    const got = await delivered(data.eventId, 1);
+    expect([...got.keys()]).toEqual([ids["reg-member1"]]);
+    expect(got.get(ids["reg-member1"] as string)).toMatchObject({
+      body: "a sub-agent finished",
+      path: `/chat/${root}?org=${orgId}`,
+      threadId: root,
+    });
+  });
+
+  it("previews titles: the conversation title leads the body", async () => {
+    const config = k.app.get(KernelConfigService);
+    await config.apply({ ...cfg, push: { previews: "titles" } });
+    expect(config.get().push.previews).toBe("titles");
+    try {
+      const conv = await seedConv(ids.member1 as string, { title: "Deploy check" });
+      const runId = await seedRun(conv, ids.member1 as string);
+      const data = await seedEvent(conv, "run_finished", finished, runId);
+      expect(await fanout().run(data)).toBe(1);
+      const got = await delivered(data.eventId, 1);
+      expect(got.get(ids["reg-member1"] as string)?.body).toBe("Deploy check: finished");
+    } finally {
+      await config.apply(cfg);
+    }
+    expect(config.get().push.previews).toBe("off");
+  });
+
   it("a sub-agent's approval links to the root with the child", async () => {
     const root = await seedConv(ids.member1 as string);
     const child = await seedConv(ids.member1 as string, { kind: "subagent", parent: root });
@@ -493,6 +541,15 @@ describe("recipients when the fanout runs", () => {
       path: `/chat/${root}?org=${orgId}&subagent=${child}`,
       threadId: root,
     });
+  });
+
+  it("a sub-agent under an eval root pushes nothing", async () => {
+    const root = await seedConv(ids.member1 as string, { kind: "eval" });
+    const child = await seedConv(ids.member1 as string, { kind: "subagent", parent: root });
+    const runId = await seedRun(child, ids.member1 as string);
+    const approvalId = await seedApproval(child, runId, { requestedFor: ids.member1 as string });
+    const data = await seedEvent(child, "approval_requested", { approvalId }, runId);
+    expect(await fanout().run(data)).toBe(0);
   });
 
   it("a sub-agent's run end pushes no reply; its background finish reaches the root's owner", async () => {
@@ -603,4 +660,23 @@ describe("scheduled task runs", () => {
       );
     },
   );
+  it("a deleted task's run pushes nothing", async () => {
+    const t = await taskRun("Deleted");
+    await db
+      .updateTable("scheduled_task_runs")
+      .set({ status: "completed" })
+      .where("id", "=", t.taskRunId)
+      .execute();
+    await db
+      .updateTable("scheduled_tasks")
+      .set({ deleted_at: new Date() })
+      .where("id", "=", t.taskId)
+      .execute();
+    expect(
+      await fanout().run({
+        eventId: scheduleRunEventId(t.taskRunId),
+        source: { kind: "schedule", taskRunId: t.taskRunId },
+      }),
+    ).toBe(0);
+  });
 });

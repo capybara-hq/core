@@ -29,7 +29,10 @@ export class PushOwed {
     @Inject(TransactionHost) readonly txHost: TransactionHost,
   ) {}
 
-  /** The fanouts of `events`, just appended to `conversationId` (of `kind`), in the caller's transaction. */
+  /**
+   * The fanouts of `events`, just appended to `conversationId` (of `kind`), in the caller's
+   * transaction.
+   */
   @Transactional({ propagation: "mandatory" })
   async oweIn(
     conversationId: string,
@@ -54,7 +57,10 @@ export class PushOwed {
     );
   }
 
-  /** The fanout of a scheduled task run's settle (completed or failed), in the caller's transaction. */
+  /**
+   * The fanout of a scheduled task run's settle (completed or failed), in the caller's
+   * transaction.
+   */
   @Transactional({ propagation: "mandatory" })
   async oweScheduleRun(taskRunId: string, orgId: string): Promise<void> {
     if (!this.host.any()) return;

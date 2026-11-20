@@ -50,9 +50,9 @@ function cut(s: string, max: number): string {
 /**
  * The message of `r` for one registration's locale. `title` is the agent's (or task's) name cut
  * to `PUSH_LIMITS.titleChars`; `body` is the fixed sentence, led by the conversation title only
- * with previews `titles` (`<title>: <sentence>`, zh `<title>：<sentence>`), cut to
- * `PUSH_LIMITS.bodyChars`. Message and tool text are never part of it. `collapseId` is the event id,
- * so a resend of the same event replaces the notification on the device. No badge (decision 7).
+ * with previews `titles` (`<title>: <sentence>`; zh joins them with a full-width colon), cut to
+ * `PUSH_LIMITS.bodyChars`. Message and tool text are never part of it. `collapseId` is the event
+ * id, so a resend of the same event replaces the notification on the device. No badge (decision 7).
  */
 export function renderPushMessage(
   r: ResolvedPush,

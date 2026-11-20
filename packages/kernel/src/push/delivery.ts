@@ -6,6 +6,7 @@ import {
   type PushProvider,
   type PushResult,
   type PushTarget,
+  validatePushMessage,
 } from "@capybara-hq/plugin-sdk";
 import { Inject, Injectable, Optional } from "@nestjs/common";
 import { sql } from "kysely";
@@ -29,7 +30,7 @@ import { PushTokenStore } from "./token-store.js";
 export const PUSH_SEND_TIMEOUT_MS = Symbol("PUSH_SEND_TIMEOUT_MS");
 
 /** How one delivery job ended without a retry. */
-export type PushDeliveryOutcome = "delivered" | "dropped" | "unregistered" | "auth";
+export type PushDeliveryOutcome = "delivered" | "dropped" | "unregistered" | "auth" | "invalid";
 
 /**
  * A delivery that failed in a way a later attempt may fix (the queue retries it with the
@@ -47,6 +48,8 @@ export class PushRetryableError extends Error {
  * One `push-deliver` job (mobile app spec §9.4, plan task C6): sends one message to one
  * registration through the push provider the registration names.
  *
+ * - A message failing `validatePushMessage` -> `invalid`, no send, an error log with the ids only
+ *   (a retry would carry the same message).
  * - The registration is read when the job runs: gone (removed, its session revoked, pruned) ->
  *   `dropped`, no send.
  * - Its provider not loaded on this replica: when a live replica reports it loaded (a rolling
@@ -90,6 +93,11 @@ export class PushDelivery {
   /** Delivers one job (see the class). */
   async deliver(data: PushDeliverData): Promise<PushDeliveryOutcome> {
     const fields = { eventId: data.eventId, registrationId: data.registrationId };
+    if (!messageValid(data.message)) {
+      // a retry would carry the same message: the job ends without a send
+      this.log.error("push delivery dropped: the message is invalid", fields);
+      return "invalid";
+    }
     const row = await this.kdb.db
       .selectFrom("push_registrations")
       .select(["id", "platform", "app_id", "provider", "token_hash", "master_key_id"])
@@ -150,7 +158,8 @@ export class PushDelivery {
   }
 
   /**
-   * One provider call for one registration, bounded by the time limit; returns its one valid result or throws (an `auth` `PushError` becomes an `auth` result).
+   * One provider call for one registration, bounded by the time limit; returns its one valid
+   * result or throws (an `auth` `PushError` becomes an `auth` result).
    */
   private async send(
     plugin: string,
@@ -235,5 +244,14 @@ export class PushDelivery {
       .limit(1)
       .execute();
     return rows.length > 0;
+  }
+}
+
+/** Whether `m` passes `validatePushMessage` (a malformed shape, e.g. a missing field, does not). */
+function messageValid(m: PushMessage): boolean {
+  try {
+    return validatePushMessage(m) === null;
+  } catch {
+    return false;
   }
 }

@@ -219,7 +219,7 @@ function Detail({
 }
 
 /**
- * 接入指南 of the platform (place `extension-deployment`): each guide the extension ships for its
+ * The platform's setup guides (place `extension-deployment`): each guide the extension ships for its
  * deployment config, with live check rows run against the saved config on this server (a push
  * provider's credentials). Drawn only when there are some.
  */

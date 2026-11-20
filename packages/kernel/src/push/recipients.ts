@@ -22,8 +22,9 @@ export type ResolvedRecipients = Omit<ResolvedPush, "eventId">;
  * - `replies`: chat conversations only, to the conversation's owner, never for a run serving a
  *   scheduled task (that pushes as `schedules`);
  * - `tasks`: the root conversation's owner;
- * - `schedules`: the task's owner, for a task run `completed` or `failed`;
- * - eval conversations and deleted conversations never push.
+ * - `schedules`: the task's owner, for a task run `completed` or `failed` of a task not deleted;
+ * - eval conversations (a sub-agent under an eval root too) and deleted conversations never push;
+ * - an escalated approval whose run is gone pushes nothing (its initiator is unknown).
  *
  * The path carries the org (`/chat/<root>?org=<orgId>`, `&subagent=<child>` for an event of a
  * sub-agent's log; a schedule run without a conversation opens `/inbox?org=<orgId>`), the thread
@@ -69,10 +70,16 @@ async function resolveConversation(
       ? null
       : await db
           .selectFrom("conversations")
-          .select(["org_id", "account_id", "deleted_at"])
+          .select(["org_id", "kind", "account_id", "deleted_at"])
           .where("id", "=", rootId)
           .executeTakeFirst();
-  if (root !== null && (root === undefined || root.org_id !== orgId || root.deleted_at !== null)) {
+  if (
+    root !== null &&
+    (root === undefined ||
+      root.org_id !== orgId ||
+      root.kind === "eval" ||
+      root.deleted_at !== null)
+  ) {
     return null;
   }
   const owner = root?.account_id ?? conv.account_id;
@@ -96,7 +103,9 @@ async function resolveConversation(
       }
       const role = approval.approver_role as OrgRole | null;
       if (role === null || !ORG_ROLES.includes(role)) return null;
+      // without its run the initiator is unknown, and only `canHandle` with it may decide
       const initiator = await triggerAccountOf(db, approval.run_id);
+      if (initiator === null) return null;
       const roles = ORG_ROLES.filter((r) => roleAtLeast(r, role));
       const rows = await db
         .selectFrom("memberships")
@@ -181,6 +190,8 @@ async function resolveSchedule(
       "scheduled_tasks.name",
     ])
     .where("scheduled_task_runs.id", "=", taskRunId)
+    // a deleted task pushes nothing
+    .where("scheduled_tasks.deleted_at", "is", null)
     .executeTakeFirst();
   if (!row || row.org_id !== row.task_org_id) return null;
   if (row.status !== "completed" && row.status !== "failed") return null;

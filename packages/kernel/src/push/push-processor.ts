@@ -26,8 +26,9 @@ type PushJobData = PushDeliverData | PushFanoutData;
 
 /**
  * The consumer of {@link PUSH_QUEUE} (`cap-push-deliver`): `push-fanout` jobs go to
- * {@link PushFanout}, `push-deliver` jobs to {@link PushDelivery}, each inside `runJob`. Worker role only (`PushWorkersModule`); built with
- * `autorun: false` and started by the worker role after the extensions loaded, so no job runs
+ * {@link PushFanout}, `push-deliver` jobs to {@link PushDelivery}, each inside `runJob`. Worker
+ * role only (`PushWorkersModule`); built with `autorun: false` and started by the worker role
+ * after the extensions loaded, so no job runs
  * before its provider could be loaded. A retry logs a warning and the last failed attempt an
  * error, with ids and the failure only (never the token).
  */
@@ -91,8 +92,8 @@ export class PushProcessor extends WorkerHost<Worker<PushJobData>> {
 }
 
 /**
- * The push queue's consumer (fanout and delivery) and the stale registration prune; imported only by the worker role
- * (`WorkerModule`). The queue itself is registered by {@link PushModule} (every role owes jobs).
+ * The push queue's consumer (fanout and delivery) and the stale registration prune; imported only
+ * by the worker role (`WorkerModule`). The queue itself is registered by {@link PushModule} (every role owes jobs).
  */
 @Module({
   imports: [PushModule, PushHostModule, ExtensionsModule],
