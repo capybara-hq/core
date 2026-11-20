@@ -429,7 +429,7 @@ describe("the other upload operations on fixture packages", () => {
     expect(out.reviewUrl).toBe(`/admin/plugins/import?staging=${out.stagingId}`);
   });
 
-  it("extensions.upload-package stores a package and returns its review; installing stays on the web", async () => {
+  it("extensions.upload-package stores a package and returns its review; installing stays with a person (CLI or API)", async () => {
     const pkg = await greeterPkg();
     const out = (await run(
       "extensions.upload-package",
@@ -437,7 +437,7 @@ describe("the other upload operations on fixture packages", () => {
       fileOf("greeter.tgz", "application/octet-stream", pkg),
     )) as { review: { name: string; sha256: string }; next: string };
     expect(out.review).toMatchObject({ name: "greeter", sha256: sha256(pkg) });
-    expect(out.next).toContain("admin console");
+    expect(out.next).toContain("capybara extensions install");
     const row = await db
       .selectFrom("extension_packages")
       .select(["name", "source"])
