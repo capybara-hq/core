@@ -472,6 +472,25 @@ The four categories of layout spec §10.3, each from its existing kernel event, 
 - **Dependency direction.** Unchanged: the clients repository depends on published
   `@capybara-hq/plugin-sdk` only; design takes shell handlers as props.
 
+## Plan follow-ups (push, 2026-11-21)
+
+Decided in `docs/superpowers/plans/2026-11-20-push-notifications.md`, inside this spec's intent.
+
+1. Setup checks gain a platform place, `extension-deployment`, with super admin routes; an `auth` result writes the platform notice `push_auth_failed` that links to the extension page.
+2. The shell learns the registration id: `push@1.registered(id)` after the POST, and `status()` returns `{ permission, registrationId, tokenChanged }`.
+3. Registrations follow their session: revoking a session deletes its registrations, so a password change removes the other devices' and keeps the one in hand (refines §9.3).
+4. `register()` needs a user activation only when the OS prompt would show; with `granted` it returns the current token, and the web re-posts on every start (R10), which refreshes `last_seen_at`.
+5. Upsert moves a token between accounts (the previous account stops reaching the phone); at most 20 registrations per account.
+6. `unregister()` forgets only the profile's registration; the OS token is shared by every profile of the install.
+7. No badge: registrations span orgs and the inbox count is per org.
+8. Paths carry the org (`/chat/<root>?org=<orgId>`, `/inbox?org=<orgId>` for a schedule run without a conversation); the web switches org from `?org=`; `threadId` is the root conversation id or `schedule-<taskId>`.
+9. `apps()` is synchronous and derived from deployment config, so the public meta calls it on every request.
+10. The fanout gate: the event's transaction owes `push-fanout` only while a `push-provider` is loaded.
+11. The aggregator is JPush (below); its plugin is `push-jpush`.
+12. P1 ruling: JPush covers Huawei, Honor, Xiaomi, OPPO, vivo, Meizu and FCM with documented fields, HTTP Basic auth `appKey:masterSecret` (stateless) against `api.jpush.cn`, and an explicit dead-token code (1003 / 1011). Getui was not chosen: its FCM path is undocumented, its invalid-cid signal is a message string only, and it needs a sign/token cycle with a one-day token.
+13. R9: `PushMessage` carries `collapseId` so a channel can replace an earlier push for the same conversation.
+14. R10: the web re-posts the registration on every app start while the permission is granted.
+
 ## 14. Open questions
 
 1. Sharing one WebView across `UITabBarController` children (§6.1): proven in the spike, else the
