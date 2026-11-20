@@ -146,13 +146,21 @@ keys only if they cannot reuse existing ones, and then in the fix dispatch after
     ssoAvatarUrl: string | null }): string | null;
   /** The https `avatarUrl` of the account's most recently refreshed non-local identity, or null. */
   export function safeSsoUrl(raw: unknown): string | null;
-  /** Kysely select fragment for any query already joined to `accounts` (alias param):
-   *  `<alias>.avatar` and a correlated subquery `sso_avatar_url`. */
-  export function avatarColumns(eb: ExpressionBuilder<KernelSchema, any>, alias?: string): [...];
+  /** The row keys `avatarColumns(eb, alias, as)` adds, typed from the prefix literal. */
+  export type AvatarColumnsRow<P extends string> =
+    { [K in `${P}_avatar`]: AccountAvatar | null } & { [K in `${P}_sso_avatar_url`]: string | null };
+  /** Kysely select fragment for any query already joined to `accounts` as `alias`:
+   *  `<alias>.avatar` as `<as>_avatar` and a correlated subquery as `<as>_sso_avatar_url`.
+   *  The required prefix keeps two people in one row (and other `avatar` columns) apart. */
+  export function avatarColumns<P extends string>(eb: ExpressionBuilder<KernelDatabase, any>,
+    alias: string, as: P): readonly [/* `${P}_avatar` */, /* `${P}_sso_avatar_url` */];
+  /** Reads what `avatarColumns(eb, alias, as)` added to a row: the person's avatarUrl. */
+  export function personAvatarUrl<P extends string>(row: AvatarColumnsRow<P>, as: P, id: string):
+    string | null;
   /** One query: ids → PersonRef (missing ids are absent from the map). */
-  export function loadPeople(db: Kysely<KernelSchema>, ids: readonly string[]):
+  export function loadPeople(db: Kysely<KernelDatabase>, ids: readonly string[]):
     Promise<Map<string, PersonRef>>;
-  export function withAvatarUrls(db: Kysely<KernelSchema>, accounts: readonly Account[]):
+  export function withAvatarUrls(db: Kysely<KernelDatabase>, accounts: readonly Account[]):
     Promise<AccountView[]>;
   ```
 - The SSO subquery: `identities` where `account_id = <alias>.id`, `source <> 'local'`,
@@ -468,8 +476,9 @@ person?: PersonLike;                      // avatar 16 only; name in the block's
 
 ### Task 6: `avatarUrl` on person-carrying responses
 
-**Files** (each join that already reads `accounts.display_name` adds `avatarColumns(eb, alias)` and
-maps the result with `accountAvatarUrl`):
+**Files** (each join that already reads `accounts.display_name` adds
+`avatarColumns(eb, alias, "<person>")`, one prefix per person in the row, and maps the result with
+`personAvatarUrl(row, "<person>", id)`):
 - Modify: `packages/kernel/src/orgs/members.service.ts:59-81`:
   `Member.account.avatarUrl` (the org and admin member rows).
 - Modify: `packages/kernel/src/admin/audit-log.service.ts:56-91`: `actor.avatarUrl`.
@@ -490,7 +499,8 @@ maps the result with `accountAvatarUrl`):
   (find each with `grep -rln "createdByName\|requestedByName\|ownerName\|pausedBy" packages/kernel/test`).
 
 **Interfaces:**
-- Consumes: `avatarColumns`, `accountAvatarUrl`, `PersonRef` (Task 1).
+- Consumes: `avatarColumns(eb, alias, as)`, `personAvatarUrl(row, as, id)`, `AvatarColumnsRow`,
+  `PersonRef` (Task 1).
 - Produces: the field names above. Existing name fields stay as they are; only the avatar is added
   (and `PersonRef` where the response already had `{ id, name }`).
 
@@ -529,7 +539,7 @@ maps the result with `accountAvatarUrl`):
   `packages/kernel/test/background/`.
 
 **Interfaces:**
-- Consumes: `loadPeople`, `PersonRef` (Task 1).
+- Consumes: `loadPeople(db, ids)` (`db` = `KernelDb.db`), `PersonRef` (Task 1).
 - Produces: `decidedByPerson`, `answeredByPerson`, `trigger`, `owner`, and `people` maps on the
   events and trajectory responses.
 - Event payloads in the log are never changed: `people` is a sidecar computed at read time (spec

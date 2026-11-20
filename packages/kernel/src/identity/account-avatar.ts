@@ -89,24 +89,43 @@ function ssoIdentity(eb: AnyAccountsEb, alias: string, column: "url" | "source")
     .limit(1);
 }
 
+/** The row keys `avatarColumns(eb, alias, as)` adds for the output prefix `P`. */
+export type AvatarColumnsRow<P extends string> = { [K in `${P}_avatar`]: AccountAvatar | null } & {
+  [K in `${P}_sso_avatar_url`]: string | null;
+};
+
 /**
- * Kysely select fragment for any query already joined to `accounts` (alias param):
- * `<alias>.avatar` and a correlated subquery `sso_avatar_url`.
+ * Kysely select fragment for any query already joined to `accounts` as `alias`: `<alias>.avatar`
+ * as `<as>_avatar` and a correlated subquery as `<as>_sso_avatar_url`. The prefix keeps two people
+ * in one row (and other `avatar` columns) apart; read the result with {@link personAvatarUrl}.
  */
-export function avatarColumns(eb: AnyAccountsEb, alias = "accounts") {
+export function avatarColumns<P extends string>(eb: AnyAccountsEb, alias: string, as: P) {
   return [
-    sql<AccountAvatar | null>`${sql.ref(`${alias}.avatar`)}`.as("avatar"),
-    ssoIdentity(eb, alias, "url").as("sso_avatar_url"),
+    sql<AccountAvatar | null>`${sql.ref(`${alias}.avatar`)}`.as(`${as}_avatar` as `${P}_avatar`),
+    ssoIdentity(eb, alias, "url").as(`${as}_sso_avatar_url` as `${P}_sso_avatar_url`),
   ] as const;
 }
 
-interface AvatarRow {
+/** The `avatarUrl` of the person whose `avatarColumns(eb, alias, as)` the row carries. */
+export function personAvatarUrl<P extends string>(
+  row: AvatarColumnsRow<P>,
+  as: P,
+  id: string,
+): string | null {
+  // a generic key does not index the mapped type; the values are re-checked by accountAvatarUrl
+  const cols = row as Record<string, unknown>;
+  return accountAvatarUrl({
+    id,
+    avatar: cols[`${as}_avatar`] as AccountAvatar | null,
+    ssoAvatarUrl: cols[`${as}_sso_avatar_url`] as string | null,
+  });
+}
+
+type AvatarRow = AvatarColumnsRow<"account"> & {
   id: string;
   display_name: string;
-  avatar: AccountAvatar | null;
-  sso_avatar_url: string | null;
   sso_avatar_source: string | null;
-}
+};
 
 /** Reads the avatar columns (plus the SSO source) of the given accounts in one query. */
 async function avatarRows(
@@ -119,7 +138,7 @@ async function avatarRows(
     .select((eb) => [
       "accounts.id",
       "accounts.display_name",
-      ...avatarColumns(eb, "accounts"),
+      ...avatarColumns(eb, "accounts", "account"),
       ssoIdentity(eb, "accounts", "source").as("sso_avatar_source"),
     ])
     .where("accounts.id", "in", [...new Set(ids)])
@@ -136,7 +155,7 @@ export async function loadPeople(
     people.set(r.id, {
       id: r.id,
       name: r.display_name,
-      avatarUrl: accountAvatarUrl({ id: r.id, avatar: r.avatar, ssoAvatarUrl: r.sso_avatar_url }),
+      avatarUrl: personAvatarUrl(r, "account", r.id),
     });
   }
   return people;
@@ -157,8 +176,8 @@ export async function withAvatarUrls(
   );
   return accounts.map((a) => {
     const r = rows.get(a.id);
-    const avatar = ownAvatar(r?.avatar);
-    const sso = safeSsoUrl(r?.sso_avatar_url);
+    const avatar = ownAvatar(r?.account_avatar);
+    const sso = safeSsoUrl(r?.account_sso_avatar_url);
     const avatarSource: AccountView["avatarSource"] = avatar
       ? { kind: "upload" }
       : sso !== null && r?.sso_avatar_source

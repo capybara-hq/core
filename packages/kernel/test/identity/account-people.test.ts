@@ -5,7 +5,12 @@ import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import { KernelConfigSchema } from "../../src/config/schema.js";
 import { type KernelSchemaDb, kernelDb } from "../../src/db/kernel-schema.js";
 import { createDb } from "../../src/db/pool.js";
-import { accountAvatarUrl, loadPeople } from "../../src/identity/account-avatar.js";
+import {
+  accountAvatarUrl,
+  avatarColumns,
+  loadPeople,
+  personAvatarUrl,
+} from "../../src/identity/account-avatar.js";
 import type { Account, AccountsService } from "../../src/identity/accounts.js";
 import type { ApiTokenService } from "../../src/identity/api-tokens.js";
 import type { ExternalIdentities } from "../../src/identity/external.js";
@@ -115,6 +120,36 @@ describe("loadPeople", () => {
       avatarUrl: "https://idp/local.png",
     })}::jsonb, updated_at = now() where account_id = ${a.id} and source = 'local'`.execute(raw);
     expect(await avatarOf(a.id)).toBe(null);
+  });
+});
+
+describe("avatarColumns", () => {
+  it("keeps two people in one row apart by their prefixes", async () => {
+    const alice = await local("alice");
+    const bob = await local("bob");
+    await external.link(bob.id, ident("ou_bob", "https://idp/bob.png"));
+    await sql`update capybara.accounts set avatar = '{"kind":"upload","uploadId":"up1"}'
+      where id = ${alice.id}`.execute(raw);
+    const row = await db
+      .selectFrom("accounts as owner")
+      .innerJoin("accounts as creator", (j) => j.on("creator.id", "=", bob.id))
+      .where("owner.id", "=", alice.id)
+      .select((eb) => [
+        "owner.id as owner_id",
+        "creator.id as creator_id",
+        ...avatarColumns(eb, "owner", "owner"),
+        ...avatarColumns(eb, "creator", "creator"),
+      ])
+      .executeTakeFirstOrThrow();
+    expect(row.owner_avatar).toEqual({ kind: "upload", uploadId: "up1" });
+    expect(row.creator_avatar).toBe(null);
+    expect(row.creator_sso_avatar_url).toBe("https://idp/bob.png");
+    expect(personAvatarUrl(row, "owner", row.owner_id)).toBe(
+      accountAvatarUrl({ id: alice.id, avatar: row.owner_avatar, ssoAvatarUrl: null }),
+    );
+    expect(personAvatarUrl(row, "creator", row.creator_id)).toBe(
+      ssoAvatar(bob.id, "https://idp/bob.png"),
+    );
   });
 });
 
