@@ -104,6 +104,7 @@ const message: PushMessage = {
   body: "finished",
   path: "/chat/c1?org=o1",
   threadId: "c1",
+  collapseId: "conv-c1-1",
   origin: "http://localhost:3000",
 };
 

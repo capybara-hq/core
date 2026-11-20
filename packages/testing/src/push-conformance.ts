@@ -26,6 +26,7 @@ export interface PushVendorRequest {
   path: string;
   origin: string;
   threadId: string;
+  collapseId: string;
 }
 
 /** The provider under test and its (fake) vendor. */
@@ -47,6 +48,7 @@ const MESSAGE: PushMessage = {
   body: "needs your approval",
   path: "/chat/c1?org=o1",
   threadId: "c1",
+  collapseId: "conv-c1-7",
   origin: "https://capybara.example.com",
 };
 

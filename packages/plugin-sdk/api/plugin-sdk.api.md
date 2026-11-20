@@ -3148,6 +3148,7 @@ export const PUSH_LIMITS: {
     readonly titleChars: 100;
     readonly bodyChars: 240;
     readonly pathChars: 512;
+    readonly collapseIdChars: 64;
     readonly tokenChars: 4096;
     readonly appIdChars: 255;
     readonly deviceNameChars: 64;
@@ -3183,6 +3184,7 @@ export type PushErrorKind = "auth" | "rate_limited" | "transient";
 export interface PushMessage {
     badge?: number;
     body: string;
+    collapseId: string;
     origin: string;
     path: string;
     threadId: string;

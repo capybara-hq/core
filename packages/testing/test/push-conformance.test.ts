@@ -49,6 +49,7 @@ const target: PushConformanceTarget = {
           path: s.message.path,
           origin: s.message.origin,
           threadId: s.message.threadId,
+          collapseId: s.message.collapseId,
         })),
       async close() {},
     };
@@ -63,6 +64,7 @@ describe("fake-push", () => {
     body: "b",
     path: "/chat/1",
     threadId: "th",
+    collapseId: "conv-th-1",
     origin: "https://x.example",
   };
   const reg = (id: string, token: string) => ({

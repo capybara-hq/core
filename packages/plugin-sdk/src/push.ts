@@ -6,6 +6,7 @@ export const PUSH_LIMITS = {
   titleChars: 100,
   bodyChars: 240,
   pathChars: 512,
+  collapseIdChars: 64,
   tokenChars: 4096,
   appIdChars: 255,
   deviceNameChars: 64,
@@ -21,6 +22,12 @@ export interface PushMessage {
   /** In-app path opened on tap; starts with `/`. */
   path: string;
   threadId: string;
+  /**
+   * The same id for every send of one event to one device (1..64 of `A-Z a-z 0-9 . _ -`): map it
+   * to the channel's collapse key (APNs `apns-collapse-id`, FCM `collapse_key`), so a resend after
+   * a crash or a timeout replaces the notification instead of showing it twice.
+   */
+  collapseId: string;
   badge?: number;
   /** The deployment origin (scheme://host[:port]); the shell matches it to a profile. */
   origin: string;
@@ -111,6 +118,13 @@ export function validatePushMessage(m: PushMessage): string | null {
   }
   if (!m.path.startsWith("/") || m.path.length > PUSH_LIMITS.pathChars) {
     return `path must start with "/" and be at most ${PUSH_LIMITS.pathChars} characters`;
+  }
+  if (
+    m.collapseId.length === 0 ||
+    m.collapseId.length > PUSH_LIMITS.collapseIdChars ||
+    !/^[A-Za-z0-9._-]+$/.test(m.collapseId)
+  ) {
+    return `collapseId must be 1 to ${PUSH_LIMITS.collapseIdChars} characters of A-Z a-z 0-9 . _ -`;
   }
   let url: URL;
   try {

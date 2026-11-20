@@ -24,6 +24,7 @@ const message: PushMessage = {
   body: "b",
   path: "/chat/1",
   threadId: "c1",
+  collapseId: "conv-c1-7",
   origin: "https://cap.example.com",
 };
 
@@ -41,6 +42,7 @@ describe("push-provider@1", () => {
   it("has the limits", () => {
     expect(PUSH_LIMITS.titleChars).toBe(100);
     expect(PUSH_LIMITS.bodyChars).toBe(240);
+    expect(PUSH_LIMITS.collapseIdChars).toBe(64);
   });
 
   it("PushError keeps its fields", () => {
@@ -90,6 +92,10 @@ describe("push-provider@1", () => {
     expect(validatePushMessage({ ...message, body: "x".repeat(241) })).toMatch(/body/);
     expect(validatePushMessage({ ...message, path: "chat" })).toMatch(/path/);
     expect(validatePushMessage({ ...message, origin: "https://a.com/x" })).toMatch(/origin/);
+    expect(validatePushMessage({ ...message, collapseId: "x".repeat(64) })).toBeNull();
+    for (const collapseId of ["", "x".repeat(65), "conv:1", "a b", "é"]) {
+      expect(validatePushMessage({ ...message, collapseId })).toMatch(/collapseId/);
+    }
   });
 });
 
