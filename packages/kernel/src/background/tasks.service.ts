@@ -11,6 +11,7 @@ import { EventLog } from "../conversations/event-log.js";
 import { conversationTree } from "../conversations/tree.js";
 import { ConversationDevices } from "../devices/conversation-devices.js";
 import { ApiError } from "../errors.js";
+import { loadPeople, type PersonRef } from "../identity/account-avatar.js";
 import { audit } from "../identity/audit.js";
 import { KernelDb } from "../infra/database/kernel-db.js";
 import { rootConversationOf } from "../runtime/subagents/child.js";
@@ -50,6 +51,8 @@ export interface BackgroundTaskView {
   conversationId: string;
   /** The child conversation of a sub-agent's task; null for the conversation's own task. */
   subagentId: string | null;
+  /** The person whose run started it (next to the run's trigger); null when the account is gone. */
+  trigger: PersonRef | null;
   description: string;
   command: string;
   status: BackgroundTaskStatus;
@@ -143,11 +146,28 @@ export class BackgroundTasks {
     return (await conversationTree(this.db.db, conversationId)).map((c) => c.id);
   }
 
-  private view(task: BackgroundTaskRow, conversationId: string): BackgroundTaskView {
+  /** The views of the tasks, their trigger people read in one query. */
+  private async views(
+    tasks: readonly BackgroundTaskRow[],
+    conversationId: string,
+  ): Promise<BackgroundTaskView[]> {
+    const people = await loadPeople(
+      this.db.db,
+      tasks.map((t) => t.triggerAccountId),
+    );
+    return tasks.map((t) => this.view(t, conversationId, people.get(t.triggerAccountId) ?? null));
+  }
+
+  private view(
+    task: BackgroundTaskRow,
+    conversationId: string,
+    trigger: PersonRef | null,
+  ): BackgroundTaskView {
     return {
       id: task.id,
       conversationId,
       subagentId: task.conversationId === conversationId ? null : task.conversationId,
+      trigger,
       description: task.description,
       command: task.command,
       status: task.status,
@@ -182,7 +202,7 @@ export class BackgroundTasks {
     accountId: string,
   ): Promise<BackgroundTaskView[]> {
     const ids = await this.scope(orgId, conversationId, accountId);
-    return (await this.store.listFor(ids)).map((t) => this.view(t, conversationId));
+    return this.views(await this.store.listFor(ids), conversationId);
   }
 
   /**
@@ -215,7 +235,7 @@ export class BackgroundTasks {
         ...auditDetail,
       },
     });
-    return this.view(after, conversationId);
+    return (await this.views([after], conversationId))[0] as BackgroundTaskView;
   }
 
   /**
