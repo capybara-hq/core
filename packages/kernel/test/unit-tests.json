@@ -19,6 +19,7 @@
   "catalog/schema-path.test.ts",
   "catalog/scope.test.ts",
   "catalog/versions.test.ts",
+  "channels/approval-person-fields.unit.test.ts",
   "channels/cards.test.ts",
   "channels/features.test.ts",
   "channels/file-delivery.test.ts",
