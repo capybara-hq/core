@@ -1,7 +1,4 @@
 import { createHash, randomUUID } from "node:crypto";
-import { mkdtemp, rm } from "node:fs/promises";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { startTestPostgres, startTestRedis, type TestContainer } from "@capybara-hq/testing";
 import sharp from "sharp";
@@ -10,7 +7,6 @@ import { z } from "zod";
 import type { ConversationEvent } from "../../src/conversations/events.js";
 import { type KernelSchemaDb, kernelDb } from "../../src/db/kernel-schema.js";
 import { createDb } from "../../src/db/pool.js";
-import { ConversationDevices } from "../../src/devices/conversation-devices.js";
 import {
   type FileCardDetail,
   type FileLimits,
@@ -20,8 +16,6 @@ import {
 } from "../../src/platform/file-ref.js";
 import { defineOperation, type PlatformOperation } from "../../src/platform/operation.js";
 import { PlatformOperations } from "../../src/platform/registry.js";
-import { PERMISSION_CONTEXT_ACTIVATION } from "../../src/sandbox/permission-context-types.js";
-import { SandboxService } from "../../src/sandbox/sandbox.service.js";
 import { StorageService } from "../../src/storage/storage.service.js";
 import { builtinsOff } from "../helpers/disabled-tools.js";
 import { accountsFor } from "../helpers/identity.js";
@@ -43,20 +37,15 @@ import {
 
 /**
  * File references through the `Platform` tool and the pipeline (platform web parity spec §5,
- * Task 14): a write that takes a conversation file (`fileId`) or a device path (`path`) resolves
- * it at the policy step (limits, sha256, a thumbnail for an image) into the approval's
+ * Task 14): a write that takes a conversation file (`fileId`; a device file is delivered first)
+ * resolves it at the policy step (limits, sha256, a thumbnail for an image) into the approval's
  * `detail.file`, and reads it again before the run, which refuses bytes that changed after the
  * person confirmed. A test-only operation is registered after the start.
- *
- * The device's managed operations (the activation gate) admit a read only for a started tool call,
- * which the policy step is not yet, so this kernel runs with the gate off: the gate's own rules are
- * `SandboxFileReader`'s, pinned in test/sandbox.
  */
 
 const fixture = (name: string) =>
   fileURLToPath(new URL(`../fixtures/plugins/${name}/index.ts`, import.meta.url));
 const MEM_STORE = fixture("mem-store");
-const SANDBOX_FAKE = fixture("sandbox-fake");
 const OP = "platform.probe-file";
 const MAX = 64 * 1024;
 const CHANGED_TEXT = "The file changed after the person confirmed it; call the operation again.";
@@ -97,14 +86,12 @@ let rd: TestContainer;
 let db: KernelSchemaDb;
 let destroyDb: () => Promise<void>;
 let k: TestKernel;
-let root: string;
 let owner: Req;
 let ownerId: string;
 let orgId: string;
 let agentId: string;
 
 beforeAll(async () => {
-  root = await mkdtemp(join(tmpdir(), "cap-file-ref-"));
   [pgc, rd] = await Promise.all([startTestPostgres(), startTestRedis()]);
   const raw = createDb(pgc.url, 3);
   db = kernelDb(raw);
@@ -114,11 +101,9 @@ beforeAll(async () => {
       { pg: pgc.url, redis: rd.url },
       {
         roles: ["api", "worker"],
-        extensions: [MODEL_FAKE, MEM_STORE, SANDBOX_FAKE],
-        extensionConfig: { "sandbox-fake": { root } },
+        extensions: [MODEL_FAKE, MEM_STORE],
       },
     ),
-    { overrides: [{ provide: PERMISSION_CONTEXT_ACTIVATION, useValue: false }] },
   );
   k.app.get(PlatformOperations).register([probe]);
   ownerId = (
@@ -147,7 +132,6 @@ afterAll(async () => {
   await k?.close();
   await destroyDb?.();
   await Promise.all([pgc?.stop(), rd?.stop()]);
-  if (root) await rm(root, { recursive: true, force: true });
 });
 
 type Ev<T extends ConversationEvent["type"]> = Extract<ConversationEvent, { type: T }>;
@@ -182,25 +166,6 @@ async function attachment(conv: string, bytes: Uint8Array, name: string, content
     })
     .execute();
   return id;
-}
-
-/** Writes `data` at `rel` in the conversation's workspace; returns the absolute path. */
-async function putFile(conv: string, rel: string, data: Uint8Array): Promise<string> {
-  const deviceId = await k.app.get(ConversationDevices).forTool(orgId, conv);
-  return k.app.get(SandboxService).withSandbox(
-    {
-      orgId,
-      deviceId,
-      holderConversationId: conv,
-      actor: { accountId: ownerId, conversationId: conv },
-    },
-    async (h, p, info, s) => {
-      const path = `${info.roots.workspace}/${rel}`;
-      await p.writeFile(h, path, data, s);
-      return path;
-    },
-    new AbortController().signal,
-  );
 }
 
 const approvalRequested = (conv: string) =>
@@ -282,20 +247,11 @@ describe("Platform file references", () => {
     expect(views.some((a) => a.file?.sha256 === sha256(bytes))).toBe(true);
   });
 
-  it("a device path resolves through the conversation's device", async () => {
+  it("a device path is refused by the params, naming Deliver", async () => {
     const conv = await createConv(owner, orgId, agentId);
-    const bytes = new TextEncoder().encode("built in the sandbox\n");
-    const path = await putFile(conv, "out/report.txt", bytes);
-    const before = seen.length;
-    const { card, result } = await confirmedCall(conv, { file: { path } });
-    expect(card.file).toMatchObject({
-      name: "report.txt",
-      size: bytes.byteLength,
-      sha256: sha256(bytes),
-      contentType: "text/plain",
-    });
-    expect(result?.isError).toBe(false);
-    expect(seen.slice(before).map((s) => s.sha256)).toEqual([sha256(bytes)]);
+    const result = await refusedCall(conv, { file: { path: "/workspace/out/plugin.tgz" } });
+    expect(result?.isError).toBe(true);
+    expect(result?.content).toContain("Deliver the file first, then pass its fileId.");
   });
 
   it("an over-limit file is refused before the card, with no approval row", async () => {
@@ -305,14 +261,6 @@ describe("Platform file references", () => {
     const result = await refusedCall(conv, { file: { fileId } });
     expect(result?.isError).toBe(true);
     expect(result?.content).toContain(
-      `The file is ${MAX + 10} bytes; this operation takes at most ${MAX}.`,
-    );
-
-    // a device file over the limit, the same way
-    const conv2 = await createConv(owner, orgId, agentId);
-    const path = await putFile(conv2, "big.txt", big);
-    const result2 = await refusedCall(conv2, { file: { path } });
-    expect(result2?.content).toContain(
       `The file is ${MAX + 10} bytes; this operation takes at most ${MAX}.`,
     );
   });
@@ -359,15 +307,20 @@ describe("Platform file references", () => {
     expect((row.summary as { en: string } | null)?.en).toBe("Store the file cat.png");
   });
 
-  it("a device file rewritten after the card is refused at the run, and nothing is stored", async () => {
+  it("a file whose stored bytes change after the card is refused at the run; nothing is stored", async () => {
     const conv = await createConv(owner, orgId, agentId);
     const shown = new TextEncoder().encode("the bytes the person saw\n");
-    const path = await putFile(conv, "out/plugin.tgz", shown);
-    await postMessage(owner, orgId, conv, callText({ file: { path } }));
+    const fileId = await attachment(conv, shown, "plugin.tgz", "application/gzip");
+    await postMessage(owner, orgId, conv, callText({ file: { fileId } }));
     const asked = await approvalRequested(conv);
     expect((await fileOfApproval(asked.payload.approvalId)).file?.sha256).toBe(sha256(shown));
-    // the agent's sandbox changes the file while the card waits
-    await putFile(conv, "out/plugin.tgz", new TextEncoder().encode("other bytes\n"));
+    // the object behind the id is replaced while the card waits (same size: it still opens)
+    const other = new TextEncoder().encode("other bytes, same length\n");
+    expect(other.byteLength).toBe(shown.byteLength);
+    await k.app.get(StorageService).kernel(orgId).put(`attachments/${fileId}`, other, {
+      contentType: "application/gzip",
+      size: other.byteLength,
+    });
     const before = seen.length;
     const ok = await approve(asked.payload.approvalId);
     expect(ok.statusCode, ok.body).toBe(200);

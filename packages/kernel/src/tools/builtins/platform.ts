@@ -754,8 +754,6 @@ async function fileOf(
   return deps.files.resolve(wanted.ref, wanted.limits, {
     orgId: ctx.orgId,
     conversationId: ctx.conversationId,
-    actorAccountId: ctx.actorAccountId,
-    ...(ctx.callId !== undefined && { callId: ctx.callId }),
     signal: signal ?? ctx.signal,
   });
 }

@@ -1,5 +1,4 @@
 import { createHash } from "node:crypto";
-import { posix } from "node:path";
 import { ToolError } from "@capybara-hq/plugin-sdk";
 import { Inject, Injectable } from "@nestjs/common";
 import sharp from "sharp";
@@ -9,49 +8,42 @@ import {
   normalizeContentType,
   sniffMatches,
 } from "../conversations/attachments.service.js";
-import { ApiError } from "../errors.js";
 import { KernelDb } from "../infra/database/kernel-db.js";
 import { rootConversationOf } from "../runtime/subagents/child.js";
-import { SandboxFileReader, SandboxFileTooLargeError } from "../sandbox/sandbox-file-reader.js";
 import { StorageService } from "../storage/storage.service.js";
 import { findConversationFile } from "../tools/builtins/conversation-files.js";
-import { contentTypeFor } from "../tools/builtins/sandbox/deliver.js";
 
 /**
  * File references (platform web parity spec §5): a `Platform` write the web does with an upload
  * takes a file the agent already has instead, a conversation file (`fileId`: an attachment, a
- * generated or delivered artifact, a `read` copy) or a file on the conversation's device (`path`).
- * The tool resolves it at the policy step (limits, sha256, a thumbnail for an image: the card's
+ * generated or delivered artifact, a `read` copy). A file on the conversation's device is delivered
+ * first (`Deliver`: the device rules, the command review and the activation gate apply) and passed
+ * by the delivered file's id, so device files have one reading path. The tool resolves it at the policy step (limits, sha256, a thumbnail for an image: the card's
  * `detail.file`) and again right before the run, which refuses bytes that differ from the ones the
  * person confirmed.
  */
 
-/** The longest device path a reference takes (the sandbox tools' bound). */
-export const FILE_REF_PATH_MAX = 4096;
+export type FileRef = { fileId: string };
 
-export type FileRef = { fileId: string } | { path: string };
+/** Model-visible: a device path where a file reference is expected. */
+export const FILE_REF_PATH_TEXT = "Deliver the file first, then pass its fileId.";
 
-export const FileRefSchema: z.ZodType<FileRef> = z.union([
-  z
-    .object({
-      fileId: z
-        .uuid()
-        .describe(
-          "The id of a file of this conversation: an attachment, a generated image or a delivered file.",
-        ),
-    })
-    .strict(),
-  z
-    .object({
-      path: z
-        .string()
-        .min(1)
-        .max(FILE_REF_PATH_MAX)
-        .refine((p) => p.startsWith("/"), "must be an absolute path")
-        .describe("The absolute path of a file on this conversation's device."),
-    })
-    .strict(),
-]);
+export const FileRefSchema: z.ZodType<FileRef> = z.strictObject(
+  {
+    fileId: z
+      .uuid()
+      .describe(
+        "The id of a file of this conversation: an attachment, a generated image or a delivered file (Deliver a device file first).",
+      ),
+  },
+  {
+    // a device path is not a file reference: the model delivers the file first
+    error: (iss) =>
+      iss.code === "unrecognized_keys" && iss.keys.includes("path")
+        ? FILE_REF_PATH_TEXT
+        : undefined,
+  },
+);
 
 /** What an operation accepts: the route's byte limit and content types (absent: any type). */
 export interface FileLimits {
@@ -84,9 +76,6 @@ export interface FileCardDetail {
 export interface FileRefContext {
   orgId: string;
   conversationId: string;
-  actorAccountId: string;
-  /** The tool call the read serves (the device reader's activation gate needs it). */
-  callId?: string;
   signal: AbortSignal;
 }
 
@@ -108,7 +97,7 @@ export const fileTypeText = (contentType: string, types: readonly string[]) =>
 export const FILE_CHANGED_TEXT =
   "The file changed after the person confirmed it; call the operation again.";
 const notFoundText = (id: string) =>
-  `File ${id} is not a file of this conversation. Pass the id of an attachment, a generated image or a delivered file of this conversation, or {"path": ...} for a file on its device.`;
+  `File ${id} is not a file of this conversation. Pass the id of an attachment, a generated image or a delivered file of this conversation, or Deliver a device file first and pass its fileId.`;
 
 const sha256Of = (bytes: Uint8Array): string => createHash("sha256").update(bytes).digest("hex");
 
@@ -151,7 +140,7 @@ export async function thumbnailOf(file: Pick<ResolvedFile, "contentType" | "byte
 /**
  * Resolves file references for the `Platform` tool. `fileId` goes through
  * `findConversationFile` (the resolver `Read` uses: the conversation and its root, inside the
- * org); `path` through {@link SandboxFileReader.read} (its device, path and activation rules).
+ * org).
  * Every refusal is a model-visible `ToolError`.
  */
 @Injectable()
@@ -160,14 +149,10 @@ export class FileRefs {
     @Inject(KernelDb) private readonly db: KernelDb,
     @Inject(AttachmentsService) private readonly attachments: AttachmentsService,
     @Inject(StorageService) private readonly storage: StorageService,
-    @Inject(SandboxFileReader) private readonly reader: SandboxFileReader,
   ) {}
 
   async resolve(ref: FileRef, limits: FileLimits, ctx: FileRefContext): Promise<ResolvedFile> {
-    const got =
-      "fileId" in ref
-        ? await this.conversationFile(ref.fileId, limits, ctx)
-        : await this.deviceFile(ref.path, limits, ctx);
+    const got = await this.conversationFile(ref.fileId, limits, ctx);
     const contentType = normalizeContentType(got.contentType);
     const types = limits.contentTypes;
     if (types !== undefined) {
@@ -219,30 +204,5 @@ export class FileRefs {
       throw new ToolError(fileTooLargeText(bytes.byteLength, limits.maxBytes));
     }
     return { name: file.name, contentType: file.contentType, bytes };
-  }
-
-  private async deviceFile(path: string, limits: FileLimits, ctx: FileRefContext) {
-    try {
-      const bytes = await this.reader.read({
-        orgId: ctx.orgId,
-        conversationId: ctx.conversationId,
-        actorAccountId: ctx.actorAccountId,
-        path,
-        maxBytes: limits.maxBytes,
-        signal: ctx.signal,
-        ...(ctx.callId !== undefined && { callId: ctx.callId }),
-      });
-      const name = posix.basename(path);
-      // a device file has no stored type: the name's, as `Deliver` names it
-      return { name, contentType: contentTypeFor(name), bytes };
-    } catch (e) {
-      if (e instanceof SandboxFileTooLargeError) {
-        throw new ToolError(fileTooLargeText(e.size, limits.maxBytes));
-      }
-      if (e instanceof ApiError && e.code.startsWith("sandbox.file_")) {
-        throw new ToolError(e.message);
-      }
-      throw e;
-    }
   }
 }

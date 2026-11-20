@@ -162,19 +162,8 @@ const isDirectory = (path: string) =>
     "sandbox.file_is_directory",
     `${clip(path, 200)} is a directory; pass the path of one file.`,
   );
-/** `sandbox.file_too_large` with its sizes, for a caller with its own wording (a file reference). */
-export class SandboxFileTooLargeError extends ApiError {
-  constructor(
-    path: string,
-    readonly size: number,
-    readonly maxBytes: number,
-  ) {
-    super(
-      "sandbox.file_too_large",
-      `File ${clip(path, 200)} is ${size} bytes, over the limit of ${maxBytes} bytes; make it smaller and retry.`,
-    );
-  }
-}
-
 const tooLarge = (path: string, size: number, max: number) =>
-  new SandboxFileTooLargeError(path, size, max);
+  new ApiError(
+    "sandbox.file_too_large",
+    `File ${clip(path, 200)} is ${size} bytes, over the limit of ${max} bytes; make it smaller and retry.`,
+  );
