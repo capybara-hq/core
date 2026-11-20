@@ -159,7 +159,7 @@ describe("sign-out with a push registration", () => {
 describe("the in-context push prompt", () => {
   const prompt = () => screen.queryByText(en.notifications.prompt.text);
 
-  it("shows once something waits, and 以后再说 hides it for good", async () => {
+  it("shows once something waits, and Not now hides it for good", async () => {
     installPush({ permission: "prompt", registrationId: null });
     stubApi({});
     const { unmount } = renderFrame(
@@ -194,7 +194,7 @@ describe("the in-context push prompt", () => {
     expect(prompt()).toBeNull();
   });
 
-  it("开启 registers this device (the click starts the OS prompt)", async () => {
+  it("Turn on registers this device (the click starts the OS prompt)", async () => {
     const push = installPush({ permission: "prompt", registrationId: null });
     stubApi({ "POST /api/v1/me/push-registrations": () => json(201, { id: "r5" }) });
     renderFrame(shellOf(ME, { pending: { count: 1, more: false } }), undefined, { locale: "en" });

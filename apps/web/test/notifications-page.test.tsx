@@ -118,7 +118,7 @@ describe("/account/notifications", () => {
     await vi.waitFor(() => expect(switchOf(m.replies).getAttribute("aria-checked")).toBe("true"));
   });
 
-  it("without push@1 there is no 在此设备开启通知 button", async () => {
+  it("without push@1 there is no turn-on-for-this-device button", async () => {
     stubApi({
       [`GET ${REGS}`]: () => json(200, { items: [] }),
       [`GET ${PREFS}`]: () => json(200, ALL_ON),

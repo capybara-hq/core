@@ -32,12 +32,12 @@ export async function runSecretsRewrap(
     log.setLevel(config.log.level);
     const r = await rewrapMasterKeys(config, { logger: log });
     io.stdout.write(
-      `rewrapped ${r.dataKeys} org data key(s), ${r.initialPasswords} initial password(s) and ` +
-        `${r.sealedReveals} invitation link(s) to master key ${r.currentMasterKeyId}\n`,
+      `rewrapped ${r.dataKeys} org data key(s), ${r.initialPasswords} initial password(s), ` +
+        `${r.sealedReveals} invitation link(s) and ${r.pushTokens} push token(s) to master key ${r.currentMasterKeyId}\n`,
     );
     if (config.masterKeyPrevious.length > 0) {
       io.stdout.write(
-        "every org data key, unexpired initial password and unexpired invitation link now uses " +
+        "every org data key, unexpired initial password, unexpired invitation link and push token now uses " +
           "the current master key (expired ones are left to their cleanup); once every replica " +
           "runs this config, wait auth.accessTokenTtlSeconds, then remove masterKeyPrevious " +
           "(docs/deploy/README.md, Rotating the master key)\n",
