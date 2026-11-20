@@ -489,7 +489,7 @@ What to know when writing an extension:
 
 ## Changing the host or the contract
 
-1. A change to the SDK's public API regenerates `packages/plugin-sdk/api/plugin-sdk.api.md` (`pnpm gen:sdk-api`) and adds a changeset bumping `@capybara-hq/plugin-sdk` (`check:sdk-api`, `check:sdk-api-changeset`).
+1. A change to the SDK's public API regenerates `packages/plugin-sdk/api/plugin-sdk.api.md` (`pnpm gen:sdk-api`) and adds a changeset bumping `@capybara-hq/plugin-sdk` (`check:sdk-api`, `check:api-changeset`).
 2. Cover the kernel side on a fake extension (add one under `packages/testing/fixtures/extensions/` when no fake has the shape, and list it in `packages/testing/src/fixtures.ts`), including a dual-replica case when state crosses requests.
 3. When the change alters what extensions receive or must do, check the official plugins in capybara-hq/plugins against it (their tests use `@capybara-hq/testing` and model-fake from npm) and update the plugins repository's author skill.
 4. `pnpm lint && pnpm typecheck && pnpm check && pnpm test`; changes that affect a release get a changeset (`pnpm changeset`).

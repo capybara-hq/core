@@ -266,13 +266,14 @@ export const CHECKS: readonly CheckEntry[] = [
     inAll: true,
   },
   {
-    name: "sdk-api-changeset",
-    cli: "sdk-api-changeset",
+    name: "api-changeset",
+    cli: "api-changeset",
     ciMode: "full",
     takesBase: true,
     reason:
       "runs on every PR as a cheap diff inspection against a base (`--base`); own PR-only CI step, skipped on main",
-    description: "A change to the SDK API report carries a changeset bumping plugin-sdk.",
+    description:
+      "A change to a published package's API report carries a changeset bumping that package.",
     inAll: false,
   },
   {
