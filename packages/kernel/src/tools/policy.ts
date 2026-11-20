@@ -145,8 +145,9 @@ export function connectorPolicy(input: {
  * - in `fail` mode an ask still left is refused (`{ refused, missingGrant }`, no approval), and
  *   `AskUserQuestion` is refused; in `wait` mode both ask the creator as in an attended run.
  *
- * A call with person fields (`CallPolicy.personFields`) is a fixed ask: no grant or agent
- * `allow` lets it through (ruling R6). The pipeline refuses it before this in an unattended run.
+ * A call with person fields (`CallPolicy.personFields`) or one only the person may confirm
+ * (`CallPolicy.personOnly`) is a fixed ask: no grant or agent `allow` lets it through (ruling R6).
+ * The pipeline refuses it before this in an unattended run.
  */
 export function createDecidePolicy(
   db: KernelSchemaDb,
@@ -308,6 +309,7 @@ export function createDecidePolicy(
     const fixedAsk =
       unattendedSkillChange ||
       call?.personFields !== undefined ||
+      call?.personOnly === true ||
       isFixedAsk(tool) ||
       (call !== null && !call.remember && (call.policy !== "allow" || agentOverride !== undefined));
     const input: PolicyInput = {

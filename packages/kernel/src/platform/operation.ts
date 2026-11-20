@@ -130,6 +130,13 @@ export interface PlatformOperation<I = unknown> {
    */
   rememberable?: false;
   /**
+   * `true`: the write's result is shown once, on the web, to the person who approves the call (an
+   * invitation link, a generated initial password), so only the person the run works for may
+   * confirm it: the call always asks them (never a grant, an `allow`, a role escalation) and is
+   * refused in an unattended run (`CallPolicy.personOnly`, like person fields, ruling R6).
+   */
+  revealsToApprover?: true;
+  /**
    * The class of one call when it depends on the target (read at confirmation time): e.g.
    * `agents.update` is `personal` only on a private agent the actor owns and `org` otherwise, so a
    * remembered grant never carries over to a shared agent. Only for writes, never returns `read`;

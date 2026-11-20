@@ -419,6 +419,8 @@ export function platformTool(deps: PlatformToolDeps): BuiltinTool {
       remember: personFields === null && cls === "personal" && op.rememberable !== false,
       summary,
       ...(personFields !== null && { personFields }),
+      // its result is shown once to the approver: only the person may confirm it
+      ...(op.revealsToApprover === true && { personOnly: true as const }),
     };
   }
 

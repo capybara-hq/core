@@ -141,7 +141,7 @@ export class SealedReveals {
     await audit(this.db.db, {
       actorAccountId: accountId,
       orgId,
-      action: "org.invitation_link_shown",
+      action: "org.invitation.link_shown",
       target: row.id,
       detail: { approvalId },
     });

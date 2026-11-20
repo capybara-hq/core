@@ -86,14 +86,41 @@ export function memberChangeRefusal(
       message: "The Platform tool never touches an owner or makes anyone an owner",
     };
   }
-  if (role !== undefined && (actor.role === null || !roleAtLeast(actor.role, role))) {
-    return {
-      code: "member.role_above_actor",
-      message: `The Platform tool never gives a role above your own (${actor.role ?? "none"})`,
-    };
-  }
-  return null;
+  return role === undefined ? null : roleAboveActor(actor.role, role);
 }
+
+/** `member.role_above_actor` when `role` is above the actor's own (or the actor has none). */
+export function roleAboveActor(
+  actorRole: OrgRole | null,
+  role: OrgRole,
+): { code: ErrorCode; message: string } | null {
+  return actorRole !== null && roleAtLeast(actorRole, role)
+    ? null
+    : {
+        code: "member.role_above_actor",
+        message: `The Platform tool never gives a role above your own (${actorRole ?? "none"})`,
+      };
+}
+
+/** Throws a refusal as the {@link ApiError} of its code. */
+function refuse(r: { code: ErrorCode; message: string } | null): void {
+  if (r !== null) throw new ApiError(r.code, r.message);
+}
+
+/**
+ * The member service's guard (`MemberWriteOptions.guard`): {@link memberChangeRefusal} on the roles
+ * read under the org row lock, so a role that changed after the precheck is still refused.
+ */
+const memberGuard =
+  (actorId: string, targetId: string, role?: OrgRole) =>
+  (actorRole: OrgRole, targetRole: OrgRole): void =>
+    refuse(
+      memberChangeRefusal(
+        { id: actorId, role: actorRole },
+        { id: targetId, role: targetRole },
+        role,
+      ),
+    );
 
 /** The invitation as the tool shows it: never a token (the list has none; create's is sealed). */
 const invitationView = (i: Invitation & { status?: string }) => ({
@@ -144,33 +171,27 @@ export class OrgsOperations implements OnModuleInit {
     return a;
   }
 
-  /** {@link memberChangeRefusal} against the roles read now. */
-  private async memberRefusal(ctx: OperationContext, targetId: string, role?: OrgRole) {
-    const [actorRole, targetRole] = await Promise.all([
-      roleOf(this.kdb.db, ctx.orgId, ctx.actorAccountId),
-      roleOf(this.kdb.db, ctx.orgId, targetId),
-    ]);
-    return memberChangeRefusal(
-      { id: ctx.actorAccountId, role: actorRole },
-      { id: targetId, role: targetRole },
-      role,
-    );
-  }
-
-  /** The precheck of a member operation: the refusal, before the card. */
+  /** The precheck of a member operation: {@link memberChangeRefusal} on the roles read now. */
   private async memberCheck(
     ctx: OperationContext,
     targetId: string,
     role?: OrgRole,
   ): Promise<PrecheckResult> {
-    const refused = await this.memberRefusal(ctx, targetId, role);
+    const [actorRole, targetRole] = await Promise.all([
+      roleOf(this.kdb.db, ctx.orgId, ctx.actorAccountId),
+      roleOf(this.kdb.db, ctx.orgId, targetId),
+    ]);
+    const refused = memberChangeRefusal(
+      { id: ctx.actorAccountId, role: actorRole },
+      { id: targetId, role: targetRole },
+      role,
+    );
     return refused === null ? { ok: true } : { ok: false, ...refused };
   }
 
-  /** Throws the refusal in the run (the precheck may have been skipped). */
-  private async assertMember(ctx: OperationContext, targetId: string, role?: OrgRole) {
-    const refused = await this.memberRefusal(ctx, targetId, role);
-    if (refused !== null) throw new ApiError(refused.code, refused.message);
+  /** The precheck of `orgs.invite`, and its run's check: never a role above the actor's. */
+  private async inviteRefusal(ctx: OperationContext, role: OrgRole) {
+    return roleAboveActor(await roleOf(this.kdb.db, ctx.orgId, ctx.actorAccountId), role);
   }
 
   /** The member's display name for a card; the id when unknown. */
@@ -587,6 +608,7 @@ export class OrgsOperations implements OnModuleInit {
         mirrors: ["POST /api/v1/orgs/:orgId/invitations"],
         confirm: "org",
         rememberable: false,
+        revealsToApprover: true,
         errors: [
           {
             code: "member.role_above_actor",
@@ -602,14 +624,8 @@ export class OrgsOperations implements OnModuleInit {
           },
         ],
         precheck: async (i, ctx) => {
-          const actor = await roleOf(this.kdb.db, ctx.orgId, ctx.actorAccountId);
-          return actor !== null && roleAtLeast(actor, i.role)
-            ? { ok: true }
-            : {
-                ok: false,
-                code: "member.role_above_actor",
-                message: `The Platform tool never gives a role above your own (${actor ?? "none"})`,
-              };
+          const refused = await this.inviteRefusal(ctx, i.role);
+          return refused === null ? { ok: true } : { ok: false, ...refused };
         },
         summary: (i) => {
           const h = i.expiresInHours;
@@ -627,13 +643,8 @@ export class OrgsOperations implements OnModuleInit {
               "orgs.invite runs only as a Platform call you approve in a conversation",
             );
           }
-          const actor = await roleOf(this.kdb.db, ctx.orgId, ctx.actorAccountId);
-          if (actor === null || !roleAtLeast(actor, input.role)) {
-            throw new ApiError(
-              "member.role_above_actor",
-              `The Platform tool never gives a role above your own (${actor ?? "none"})`,
-            );
-          }
+          // the service re-checks the role under the org row lock (`forbidden`)
+          refuse(await this.inviteRefusal(ctx, input.role));
           const to = {
             conversationId: ctx.conversationId,
             runId: ctx.runId,
@@ -738,14 +749,16 @@ export class OrgsOperations implements OnModuleInit {
           };
         },
         run: async (input, ctx) => {
-          await this.assertMember(ctx, input.accountId, input.role);
           await this.members.changeRole(
             ctx.orgId,
             input.accountId,
             input.role,
             ctx.actorAccountId,
             undefined,
-            viaAgent("orgs.set-member-role", ctx),
+            {
+              auditDetail: viaAgent("orgs.set-member-role", ctx),
+              guard: memberGuard(ctx.actorAccountId, input.accountId, input.role),
+            },
           );
           return { accountId: input.accountId, role: input.role };
         },
@@ -775,7 +788,7 @@ export class OrgsOperations implements OnModuleInit {
           },
           {
             code: "member.anonymous_guest",
-            next: "The anonymous guest has no role to change; switch the channel connection back to binding on the web if it is no longer wanted.",
+            next: "The anonymous guest cannot be removed; switch the channel connection back to binding on the web if anonymous access is no longer wanted.",
           },
         ],
         precheck: (i, ctx) => this.memberCheck(ctx, i.accountId),
@@ -787,14 +800,10 @@ export class OrgsOperations implements OnModuleInit {
           };
         },
         run: async (input, ctx) => {
-          await this.assertMember(ctx, input.accountId);
-          await this.members.remove(
-            ctx.orgId,
-            input.accountId,
-            ctx.actorAccountId,
-            undefined,
-            viaAgent("orgs.remove-member", ctx),
-          );
+          await this.members.remove(ctx.orgId, input.accountId, ctx.actorAccountId, undefined, {
+            auditDetail: viaAgent("orgs.remove-member", ctx),
+            guard: memberGuard(ctx.actorAccountId, input.accountId),
+          });
           return { accountId: input.accountId, removed: true };
         },
       }),

@@ -1,4 +1,5 @@
 import { randomUUID } from "node:crypto";
+import { sql } from "kysely";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import type { ConversationEvent } from "../../src/conversations/events.js";
 import { ApiTokenService } from "../../src/identity/api-tokens.js";
@@ -10,7 +11,15 @@ import { PlatformOperations } from "../../src/platform/registry.js";
 import { deleteExpiredSealedReveals } from "../../src/platform/sealed-reveals.js";
 import { type OrgEnv, startOrgEnv } from "../catalog/org-env.js";
 import { builtinsOff } from "../helpers/disabled-tools.js";
-import { createConv, eventsOf, postMessage, waitFor, waitForTerminal } from "../helpers/runs.js";
+import { accountsFor } from "../helpers/identity.js";
+import {
+  createConv,
+  eventsOf,
+  PW,
+  postMessage,
+  waitFor,
+  waitForTerminal,
+} from "../helpers/runs.js";
 
 /**
  * Member management through the `Platform` tool (platform web parity spec §7.2, maintainer decision
@@ -191,8 +200,58 @@ describe("orgs.invite through an admin's private agent", () => {
       (a) => a.action === "org.invitation.created" && a.target === invitationId,
     );
     expect(created?.detail).toMatchObject({ via: "agent", operation: "orgs.invite" });
-    const read = audit.find((a) => a.action === "org.invitation_link_shown");
+    const read = audit.find((a) => a.action === "org.invitation.link_shown");
     expect(read).toMatchObject({ actor_account_id: env.bossId, target: invitationId });
+  });
+
+  it("asks even under an allow override and a remembered grant (only the person confirms)", async () => {
+    const spec = await env.db
+      .selectFrom("approvals")
+      .select("spec_hash")
+      .where("id", "=", approvalId)
+      .executeTakeFirstOrThrow();
+    const res = await env.boss({
+      method: "POST",
+      url: `/api/v1/orgs/${env.orgId}/agents`,
+      payload: {
+        definition: {
+          name: "Allowed",
+          instructions: "Be helpful.",
+          model: { provider: "model-fake", model: "fake-1" },
+          disabledTools: builtinsOff("Platform"),
+        },
+        visibility: "private",
+      },
+    });
+    expect(res.statusCode, res.body).toBe(201);
+    const allowed = (res.json() as { agent: { id: string } }).agent.id;
+    // an `allow` on the tool and the operation's key (the route refuses to save one on a builtin,
+    // so it goes into the stored version) and a remembered grant of the operation
+    await sql`UPDATE capybara.agent_versions
+      SET definition = jsonb_set(definition, '{toolPolicies}',
+        ${JSON.stringify({ Platform: "allow", "Platform:orgs.invite": "allow" })}::jsonb)
+      WHERE agent_id = ${allowed}`.execute(env.db);
+    await sql`INSERT INTO capybara.tool_grants (org_id, account_id, agent_id, tool_key, spec_hash)
+      VALUES (${env.orgId}, ${env.bossId}, ${allowed}, 'Platform:orgs.invite', ${spec.spec_hash})`.execute(
+      env.db,
+    );
+    const convId = await createConv(env.boss, env.orgId, allowed);
+    await postMessage(env.boss, env.orgId, convId, call("orgs.invite", { role: "guest" }));
+    const asked = await waitFor(
+      async () => ofType(await eventsOf(env.db, convId), "approval_requested")[0],
+      20_000,
+      "approval_requested",
+    );
+    const row = await env.db
+      .selectFrom("approvals")
+      .select(["tool_key", "requested_for", "scopes"])
+      .where("id", "=", asked.payload.approvalId)
+      .executeTakeFirstOrThrow();
+    expect(row).toMatchObject({
+      tool_key: "Platform:orgs.invite",
+      requested_for: env.bossId,
+      scopes: ["once"],
+    });
   });
 
   it("a personal access token cannot reveal a link (auth.session_required)", async () => {
@@ -222,6 +281,31 @@ describe("orgs.invite through an admin's private agent", () => {
       .where("target", "=", invitationId)
       .executeTakeFirstOrThrow();
     expect(audit.detail).toMatchObject({ via: "agent", operation: "orgs.revoke-invitation" });
+  });
+
+  it("a link whose invitation was revoked before it was read is never shown", async () => {
+    const convId = await createConv(env.boss, env.orgId, agentId);
+    await postMessage(env.boss, env.orgId, convId, call("orgs.invite", { role: "member" }));
+    const asked = await waitFor(
+      async () => ofType(await eventsOf(env.db, convId), "approval_requested")[0],
+      20_000,
+      "approval_requested",
+    );
+    const ok = await env.boss({
+      method: "POST",
+      url: `/api/v1/orgs/${env.orgId}/approvals/${asked.payload.approvalId}/decision`,
+      payload: { decision: "approve", scope: "once" },
+    });
+    expect(ok.statusCode, ok.body).toBe(200);
+    await waitForTerminal(env.db, convId, 1, 30_000);
+    const result = ofType(await eventsOf(env.db, convId), "tool_result").at(-1)?.payload;
+    const id = (JSON.parse(result?.content ?? "{}") as { invitation: { id: string } }).invitation
+      .id;
+    await run("orgs.revoke-invitation", { invitationId: id }, ctxOf(env.bossId));
+    const res = await reveal(env.boss, asked.payload.approvalId);
+    expect(res.statusCode).toBe(404);
+    expect(errCode(res)).toBe("invitation.link_unavailable");
+    await env.db.deleteFrom("platform_sealed_reveals").where("id", "=", id).execute();
   });
 
   it("an invite seals one row for its call; the hourly job drops it once expired", async () => {
@@ -295,8 +379,35 @@ describe("refusals before the card", () => {
     ).toMatchObject({ ok: false, code: "member.self" });
     await expect(
       run("orgs.remove-member", { accountId: env.rootId }, ctxOf(env.bossId)),
-    ).rejects.toThrow(/owner/);
+    ).rejects.toThrow(/never touches an owner/);
     expect(await roleIn(env.rootId)).toBe("owner");
+  });
+
+  it("refuses under the org row lock a target that became an owner after the precheck", async () => {
+    const other = (
+      await accountsFor(env.db).createLocal({ login: "racer", password: PW, displayName: "Racer" })
+    ).id;
+    await env.db
+      .insertInto("memberships")
+      .values({ org_id: env.orgId, account_id: other, role: "member" })
+      .execute();
+    const input = { accountId: other, role: "guest" };
+    expect(await precheck("orgs.set-member-role", input, ctxOf(env.rootId))).toEqual({ ok: true });
+    // promoted between the card and the run
+    await env.db
+      .updateTable("memberships")
+      .set({ role: "owner" })
+      .where("org_id", "=", env.orgId)
+      .where("account_id", "=", other)
+      .execute();
+    // the actor is an owner, so the service alone would allow it; the tool's guard refuses
+    await expect(run("orgs.set-member-role", input, ctxOf(env.rootId))).rejects.toThrow(
+      /never touches an owner/,
+    );
+    await expect(
+      run("orgs.remove-member", { accountId: other }, ctxOf(env.rootId)),
+    ).rejects.toThrow(/never touches an owner/);
+    expect(await roleIn(other)).toBe("owner");
   });
 
   it("never raises above the actor's role (the guard itself)", () => {

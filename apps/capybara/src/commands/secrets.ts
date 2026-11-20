@@ -37,9 +37,9 @@ export async function runSecretsRewrap(
     );
     if (config.masterKeyPrevious.length > 0) {
       io.stdout.write(
-        "every org data key and unexpired initial password now uses the current master key " +
-          "(expired initial passwords are left to their cleanup); once every replica runs this " +
-          "config, wait auth.accessTokenTtlSeconds, then remove masterKeyPrevious " +
+        "every org data key, unexpired initial password and unexpired invitation link now uses " +
+          "the current master key (expired ones are left to their cleanup); once every replica " +
+          "runs this config, wait auth.accessTokenTtlSeconds, then remove masterKeyPrevious " +
           "(docs/deploy/README.md, Rotating the master key)\n",
       );
     }
