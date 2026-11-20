@@ -139,6 +139,7 @@ export {
   SkeletonBars,
   TaskList,
 } from "./panels";
+export { PersonFieldRow, type PersonFieldRowProps } from "./person-field";
 export { Cursor, Prose, type ProseProps, Spinner } from "./prose";
 export { QueuedMessage, type QueuedMessageProps, QueuePaused } from "./queued";
 export {

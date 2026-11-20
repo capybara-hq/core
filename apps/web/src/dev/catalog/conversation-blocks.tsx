@@ -607,6 +607,36 @@ function approvalBlocks(): ReactNode {
       <ApprovalPending id="approval-block-pending-once" scopes={["once"]} />
       <ApprovalPending id="approval-block-pending-summary" scopes={A.scopes} summary />
       <ApprovalPending id="approval-block-deny-reason" scopes={A.scopes} deny />
+      <Block id="approval-block-person-fields">
+        <ApprovalBlock
+          tool={A.tool}
+          toolKey={A.toolKey}
+          input={Object.fromEntries(A.args)}
+          scopes={["once"]}
+          state={{ kind: "pending" }}
+          personTarget="Acme"
+          personFields={[
+            {
+              path: "apiKey",
+              label: "API key",
+              description: "From the vendor console.",
+              multiline: false,
+              value: "",
+              onChange: noop,
+            },
+            {
+              path: "privateKey",
+              label: "Private key",
+              multiline: true,
+              value: "",
+              error: "Enter a value.",
+              onChange: noop,
+            },
+          ]}
+          onApprove={noop}
+          onDeny={noop}
+        />
+      </Block>
       <Block id="approval-block-approved">
         <ApprovalBlock
           tool={W.approved.tool}

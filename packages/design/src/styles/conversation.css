@@ -1082,6 +1082,27 @@ button.cb-tool-toggle:focus-visible {
   line-clamp: 3;
   overflow: hidden;
 }
+.cb-hcard-person {
+  display: flex;
+  flex-direction: column;
+  gap: var(--cb-space-2);
+  min-width: 0;
+}
+.cb-person-field {
+  display: flex;
+  flex-direction: column;
+  gap: var(--cb-space-1);
+  min-width: 0;
+}
+.cb-person-field-label {
+  font-weight: 600;
+}
+.cb-person-field-error {
+  color: var(--cb-fail);
+}
+.cb-person-field textarea[data-masked="true"] {
+  -webkit-text-security: disc;
+}
 .cb-hcard-json {
   align-self: stretch;
   max-height: var(--cb-layout-tool-output);

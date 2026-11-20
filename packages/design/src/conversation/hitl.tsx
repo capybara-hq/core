@@ -7,6 +7,7 @@ import { CodeBlock } from "../display/chat";
 import { initialOf } from "../display/initial";
 import { Icon } from "../icons/icon";
 import { useDesignT } from "../provider";
+import { PersonFieldRow } from "./person-field";
 import { registrableDomain } from "./registrable";
 import { fillCopy } from "./tool-copy";
 
@@ -103,6 +104,21 @@ export type ApprovalBlockProps = {
    */
   command?: CommandAsk;
   state: ApprovalState;
+  /**
+   * Secret fields the person types into the card (an API key): the agent never sees the values.
+   * `path` identifies the field; label and description come from the target's schema.
+   */
+  personFields?: {
+    path: string;
+    label: string;
+    description?: string | undefined;
+    multiline: boolean;
+    error?: string | undefined;
+    value: string;
+    onChange(v: string): void;
+  }[];
+  /** What the entered values are saved to (shown above the fields). */
+  personTarget?: string;
   /** `hosts`: a network ask's checked hosts (every host when it has one). */
   onApprove?(scope: ApprovalScope, hosts?: string[]): void;
   onDeny?(reason?: string): void;
@@ -330,6 +346,27 @@ export function ApprovalBlock(p: ApprovalBlockProps): JSX.Element {
           ) : null}
         </div>
       )}
+      {p.personFields && p.personFields.length > 0 ? (
+        <div className="cb-hcard-person" data-part="person-fields">
+          <span className="cb-muted cb-small" data-part="person-note">
+            {p.personTarget
+              ? fillCopy(t("hitl.personTarget"), { target: p.personTarget })
+              : t("hitl.personNote")}
+          </span>
+          {p.personFields.map((f) => (
+            <PersonFieldRow
+              key={f.path}
+              label={f.label}
+              description={f.description}
+              multiline={f.multiline}
+              value={f.value}
+              error={f.error}
+              disabled={busy}
+              onChange={f.onChange}
+            />
+          ))}
+        </div>
+      ) : null}
       {actions}
     </div>
   );
