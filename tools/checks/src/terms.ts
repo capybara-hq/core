@@ -61,6 +61,8 @@ export const SHELL_CAPABILITY_NAMES: ReadonlySet<string> = new Set([
   "HapticsCapabilityV1",
   "ShareCapabilityV1",
   "MenuCapabilityV1",
+  "NavCapabilityV1",
+  "ProfilesCapabilityV1",
   "useShellCapability",
   "shellCapability",
   "useDeviceCapability",

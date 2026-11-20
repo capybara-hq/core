@@ -2689,6 +2689,43 @@ export interface ModelUsage {
 }
 
 // @public
+export const NAV_SECTION_ORDER: readonly NavSectionId[];
+
+// @public
+export interface NavBadgeV1 {
+    count?: number;
+    countMore?: boolean;
+}
+
+// @public
+export interface NavCapabilityV1 {
+    onMenu(listener: () => void): () => void;
+    onSelect(listener: (id: NavSectionId) => void): () => void;
+    set(state: NavStateV1): Promise<void>;
+}
+
+// @public
+export interface NavItemV1 extends NavBadgeV1 {
+    id: NavSectionId;
+    label: string;
+}
+
+// @public
+export interface NavMenuV1 extends NavBadgeV1 {
+    label: string;
+}
+
+// @public
+export type NavSectionId = "chats" | "inbox" | "agents" | "schedules";
+
+// @public
+export interface NavStateV1 {
+    current: NavSectionId | null;
+    items: NavItemV1[];
+    menu: NavMenuV1 | null;
+}
+
+// @public
 export type NetDeniedCode = "net.insecure_url" | "net.private_address" | "net.dns_failed" | "net.redirect" | "net.proxy_refused";
 
 // @public
@@ -3165,6 +3202,11 @@ export function previewerAccepts(p: Pick<FilePreviewer, "accepts" | "maxBytes">,
     contentType: string;
     size: number;
 }): boolean;
+
+// @public
+export interface ProfilesCapabilityV1 {
+    show(): Promise<void>;
+}
 
 // @public
 export interface PromptInfo {
@@ -3951,6 +3993,8 @@ export const SHELL_CAPABILITY_KEYS: {
     readonly haptics: "haptics@1";
     readonly share: "share@1";
     readonly menu: "menu@1";
+    readonly nav: "nav@1";
+    readonly profiles: "profiles@1";
 };
 
 // @public
