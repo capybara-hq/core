@@ -199,9 +199,17 @@ export class OrgPluginsOperations implements OnModuleInit {
     let fields: PersonFieldSpec[] = [];
     let recordOnly: string[] = [];
     if (d.extension !== null) {
-      const v = (await this.extensions.list(ctx.orgId)).find(
-        (e) => e.catalogItem?.itemId === itemId || e.plugin === d.extension,
-      );
+      const views = await this.extensions.list(ctx.orgId);
+      // the view of this catalog item; by plugin name only when that name is unambiguous
+      const byName = views.filter((e) => e.plugin === d.extension);
+      const v =
+        views.find((e) => e.catalogItem?.itemId === itemId) ??
+        (byName.length === 1 ? byName[0] : undefined);
+      if (v === undefined && byName.length > 1) {
+        throw new PersonFieldsRefused(
+          `Several extensions named ${d.extension} are in this org, so the secret fields of this plugin's extension are not known; install the plugin on the web (Plugins page).`,
+        );
+      }
       if (v === undefined) {
         throw new PersonFieldsRefused(
           `Cannot read the config schema of the plugin's extension ${d.extension} now, so its secret fields are unknown; try again, or install the plugin on the web (Plugins page).`,

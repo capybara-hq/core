@@ -1,6 +1,8 @@
-import { configJsonSchema, secret, ui } from "@capybara-hq/plugin-sdk";
+import { configJsonSchema, secret, ToolError, ui } from "@capybara-hq/plugin-sdk";
 import { describe, expect, it } from "vitest";
 import { z } from "zod";
+import { ApiError } from "../../src/errors.js";
+import { afterTaken, VALUES_USED_UP_TEXT } from "../../src/platform/ops/person-inputs.js";
 import {
   checkPersonValue,
   PERSON_FIELD_MAX_BYTES,
@@ -389,5 +391,39 @@ describe("checkPersonValue", () => {
     expect(
       checkPersonValue(spec({ type: "string", minLength: 8, pattern: "^sk-" }), "sk-12345678"),
     ).toBeNull();
+  });
+});
+
+describe("afterTaken", () => {
+  const entered = { apiKey: "k" };
+
+  it("an ApiError keeps its code and details and says the values were used up", () => {
+    const e = afterTaken(
+      new ApiError("validation_failed", "Bad", [{ path: "x", message: "m" }]),
+      entered,
+    );
+    expect(e).toBeInstanceOf(ApiError);
+    expect(e).toMatchObject({ code: "validation_failed", details: [{ path: "x", message: "m" }] });
+    expect((e as ApiError).message).toBe(`Bad. ${VALUES_USED_UP_TEXT}`);
+  });
+
+  it("a ToolError keeps its kind", () => {
+    const e = afterTaken(new ToolError("Nope.", { kind: "unavailable" }), entered);
+    expect(e).toBeInstanceOf(ToolError);
+    expect(e).toMatchObject({ kind: "unavailable", message: `Nope. ${VALUES_USED_UP_TEXT}` });
+  });
+
+  it("any other error names only its class, keeping the original as the cause", () => {
+    const inner = new TypeError("secret detail");
+    const e = afterTaken(inner, entered) as ToolError;
+    expect(e).toBeInstanceOf(ToolError);
+    expect(e.message).toBe(`The write failed (TypeError). ${VALUES_USED_UP_TEXT}`);
+    expect(e.message).not.toContain("secret detail");
+    expect(e.cause).toBe(inner);
+  });
+
+  it("nothing entered: the error is unchanged", () => {
+    const inner = new Error("x");
+    expect(afterTaken(inner, {})).toBe(inner);
   });
 });

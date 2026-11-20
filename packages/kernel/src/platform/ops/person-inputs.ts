@@ -1,3 +1,4 @@
+import { ToolError } from "@capybara-hq/plugin-sdk";
 import { ApiError } from "../../errors.js";
 import { setDeep } from "../../extensions/deployment-config-store.js";
 import type { OperationContext } from "../operation.js";
@@ -49,17 +50,25 @@ export async function takePersonInputs(
   }));
 }
 
+/** What the model is told after a failed write consumed the person's values. */
+export const VALUES_USED_UP_TEXT =
+  "The values the person entered were used up: calling the operation again shows a new card where the person enters them again.";
+
 /**
  * The error of a write that failed after {@link takePersonInputs} consumed the values: the same
- * error, its message saying the values are gone and the person enters them again on a new card.
+ * error (an `ApiError` keeps its code and details, a `ToolError` its kind), its message saying the
+ * values are gone and the person enters them again on a new card. Any other error becomes a
+ * `ToolError` naming only its class (as the pipeline would), with the original as `cause`.
  */
 export function afterTaken(e: unknown, entered: Readonly<Record<string, string>>): unknown {
-  if (!(e instanceof ApiError) || Object.keys(entered).length === 0) return e;
-  return new ApiError(
-    e.code,
-    `${e.message.replace(/\.?$/, ".")} The values the person entered were used up: calling the operation again shows a new card where the person enters them again.`,
-    e.details,
-  );
+  if (Object.keys(entered).length === 0) return e;
+  const told = (message: string) => `${message.trim().replace(/\.?$/, ".")} ${VALUES_USED_UP_TEXT}`;
+  if (e instanceof ApiError) return new ApiError(e.code, told(e.message), e.details);
+  if (e instanceof ToolError) return new ToolError(told(e.message), { kind: e.kind });
+  const name = e instanceof Error ? e.name : "Error";
+  const out = new ToolError(told(`The write failed (${name})`));
+  Object.defineProperty(out, "cause", { value: e });
+  return out;
 }
 
 /**

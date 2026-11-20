@@ -30,6 +30,7 @@ import {
   type TestKernel,
   waitFor,
   waitForEvent,
+  waitForTerminal,
 } from "../helpers/runs.js";
 
 /**
@@ -320,13 +321,22 @@ describe("handoff cards in IM", () => {
     });
   });
 
-  it("each handoff card is delivered once", async () => {
-    await waitFor(
-      async () => sentTo("dm-u-connect").some((s) => cardOf(s)?.kind === "bind"),
-      10_000,
-      "connect card",
-    );
+  it("each handoff card is delivered once, counted after the delivery passed the run's end", async () => {
     for (const chat of ["dm-u-link", "dm-u-connect"]) {
+      const conv = await convOf(chat);
+      const [end] = await waitForTerminal(db, conv, 1, 20_000);
+      await waitFor(
+        async () => {
+          const d = await db
+            .selectFrom("channel_deliveries")
+            .select("last_seq")
+            .where("conversation_id", "=", conv)
+            .executeTakeFirst();
+          return d !== undefined && Number(d.last_seq) >= (end?.seq ?? Infinity);
+        },
+        10_000,
+        "delivery past the run's end",
+      );
       expect(sentTo(chat).filter((s) => cardOf(s)?.kind === "bind")).toHaveLength(1);
     }
   });
