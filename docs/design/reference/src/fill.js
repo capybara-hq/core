@@ -558,7 +558,7 @@
 
   /** The objects list while loading: the real header with dashes for the counts, three object rows. */
   function listLoadingObjects() {
-    const row = `<li class="r-lrow" data-part="loading-row"><div class="r-skel-box" data-part="skeleton-box" data-box="mark"></div><div class="r-lrow-text">${skelText("30%")}${skelText("55%")}</div></li>`;
+    const row = `<li class="r-lrow" data-part="loading-row"><span class="r-lrow-mark" data-part="object-row-mark"><div class="r-skel-box" data-part="skeleton-box" data-box="mark"></div></span><div class="r-lrow-text">${skelText("30%")}${skelText("55%")}</div></li>`;
     const head = pageHeader({ title: F.PAGE_HEADER_FIXTURE.title, actions: true, tabs: true, pending: true });
     return `<div class="r-tpl" aria-busy="true"><div class="r-tpl-head">${head}</div><div class="r-tpl-body"><div class="r-tpl-main"><ul class="r-llist" data-part="loading-list">${row.repeat(3)}</ul></div></div></div>`;
   }

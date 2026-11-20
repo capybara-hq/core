@@ -376,7 +376,7 @@ describe("ListPage variants", () => {
   it("loading wins over empty: no empty state flashes before the first answer", () => {
     zh(<ListPage header={header} variant="objects" loading empty={{ text: "还没有 agent" }} />);
     expect(screen.queryByText("还没有 agent")).toBeNull();
-    expect(document.querySelectorAll('[data-skeleton="true"]').length).toBe(3);
+    expect(document.querySelectorAll('li[data-skeleton="true"]').length).toBe(3);
   });
 
   it("ObjectList takes the row count of its skeleton", () => {

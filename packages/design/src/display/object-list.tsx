@@ -95,7 +95,10 @@ export function ObjectList({
       {Array.from({ length: rows }, (_, i) => (
         // biome-ignore lint/suspicious/noArrayIndexKey: the skeleton rows are positional
         <li key={i} className="cb-object-row" data-part="object-row" data-skeleton="true">
-          <SkeletonBox part="mark" />
+          {/* the loaded row's mark place (same part, same box), holding the mark placeholder */}
+          <span className="cb-object-mark" data-part="object-row-mark" data-skeleton="true">
+            <SkeletonBox part="mark" />
+          </span>
           <span className="cb-object-text">
             <SkeletonText width="30%" />
             <SkeletonText width="55%" />

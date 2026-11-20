@@ -7311,3 +7311,9 @@ span.r-scal-daynum {
   white-space: nowrap;
   color: var(--cb-faint);
 }
+
+/* The loading object row's mark place (the loaded row's object-row-mark part). */
+.r-lrow-mark {
+  display: flex;
+  flex: none;
+}

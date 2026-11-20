@@ -628,6 +628,10 @@ a.cb-item-list-title:hover {
   color: var(--cb-ink);
   font-weight: 600;
 }
+/* A skeleton row's mark place: the placeholder inside draws the ground (one bar look, §6.29). */
+.cb-object-mark[data-skeleton="true"] {
+  background: transparent;
+}
 /* An agent's row: its 28 px avatar centred in the mark's 36 px place, on no ground of its own. */
 .cb-object-mark[data-kind="avatar"] {
   background: transparent;
