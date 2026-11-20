@@ -462,6 +462,14 @@ export class CatalogAdminOperations implements OnModuleInit {
           reviewUrl: reviewUrl(input.stagingId),
           next: CONFIRM_ON_WEB,
         }),
+        handoff: (input) => ({
+          kind: "handoff",
+          title: {
+            zh: "审阅并确认平台插件更新",
+            en: "Review and confirm the platform plugin update",
+          },
+          target: { type: "link", url: reviewUrl(input.stagingId) },
+        }),
       }),
       defineOperation({
         id: "plugins.scope-preview",

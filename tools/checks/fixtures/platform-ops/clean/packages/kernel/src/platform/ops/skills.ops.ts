@@ -60,4 +60,28 @@ export const ops = [
     summary: () => ({ zh: "设置偏好", en: "Set preferences" }),
     run: async () => ({}),
   }),
+  // confirms on the web and links it; a confirmation card is no "confirm on the web"
+  defineOperation({
+    id: "skills.import",
+    description: "Stage an import; the person reviews it on the web (the link card).",
+    input: z.object({}),
+    example: {},
+    authz: { orgAction: "skills.manage" },
+    mirrors: [],
+    confirm: "org",
+    summary: () => ({ zh: "导入", en: "Import" }),
+    handoff: () => ({ kind: "handoff" }),
+    run: async () => ({}),
+  }),
+  defineOperation({
+    id: "skills.package",
+    description: "Store a package; the web has no page for it, so the person confirms with the CLI.",
+    input: z.object({}),
+    example: {},
+    authz: { orgAction: "skills.manage" },
+    mirrors: [],
+    confirm: "org",
+    summary: () => ({ zh: "存放", en: "Store" }),
+    run: async () => ({}),
+  }),
 ];

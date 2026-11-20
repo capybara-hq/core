@@ -664,7 +664,7 @@ export class AgentSkillsOperations implements OnModuleInit {
       defineOperation({
         id: "skills.get-change",
         description:
-          "Read one skill change request as the inbox shows it: a share of an agent's skill with the org or a proposed version of a shared skill (kind), the agent, the skill name and description, the version, its file paths and sizes, who asked, its state and who decided. Never file contents: review those on the web, where org admins decide it. Only org admins and the person who asked can read it.",
+          "Read one skill change request as the inbox shows it: a share of an agent's skill with the org or a proposed version of a shared skill (kind), the agent, the skill name and description, the version, its file paths and sizes, who asked, its state and who decided. Never file contents: read those in the inbox, where org admins decide it. Only org admins and the person who asked can read it.",
         input: z.object({ changeId: SkillChangePathParams.shape.id }).strict(),
         example: { changeId: "6a1d3e5f-2b4c-4d70-8e91-0f2a4c6e8b13" },
         // approvals.decide is stricter than the service (a plain-member requester is refused by

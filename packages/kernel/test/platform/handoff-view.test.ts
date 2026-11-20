@@ -282,6 +282,19 @@ describe("handoffs of import and upload operations", () => {
     expect(handoffOf(id, { review: { name: "x" } })).toBeNull();
   });
 
+  it("plugins.import-update-preview links the update's review page", () => {
+    const card = handoffOf("plugins.import-update-preview", {});
+    expect(card).toEqual({
+      kind: "handoff",
+      title: expect.objectContaining({ en: expect.any(String) }),
+      target: {
+        type: "link",
+        url: `/admin/plugins/import?staging=${(op("plugins.import-update-preview").example as { stagingId: string }).stagingId}`,
+      },
+    });
+    expect(ToolViewSchema.safeParse(card).success).toBe(true);
+  });
+
   it("plugins.upload links the org's Plugins page with the staged upload", () => {
     expect(handoffOf("plugins.upload", staged)).toEqual({
       kind: "handoff",

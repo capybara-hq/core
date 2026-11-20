@@ -99,4 +99,16 @@ export const ops = [
     confirm: "read",
     run: async () => ({}),
   }),
+  // platform-op-handoff: the person confirms on the web, but there is no handoff
+  defineOperation({
+    id: "skills.import",
+    description: "Stage an import; the person confirms on the web.",
+    input: z.object({}),
+    example: {},
+    authz: { orgAction: "skills.manage" },
+    mirrors: [],
+    confirm: "org",
+    summary: () => ({ zh: "x", en: "x" }),
+    run: async () => ({}),
+  }),
 ];

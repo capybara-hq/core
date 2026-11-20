@@ -476,7 +476,7 @@ export class ConnectorsOperations implements OnModuleInit {
       defineOperation<z.infer<typeof CreateInput>>({
         id: "connectors.create",
         description:
-          "Create a custom connector (org admins): name, connector kind (connectors.kinds), endpoint and auth method; it connects, lists the tools and stores them for review. The credential is never a param: the person enters it on the confirmation card (bearer and api_key: credential.token; basic: credential.username and credential.password; oauth_client, or oauth_code with client manual: client.clientSecret, with the client id in client). Required credential fields are asked even when not listed in askPerson. Custom header credentials are entered on the web. Preview first with connectors.preview.",
+          "Create a custom connector (org admins): name, connector kind (connectors.kinds), endpoint and auth method; it connects, lists the tools and stores them for review. The credential is never a param: the person enters it on the confirmation card (bearer and api_key: credential.token; basic: credential.username and credential.password; oauth_client, or oauth_code with client manual: client.clientSecret, with the client id in client). Required credential fields are asked even when not listed in askPerson. Custom header credentials are entered by a person in the connector's settings in the web app. Preview first with connectors.preview.",
         input: CreateInput,
         example: {
           name: "Docs",
@@ -609,7 +609,7 @@ export class ConnectorsOperations implements OnModuleInit {
       defineOperation({
         id: "connectors.set-org-credential",
         description:
-          "Replace the org's credential of an org-credential connector (org admins): the person enters it on the confirmation card (bearer and api_key: credential.token; basic: credential.username and credential.password). For an OAuth connector it replaces the OAuth client: pass its id in client, the person enters client.clientSecret. Every field of the credential is asked. Custom header credentials are entered on the web.",
+          "Replace the org's credential of an org-credential connector (org admins): the person enters it on the confirmation card (bearer and api_key: credential.token; basic: credential.username and credential.password). For an OAuth connector it replaces the OAuth client: pass its id in client, the person enters client.clientSecret. Every field of the credential is asked. Custom header credentials are entered by a person in the connector's settings in the web app.",
         input: z
           .object({
             connectorId: ConnectorId,

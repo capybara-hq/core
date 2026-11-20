@@ -412,7 +412,13 @@ approvals and requests, confirming extension permissions, roles, the super-admin
 setup), `secret` (a route that delivers a secret to a browser: SSO / OAuth callbacks, the
 initial-password reveal, other orgs' config copies; "it carries a secret" is no reason: that is a
 person field), `transport`
-(uploads, downloads, streams, presigned URLs), `internal` (the web's own plumbing). A `@SessionOnly()`
+(downloads, streams, embeds, health, public share pages; never an upload: a file reaches an operation
+as a file reference `{ fileId }`, and `platform-op-upload` fails an exclusion whose reason or category
+says upload, multipart or raw bytes, except the three attachment routes, which are `internal` and name
+"a person's file into a conversation"), `internal` (a helper of a web screen; its reason names the
+operation that gives the same facts, or says no agent use). An operation whose description sends the
+person to confirm or review on the web defines `handoff` (the link card, display only;
+`platform-op-handoff`); `extensions.upload-package` has none, since no web page shows a stored package. A `@SessionOnly()`
 route is `human-only` or `secret`, never mirrored (`platform-op-session-only`). A controller that
 switches a mirrored route to a schema not in its `ROUTE_SCHEMAS` entry is caught only by review: the
 parity test compares the registered schemas, and tying a `@ZBody` / `@ZQuery` DTO back to that entry

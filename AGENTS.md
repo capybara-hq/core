@@ -151,7 +151,10 @@ Each line is the rule you must not miss; the skill has the rest.
   parity test fails on drift); remove a route = its operation and exclusion go with it. Operations
   call the controllers' services, never new logic (`pnpm check:platform-ops`, `platform-parity.test.ts`).
   A secret an operation needs is a person field entered on the card, never a param
-  (`platform-op-secret-param`). [writing-kernel-api](.agents/skills/writing-kernel-api/SKILL.md)
+  (`platform-op-secret-param`); "it is an upload" is no reason to exclude a route, a file reaches an
+  operation as a file reference (`platform-op-upload`), and an operation that sends the person to
+  confirm or review on the web returns a handoff link card (`platform-op-handoff`).
+  [writing-kernel-api](.agents/skills/writing-kernel-api/SKILL.md)
 - **Tools, sub-agents, web tools, skills:** English descriptions and actionable errors; tool keys
   contain no dots. [writing-tools](.agents/skills/writing-tools/SKILL.md)
 - **Model providers:** no retries inside the extension; media limits and placeholders are the

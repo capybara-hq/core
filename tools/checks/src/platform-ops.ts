@@ -36,7 +36,13 @@ import {
  *   `orgAdmin` or `member` step, so every role of the org gets one;
  * - platform-op-session-only: a `@SessionOnly()` route (a web session only, never a token) mirrored
  *   by an operation, or excluded under a category other than `human-only` / `secret`: such a route
- *   is either a person's own act or carries a secret, so the agent never gets it.
+ *   is either a person's own act or carries a secret, so the agent never gets it;
+ * - platform-op-upload: an exclusion whose reason or category mentions `upload`, `multipart` or
+ *   `raw bytes` (platform web parity spec §7.1, §9): "it is an upload" is no reason, since files
+ *   reach an operation as file references. Only the three attachment routes are exempt, and they
+ *   must be `internal` with a reason naming "a person's file into a conversation";
+ * - platform-op-handoff: an operation whose description says a person confirms or reviews "on the
+ *   web" must define `handoff`, the link card that sends the person there (spec §6, §9).
  */
 export const PLATFORM_OP_RULES = [
   "platform-op-missing",
@@ -49,7 +55,20 @@ export const PLATFORM_OP_RULES = [
   "platform-op-literal",
   "platform-op-errors",
   "platform-op-session-only",
+  "platform-op-upload",
+  "platform-op-handoff",
 ] as const;
+
+/** The only routes that may carry an upload reason: a person's file into a conversation. */
+const ATTACHMENT_ROUTES: ReadonlySet<string> = new Set([
+  "POST /api/v1/orgs/:orgId/attachments",
+  "POST /api/v1/orgs/:orgId/attachments/:id/finalize",
+  "GET /api/v1/orgs/:orgId/attachments/limits",
+]);
+const ATTACHMENT_REASON = "a person's file into a conversation";
+const UPLOAD_WORDS = /upload|multipart|raw bytes/i;
+const ON_THE_WEB = /\bon the web\b/i;
+const CONFIRM_OR_REVIEW = /\b(confirm|confirms|confirmed|review|reviews|reviewed)\b/i;
 
 const KERNEL_SRC = "packages/kernel/src";
 
@@ -250,6 +269,17 @@ function readOps(p: ParsedFile, out: Finding[]): Op[] {
       add(
         "platform-op-describe",
         `${id}: a write (confirm \`${confirm ?? "?"}\`) needs a \`summary\``,
+      );
+    }
+    if (
+      description !== undefined &&
+      ON_THE_WEB.test(description) &&
+      CONFIRM_OR_REVIEW.test(description) &&
+      !prop(obj, "handoff")
+    ) {
+      add(
+        "platform-op-handoff",
+        `${id}: the description sends the person to confirm or review on the web, so the operation must define \`handoff\` (the link card); if no web page shows it, say so instead`,
       );
     }
     const errors = prop(obj, "errors");
@@ -503,6 +533,25 @@ export function checkPlatformOps(root: string): Finding[] {
         ...at,
         rule: "platform-op-exclusion-reason",
         message: `\`${e.route}\` has no reason`,
+      });
+    }
+    const uploadish = UPLOAD_WORDS.test(`${e.category ?? ""} ${e.reason ?? ""}`);
+    if (ATTACHMENT_ROUTES.has(e.route)) {
+      if (
+        e.category !== "internal" ||
+        !(e.reason ?? "").toLowerCase().includes(ATTACHMENT_REASON)
+      ) {
+        out.push({
+          ...at,
+          rule: "platform-op-upload",
+          message: `\`${e.route}\` is an attachment route: it must be \`internal\` with a reason naming "${ATTACHMENT_REASON}"`,
+        });
+      }
+    } else if (uploadish) {
+      out.push({
+        ...at,
+        rule: "platform-op-upload",
+        message: `\`${e.route}\`: "upload" is no reason to exclude a route (files reach operations as file references): add its operation, or state the real reason (the person must be the actor, or nothing an agent acts on)`,
       });
     }
     if (e.category === "later") {

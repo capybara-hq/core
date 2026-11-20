@@ -607,11 +607,13 @@ section of `.agents/skills/writing-kernel-api`; the short list for a tool change
   `rememberable`, `confirmFor`, `precheck`, `personFields` (with `personFieldParams` in the input),
   `withoutSecrets`, `summary`, `errors` (role-keyed `next`), `run`.
 - Checks: `check:platform-ops` (`platform-op-missing`, `-exclusion-reason`, `-later`, `-authz`, `-orphan`,
-  `-double`, `-describe`, `-literal`, `-errors`) and the parity test
+  `-double`, `-describe`, `-literal`, `-errors`, `-session-only`, `-upload`, `-handoff`) and the parity test
   `tools/checks/test/platform-parity.test.ts` (with `platform-op-secret-param`: a route field with
   `secret()` meta is in `omits` and the operation defines `personFields` or a `withoutSecrets` reason).
 - Exclusion categories: `human-only`, `secret`, `transport`, `internal`; there is no `later`
-  (`platform-op-later` fails it).
+  (`platform-op-later` fails it), and "upload" is no reason (`platform-op-upload`): a file is an
+  input `{ fileId }`, delivered with Deliver first when it lives on a device. An operation that
+  sends the person to confirm or review on the web defines `handoff` (`platform-op-handoff`).
 - A new domain: `PLATFORM_DOMAINS`, `PlatformOpsModule`, `ROUTE_SCHEMAS`, and the domain list in
   `test/tools/platform-tool.test.ts`.
 
