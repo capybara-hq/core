@@ -20,6 +20,7 @@ import {
   useStatusBar,
 } from "../src/index";
 import { describeNestedBox, findNestedBoxes } from "../src/reference/index";
+import { css, parseCss } from "./css-rules";
 import { matchMediaFor } from "./width";
 
 afterEach(() => {
@@ -108,6 +109,17 @@ describe("AppShell", () => {
     expect(column.contains(nav)).toBe(false);
     expect(content.compareDocumentPosition(footer) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
     expect(screen.getByRole("link", { name: "Agents" }).getAttribute("aria-current")).toBe("page");
+  });
+
+  it("the shell root carries the class whose rules stop rubber banding; chrome no-select is on its classes", () => {
+    zh(shell());
+    const root = document.querySelector('[data-cap-part="shell"]') as HTMLElement;
+    expect(root.classList.contains("cb-shell")).toBe(true);
+    const decls = (file: string, sel: string) =>
+      parseCss(css(file)).find((r) => r.selector === sel && r.at === null)?.decls;
+    expect(decls("shell.css", ".cb-shell")?.["overscroll-behavior"]).toBe("none");
+    expect(document.querySelector(".cb-sidebar")).toBeTruthy();
+    expect(decls("sidebar.css", ".cb-sidebar")?.["user-select"]).toBe("none");
   });
 
   it("a banner (safe mode) is a row of the shell: the regions share the rest of the window", () => {

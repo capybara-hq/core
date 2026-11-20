@@ -67,6 +67,21 @@ describe("touch behaviour", () => {
     expect(pressed, `${cls} needs an :active or [data-pressed] rule`).toBe(true);
   });
 
+  it("every .cb-btn variant has its own pressed rule above the generic one", () => {
+    const variants = [
+      ...new Set(
+        [...css("controls.css").matchAll(/\.cb-btn\[data-variant="([\w-]+)"\]/g)].map((m) => m[1]),
+      ),
+    ];
+    expect(variants.length).toBeGreaterThanOrEqual(6);
+    for (const v of variants) {
+      const sel = `.cb-btn[data-variant="${v}"]:active:not(:disabled)`;
+      const d = declsOf(sel);
+      expect(d.background, `${v} needs ${sel}`).toBeTruthy();
+      expect(d.background).not.toBe("var(--cb-hover)");
+    }
+  });
+
   it.each([".cb-shell-topbar", ".cb-bottomnav", ".cb-sidebar", ".cb-btn", ".cb-icon-btn"])(
     "%s is not selectable and has no long-press callout",
     (cls) => {

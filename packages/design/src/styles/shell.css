@@ -54,6 +54,7 @@
   padding-left: var(--cb-inset-left);
   background: var(--cb-bg);
   color: var(--cb-ink);
+  /* declarative: the shell clips its overflow; `html` carries the effective rule */
   overscroll-behavior: none;
 }
 /* Inside a reference block the shell fills the block instead of the window. */

@@ -256,7 +256,8 @@
     border-color var(--cb-motion-hover),
     color var(--cb-motion-hover);
 }
-/* Pressed (§7.1): the hover ground; the variants below set their own, with more specificity. */
+/* Pressed (§7.1): the hover ground; every data-variant below sets its own, with more specificity
+   (touch.test.ts enumerates them). */
 .cb-btn:active:not(:disabled) {
   background: var(--cb-hover);
 }
@@ -353,6 +354,10 @@
   background: var(--cb-fail);
   border-color: transparent;
   color: var(--cb-on-accent);
+}
+/* Pressed keeps the label's contrast: the solid ground moves toward the ink, never to the pale hover. */
+.cb-btn[data-variant="danger-solid"]:active:not(:disabled) {
+  background: color-mix(in srgb, var(--cb-fail) 85%, var(--cb-ink));
 }
 
 /* Disabled never adds a border (spec §6.1): a ghost or icon button stays borderless, default and
