@@ -2,7 +2,7 @@ import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, beforeAll, describe, expect, it } from "vitest";
 import {
   checkDesignI18n,
   checkI18n,
@@ -50,10 +50,6 @@ describe("checkI18n", () => {
     expect(f[0]?.message).toContain("login.subtitle");
     expect(f[0]?.message).toContain("删除该 key");
     expect(f[0]?.line).toBe(7);
-  });
-
-  it("仓库里的 apps/web/messages -> 0 条", () => {
-    expect(checkI18n(webMessages)).toEqual([]);
   });
 
   it("同名 key 一边是对象一边是字符串 -> 缺失与多出各报一条", () => {
@@ -211,10 +207,6 @@ describe("checkDesignI18n", () => {
       "i18n-design-unreadable",
     ]);
   });
-
-  it("the design system's zh strings pass", () => {
-    expect(checkDesignI18n(designMessages)).toEqual([]);
-  });
 });
 
 describe("checkWebI18nKeys", () => {
@@ -230,11 +222,6 @@ describe("checkWebI18nKeys", () => {
     ]);
     expect(f[1]?.message).toContain("a group, not a message");
     expect(f.every((x) => x.file.endsWith("view.tsx"))).toBe(true);
-  });
-
-  it("the web app's keys all exist", () => {
-    const web = fileURLToPath(new URL("../../../apps/web", import.meta.url));
-    expect(checkWebI18nKeys(join(web, "src"), join(web, "messages"))).toEqual([]);
   });
 });
 
@@ -255,9 +242,36 @@ describe("checkSourceZh", () => {
     const d = dirWith({ "zh.json": '{"a":"子代理"}', "en.json": '{"a":"Sub-agent"}' });
     expect(checkI18n(d).map((x) => x.rule)).toEqual(["i18n-zh-subagent"]);
   });
+});
+
+describe("the real tree", () => {
+  // Whole-repo scans, far slower under a loaded parallel run than idle: in the hook, bounded by
+  // hookTimeout, so the test timeout covers only the assertions.
+  const web = fileURLToPath(new URL("../../../apps/web", import.meta.url));
+  const packages = fileURLToPath(new URL("../../../packages", import.meta.url));
+  let found: Record<"messages" | "design" | "webKeys" | "sourceZh", unknown[]>;
+  beforeAll(() => {
+    found = {
+      messages: checkI18n(webMessages),
+      design: checkDesignI18n(designMessages),
+      webKeys: checkWebI18nKeys(join(web, "src"), join(web, "messages")),
+      sourceZh: checkSourceZh([join(packages, "kernel/src"), join(packages, "plugin-sdk/src")]),
+    };
+  });
+
+  it("仓库里的 apps/web/messages -> 0 条", () => {
+    expect(found.messages).toEqual([]);
+  });
+
+  it("the design system's zh strings pass", () => {
+    expect(found.design).toEqual([]);
+  });
+
+  it("the web app's keys all exist", () => {
+    expect(found.webKeys).toEqual([]);
+  });
 
   it("the kernel and SDK zh strings pass", () => {
-    const root = fileURLToPath(new URL("../../../packages", import.meta.url));
-    expect(checkSourceZh([join(root, "kernel/src"), join(root, "plugin-sdk/src")])).toEqual([]);
+    expect(found.sourceZh).toEqual([]);
   });
 });

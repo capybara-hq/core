@@ -80,7 +80,7 @@ window.__CB_EXTRA__ = ({ F, esc, icon }) => {
   const stateIcon = (state) =>
     `<span class="r-scal-icon" data-part="schedule-calendar-icon" data-state="${state}">${icon(STATE_ICON[state], 12)}</span>`;
   const itemLine = (it) =>
-    `${stateIcon(it.state)}<span class="r-scal-time" data-part="schedule-calendar-time">${esc(it.time)}</span><span class="r-scal-title" data-part="schedule-calendar-title">${esc(it.title)}</span>${it.mark ? `<span class="r-scal-mark">${esc(it.mark)}</span>` : ""}`;
+    `${stateIcon(it.state)}<span class="r-scal-time" data-part="schedule-calendar-time">${esc(it.time)}</span><span class="r-scal-title" data-part="schedule-calendar-title">${esc(it.title)}</span>${it.mark ? `<span class="r-scal-mark">${esc(it.mark)}</span>` : ""}${it.person ? `<span class="r-scal-person" data-part="schedule-calendar-person"><span class="r-avatar" data-part="avatar" data-kind="initial" data-shape="circle" data-size="16" aria-hidden="true">${esc([...it.person.name][0].toUpperCase())}</span></span>` : ""}`;
   const chipLine = (c) =>
     `${stateIcon(c.state)}<span class="r-scal-title r-scal-chip-title" data-part="schedule-calendar-title">${esc(c.title)}</span><span class="r-scal-tail" data-part="schedule-calendar-tail"><span class="r-scal-summary" data-part="schedule-calendar-summary">${esc(c.summary)}</span>${c.failed ? `<span class="r-scal-chip-failed" data-part="schedule-calendar-chip-failed"> · ${esc(c.failed)}</span>` : ""}</span>`;
   const sel = (id, o) => (id === o.selectedId ? ' data-selected="true" aria-current="true"' : "");
@@ -111,7 +111,9 @@ window.__CB_EXTRA__ = ({ F, esc, icon }) => {
   }
 
   function week(o) {
-    const items = o.loading || o.empty ? [] : S.week.items;
+    // the person state: every block carries its creator (spec §6.40), the name in its tooltip
+    const withPerson = (it) => (o.person ? { ...it, person: F.PERSON_FIXTURE } : it);
+    const items = o.loading || o.empty ? [] : S.week.items.map(withPerson);
     const collapsed = o.dense ? S.week.collapsed : [];
     const days = S.week.days;
     const heads = days
@@ -152,7 +154,7 @@ window.__CB_EXTRA__ = ({ F, esc, icon }) => {
             const pos = `top:${top(m)};left:${(p.lane * 100) / p.lanes}%;width:calc(${100 / p.lanes}% - 2px)`;
             if (p.kind === "more")
               return `<button class="r-scal-more" data-part="schedule-calendar-more" style="${pos}" aria-label="另外 ${p.items.length} 项，${dayLabel(day)}">+${p.items.length}</button>`;
-            return `<button class="r-scal-block" data-part="schedule-calendar-block" data-state="${p.item.state}"${sel(p.item.id, o)} style="${pos}" aria-label="${esc(p.item.label)}">${itemLine(p.item)}</button>`;
+            return `<button class="r-scal-block" data-part="schedule-calendar-block" data-state="${p.item.state}"${sel(p.item.id, o)} style="${pos}" aria-label="${esc(p.item.label)}" title="${esc(p.item.person ? `${p.item.label} · ${p.item.person.name}` : p.item.label)}">${itemLine(p.item)}</button>`;
           })
           .join("");
         const skel = o.loading

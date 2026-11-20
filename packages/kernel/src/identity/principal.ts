@@ -41,8 +41,8 @@ export const SuperAdmin = (): MethodDecorator & ClassDecorator =>
 /**
  * Reachable by an account that must change its generated initial password first
  * (`Account.mustChangePassword`): the guard refuses every other route with
- * `auth.password_change_required`. Only `GET /me` and `PUT /me/password` carry it (public routes
- * such as logout are reachable anyway).
+ * `auth.password_change_required`. Only `GET /me`, `PUT /me/password` and the avatar image route
+ * (the account's own image only) carry it (public routes such as logout are reachable anyway).
  */
 export const AllowPendingPasswordChange = (): MethodDecorator =>
   SetMetadata(PASSWORD_CHANGE_KEY, true);

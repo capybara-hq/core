@@ -126,7 +126,7 @@ async function fixture(clientCap = 69632, serverCap = 100000) {
     log,
   );
   const relay = new LocalDeviceRelay(redis, bus, locks, config, log, {
-    transport: targets.transport.bind(targets),
+    current: targets.current.bind(targets),
     state: async () => targetState,
   });
   const forbidden = vi.fn(() => {

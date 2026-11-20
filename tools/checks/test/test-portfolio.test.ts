@@ -1,6 +1,6 @@
 import { relative, sep } from "node:path";
 import { fileURLToPath } from "node:url";
-import { describe, expect, it } from "vitest";
+import { beforeAll, describe, expect, it } from "vitest";
 import {
   changedTestFiles,
   checkTestPortfolio,
@@ -153,10 +153,18 @@ describe("checkTestPortfolio", () => {
       `${badFile}\ttest-double-boot`,
     ]);
   });
+});
+
+describe("the real tree", () => {
+  // One whole-repo scan (~2 s idle, far longer under a loaded parallel run): in the hook, bounded
+  // by hookTimeout, so the test timeout covers only the assertions. `findings` is what survives
+  // the list, `raw` proves the list is not vacuous.
+  let scan: ReturnType<typeof inspectTestPortfolio>;
+  beforeAll(() => {
+    scan = inspectTestPortfolio({ root: repoRoot });
+  });
 
   it("passes the real tree, and every grandfather entry is justified and still violates", () => {
-    // One scan (~2 s): `findings` is what survives the list, `raw` proves the list is not vacuous.
-    const scan = inspectTestPortfolio({ root: repoRoot });
     expect(scan.findings).toEqual([]);
     expect(scan.raw.length).toBeGreaterThan(0);
     expect(readBaseline(repoRoot).length).toBeGreaterThan(0);

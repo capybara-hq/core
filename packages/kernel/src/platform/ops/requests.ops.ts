@@ -10,6 +10,7 @@ import { CatalogRequestsService, type CatalogRequestView } from "../../catalog/r
 import { defineOperation } from "../operation.js";
 import { PlatformOperations } from "../registry.js";
 import { viaAgent } from "./errors.js";
+import { listCard } from "./list-handoff.js";
 import { Cursor, pageOf, startOf } from "./paging.js";
 
 /** A request as the requester reads it (no org name: it is this org's). */
@@ -184,6 +185,11 @@ export class RequestsOperations implements OnModuleInit {
           const all = await this.requests.listForOrgAdmin(ctx.orgId, ctx.actorAccountId);
           return pageOf(all.map(pendingRow), startOf(input.cursor), 50);
         },
+        handoff: (_i, result) =>
+          listCard(result, "/inbox", {
+            zh: "去收件箱处理成员的请求",
+            en: "Decide the members' requests in the inbox",
+          }),
       }),
       defineOperation({
         id: "requests.platform-list",
@@ -203,6 +209,11 @@ export class RequestsOperations implements OnModuleInit {
           );
           return pageOf(all.map(platformRow), startOf(input.cursor), 50);
         },
+        handoff: (_i, result) =>
+          listCard(result, "/admin/inbox", {
+            zh: "去平台收件箱处理组织的请求",
+            en: "Decide the orgs' requests in the platform inbox",
+          }),
       }),
     ]);
   }

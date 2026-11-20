@@ -157,6 +157,11 @@ export const CHANNEL_PHRASES = {
     zh: "启动一个后台进程，它在沙箱外持续运行，直到自行退出或被停止。",
     en: "Starts a background process that keeps running outside the sandbox until it exits or is stopped.",
   },
+  /** An approval card's line about the file the call takes (`{name}`, `{size}`, `{sha}`: 12 hex). */
+  approvalFile: {
+    zh: "文件：{name}（{size}，sha256 {sha}）",
+    en: "File: {name} ({size}, sha256 {sha})",
+  },
   /** An escalation card's working directory line (`{dir}`). */
   escalationCwd: { zh: "运行目录：{dir}", en: "Runs in: {dir}" },
   /** An escalation card's justification line (`{text}`: the agent's words, quoted). */

@@ -351,19 +351,6 @@
   height: var(--cb-row-roomy);
   font-weight: 600;
 }
-.cb-me-avatar {
-  display: inline-grid;
-  flex: none;
-  place-items: center;
-  width: var(--cb-control-dense);
-  height: var(--cb-control-dense);
-  border-radius: 50%;
-  background: var(--cb-selected);
-  color: var(--cb-ink);
-  font-size: var(--cb-type-small-size);
-  font-weight: 600;
-  line-height: 1;
-}
 .cb-me-ellipsis {
   min-width: 0;
   overflow: hidden;

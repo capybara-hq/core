@@ -22,6 +22,7 @@ import { LinkPendingMark, useDesignLink, useDesignT } from "../provider";
 import { Avatar, type AvatarValue } from "./avatar";
 import { EmptyState, type EmptyStateProps } from "./empty-state";
 import { MarkImage } from "./object-mark";
+import { type PersonLike, PersonName } from "./person-name";
 import { SkeletonBox, SkeletonText, useSkeletonAnnounces } from "./skeleton";
 
 /** A card's one primary action (spec §6.34): a `dense` `default` button, or a link. */
@@ -54,9 +55,10 @@ export type ObjectCardLoaded = {
   description?: string;
   /**
    * One mono line; as a list, the parts are joined with " · " and a `{ label, tone: "warn" }` part
-   * is drawn in `warn` (as ObjectRow's meta), a `tone: "fail"` one in `fail`.
+   * is drawn in `warn` (as ObjectRow's meta), a `tone: "fail"` one in `fail`; a `{ person }` part
+   * is a `PersonName` 16 (an agent's owner, spec §6.34).
    */
-  meta?: string | (string | { label: string; tone: "warn" | "fail" })[];
+  meta?: string | (string | { label: string; tone: "warn" | "fail" } | { person: PersonLike })[];
   /**
    * The object's state at the head's right (运行中, 出错, 已停用): a mono `small` label, `ok` /
    * `warn` / `fail` in their color, `muted` in `faint` (as ObjectRow's state, §6.17).
@@ -529,6 +531,15 @@ function LoadedCard({
                     {i > 0 ? " · " : null}
                     {typeof m === "string" ? (
                       m
+                    ) : "person" in m ? (
+                      <span className="cb-object-card-meta-person" data-part="object-card-person">
+                        <PersonName
+                          name={m.person.name}
+                          avatarUrl={m.person.avatarUrl}
+                          initialFrom={m.person.initialFrom}
+                          size={16}
+                        />
+                      </span>
                     ) : (
                       <span className="cb-object-card-meta-part" data-tone={m.tone}>
                         {m.label}

@@ -172,6 +172,14 @@ export interface LegacyDeviceHello {
    * A malformed value is dropped by the parser.
    */
   bootId?: string;
+  /**
+   * The identity of this run of the program: random, chosen once when the process starts and
+   * the same on every connection it makes (never the OS pid). The results a program keeps for a
+   * reconnect live in its memory, so a value that differs from the one a request was sent to
+   * proves that request's result can no longer arrive: the kernel ends its wait at once instead of
+   * at the deadline. Same format as {@link bootId}; a malformed value is dropped by the parser.
+   */
+  programRunId?: string;
 }
 
 /** A hello's `bootId`: 1 to 128 characters of letters, digits, `.`, `_`, `:` and `-`. */
@@ -582,8 +590,14 @@ function parseRecentOps(v: unknown[]): DevicePolicyOpReport[] {
 /** Optional hello fields: malformed values are ignored so old and new peers interoperate. */
 function optionalHelloFields(
   o: Record<string, unknown>,
-): Pick<LegacyDeviceHello, "features" | "policy" | "recentOps" | "home" | "bootId"> {
-  const out: Pick<LegacyDeviceHello, "features" | "policy" | "recentOps" | "home" | "bootId"> = {};
+): Pick<
+  LegacyDeviceHello,
+  "features" | "policy" | "recentOps" | "home" | "bootId" | "programRunId"
+> {
+  const out: Pick<
+    LegacyDeviceHello,
+    "features" | "policy" | "recentOps" | "home" | "bootId" | "programRunId"
+  > = {};
   if (Array.isArray(o.features)) {
     out.features = DEVICE_FEATURES.filter((f) => (o.features as unknown[]).includes(f));
   }
@@ -592,6 +606,7 @@ function optionalHelloFields(
     out.home = o.home;
   }
   if (isDeviceBootId(o.bootId)) out.bootId = o.bootId;
+  if (isDeviceBootId(o.programRunId)) out.programRunId = o.programRunId;
   return { ...out, ...optionalPolicy(o.policy) };
 }
 

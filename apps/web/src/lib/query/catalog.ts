@@ -1,4 +1,9 @@
-import { getOrgCatalogItem, listOrgCatalog, listOrgMarketplaceEntries } from "../catalog";
+import {
+  getOrgCatalogItem,
+  getOrgUpload,
+  listOrgCatalog,
+  listOrgMarketplaceEntries,
+} from "../catalog";
 import { orgExtensionChangeKeys } from "./admin";
 import { defineQuery } from "./define";
 import { keys } from "./keys";
@@ -8,6 +13,14 @@ export const orgCatalogQuery = (orgId: string) =>
   defineQuery({
     key: keys.org(orgId).catalog(),
     fn: () => listOrgCatalog(orgId),
+    freshness: "orgConfig",
+  });
+
+/** One of the org's staged plugin uploads, opened from a link (`/plugins?staging=<id>`). */
+export const orgUploadQuery = (orgId: string, stagingId: string) =>
+  defineQuery({
+    key: keys.org(orgId).catalogUpload(stagingId),
+    fn: () => getOrgUpload(orgId, stagingId),
     freshness: "orgConfig",
   });
 

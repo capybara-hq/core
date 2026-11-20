@@ -35,3 +35,16 @@ export class MeController {
   @Put("preferences")
   setPreferences() {}
 }
+
+@Controller("api/v1/orgs/:orgId/attachments")
+@OrgAction("skills.read")
+export class AttachmentsController {
+  @Get("limits")
+  limits() {}
+
+  @Post()
+  create() {}
+
+  @Post(":id/finalize")
+  finalize() {}
+}

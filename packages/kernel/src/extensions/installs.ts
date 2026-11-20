@@ -203,6 +203,8 @@ export class ExtensionInstalls {
       store?: "object" | "pg";
       expectPackageName?: string;
       owner?: { orgId: string };
+      /** Merged into the audit detail (a write made through the Platform tool: `via`, …). */
+      auditDetail?: Record<string, unknown>;
     } = {},
   ): Promise<PackageReview> {
     if (opts.owner !== undefined && actor === null) {
@@ -267,6 +269,7 @@ export class ExtensionInstalls {
         sha256: pkg.sha256,
         source: src.source,
         ...(opts.owner !== undefined && { orgId: opts.owner.orgId }),
+        ...opts.auditDetail,
       },
       opts.owner,
     );
@@ -320,6 +323,7 @@ export class ExtensionInstalls {
       sha256: string;
       source: IngestSource["source"];
       orgId?: string;
+      [key: string]: unknown;
     },
     owner?: { orgId: string },
   ): Promise<void> {
@@ -337,7 +341,11 @@ export class ExtensionInstalls {
   ingestFile(
     actor: string | null,
     bytes: Uint8Array,
-    opts: { actorTokenId?: string; store?: "object" | "pg" } = {},
+    opts: {
+      actorTokenId?: string;
+      store?: "object" | "pg";
+      auditDetail?: Record<string, unknown>;
+    } = {},
   ): Promise<PackageReview> {
     return this.ingest(actor, bytes, { source: "file", ref: "upload" }, opts);
   }

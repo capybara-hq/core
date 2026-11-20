@@ -258,7 +258,12 @@ export class ExternalIdentities {
   private async refreshIdentity(id: ExternalIdentity): Promise<void> {
     await this.db
       .updateTable("identities")
-      .set({ email: id.email ?? null, email_verified: id.emailVerified, profile: profileOf(id) })
+      .set({
+        email: id.email ?? null,
+        email_verified: id.emailVerified,
+        profile: profileOf(id),
+        updated_at: sql`now()`,
+      })
       .where("source", "=", id.source)
       .where("external_id", "=", id.externalId)
       .execute();
@@ -296,6 +301,7 @@ export class ExternalIdentities {
         email_verified: id.emailVerified,
         profile: profileOf(id),
         linked_via: linkedVia,
+        updated_at: sql`now()`,
       })
       .onConflict((oc) => oc.columns(["source", "external_id"]).doNothing())
       .returning("account_id")

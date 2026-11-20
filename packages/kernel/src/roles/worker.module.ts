@@ -20,6 +20,8 @@ import { EvalWorkersModule } from "../evals/evals.module.js";
 import { ExtensionsModule } from "../extensions/extensions.module.js";
 import { PluginsReconcileJob } from "../extensions/lifecycle.js";
 import { LifecycleHookWorkersModule } from "../extensions/lifecycle-hooks.js";
+import { AccountAvatarCleanupJob } from "../identity/account-avatars.service.js";
+import { IdentityModule } from "../identity/identity.module.js";
 import { InitialPasswordCleanupJob } from "../identity/initial-passwords.job.js";
 import { OutboxRelayModule } from "../infra/outbox/outbox-relay.module.js";
 import { KernelScheduleModule } from "../infra/schedule/schedule.module.js";
@@ -77,6 +79,7 @@ export class WorkerModule {
         TitlesModule,
         PromptSuggestionsModule,
         AttachmentsModule,
+        IdentityModule,
         StorageModule,
         SandboxModule,
         BackgroundModule,
@@ -105,6 +108,8 @@ export class WorkerModule {
         RetireLegacyTasksJob,
         ToolJobs,
         InitialPasswordCleanupJob,
+        // expired, unbound avatar uploads of accounts (account profile spec §5.3)
+        AccountAvatarCleanupJob,
         ClientReportsCron,
         CatalogJobs,
         DirectoryScanJob,

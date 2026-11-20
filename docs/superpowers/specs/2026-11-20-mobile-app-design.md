@@ -156,7 +156,9 @@ fails when the native projects drift from it.
 - **Back**: iOS enables the WebView's back-forward swipe (`allowsBackForwardNavigationGestures`),
   which moves through the same history the web's back button uses; Android's back gesture goes
   back in history while there is any, else moves the app to the background (decided 2026-11-21:
-  no tab roots any more). The web suppresses its own
+  no tab roots any more). The web holds one history entry while the drawer or a bottom sheet is
+  open, so back (Android or the iOS swipe) closes the overlay first, then navigates (maintainer
+  decision 2026-11-21, layout spec §4.1, §15); the shell needs no overlay knowledge. The web suppresses its own
   pop animation when the browser already animated (`PopStateEvent.hasUAVisualTransition`), so a
   swipe never animates twice (§7.2).
 - **Errors**: a deployment that cannot be reached shows a native error state with retry and the
@@ -335,7 +337,7 @@ only; the desktop keeps E 终端 unchanged.
   `viewport-fit=cover` and pads every side by its own inset, so the day Safari extends content
   under the outer display's side controls (Apple has not decided, layout spec §15), the page runs
   under the strip with no change. Until then the strip stays the system's in Safari and the PWA.
-- **Inner display in the app (decided 2026-11-21)**: the strip's sections stay (the board draws
+- **Inner display in the app (decided 2026-11-21; maintainer confirmed the inner display has the right strip too, native strip navigation there as in plan)**: the strip's sections stay (the board draws
   them on both displays) and the content runs under the strip as on the outer display; the web
   shows the rail or the sidebar with only search, the recent conversations, the account and the
   new conversation, and sends `menu: null` (no menu button: the sidebar is on screen). Open and

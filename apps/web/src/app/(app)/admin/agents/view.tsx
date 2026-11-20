@@ -9,6 +9,7 @@ import {
   DateTime,
   Field,
   ListPage,
+  PersonName,
   Select,
   Stack,
   Text,
@@ -85,7 +86,7 @@ const agentColumns = (t: T): Column<AdminAgentRow>[] => [
     header: t("columns.owner"),
     cell: (a) => (
       <Stack direction="row" gap={8} align="center">
-        <Text truncate>{a.ownerName}</Text>
+        <PersonName name={a.ownerName} avatarUrl={a.ownerAvatarUrl} size={16} />
         {a.needsReassignment && <Badge tone="warn">{t("needsReassignment")}</Badge>}
       </Stack>
     ),

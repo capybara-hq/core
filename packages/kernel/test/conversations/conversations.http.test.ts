@@ -1,5 +1,6 @@
 import { startTestPostgres, startTestRedis, type TestContainer } from "@capybara-hq/testing";
 import { Redis } from "ioredis";
+import { sql } from "kysely";
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import { KernelConfigSchema } from "../../src/config/schema.js";
 import { EventLog } from "../../src/conversations/event-log.js";
@@ -302,6 +303,70 @@ describe("Conversation HTTP", () => {
     expect(await seqs("?after=2&limit=2")).toEqual([3, 4]);
     expect(await seqs("?after=5")).toEqual([]);
     expect((await req({ method: "GET", url: `${url}?after=-1` })).statusCode).toBe(400);
+  });
+
+  it("events carry a people sidecar for every account they name; a deleted account is absent", async () => {
+    const req = await session("owner");
+    const orgId = await createOrg(req);
+    const agentId = await createAgent(req, orgId);
+    const conv = await createConv(req, orgId, agentId);
+    const adm = await memberSession(orgId, "adm", "admin");
+    const gone = await accounts.createLocal({ login: "gone", password: PW, displayName: "Gone" });
+    await sql`UPDATE capybara.accounts SET avatar = ${JSON.stringify({ kind: "upload", uploadId: "u1" })}::jsonb
+      WHERE id = ${adm.account.id}`.execute(raw);
+    await k.app.get(EventLog).append(conv.id, [
+      {
+        type: "user_message",
+        payload: { content: [{ type: "text", text: "hi" }], authorAccountId: owner.id },
+      },
+      {
+        type: "run_started",
+        runId: "r1",
+        payload: {
+          agentVersion: 1,
+          model: { provider: "model-fake", model: "fake-1" },
+          triggerAccountId: owner.id,
+        },
+      },
+      {
+        type: "run_aborted",
+        runId: "r1",
+        payload: { byAccountId: adm.account.id, reason: "user" },
+      },
+      {
+        type: "run_aborted",
+        runId: "r2",
+        payload: { byAccountId: gone.id, reason: "user" },
+      },
+    ]);
+    await sql`DELETE FROM capybara.accounts WHERE id = ${gone.id}`.execute(raw);
+    const url = `/api/v1/orgs/${orgId}/conversations/${conv.id}/events`;
+    for (const q of ["", "?before=end"]) {
+      const res = await req({ method: "GET", url: `${url}${q}` });
+      expect(res.statusCode, res.body).toBe(200);
+      const { people } = res.json() as {
+        people: Record<string, { id: string; name: string; avatarUrl: string | null }>;
+      };
+      expect(people[owner.id]).toMatchObject({ id: owner.id, name: "Owner", avatarUrl: null });
+      expect(people[adm.account.id]?.name).toBe("adm");
+      expect(people[adm.account.id]?.avatarUrl).toContain(
+        `/api/v1/accounts/${adm.account.id}/avatar`,
+      );
+      expect(people[gone.id]).toBeUndefined();
+      expect(Object.keys(people).sort()).toEqual([owner.id, adm.account.id].sort());
+    }
+    // the logged payloads keep their ids only
+    const events = (await req({ method: "GET", url })).json() as { events: EventJson[] };
+    expect(events.events.find((e) => e.type === "run_aborted")?.payload).toEqual({
+      byAccountId: adm.account.id,
+      reason: "user",
+    });
+    const one = await req({ method: "GET", url: `/api/v1/orgs/${orgId}/conversations/${conv.id}` });
+    expect((one.json() as { conversation: { owner: unknown } }).conversation.owner).toEqual({
+      id: owner.id,
+      name: "Owner",
+      avatarUrl: null,
+    });
   });
 
   it("events?before= reads turn-aligned pages from the end (history paging spec §2)", async () => {

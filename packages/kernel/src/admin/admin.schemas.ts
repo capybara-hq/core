@@ -23,7 +23,8 @@ export const CreateAccountBody = z.object({
 export const AccountParams = z.object({ accountId: z.string().min(1).max(100) });
 
 export const UpdateAccountBody = z.object({
-  displayName: z.string().trim().min(1).max(100).optional(),
+  /** A body sanity bound; a changed name must have at most 64 code points (the service checks). */
+  displayName: z.string().trim().min(1).max(1000).optional(),
   status: z.enum(["active", "disabled"]).optional(),
   isSuperAdmin: z.boolean().optional(),
 });

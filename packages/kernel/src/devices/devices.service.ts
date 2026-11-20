@@ -12,6 +12,7 @@ import { type Selectable, sql } from "kysely";
 import type { SandboxOperationIntentsTable } from "../db/kernel-schema.js";
 import { ApiError } from "../errors.js";
 import { ExtensionDisplayNames } from "../extensions/display-name.js";
+import { avatarColumns, type PersonRef, personAvatarUrl } from "../identity/account-avatar.js";
 import { audit } from "../identity/audit.js";
 import { KernelConfigService } from "../infra/config/kernel-config.service.js";
 import { KernelDb } from "../infra/database/kernel-db.js";
@@ -208,8 +209,8 @@ export interface DeviceSettingChangeView {
   ceiling: { from: DeviceCeilingFacts | null; to: DeviceCeilingFacts } | null;
   /** The cloud network change (`network` only; else null). */
   network: { from: DeviceNetworkSetting; to: DeviceNetworkSetting } | null;
-  /** The deciding account's display name (null when the account is gone). */
-  by: string | null;
+  /** The deciding account (null when the account is gone). */
+  by: PersonRef | null;
   /**
    * `device`: made or reported on the machine itself; `token`: through an API token; `agent`: an
    * agent's Platform tool call.
@@ -1483,7 +1484,15 @@ export class DevicesService {
     const rows = await this.db
       .selectFrom(ranked.as("r"))
       .leftJoin("accounts as ac", "ac.id", "r.actor_account_id")
-      .select(["r.target", "r.action", "r.at", "r.detail", "ac.display_name"])
+      .select((eb) => [
+        "r.target",
+        "r.action",
+        "r.at",
+        "r.detail",
+        "r.actor_account_id",
+        "ac.display_name",
+        ...avatarColumns(eb, "ac", "actor"),
+      ])
       .where("r.n", "<=", RECENT_POLICY_CHANGES)
       .orderBy("r.at", "desc")
       .execute();
@@ -1495,7 +1504,13 @@ export class DevicesService {
           r.action,
           r.at,
           (r.detail ?? {}) as Record<string, unknown>,
-          r.display_name ?? null,
+          r.actor_account_id === null || r.display_name === null
+            ? null
+            : {
+                id: r.actor_account_id,
+                name: r.display_name,
+                avatarUrl: personAvatarUrl(r, "actor", r.actor_account_id),
+              },
         ),
       );
       out.set(r.target, list);
@@ -1700,7 +1715,7 @@ function settingChangeOf(
   action: string,
   at: Date,
   d: Record<string, unknown>,
-  by: string | null,
+  by: PersonRef | null,
 ): DeviceSettingChangeView {
   const hosts = (v: unknown) =>
     Array.isArray(v) ? v.filter((h): h is string => typeof h === "string") : [];

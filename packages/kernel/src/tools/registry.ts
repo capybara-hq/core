@@ -28,6 +28,7 @@ import { KernelConfigService } from "../infra/config/kernel-config.service.js";
 import { KernelDb } from "../infra/database/kernel-db.js";
 import type { OrgRole } from "../orgs/roles.js";
 import { readOrgSettings } from "../orgs/settings.service.js";
+import type { FileCardDetail } from "../platform/file-ref.js";
 import type { PersonFieldSpec } from "../platform/person-fields.js";
 import { estimateTokens } from "../runtime/context/tokens.js";
 import type { ConversationKindForHooks } from "../runtime/hook-calls.js";
@@ -272,6 +273,11 @@ export interface CallPolicy {
    * refused in an unattended run and when the ask would go to a role instead of the person.
    */
   personOnly?: true;
+  /**
+   * The file the call takes in place of an upload, as the card shows it (platform web parity spec
+   * §5): stored in the approval's `detail.file`, so the approval binds its sha256. Never the bytes.
+   */
+  file?: FileCardDetail;
 }
 
 export type ToolPolicy = "allow" | "ask" | "deny";
