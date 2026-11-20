@@ -249,7 +249,7 @@ never the token), `marketplace.config_managed`.
   - offline: a `git` entry satisfied from the offline dir without network;
   - restart: no re-run, no theme rewrite; super admin's choice (including an explicit `null`) kept;
   - an extra entry removed from the file → `required_cleared` / builtin cleared like a built-in
-    one (`extensions/bootstrap-extra-start.test.ts`);
+    one (`extensions/bootstrap-default-theme.test.ts`);
   - a service started without the extra manifest while managed marketplaces exist changes nothing
     (R14);
   - name conflict fails the step;
