@@ -714,7 +714,11 @@ describe("/schedules/[id]", () => {
   it("an org admin on another member's task: read-only, pause in the action row, no run", async () => {
     stubApi(routes({ accountId: "a2" }));
     await renderRouteWithCache("/schedules/s1", lastStubRoutes(), { me: asRole("admin") });
-    expect(screen.getByText(E.form.readOnly.replace("{name}", "Mei"))).toBeTruthy();
+    const notice = screen.getByRole("note");
+    expect(notice.textContent).toContain(E.form.readOnlyOwner);
+    expect(notice.textContent).toContain(E.form.readOnlyRights);
+    expect(within(notice).getByText("Mei")).toBeTruthy();
+    expect(personAvatarSrc(notice)).toBe("/api/v1/accounts/a2/avatar?v=abc123");
     expect(screen.getByRole("textbox", { name: E.form.name })).toHaveProperty("disabled", true);
     expect(screen.queryByRole("button", { name: E.actions.runNow })).toBeNull();
     expect(screen.queryByRole("button", { name: E.form.save })).toBeNull();

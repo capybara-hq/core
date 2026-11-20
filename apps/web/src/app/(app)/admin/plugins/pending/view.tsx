@@ -112,6 +112,7 @@ function Pending({
   const head = usePluginsHead("pending");
   const t = useTranslations("catalog.admin.pending");
   const ta = useTranslations("catalog.admin");
+  const tp = useTranslations("people");
   const componentsLabel = useComponentsLabel();
   const locale = useLocale();
   const toast = useToast();
@@ -232,7 +233,8 @@ function Pending({
               chips={[{ label: t(`kind.${r.kind}`) }]}
               {...(r.note !== "" ? { description: r.note } : {})}
               meta={[
-                t("requester", { name: requesterOf(r)?.name ?? "—" }),
+                t("requester"),
+                { person: requesterOf(r) ?? { name: tp("departed"), avatarUrl: null } },
                 ...(version !== null ? [versionLabel(version)] : []),
               ]}
               state={{ label: t("waiting"), tone: "warn" }}

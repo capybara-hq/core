@@ -5425,6 +5425,11 @@ textarea {
 .r-ocard-foot > .r-skel-box {
   flex: none;
 }
+.r-ocard-meta-person {
+  display: inline-flex;
+  max-width: 100%;
+  vertical-align: middle;
+}
 .r-ocard-meta {
   flex: 1;
   min-width: 0;

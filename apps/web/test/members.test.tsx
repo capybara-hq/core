@@ -112,9 +112,7 @@ describe("成员页（SettingsPage）", () => {
     });
     await renderRouteWithCache("/settings/members", lastStubRoutes(), { me: asRole("admin") });
     await screen.findByText("Bob");
-    expect(personAvatarSrc(rowOf(`Grant (${en.members.you})`))).toBe(
-      "/api/v1/accounts/a1/avatar?v=abc123",
-    );
+    expect(personAvatarSrc(rowOf("Grant"))).toBe("/api/v1/accounts/a1/avatar?v=abc123");
     expect(personAvatarSrc(rowOf("Bob"))).toBeNull();
     expect(personInitial(rowOf("Bob"))).toBe("B");
   });
@@ -172,7 +170,12 @@ describe("成员页（SettingsPage）", () => {
     ).toHaveProperty("disabled", true);
     expect(within(owner).queryByRole("button", { name: ROW_ACTIONS.en })).toBeNull();
     // 自己这一行显示「（你）」，角色不可改，也没有行菜单
-    const self = rowOf(`Bob (${m.you})`);
+    const self = rowOf("Bob");
+    // "(you)" is the secondary text, never part of the name the avatar initial reads
+    expect(self.querySelector('[data-part="person-name-secondary"]')?.textContent).toBe(
+      `(${m.you})`,
+    );
+    expect(personInitial(self)).toBe("B");
     expect(
       within(self).getByRole("combobox", { name: m.roleOf.replace("{name}", "Bob") }),
     ).toHaveProperty("disabled", true);
@@ -291,7 +294,7 @@ describe("成员页（SettingsPage）", () => {
     expect(bob.value).toBe("owner");
     // an admin may not change an owner's role, nor grant owner
     expect(bob.disabled).toBe(true);
-    const mine = within(rowOf(`Grant (${m.you})`)).getByRole("combobox", {
+    const mine = within(rowOf("Grant")).getByRole("combobox", {
       name: m.roleOf.replace("{name}", "Grant"),
     }) as HTMLButtonElement;
     expect(mine.value).toBe("admin");

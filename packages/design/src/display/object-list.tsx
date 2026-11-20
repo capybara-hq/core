@@ -7,6 +7,7 @@ import { Menu, type MenuItem, menuActions, menuLone } from "../overlays/index";
 import { LinkPendingMark, useDesignLink, useDesignT } from "../provider";
 import { Avatar, type AvatarValue } from "./avatar";
 import { MarkImage } from "./object-mark";
+import { type PersonLike, PersonName } from "./person-name";
 import { SkeletonBox, SkeletonText, useSkeletonAnnounces } from "./skeleton";
 
 export type ObjectRowProps = {
@@ -36,9 +37,10 @@ export type ObjectRowProps = {
   description?: string;
   /**
    * One mono line in `faint`; as a list, the parts are joined with " · " and a `{ label, tone:
-   * "warn" }` part is drawn in `warn` (a sensitive-permission count).
+   * "warn" }` part is drawn in `warn` (a sensitive-permission count); a `{ person }` part is a
+   * `PersonName` 16 (a requester, spec §6.17).
    */
-  meta?: string | (string | { label: string; tone: "warn" })[];
+  meta?: string | (string | { label: string; tone: "warn" } | { person: PersonLike })[];
   /** A mono state label with its color. */
   state?: { label: string; tone: "ok" | "warn" | "fail" | "muted" };
   /** A short mono text at the right (last use). */
@@ -202,6 +204,14 @@ export function ObjectRow({
                         {i > 0 ? " · " : null}
                         {typeof m === "string" ? (
                           m
+                        ) : "person" in m ? (
+                          <span className="cb-object-meta-person" data-part="object-row-person">
+                            <PersonName
+                              name={m.person.name}
+                              avatarUrl={m.person.avatarUrl}
+                              size={16}
+                            />
+                          </span>
                         ) : (
                           <span className="cb-object-meta-part" data-tone={m.tone}>
                             {m.label}

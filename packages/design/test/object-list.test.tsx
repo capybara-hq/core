@@ -17,6 +17,23 @@ const zh = (ui: React.ReactElement) => render(<DesignProvider locale="zh">{ui}</
 const header = { path: [{ label: "capybara" }], title: "Agents" };
 
 describe("ObjectRow", () => {
+  it("draws a person meta part as a 16 PersonName", () => {
+    zh(
+      <ObjectList label="Rows">
+        <ObjectRow
+          mark={{ text: "x" }}
+          name="Pack"
+          meta={[{ person: { name: "Mia", avatarUrl: null } }, "v1.0"]}
+        />
+      </ObjectList>,
+    );
+    const row = screen.getByRole("listitem");
+    const person = row.querySelector('[data-part="person-name"]') as HTMLElement;
+    expect(person.getAttribute("data-size")).toBe("16");
+    expect(person.textContent).toBe("MMia");
+    expect(row.querySelector(".cb-object-meta-text")?.textContent).toBe("MMia · v1.0");
+  });
+
   it("shows name, chips, description, meta, state and one action", () => {
     zh(
       <ObjectList label="Agent 列表">

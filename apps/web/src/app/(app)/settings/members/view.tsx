@@ -136,13 +136,10 @@ function Members({ orgId }: { orgId: string }) {
       cell: (m) => (
         <Stack direction="row" gap={8}>
           <PersonName
-            name={
-              m.account.id === me.account.id
-                ? `${m.account.displayName} (${t("you")})`
-                : m.account.displayName
-            }
+            name={m.account.displayName}
             avatarUrl={m.account.avatarUrl}
             size={24}
+            {...(m.account.id === me.account.id ? { secondary: `(${t("you")})` } : {})}
           />
           {m.anonymous && <Badge>{t("anonymous")}</Badge>}
         </Stack>

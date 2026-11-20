@@ -4245,6 +4245,7 @@
       "actions": {
         "accountCreated": "创建了账号",
         "accountUpdated": "修改了账号",
+        "accountProfileUpdated": "修改了个人资料",
         "authAppAuthorized": "授权桌面端登录",
         "authAppSignedIn": "桌面端已登录",
         "platformIconUpdated": "更换了平台图标",
@@ -5501,7 +5502,7 @@
           "import": "申请安装",
           "enable": "申请启用"
         },
-        "requester": "申请人 {name}",
+        "requester": "申请人",
         "approve": "批准",
         "reject": "拒绝",
         "approved": "已批准",
@@ -6710,7 +6711,8 @@
       "missingTitle": "最近运行中被拒绝的工具",
       "addMissing": "加入预先批准的工具",
       "connect": "连接 {slug}",
-      "readOnly": "这个任务属于 {name}。组织管理员可以暂停、恢复或删除它，但不能修改。",
+      "readOnlyOwner": "这个任务属于",
+      "readOnlyRights": "组织管理员可以暂停、恢复或删除它，但不能修改。",
       "creatorUnknown": "其他成员",
       "chatAgentFixed": "聊天任务使用该聊天所属渠道连接的智能体。",
       "minInterval": "本组织的任务最短每 {n} 分钟运行一次。",

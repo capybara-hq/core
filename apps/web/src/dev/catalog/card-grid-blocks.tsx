@@ -112,6 +112,20 @@ const TEMPLATES: ObjectCardProps[] = [
   },
 ];
 
+type Loaded = Extract<ObjectCardProps, { title: string }>;
+
+/** Cards whose meta leads with the owner as a person (spec §6.34). */
+const PERSON_CARDS: ObjectCardProps[] = [
+  {
+    ...(AGENT_CARDS[0] as Loaded),
+    meta: [{ person: { name: "Grant", avatarUrl: null } }, "仅自己"],
+  },
+  {
+    ...(AGENT_CARDS[1] as Loaded),
+    meta: [{ person: { name: "Lin", avatarUrl: null } }, "全组织"],
+  },
+];
+
 function grid(label: string, cards: ObjectCardProps[]) {
   return (
     <CardGrid label={label}>
@@ -135,6 +149,10 @@ function cardGridBlocks(): ReactNode {
       </RefBlock>
       <RefBlock id="card-grid-no-description" width={W} pad>
         {grid("模板", TEMPLATES)}
+      </RefBlock>
+      {/* The owner as a person in the meta line (spec §6.34): a 16 circle before the name. */}
+      <RefBlock id="card-grid-person" width={W} pad>
+        {grid("智能体", PERSON_CARDS)}
       </RefBlock>
       <RefBlock id="card-grid-loading" width={W} pad>
         <CardGrid label="智能体" loading />

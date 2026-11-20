@@ -1,6 +1,7 @@
 "use client";
 
 import {
+  Callout,
   type Column,
   DangerZone,
   DangerZoneItem,
@@ -19,6 +20,7 @@ import { useState } from "react";
 import { ErrorFrame } from "../../../../components/ErrorFrame";
 import { FormError } from "../../../../components/form-error";
 import { NoAccess } from "../../../../components/NoAccess";
+import { Person } from "../../../../components/Person";
 import {
   ApprovedToolsSection,
   changedCount,
@@ -40,6 +42,7 @@ import { usePagePath } from "../../../../components/shell/path";
 import { useRouter } from "../../../../i18n/navigation";
 import type { ProviderModels } from "../../../../lib/agents";
 import { roleAtLeast } from "../../../../lib/members";
+import type { PersonRef } from "../../../../lib/people";
 import { agentsQuery } from "../../../../lib/query/agents";
 import { retryOnMountOf } from "../../../../lib/query/client";
 import { modelsQuery } from "../../../../lib/query/conversation";
@@ -246,8 +249,14 @@ function ScheduleForm({
           onSelect: () => void act(actions.resume.mutateAsync(task.id), t("actions.resumed")),
           loading: actions.resume.isPending,
         };
-  const creator =
-    names.kind === "ready" ? (names.people[task.accountId] ?? t("form.creatorUnknown")) : "";
+  const creator: PersonRef | null =
+    names.kind === "ready"
+      ? (names.refs[task.accountId] ?? {
+          id: task.accountId,
+          name: t("form.creatorUnknown"),
+          avatarUrl: null,
+        })
+      : null;
   return (
     <>
       <FormPage
@@ -255,7 +264,6 @@ function ScheduleForm({
           path: [...scope, { label: "schedules", href: "/schedules" }, { label: task.name }],
           title: task.name,
           status: <ScheduleStateMark task={task} />,
-          ...(readOnly ? { description: t("form.readOnly", { name: creator }) } : {}),
           // An org admin on another member's task: pause or resume only (no run, no edit)
           actions: readOnly
             ? []
@@ -305,6 +313,12 @@ function ScheduleForm({
               }
         }
       >
+        {readOnly && creator !== null ? (
+          <Callout tone="info">
+            {t("form.readOnlyOwner")} <Person person={creator} size={16} />.{" "}
+            {t("form.readOnlyRights")}
+          </Callout>
+        ) : null}
         <ScheduleFormSections
           orgId={orgId}
           draft={draft}

@@ -4257,6 +4257,7 @@
       "actions": {
         "accountCreated": "Created an account",
         "accountUpdated": "Updated an account",
+        "accountProfileUpdated": "Edited their profile",
         "authAppAuthorized": "Allowed an app to sign in",
         "authAppSignedIn": "An app signed in",
         "platformIconUpdated": "Changed the platform icon",
@@ -5513,7 +5514,7 @@
           "import": "Asks to install",
           "enable": "Asks to enable"
         },
-        "requester": "By {name}",
+        "requester": "Requested by",
         "approve": "Approve",
         "reject": "Reject",
         "approved": "Approved",
@@ -6722,7 +6723,8 @@
       "missingTitle": "Refused in the latest runs",
       "addMissing": "Add to approved tools",
       "connect": "Connect {slug}",
-      "readOnly": "This task belongs to {name}. Organization admins can pause, resume or delete it, not change it.",
+      "readOnlyOwner": "This task belongs to",
+      "readOnlyRights": "Organization admins can pause, resume or delete it, not change it.",
       "creatorUnknown": "another member",
       "chatAgentFixed": "A chat task uses the agent of the chat's connection.",
       "minInterval": "This organization runs a task at most once every {n} minutes.",

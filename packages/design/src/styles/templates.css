@@ -677,6 +677,11 @@ a.cb-object-name:hover {
   text-overflow: ellipsis;
   white-space: nowrap;
 }
+.cb-object-meta-person {
+  display: inline-flex;
+  max-width: 100%;
+  vertical-align: middle;
+}
 .cb-object-meta-part[data-tone="warn"] {
   color: var(--cb-warn);
 }
