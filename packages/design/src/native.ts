@@ -102,7 +102,7 @@ export type NativeMenuAction = {
 /**
  * The trigger props of a menu that opens as the platform's action sheet (`menu` given): the
  * sheet opens on the click (Radix's own pointerdown is cancelled; a touch pointerdown is no user
- * activation) or on Enter, Space and ↓, anchored to the trigger's rect. A pick runs its action
+ * activation) or on Enter, Space and ↓ (one sheet per Space press: its keyup click is skipped), anchored to the trigger's rect. A pick runs its action
  * (an unknown or disabled id runs nothing), a dismissal nothing, and a throw or rejection calls
  * `fallback` (the design's own menu). One sheet at a time. Without `menu`: no props.
  */
@@ -114,8 +114,11 @@ export function useNativeMenuTrigger(
   onPointerDown?(e: { preventDefault(): void }): void;
   onClick?(e: { currentTarget: HTMLElement }): void;
   onKeyDown?(e: KeyboardEvent<HTMLElement>): void;
+  onKeyUp?(e: KeyboardEvent<HTMLElement>): void;
 } {
   const showing = useRef(false);
+  // Space opened the sheet on keydown: the button's own click on keyup is the same press
+  const spacePress = useRef(false);
   if (menu === undefined) return {};
   const show = (el: HTMLElement) => {
     if (showing.current) return;
@@ -149,11 +152,26 @@ export function useNativeMenuTrigger(
   };
   return {
     onPointerDown: (e) => e.preventDefault(),
-    onClick: (e) => show(e.currentTarget),
+    onClick: (e) => {
+      if (spacePress.current) return;
+      show(e.currentTarget);
+    },
     onKeyDown: (e) => {
       if (e.key !== "Enter" && e.key !== " " && e.key !== "ArrowDown") return;
       e.preventDefault();
+      if (e.key === " ") {
+        if (e.repeat) return;
+        spacePress.current = true;
+      }
       show(e.currentTarget);
+    },
+    onKeyUp: (e) => {
+      if (e.key !== " " || !spacePress.current) return;
+      e.preventDefault();
+      // the click a browser still fires for this keyup comes right after it
+      setTimeout(() => {
+        spacePress.current = false;
+      }, 0);
     },
   };
 }

@@ -148,6 +148,35 @@ describe("the native tab bar (nav@1)", () => {
     expect(fake.listeners.size).toBe(0);
   });
 
+  it("a new but equivalent handle on every parent render sends nothing and never hides the bar", () => {
+    window.matchMedia = matchMediaFor(390).matchMedia;
+    const fake = fakeNav();
+    const onNavigate = vi.fn();
+    // a parent that builds the handle inline: a new object per render, the same shell behind it
+    const inline = (): NativeNavHandle => ({
+      set: (state) => fake.nav.set(state),
+      onSelect: (listener) => fake.nav.onSelect(listener),
+    });
+    const view = render(shell(inline(), "/conversations", { onNavigate }));
+    expect(fake.nav.set).toHaveBeenCalledTimes(1);
+    view.rerender(shell(inline(), "/conversations", { onNavigate }));
+    view.rerender(shell(inline(), "/conversations", { onNavigate }));
+    expect(fake.nav.set).toHaveBeenCalledTimes(1);
+    // taps still reach the shell, through one live subscription
+    expect(fake.listeners.size).toBe(1);
+    act(() => fake.select("agents"));
+    expect(onNavigate).toHaveBeenCalledWith("/agents");
+    // a real change goes to the latest handle
+    view.rerender(shell(inline(), "/agents/new", { onNavigate }));
+    expect(fake.nav.set).toHaveBeenCalledTimes(2);
+    expect(fake.nav.set).toHaveBeenLastCalledWith(expect.objectContaining({ visible: false }));
+    // unmount: hidden once, unsubscribed
+    view.unmount();
+    expect(fake.nav.set).toHaveBeenCalledTimes(3);
+    expect(fake.nav.set).toHaveBeenLastCalledWith(expect.objectContaining({ visible: false }));
+    expect(fake.listeners.size).toBe(0);
+  });
+
   it("without a nativeNav the shell carries no data-native-nav", () => {
     window.matchMedia = matchMediaFor(390).matchMedia;
     render(

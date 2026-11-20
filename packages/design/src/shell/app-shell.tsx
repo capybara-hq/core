@@ -34,6 +34,8 @@ export type AppShellProps = {
    * tells the handle the four items, the current one and `visible` (exactly when the web would
    * have shown its own bar: compact, a tab root, no open keyboard) on every change, and a tap on a
    * native tab plays the `selection` haptic and navigates to the item's `href` with `onNavigate`.
+   * The handle need not be stable: a new equivalent object per render sends no extra state (the
+   * latest one receives the next change); unmounting the shell hides the bar.
    */
   nativeNav?: NativeNavHandle;
   /** Client navigation for the native tab bar (apps/web: the router's push). */
@@ -238,38 +240,55 @@ export function AppShell({
 
   // The native tab bar (mobile app spec §6.1): visible exactly when the web would show its own
   // bar (the slot below, and the CSS that shows it on compact while no keyboard is open).
+  // The handle may be a new object on every render (a parent building it inline): only its
+  // presence keys the state and hide effects, which reach the latest handle through a ref, so an
+  // equivalent new handle sends nothing and never hides and shows the bar. Only the tap
+  // subscription follows the handle itself (resubscribing sends no state).
   const haptics = useHaptics();
+  const hasNav = nativeNav !== undefined;
   const [keyboardOpen, setKeyboardOpen] = useState(false);
   useEffect(() => {
     const el = shellRef.current;
-    if (nativeNav === undefined || el === null || typeof MutationObserver === "undefined") return;
+    if (!hasNav || el === null || typeof MutationObserver === "undefined") return;
     const read = () => setKeyboardOpen(el.dataset.keyboard === "open");
     read();
     const observer = new MutationObserver(read);
     observer.observe(el, { attributes: true, attributeFilter: ["data-keyboard"] });
     return () => observer.disconnect();
-  }, [nativeNav]);
+  }, [hasNav]);
   const navState = {
     items: items.map(nativeTab),
     current: currentTab,
     visible: hydrated && sizeClass === "compact" && items.length > 0 && !pushed && !keyboardOpen,
   };
   const navKey = JSON.stringify(navState);
-  const navSent = useRef<{ nav: NativeNavHandle; key: string } | null>(null);
+  const navSent = useRef<string | null>(null);
+  const navLatest = useRef({ nav: nativeNav, items, onNavigate, haptics, navState });
+  navLatest.current = { nav: nativeNav, items, onNavigate, haptics, navState };
+  // the page without this shell (an auth page) has no tab bar: hidden once the shell goes
+  useEffect(() => {
+    if (!hasNav) return;
+    return () => {
+      const { nav, navState: last } = navLatest.current;
+      try {
+        nav?.set({ ...last, visible: false });
+      } catch {
+        // the shell keeps its last state
+      }
+      navSent.current = null;
+    };
+  }, [hasNav]);
   // biome-ignore lint/correctness/useExhaustiveDependencies: `navKey` is `navState`, deduped
   useEffect(() => {
-    if (nativeNav === undefined) return;
-    const sent = navSent.current;
-    if (sent !== null && sent.nav === nativeNav && sent.key === navKey) return;
-    navSent.current = { nav: nativeNav, key: navKey };
+    const { nav, navState: state } = navLatest.current;
+    if (!hasNav || nav === undefined || navSent.current === navKey) return;
+    navSent.current = navKey;
     try {
-      nativeNav.set(navState);
+      nav.set(state);
     } catch {
       // the shell keeps its last state
     }
-  }, [nativeNav, navKey]);
-  const navLatest = useRef({ items, onNavigate, haptics, navState });
-  navLatest.current = { items, onNavigate, haptics, navState };
+  }, [hasNav, navKey]);
   useEffect(() => {
     if (nativeNav === undefined) return;
     let off: (() => void) | undefined;
@@ -292,13 +311,6 @@ export function AppShell({
       } catch {
         // already gone
       }
-      // the page without this shell (an auth page) has no tab bar
-      try {
-        nativeNav.set({ ...navLatest.current.navState, visible: false });
-      } catch {
-        // the shell keeps its last state
-      }
-      navSent.current = null;
     };
   }, [nativeNav]);
 

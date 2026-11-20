@@ -96,6 +96,21 @@ describe("Menu with native.menu", () => {
     expect(screen.queryByRole("menu")).toBeNull();
   });
 
+  it("one Space press opens one sheet, even when it is dismissed at once", async () => {
+    window.matchMedia = matchMediaFor(390).matchMedia;
+    const menu = vi.fn(async () => null);
+    const trigger = renderMenu(items, { menu });
+    trigger.focus();
+    const user = userEvent.setup();
+    await user.keyboard(" ");
+    await act(async () => {});
+    expect(menu).toHaveBeenCalledTimes(1);
+    // a later press opens it again
+    await user.keyboard(" ");
+    await act(async () => {});
+    expect(menu).toHaveBeenCalledTimes(2);
+  });
+
   it("a dismissal (null) runs nothing", async () => {
     window.matchMedia = matchMediaFor(390).matchMedia;
     rename.mockClear();
