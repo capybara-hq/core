@@ -351,6 +351,13 @@ Rulings taken while implementing; where they differ from the text above, they wi
   `BootstrapExtraMismatchError` before anything is obtained or written (the start logs the R14
   error and goes on; `capybara bootstrap` exits 1), and `syncExtraFromConfig(undefined)` (a
   process without an extra manifest) never demotes.
+- **R17, the last run remembers the extra entries:** a run's `results` flag every entry of the
+  extra manifest `extra: true` (older rows lack it: not extra). The mismatch of R14 / R16 is: no
+  extra manifest here and (config-managed marketplaces exist or the last completed run has an
+  `extra` entry), checked before the sync, in `capybara bootstrap` and under the lock. This closes
+  the npm-only gap (an extra manifest without marketplaces, e.g. run only by compose's init,
+  leaves no managed row). An entry a built-in manifest dropped carries no flag, and an empty extra
+  manifest file is configured, so removal works as before.
 - **Repository root:** a git entry's `path` may be `.` / `./` (a single-plugin repository).
 - **Several repositories:** `capybara-plugin bootstrap` reads every git entry from `--root`; a
   manifest whose git entries come from more than one marketplace is checked and pinned once per
