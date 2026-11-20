@@ -8,9 +8,9 @@ import type { Waiter } from "../timeline";
 
 /**
  * Words who a wait is for (`SubagentLive.whoWaits`, the approval card): undefined for the viewer
- * ("等待你批准"), a person's display name from the log's `people` (the events response names every
- * account, so a guest sees names too), a role ("管理员") for an approval escalated by role, or
- * "其他成员" for an account that has left.
+ * (the viewer's own wait reads "waiting for you"), a person's display name from the log's `people` (the events response names every
+ * account, so a guest sees names too), a role ("admin") for an approval escalated by role, or
+ * "another member" for an account that has left.
  */
 export function useWhoWaits(people: PeopleMap): (w: Waiter) => string | undefined {
   const t = useTranslations("chat.waitingFor");

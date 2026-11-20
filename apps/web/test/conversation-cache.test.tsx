@@ -105,6 +105,27 @@ describe("learnPeople", () => {
     expect(qc.getQueryData<EventWindow>(key)?.people).toEqual({ a2: bo });
   });
 
+  it("reads the author of a streamed message and whom a streamed approval is for", async () => {
+    let reads = 0;
+    const calls = stubApi({
+      "GET /api/v1/orgs/o1/conversations/c1/events": () =>
+        json(200, {
+          events: [],
+          people: reads++ === 0 ? { a2: bo } : { a3: { ...bo, id: "a3" } },
+        }),
+    });
+    const qc = testQueryClient();
+    qc.setQueryData(key, { ...win([msg(1)]), people: {} });
+    await learnPeople(qc, "o1", "c1", userMsg(2, "hi", { authorAccountId: "a2" }));
+    expect(Object.keys(qc.getQueryData<EventWindow>(key)?.people ?? {})).toContain("a2");
+    await learnPeople(qc, "o1", "c1", ev(3, "approval_requested", { requestedFor: "a3" }, "r1"));
+    expect(calls).toHaveLength(2);
+    expect(Object.keys(qc.getQueryData<EventWindow>(key)?.people ?? {}).sort()).toEqual([
+      "a2",
+      "a3",
+    ]);
+  });
+
   it("reads nothing for a known account or a window no read filled", async () => {
     const calls = stubApi({});
     const qc = testQueryClient();

@@ -3,8 +3,11 @@ import type { KernelDatabase } from "../db/kernel-schema.js";
 import { loadPeople, type PersonRef } from "../identity/account-avatar.js";
 import type { ConversationEvent } from "./events.js";
 
-/** The payload keys that name a person: a message's author, a run's trigger, who decided or stopped. */
-const PERSON_KEYS = ["authorAccountId", "triggerAccountId", "byAccountId"] as const;
+/**
+ * The payload keys that name a person: a message's author, a run's trigger, who decided or
+ * stopped, and whom an approval or sub-agent wait is for (`requestedFor`, a string or null).
+ */
+const PERSON_KEYS = ["authorAccountId", "triggerAccountId", "byAccountId", "requestedFor"] as const;
 
 /** Every account id the events name (an id may repeat; null is skipped). */
 export function accountIdsOfEvents(events: readonly ConversationEvent[]): string[] {

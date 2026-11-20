@@ -560,7 +560,12 @@ function addPeople(
 }
 
 /** The payload keys of an event that can name an account the page has not read yet. */
-const STREAMED_PERSON_KEYS = ["triggerAccountId", "byAccountId"] as const;
+const STREAMED_PERSON_KEYS = [
+  "authorAccountId",
+  "triggerAccountId",
+  "byAccountId",
+  "requestedFor",
+] as const;
 
 /**
  * Reads the people a streamed event names when the window does not know them yet (an account that
