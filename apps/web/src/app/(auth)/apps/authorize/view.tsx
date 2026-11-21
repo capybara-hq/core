@@ -135,7 +135,7 @@ function Consent({ request }: { request: AuthorizeAppBody }) {
   const platform = meta.data?.name ?? tc("appName");
   return (
     <AuthPage
-      title={t(`clients.${request.client}.title`, { machine: request.name, platform })}
+      title={t(`clients.${request.client}.title`, { platform })}
       subtitle={t(`clients.${request.client}.subtitle`)}
       preferences={preferences}
     >

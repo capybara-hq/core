@@ -760,6 +760,7 @@ States: `default`, `loading`, `content`, `loading-content`
 | content | loading-content | max-width | layout.content |
 
 ### 5.10 Auth (T10)
+- **Title**: the card's h1 is a sentence (often mixed Chinese and Latin), so it uses the prose font at the `h1` step and weight (maintainer decision 2026-11-21); every AuthPage page gets it from the template.
 - **Loading** (`AuthPage.loading`, `{ fields, subtitle?, note?, hint?, buttons? }`): the page keeps its frame: the two dither columns, the logo, the 400 px card with the title and subtitle the page knows (an empty `title` is an h1-sized bar; `subtitle: true` is a 70% `body` slot for a subtitle that comes with the data), and its `footer` and `preferences`. The card's body is `fields` field placeholders (§5.3; a count or the page's static `FieldShape[]`), then `note` (static content the page shows for real after the data, such as a warning card), then the card's buttons: a gap-8 stack of `buttons` `prominent` boxes (§2.5; default 1, the submit button), opened by `hint` (a static `prose` `muted` line the page shows above its buttons) when given; these parts are `space.4` apart, in place of `children`. One busy announcement (§6.29). Nothing animates.
 - **Classes** (size classes, §4; mobile layout spec §5.1; each template draws its form, a page never branches on width): **compact**: full width with 16 px gutters and the safe areas; **medium**: centered; **expanded**: as above (the status and onboarding templates, T11 and T12, take the same forms).
 
