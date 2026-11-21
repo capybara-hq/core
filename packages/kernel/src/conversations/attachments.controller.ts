@@ -29,7 +29,8 @@ const CreateBody = z
 
 class AttachmentCreateBodyDto extends createZodDto(CreateBody, "AttachmentCreateBody") {}
 
-const DownloadQuery = z.object({ as: DOWNLOAD_AS.optional() }).strict();
+// Not strict: the web adds a cache-busting `retry=1` when it reloads a failed image.
+const DownloadQuery = z.object({ as: DOWNLOAD_AS.optional() });
 class AttachmentDownloadQueryDto extends createZodDto(DownloadQuery, "AttachmentDownloadQuery") {}
 
 /**

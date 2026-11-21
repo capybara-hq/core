@@ -593,6 +593,17 @@ describe("the download URL as JSON (as=url)", () => {
     const bad = await owner({ method: "GET", url: url.replace("as=url", "as=html") });
     expect(bad.statusCode).toBe(400);
   });
+
+  it("ignores the web's cache-busting retry param: it still redirects, and combines with as=url", async () => {
+    const id = await ready(owner, "notes.txt", "text/plain", TEXT);
+    const base = `/api/v1/orgs/${orgId}/attachments/${id}/download`;
+    const retried = await owner({ method: "GET", url: `${base}?retry=1` });
+    expect(retried.statusCode, retried.body).toBe(302);
+    expect(retried.headers.location).toBeTruthy();
+    const asUrl = await owner({ method: "GET", url: `${base}?retry=1&as=url` });
+    expect(asUrl.statusCode, asUrl.body).toBe(200);
+    expect(typeof (asUrl.json() as { url: string }).url).toBe("string");
+  });
 });
 
 describe("只有附件的消息", () => {

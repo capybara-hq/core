@@ -380,6 +380,9 @@ describe("artifact download URL as JSON (as=url)", () => {
     // `inline=1` combines with it
     const inline = await owner({ method: "GET", url: `${base}?inline=1&as=url` });
     expect(inline.statusCode).toBe(200);
+    // the web's cache-busting retry param is ignored, as on the attachment route
+    const retried = await owner({ method: "GET", url: `${base}?retry=1&as=url` });
+    expect(retried.statusCode, retried.body).toBe(200);
     // no session: 401; a member who cannot see the conversation: its usual 404
     expect(
       (await asUser(k.http, cookieJar())({ method: "GET", url: `${base}?as=url` })).statusCode,
