@@ -355,8 +355,11 @@ describe("M6 第二段双副本验收（管理后台与免重启插件生命周�
 
     const org = await ok(0, "POST", "/api/v1/orgs", { name: "Acme" });
     orgId = (org.org as { id: string }).id;
-    await enableExtensions(raw, orgId, "model-fake");
+    // a device provider serves only the orgs that switched it on; the person's default device is
+    // made on the org's default device provider
+    await enableExtensions(raw, orgId, "model-fake", "device-fake");
     base = `/api/v1/orgs/${orgId}`;
+    await ok(1, "PATCH", `${base}/settings`, { deviceDefaultProvider: "device-fake" });
     await ok(1, "PUT", `${base}/extensions/fake-tools-ui`, { enabled: true });
     await waitFor(
       async () => (await orgPluginAvailable(0, "fake-tools-ui")) === true,

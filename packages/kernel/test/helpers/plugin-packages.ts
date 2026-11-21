@@ -209,7 +209,10 @@ export interface LifePkgOptions {
  *   为空时等同进程的 `globalThis.__lifeGate`（没有就立即返回）；
  * - setup 时 `<dir>/fail-<version>-<pid>` 存在则抛错（只让某个副本的某个版本失败）。
  * 模块顶层把 `<name> <version>` 记进 `globalThis.__lifeImports`（批准之前不得导入）。
- * 提供的能力实现为 `{ from: <name>, version }`；`connector@1` 为一个最小连接器（`open` 等 `globalThis.__lifeGate`）。每次 setup 在 `globalThis.__lifeSetups[<name>]` 记一笔（同进程测试用）。
+ * Provided capabilities are `{ from: <name>, version }`; `connector@1` is a minimal connector
+ * (`open` waits for `globalThis.__lifeGate`), `device-provider@1` a provider with the members the
+ * kernel checks, whose calls throw. Every setup appends to `globalThis.__lifeSetups[<name>]` (for
+ * in-process tests).
  */
 export async function lifePkg(o: LifePkgOptions): Promise<Uint8Array> {
   const name = o.name ?? "life";
@@ -289,8 +292,28 @@ export default defineExtension({
         };
       },
     };
+    // device-provider@1: the members the kernel checks at provide time; no device is ever made on it
+    const unused = async () => {
+      throw new Error(NAME + " is a lifecycle fixture: it makes no devices");
+    };
+    const deviceProvider = {
+      networkAllowlist: true,
+      concurrentExec: true,
+      report: unused,
+      killTagged: unused,
+      exec: unused,
+      create: unused,
+      createFileSystem: unused,
+    };
     for (const cap of ${JSON.stringify(provides)}) {
-      ctx.provide(cap, cap === "connector@1" ? connector : { from: NAME, version: VERSION });
+      ctx.provide(
+        cap,
+        cap === "connector@1"
+          ? connector
+          : cap === "device-provider@1"
+            ? deviceProvider
+            : { from: NAME, version: VERSION },
+      );
     }
     ctx.http.route("GET", "/version", async () => new Response(VERSION));
     ctx.tools.register(${JSON.stringify(spec)}, async () => {
