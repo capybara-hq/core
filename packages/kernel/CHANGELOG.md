@@ -1,5 +1,14 @@
 # @capybara-hq/kernel
 
+## 0.1.0-rc.65
+
+### Patch Changes
+
+- 8f70749: Every unsupported permission availability carries its cause (a runtime report and a missing preview had none, which crashed the new conversation's mode menu into a 503 page); the desktop band's hairline is drawn only while the rail is shown.
+- 10923f5: In ToolSearch mode, a call to a tool name the model has not loaded, such as a miscased catalog
+  key, shows as the neutral "load the tool first" notice instead of a failure. The model still gets
+  the same error text.
+
 ## 0.1.0-rc.64
 
 ### Minor Changes
