@@ -1,9 +1,11 @@
 import { randomUUID } from "node:crypto";
 import {
   DeviceProtocolError,
+  type DeviceResponse,
   type ExtensionContext,
   isFileSystemGoneError,
   isSandboxGoneError,
+  isSandboxWorkUnsettledError,
   type KernelReq,
   ToolError,
 } from "@capybara-hq/plugin-sdk";
@@ -453,6 +455,25 @@ describe("LocalDeviceRelay", () => {
     expect(plain).toBeInstanceOf(ToolError);
     expect((plain as Error).message).toBe("On the connected machine: readFile failed");
     await h.disconnect();
+  });
+
+  it("unsettled (a protocol 4 kind) maps to SandboxWorkUnsettledError carrying the message", () => {
+    const resultOf = (
+      relay as unknown as { resultOf: (op: string, res: DeviceResponse) => unknown }
+    ).resultOf.bind(relay);
+    let thrown: unknown;
+    try {
+      resultOf("stat", {
+        type: "res",
+        id: "r",
+        ok: false,
+        error: { kind: "unsettled", message: "Earlier work is not settled" },
+      });
+    } catch (e) {
+      thrown = e;
+    }
+    expect(isSandboxWorkUnsettledError(thrown)).toBe(true);
+    expect((thrown as Error).message).toBe("Earlier work is not settled");
   });
 
   it("an invalid result is refused (parseOpResult)", async () => {

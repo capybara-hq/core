@@ -11,6 +11,7 @@ import {
   SandboxPermissionUnsupportedError,
   SandboxScopeDeniedError,
   type SandboxStopResult,
+  SandboxWorkUnsettledError,
 } from "@capybara-hq/plugin-sdk";
 import type { MacOperationBackend } from "./mac-operation-backend.js";
 import type { VerifiedRuntime } from "./runtime-manifest.js";
@@ -276,7 +277,7 @@ export class InstanceBinder {
     const unsettled = (backend: MacOperationBackend) =>
       ownedTotal(backend) + backend.lifecycle.retirementObligations(next.instanceGeneration);
     const refuse = (pending: number) =>
-      new SandboxPermissionUnsupportedError(
+      new SandboxWorkUnsettledError(
         `Earlier work on this device is not settled (${pending}); stop or retire it before a new instance`,
       );
     if (old) {

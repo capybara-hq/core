@@ -1151,7 +1151,7 @@ export type DeviceResponse = Exclude<DeviceRes, {
     id: string;
     ok: false;
     error: {
-        kind: "gone" | "fs_gone" | "policy" | "error" | "denied" | "unsupported" | "unknown" | "invalid";
+        kind: "gone" | "fs_gone" | "policy" | "error" | "denied" | "unsupported" | "unsettled" | "unknown" | "invalid";
         message: string;
     };
 };

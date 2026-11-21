@@ -27,15 +27,14 @@ export class SandboxPermissionUnsupportedError extends Error {
 }
 
 /**
- * Recognizes the name and tag across SDK copies without requiring this class's identity; the
- * subclass {@link SandboxWorkUnsettledError} counts too (it is the same definite refusal).
+ * Recognizes the inherited tag across SDK copies without requiring this class's identity, so every
+ * subclass counts too (for example {@link SandboxWorkUnsettledError}: the same definite refusal).
  */
 export function isSandboxPermissionUnsupportedError(
   e: unknown,
 ): e is SandboxPermissionUnsupportedError {
   return (
     e instanceof Error &&
-    (e.name === "SandboxPermissionUnsupportedError" || e.name === "SandboxWorkUnsettledError") &&
     (e as { sandboxPermissionUnsupported?: unknown }).sandboxPermissionUnsupported === true
   );
 }

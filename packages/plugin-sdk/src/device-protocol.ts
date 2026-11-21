@@ -1031,6 +1031,7 @@ export type DeviceResponse =
           | "error"
           | "denied"
           | "unsupported"
+          | "unsettled"
           | "unknown"
           | "invalid";
         message: string;
@@ -1493,6 +1494,7 @@ export function parseDeviceFrame(
         "error",
         "denied",
         "unsupported",
+        "unsettled",
         "unknown",
         "invalid",
       ].includes(String(e.kind))
