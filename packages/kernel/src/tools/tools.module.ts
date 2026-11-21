@@ -45,6 +45,7 @@ import { PermissionApprovalJobs } from "./permission-approval-jobs.js";
 import { ToolPipeline } from "./pipeline.js";
 import { QuestionsService } from "./questions.service.js";
 import { ToolRegistry } from "./registry.js";
+import { ToolAskReview } from "./tool-review.js";
 
 /**
  * Tools and connectors: credentials, output archives, the builtin tools and the registry,
@@ -113,6 +114,8 @@ import { ToolRegistry } from "./registry.js";
     Breaker,
     ConnectorContent,
     ToolPipeline,
+    // the review model's judgment of a tool ask under Approve for me (the `review` purpose)
+    ToolAskReview,
     ConnectorsService,
     AdminConnectors,
     ConnectorAccountPolicies,

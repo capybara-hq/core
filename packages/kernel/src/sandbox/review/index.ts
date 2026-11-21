@@ -10,12 +10,17 @@ export type {
   ReviewClassifierDeps,
   ReviewClassifierInput,
   ReviewHookFacts,
+  ReviewModelCall,
+  ReviewModelCallArgs,
+  ReviewOutcomeTexts,
   RunClassifierArgs,
 } from "./classifier.js";
 export {
   boundMessages,
+  callReviewModel,
   classifierMessage,
   fitReviewInput,
+  fitReviewText,
   newReviewTag,
   parseReviewAnswer,
   REVIEW_ASK_REASON,
@@ -25,6 +30,8 @@ export {
   REVIEW_TRUNCATED_ASK_REASON,
   REVIEW_TRUNCATED_MARKER,
   REVIEW_UNAVAILABLE_PREFIX,
+  readPersonMessages,
+  reviewModelLimits,
   reviewSystemPrompt,
   runClassifier,
 } from "./classifier.js";
