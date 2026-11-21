@@ -289,12 +289,18 @@ export function AppShell({
     const last = lastRoute.current;
     if (last.pathname === pathname) return;
     lastRoute.current = { pathname, root };
+    // A view transition already animates this move (the back button: `data-cb-transition` on
+    // `<html>`, view-transition.ts): a CSS slide as well would run again once it ends, when the
+    // `animation: none` that holds it during the transition lifts (the page slid in twice).
     const animated =
-      uaTransition.current === window.location.href || instantRoute.current === pathname;
+      uaTransition.current === window.location.href ||
+      instantRoute.current === pathname ||
+      document.documentElement.dataset.cbTransition !== undefined;
     uaTransition.current = null;
     instantRoute.current = null;
     // A pushed page slides in from the end edge and the way back to a chat surface slides back; a
-    // move between chat surfaces and a move the browser animated do not.
+    // move between chat surfaces and a move already animated (by the browser or a view
+    // transition) do not.
     setSlide((prev) =>
       animated || (root && last.root)
         ? null
