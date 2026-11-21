@@ -1790,7 +1790,7 @@
       }
     },
     "detail": {
-      "providerOffNote": "此设备的提供方已在本组织关闭或未安装，文件仍保留",
+      "providerOffNote": "此设备的提供方已在本组织关闭或未安装，文件仍保留。",
       "about": "说明",
       "filesLostNote": "该设备的文件已在提供方丢失。重建文件后才能再次使用。",
       "reconcileNote": "该设备的沙箱限制需要重新确立，确立之前不会运行任何命令。重建文件即可应用它们，工作区会被清空。",
@@ -3240,7 +3240,7 @@
       "webSearch": "网页搜索",
       "webFetch": "网页读取",
       "connector": "连接器",
-      "deviceProvider": "设备",
+      "deviceProvider": "设备提供方",
       "objectStore": "对象存储",
       "channel": "渠道",
       "directory": "通讯录",

@@ -312,7 +312,7 @@ describe("device detail", () => {
     });
     await renderDetail({ locale: "zh" });
     expect(
-      await screen.findByText("此设备的提供方已在本组织关闭或未安装，文件仍保留"),
+      await screen.findByText("此设备的提供方已在本组织关闭或未安装，文件仍保留。"),
     ).toBeTruthy();
   });
 
