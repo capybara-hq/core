@@ -67,7 +67,9 @@ describe("/account/profile", () => {
     await renderRouteWithCache(PATH, lastStubRoutes(), { me });
     expect(document.querySelector('[data-part="avatar"][data-kind="image"]')).not.toBeNull();
     // the sign-in source's label, never the identity key
-    expect(await screen.findByText("From Lark")).toBeTruthy();
+    expect(
+      await screen.findByText("Your Lark picture is in use. Upload an image to replace it."),
+    ).toBeTruthy();
     expect(screen.queryByText(/lark:t1/)).toBeNull();
     // an SSO avatar is not the person's own: nothing to remove
     expect(screen.queryByRole("button", { name: P.remove })).toBeNull();
@@ -80,7 +82,9 @@ describe("/account/profile", () => {
     });
     api(me, { "GET /api/v1/auth/sources": () => json(200, { sources: [] }) });
     await renderRouteWithCache(PATH, lastStubRoutes(), { me });
-    expect(await screen.findByText("From wecom")).toBeTruthy();
+    expect(
+      await screen.findByText("Your wecom picture is in use. Upload an image to replace it."),
+    ).toBeTruthy();
   });
 
   it("ties the avatar controls to their label", async () => {

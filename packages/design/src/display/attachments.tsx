@@ -197,17 +197,20 @@ export function FileDrop({ label, onFiles, disabled, dragging: forced, children 
 }
 
 export type FileButtonProps = {
-  /** 按钮的可访问名称。 */
+  /** The button's accessible name; with `showLabel`, also its visible words. */
   label: string;
   onFiles: (files: File[]) => void;
   accept?: string;
   multiple?: boolean;
   disabled?: boolean;
   icon?: ReactNode;
+  /** Draw a default `Button` with the icon and `label` instead of the icon button. */
+  showLabel?: boolean;
 };
 
 /**
- * The file picker button: a bordered icon button (`plus`). A click opens the system picker; the
+ * The file picker button: a bordered icon button (`plus`), or with `showLabel` a default button
+ * with the icon and the words. A click opens the system picker; the
  * chosen files go to `onFiles` and the input is cleared so the same file can be chosen again.
  */
 export function FileButton({
@@ -217,6 +220,7 @@ export function FileButton({
   multiple,
   disabled,
   icon = <Icon name="plus" size={16} />,
+  showLabel,
 }: FileButtonProps) {
   const input = useRef<HTMLInputElement>(null);
   const onChange = (e: ChangeEvent<HTMLInputElement>) => {
@@ -226,13 +230,20 @@ export function FileButton({
   };
   return (
     <>
-      <IconButton
-        label={label}
-        icon={icon}
-        variant="default"
-        disabled={disabled}
-        onClick={() => input.current?.click()}
-      />
+      {showLabel ? (
+        <Button variant="default" disabled={disabled} onClick={() => input.current?.click()}>
+          {icon}
+          {label}
+        </Button>
+      ) : (
+        <IconButton
+          label={label}
+          icon={icon}
+          variant="default"
+          disabled={disabled}
+          onClick={() => input.current?.click()}
+        />
+      )}
       <input
         ref={input}
         className="cb-file-input"
