@@ -410,8 +410,10 @@ test.describe("appearance pages", () => {
       await page.goto("/admin/settings");
       const picker = page.getByRole("radiogroup", { name: AP.platform.label });
       await expect(picker.getByRole("radio", { name: /霓虹网格/ })).toBeVisible();
+      await expect(picker.getByRole("radio", { name: /品牌套件/ })).toBeVisible();
       await expect(picker.getByRole("radio", { name: AP.builtin })).toBeVisible();
-      await expect(picker.getByRole("radio")).toHaveCount(2);
+      await expect(picker.getByRole("radio", { name: /纸张/ })).toHaveCount(0);
+      await expect(picker.getByRole("radio")).toHaveCount(3);
     } finally {
       await scope({ follow: true });
     }
