@@ -96,6 +96,38 @@ describe("a pop the browser already animated", () => {
   });
 });
 
+describe("a pop the back button animates with a view transition", () => {
+  it("sets no CSS slide, so the page does not slide in again once the transition ends", async () => {
+    window.matchMedia = matchMediaFor(390).matchMedia;
+    let finish: () => void = () => {};
+    let update: Promise<unknown> = Promise.resolve();
+    doc.startViewTransition = vi.fn((cb: () => unknown) => {
+      update = Promise.resolve(cb());
+      return { finished: new Promise<void>((r) => (finish = r)) };
+    });
+    window.history.replaceState(null, "", "/");
+    const { rerender } = render(shell("/"));
+    window.history.pushState(null, "", "/inbox");
+    rerender(shell("/inbox"));
+    expect(main().getAttribute("data-nav")).toMatch(/^push-/);
+    // the back button: the route changes inside the view transition's update
+    withViewTransition(() => {
+      window.history.replaceState(null, "", "/");
+      rerender(shell("/"));
+    }, "pop");
+    await act(async () => {
+      await update;
+    });
+    expect(document.documentElement.dataset.cbTransition).toBe("pop");
+    expect(main().getAttribute("data-nav")).toBeNull();
+    await act(async () => {
+      finish();
+    });
+    expect(document.documentElement.dataset.cbTransition).toBeUndefined();
+    expect(main().getAttribute("data-nav")).toBeNull();
+  });
+});
+
 describe("moves on one level never slide", () => {
   const chat = (pathname: string, chatSurface: boolean) => (
     <DesignProvider locale="zh">
