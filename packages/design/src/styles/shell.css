@@ -1,6 +1,6 @@
 /*
- * App Shell (spec §4): Sidebar | content column. The content column holds the top bar (below 600),
- * the page (template), the StatusBar and the bottom navigation (below 600); the ActionRow sits at
+ * App Shell (spec §4): Sidebar | content column. The content column holds the floating row (below
+ * 600), the page (template) and the StatusBar; the ActionRow sits at
  * the template's bottom.
  */
 
@@ -49,8 +49,8 @@
   height: 100dvh;
   min-height: 0;
   overflow: clip;
-  /* the landscape notch, or a shell's side chrome (spec §4.7) */
-  padding-right: var(--cb-inset-right);
+  /* the landscape notch, or a shell's side chrome (spec §4.7): the ground runs under a right-hand
+     strip (the iPhone Duo's, spec §8), so only the content pads its end by `--cb-inset-right` */
   padding-left: var(--cb-inset-left);
   background: var(--cb-bg);
   color: var(--cb-ink);
@@ -73,6 +73,8 @@
 .cb-shell[data-banner="true"] > .cb-shell-banner {
   grid-column: 1 / -1;
   grid-row: 1;
+  /* the ground runs under a right-hand strip; the text ends before it (spec §8) */
+  padding-right: var(--cb-inset-right);
 }
 .cb-shell[data-banner="true"] > .cb-sidebar {
   grid-column: 1;
@@ -95,46 +97,95 @@
   flex-direction: column;
   min-height: 0;
 }
+/* A top row's drag filler (DragFill): the empty room between a row's controls, the row's full
+   height. Only the desktop shell makes it drag (shell-environment.css); elsewhere a spacer. */
+.cb-drag-fill {
+  flex: 1 1 0;
+  align-self: stretch;
+  min-width: 0;
+}
+/* A filler takes room, never a gap of its own: in a row with a gap it cancels the one before it,
+   so the row lays out exactly as it did without it (a full brand row or title bar included). */
+.cb-sidebar-top > .cb-drag-fill,
+.cb-pageheader-path > .cb-drag-fill {
+  margin-left: calc(-1 * var(--cb-space-2));
+}
+.cb-title-bar > .cb-drag-fill {
+  margin-left: calc(-1 * var(--cb-space-1));
+}
 
-/* Compact chrome (spec §4, §4.6, §4.7): the top bar above the page and the bottom navigation
-   under it, both drawn always and shown below 600 by these rules, so the server render is right at
-   every width. The OS insets (`--cb-inset-*`, §4.7) pad them; the bars keep their token heights. */
-.cb-shell-topbar,
-.cb-shell-bottomnav {
+/* The chat-first compact shell (spec §4.6, §4.7, §6.55): below 600 the floating row lies over the
+   page's top, under the OS top inset: the menu button on a chat surface, back on a pushed page.
+   It is drawn always and shown below 600 by these rules, so the server render is right at every
+   width. A pushed page starts under the row (its head's title sits below it); a chat surface
+   clears it itself (the conversation's title pill shares the row). One shell for every pointer
+   (plan Decision 17): the row's controls are control.prominent on a fine pointer and touch.float
+   on touch (touch.css). */
+.cb-shell-float {
   display: none;
-  flex: none;
-}
-/* A native shell's tab bar replaces the bottom navigation (mobile app spec §6.1): `<html>` from the
-   no-flash script, the shell element from the AppShell. */
-[data-native-nav] .cb-shell-bottomnav {
-  display: none;
-}
-/* Chrome is not text to select: no selection, no iOS callout on a long press (§7.1). */
-.cb-shell-topbar,
-.cb-bottomnav {
   -webkit-touch-callout: none;
   -webkit-user-select: none;
   user-select: none;
 }
 @media (max-width: 599px) {
-  .cb-shell-topbar {
-    display: block;
-    padding-top: var(--cb-inset-top);
+  .cb-shell {
+    --cb-float-size: var(--cb-control-prominent);
+    --cb-float-top: calc(var(--cb-inset-top) + var(--cb-space-2));
+    --cb-float-row: calc(var(--cb-float-top) + var(--cb-float-size) + var(--cb-space-2));
+  }
+  .cb-shell-column {
+    position: relative;
+  }
+  /* A solid strip of the page ground under the row (T27 review): the thread and a scrolled pushed
+     page slide under it instead of showing through the floating controls. Solid, not a fade: the
+     spec allows no gradients (§1). */
+  .cb-shell-column::before {
+    content: "";
+    position: absolute;
+    z-index: calc(var(--cb-z-sheet) - 11);
+    inset: 0 0 auto;
+    height: var(--cb-float-row);
     background: var(--cb-bg);
+    pointer-events: none;
   }
-  .cb-shell-bottomnav {
+  .cb-shell-float {
     display: block;
-    padding-bottom: var(--cb-inset-bottom);
-    background: var(--cb-sidebar);
+    position: absolute;
+    z-index: calc(var(--cb-z-sheet) - 10);
+    top: var(--cb-float-top);
+    left: calc(var(--cb-space-4) + var(--cb-inset-left));
+    right: calc(var(--cb-space-4) + var(--cb-inset-right));
+    /* the row lets taps through to the page between its controls */
+    pointer-events: none;
   }
-  /* The keyboard hides the bottom navigation (spec §4.3). */
-  .cb-shell[data-keyboard="open"] .cb-shell-bottomnav {
-    display: none;
+  .cb-floatbar > * {
+    pointer-events: auto;
   }
-  /* The compact class has no StatusBar: its system status is on the Me page (spec §4). */
+  .cb-shell[data-surface="pushed"] .cb-shell-main {
+    padding-top: var(--cb-float-row);
+  }
+  /* The compact class has no StatusBar: the account sheet carries the system status (spec §4). */
   .cb-shell-column > .cb-statusbar {
     display: none;
   }
+}
+.cb-floatbar {
+  display: flex;
+  align-items: center;
+  gap: var(--cb-space-2);
+  min-height: var(--cb-float-size, var(--cb-control-prominent));
+}
+.cb-floatbar-gap {
+  flex: 1;
+}
+/* A page's own overflow menu in the row: a round floating button like the leading one. */
+.cb-floatbar .cb-icon-btn {
+  width: var(--cb-float-size, var(--cb-control-prominent));
+  height: var(--cb-float-size, var(--cb-control-prominent));
+  border: 1px solid var(--cb-float-line);
+  border-radius: var(--cb-radius-pill);
+  background: var(--cb-float-ground);
+  box-shadow: var(--cb-shadow-float-touch);
 }
 
 /* A push slides in from the end edge and a pop slides back (spec §4.6), over motion.push with
@@ -238,229 +289,6 @@
   }
 }
 
-/* TopBar (spec §6.46): layout.top-bar high, back (pushed pages), the page's name, search and the
-   overflow menu. Padded 0 space.2 at the end and, on a tab root, space.4 at the start (the title
-   on the 16 px content edge). The buttons are the ordinary ghost icon buttons (control.default
-   squares, radius sm); each reaches a 40 x 40 tap target through an invisible ring that does not
-   change the box, so a hover or pressed ground fills the rounded square only. */
-.cb-topbar {
-  display: flex;
-  flex: none;
-  align-items: center;
-  gap: var(--cb-space-3);
-  box-sizing: border-box;
-  height: var(--cb-layout-top-bar);
-  padding: 0 var(--cb-space-2) 0 var(--cb-space-4);
-  border-bottom: 1px solid var(--cb-line-soft);
-  background: var(--cb-bg);
-}
-.cb-topbar[data-pushed="true"] {
-  padding-left: var(--cb-space-2);
-}
-.cb-topbar-title {
-  flex: 1;
-  min-width: 0;
-  overflow: hidden;
-  color: var(--cb-ink);
-  font-size: var(--cb-type-body-size);
-  font-weight: 600;
-  line-height: var(--cb-type-body-line);
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-.cb-topbar .cb-icon-btn {
-  position: relative;
-  flex: none;
-  color: var(--cb-muted);
-  text-decoration: none;
-}
-.cb-topbar .cb-icon-btn::after {
-  content: "";
-  position: absolute;
-  inset: -7px;
-}
-.cb-topbar .cb-icon-btn[aria-pressed="true"] {
-  background: var(--cb-selected);
-  color: var(--cb-ink);
-}
-
-/* BottomNav (spec §6.45): four items of layout.bottom-nav on the sidebar ground with a line-soft
-   top line (a pseudo-element, so the bar stays 56); no box, shadow or radius. An item is a quarter
-   of the width, an icon 16 over a micro label; the current one has no ground of its own: ink, the
-   label weight 500. */
-.cb-bottomnav {
-  position: relative;
-  display: flex;
-  height: var(--cb-layout-bottom-nav);
-  background: var(--cb-sidebar);
-}
-.cb-bottomnav::before {
-  content: "";
-  position: absolute;
-  inset: 0 0 auto 0;
-  z-index: 1;
-  height: 1px;
-  background: var(--cb-line-soft);
-}
-.cb-bottomnav-item {
-  position: relative;
-  display: flex;
-  flex: 1 1 0;
-  flex-direction: column;
-  align-items: center;
-  justify-content: center;
-  gap: var(--cb-space-1);
-  min-width: 40px;
-  height: var(--cb-layout-bottom-nav);
-  min-height: 40px;
-  color: var(--cb-muted);
-  text-decoration: none;
-  -webkit-tap-highlight-color: transparent;
-}
-.cb-bottomnav-item:active {
-  background: var(--cb-hover);
-}
-.cb-bottomnav-item:focus-visible {
-  outline: 1px solid var(--cb-accent);
-  outline-offset: -1px;
-}
-.cb-bottomnav-label {
-  max-width: 100%;
-  padding: 0 var(--cb-space-1);
-  overflow: hidden;
-  font-size: var(--cb-type-micro-size);
-  line-height: var(--cb-type-micro-line);
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-.cb-bottomnav-item[aria-current="page"] {
-  color: var(--cb-ink);
-}
-.cb-bottomnav-item[aria-current="page"] .cb-bottomnav-label {
-  font-weight: 500;
-}
-.cb-bottomnav-icon {
-  position: relative;
-  display: inline-flex;
-}
-/* A short window (height below 480) keeps the icons and the 56 height; the names stay as
-   accessible names (spec §4.7). */
-.cb-shell[data-short="true"] .cb-bottomnav-label,
-.cb-bottomnav[data-short="true"] .cb-bottomnav-label {
-  display: none;
-}
-/* The nav badge outside the icon's top-right corner (spec §6.13 "Nav badge"): its left edge 2px
-   past the icon's right edge, its vertical center on the icon's top edge, a 2px ring in the
-   bar's ground filling the gap. Same size and look as the rail's. */
-.cb-bottomnav-badge {
-  position: absolute;
-  top: 0;
-  left: calc(100% + 2px);
-  min-width: 14px;
-  padding: 0 3px;
-  border-radius: var(--cb-radius-sm);
-  background-color: var(--cb-selected);
-  background-image:
-    linear-gradient(var(--cb-selected), var(--cb-selected)),
-    linear-gradient(var(--cb-sidebar), var(--cb-sidebar));
-  box-shadow: 0 0 0 2px var(--cb-sidebar);
-  color: var(--cb-ink);
-  font-size: var(--cb-type-micro-size);
-  line-height: var(--cb-type-micro-line);
-  text-align: center;
-  transform: translateY(-50%);
-}
-
-/* MePanel (spec §6.48): the account and org head, groups of row.roomy rows split by line-soft
-   hairlines, in no box. */
-.cb-me {
-  display: flex;
-  flex-direction: column;
-  gap: var(--cb-space-4);
-  box-sizing: border-box;
-  width: 100%;
-  padding: 0 0 var(--cb-space-6);
-}
-.cb-me-head {
-  display: flex;
-  flex-direction: column;
-  gap: var(--cb-space-2);
-}
-.cb-me-account {
-  display: flex;
-  align-items: center;
-  gap: var(--cb-space-2);
-  height: var(--cb-row-roomy);
-  font-weight: 600;
-}
-.cb-me-ellipsis {
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-.cb-me-group {
-  display: flex;
-  flex-direction: column;
-}
-.cb-me-label {
-  display: flex;
-  align-items: flex-end;
-  height: var(--cb-row-dense);
-  margin: 0;
-  color: var(--cb-faint);
-  font-size: var(--cb-type-micro-size);
-  font-weight: 400;
-  letter-spacing: 0.06em;
-  line-height: var(--cb-type-micro-line);
-}
-.cb-me-row {
-  position: relative;
-  display: flex;
-  align-items: center;
-  gap: var(--cb-space-3);
-  box-sizing: border-box;
-  width: 100%;
-  height: var(--cb-row-roomy);
-  padding: 0;
-  border: 0;
-  border-top: 1px solid var(--cb-line-soft);
-  background: transparent;
-  color: var(--cb-ink);
-  font: inherit;
-  font-size: var(--cb-type-body-size);
-  text-align: left;
-  text-decoration: none;
-  cursor: pointer;
-}
-.cb-me-label + .cb-me-row {
-  border-top: 0;
-}
-.cb-me-row > .cb-icon {
-  flex: none;
-  color: var(--cb-muted);
-}
-/* The trailing icon (chevron, outward arrow); a link's pending mark may follow it. */
-.cb-me-row > .cb-icon:not(:first-child) {
-  color: var(--cb-faint);
-}
-.cb-me-row > .cb-me-ellipsis {
-  flex: 1;
-}
-.cb-me-row:focus-visible {
-  outline: 1px solid var(--cb-accent);
-  outline-offset: -1px;
-}
-.cb-me-value {
-  color: var(--cb-muted);
-}
-.cb-me-system {
-  margin: 0;
-  color: var(--cb-muted);
-  font-size: var(--cb-type-micro-size);
-  line-height: var(--cb-type-micro-line);
-}
-
 /* The tabs row (spec §2.4): the views with counts, the search at the right end. */
 /* The tabs row has one height with or without the search (a default control + space.1 above and
    below); the tabs sit at its bottom and overlap its border by 1 px, so the selected tab's
@@ -530,6 +358,8 @@
 .cb-template-head {
   flex: none;
   padding: var(--cb-space-5) var(--cb-content-pad) var(--cb-layout-head-content);
+  /* the content ends before a right-hand strip (spec §8) */
+  padding-right: calc(var(--cb-content-pad) + var(--cb-inset-right));
   /* Reserve the same scrollbar gutter as the scrolling body below, so a classic (non-overlay)
      scrollbar does not shift the content column against the head; scrollbar-gutter only applies
      to a scroll container, hence overflow: hidden. No effect with overlay scrollbars. */
@@ -828,6 +658,8 @@ a.cb-stat-card:focus-visible {
   flex: 1;
   min-width: min(var(--cb-layout-content-min), 100%);
   overflow: auto;
+  /* the ground runs under a right-hand strip; the content ends before it (spec §8) */
+  padding-right: var(--cb-inset-right);
   /* Same gutter as .cb-template-head: the column keeps its x whether or not the page scrolls. */
   scrollbar-gutter: stable;
 }
@@ -845,15 +677,18 @@ a.cb-stat-card:focus-visible {
 .cb-body-content[data-padded="true"] {
   box-sizing: border-box;
   padding: var(--cb-space-4) var(--cb-layout-gutter);
+  padding-right: calc(var(--cb-layout-gutter) + var(--cb-inset-right));
 }
 /* In the content width the head's bottom padding is the gap above the first block (spec §4.2). */
 .cb-body-content[data-padded="true"]:has(> .cb-body-frame[data-width="content"]) {
   padding: 0 var(--cb-content-pad) var(--cb-space-6);
+  padding-right: calc(var(--cb-content-pad) + var(--cb-inset-right));
 }
 /* The content width: the side padding on both sides, the frame centered, space at the bottom. */
 .cb-body-content:not([data-padded="true"]):has(> .cb-body-frame[data-width="content"]) {
   box-sizing: border-box;
   padding: 0 var(--cb-content-pad) var(--cb-space-6);
+  padding-right: calc(var(--cb-content-pad) + var(--cb-inset-right));
 }
 .cb-body-frame[data-width="full"] {
   height: 100%;
@@ -905,7 +740,8 @@ a.cb-stat-card:focus-visible {
   flex: none;
   align-items: center;
   height: var(--cb-layout-action-row);
-  padding: 0 var(--cb-content-pad, var(--cb-layout-gutter));
+  padding: 0 calc(var(--cb-content-pad, var(--cb-layout-gutter)) + var(--cb-inset-right)) 0
+    var(--cb-content-pad, var(--cb-layout-gutter));
   overflow: hidden;
   scrollbar-gutter: stable;
   border-top: 1px solid var(--cb-line-soft);
@@ -960,7 +796,7 @@ a.cb-stat-card:focus-visible {
   align-items: center;
   gap: var(--cb-space-3);
   height: var(--cb-layout-status-bar);
-  padding: 0 var(--cb-layout-gutter);
+  padding: 0 calc(var(--cb-layout-gutter) + var(--cb-inset-right)) 0 var(--cb-layout-gutter);
   border-top: 1px solid var(--cb-line-soft);
   color: var(--cb-muted);
   font-size: var(--cb-type-micro-size);
@@ -1106,8 +942,8 @@ a.cb-stat-card:focus-visible {
 }
 
 /* A short window (height below 480, spec §4.7; the shell's `data-short`): the StatusBar is hidden
-   whatever the width; the PageHeader drops its path row on compact only, where the top bar carries
-   back (medium and expanded have no top bar: the path row is their way up). The query is the first
+   whatever the width; the PageHeader drops its path row on compact only, where the floating row carries
+   back (medium and expanded have no floating row: the path row is their way up). The query is the first
    paint's; the attribute follows it after hydration for plugin CSS. */
 @media (max-height: 479px) {
   .cb-statusbar {
@@ -1120,5 +956,20 @@ a.cb-stat-card:focus-visible {
   }
   .cb-pageheader-path + .cb-pageheader-row {
     margin-top: 0;
+  }
+}
+
+/* A native strip (mobile app spec §6.1, mobile layout spec §4.2 / §4.3): while the mobile app's
+   strip shows (`data-native-nav` on <html> and the shell element), the sections and the menu button
+   are native: the web's section entries (drawer, sidebar) and its menu button are hidden. */
+[data-native-nav] [data-nav-section],
+[data-native-nav] .cb-shell-menu-btn {
+  display: none;
+}
+/* Medium and expanded keep only search, the recent conversations, the account and the new
+   conversation: the sidebar's other entries (技能, 连接器, 更多) move into the account menu. */
+@media (min-width: 600px) {
+  [data-native-nav] [data-nav-other] {
+    display: none;
   }
 }

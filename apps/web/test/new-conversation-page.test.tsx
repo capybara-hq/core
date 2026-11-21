@@ -857,6 +857,34 @@ describe("the first send carries the permission choice (atomic first message, Ta
     }
   });
 
+  it("on a compact touch window the options sheet holds one history entry; back closes it", async () => {
+    // a 390 px touch phone: the size queries by width, the pointer queries coarse
+    vi.stubGlobal("matchMedia", (query: string) => {
+      const widths = [...query.matchAll(/\((min|max)-width:\s*(\d+)px\)/g)];
+      const matches = /pointer/.test(query)
+        ? query.trim() !== "(any-pointer: fine)"
+        : widths.length > 0 &&
+          widths.every(([, k, n]) => (k === "min" ? 390 >= Number(n) : 390 <= Number(n)));
+      return { matches, media: query, addEventListener() {}, removeEventListener() {} };
+    });
+    try {
+      window.history.replaceState(null, "", "/");
+      stubApi({});
+      await renderRouteWithCache("/", routes());
+      const user = userEvent.setup();
+      const before = window.history.length;
+      await user.click(document.querySelector('[data-part="composer-options"]') as HTMLElement);
+      expect(screen.getByRole("dialog")).toBeTruthy();
+      expect(window.history.length).toBe(before + 1);
+      act(() => window.history.back());
+      await vi.waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+      expect(window.location.pathname).toBe("/");
+      expect(router.push).not.toHaveBeenCalled();
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  });
+
   it("a lost reply is retried with the same bytes and id: one conversation, one navigation", async () => {
     let n = 0;
     const calls = stubApi({

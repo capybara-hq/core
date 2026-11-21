@@ -119,3 +119,13 @@ skill authoring spec §5.7) cannot be imported in that pass. A manifest entry ma
 `check:bootstrap` and its network half, the marketplace pin. The manifest format gained the
 optional `builtin` field and required declarative entries are now put back when missing (both in
 "Builtin entries" above); otherwise `required` keeps its meaning.
+
+## Amendment (2026-11-20): Extra manifest
+
+A deployment can point `bootstrap.extraManifest` (or `capybara bootstrap --extra-manifest`) at a
+second manifest (`bootstrap-extra.v1`). The run identity is the sha256 of the merged manifest, so
+adding or changing the file makes the run "not done" and it runs again under the same
+`lock:bootstrap`. Its `git` entries are obtained from the offline directory or read from git at the
+pinned commit in `capybara bootstrap` too (no marketplace row is needed, so compose `init` works);
+the kernel start then syncs the config-managed marketplaces and applies the default theme. See
+[the design](2026-11-20-bootstrap-extra-manifest-design.md), "As built".

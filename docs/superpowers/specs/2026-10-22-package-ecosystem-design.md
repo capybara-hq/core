@@ -1087,6 +1087,11 @@ The entry list is called `plugins`, as in Claude's `marketplace.json`. `source` 
 
 ### 5.4 What is stored (designer's call)
 
+> **Amendment (2026-11-20, [bootstrap extra manifest](2026-11-20-bootstrap-extra-manifest-design.md)):**
+> a marketplace row may be owned by the config (`config:<name>`, declared by the extra bootstrap
+> manifest): read-only except `enabled`, its token from `marketplaces.tokens`. Every marketplace has
+> a nullable `username`, the Basic-auth user its token is sent with (empty = `x-access-token`).
+
 - Each catalog version keeps **the upstream file tree byte for byte**, plus:
   - the normalized plugin manifest (the original for native plugins, the translation for Claude
     plugins);
@@ -1395,6 +1400,14 @@ deployments **(designer's call)**.)
   replica status rows, deployment config in PG, org rows) needs no conversion. 0050 drops the status
   rows; the first run installs both plugins under the names they already own and the saved config
   applies.
+
+> **Amendment (2026-11-20, [bootstrap extra manifest](2026-11-20-bootstrap-extra-manifest-design.md)):**
+> a deployment may add pinned entries through `bootstrap.extraManifest` (config, or
+> `capybara bootstrap --extra-manifest`). It is merged into the built-in manifest, never overriding
+> an entry, and adds `git` entries (a marketplace of the file, a 40-hex `commit`, a `path`, and the
+> sha512 of the kernel's `packPackageTgz` pack, verified before anything is read), config-owned
+> marketplaces and an optional default theme. The install source of a git entry stays `bootstrap`.
+> `capybara-plugin bootstrap --check|--write` validates and pins such a file.
 
 ## 8. Claude Code plugin translation
 

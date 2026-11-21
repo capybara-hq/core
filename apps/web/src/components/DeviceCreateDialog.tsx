@@ -2,9 +2,9 @@
 
 import {
   Button,
+  CopyField,
   Dialog,
   Field,
-  Icon,
   Input,
   RadioGroup,
   Stack,
@@ -43,7 +43,7 @@ type Kind = "cloud" | "local";
  *   no provider) keeps the dialog open with its copy.
  * - Local device: in the desktop shell (`device@1`) a primary "connect this machine" button first (the
  *   shell asks the person natively); the commands to run on the machine (install, `capybara-device login` with
- *   this deployment's address), each with a copy button; the dialog then reads the devices
+ *   this deployment's address), each a CopyField (the code line with its copy button); the dialog then reads the devices
  *   until a local device it had not seen appears, and opens its page.
  */
 export function DeviceCreateDialog({
@@ -259,43 +259,12 @@ function LocalSteps({
           {t("connectedElsewhere", { origin: status.origin })}
         </Text>
       )}
-      <CommandStep label={t("installStep")} command={DEVICE_INSTALL_COMMAND} />
-      <CommandStep
-        label={t("loginStep")}
-        command={origin === "" ? "" : deviceLoginCommand(origin)}
-      />
-      <CommandStep label={t("startStep")} command={DEVICE_START_COMMAND} />
+      <CopyField label={t("installStep")} value={DEVICE_INSTALL_COMMAND} />
+      <CopyField label={t("loginStep")} value={origin === "" ? "" : deviceLoginCommand(origin)} />
+      <CopyField label={t("startStep")} value={DEVICE_START_COMMAND} />
       <Text variant="prose" tone="muted" icon="spinner">
         {t("waiting")}
       </Text>
-    </Stack>
-  );
-}
-
-/** One command to run on the machine: a read-only field and its copy button. */
-function CommandStep({ label, command }: { label: string; command: string }) {
-  const t = useTranslations("devices.create");
-  const toast = useToast();
-  const errorMessage = useErrorMessage();
-  const copy = async () => {
-    try {
-      await navigator.clipboard.writeText(command);
-      toast.success(t("copied"));
-    } catch (e) {
-      toast.error(errorMessage(e));
-    }
-  };
-  return (
-    <Stack gap={8}>
-      <Field label={label}>
-        <Input readOnly value={command} onFocus={(e) => e.target.select()} />
-      </Field>
-      <Stack direction="row">
-        <Button density="dense" disabled={command === ""} onClick={() => void copy()}>
-          <Icon name="copy" size={14} />
-          {t("copy")}
-        </Button>
-      </Stack>
     </Stack>
   );
 }

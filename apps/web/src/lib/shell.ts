@@ -1,6 +1,6 @@
 "use client";
 
-import type { NativeHandlers } from "@capybara-hq/design";
+import type { NativeHandlers, NativeNavHandle } from "@capybara-hq/design";
 import * as React from "react";
 import { useCallback, useMemo, useSyncExternalStore } from "react";
 
@@ -358,6 +358,10 @@ export const MOBILE_SHELL_LIMITS = {
   shareTitle: 256,
   shareText: 4000,
   url: 2048,
+  /** `nav@1`: a section or menu label is 1..32 characters. */
+  navLabel: 32,
+  /** `nav@1`: a badge count is an integer 0..9999 (`countMore` says there are more). */
+  navCount: 9999,
 } as const;
 
 /** The menu item id pattern, checked on `menu@1.show` (the shell validates every input). */
@@ -443,6 +447,63 @@ export const useShareCapability = () =>
   useShellCapability(SHELL_CAPABILITY_KEYS.share) as ShareCapabilityV1 | undefined;
 export const useMenuCapability = () =>
   useShellCapability(SHELL_CAPABILITY_KEYS.menu) as MenuCapabilityV1 | undefined;
+export const useNavCapability = () =>
+  useShellCapability(SHELL_CAPABILITY_KEYS.nav) as NavCapabilityV1 | undefined;
+export const useProfilesCapability = () =>
+  useShellCapability(SHELL_CAPABILITY_KEYS.profiles) as ProfilesCapabilityV1 | undefined;
+export const useOpenExternalCapability = () =>
+  useShellCapability(SHELL_CAPABILITY_KEYS.openExternal) as OpenExternalCapabilityV1 | undefined;
+
+/**
+ * The native strip as the design takes it (`nav@1` adapted; mobile app spec §6.1): present exactly
+ * while the shell has a strip. `set` is a state push, not confirming (the shell needs no
+ * activation), and the one capability call made from an effect: a rejection or a throw is dropped
+ * (the strip keeps its last state). The handle keeps its reference while the capability object
+ * does.
+ */
+export function useNativeNavHandle(): NativeNavHandle | undefined {
+  const nav = useNavCapability();
+  return useMemo(
+    () =>
+      nav === undefined
+        ? undefined
+        : {
+            set: (state) => {
+              try {
+                nav.set(state).catch(() => {});
+              } catch {
+                // a shell that throws leaves the strip as it was
+              }
+            },
+            onSelect: (listener) => nav.onSelect(listener),
+            onMenu: (listener) => nav.onMenu(listener),
+          },
+    [nav],
+  );
+}
+
+/**
+ * The account sheet's "Switch platform" (`profiles@1.show`, mobile app spec §5.2): undefined without
+ * the capability (the browser, an app locked to one deployment). Call it inside the click's
+ * handler: the shell's switcher is confirming and needs the user activation. It resolves with
+ * nothing whatever is picked; a refusal (`busy`, `no_activation`) is dropped.
+ */
+export function useSwitchProfile(): (() => void) | undefined {
+  const profiles = useProfilesCapability();
+  return useMemo(
+    () =>
+      profiles === undefined
+        ? undefined
+        : () => {
+            try {
+              profiles.show().catch(() => {});
+            } catch {
+              // the switcher did not open
+            }
+          },
+    [profiles],
+  );
+}
 
 /**
  * The design's native handlers, only for the capabilities the shell has (none in a browser). Each

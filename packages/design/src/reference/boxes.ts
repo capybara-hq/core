@@ -30,6 +30,7 @@ export const BOXES: readonly BoxRule[] = [
   { name: "StatCard", selector: ".cb-stat-card" },
   { name: "Repeater card", selector: '.cb-repeater[data-variant="cards"] .cb-repeater-item' },
   { name: "CodeBlock", selector: '.cb-code:not([data-framed="false"])' },
+  { name: "CopyCode", selector: '.cb-copy-code-line:not([data-framed="false"])' },
   { name: "EmbedFrame", selector: '.cb-embed:not([data-framed="false"])' },
   { name: "FilePicker", selector: ".cb-file-picker" },
   { name: "option card", selector: '.cb-radio[data-variant="card"]' },

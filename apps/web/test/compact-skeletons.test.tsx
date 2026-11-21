@@ -1,13 +1,12 @@
 // Every compact route shows a skeleton, never a blank area, while its data is on the way (mobile
 // spec §7.3): the page holds a template skeleton (`aria-busy`) with something to read.
-import { cleanup, render } from "@testing-library/react";
+import { cleanup } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { meQuery, readinessQuery } from "../src/lib/query/shell";
 import { FakeEventSource } from "./support/conversation";
 import { resetNavigation } from "./support/navigation";
 import { renderRouteEmptyCache } from "./support/query";
 import { ME, testQueryClient } from "./support/render";
-import { frameElement, shellOf } from "./support/shell";
 
 // `/schedules` reads the remembered view's cookie on the server: none here.
 vi.mock("next/headers", () => ({ headers: async () => new Headers() }));
@@ -71,6 +70,7 @@ async function holdAll(path: string) {
 
 describe("compact routes before their data", () => {
   it.each([
+    "/",
     "/conversations",
     "/agents",
     "/inbox",
@@ -92,13 +92,12 @@ describe("compact routes before their data", () => {
   });
 });
 
-describe("the Me tab", () => {
-  it("is never blank: the frame builds its panel from the cached shell", async () => {
-    resetNavigation("/me");
-    const { default: MeView } = await import("../src/app/(app)/me/view");
-    render(frameElement(shellOf(ME), <MeView />, { locale: "en" }));
-    const panel = document.querySelector('[data-part="me-panel"], [data-template="OverviewPage"]');
-    expect(panel, "/me draws no page").not.toBeNull();
-    expect(panel?.textContent?.trim()).not.toBe("");
+describe("the retired Me page (mobile touch plan Task 28)", () => {
+  it("/me has no route entry and no page: it renders the not-found page", async () => {
+    const { matchRoute } = await import("../src/lib/query/routes");
+    // only the unknown-route entry (the 404) matches it
+    expect(matchRoute("/me")?.entry.pattern).toBe("/[...rest]");
+    const { existsSync } = await import("node:fs");
+    expect(existsSync(new URL("../src/app/(app)/me", import.meta.url))).toBe(false);
   });
 });

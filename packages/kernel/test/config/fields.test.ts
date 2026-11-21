@@ -219,3 +219,50 @@ describe("vision read config keys", () => {
     expect(field?.meta?.hot).toBe(true);
   });
 });
+
+describe("bootstrap.extraManifest and marketplaces.tokens", () => {
+  const base = { db: { url: "postgres://a" }, redis: { url: "redis://a" }, masterKey };
+
+  it("reads both from the environment", () => {
+    const config = resolveConfig(
+      { db: { url: "postgres://a" }, redis: { url: "redis://a" }, masterKey },
+      {
+        CAPYBARA_BOOTSTRAP__EXTRA_MANIFEST: "/x.json",
+        CAPYBARA_MARKETPLACES__TOKENS: '{"acme":"t"}',
+      },
+    );
+    expect(config.bootstrap.extraManifest).toBe("/x.json");
+    expect(config.marketplaces.tokens.acme).toBe("t");
+  });
+
+  it("defaults to no extra manifest and no tokens", () => {
+    const config = KernelConfigSchema.parse(base);
+    expect(config.bootstrap.extraManifest).toBeUndefined();
+    expect(config.marketplaces.tokens).toEqual({});
+  });
+
+  it("rejects a token key that is not a marketplace name and a malformed token", () => {
+    for (const tokens of [
+      { "Bad Name": "t" },
+      { acme: "" },
+      { acme: "a\nb" },
+      { acme: "x".repeat(4097) },
+    ]) {
+      expect(KernelConfigSchema.safeParse({ ...base, marketplaces: { tokens } }).success).toBe(
+        false,
+      );
+    }
+  });
+
+  it("marks tokens secret and not hot", () => {
+    const by = new Map(configFields(KernelConfigSchema).map((f) => [f.path, f.meta]));
+    expect(by.get("marketplaces.tokens")?.secret).toBe(true);
+    expect(by.get("marketplaces.tokens")?.hot).toBeFalsy();
+    expect(by.get("bootstrap.extraManifest")?.hot).toBeFalsy();
+    const config = KernelConfigSchema.parse({
+      ...base,
+      marketplaces: { tokens: { acme: "tok-1" } },
+    });
+    expect(secretValues(KernelConfigSchema, config)).toContain("tok-1");
+  });
+});

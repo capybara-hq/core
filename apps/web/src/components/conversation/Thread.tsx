@@ -705,8 +705,12 @@ function EntryNode({ e, c }: { e: TimelineEntry; c: EntryContext }): ReactNode {
               ) : null}
             </>
           ) : undefined;
-        // an author who left gets the departed avatar (the initial of "Former member")
-        const writer = e.authorAccountId === undefined ? undefined : person(e.authorAccountId);
+        // The circle names who wrote it: the viewer's own messages need none; an author who left
+        // gets the departed avatar (the initial of "Former member").
+        const writer =
+          e.authorAccountId === undefined || e.authorAccountId === me.account.id
+            ? undefined
+            : person(e.authorAccountId);
         const author =
           writer === undefined
             ? undefined

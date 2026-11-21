@@ -1,6 +1,12 @@
 "use client";
 
-import type { BottomNavItem, CommandGroup, IconName, SidebarNavItem } from "@capybara-hq/design";
+import type {
+  CommandGroup,
+  DrawerNavData,
+  IconName,
+  NavBadge,
+  SidebarNavItem,
+} from "@capybara-hq/design";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useTranslations } from "next-intl";
 import { useCallback } from "react";
@@ -28,7 +34,9 @@ export type NavLevel = "guest" | "member" | "admin";
  * conversation at `/` is the home, and `/chat` redirects there); `more` items sit in the 更多
  * flyout (then the extension pages). Search and the inbox are icon buttons in the brand row. Items are hidden
  * by the current org role through `audience` (cosmetic only; the kernel decides). The admin
- * console is the entry above the account row, for super admins.
+ * console is the entry above the account row, for super admins. `drawer` places an item in the
+ * compact drawer (design spec §6.53): a section entry or its "Skills, connectors, devices…" level; the
+ * management items have none and never enter it (mobile layout spec §15, decision 4).
  */
 const NAV: readonly {
   id: string;
@@ -37,6 +45,9 @@ const NAV: readonly {
   audience: NavAudience;
   icon: IconName;
   section: "primary" | "more";
+  drawer?: "section" | "more";
+  /** A management page that is desktop-only on touch: hidden there, never in the drawer. */
+  desktopOnly?: true;
 }[] = [
   {
     id: "agents",
@@ -45,6 +56,7 @@ const NAV: readonly {
     audience: "all",
     icon: "agent",
     section: "primary",
+    drawer: "section",
   },
   // Skills: members browse them, guests don't
   {
@@ -54,6 +66,7 @@ const NAV: readonly {
     audience: "member",
     icon: "skills",
     section: "primary",
+    drawer: "more",
   },
   {
     id: "connectors",
@@ -62,6 +75,7 @@ const NAV: readonly {
     audience: "all",
     icon: "connector",
     section: "primary",
+    drawer: "more",
   },
   // Scheduled tasks: a member's own tasks (guests can't create them, spec §10)
   {
@@ -71,6 +85,7 @@ const NAV: readonly {
     audience: "member",
     icon: "clock",
     section: "primary",
+    drawer: "section",
   },
   // Devices: where a person's conversations run their commands and keep their files
   // (set up once, then rarely visited: under More)
@@ -81,6 +96,7 @@ const NAV: readonly {
     audience: "all",
     icon: "cpu",
     section: "more",
+    drawer: "more",
   },
   // Plugins (what the platform offers this org): members browse and ask, org admins switch them
   {
@@ -90,6 +106,7 @@ const NAV: readonly {
     audience: "member",
     icon: "catalog",
     section: "more",
+    desktopOnly: true,
   },
   // Extensions: members see their state (the kernel's org.extensions.read projection), org admins
   // also switch and configure them (org.extensions.manage)
@@ -100,6 +117,7 @@ const NAV: readonly {
     audience: "member",
     icon: "extension",
     section: "more",
+    desktopOnly: true,
   },
   {
     id: "channels",
@@ -108,9 +126,18 @@ const NAV: readonly {
     audience: "admin",
     icon: "channel",
     section: "more",
+    desktopOnly: true,
   },
   // Evals and runs: sets and runs (agent owners reach their runs from the agent page)
-  { id: "evals", key: "evals", href: "/evals", audience: "admin", icon: "evals", section: "more" },
+  {
+    id: "evals",
+    key: "evals",
+    href: "/evals",
+    audience: "admin",
+    icon: "evals",
+    section: "more",
+    desktopOnly: true,
+  },
   // Organization settings (members read General, Members and Sandbox; admins change them);
   // personal settings are the account menu's
   {
@@ -120,6 +147,7 @@ const NAV: readonly {
     audience: "member",
     icon: "settings",
     section: "more",
+    desktopOnly: true,
   },
 ];
 
@@ -245,8 +273,8 @@ export type ExtensionNavItem = {
 };
 
 /**
- * The entries a compact list shows: the Me panel is the compact class's navigation, so a page
- * whose compact form is `hidden` is left out of it (the wide sidebar lists every page).
+ * The entries a compact list shows: the drawer is the compact class's navigation, so a page whose
+ * compact form is `hidden` is left out of it (the wide sidebar lists every page).
  */
 export const shownOnCompact = <T extends { compact?: UiCompactForm }>(items: readonly T[]): T[] =>
   items.filter((i) => i.compact !== "hidden");
@@ -359,15 +387,6 @@ export function useNav(
   more: SidebarNavItem[];
   /** The brand row's inbox button (count only while something is pending). */
   inbox: { href: string; count?: number; countMore?: boolean };
-  /** The compact class's four navigation items (design spec §6.45), in their fixed order. */
-  bottom: BottomNavItem[];
-  /**
-   * The Me page's rows (design spec §6.48): Workspace is the sidebar's primary items the bottom
-   * navigation has no room for, then Devices; Manage is the sidebar's other More items, so the two never
-   * drift: whatever the role sees under More (members read Plugins, Extensions and Org settings; org
-   * admins and owners add Channels and Evals; a guest has none).
-   */
-  me: { workspace: SidebarNavItem[]; manage: SidebarNavItem[] };
   adminHref?: string;
   commands: CommandGroup[];
 } {
@@ -379,6 +398,7 @@ export function useNav(
     label: t(`nav.${n.key}`),
     href: n.href,
     icon: n.icon,
+    ...(n.desktopOnly ? { desktopOnly: true } : {}),
   }));
   const inbox = {
     href: "/inbox",
@@ -387,7 +407,9 @@ export function useNav(
   const strip = ({ section: _, ...item }: (typeof items)[number]): SidebarNavItem => item;
   const primary = items.filter((n) => n.section === "primary").map(strip);
   const more = items.filter((n) => n.section === "more").map(strip);
-  const admin = superAdmin ? [{ id: "admin", label: t("nav.admin"), href: "/admin" }] : [];
+  const admin = superAdmin
+    ? [{ id: "admin", label: t("nav.admin"), href: "/admin", desktopOnly: true }]
+    : [];
   const commands: CommandGroup[] = [
     {
       label: t("nav.goto"),
@@ -399,6 +421,7 @@ export function useNav(
       ].map((n) => ({
         id: `goto-${n.id}`,
         label: n.label,
+        ...("desktopOnly" in n && n.desktopOnly ? { desktopOnly: true } : {}),
         onSelect: () => router.push(n.href),
       })),
     },
@@ -427,76 +450,71 @@ export function useNav(
       ],
     },
   ].filter((g) => g.items.length > 0);
-  const bottom = bottomItems(
-    {
-      chats: t("nav.chats"),
-      agents: t("nav.agents"),
-      inbox: t("nav.inbox"),
-      me: t("nav.me"),
-    },
-    inbox,
-  );
-  const me = {
-    workspace: [
-      ...primary.filter((n) => n.id !== "agents"),
-      ...more.filter((n) => n.id === "devices"),
-    ],
-    manage: more.filter((n) => n.id !== "devices"),
-  };
   return {
     primary,
     more,
     inbox,
-    bottom,
-    me,
     ...(superAdmin ? { adminHref: "/admin" } : {}),
     commands,
   };
 }
 
-/**
- * The routes the Me tab holds besides `/me` itself (its pushed pages, design spec §4.6): every
- * workspace route that is no other tab's, so Me stays current on them.
- */
-const ME_PAGES = [
-  "/skills",
-  "/connectors",
-  "/schedules",
-  "/devices",
-  "/plugins",
-  "/extensions",
-  "/channels",
-  "/evals",
-  "/trajectories",
-  "/settings",
-  "/account",
-  "/admin",
-  "/p",
-];
+/** What the compact drawer takes from the navigation (design spec §6.53). */
+export type DrawerNav = Pick<
+  DrawerNavData,
+  "sections" | "more" | "moreLabel" | "allConversations" | "newConversation"
+> & { menuBadge?: NavBadge };
 
-/** The compact bottom navigation's four items (design spec §6.45); the inbox carries the count. */
-function bottomItems(
-  label: Record<BottomNavItem["id"], string>,
-  inbox: { count?: number; countMore?: boolean },
-): BottomNavItem[] {
-  return [
-    // the new conversation (`/`) and a conversation are pushed pages the Conversations tab holds
-    {
-      id: "chats",
-      label: label.chats,
-      href: "/conversations",
-      icon: "chats",
-      also: ["/chat", "/"],
-    },
-    { id: "agents", label: label.agents, href: "/agents", icon: "agent" },
+/**
+ * The compact drawer's navigation (design spec §6.53; mobile touch plan Task 28) from the same
+ * `NAV` data and role levels as the sidebar: the sections Inbox (with the pending count), Agents
+ * and Scheduled tasks, and the "Skills, connectors, devices…" level with Skills, Connectors, Devices
+ * and the org's extension pages (those not hidden on compact). The management items (Plugins,
+ * Extensions, Channels, Evals & runs, Organization settings, the admin console) never enter it: on touch they are managed on a computer.
+ */
+export function useDrawerNav(
+  level: NavLevel,
+  pending: { count: number; more: boolean } = { count: 0, more: false },
+  extensions: readonly ExtensionNavItem[] = [],
+): DrawerNav {
+  const t = useTranslations();
+  const visible = NAV.filter((n) => VISIBLE[level].includes(n.audience));
+  const badge: NavBadge | undefined =
+    pending.count > 0
+      ? { count: pending.count, ...(pending.more ? { more: true } : {}) }
+      : undefined;
+  const item = (n: (typeof NAV)[number]) => ({
+    label: t(`nav.${n.key}`),
+    href: n.href,
+    icon: n.icon,
+  });
+  const sections: DrawerNav["sections"] = [
     {
       id: "inbox",
-      label: label.inbox,
+      label: t("nav.inbox"),
       href: "/inbox",
       icon: "inbox",
-      ...(inbox.count !== undefined ? { count: inbox.count } : {}),
-      ...(inbox.countMore ? { countMore: true } : {}),
+      ...(badge ? { badge } : {}),
     },
-    { id: "me", label: label.me, href: "/me", icon: "user", also: ME_PAGES },
+    ...visible
+      .filter((n) => n.drawer === "section")
+      .map((n) => ({ id: n.id as "agents" | "schedules", ...item(n) })),
   ];
+  const more: DrawerNav["more"] = [
+    ...visible.filter((n) => n.drawer === "more").map((n) => ({ id: n.id, ...item(n) })),
+    ...shownOnCompact(extensions).map((x) => ({
+      id: `ext:${x.id}`,
+      label: x.label,
+      href: x.href,
+      icon: "extension" as const,
+    })),
+  ];
+  return {
+    sections,
+    more,
+    moreLabel: t("drawer.more"),
+    allConversations: { label: t("drawer.allConversations"), href: "/conversations" },
+    newConversation: { label: t("conversations.new"), href: "/" },
+    ...(badge ? { menuBadge: badge } : {}),
+  };
 }

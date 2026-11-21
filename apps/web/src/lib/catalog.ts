@@ -562,6 +562,10 @@ export interface Marketplace {
   enabled: boolean;
   disabledByConfig: boolean;
   hasToken: boolean;
+  /** The Basic auth username of a git marketplace's token (null: the default `x-access-token`). */
+  username: string | null;
+  /** `config`: set by the deployment config (read-only here except `enabled`). */
+  managed: "config" | null;
   lastRefreshedAt: string | null;
   lastStatus: "ok" | "error" | "never";
   lastError: string | null;
@@ -1303,6 +1307,7 @@ export const addMarketplace = (body: {
   form?: MarketplaceForm;
   ref?: string;
   token?: string;
+  username?: string;
 }) => apiFetch<Marketplace>(marketplaces, post(body));
 
 /** `ref: null` makes a git marketplace follow the remote HEAD again. */
@@ -1315,6 +1320,8 @@ export const updateMarketplace = (
     ref?: string | null;
     enabled?: boolean;
     token?: string | null;
+    /** `null`: back to the default username. */
+    username?: string | null;
   },
 ) =>
   apiFetch<Marketplace>(`${marketplaces}/${enc(id)}`, {

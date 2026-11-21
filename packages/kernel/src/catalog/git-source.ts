@@ -2,6 +2,7 @@ import * as fsp from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { inflateSync } from "node:zlib";
+import { GIT_MARKETPLACE_USERNAME_DEFAULT, GIT_USERNAME_RE } from "@capybara-hq/plugin-sdk";
 import git, { type GitHttpRequest, type GitHttpResponse, type HttpClient } from "isomorphic-git";
 import { NetDeniedError, type NetPolicy } from "../net/public-address.js";
 import { NetBodyTooLargeError, safeFetch } from "../net/safe-fetch.js";
@@ -61,6 +62,11 @@ export type GitLocation = { url: string; ref?: string; commit?: string; path?: s
 export type GitOptions = {
   net: NetPolicy;
   token?: string;
+  /**
+   * The Basic auth username sent with `token` (empty or absent:
+   * {@link GIT_MARKETPLACE_USERNAME_DEFAULT}); one outside `GIT_USERNAME_RE` is refused.
+   */
+  username?: string;
   /** The token is sent only to this origin (the marketplace URL's). */
   tokenOrigin?: string;
   signal: AbortSignal;
@@ -90,15 +96,23 @@ export interface GitErrorDetail {
 export class GitSourceError extends Error {
   readonly netCode: MarketplaceNetCode | undefined;
   readonly detail: GitErrorDetail;
+  /** The pinned commit the server would not send by its sha (the message advises a ref tip). */
+  readonly refusedCommit: string | undefined;
   constructor(
     readonly code: GitSourceErrorCode,
     message: string,
-    options?: { cause?: unknown; netCode?: MarketplaceNetCode; detail?: GitErrorDetail },
+    options?: {
+      cause?: unknown;
+      netCode?: MarketplaceNetCode;
+      detail?: GitErrorDetail;
+      refusedCommit?: string;
+    },
   ) {
     super(message, options);
     this.name = "GitSourceError";
     this.netCode = options?.netCode;
     this.detail = options?.detail ?? {};
+    this.refusedCommit = options?.refusedCommit;
   }
 }
 
@@ -173,11 +187,15 @@ function startOp(loc: GitLocation, o: GitOptions): Op {
   const problem = marketplaceUrlProblem(loc.url, o.net.allowInsecureLoopback);
   if (problem !== null) throw failed(`invalid git URL: ${problem}`);
   const signal = AbortSignal.any([o.signal, AbortSignal.timeout(GIT_LIMITS.timeoutMs)]);
+  // A ':' in the username would move the split of the Basic credential
+  if (o.username !== undefined && o.username !== "" && !GIT_USERNAME_RE.test(o.username)) {
+    throw failed("invalid git username");
+  }
   const state = { overLimit: false };
   const auth =
     o.token === undefined
       ? undefined
-      : `Basic ${Buffer.from(`x-access-token:${o.token}`).toString("base64")}`;
+      : `Basic ${Buffer.from(`${o.username || GIT_MARKETPLACE_USERNAME_DEFAULT}:${o.token}`).toString("base64")}`;
   const http: HttpClient = {
     async request(req: GitHttpRequest): Promise<GitHttpResponse> {
       const target = new URL(req.url);
@@ -387,9 +405,13 @@ function scanningFs(maxUnpacked: number) {
   };
 }
 
-/** The message for a pinned commit the server would not send. */
-const refusedCommit = (commit: string) =>
-  `the server refused to serve commit ${commit}; pin a branch or tag tip instead`;
+/** A pinned commit the server would not send. */
+const refusedCommit = (what: string, commit: string, cause?: unknown) =>
+  new GitSourceError(
+    "marketplace.git_failed",
+    `${what}: the server refused to serve commit ${commit}; pin a branch or tag tip instead`,
+    { ...(cause !== undefined && { cause }), refusedCommit: commit },
+  );
 
 /** isomorphic-git's error for a want the server did not answer (an unknown or unadvertised sha). */
 function refusedWant(e: unknown): boolean {
@@ -485,17 +507,17 @@ export async function readGitTreeAndOids(
     } catch (e) {
       // A commit that is not a ref tip needs the server to allow reachable-sha wants (GitHub does;
       // GitLab / Gitea depend on their configuration); the server then sends nothing for it
-      if (refusedWant(e)) throw failed(`${what}: ${refusedCommit(commit)}`, e);
+      if (refusedWant(e)) throw refusedCommit(what, commit, e);
       throw e;
     }
-    if (res.fetchHead !== commit) throw failed(`${what}: ${refusedCommit(commit)}`);
+    if (res.fetchHead !== commit) throw refusedCommit(what, commit);
     op.signal.throwIfAborted();
     let c: Awaited<ReturnType<typeof git.readCommit>>["commit"];
     try {
       ({ commit: c } = await git.readCommit({ fs, gitdir, oid: commit, cache }));
     } catch (e) {
       // the server answered the fetch without the commit
-      if (refusedWant(e)) throw failed(`${what}: ${refusedCommit(commit)}`, e);
+      if (refusedWant(e)) throw refusedCommit(what, commit, e);
       throw e;
     }
     let tree = c.tree;

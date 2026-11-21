@@ -98,6 +98,9 @@ describe("desktop shell capability types", () => {
       shareTitle: 256,
       shareText: 4000,
       url: 2048,
+      // nav@1: a section or menu label 1..32, a badge count an integer 0..9999 (plan Decision 2)
+      navLabel: 32,
+      navCount: 9999,
     });
     expect(MENU_ITEM_ID.test("a.b-c_1")).toBe(true);
     expect(MENU_ITEM_ID.test("")).toBe(false);

@@ -1095,6 +1095,19 @@ export const SHARE_FIXTURE: {
   ].join(""),
 };
 
+/** CopyCode (spec §6.58): a command, its card title, and a value too long for its block. */
+export const COPY_CODE_FIXTURE: {
+  label: string;
+  command: string;
+  cardTitle: string;
+  long: string;
+} = {
+  label: "安装",
+  command: "npm install -g @capybara-hq/device@next",
+  cardTitle: "在这台机器上运行",
+  long: "capybara-device login --url https://capybara.example.com --org 6f1c2d9e-4b7a-4e15-9c3d-2a8b7e5f0c41",
+};
+
 // ── Properties panel, right panel, extension slots ──────────────────────────
 
 export const PANEL_FIXTURE: {

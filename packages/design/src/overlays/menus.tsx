@@ -22,6 +22,8 @@ export type MenuItem =
       checked?: boolean;
       /** The current page (a navigation menu such as the sidebar's 更多): `aria-current="page"`. */
       current?: boolean;
+      /** A desktop-only page's entry: `data-desktop-only`, hidden under the touch query. */
+      desktopOnly?: boolean;
       /** A leading 16 px icon (a navigation menu's items carry the main nav's icons). */
       icon?: IconName;
       /** One muted line of help after the label (a Repeater preset's help). */
@@ -237,6 +239,7 @@ function MenuItems({ items }: { items: MenuItem[] }) {
         key={item.label}
         className="cb-menu-item"
         data-danger={item.danger ? "true" : undefined}
+        data-desktop-only={item.desktopOnly ? "" : undefined}
         disabled={item.disabled}
         onSelect={() => item.onSelect?.()}
         // 禁用的导航项不渲染链接（否则原生 <a> 仍会跳转），由 Radix 标 aria-disabled

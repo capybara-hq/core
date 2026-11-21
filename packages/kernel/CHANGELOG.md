@@ -1,5 +1,63 @@
 # @capybara-hq/kernel
 
+## 0.1.0-rc.63
+
+### Minor Changes
+
+- 56af2e0: Add the `bootstrap.extraManifest` and `marketplaces.tokens` config fields for a second bootstrap manifest.
+- b491e2a: Install the `git` entries of the extra bootstrap manifest: the tree at the pinned commit (or its pack
+  from the offline directory), verified against the entry's integrity before anything is imported,
+  with the marketplace's token and username sent only to its origin, and recorded as the
+  config-managed marketplace's source. New error code `bootstrap.git_read_failed`.
+- 24fa482: Marketplaces declared by the extra bootstrap manifest are owned by the config (read-only except `enabled`, token from `marketplaces.tokens`), and every marketplace can store the git username its token is sent with.
+- 59e2551: Merge the extra bootstrap manifest into the built-in one at start and in `capybara bootstrap` (`--extra-manifest`, else `bootstrap.extraManifest`), and sync its marketplaces.
+- 8416855: Apply the extra bootstrap manifest's `defaultTheme` as the platform default theme at every start while the `uiTheme` setting is still the seed (a super admin's choice is never reset); the dual-replica harness takes `bootstrap.extraManifest`.
+
+### Patch Changes
+
+- 13369a0: Add `capybara-plugin bootstrap --check|--write` to validate and pin a distribution's extra bootstrap
+  manifest (git entries are pinned to the kernel's canonical pack; every git entry is read from
+  `--root`, and `--marketplace <name>` limits the run to one marketplace's repository), and export
+  `packPackageTgz` from the kernel.
+- Updated dependencies [09a0bc5]
+  - @capybara-hq/plugin-sdk@0.1.0-rc.48
+
+## 0.1.0-rc.62
+
+### Minor Changes
+
+- 8453226: The attachment and artifact download routes take `?as=url`: under the same session and org checks
+  they answer `{ url }` (the presigned location the 302 would send, `Cache-Control: private,
+  no-store`), so the web can hand a native shell's system browser a cookie-free download URL.
+
+### Patch Changes
+
+- Updated dependencies [0756b7b]
+  - @capybara-hq/plugin-sdk@0.1.0-rc.47
+
+## 0.1.0-rc.61
+
+### Minor Changes
+
+- 33074e1: Push notification registrations and delivery: the `push_registrations` and `push_preferences`
+  tables, push tokens sealed with the master keyring (rewrapped by `capybara secrets rewrap`).
+  Trigger events (approvals, questions, connect requests, run ends, background and sub-agent finishes,
+  scheduled task runs) owe a push fanout in their own transaction; the fanout resolves recipients when
+  it runs and owes one delivery per registration. New config `push.previews` (`off` | `titles`).
+- 12a6582: Add the setup guide place `extension-deployment`: a plugin's guide on the super admin's extension
+  page whose checks get the extension's platform deployment config (`SetupCheckTarget` kind
+  `extension-deployment`; `SetupCheckArgs.orgId` is now `string | null`, null for this place). The
+  `fake-push` fixture ships such a guide with the check `fake-push-key`. The kernel serves these guides
+  and runs their checks on super admin routes (`/api/v1/admin/extensions/:name/guides…`) and the
+  `extensions.platform-guides`, `extensions.platform-check-status` and `extensions.platform-check`
+  Platform operations; the web shows them with live check rows on the extension's config tab.
+
+### Patch Changes
+
+- Updated dependencies [a007fee]
+- Updated dependencies [12a6582]
+  - @capybara-hq/plugin-sdk@0.1.0-rc.46
+
 ## 0.1.0-rc.60
 
 ### Patch Changes

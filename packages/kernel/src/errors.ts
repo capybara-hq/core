@@ -147,6 +147,12 @@ export const ERROR_CODES = {
   "bootstrap.integrity_mismatch": 500,
   "bootstrap.download_failed": 502,
   "bootstrap.missing_file": 500,
+  /** The extra bootstrap manifest cannot be read, is invalid, or a git entry's marketplace is not git form. */
+  "bootstrap.extra_invalid": 500,
+  /** The extra bootstrap manifest names a plugin the built-in manifest already pins. */
+  "bootstrap.extra_conflict": 500,
+  /** A git entry's tree cannot be read from its marketplace (the git error, never the token). */
+  "bootstrap.git_read_failed": 502,
   "catalog.invalid_manifest": 422,
   "catalog.no_extension": 409,
   "catalog.dependency_unresolved": 409,
@@ -280,6 +286,7 @@ export const ERROR_CODES = {
   "marketplace.entry_deprecated": 409,
   "marketplace.package_mismatch": 409,
   "marketplace.builtin": 409,
+  "marketplace.config_managed": 409,
   "marketplace.git_failed": 502,
   "marketplace.git_too_large": 422,
   "marketplace.git_unsupported_entry": 422,

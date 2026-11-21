@@ -40,8 +40,7 @@ const HIT_EXEMPT: { selector: string; why: string }[] = [
  * spec states no hit area for form fields, selects, steppers, switches, checkboxes and the like.
  */
 const GUARANTEED = [
-  ".cb-topbar .cb-icon-btn",
-  ".cb-bottomnav-item",
+  ".cb-float-btn",
   '[data-part="page-header-tabs"] [role="tab"]',
   '[data-part="page-tabs"] [role="tab"]',
   ".cb-pageheader-actions .cb-btn",
@@ -202,27 +201,6 @@ for (const javaScriptEnabled of [true, false]) {
               expect(box.y + box.height).toBeLessThanOrEqual(HEIGHT);
             }
           }
-
-          // the last item is not under the bottom navigation
-          const covered = await page.evaluate(() => {
-            const nav = document.querySelector('[data-part="bottom-nav"]');
-            const main = document.querySelector(".cb-shell-main") ?? document.body;
-            if (!nav) return null;
-            const navTop = nav.getBoundingClientRect().top;
-            let last: Element = main;
-            for (;;) {
-              const kids = Array.from(last.children).filter((c) => {
-                const r = c.getBoundingClientRect();
-                return r.height > 0 && getComputedStyle(c).position !== "fixed";
-              });
-              const next = kids[kids.length - 1];
-              if (!next) break;
-              last = next;
-            }
-            const bottom = last.getBoundingClientRect().bottom;
-            return bottom <= navTop + 1 ? null : { bottom, navTop };
-          });
-          expect(covered, "the last item under the bottom navigation").toBeNull();
         });
       }
     });

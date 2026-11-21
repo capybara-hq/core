@@ -263,6 +263,9 @@
       "needs_config": "这个扩展需要先在本组织完成配置"
     },
     "bootstrap": {
+      "extra_conflict": "部署的额外引导清单里有插件与内置插件重名。",
+      "extra_invalid": "部署的额外引导清单无效，详见服务器日志或错误信息。",
+      "git_read_failed": "无法从 git 市场读取某个插件。",
       "download_failed": "无法从 npm registry 下载部署锁定的某个引导插件。请检查 registry（packages.npmRegistry），或把包放进引导目录。",
       "integrity_mismatch": "某个引导插件的包与锁定的 sha512 不符，部署拒绝安装它。registry 或文件可能被篡改。",
       "missing_file": "部署锁定的某个引导插件包不在引导目录里。"
@@ -502,6 +505,7 @@
       "entry_deprecated": "这个版本已被市场标为废弃，不能安装，请选择其他版本。",
       "package_mismatch": "下载的包与市场条目不一致。",
       "builtin": "官方市场由部署配置决定，这里只能启用或停用。",
+      "config_managed": "这个市场由部署配置，在这里只能启用或停用。",
       "git_failed": "读取 git 仓库失败（服务器、分支或提交有问题），具体原因见错误信息。",
       "git_too_large": "git 仓库超出了插件的大小或文件数限制。",
       "git_unsupported_entry": "git 仓库里有符号链接或子模块，插件不能使用。",
@@ -1518,10 +1522,7 @@
     "deviceCode": {
       "title": "登录 GitHub",
       "body": "打开 GitHub 并输入下面的一次性代码，完成登录。登录在设备内进行，令牌不会离开设备。",
-      "codeLabel": "一次性代码",
-      "copy": "复制代码",
-      "copied": "已复制",
-      "copyManual": "请选中代码后复制"
+      "codeLabel": "一次性代码"
     },
     "toolLines": "第 {from}–{to} 行",
     "pickModel": "切换模型",
@@ -1772,8 +1773,6 @@
       "localHint": "在你自己的电脑或服务器上运行命令。",
       "installStep": "1. 在这台机器上安装连接程序",
       "loginStep": "2. 登录并在打开的网页上确认",
-      "copy": "复制",
-      "copied": "已复制。",
       "waiting": "正在等待机器登录…确认后它会出现在设备列表里，运行第 3 步后变为在线。",
       "connected": "已连接 {name}。",
       "close": "关闭",
@@ -2040,9 +2039,7 @@
     "admin": "管理后台",
     "plugins": "插件",
     "extensions": "扩展",
-    "schedules": "定时任务",
-    "chats": "会话",
-    "me": "我"
+    "schedules": "定时任务"
   },
   "conversations": {
     "title": "会话",
@@ -2055,15 +2052,23 @@
     "running": "运行中",
     "waiting": "等待我"
   },
-  "me": {
-    "title": "我",
-    "adminTitle": "管理后台",
-    "back": "回到工作区"
+  "desktopOnly": {
+    "title": "请在电脑上管理",
+    "body": "插件、扩展、渠道、组织设置和管理后台这类配置，只在电脑上提供。",
+    "copy": "复制链接",
+    "copied": "链接已复制",
+    "back": "回到对话"
+  },
+  "drawer": {
+    "more": "技能、连接器、设备…",
+    "switchOrg": "切换组织",
+    "allConversations": "全部会话"
   },
   "shell": {
     "noOrg": "选择组织",
     "createOrg": "新建组织…",
     "accountSettings": "个人设置",
+    "switchProfile": "切换平台",
     "noCurrentOrg": "当前没有组织，无法操作会话。"
   },
   "notFound": {
@@ -3336,7 +3341,7 @@
   "appAuth": {
     "clients": {
       "desktop": {
-        "title": "在 {machine} 上的 Capybara 桌面端登录 {platform}？",
+        "title": "在桌面端登录 {platform}？",
         "subtitle": "只有在你刚从 Capybara 桌面端发起登录时才继续。",
         "machine": "机器",
         "invalidHint": "这个链接不完整。请回到 Capybara 桌面端重新发起登录。",
@@ -3344,7 +3349,7 @@
         "codeInvalid": "登录链接已失效，请在 Capybara 桌面端重新登录。"
       },
       "mobile": {
-        "title": "在 {machine} 上的 Capybara 移动端登录 {platform}？",
+        "title": "在移动端登录 {platform}？",
         "subtitle": "只有在你刚从 Capybara 移动端发起登录时才继续。",
         "machine": "设备",
         "invalidHint": "这个链接不完整。请回到 Capybara 移动端重新发起登录。",
@@ -5024,8 +5029,6 @@
       "create": "生成邀请链接",
       "link": "邀请链接",
       "linkHelp": "链接只显示这一次，只能使用一次；请通过可信的渠道发给对方。",
-      "copy": "复制链接",
-      "copied": "已复制邀请链接",
       "done": "完成"
     }
   },
@@ -5442,6 +5445,11 @@
         "token": "令牌",
         "tokenHelp": "可选；留空不改。",
         "tokenSet": "已设置令牌",
+        "username": "用户名",
+        "usernameHelp": "可选；令牌配合使用的用户名，留空用默认值 x-access-token。常见主机：Bitbucket 为 x-token-auth，GitLab 为 oauth2。",
+        "managed": "由部署配置管理",
+        "managedTokenSet": "部署已配置令牌",
+        "managedTokenUnset": "部署未配置令牌",
         "clearToken": "清除令牌",
         "save": "保存",
         "saved": "已保存「{name}」。",

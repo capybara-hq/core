@@ -550,6 +550,8 @@ describe("desktop drag regions (desktop client spec §7.3)", () => {
     "cb-conv-sheet",
     "cb-conv-scrim",
     "cb-sidebar-layer",
+    "cb-drawer",
+    "cb-drawer-scrim",
     "cb-conv-pushed",
   ];
 
@@ -565,10 +567,78 @@ describe("desktop drag regions (desktop client spec §7.3)", () => {
     }
   });
 
-  it("full-height overlays start below the band", () => {
-    for (const cls of ["cb-sheet", "cb-conv-sheet", "cb-viewer", "cb-sidebar-layer"]) {
-      expect(desktopRule(cls, /top: var\(--cb-shell-band\)/), cls).toBe(true);
+  it("full-height overlays start below the band and the top row on their controls' side", () => {
+    for (const [cls, row] of [
+      ["cb-sheet", "row-end"],
+      ["cb-conv-sheet", "row-end"],
+      ["cb-sidebar-layer", "row-start"],
+      ["cb-viewer", "row"],
+    ] as const) {
+      const decl = new RegExp(`top: max\\(var\\(--cb-shell-band\\), var\\(--cb-shell-${row}\\)\\)`);
+      expect(desktopRule(cls, decl), cls).toBe(true);
     }
-    expect(desktopRule("cb-conv-pushed", /padding-top: var\(--cb-shell-band\)/)).toBe(true);
+    expect(
+      desktopRule(
+        "cb-conv-pushed",
+        /padding-top: max\(var\(--cb-shell-band\), var\(--cb-shell-row\)\)/,
+      ),
+    ).toBe(true);
+    expect(
+      desktopRule(
+        "cb-drawer",
+        /padding-top: max\(var\(--cb-inset-top\), var\(--cb-shell-row-start\)\)/,
+      ),
+    ).toBe(true);
+  });
+
+  const body = (selector: string) =>
+    rules.filter((r) => r.selector === selector).map((r) => r.body.replace(/\s+/g, " "));
+
+  it("a mobile shell keeps the band down to the controls; the desktop's band is its top inset", () => {
+    expect(body(":root[data-shell]").join()).toMatch(
+      /--cb-shell-band: max\( var\(--cb-inset-top\), calc\(var\(--cb-shell-controls-y, 0px\) \+ var\(--cb-shell-controls-height, 0px\)\) \)/,
+    );
+    expect(body(':root[data-shell="desktop"]').join()).toContain(
+      "--cb-shell-band: var(--cb-inset-top);",
+    );
+    expect(body(":root[data-shell] .cb-shell").join()).toContain(
+      "padding-top: var(--cb-shell-band);",
+    );
+  });
+
+  it("the desktop's top row is the controls' height, reserved only where they reach below the band", () => {
+    const root = body(':root[data-shell="desktop"]').join();
+    expect(root).toMatch(
+      /--cb-shell-below: max\( 0px, calc\(\(var\(--cb-shell-controls-bottom\) - var\(--cb-shell-band\)\) \* 100000\) \)/,
+    );
+    expect(root).toContain(
+      "--cb-shell-row: min(var(--cb-shell-controls-bottom), var(--cb-shell-below));",
+    );
+    for (const side of ["start", "end"]) {
+      expect(root).toMatch(new RegExp(`--cb-shell-reserve-${side}: min\\(`));
+      expect(root).toContain(`--cb-shell-row-${side}: min(var(--cb-shell-row),`);
+    }
+  });
+
+  it("the top row's first rows take its height and keep clear of the controls", () => {
+    expect(
+      desktopRule(
+        "cb-sidebar-top",
+        /height: max\(var\(--cb-row-default\), var\(--cb-shell-row\)\)/,
+      ),
+    ).toBe(true);
+    expect(desktopRule("cb-sidebar-top", /padding-left: max\([^;]*--cb-shell-reserve-start/)).toBe(
+      true,
+    );
+    for (const cls of ["cb-title-bar", "cb-shared-bar"]) {
+      expect(
+        desktopRule(cls, /height: max\(var\(--cb-layout-title-bar\), var\(--cb-shell-row\)\)/),
+        cls,
+      ).toBe(true);
+      expect(desktopRule(cls, /padding-right: max\([^;]*--cb-shell-reserve-end/), cls).toBe(true);
+    }
+    expect(desktopRule("cb-shell-float", /left: var\(--cb-float-start\)/)).toBe(true);
+    expect(desktopRule("cb-shell-band", /width: max\(var\(--cb-shell-reserve-start\)/)).toBe(true);
+    expect(desktopRule("cb-pageheader-path", /min-height: var\(--cb-shell-row\)/)).toBe(true);
   });
 });

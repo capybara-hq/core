@@ -4,7 +4,7 @@ import { css, parseCss } from "./css-rules";
 // Mobile app spec §7.1: the touch pass. The web stops feeling like a page on touch, in the browser,
 // the PWA and the app alike. The stylesheets are the thing to prove.
 
-const FILES = ["base.css", "controls.css", "shell.css", "sidebar.css", "display.css"];
+const FILES = ["base.css", "controls.css", "shell.css", "sidebar.css", "display.css", "touch.css"];
 const rules = FILES.flatMap((f) => parseCss(css(f)));
 /** A selector list split at the commas outside parentheses, spaces normalised. */
 function selectorsOf(selector: string): string[] {
@@ -35,17 +35,22 @@ const FIELDS = ':where(input, textarea, [contenteditable]:not([contenteditable="
 
 /**
  * The interactive design classes. The brief's `.cb-card[href]` does not exist (a card is not a link),
- * `.cb-sidebar-item` stands for the sidebar's items and `.cb-bottomnav a` is `.cb-bottomnav-item`;
- * the sidebar's more row and conversation title button are interactive too.
+ * `.cb-sidebar-item` stands for the sidebar's items; the sidebar's more row and conversation title button are interactive too.
  */
 const INTERACTIVE = [
   ".cb-btn",
   ".cb-icon-btn",
   ".cb-row-link",
-  ".cb-bottomnav-item",
   ".cb-sidebar-item",
   ".cb-sidebar-more",
   ".cb-sidebar-conv",
+  // the chat-first compact shell (Task 27): the floating button, the drawer's rows, its search,
+  // account row and new-conversation button, and the account sheet's rows (NavRow too)
+  ".cb-float-btn",
+  ".cb-navrow",
+  ".cb-navdrawer-search",
+  ".cb-navdrawer-account",
+  ".cb-navdrawer-new",
 ];
 
 describe("touch behaviour", () => {
@@ -82,7 +87,7 @@ describe("touch behaviour", () => {
     }
   });
 
-  it.each([".cb-shell-topbar", ".cb-bottomnav", ".cb-sidebar", ".cb-btn", ".cb-icon-btn"])(
+  it.each([".cb-shell-float", ".cb-sidebar", ".cb-btn", ".cb-icon-btn"])(
     "%s is not selectable and has no long-press callout",
     (cls) => {
       const d = declsOf(cls);

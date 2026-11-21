@@ -34,7 +34,7 @@ name: capybara
 x-images:
   # ${CAPYBARA_IMAGE_PREFIX-...}: unset means ghcr.io; an empty value selects local tags
   # (capybara-api:<version>, as built by compose.build.yaml).
-  api: &api-image ${CAPYBARA_IMAGE_PREFIX-ghcr.io/capybara-hq/}capybara-api:${CAPYBARA_VERSION:-0.1.0-rc.75}
+  api: &api-image ${CAPYBARA_IMAGE_PREFIX-ghcr.io/capybara-hq/}capybara-api:${CAPYBARA_VERSION:-0.1.0-rc.80}
 
 x-kernel-env: &kernel-env
   CAPYBARA_DB__URL: postgres://capybara:${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}@postgres:5432/capybara
@@ -178,6 +178,13 @@ services:
   # npm (CAPYBARA_PACKAGES__NPM_REGISTRY for a mirror, in a compose.override.yaml); offline, mount
   # a host directory holding the pinned tgz files (any names) at /app/bootstrap, e.g.
   #   volumes: ["./bootstrap:/app/bootstrap:ro"]
+  # A distribution adds its own pinned plugins with an extra manifest (bootstrap-extra.v1, see
+  # `capybara-plugin bootstrap --write`): mount the file in init, api, worker and gateway
+  # (the merged manifest must be the same everywhere), e.g. in a compose.override.yaml
+  #   volumes: ["./bootstrap-extra.json:/app/bootstrap-extra.json:ro"]
+  # and set CAPYBARA_BOOTSTRAP__EXTRA_MANIFEST=/app/bootstrap-extra.json for those services.
+  # Every service (init, api, worker, gateway) must use the same extra manifest; marketplace
+  # tokens go in CAPYBARA_MARKETPLACES__TOKENS (or Nacos), never in the manifest or this file.
   init:
     image: *api-image
     init: true
@@ -239,7 +246,7 @@ services:
 
   worker:
     <<: *kernel
-    image: ${CAPYBARA_IMAGE_PREFIX-ghcr.io/capybara-hq/}capybara-worker:${CAPYBARA_VERSION:-0.1.0-rc.75}
+    image: ${CAPYBARA_IMAGE_PREFIX-ghcr.io/capybara-hq/}capybara-worker:${CAPYBARA_VERSION:-0.1.0-rc.80}
     environment:
       <<: *kernel-env
     # "sandbox": the internal network of the optional sandbox-proxy (sandbox profile).
@@ -249,7 +256,7 @@ services:
 
   gateway:
     <<: *kernel
-    image: ${CAPYBARA_IMAGE_PREFIX-ghcr.io/capybara-hq/}capybara-gateway:${CAPYBARA_VERSION:-0.1.0-rc.75}
+    image: ${CAPYBARA_IMAGE_PREFIX-ghcr.io/capybara-hq/}capybara-gateway:${CAPYBARA_VERSION:-0.1.0-rc.80}
     environment:
       <<: *kernel-env
       # The gateway holds IM long connections and serves channel webhooks. Nothing proxies to it
@@ -274,7 +281,7 @@ services:
       - devices
 
   web:
-    image: ${CAPYBARA_IMAGE_PREFIX-ghcr.io/capybara-hq/}capybara-web:${CAPYBARA_VERSION:-0.1.0-rc.75}
+    image: ${CAPYBARA_IMAGE_PREFIX-ghcr.io/capybara-hq/}capybara-web:${CAPYBARA_VERSION:-0.1.0-rc.80}
     init: true
     restart: unless-stopped
     depends_on:
@@ -344,7 +351,7 @@ services:
   # CAPYBARA_SANDBOX__IMAGE and the plugin's egressProxyImage.
   sandbox-image:
     profiles: ["sandbox-build"]
-    build: https://github.com/capybara-hq/plugins.git#ae438abbbe7e200961c9f09f9463450769f9dbaa:plugins/sandbox-docker/image
+    build: https://github.com/capybara-hq/plugins.git#895bfc11d7ed76726b20e2e6140764b7fadc6598:plugins/sandbox-docker/image
     image: capybara-sandbox:latest
     command: ["true"]
     restart: "no"
@@ -352,7 +359,7 @@ services:
 
   sandbox-egress-image:
     profiles: ["sandbox-build"]
-    build: https://github.com/capybara-hq/plugins.git#ae438abbbe7e200961c9f09f9463450769f9dbaa:plugins/sandbox-docker/egress-proxy
+    build: https://github.com/capybara-hq/plugins.git#895bfc11d7ed76726b20e2e6140764b7fadc6598:plugins/sandbox-docker/egress-proxy
     image: capybara-sandbox-egress:latest
     command: ["node", "-e", "0"]
     restart: "no"

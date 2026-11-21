@@ -1,12 +1,15 @@
 import { resolve } from "node:path";
 import {
-  BOOTSTRAP_MANIFEST_FILE,
   type BootstrapEntryResult,
+  BootstrapExtraMismatchError,
   BootstrapFailedError,
   bootstrapManifestSha256,
+  type ExtraManifestTraces,
+  hasExtraManifestTraces,
   type KernelLogger,
+  loadBootstrapManifest,
+  missingExtraManifestMessage,
   openCatalogCli,
-  readBootstrapManifest,
 } from "@capybara-hq/kernel";
 import { withOpened } from "./extensions.js";
 
@@ -21,6 +24,19 @@ export function bootstrapDirOf(
   cwd: string = process.cwd(),
 ): string {
   return resolve(cwd, given ?? config.bootstrap.dir);
+}
+
+/**
+ * The extra bootstrap manifest: `given` (`--extra-manifest`), else the config key
+ * `bootstrap.extraManifest`, resolved against the working directory; absent when neither is set.
+ */
+export function bootstrapExtraManifestOf(
+  config: { bootstrap: { extraManifest?: string | undefined } },
+  given?: string,
+  cwd: string = process.cwd(),
+): string | undefined {
+  const path = given ?? config.bootstrap.extraManifest;
+  return path === undefined ? undefined : resolve(cwd, path);
 }
 
 export interface BootstrapIo {
@@ -43,7 +59,7 @@ const entryLine = (r: BootstrapEntryResult): string =>
   `${r.name} ${r.version}: ${ACTION_TEXT[r.action]}${r.leftDisabled !== undefined ? `, left disabled: ${r.leftDisabled.message}` : ""}\n`;
 
 /**
- * `capybara bootstrap [--dir <path>] [--manifest <path>]` (package ecosystem spec §7, startup
+ * `capybara bootstrap [--dir <path>] [--manifest <path>] [--extra-manifest <path>]` (package ecosystem spec §7, startup
  * bootstrap spec): installs the plugins the bootstrap manifest pins (default: the `bootstrap.json`
  * shipped with the kernel), each from a `*.tgz` of the offline directory whose sha512 matches
  * (`--dir`, else config `bootstrap.dir`, see {@link bootstrapDirOf}; it may be missing), else
@@ -55,7 +71,8 @@ const entryLine = (r: BootstrapEntryResult): string =>
  * context again and runs once more (a declarative entry's catalog files need the object store,
  * which on a fresh deployment is itself a bootstrap plugin installed by the first pass); the
  * `builtin` entries are left to that second pass, and one that still fails there is a warning like
- * an optional entry. Running
+ * an optional entry. The extra manifest (`--extra-manifest`, else config `bootstrap.extraManifest`) is
+ * merged into the built-in one first. Running
  * replicas pick the new install records up through `kernel.plugins.changed` (published by the
  * install and enable operations).
  *
@@ -64,46 +81,62 @@ const entryLine = (r: BootstrapEntryResult): string =>
  * `start` retries them), and the deployment can serve, as `capybara start` would (it refuses only
  * for required entries). Exit code 1 when a required entry fails, a package cannot be obtained
  * (missing, download failed, or not matching its pin: nothing is written then), or anything else
- * goes wrong.
+ * goes wrong, and when no extra manifest is given while the deployment has marketplaces an extra
+ * manifest manages or the last run took entries from one (another service or an earlier
+ * bootstrap ran with one; nothing is written).
  */
 export async function runBootstrap(
-  opts: { dir?: string; manifest?: string },
+  opts: { dir?: string; manifest?: string; extraManifest?: string },
   log: KernelLogger,
   env: NodeJS.ProcessEnv,
   io: BootstrapIo = { stdout: process.stdout, stderr: process.stderr },
 ): Promise<number> {
-  let manifest: Awaited<ReturnType<typeof readBootstrapManifest>>;
-  try {
-    manifest = await readBootstrapManifest(opts.manifest ?? BOOTSTRAP_MANIFEST_FILE);
-  } catch (e) {
-    io.stderr.write(`capybara: bootstrap failed: ${errMsg(e)}\n`);
-    return 1;
-  }
-  const sha = bootstrapManifestSha256(manifest);
+  // Read inside the opened context: the extra manifest's default is a config key
+  let sha = "";
   const pass = (carry?: BootstrapEntryResult[], packages?: ReadonlyMap<string, Uint8Array>) =>
     withOpened(
       log,
       env,
       (config) => openCatalogCli(config, log),
       async (cli) => {
+        const extraManifest = bootstrapExtraManifestOf(cli.config, opts.extraManifest);
+        // Without an extra manifest while one left traces (config-managed marketplaces, or entries
+        // the last run took from one), the run would strip the extra entries' required / builtin
+        // under the built-in manifest's sha: refused
+        if (extraManifest === undefined) {
+          const traces = await cli.bootstrap.extraManifestTraces();
+          if (hasExtraManifestTraces(traces)) return { mismatch: traces };
+        }
+        const manifest = await loadBootstrapManifest({
+          ...(opts.manifest !== undefined && { manifestFile: opts.manifest }),
+          ...(extraManifest !== undefined && { extraManifest }),
+        });
+        sha = bootstrapManifestSha256(manifest);
         if (carry === undefined && (await cli.bootstrap.isDone(sha))) return "done" as const;
         const dir = bootstrapDirOf(cli.config, opts.dir);
-        return (
-          await cli.bootstrap.run({
-            manifest,
-            dir,
-            imports: cli.imports,
-            ...(carry !== undefined && { carry }),
-            // What the first pass obtained is not downloaded again
-            ...(packages !== undefined && { packages }),
-            // The first pass opens no object store a builtin entry's skills need: the second does
-            deferBuiltin: carry === undefined,
-          })
-        ).results;
+        try {
+          return (
+            await cli.bootstrap.run({
+              // git entries are read from their marketplace (no marketplace row needed)
+              manifest,
+              dir,
+              imports: cli.imports,
+              ...(carry !== undefined && { carry }),
+              // What the first pass obtained is not downloaded again
+              ...(packages !== undefined && { packages }),
+              // The first pass opens no object store a builtin entry's skills need: the second does
+              deferBuiltin: carry === undefined,
+            })
+          ).results;
+        } catch (e) {
+          // The step's own check under the lock: a kernel with the extra manifest synced after ours
+          if (e instanceof BootstrapExtraMismatchError) return { mismatch: e.traces };
+          throw e;
+        }
       },
     );
   try {
-    let results: BootstrapEntryResult[] | "done";
+    let results: BootstrapEntryResult[] | "done" | { mismatch: ExtraManifestTraces };
     try {
       results = await pass();
     } catch (e) {
@@ -129,6 +162,12 @@ export async function runBootstrap(
         );
         return 0;
       }
+    }
+    if (typeof results === "object" && "mismatch" in results) {
+      io.stderr.write(
+        `capybara: bootstrap: ${missingExtraManifestMessage(results.mismatch)}; refusing to run the bootstrap step\n`,
+      );
+      return 1;
     }
     if (results === "done") {
       io.stdout.write(

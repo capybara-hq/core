@@ -189,7 +189,9 @@ New keys in zh and en for the page, its actions, the SSO line, the size / type e
 ## 6. Conversation speaker
 
 A web conversation belongs to one person, so the user bubbles show no sender today. Under P3 the
-user bubble shows its **author's avatar (24)** at its side (my call) on the conversation page, the
+user bubble written by another person shows its **author's avatar (40)** at its side on the
+conversation page (the viewer's own messages show none: maintainer decision 2026-11-21, after the
+first cut drew one on every bubble), the
 only view that renders user bubbles (the trajectory viewer renders runs and steps, not messages;
 shares are snapshots of files, and the public share page is out, §3). In a shared conversation the
 author's name shows too when the author is not the viewer. The author is

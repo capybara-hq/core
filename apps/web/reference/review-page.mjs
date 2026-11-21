@@ -92,8 +92,8 @@ const GROUPS = [
     ],
   },
   {
-    title: "Mobile layout: compact shell, list-detail, sheet drag states",
-    components: ["bottom-nav", "top-bar", "list-detail", "me-panel", "sheet"],
+    title: "Mobile layout: list-detail, sheet drag states",
+    components: ["list-detail", "sheet"],
   },
 ];
 const COMPONENTS = GROUPS.flatMap((g) => g.components);

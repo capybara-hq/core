@@ -80,12 +80,12 @@ describe("findCompactViolations (the rule set itself, red first)", () => {
     expect(found()[1]).toBe("unnamed-control: <button>");
   });
 
-  it("the shell top bar's back counts only while it is pushed", () => {
+  it("the shell floating row's back counts only while it leads with back", () => {
     const shell = (pushed: boolean) => (
       <div className="cb-shell">
-        <header data-part="top-bar" data-pushed={pushed ? "true" : "false"}>
-          <button type="button" data-part="back" aria-label="返回" />
-        </header>
+        <div data-part="floating-bar" data-lead={pushed ? "back" : "menu"}>
+          <button type="button" aria-label={pushed ? "返回" : "打开菜单"} />
+        </div>
         <section data-part="list-detail" aria-label="收件箱" />
       </div>
     );
@@ -135,10 +135,6 @@ describe("the real components at the compact width have no violation", () => {
           sidebar={SIDEBAR}
           status={{ context: "grant@acme:/", version: "0.1.0" }}
           pathname="/inbox"
-          bottomNav={[
-            { id: "inbox", label: "收件箱", href: "/inbox", icon: "inbox" },
-            { id: "agents", label: "智能体", href: "/agents", icon: "agent" },
-          ]}
         >
           <InboxPage
             header={{ path: [{ label: "收件箱" }], title: "收件箱" }}

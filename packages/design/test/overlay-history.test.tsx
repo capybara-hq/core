@@ -181,27 +181,191 @@ describe("useOverlayHistory", () => {
     await waitFor(() => expect(back).toHaveBeenCalledTimes(1));
   });
 
-  // I3: a pick that navigates must not pop: the router's push is still pending when the drawer
-  // closes, and a traversal queued now would run after the push and land on the wrong entry.
-  it("a pick closes the drawer without popping its entry", async () => {
-    function Pick() {
-      const [open, setOpen] = useState(true);
+  // A link pick pops the drawer's entry first and navigates after the pop (mobile touch plan
+  // Task 28): the router's push would otherwise still be pending when the traversal runs, so the
+  // pick could not pop at all and left a stale entry (an extra back step to the same page).
+  function Pick({ onNavigate }: { onNavigate?: (href: string) => void }) {
+    const [open, setOpen] = useState(true);
+    return (
+      <DesignProvider locale="en">
+        <Drawer
+          open={open}
+          onOpenChange={setOpen}
+          label="Menu"
+          {...(onNavigate ? { onNavigate } : {})}
+        >
+          <a href="/next" data-drawer-pick="true">
+            go
+          </a>
+          <a href="/new-tab" target="_blank" rel="noreferrer">
+            tab
+          </a>
+        </Drawer>
+      </DesignProvider>
+    );
+  }
+
+  it("a link pick pops the drawer's entry, then navigates after the pop", async () => {
+    history.replaceState(null, "", "/prev");
+    history.pushState(null, "", "/");
+    const visits: { href: string; marker: unknown; path: string }[] = [];
+    const onNavigate = vi.fn((href: string) =>
+      visits.push({ href, marker: markerOf(), path: location.pathname }),
+    );
+    render(<Pick onNavigate={onNavigate} />);
+    expect(typeof markerOf()).toBe("string");
+    await userEvent.click(screen.getByText("go"));
+    await waitFor(() => expect(hasDrawer()).toBe(false));
+    await waitFor(() => expect(onNavigate).toHaveBeenCalledTimes(1));
+    // navigated from the entry under the drawer's: one back goes to the previous page
+    expect(visits).toEqual([{ href: "/next", marker: undefined, path: "/" }]);
+    await settled();
+    expect(onNavigate).toHaveBeenCalledTimes(1);
+  });
+
+  it("a modified click or a new-tab link is the browser's own: no pop, no navigate", async () => {
+    const onNavigate = vi.fn();
+    render(<Pick onNavigate={onNavigate} />);
+    const back = vi.spyOn(history, "back");
+    const go = vi.spyOn(history, "go");
+    const tab = screen.getByText("tab");
+    tab.addEventListener("click", (e) => e.preventDefault());
+    await userEvent.click(tab);
+    await settled();
+    expect(onNavigate).not.toHaveBeenCalled();
+    expect(go).not.toHaveBeenCalled();
+    // the drawer still closes on the pick and pops its entry the ordinary way
+    await waitFor(() => expect(hasDrawer()).toBe(false));
+    await waitFor(() => expect(back).toHaveBeenCalledTimes(1));
+    await waitFor(() => expect(markerOf()).toBeUndefined());
+    await settled();
+  });
+
+  it("a pick in a sheet over the drawer pops both entries in one step, then navigates", async () => {
+    history.replaceState(null, "", "/");
+    function Stack({ onNavigate }: { onNavigate: (href: string) => void }) {
+      const [drawer, setDrawer] = useState(true);
+      const [sheet, setSheet] = useState(false);
       return (
         <DesignProvider locale="en">
-          <Drawer open={open} onOpenChange={setOpen} label="Menu">
-            <a href="/next" data-drawer-pick="true" onClick={(e) => e.preventDefault()}>
-              go
-            </a>
+          <Drawer open={drawer} onOpenChange={setDrawer} label="Menu" onNavigate={onNavigate}>
+            <button type="button" onClick={() => setSheet(true)}>
+              open-sheet
+            </button>
+            <BottomSheet open={sheet} onOpenChange={setSheet} title="Account">
+              <a href="/account/profile" data-drawer-pick="true">
+                settings
+              </a>
+            </BottomSheet>
           </Drawer>
         </DesignProvider>
       );
     }
+    const onNavigate = vi.fn((_href: string) => markerOf());
+    render(<Stack onNavigate={onNavigate} />);
+    const drawerEntry = markerOf();
+    await userEvent.click(screen.getByText("open-sheet"));
+    expect(markerOf()).not.toBe(drawerEntry);
+    const go = vi.spyOn(history, "go");
+    await userEvent.click(screen.getByText("settings"));
+    await waitFor(() => expect(onNavigate).toHaveBeenCalledWith("/account/profile"));
+    expect(onNavigate.mock.results[0]?.value).toBeUndefined();
+    expect(go).toHaveBeenCalledWith(-2);
+    await waitFor(() => expect(hasDrawer()).toBe(false));
+    expect(hasSheet()).toBe(false);
+  });
+
+  it("without onNavigate a link pick closes the drawer and leaves its entry", async () => {
     render(<Pick />);
     const back = vi.spyOn(history, "back");
+    screen.getByText("go").addEventListener("click", (e) => e.preventDefault());
     await userEvent.click(screen.getByText("go"));
     await waitFor(() => expect(hasDrawer()).toBe(false));
     await settled();
     expect(back).not.toHaveBeenCalled();
+  });
+
+  // T27 review (Important): a button pick usually navigates in the same tick (a router push); a
+  // back() queued then would win over the push and lose the navigation. It leaves its entry, unless
+  // it is marked to stay on the page (`data-drawer-pick="stay"`), which pops as usual.
+  it("a button pick leaves the drawer's entry: no back() races its navigation", async () => {
+    const pushed: string[] = [];
+    function ButtonPick() {
+      const [open, setOpen] = useState(true);
+      return (
+        <DesignProvider locale="en">
+          <Drawer open={open} onOpenChange={setOpen} label="Menu" onNavigate={() => {}}>
+            <button
+              type="button"
+              data-drawer-pick="true"
+              onClick={() => {
+                // a router's push commits later than the click (Next pushes in a transition)
+                setTimeout(() => {
+                  pushed.push("/c/new");
+                  history.pushState(null, "", "/c/new");
+                }, 0);
+              }}
+            >
+              new
+            </button>
+          </Drawer>
+        </DesignProvider>
+      );
+    }
+    history.replaceState(null, "", "/");
+    render(<ButtonPick />);
+    const back = vi.spyOn(history, "back");
+    const go = vi.spyOn(history, "go");
+    await userEvent.click(screen.getByText("new"));
+    await waitFor(() => expect(hasDrawer()).toBe(false));
+    await waitFor(() => expect(pushed).toEqual(["/c/new"]));
+    await settled();
+    expect(back).not.toHaveBeenCalled();
+    expect(go).not.toHaveBeenCalled();
+    expect(location.pathname).toBe("/c/new");
+  });
+
+  it('a button pick marked data-drawer-pick="stay" pops its entry as a close does', async () => {
+    function StayPick() {
+      const [open, setOpen] = useState(true);
+      return (
+        <DesignProvider locale="en">
+          <Drawer open={open} onOpenChange={setOpen} label="Menu">
+            <button type="button" data-drawer-pick="stay">
+              stay
+            </button>
+          </Drawer>
+        </DesignProvider>
+      );
+    }
+    render(<StayPick />);
+    const back = vi.spyOn(history, "back");
+    await userEvent.click(screen.getByText("stay"));
+    await waitFor(() => expect(hasDrawer()).toBe(false));
+    await waitFor(() => expect(back).toHaveBeenCalledTimes(1));
+    await waitFor(() => expect(markerOf()).toBeUndefined());
+    await settled();
+  });
+
+  // T28 review: a traversal whose popstate never comes (a count past the real stack, a browser
+  // quirk) must not lose the pick nor leave a pending self-pop that swallows the next real back.
+  it("a pick still navigates when the pop's popstate never comes, and the next back still closes", async () => {
+    history.replaceState(null, "", "/");
+    const onNavigate = vi.fn();
+    render(<Pick onNavigate={onNavigate} />);
+    const back = vi.spyOn(history, "back").mockImplementation(() => {});
+    await userEvent.click(screen.getByText("go"));
+    expect(back).toHaveBeenCalledTimes(1);
+    await waitFor(() => expect(onNavigate).toHaveBeenCalledWith("/next"));
+    back.mockRestore();
+    cleanup();
+    // a real back after that closes the next overlay (no stale self-pop count swallows it)
+    render(<Overlays />);
+    await userEvent.click(screen.getByText("open-drawer"));
+    act(() => history.back());
+    await waitFor(() => expect(hasDrawer()).toBe(false));
+    await settled();
+    expect(onNavigate).toHaveBeenCalledTimes(1);
   });
 
   it("the back after an orphaned pick entry still closes the next drawer first", async () => {

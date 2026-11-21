@@ -1,5 +1,85 @@
 # @capybara-hq/web
 
+## 0.1.0-rc.80
+
+### Patch Changes
+
+- ae15bfd: Sign-in page titles use the prose font, and the desktop / mobile sign-in confirmation asks a shorter
+  question ("在桌面端登录 {platform}？"); the machine stays in the details list.
+- 94adb43: Commands, links and codes to copy are one code line with the copy button inside it (`CopyCode`);
+  the button shows 已复制 for two seconds, and without a clipboard the value is selected with a line
+  saying to copy it by hand. The device connect steps, the invitation link, a channel's callback
+  address, a connector's OAuth callback, the share link and the GitHub device code use it.
+- 8c0ca79: Desktop app: the web runs to the window's top edge. The traffic lights sit in the sidebar's brand
+  row, centred on it, and the conversation title bar shares that row; no empty band above the page.
+- Updated dependencies [8c0ca79]
+  - @capybara-hq/design@0.2.0-rc.28
+
+## 0.1.0-rc.79
+
+No changes in this release.
+
+## 0.1.0-rc.78
+
+### Patch Changes
+
+- 7c22f02: The viewer's own messages show no avatar beside the bubble; a message another person wrote keeps
+  its author's circle.
+
+## 0.1.0-rc.77
+
+### Minor Changes
+
+- f316cf8: Chat-first compact shell (design): no top bar and no bottom navigation below 600; a floating row
+  with the menu button (pending inbox count) on chat surfaces and back on pushed pages; the drawer
+  (`NavDrawer`: search, sections, the 技能、连接器、设备… level, recent conversations, account and new
+  conversation) and the `AccountSheet`; the conversation title bar's compact form (centre pill,
+  trailing overflow); the thread's bottom reserve follows the floating composer's measured height;
+  the composer's settings sheet closes on the system back first.
+- 7136000: Chat-first compact navigation; the Me page is retired. The home and a conversation are chat
+  surfaces (menu button with the inbox count), every other page is pushed (back). The drawer holds
+  收件箱 (with its count), 智能体 and 定时任务, the 技能、连接器、设备… level (with the org's extension
+  pages), the recent conversations, 全部会话, the account sheet (org switcher, personal settings,
+  appearance, status, sign out) and 新会话; management pages are not in it. A drawer pick pops its
+  history entry before it navigates, so one back returns to the page before. `/me` is gone (404),
+  the PWA starts at `/`, and the design's `BottomNav`, `TopBar` and `MePanel` are removed.
+- 7a8c38f: Management pages are desktop-only on touch. Plugins, extensions, channels, organization settings,
+  evals and runs, and the admin console show 「请在电脑上管理」 (the page's URL, 复制链接, 回到对话) on a
+  touch device instead of the page, whose queries do not run there; their sidebar entries and palette
+  commands are hidden on touch. Desktop and wide windows with a fine pointer are unchanged.
+- 9cf373b: Inside the mobile app on the iPhone Duo the web hands the native strip its sections (`nav@1`: 对话,
+  收件箱 with the pending count, 智能体, 定时任务), follows its taps without a slide, opens the drawer
+  from the strip's menu button and hides its own section entries and menu button while the strip
+  shows. The account sheet and menu offer 「切换平台」 through `profiles@1`, and downloads in a shell
+  with `openExternal@1` open in the system browser.
+
+### Patch Changes
+
+- 82e5a16: The page ground, the action row and the composer run edge to edge under the iPhone Duo's strip;
+  their content ends before it (`--cb-inset-right`).
+
+## 0.1.0-rc.76
+
+### Minor Changes
+
+- 0f951f6: Add the 通知 / Notifications personal settings page (push devices and the four category switches), the in-context push prompt for shells that offer `push@1`, sign-out that forgets the install's push registration, and `?org=` on app links that switches the current org.
+- 12a6582: Add the setup guide place `extension-deployment`: a plugin's guide on the super admin's extension
+  page whose checks get the extension's platform deployment config (`SetupCheckTarget` kind
+  `extension-deployment`; `SetupCheckArgs.orgId` is now `string | null`, null for this place). The
+  `fake-push` fixture ships such a guide with the check `fake-push-key`. The kernel serves these guides
+  and runs their checks on super admin routes (`/api/v1/admin/extensions/:name/guides…`) and the
+  `extensions.platform-guides`, `extensions.platform-check-status` and `extensions.platform-check`
+  Platform operations; the web shows them with live check rows on the extension's config tab.
+
+### Patch Changes
+
+- 0ecdba4: The author circle beside a user message is 40 px, as tall as a one-line bubble (was 24).
+- 783f457: The shell no longer schedules a React update from inside Next's history insertion effect
+  ("useInsertionEffect must not schedule updates" in development) when it counts in-app history.
+- Updated dependencies [0ecdba4]
+- Updated dependencies [783f457]
+  - @capybara-hq/design@0.2.0-rc.27
+
 ## 0.1.0-rc.75
 
 ### Patch Changes

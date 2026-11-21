@@ -54,6 +54,8 @@ const PAGES = [
   // file sharing: the HTML document frame, the copy field and the shared file page (T14)
   "html-frame",
   "copy-field",
+  // the one line people copy (spec §6.58)
+  "copy-code",
   "shared-file-page",
   // the role pass: no-access state, danger zone, secret reveal
   "roles",
@@ -100,11 +102,8 @@ const PAGES = [
   "schedule-calendar",
   // a device's head and its two modes (auto mode design §4, plan Task 10)
   "device-nameplate",
-  // the mobile and foldable layout: the compact shell, the list-detail region, the sheet drag states
-  "bottom-nav",
-  "top-bar",
+  // the mobile and foldable layout: the list-detail region, the sheet drag states
   "list-detail",
-  "me-panel",
   "sheet",
 ];
 const THEMES = ["dark", "light"] as const;

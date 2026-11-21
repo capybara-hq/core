@@ -15,10 +15,13 @@ import {
   useHapticsCapability,
   useMenuCapability,
   useNativeHandlers,
+  useNativeNavHandle,
   useNotifyCapability,
+  useProfilesCapability,
   useShareCapability,
   useShellCapability,
   useSignInCapability,
+  useSwitchProfile,
 } from "../src/lib/shell";
 
 /** A fake shell whose capabilities a test changes, announcing them with `change`. */
@@ -409,6 +412,75 @@ describe("the mobile capability accessors", () => {
     await new Promise((r) => setImmediate(r));
     process.off("unhandledRejection", unhandled);
     expect(impact).toHaveBeenCalledWith("selection");
+    expect(unhandled).not.toHaveBeenCalled();
+  });
+});
+
+describe("the nav@1 and profiles@1 accessors", () => {
+  const unhandledDuring = async (fn: () => void) => {
+    const unhandled = vi.fn();
+    process.on("unhandledRejection", unhandled);
+    fn();
+    await Promise.resolve();
+    await new Promise((r) => setImmediate(r));
+    process.off("unhandledRejection", unhandled);
+    return unhandled;
+  };
+
+  it("useNativeNavHandle is undefined without nav@1 and swallows a rejected or throwing set", async () => {
+    const seen: (ReturnType<typeof useNativeNavHandle> | null)[] = [];
+    function H() {
+      seen.push(useNativeNavHandle() ?? null);
+      return null;
+    }
+    const f = fakeShell();
+    install(f.shell);
+    const view = render(<H />);
+    expect(seen.at(-1)).toBeNull();
+    const set = vi.fn(() => Promise.reject(new Error("no strip")));
+    const off = vi.fn();
+    const nav = { set, onSelect: vi.fn(() => off), onMenu: vi.fn(() => off) };
+    act(() => f.change({ "nav@1": nav }));
+    const handle = seen.at(-1);
+    expect(handle).toBeTruthy();
+    const state = { items: [{ id: "chats" as const, label: "对话" }], current: null, menu: null };
+    const unhandled = await unhandledDuring(() => handle?.set(state));
+    expect(set).toHaveBeenCalledWith(state);
+    expect(unhandled).not.toHaveBeenCalled();
+    set.mockImplementation(() => {
+      throw new Error("gone");
+    });
+    expect(() => handle?.set(state)).not.toThrow();
+    // the listeners pass through
+    const l = () => {};
+    expect(handle?.onSelect(l)).toBe(off);
+    expect(handle?.onMenu(l)).toBe(off);
+    expect(nav.onSelect).toHaveBeenCalledWith(l);
+    // a rerender keeps the handle while the capability object stays
+    const before = seen.at(-1);
+    view.rerender(<H />);
+    expect(seen.length).toBeGreaterThan(2);
+    expect(seen.at(-1)).toBe(before);
+  });
+
+  it("useSwitchProfile is undefined without profiles@1; it calls show() and swallows a rejection", async () => {
+    const seen: (ReturnType<typeof useSwitchProfile> | null)[] = [];
+    const caps: unknown[] = [];
+    function H() {
+      caps.push(useProfilesCapability());
+      seen.push(useSwitchProfile() ?? null);
+      return null;
+    }
+    const f = fakeShell();
+    install(f.shell);
+    render(<H />);
+    expect(seen.at(-1)).toBeNull();
+    expect(caps.at(-1)).toBeUndefined();
+    const show = vi.fn(() => Promise.reject(new Error("busy")));
+    act(() => f.change({ "profiles@1": { show } }));
+    expect(caps.at(-1)).toEqual({ show });
+    const unhandled = await unhandledDuring(() => seen.at(-1)?.());
+    expect(show).toHaveBeenCalledTimes(1);
     expect(unhandled).not.toHaveBeenCalled();
   });
 });

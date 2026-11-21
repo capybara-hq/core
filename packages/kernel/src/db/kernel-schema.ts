@@ -2484,6 +2484,10 @@ export interface MarketplacesTable {
   skipped: ColumnType<{ name: string; reason: string }[], string | undefined, string>;
   /** 0101: the git commit whose repository-path icons were last stored completely. */
   icons_commit: ColumnType<string | null, string | null | undefined, string | null>;
+  /** 0169: `config` when the deployment config (bootstrap.extraManifest) owns the row. */
+  managed: ColumnType<"config" | null, "config" | null | undefined, "config" | null>;
+  /** 0169: the Basic auth username sent with the git token (null: x-access-token). */
+  username: ColumnType<string | null, string | null | undefined, string | null>;
 }
 
 /**

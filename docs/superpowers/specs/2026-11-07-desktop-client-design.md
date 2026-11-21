@@ -458,7 +458,8 @@ account that signs in but belongs to no org lands in the main window on the web'
 - After sign-in the small window closes and the profile's main window opens on `/`. The main
   window is freely resizable and remembers its size and position per profile (first 1280×800,
   centered; a saved position that is off every display is centered again).
-- It keeps the existing drag regions (sidebar head, top bar, conversation title bar, in design
+- It has no title bar band: the web runs to the top edge and the traffic lights sit in its top
+  row (§7.3). It keeps the drag regions (sidebar head, top bar, conversation title bar, in design
   CSS) and the traffic-light clearance through the Shell environment's `controls` rectangle
   (§7.3); later Windows builds report their caption buttons the same way.
 
@@ -570,15 +571,59 @@ values:
 | `kind` | `"desktop"` |
 | `platform` | `"macos"` (later `"windows"`, `"linux"`) |
 | `shellVersion` | The app's version |
-| `insets` | macOS with `titleBarStyle: "hiddenInset"`: `top` 28 (the title bar band holding the traffic lights at their default position), `right` / `bottom` / `left` 0. In fullscreen: `top` 0, announced with `change` |
-| `controls` | macOS: the traffic lights' rectangle at the app's fixed `trafficLightPosition`, including their margins: `{ x: 0, y: 0, width: 80, height: 28 }` (exact values measured once on the built window, **designer's call**); `null` in fullscreen, announced with `change`. Later Windows / Linux builds report their title-bar overlay buttons the same way |
+| `insets` | The main window: all 0 (no title bar band: the web runs to the window's top edge, amended 2026-11-21). In fullscreen also 0 |
+| `controls` | macOS main window (`titleBarStyle: "hidden"`): the traffic lights' rectangle from the window's top-left corner, as high as the web's top row, the lights vertically centred in it at the app's fixed `trafficLightPosition`: `{ x: 0, y: 0, width: 92, height: 48 }` with the lights (60 wide, 14 high on current macOS) at `{ x: 16, y: 17 }` (48 is design's `layout.title-bar`, the conversation title bar's height; exact values checked on the built window, **designer's call**); `null` in fullscreen, announced with `change`. Later Windows / Linux builds report their title-bar overlay buttons the same way (a `titleBarOverlay` as high as the row, the rectangle at the window's right edge, re-announced when the width changes) |
 | `capabilities` | `notify@1`, `openExternal@1` and `signIn@1` always; `chrome@1` (mobile layout §9.2: window background, title bar and the local pages follow the theme and its color tokens, §6.10); `device@1` when 「连接本机」 is available: macOS or Linux, not turned off by managed configuration, and the deployment's `/api/v1/meta` says `localDevices` with a `device` range the bundled program speaks |
 
-The AppShell clears the window controls from `--cb-shell-controls-*` (mobile layout §9.3); no
-geometry is keyed on `data-shell-platform`. The desktop's remaining choice, realized in design CSS
-**(designer's call)**: the sidebar head, the top bar and the conversation title bar are drag
-regions, every interactive element in them `no-drag`. The shell adds no drag regions of its own
-to the web; its local pages carry their own (the top band, §6.1).
+**The top row (maintainer decision 2026-11-21).** There is no
+separate title bar band above the web, as in other desktop chat apps: the sidebar runs to the
+window's top edge and the traffic lights sit in its brand row, centred on it; the content
+column's first row is the same row. The row's height is the controls rectangle's height, so the
+shell decides it once (48, design's `layout.title-bar`) and the web follows what is reported. All
+of it lives in design CSS and the templates (the AppShell, the Sidebar, the conversation title
+bar, the PageHeader, the SharedFilePage), never in a page; no geometry is keyed on
+`data-shell-platform`. The reserved areas are the controls rectangle: on the start side (macOS
+lights, 92 × 48) and on the end side (a Windows caption overlay, 138 × the row, once Windows
+reports it).
+
+- **Brand and lights.** The full sidebar's brand row is lights, the brand mark, a drag filler and
+  the tools (search, inbox, collapse): the wordmark gives way while the lights are there (with it
+  the tools ran past the 256 sidebar) and returns in fullscreen; a theme's own brand shrinks
+  before the tools do. The rail (medium, or collapsed) is narrower than the lights: its top row is
+  the lights' row and its mark moves to the row below. Below 600 the floating row is the top row
+  and starts after the lights.
+- **The content column's top row** is the conversation title bar (48) or a template head's path
+  row (as high as the row, centred on it; the title row follows `layout.head-path` below). Past a
+  rail both start after the controls (the title bar at the rectangle's edge plus `space.3`, the
+  path row likewise, which also fixes a breadcrumb that sat 4 px from the lights). Their end keeps
+  clear of end controls: the title bar's right-side toggles (properties, panels, more), a
+  title-less head's actions on the path row, the shared file page's download; an open side panel
+  starts below the end controls instead, the strip above it a drag filler. Every other
+  right-side control of a template (a page head's actions, the tab row's search) is below the top
+  row.
+- **Overlays** on the controls' side start below the row: the rail's conversations sheet and the
+  compact drawer under the lights, the end-edge sheets under end controls, the image viewer under
+  either; centred dialogs and the palette need nothing.
+- **Drag regions.** A drag region swallows every mouse event over it, whatever is stacked above,
+  and a control inside one cannot be used: so only dedicated empty fillers drag, never a container
+  holding controls. The templates draw a `DragFill` (an empty flex spacer, `aria-hidden`) between
+  a top row's controls: the brand row, the title bar, the page head's path row, the shared file
+  page's bar; the AppShell draws one over the controls rectangle (`.cb-shell-band`), which every
+  row there keeps empty. While any overlay is open (a menu, popover, tooltip, toast, dialog,
+  sheet, palette, drawer) no filler drags, so an overlay landing over one stays clickable and
+  hoverable and the window does not move under a modal. Double-clicking a filler does what the
+  title bar does (macOS: zoom or minimize as System Settings say; Windows: maximize); a
+  right-click on one shows no web menu (Windows may show the window menu). Below 600 the floating
+  row's gap is a filler on a pushed page; on a chat surface the title pill lies over it, so it does
+  not drag there, and the controls area reaches to just before the row's first control (a window
+  with its controls at the end keeps a strip at its start edge to drag by). A design test checks that drag regions are only the fillers and that every filler is
+  empty. The shell adds no drag regions of its own to the web; its local pages carry their own
+  (the top band, §6.1: an empty band element, the controls rectangle in it `no-drag`).
+
+Versions meet in either order: an older shell reports `top` 28 and a 28 high rectangle, which
+lies inside the band, so a newer web keeps the band and reserves nothing past it; a newer shell
+on an older web gets a 48 high band (the older web's band reaches the controls' bottom) with the
+lights centred in it.
 
 ### 7.4 Shell dialogs (decided 2026-11-20; window details designer's calls)
 

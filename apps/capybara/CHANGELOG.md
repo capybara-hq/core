@@ -1,5 +1,53 @@
 # @capybara-hq/capybara
 
+## 0.1.0-rc.80
+
+### Minor Changes
+
+- 59e2551: Merge the extra bootstrap manifest into the built-in one at start and in `capybara bootstrap` (`--extra-manifest`, else `bootstrap.extraManifest`), and sync its marketplaces.
+- 8416855: Apply the extra bootstrap manifest's `defaultTheme` as the platform default theme at every start while the `uiTheme` setting is still the seed (a super admin's choice is never reset); the dual-replica harness takes `bootstrap.extraManifest`.
+
+### Patch Changes
+
+- Updated dependencies [56af2e0]
+- Updated dependencies [b491e2a]
+- Updated dependencies [24fa482]
+- Updated dependencies [59e2551]
+- Updated dependencies [8416855]
+- Updated dependencies [13369a0]
+  - @capybara-hq/kernel@0.1.0-rc.63
+
+## 0.1.0-rc.79
+
+### Patch Changes
+
+- c93db41: Bootstrap and the compose sandbox profile move to sandbox-docker 0.1.0-rc.21, whose image stages the
+  current SDK runtime: with rc.20 a current kernel refused every cloud device with "The staged
+  native-files.py does not match its digest".
+
+## 0.1.0-rc.78
+
+No changes in this release.
+
+## 0.1.0-rc.77
+
+### Patch Changes
+
+- Updated dependencies [8453226]
+  - @capybara-hq/kernel@0.1.0-rc.62
+
+## 0.1.0-rc.76
+
+### Minor Changes
+
+- 946c9eb: `capybara secrets rewrap` also rewraps sealed push tokens and prints their count.
+
+### Patch Changes
+
+- Updated dependencies [33074e1]
+- Updated dependencies [12a6582]
+  - @capybara-hq/kernel@0.1.0-rc.61
+
 ## 0.1.0-rc.75
 
 No changes in this release.

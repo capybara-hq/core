@@ -785,13 +785,13 @@ describe("SetupPage (the guided setup layout)", () => {
     expect(screen.queryByRole("dialog")).toBeNull();
   });
 
-  it("the compact top bar pushes the steps as a page of their own; back closes it", async () => {
+  it("the compact floating row pushes the steps as a page of their own; back closes it", async () => {
     window.history.replaceState(null, "", "/setup");
-    zh(<SetupPage sidebar={sidebar} status={status} title="开始之前" />);
-    const bar = document.querySelector('[data-part="top-bar"]') as HTMLElement;
-    expect(bar.querySelector('[aria-label="打开导航"]')).toBeNull();
+    zh(<SetupPage sidebar={sidebar} status={status} />);
+    const bar = document.querySelector('[data-part="floating-bar"]') as HTMLElement;
+    expect(bar.querySelector('[aria-label^="打开菜单"]')).toBeNull();
     expect(bar.querySelector('[aria-label^="搜索"]')).toBeNull();
-    expect(bar.getAttribute("data-pushed")).toBe("false");
+    expect(bar.getAttribute("data-lead")).toBe("steps");
     expect(document.querySelector('[data-part="setup-steps"]')).toBeNull();
     await userEvent.click(within(bar).getByRole("button", { name: "步骤" }));
     expect(window.location.hash).toBe("#steps");
@@ -800,7 +800,7 @@ describe("SetupPage (the guided setup layout)", () => {
     expect(within(steps).getAllByRole("link").length).toBeGreaterThan(1);
     // the setup home is hidden while the steps page is open, and the shell shows back
     expect(document.querySelector(".cb-setup-body")?.getAttribute("data-steps-open")).toBe("true");
-    expect(bar.getAttribute("data-pushed")).toBe("true");
+    expect(bar.getAttribute("data-lead")).toBe("back");
     await userEvent.click(within(bar).getByRole("button", { name: "返回" }));
     await vi.waitFor(() => expect(document.querySelector('[data-part="setup-steps"]')).toBeNull());
     expect(window.location.hash).toBe("");

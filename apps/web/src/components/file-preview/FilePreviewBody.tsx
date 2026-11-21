@@ -330,8 +330,8 @@ export function FilePreviewBody({
   } else if (p?.kind === "view" && data.view) {
     content = <UiViewRenderer view={data.view} onAction={async () => {}} />;
   } else if (builtin === "image") {
-    const open = (url: string) =>
-      conv ? openDownload(url) : window.open(url, "_blank", "noopener,noreferrer");
+    // a share link needs no session (it opens as is); a conversation's file does
+    const open = (url: string) => openDownload(url, conv ? {} : { public: true });
     content = (
       <PanelImage
         key={fileId}

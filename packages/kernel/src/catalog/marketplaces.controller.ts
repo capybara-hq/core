@@ -94,6 +94,7 @@ export class MarketplacesController {
         ...(body.ref !== undefined && { ref: body.ref }),
         ...(body.mirrors !== undefined && { mirrors: body.mirrors }),
         ...(body.token !== undefined && { token: body.token }),
+        ...(body.username !== undefined && { username: body.username }),
       },
       actorOpts(actor),
     );
@@ -145,7 +146,8 @@ export class MarketplacesController {
 
   /**
    * Updates a marketplace (official only takes `enabled`, anything else -> 409
-   * `marketplace.builtin`; `token: null` clears the token).
+   * `marketplace.builtin`; a config-managed one likewise -> 409 `marketplace.config_managed`;
+   * `token: null` clears the token, `username: null` or `""` the username).
    */
   @Patch(":id")
   update(
@@ -165,6 +167,7 @@ export class MarketplacesController {
         ...(body.mirrors !== undefined && { mirrors: body.mirrors }),
         ...(body.enabled !== undefined && { enabled: body.enabled }),
         ...(body.token !== undefined && { token: body.token }),
+        ...(body.username !== undefined && { username: body.username }),
       },
       actorOpts(actor),
     );
@@ -172,7 +175,7 @@ export class MarketplacesController {
 
   /**
    * Deletes a custom marketplace (imported catalog items are kept); official -> 409
-   * `marketplace.builtin`.
+   * `marketplace.builtin`, config-managed -> 409 `marketplace.config_managed`.
    */
   @Delete(":id")
   @HttpCode(204)

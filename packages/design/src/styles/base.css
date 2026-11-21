@@ -206,7 +206,7 @@ body {
 .cb-ref-block[data-pad="true"] {
   padding: var(--cb-space-4);
 }
-/* A compact screen in a reference block: the top bar, the body filling the rest, the bottom bar. */
+/* A compact screen in a reference block: the top row, the body filling the rest, the bottom row. */
 .cb-ref-screen {
   display: flex;
   flex-direction: column;

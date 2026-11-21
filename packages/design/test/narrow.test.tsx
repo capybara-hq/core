@@ -172,12 +172,11 @@ describe("size-class widths in the stylesheets", () => {
     }
   });
 
-  it("the compact chrome (top bar, bottom navigation) is shown below 600 only", () => {
+  it("the compact chrome (the floating row) is shown below 600 only", () => {
     const shell = css("shell.css");
-    expect(decls(shell, ".cb-shell-topbar")).toContain("display: none;");
+    expect(decls(shell, ".cb-shell-float")).toContain("display: none;");
     const compact = media(shell, "(max-width: 599px)");
-    expect(decls(compact, ".cb-shell-topbar")).toContain("display: block;");
-    expect(decls(compact, ".cb-shell-bottomnav")).toContain("display: block;");
+    expect(decls(compact, ".cb-shell-float")).toContain("display: block;");
   });
 
   it("a short window hides the status bar on every class", () => {

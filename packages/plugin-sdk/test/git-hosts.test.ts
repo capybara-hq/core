@@ -1,8 +1,11 @@
 import { describe, expect, it } from "vitest";
 import {
   GIT_HOST_USERNAMES,
+  GIT_MARKETPLACE_USERNAME_DEFAULT,
+  GIT_USERNAME_RE,
   parseConnectorTemplateFile,
   parseGitSource,
+  suggestGitUsername,
   validateGitSource,
 } from "../src/index.js";
 
@@ -82,5 +85,25 @@ describe("connector template git field", () => {
     expect("errors" in good ? good.errors : []).toEqual([]);
     const bad = parseConnectorTemplateFile(file(ok("github.com:443")));
     expect("errors" in bad ? bad.errors.join("\n") : "").toContain("template.git.hosts.0.host");
+  });
+});
+
+describe("suggestGitUsername", () => {
+  it("suggests the username of a well-known host", () => {
+    expect(suggestGitUsername("github.com")).toBe("x-access-token");
+    expect(suggestGitUsername("acme.ghe.com")).toBe("x-access-token");
+    expect(suggestGitUsername("bitbucket.org")).toBe("x-token-auth");
+    expect(suggestGitUsername("gitlab.com")).toBe("oauth2");
+  });
+
+  it("has no suggestion for other hosts", () => {
+    expect(suggestGitUsername("gitee.com")).toBeUndefined();
+    expect(suggestGitUsername("ghe.com")).toBeUndefined();
+  });
+
+  it("exports the default username and the username pattern", () => {
+    expect(GIT_MARKETPLACE_USERNAME_DEFAULT).toBe("x-access-token");
+    expect(GIT_USERNAME_RE.test("x-token-auth")).toBe(true);
+    expect(GIT_USERNAME_RE.test("a b")).toBe(false);
   });
 });

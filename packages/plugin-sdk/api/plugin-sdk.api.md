@@ -210,6 +210,9 @@ export interface BindInstanceResult {
 }
 
 // @public
+export const BOOTSTRAP_EXTRA_MANIFEST_SCHEMA_VERSION = 1;
+
+// @public
 export const BOOTSTRAP_MANIFEST_SCHEMA_VERSION = 1;
 
 // @public
@@ -232,7 +235,50 @@ export type BootstrapEntry = {
 };
 
 // @public
+export type BootstrapExtraEntry = (Omit<Extract<BootstrapEntry, {
+    source: "npm";
+}>, "required"> & {
+    required?: boolean;
+}) | BootstrapGitEntry;
+
+// @public
+export interface BootstrapExtraManifest {
+    $schema?: string;
+    defaultTheme?: {
+        plugin: string;
+        theme: string;
+    };
+    marketplaces: BootstrapExtraMarketplace[];
+    plugins: BootstrapExtraEntry[];
+    schemaVersion: 1;
+}
+
+// @public
+export const BootstrapExtraManifestSchema: z.ZodType<BootstrapExtraManifest>;
+
+// @public
+export interface BootstrapExtraMarketplace {
+    name: string;
+    ref?: string;
+    url: string;
+    username?: string;
+}
+
+// @public
 export function bootstrapFileName(e: BootstrapEntry): string;
+
+// @public
+export interface BootstrapGitEntry {
+    builtin?: boolean;
+    commit: string;
+    integrity: string;
+    marketplace: string;
+    name: string;
+    path: string;
+    required?: boolean;
+    source: "git";
+    version: string;
+}
 
 // @public
 export interface BootstrapManifest {
@@ -1790,6 +1836,12 @@ export const GIT_HOSTS_LIMITS: {
 };
 
 // @public
+export const GIT_MARKETPLACE_USERNAME_DEFAULT = "x-access-token";
+
+// @public
+export const GIT_USERNAME_RE: RegExp;
+
+// @public
 export interface GitHostEntry {
     host: string;
     username: string;
@@ -2509,6 +2561,8 @@ export const MOBILE_SHELL_LIMITS: {
     readonly shareTitle: 256;
     readonly shareText: 4000;
     readonly url: 2048;
+    readonly navLabel: 32;
+    readonly navCount: 9999;
 };
 
 // @public
@@ -2892,6 +2946,13 @@ export type ParamValue = string | number | boolean;
 // @public
 export function parseAgentTemplate(text: string): {
     template: AgentTemplate;
+} | {
+    errors: string[];
+};
+
+// @public
+export function parseBootstrapExtraManifest(json: unknown): {
+    manifest: BootstrapExtraManifest;
 } | {
     errors: string[];
 };
@@ -3891,7 +3952,7 @@ export function sanitizeThemeSvg(bytes: Uint8Array): {
 };
 
 // @public
-export const SDK_VERSION = "0.1.0-rc.45";
+export const SDK_VERSION = "0.1.0-rc.48";
 
 // @public
 export function secret<T extends z.ZodTypeAny>(schema: T): T;
@@ -4228,6 +4289,9 @@ export interface SuggestedAppearance {
     replacements?: Record<string, string>;
     theme?: string;
 }
+
+// @public
+export function suggestGitUsername(host: string): string | undefined;
 
 // @public
 export const THEME_CONTRAST: readonly (readonly [fg: string, bg: string, floor: number, over?: string])[];

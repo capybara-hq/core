@@ -1,5 +1,46 @@
 # @capybara-hq/testing
 
+## 0.1.0-rc.31
+
+### Minor Changes
+
+- 8416855: Apply the extra bootstrap manifest's `defaultTheme` as the platform default theme at every start while the `uiTheme` setting is still the seed (a super admin's choice is never reset); the dual-replica harness takes `bootstrap.extraManifest`.
+
+### Patch Changes
+
+- Updated dependencies [56af2e0]
+- Updated dependencies [09a0bc5]
+- Updated dependencies [b491e2a]
+- Updated dependencies [24fa482]
+- Updated dependencies [59e2551]
+- Updated dependencies [8416855]
+- Updated dependencies [13369a0]
+  - @capybara-hq/kernel@0.1.0-rc.63
+  - @capybara-hq/plugin-sdk@0.1.0-rc.48
+  - @capybara-hq/plugin-tools@0.1.0-rc.18
+
+## 0.1.0-rc.30
+
+### Minor Changes
+
+- 12a6582: Add the setup guide place `extension-deployment`: a plugin's guide on the super admin's extension
+  page whose checks get the extension's platform deployment config (`SetupCheckTarget` kind
+  `extension-deployment`; `SetupCheckArgs.orgId` is now `string | null`, null for this place). The
+  `fake-push` fixture ships such a guide with the check `fake-push-key`. The kernel serves these guides
+  and runs their checks on super admin routes (`/api/v1/admin/extensions/:name/guides…`) and the
+  `extensions.platform-guides`, `extensions.platform-check-status` and `extensions.platform-check`
+  Platform operations; the web shows them with live check rows on the extension's config tab.
+- c2cf4bb: Add the `fake-push` fixture extension (`push-provider@1`, scripted by the token prefix) and `describePushProviderConformance`, the conformance suite for push providers.
+
+### Patch Changes
+
+- Updated dependencies [a007fee]
+- Updated dependencies [33074e1]
+- Updated dependencies [12a6582]
+  - @capybara-hq/plugin-sdk@0.1.0-rc.46
+  - @capybara-hq/kernel@0.1.0-rc.61
+  - @capybara-hq/plugin-tools@0.1.0-rc.17
+
 ## 0.1.0-rc.29
 
 ### Patch Changes

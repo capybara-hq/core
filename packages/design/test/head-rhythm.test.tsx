@@ -219,6 +219,14 @@ const ALLOWED: Record<string, Record<string, string[]>> = {
     "margin-top": ["var(--cb-layout-head-path)", "0"],
   },
   ".cb-pageheader-notice": { "margin-top": ["var(--cb-layout-head-tabs)"] },
+  // The desktop shell's top row (desktop client spec §7.3): the path row is the content column's
+  // top row, as high as the window controls' row, so the head starts at the window's top edge.
+  ':root[data-shell="desktop"] .cb-shell-main .cb-template-head': {
+    "padding-top": ["max(0px, calc(var(--cb-space-5) - var(--cb-shell-row) * 100000))"],
+  },
+  ':root[data-shell="desktop"] .cb-shell-main .cb-pageheader-path': {
+    "min-height": ["var(--cb-shell-row)"],
+  },
   ".cb-pageheader-description": { margin: ["var(--cb-layout-head-description) 0 0"] },
   ".cb-pageheader-tabs": {
     gap: ["var(--cb-space-3)"],

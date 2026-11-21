@@ -1,0 +1,47 @@
+<!doctype html>
+<html lang="zh-CN" data-theme="dark">
+<head>
+<meta charset="utf-8">
+<title>CopyCode · reference</title>
+<link rel="stylesheet" href="/design/styles/fonts.css">
+<link rel="stylesheet" href="/design/styles/tokens.css">
+<link rel="stylesheet" href="reference.css">
+</head>
+<body>
+<main class="r-page">
+<h1>CopyCode</h1>
+<p>One line people copy (spec §6.58): the value in the code font in a one-line block, the copy icon button inside the block at its right. After copying a check and 已复制 for two seconds; without a usable clipboard the value is selected and a muted line says to copy it by hand. Framed on the page ground, a panel-2 tint inside a box; a long value scrolls sideways inside the block.</p>
+<div class="r-blocks">
+<section data-ref-block="copy-code-idle" style="width:480px" data-pad>
+  <div class="r-copy-code">
+    <div class="r-copy-code-line"><pre class="r-copy-code-value">npm install -g @capybara-hq/device@next</pre><button class="r-btn r-copy-code-copy" data-variant="ghost" data-step="dense" aria-label="复制"><i data-icon="copy" data-size="14"></i></button></div>
+  </div>
+</section>
+<section data-ref-block="copy-code-copied" style="width:480px" data-pad>
+  <div class="r-copy-code">
+    <div class="r-copy-code-line"><pre class="r-copy-code-value">npm install -g @capybara-hq/device@next</pre><button class="r-btn r-copy-code-copy" data-variant="ghost" data-step="dense"><i data-icon="check" data-size="14"></i>已复制</button></div>
+  </div>
+</section>
+<section data-ref-block="copy-code-manual" style="width:480px" data-pad>
+  <div class="r-copy-code">
+    <div class="r-copy-code-line"><pre class="r-copy-code-value">npm install -g @capybara-hq/device@next</pre><button class="r-btn r-copy-code-copy" data-variant="ghost" data-step="dense" aria-label="复制"><i data-icon="copy" data-size="14"></i></button></div>
+    <span class="r-copy-field-manual"><i data-icon="circle-alert" data-size="14"></i>无法自动复制：已选中，请按 Ctrl+C（⌘C）复制。</span>
+  </div>
+</section>
+<section data-ref-block="copy-code-in-box" style="width:480px" data-pad>
+  <section class="r-boxcard"><div class="r-boxcard-head">在这台机器上运行</div><div class="r-boxcard-body">
+    <div class="r-copy-code">
+      <div class="r-copy-code-line" data-framed="false"><pre class="r-copy-code-value">npm install -g @capybara-hq/device@next</pre><button class="r-btn r-copy-code-copy" data-variant="ghost" data-step="dense" aria-label="复制"><i data-icon="copy" data-size="14"></i></button></div>
+    </div>
+  </div></section>
+</section>
+<section data-ref-block="copy-code-long" style="width:320px">
+  <div class="r-copy-code">
+    <div class="r-copy-code-line"><pre class="r-copy-code-value">capybara-device login --url https://capybara.example.com --org 6f1c2d9e-4b7a-4e15-9c3d-2a8b7e5f0c41</pre><button class="r-btn r-copy-code-copy" data-variant="ghost" data-step="dense" aria-label="复制"><i data-icon="copy" data-size="14"></i></button></div>
+  </div>
+</section>
+</div>
+</main>
+<script src="fill.js"></script>
+</body>
+</html>

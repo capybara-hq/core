@@ -491,12 +491,14 @@ describe("渠道连接详情（DetailPage）", () => {
     const user = userEvent.setup();
     const save = await screen.findByRole("button", { name: d.saveInbound });
     expect(save).toHaveProperty("disabled", true);
-    expect(screen.queryByDisplayValue(CHANNEL.webhookUrl)).toBeNull();
+    expect(screen.queryByText(CHANNEL.webhookUrl)).toBeNull();
     await user.click(
       screen.getByRole("radio", { name: new RegExp(`^${en.channels.inboundMode.webhook}`) }),
     );
-    const url = screen.getByDisplayValue(CHANNEL.webhookUrl) as HTMLInputElement;
-    expect(url.readOnly).toBe(true);
+    // a CopyField: the label names the code line holding the address
+    const url = screen.getByRole("group", { name: d.callbackUrl });
+    expect(url.querySelector("code")?.textContent).toBe(CHANNEL.webhookUrl);
+    expect(within(url).getByRole("button", { name: "Copy" })).toBeTruthy();
     await user.click(save);
     await vi.waitFor(() =>
       expect(bodyOf(calls.find((c) => c.method === "PATCH"))).toEqual({ inboundMode: "webhook" }),

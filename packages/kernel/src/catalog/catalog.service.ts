@@ -289,8 +289,12 @@ export function repoOwner(url: string): string {
  */
 export const gitFallbackVersion = (commit: string): string => `0.0.0-git.g${commit.slice(0, 12)}`;
 
-/** The recorded git location and the `source_ref` text of a git import. */
-function gitSource(
+/**
+ * The recorded git location and the `source_ref` text of a git import. A marketplace `path` entry
+ * passes the marketplace's URL, ref and the entry's path with `pinned` false; the bootstrap step
+ * records an extra-manifest git entry with the same arguments, so both are one source.
+ */
+export function marketplaceGitSource(
   loc: GitLocation,
   read: { commit: string; tree: string | undefined },
   pinned: boolean,
@@ -500,16 +504,20 @@ export class CatalogService {
           ...(src.git.path !== undefined && { path: src.git.path }),
         };
       }
-      const token = marketplace.builtin
-        ? undefined
-        : await this.marketplaces.token(input.marketplaceId);
+      const { token, username } = marketplace.builtin
+        ? {}
+        : await this.marketplaces.credentials(input.marketplaceId);
       const read = await this.readGit(loc, {
-        ...(token !== undefined && { token, tokenOrigin: new URL(marketplace.url).origin }),
+        ...(token !== undefined && {
+          token,
+          tokenOrigin: new URL(marketplace.url).origin,
+          ...(username !== undefined && { username }),
+        }),
         ...(opts.signal !== undefined && { signal: opts.signal }),
       });
       // path entries follow the marketplace's ref; git entries follow theirs unless a commit is pinned
       const pinned = "git" in src && src.git.commit !== undefined;
-      const where = gitSource(
+      const where = marketplaceGitSource(
         "path" in src && marketplace.ref !== null ? { ...loc, ref: marketplace.ref } : loc,
         read,
         pinned,
@@ -577,7 +585,7 @@ export class CatalogService {
     };
     const read = await this.readGit(loc, opts.signal !== undefined ? { signal: opts.signal } : {});
     const pinned = input.ref !== undefined && /^[0-9a-f]{40}$/i.test(input.ref);
-    const where = gitSource(loc, read, pinned);
+    const where = marketplaceGitSource(loc, read, pinned);
     const segment =
       where.detail.path === "."
         ? (new URL(url).pathname
@@ -605,7 +613,7 @@ export class CatalogService {
   /** Resolves the commit and reads the plugin's files; git failures become API errors. */
   private async readGit(
     loc: GitLocation,
-    o: Pick<GitOptions, "token" | "tokenOrigin"> & { signal?: AbortSignal },
+    o: Pick<GitOptions, "token" | "tokenOrigin" | "username"> & { signal?: AbortSignal },
   ): Promise<{ commit: string; files: Map<string, Uint8Array>; tree: string | undefined }> {
     const config = this.config.get();
     const options: GitOptions = {
@@ -614,6 +622,7 @@ export class CatalogService {
       signal: o.signal ?? new AbortController().signal,
       ...(o.token !== undefined && { token: o.token }),
       ...(o.tokenOrigin !== undefined && { tokenOrigin: o.tokenOrigin }),
+      ...(o.username !== undefined && { username: o.username }),
     };
     try {
       const commit = await resolveGitCommit(loc, options);

@@ -99,6 +99,8 @@ export const REFERENCE_COMPONENTS = [
   // file sharing: the HTML document frame, the copy field and the shared file page (T14)
   "html-frame",
   "copy-field",
+  // the one line people copy (spec §6.58), the line CopyField labels
+  "copy-code",
   "shared-file-page",
   "subagent-group",
   "title-bar",
@@ -165,10 +167,6 @@ export const REFERENCE_COMPONENTS = [
   "theme-swatch-group",
   // a device's head and its two modes (auto mode design §4, plan Task 10)
   "device-nameplate",
-  // the compact shell (mobile layout spec §4; design spec §6.45–§6.48)
-  "bottom-nav",
-  "top-bar",
-  "me-panel",
   // the touch components (design spec §6.51–§6.53; mobile app plan Task 25)
   "floating-button",
   "drawer",

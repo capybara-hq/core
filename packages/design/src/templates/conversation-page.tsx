@@ -24,6 +24,7 @@ import { BoxScope } from "../layout/box";
 import { useDragDismiss } from "../overlays/drag";
 import { useFocusReturn } from "../overlays/focus-return";
 import { useDesignT } from "../provider";
+import { DragFill } from "../shell/drag-fill";
 import { useViewportSegments } from "../shell/segments";
 import { useHasShell, useRegisterShellPage } from "../shell/shell-page";
 import { INLINE_RIGHT_AREA_BELOW, useSizeClass } from "../shell/size-class";
@@ -262,6 +263,24 @@ export function ConversationPage({
     },
     [follow],
   );
+  // The composer's height as `--cb-composer-h` on the center column: on touch the composer floats
+  // over the thread's bottom, and the thread's bottom padding clears it even with a grown
+  // (up to 8-line) textarea, so the newest lines are never hidden under it.
+  const composerObserver = useRef<ResizeObserver | null>(null);
+  const composerBox = useCallback((el: HTMLDivElement | null) => {
+    composerObserver.current?.disconnect();
+    composerObserver.current = null;
+    const center = el?.parentElement ?? null;
+    if (el === null || center === null || typeof ResizeObserver === "undefined") return;
+    const write = () => {
+      const h = Math.ceil(el.getBoundingClientRect().height);
+      center.style.setProperty("--cb-composer-h", `${h}px`);
+    };
+    write();
+    const ro = new ResizeObserver(write);
+    ro.observe(el);
+    composerObserver.current = ro;
+  }, []);
   // One tap on the latest button: to the bottom (a reversed column's origin, scrollTop 0, is the
   // bottom); the scroll event lets the hook resume following and hide the button.
   const toLatest = () => {
@@ -382,7 +401,7 @@ export function ConversationPage({
           )}
         </div>
       </div>
-      <div className="cb-conv-composer">
+      <div ref={composerBox} className="cb-conv-composer">
         {unseen ? (
           <div className="cb-conv-latest" data-part="latest">
             <IconButton
@@ -436,14 +455,13 @@ export function ConversationPage({
   const open = rightNode != null && right !== "none";
   const full = rightFull === true && right === "panel" && open;
   // On a phone (auto layout) the open right area is a page pushed over the conversation, full
-  // screen, kept by the URL hash the page owns: back closes it. Inside an AppShell it also hides
-  // the bottom navigation.
+  // screen, kept by the URL hash the page owns: back closes it.
   const pushed = layout === "auto" && compact && open;
   const sheet = sheetLayout && !pushed;
   const closeRight = useRef(onCloseRight);
   closeRight.current = onCloseRight;
   const pushedBack = useCallback(() => closeRight.current(), []);
-  // Inside an AppShell the shell's top bar is the one back (and shows the title) and the right
+  // Inside an AppShell the shell's floating row is the one back and the right
   // area sits in normal flow under it; without one the page draws its own cover and back bar.
   const inShell = useHasShell();
   useRegisterShellPage(
@@ -544,6 +562,9 @@ export function ConversationPage({
               onPointerUp={onPointerUp}
               onPointerCancel={onPointerUp}
             />
+            {/* The strip above the panel when end window controls take the top row (none on
+                macOS): a drag filler, as high as that row. */}
+            <DragFill />
             {panelNode}
           </div>
         ) : null}

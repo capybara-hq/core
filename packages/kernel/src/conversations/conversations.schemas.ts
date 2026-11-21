@@ -4,6 +4,13 @@ import { CONTROL_OR_HIDDEN_RE } from "../text.js";
 import { CONVERSATION_TITLE_MAX_CHARS } from "./conversations.service.js";
 import { FILES_PAGE_MAX } from "./files.js";
 
+/**
+ * The download routes' answer form: `as=url` answers `{ url }` (the presigned location the 302
+ * would send, never cached) so a page can hand a cookie-free URL to the system browser (a native
+ * shell's `openExternal@1`). Shared by the attachment and the artifact download routes.
+ */
+export const DOWNLOAD_AS = z.enum(["url"]);
+
 /** Shared by the list and groups queries: title search, run activity and the archived list. */
 export const searchFields = {
   q: z.string().min(1).max(100).optional(),

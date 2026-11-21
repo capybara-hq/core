@@ -7,6 +7,7 @@ import { Icon } from "../icons/icon";
 import type { IconName } from "../icons/paths";
 import { Dialog } from "../overlays/dialog";
 import { useDesignLink, useDesignT } from "../provider";
+import { DragFill } from "../shell/drag-fill";
 import { SIZE_CLASS_QUERIES } from "../shell/size-class";
 import { useMediaQuery } from "../shell/use-media-query";
 import { ConvMenu, type ConvMenuEntry } from "./menu";
@@ -195,6 +196,7 @@ export function TitleBar({
           entries={entries}
         />
       )}
+      <DragFill />
       <IconButton
         part="title-bar-button"
         label={t("titlebar.properties")}
@@ -243,6 +245,39 @@ export function TitleBar({
           }))}
         />
       ) : null}
+      {/* The compact form inside the chat-first shell (§6.16.1): the title is the floating centre
+          pill and every icon folds into this one trailing overflow; CSS shows it there only. */}
+      <span className="cb-title-overflow" data-part="title-overflow">
+        <ConvMenu
+          label={t("shell.moreActions")}
+          align="end"
+          size="touch"
+          sideOffset={2}
+          trigger={
+            <IconButton
+              part="title-more"
+              label={t("shell.moreActions")}
+              icon={<Icon name="more-horizontal" size={16} />}
+            />
+          }
+          entries={[
+            {
+              kind: "item" as const,
+              id: "properties",
+              label: t("titlebar.properties"),
+              icon: "panel-right" as const,
+              onSelect: properties.onToggle,
+            },
+            ...panels.map((p) => ({
+              kind: "item" as const,
+              id: p.id,
+              label: p.label,
+              icon: p.icon,
+              onSelect: p.onOpen,
+            })),
+          ]}
+        />
+      </span>
     </header>
   );
 }
@@ -251,10 +286,17 @@ export function TitleBar({
 export function NewTitleBar(): JSX.Element {
   const t = useDesignT();
   return (
-    <header className="cb-title-bar" data-part="title-bar" data-cap-part="title-bar">
+    <header
+      className="cb-title-bar"
+      data-part="title-bar"
+      data-cap-part="title-bar"
+      // the chat-first compact shell draws none: the home's centre stays empty (§6.16.1)
+      data-new="true"
+    >
       <span className="cb-title-btn" data-part="title" data-untitled="true">
         <span className="cb-title-text">{t("titlebar.new")}</span>
       </span>
+      <DragFill />
     </header>
   );
 }

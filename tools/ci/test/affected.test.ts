@@ -263,6 +263,24 @@ describe("planFromFiles: by diff", () => {
     ]) {
       expect(plan(f).bootstrapNetwork, f).toBe(false);
     }
+    // the SDK runtime sources the sandbox-docker image stages (bootstrap-sandbox-runtime); this
+    // workspace holds packages/plugin-sdk, so its other files do not run everything
+    const sdk: Workspace = { ...ws, packages: [...ws.packages, pkg("packages/plugin-sdk")] };
+    const sdkPlan = (f: string) => planFromFiles([f], sdk);
+    for (const f of [
+      "packages/plugin-sdk/src/bootstrap.ts",
+      "packages/plugin-sdk/src/sandbox-runtime-source.ts",
+      "packages/plugin-sdk/src/sandbox-native-runtime-source.ts",
+      "packages/plugin-sdk/src/sandbox-linux-runtime-source.ts",
+    ]) {
+      expect(sdkPlan(f).bootstrapNetwork, f).toBe(true);
+    }
+    for (const f of [
+      "packages/plugin-sdk/src/sandbox.ts",
+      "packages/plugin-sdk/test/sandbox-runtime-source.test.ts",
+    ]) {
+      expect(sdkPlan(f).bootstrapNetwork, f).toBe(false);
+    }
     expect(
       plan("packages/kernel/src/kernel.ts", "plugins/model-fake/src/index.ts").bootstrapNetwork,
     ).toBe(false);

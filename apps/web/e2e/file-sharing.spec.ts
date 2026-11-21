@@ -190,9 +190,9 @@ test.describe
       // external links default to 7 days
       await expect(dialog.getByRole("combobox")).toHaveText(new RegExp(D.days7));
       await dialog.getByRole("button", { name: D.create, exact: true }).click();
-      const field = dialog.getByRole("textbox", { name: D.link, exact: true });
-      await expect(field).toHaveValue(/\/s\/[A-Za-z0-9]{10}$/);
-      shared.link = await field.inputValue();
+      const field = dialog.getByRole("group", { name: D.link, exact: true }).locator("code");
+      await expect(field).toHaveText(/\/s\/[A-Za-z0-9]{10}$/);
+      shared.link = (await field.textContent()) ?? "";
       await dialog.getByRole("button", { name: D.done, exact: true }).click();
       await expect(
         panel(page).getByRole("button", { name: designZh("files.shared") }),
