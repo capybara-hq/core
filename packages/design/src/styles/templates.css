@@ -1755,7 +1755,7 @@ li:first-child > .cb-ld-row {
   box-sizing: border-box;
   min-height: 0;
   padding: 0 var(--cb-content-pad);
-  padding-inline-end: calc(var(--cb-content-pad) + var(--cb-inset-right));
+  padding-right: calc(var(--cb-content-pad) + var(--cb-inset-right));
   overflow: hidden;
   scrollbar-gutter: stable;
 }

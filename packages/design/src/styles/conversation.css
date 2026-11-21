@@ -1802,6 +1802,8 @@ button.cb-file-card:focus-visible {
   border-left: 1px solid var(--cb-line-soft);
   background: var(--cb-panel-2);
   color: var(--cb-ink);
+  /* the ground runs under a right-hand strip; head and body end before it (spec §8) */
+  padding-right: var(--cb-inset-right);
 }
 .cb-rpanel-head {
   flex: none;

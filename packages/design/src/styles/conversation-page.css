@@ -36,6 +36,7 @@
   min-width: 0;
   height: var(--cb-layout-title-bar);
   padding: 0 var(--cb-space-3) 0 var(--cb-space-5);
+  padding-right: calc(var(--cb-space-3) + var(--cb-inset-right));
 }
 .cb-title-path {
   display: flex;
@@ -151,13 +152,8 @@ span.cb-title-btn {
     position: absolute;
     z-index: calc(var(--cb-z-sheet) - 10);
     top: var(--cb-float-top);
-    inset-inline: calc(
-        var(--cb-space-4) +
-        var(--cb-inset-left) +
-        var(--cb-float-size) +
-        var(--cb-space-2)
-      )
-      calc(var(--cb-space-4) + var(--cb-inset-right));
+    left: calc(var(--cb-space-4) + var(--cb-inset-left) + var(--cb-float-size) + var(--cb-space-2));
+    right: calc(var(--cb-space-4) + var(--cb-inset-right));
     gap: var(--cb-space-2);
     height: var(--cb-float-size);
     padding: 0;
@@ -1454,7 +1450,7 @@ button.cb-property-row {
   }
   .cb-conv-composer {
     padding-inline: var(--cb-space-4);
-    padding-inline-end: calc(var(--cb-space-4) + var(--cb-inset-right));
+    padding-right: calc(var(--cb-space-4) + var(--cb-inset-right));
     /* pinned at the window's bottom on a pushed page: above the home indicator (spec §4.7) */
     padding-bottom: calc(var(--cb-space-3) + var(--cb-inset-bottom));
   }
@@ -1464,6 +1460,7 @@ button.cb-property-row {
   }
   .cb-title-bar {
     padding-inline: var(--cb-space-4) var(--cb-space-1);
+    padding-right: calc(var(--cb-space-1) + var(--cb-inset-right));
   }
   .cb-title-bar .cb-icon-btn {
     min-width: 40px;
@@ -1761,7 +1758,7 @@ button.cb-property-row {
 }
 .cb-conv-latest {
   position: absolute;
-  inset-inline-end: var(--cb-layout-gutter);
+  right: calc(var(--cb-layout-gutter) + var(--cb-inset-right));
   bottom: 100%;
   z-index: 1;
   display: flex;
@@ -1772,7 +1769,7 @@ button.cb-property-row {
 }
 @media (max-width: 599px) {
   .cb-conv-latest {
-    inset-inline-end: var(--cb-space-4);
+    right: calc(var(--cb-space-4) + var(--cb-inset-right));
   }
   /* The compact class has no StatusBar (mobile layout spec §4): the page draws its own. */
   .cb-conv-page .cb-statusbar {
@@ -1826,7 +1823,7 @@ button.cb-property-row {
   flex-direction: column;
   overflow-y: auto;
   /* the ground runs under a right-hand strip; the content ends before it (spec §8) */
-  padding-inline-end: var(--cb-inset-right);
+  padding-right: var(--cb-inset-right);
 }
 .cb-conv-pushed-body > .cb-properties {
   width: 100%;
@@ -1834,6 +1831,8 @@ button.cb-property-row {
   padding: var(--cb-space-2) var(--cb-space-4);
 }
 .cb-conv-pushed-body > .cb-rpanel {
+  /* the pushed body already pads the inset */
+  padding-right: 0;
   flex: 1;
   width: 100%;
   min-width: 0;

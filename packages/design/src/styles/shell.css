@@ -73,6 +73,8 @@
 .cb-shell[data-banner="true"] > .cb-shell-banner {
   grid-column: 1 / -1;
   grid-row: 1;
+  /* the ground runs under a right-hand strip; the text ends before it (spec §8) */
+  padding-right: var(--cb-inset-right);
 }
 .cb-shell[data-banner="true"] > .cb-sidebar {
   grid-column: 1;
@@ -135,8 +137,8 @@
     position: absolute;
     z-index: calc(var(--cb-z-sheet) - 10);
     top: var(--cb-float-top);
-    inset-inline: calc(var(--cb-space-4) + var(--cb-inset-left))
-      calc(var(--cb-space-4) + var(--cb-inset-right));
+    left: calc(var(--cb-space-4) + var(--cb-inset-left));
+    right: calc(var(--cb-space-4) + var(--cb-inset-right));
     /* the row lets taps through to the page between its controls */
     pointer-events: none;
   }
@@ -341,7 +343,7 @@
   flex: none;
   padding: var(--cb-space-5) var(--cb-content-pad) var(--cb-layout-head-content);
   /* the content ends before a right-hand strip (spec §8) */
-  padding-inline-end: calc(var(--cb-content-pad) + var(--cb-inset-right));
+  padding-right: calc(var(--cb-content-pad) + var(--cb-inset-right));
   /* Reserve the same scrollbar gutter as the scrolling body below, so a classic (non-overlay)
      scrollbar does not shift the content column against the head; scrollbar-gutter only applies
      to a scroll container, hence overflow: hidden. No effect with overlay scrollbars. */
@@ -641,7 +643,7 @@ a.cb-stat-card:focus-visible {
   min-width: min(var(--cb-layout-content-min), 100%);
   overflow: auto;
   /* the ground runs under a right-hand strip; the content ends before it (spec §8) */
-  padding-inline-end: var(--cb-inset-right);
+  padding-right: var(--cb-inset-right);
   /* Same gutter as .cb-template-head: the column keeps its x whether or not the page scrolls. */
   scrollbar-gutter: stable;
 }
@@ -659,18 +661,18 @@ a.cb-stat-card:focus-visible {
 .cb-body-content[data-padded="true"] {
   box-sizing: border-box;
   padding: var(--cb-space-4) var(--cb-layout-gutter);
-  padding-inline-end: calc(var(--cb-layout-gutter) + var(--cb-inset-right));
+  padding-right: calc(var(--cb-layout-gutter) + var(--cb-inset-right));
 }
 /* In the content width the head's bottom padding is the gap above the first block (spec §4.2). */
 .cb-body-content[data-padded="true"]:has(> .cb-body-frame[data-width="content"]) {
   padding: 0 var(--cb-content-pad) var(--cb-space-6);
-  padding-inline-end: calc(var(--cb-content-pad) + var(--cb-inset-right));
+  padding-right: calc(var(--cb-content-pad) + var(--cb-inset-right));
 }
 /* The content width: the side padding on both sides, the frame centered, space at the bottom. */
 .cb-body-content:not([data-padded="true"]):has(> .cb-body-frame[data-width="content"]) {
   box-sizing: border-box;
   padding: 0 var(--cb-content-pad) var(--cb-space-6);
-  padding-inline-end: calc(var(--cb-content-pad) + var(--cb-inset-right));
+  padding-right: calc(var(--cb-content-pad) + var(--cb-inset-right));
 }
 .cb-body-frame[data-width="full"] {
   height: 100%;
