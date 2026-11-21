@@ -1,5 +1,48 @@
 # @capybara-hq/kernel
 
+## 0.1.0-rc.66
+
+### Minor Changes
+
+- 19d5e1a: The product name people see follows `platform.name` (unset: Capybara) everywhere, not only in the
+  document title and the web app manifest (issue #452).
+  
+  - Kernel: the IM bot's bind and web-hint phrases, the OAuth dynamic client registration name, the
+    session user agent of desktop and mobile sign-ins, the `<name>:` prefix on git gateway messages,
+    the platform overview the model reads, and the attribution defaults
+    (`Co-Authored-By: <name> <noreply@capybarahq.com>`; the pull-request line links the upstream
+    project only under the default name). The official marketplace is now named "Official
+    marketplace", and messages that named the software in passing say "the platform".
+  - Web: every message that named the product takes the platform name from the public meta,
+    including the sign-in, binding, invitation and app consent pages. Pages that cannot
+    read the kernel (the root error page, a starting kernel) say the built-in name. `check:i18n`
+    rejects the literal "Capybara" in web messages (`i18n-product-name`).
+  - Design: `Brand` gains `productName`, the `alt` of a theme's logo mark (else the wordmark, else
+    "Logo"). The built-in `CAPYBARA` wordmark stays beside the pixel capybara whatever the name.
+
+### Patch Changes
+
+- 9c46c28: Stopping a conversation's run (and an offboarding run stop) no longer misses a run that suspends
+  for an approval or input at the same moment: after the stop marker is set, a run found `waiting`
+  is ended directly, so it never stays waiting with the stop lost.
+- 8ef62d6: The Platform tool's `domain` input is an enum of the registered domain ids, and its description says
+  writes may need approval depending on the conversation's permission profile.
+- 4f3c400: The command review and the tool review (Approve for me) read the person's recent messages in
+  conversation order again: they were passed newest first to a prompt that says oldest first, so the
+  review model took the person's latest message for their earliest and a tight budget dropped the
+  newest one. A person who changed their mind ("now enable it") was refused on their older request.
+- bfb0fc0: An identity source can refuse an account on purpose: the SDK adds `IdentitySourceRefused` and
+  `isIdentitySourceRefused`, and a login refused that way returns to the sign-in page with
+  `sso.account_not_allowed` ("This account is not allowed to sign in on this platform…") instead of a
+  generic provider error. The plugin's message is only logged.
+- f32b8a2: Themes: the public asset route serves a theme's illustration, app icons and avatar files (only the
+  files the stored definition names), the catalog import stores them, and `ThemeRef` (theme listing,
+  platform default) carries `logo.illustrationUrl`, `logo.appIconUrl`, `logo.appIconMaskableUrl`,
+  `decoration` and `background` (the merged `bg` of each scheme the theme defines) (#451).
+- Updated dependencies [bfb0fc0]
+- Updated dependencies [ada3723]
+  - @capybara-hq/plugin-sdk@0.1.0-rc.50
+
 ## 0.1.0-rc.65
 
 ### Patch Changes
