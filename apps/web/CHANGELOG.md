@@ -1,5 +1,20 @@
 # @capybara-hq/web
 
+## 0.1.0-rc.80
+
+### Patch Changes
+
+- ae15bfd: Sign-in page titles use the prose font, and the desktop / mobile sign-in confirmation asks a shorter
+  question ("在桌面端登录 {platform}？"); the machine stays in the details list.
+- 94adb43: Commands, links and codes to copy are one code line with the copy button inside it (`CopyCode`);
+  the button shows 已复制 for two seconds, and without a clipboard the value is selected with a line
+  saying to copy it by hand. The device connect steps, the invitation link, a channel's callback
+  address, a connector's OAuth callback, the share link and the GitHub device code use it.
+- 8c0ca79: Desktop app: the web runs to the window's top edge. The traffic lights sit in the sidebar's brand
+  row, centred on it, and the conversation title bar shares that row; no empty band above the page.
+- Updated dependencies [8c0ca79]
+  - @capybara-hq/design@0.2.0-rc.28
+
 ## 0.1.0-rc.79
 
 No changes in this release.

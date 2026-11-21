@@ -1,5 +1,26 @@
 # @capybara-hq/plugin-tools
 
+## 0.1.0-rc.18
+
+### Minor Changes
+
+- 13369a0: Add `capybara-plugin bootstrap --check|--write` to validate and pin a distribution's extra bootstrap
+  manifest (git entries are pinned to the kernel's canonical pack; every git entry is read from
+  `--root`, and `--marketplace <name>` limits the run to one marketplace's repository), and export
+  `packPackageTgz` from the kernel.
+
+### Patch Changes
+
+- Updated dependencies [56af2e0]
+- Updated dependencies [09a0bc5]
+- Updated dependencies [b491e2a]
+- Updated dependencies [24fa482]
+- Updated dependencies [59e2551]
+- Updated dependencies [8416855]
+- Updated dependencies [13369a0]
+  - @capybara-hq/kernel@0.1.0-rc.63
+  - @capybara-hq/plugin-sdk@0.1.0-rc.48
+
 ## 0.1.0-rc.17
 
 ### Patch Changes

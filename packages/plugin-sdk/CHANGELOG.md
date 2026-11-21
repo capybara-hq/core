@@ -1,5 +1,14 @@
 # @capybara-hq/plugin-sdk
 
+## 0.1.0-rc.48
+
+### Minor Changes
+
+- 09a0bc5: Add the extra bootstrap manifest format (`BootstrapExtraManifestSchema`, `parseBootstrapExtraManifest`)
+  and the git marketplace username helpers (`suggestGitUsername`, `GIT_MARKETPLACE_USERNAME_DEFAULT`,
+  `GIT_USERNAME_RE`). A git entry's `path` may be `.` / `./`, the repository root of a single-plugin
+  repository.
+
 ## 0.1.0-rc.47
 
 ### Minor Changes

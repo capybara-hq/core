@@ -1,5 +1,12 @@
 # @capybara-hq/plugin-model-fake
 
+## 0.1.0-rc.49
+
+### Patch Changes
+
+- Updated dependencies [09a0bc5]
+  - @capybara-hq/plugin-sdk@0.1.0-rc.48
+
 ## 0.1.0-rc.48
 
 ### Patch Changes
