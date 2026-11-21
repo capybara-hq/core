@@ -23,18 +23,43 @@ export function backTarget(
 }
 
 /** The longest a view transition waits for the page behind a back to arrive. */
-const SETTLE_LIMIT_MS = 500;
+export const SETTLE_LIMIT_MS = 500;
+
+/** What waits for the shell's next route commit ({@link routeCommitted}). */
+const routeCommitWaiters = new Set<(pathname: string | undefined) => void>();
 
 /**
- * Goes back one entry and settles once the page has changed (the next `popstate` and the frame
- * after it), so a view transition captures the new page; a bounded wait covers a `popstate` that
- * never comes.
+ * Called by `AppShell` in a layout effect when its route (`pathname`) changes: the new page is in
+ * the DOM, so a back waiting on it ({@link goBack}) settles.
+ */
+export function routeCommitted(pathname: string | undefined): void {
+  for (const waiter of [...routeCommitWaiters]) waiter(pathname);
+}
+
+/**
+ * Goes back one entry and settles once the page has changed, so a view transition captures the
+ * new page: when the shell commits the route the back landed on, or, when the back changed no
+ * route (a hash or query entry), on the task after its `popstate`. Never on a frame: inside a view
+ * transition's update the browser renders none until the update settles, so a frame would only
+ * come at the bound. A bounded wait covers a `popstate` that never comes.
  */
 export function goBack(): Promise<void> {
   return new Promise((resolve) => {
-    const settle = () => requestAnimationFrame(() => resolve());
-    window.addEventListener("popstate", settle, { once: true });
-    window.setTimeout(resolve, SETTLE_LIMIT_MS);
+    const from = window.location.pathname;
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const settle = () => {
+      routeCommitWaiters.delete(settle);
+      window.removeEventListener("popstate", onPop);
+      clearTimeout(timer);
+      resolve();
+    };
+    const onPop = () => {
+      if (window.location.pathname === from) setTimeout(settle, 0);
+    };
+    // Any route the shell commits after the back is the one it landed on.
+    routeCommitWaiters.add(settle);
+    window.addEventListener("popstate", onPop, { once: true });
+    timer = setTimeout(settle, SETTLE_LIMIT_MS);
     window.history.back();
   });
 }
