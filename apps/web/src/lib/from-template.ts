@@ -1,5 +1,4 @@
-import type { PresetId } from "@capybara-hq/design";
-import type { Agent, AgentVisibility } from "./agents";
+import type { Agent, AgentVisibility, PresetAvatarInput } from "./agents";
 import { apiFetch } from "./api";
 import type { ModelRef } from "./conversations";
 
@@ -49,7 +48,7 @@ export interface CreateFromTemplateInput {
   members?: string[];
   /** Sent only when the person changed the preselected model. */
   model?: ModelRef;
-  avatar?: { kind: "preset"; id: PresetId };
+  avatar?: PresetAvatarInput;
   previewHash: string;
 }
 

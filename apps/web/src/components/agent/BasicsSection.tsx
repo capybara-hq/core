@@ -2,8 +2,8 @@
 
 import {
   AVATAR_UPLOAD_ACCEPT,
+  type AvatarChoice,
   AvatarPicker,
-  type AvatarValue,
   Callout,
   Checkbox,
   Field,
@@ -27,11 +27,19 @@ import {
   type AgentDefinitionSave,
   type AgentVisibility,
   avatarValue,
+  type PresetAvatarInput,
   type ProfileInput,
   updateAgent,
   uploadAvatar,
 } from "../../lib/agents";
 import { ApiClientError } from "../../lib/api";
+import {
+  avatarInputOf,
+  choiceOfPresetId,
+  presetChoiceOf,
+  themeTileOf,
+  useAvatarChoices,
+} from "../../lib/avatar-choices";
 import { cropAvatar } from "../../lib/avatar-crop";
 import { retryOnMountOf } from "../../lib/query/client";
 import { attachmentLimitsQuery } from "../../lib/query/conversation";
@@ -52,8 +60,11 @@ const VISIBILITIES = ["private", "org", "members"] as const satisfies readonly A
 /** The kernel's answers that mean someone else saved first: the section offers a reload. */
 export const CONFLICT_CODES = new Set(["agent.profile_conflict", "agent.version_conflict"]);
 
-/** The profile part of Basics (saved with `PATCH …/profile`). */
-type ProfilePart = { avatar: AgentAvatar };
+/**
+ * The profile part of Basics (saved with `PATCH …/profile`): the stored avatar, or a picked preset
+ * as the kernel takes it (a built-in id or a theme preset key).
+ */
+type ProfilePart = { avatar: AgentAvatar | PresetAvatarInput };
 /**
  * The agent part of Basics (the agent PATCH: the name and the description are in the definition,
  * so the model sees them in its run context).
@@ -194,6 +205,7 @@ function BasicsEdit() {
     router.replace(`/agents/${encodeURIComponent(agentId)}?s=basics`);
   }, [t, router, agentId]);
 
+  const choices = useAvatarChoices(orgId);
   const limitsQ = attachmentLimitsQuery(orgId);
   const limits = useQuery({ ...limitsQ, retryOnMount: retryOnMountOf(limitsQ.queryKey) });
   const membersQ = membersQuery(orgId);
@@ -258,15 +270,20 @@ function BasicsEdit() {
 
   const d = profile.draft;
   const b = basic.draft;
-  /** What the picker shows: a preset, the new upload's preview, or the saved image. */
-  const pickerValue: AvatarValue =
+  /**
+   * What the picker shows: a preset (a theme one as its tile while the org's theme offers it, a
+   * stored one too), the new upload's preview, or the saved image.
+   */
+  const pickerValue: AvatarChoice =
     d.avatar === null
       ? null
       : d.avatar.kind === "preset"
-        ? d.avatar
-        : d.avatar.kind === "upload" && preview?.uploadId === d.avatar.uploadId
-          ? { kind: "image", src: preview.src }
-          : avatarValue(agent, orgId);
+        ? choiceOfPresetId(d.avatar.id, choices.extra)
+        : d.avatar.kind === "theme"
+          ? (themeTileOf(d.avatar.url, choices.extra) ?? avatarValue(agent, orgId))
+          : d.avatar.kind === "upload" && preview?.uploadId === d.avatar.uploadId
+            ? { kind: "image", src: preview.src }
+            : avatarValue(agent, orgId);
 
   const savedProfile = profilePartOf(agent);
   const savedBasic = agentPartOf(agent);
@@ -286,8 +303,10 @@ function BasicsEdit() {
     setNameError(name === "");
     if (name === "") return;
     const profileInput: ProfileInput = {
-      // an `external` avatar is migrated data: never written back
-      ...(changed.avatar && d.avatar?.kind !== "external" ? { avatar: d.avatar } : {}),
+      // an `external` avatar is migrated data and a `theme` one the kernel's: never written back
+      ...(changed.avatar && d.avatar?.kind !== "external" && d.avatar?.kind !== "theme"
+        ? { avatar: d.avatar }
+        : {}),
     };
     const sendProfile = Object.keys(profileInput).length > 0;
     const sendDefinition = changed.name || changed.description;
@@ -381,8 +400,11 @@ function BasicsEdit() {
               value={pickerValue}
               label={t("page.avatarLabel")}
               disabled={pending || uploading}
+              hidden={choices.hidden}
+              extra={choices.extra}
               onChange={(v) => {
-                if (v?.kind === "preset") editProfile({ avatar: v });
+                const next = presetChoiceOf(v);
+                if (next !== null) editProfile({ avatar: avatarInputOf(next) });
               }}
               {...(uploadOff
                 ? { uploadOffReason: t("page.uploadOff") }

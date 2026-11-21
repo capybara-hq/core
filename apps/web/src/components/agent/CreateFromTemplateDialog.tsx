@@ -1,7 +1,6 @@
 "use client";
 
 import {
-  AVATAR_PRESET_IDS,
   AvatarPicker,
   Button,
   Callout,
@@ -12,7 +11,6 @@ import {
   Input,
   ItemList,
   PersonName,
-  type PresetId,
   Select,
   Skeleton,
   Stack,
@@ -24,6 +22,12 @@ import { useEffect, useState } from "react";
 import { useRouter } from "../../i18n/navigation";
 import type { Agent, AgentVisibility } from "../../lib/agents";
 import { ApiClientError } from "../../lib/api";
+import {
+  avatarInputOf,
+  type PresetChoice,
+  presetChoiceOf,
+  useAvatarChoices,
+} from "../../lib/avatar-choices";
 import type { ModelRef } from "../../lib/conversations";
 import { labelLocale, modelLabel } from "../../lib/extension-label";
 import {
@@ -54,9 +58,6 @@ import { decodeModel, encodeModel } from "./definition-parts";
 const NAME_MAX = 80;
 const VISIBILITIES = ["private", "org", "members"] as const satisfies readonly AgentVisibility[];
 const STATES: readonly PlanItemState[] = ["carried", "pending", "unavailable"];
-
-const randomPreset = (): PresetId =>
-  AVATAR_PRESET_IDS[Math.floor(Math.random() * AVATAR_PRESET_IDS.length)] as PresetId;
 
 /** Where a created agent opens: its Tools section when connectors wait (the 待配置 notice). */
 export const createdAgentHref = (agent: Pick<Agent, "id" | "definition">): string =>
@@ -102,8 +103,10 @@ export function CreateFromTemplateDialog({
   const members = useQuery({ ...membersQ, enabled: admin });
 
   const [name, setName] = useState(template.name.slice(0, NAME_MAX));
-  const [preset, setPreset] = useState<PresetId | null>(null);
-  useEffect(() => setPreset((p) => p ?? randomPreset()), []);
+  // a random visible choice, as the create form (none visible: none, and the kernel decides)
+  const choices = useAvatarChoices(orgId);
+  const [preset, setPreset] = useState<PresetChoice | null>(null);
+  useEffect(() => setPreset((p) => p ?? choices.randomChoice()), [choices]);
   const [visibility, setVisibility] = useState<AgentVisibility>("private");
   const [memberIds, setMemberIds] = useState<string[]>([]);
   // The person's pick; null = the preview's automatic choice.
@@ -144,7 +147,7 @@ export function CreateFromTemplateDialog({
         ...(admin && visibility !== "private" ? { visibility } : {}),
         ...(admin && visibility === "members" ? { members: memberIds } : {}),
         ...(chosen !== null ? { model: chosen } : {}),
-        ...(preset !== null ? { avatar: { kind: "preset" as const, id: preset } } : {}),
+        ...(preset !== null ? { avatar: avatarInputOf(preset) } : {}),
         previewHash: p.previewHash,
       });
     },
@@ -220,11 +223,14 @@ export function CreateFromTemplateDialog({
         <Stack gap={16}>
           {error !== null && <FormError message={errorMessage(error)} />}
           <AvatarPicker
-            value={preset === null ? null : { kind: "preset", id: preset }}
+            value={preset}
             label={tp("avatarLabel")}
             disabled={create.isPending}
+            hidden={choices.hidden}
+            extra={choices.extra}
             onChange={(v) => {
-              if (v?.kind === "preset") setPreset(v.id);
+              const next = presetChoiceOf(v);
+              if (next !== null) setPreset(next);
             }}
             uploadOffReason={t("uploadLater")}
           />

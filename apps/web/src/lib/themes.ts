@@ -60,6 +60,14 @@ export interface OrgThemes {
   resolved: ThemeRef | null;
   /** The org's setting as stored: its default (null: follow the platform) and the personal lock. */
   org: { id: string | null; personal: "allowed" | "locked" };
+  /**
+   * The avatar presets of the org's effective default theme (theme brand coverage spec §4): the
+   * built-in ids it hides and its own presets (`key` is what an avatar input sends).
+   */
+  avatars: {
+    hidden: string[];
+    presets: { key: string; name: { en: string; zh?: string }; url: string }[];
+  };
 }
 
 /** A theme's name in the UI locale (its English name when it has none in Chinese). */

@@ -161,9 +161,10 @@ export type AvatarPickerProps = {
 };
 
 /**
- * AvatarPicker (spec §6.30): the presets (the ten, less `hidden`, plus the theme's `extra`) as one radio group of 40 px tiles, then an upload
- * tile, which shows the uploaded image when that is the avatar. Without `onUpload` the upload tile
- * is disabled and the reason is written under the tiles.
+ * AvatarPicker (spec §6.30): the presets (the ten, less `hidden`, plus the theme's `extra`) as
+ * one radio group of 40 px tiles, then an upload tile, which shows the uploaded image when that is
+ * the avatar. Without `onUpload` the upload tile is disabled and the reason is written under the
+ * tiles.
  */
 export function AvatarPicker({
   value,

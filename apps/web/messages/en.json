@@ -151,6 +151,7 @@
       "subagents_invalid": "Some sub-agent settings cannot be saved: check the templates, names, tools, skills and agents listed, and keep at most 20 agent types.",
       "not_found": "The agent does not exist or you cannot access it.",
       "model_unavailable": "The selected model is unavailable.",
+      "avatar_unavailable": "This avatar is no longer offered in your organization. Choose one of the presets the picker shows.",
       "version_conflict": "Someone else saved this agent while you were editing it. Reload the page and apply your changes again.",
       "profile_conflict": "Someone else changed this agent's profile while you were editing. Reload to see the latest, then apply your changes again.",
       "instructions_mismatch": "The instructions do not match the prompt files. Edit the prompt files, or reload and try again.",

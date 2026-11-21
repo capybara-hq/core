@@ -1,14 +1,12 @@
 "use client";
 
 import {
-  AVATAR_PRESET_IDS,
   AVATAR_UPLOAD_ACCEPT,
+  type AvatarChoice,
   AvatarPicker,
-  type AvatarValue,
   Field,
   FormSection,
   Input,
-  type PresetId,
   Select,
   Stack,
 } from "@capybara-hq/design";
@@ -31,6 +29,12 @@ import {
   uploadAvatar,
 } from "../lib/agents";
 import { ApiClientError } from "../lib/api";
+import {
+  avatarInputOf,
+  type PresetChoice,
+  presetChoiceOf,
+  useAvatarChoices,
+} from "../lib/avatar-choices";
 import { cropAvatar } from "../lib/avatar-crop";
 import { labelLocale, modelLabel } from "../lib/extension-label";
 import { retryOnMountOf } from "../lib/query/client";
@@ -45,9 +49,6 @@ import { FormError } from "./form-error";
 const VISIBILITIES = ["private", "org"] as const satisfies readonly AgentVisibility[];
 const NAME_MAX = 80;
 
-/** A random preset for a new agent's avatar (mirrors the kernel's `randomPreset`). */
-const randomPreset = (random: () => number = Math.random): PresetId =>
-  AVATAR_PRESET_IDS[Math.floor(random() * AVATAR_PRESET_IDS.length)] as PresetId;
 /** Enter in these single-line inputs saves (the form has no native submit button). */
 const ENTER_SUBMITS = new Set(["text", "search", "email", "url", "tel", "password", "number"]);
 
@@ -70,12 +71,13 @@ export type AgentFormView = {
 export type AgentCreated = { agent: Agent; uploadFailed: boolean };
 
 /**
- * The create form of `/agents/new` (agent profile design §2.4): the avatar (a random preset is
- * preselected; another preset or an upload), the name, the model and the visibility, nothing else.
- * The prompt starts from the kernel's default `AGENTS.md` (the request carries neither
- * `instructions` nor `instructionFiles`); everything else is set on the agent page. A picked upload
- * needs the agent's id: the agent is created with the preselected preset, then the image is
- * uploaded and saved into the profile.
+ * The create form of `/agents/new` (agent profile design §2.4): the avatar (a random one of the
+ * org's visible presets is preselected, theme brand coverage spec §4; another preset or an
+ * upload), the name, the model and the visibility, nothing else. The prompt starts from the
+ * kernel's default `AGENTS.md` (the request carries neither `instructions` nor
+ * `instructionFiles`); everything else is set on the agent page. A picked upload needs the agent's
+ * id: the agent is created with the preselected preset, then the image is uploaded and saved into
+ * the profile.
  */
 export function useAgentForm(
   orgId: string,
@@ -105,9 +107,11 @@ export function useAgentForm(
   const [model, setModel] = useState(options[0]?.value ?? "");
   const [visibility, setVisibility] = useState<AgentVisibility>("private");
   // The preselected preset: kept while an upload is picked, so a failed upload leaves a real
-  // avatar. It is drawn after mount, so the server's paint and the first client render agree.
-  const [preset, setPreset] = useState<PresetId | null>(null);
-  useEffect(() => setPreset((p) => p ?? randomPreset()), []);
+  // avatar. It is drawn after mount, so the server's paint and the first client render agree,
+  // from the visible choices only (none visible: none, and the kernel decides).
+  const choices = useAvatarChoices(orgId);
+  const [preset, setPreset] = useState<PresetChoice | null>(null);
+  useEffect(() => setPreset((p) => p ?? choices.randomChoice()), [choices]);
   const [picked, setPicked] = useState<{ blob: Blob; src: string } | null>(null);
   const [uploadError, setUploadError] = useState<string>();
   const [storageOff, setStorageOff] = useState(false);
@@ -153,7 +157,7 @@ export function useAgentForm(
     invalidates: (v) => [keys.org(orgId).agents(), keys.org(orgId).agent(v.agent.id)],
   });
 
-  function pick(next: PresetId) {
+  function pick(next: PresetChoice) {
     revoke(pickedSrc.current);
     pickedSrc.current = undefined;
     setPicked(null);
@@ -182,12 +186,8 @@ export function useAgentForm(
     }
   }
 
-  const pickerValue: AvatarValue =
-    picked !== null && picked.src !== ""
-      ? { kind: "image", src: picked.src }
-      : preset === null
-        ? null
-        : { kind: "preset", id: preset };
+  const pickerValue: AvatarChoice =
+    picked !== null && picked.src !== "" ? { kind: "image", src: picked.src } : preset;
 
   // The primary waits for a name (spec §5.3); Enter in the name field still says what is missing.
   const canSubmit = !pending && !cropping && !noModels && name.trim() !== "";
@@ -201,11 +201,12 @@ export function useAgentForm(
     if (main === null) return;
     setPending(true);
     setError(undefined);
+    const avatar = preset ?? choices.randomChoice();
     try {
       const res = await create.mutateAsync({
         definition: { name: trimmed, model: main },
         visibility,
-        profile: { avatar: { kind: "preset", id: preset ?? randomPreset() } },
+        ...(avatar !== null ? { profile: { avatar: avatarInputOf(avatar) } } : {}),
       });
       let uploadFailed = false;
       if (picked !== null) {
@@ -257,8 +258,11 @@ export function useAgentForm(
               value={pickerValue}
               label={tp("avatarLabel")}
               disabled={pending || cropping}
+              hidden={choices.hidden}
+              extra={choices.extra}
               onChange={(v) => {
-                if (v?.kind === "preset") pick(v.id);
+                const next = presetChoiceOf(v);
+                if (next !== null) pick(next);
               }}
               {...(uploadOff
                 ? { uploadOffReason: tp("uploadOff") }
