@@ -320,7 +320,12 @@ describe("SettingsService devicesDefaultProvider", () => {
       { warn: () => {} },
       {
         get: () =>
-          ({ devices: { defaultProvider: provider }, attribution: {}, sharing: {} }) as never,
+          ({
+            devices: { defaultProvider: provider },
+            attribution: {},
+            platform: {},
+            sharing: {},
+          }) as never,
         fieldSource: (path: string) =>
           path === "devices.defaultProvider" && provider !== undefined ? source : undefined,
       },
