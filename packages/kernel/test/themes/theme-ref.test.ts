@@ -1,5 +1,6 @@
 import { type ParsedTheme, parseThemeFile, THEME_TOKENS } from "@capybara-hq/plugin-sdk";
 import { describe, expect, it } from "vitest";
+import { storedAssetRefs } from "../../src/themes/theme-delivery.service.js";
 import { themeRefOf } from "../../src/themes/theme-state.js";
 
 /**
@@ -90,5 +91,60 @@ describe("themeRefOf", () => {
     expect(bg.dark).toBe(THEME_TOKENS.color.bg.dark);
     expect(bg.light).toBe("#FAFAFA");
     expect(Object.keys(bg).sort()).toEqual(["dark", "light"]);
+  });
+
+  it("a stored logo ref that is not an asset path gets a null URL, no throw", () => {
+    const def = parse({ name: NAME, schemes: { dark: { radius: { sm: 2 } } } });
+    const tampered = {
+      ...def,
+      logo: { mark: 42, favicon: null, illustration: "../x.svg", appIcon: ["a.png"] },
+    } as unknown as ParsedTheme;
+    expect(themeRefOf(ID, "1", tampered, null).logo).toEqual({
+      markUrl: null,
+      wordmark: null,
+      faviconUrl: null,
+      illustrationUrl: null,
+      appIconUrl: null,
+      appIconMaskableUrl: null,
+    });
+    const nullLogo = { ...def, logo: null } as unknown as ParsedTheme;
+    expect(themeRefOf(ID, "1", nullLogo, null).logo).toBeNull();
+  });
+});
+
+/**
+ * The asset route names files from the stored definition without re-parsing it: a field of the
+ * wrong shape names nothing and never throws.
+ */
+describe("storedAssetRefs", () => {
+  const base = parse({ name: NAME, schemes: { dark: { radius: { sm: 2 } } } });
+  const refs = (patch: Record<string, unknown>) =>
+    storedAssetRefs({ ...base, ...patch } as unknown as ParsedTheme);
+
+  it("malformed fonts, logo and avatars name nothing", () => {
+    for (const patch of [
+      { fonts: "x" },
+      { fonts: [null, { file: 1 }] },
+      { logo: "x" },
+      { logo: [] },
+      { logo: { mark: null } },
+      { avatars: {} },
+    ]) {
+      expect(refs(patch), JSON.stringify(patch)).toEqual([]);
+    }
+  });
+
+  it("a null definition names nothing", () => {
+    expect(storedAssetRefs(null as unknown as ParsedTheme)).toEqual([]);
+  });
+
+  it("well-formed refs are listed as stored", () => {
+    expect(
+      refs({
+        fonts: [{ family: "A", file: "./fonts/A.woff2", weight: 400, role: "prose" }],
+        logo: { mark: "./logo.svg", appIcon: "brand/app.png" },
+        avatars: [{ id: "bot", name: { en: "Bot" }, file: "./brand/bot.svg" }],
+      }),
+    ).toEqual(["./fonts/A.woff2", "./logo.svg", "brand/app.png", "./brand/bot.svg"]);
   });
 });

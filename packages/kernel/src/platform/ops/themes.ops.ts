@@ -21,7 +21,7 @@ export class ThemesOperations implements OnModuleInit {
       defineOperation({
         id: "themes.list",
         description:
-          "List the themes on in this org (id, version, name, schemes, logo and the bg / panel / ink / accent swatches per scheme), the theme in effect for you here (resolved; null is the built-in theme) and the org's setting (its default theme id, null following the platform, and whether personal picks are allowed or locked). Use a theme id with platform.set-preferences to change your own theme, or with org-settings.update to change the org's default.",
+          "List the themes on in this org (id, version, name, schemes, logo, decoration (the sign-in page background pattern: dither or none), background (the page background color per scheme) and the bg / panel / ink / accent swatches per scheme), the theme in effect for you here (resolved; null is the built-in theme) and the org's setting (its default theme id, null following the platform, and whether personal picks are allowed or locked). Use a theme id with platform.set-preferences to change your own theme, or with org-settings.update to change the org's default.",
         input: z.object({}).strict(),
         example: {},
         authz: { orgAction: "org.read" },

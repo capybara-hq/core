@@ -3,6 +3,7 @@
 // transaction's connection when there is one): the settings writers (deployment, org, person) and
 // `ThemesService` decide with the same predicates.
 import {
+  isThemeAssetPath,
   type LocalizedName,
   mergeThemeSchemes,
   type ParsedTheme,
@@ -109,7 +110,9 @@ export function themeRefOf(
   def: ParsedTheme,
   plugin: string | null,
 ): ThemeRef {
-  const url = (ref: string | undefined) => (ref === undefined ? null : themeUrl(id, version, ref));
+  // A stored definition is not re-parsed: a ref that is not a theme asset path gets no URL
+  const url = (ref: unknown) => (isThemeAssetPath(ref) ? themeUrl(id, version, ref) : null);
+  const logo: unknown = def.logo;
   return {
     id,
     key: plugin === null ? def.id : `${plugin}/${def.id}`,
@@ -118,7 +121,7 @@ export function themeRefOf(
     schemes: SCHEMES.filter((s) => def.schemes[s] !== undefined),
     singleScheme: def.singleScheme,
     logo:
-      def.logo === undefined
+      def.logo === undefined || logo === null || typeof logo !== "object"
         ? null
         : {
             markUrl: url(def.logo.mark),

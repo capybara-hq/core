@@ -26,8 +26,9 @@ const ASSET_TYPES: readonly [RegExp, string][] = [
  * files), read defensively: the row is not re-parsed, so a field of the wrong shape names nothing
  * rather than failing the request.
  */
-function storedAssetRefs(def: ParsedTheme): string[] {
+export function storedAssetRefs(def: ParsedTheme): string[] {
   const isObject = (v: unknown): boolean => v !== null && typeof v === "object";
+  if (!isObject(def)) return [];
   const { fonts, logo, avatars, ...rest } = def;
   const shaped: ParsedTheme = {
     ...rest,

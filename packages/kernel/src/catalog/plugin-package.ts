@@ -116,8 +116,9 @@ export interface PluginPackageTheme {
   path: string;
   theme: ParsedTheme;
   /**
-   * The theme's fonts and logo files after `validateThemeAssets` (the SVGs sanitized, the rest
-   * unchanged), keyed by their path relative to the package root (no leading `./`).
+   * The theme's fonts, logo files (mark, favicon, illustration, app icons) and avatar files after
+   * `validateThemeAssets` (the SVGs sanitized, the rest unchanged), keyed by their path relative
+   * to the package root (no leading `./`).
    */
   assets: Map<string, Uint8Array>;
 }
