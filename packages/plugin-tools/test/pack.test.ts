@@ -278,6 +278,20 @@ describe("packPlugin: other behavior", () => {
     expect(spies.build).not.toHaveBeenCalled();
   });
 
+  it("pack ships the illustration, app icons and avatar files", async () => {
+    const r = await packPlugin(join(repo, "packages/testing/fixtures/plugins/fake-theme"), out);
+    const entries = await readTgz(r.file);
+    for (const p of [
+      "brand/illustration.svg",
+      "brand/app-512.png",
+      "brand/app-mask-512.png",
+      "brand/avatars/bot.svg",
+      "brand/avatars/cat.png",
+    ]) {
+      expect(entries.has(p), p).toBe(true);
+    }
+  });
+
   it("a theme that does not parse fails the pack", async () => {
     await expect(packPlugin(fixture("plugin-theme-invalid"), out)).rejects.toThrow(/broken\.json/);
   });
