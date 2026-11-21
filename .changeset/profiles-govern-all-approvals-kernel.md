@@ -11,7 +11,7 @@ or account, policy denies, ceilings, unattended runs and tools that require a pe
 unchanged.
 
 - Conversations from chat apps default to Approve for me, so their tool asks go to the review model.
-- Secret fields are a separate secure input request (approval kind `secure_input`, migration 0174),
+- Secret fields are a separate secure input request (approval kind `secure_input`, migration 0175),
   asked under every profile after the call's own consent; the web submits it.
 - The initial password and the invitation link are read by call:
   `POST /api/v1/orgs/:orgId/conversations/:conversationId/runs/:runId/calls/:callId/initial-password`
