@@ -1,5 +1,12 @@
 # @capybara-hq/web
 
+## 0.1.0-rc.78
+
+### Patch Changes
+
+- 7c22f02: The viewer's own messages show no avatar beside the bubble; a message another person wrote keeps
+  its author's circle.
+
 ## 0.1.0-rc.77
 
 ### Minor Changes
