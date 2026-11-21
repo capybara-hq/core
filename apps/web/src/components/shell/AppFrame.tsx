@@ -50,6 +50,7 @@ import { markSigningOut, resetSession } from "../../lib/query/workspace";
 import { HOME_PATH } from "../../lib/routes";
 import { logout, type Me, type Membership, setCurrentOrg } from "../../lib/session";
 import { broadcastSession, useSessionSync } from "../../lib/session-sync";
+import { useNativeNavHandle, useSwitchProfile } from "../../lib/shell";
 import { sidebarCookie } from "../../lib/sidebar-cookie";
 import { useErrorMessage } from "../../lib/use-error-message";
 import { useShellNotifications } from "../../lib/use-shell-notifications";
@@ -362,6 +363,9 @@ function ShellFrame({
   const t = useTranslations();
   const router = useRouter();
   const navigate = useCallback((href: string) => router.push(href), [router]);
+  // A native shell's strip (`nav@1`) and profile switcher (`profiles@1`): undefined in a browser.
+  const nativeNav = useNativeNavHandle();
+  const switchProfile = useSwitchProfile();
   const qc = useQueryClient();
   const pathname = usePathname();
   const errorMessage = useErrorMessage();
@@ -604,6 +608,8 @@ function ShellFrame({
   const personalMenu: MenuItem[] = [
     languageMenu,
     { label: t("shell.accountSettings"), href: ACCOUNT_HOME },
+    // the native switcher opens inside the item's select (user activation)
+    ...(switchProfile ? [{ label: t("shell.switchProfile"), onSelect: switchProfile }] : []),
     "separator",
     { label: t("common.logout"), onSelect: () => void onLogout() },
   ];
@@ -668,6 +674,7 @@ function ShellFrame({
       personalSettingsHref: ACCOUNT_HOME,
       theme: preferences.theme ? <ThemeToggle {...preferences.theme} /> : null,
       status: [status.context, version, timeZone].filter((v) => v !== "").join(" · "),
+      ...(switchProfile ? { onSwitchProfile: switchProfile } : {}),
       onSignOut: () => void onLogout(),
     },
   };
@@ -818,6 +825,7 @@ function ShellFrame({
       drawer={drawer}
       chatSurface={isChatSurface(pathname)}
       onNavigate={navigate}
+      {...(nativeNav ? { nativeNav } : {})}
       pathname={pathname}
       status={status}
       ownStatusBar={pathname === HOME_PATH || under(pathname, "/chat")}

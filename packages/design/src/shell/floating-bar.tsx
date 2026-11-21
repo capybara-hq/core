@@ -71,6 +71,7 @@ export function FloatingBar({ lead, trailing }: FloatingBarProps) {
       <FloatingIconButton
         icon="menu"
         label={label}
+        menuButton
         onClick={lead.onOpen}
         {...(lead.badge ? { badge: lead.badge } : {})}
       />

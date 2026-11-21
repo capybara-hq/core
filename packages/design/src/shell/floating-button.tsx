@@ -12,13 +12,22 @@ export type FloatingIconButtonProps = {
   onClick?: () => void;
   /** Draws a link instead of a button (a floating back button of a pushed page). */
   href?: string;
+  /** The shell's menu button (`cb-shell-menu-btn`): hidden while a native strip shows. */
+  menuButton?: boolean;
 };
 
 /**
  * A round floating icon button over the page (design spec §6.51): the chat-first shell's menu
  * button, the back button of a pushed page. A translucent ground with a hairline and a soft shadow.
  */
-export function FloatingIconButton({ icon, label, badge, onClick, href }: FloatingIconButtonProps) {
+export function FloatingIconButton({
+  icon,
+  label,
+  badge,
+  onClick,
+  href,
+  menuButton,
+}: FloatingIconButtonProps) {
   const Link = useDesignLink();
   const text = badgeText(badge);
   const inner = (
@@ -42,7 +51,7 @@ export function FloatingIconButton({ icon, label, badge, onClick, href }: Floati
   return (
     <button
       type="button"
-      className="cb-float-btn"
+      className={menuButton ? "cb-float-btn cb-shell-menu-btn" : "cb-float-btn"}
       data-part="float-btn"
       aria-label={label}
       onClick={onClick}

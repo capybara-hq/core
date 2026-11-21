@@ -2073,6 +2073,7 @@
     "noOrg": "Select organization",
     "createOrg": "Create organization…",
     "accountSettings": "Personal settings",
+    "switchProfile": "Switch platform",
     "noCurrentOrg": "There is no current organization to act on."
   },
   "notFound": {

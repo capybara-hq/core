@@ -3,28 +3,45 @@ import type { MenuItem } from "./overlays/menus";
 
 /**
  * Native handles (mobile app spec §6): what a native shell offers the page in place of the web's
- * own tab bar, menus, share and haptics. The design package imports nothing from a shell or from
- * the plugin SDK: these shapes restate the SDK's `nav@1` / `menu@1` / `share@1` / `haptics@1`
+ * own strip sections, menus, share and haptics. The design package imports nothing from a shell or
+ * from the plugin SDK: these shapes restate the SDK's `nav@1` / `menu@1` / `share@1` / `haptics@1`
  * structurally, and apps/web passes the shell's capabilities in (`DesignProvider native`,
  * `AppShell nativeNav`). Without them (the browser) the design draws its own.
  */
 
-/** The four tabs of the native tab bar: the ids of the compact bottom navigation. */
-export type NativeTabId = "chats" | "agents" | "inbox" | "me";
+/** The native strip's sections (`nav@1`), in display order. */
+export type NativeSectionId = "chats" | "inbox" | "agents" | "schedules";
 
-/** The native tab bar (`nav@1`). */
+/** The strip's sections in display order (the SDK's `NAV_SECTION_ORDER`). */
+export const NATIVE_SECTION_ORDER: readonly NativeSectionId[] = [
+  "chats",
+  "inbox",
+  "agents",
+  "schedules",
+];
+
+/** The bounds the shell validates `nav@1` state against (the SDK's `MOBILE_SHELL_LIMITS`). */
+export const NATIVE_NAV_LIMITS = { label: 32, count: 9999 } as const;
+
+/**
+ * The native strip (`nav@1`, mobile app spec §6.1): a vertical tab bar in the iPhone Duo's strip,
+ * offered only while the window has one (its presence is the strip's visibility).
+ */
 export interface NativeNavHandle {
   /**
-   * The bar's whole state: its items, the current one and whether a bar belongs on screen now
-   * (exactly when the web would draw its own bottom navigation).
+   * The strip's whole state: the sections the person sees (with the inbox count), the current
+   * one, and its menu button (non-null while the web's class is compact; the button asks the web
+   * to open its drawer).
    */
   set(state: {
-    items: { id: NativeTabId; label: string; count?: number; countMore?: boolean }[];
-    current: NativeTabId | null;
-    visible: boolean;
+    items: { id: NativeSectionId; label: string; count?: number; countMore?: boolean }[];
+    current: NativeSectionId | null;
+    menu: { label: string; count?: number; countMore?: boolean } | null;
   }): void;
-  /** A tap on a tab; returns the unsubscribe. */
-  onSelect(listener: (id: NativeTabId) => void): () => void;
+  /** A tap on a section, also the current one; returns the unsubscribe. */
+  onSelect(listener: (id: NativeSectionId) => void): () => void;
+  /** A tap on the strip's menu button; returns the unsubscribe. */
+  onMenu(listener: () => void): () => void;
 }
 
 export type NativeHapticKind = "selection" | "light" | "success" | "warning";

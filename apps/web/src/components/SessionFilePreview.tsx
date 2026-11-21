@@ -3,6 +3,7 @@
 import { AttachmentPreview, useToast } from "@capybara-hq/design";
 import { useCallback, useRef, useState } from "react";
 import { ApiClientError, ensureSession } from "../lib/api";
+import { useOpenExternalCapability } from "../lib/shell";
 import { useErrorMessage } from "../lib/use-error-message";
 
 /**
@@ -18,13 +19,27 @@ import { useErrorMessage } from "../lib/use-error-message";
  * opens synchronously (keeping the user gesture, no opener), then navigates once the session is
  * confirmed; when the sign-in is really gone (401) the tab closes and the error shows here instead
  * of a bare 401.
+ *
+ * Inside a native shell with `openExternal@1` (the mobile app sends every popup to its in-app
+ * browser sheet, which has none of the WebView's cookies, so a blank tab opens nothing or a
+ * signed-out page) the URL goes to the system browser instead, inside the click; the shell's
+ * sign-in ran in that browser, so its session is there too.
  */
 export function useOpenDownload(): (url: string) => void {
   const toast = useToast();
   const errorMessage = useErrorMessage();
+  const external = useOpenExternalCapability();
   return useCallback(
     (url: string) => {
       const target = new URL(url, window.location.href).href;
+      if (external !== undefined) {
+        try {
+          external.open(target).catch(() => {});
+        } catch {
+          // the shell refused it: nothing opens
+        }
+        return;
+      }
       const tab = window.open("", "_blank");
       if (!tab) {
         window.open(target, "_blank", "noopener,noreferrer");
@@ -44,7 +59,7 @@ export function useOpenDownload(): (url: string) => void {
         go();
       });
     },
-    [toast, errorMessage],
+    [toast, errorMessage, external],
   );
 }
 

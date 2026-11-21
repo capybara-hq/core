@@ -932,3 +932,18 @@ a.cb-stat-card:focus-visible {
     margin-top: 0;
   }
 }
+
+/* A native strip (mobile app spec §6.1, mobile layout spec §4.2 / §4.3): while the mobile app's
+   strip shows (`data-native-nav` on <html> and the shell element), the sections and the menu button
+   are native: the web's section entries (drawer, sidebar) and its menu button are hidden. */
+[data-native-nav] [data-nav-section],
+[data-native-nav] .cb-shell-menu-btn {
+  display: none;
+}
+/* Medium and expanded keep only search, the recent conversations, the account and the new
+   conversation: the sidebar's other entries (技能, 连接器, 更多) move into the account menu. */
+@media (min-width: 600px) {
+  [data-native-nav] [data-nav-other] {
+    display: none;
+  }
+}

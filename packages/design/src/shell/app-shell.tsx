@@ -2,8 +2,14 @@ import { type ReactNode, useCallback, useEffect, useId, useMemo, useRef, useStat
 import { IconButton } from "../controls/index";
 import type { ConvMenuEntry } from "../conversation/menu";
 import { ConvMenu } from "../conversation/menu";
+import type { NavBadge } from "../display/nav-badge";
 import { Icon } from "../icons/icon";
-import type { NativeNavHandle } from "../native";
+import {
+  NATIVE_NAV_LIMITS,
+  type NativeNavHandle,
+  type NativeSectionId,
+  useHaptics,
+} from "../native";
 import { type CommandGroup, CommandPalette } from "../overlays/index";
 import { useDesignT } from "../provider";
 import { DesktopOnlyNotice, type DesktopOnlyNoticeProps } from "../templates/desktop-only";
@@ -35,13 +41,18 @@ export type AppShellProps = {
   /** The route (`usePathname()`, without the locale): the drawer's current row, the slide key. */
   pathname?: string;
   /**
-   * A native shell's navigation (`nav@1`): the shell element carries `data-native-nav`. Until the
-   * strip rework (mobile touch plan Task 30) the shell sends it nothing: the chat-first shell has
-   * no tab items to give it.
+   * A native shell's strip (`nav@1`, mobile app spec §6.1): the shell element and `<html>` carry
+   * `data-native-nav`, which hides the web's own section entries and menu button; the shell tells
+   * the strip the drawer's sections with the inbox count, the current one and (while compact) the
+   * menu button, and follows its taps. The handle may be a new object on every render: only its
+   * presence keys what is sent, so an equivalent handle sends nothing.
    */
   nativeNav?: NativeNavHandle;
-  /** Client navigation (apps/web: the router's push): the drawer's picks. */
-  onNavigate?(href: string): void;
+  /**
+   * Client navigation (apps/web: the router's push): the drawer's picks and the strip's taps.
+   * `transition: "none"`: the move swaps at once (a native tab switch never slides).
+   */
+  onNavigate?(href: string, options?: { transition?: "none" }): void;
   /**
    * The compact floating row's trailing overflow menu for pages that do not register their own
    * ({@link useRegisterShellPage}); empty or absent: no button.
@@ -238,6 +249,8 @@ export function AppShell({
   // page never animates twice. A later navigation changes the URL, so a gesture that changed no
   // route never swallows the next slide.
   const uaTransition = useRef<string | null>(null);
+  // The path a native strip tap went to (`transition: "none"`): its route change swaps at once.
+  const instantRoute = useRef<string | null>(null);
   useEffect(() => {
     const onPop = (e: PopStateEvent) => {
       const animated = (e as PopStateEvent & { hasUAVisualTransition?: boolean })
@@ -251,8 +264,10 @@ export function AppShell({
     const last = lastRoute.current;
     if (last.pathname === pathname) return;
     lastRoute.current = { pathname, root };
-    const animated = uaTransition.current === window.location.href;
+    const animated =
+      uaTransition.current === window.location.href || instantRoute.current === pathname;
     uaTransition.current = null;
+    instantRoute.current = null;
     // A pushed page slides in from the end edge and the way back to a chat surface slides back; a
     // move between chat surfaces and a move the browser animated do not.
     setSlide((prev) =>
@@ -261,6 +276,97 @@ export function AppShell({
         : { direction: root ? "pop" : "push", n: ((prev?.n ?? 0) + 1) % 2 },
     );
   }, [pathname, root]);
+
+  // The native strip (mobile app spec §6.1): its state comes from the drawer's data and the route.
+  const haptics = useHaptics();
+  const hasNav = nativeNav !== undefined;
+  const navState = drawer
+    ? {
+        items: [
+          { id: "chats" as const, label: navLabel(t("shell.chats")) },
+          ...drawer.sections.map((s) => ({
+            id: s.id,
+            label: navLabel(s.label),
+            ...navBadge(s.badge),
+          })),
+        ],
+        current: currentSection(pathname, surface, drawer),
+        menu:
+          hydrated && sizeClass === "compact"
+            ? { label: navLabel(t("shell.menu")), ...navBadge(drawer.menuBadge) }
+            : null,
+      }
+    : null;
+  const navKey = navState === null ? null : JSON.stringify(navState);
+  const navSent = useRef<string | null>(null);
+  const navLatest = useRef({ nav: nativeNav, drawer, onNavigate, haptics, navState, pathname });
+  navLatest.current = { nav: nativeNav, drawer, onNavigate, haptics, navState, pathname };
+  // `nav.set` is the one capability call made from an effect: a state push, not confirming. Only
+  // the handle's presence and the state key it: an equivalent new handle sends nothing.
+  useEffect(() => {
+    const { nav, navState: state } = navLatest.current;
+    if (!hasNav) {
+      navSent.current = null;
+      return;
+    }
+    if (nav === undefined || state === null || navSent.current === navKey) return;
+    navSent.current = navKey;
+    try {
+      nav.set(state);
+    } catch {
+      // the strip keeps its last state
+    }
+  }, [hasNav, navKey]);
+  // `<html data-native-nav>` (set before the first paint by the environment script) also reaches
+  // the drawer and the menus, which portal out of the shell element: set while the handle is
+  // there, cleared once it goes (the strip went away), never touched before a handle was seen.
+  const hadNav = useRef(false);
+  useEffect(() => {
+    if (reference !== undefined) return;
+    const root = document.documentElement;
+    if (hasNav) {
+      hadNav.current = true;
+      root.setAttribute("data-native-nav", "");
+    } else if (hadNav.current) {
+      hadNav.current = false;
+      root.removeAttribute("data-native-nav");
+    }
+  }, [hasNav, reference]);
+  // The strip's taps and its menu button: subscribed per handle (resubscribing sends no state).
+  useEffect(() => {
+    if (nativeNav === undefined) return;
+    const offs: (() => void)[] = [];
+    const listen = (subscribe: () => unknown) => {
+      try {
+        const off = subscribe();
+        if (typeof off === "function") offs.push(off as () => void);
+      } catch {
+        // a shell that cannot subscribe: its taps do nothing
+      }
+    };
+    listen(() =>
+      nativeNav.onSelect((id) => {
+        const { drawer: d, onNavigate: go, haptics: buzz, pathname: now } = navLatest.current;
+        const href = d === undefined ? undefined : sectionHref(id, d);
+        if (href === undefined) return;
+        buzz("selection");
+        // a tab switch swaps at once; the current section's root is the same page (no route change)
+        if (href !== now) instantRoute.current = href;
+        if (go) go(href, { transition: "none" });
+        else window.location.assign(href);
+      }),
+    );
+    listen(() => nativeNav.onMenu(() => setDrawerOpen((open) => !open)));
+    return () => {
+      for (const off of offs) {
+        try {
+          off();
+        } catch {
+          // already gone
+        }
+      }
+    };
+  }, [nativeNav]);
 
   const openSteps = useCallback(() => {
     stepsPushed.current = true;
@@ -395,6 +501,7 @@ export function AppShell({
           ) : null}
           <Sidebar
             {...sidebar}
+            {...(nativeNav ? { nativeNav: true } : {})}
             collapsed={collapsed}
             onCollapsedChange={setCollapsed}
             onOpenCommands={() => setPaletteOpen(true)}
@@ -492,4 +599,42 @@ type NavigationApi = {
 function navigationApi(): NavigationApi | null {
   const nav = (window as { navigation?: NavigationApi }).navigation;
   return nav?.currentEntry ? nav : null;
+}
+
+const under = (pathname: string, href: string) =>
+  pathname === href || pathname.startsWith(`${href}/`);
+
+/** A label within the strip's bound (`navLabel`), cut by code point. */
+function navLabel(label: string): string {
+  const chars = Array.from(label);
+  return chars.length > NATIVE_NAV_LIMITS.label
+    ? chars.slice(0, NATIVE_NAV_LIMITS.label).join("")
+    : label;
+}
+
+/** A badge in the strip's shape: a count within `navCount`, `countMore` past it; none at 0. */
+function navBadge(badge: NavBadge | undefined): { count?: number; countMore?: boolean } {
+  const n = badge?.count ?? 0;
+  if (!(n > 0)) return {};
+  const count = Math.min(Math.floor(n), NATIVE_NAV_LIMITS.count);
+  const more = badge?.more === true || n > NATIVE_NAV_LIMITS.count;
+  return { count, ...(more ? { countMore: true } : {}) };
+}
+
+/** The section a route belongs to: chats for a chat surface and the conversations list. */
+function currentSection(
+  pathname: string | undefined,
+  surface: boolean,
+  drawer: DrawerNavData,
+): NativeSectionId | null {
+  if (surface) return "chats";
+  if (pathname === undefined) return null;
+  if (under(pathname, drawer.allConversations.href)) return "chats";
+  return drawer.sections.find((s) => under(pathname, s.href))?.id ?? null;
+}
+
+/** A section's root: the new conversation for chats, else the drawer's entry. */
+function sectionHref(id: NativeSectionId, drawer: DrawerNavData): string | undefined {
+  if (id === "chats") return drawer.newConversation.href;
+  return drawer.sections.find((s) => s.id === id)?.href;
 }
