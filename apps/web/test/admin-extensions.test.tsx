@@ -548,15 +548,15 @@ describe("/admin/extensions (ListPage + DataTable by capability, details in a Sh
     async (locale) => {
       const p = msgs[locale].admin.extensions;
       const docker = plugin({
-        name: "sandbox-docker",
-        displayName: { zh: "Docker 沙箱", en: "Docker sandbox" },
-        permissions: [group("provides", ["device-provider@1"])],
+        name: "object-store-s3",
+        displayName: { zh: "S3 存储", en: "S3 storage" },
+        permissions: [group("provides", ["object-store@1"])],
       });
       const e2b = plugin({
-        name: "sandbox-e2b",
-        displayName: { zh: "E2B 沙箱", en: "E2B sandbox" },
+        name: "object-store-oss",
+        displayName: { zh: "OSS 存储", en: "OSS storage" },
         status: "conflict",
-        permissions: [group("provides", ["device-provider@1"])],
+        permissions: [group("provides", ["object-store@1"])],
         replicas: [
           {
             replicaId: "web-1-111-aaaaaa",
@@ -564,39 +564,39 @@ describe("/admin/extensions (ListPage + DataTable by capability, details in a Sh
             state: "pending",
             reason: "conflict",
             detail:
-              "extension point device-provider@1 is provided by more than one extension: sandbox-docker, sandbox-e2b",
+              "extension point object-store@1 is provided by more than one extension: object-store-s3, object-store-oss",
             heartbeatAt: HEARTBEAT,
           },
         ],
         conflict: {
-          extensionPoint: "device-provider@1",
+          extensionPoint: "object-store@1",
           providers: [
-            { name: "sandbox-docker", displayName: { zh: "Docker 沙箱", en: "Docker sandbox" } },
+            { name: "object-store-s3", displayName: { zh: "S3 存储", en: "S3 storage" } },
           ],
         },
       });
       listRoutes([docker, e2b]);
       await renderRouteWithCache("/admin/extensions", lastStubRoutes(), { locale });
-      const row = tableRow(locale === "zh" ? "E2B 沙箱" : "E2B sandbox");
+      const row = tableRow(locale === "zh" ? "OSS 存储" : "OSS storage");
       expect(within(row).getByText(p.status.conflict)).toBeTruthy();
       expect(within(row).queryByText(p.status.dependency)).toBeNull();
       const user = userEvent.setup();
       await user.click(
-        screen.getByText(locale === "zh" ? "E2B 沙箱" : "E2B sandbox", {
+        screen.getByText(locale === "zh" ? "OSS 存储" : "OSS storage", {
           selector: ".cb-cell-title-name",
         }),
       );
       const sheet = await screen.findByRole("dialog");
       const line = fill(p.detail.conflictLine, {
-        point: msgs[locale].extensions.capability.deviceProvider,
-        others: locale === "zh" ? "Docker 沙箱" : "Docker sandbox",
-        name: locale === "zh" ? "E2B 沙箱" : "E2B sandbox",
+        point: msgs[locale].extensions.capability.objectStore,
+        others: locale === "zh" ? "S3 存储" : "S3 storage",
+        name: locale === "zh" ? "OSS 存储" : "OSS storage",
       });
       expect(within(sheet).getByText(line)).toBeTruthy();
       if (locale === "zh") {
         expect(p.status.conflict).toBe("冲突");
         expect(line).toBe(
-          "设备提供方只能启用一个提供方：Docker 沙箱已启用，先停用它，E2B 沙箱就会加载。",
+          "对象存储只能启用一个提供方：S3 存储已启用，先停用它，OSS 存储就会加载。",
         );
       }
       expect(within(sheet).getAllByText(p.detail.replicaReason.conflict).length).toBeGreaterThan(0);
@@ -605,26 +605,26 @@ describe("/admin/extensions (ListPage + DataTable by capability, details in a Sh
   );
 
   it.each(LOCALES)(
-    "a second sandbox while another is enabled: 启用 is off, the line names the one to disable first and links to it (%s)",
+    "a second object store while another is enabled: 启用 is off, the line names the one to disable first and links to it (%s)",
     async (locale) => {
       const p = msgs[locale].admin.extensions;
       const docker = plugin({
-        name: "sandbox-docker",
-        displayName: { zh: "Docker 沙箱", en: "Docker sandbox" },
-        permissions: [group("provides", ["device-provider@1"])],
+        name: "object-store-s3",
+        displayName: { zh: "S3 存储", en: "S3 storage" },
+        permissions: [group("provides", ["object-store@1"])],
       });
       const e2b = plugin({
-        name: "sandbox-e2b",
-        displayName: { zh: "E2B 沙箱", en: "E2B sandbox" },
+        name: "object-store-oss",
+        displayName: { zh: "OSS 存储", en: "OSS storage" },
         status: "disabled",
         desired: { version: "1.0.0", sha256: SHA, state: "disabled" },
         replicas: [],
-        permissions: [group("provides", ["device-provider@1"])],
+        permissions: [group("provides", ["object-store@1"])],
         enableBlocked: {
-          extensionPoint: "device-provider@1",
+          extensionPoint: "object-store@1",
           enabled: {
-            name: "sandbox-docker",
-            displayName: { zh: "Docker 沙箱", en: "Docker sandbox" },
+            name: "object-store-s3",
+            displayName: { zh: "S3 存储", en: "S3 storage" },
           },
         },
       });
@@ -632,18 +632,18 @@ describe("/admin/extensions (ListPage + DataTable by capability, details in a Sh
       await renderRouteWithCache("/admin/extensions", lastStubRoutes(), { locale });
       const user = userEvent.setup();
       await user.click(
-        screen.getByText(locale === "zh" ? "E2B 沙箱" : "E2B sandbox", {
+        screen.getByText(locale === "zh" ? "OSS 存储" : "OSS storage", {
           selector: ".cb-cell-title-name",
         }),
       );
       const sheet = await screen.findByRole("dialog");
       const line = fill(p.detail.enableBlocked, {
-        point: msgs[locale].extensions.capability.deviceProvider,
-        other: locale === "zh" ? "Docker 沙箱" : "Docker sandbox",
-        name: locale === "zh" ? "E2B 沙箱" : "E2B sandbox",
+        point: msgs[locale].extensions.capability.objectStore,
+        other: locale === "zh" ? "S3 存储" : "S3 storage",
+        name: locale === "zh" ? "OSS 存储" : "OSS storage",
       });
       if (locale === "zh") {
-        expect(line).toBe("设备提供方只能启用一个提供方：请先停用 Docker 沙箱，再启用 E2B 沙箱。");
+        expect(line).toBe("对象存储只能启用一个提供方：请先停用 S3 存储，再启用 OSS 存储。");
       }
       expect(within(sheet).getByText(line)).toBeTruthy();
       const enable = within(sheet).getByRole("button", { name: p.detail.actions.enable });
@@ -652,10 +652,10 @@ describe("/admin/extensions (ListPage + DataTable by capability, details in a Sh
       expect(calls.some((c) => c.method === "POST")).toBe(false);
       const link = within(sheet).getByRole("link", {
         name: fill(p.detail.openOther, {
-          name: locale === "zh" ? "Docker 沙箱" : "Docker sandbox",
+          name: locale === "zh" ? "S3 存储" : "S3 storage",
         }),
       });
-      expect(link.getAttribute("href")).toBe("/admin/extensions/sandbox-docker");
+      expect(link.getAttribute("href")).toBe("/admin/extensions/object-store-s3");
       expect(findNestedBoxes(document.body).map(describeNestedBox)).toEqual([]);
     },
   );
@@ -665,7 +665,7 @@ describe("/admin/extensions (ListPage + DataTable by capability, details in a Sh
       status: "disabled",
       desired: { version: "1.0.0", sha256: SHA, state: "disabled" },
       replicas: [],
-      permissions: [group("provides", ["device-provider@1"])],
+      permissions: [group("provides", ["object-store@1"])],
     });
     detailRoutes(disabled, {
       "POST /api/v1/admin/extensions/demo/enable": () =>
@@ -673,13 +673,13 @@ describe("/admin/extensions (ListPage + DataTable by capability, details in a Sh
           error: {
             code: "extension.single_provider_enabled",
             message:
-              "Only one extension may provide device-provider@1; disable Other sandbox first, then enable demo",
+              "Only one extension may provide object-store@1; disable Other storage first, then enable demo",
             details: [
               {
-                extensionPoint: "device-provider@1",
+                extensionPoint: "object-store@1",
                 enabled: {
-                  name: "other-sbx",
-                  displayName: { zh: "别的沙箱", en: "Other sandbox" },
+                  name: "other-store",
+                  displayName: { zh: "别的存储", en: "Other storage" },
                 },
               },
             ],
@@ -691,8 +691,8 @@ describe("/admin/extensions (ListPage + DataTable by capability, details in a Sh
     const user = userEvent.setup();
     await user.click(await screen.findByRole("button", { name: p.detail.actions.enable }));
     const line = fill(p.detail.enableBlocked, {
-      point: en.extensions.capability.deviceProvider,
-      other: "Other sandbox",
+      point: en.extensions.capability.objectStore,
+      other: "Other storage",
       name: "demo",
     });
     expect(await screen.findByText(line)).toBeTruthy();
@@ -701,9 +701,9 @@ describe("/admin/extensions (ListPage + DataTable by capability, details in a Sh
     ).toBe(true);
     expect(
       screen
-        .getByRole("link", { name: fill(p.detail.openOther, { name: "Other sandbox" }) })
+        .getByRole("link", { name: fill(p.detail.openOther, { name: "Other storage" }) })
         .getAttribute("href"),
-    ).toBe("/admin/extensions/other-sbx");
+    ).toBe("/admin/extensions/other-store");
   });
 
   it.each(LOCALES)(
@@ -797,10 +797,10 @@ describe("/admin/extensions (ListPage + DataTable by capability, details in a Sh
     async (locale) => {
       const p = msgs[locale].admin.extensions;
       const e2b = plugin({
-        name: "sandbox-e2b",
-        displayName: { zh: "E2B 沙箱", en: "E2B sandbox" },
+        name: "object-store-oss",
+        displayName: { zh: "OSS 存储", en: "OSS storage" },
         status: "conflict",
-        permissions: [group("provides", ["device-provider@1"])],
+        permissions: [group("provides", ["object-store@1"])],
         replicas: [
           {
             replicaId: "web-1-111-aaaaaa",
@@ -808,35 +808,35 @@ describe("/admin/extensions (ListPage + DataTable by capability, details in a Sh
             state: "pending",
             reason: "conflict",
             detail:
-              "extension point device-provider@1 is provided by more than one extension: sandbox-docker, sandbox-e2b; sandbox-docker is not loaded, so device-provider@1 has no running provider",
+              "extension point object-store@1 is provided by more than one extension: object-store-s3, object-store-oss; object-store-s3 is not loaded, so object-store@1 has no running provider",
             heartbeatAt: HEARTBEAT,
           },
         ],
         conflict: {
-          extensionPoint: "device-provider@1",
+          extensionPoint: "object-store@1",
           providers: [
-            { name: "sandbox-docker", displayName: { zh: "Docker 沙箱", en: "Docker sandbox" } },
+            { name: "object-store-s3", displayName: { zh: "S3 存储", en: "S3 storage" } },
           ],
           unprovided: true,
         },
       });
       listRoutes([e2b]);
       await renderRouteWithCache("/admin/extensions", lastStubRoutes(), { locale });
-      const sandbox = msgs[locale].extensions.capability.deviceProvider;
-      const noProvider = fill(p.calloutNoProvider, { point: sandbox });
-      if (locale === "zh") expect(noProvider).toBe("设备提供方没有正在运行的提供方。");
+      const store = msgs[locale].extensions.capability.objectStore;
+      const noProvider = fill(p.calloutNoProvider, { point: store });
+      if (locale === "zh") expect(noProvider).toBe("没有正在运行的对象存储扩展。");
       expect(screen.getByText(noProvider, { exact: false })).toBeTruthy();
       const user = userEvent.setup();
       await user.click(
-        screen.getByText(locale === "zh" ? "E2B 沙箱" : "E2B sandbox", {
+        screen.getByText(locale === "zh" ? "OSS 存储" : "OSS storage", {
           selector: ".cb-cell-title-name",
         }),
       );
       const sheet = await screen.findByRole("dialog");
       const line = fill(p.detail.noProviderLine, {
-        point: sandbox,
-        others: locale === "zh" ? "Docker 沙箱" : "Docker sandbox",
-        name: locale === "zh" ? "E2B 沙箱" : "E2B sandbox",
+        point: store,
+        others: locale === "zh" ? "S3 存储" : "S3 storage",
+        name: locale === "zh" ? "OSS 存储" : "OSS storage",
       });
       expect(within(sheet).getByText(line)).toBeTruthy();
     },

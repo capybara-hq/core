@@ -4884,7 +4884,7 @@
       },
       "callout": "{n} 个扩展需要处理：{names}",
       "calloutFix": "去处理",
-      "calloutNoProvider": "{point}没有正在运行的提供方。",
+      "calloutNoProvider": "没有正在运行的{point}扩展。",
       "configure": "配置",
       "settings": "设置",
       "upgrade": "升级",
