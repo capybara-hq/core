@@ -5,7 +5,7 @@ import { useTranslations } from "next-intl";
 
 /**
  * A `gh auth login --web` device code (auto mode spec §6, P-D13): the GitHub device-login URL as a
- * link and the one-time code as a CopyField (the code line whose copy button reads 已复制 for two
+ * link and the one-time code as a CopyField (the code line whose copy button reads "Copied" for two
  * seconds). The login runs inside the device's container; the kernel only echoes the prompt,
  * never the token.
  */

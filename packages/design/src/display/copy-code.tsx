@@ -10,7 +10,7 @@ export type CopyCodeState = "idle" | "copied" | "manual";
 export type CopyCodeProps = {
   /** The one line to copy: a command, an address, a one-time code. Empty disables the copy. */
   value: string;
-  /** The block's accessible name (安装命令), when no visible label names it. */
+  /** The block's accessible name (e.g. "Install command"), when no visible label names it. */
   label?: string;
   /** The id of a visible label naming the block (CopyField passes its label's). */
   labelledBy?: string;
@@ -22,7 +22,7 @@ export type CopyCodeProps = {
 
 /**
  * One line people copy (spec §6.58): the value in the code font in a one-line block, a copy icon
- * button inside the block at its right. After copying the button shows a check and 已复制 for two
+ * button inside the block at its right. After copying the button shows a check and "Copied" for two
  * seconds. Without a usable clipboard (an insecure origin, a refused permission) the value is
  * selected and a muted line under the block says to copy it by hand. A long value scrolls
  * sideways inside the block, never past it. On the page ground it is framed (1px `line`, `panel`);

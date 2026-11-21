@@ -98,7 +98,7 @@ describe("CopyCode (spec §6.58)", () => {
     expect(document.activeElement).toBe(screen.getByRole("button", { name: "复制" }));
     await userEvent.keyboard("{Enter}");
     expect(writeText).toHaveBeenCalledWith(COMMAND);
-    // the same element stays focused while it reads 已复制
+    // the same element stays focused while it reads "Copied"
     expect(document.activeElement).toBe(screen.getByRole("button", { name: "已复制" }));
   });
 
