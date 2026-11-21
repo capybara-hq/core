@@ -1,6 +1,7 @@
 import { Module } from "@nestjs/common";
 import { BackgroundModule } from "../background/background.module.js";
 import { ConversationAccessModule } from "../conversations/access.js";
+import { ConversationApprovalProfileModule } from "../conversations/approval-profile.js";
 import { AttachmentsModule } from "../conversations/attachments.module.js";
 import { EventLogModule } from "../conversations/event-log.js";
 import { ConversationLeakCheckModule } from "../conversations/leak-check.js";
@@ -61,6 +62,8 @@ import { ToolAskReview } from "./tool-review.js";
     PermissionAuthorityModule,
     OperationAuthorityModule,
     EventLogModule,
+    // the profile that decides an ask addressed to the conversation's person (the profile step)
+    ConversationApprovalProfileModule,
     // the approval decision's leak check of a person's card values
     ConversationLeakCheckModule,
     AttachmentsModule,

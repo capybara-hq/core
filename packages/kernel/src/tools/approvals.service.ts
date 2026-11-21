@@ -239,6 +239,11 @@ export interface ApprovalRecord {
    * then ends without running tells the agent to have them rotated.
    */
   leakedFields?: string[];
+  /**
+   * A tool ask the review model could not decide under Approve for me (profiles govern every
+   * approval, R3): the card says it is the person's call. Absent otherwise.
+   */
+  reviewUnsure?: true;
   toolKey: string;
   specHash: string;
   connectorId: string | null;
@@ -412,6 +417,17 @@ export interface ToolAskDetail {
   leakedFields?: string[];
   /** The file the call takes in place of an upload (its sha256 is what the approval binds). */
   file?: FileCardDetail;
+  /** The review model could not decide the ask under Approve for me (R3). */
+  reviewUnsure?: true;
+}
+
+/** Whether a tool ask's stored `detail` says the review model could not decide it. */
+function reviewUnsureOf(detail: unknown): Pick<ApprovalRecord, "reviewUnsure"> | null {
+  return typeof detail === "object" &&
+    detail !== null &&
+    (detail as { reviewUnsure?: unknown }).reviewUnsure === true
+    ? { reviewUnsure: true }
+    : null;
 }
 
 /** A tool ask's file from its stored `detail` (none: the call takes no file). */
@@ -583,6 +599,7 @@ function toRecord(r: Selectable<ApprovalsTable>): ApprovalRecord {
     command: r.kind === "command" ? ((r.detail as CommandAskDetail | null) ?? null) : null,
     ...((r.kind === "tool" || r.kind === "secure_input") && personFieldsOf(r.detail)),
     ...(r.kind === "tool" && fileOf(r.detail)),
+    ...(r.kind === "tool" && reviewUnsureOf(r.detail)),
     toolKey: r.tool_key,
     specHash: r.spec_hash,
     connectorId: r.connector_id,

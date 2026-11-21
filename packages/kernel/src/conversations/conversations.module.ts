@@ -11,6 +11,7 @@ import { SkillsModule } from "../skills/skills.module.js";
 import { StorageModule } from "../storage/storage.module.js";
 import { ToolsModule } from "../tools/tools.module.js";
 import { ConversationAccessModule } from "./access.js";
+import { ConversationApprovalProfileModule } from "./approval-profile.js";
 import { ConversationArtifacts } from "./artifacts.js";
 import { AttachmentsModule } from "./attachments.module.js";
 import { ConversationsService } from "./conversations.service.js";
@@ -37,6 +38,7 @@ import { ConversationQueue } from "./queue.service.js";
     PermissionAuthorityModule,
     EventLogModule,
     ConversationAccessModule,
+    ConversationApprovalProfileModule,
     AttachmentsModule,
     AgentLookupModule,
     StorageModule,
@@ -66,6 +68,7 @@ import { ConversationQueue } from "./queue.service.js";
     PermissionProfilesService,
     EventLogModule,
     ConversationAccessModule,
+    ConversationApprovalProfileModule,
     AttachmentsModule,
     ConversationsService,
     ConversationQueue,
