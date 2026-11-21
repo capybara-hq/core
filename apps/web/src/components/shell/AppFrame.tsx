@@ -47,6 +47,7 @@ import { logout, type Me, type Membership, setCurrentOrg } from "../../lib/sessi
 import { broadcastSession, useSessionSync } from "../../lib/session-sync";
 import { sidebarCookie } from "../../lib/sidebar-cookie";
 import { useErrorMessage } from "../../lib/use-error-message";
+import { useForgetPushRegistration } from "../../lib/use-push-registration";
 import { useShellNotifications } from "../../lib/use-shell-notifications";
 import { useAdminExtensionPages } from "../admin-nav";
 import { CreateOrgDialog } from "../CreateOrgDialog";
@@ -74,6 +75,8 @@ import {
   usePendingApprovals,
 } from "./nav";
 import { OrgChooser } from "./OrgChooser";
+import { useOrgParam } from "./org-param";
+import { usePushPrompt } from "./PushPrompt";
 import { type Session, SessionContext } from "./session";
 import {
   activeStepOf,
@@ -328,7 +331,21 @@ function ShellFrame({
   const capState = useCapState();
   const sidebarChoice = useContext(SidebarChoiceContext);
   // Safe mode's banner (from the client host): a row of the shell, so nothing is clipped
-  const banner = useShellBanner();
+  const safeBanner = useShellBanner();
+  // the push prompt shares the banner row; safe mode's banner comes first
+  const pushPrompt = usePushPrompt(sections?.pending.count ?? 0);
+  const banner =
+    safeBanner !== null && pushPrompt !== null ? (
+      <>
+        {safeBanner}
+        {pushPrompt}
+      </>
+    ) : (
+      (safeBanner ?? pushPrompt)
+    );
+  // `?org=` on a link (a push's path) switches the current org when the person is a member
+  useOrgParam(me);
+  const forgetPush = useForgetPushRegistration();
   const orgId = currentOrg?.orgId ?? null;
   // A brand replacement: client code for the slot, or a winner the layout prefetched that the
   // document's set delivers (then the server render is already pending, no flash of the logo).
@@ -442,6 +459,8 @@ function ShellFrame({
     // down, so it cannot send the page to sign-in with a return path meanwhile.
     markSigningOut();
     try {
+      // this install's push registration goes first, while the session is still valid
+      await forgetPush();
       await postLogout();
     } finally {
       broadcastSession("signed-out");

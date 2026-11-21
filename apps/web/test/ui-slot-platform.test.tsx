@@ -227,6 +227,7 @@ describe("未生效的界面 on the extension detail", () => {
     stubApi({
       [`GET ${ADMIN}/extensions`]: () =>
         json(200, { extensions: [ext(uiDropped)], drainSeconds: 30 }),
+      [`GET ${ADMIN}/extensions/demo/guides`]: () => json(200, { guides: [] }),
       [`GET ${ADMIN}/extensions/demo/config`]: () =>
         json(200, {
           plugin: "demo",

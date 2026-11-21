@@ -29,6 +29,7 @@ export * from "./org-access.js";
 export * from "./permissions.js";
 export * from "./plugin-manifest.js";
 export * from "./plugin-package.js";
+export * from "./push.js";
 export * from "./sandbox.js";
 export * from "./sandbox-operation.js";
 export { SANDBOX_RUNTIME_SOURCE } from "./sandbox-runtime-source.js";

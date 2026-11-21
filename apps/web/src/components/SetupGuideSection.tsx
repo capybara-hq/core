@@ -13,7 +13,12 @@ import {
   useToast,
   versionLabel,
 } from "@capybara-hq/design";
-import { keepPreviousData, useQuery, useQueryClient } from "@tanstack/react-query";
+import {
+  keepPreviousData,
+  type UseQueryOptions,
+  useQuery,
+  useQueryClient,
+} from "@tanstack/react-query";
 import { useLocale, useTranslations } from "next-intl";
 import { useEffect, useRef, useState } from "react";
 import { useRouter } from "../i18n/navigation";
@@ -21,12 +26,13 @@ import { ApiClientError } from "../lib/api";
 import { labelLocale } from "../lib/extension-label";
 import { keys } from "../lib/query/keys";
 import { useAppMutation } from "../lib/query/mutation";
-import { adminSetupGuideQuery, setupGuideQuery } from "../lib/query/setup";
-import { setupCheckStatesQuery } from "../lib/query/setup-checks";
+import { adminSetupGuideQuery, deploymentGuidesQuery, setupGuideQuery } from "../lib/query/setup";
+import { deploymentCheckStatesQuery, setupCheckStatesQuery } from "../lib/query/setup-checks";
 import { draftConversationPath } from "../lib/routes";
 import {
   beforeReference,
   type RenderedSetupGuide,
+  runDeploymentCheck,
   runSetupCheck,
   type SetupCheckSelection,
   type SetupCheckState,
@@ -40,8 +46,18 @@ import { FormError } from "./form-error";
 
 const KNOWN_MODES = new Set(["long_connection", "webhook"]);
 
-export type SetupGuideSectionProps = {
-  orgId: string;
+export type SetupGuideSectionProps = (
+  | { orgId: string; deployment?: undefined }
+  | {
+      orgId?: undefined;
+      /**
+       * An `extension-deployment` guide of this extension (the super admin's extension page):
+       * read from the extension's guide list, with live check rows run against the platform
+       * deployment config. No org, no target, no drift.
+       */
+      deployment: string;
+    }
+) & {
   guide: SetupGuideRef;
   /** The target (a saved connection or connector, or the name typed so far) and the audience. */
   query: {
@@ -92,12 +108,13 @@ export type SetupGuideSectionProps = {
  * the page puts it in a section card (a FormSection or a Card), where the notice is a line.
  */
 export function SetupGuideSection({
-  orgId,
+  orgId: ownOrgId,
   guide,
   query,
   drift = null,
   checks = "static",
   admin = false,
+  deployment,
   pluginLabel,
   targetLabel,
   mode: controlledMode,
@@ -108,19 +125,35 @@ export function SetupGuideSection({
   const t = useTranslations("setupGuide");
   const locale = labelLocale(useLocale());
   const errorMessage = useErrorMessage();
+  // a deployment guide has no org: the org reads below are disabled for it
+  const orgId = ownOrgId ?? "";
   // Undefined: the kernel's default (the target's mode, else the guide's first)
   const [ownMode, setOwnMode] = useState<string>();
   const controlled = onModeChange !== undefined;
   const mode = controlled ? controlledMode : ownMode;
   const setMode = (m: string) => (controlled ? onModeChange(m) : setOwnMode(m));
   const q = { ...query, locale };
-  const read = useQuery({
+  const onDeployment = deployment !== undefined;
+  const ownRead = useQuery({
     ...(admin
       ? adminSetupGuideQuery(guide, locale)
       : setupGuideQuery(orgId, guide, { ...q, ...(mode && { mode }) })),
     // the name typed so far re-renders the guide: keep the last one on screen meanwhile
     placeholderData: keepPreviousData,
+    enabled: !onDeployment,
   });
+  // the extension's guides come as one list (the page's read): this guide is one of them
+  const deploymentRead = useQuery({
+    ...deploymentGuidesQuery(deployment ?? "", locale),
+    enabled: onDeployment,
+  });
+  const read = onDeployment
+    ? {
+        data: deploymentRead.data?.find((g) => g.id === guide.guideId),
+        error: deploymentRead.error,
+        loaded: deploymentRead.data !== undefined,
+      }
+    : { data: ownRead.data, error: ownRead.error, loaded: false };
   const shown = read.data?.mode;
   const onModeShownRef = useRef(onModeShown);
   onModeShownRef.current = onModeShown;
@@ -130,6 +163,8 @@ export function SetupGuideSection({
   }, [shown]);
   if (read.data === undefined) {
     if (read.error !== null) return <FormError message={errorMessage(read.error)} />;
+    // a deployment guide the list no longer has: nothing to show
+    if (read.loaded) return null;
     return <Skeleton rows={4} />;
   }
   const g = read.data;
@@ -139,11 +174,29 @@ export function SetupGuideSection({
     g.target !== null || query.connectionId !== undefined || query.connectorId !== undefined;
   // Before save (新建渠道): the reference part after the last thematic break is not shown, and the
   // check rows, which need a saved target, are one line (channel inbound mode fields spec §5)
-  const blocks = saved || admin ? g.blocks : beforeReference(g.blocks);
-  const pendingChecks = !saved && !admin && blocks.some((b) => b.kind === "check");
+  const blocks = saved || admin || onDeployment ? g.blocks : beforeReference(g.blocks);
+  const pendingChecks = !saved && !admin && !onDeployment && blocks.some((b) => b.kind === "check");
+  const selection: SetupCheckSelection = {
+    ...(query.connectionId !== undefined && { connectionId: query.connectionId }),
+    ...(query.connectorId !== undefined && { connectorId: query.connectorId }),
+    ...(g.mode !== null && { mode: g.mode }),
+    ...(query.audience !== undefined && { audience: query.audience }),
+  };
+  const source: CheckSource | null =
+    deployment !== undefined
+      ? {
+          states: deploymentCheckStatesQuery(deployment, guide.guideId),
+          runs: { kind: "deployment", plugin: deployment, guideId: guide.guideId },
+        }
+      : checks === "live" && !admin && saved
+        ? {
+            states: setupCheckStatesQuery(orgId, guide, selection),
+            runs: { kind: "org", orgId, guide, selection },
+          }
+        : null;
   return (
     <Stack gap={16}>
-      {drift !== null && !admin ? (
+      {drift !== null && !admin && !onDeployment ? (
         <DriftNotice
           orgId={orgId}
           guide={guide}
@@ -173,19 +226,12 @@ export function SetupGuideSection({
           )}
         </Stack>
       )}
-      {checks === "live" && !admin && saved ? (
+      {source !== null ? (
         <LiveGuideDocument
           // a mode's rows are their own: switching starts over
           key={g.mode ?? ""}
-          orgId={orgId}
-          guide={guide}
           g={g}
-          selection={{
-            ...(query.connectionId !== undefined && { connectionId: query.connectionId }),
-            ...(query.connectorId !== undefined && { connectorId: query.connectorId }),
-            ...(g.mode !== null && { mode: g.mode }),
-            ...(query.audience !== undefined && { audience: query.audience }),
-          }}
+          source={source}
         />
       ) : (
         <GuideDocument
@@ -207,7 +253,7 @@ export function SetupGuideSection({
           {t(`unresolved.${reason}`, { names: names.map((n) => `{{${n}}}`).join(", ") })}
         </Text>
       ))}
-      {admin ? null : (
+      {admin || onDeployment ? null : (
         <AskAgent
           g={g}
           query={query}
@@ -265,6 +311,17 @@ function AskAgent({
   );
 }
 
+/**
+ * Where live check rows come from: the cached states (runs nothing) and what a run is against (a
+ * target of the org's guide, or the extension's platform deployment).
+ */
+interface CheckSource {
+  states: UseQueryOptions<Record<string, SetupCheckState>, ApiClientError>;
+  runs:
+    | { kind: "org"; orgId: string; guide: SetupGuideRef; selection: SetupCheckSelection }
+    | { kind: "deployment"; plugin: string; guideId: string };
+}
+
 /** How often a row running elsewhere is read again, and for how long at most (spec §10.4). */
 const POLL_MS = 1000;
 const POLL_WINDOW_MS = 10_000;
@@ -281,23 +338,13 @@ const MAX_AUTO_RUNS = 3;
  * `cooldownUntil`). Over the per-account limit (429 `rate_limited`) the rows keep their last state
  * and a muted line says so; runs on view stop.
  */
-function LiveGuideDocument({
-  orgId,
-  guide,
-  g,
-  selection,
-}: {
-  orgId: string;
-  guide: SetupGuideRef;
-  g: RenderedSetupGuide;
-  selection: SetupCheckSelection;
-}) {
+function LiveGuideDocument({ g, source }: { g: RenderedSetupGuide; source: CheckSource }) {
   const t = useTranslations("setupGuide");
   const locale = labelLocale(useLocale());
   const qc = useQueryClient();
   const toast = useToast();
   const errorMessage = useErrorMessage();
-  const q = setupCheckStatesQuery(orgId, guide, selection);
+  const q = source.states;
   const pollingSince = useRef<number | null>(null);
   const states = useQuery({
     ...q,
@@ -314,8 +361,15 @@ function LiveGuideDocument({
   const [inFlight, setInFlight] = useState<ReadonlySet<string>>(() => new Set());
   const [rateLimited, setRateLimited] = useState(false);
   const run = useAppMutation({
-    fn: (v: { id: string; force: boolean }) =>
-      runSetupCheck(orgId, guide, v.id, { ...selection, ...(v.force && { force: true }) }),
+    fn: (v: { id: string; force: boolean }) => {
+      const r = source.runs;
+      return r.kind === "deployment"
+        ? runDeploymentCheck(r.plugin, r.guideId, v.id, { force: v.force })
+        : runSetupCheck(r.orgId, r.guide, v.id, {
+            ...r.selection,
+            ...(v.force && { force: true }),
+          });
+    },
     // the answer is the row's new state; a `running` one is polled through the states read
     invalidates: () => [],
     onSuccess: (r, v) =>

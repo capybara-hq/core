@@ -210,6 +210,15 @@ describe("IM delivery is owed (transactional outbox §8.1)", () => {
   beforeAll(async () => {
     owedMode = true;
     orgId = await createOrgWithProviders(k, owner, "Owed");
+    // A completed web run also queues a prompt suggestion job, which appends a `usage` event
+    // (`purpose: "suggestion"`) after the run, in no order with the title's: a test that reads the
+    // log position after a web run would race it. This suite is about IM delivery: switch it off.
+    const off = await owner({
+      method: "PATCH",
+      url: `/api/v1/orgs/${orgId}/settings`,
+      payload: { promptSuggestions: "off" },
+    });
+    expect(off.statusCode, off.body).toBe(200);
     for (const plugin of ["chan-mini", "mem-connector"]) {
       const en = await owner({
         method: "PUT",

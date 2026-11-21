@@ -232,6 +232,7 @@ const ROUTES: Routes = {
   "GET /api/v1/admin/catalog/imports/st1": () => json(200, PREPARED),
   "GET /api/v1/admin/extensions": () => json(200, { extensions: [ext()], drainSeconds: 45 }),
   "GET /api/v1/admin/extensions/demo/config": () => json(200, CONFIG),
+  "GET /api/v1/admin/extensions/demo/guides": () => json(200, { guides: [] }),
   "GET /api/v1/admin/inbox": () =>
     json(200, {
       items: [

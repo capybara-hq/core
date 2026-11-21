@@ -1,4 +1,13 @@
-import { type ReactNode, useCallback, useEffect, useId, useMemo, useRef, useState } from "react";
+import {
+  type ReactNode,
+  useCallback,
+  useEffect,
+  useId,
+  useMemo,
+  useRef,
+  useState,
+  useSyncExternalStore,
+} from "react";
 import type { ConvMenuEntry } from "../conversation/menu";
 import { type NativeNavHandle, type NativeTabId, useHaptics } from "../native";
 import { type CommandGroup, CommandPalette } from "../overlays/index";
@@ -212,15 +221,18 @@ export function AppShell({
   // the index when the shell mounted, so a replace (router.replace at the start) adds none and a
   // forward is no pop. Without the API there is no count: a counter cannot tell a push from a
   // replace, so back goes up the path rather than risk leaving the app.
-  const [depth, setDepth] = useState(0);
-  useEffect(() => {
-    const nav = navigationApi();
-    if (nav === null) return;
-    const start = nav.currentEntry?.index ?? 0;
-    const update = () => setDepth(Math.max(0, (nav.currentEntry?.index ?? start) - start));
-    nav.addEventListener("currententrychange", update);
-    return () => nav.removeEventListener("currententrychange", update);
-  }, []);
+  // Read in render as an external store: Next's router moves the history inside an insertion
+  // effect, where `currententrychange` fires synchronously, so the subscription only tells React
+  // after that phase (`subscribeNavigation`) and a render always reads the current index.
+  const [startIndex] = useState(() => navigationApi()?.currentEntry?.index ?? 0);
+  const depth = useSyncExternalStore(
+    subscribeNavigation,
+    () => {
+      const nav = navigationApi();
+      return nav === null ? 0 : Math.max(0, (nav.currentEntry?.index ?? startIndex) - startIndex);
+    },
+    () => 0,
+  );
   // The slide of the last route change: its direction and a parity that restarts the animation
   // when two pushes follow each other (the CSS animations are named by both).
   const [slide, setSlide] = useState<{ direction: "push" | "pop"; n: number } | null>(null);
@@ -544,6 +556,20 @@ type NavigationApi = {
   removeEventListener(type: "currententrychange", fn: () => void): void;
 };
 function navigationApi(): NavigationApi | null {
+  if (typeof window === "undefined") return null; // the server render: read during render now
   const nav = (window as { navigation?: NavigationApi }).navigation;
   return nav?.currentEntry ? nav : null;
+}
+
+/**
+ * Subscribes to the Navigation API's entry changes, telling React in a microtask: the event fires
+ * synchronously inside `history.pushState`, which Next's router calls from an insertion effect,
+ * and an insertion effect must not schedule updates.
+ */
+function subscribeNavigation(onChange: () => void): () => void {
+  const nav = navigationApi();
+  if (nav === null) return () => {};
+  const notify = () => queueMicrotask(onChange);
+  nav.addEventListener("currententrychange", notify);
+  return () => nav.removeEventListener("currententrychange", notify);
 }

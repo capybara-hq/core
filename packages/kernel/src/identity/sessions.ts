@@ -11,6 +11,7 @@ import { KernelDb } from "../infra/database/kernel-db.js";
 import { TransactionHost } from "../infra/database/transaction-host.js";
 import { Transactional } from "../infra/database/transactional.decorator.js";
 import { KEYRING, REDIS } from "../infra/tokens.js";
+import { deletePushRegistrationsForSessions } from "../push/registration-cleanup.js";
 import { ACCOUNT_COLUMNS, type Account, toAccount } from "./accounts.js";
 import { sha256Hex } from "./hash.js";
 
@@ -235,26 +236,45 @@ export class SessionService {
     if (row) await this.revoke(row.id);
   }
 
+  /** Revokes one session and deletes the push registrations it posted, then writes the marker. */
   async revoke(sessionId: string): Promise<void> {
+    await this.revokeIn(sessionId);
+    await this.redis.set(revokedKey(sessionId), "1", "EX", REVOKED_MARKER_TTL_SECONDS);
+  }
+
+  @Transactional()
+  private async revokeIn(sessionId: string): Promise<void> {
     await this.db
       .updateTable("sessions")
       .set({ revoked_at: sql<Date>`now()` })
       .where("id", "=", sessionId)
       .where("revoked_at", "is", null)
       .execute();
-    await this.redis.set(revokedKey(sessionId), "1", "EX", REVOKED_MARKER_TTL_SECONDS);
+    // a registration follows its session (push plan decision 3); the row is kept, so delete them
+    await deletePushRegistrationsForSessions(this.db.db, [sessionId]);
   }
 
+  /**
+   * Revokes the account's sessions (but `exceptSessionId`) and deletes their push registrations
+   * in one transaction, then writes the markers.
+   */
   async revokeAllForAccount(accountId: string, exceptSessionId?: string): Promise<number> {
+    const ids = await this.revokeAllIn(accountId, exceptSessionId);
+    await this.markRevoked(ids);
+    return ids.length;
+  }
+
+  @Transactional()
+  private async revokeAllIn(accountId: string, exceptSessionId?: string): Promise<string[]> {
     let q = this.db
       .updateTable("sessions")
       .set({ revoked_at: sql<Date>`now()` })
       .where("account_id", "=", accountId)
       .where("revoked_at", "is", null);
     if (exceptSessionId !== undefined) q = q.where("id", "!=", exceptSessionId);
-    const rows = await q.returning("id").execute();
-    await this.markRevoked(rows.map((r) => r.id));
-    return rows.length;
+    const ids = (await q.returning("id").execute()).map((r) => r.id);
+    await deletePushRegistrationsForSessions(this.db.db, ids);
+    return ids;
   }
 
   /**

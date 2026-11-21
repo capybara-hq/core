@@ -26,6 +26,7 @@ import { ME_ROUTES } from "../identity/me.schemas.js";
 import { INBOX_ROUTES } from "../inbox/inbox.schemas.js";
 import { ORG_MODEL_ROUTES } from "../models/org-models.schemas.js";
 import { ORG_ROUTES, ORG_SETTINGS_ROUTES } from "../orgs/orgs.schemas.js";
+import { PUSH_ROUTES } from "../push/push.schemas.js";
 import { SCHEDULE_ROUTES } from "../schedules/schedules.schemas.js";
 import { SETUP_CHECK_ROUTES } from "../setup/setup-checks.schemas.js";
 import { SETUP_GUIDE_ROUTES } from "../setup/setup-guides.schemas.js";
@@ -89,6 +90,8 @@ export const ROUTE_SCHEMAS: readonly RouteSchemas[] = [
   ...DEVICE_ROUTES,
   // personal preferences (run context spec §3.4)
   ...ME_ROUTES,
+  // push preferences (mobile app spec §9.4)
+  ...PUSH_ROUTES,
   // themes (themes spec §9)
   ...THEME_ROUTES,
   // the platform icon (mobile layout spec §10.2.1)

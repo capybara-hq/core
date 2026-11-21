@@ -587,6 +587,10 @@
       "too_large": "文件太大：最多 1 MiB（SVG 网站图标最多 128 KiB）。",
       "storage_unavailable": "对象存储不可用，无法保存图标。请稍后重试。",
       "not_found": "这个图标尚未上传。"
+    },
+    "push": {
+      "provider_unavailable": "平台没有可用的推送通道覆盖此应用，暂时无法接收通知。请联系超级管理员。",
+      "registration_not_found": "此设备已不再接收通知。"
     }
   },
   "agents": {
@@ -2691,7 +2695,8 @@
       "schedules": "定时任务",
       "audit": "审计日志",
       "shares": "分享",
-      "myShares": "我的分享"
+      "myShares": "我的分享",
+      "notifications": "通知"
     },
     "empty": "没有需要你个人凭据的连接器。",
     "emptyHint": "使用个人凭据的连接器会出现在这里。",
@@ -3043,6 +3048,7 @@
   },
   "setupGuide": {
     "title": "接入指南",
+    "deploymentHint": "先保存上面的部署配置，下面的检查会在这台服务器上验证它。",
     "hint": "按插件的说明在平台上创建应用；下面的内容已按这个渠道填好，复制后粘贴即可。",
     "modeLabel": "接收方式",
     "modes": {
@@ -3167,7 +3173,8 @@
         "sandbox": "在部署里执行任意命令",
         "object_store": "保管全部附件与扩展包",
         "context": "在启用它的组织的对话中，向模型上下文加入文本",
-        "migration_warnings": "迁移警告变了（见下方迁移警告），须重新批准"
+        "migration_warnings": "迁移警告变了（见下方迁移警告），须重新批准",
+        "push_provider": "用平台的凭据发送推送通知"
       },
       "warnings": "迁移警告",
       "warningsHint": "扩展迁移只能做增量变更：新旧版本会在不同副本上同时运行，破坏性迁移可能让旧版本出错或丢数据。",
@@ -4048,7 +4055,8 @@
           "scope_sync_failed": "范围同步失败",
           "extension_disabled": "扩展已停用",
           "ownership_transferred": "所有权转移",
-          "org_upload_pending": "组织上传待确认"
+          "org_upload_pending": "组织上传待确认",
+          "push_auth_failed": "推送凭据无效"
         },
         "reasons": {
           "missingConfig": "缺少部署配置",
@@ -4133,7 +4141,8 @@
           "suggestions": "输入建议",
           "usageReport": "用量上报",
           "evals": "评测",
-          "lifecycle": "生命周期通知"
+          "lifecycle": "生命周期通知",
+          "pushDeliver": "推送发送"
         },
         "connections": {
           "channels": "渠道",
@@ -4263,6 +4272,12 @@
         "dismiss": "知道了",
         "view": "查看",
         "dismissed": "已处理。"
+      },
+      "pushAuth": {
+        "label": "推送凭据无效",
+        "title": "推送凭据无效：{plugin}",
+        "plugin": "扩展",
+        "hint": "推送服务拒绝了该扩展的凭据，所有人都收不到它发出的通知。请在该扩展的平台配置里检查凭据；再次被拒绝时会重新提醒。"
       }
     },
     "audit": {
@@ -4455,7 +4470,9 @@
         "subagentRefused": "拒绝了子智能体",
         "toolCalled": "调用了工具",
         "toolGrantRevoked": "撤销了已记住的授权",
-        "trajectoryViewed": "查看了轨迹"
+        "trajectoryViewed": "查看了轨迹",
+        "pushRegistered": "在设备上开启了通知",
+        "pushUnregistered": "移除了一台通知设备"
       }
     },
     "accounts": {
@@ -7079,6 +7096,44 @@
       "stateLive": "有效",
       "state": "状态",
       "actions": "操作"
+    }
+  },
+  "notifications": {
+    "title": "通知",
+    "description": "通知发到哪些设备，以及提醒你哪些事项。通知里不含消息正文。",
+    "devices": {
+      "title": "设备",
+      "description": "会收到你账号推送通知的设备。",
+      "device": "设备",
+      "thisDevice": "当前设备",
+      "lastSeen": "最近在线",
+      "actions": "操作",
+      "remove": "移除",
+      "removed": "已移除设备。",
+      "empty": "还没有设备接收通知",
+      "enable": "在此设备开启通知",
+      "denied": "系统设置里已关闭此应用的通知。"
+    },
+    "categories": {
+      "title": "通知内容",
+      "description": "每个开关对你所在的全部组织生效。",
+      "waiting": "等你处理",
+      "waitingHint": "审批、提问，或智能体需要你连接的账号。",
+      "replies": "智能体回复",
+      "repliesHint": "会话的一次运行已完成或失败。",
+      "tasks": "任务状态",
+      "tasksHint": "后台任务或子智能体已结束。",
+      "schedules": "定时任务",
+      "schedulesHint": "你的定时任务已运行或运行失败。"
+    },
+    "deviceName": {
+      "ios": "iOS 设备",
+      "android": "Android 设备"
+    },
+    "prompt": {
+      "text": "开启通知，有事项等你处理时提醒你",
+      "enable": "开启",
+      "later": "以后再说"
     }
   }
 }

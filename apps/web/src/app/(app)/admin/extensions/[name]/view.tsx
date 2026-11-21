@@ -1,6 +1,7 @@
 "use client";
 
 import {
+  Card,
   type Column,
   DataTable,
   DetailPage,
@@ -9,7 +10,7 @@ import {
   Text,
   versionLabel,
 } from "@capybara-hq/design";
-import { useQueryClient } from "@tanstack/react-query";
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useLocale, useTranslations } from "next-intl";
 import { useState } from "react";
 import { AdminClientCode } from "../../../../../components/AdminClientCode";
@@ -23,6 +24,7 @@ import { ExtensionStatusMark } from "../../../../../components/AdminExtensionPar
 import { ErrorFrame } from "../../../../../components/ErrorFrame";
 import { ExtensionDeploymentConfig } from "../../../../../components/ExtensionDeploymentConfig";
 import { NoAccess } from "../../../../../components/NoAccess";
+import { SetupGuideSection } from "../../../../../components/SetupGuideSection";
 import { usePagePath } from "../../../../../components/shell/path";
 import type { AdminExtension } from "../../../../../lib/admin-extensions";
 import { extensionLabel, labelLocale } from "../../../../../lib/extension-label";
@@ -31,7 +33,9 @@ import {
   adminExtensionsQuery,
   extensionChangeKeys,
 } from "../../../../../lib/query/admin";
+import { keys } from "../../../../../lib/query/keys";
 import { usePageQuery } from "../../../../../lib/query/page-query";
+import { deploymentGuidesQuery } from "../../../../../lib/query/setup";
 import { useAdmin } from "../../../../../lib/query/workspace";
 import NotFound from "../../../not-found";
 
@@ -49,7 +53,8 @@ type Tab = (typeof TABS)[number];
  *   pre-approved.
  * - Config: the deployment config (sources read-only, secrets can only be set or cleared, hot fields
  *   apply at once, the others reload after saving); a pending-config extension opens on it, with
- *   the missing fields listed.
+ *   the missing fields listed. Under it, each platform setup guide the extension ships (place
+ *   `extension-deployment`) with live check rows run against the saved deployment config.
  * 界面代码 (an extension with client code): its build, files, sizes and error reports, and
  * 停用界面代码 (client extensions spec §10.2, §10.4).
  * Actions only write the desired state and return; the page re-reads while the state is converging.
@@ -190,18 +195,57 @@ function Detail({
       ) : tab === "permissions" ? (
         <AdminExtensionPermissions plugin={plugin} {...changed} />
       ) : (
-        <ExtensionDeploymentConfig
-          name={name}
-          drainSeconds={data.drainSeconds}
-          pending={plugin.status === "pending_config"}
-          // The extension's state (pending config) and the org's readiness may change with it.
-          onChanged={() => {
-            for (const queryKey of [listKey, ...extensionChangeKeys(orgId)])
-              void qc.invalidateQueries({ queryKey });
-          }}
-        />
+        <Stack gap={16}>
+          <ExtensionDeploymentConfig
+            name={name}
+            drainSeconds={data.drainSeconds}
+            pending={plugin.status === "pending_config"}
+            // The extension's state (pending config) and the org's readiness may change with it,
+            // and its platform guide checks verify the config just saved.
+            onChanged={() => {
+              for (const queryKey of [
+                listKey,
+                ...extensionChangeKeys(orgId),
+                keys.deployment().deploymentChecksOf(name),
+              ])
+                void qc.invalidateQueries({ queryKey });
+            }}
+          />
+          <DeploymentGuides name={name} />
+        </Stack>
       )}
     </DetailPage>
+  );
+}
+
+/**
+ * The platform's setup guides (place `extension-deployment`): each guide the extension ships for its
+ * deployment config, with live check rows run against the saved config on this server (a push
+ * provider's credentials). Drawn only when there are some.
+ */
+function DeploymentGuides({ name }: { name: string }) {
+  const t = useTranslations("setupGuide");
+  const locale = labelLocale(useLocale());
+  const read = useQuery(deploymentGuidesQuery(name, locale));
+  const guides = read.data ?? [];
+  if (guides.length === 0) return null;
+  return (
+    <>
+      {guides.map((g) => (
+        <Card key={g.id} title={t("title")}>
+          <Stack gap={16}>
+            <Text variant="prose" tone="muted">
+              {t("deploymentHint")}
+            </Text>
+            <SetupGuideSection
+              guide={{ itemId: g.itemId, guideId: g.id, version: g.version }}
+              query={{}}
+              deployment={name}
+            />
+          </Stack>
+        </Card>
+      ))}
+    </>
   );
 }
 

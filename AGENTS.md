@@ -177,6 +177,10 @@ Each line is the rule you must not miss; the skill has the rest.
   command; locking, suspension and destruction are the kernel's; never publish the socket proxy on
   a host address.
   [writing-sandbox-providers](.agents/skills/writing-sandbox-providers/SKILL.md)
+- **Push:** channels are `push-provider@1` plugins; delivery is the kernel's (an outbox row in the
+  event's transaction, one `cap-push-deliver` job per registration, retries only there); a push
+  token is sealed at rest and never logged, audited or returned; payloads carry no conversation
+  content unless `push.previews` is `titles`, never message text. [mobile app spec §9]
 - **Object storage:** key prefixes are added by the kernel; presigned upload size enforced by the
   store. [writing-object-store-providers](.agents/skills/writing-object-store-providers/SKILL.md)
 - **Connectors:** protocols are connector extensions (`connector@1`); no stdio MCP.

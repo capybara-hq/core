@@ -587,6 +587,10 @@
       "too_large": "The file is too large: at most 1 MiB (an SVG favicon at most 128 KiB).",
       "storage_unavailable": "Object storage is unavailable, so the icon cannot be saved. Try again later.",
       "not_found": "This icon has not been uploaded."
+    },
+    "push": {
+      "provider_unavailable": "This app can't receive notifications from this platform: no enabled push channel covers it. Ask your super admin.",
+      "registration_not_found": "This device no longer receives notifications."
     }
   },
   "agents": {
@@ -2703,7 +2707,8 @@
       "schedules": "Scheduled tasks",
       "audit": "Audit log",
       "shares": "Shares",
-      "myShares": "My shares"
+      "myShares": "My shares",
+      "notifications": "Notifications"
     },
     "empty": "No connector needs your own credential.",
     "emptyHint": "Connectors that use personal credentials show up here.",
@@ -3055,6 +3060,7 @@
   },
   "setupGuide": {
     "title": "Setup guide",
+    "deploymentHint": "Save the deployment config above first; the checks below then verify it on this server.",
     "hint": "Create the app on the platform with the plugin's instructions; the text below is filled in for this channel, ready to copy and paste.",
     "modeLabel": "Inbound mode",
     "modes": {
@@ -3179,7 +3185,8 @@
         "sandbox": "runs arbitrary commands in the deployment",
         "object_store": "holds every attachment and extension package",
         "context": "adds text to the model's context in conversations of organizations that enable it",
-        "migration_warnings": "the migration warnings changed (see Migration warnings below); approve again"
+        "migration_warnings": "the migration warnings changed (see Migration warnings below); approve again",
+        "push_provider": "delivers push notifications with the platform's credentials"
       },
       "warnings": "Migration warnings",
       "warningsHint": "Extension migrations should only expand: old and new versions run side by side on different replicas, so destructive migrations can break the old version or lose data.",
@@ -4060,7 +4067,8 @@
           "scope_sync_failed": "Scope sync failures",
           "extension_disabled": "Extensions disabled",
           "ownership_transferred": "Ownership transfers",
-          "org_upload_pending": "Org uploads to confirm"
+          "org_upload_pending": "Org uploads to confirm",
+          "push_auth_failed": "Push credentials rejected"
         },
         "reasons": {
           "missingConfig": "Deployment config missing",
@@ -4145,7 +4153,8 @@
           "suggestions": "Prompt suggestions",
           "usageReport": "Usage reports",
           "evals": "Evals",
-          "lifecycle": "Lifecycle notices"
+          "lifecycle": "Lifecycle notices",
+          "pushDeliver": "Push delivery"
         },
         "connections": {
           "channels": "Channels",
@@ -4275,6 +4284,12 @@
         "dismiss": "Got it",
         "view": "View",
         "dismissed": "Dismissed."
+      },
+      "pushAuth": {
+        "label": "Push credentials rejected",
+        "title": "Push credentials rejected: {plugin}",
+        "plugin": "Extension",
+        "hint": "The push service refused the credentials of this extension, so no one receives its notifications. Check them in the extension's deployment config; the notice returns if they are refused again."
       }
     },
     "audit": {
@@ -4467,7 +4482,9 @@
         "subagentRefused": "Refused a sub-agent",
         "toolCalled": "Called a tool",
         "toolGrantRevoked": "Revoked a remembered approval",
-        "trajectoryViewed": "Viewed a trajectory"
+        "trajectoryViewed": "Viewed a trajectory",
+        "pushRegistered": "Turned on notifications on a device",
+        "pushUnregistered": "Removed a notification device"
       }
     },
     "accounts": {
@@ -7091,6 +7108,44 @@
       "stateLive": "Active",
       "state": "State",
       "actions": "Actions"
+    }
+  },
+  "notifications": {
+    "title": "Notifications",
+    "description": "Where notifications reach you, and what they tell you about. They carry no message text.",
+    "devices": {
+      "title": "Devices",
+      "description": "Devices that receive push notifications for your account.",
+      "device": "Device",
+      "thisDevice": "This device",
+      "lastSeen": "Last seen",
+      "actions": "Actions",
+      "remove": "Remove",
+      "removed": "Device removed.",
+      "empty": "No device receives notifications yet",
+      "enable": "Turn on for this device",
+      "denied": "Notifications are turned off for this app in the system settings."
+    },
+    "categories": {
+      "title": "What to notify",
+      "description": "Each switch applies to all your organizations.",
+      "waiting": "Waiting for you",
+      "waitingHint": "An approval, a question or a connection an agent needs from you.",
+      "replies": "Agent replies",
+      "repliesHint": "A conversation run finished or failed.",
+      "tasks": "Task status",
+      "tasksHint": "A background task or a sub-agent finished.",
+      "schedules": "Scheduled tasks",
+      "schedulesHint": "One of your scheduled tasks ran or failed."
+    },
+    "deviceName": {
+      "ios": "iOS device",
+      "android": "Android device"
+    },
+    "prompt": {
+      "text": "Turn on notifications to hear when something is waiting for you",
+      "enable": "Turn on",
+      "later": "Not now"
     }
   }
 }

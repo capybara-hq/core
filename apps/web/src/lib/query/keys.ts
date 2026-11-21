@@ -22,6 +22,10 @@ export const keys = {
       identities: (): readonly unknown[] => [...all, "identities"],
       /** The account's preferences (its time zone). */
       preferences: (): readonly unknown[] => [...all, "preferences"],
+      /** The account's push registrations (devices that receive notifications). */
+      pushRegistrations: (): readonly unknown[] => [...all, "pushRegistrations"],
+      /** The account's four push switches. */
+      pushPreferences: (): readonly unknown[] => [...all, "pushPreferences"],
     };
   },
   org(orgId: string) {
@@ -563,6 +567,26 @@ export const keys = {
         version: string,
         locale: string,
       ): readonly unknown[] => [...all, "adminSetupGuide", itemId, guideId, version, locale],
+      /** An extension's platform setup guides (`extension-deployment`), per language. */
+      deploymentGuides: (plugin: string, locale: string): readonly unknown[] => [
+        ...all,
+        "deploymentGuides",
+        plugin,
+        locale,
+      ],
+      /** Every platform guide's check states of an extension (an invalidation prefix). */
+      deploymentChecksOf: (plugin: string): readonly unknown[] => [
+        ...all,
+        "deploymentChecks",
+        plugin,
+      ],
+      /** The cached check states of an extension's platform setup guide. */
+      deploymentChecks: (plugin: string, guideId: string): readonly unknown[] => [
+        ...all,
+        "deploymentChecks",
+        plugin,
+        guideId,
+      ],
       /** The admin overview's numbers (also the prefix of its 待处理 lists). */
       adminOverview: (): readonly unknown[] => [...all, "adminOverview"],
       /**
