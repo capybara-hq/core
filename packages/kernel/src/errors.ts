@@ -613,6 +613,13 @@ export const ERROR_CODES = {
   /** An extension's `ctx.models.embed` call was denied by a `model.request` policy hook. */
   "model.hook_denied": 403,
   "eval.result_not_found": 404,
+  /**
+   * A push registration names a provider that is not loaded or whose credentials do not cover
+   * its app id (mobile app spec §9.2).
+   */
+  "push.provider_unavailable": 422,
+  /** No push registration of that id belongs to the caller. */
+  "push.registration_not_found": 404,
 } as const satisfies Record<string, number>;
 
 export type ErrorCode = keyof typeof ERROR_CODES;

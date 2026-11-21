@@ -188,6 +188,9 @@ export function shellCapability<T extends object>(key: string): T | undefined {
   return read<T>(key);
 }
 
+/** `PushPlatform` of the SDK's `push.ts` (not part of the mirrored slice below). */
+type PushPlatform = "ios" | "android";
+
 /**
  * The desktop shell's capability shapes: a mirror of `packages/plugin-sdk/src/shell-capabilities.ts`
  * (`@capybara-hq/plugin-sdk`; apps/web depends only on the design system and may not import it),
@@ -204,6 +207,7 @@ export const SHELL_CAPABILITY_KEYS = {
   menu: "menu@1",
   nav: "nav@1",
   profiles: "profiles@1",
+  push: "push@1",
 } as const;
 
 export type KeepAwakeMode = "off" | "while-busy" | "connected";
@@ -403,6 +407,34 @@ export interface ProfilesCapabilityV1 {
   show(): Promise<void>;
 }
 
+export type PushPermission = "granted" | "denied" | "prompt";
+
+export interface PushStatus {
+  permission: PushPermission;
+  /** The server-side registration id this install holds, or null. */
+  registrationId: string | null;
+  /** The OS token differs from the one last registered. */
+  tokenChanged: boolean;
+}
+
+/** What the shell hands the web app to register with the deployment. */
+export interface PushRegistration {
+  platform: PushPlatform;
+  appId: string;
+  provider: string;
+  token: string;
+}
+
+/** `push@1`: native push registration (mobile shells). */
+export interface PushCapabilityV1 {
+  status(): Promise<PushStatus>;
+  /** User activation only when permission is "prompt"; rejects { code: "cancelled" } when denied. */
+  register(): Promise<PushRegistration>;
+  /** Tells the shell the deployment's registration id for this install. */
+  registered(id: string): Promise<void>;
+  unregister(): Promise<void>;
+}
+
 export const useDeviceCapability = () =>
   useShellCapability(SHELL_CAPABILITY_KEYS.device) as DeviceCapabilityV1 | undefined;
 export const useNotifyCapability = () =>
@@ -509,3 +541,5 @@ export function useNativeHandlers(): NativeHandlers {
     [haptics, share, menu],
   );
 }
+export const usePushCapability = () =>
+  useShellCapability(SHELL_CAPABILITY_KEYS.push) as PushCapabilityV1 | undefined;

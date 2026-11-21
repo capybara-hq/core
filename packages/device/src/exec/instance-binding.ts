@@ -281,6 +281,8 @@ export class InstanceBinder {
       );
     if (old) {
       old.backend.lifecycle.beginDrain();
+      // what an earlier program run (or a failed worker) left settles first once proven gone
+      await old.backend.lifecycle.settleOrphans();
       if (old.binding.instanceGeneration !== next.instanceGeneration) {
         // live foreground work and uncertain work refuse first, so a refused bind stops nothing;
         // only then are the older generation's live background tasks exact-stopped (bounded)
@@ -303,6 +305,7 @@ export class InstanceBinder {
       return this.enable(next);
     }
     const candidate = await this.options.createBackend(next.instanceGeneration, next);
+    await candidate.lifecycle.settleOrphans();
     const pending = unsettled(candidate);
     if (pending > 0) {
       candidate.lifecycle.dispose();

@@ -8,6 +8,7 @@ import { Transactional } from "../infra/database/transactional.decorator.js";
 import { OutboxService } from "../infra/outbox/outbox.service.js";
 import { KERNEL_BUS, KERNEL_LOGGER } from "../infra/tokens.js";
 import type { KernelLogger } from "../log.js";
+import { PushOwed, PushOwedModule } from "../push/push-owed.js";
 import type { DeliveryScope, ScopeArtifact } from "./delivery-scope.js";
 import {
   type ConversationEvent,
@@ -168,7 +169,8 @@ const EVENT_COLUMNS = [
  *
  * An append to a conversation with a channel target (`channel_deliveries`, read with the row lock)
  * owes the conversation's IM delivery in the append's transaction (transactional outbox spec
- * §8.1); a conversation without one writes nothing more.
+ * §8.1); a conversation without one writes nothing more. A push trigger event (an approval, a
+ * run's end, ...: `push/triggers.ts`) owes its push fanout in the same transaction (`PushOwed`).
  */
 @Injectable()
 export class EventLog {
@@ -180,6 +182,8 @@ export class EventLog {
     @Inject(KERNEL_LOGGER) private readonly log: Pick<KernelLogger, "warn">,
     @Inject(OutboxService) private readonly outbox: Pick<OutboxService, "add">,
     @Inject(TransactionHost) readonly txHost: TransactionHost,
+    /** Owes the push fanout of a trigger event in the append's transaction. */
+    @Inject(PushOwed) private readonly push: Pick<PushOwed, "oweIn">,
   ) {}
 
   /**
@@ -514,6 +518,7 @@ export class EventLog {
       .selectFrom("conversations")
       .select((eb) => [
         "org_id",
+        "kind",
         eb
           .exists(
             eb
@@ -598,6 +603,7 @@ export class EventLog {
       .execute();
     if (conv.im) await oweDelivery(this.outbox, { conversationId, orgId: conv.org_id, seq: toSeq });
     const bySeq = new Map(inserted.map((r) => [Number(r.seq), toEvent(r)]));
+    await this.push.oweIn(conversationId, conv.org_id, conv.kind, [...bySeq.values()]);
     return {
       events: plan.map((p) =>
         p.kind === "old" ? p.event : (bySeq.get(base + p.index + 1) as ConversationEvent),
@@ -608,6 +614,9 @@ export class EventLog {
   }
 }
 
-/** The one {@link EventLog} (infra dependencies only, so every domain can import it). */
-@Module({ providers: [EventLog], exports: [EventLog] })
+/**
+ * The one {@link EventLog} (infra dependencies and the push owed module, which needs only the
+ * extension registry, so every domain can import it).
+ */
+@Module({ imports: [PushOwedModule], providers: [EventLog], exports: [EventLog] })
 export class EventLogModule {}

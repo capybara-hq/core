@@ -10,3 +10,11 @@ export function navigateBrowser(url: string): void {
 export function reloadDocument(): void {
   window.location.reload();
 }
+
+/**
+ * Replaces the current document with `url` (no history entry; a separate module so tests can
+ * replace it): a link that carries `?org=` lands in the other org's document without a Back step.
+ */
+export function replaceBrowser(url: string): void {
+  window.location.replace(url);
+}

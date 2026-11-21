@@ -397,14 +397,14 @@ describe("the thinking row's live spinner (§6.16.5)", () => {
 });
 
 describe("UserBubble author (§6.16.6)", () => {
-  it("draws a 24 circle avatar after the bubble and, with showName, the name above", () => {
+  it("draws a 40 circle avatar after the bubble and, with showName, the name above", () => {
     const { container } = wrap(
       <UserBubble text="hello" author={{ name: "Ada", avatarUrl: null, showName: true }} />,
     );
     const row = container.querySelector('[data-part="bubble-row"]') as HTMLElement;
     const avatar = row.querySelector('[data-part="avatar"]') as HTMLElement;
     expect(avatar.getAttribute("data-shape")).toBe("circle");
-    expect(avatar.getAttribute("data-size")).toBe("24");
+    expect(avatar.getAttribute("data-size")).toBe("40");
     expect(avatar.textContent).toBe("A");
     expect(row.firstElementChild?.getAttribute("data-part")).toBe("bubble");
     expect(row.lastElementChild).toBe(avatar);

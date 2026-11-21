@@ -82,6 +82,7 @@ look like `channel@1`: name and major version. The registered points:
 | `web-search` | multi | yes | Searches the web for the WebSearch tool; each org picks a default provider. |
 | `context` | multi | yes | Adds text to the model's context at run start in conversations of orgs that enable it. |
 | `web-fetch` | multi | yes | Fetches and extracts web pages for the WebFetch tool; each org picks a default provider. |
+| `push-provider` | multi | no | Delivers push notifications to people's mobile apps through one channel (APNs, FCM, an aggregator). |
 <!-- /generated -->
 
 Read `extension-points/<name>` for each one. Which points a deployment actually has loaded, and

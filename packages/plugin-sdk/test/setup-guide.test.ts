@@ -27,8 +27,12 @@ const v = (
 const doc = (...lines: string[]) => ["# Create the Slack app", "", ...lines, ""].join("\n");
 
 describe("places and paths", () => {
-  it("defines the two places with their modes, audiences and variables", () => {
-    expect(SETUP_GUIDE_PLACES).toEqual(["channel-connection", "connector-template"]);
+  it("defines the three places with their modes, audiences and variables", () => {
+    expect(SETUP_GUIDE_PLACES).toEqual([
+      "channel-connection",
+      "connector-template",
+      "extension-deployment",
+    ]);
     const ch = SETUP_GUIDE_PLACE_INFO["channel-connection"];
     expect(ch.modes).toEqual(["long_connection", "webhook"]);
     expect(ch.audiences).toEqual(["admin"]);
@@ -55,6 +59,33 @@ describe("places and paths", () => {
       connectorName: "text",
     });
     expect(ct.variables).not.toHaveProperty("connectionName");
+    const ed = SETUP_GUIDE_PLACE_INFO["extension-deployment"];
+    expect(ed.modes).toEqual([]);
+    expect(ed.audiences).toEqual(["admin"]);
+    expect(ed.variables).toEqual({
+      publicUrl: "url",
+      orgName: "text",
+      pluginName: "text",
+      pluginVersion: "token",
+      mode: "token",
+    });
+    expect(ed.drift).toBe(false);
+  });
+
+  it("refuses a mode or the member audience in an extension-deployment guide", () => {
+    const place = "extension-deployment" as const;
+    expect(
+      errors(v(doc("Set the key.", "", "::check key-works The key works"), { place })),
+    ).toEqual([]);
+    expect(errors(v(doc("::: mode webhook", "x", ":::"), { place }))).toEqual([
+      "guides/slack-app.md:3: place extension-deployment has no modes",
+    ]);
+    expect(errors(v(doc("::: audience member", "x", ":::"), { place }))).toEqual([
+      'guides/slack-app.md:3: audience "member" is not one of the audiences of place extension-deployment: admin',
+    ]);
+    expect(errors(v(doc("{{connectionName}}"), { place }))[0]).toContain(
+      "unknown variable {{connectionName}} for place extension-deployment",
+    );
   });
 
   it("names the documents by convention", () => {

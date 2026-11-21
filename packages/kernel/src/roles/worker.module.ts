@@ -28,6 +28,7 @@ import { KernelScheduleModule } from "../infra/schedule/schedule.module.js";
 import { DirectoryScanJob } from "../orgs/directory-sync.js";
 import { OrgLockModule } from "../orgs/org-lock.js";
 import { OrgsModule } from "../orgs/orgs.module.js";
+import { PushWorkersModule } from "../push/push-processor.js";
 import { MaintenanceModule } from "../runtime/maintenance.js";
 import { RunJobsModule } from "../runtime/run-jobs.js";
 import { RunOrphanCheck } from "../runtime/run-orphan-check.job.js";
@@ -50,7 +51,7 @@ import { WorkerRole } from "./worker-role.js";
  * `worker`: the cron scheduler and the `@LockedInterval` scheduler (`KernelScheduleModule`, the one
  * place `ScheduleModule.forRoot` is imported), every fixed-period job (`@LockedCron` /
  * `@LockedInterval`, each once per tick across replicas), every queue consumer (`@Processor`: runs,
- * sub-agent runs, `usage.report`, titles, evals, maintenance, channel deliveries, the plugin scope sync) and
+ * sub-agent runs, `usage.report`, titles, evals, maintenance, channel deliveries, the plugin scope sync, push deliveries) and
  * {@link WorkerRole}, which `KernelLifecycle` drives. A process without the worker role runs no cron
  * and no BullMQ worker (the queues' producers exist on every role).
  */
@@ -72,6 +73,8 @@ export class WorkerModule {
         MaintenanceModule,
         PluginScopeWorkersModule,
         LifecycleHookWorkersModule,
+        // push deliveries (`cap-push-deliver`) and the daily stale registration prune
+        PushWorkersModule,
         // the domains the fixed-period jobs call
         RuntimeModule,
         RunJobsModule,

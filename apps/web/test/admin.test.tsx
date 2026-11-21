@@ -142,6 +142,7 @@ const QUEUE_NAMES = [
   "cap-kernel-usage-report",
   "cap-kernel-evals",
   "cap-kernel-lifecycle",
+  "cap-push-deliver",
 ];
 const HEALTH = {
   kernel: { version: "0.1.0" },

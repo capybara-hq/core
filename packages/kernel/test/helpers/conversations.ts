@@ -25,7 +25,7 @@ import type { TransactionHost } from "../../src/infra/database/transaction-host.
 import { OutboxService } from "../../src/infra/outbox/outbox.service.js";
 import { createLogger, type KernelLogger } from "../../src/log.js";
 import type { SkillInvoker } from "../../src/skills/invoke.js";
-import { ceilingWritesOver, handlesFor } from "./identity.js";
+import { ceilingWritesOver, handlesFor, NO_PUSH } from "./identity.js";
 
 export { legacyDbFor } from "./identity.js";
 
@@ -47,6 +47,7 @@ export function eventLogFor(
     quiet,
     outbox ?? new OutboxService(h.txHost, h.db, async () => {}),
     h.txHost,
+    NO_PUSH,
   );
 }
 

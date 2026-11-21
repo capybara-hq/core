@@ -67,6 +67,8 @@ const HOT_APPLIERS: Record<string, (k: { log: KernelLogger }, value: unknown) =>
   "web.fetch.maxAnswerTokens": () => {},
   "web.fetch.cacheSeconds": () => {},
   "web.fetch.timeoutMs": () => {},
+  // The push fanout reads the preview setting at every fanout.
+  "push.previews": () => {},
   // Scheduled-task settings are clamped to these bounds on every read.
   "schedules.minIntervalFloorMinutes": () => {},
   "schedules.maxTasksPerMemberCap": () => {},

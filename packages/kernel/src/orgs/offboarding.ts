@@ -16,6 +16,7 @@ import { Transactional } from "../infra/database/transactional.decorator.js";
 import { OutboxService } from "../infra/outbox/outbox.service.js";
 import { KERNEL_LOGGER } from "../infra/tokens.js";
 import type { KernelLogger } from "../log.js";
+import { deletePushRegistrationsForSessions } from "../push/registration-cleanup.js";
 import { MAINTENANCE_QUEUE_NAME } from "../runtime/maintenance-queue.js";
 import { RunControl } from "../runtime/run-control.js";
 import { oweDeviceDestroy } from "../sandbox/jobs.js";
@@ -256,6 +257,11 @@ export class Offboarding {
           .returning("id")
           .execute()
       : [];
+    // a registration follows its session (push plan decision 3)
+    await deletePushRegistrationsForSessions(
+      this.db.db,
+      sessions.map((r) => r.id),
+    );
 
     // in this transaction (the approvals and questions services join it: `mandatory`)
     const credentials = await this.credentials.clearAccount(orgId, accountId);

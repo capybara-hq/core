@@ -34,6 +34,7 @@ describe("desktop shell capability types", () => {
       menu: "menu@1",
       nav: "nav@1",
       profiles: "profiles@1",
+      push: "push@1",
     });
   });
 

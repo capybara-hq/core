@@ -13,6 +13,7 @@ import { LockedIntervalScheduler } from "../infra/schedule/locked-interval.js";
 import { ScheduledRuns } from "../infra/schedule/scheduled-runs.js";
 import { KERNEL_LOGGER } from "../infra/tokens.js";
 import type { KernelLogger } from "../log.js";
+import { PushProcessor } from "../push/push-processor.js";
 import { MaintenanceProcessor } from "../runtime/maintenance.js";
 import {
   PromptSuggestionProcessor,
@@ -28,7 +29,7 @@ import { UsageReporter } from "../runtime/usage-report.js";
  * The worker role's parts, driven by `KernelLifecycle` at fixed points of its start order and stop
  * phases (so they stay ordered after the extension load and before the extension host closes): the
  * queue consumers (runs, sub-agent runs, evals, maintenance, the plugin scope sync, lifecycle
- * hook deliveries, channel deliveries, `usage.report`, titles, prompt suggestions) and the schedulers of the `@LockedCron` / `@LockedInterval` jobs. Provided only by
+ * hook deliveries, push deliveries, channel deliveries, `usage.report`, titles, prompt suggestions) and the schedulers of the `@LockedCron` / `@LockedInterval` jobs. Provided only by
  * `WorkerModule`, so a process without the worker role has none of them.
  */
 @Injectable()
@@ -62,6 +63,7 @@ export class WorkerRole {
     @Inject(MaintenanceProcessor) private readonly maintenanceProcessor: MaintenanceProcessor,
     @Inject(PluginScopeSyncProcessor) private readonly scopeProcessor: PluginScopeSyncProcessor,
     @Inject(LifecycleHooksProcessor) private readonly lifecycleProcessor: LifecycleHooksProcessor,
+    @Inject(PushProcessor) private readonly pushProcessor: PushProcessor,
   ) {
     this.config = config.get();
   }
@@ -82,6 +84,7 @@ export class WorkerRole {
     this.maintenanceProcessor.start();
     this.scopeProcessor.start();
     this.lifecycleProcessor.start();
+    this.pushProcessor.start();
     this.channelOutbound.startWorker(this.channelsProcessor.worker);
     this.usageReport.startWorker(this.usageProcessor.worker);
     this.titles.startWorker(this.titleProcessor.worker);
@@ -116,14 +119,16 @@ export class WorkerRole {
   }
 
   /**
-   * Closes the maintenance queue's worker, the plugin scope sync's (it stops between pairs) and
-   * the lifecycle hook deliveries' (calls in flight are aborted and retried).
+   * Closes the maintenance queue's worker, the plugin scope sync's (it stops between pairs), the
+   * lifecycle hook deliveries' (calls in flight are aborted and retried) and the push deliveries'
+   * (sends in flight finish, each bounded by the send time limit).
    */
   async closeMaintenance(): Promise<void> {
     await Promise.all([
       this.maintenanceProcessor.worker.close(),
       this.scopeProcessor.close(),
       this.lifecycleProcessor.close(),
+      this.pushProcessor.close(),
     ]);
   }
 }

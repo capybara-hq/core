@@ -80,7 +80,7 @@ describe("capybara secrets rewrap", () => {
     const r = await runCliInProcess(["secrets", "rewrap"], env);
     expect(r.code, r.stderr).toBe(0);
     expect(r.stdout).toContain(
-      `rewrapped 3 org data key(s), 0 initial password(s) and 0 invitation link(s) to master key ${newId}`,
+      `rewrapped 3 org data key(s), 0 initial password(s), 0 invitation link(s) and 0 push token(s) to master key ${newId}`,
     );
     expect(r.stdout).toContain("wait auth.accessTokenTtlSeconds, then remove masterKeyPrevious");
     expectNoKey(r.stdout + r.stderr);
@@ -92,7 +92,7 @@ describe("capybara secrets rewrap", () => {
     const again = await runCliInProcess(["secrets", "rewrap"], env);
     expect(again.code, again.stderr).toBe(0);
     expect(again.stdout).toContain(
-      "rewrapped 0 org data key(s), 0 initial password(s) and 0 invitation link(s)",
+      "rewrapped 0 org data key(s), 0 initial password(s), 0 invitation link(s) and 0 push token(s)",
     );
     expectNoKey(again.stdout + again.stderr);
   }, 60_000);

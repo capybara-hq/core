@@ -46,12 +46,19 @@ import { Offboarding, type OffboardingRunControl } from "../../src/orgs/offboard
 import { OrgLock } from "../../src/orgs/org-lock.js";
 import { OrgsService } from "../../src/orgs/orgs.service.js";
 import { OrgSettingsService } from "../../src/orgs/settings.service.js";
+import type { PushOwed } from "../../src/push/push-owed.js";
 import { MAINTENANCE_QUEUE_NAME } from "../../src/runtime/maintenance-queue.js";
 import type { ApprovalsService } from "../../src/tools/approvals.service.js";
 import { type Credentials, clearAccountCredentials } from "../../src/tools/credentials.js";
 import type { QuestionsService } from "../../src/tools/questions.service.js";
 
 import { type DatabaseHandles, databaseHandles } from "./database.js";
+
+/**
+ * The push owed seam of a hand-built {@link EventLog}: owes nothing, as the kernel does while no
+ * push provider is loaded.
+ */
+export const NO_PUSH: Pick<PushOwed, "oweIn"> = { oweIn: async () => {} };
 
 const quiet = createLogger("error", { write: () => {} });
 const handles = new WeakMap<object, DatabaseHandles>();
@@ -334,7 +341,7 @@ export function ceilingWritesOver(
 ): PermissionCeilingWrites {
   const lock = new PermissionAuthorityLock(h.db, h.txHost, new XactLock(h.db, h.txHost));
   const outbox = new OutboxService(h.txHost, h.db, async () => {});
-  const events = new EventLog(h.db, { publish: async () => {} }, quiet, outbox, h.txHost);
+  const events = new EventLog(h.db, { publish: async () => {} }, quiet, outbox, h.txHost, NO_PUSH);
   return new PermissionCeilingWrites(
     new PermissionTransitions(h.db, h.txHost, lock, events, outbox),
     h.db,

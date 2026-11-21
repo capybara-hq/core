@@ -208,6 +208,35 @@ export interface PlatformSealedRevealsTable {
   created_at: Ts;
 }
 
+/** A person's mobile app push registration (migration 0172); the token is sealed. */
+export interface PushRegistrationsTable {
+  id: string;
+  account_id: string;
+  /** The session that posted it; revoking that session deletes the registration. */
+  session_id: string | null;
+  platform: "ios" | "android";
+  app_id: string;
+  /** The push-provider extension (plugin name) the registration is delivered through. */
+  provider: string;
+  /** sha256 hex of the token, unique per (provider, app_id). */
+  token_hash: string;
+  master_key_id: string;
+  /** AES-256-GCM with the master keyring, AAD `pushTokenAad(id)`. */
+  token_ciphertext: Buffer;
+  locale: "zh" | "en";
+  device_name: string;
+  created_at: Ts;
+  last_seen_at: Ts;
+}
+
+/** A person's switch for one push category (migration 0172); an absent row is on. */
+export interface PushPreferencesTable {
+  account_id: string;
+  category: "waiting" | "replies" | "tasks" | "schedules";
+  enabled: boolean;
+  updated_at: Ts;
+}
+
 export interface IdentitiesTable {
   source: string;
   external_id: string;
@@ -1918,6 +1947,8 @@ export interface KernelDatabase {
   account_initial_passwords: AccountInitialPasswordsTable;
   platform_sealed_inputs: PlatformSealedInputsTable;
   platform_sealed_reveals: PlatformSealedRevealsTable;
+  push_registrations: PushRegistrationsTable;
+  push_preferences: PushPreferencesTable;
   identities: IdentitiesTable;
   local_passwords: LocalPasswordsTable;
   orgs: OrgsTable;
@@ -2105,10 +2136,13 @@ export interface OrgNoticesTable {
   dismissed_by: NullableCol<string>;
 }
 
-/** 0084: a notice for the super admins (platform inbox), until one of them dismisses it. */
+/**
+ * 0084: a notice for the super admins (platform inbox), until one of them dismisses it; 0173
+ * added `push_auth_failed` (at most one open per plugin).
+ */
 export interface PlatformNoticesTable {
   id: string;
-  kind: "ownership_transferred";
+  kind: "ownership_transferred" | "push_auth_failed";
   detail: Json<Record<string, unknown>>;
   created_at: Ts;
   dismissed_at: TsNullable;

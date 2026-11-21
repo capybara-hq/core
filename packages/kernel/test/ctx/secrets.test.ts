@@ -8,6 +8,7 @@ import {
   createSecrets,
   initialPasswordAad,
   platformSealedRevealAad,
+  pushTokenAad,
   rewrapToCurrentMasterKey,
 } from "../../src/ctx/secrets.js";
 import { migrate } from "../../src/db/migrator.js";
@@ -203,6 +204,7 @@ describe("ctx.secrets", () => {
       dataKeys: 0,
       initialPasswords: 0,
       sealedReveals: 0,
+      pushTokens: 0,
     });
     expect(await createSecrets(db, createKeyring(k2, []), "ns-rot").get("rotorg", "k")).toBe(
       "persist-me",
@@ -276,6 +278,7 @@ describe("rewrapToCurrentMasterKey", () => {
     );
     // and as migration 0170 creates them
     await db.withSchema("capybara").deleteFrom("platform_sealed_reveals").execute();
+    await db.withSchema("capybara").deleteFrom("push_registrations").execute();
     await sql`ALTER TABLE capybara.platform_sealed_reveals
       ADD CONSTRAINT platform_sealed_reveals_org_id_fkey
         FOREIGN KEY (org_id) REFERENCES capybara.orgs(id) ON DELETE CASCADE,
@@ -349,6 +352,7 @@ describe("rewrapToCurrentMasterKey", () => {
       dataKeys: 5,
       initialPasswords: 0,
       sealedReveals: 0,
+      pushTokens: 0,
     });
     expect(new Set((await dataKeyIds()).values())).toEqual(new Set([ring2.currentId]));
     const onlyNew = createSecrets(db, createKeyring(k2, []), "ns-batch");
@@ -365,6 +369,7 @@ describe("rewrapToCurrentMasterKey", () => {
       dataKeys: 0,
       initialPasswords: 1,
       sealedReveals: 0,
+      pushTokens: 0,
     });
     const rows = await db
       .withSchema("capybara")
@@ -393,6 +398,7 @@ describe("rewrapToCurrentMasterKey", () => {
       dataKeys: 0,
       initialPasswords: 0,
       sealedReveals: 1,
+      pushTokens: 0,
     });
     const rows = await db
       .withSchema("capybara")
@@ -414,6 +420,53 @@ describe("rewrapToCurrentMasterKey", () => {
         )
         .toString(),
     ).toBe("cap_inv_inv-live");
+  });
+
+  it("rewraps sealed push tokens; they open with the new key alone", async () => {
+    const ring1 = createKeyring(k1, []);
+    await db
+      .withSchema("capybara")
+      .insertInto("accounts")
+      .values({ id: "acc-push", display_name: "Push" })
+      .onConflict((oc) => oc.column("id").doNothing())
+      .execute();
+    const w = ring1.wrap(Buffer.from("device-token-1"), pushTokenAad("preg-1"));
+    await db
+      .withSchema("capybara")
+      .insertInto("push_registrations")
+      .values({
+        id: "preg-1",
+        account_id: "acc-push",
+        platform: "ios",
+        app_id: "com.example.app",
+        provider: "push-apns",
+        token_hash: "a".repeat(64),
+        master_key_id: w.masterKeyId,
+        token_ciphertext: w.data,
+        locale: "en",
+        device_name: "Phone",
+      })
+      .execute();
+    const ring2 = createKeyring(k2, [k1]);
+    expect(await rewrapToCurrentMasterKey(handlesOf(db), ring2)).toEqual({
+      dataKeys: 0,
+      initialPasswords: 0,
+      sealedReveals: 0,
+      pushTokens: 1,
+    });
+    const row = await db
+      .withSchema("capybara")
+      .selectFrom("push_registrations")
+      .select(["master_key_id", "token_ciphertext"])
+      .where("id", "=", "preg-1")
+      .executeTakeFirstOrThrow();
+    expect(row.master_key_id).toBe(ring2.currentId);
+    expect(
+      createKeyring(k2, [])
+        .unwrap(row.master_key_id, Buffer.from(row.token_ciphertext), pushTokenAad("preg-1"))
+        .toString(),
+    ).toBe("device-token-1");
+    expect((await rewrapToCurrentMasterKey(handlesOf(db), ring2)).pushTokens).toBe(0);
   });
 
   it("a master key missing from the keyring fails before anything is written, naming ids only", async () => {
