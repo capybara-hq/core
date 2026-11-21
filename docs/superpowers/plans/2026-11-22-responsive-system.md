@@ -16,6 +16,8 @@ only the matching one stays mounted after hydration. Sizes come from tokens (the
 Playwright (`apps/web/visual`), oxc-based checks in `tools/checks`.
 
 **Spec:** `docs/superpowers/specs/2026-11-22-responsive-system-design.md` (decisions D1–D10, §9).
+Phase 0b implements the companion `docs/superpowers/specs/2026-11-22-mobile-interaction-model-design.md`
+(its §12; open until its questions Q1–Q16 are answered).
 Read it before any task; section numbers below (§2.1 …) are that spec's.
 
 ## Decisions (maintainer 2026-11-22)
@@ -460,6 +462,59 @@ waves 3–5 ("templates follow"). Phases 1–3 are one PR each.
 
 ---
 
+## Phase 0b: interaction model (one PR, after phase 0's second PR)
+
+Spec: the interaction model doc §§ 2–9. Depends on the sheet standard
+(`fix/sheet-close-focus-ground`) and the drawer (`feat/compact-drawer-conversations`) being merged
+where noted. Waves: T0b.1, T0b.4, T0b.5, T0b.8, T0b.10 (wave 1, disjoint files); T0b.2, T0b.3, T0b.6, T0b.9
+(wave 2); T0b.7, T0b.11 (wave 3). All `normal`; T0b.1 reviewed alone on
+the most capable model (focus, history and the typed-name confirmation in a sheet).
+
+### Task T0b.1: Dialog and DangerConfirm as sheets on compact [sheet standard]
+**Files:** `packages/design/src/overlays/dialog.tsx`, `overlays.css`; test `packages/design/test/dialog-compact.test.tsx`.
+- [ ] Tests at 390: `Dialog renders as a bottom sheet with the sheet head`; `DangerConfirm puts the
+  fail button full width above 取消`; `typed name still required`; `back closes it`; at 1440 the
+  centred dialog unchanged. Implement through `ClassForms`; commit `feat(design): dialogs are sheets on compact (#588)`.
+
+### Task T0b.2: Select as a picker sheet on compact [sheet standard]
+**Files:** `packages/design/src/controls/select.tsx`, test `select-compact.test.tsx`.
+- [ ] Tests at 390: `opens a sheet with radio rows`; `over 10 options shows a search field`;
+  `pick closes and calls onChange with selection haptic`. Implement; commit.
+
+### Task T0b.3: Infinite scroll on compact lists
+**Files:** `packages/design/src/display/list-sentinel.ts` (`useListSentinel(onLoadMore: () => void, opts: { hasMore: boolean; loading: boolean })`), `object-list.tsx`, `card-grid.tsx`, `table/DataTable.tsx` (prop `onLoadMore?`, `hasMore?`, `loadingMore?`), `tools/checks/src/web-ui.ts` rule `web-ui-load-more` + fixture.
+- [ ] Tests: `sentinel in view calls onLoadMore once`; `no call while loading or without more`;
+  `error shows an inline retry row`; desktop keeps the page's own load-more. Commit.
+
+### Task T0b.4: Toasts at the bottom on compact
+**Files:** `packages/design/src/overlays/toast.tsx`, `overlays.css`; test (CSS rule): the 599 block
+puts `.cb-toast-region` at `bottom: calc(var(--cb-inset-bottom) + …)` above `--cb-keyboard-inset`. Commit.
+
+### Task T0b.5: Scroll to input under the mobile query [#575]
+**Files:** `packages/design/src/controls/inputs.tsx`, `shell/app-shell.tsx` (an inset-settled event); test `scroll-to-input.test.tsx`: `focus inside a scroller scrolls the field into view after the inset changes`; `no call on a fine pointer at 1440`. Commit.
+
+### Task T0b.6: Pull to refresh in a native shell [drawer branch; Q4]
+**Files:** `packages/design/src/display/pull-refresh.tsx` (`PullToRefresh({ onRefresh, children })`, active only with a native shell and touch), used by `InboxPage`, the conversations list, `NavDrawer` recents; test `pull-refresh.test.tsx`: `inactive in a browser`; `pull past threshold calls onRefresh with selection haptic`. Commit.
+
+### Task T0b.7: Interaction guards
+**Files:** `tools/checks/src/web-ui.ts` (rules `web-ui-overlay-primitive`, `useNative` added to `web-ui-size-branch`), `tools/checks/src/design-sheet-parts.ts`, fixtures, README.
+- [ ] Red fixtures first; real tree clean; commit `feat(checks): overlays and sheet parts stay design primitives (#588)`.
+
+### Task T0b.8: Haptic additions
+**Files:** `packages/design/src/overlays/long-press.ts` (light on open), `pull-refresh.tsx` hook point; test in `haptics.test.tsx`. Commit.
+
+### Task T0b.9: Duo: the primary goes to the strip pill
+**Files:** `packages/design/src/shell/shell-page.tsx` (`ShellPage.primary?: { label: string; icon?: IconName; href?: string; onSelect?(): void }`), `templates/list-page.tsx` (register instead of `ListFab` while `data-native-nav`), `shell/list-fab.tsx`; test `duo-primary.test.tsx`: `with nav@1 present ListFab is not mounted and the shell holds the primary`; `without nav@1 the FAB is back`.
+- [ ] Implement; commit `feat(design): the list primary joins the Duo strip (#588)`.
+
+### Task T0b.10: Duo: `nav@1` action and account
+**Files:** the shell environment types in `packages/design/src/native.ts` / `shell-environment.tsx`, the web adapter in `apps/web/src/components/shell/AppFrame.tsx` (allowlisted), `docs/superpowers/specs/2026-11-20-mobile-app-design.md` §5.2 (contract text); native side tracked in the clients repo.
+- [ ] Tests with a fake shell: `set carries action (page primary or 新会话) and account`; `side from nav@1 is written as data-strip`; `onAction runs the primary`; `onAccount opens the account sheet`; `a strip selection closes the open sheet first`; `search item opens the palette`. Implement; commit.
+
+### Task T0b.11: Duo: drawer entries, sheets and shots
+**Files:** `packages/design/src/shell/nav-drawer.tsx`, `sidebar.tsx`, `account-sheet.tsx` (技能、连接器、设备… row while `nav@1`), `overlays/bottom-sheet.tsx` + `overlays.css` (panel inside `--cb-inset-right`, scrim full bleed), `apps/web/visual/duo.spec.ts` (outer list with the pill primary, outer sheet, inner list).
+- [ ] Tests at 382 with `data-native-nav`: `no menu button`; `sheet panel ends at the strip inset`; `account sheet holds 技能、连接器、设备…`; with `data-strip="left"`: `sheet panel starts after the left inset`, `back button clears the left inset`; `a side change keeps the open sheet and the scroll position (no remount)`. `ShellEnvironmentScript` writes `data-strip` from `nav@1.side`, else the insets. Implement; commit.
+
 ## Phase 1: member pages (one PR)
 
 Waves: T1.1–T1.4 disjoint (wave 1), T1.5 after them (wave 2). All `normal`, one batched review.
@@ -488,6 +543,11 @@ Waves: T1.1–T1.4 disjoint (wave 1), T1.5 after them (wave 2). All `normal`, on
 - [ ] Test: every item of the connector and device cards' ⋯ menus exists on their detail page
   (`apps/web/test/actions-reachable.test.tsx`: render card + detail with fixtures, compare labels).
 - [ ] Add missing detail actions and the skills tables' `compact` roles; run, commit `feat(web): row actions are on the detail pages (#568)`.
+
+### Task T1.6: Conversations page: time groups and infinite scroll [drawer branch, T0b.3]
+**Files:** `apps/web/src/app/(app)/conversations/view.tsx`.
+- [ ] Test at 390: groups 今天 / 昨天 / 本周 / 更早; the next page loads from the sentinel; no
+  「加载更多」 row. Implement with `onLoadMore`; commit.
 
 ### Task T1.5: Member visual pages
 **Files:** `apps/web/visual/responsive.spec.ts` (add agents, skills, connectors, schedules, conversations, inbox, account profile at 390 / 768 / 1440), `.changeset/responsive-system-phase1.md` (`@capybara-hq/capybara` patch).
