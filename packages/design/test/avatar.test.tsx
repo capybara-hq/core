@@ -8,6 +8,7 @@ import {
   AvatarPicker,
   DesignProvider,
   TOKEN_NAMES,
+  visibleAvatarChoices,
 } from "../src/index";
 
 afterEach(cleanup);
@@ -284,5 +285,82 @@ describe("AvatarPicker (spec §6.30)", () => {
     expect(container.querySelector('[data-part="avatar-upload"] img')?.getAttribute("src")).toBe(
       "/api/avatar/a1",
     );
+  });
+
+  describe("hidden and theme presets (#451)", () => {
+    const extra = [
+      { key: "neon", name: "霓虹", src: "/theme/neon.png" },
+      { key: "chrome", name: "铬", src: "/theme/chrome.png" },
+    ];
+    const radioNames = () => screen.getAllByRole("radio").map((r) => r.getAttribute("aria-label"));
+
+    it("hidden built-ins are not listed", () => {
+      wrap(<AvatarPicker value={null} onChange={() => {}} hidden={["fox", "owl"]} />, "en");
+      const names = radioNames();
+      expect(names).toHaveLength(8);
+      expect(names).not.toContain("Fox");
+      expect(names).not.toContain("Owl");
+    });
+
+    it("theme presets follow the remaining built-ins, before the upload tile", () => {
+      const { container } = wrap(
+        <AvatarPicker
+          value={null}
+          onChange={() => {}}
+          onUpload={() => {}}
+          hidden={["fox"]}
+          extra={extra}
+        />,
+      );
+      const names = radioNames();
+      expect(names).toHaveLength(11);
+      expect(names.slice(-2)).toEqual(["霓虹", "铬"]);
+      const tiles = container.querySelectorAll(".cb-avatar-picker-tiles > *");
+      expect(tiles[tiles.length - 1]?.getAttribute("data-part")).toBe("avatar-upload");
+      const group = screen.getByRole("radiogroup");
+      expect(group.querySelectorAll("img")).toHaveLength(2);
+      expect(group.querySelector("img")?.getAttribute("src")).toBe("/theme/neon.png");
+    });
+
+    it("a theme tile is named by its localized name and selects { kind: theme, key, src }", () => {
+      const onChange = vi.fn();
+      wrap(
+        <AvatarPicker
+          value={{ kind: "theme", key: "chrome", src: "/theme/chrome.png" }}
+          onChange={onChange}
+          extra={extra}
+        />,
+      );
+      expect(screen.getByRole("radio", { name: "铬" })).toHaveProperty("checked", true);
+      expect(screen.getByRole("radio", { name: "霓虹" })).toHaveProperty("checked", false);
+      fireEvent.click(screen.getByRole("radio", { name: "霓虹" }));
+      expect(onChange).toHaveBeenCalledWith({ kind: "theme", key: "neon", src: "/theme/neon.png" });
+    });
+
+    it("a stored hidden preset still renders as Avatar", () => {
+      const { container } = wrap(
+        <Avatar value={{ kind: "preset", id: "fox" }} name="A" size={40} />,
+      );
+      expect(root(container).getAttribute("data-preset")).toBe("fox");
+    });
+
+    it("without hidden and extra the DOM equals the plain picker's", () => {
+      const a = wrap(<AvatarPicker value={null} onChange={() => {}} />);
+      // useId differs per render: compare with the ids normalised
+      const norm = (h: string) => h.replace(/(:r[0-9a-z]+:|_r_[0-9a-z]+_)/g, "ID");
+      const html = norm(a.container.innerHTML);
+      cleanup();
+      const b = wrap(<AvatarPicker value={null} onChange={() => {}} hidden={[]} extra={[]} />);
+      expect(norm(b.container.innerHTML)).toBe(html);
+    });
+
+    it("visibleAvatarChoices lists the remaining built-ins, then theme presets", () => {
+      const all = visibleAvatarChoices([], []);
+      expect(all).toHaveLength(10);
+      const some = visibleAvatarChoices(["panda"], extra);
+      expect(some).toHaveLength(11);
+      expect(some.some((c) => c?.kind === "preset" && c.id === "panda")).toBe(false);
+      expect(some[10]).toEqual({ kind: "theme", key: "chrome", src: "/theme/chrome.png" });
+    });
   });
 });

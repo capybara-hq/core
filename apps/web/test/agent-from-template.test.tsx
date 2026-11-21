@@ -1,3 +1,4 @@
+import { AVATAR_PRESET_IDS } from "@capybara-hq/design";
 import { describeNestedBox, findNestedBoxes } from "@capybara-hq/design/reference";
 import { act, cleanup, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
@@ -10,6 +11,7 @@ import {
   previewChanges,
 } from "../src/lib/from-template";
 import type { Me } from "../src/lib/session";
+import { orgThemesBody, themePreset } from "./support/agents";
 import { bodyOf, type Call, json, stubApi } from "./support/api";
 import { resetNavigation, router } from "./support/navigation";
 import { renderRouteWithCache } from "./support/query";
@@ -141,6 +143,7 @@ function routes(over: Record<string, Handler> = {}): Routes {
         },
       }),
     [`GET ${ORG}/models`]: () => json(200, MODELS),
+    [`GET ${ORG}/themes`]: () => json(200, orgThemesBody()),
     [`POST ${ORG}/agents/from-template/preview`]: () => json(200, PREVIEW),
     [`POST ${ORG}/agents/from-template`]: () => json(201, created(true)),
     ...over,
@@ -167,6 +170,7 @@ async function openDialog(r: Routes, me?: Me) {
 beforeEach(() => resetNavigation("/agents"));
 afterEach(() => {
   cleanup();
+  vi.restoreAllMocks();
   vi.unstubAllGlobals();
 });
 
@@ -224,6 +228,32 @@ describe("用它创建 (P4-18)", () => {
     expect((body.avatar as { kind: string }).kind).toBe("preset");
     // pending connectors: the Tools section, where the 待配置 notice is
     await vi.waitFor(() => expect(router.push).toHaveBeenCalledWith("/agents/ag9?s=tools"));
+  });
+
+  it("from-template uses the same choices: hidden presets are not offered, theme keys are sent", async () => {
+    vi.spyOn(Math, "random").mockReturnValue(0);
+    const mascot = themePreset("mascot", "Mascot");
+    const hidden = AVATAR_PRESET_IDS.filter((id) => id !== "fox");
+    const r = routes({
+      [`GET ${ORG}/themes`]: () => json(200, orgThemesBody({ hidden, presets: [mascot] })),
+    });
+    const calls = stubApi(r);
+    const dialog = await openDialog(r, MEMBER);
+    // the first visible choice is preselected, never a hidden built-in
+    await vi.waitFor(() =>
+      expect((within(dialog).getByRole("radio", { checked: true }) as HTMLInputElement).value).toBe(
+        "fox",
+      ),
+    );
+    expect(within(dialog).getAllByRole("radio")).toHaveLength(2);
+    const user = userEvent.setup();
+    await user.click(within(dialog).getByRole("radio", { name: "Mascot" }));
+    await user.click(within(dialog).getByRole("button", { name: F.submit }));
+    await vi.waitFor(() => expect(posts(calls, "from-template")).toHaveLength(1));
+    expect((posts(calls, "from-template")[0] as { avatar: unknown }).avatar).toEqual({
+      kind: "preset",
+      id: mascot.key,
+    });
   });
 
   it("an org admin picks the visibility; a changed model is sent; without pending it opens the agent", async () => {

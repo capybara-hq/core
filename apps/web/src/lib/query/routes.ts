@@ -671,6 +671,8 @@ const ROUTE_TABLE: readonly RouteEntry[] = [
           ...agentConnectorQueries(orgId, agent),
           q(channelsQuery(orgId)),
           q(attachmentLimitsQuery(orgId)),
+          // the avatar choices (the shell's read too; Basics' picker)
+          q(orgThemesQuery(orgId)),
           ...(asksAdmins ? [q(setupRequestQuery(orgId, id))] : []),
         ].map((o) => qc.prefetchQuery({ ...o, retry: false })),
       );
@@ -678,11 +680,12 @@ const ROUTE_TABLE: readonly RouteEntry[] = [
   },
   {
     pattern: "/agents/new",
-    // Members up (a guest gets no access and nothing is read).
+    // Members up (a guest gets no access and nothing is read); the org's themes are the avatar
+    // choices (the shell's read too).
     queries: ({ orgId, me }) =>
       orgId === null || !atLeast(me, "member")
         ? []
-        : [...agentFormQueries(orgId), q(attachmentLimitsQuery(orgId))],
+        : [...agentFormQueries(orgId), q(attachmentLimitsQuery(orgId)), q(orgThemesQuery(orgId))],
   },
   {
     pattern: "/agents/templates/[id]",

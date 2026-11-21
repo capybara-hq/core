@@ -20,6 +20,8 @@ export {
   AVATAR_SIZES,
   AVATAR_UPLOAD_ACCEPT,
   Avatar,
+  type AvatarChoice,
+  type AvatarExtraPreset,
   AvatarPicker,
   type AvatarPickerProps,
   type AvatarPreset,
@@ -27,6 +29,7 @@ export {
   type AvatarSize,
   type AvatarValue,
   type PresetId,
+  visibleAvatarChoices,
 } from "./avatar";
 export { Badge, Kbd, Metric, type MetricProps, StatusMark } from "./basic";
 export { type BrandMark, brandArtStyle, cssUrlValue, useBrandMark } from "./brand-art";

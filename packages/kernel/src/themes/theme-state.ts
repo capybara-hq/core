@@ -3,6 +3,8 @@
 // transaction's connection when there is one): the settings writers (deployment, org, person) and
 // `ThemesService` decide with the same predicates.
 import {
+  BUILTIN_AVATAR_PRESET_IDS,
+  type BuiltinAvatarPresetId,
   isThemeAssetPath,
   type LocalizedName,
   mergeThemeSchemes,
@@ -22,6 +24,7 @@ import {
 import type { KernelSchemaDb } from "../db/kernel-schema.js";
 import { ApiError } from "../errors.js";
 import { packagePath } from "../packages/tgz.js";
+import { THEME_PRESET_KEY_RE } from "./avatar-preset-key.js";
 
 /** The schemes in the order they are listed. */
 const SCHEMES: readonly ThemeScheme[] = ["dark", "light"];
@@ -98,6 +101,69 @@ export function themeUrl(id: string, version: string, asset?: string): string {
   return asset === undefined
     ? `${base}/r${THEME_CSS_REVISION}/theme.css`
     : `${base}/assets/${encodeURIComponent(packagePath(asset))}`;
+}
+
+/** A theme avatar preset an org offers (theme brand coverage spec §4). */
+export interface OrgAvatarPreset {
+  /** `<plugin>/<theme file id>/<preset id>` ({@link THEME_PRESET_KEY_RE}): what a client sends. */
+  key: string;
+  /** The theme file's name; a missing `zh` reads as `en`. */
+  name: LocalizedName;
+  /** The file's delivery URL ({@link themeUrl}; immutable, served after the theme changes). */
+  url: string;
+  /** What a stored `{ kind: "theme" }` avatar pins: theme, version, preset id and file path. */
+  themeId: string;
+  version: string;
+  preset: string;
+  file: string;
+}
+
+/** The avatar presets of an org's effective default theme: built-ins it hides, presets it adds. */
+export interface OrgAvatars {
+  /** In the built-in order. */
+  hidden: BuiltinAvatarPresetId[];
+  /** In the theme file's order. */
+  presets: OrgAvatarPreset[];
+}
+
+/**
+ * The avatar presets of version `version` of theme `id` (spec §4). A stored definition is not
+ * re-parsed: entries outside the grammar (a preset whose file is not a theme asset path, an id
+ * that would not form a key, an unknown hidden id) are skipped. A row without provenance
+ * (`plugin` null) cannot form a key: it offers no presets, but its hidden list still applies.
+ */
+export function themeAvatarPresets(
+  id: string,
+  version: string,
+  def: ParsedTheme,
+  plugin: string | null,
+): OrgAvatars {
+  const hide: unknown = def.hideAvatarPresets;
+  const hiddenSet = new Set(Array.isArray(hide) ? hide : []);
+  const hidden = BUILTIN_AVATAR_PRESET_IDS.filter((p) => hiddenSet.has(p));
+  const avatars: unknown = def.avatars;
+  const presets: OrgAvatarPreset[] = [];
+  if (plugin !== null && Array.isArray(avatars)) {
+    for (const a of avatars as unknown[]) {
+      if (a === null || typeof a !== "object") continue;
+      const { id: preset, name, file } = a as Record<string, unknown>;
+      if (typeof preset !== "string" || !isThemeAssetPath(file)) continue;
+      const key = `${plugin}/${def.id}/${preset}`;
+      if (!THEME_PRESET_KEY_RE.test(key) || name === null || typeof name !== "object") continue;
+      const { en, zh } = name as Record<string, unknown>;
+      if (typeof en !== "string") continue;
+      presets.push({
+        key,
+        name: { en, zh: typeof zh === "string" ? zh : en },
+        url: themeUrl(id, version, file),
+        themeId: id,
+        version,
+        preset,
+        file,
+      });
+    }
+  }
+  return { hidden, presets };
 }
 
 /**

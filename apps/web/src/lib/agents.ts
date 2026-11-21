@@ -270,7 +270,25 @@ export type AgentAvatar =
   | { kind: "preset"; id: PresetId }
   | { kind: "upload"; uploadId: string }
   | { kind: "external"; url: string }
+  /**
+   * A theme preset pinned to the theme version it was chosen from (theme brand coverage spec §4);
+   * `url` is its immutable asset URL. Only the kernel writes it (from a preset key).
+   */
+  | {
+      kind: "theme";
+      themeId: string;
+      version: string;
+      preset: string;
+      file: string;
+      url: string;
+    }
   | null;
+
+/**
+ * A preset avatar as a client writes it: a built-in id or a theme preset key
+ * (`<plugin>/<theme>/<preset>`, from the org's theme listing, `OrgThemes.avatars`).
+ */
+export type PresetAvatarInput = { kind: "preset"; id: string };
 
 export interface QuickAction {
   title: string;
@@ -289,7 +307,7 @@ export interface AgentProfile {
  * the definition (saved with the agent PATCH).
  */
 export interface ProfileInput {
-  avatar?: { kind: "preset"; id: PresetId } | { kind: "upload"; uploadId: string } | null;
+  avatar?: PresetAvatarInput | { kind: "upload"; uploadId: string } | null;
   quickActions?: QuickAction[];
 }
 
@@ -572,8 +590,9 @@ export const listModels = (orgId: string, kind?: ModelKind) =>
   );
 
 /**
- * The avatar the design `Avatar` renders. Uploads and migrated external avatars go through the
- * kernel's redirect route; `v` busts the browser cache when the profile changes.
+ * The avatar the design `Avatar` renders. A theme preset is its immutable asset URL; uploads and
+ * migrated external avatars go through the kernel's redirect route; `v` busts the browser cache
+ * when the profile changes.
  */
 export function avatarValue(
   agent: { id: string; profile: Pick<AgentProfile, "avatar" | "updatedAt"> },
@@ -582,6 +601,7 @@ export function avatarValue(
   const a = agent.profile.avatar;
   if (a === null) return null;
   if (a.kind === "preset") return { kind: "preset", id: a.id };
+  if (a.kind === "theme") return { kind: "image", src: a.url };
   return {
     kind: "image",
     src: `${base(orgId)}/agents/${encodeURIComponent(agent.id)}/avatar?v=${encodeURIComponent(agent.profile.updatedAt)}`,

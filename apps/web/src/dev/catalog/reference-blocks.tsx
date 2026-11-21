@@ -69,6 +69,7 @@ import {
   STATUS_FIXTURE,
   TABLE_HOVER_ROW,
   TABLE_SELECTED_ROW,
+  THEME_AVATAR_FIXTURES,
 } from "@capybara-hq/design/fixtures";
 import { createContext, type ReactNode, useContext } from "react";
 import { BOX_BLOCKS } from "./box-blocks";
@@ -1360,6 +1361,20 @@ function avatarBlocks(): ReactNode {
       </RefBlock>
       <RefBlock id="avatar-picker" width={640} pad>
         <AvatarPicker value={{ kind: "preset", id: "capybara" }} onChange={noop} onUpload={noop} />
+      </RefBlock>
+      {/* A theme's list (theme brand coverage spec §4): built-ins hidden, the theme's own after. */}
+      <RefBlock id="avatar-picker-theme-presets" width={640} pad>
+        <AvatarPicker
+          value={{
+            kind: "theme",
+            key: THEME_AVATAR_FIXTURES[0].key,
+            src: THEME_AVATAR_FIXTURES[0].src,
+          }}
+          onChange={noop}
+          onUpload={noop}
+          hidden={AVATAR_PRESET_IDS.filter((id) => id !== "capybara" && id !== "fox")}
+          extra={THEME_AVATAR_FIXTURES}
+        />
       </RefBlock>
       <RefBlock id="avatar-picker-upload-off" width={640} pad>
         <AvatarPicker

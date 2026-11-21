@@ -4,7 +4,7 @@ import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import en from "../messages/en.json";
 import zh from "../messages/zh.json";
-import { renderNewAgent } from "./support/agents";
+import { orgThemesBody, renderNewAgent, themePreset } from "./support/agents";
 import { json as apiJson, bodyOf, type Call, stubApi } from "./support/api";
 import { resetNavigation, router } from "./support/navigation";
 import { pickOption } from "./support/select";
@@ -210,5 +210,89 @@ describe("the create form of /agents/new", () => {
       avatar: { kind: "preset", id: "panda" },
     });
     expect(posted(calls, "/agents/ag1/avatar/uploads")).toHaveLength(0);
+  });
+  // theme brand coverage spec §4: the picker and the random default follow the org's default theme
+  it("the create form never preselects a hidden preset", async () => {
+    vi.spyOn(Math, "random").mockReturnValue(0.99);
+    const hidden = AVATAR_PRESET_IDS.filter((id) => id !== "panda" && id !== "fox");
+    const calls = stub({ [`GET ${ORG}/themes`]: () => apiJson(200, orgThemesBody({ hidden })) });
+    await renderNewAgent();
+    // the hidden built-ins are not offered; the random pick is the last visible one
+    await vi.waitFor(() =>
+      expect((screen.getByRole("radio", { checked: true }) as HTMLInputElement).value).toBe("fox"),
+    );
+    expect(screen.getAllByRole("radio").map((r) => (r as HTMLInputElement).value)).toEqual([
+      "panda",
+      "fox",
+    ]);
+    const user = userEvent.setup();
+    await user.type(screen.getByRole("textbox", { name: en.agents.form.nameLabel }), "Echo");
+    await user.click(screen.getByRole("button", { name: en.agents.form.submit }));
+    await vi.waitFor(() => expect(posted(calls, "/agents")).toHaveLength(1));
+    expect((bodyOf(posted(calls, "/agents")[0]) as { profile: unknown }).profile).toEqual({
+      avatar: { kind: "preset", id: "fox" },
+    });
+  });
+
+  it("with nothing visible nothing is preselected and the kernel decides", async () => {
+    const calls = stub({
+      [`GET ${ORG}/themes`]: () => apiJson(200, orgThemesBody({ hidden: [...AVATAR_PRESET_IDS] })),
+    });
+    await renderNewAgent();
+    expect(screen.queryAllByRole("radio")).toEqual([]);
+    const user = userEvent.setup();
+    await user.type(screen.getByRole("textbox", { name: en.agents.form.nameLabel }), "Echo");
+    await user.click(screen.getByRole("button", { name: en.agents.form.submit }));
+    await vi.waitFor(() => expect(posted(calls, "/agents")).toHaveLength(1));
+    expect(bodyOf(posted(calls, "/agents")[0])).not.toHaveProperty("profile");
+  });
+
+  it("the picker lists the theme presets and saves the key", async () => {
+    vi.spyOn(Math, "random").mockReturnValue(0.99);
+    const mascot = themePreset("mascot", "Mascot", "吉祥物");
+    const calls = stub({
+      [`GET ${ORG}/themes`]: () => apiJson(200, orgThemesBody({ presets: [mascot] })),
+    });
+    await renderNewAgent();
+    // the theme preset follows the built-ins; the random default may pick it (the last choice)
+    const tile = screen.getByRole("radio", { name: "Mascot" }) as HTMLInputElement;
+    await vi.waitFor(() => expect(tile.checked).toBe(true));
+    const user = userEvent.setup();
+    await user.click(screen.getByRole("radio", { name: /Panda/i }));
+    await user.click(tile);
+    await user.type(screen.getByRole("textbox", { name: en.agents.form.nameLabel }), "Echo");
+    await user.click(screen.getByRole("button", { name: en.agents.form.submit }));
+    await vi.waitFor(() => expect(posted(calls, "/agents")).toHaveLength(1));
+    expect((bodyOf(posted(calls, "/agents")[0]) as { profile: unknown }).profile).toEqual({
+      avatar: { kind: "preset", id: mascot.key },
+    });
+  });
+
+  it("theme preset names follow the locale, zh falling back to en", async () => {
+    stub({
+      [`GET ${ORG}/themes`]: () =>
+        apiJson(
+          200,
+          orgThemesBody({
+            presets: [themePreset("mascot", "Mascot", "吉祥物"), themePreset("owl", "Owl")],
+          }),
+        ),
+    });
+    await renderNewAgent({ locale: "zh" });
+    expect(screen.getByRole("radio", { name: "吉祥物" })).toBeTruthy();
+    expect(screen.getByRole("radio", { name: "Owl" })).toBeTruthy();
+  });
+
+  it("a 400 agent.avatar_unavailable shows its message", async () => {
+    stub({
+      [`POST ${ORG}/agents`]: () =>
+        apiJson(400, { error: { code: "agent.avatar_unavailable", message: "unavailable" } }),
+    });
+    await renderNewAgent();
+    const user = userEvent.setup();
+    await user.type(screen.getByRole("textbox", { name: en.agents.form.nameLabel }), "Echo");
+    await user.click(screen.getByRole("button", { name: en.agents.form.submit }));
+    expect(await screen.findByText(en.errors.agent.avatar_unavailable)).toBeTruthy();
+    expect(router.push).not.toHaveBeenCalled();
   });
 });

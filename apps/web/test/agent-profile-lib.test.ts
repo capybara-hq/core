@@ -37,6 +37,19 @@ describe("agent profile lib", () => {
     ).toEqual({ kind: "image", src });
   });
 
+  it("avatarValue maps theme to its url", () => {
+    const url = "/api/v1/themes/th1/1.0.0/assets/avatars%2Fmascot.png";
+    const avatar = {
+      kind: "theme" as const,
+      themeId: "th1",
+      version: "1.0.0",
+      preset: "mascot",
+      file: "avatars/mascot.png",
+      url,
+    };
+    expect(avatarValue(agent({ avatar }), "o1")).toEqual({ kind: "image", src: url });
+  });
+
   function setup() {
     const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
     qc.setQueryData(agentQuery("o1", "a1").queryKey, agent());

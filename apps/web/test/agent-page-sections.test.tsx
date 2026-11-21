@@ -5,7 +5,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import en from "../messages/en.json";
 import zh from "../messages/zh.json";
 import { keys } from "../src/lib/query/keys";
-import { agentFormDefaults, renderEditAgent } from "./support/agents";
+import { agentFormDefaults, orgThemesBody, renderEditAgent, themePreset } from "./support/agents";
 import { bodyOf, type Call, json, stubApi } from "./support/api";
 import { resetNavigation, router } from "./support/navigation";
 import { renderRouteEmptyCache } from "./support/query";
@@ -405,6 +405,83 @@ describe("the agent page's sections with their own saves (agent profile design Â
       },
       expectedVersion: 1,
     });
+  });
+
+  it("the basics section shows a stored theme avatar as the checked tile", async () => {
+    const mascot = themePreset("mascot", "Mascot");
+    const stored = {
+      kind: "theme",
+      themeId: "th1",
+      version: "1.0.0",
+      preset: "mascot",
+      file: "avatars/mascot.png",
+      url: mascot.url,
+    };
+    const base = agent();
+    const saved = { ...base, profile: { ...base.profile, avatar: stored } };
+    const profiles: unknown[] = [];
+    const r = routes(saved as unknown as AgentJson, {
+      [`GET ${ORG}/themes`]: ok(orgThemesBody({ hidden: ["capybara"], presets: [mascot] })),
+      [`PATCH ${ORG}/agents/ag1/profile`]: (c) => {
+        profiles.push(bodyOf(c));
+        return json(200, { profile: saved.profile });
+      },
+    });
+    stubApi(r);
+    await renderEditAgent({ routes: r });
+    // still offered: the theme tile is the checked one; a hidden built-in is not offered
+    const tile = screen.getByRole("radio", { name: "Mascot" }) as HTMLInputElement;
+    expect(tile.checked).toBe(true);
+    expect(screen.queryByRole("radio", { name: /Capybara/i })).toBeNull();
+    // the stored theme avatar is unchanged: picking a built-in then the theme tile sends its key
+    const user = userEvent.setup();
+    await user.click(screen.getByRole("radio", { name: /Panda/i }));
+    await user.click(tile);
+    await user.click(save());
+    await vi.waitFor(() => expect(profiles).toHaveLength(1));
+    expect(profiles[0]).toMatchObject({ avatar: { kind: "preset", id: mascot.key } });
+  });
+
+  it("the basics section keeps a stored hidden built-in shown and checked, other hidden ones unlisted", async () => {
+    const base = agent();
+    const saved = {
+      ...base,
+      profile: { ...base.profile, avatar: { kind: "preset", id: "capybara" } },
+    };
+    const r = routes(saved as unknown as AgentJson, {
+      [`GET ${ORG}/themes`]: ok(orgThemesBody({ hidden: ["capybara", "panda"], presets: [] })),
+    });
+    stubApi(r);
+    await renderEditAgent({ routes: r });
+    const tile = screen.getByRole("radio", { name: /Capybara/i }) as HTMLInputElement;
+    expect(tile.checked).toBe(true);
+    expect(screen.queryByRole("radio", { name: /Panda/i })).toBeNull();
+  });
+
+  it("a stored theme avatar no longer offered shows as the image, never written back", async () => {
+    const stored = {
+      kind: "theme",
+      themeId: "th0",
+      version: "0.9.0",
+      preset: "old",
+      file: "avatars/old.png",
+      url: "/api/v1/themes/th0/0.9.0/assets/avatars%2Fold.png",
+    };
+    const base = agent();
+    const saved = { ...base, profile: { ...base.profile, avatar: stored } };
+    const r = routes(saved as unknown as AgentJson);
+    const calls = stubApi(r);
+    const { container } = await renderEditAgent({ routes: r });
+    expect(screen.queryByRole("radio", { checked: true })).toBeNull();
+    const upload = container.querySelector('[data-part="avatar-upload"]') as HTMLElement;
+    expect(upload.getAttribute("data-state")).toBe("checked");
+    expect(upload.querySelector("img")?.getAttribute("src")).toBe(stored.url);
+    // a name change saves the agent only: the stored avatar is not sent back
+    const user = userEvent.setup();
+    await user.type(screen.getByRole("textbox", { name: F.nameLabel }), " 2");
+    await user.click(save());
+    await vi.waitFor(() => expect(patches(calls)).toHaveLength(1));
+    expect(calls.filter((c) => c.url === `${ORG}/agents/ag1/profile`)).toEqual([]);
   });
 
   it("an unrelated section's save keeps the prompt files: their join goes as instructions", async () => {

@@ -10,6 +10,7 @@ import zh from "../messages/zh.json";
 import { ADMIN_PAGES } from "../src/components/admin-nav";
 import { activeAdminOf } from "../src/components/shell/nav";
 import { APP_PAGES } from "../src/components/shell/path";
+import { adminAvatarValue } from "../src/lib/admin-items";
 import {
   adminAgentQuery,
   adminAgentsQuery,
@@ -398,6 +399,20 @@ describe("/admin/agents/[id]", () => {
 });
 
 describe("admin item queries", () => {
+  it("the admin console draws a theme avatar as an image", () => {
+    const url = "/api/v1/themes/th1/1.0.0/assets/avatars%2Fmascot.png";
+    expect(
+      adminAvatarValue({
+        kind: "theme",
+        themeId: "th1",
+        version: "1.0.0",
+        preset: "mascot",
+        file: "avatars/mascot.png",
+        url,
+      }),
+    ).toEqual({ kind: "image", src: url });
+  });
+
   it("agent keys and URLs: each filter and cursor its own entry", async () => {
     const calls = stubApi({
       [`GET ${LIST}`]: () => json(200, { agents: [], next: null }),
