@@ -1,5 +1,13 @@
 # @capybara-hq/design
 
+## 0.2.0-rc.27
+
+### Patch Changes
+
+- 0ecdba4: The author circle beside a user message is 40 px, as tall as a one-line bubble (was 24).
+- 783f457: The shell no longer schedules a React update from inside Next's history insertion effect
+  ("useInsertionEffect must not schedule updates" in development) when it counts in-app history.
+
 ## 0.2.0-rc.26
 
 ### Patch Changes

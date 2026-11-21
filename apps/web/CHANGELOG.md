@@ -1,5 +1,27 @@
 # @capybara-hq/web
 
+## 0.1.0-rc.76
+
+### Minor Changes
+
+- 0f951f6: Add the 通知 / Notifications personal settings page (push devices and the four category switches), the in-context push prompt for shells that offer `push@1`, sign-out that forgets the install's push registration, and `?org=` on app links that switches the current org.
+- 12a6582: Add the setup guide place `extension-deployment`: a plugin's guide on the super admin's extension
+  page whose checks get the extension's platform deployment config (`SetupCheckTarget` kind
+  `extension-deployment`; `SetupCheckArgs.orgId` is now `string | null`, null for this place). The
+  `fake-push` fixture ships such a guide with the check `fake-push-key`. The kernel serves these guides
+  and runs their checks on super admin routes (`/api/v1/admin/extensions/:name/guides…`) and the
+  `extensions.platform-guides`, `extensions.platform-check-status` and `extensions.platform-check`
+  Platform operations; the web shows them with live check rows on the extension's config tab.
+
+### Patch Changes
+
+- 0ecdba4: The author circle beside a user message is 40 px, as tall as a one-line bubble (was 24).
+- 783f457: The shell no longer schedules a React update from inside Next's history insertion effect
+  ("useInsertionEffect must not schedule updates" in development) when it counts in-app history.
+- Updated dependencies [0ecdba4]
+- Updated dependencies [783f457]
+  - @capybara-hq/design@0.2.0-rc.27
+
 ## 0.1.0-rc.75
 
 ### Patch Changes

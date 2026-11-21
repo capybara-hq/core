@@ -1,5 +1,28 @@
 # @capybara-hq/kernel
 
+## 0.1.0-rc.61
+
+### Minor Changes
+
+- 33074e1: Push notification registrations and delivery: the `push_registrations` and `push_preferences`
+  tables, push tokens sealed with the master keyring (rewrapped by `capybara secrets rewrap`).
+  Trigger events (approvals, questions, connect requests, run ends, background and sub-agent finishes,
+  scheduled task runs) owe a push fanout in their own transaction; the fanout resolves recipients when
+  it runs and owes one delivery per registration. New config `push.previews` (`off` | `titles`).
+- 12a6582: Add the setup guide place `extension-deployment`: a plugin's guide on the super admin's extension
+  page whose checks get the extension's platform deployment config (`SetupCheckTarget` kind
+  `extension-deployment`; `SetupCheckArgs.orgId` is now `string | null`, null for this place). The
+  `fake-push` fixture ships such a guide with the check `fake-push-key`. The kernel serves these guides
+  and runs their checks on super admin routes (`/api/v1/admin/extensions/:name/guides…`) and the
+  `extensions.platform-guides`, `extensions.platform-check-status` and `extensions.platform-check`
+  Platform operations; the web shows them with live check rows on the extension's config tab.
+
+### Patch Changes
+
+- Updated dependencies [a007fee]
+- Updated dependencies [12a6582]
+  - @capybara-hq/plugin-sdk@0.1.0-rc.46
+
 ## 0.1.0-rc.60
 
 ### Patch Changes
