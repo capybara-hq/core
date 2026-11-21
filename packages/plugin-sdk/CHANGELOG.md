@@ -1,5 +1,18 @@
 # @capybara-hq/plugin-sdk
 
+## 0.1.0-rc.45
+
+### Minor Changes
+
+- dfea642: Add the `nav@1` shell capability (the native strip's sections, current section and menu button:
+  `NavCapabilityV1`, `NavStateV1`, `NAV_SECTION_ORDER`) and `profiles@1` (`ProfilesCapabilityV1`,
+  the native profile switcher).
+- 614d852: Touch tokens and the code font role. One `@media` block in the generated tokens carries the touch
+  overrides (system font, larger type, 44 px controls and rows, rounder corners) for a coarse
+  pointer; `--cb-font-code` keeps Sarasa on code, commands, paths, versions and times. New tokens:
+  `float-ground`, `float-line`, `shadow-float-touch`, `radius-pill`, `layout-drawer` and the
+  `touch-*` sizes. The new colors and the shadow join the SDK's overridable theme tokens.
+
 ## 0.1.0-rc.44
 
 ### Minor Changes

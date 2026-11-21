@@ -1,5 +1,45 @@
 # @capybara-hq/web
 
+## 0.1.0-rc.74
+
+### Minor Changes
+
+- 7bb3837: Design native handles for the mobile app: `DesignProvider` takes `native` handlers (menu, share,
+  haptics) and `AppShell` a `nativeNav` tab bar handle with `onNavigate`. Inside a shell with
+  `nav@1` the web's bottom navigation is dropped before the first paint (`data-native-nav`) and the
+  native bar is told the items, the current tab and when it belongs on screen. Plain menus open as
+  the platform's action sheet on phones, sends, approvals, destructive confirmations and selection
+  changes play haptics, and `ShellReady` tells `chrome@1` the page has drawn.
+- dbd5022: Touch conversation layout: a floating composer pill with a settings chip and sheet, a bubble at the end edge, 48 px approval buttons.
+- 60af950: Touch components in the design system: `FloatingIconButton` (the chat-first shell's round menu and
+  back button with a count badge), `Drawer` and `DrawerLevel` (a panel from the start edge, drag to
+  close, a deeper level), `NavRow`, large list rows without dividers or a card border on touch, and the
+  bottom sheet's touch form. Opening a drawer or a bottom sheet on a compact touch window holds one
+  history entry, so the system back closes it first (`useOverlayHistory`).
+- 614d852: Touch tokens and the code font role. One `@media` block in the generated tokens carries the touch
+  overrides (system font, larger type, 44 px controls and rows, rounder corners) for a coarse
+  pointer; `--cb-font-code` keeps Sarasa on code, commands, paths, versions and times. New tokens:
+  `float-ground`, `float-line`, `shadow-float-touch`, `radius-pill`, `layout-drawer` and the
+  `touch-*` sizes. The new colors and the shadow join the SDK's overridable theme tokens.
+- 664d58b: Mobile shell capabilities in the web adapter: inside the mobile app `menu@1`, `share@1` and
+  `haptics@1` reach the design as native handlers, and `chrome@1.ready` is called once the page has
+  drawn. Sharing a file link or a conversation link uses the system share sheet (or Web Share), else
+  copies it.
+
+### Patch Changes
+
+- ced9476: Push and pop slides use the platform's navigation timing (350ms iOS curve; 300ms Material
+  emphasized under `data-shell-platform="android"`), with the page underneath parallaxed and dimmed
+  on the way back. A back gesture the browser already animated (`hasUAVisualTransition`) swaps at
+  once, and tab switches (including the native tab bar's) never slide. A lost Space keyup on a
+  native menu trigger no longer swallows the next tap, and a native tab bar whose handle goes away
+  while the shell stays is hidden.
+- 6c7aed3: Touch behaviour pass: controls draw no tap highlight and take no double-tap zoom delay, interactive
+  rows and buttons have a pressed state, chrome (top bar, bottom nav, sidebar, buttons) is not
+  selectable and has no long-press callout, and the page no longer rubber bands. Pinch zoom stays.
+- 7dc0ecd: Warm routes on touch: a link reads its route's first-paint queries on `pointerdown`, and a sidebar
+  conversation row does it when it scrolls into view, so the page is often cached when the tap lands.
+
 ## 0.1.0-rc.73
 
 No changes in this release.
