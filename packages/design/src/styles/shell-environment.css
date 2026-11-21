@@ -450,6 +450,12 @@
     gap: 0;
     padding: 0;
   }
+  /* The bar sits in the band's own row whatever surface the shell reports: on a pushed surface the
+     main column is padded down by the row (shell.css), and the bar's containing block (the
+     conversation page) starts below that padding, so it lifts back by the same amount. */
+  :root[data-shell="desktop"] .cb-shell[data-surface="pushed"] .cb-shell-main .cb-title-bar {
+    top: calc(-1 * var(--cb-float-row));
+  }
   :root[data-shell="desktop"] .cb-shell .cb-shell-main .cb-title-bar > .cb-title-btn,
   :root[data-shell="desktop"] .cb-shell .cb-shell-main .cb-title-overflow[data-form="float"] {
     display: none;
@@ -503,8 +509,9 @@
    conversation's title pill lies over it. The controls area reaches to just before the row's
    first control, so a window with its controls at the end (Windows) keeps a strip at its start
    edge to drag by. */
+/* (on any surface: a conversation's bar lies over the row wherever it is drawn) */
 :root[data-shell="desktop"]
-  .cb-shell[data-surface="chat"]:has(.cb-title-bar:not([data-new]))
+  .cb-shell:has(.cb-shell-main .cb-title-bar:not([data-new]))
   .cb-floatbar
   > .cb-drag-fill {
   -webkit-app-region: no-drag;

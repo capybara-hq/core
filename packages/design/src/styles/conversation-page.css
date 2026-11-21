@@ -187,6 +187,10 @@ span.cb-title-btn {
   .cb-shell .cb-title-bar > * {
     pointer-events: auto;
   }
+  /* (a pushed surface pads the main column down by the row, shell.css: the bar stays in the row) */
+  .cb-shell[data-surface="pushed"] .cb-shell-main .cb-title-bar {
+    top: calc(var(--cb-float-top) - var(--cb-float-row));
+  }
   .cb-shell .cb-title-bar[data-new="true"],
   .cb-shell .cb-title-bar > .cb-drag-fill,
   .cb-shell .cb-title-bar > .cb-title-path,

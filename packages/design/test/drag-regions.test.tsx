@@ -226,7 +226,7 @@ describe("the narrow window's row and the side panel's strip", () => {
         /\.cb-floatbar > \.cb-drag-fill$/.test(r.selector) && r.decls["app-region"] === "no-drag",
     );
     expect(off.map((r) => r.selector)).toEqual([
-      ':root[data-shell="desktop"] .cb-shell[data-surface="chat"]:has(.cb-title-bar:not([data-new])) .cb-floatbar > .cb-drag-fill',
+      ':root[data-shell="desktop"] .cb-shell:has(.cb-shell-main .cb-title-bar:not([data-new])) .cb-floatbar > .cb-drag-fill',
     ]);
   });
 
@@ -273,7 +273,7 @@ describe("the narrow window's row and the side panel's strip", () => {
     expect(row.firstElementChild?.tagName).toBe("BUTTON");
     expect(row.querySelector(":scope > .cb-drag-fill")).not.toBeNull();
     // no conversation title pill: the no-drag rule's `:has(...)` does not match
-    expect(shell.matches(":has(.cb-title-bar:not([data-new]))")).toBe(false);
+    expect(shell.matches(":has(.cb-shell-main .cb-title-bar:not([data-new]))")).toBe(false);
   });
 
   it("an open side panel draws a filler for the strip above it", () => {
@@ -769,6 +769,53 @@ describe("the compact flat title bar inside the desktop shell (maintainer decisi
       (r) => r.selector === ".cb-title-plain > .cb-drag-fill",
     );
     expect(over?.decls).toMatchObject({ position: "absolute", inset: "0" });
+  });
+
+  it("puts the title and … in the band's own row (one row, never a second row under the band)", () => {
+    const bar = `${D} .cb-shell .cb-shell-main .cb-title-bar`;
+    // the bar is the row: from the window's top edge, the row's height, centring its children
+    // (the base rule), so the plain title (stretched) and the … (28, centred) share the band's box
+    expect(flat(bar)).toMatchObject({ top: "0", height: "var(--cb-shell-flat)" });
+    const base = parseCss(css("conversation-page.css"));
+    expect(
+      base.find((r) => r.at === null && r.selector === ".cb-title-bar")?.decls["align-items"],
+    ).toBe("center");
+    expect(
+      base.find((r) => r.at === null && r.selector === ".cb-title-plain" && r.decls["align-self"])
+        ?.decls["align-self"],
+    ).toBe("stretch");
+    // the band's buttons are centred in the same row: (row - size) / 2 from the top
+    expect(flat(`${D} .cb-shell-column`)["--cb-float-top"]).toBe(
+      "calc((var(--cb-shell-flat) - var(--cb-float-size)) / 2)",
+    );
+    // a pushed surface pads the main column down by the row (shell.css): the bar lifts back by
+    // exactly that, so it never lands under the band
+    const padded = parseCss(css("shell.css")).find(
+      (r) =>
+        r.at === "(max-width: 599px)" &&
+        r.selector === '.cb-shell[data-surface="pushed"] .cb-shell-main' &&
+        r.decls["padding-top"],
+    );
+    expect(padded?.decls["padding-top"]).toBe("var(--cb-float-row)");
+    expect(flat(`${D} .cb-shell[data-surface="pushed"] .cb-shell-main .cb-title-bar`).top).toBe(
+      "calc(-1 * var(--cb-float-row))",
+    );
+    // the floating form does the same with its own offset (browser, touch, mobile)
+    const lift = base.find(
+      (r) =>
+        r.at === "(max-width: 599px)" &&
+        r.selector === '.cb-shell[data-surface="pushed"] .cb-shell-main .cb-title-bar',
+    );
+    expect(lift?.decls.top).toBe("calc(var(--cb-float-top) - var(--cb-float-row))");
+    // and the row's own gap filler never drags under the bar, on any surface
+    expect(
+      rules().some(
+        (r) =>
+          r.selector ===
+            `${D} .cb-shell:has(.cb-shell-main .cb-title-bar:not([data-new])) .cb-floatbar > .cb-drag-fill` &&
+          r.decls["app-region"] === "no-drag",
+      ),
+    ).toBe(true);
   });
 
   it("the title is plain text inside a filler; only the menu and … take clicks", () => {
