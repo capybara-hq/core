@@ -1,7 +1,9 @@
+import { THEME_TOKENS } from "@capybara-hq/plugin-sdk";
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import { THEME_CSS_REVISION } from "../../src/themes/theme-state.js";
 import { ThemesService } from "../../src/themes/themes.service.js";
-import { type OrgEnv, resetOrgCatalog, startOrgEnv } from "../catalog/org-env.js";
+import { importPlugin, type OrgEnv, resetOrgCatalog, startOrgEnv } from "../catalog/org-env.js";
+import { pluginTgz } from "../helpers/plugin-packages.js";
 import {
   clearThemeLevels,
   importTheme,
@@ -64,7 +66,12 @@ describe("theme resolution", () => {
         markUrl: `/api/v1/themes/${a}/1/assets/brand%2Flogo.svg`,
         wordmark: "NEON GRID",
         faviconUrl: null,
+        illustrationUrl: null,
+        appIconUrl: null,
+        appIconMaskableUrl: null,
       },
+      decoration: "dither",
+      background: { dark: "#05070D" },
       cssUrl: `/api/v1/themes/${a}/1/r${THEME_CSS_REVISION}/theme.css`,
     });
   });
@@ -126,6 +133,58 @@ describe("theme resolution", () => {
     // another member with no pick gets the org's default; the org with no setting reads as allowed
     const boss = await env.boss({ method: "GET", url: `/api/v1/orgs/${env.orgId}/themes` });
     expect(boss.json().resolved).toMatchObject({ id: a });
+  });
+
+  it("GET /orgs/:orgId/themes and GET /platform/theme carry decoration and background", async () => {
+    // A two-scheme theme that turns the decoration off and overrides only the dark bg
+    const itemId = await importPlugin(
+      env,
+      await pluginTgz({
+        manifest: { name: "plain" },
+        files: {
+          "themes/plain.json": JSON.stringify({
+            name: { en: "Plain", zh: "素" },
+            schemes: { dark: { color: { bg: "#101010" } }, light: { radius: { md: 4 } } },
+            decoration: "none",
+          }),
+        },
+      }),
+    );
+    const d = (
+      await env.db
+        .selectFrom("platform_themes")
+        .select("id")
+        .where("catalog_item_id", "=", itemId)
+        .executeTakeFirstOrThrow()
+    ).id;
+    await setThemeScope(env, d, "all");
+    await writeUiTheme(env, d);
+
+    const r = await env.mem({ method: "GET", url: `/api/v1/orgs/${env.orgId}/themes` });
+    expect(r.statusCode, r.body).toBe(200);
+    const listed = (
+      r.json() as { themes: { id: string; decoration: string; background: object }[] }
+    ).themes;
+    const of = (id: string) => listed.find((t) => t.id === id);
+    // a: dark only with its own bg; b: both schemes, no bg override (the built-in values)
+    expect(of(a)).toMatchObject({ decoration: "dither", background: { dark: "#05070D" } });
+    expect(of(a)?.background).not.toHaveProperty("light");
+    expect(of(b)).toMatchObject({
+      decoration: "dither",
+      background: { dark: THEME_TOKENS.color.bg.dark, light: THEME_TOKENS.color.bg.light },
+    });
+    expect(of(d)).toMatchObject({
+      decoration: "none",
+      background: { dark: "#101010", light: THEME_TOKENS.color.bg.light },
+    });
+
+    const p = await env.k.http.inject({ method: "GET", url: "/api/v1/platform/theme" });
+    expect(p.statusCode, p.body).toBe(200);
+    expect(p.json()).toMatchObject({
+      id: d,
+      decoration: "none",
+      background: { dark: "#101010", light: THEME_TOKENS.color.bg.light },
+    });
   });
 
   it("the platform default for anonymous pages, only while it is eligible", async () => {

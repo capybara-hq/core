@@ -2,6 +2,7 @@ import { readFileSync } from "node:fs";
 import { Ajv2020 } from "ajv/dist/2020.js";
 import { describe, expect, it } from "vitest";
 import {
+  BUILTIN_AVATAR_PRESET_IDS,
   canonicalThemeValue,
   isThemeAssetPath,
   isThemeFontFamily,
@@ -27,6 +28,33 @@ const neonGrid = (): Record<string, unknown> => ({
   },
   fonts: [{ family: "MiSans", file: "./fonts/MiSans-Regular.woff2", weight: 400, role: "prose" }],
   logo: { mark: "./logo.svg", wordmark: "NEON GRID" },
+});
+
+/** The spec §1 example: every brand field. */
+const brandKit = (): Record<string, unknown> => ({
+  name: { en: "Acme", zh: "Acme" },
+  schemes: { dark: {} },
+  logo: {
+    mark: "./logo.svg",
+    wordmark: "ACME",
+    favicon: "./favicon.svg",
+    illustration: "./empty.svg",
+    appIcon: "./app-512.png",
+    appIconMaskable: "./app-mask-512.png",
+  },
+  decoration: "none",
+  avatars: [
+    { id: "acme-bot", name: { en: "Acme bot", zh: "Acme 机器人" }, file: "./avatars/bot.png" },
+  ],
+  hideAvatarPresets: ["capybara"],
+});
+
+/** An avatar preset entry. */
+const avatar = (id: string, over: Record<string, unknown> = {}) => ({
+  id,
+  name: { en: "Avatar" },
+  file: `./avatars/${id}.svg`,
+  ...over,
 });
 
 /** A theme overriding one dark token group. */
@@ -313,6 +341,157 @@ describe("parseThemeFile", () => {
     expect(errorsOf(logo({ extra: 1 })).join("\n")).toMatch(/extra/);
   });
 
+  it("accepts a brand-complete theme", () => {
+    const t = parsed(brandKit());
+    const input = brandKit();
+    expect(t.logo).toEqual(input.logo);
+    expect(t.decoration).toBe("none");
+    expect(t.avatars).toEqual(input.avatars);
+    expect(t.hideAvatarPresets).toEqual(["capybara"]);
+  });
+
+  it("rejects appIconMaskable without appIcon", () => {
+    const e = errorsOf({ ...brandKit(), logo: { appIconMaskable: "./app-mask-512.png" } });
+    expect(e).toEqual([expect.stringMatching(/^logo\.appIconMaskable: .*appIcon/)]);
+  });
+
+  it("rejects an unsafe path or a wrong extension in the new asset fields", () => {
+    expect(errorsOf({ ...brandKit(), avatars: [avatar("bot", { file: "../x.svg" })] })).toEqual([
+      expect.stringMatching(/^avatars\.0\.file: .*inside the plugin/),
+    ]);
+    expect(errorsOf({ ...brandKit(), avatars: [avatar("bot", { file: "./x.gif" })] })).toEqual([
+      expect.stringMatching(/^avatars\.0\.file: .*\.svg or \.png/),
+    ]);
+    expect(errorsOf({ ...brandKit(), logo: { illustration: "./e.gif" } })).toEqual([
+      expect.stringMatching(/^logo\.illustration: .*\.svg or \.png/),
+    ]);
+    expect(errorsOf({ ...brandKit(), logo: { illustration: "../e.svg" } })).toEqual([
+      expect.stringMatching(/^logo\.illustration: .*inside the plugin/),
+    ]);
+  });
+
+  it("rejects an SVG app icon", () => {
+    const e = errorsOf({ ...brandKit(), logo: { appIcon: "./app.svg" } });
+    expect(e).toEqual([expect.stringMatching(/^logo\.appIcon: .*\.png/)]);
+    const m = errorsOf({
+      ...brandKit(),
+      logo: { appIcon: "./app.png", appIconMaskable: "./mask.svg" },
+    });
+    expect(m).toEqual([expect.stringMatching(/^logo\.appIconMaskable: .*\.png/)]);
+  });
+
+  it("rejects more than 12 avatars", () => {
+    const avatars = Array.from({ length: 13 }, (_, i) => avatar(`a${i}`));
+    expect(errorsOf({ ...brandKit(), avatars }).join("\n")).toMatch(/^avatars/m);
+    expect(errorsOf({ ...brandKit(), avatars: avatars.slice(0, 12) })).toEqual([]);
+  });
+
+  it("rejects a duplicate avatar id", () => {
+    const e = errorsOf({ ...brandKit(), avatars: [avatar("bot"), avatar("bot")] });
+    expect(e).toEqual([expect.stringMatching(/^avatars\.1\.id: .*duplicate.*bot/)]);
+  });
+
+  it("rejects an avatar id that is a built-in id", () => {
+    const e = errorsOf({ ...brandKit(), avatars: [avatar("fox")] });
+    expect(e).toEqual([expect.stringMatching(/^avatars\.0\.id: .*built-in.*fox/)]);
+  });
+
+  it("rejects an avatar id outside the pattern", () => {
+    for (const id of ["Bot_1", "-bot", "", "a".repeat(33)]) {
+      expect(errorsOf({ ...brandKit(), avatars: [avatar(id)] }).join("\n")).toMatch(
+        /^avatars\.0\.id/m,
+      );
+    }
+    expect(errorsOf({ ...brandKit(), avatars: [avatar("a".repeat(32))] })).toEqual([]);
+  });
+
+  it("rejects an avatar name over 24 characters", () => {
+    const long = errorsOf({
+      ...brandKit(),
+      avatars: [avatar("bot", { name: { en: "W".repeat(25) } })],
+    });
+    expect(long).toEqual(["avatars.0.name.en: name.en must be at most 24 characters"]);
+    const zh = errorsOf({
+      ...brandKit(),
+      avatars: [avatar("bot", { name: { en: "Bot", zh: "机".repeat(25) } })],
+    });
+    expect(zh).toEqual(["avatars.0.name.zh: name.zh must be at most 24 characters"]);
+    // 24 characters, counted by code point, is fine
+    expect(
+      errorsOf({ ...brandKit(), avatars: [avatar("bot", { name: { en: "霓虹网格".repeat(6) } })] }),
+    ).toEqual([]);
+  });
+
+  it("rejects an avatar name with a forbidden character", () => {
+    const wordmark = errorsOf({ ...brandKit(), logo: { wordmark: "A\u202eB" } });
+    const name = errorsOf({
+      ...brandKit(),
+      avatars: [avatar("bot", { name: { en: "A\u202eB" } })],
+    });
+    const forbidden =
+      "must not contain control, format, line / paragraph separator or lone surrogate characters";
+    // the wordmark's message, naming the field
+    expect(wordmark).toEqual([`logo.wordmark: wordmark ${forbidden}`]);
+    expect(name).toEqual([`avatars.0.name.en: name.en ${forbidden}`]);
+    expect(errorsOf({ ...brandKit(), avatars: [avatar("bot", { name: { en: " " } })] })).toEqual([
+      "avatars.0.name.en: name.en must not be blank",
+    ]);
+    expect(
+      errorsOf({ ...brandKit(), avatars: [avatar("bot", { name: { zh: "x" } })] }).join("\n"),
+    ).toMatch(/^avatars\.0\.name\.en/m);
+  });
+
+  it("rejects an unknown hidden preset", () => {
+    const e = errorsOf({ ...brandKit(), hideAvatarPresets: ["dragon"] });
+    expect(e.join("\n")).toMatch(/^hideAvatarPresets\.0/m);
+    expect(errorsOf({ ...brandKit(), hideAvatarPresets: ["fox", "owl", "fox"] })).toEqual([
+      "hideAvatarPresets.2: duplicate hidden preset fox",
+    ]);
+  });
+
+  it("rejects hiding all ten built-ins without avatars", () => {
+    const all = [...BUILTIN_AVATAR_PRESET_IDS];
+    expect(errorsOf({ ...brandKit(), avatars: undefined, hideAvatarPresets: all })).toEqual([
+      expect.stringMatching(/^hideAvatarPresets: .*avatars/),
+    ]);
+    expect(errorsOf({ ...brandKit(), avatars: [], hideAvatarPresets: all })).toHaveLength(1);
+    // nine hidden leaves one built-in
+    expect(errorsOf({ ...brandKit(), avatars: [], hideAvatarPresets: all.slice(1) })).toEqual([]);
+  });
+
+  it("accepts hiding all ten with one avatar", () => {
+    const all = [...BUILTIN_AVATAR_PRESET_IDS];
+    expect(errorsOf({ ...brandKit(), avatars: [avatar("bot")], hideAvatarPresets: all })).toEqual(
+      [],
+    );
+  });
+
+  it('rejects decoration "stars"', () => {
+    expect(errorsOf({ ...brandKit(), decoration: "stars" }).join("\n")).toMatch(/^decoration/m);
+    expect(parsed({ ...brandKit(), decoration: "dither" }).decoration).toBe("dither");
+  });
+
+  it("decoration omitted parses as undefined", () => {
+    const t = parsed(neonGrid());
+    expect(t.decoration).toBeUndefined();
+    expect(t).not.toHaveProperty("decoration");
+  });
+
+  it("built-in avatar preset ids", () => {
+    expect(BUILTIN_AVATAR_PRESET_IDS).toEqual([
+      "capybara",
+      "black-bear",
+      "panda",
+      "elephant",
+      "fox",
+      "owl",
+      "penguin",
+      "rabbit",
+      "turtle",
+      "whale",
+    ]);
+  });
+
   it("an unreadable merged scheme is reported with the failing pair", () => {
     const e = errorsOf(dark({ color: { bg: "#8E8E89" } }));
     expect(e.some((x) => x.startsWith("unreadable:") && x.includes("muted on bg"))).toBe(true);
@@ -361,6 +540,9 @@ describe("parseThemeFile", () => {
       pngBytes: 262144,
       pngMinHeight: 64,
       wordmark: 24,
+      avatars: 12,
+      appIconBytes: 1048576,
+      appIconMinSize: 512,
     });
   });
 });
@@ -372,12 +554,23 @@ describe("theme.v1 JSON Schema", () => {
   const validate = new Ajv2020({ allErrors: true, strict: false }).compile(schema);
   it.each([
     ["the spec example", neonGrid()],
+    ["the brand-complete example", brandKit()],
     ["unknown key", { ...neonGrid(), extra: 1 }],
+    ["unknown key under logo", { ...brandKit(), logo: { appIcon: "./a.png", banner: "./b.png" } }],
+    ["unknown key under an avatar", { ...brandKit(), avatars: [avatar("bot", { url: "x" })] }],
+    ["an unknown decoration", { ...brandKit(), decoration: "stars" }],
     ["missing name", { ...neonGrid(), name: undefined }],
     ["radius out of range", dark({ radius: { md: 17 } })],
   ])("agrees with zod: %s", (_label, json) => {
     const clean = JSON.parse(JSON.stringify(json));
     expect(validate(clean)).toBe(ThemeFileSchema.safeParse(clean).success);
+  });
+
+  it("accepts the brand-complete example and rejects unknown keys under logo", () => {
+    expect(validate(brandKit())).toBe(true);
+    expect(validate({ ...brandKit(), logo: { mark: "./logo.svg", banner: "./b.png" } })).toBe(
+      false,
+    );
   });
 });
 

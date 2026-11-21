@@ -1,6 +1,11 @@
+import { mkdtemp, readFile, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { sanitizeThemeSvg, THEME_TOKENS } from "@capybara-hq/plugin-sdk";
+import { fakeExtensionDir, packFixture } from "@capybara-hq/testing";
 import { sql } from "kysely";
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
+import { StorageService } from "../../src/storage/storage.service.js";
 import { THEME_CSS_REVISION } from "../../src/themes/theme-state.js";
 import { importPlugin, type OrgEnv, resetOrgCatalog, startOrgEnv } from "../catalog/org-env.js";
 import { pluginTgz } from "../helpers/plugin-packages.js";
@@ -35,20 +40,22 @@ const PNG = png();
 
 const IMMUTABLE = "public, max-age=31536000, immutable";
 
+/** Both suites share one org environment. */
+let env: OrgEnv;
+
+/** An anonymous request (no cookie, no token). */
+const anon = (url: string) => env.k.http.inject({ method: "GET", url });
+
+beforeAll(async () => {
+  env = await startOrgEnv();
+});
+
+afterAll(async () => {
+  await env?.stop();
+});
+
 describe("theme delivery routes", () => {
-  let env: OrgEnv;
   let id: string;
-
-  /** An anonymous request (no cookie, no token). */
-  const anon = (url: string) => env.k.http.inject({ method: "GET", url });
-
-  beforeAll(async () => {
-    env = await startOrgEnv();
-  });
-
-  afterAll(async () => {
-    await env?.stop();
-  });
 
   beforeEach(async () => {
     await resetOrgCatalog(env);
@@ -207,5 +214,130 @@ describe("theme delivery routes", () => {
         faviconUrl: `/api/v1/themes/${id}/1/assets/brand%2Ficon.png`,
       },
     });
+  });
+});
+
+/**
+ * Theme brand coverage spec §2 (#451): the asset route serves every file the version names
+ * (illustration, app icons, avatar files) and still nothing else, from the `fake-theme` fixture
+ * as `capybara-plugin pack` ships it (theme `brand-kit`).
+ */
+describe("theme brand assets", () => {
+  const FIXTURE = fakeExtensionDir("fake-theme");
+  let id: string;
+  let objectPrefix: string;
+
+  /** The asset URL of `path` in version 1 of brand-kit. */
+  const asset = (path: string) => `/api/v1/themes/${id}/1/assets/${encodeURIComponent(path)}`;
+  const fixture = async (path: string) => new Uint8Array(await readFile(join(FIXTURE, path)));
+
+  beforeEach(async () => {
+    await resetOrgCatalog(env);
+    await clearThemeLevels(env);
+    const out = await mkdtemp(join(tmpdir(), "kernel-fake-theme-"));
+    let bytes: Uint8Array;
+    try {
+      bytes = (await packFixture("fake-theme", out)).bytes;
+    } finally {
+      await rm(out, { recursive: true, force: true });
+    }
+    const itemId = await importPlugin(env, bytes);
+    const row = await env.db
+      .selectFrom("platform_themes as p")
+      .innerJoin("platform_theme_versions as v", "v.theme_id", "p.id")
+      .select(["p.id", "v.object_prefix"])
+      .where("p.catalog_item_id", "=", itemId)
+      .where("p.name", "=", "brand-kit")
+      .where("v.version", "=", 1)
+      .executeTakeFirstOrThrow();
+    id = row.id;
+    objectPrefix = row.object_prefix as string;
+  });
+
+  it("GET assets serves the illustration, both app icons and each avatar file with their types, immutable", async () => {
+    await setThemeScope(env, id, "all");
+    await writeUiTheme(env, id);
+    const ref = (await anon("/api/v1/platform/theme")).json() as {
+      logo: { illustrationUrl: string; appIconUrl: string; appIconMaskableUrl: string };
+    };
+    expect(ref.logo.illustrationUrl).toBe(asset("brand/illustration.svg"));
+    expect(ref.logo.appIconUrl).toBe(asset("brand/app-512.png"));
+    expect(ref.logo.appIconMaskableUrl).toBe(asset("brand/app-mask-512.png"));
+
+    const svg = async (url: string, path: string) => {
+      const r = await anon(url);
+      expect(r.statusCode, url).toBe(200);
+      expect(r.headers["content-type"], url).toBe("image/svg+xml");
+      expect(r.headers["content-security-policy"], url).toBe("default-src 'none'; sandbox");
+      expect(r.headers["x-content-type-options"], url).toBe("nosniff");
+      expect(r.headers["cache-control"], url).toBe(IMMUTABLE);
+      expect(r.body, url).toBe((sanitizeThemeSvg(await fixture(path)) as { svg: string }).svg);
+    };
+    const png = async (url: string, path: string) => {
+      const r = await anon(url);
+      expect(r.statusCode, url).toBe(200);
+      expect(r.headers["content-type"], url).toBe("image/png");
+      expect(r.headers["x-content-type-options"], url).toBe("nosniff");
+      expect(r.headers["cache-control"], url).toBe(IMMUTABLE);
+      expect(new Uint8Array(r.rawPayload), url).toEqual(await fixture(path));
+    };
+    await svg(ref.logo.illustrationUrl, "brand/illustration.svg");
+    await png(ref.logo.appIconUrl, "brand/app-512.png");
+    await png(ref.logo.appIconMaskableUrl, "brand/app-mask-512.png");
+    await svg(asset("brand/avatars/bot.svg"), "brand/avatars/bot.svg");
+    await png(asset("brand/avatars/cat.png"), "brand/avatars/cat.png");
+  });
+
+  it("an asset the definition does not name is still 404 theme.not_found", async () => {
+    // Pack ships only the files a theme names, so `brand/unnamed.svg` of the fixture directory
+    // never reaches the package. Put it under the version's own object prefix (where its named
+    // assets live), so the only thing standing between the request and the bytes is the rule
+    // that the route serves names from the stored definition.
+    const unnamed = await fixture("brand/unnamed.svg");
+    await env.k.app
+      .get(StorageService)
+      .deployment()
+      .put(`${objectPrefix}brand/unnamed.svg`, unnamed, {
+        contentType: "image/svg+xml",
+        size: unnamed.byteLength,
+      });
+    // A file still stored but no longer named: the stored definition loses its illustration
+    await sql`UPDATE capybara.platform_theme_versions
+      SET definition = definition #- '{logo,illustration}'
+      WHERE theme_id = ${id} AND version = 1`.execute(env.db);
+    for (const url of [
+      asset("brand/unnamed.svg"),
+      asset("brand/illustration.svg"),
+      asset("./brand/avatars/bot.svg"),
+      asset("brand/avatars/../app-512.png"),
+      asset("themes/brand-kit.json"),
+      asset("brand/avatars/dog.svg"),
+    ]) {
+      const r = await anon(url);
+      expect(r.statusCode, url).toBe(404);
+      expect(r.json().error.code, url).toBe("theme.not_found");
+    }
+    // the names that remain are still served
+    expect((await anon(asset("brand/avatars/bot.svg"))).statusCode).toBe(200);
+    expect((await anon(asset("brand/app-512.png"))).statusCode).toBe(200);
+  });
+
+  it("a removed theme's new assets are still served", async () => {
+    await env.db
+      .updateTable("platform_themes")
+      .set({ deleted_at: new Date() })
+      .where("id", "=", id)
+      .execute();
+    for (const path of [
+      "brand/illustration.svg",
+      "brand/app-512.png",
+      "brand/app-mask-512.png",
+      "brand/avatars/bot.svg",
+      "brand/avatars/cat.png",
+    ]) {
+      const r = await anon(asset(path));
+      expect(r.statusCode, path).toBe(200);
+      expect(r.headers["cache-control"], path).toBe(IMMUTABLE);
+    }
   });
 });

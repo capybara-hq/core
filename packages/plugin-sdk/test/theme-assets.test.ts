@@ -5,6 +5,7 @@ import {
   type ParsedTheme,
   sanitizeThemeSvg,
   THEME_LIMITS,
+  themeAssetRefs,
   validateThemeAssets,
 } from "../src/index.js";
 
@@ -220,6 +221,12 @@ describe("checkPng", () => {
   it("accepts a PNG at least 64 px high", () => {
     expect(checkPng(png(64, 64))).toBeUndefined();
   });
+  it("takes the byte limit as a parameter", () => {
+    expect(checkPng(png(64, 64, THEME_LIMITS.pngBytes + 1), THEME_LIMITS.appIconBytes)).toBe(
+      undefined,
+    );
+    expect(checkPng(png(64, 64, 101), 100)).toMatch(/larger than 100 bytes/);
+  });
   it("refuses a short, unsigned, truncated or oversized PNG", () => {
     expect(checkPng(png(32, 32))).toMatch(/64/);
     expect(checkPng(enc("GIF89a------------------------------------"))).toMatch(/PNG/);
@@ -318,5 +325,222 @@ describe("validateThemeAssets", () => {
     );
     expect(r.errors).toEqual([]);
     expect(r.assets.size).toBe(1);
+  });
+
+  /** The brand-complete theme of `theme.test.ts` (its assets as plugin paths). */
+  const brandKit = (): ParsedTheme =>
+    theme({
+      fonts: [{ family: "A", file: "./fonts/a.woff2", weight: 400, role: "prose" }],
+      logo: {
+        mark: "./logo.svg",
+        wordmark: "ACME",
+        favicon: "./favicon.svg",
+        illustration: "./empty.svg",
+        appIcon: "./app-512.png",
+        appIconMaskable: "./app-mask-512.png",
+      },
+      decoration: "none",
+      avatars: [
+        { id: "bot", name: { en: "Bot" }, file: "./avatars/bot.svg" },
+        { id: "cat", name: { en: "Cat" }, file: "./avatars/cat.png" },
+      ],
+      hideAvatarPresets: ["capybara"],
+    });
+  const square = enc(svgDoc('<circle r="1"/>', 'viewBox="0 0 1 1"'));
+  const brandFiles = () =>
+    new Map<string, Uint8Array>([
+      ["fonts/a.woff2", woff2()],
+      ["logo.svg", svg],
+      ["favicon.svg", square],
+      ["empty.svg", enc(svgDoc("", 'viewBox="0 0 40 30"'))],
+      ["app-512.png", png(512, 512)],
+      ["app-mask-512.png", png(1024, 1024)],
+      ["avatars/bot.svg", square],
+      ["avatars/cat.png", png(64, 64)],
+    ]);
+
+  it("themeAssetRefs lists every asset field in order", () => {
+    expect(themeAssetRefs(brandKit())).toEqual([
+      { field: "fonts.0.file", ref: "./fonts/a.woff2" },
+      { field: "logo.mark", ref: "./logo.svg" },
+      { field: "logo.favicon", ref: "./favicon.svg" },
+      { field: "logo.illustration", ref: "./empty.svg" },
+      { field: "logo.appIcon", ref: "./app-512.png" },
+      { field: "logo.appIconMaskable", ref: "./app-mask-512.png" },
+      { field: "avatars.0.file", ref: "./avatars/bot.svg" },
+      { field: "avatars.1.file", ref: "./avatars/cat.png" },
+    ]);
+    expect(themeAssetRefs(theme({}))).toEqual([]);
+  });
+
+  it("accepts the brand-complete theme", () => {
+    const r = validateThemeAssets(brandKit(), brandFiles());
+    expect(r.errors).toEqual([]);
+    expect([...r.assets.keys()].sort()).toEqual([...brandFiles().keys()].sort());
+  });
+
+  it("an illustration follows the mark rules", () => {
+    const short = validateThemeAssets(
+      theme({ logo: { illustration: "./e.png" } }),
+      new Map([["e.png", png(200, 63)]]),
+    );
+    expect(short.errors).toEqual([expect.stringMatching(/^logo\.illustration: .*64 px high/)]);
+    const big = validateThemeAssets(
+      theme({ logo: { illustration: "./e.svg" } }),
+      new Map([["e.svg", enc(svgDoc(`<desc>${"a".repeat(THEME_LIMITS.svgBytes)}</desc>`))]]),
+    );
+    expect(big.errors).toEqual([expect.stringMatching(/^logo\.illustration: .*larger than/)]);
+    const bigPng = validateThemeAssets(
+      theme({ logo: { illustration: "./e.png" } }),
+      new Map([["e.png", png(64, 64, THEME_LIMITS.pngBytes + 1)]]),
+    );
+    expect(bigPng.errors).toEqual([expect.stringMatching(/^logo\.illustration: .*larger than/)]);
+    // not square is fine for an illustration, and its SVG is sanitized
+    const wide = validateThemeAssets(
+      theme({ logo: { illustration: "./e.svg" } }),
+      new Map([["e.svg", enc(svgDoc("<!-- c -->", 'width="9" viewBox="0 0 40 30"'))]]),
+    );
+    expect(wide.errors).toEqual([]);
+    expect(new TextDecoder().decode(wide.assets.get("e.svg"))).toBe(
+      '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 40 30"/>',
+    );
+    const script = validateThemeAssets(
+      theme({ logo: { illustration: "./e.svg" } }),
+      new Map([["e.svg", enc(svgDoc("<script>x</script>"))]]),
+    );
+    expect(script.errors).toEqual([expect.stringMatching(/^logo\.illustration: .*script/)]);
+  });
+
+  it("an app icon must be square", () => {
+    for (const field of ["appIcon", "appIconMaskable"] as const) {
+      const r = validateThemeAssets(
+        theme({ logo: { appIcon: "./ok.png", [field]: "./a.png" } }),
+        new Map([
+          ["ok.png", png(512, 512)],
+          ["a.png", png(512, 511)],
+        ]),
+      );
+      expect(r.errors).toEqual([
+        expect.stringMatching(new RegExp(`^logo\\.${field}: .*must be square, not 512 x 511`)),
+      ]);
+    }
+  });
+
+  it("an app icon must be at least 512 px", () => {
+    const r = validateThemeAssets(
+      theme({ logo: { appIcon: "./a.png" } }),
+      new Map([["a.png", png(256, 256)]]),
+    );
+    expect(r.errors).toEqual([expect.stringMatching(/^logo\.appIcon: .*at least 512 px/)]);
+  });
+
+  it("an app icon must be at most 1 MiB", () => {
+    const r = validateThemeAssets(
+      theme({ logo: { appIcon: "./a.png" } }),
+      new Map([["a.png", png(512, 512, THEME_LIMITS.appIconBytes + 1)]]),
+    );
+    expect(r.errors).toEqual([expect.stringMatching(/^logo\.appIcon: .*larger than 1048576/)]);
+    const max = validateThemeAssets(
+      theme({ logo: { appIcon: "./a.png" } }),
+      new Map([["a.png", png(512, 512, THEME_LIMITS.appIconBytes)]]),
+    );
+    expect(max.errors).toEqual([]);
+  });
+
+  it("an app icon may exceed the 256 KB logo PNG limit", () => {
+    const r = validateThemeAssets(
+      theme({ logo: { appIcon: "./a.png" } }),
+      new Map([["a.png", png(512, 512, 600 * 1024)]]),
+    );
+    expect(r.errors).toEqual([]);
+  });
+
+  it("an app icon must be a PNG", () => {
+    // a stored definition is re-checked here, not only by the theme file's shape
+    const r = validateThemeAssets(
+      theme({ logo: { appIcon: "./a.svg" } }),
+      new Map([["a.svg", square]]),
+    );
+    expect(r.errors).toEqual([expect.stringMatching(/^logo\.appIcon: .*\.png/)]);
+  });
+
+  it("an avatar file must be square", () => {
+    const r = validateThemeAssets(
+      theme({
+        avatars: [
+          { id: "a", name: { en: "A" }, file: "./a.svg" },
+          { id: "b", name: { en: "B" }, file: "./b.png" },
+          { id: "c", name: { en: "C" }, file: "./c.png" },
+        ],
+      }),
+      new Map([
+        ["a.svg", enc(svgDoc("", 'viewBox="0 0 40 30"'))],
+        ["b.png", png(64, 80)],
+        ["c.png", png(32, 32)],
+      ]),
+    );
+    expect(r.errors).toEqual([
+      expect.stringMatching(/^avatars\.0\.file: .*must be square, not 40 x 30/),
+      expect.stringMatching(/^avatars\.1\.file: .*must be square, not 64 x 80/),
+      expect.stringMatching(/^avatars\.2\.file: .*64 px high/),
+    ]);
+  });
+
+  it("an avatar file follows the mark size limits", () => {
+    const r = validateThemeAssets(
+      theme({ avatars: [{ id: "a", name: { en: "A" }, file: "./a.png" }] }),
+      new Map([["a.png", png(64, 64, THEME_LIMITS.pngBytes + 1)]]),
+    );
+    expect(r.errors).toEqual([expect.stringMatching(/^avatars\.0\.file: .*larger than 262144/)]);
+  });
+
+  it("an avatar SVG is sanitized", () => {
+    const raw = enc(
+      svgDoc('<!-- editor --><circle r="1"/>', 'width="64" height="64" viewBox="0 0 1 1"'),
+    );
+    const ok = validateThemeAssets(
+      theme({ avatars: [{ id: "a", name: { en: "A" }, file: "./a.svg" }] }),
+      new Map([["a.svg", raw]]),
+    );
+    expect(ok.errors).toEqual([]);
+    const out = ok.assets.get("a.svg");
+    expect(out).not.toEqual(raw);
+    expect(new TextDecoder().decode(out)).toBe(
+      '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1 1"><circle r="1"/></svg>',
+    );
+    // a <script> child is never served: the sanitizer refuses the file
+    const bad = validateThemeAssets(
+      theme({ avatars: [{ id: "a", name: { en: "A" }, file: "./a.svg" }] }),
+      new Map([["a.svg", enc(svgDoc('<script>alert(1)</script><circle r="1"/>'))]]),
+    );
+    expect(bad.errors).toEqual([expect.stringMatching(/^avatars\.0\.file: .*script/)]);
+    expect(bad.assets.size).toBe(0);
+  });
+
+  it("new assets count toward assetsBytes", () => {
+    const fonts = Array.from({ length: 7 }, (_, i) => ({
+      family: `F${i}`,
+      file: `./f${i}.woff2`,
+      weight: 400,
+      role: "prose" as const,
+    }));
+    const files = new Map<string, Uint8Array>(
+      fonts.map((f) => [f.file.slice(2), woff2(THEME_LIMITS.fontBytes)]),
+    );
+    // 14 MiB of fonts: within the limit alone
+    expect(validateThemeAssets(theme({ fonts }), files).errors).toEqual([]);
+    files.set("e.png", png(64, 64, THEME_LIMITS.pngBytes));
+    files.set("app.png", png(512, 512, THEME_LIMITS.appIconBytes));
+    files.set("mask.png", png(512, 512, THEME_LIMITS.appIconBytes));
+    files.set("a.png", png(64, 64, THEME_LIMITS.pngBytes));
+    const over = validateThemeAssets(
+      theme({
+        fonts,
+        logo: { illustration: "./e.png", appIcon: "./app.png", appIconMaskable: "./mask.png" },
+        avatars: [{ id: "a", name: { en: "A" }, file: "./a.png" }],
+      }),
+      files,
+    );
+    expect(over.errors).toEqual([expect.stringMatching(/16777216 bytes/)]);
   });
 });

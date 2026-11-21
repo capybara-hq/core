@@ -1,10 +1,10 @@
 import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
 import { join, posix } from "node:path";
 import {
-  type ParsedTheme,
   PLUGIN_MANIFEST_FILE,
   parseThemeFile,
   THEME_LIMITS,
+  themeAssetRefs,
   themeIdOf,
   validateThemeAssets,
 } from "@capybara-hq/plugin-sdk";
@@ -41,7 +41,8 @@ export function themePathsOf(dir: string): { paths: string[]; listed: boolean } 
  * - `theme-invalid`: a theme file that is missing, over the size limit, not JSON or rejected by
  *   `parseThemeFile`, or more themes than {@link THEME_LIMITS}`.perPlugin`;
  * - `theme-readability`: a theme whose merged scheme fails the readability pairs (`unreadable:`);
- * - `theme-asset`: a font or logo that is missing or invalid (`validateThemeAssets`), and the sum
+ * - `theme-asset`: a file the theme names (`themeAssetRefs`: fonts, logo files, avatar files) that
+ *   is missing or invalid (`validateThemeAssets`), and the sum
  *   of the distinct asset sizes over all of the plugin's themes above
  *   {@link THEME_LIMITS}`.assetsBytes` (the limit is per plugin; the SDK checks one theme).
  */
@@ -80,7 +81,7 @@ export function checkThemes(pluginDirs: string[]): Finding[] {
         }
         continue;
       }
-      const used = assetRefs(r);
+      const used = themeAssetRefs(r).map((a) => a.ref);
       for (const ref of used) {
         const key = stripDot(ref);
         const p = posix.normalize(key);
@@ -107,11 +108,4 @@ export function checkThemes(pluginDirs: string[]): Finding[] {
     }
   }
   return findings;
-}
-
-/** The asset paths a parsed theme references (fonts, logo mark and favicon). */
-export function assetRefs(theme: ParsedTheme): string[] {
-  const refs = (theme.fonts ?? []).map((f) => f.file);
-  for (const ref of [theme.logo?.mark, theme.logo?.favicon]) if (ref !== undefined) refs.push(ref);
-  return refs;
 }

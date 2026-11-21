@@ -40,9 +40,9 @@ export class ThemeDeliveryController {
   }
 
   /**
-   * A font (`font/woff2`) or logo (`image/svg+xml`, sanitized at import, served under a CSP
-   * sandbox; `image/png`) the version names; `file` is its plugin path as one segment
-   * (`fonts%2FMiSans.woff2`).
+   * A font (`font/woff2`), logo file (mark, favicon, illustration, app icons) or avatar file
+   * (`image/svg+xml`, sanitized at import, served under a CSP sandbox; `image/png`) the version
+   * names; `file` is its plugin path as one segment (`fonts%2FMiSans.woff2`).
    */
   @Public()
   @Get("assets/:file")
