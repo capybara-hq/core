@@ -12,19 +12,19 @@ export function icuLiteral(text: string): string {
   return text.replace(/'/g, "''").replace(/[{}<>]+/g, (run) => `'${run}'`);
 }
 
-type Messages = { [key: string]: string | Messages };
+type Messages = string | readonly Messages[] | { readonly [key: string]: Messages };
 
+/** `messages` with `{product}` filled in every string; arrays stay arrays (`t.raw` lists). */
 function fill(messages: Messages, literal: string): Messages {
-  const out: Messages = {};
-  for (const [key, value] of Object.entries(messages)) {
-    out[key] =
-      typeof value === "string"
-        ? value.includes(PRODUCT_PLACEHOLDER)
-          ? value.replaceAll(PRODUCT_PLACEHOLDER, () => literal)
-          : value
-        : fill(value, literal);
+  if (typeof messages === "string") {
+    return messages.includes(PRODUCT_PLACEHOLDER)
+      ? messages.replaceAll(PRODUCT_PLACEHOLDER, () => literal)
+      : messages;
   }
-  return out;
+  if (Array.isArray(messages)) return messages.map((m) => fill(m, literal));
+  return Object.fromEntries(
+    Object.entries(messages).map(([key, value]) => [key, fill(value, literal)]),
+  );
 }
 
 /** The latest filled catalog per source catalog: one name per deployment, so this rarely misses. */

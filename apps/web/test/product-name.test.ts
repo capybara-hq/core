@@ -69,6 +69,12 @@ describe("the request config fills {product}", () => {
     expect((await messagesFor("zh")).common.appName).toBe("Capybara");
   });
 
+  it("keeps arrays as arrays (message lists read with t.raw)", () => {
+    const filled = withProductName(enCatalog, "Acme Agents");
+    expect(Array.isArray(filled.chat.greeting.morning)).toBe(true);
+    expect(filled.chat.greeting.morning).toEqual(enCatalog.chat.greeting.morning);
+  });
+
   it("leaves the source catalog alone", () => {
     withProductName(enCatalog, "Acme Agents");
     expect(enCatalog.bind.goHome).toBe("Go to {product}");

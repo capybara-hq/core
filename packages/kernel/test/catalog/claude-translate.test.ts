@@ -1124,7 +1124,7 @@ describe("translateClaudePlugin", () => {
       refused(() =>
         translateClaudePlugin(pj({ name: "solo" }, { "SKILL.md": skill("Upper") }), OPTS),
       ),
-    ).toContain("no skill Capybara can import, no agent and no remote MCP server");
+    ).toContain("no skill this platform can import, no agent and no remote MCP server");
   });
 
   it("a root SKILL.md leaves other skills, not-applicable files, other harnesses and generated files where they are (review I2)", () => {

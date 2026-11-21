@@ -914,7 +914,8 @@ function DeviceNetworkSection({
  * message, the line ending an agent-created pull-request body, and whether a pull request also
  * carries the conversation link (needs `http.publicUrl`, off by default). A field the startup
  * config sets is read-only with its source. The preview shows what a commit and a pull request end
- * with. 恢复默认 puts the built-in values (for the platform name) back into the draft; the page's ActionRow saves it.
+ * with. The restore button puts the built-in values (for the platform name) back into the draft;
+ * the page's ActionRow saves it.
  */
 function AttributionSection({
   saved,
