@@ -24,6 +24,8 @@ const PAGES = [
   "title-bar",
   "composer",
   "picker-menu",
+  // the composer's mode menu (approval profiles)
+  "mode-menu",
   // phase D: the `/` palette's tagged items
   "command-palette",
   "prose",
