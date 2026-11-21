@@ -601,7 +601,8 @@ reports it).
   before the title (the title starts after it) and leaves the rail. The medium rail cannot expand;
   its sidebar toggle (maintainer decision 2026-11-21, design spec §6.13) sits in the same place in
   the band and opens the full sidebar as a drawer over the content, starting below the band so the
-  band and the lights stay uncovered. Geometry comes from the reported rectangle alone (`--cb-shell-rail-drop`, a
+  band and the lights stay uncovered; ⌘\ / Ctrl+\ opens and closes it, and its tooltip shows the
+  shortcut (maintainer decision 2026-11-22). Geometry comes from the reported rectangle alone (`--cb-shell-rail-drop`, a
   registered length that is 0 without controls, with controls at the end or no wider than the
   rail; the button's placement is a style query on it); without reported controls (a browser,
   Windows / Linux with their system title bar, mobile) nothing changes. Below 600 the floating row

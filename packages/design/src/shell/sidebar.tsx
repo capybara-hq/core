@@ -507,7 +507,7 @@ function SidebarPanel({
           {drawer && (responsive || mediumRail) ? (
             // The medium rail's sidebar toggle: opens the full sidebar as a drawer (before
             // hydration drawn beside the expand button, CSS keeps the one for the width).
-            <Tooltip content={t("sidebar.show")}>
+            <Tooltip content={`${t("sidebar.show")} ${COLLAPSE_SHORTCUT}`}>
               <IconButton
                 label={t("sidebar.show")}
                 icon={<Icon name="panel-left" />}

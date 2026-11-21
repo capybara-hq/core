@@ -419,11 +419,18 @@ export function AppShell({
   }, []);
 
   const searchable = commands !== undefined;
-  // ⌘K opens the palette; ⌘\ / Ctrl+\ collapses or expands the sidebar (the expanded class only:
-  // medium has the rail alone, compact no sidebar). A ref keeps one listener for the latest state.
+  // ⌘K opens the palette; ⌘\ / Ctrl+\ collapses or expands the sidebar on the expanded class and
+  // opens or closes the medium rail's drawer (maintainer decision 2026-11-22; the collapsed choice
+  // stays); compact has no sidebar. A ref keeps one listener for the latest state.
   const collapseKey = useRef<(() => void) | null>(null);
   collapseKey.current =
-    sizeClass === "expanded" && reference === undefined ? () => setCollapsed(!collapsed) : null;
+    reference !== undefined
+      ? null
+      : sizeClass === "expanded"
+        ? () => setCollapsed(!collapsed)
+        : sizeClass === "medium"
+          ? () => setSidebarDrawerOpen((open) => !open)
+          : null;
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       if (!(e.metaKey || e.ctrlKey)) return;
@@ -552,7 +559,7 @@ export function AppShell({
             </div>
           ) : topRowDrawerToggle ? (
             <div className="cb-shell-rail-toggle">
-              <Tooltip content={t("sidebar.show")}>
+              <Tooltip content={`${t("sidebar.show")} ${COLLAPSE_SHORTCUT}`}>
                 <IconButton
                   label={t("sidebar.show")}
                   icon={<Icon name="panel-left" />}

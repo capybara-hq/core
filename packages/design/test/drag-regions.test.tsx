@@ -606,6 +606,39 @@ describe("the medium rail's drawer (design spec §6.13, maintainer decision 2026
     expect(drawerEl()).toBeNull();
   });
 
+  it("⌘\\ / Ctrl+\\ opens and closes it on medium, and leaves the collapsed choice alone", async () => {
+    const onCollapsed = vi.fn();
+    shell(720, onCollapsed);
+    const press = (init: KeyboardEventInit) =>
+      act(() => {
+        document.dispatchEvent(new KeyboardEvent("keydown", { key: "\\", bubbles: true, ...init }));
+      });
+    press({ metaKey: true });
+    expect(drawerEl()).not.toBeNull();
+    press({ metaKey: true });
+    expect(drawerEl()).toBeNull();
+    press({ ctrlKey: true });
+    expect(drawerEl()).not.toBeNull();
+    press({ ctrlKey: true });
+    expect(drawerEl()).toBeNull();
+    // without the modifier: nothing
+    press({});
+    expect(drawerEl()).toBeNull();
+    expect(onCollapsed).not.toHaveBeenCalled();
+  });
+
+  it("the medium toggles' tooltips show the shortcut, like the expand button's", async () => {
+    desktop(true);
+    const r = shell(720);
+    for (const part of ["top-row-drawer-toggle", "drawer-toggle"]) {
+      const button = r.container.querySelector<HTMLElement>(`[data-part='${part}']`) as HTMLElement;
+      act(() => button.focus());
+      const tip = await within(document.body).findByRole("tooltip");
+      expect(tip.textContent, part).toContain("显示侧栏 ⌘\\");
+      act(() => button.blur());
+    }
+  });
+
   it("leaving the medium class closes it", async () => {
     const mm = matchMediaFor(720);
     vi.stubGlobal("matchMedia", mm.matchMedia);
