@@ -24,6 +24,7 @@ import {
   SandboxScopeDeniedError,
   type SandboxStopResult,
 } from "@capybara-hq/plugin-sdk";
+import { type OrphanProcesses, reapOrphans } from "./mac-orphans.js";
 import type { NativeHelperResult } from "./native-helper-client.js";
 import { digest, type LocalExecAuthority, type LocalOperationGrant } from "./operation-types.js";
 import {
@@ -141,6 +142,12 @@ export interface SupervisorOptions {
    * the entry stays unknown and is never resumed.
    */
   reapOrphan?: (identity: TrustedLaunchIdentity) => void;
+  /**
+   * macOS: the process table the supervisor settles recorded launch identities against (see
+   * {@link MacOperationSupervisor.settleOrphans}). Absent, an unknown entry with a launch identity
+   * stays an obligation for good.
+   */
+  orphans?: OrphanProcesses;
   /**
    * The most completed native read bytes kept in memory for retries (default 64 MiB). Past it the
    * oldest reads give their bytes up and their retry reports an unknown outcome, as after a
@@ -367,6 +374,8 @@ export class MacOperationSupervisor {
         e.stop = { outcome: "cancel-pending" };
       this.entries.set(e.ref.operationId, e);
     }
+    // work an earlier program run left behind settles as soon as its processes are proven gone
+    void this.settleOrphans();
   }
   private validateSuccessor(prior: Journal, next: Journal): void {
     for (const old of prior.entries) {
@@ -739,7 +748,8 @@ export class MacOperationSupervisor {
               await this.serial(() => {
                 if (entry.revoked)
                   throw new SandboxScopeDeniedError("Operation revoked during launch");
-                entry.identity = identity;
+                // the wall clock, not `now` (retention): it is compared with process start times
+                entry.identity = { ...identity, launchedAtMs: Date.now() };
                 entry.state = "running";
                 this.persist();
               });
@@ -835,6 +845,8 @@ export class MacOperationSupervisor {
             this.live.delete(entry.ref.operationId);
             this.liveEnded(entry.ref.operationId);
             this.notifyOwned();
+            // a worker that failed after its launch leaves the entry unknown with its identity
+            if (entry.state !== "completed" && entry.identity) void this.settleOrphans();
           })
           .catch((error) => {
             if (entry.output) this.collectorFault(entry, live, error);
@@ -862,6 +874,7 @@ export class MacOperationSupervisor {
         this.live.delete(entry.ref.operationId);
         this.liveEnded(entry.ref.operationId);
         this.notifyOwned();
+        if (entry.identity) void this.settleOrphans();
         throw error;
       }
     })();
@@ -1189,6 +1202,83 @@ export class MacOperationSupervisor {
       if (owned || !this.settledEntry(e)) count++;
     }
     return count;
+  }
+  private owns(id: string): boolean {
+    return this.live.has(id) || this.faultOwners.has(id) || this.cancellations.has(id);
+  }
+  private reaping: Promise<void> = Promise.resolve();
+  /**
+   * Settles unknown entries whose recorded launch identity no process of this run owns: work of an
+   * earlier device process (it crashed or restarted while the work ran) and workers of this one
+   * that failed after their launch. Each is checked against the process table (mac-orphans.ts):
+   * proven gone (or the pid provably reused) settles it as is; a process proven ours is killed
+   * with its process group and settles once the table shows the group gone; anything else stays
+   * an obligation and is never signalled. A settled entry drops its identity (nothing of it can
+   * run any more) and records the stop. Passes run one after another; the promise never rejects.
+   */
+  settleOrphans(): Promise<void> {
+    const orphans = this.options.orphans;
+    if (!orphans) return Promise.resolve();
+    this.reaping = this.reaping.then(() => this.reapPass(orphans)).catch(() => {});
+    return this.reaping;
+  }
+  private async reapPass(orphans: OrphanProcesses): Promise<void> {
+    if (this.closed || this.journalBlocked) return;
+    const candidates = [...this.entries.values()].filter(
+      (e) =>
+        e.identity !== undefined &&
+        e.state !== "completed" &&
+        e.stop?.outcome !== "stopped" &&
+        e.stop?.outcome !== "already-exited" &&
+        // a launch in progress or a live worker of this run: its own worker owns the process
+        e.state !== "consumed" &&
+        e.state !== "running" &&
+        !this.owns(e.ref.operationId),
+    );
+    if (!candidates.length) return;
+    const identities = candidates.map((e) => e.identity as TrustedLaunchIdentity);
+    const settled = await reapOrphans(
+      orphans,
+      candidates.map((e, i) => ({
+        identity: identities[i] as TrustedLaunchIdentity,
+        admitBeforeMs: e.admitBeforeMs,
+      })),
+    );
+    await this.serial(() => {
+      if (this.closed) return;
+      const changed: {
+        e: Entry;
+        identity: TrustedLaunchIdentity;
+        stop?: SandboxStopResult;
+        cancel?: boolean;
+      }[] = [];
+      candidates.forEach((e, i) => {
+        const identity = identities[i] as TrustedLaunchIdentity;
+        if (!settled[i] || e.identity !== identity || this.owns(e.ref.operationId)) return;
+        changed.push({
+          e,
+          identity,
+          ...(e.stop ? { stop: e.stop } : {}),
+          ...(e.output ? { cancel: e.output.interruptedCancellation } : {}),
+        });
+        delete e.identity;
+        e.stop = { outcome: "stopped" };
+        if (e.output) e.output.interruptedCancellation = false;
+      });
+      if (!changed.length) return;
+      try {
+        this.persist();
+      } catch (error) {
+        // not durable: nothing settled
+        for (const { e, identity, stop, cancel } of changed) {
+          e.identity = identity;
+          if (stop) e.stop = stop;
+          else delete e.stop;
+          if (e.output && cancel !== undefined) e.output.interruptedCancellation = cancel;
+        }
+        throw error;
+      }
+    });
   }
   /** An entry (not owned by this process) whose work can have no effect any more. */
   private settledEntry(e: Entry): boolean {

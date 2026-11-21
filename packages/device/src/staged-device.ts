@@ -80,6 +80,7 @@ const IDLE_LIFECYCLE: MacOperationBackend["lifecycle"] = {
   ownership: () => ({ workers: 0, cancellations: 0, collectors: 0, persistence: 0 }),
   settle: async () => {},
   retirementObligations: () => 0,
+  settleOrphans: async () => {},
   stopOwned: async () => [],
   blockersBesidesLiveBackground: () => 0,
   dispose: () => {},
@@ -263,9 +264,21 @@ export function createStagedDevice(o: StagedDeviceOptions): StagedDevice {
       },
     );
     await proof.attempt();
+    // the real worker records real launch identities: settle its orphans against the real
+    // process table (a test's fake worker records fake pids, which must never be signalled)
+    const orphans = o.startWorker
+      ? undefined
+      : (await import("./exec/mac-orphans.js")).macOrphanProcesses;
     return createHostOperationBackend(options, {
       platform,
-      mac: { ...deps, platform, startWorker, restrictedSupported: true, restrictedProof: proof },
+      mac: {
+        ...deps,
+        platform,
+        startWorker,
+        restrictedSupported: true,
+        restrictedProof: proof,
+        ...(orphans ? { orphans } : {}),
+      },
     });
   };
 

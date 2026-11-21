@@ -857,6 +857,76 @@ it.runIf(process.platform === "darwin")(
   },
 );
 
+// A skill load of rc.23 named its marker file as a preparation write root: the helper launched
+// and failed, which left an unknown journal entry with the helper's launch identity that refused
+// every later binding to another generation. Once the helper is gone it settles.
+it.runIf(process.platform === "darwin")(
+  "a native preparation that fails after its helper launched does not block the next generation",
+  async () => {
+    const { mkdir, realpath, readdir, readFile } = await import("node:fs/promises");
+    const { startMacOperationWorker } = await import("../src/exec/operation-worker.js");
+    const { macOrphanProcesses } = await import("../src/exec/mac-orphans.js");
+    const root = await realpath(await mkdtemp(join(tmpdir(), "cap-failed-preparation-")));
+    dirs.push(root);
+    const stateDir = join(root, "state");
+    const roots = {
+      workspace: join(root, "workspace"),
+      skills: join(root, "skills"),
+      tmp: join(root, "tmp"),
+    };
+    for (const d of [stateDir, ...Object.values(roots)]) await mkdir(d, { mode: 0o700 });
+    const ceiling: DeviceOwnerCeiling = {
+      revision: "fixture",
+      outsideSandbox: true,
+      network: "allowlist",
+      roots,
+      restrictedProjectReach: "os-user",
+      allowedDomains: [],
+      restrictedDeniedReadRoots: [stateDir],
+      preparation: { skillsRoot: roots.skills, attachmentsBase: join(roots.workspace, "a") },
+    };
+    const backend = await createMacOperationBackend(
+      {
+        deviceId: "d",
+        instanceGeneration: "first",
+        stateDir,
+        roots,
+        pythonPath: "/usr/bin/python3",
+        runtimeHash: workspace.runtimeHash,
+        readOwnerCeiling: async () => ceiling,
+      },
+      {
+        restrictedSupported: true,
+        platform: "darwin",
+        startWorker: startMacOperationWorker,
+        orphans: macOrphanProcesses,
+      },
+    );
+    const marker = join(roots.skills, ".capybara", "skill@digest.json");
+    const prep = await backend.prepare(
+      { id: "d" },
+      {
+        operationId: "marker-write",
+        deviceId: "d",
+        purpose: "skills",
+        writeRoots: [marker],
+        tag: "s",
+      },
+      signal,
+    );
+    // the write root is the marker itself: the helper establishes it as a directory, then the
+    // write onto that directory fails inside the helper
+    await expect(prep.writeFile(marker, Buffer.from("{}"), signal)).rejects.toThrow();
+    const journal = (await readdir(stateDir)).find((n) =>
+      /^operation-journal-[a-f0-9]+\.json$/.test(n),
+    ) as string;
+    const entries = JSON.parse(await readFile(join(stateDir, journal), "utf8")).entries;
+    expect(entries).toHaveLength(1);
+    await backend.lifecycle.settleOrphans();
+    expect(backend.lifecycle.retirementObligations("second")).toBe(0);
+  },
+);
+
 it("retained output controls use the exact reference without a fresh profile grant", async () => {
   const f = await fixture();
   f.hold();

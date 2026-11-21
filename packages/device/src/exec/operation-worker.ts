@@ -71,6 +71,13 @@ export interface TrustedLaunchIdentity {
    */
   session?: { sid: number; start: number };
   process?: string;
+  /**
+   * When the device recorded the launch (wall clock, epoch ms), right after the spawn: the
+   * launched process started shortly before it. With the pid it identifies that process after a
+   * restart (macOS orphan reaping, mac-orphans.ts); a pid whose process started outside that
+   * window was reused.
+   */
+  launchedAtMs?: number;
 }
 type Scope = SandboxOperationScope | SandboxBrowseScope | SandboxPreparationScope;
 interface Common {
