@@ -1580,11 +1580,18 @@ button.cb-property-row {
   cursor: col-resize;
   outline: none;
 }
-.cb-conv-resize:hover,
-.cb-conv-resize:focus-visible,
-.cb-conv-resize[data-dragging="true"] {
-  box-shadow: inset 2px 0 0 var(--cb-accent);
-  background-clip: content-box;
+/* The accent line covers the panel's left hairline (at the handle's centre, the panel's edge),
+   not the handle's outer edge 4 px away from it. */
+.cb-conv-resize::after {
+  content: "";
+  position: absolute;
+  inset: 0 auto 0 calc(var(--cb-space-1) - 1px);
+  width: 2px;
+}
+.cb-conv-resize:hover::after,
+.cb-conv-resize:focus-visible::after,
+.cb-conv-resize[data-dragging="true"]::after {
+  background: var(--cb-accent);
 }
 .cb-conv-scrim {
   position: fixed;
