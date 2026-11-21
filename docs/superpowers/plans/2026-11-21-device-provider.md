@@ -181,9 +181,11 @@ export interface DeviceCapabilityV2 {
 
 ### Kernel (`packages/kernel`)
 
-- `src/sandbox/providers.ts` → `DeviceProviders` (`@Injectable`):
-  `forDevice(provider: string): DeviceProviderEntry | undefined`,
-  `onInOrg(orgId: string): Promise<DeviceProviderEntry[]>`,
+- `src/sandbox/providers.ts` → `DeviceProviders` (`@Injectable`, a pure registry):
+  `forDevice(provider: string): DeviceProviderEntry | undefined`, `loaded()`, `register(entry)`.
+  `src/devices/device-provider-selection.ts` → `DeviceProviderSelection` (`@Injectable`, own
+  module; ruling during phase 1 execution, avoids a module cycle):
+  `onInOrg(orgId: string): Promise<DeviceProviderEntry[]>`, `isOnInOrg(orgId, plugin)`,
   `defaultFor(orgId: string): Promise<DeviceProviderEntry | undefined>`;
   `DeviceProviderEntry = { plugin: string; version: string; impl: DeviceProvider }`.
   `cloud()`, `providerForDevice`, `LOCAL_PROVIDER`, `isInternalProvider` are deleted.
