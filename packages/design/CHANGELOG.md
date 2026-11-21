@@ -1,5 +1,20 @@
 # @capybara-hq/design
 
+## 0.2.0-rc.29
+
+### Minor Changes
+
+- 4697ec6: Secure input variant of the approval block (Submit and Cancel, values saved directly) and an
+  "approved automatically" or "approved by the review model" line on tool rows.
+
+### Patch Changes
+
+- 7a5468b: Desktop shell: where the window controls reach past the sidebar rail, the top row is one band across
+  the whole window on the page ground and the rail (its surface and divider) starts below it; the
+  collapsed rail's expand button moves into the band right after the controls. Below 600 the floating
+  row's empty room drags the window wherever the shell reports controls, the home included.
+- 04172b9: The conversation panel's resize line covers the panel's left hairline instead of sitting 4 px beside it.
+
 ## 0.2.0-rc.28
 
 ### Patch Changes
