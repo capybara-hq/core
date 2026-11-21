@@ -174,7 +174,15 @@ export function NavDrawer({ open, onOpenChange, data, pathname, onNavigate }: Na
           </div>
         </div>
       )}
-      <AccountSheet open={accountOpen} onOpenChange={setAccountOpen} data={data.account} />
+      <AccountSheet
+        open={accountOpen}
+        onOpenChange={setAccountOpen}
+        data={data.account}
+        onDone={() => {
+          setAccountOpen(false);
+          onOpenChange(false);
+        }}
+      />
     </Drawer>
   );
 }

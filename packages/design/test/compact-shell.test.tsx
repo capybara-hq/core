@@ -397,6 +397,25 @@ describe("the drawer from the menu button", () => {
     expect(document.querySelector('[data-part="drawer-level"]')).toBeNull();
   });
 
+  it("done() from an account-sheet slot closes the sheet and the drawer (T28 review)", async () => {
+    window.matchMedia = matchMediaFor(390).matchMedia;
+    const data = drawerData();
+    const account = {
+      ...data.account,
+      orgSwitcher: (done: () => void) => (
+        <button type="button" onClick={done}>
+          切到 Beta
+        </button>
+      ),
+    };
+    render(shell({ drawer: { ...data, account } }));
+    await userEvent.click(menuButton() as HTMLElement);
+    await userEvent.click(within(drawerEl() as HTMLElement).getByRole("button", { name: /Grant/ }));
+    await userEvent.click(screen.getByRole("button", { name: "切到 Beta" }));
+    await waitFor(() => expect(document.querySelector('[data-part="account-sheet"]')).toBeNull());
+    await waitFor(() => expect(drawerEl()).toBeNull());
+  });
+
   it("a guest's data without schedules renders two sections", async () => {
     window.matchMedia = matchMediaFor(390).matchMedia;
     const data = drawerData();

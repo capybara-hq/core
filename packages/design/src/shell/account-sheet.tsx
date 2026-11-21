@@ -7,6 +7,12 @@ import { picksAway } from "../overlays/drawer";
 import { popOverlaysThen, useOverlayHistory } from "../overlays/use-overlay-history";
 import { useDesignT } from "../provider";
 
+/**
+ * A control in the sheet: a node, or a function given `done`, which closes the sheet and the
+ * drawer under it (call it once the control has done its work: an org switch, a language pick).
+ */
+export type AccountSheetSlot = ReactNode | ((done: () => void) => ReactNode);
+
 /** What the drawer's account row opens (design spec §6.54). */
 export interface AccountSheetData {
   name: string;
@@ -15,7 +21,9 @@ export interface AccountSheetData {
   /** The person's avatar (a circle: an image or the initial). */
   avatar?: AvatarValue;
   /** The org switcher (apps/web's own control); absent with one org. */
-  orgSwitcher?: ReactNode;
+  orgSwitcher?: AccountSheetSlot;
+  /** The language control (on a phone the only way to switch it). */
+  language?: AccountSheetSlot;
   personalSettingsHref: string;
   /** The theme control (the light / dark switch). */
   theme: ReactNode;
@@ -32,6 +40,8 @@ export type AccountSheetProps = {
   open: boolean;
   onOpenChange(open: boolean): void;
   data: AccountSheetData;
+  /** Closes the sheet and what it sits over (the drawer); default: the sheet alone. */
+  onDone?: () => void;
 };
 
 /**
@@ -41,9 +51,11 @@ export type AccountSheetProps = {
  * window, so the system back closes it before the drawer under it (Decision 25); a row that goes
  * somewhere leaves the entry (the navigation is pending) and also closes the drawer.
  */
-export function AccountSheet({ open, onOpenChange, data }: AccountSheetProps) {
+export function AccountSheet({ open, onOpenChange, data, onDone }: AccountSheetProps) {
   const t = useDesignT();
   const history = useOverlayHistory(open, () => onOpenChange(false));
+  const done = onDone ?? (() => onOpenChange(false));
+  const slot = (s: AccountSheetSlot) => (typeof s === "function" ? s(done) : s);
   const onClick = (e: MouseEvent<HTMLDivElement>) => {
     const pick = (e.target as HTMLElement).closest<HTMLElement>("[data-drawer-pick]");
     if (pick === null) return;
@@ -74,8 +86,16 @@ export function AccountSheet({ open, onOpenChange, data }: AccountSheetProps) {
               )}
             </span>
           </div>
-          {data.orgSwitcher ? <div className="cb-account-slot">{data.orgSwitcher}</div> : null}
+          {data.orgSwitcher ? (
+            <div className="cb-account-slot">{slot(data.orgSwitcher)}</div>
+          ) : null}
           <NavRow icon="user" label={t("account.settings")} href={data.personalSettingsHref} />
+          {data.language ? (
+            <div className="cb-account-line" data-part="account-language">
+              <span className="cb-account-label">{t("account.language")}</span>
+              {slot(data.language)}
+            </div>
+          ) : null}
           <div className="cb-account-line" data-part="account-theme">
             <span className="cb-account-label">{t("account.theme")}</span>
             {data.theme}

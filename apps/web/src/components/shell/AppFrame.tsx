@@ -85,6 +85,21 @@ import {
   useSetupSteps,
 } from "./setup";
 
+/** `items` with `after` run once an item's own action has (the account sheet's `done`). */
+function closingAfter(items: MenuItem[], after: () => void): MenuItem[] {
+  return items.map((i) =>
+    i === "separator" || i.onSelect === undefined
+      ? i
+      : {
+          ...i,
+          onSelect: () => {
+            i.onSelect?.();
+            after();
+          },
+        },
+  );
+}
+
 /** The local time zone, e.g. `UTC+8`, `UTC-3:30` (the status bar's right side, spec §4.4). */
 function timeZoneLabel(): string {
   const offset = -new Date().getTimezoneOffset();
@@ -572,17 +587,31 @@ function ShellFrame({
       name: me.account.displayName,
       orgName: currentOrg?.name ?? null,
       avatar: me.account.avatarUrl ? { kind: "image", src: me.account.avatarUrl } : null,
+      // A pick in either menu closes the sheet and the drawer (`done`): an org switch replaces the
+      // page anyway, a language pick re-renders it, and an org dialog opens over the page.
       ...(currentOrg !== null && multiOrg
         ? {
-            orgSwitcher: (
+            orgSwitcher: (done: () => void) => (
               <Menu
-                items={orgItems}
+                items={closingAfter(orgItems, done)}
                 label={t("drawer.switchOrg")}
                 trigger={<Button variant="ghost">{t("drawer.switchOrg")}</Button>}
               />
             ),
           }
         : {}),
+      language: (done: () => void) => (
+        <Menu
+          items={closingAfter(languageMenu.submenu ?? [], done)}
+          label={preferences.language.label}
+          trigger={
+            <Button variant="ghost">
+              {preferences.language.options.find((o) => o.value === preferences.language.value)
+                ?.label ?? preferences.language.value}
+            </Button>
+          }
+        />
+      ),
       personalSettingsHref: ACCOUNT_HOME,
       theme: preferences.theme ? <ThemeToggle {...preferences.theme} /> : null,
       status: [status.context, version, timeZone].filter((v) => v !== "").join(" · "),

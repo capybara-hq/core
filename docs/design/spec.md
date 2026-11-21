@@ -3902,10 +3902,10 @@ States: `default`, `current`, `badge`
 
 ### 6.55 AccountSheet
 
-`AccountSheet({ open, onOpenChange, data })` is a bottom sheet (§6.7) from the drawer's account row, titled 账户 / Account (it replaces the compact Me page).
+`AccountSheet({ open, onOpenChange, data, onDone? })` is a bottom sheet (§6.7) from the drawer's account row, titled 账户 / Account (it replaces the compact Me page).
 
-- **Rows**, on the sheet's own surface with no box around them: the person (the `Avatar` 40 circle, the name, the org name), the org switcher (the app's control, when the person has more than one org), 个人设置 (a `NavRow` link, `user`), 外观 with the theme control at its end, 状态 with the system status line (what the StatusBar shows on wider windows), the install hint (the PWA, while not installed), 切换平台 (only with `onSwitchProfile`, a native shell's `profiles@1.show`, Decision 23) and 退出登录 (`log-out`).
-- **Closing**: as any bottom sheet; a row that goes somewhere closes the sheet and the drawer under it; the system back closes the sheet first (it holds its own history entry on a compact touch window).
+- **Rows**, on the sheet's own surface with no box around them: the person (the `Avatar` 40 circle, the name, the org name), the org switcher (the app's control, when the person has more than one org), 个人设置 (a `NavRow` link, `user`), 语言 with the language control at its end (on a phone the only language switch), 外观 with the theme control at its end, 状态 with the system status line (what the StatusBar shows on wider windows), the install hint (the PWA, while not installed), 切换平台 (only with `onSwitchProfile`, a native shell's `profiles@1.show`, Decision 23) and 退出登录 (`log-out`).
+- **Closing**: as any bottom sheet; a row that goes somewhere closes the sheet and the drawer under it, and so does a pick in the org switcher or the language control (a slot given as a function receives `done`, which closes both); the system back closes the sheet first (it holds its own history entry on a compact touch window).
 
 ### 6.56 FloatingBar
 

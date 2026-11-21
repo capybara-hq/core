@@ -58,6 +58,31 @@ describe("AccountSheet", () => {
     await waitFor(() => expect(sheet()).toBeNull());
   });
 
+  it("a 语言 line holds the language control (T28 review: the phone's only language switch)", () => {
+    render(<Harness d={data({ language: <button type="button">中文</button> })} />);
+    const line = (sheet() as HTMLElement).querySelector(
+      '[data-part="account-language"]',
+    ) as HTMLElement;
+    expect(within(line).getByText("语言")).toBeTruthy();
+    expect(within(line).getByRole("button", { name: "中文" })).toBeTruthy();
+  });
+
+  it("a slot given as a function gets done(), which closes the sheet (an org switch, a language pick)", async () => {
+    render(
+      <Harness
+        d={data({
+          orgSwitcher: (done) => (
+            <button type="button" onClick={done}>
+              切到 Beta
+            </button>
+          ),
+        })}
+      />,
+    );
+    await userEvent.click(screen.getByRole("button", { name: "切到 Beta" }));
+    await waitFor(() => expect(sheet()).toBeNull());
+  });
+
   it("outside an org there is no org line", () => {
     render(<Harness d={data({ orgName: null })} />);
     expect(within(sheet() as HTMLElement).queryByText("Meta1")).toBeNull();

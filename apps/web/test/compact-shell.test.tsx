@@ -3,7 +3,7 @@
 // button carrying the inbox count, every other page with back; the menu opens the drawer, whose
 // picks pop its history entry before they navigate, and the system back closes an open drawer or
 // account sheet before it leaves the page.
-import { act, cleanup, waitFor, within } from "@testing-library/react";
+import { act, cleanup, screen, waitFor, within } from "@testing-library/react";
 import { userEvent } from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { pathname as currentPath, resetNavigation, router } from "./support/navigation";
@@ -136,6 +136,33 @@ describe("the drawer from the menu button", () => {
     expect(within(sheet).getByRole("button", { name: "退出登录" })).toBeTruthy();
     // a browser has no native profile switcher
     expect(within(sheet).queryByRole("button", { name: "切换平台" })).toBeNull();
+  });
+
+  it("the account sheet has a 语言 line: picking English switches and closes the sheet and drawer", async () => {
+    renderFrame(shellOf(ME, pending));
+    await userEvent.click(menuButton() as HTMLElement);
+    await userEvent.click(within(drawerEl() as HTMLElement).getByRole("button", { name: /Grant/ }));
+    const sheet = document.querySelector('[data-part="account-sheet"]') as HTMLElement;
+    const line = sheet.querySelector('[data-part="account-language"]') as HTMLElement;
+    await userEvent.click(within(line).getByRole("button", { name: /中文/ }));
+    await userEvent.click(await screen.findByRole("menuitemradio", { name: "English" }));
+    await waitFor(() => expect(document.cookie).toContain("NEXT_LOCALE=en"));
+    await waitFor(() => expect(document.querySelector('[data-part="account-sheet"]')).toBeNull());
+    await waitFor(() => expect(drawerEl()).toBeNull());
+  });
+
+  it("picking another org in the account sheet closes the sheet and the drawer", async () => {
+    const two = {
+      ...ME,
+      memberships: [...ME.memberships, { orgId: "o2", slug: "beta", name: "Beta", role: "member" }],
+    };
+    renderFrame(shellOf(two, pending));
+    await userEvent.click(menuButton() as HTMLElement);
+    await userEvent.click(within(drawerEl() as HTMLElement).getByRole("button", { name: /Grant/ }));
+    await userEvent.click(screen.getByRole("button", { name: "切换组织" }));
+    await userEvent.click(await screen.findByRole("menuitemradio", { name: "Beta" }));
+    await waitFor(() => expect(document.querySelector('[data-part="account-sheet"]')).toBeNull());
+    await waitFor(() => expect(drawerEl()).toBeNull());
   });
 });
 
