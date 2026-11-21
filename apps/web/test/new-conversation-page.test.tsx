@@ -564,6 +564,32 @@ describe("the device picker (environments design §4.1)", () => {
     expect(bodyOf(calls.find((c) => c.method === "POST"))).toMatchObject({ deviceId: "d1" });
   });
 
+  it("without a device, Auto asks the device-less question and the first send carries no consent", async () => {
+    resetNavigation("/");
+    const calls = stubApi({ [`POST ${ORG}/conversations/first-message`]: createdAt });
+    await renderRouteWithCache(
+      "/",
+      withDevices({
+        items: [envView("d1", "Laptop", { source: "local", provider: "@local", online: false })],
+        defaultId: null,
+        lastUsedId: null,
+        cloudAvailable: false,
+      }),
+    );
+    const user = userEvent.setup();
+    await user.click(screen.getByRole("button", { name: /^Permissions: / }));
+    await user.click(await screen.findByRole("menuitemradio", { name: /^Auto/ }));
+    const dialog = await screen.findByRole("dialog");
+    expect(within(dialog).getByText(en.chat.permission.full.titleNoDevice)).toBeTruthy();
+    expect(dialog.textContent).toContain(en.chat.permission.full.bodyNoDevice);
+    await user.click(within(dialog).getByRole("button", { name: "Use Auto" }));
+    await user.type(input(), "go{Enter}");
+    await vi.waitFor(() => expect(router.replace).toHaveBeenCalledWith("/chat/c9"));
+    const body = bodyOf(calls.find((c) => c.method === "POST")) as Record<string, unknown>;
+    expect(body.permission).toEqual({ profile: "full-access" });
+    expect(body).not.toHaveProperty("deviceId");
+  });
+
   it("without a cloud sandbox and only offline devices, a restricted first send goes without a device", async () => {
     resetNavigation("/");
     const calls = stubApi({ [`POST ${ORG}/conversations/first-message`]: createdAt });
@@ -580,11 +606,10 @@ describe("the device picker (environments design §4.1)", () => {
     // the reason is said, without blocking a device-less conversation
     expect(screen.getByText(en.chat.deviceOffline)).toBeTruthy();
     const user = userEvent.setup();
-    // Full access needs a device; the restricted choices stay
+    // every profile is offered without a device
     await user.click(screen.getByRole("button", { name: /^Permissions: / }));
-    const full = await screen.findByRole("menuitemradio", { name: /^Full access/ });
-    expect(full.getAttribute("aria-disabled")).toBe("true");
-    expect(full.textContent).toContain(en.chat.permission.reason.noDevice);
+    const full = await screen.findByRole("menuitemradio", { name: /^Auto/ });
+    expect(full.getAttribute("aria-disabled")).toBeNull();
     await user.click(screen.getByRole("menuitemradio", { name: /^Request approval/ }));
     await user.type(input(), "go{Enter}");
     await vi.waitFor(() => expect(router.replace).toHaveBeenCalledWith("/chat/c9"));
@@ -712,14 +737,14 @@ describe("the first send carries the permission choice (atomic first message, Ta
   async function chooseFull(user: ReturnType<typeof userEvent.setup>) {
     await vi.waitFor(async () => {
       await user.click(permissionButton());
-      const full = await screen.findByRole("menuitemradio", { name: /^Full access/ });
+      const full = await screen.findByRole("menuitemradio", { name: /^Auto/ });
       expect(full.getAttribute("aria-disabled")).toBeNull();
       await user.click(full);
     });
     const dialog = await screen.findByRole("dialog");
-    await user.click(within(dialog).getByRole("button", { name: "Use Full access" }));
+    await user.click(within(dialog).getByRole("button", { name: "Use Auto" }));
     await vi.waitFor(() =>
-      expect(permissionButton().getAttribute("aria-label")).toMatch(/^Permissions: Full access/),
+      expect(permissionButton().getAttribute("aria-label")).toMatch(/^Permissions: Auto/),
     );
   }
   const retryOriginal = () =>
@@ -757,12 +782,12 @@ describe("the first send carries the permission choice (atomic first message, Ta
     });
   });
 
-  it("Full access asks first and sends the consented scope revision of the displayed device", async () => {
+  it("Auto asks first and sends the consented scope revision of the displayed device", async () => {
     const calls = stubApi({ [FIRST]: created() });
     await renderRouteWithCache("/", routes());
     const user = userEvent.setup();
     await user.click(permissionButton());
-    await user.click(await screen.findByRole("menuitemradio", { name: /^Full access/ }));
+    await user.click(await screen.findByRole("menuitemradio", { name: /^Auto/ }));
     const dialog = await screen.findByRole("dialog");
     expect(dialog.textContent).toContain("Commands still run in the sandbox");
     // cancel changes nothing
@@ -997,9 +1022,7 @@ describe("the first send carries the permission choice (atomic first message, Ta
     await user.click(retryOriginal()[0] as HTMLElement);
     await vi.waitFor(() => expect(n).toBe(2));
     await vi.waitFor(() => expect(retryOriginal()).toHaveLength(1));
-    expect(retryOriginal()[0]?.parentElement?.textContent).toContain(
-      "“go” with Full access on Personal.",
-    );
+    expect(retryOriginal()[0]?.parentElement?.textContent).toContain("“go” with Auto on Personal.");
     expect(client.getQueryState(keys.org("o1").permissionPreview("e1"))?.isInvalidated).toBe(true);
   });
 
@@ -1095,7 +1118,7 @@ describe("the first send carries the permission choice (atomic first message, Ta
     });
     const { calls } = await renderChatRoute({ locale: "en" });
     await screen.findByText("hi");
-    expect(screen.queryByText("Full access")).toBeNull();
+    expect(screen.queryByText("Auto")).toBeNull();
     expect(calls.filter((c) => c.url.endsWith("/permissions"))).toEqual([]);
   });
 });

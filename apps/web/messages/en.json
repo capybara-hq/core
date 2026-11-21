@@ -1649,18 +1649,20 @@
       "profile": {
         "requestApproval": "Request approval",
         "approveForMe": "Approve for me",
-        "fullAccess": "Full access"
+        "fullAccess": "Auto"
       },
       "description": {
-        "requestApproval": "Works freely inside the sandbox; asks you before going beyond it or running sensitive commands.",
-        "approveForMe": "Same sandbox; a review model decides requests to go beyond it and asks you when unsure.",
-        "fullAccess": "Same sandbox; approves whatever this device allows, without asking. Credential reads outside the sandbox and sub-agents' requests to run outside it still go to the review model."
+        "requestApproval": "Asks you before every approval.",
+        "approveForMe": "A review model decides for you and asks you when unsure.",
+        "fullAccess": "Doesn't ask; the agent acts freely. Approvals that need someone else, and secrets only you can enter, still come to you."
       },
       "reason": {
-        "noDevice": "Choose a device first",
         "checking": "Checking this device…",
-        "checkFailed": "Couldn't check this device",
-        "unsupported": "Not supported on this device"
+        "checkFailed": "Couldn't check this device"
+      },
+      "notice": {
+        "providerOutdated": "This device's sandbox plugin ({plugin} {version}) needs an update before device tools can run; a super admin updates it in Plugins.",
+        "runtime": "This device's runtime can't enforce its sandbox, so device tools can't run for now."
       },
       "configureReview": "Set up the review model",
       "locked": {
@@ -1668,11 +1670,13 @@
         "scheduled": "Scheduled tasks keep their own unattended approval rules"
       },
       "full": {
-        "title": "Use Full access on {device}?",
-        "body": "Commands still run in the sandbox; the agent's requests to go beyond it{outside} are approved automatically and recorded.",
+        "title": "Use Auto on {device}?",
+        "titleNoDevice": "Use Auto?",
+        "body": "Commands still run in the sandbox; the agent's requests to go beyond it{outside} are approved automatically and recorded. Platform and connector actions also run without asking, and are recorded.",
+        "bodyNoDevice": "Platform and connector actions run without asking, and are recorded.",
         "outside": " (including running commands outside the sandbox)",
-        "limits": "Protected paths and platform and organization denials still apply. Credential reads outside the sandbox and sub-agents' requests to run outside it still go to the review model.",
-        "confirm": "Use Full access",
+        "limits": "Protected paths and platform and organization denials still apply. Credential reads outside the sandbox and sub-agents' requests to run outside it still go to the review model. Approvals that need someone else, and secrets only you can enter, still come to you.",
+        "confirm": "Use Auto",
         "cancel": "Cancel"
       },
       "unconfirmed": "Last confirmed permissions. Refreshing before they can change again.",
@@ -2090,6 +2094,10 @@
     }
   },
   "approval": {
+    "reviewUnsure": "The review model wasn't sure, so it's your call.",
+    "secureInput": {
+      "webOnly": "{count, plural, one {# field} other {# fields}} to fill in on the web"
+    },
     "initialPassword": {
       "show": "Show the initial password",
       "label": "Initial password of {login}",
@@ -2787,7 +2795,7 @@
     },
     "outsideSandbox": {
       "title": "Run outside the sandbox",
-      "description": "Whether a call on a device may be granted running outside its sandbox: under Request approval and Approve for me you or the review model approve it first; under Full access it is approved automatically where the device allows it, and recorded. Each device owner still allows it on the device; cloud devices have no outside.",
+      "description": "Whether a call on a device may be granted running outside its sandbox: under Request approval and Approve for me you or the review model approve it first; under Auto it is approved automatically where the device allows it, and recorded. Each device owner still allows it on the device; cloud devices have no outside.",
       "allowed": "Allowed",
       "allowedHint": "Calls may be granted running outside the sandbox; each device owner still allows it on the device.",
       "off": "Off",
@@ -3382,7 +3390,7 @@
     "newDevice": "New device",
     "name": "New device name",
     "noOrg": "You are not in an organization yet, so you cannot connect a machine.",
-    "disclosure": "Once you confirm, you and your agents can run commands on this machine. Command output and the file contents your agents read become part of conversations and are sent to models. Disconnect any time on the device's page, or run capybara-device stop on this machine. Confirming does not allow Full access: only the machine's owner allows it, on the machine (capybara-device ceiling set).",
+    "disclosure": "Once you confirm, you and your agents can run commands on this machine. Command output and the file contents your agents read become part of conversations and are sent to models. Disconnect any time on the device's page, or run capybara-device stop on this machine. Confirming does not allow Auto: only the machine's owner allows it, on the machine (capybara-device ceiling set).",
     "confirm": "Connect",
     "deny": "Deny",
     "doneTitle": "Connected",
@@ -4414,7 +4422,8 @@
         "deviceRenamed": "Renamed a device",
         "deviceOwnerCeilingChanged": "Changed a device's owner permission ceiling",
         "conversationPermissionProfileChanged": "Changed a conversation's permission profile",
-        "permissionCrossingAutoGranted": "Full access automatically granted an agent a sandbox crossing",
+        "permissionCrossingAutoGranted": "Auto approved a sandbox crossing for the agent",
+        "toolAskAutoDecided": "A tool approval was decided automatically (Auto or the review model)",
         "evalCaseAdded": "Added an eval case",
         "evalCaseRemoved": "Removed an eval case",
         "evalResultLabeled": "Labeled an eval result",
@@ -4631,7 +4640,7 @@
       },
       "outsideSandbox": {
         "title": "Run outside the sandbox",
-        "description": "Whether a call on a device may be granted running outside its sandbox: where the organization and the device owner allow it, you or the review model approve it under Request approval and Approve for me, and Full access approves it automatically and records it. Cloud devices have no outside.",
+        "description": "Whether a call on a device may be granted running outside its sandbox: where the organization and the device owner allow it, you or the review model approve it under Request approval and Approve for me, and Auto approves it automatically and records it. Cloud devices have no outside.",
         "label": "Run outside the sandbox",
         "allowed": "Allowed",
         "allowedHint": "Organizations may allow it; each device owner still allows it on the device.",

@@ -331,29 +331,27 @@ test.describe("permission profiles", () => {
         report: { restricted: null, outsideSandbox: true },
       });
 
-      // The existing conversation's mode menu: every profile unavailable with the same reason (a
-      // profile only chooses who approves; the sandbox is the device's), Request approval still
+      // The existing conversation's mode menu: every profile stays selectable (a
+      // profile chooses who approves; only the device's own tools refuse), Request approval still
       // the selected profile, Full access never chosen.
       await page.reload();
       await expect(page.locator('[data-template="ConversationPage"]')).toBeVisible();
       await permissionButton(page, PROFILE.requestApproval).click();
       for (const profile of [PROFILE.requestApproval, PROFILE.approveForMe, PROFILE.fullAccess]) {
-        await expect(row(page, profile)).toBeDisabled();
-        await expect(row(page, profile)).toHaveAccessibleName(`${profile} ${p.reason.unsupported}`);
+        await expect(row(page, profile)).toBeEnabled();
       }
       await expect(row(page, PROFILE.requestApproval)).toHaveAttribute("aria-checked", "true");
       await expect(row(page, PROFILE.fullAccess)).toHaveAttribute("aria-checked", "false");
       await page.keyboard.press("Escape");
       await expect(permissionButton(page, PROFILE.requestApproval)).toBeVisible();
 
-      // A new conversation on that device shows the same reasons; the default stays Approve for me
-      // (shown unavailable), never switched to Full access.
+      // A new conversation on that device keeps every profile selectable; the default stays Approve for me
+      // (selected), never switched to Full access.
       await newChat(page, agentId);
       await pickDevice(page, deviceName);
       await permissionButton(page, PROFILE.approveForMe).click();
       for (const profile of [PROFILE.requestApproval, PROFILE.approveForMe, PROFILE.fullAccess]) {
-        await expect(row(page, profile)).toBeDisabled();
-        await expect(row(page, profile)).toHaveAccessibleName(`${profile} ${p.reason.unsupported}`);
+        await expect(row(page, profile)).toBeEnabled();
       }
       await expect(row(page, PROFILE.approveForMe)).toHaveAttribute("aria-checked", "true");
       await expect(row(page, PROFILE.fullAccess)).toHaveAttribute("aria-checked", "false");

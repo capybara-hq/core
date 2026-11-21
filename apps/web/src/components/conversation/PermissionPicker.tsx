@@ -83,38 +83,39 @@ export function recordedProfile(
 /** The model-purposes settings where an org admin sets the review model. */
 export const REVIEW_MODEL_SETTINGS = "/settings/models?tab=purposes";
 
-type Reason = "noDevice" | "checking" | "checkFailed" | "unsupported";
+type Reason = "checking" | "checkFailed";
 
 /**
- * Why each profile cannot be chosen for this device (undefined: it can). A profile only chooses
- * who approves a crossing (approval-only profiles design), so the three share the device's
- * support: a provider that cannot run scoped operations (unsupported, or an operation boundary
- * without restricted execution) offers none, and Full access never depends on a ceiling. Only
- * known states map to a reason; a provider's raw reason text is never shown here.
+ * Why a profile cannot be chosen yet (undefined: it can). Every profile is offered whatever the
+ * device supports (profiles govern every approval); only Auto on a device waits while the device
+ * is checked or when the check failed, because its confirmation names what the device may grant.
  */
 export function unavailableReasons(
   deviceId: string | undefined,
   preview: { data: PermissionPreview | undefined; failed: boolean },
 ): Record<PermissionProfile, Reason | undefined> {
-  if (deviceId === undefined)
-    // no device: nothing to restrict, nothing to grant Full access on
-    return {
-      "request-approval": undefined,
-      "approve-for-me": undefined,
-      "full-access": "noDevice",
-    };
+  const none = { "request-approval": undefined, "approve-for-me": undefined } as const;
+  if (deviceId === undefined) return { ...none, "full-access": undefined };
   const p = preview.data;
-  if (p === undefined || p.deviceId !== deviceId) {
-    const full = preview.failed ? "checkFailed" : "checking";
-    return { "request-approval": undefined, "approve-for-me": undefined, "full-access": full };
-  }
-  const a = p.availability;
-  const reason: Reason | undefined =
-    a.state === "unsupported" ||
-    (a.state === "supported" && a.report.boundary === "operation" && a.report.restricted === null)
-      ? "unsupported"
-      : undefined;
-  return { "request-approval": reason, "approve-for-me": reason, "full-access": reason };
+  if (p === undefined || p.deviceId !== deviceId)
+    return { ...none, "full-access": preview.failed ? "checkFailed" : "checking" };
+  return { ...none, "full-access": undefined };
+}
+
+/**
+ * The one line at the top of the mode menu when the device's device tools cannot run (the profiles
+ * stay selectable): the sandbox plugin that needs an update, or the runtime that cannot enforce its
+ * sandbox. Built from the kernel's cause, never from provider-written text.
+ */
+export function pickerNotice(
+  preview: PermissionPreview | undefined,
+  t: (key: "notice.providerOutdated" | "notice.runtime", values?: Record<string, string>) => string,
+): string | undefined {
+  const a = preview?.availability;
+  if (a === undefined || a.state !== "unsupported") return undefined;
+  return a.cause.kind === "provider-outdated"
+    ? t("notice.providerOutdated", { plugin: a.cause.plugin, version: a.cause.version })
+    : t("notice.runtime");
 }
 
 /**
@@ -158,6 +159,7 @@ export function modeMenuFromPickers(
     })),
     onPickMode: permission.onPick,
     ...(permission.note !== undefined ? { note: permission.note } : {}),
+    ...(permission.notice !== undefined ? { notice: permission.notice } : {}),
     ...(permission.locked !== undefined
       ? { locked: permission.locked.hint }
       : permission.disabled
@@ -182,7 +184,8 @@ export function modeMenuFromPickers(
 }
 
 type Consent = { deviceId: string; project: string | null; scopeRevision: string };
-type Choice = { profile: PermissionProfile; consent?: Consent };
+/** `noDevice`: Auto confirmed for a conversation without a device (no consent row exists). */
+type Choice = { profile: PermissionProfile; consent?: Consent; noDevice?: true };
 
 export type PermissionChoiceInput = {
   orgId: string;
@@ -286,17 +289,26 @@ export function usePermissionChoice(input: PermissionChoiceInput): {
       (shown !== undefined && shown.scopeRevision !== c.scopeRevision))
   )
     setChoice({ profile: DEFAULT_PERMISSION_PROFILE });
-  /** The preview the confirmation is about, frozen when it opened, with the revision then. */
+  // Auto confirmed without a device does not carry over to a device: that one asks again
+  if (choice.profile === "full-access" && choice.noDevice === true && deviceId !== undefined)
+    setChoice({ profile: DEFAULT_PERMISSION_PROFILE });
+  /**
+   * The preview the confirmation is about, frozen when it opened, with the revision then (null
+   * preview: the device-less confirmation).
+   */
   const [asked, setAsked] = useState<{
-    preview: PermissionPreview;
+    preview: PermissionPreview | null;
     revision: number | undefined;
   } | null>(null);
   // the picker became unusable or another revision is on display: the question is void
   if (asked !== null && (input.editable === false || asked.revision !== input.revision))
     setAsked(null);
-  const asking = asked?.preview ?? null;
-  const setAsking = (p: PermissionPreview | null) =>
-    setAsked(p === null ? null : { preview: p, revision: input.revision });
+  const asking = asked !== null;
+  const askedPreview = asked?.preview ?? null;
+  const setAsking = (p: PermissionPreview | "no-device" | null) =>
+    setAsked(
+      p === null ? null : { preview: p === "no-device" ? null : p, revision: input.revision },
+    );
   const found = unavailableReasons(deviceId, {
     data: shown,
     failed: deviceId !== undefined && preview.failed,
@@ -318,6 +330,7 @@ export function usePermissionChoice(input: PermissionChoiceInput): {
     if (profile === undefined || reasons[profile] !== undefined || profile === choice.profile)
       return;
     if (profile !== "full-access") choose({ profile });
+    else if (deviceId === undefined) setAsking("no-device");
     else if (shown !== undefined) {
       const held = consented ?? input.consentScope;
       if (
@@ -338,8 +351,14 @@ export function usePermissionChoice(input: PermissionChoiceInput): {
     }
   };
   const confirm = () => {
-    const p = asking;
+    const p = askedPreview;
+    const wasDeviceless = asking && p === null;
     setAsking(null);
+    if (wasDeviceless) {
+      // a device was chosen while the dialog was open: nothing is granted
+      if (deviceId === undefined) choose({ profile: "full-access", noDevice: true });
+      return;
+    }
     // the device or its scope changed while the dialog was open: nothing is granted
     if (
       p === null ||
@@ -352,6 +371,7 @@ export function usePermissionChoice(input: PermissionChoiceInput): {
     setConsented(consent);
     choose({ profile: "full-access", consent });
   };
+  const notice = pickerNotice(shown, t);
   // no persistent explanation: a device not checked yet says nothing (it is checked on first use);
   // only a profile a checked device cannot offer carries its reason, on the item
   const picker: PickerProps = {
@@ -381,45 +401,53 @@ export function usePermissionChoice(input: PermissionChoiceInput): {
           },
         }
       : {}),
+    ...(notice !== undefined ? { notice } : {}),
     onPick: pick,
   };
-  const dialog =
-    asking === null ? null : (
-      <Dialog
-        open
-        onOpenChange={(open) => {
-          if (!open) setAsking(null);
-        }}
-        title={t("full.title", { device: input.deviceLabel ?? "" })}
-        footer={
-          <>
-            <Button variant="ghost" onClick={() => setAsking(null)}>
-              {t("full.cancel")}
-            </Button>
-            <Button variant="primary" onClick={confirm}>
-              {t("full.confirm")}
-            </Button>
-          </>
-        }
-      >
-        <Stack gap={8}>
-          <Text variant="prose">
-            {t("full.body", {
-              outside: fullAccessReachesOutside(asking) ? t("full.outside") : "",
-            })}
-          </Text>
-          <Text variant="prose" tone="muted">
-            {t("full.limits")}
-          </Text>
-        </Stack>
-      </Dialog>
-    );
+  const dialog = !asking ? null : (
+    <Dialog
+      open
+      onOpenChange={(open) => {
+        if (!open) setAsking(null);
+      }}
+      title={
+        askedPreview === null
+          ? t("full.titleNoDevice")
+          : t("full.title", { device: input.deviceLabel ?? "" })
+      }
+      footer={
+        <>
+          <Button variant="ghost" onClick={() => setAsking(null)}>
+            {t("full.cancel")}
+          </Button>
+          <Button variant="primary" onClick={confirm}>
+            {t("full.confirm")}
+          </Button>
+        </>
+      }
+    >
+      <Stack gap={8}>
+        <Text variant="prose">
+          {askedPreview === null
+            ? t("full.bodyNoDevice")
+            : t("full.body", {
+                outside: fullAccessReachesOutside(askedPreview) ? t("full.outside") : "",
+              })}
+        </Text>
+        <Text variant="prose" tone="muted">
+          {t("full.limits")}
+        </Text>
+      </Stack>
+    </Dialog>
+  );
   const selection: PermissionSelection | null =
     choice.profile !== "full-access"
       ? { profile: choice.profile }
       : choice.consent !== undefined
         ? { profile: "full-access", consentScopeRevision: choice.consent.scopeRevision }
-        : null;
+        : choice.noDevice === true && deviceId === undefined
+          ? { profile: "full-access" }
+          : null;
   const clearFullAccess = () => {
     // the kernel refused the consent: the next Full asks again
     setConsented(null);
