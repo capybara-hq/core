@@ -7,9 +7,11 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   Badge,
   BarChart,
+  type Brand,
   CAPYBARA_BITMAP,
   DesignProvider,
   Dither,
+  EmptyState,
   Icon,
   Kbd,
   KeyValue,
@@ -515,4 +517,58 @@ describe("清理：Pagination 页码越界、Tabs 无匹配值", () => {
     );
     expect((screen.getByRole("tab", { name: "B" }) as HTMLButtonElement).tabIndex).toBe(0);
   });
+});
+
+describe("EmptyState with a theme brand (theme brand coverage §3)", () => {
+  const brand = (b: Partial<Brand>): Brand => ({
+    markUrl: null,
+    wordmark: null,
+    illustrationUrl: null,
+    decoration: "dither",
+    productName: null,
+    ...b,
+  });
+  const draw = (size: "page" | "panel" | "compact", b?: Brand) =>
+    render(
+      <DesignProvider locale="en" {...(b ? { brand: b } : {})}>
+        <EmptyState text="Nothing yet" size={size} />
+      </DesignProvider>,
+    ).container;
+
+  it.each(["page", "panel"] as const)(
+    "%s draws the theme art as a masked box with --cb-brand-art",
+    (size) => {
+      const c = draw(size, brand({ markUrl: "/m.svg" }));
+      const box = c.querySelector('[data-part="empty-illustration"]');
+      const art = box?.querySelector<HTMLElement>('[data-part="empty-brand-art"]');
+      expect(art).not.toBeNull();
+      expect(art?.style.getPropertyValue("--cb-brand-art")).toBe('url("/m.svg")');
+      expect(box?.querySelector("svg")).toBeNull();
+      expect(box?.getAttribute("aria-hidden")).toBe("true");
+    },
+  );
+
+  it("illustrationUrl wins over markUrl", () => {
+    const c = draw("page", brand({ markUrl: "/m.svg", illustrationUrl: "/i.svg" }));
+    const art = c.querySelector<HTMLElement>('[data-part="empty-brand-art"]');
+    expect(art?.style.getPropertyValue("--cb-brand-art")).toBe('url("/i.svg")');
+  });
+
+  it("compact draws no art", () => {
+    const c = draw("compact", brand({ markUrl: "/m.svg", illustrationUrl: "/i.svg" }));
+    expect(c.querySelector('[data-part="empty-illustration"]')).toBeNull();
+    expect(c.querySelector('[data-part="empty-brand-art"]')).toBeNull();
+  });
+
+  it.each(["page", "panel"] as const)(
+    "%s without a brand, or with both URLs null, equals today's DOM",
+    (size) => {
+      const today = draw(size).innerHTML;
+      cleanup();
+      expect(today).toContain("cb-logo-line");
+      expect(draw(size, brand({ wordmark: "BRAND KIT" })).innerHTML).toBe(today);
+      cleanup();
+      expect(draw(size, brand({ markUrl: "", illustrationUrl: "" })).innerHTML).toBe(today);
+    },
+  );
 });
