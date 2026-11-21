@@ -53,14 +53,13 @@ const signal = () => AbortSignal.timeout(30_000);
 const log = { info() {}, warn() {}, error() {} };
 
 /** Providers over a registry only: the org-bound reads are not used here. */
-const providersOf = (reg: ExtensionRegistry): SandboxProviders =>
+const providersOf = (reg: Pick<ExtensionRegistry, "list">): SandboxProviders =>
   new SandboxProviders(
     reg,
     undefined as never,
     undefined as never,
     undefined as never,
     undefined as never,
-    log,
   );
 
 /** A service whose cloud provider is `cloudEntry` and whose internal providers are `internal`. */
