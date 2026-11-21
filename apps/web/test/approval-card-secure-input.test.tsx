@@ -15,7 +15,7 @@ const SECRET = "sk-live-0123456789abcdef";
 
 const APPROVAL = (over: Partial<Approval> = {}): Approval => ({
   id: "ap1",
-  kind: "tool",
+  kind: "secure_input",
   conversationId: "c1",
   runId: "r1",
   callId: "call_1",
@@ -23,7 +23,7 @@ const APPROVAL = (over: Partial<Approval> = {}): Approval => ({
   toolName: "Platform",
   connector: null,
   agent: { id: "ag1", name: "Echo agent" },
-  input: {},
+  input: null,
   requestedFor: "a1",
   scopes: ["once", "session", "always"],
   approverRole: null,
@@ -56,6 +56,10 @@ const item: ApprovalItem = {
   toolKey: "Platform",
   input: {},
   expiresAt: EXPIRES,
+  secureInput: {
+    target: { zh: "Anthropic：平台配置", en: "Anthropic: deployment config" },
+    fields: ["apiKey"],
+  },
   decided: null,
   decidedAt: null,
 };
@@ -74,22 +78,25 @@ afterEach(() => {
   vi.unstubAllGlobals();
 });
 
+const omitSecure = ({ secureInput: _s, ...rest }: ApprovalItem): ApprovalItem => rest;
+
 const field = async () => (await screen.findByLabelText("API key")) as HTMLInputElement;
 
-describe("ApprovalCard: person fields", () => {
-  it("keeps Approve disabled until every field has a value, and offers only once", async () => {
+describe("ApprovalCard: secure input", () => {
+  it("keeps Submit disabled until every field has a value, and offers Cancel, never a scope", async () => {
     stubApi({ "GET /api/v1/orgs/o1/approvals/ap1": () => json(200, { approval: APPROVAL() }) });
     renderPage(<ApprovalCard orgId="o1" item={item} />, { locale: "en" });
     const input = await field();
-    const approve = screen.getByRole("button", { name: "Approve" }) as HTMLButtonElement;
+    const approve = screen.getByRole("button", { name: "Submit" }) as HTMLButtonElement;
     expect(approve.disabled).toBe(true);
-    expect(screen.queryByRole("button", { name: /conversation|always/i })).toBeNull();
-    expect(screen.getByText(/Anthropic: deployment config/)).toBeTruthy();
+    expect(screen.queryByRole("button", { name: /conversation|always|Approve|Deny/i })).toBeNull();
+    expect(screen.getByRole("button", { name: "Cancel" })).toBeTruthy();
+    expect(screen.getByText(/Secure input: Anthropic: deployment config/)).toBeTruthy();
     await userEvent.setup().type(input, SECRET);
     expect(approve.disabled).toBe(false);
   });
 
-  it("posts the values once with the approve and clears them from the cache", async () => {
+  it("posts the values once with the approve decision and clears them from the cache", async () => {
     const calls = stubApi({
       "GET /api/v1/orgs/o1/approvals/ap1": () => json(200, { approval: APPROVAL() }),
       "POST /api/v1/orgs/o1/approvals/ap1/decision": () => json(200, { approval: DECIDED }),
@@ -97,7 +104,7 @@ describe("ApprovalCard: person fields", () => {
     renderPage(<ApprovalCard orgId="o1" item={item} />, { locale: "en" });
     const user = userEvent.setup();
     await user.type(await field(), SECRET);
-    await user.click(screen.getByRole("button", { name: "Approve" }));
+    await user.click(screen.getByRole("button", { name: "Submit" }));
     await waitFor(() => expect(calls.some((c) => c.method === "POST")).toBe(true));
     expect(bodyOf(calls.find((c) => c.method === "POST"))).toEqual({
       decision: "approve",
@@ -105,6 +112,7 @@ describe("ApprovalCard: person fields", () => {
       inputs: { apiKey: SECRET },
     });
     await waitFor(() => expect(screen.queryByLabelText("API key")).toBeNull());
+    expect(await screen.findByText(/Submitted/)).toBeTruthy();
     expect(
       JSON.stringify(
         currentPageClient()
@@ -151,14 +159,14 @@ describe("ApprovalCard: person fields", () => {
     renderPage(<ApprovalCard orgId="o1" item={item} />, { locale: "zh" });
     const user = userEvent.setup();
     await user.type(await screen.findByLabelText("API 密钥"), SECRET);
-    await user.click(screen.getByRole("button", { name: "批准" }));
+    await user.click(screen.getByRole("button", { name: "提交" }));
     expect(
       await screen.findByText("这个值在对话里出现过，视为已泄露。请到服务商那里新建一个再填写。"),
     ).toBeTruthy();
-    expect(screen.getByRole("button", { name: "批准" })).toBeTruthy();
-    // the leaked value is cleared, the refusal stays, and Approve waits for a new value
+    expect(screen.getByRole("button", { name: "提交" })).toBeTruthy();
+    // the leaked value is cleared, the refusal stays, and Submit waits for a new value
     expect(((await screen.findByLabelText("API 密钥")) as HTMLInputElement).value).toBe("");
-    expect(screen.getByRole("button", { name: "批准" }).hasAttribute("disabled")).toBe(true);
+    expect(screen.getByRole("button", { name: "提交" }).hasAttribute("disabled")).toBe(true);
   });
 
   it("shows an invalid value's problem under its field", async () => {
@@ -176,11 +184,11 @@ describe("ApprovalCard: person fields", () => {
     renderPage(<ApprovalCard orgId="o1" item={item} />, { locale: "en" });
     const user = userEvent.setup();
     await user.type(await field(), "x");
-    await user.click(screen.getByRole("button", { name: "Approve" }));
+    await user.click(screen.getByRole("button", { name: "Submit" }));
     expect(await screen.findByText("API key is too short.")).toBeTruthy();
   });
 
-  it("Deny posts no inputs", async () => {
+  it("Cancel posts a deny without inputs", async () => {
     const calls = stubApi({
       "GET /api/v1/orgs/o1/approvals/ap1": () => json(200, { approval: APPROVAL() }),
       "POST /api/v1/orgs/o1/approvals/ap1/decision": () =>
@@ -189,9 +197,61 @@ describe("ApprovalCard: person fields", () => {
     renderPage(<ApprovalCard orgId="o1" item={item} />, { locale: "en" });
     const user = userEvent.setup();
     await user.type(await field(), SECRET);
-    await user.click(screen.getByRole("button", { name: /^Deny/ }));
-    await user.click(await screen.findByRole("button", { name: "Deny" }));
+    await user.click(screen.getByRole("button", { name: "Cancel" }));
     await waitFor(() => expect(calls.some((c) => c.method === "POST")).toBe(true));
     expect(bodyOf(calls.find((c) => c.method === "POST"))).toEqual({ decision: "deny" });
+    expect(await screen.findByText(/Cancelled/)).toBeTruthy();
+  });
+
+  it("a leaked field of the read approval shows its error on reload and stays empty", async () => {
+    stubApi({
+      "GET /api/v1/orgs/o1/approvals/ap1": () =>
+        json(200, { approval: APPROVAL({ leakedFields: ["apiKey"] }) }),
+    });
+    renderPage(<ApprovalCard orgId="o1" item={item} />, { locale: "en" });
+    expect(((await field()) as HTMLInputElement).value).toBe("");
+    expect(screen.getByText(/appeared in the conversation/)).toBeTruthy();
+  });
+
+  it("a decided request reads Submitted without reading the approval's fields", async () => {
+    stubApi({});
+    renderPage(
+      <ApprovalCard
+        orgId="o1"
+        item={{
+          ...item,
+          decided: {
+            approvalId: "ap1",
+            callId: "call_1",
+            decision: "approved",
+            byAccountId: "a1",
+          },
+          decidedAt: EXPIRES,
+        }}
+      />,
+      { locale: "zh" },
+    );
+    expect(await screen.findByText(/已提交/)).toBeTruthy();
+    expect(screen.queryByRole("button", { name: "提交" })).toBeNull();
+  });
+
+  it("a tool approval the review model was unsure about says so", async () => {
+    stubApi({
+      "GET /api/v1/orgs/o1/approvals/ap1": () =>
+        json(200, {
+          approval: {
+            ...APPROVAL({ kind: "tool", input: {}, reviewUnsure: true }),
+            personFields: undefined,
+            personTarget: undefined,
+          },
+        }),
+    });
+    renderPage(<ApprovalCard orgId="o1" item={{ ...omitSecure(item), input: {} }} />, {
+      locale: "en",
+    });
+    expect(
+      await screen.findByText("The review model wasn't sure, so it's your call."),
+    ).toBeTruthy();
+    expect(screen.getByRole("button", { name: "Approve" })).toBeTruthy();
   });
 });

@@ -245,7 +245,7 @@ export function usePermissionChoice(input: PermissionChoiceInput): {
    */
   selection: PermissionSelection | null;
   /**
-   * Drops a Auto consent back to Approve for me (the kernel refused the displayed scope);
+   * Drops an Auto consent back to Approve for me (the kernel refused the displayed scope);
    * any other choice stays. Consent is only ever given again through the dialog, which the next
    * Auto selection shows again.
    */

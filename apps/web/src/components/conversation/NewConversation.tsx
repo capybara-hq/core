@@ -107,7 +107,7 @@ export function orderAgents(
  * (`first-message-attempt.ts`): its id and request bytes are frozen once. No answer leaves its
  * outcome unknown and an unchanged send retries it with the same bytes (the kernel answers the
  * same conversation); a changed send is a new request with a new id, and the earlier one keeps
- * its Retry original. A 409 drops a Auto consent and reads the device's scope again: the
+ * its Retry original. A 409 drops an Auto consent and reads the device's scope again: the
  * person consents again through the dialog, nothing resends on its own.
  *
  * The send is instant (conversation send spec §2.1): the page switches to the conversation layout

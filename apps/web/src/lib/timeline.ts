@@ -204,6 +204,8 @@ export interface ApprovalItem {
   network?: { hosts: string[] };
   /** A command review ask (auto mode spec §5.4): what is held and why. */
   command?: CommandAsk;
+  /** A secure input request: what the values are for and the field paths (never a value). */
+  secureInput?: { target: { zh: string; en: string }; fields: string[] };
   decided: ApprovalDecision | null;
   decidedAt: string | null;
 }
@@ -412,6 +414,19 @@ export type TimelineEntry =
       callId: string;
       title: string;
       target: HandoffTarget;
+    }
+  | {
+      /**
+       * A `Platform` operation's result the run's person reads once (`tool_result.view` kind
+       * `reveal`), by call, under the group that holds the call. `starterAccountId` is the run's
+       * person when the log names them.
+       */
+      kind: "reveal";
+      key: string;
+      callId: string;
+      runId: string;
+      reveal: "initial_password" | "invitation_link";
+      starterAccountId?: string;
     }
   | {
       /** A group's files: inline images (and generating placeholders) in call order, then the rest. */
@@ -824,6 +839,7 @@ export function buildEventTimeline(
   const groupFacts = new Map<string, Extract<TimelineEntry, { kind: "network-facts" }>[]>();
   const groupDeviceCodes = new Map<string, Extract<TimelineEntry, { kind: "device-code" }>[]>();
   const groupHandoffs = new Map<string, Extract<TimelineEntry, { kind: "handoff" }>[]>();
+  const groupReveals = new Map<string, Extract<TimelineEntry, { kind: "reveal" }>[]>();
   /** The last user message (Retry repeats it). */
   let lastUser: RetryMessage | null = null;
   /** Plain user bubbles by seq, and the fork invocations (phase D: who waits for a sub-agent). */
@@ -1286,6 +1302,27 @@ export function buildEventTimeline(
           });
           groupHandoffs.set(c.group, list);
         }
+        if (view?.kind === "reveal" && !p.isError && e.runId !== null) {
+          const list = groupReveals.get(c.group) ?? [];
+          const starter = starters.get(e.runId);
+          list.push({
+            kind: "reveal",
+            key: `${key}:reveal`,
+            callId: p.callId,
+            runId: e.runId,
+            reveal: view.reveal,
+            ...(starter !== undefined ? { starterAccountId: starter } : {}),
+          });
+          groupReveals.set(c.group, list);
+        }
+        break;
+      }
+      case "tool_ask_decided": {
+        // the profile approved the call without asking: the row says so, neutrally
+        const c = calls.get(callKey(e.runId, e.payload.callId));
+        if (c && e.payload.outcome === "allow")
+          c.tool.row.approvedBy =
+            e.payload.decisionSource === "full-access" ? "auto" : "review-model";
         break;
       }
       case "network_blocked": {
@@ -1537,6 +1574,14 @@ export function buildEventTimeline(
               ? { network: { hosts: [...e.payload.network.hosts] } }
               : {}),
             ...(e.payload.command !== undefined ? { command: e.payload.command } : {}),
+            ...(e.payload.secureInput !== undefined
+              ? {
+                  secureInput: {
+                    target: e.payload.secureInput.target,
+                    fields: [...e.payload.secureInput.fields],
+                  },
+                }
+              : {}),
             ...approverField(e.payload),
             decided: null,
             decidedAt: null,
@@ -1770,6 +1815,7 @@ export function buildEventTimeline(
     groupFacts.size === 0 &&
     groupDeviceCodes.size === 0 &&
     groupHandoffs.size === 0 &&
+    groupReveals.size === 0 &&
     !shown.some((entry) => entry.kind === "tools" && entry.rows.some(generating))
   )
     return { entries: shown, modelOf };
@@ -1810,6 +1856,7 @@ export function buildEventTimeline(
     for (const fact of groupFacts.get(entry.key) ?? []) withExtras.push(fact);
     for (const device of groupDeviceCodes.get(entry.key) ?? []) withExtras.push(device);
     for (const handoff of groupHandoffs.get(entry.key) ?? []) withExtras.push(handoff);
+    for (const reveal of groupReveals.get(entry.key) ?? []) withExtras.push(reveal);
   }
   return { entries: withExtras, modelOf };
 }

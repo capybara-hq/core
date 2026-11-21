@@ -180,19 +180,10 @@ export type ApprovalBlockProps = {
     submitDisabled?: boolean;
   };
   /**
-   * @deprecated Use {@link secureInput}; the tool approval variant no longer carries person
-   * fields. Kept until the web's approval card moves over, then removed.
-   */
-  personFields?: SecureInputField[];
-  /** @deprecated Use {@link secureInput}. */
-  personTarget?: string;
-  /**
    * The file the call takes in place of an upload (name, size, the sha256 the approval binds, an
    * image's WebP data URL): a row above the actions so the person sees what they approve.
    */
   file?: { name: string; size: number; sha256: string; thumbnail?: string | undefined };
-  /** Approve stays disabled (Deny does not): person fields not all filled yet. */
-  approveDisabled?: boolean;
   /** `hosts`: a network ask's checked hosts (every host when it has one). */
   onApprove?(scope: ApprovalScope, hosts?: string[]): void;
   onDeny?(reason?: string): void;
@@ -570,7 +561,7 @@ export function ApprovalBlock(p: ApprovalBlockProps): JSX.Element {
             <ScopeChoice
               key={scope}
               primary={i === 0}
-              disabled={busy || p.approveDisabled === true}
+              disabled={busy}
               label={p.scopeLabels?.[scope] ?? t(SCOPE_LABEL[scope])}
               hint={undefined}
               onClick={() => p.onApprove?.(scope)}
@@ -649,27 +640,6 @@ export function ApprovalBlock(p: ApprovalBlockProps): JSX.Element {
         </div>
       )}
       {p.file ? <ApprovalFileRow file={p.file} /> : null}
-      {p.personFields && p.personFields.length > 0 ? (
-        <div className="cb-hcard-person" data-part="person-fields">
-          <span className="cb-muted cb-small" data-part="person-note">
-            {p.personTarget
-              ? fillCopy(t("hitl.personTarget"), { target: p.personTarget })
-              : t("hitl.personNote")}
-          </span>
-          {p.personFields.map((f) => (
-            <PersonFieldRow
-              key={f.path}
-              label={f.label}
-              description={f.description}
-              multiline={f.multiline}
-              value={f.value}
-              error={f.error}
-              disabled={busy}
-              onChange={f.onChange}
-            />
-          ))}
-        </div>
-      ) : null}
       {actions}
       {denying ? null : (
         <ScopeHintLines

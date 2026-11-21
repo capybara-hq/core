@@ -48,6 +48,8 @@ import { ApprovalCard } from "../ApprovalCard";
 import { ConnectCard } from "../ConnectCard";
 import { DeviceCodeCard } from "../DeviceCodeCard";
 import { HandoffCard } from "../HandoffCard";
+import { InitialPasswordReveal } from "../InitialPasswordReveal";
+import { InvitationLinkReveal } from "../InvitationLinkReveal";
 import { Person } from "../Person";
 import { QuestionCard } from "../QuestionCard";
 import { useOpenDownload } from "../SessionFilePreview";
@@ -877,6 +879,8 @@ function EntryNode({ e, c }: { e: TimelineEntry; c: EntryContext }): ReactNode {
         return <DeviceCodeCard url={e.url} code={e.code} />;
       case "handoff":
         return <HandoffCard orgId={orgId} title={e.title} target={e.target} />;
+      case "reveal":
+        return <RevealEntry orgId={orgId} conversationId={conversationId} entry={e} />;
       case "files":
         return files(e);
       case "divider":
@@ -908,6 +912,29 @@ function EntryNode({ e, c }: { e: TimelineEntry; c: EntryContext }): ReactNode {
   };
 
   return entry(e);
+}
+
+/**
+ * What a call's result shows its run's person once (the initial password, the invitation link),
+ * read by call. Anyone else sees nothing: the kernel refuses them anyway.
+ */
+function RevealEntry({
+  orgId,
+  conversationId,
+  entry,
+}: {
+  orgId: string;
+  conversationId: string;
+  entry: Extract<TimelineEntry, { kind: "reveal" }>;
+}): ReactNode {
+  const { me } = useSession();
+  if (entry.starterAccountId !== undefined && entry.starterAccountId !== me.account.id) return null;
+  const call = { conversationId, runId: entry.runId, callId: entry.callId };
+  return entry.reveal === "initial_password" ? (
+    <InitialPasswordReveal orgId={orgId} call={call} />
+  ) : (
+    <InvitationLinkReveal orgId={orgId} call={call} />
+  );
 }
 
 /**

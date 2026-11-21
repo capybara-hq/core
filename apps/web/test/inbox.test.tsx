@@ -170,7 +170,7 @@ describe("收件箱（InboxPage）", () => {
   );
 
   it.each(LOCALES)(
-    "an approval with person fields has no Approve, one way to the conversation (%s)",
+    "a secure input request has no Submit, one way to the conversation (%s)",
     async (locale) => {
       const m = msgs[locale];
       const { container } = await renderInbox(
@@ -180,6 +180,8 @@ describe("收件箱（InboxPage）", () => {
               200,
               inbox([
                 approval("a", {
+                  kind: "secure_input",
+                  input: null,
                   personFields: [
                     {
                       path: "apiKey",
@@ -207,7 +209,7 @@ describe("收件箱（InboxPage）", () => {
       const detail = container.querySelector('[data-approval-id="a"]') as HTMLElement;
       expect(
         within(detail).getByText(
-          locale === "zh" ? "打开对话填写 2 项" : "Open the conversation to fill in 2 fields",
+          locale === "zh" ? "需要在网页填写 2 项" : "2 fields to fill in on the web",
         ),
       ).toBeTruthy();
       // one control opens the conversation: the primary action (the conversation fact stays a link)

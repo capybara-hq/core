@@ -43,36 +43,6 @@ describe("PersonFieldRow", () => {
   });
 });
 
-describe("ApprovalBlock person fields", () => {
-  it("renders one row per field inside the card without nested boxes", () => {
-    wrap(
-      <ApprovalBlock
-        tool="Platform: set config"
-        toolKey="platform__set"
-        input={{ target: "x" }}
-        scopes={["once"]}
-        state={{ kind: "pending" }}
-        personTarget="Acme"
-        personFields={[
-          { path: "apiKey", label: "API key", multiline: false, value: "", onChange: () => {} },
-          {
-            path: "cert",
-            label: "Certificate",
-            multiline: true,
-            value: "",
-            onChange: () => {},
-            error: "Bad",
-          },
-        ]}
-      />,
-    );
-    expect(screen.getByLabelText("API key")).toBeTruthy();
-    expect(screen.getByLabelText("Certificate")).toBeTruthy();
-    expect(document.querySelectorAll('[data-part="person-field"]').length).toBe(2);
-    expect(findNestedBoxes(document.body)).toEqual([]);
-  });
-});
-
 describe("person field safety properties", () => {
   const field = {
     path: "apiKey",
@@ -88,7 +58,7 @@ describe("person field safety properties", () => {
       input={{}}
       scopes={["once"]}
       state={state}
-      personFields={[field]}
+      secureInput={{ target: "t", fields: [field], onSubmit: () => {}, onCancel: () => {} }}
     />
   );
 

@@ -172,6 +172,11 @@ export type ToolView =
   /** A call to a tool the step did not load: expected behaviour, a neutral notice, not a failure. */
   | { kind: "not_loaded" }
   /**
+   * A `Platform` operation whose result the run's person reads once, by call (the initial
+   * password, the invitation link): the web draws the reveal under the tool row.
+   */
+  | { kind: "reveal"; reveal: "initial_password" | "invitation_link" }
+  /**
    * A `Platform` operation's link card (platform web parity spec §4.4, §6): the decision waits for
    * the person on a web page (`link`, a relative path) or an OAuth connect (`connect`).
    */
@@ -369,7 +374,28 @@ type EventBody =
         network?: { hosts: string[] };
         /** A command review ask: what is held and why (display only). */
         command?: CommandAsk;
+        /** A secure input request: what the values are for and the field paths (never a value). */
+        secureInput?: { target: { zh: string; en: string }; fields: string[] };
       } & Approver;
+    }
+  /**
+   * An approval addressed to the conversation's person that the profile decided without asking
+   * (Auto, or the review model under Approve for me). Display and audit only.
+   */
+  | {
+      type: "tool_ask_decided";
+      payload: {
+        step: number;
+        callId: string;
+        toolKey: string;
+        specHash: string;
+        bindingHash: string;
+        outcome: "allow" | "deny";
+        decisionSource: "review-model" | "full-access";
+        reason: string;
+        profileRevision: number;
+        fileSha256?: string;
+      };
     }
   | {
       type: "approval_decided";
