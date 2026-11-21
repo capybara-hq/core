@@ -234,39 +234,30 @@ describe("the scheme toggle under a single-scheme theme (usePreferences)", () =>
 });
 
 describe("themeIcons", () => {
-  it("a theme's favicon is the page icon; none leaves the app's icon", () => {
-    const favicon = "/api/v1/themes/t-night/1.0.0/assets/favicon.png";
-    const logo = {
-      markUrl: null,
-      wordmark: null,
-      faviconUrl: favicon,
-      illustrationUrl: null,
-      appIconUrl: null,
-      appIconMaskableUrl: null,
-    };
-    expect(themeIcons({ ...NEON_GRID, logo })).toEqual({ icons: { icon: favicon } });
-    expect(themeIcons(NEON_GRID)).toEqual({});
-    expect(themeIcons(null)).toEqual({});
+  const favicon = "/api/v1/themes/t-night/1.0.0/assets/favicon.png";
+  const logo = {
+    markUrl: null,
+    wordmark: null,
+    faviconUrl: favicon,
+    illustrationUrl: null,
+    appIconUrl: null,
+    appIconMaskableUrl: null,
+  };
+  const base = {
+    icon: [{ url: "/icon.svg", type: "image/svg+xml" }],
+    apple: [{ url: "/icon-512.png", sizes: "512x512", type: "image/png" }],
+  };
+
+  it("a theme's favicon replaces the base icon and keeps its apple-touch-icon", () => {
+    expect(themeIcons({ ...NEON_GRID, logo }, base)).toEqual({
+      icons: { icon: favicon, apple: base.apple },
+    });
   });
 
-  it("a theme's favicon replaces the parent's icon and keeps its apple-touch-icon", () => {
-    const favicon = "/api/v1/themes/t-night/1.0.0/assets/favicon.png";
-    const logo = {
-      markUrl: null,
-      wordmark: null,
-      faviconUrl: favicon,
-      illustrationUrl: null,
-      appIconUrl: null,
-      appIconMaskableUrl: null,
-    };
-    const parent = {
-      icon: [{ url: "/icon.svg", type: "image/svg+xml" }],
-      apple: [{ url: "/icon-512.png", sizes: "512x512", type: "image/png" }],
-    };
-    expect(themeIcons({ ...NEON_GRID, logo }, parent)).toEqual({
-      icons: { icon: favicon, apple: parent.apple },
-    });
-    expect(themeIcons(NEON_GRID, parent)).toEqual({});
+  it("a route-group layout always sets icon: without a theme favicon, the platform's", () => {
+    // a stale cookie favicon in the root layout's icons never survives a themed document
+    expect(themeIcons(NEON_GRID, base)).toEqual({ icons: base });
+    expect(themeIcons(null, base)).toEqual({ icons: base });
   });
 });
 

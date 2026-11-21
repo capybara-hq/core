@@ -7,8 +7,10 @@ import { ClientHostRoot } from "../../components/client-ext/ClientHost";
 import { HydrateCache } from "../../components/HydrateCache";
 import { AppFrame } from "../../components/shell/AppFrame";
 import { KernelStarting } from "../../components/shell/KernelStarting";
+import { StaticTheme } from "../../components/static-theme";
 import { ThemeRoot } from "../../components/theme-root";
 import { setupReady } from "../../lib/agents";
+import { BRAND_COOKIE, decodeBrandCookie } from "../../lib/brand-cookie";
 import { matchRoute } from "../../lib/query/routes";
 import { HOME_PATH } from "../../lib/routes";
 import { clientHost } from "../../lib/server/client-host";
@@ -22,12 +24,15 @@ import {
 } from "../../lib/server/page";
 import { dehydrateFor, prefetchRoute, serverQueryClient } from "../../lib/server/query";
 import { getShell } from "../../lib/server/session";
-import { workspaceThemeMetadata } from "../../lib/server/theme";
+import { workspaceThemeMetadata, workspaceViewport } from "../../lib/server/theme";
 import { setupRouteOf } from "../../lib/setup-routes";
 import { isSidebarCollapsed, SIDEBAR_COOKIE } from "../../lib/sidebar-cookie";
 
-/** The viewer's theme icon, when the theme has one (themes spec §4.3). */
+/** The viewer's theme icon, when the theme has one, else the platform's (themes spec §4.3). */
 export const generateMetadata = workspaceThemeMetadata;
+
+/** The browser colour: the viewer's theme's page colour (theme brand coverage spec §6). */
+export const generateViewport = workspaceViewport;
 
 /**
  * The signed-in pages: the frame (App Shell, setup frame or org chooser) and the session context.
@@ -53,8 +58,15 @@ export default async function AppLayout({ children }: { children: ReactNode }) {
   const shell = await getShell(qc, async (session) => {
     prefetched.route = await prefetchRoute(qc, path, { ...session, locale, cookie });
   });
-  // The kernel cannot answer (starting, restarting): a frame that retries by itself (ruling R2).
-  if (shell.kind === "unavailable") return <KernelStarting />;
+  // The kernel cannot answer (starting, restarting): a frame that retries by itself (ruling R2),
+  // under the theme this browser last drew (the brand cookie; theme brand coverage spec §5).
+  if (shell.kind === "unavailable") {
+    return (
+      <StaticTheme brand={decodeBrandCookie(await currentCookie(BRAND_COOKIE))}>
+        <KernelStarting />
+      </StaticTheme>
+    );
+  }
   // While the org is not ready, a route that is no setup route goes home (the new conversation,
   // where the frame draws the setup home) before anything streams (web-SSR spec §4). Client
   // navigations don't re-render the layout: `useWorkspace()` covers them.

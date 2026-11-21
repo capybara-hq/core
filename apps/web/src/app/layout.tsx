@@ -44,7 +44,7 @@ const REGULAR_FONT = `${regularFont.pathname}${regularFont.search}`;
  * override the colour with their resolved theme's.
  */
 export async function generateViewport(): Promise<Viewport> {
-  const scheme = parseTheme((await cookies()).get(THEME_COOKIE)?.value);
+  const scheme = parseTheme(await currentCookie(THEME_COOKIE));
   return rootViewport(scheme, await outsideTheme());
 }
 

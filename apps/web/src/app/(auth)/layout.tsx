@@ -6,10 +6,13 @@ import { matchRoute } from "../../lib/query/routes";
 import { platformThemeQuery } from "../../lib/query/themes";
 import { currentPath } from "../../lib/server/page";
 import { dehydrateFor, prefetchRoute, serverQueryClient } from "../../lib/server/query";
-import { platformThemeMetadata } from "../../lib/server/theme";
+import { platformThemeMetadata, platformViewport } from "../../lib/server/theme";
 
-/** The platform default theme's icon, when it has one (themes spec §4.3). */
+/** The platform default theme's icon, when it has one, else the platform's (themes spec §4.3). */
 export const generateMetadata = platformThemeMetadata;
+
+/** The browser colour: the platform default theme's page colour (theme brand coverage spec §6). */
+export const generateViewport = platformViewport;
 
 /**
  * The public pages (sign-in, setup, invitation, binding): on a document request, the route's
