@@ -374,7 +374,7 @@ export class SetupGuidesService {
       target: g.target,
       hash: g.hash,
       webPath,
-      handover: `Secrets (tokens, signing secrets, client secrets) are typed by the person into their fields on ${webPath}; never ask for one in the conversation. A secret field a write takes as a person field is typed on the Platform confirmation card instead. Connecting a personal account is connectors.connect (a Connect button for the person); confirming the app was updated is the person's statement on the card of channels.guide-ack or connectors.guide-ack.`,
+      handover: `Secrets (tokens, signing secrets, client secrets) are typed by the person into their fields on ${webPath}; never ask for one in the conversation. A secret field a write takes as a person field is typed in the Platform tool's secure input request instead. Connecting a personal account is connectors.connect (a Connect button for the person); confirming the app was updated is the person's statement on the card of channels.guide-ack or connectors.guide-ack.`,
     };
   }
 }

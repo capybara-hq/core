@@ -608,7 +608,7 @@ export class OrgsOperations implements OnModuleInit {
         mirrors: ["POST /api/v1/orgs/:orgId/invitations"],
         confirm: "org",
         rememberable: false,
-        revealsToApprover: "invitation_link",
+        revealsOnce: "invitation_link",
         errors: [
           {
             code: "member.role_above_actor",

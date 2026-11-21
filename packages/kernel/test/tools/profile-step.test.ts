@@ -747,7 +747,7 @@ describe("what the profile never decides", () => {
     expect(await decisionsOf(conv)).toEqual([]);
   });
 
-  it("Auto: a Platform call with person fields runs its consent, never its secure input", async () => {
+  it("Auto decides the consent of a Platform call with person fields and still raises the secure input", async () => {
     const agentId = await createAgent();
     script("p-secret", "Platform", {
       action: "call",

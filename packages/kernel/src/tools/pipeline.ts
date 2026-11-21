@@ -251,13 +251,13 @@ export const PERSON_FIELDS_ROLE_TEXT =
   "This write needs the person you work for to enter values; they lack the role. Ask an admin to do it on the web.";
 /**
  * A call only the person may confirm (`CallPolicy.personOnly`: its result is shown once to the
- * approver) in an unattended run: nobody is there to approve and read it.
+ * run's person) in an unattended run: nobody is there to read it.
  */
 export const PERSON_ONLY_UNATTENDED_TEXT =
-  "This write shows its result once, on the web, to the person who approves it; it cannot run unattended.";
+  "This write shows its result once, on the web, to the person you work for, and no one is there to read it; it cannot run unattended.";
 /** A call only the person may confirm whose ask would go to a role instead of the person. */
 export const PERSON_ONLY_ROLE_TEXT =
-  "This write shows its result once to the person you work for, who must approve it; they lack the role. Ask an admin to do it on the web.";
+  "This write shows its result once to the person you work for, so it runs only for them, and they lack the role. Ask an admin to do it on the web.";
 /**
  * The review model declined, under Approve for me, a call whose approval would have gone to the
  * person (profiles govern every approval, R3): nothing ran.
@@ -2973,6 +2973,9 @@ export class ToolPipeline {
       si !== null &&
       si.specHash === tool.specHash &&
       canonicalJson(si.input) === canonicalJson(call.input ?? {});
+    // only a submitted request is re-asked when stale: a pending one keeps waiting (the person
+    // still sees and may submit it; the stale check then asks again), and a cancelled or expired
+    // one ends the call, as a decided approval keeps governing its call
     if (si === null || (si.status === "approved" && !current)) {
       si = await this.deps.approvals.requestSecureInput({
         attempt: (await this.lastAttempt(ctx.runId, call.id)) + 1,
@@ -3026,24 +3029,21 @@ export class ToolPipeline {
   }
 
   /**
-   * A decided approval other than approved → the model's text; still pending → null (wait). A
-   * person field refused on the card as leaked is named, so the agent has the key rotated.
+   * A decided tool approval other than approved → the model's text; still pending → null (wait).
+   * A tool approval takes no values (a secure input does), so it never names leaked fields.
    */
   private refusalText(a: ApprovalRecord): string | null {
-    const text = ((): string | null => {
-      switch (a.status) {
-        case "denied":
-          return approvalDeniedText(a.denyReason);
-        case "expired":
-          // Use the approval's own wait (creation to expiry), not the current config: it can be hot-reloaded
-          return approvalExpiredText(approvalHours(a));
-        case "cancelled":
-          return APPROVAL_CANCELLED_TEXT;
-        default:
-          return null;
-      }
-    })();
-    return text === null ? null : withLeakedOnCard(text, a.leakedFields);
+    switch (a.status) {
+      case "denied":
+        return approvalDeniedText(a.denyReason);
+      case "expired":
+        // Use the approval's own wait (creation to expiry), not the current config: it can be hot-reloaded
+        return approvalExpiredText(approvalHours(a));
+      case "cancelled":
+        return APPROVAL_CANCELLED_TEXT;
+      default:
+        return null;
+    }
   }
 
   /**

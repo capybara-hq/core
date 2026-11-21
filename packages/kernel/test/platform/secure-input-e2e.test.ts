@@ -18,6 +18,7 @@ import { StorageService } from "../../src/storage/storage.service.js";
 import { PERSON_INPUTS_EXPIRED_TEXT } from "../../src/tools/builtins/platform.js";
 import {
   APPROVAL_CANCELLED_TEXT,
+  leakedOnCardText,
   PERSON_FIELDS_ROLE_TEXT,
   PERSON_FIELDS_UNATTENDED_TEXT,
   PERSON_ONLY_ROLE_TEXT,
@@ -25,6 +26,7 @@ import {
   secureInputCancelledText,
   secureInputExpiredText,
   TOOL_PIPELINE_HOOKS,
+  toolReviewDeniedText,
 } from "../../src/tools/pipeline.js";
 import { createDecidePolicy } from "../../src/tools/policy.js";
 import { TOOL_REVIEW_SYSTEM_PROMPT } from "../../src/tools/tool-review.js";
@@ -102,12 +104,13 @@ const probe = defineOperation({
   personFields: async () => personTarget(),
   run: async (input, ctx) => {
     const pi = ctx.personInputs;
-    // `baseUrl: "mode:skip"` picks a handler that never applies the values
+    // `baseUrl` picks a misbehaving handler: one that never applies the values, or applies twice
     if (pi !== undefined && input.values.baseUrl === "mode:skip") {
       seen.push({ op: OP, value: "skipped" });
       return { stored: false };
     }
     const value = pi === undefined ? null : await pi.apply(async (v) => v.apiKey ?? null);
+    if (pi !== undefined && input.values.baseUrl === "mode:twice") await pi.apply(async () => null);
     seen.push({ op: OP, value });
     return { stored: true };
   },
@@ -450,6 +453,8 @@ describe("secure input under each profile", () => {
     expect((await submit(si.id)).statusCode).toBe(200);
     await settled(convId);
     expect(seen.slice(before)).toEqual([{ op: OP, value: SECRET }]);
+    // the resumed call reused the recorded decision: one event for the call
+    expect(await decisionsOf(convId)).toHaveLength(1);
     const result = await lastResult(convId);
     expect(result?.isError).toBe(false);
     expect(result?.content).toContain(`Secure input ${si.id}: submitted.`);
@@ -475,7 +480,49 @@ describe("secure input under each profile", () => {
     await settled(convId);
     expect(seen.slice(before)).toEqual([{ op: OP, value: SECRET }]);
     expect((await lastResult(convId))?.isError).toBe(false);
+    expect(await decisionsOf(convId)).toHaveLength(1);
     scriptRules([]);
+  });
+
+  it("Approve for me with a deny: the deny text, and no secure input is raised", async () => {
+    scriptRules([
+      {
+        when: { systemIncludes: TOOL_REVIEW_SYSTEM_PROMPT },
+        reply: { text: JSON.stringify({ decision: "deny", reason: "Not asked for." }) },
+      },
+    ]);
+    const before = seen.length;
+    const convId = await probeCall("approve-for-me");
+    await settled(convId);
+    scriptRules([]);
+    expect(await approvalsOf(convId)).toEqual([]);
+    expect(await decisionsOf(convId)).toEqual([
+      expect.objectContaining({ outcome: "deny", decisionSource: "review-model" }),
+    ]);
+    expect(await lastResult(convId)).toMatchObject({
+      isError: true,
+      content: toolReviewDeniedText("Not asked for."),
+    });
+    expect(seen.slice(before)).toEqual([]);
+  });
+
+  it("an agent's allow override lifts neither the consent nor the secure input", async () => {
+    const allowed = await createAgent("Allowed");
+    // the route refuses to save an override on a builtin, so it is written into the stored version
+    await sql`UPDATE capybara.agent_versions
+      SET definition = jsonb_set(definition, '{toolPolicies}',
+        ${JSON.stringify({ Platform: "allow", [`Platform:${OP}`]: "allow" })}::jsonb)
+      WHERE agent_id = ${allowed}`.execute(db);
+    const before = seen.length;
+    const convId = await probeCall("request-approval", { askPerson: ["apiKey"] }, allowed);
+    // an agent override only tightens: the consent is still asked
+    const consent = await pending(convId, "tool");
+    expect((await decide(consent.id, { decision: "approve", scope: "once" })).statusCode).toBe(200);
+    const si = await pending(convId, "secure_input");
+    expect(seen.slice(before)).toEqual([]);
+    expect((await submit(si.id)).statusCode).toBe(200);
+    await settled(convId);
+    expect(seen.slice(before)).toEqual([{ op: OP, value: SECRET }]);
   });
 
   it("a remembered grant skips the consent, never the secure input", async () => {
@@ -596,7 +643,7 @@ describe("secure input values", () => {
     expect(seen.slice(before)).toEqual([]);
   });
 
-  it("a handler that never applies the values says so, without the submitted line", async () => {
+  it("a handler that never applies the values says so, without the entered line", async () => {
     const convId = await probeCall("full-access", {
       values: { baseUrl: "mode:skip" },
       askPerson: ["apiKey"],
@@ -609,6 +656,109 @@ describe("secure input values", () => {
     expect(result?.content).toContain(`Secure input ${si.id}: submitted.`);
     expect(result?.content).toContain(`The values the person entered were not used by ${OP}.`);
     expect(result?.content).not.toContain("entered by the person`");
+  });
+});
+
+describe("leaked values", () => {
+  const LEAKED_TEXT = leakedOnCardText("apiKey");
+
+  /**
+   * A conversation on Auto where the person first posted `leaked`, then the probe call; the person
+   * submits the leaked value, which is refused. Returns the conversation and the request.
+   */
+  async function leakedRequest(leaked: string) {
+    const convId = await conversation("full-access");
+    await postMessage(owner, orgId, convId, `my key is ${leaked}`);
+    await waitForTerminal(db, convId, 1, 30_000);
+    await postMessage(owner, orgId, convId, callText(OP, { askPerson: ["apiKey"] }));
+    const si = await pending(convId, "secure_input");
+    const res = await submit(si.id, { apiKey: leaked });
+    expect(res.statusCode, res.body).toBe(422);
+    expect(JSON.parse(res.body)).toMatchObject({ error: { code: "approval.input_leaked" } });
+    expect(res.body).not.toContain(leaked);
+    return { convId, si };
+  }
+
+  it("a leak refusal followed by Cancel: the result tells the agent to have the key rotated", async () => {
+    const leaked = "sk-leak-cancel-Ru27Ma44";
+    const { convId, si } = await leakedRequest(leaked);
+    expect((await decide(si.id, { decision: "deny" })).statusCode).toBe(200);
+    await waitForTerminal(db, convId, 2, 30_000);
+    const result = await lastResult(convId);
+    expect(result).toMatchObject({
+      isError: true,
+      content: `${secureInputCancelledText(si.id)}\n${LEAKED_TEXT}`,
+    });
+    expect(result?.content).not.toContain(leaked);
+  });
+
+  it("a leak refusal followed by expiry: the result carries the copy", async () => {
+    const { convId, si } = await leakedRequest("sk-leak-expire-Bt63Wn18");
+    await sql`UPDATE capybara.approvals SET expires_at = now(), created_at = now() - interval '24 hours'
+      WHERE id = ${si.id}`.execute(db);
+    await k.app.get(Waits).expire("approval", si.id);
+    await waitForTerminal(db, convId, 2, 30_000);
+    expect(await lastResult(convId)).toMatchObject({
+      isError: true,
+      content: `${secureInputExpiredText(si.id, 24)}\n${LEAKED_TEXT}`,
+    });
+  });
+
+  it("a leak refusal followed by a stop: the cancelled result carries the copy", async () => {
+    const leaked = "sk-leak-stop-Hc90Ze35";
+    const { convId } = await leakedRequest(leaked);
+    const res = await owner({
+      method: "POST",
+      url: `/api/v1/orgs/${orgId}/conversations/${convId}/abort`,
+    });
+    expect(res.statusCode, res.body).toBe(202);
+    await waitForTerminal(db, convId, 2, 30_000);
+    const result = await lastResult(convId);
+    expect(result?.content).toContain(APPROVAL_CANCELLED_TEXT);
+    expect(result?.content).toContain(LEAKED_TEXT);
+    expect(result?.content).not.toContain(leaked);
+  });
+
+  it("a second apply is a programming error, not the expired text", async () => {
+    const convId = await probeCall("full-access", {
+      values: { baseUrl: "mode:twice" },
+      askPerson: ["apiKey"],
+    });
+    const si = await pending(convId, "secure_input");
+    expect((await submit(si.id)).statusCode).toBe(200);
+    await settled(convId);
+    const result = await lastResult(convId);
+    expect(result?.isError).toBe(true);
+    expect(result?.content).not.toContain(PERSON_INPUTS_EXPIRED_TEXT);
+    expect(result?.content).not.toContain(SECRET);
+    expect(lines.join("\n")).toContain("personInputs.apply called twice");
+  });
+
+  it("submits with values on a 5,000-event conversation tree", async () => {
+    const convId = await probeCall("full-access");
+    const si = await pending(convId, "secure_input");
+    // the events go into a sub-agent conversation of the tree: the leak check reads the whole
+    // tree, and the waiting run's own log stays as it is
+    const child = randomUUID();
+    await db
+      .insertInto("conversations")
+      .values({
+        id: child,
+        org_id: orgId,
+        agent_id: agentId,
+        account_id: ownerId,
+        source: "web",
+        kind: "subagent",
+        parent_conversation_id: convId,
+      })
+      .execute();
+    await sql`INSERT INTO capybara.conversation_events (conversation_id, seq, type, payload)
+      SELECT ${child}, g, 'tool_result',
+        jsonb_build_object('type', 'tool_result', 'output', repeat('lorem ipsum ', 80) || g)
+      FROM generate_series(1, 5000) g`.execute(db);
+    expect((await submit(si.id, { apiKey: "sk-big-tree-Pq52Ld09" })).statusCode).toBe(200);
+    await settled(convId);
+    expect((await lastResult(convId))?.isError).toBe(false);
   });
 });
 

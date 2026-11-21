@@ -798,7 +798,7 @@ describe("secure input, automatic decisions and reveals (profiles govern every a
     mirrors: [],
     confirm: "personal",
     summary: () => ({ zh: "Reveal once", en: "Reveal once" }),
-    revealsToApprover: "invitation_link",
+    revealsOnce: "invitation_link",
     run: async () => ({ link: "shown once to the person" }),
   });
   const FILE_SHA = "a".repeat(64);

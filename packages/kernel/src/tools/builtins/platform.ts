@@ -78,7 +78,7 @@ import type {
  *   shows it (`CallPolicy.file`, never remembered) and the approval binds its sha256, or, with no
  *   approval, the automatic decision does (R7). Right before `op.run` the file is read again, and
  *   bytes with another sha256 are refused.
- * - A write whose result is shown once to the run's person (`op.revealsToApprover`) carries the
+ * - A write whose result is shown once to the run's person (`op.revealsOnce`) carries the
  *   reveal view, which the web reads by the call (R6).
  * - Results are JSON text; a list an operation returns is capped at {@link LIST_MAX} entries.
  */
@@ -355,7 +355,7 @@ const unavailableOpText = (id: string, reason: string) =>
 const precheckText = (id: string, code: string, message: string, next: string | undefined) =>
   `Operation ${id} cannot run now: ${code}: ${sentence(message)} ${next ?? OPERATION_ERROR_NEXT}`;
 const secretRecordText = (id: string, path: string, target: string) =>
-  `Operation ${id} cannot run now: platform.secret_record_web_only: \`${path}\` is a secret record, which the confirmation card cannot ask for. Tell the person to enter it on the web page of ${target}.`;
+  `Operation ${id} cannot run now: platform.secret_record_web_only: \`${path}\` is a secret record, which a secure input request cannot ask for. Tell the person to enter it on the web page of ${target}.`;
 /** Model-visible: the person's values expired before the approved call ran (spec §4.3). */
 export const PERSON_INPUTS_EXPIRED_TEXT =
   "The values the person entered expired before they were applied; call the operation again.";
@@ -533,7 +533,7 @@ export function platformTool(deps: PlatformToolDeps): BuiltinTool {
       ...(personFields !== null && { personFields }),
       ...(card !== null && { file: card }),
       // its result is shown once to the run's person: only they may consent to it
-      ...(op.revealsToApprover !== undefined && { personOnly: true as const }),
+      ...(op.revealsOnce !== undefined && { personOnly: true as const }),
     };
   }
 
@@ -735,9 +735,7 @@ export function platformTool(deps: PlatformToolDeps): BuiltinTool {
     const out = withReviewUrl(asResult(withoutPersonAvatars(result)), handoff);
     // a result shown once to the run's person: the web reads it by this call (R6)
     const view: ToolView | null =
-      op.revealsToApprover !== undefined
-        ? { kind: "reveal", reveal: op.revealsToApprover }
-        : handoff;
+      op.revealsOnce !== undefined ? { kind: "reveal", reveal: op.revealsOnce } : handoff;
     return {
       content: [
         { type: "text", text: JSON.stringify(out) },

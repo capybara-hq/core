@@ -709,7 +709,7 @@ export class OrgPluginsOperations implements OnModuleInit {
       defineOperation<z.infer<typeof InstallInput>>({
         id: "plugins.install",
         description:
-          "Install a plugin in this org with its inputs (org admins; the web's install wizard): per connector template the connector's name, slug, endpoint fields and OAuth client id (templates), and the extension's org config without secrets (extensionConfig). Secrets are never params: the person enters them on the confirmation card, at connectors.<templateId>.credential.token (or .credential.username / .credential.password, .client.clientSecret) and extensionConfig.<field>. Required ones are asked even when not listed in askPerson. A plugin that needs no input is switched on with plugins.set-enabled instead.",
+          "Install a plugin in this org with its inputs (org admins; the web's install wizard): per connector template the connector's name, slug, endpoint fields and OAuth client id (templates), and the extension's org config without secrets (extensionConfig). Secrets are never params: the person enters them in a secure input request, at connectors.<templateId>.credential.token (or .credential.username / .credential.password, .client.clientSecret) and extensionConfig.<field>. Required ones are asked even when not listed in askPerson. A plugin that needs no input is switched on with plugins.set-enabled instead.",
         input: InstallInput,
         example: {
           itemId: EXAMPLE_ID,
@@ -814,7 +814,7 @@ export class OrgPluginsOperations implements OnModuleInit {
       defineOperation<z.infer<typeof ConfigureInput>>({
         id: "plugins.configure-connectors",
         description:
-          "Create the connectors an installed plugin is missing (org admins; the plugin shows needs_config, e.g. after a platform update added a connector template): per missing template its name, slug, endpoint fields and OAuth client id (templates). Credentials are never params: the person enters them on the confirmation card at connectors.<templateId>.credential.token (or .credential.username / .credential.password, .client.clientSecret). Required ones are asked even when not listed in askPerson.",
+          "Create the connectors an installed plugin is missing (org admins; the plugin shows needs_config, e.g. after a platform update added a connector template): per missing template its name, slug, endpoint fields and OAuth client id (templates). Credentials are never params: the person enters them in a secure input request at connectors.<templateId>.credential.token (or .credential.username / .credential.password, .client.clientSecret). Required ones are asked even when not listed in askPerson.",
         input: ConfigureInput,
         example: {
           itemId: EXAMPLE_ID,
