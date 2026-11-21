@@ -72,10 +72,10 @@ export interface TrustedLaunchIdentity {
   session?: { sid: number; start: number };
   process?: string;
   /**
-   * When the device recorded the launch (wall clock, epoch ms), right after the spawn: the
-   * launched process started shortly before it. With the pid it identifies that process after a
-   * restart (macOS orphan reaping, mac-orphans.ts); a pid whose process started outside that
-   * window was reused.
+   * When the launch happened (wall clock, epoch ms), read next to the spawn by whoever spawned
+   * (the macOS worker for an exec, the native launch callback for a helper): the launched process
+   * started at or just before it. With the pid it identifies that process after a restart (macOS
+   * orphan reaping, mac-orphans.ts); a leader at that pid that started later is another process.
    */
   launchedAtMs?: number;
 }
@@ -503,7 +503,7 @@ process.on('message',async message=>{try{
  }else if(message.type==='execute'){
   if(!wrapped||child||closing)throw Error('Immutable worker already consumed');
   child=spawn('/bin/bash',['-c',message.script],{cwd:message.cwd,env:message.env,detached:true,stdio:['ignore','pipe','pipe']});
-  const identity={pid:child.pid,token:randomUUID()};if(!identity.pid)throw Error('Missing trusted launch identity');
+  const identity={pid:child.pid,token:randomUUID(),launchedAtMs:Date.now()};if(!identity.pid)throw Error('Missing trusted launch identity');
   owned.set(identity.pid,identity.token);
   childClosed=new Promise(resolve=>child.once('close',async code=>{clearTimeout(timer);clearTimeout(settleTimer);await outputDone;send({event:'completed',code,timedOut,killed,outputFailed});resolve();}));
   child.once('error',error=>send({event:'error',message:String(error)}));
@@ -930,7 +930,8 @@ export async function startMacOperationWorker(
       }
       controller.signal.throwIfAborted();
       const recordLaunch = async (pid: number) => {
-        const identity = { pid, token: randomUUID() };
+        // taken synchronously right after the spawn: the helper started at or before it
+        const identity = { pid, token: randomUUID(), launchedAtMs: Date.now() };
         if (!runtime) throw new Error("Missing private supervisor");
         const ack = message(runtime, "registered");
         runtime.send({ type: "register", ...identity });
@@ -1088,7 +1089,14 @@ export async function startMacOperationWorker(
       });
       try {
         const identity = await launched;
-        registered = { pid: Number(identity.pid), token: String(identity.token) };
+        registered = {
+          pid: Number(identity.pid),
+          token: String(identity.token),
+          // the worker's own clock reading next to its spawn (the same machine's wall clock)
+          ...(Number.isSafeInteger(identity.launchedAtMs)
+            ? { launchedAtMs: Number(identity.launchedAtMs) }
+            : {}),
+        };
         await request.onLaunch(registered);
         readyResolve();
         const result = await completed;

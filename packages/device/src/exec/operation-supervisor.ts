@@ -748,8 +748,12 @@ export class MacOperationSupervisor {
               await this.serial(() => {
                 if (entry.revoked)
                   throw new SandboxScopeDeniedError("Operation revoked during launch");
-                // the wall clock, not `now` (retention): it is compared with process start times
-                entry.identity = { ...identity, launchedAtMs: Date.now() };
+                // the spawner's reading next to the spawn; a worker that reads none gets this later
+                // one (wall clock, not `now`): a late time can only make a live leader unprovable
+                entry.identity =
+                  identity.launchedAtMs === undefined
+                    ? { ...identity, launchedAtMs: Date.now() }
+                    : identity;
                 entry.state = "running";
                 this.persist();
               });

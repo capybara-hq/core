@@ -2,7 +2,11 @@ import { mkdtemp, readdir, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from "vitest";
-import type { OrphanProcesses, ProcessRow } from "../src/exec/mac-orphans.js";
+import {
+  LEGACY_MARGIN_MS,
+  type OrphanProcesses,
+  type ProcessRow,
+} from "../src/exec/mac-orphans.js";
 import { MacOperationSupervisor } from "../src/exec/operation-supervisor.js";
 import { digest } from "../src/exec/operation-types.js";
 import type { MacWorkerRequest } from "../src/exec/operation-worker.js";
@@ -1356,19 +1360,29 @@ it("prunes settled entries past retention, keeps owed ones, and a restart accept
 });
 
 describe("orphans a lost device process left behind", () => {
-  // a fake process table: killing a group removes its rows, unless the kill does not take
-  const table = (rows: ProcessRow[], opts: { killTakes?: boolean } = {}) => {
-    const killed: number[] = [];
+  // a fake process table: SIGKILL (of a process or a group) removes rows, unless kills do not take;
+  // `signals` records every signal sent, SIGSTOP included
+  const table = (rows: Omit<ProcessRow, "ppid">[], opts: { killTakes?: boolean } = {}) => {
+    const live: ProcessRow[] = rows.map((row) => ({ ppid: 1, ...row }));
+    const signals: string[] = [];
+    const remove = (match: (row: ProcessRow) => boolean) => {
+      if (opts.killTakes === false) return;
+      for (let i = live.length - 1; i >= 0; i--)
+        if (match(live[i] as ProcessRow)) live.splice(i, 1);
+    };
     const processes: OrphanProcesses = {
-      list: async () => rows.map((row) => ({ ...row })),
+      list: async () => live.map((row) => ({ ...row })),
+      signal: (pid, signal) => {
+        signals.push(`${signal} ${pid}`);
+        if (signal === "SIGKILL") remove((row) => row.pid === pid);
+      },
       killGroup: (pgid) => {
-        killed.push(pgid);
-        if (opts.killTakes === false) return;
-        for (let i = rows.length - 1; i >= 0; i--) if (rows[i]?.pgid === pgid) rows.splice(i, 1);
+        signals.push(`SIGKILL -${pgid}`);
+        remove((row) => row.pgid === pgid);
       },
       pause: async () => {},
     };
-    return { rows, killed, processes };
+    return { rows: live, signals, processes };
   };
   const entry = (operationId: string, extra: Record<string, unknown> = {}) => ({
     ref: {
@@ -1424,7 +1438,7 @@ describe("orphans a lost device process left behind", () => {
     await supervisor.settleOrphans();
     expect(supervisor.retirementObligations("next")).toBe(0);
     expect(supervisor.blockersBesidesLiveBackground("next")).toBe(0);
-    expect(t.killed).toEqual([]);
+    expect(t.signals).toEqual([]);
     // durable: a restarted program without reaping finds them settled too
     supervisor.close();
     expect(open(stateDir).retirementObligations("next")).toBe(0);
@@ -1454,13 +1468,13 @@ describe("orphans a lost device process left behind", () => {
     ]);
     const t = table([
       { pid: 62001, pgid: 1, startMs: 0 },
-      { pid: 62002, pgid: 62002, startMs: 100_000 + 61_000 },
+      { pid: 62002, pgid: 62002, startMs: 100_000 + LEGACY_MARGIN_MS + 1000 },
       { pid: 62003, pgid: 62003, startMs: 5_000_000 + 3_600_000 },
     ]);
     const supervisor = open(stateDir, t.processes);
     await supervisor.settleOrphans();
     expect(supervisor.retirementObligations("next")).toBe(0);
-    expect(t.killed).toEqual([]);
+    expect(t.signals).toEqual([]);
   });
 
   it("never kills or settles what it cannot prove ours", async () => {
@@ -1469,18 +1483,21 @@ describe("orphans a lost device process left behind", () => {
       entry("legacy", { identity: { pid: 63001, token: "t" } }),
       // the leader is gone but its group still has a member
       entry("remnant", { identity: { pid: 63002, token: "t", launchedAtMs: 50_000 } }),
+      // a live leader that looks older than its launch window (a late record, a stepped clock)
+      entry("old-looking", { identity: { pid: 63003, token: "t", launchedAtMs: 500_000 } }),
     ]);
     const t = table([
       { pid: 63001, pgid: 63001, startMs: 90_000 },
       { pid: 63010, pgid: 63002, startMs: 60_000 },
+      { pid: 63003, pgid: 63003, startMs: 500_000 - 120_000 },
     ]);
     const supervisor = open(stateDir, t.processes);
     await supervisor.settleOrphans();
-    expect(t.killed).toEqual([]);
-    expect(supervisor.retirementObligations("next")).toBe(2);
+    expect(t.signals).toEqual([]);
+    expect(supervisor.retirementObligations("next")).toBe(3);
   });
 
-  it("kills a provably ours process group, settles once it is gone, and blocks while it is not", async () => {
+  it("kills a provably ours process tree, settles once it is gone, and blocks while it is not", async () => {
     const launchedAtMs = 50_400;
     const rows = () => [
       { pid: 64001, pgid: 64001, startMs: 50_000 },
@@ -1491,16 +1508,60 @@ describe("orphans a lost device process left behind", () => {
     const refused = table(rows(), { killTakes: false });
     const blocked = open(stubborn.stateDir, refused.processes);
     await blocked.settleOrphans();
-    expect(refused.killed.length).toBeGreaterThan(0);
+    expect(refused.signals).toContain("SIGKILL 64001");
     expect(blocked.retirementObligations("next")).toBe(1);
+    // nothing was written: the journal on disk keeps the entry unsettled, identity and all
+    const kept = byId(JSON.parse(await readFile(stubborn.file, "utf8")).entries, "live");
+    expect(kept).toMatchObject({ state: "unknown", identity: { pid: 64001, launchedAtMs } });
+    expect(kept.stop).toBeUndefined();
+    blocked.close();
+    expect(open(stubborn.stateDir).retirementObligations("next")).toBe(1);
 
     const { stateDir } = await journalAt(journal);
     const t = table(rows());
     const supervisor = open(stateDir, t.processes);
     await supervisor.settleOrphans();
-    expect(t.killed).toEqual([64001]);
+    expect(t.signals).toEqual([
+      "SIGSTOP 64001",
+      "SIGSTOP 64002",
+      "SIGKILL 64001",
+      "SIGKILL 64002",
+      "SIGKILL -64001",
+    ]);
     expect(t.rows).toEqual([]);
     expect(supervisor.retirementObligations("next")).toBe(0);
+  });
+
+  it("a settlement whose journal write fails is rolled back and retried by a later pass", async () => {
+    const { stateDir, file } = await journalAt([
+      entry("a", { identity: { pid: 67001, token: "t" } }),
+    ]);
+    let failWrites = true;
+    const supervisor = new MacOperationSupervisor({
+      stateDir,
+      deviceId: "d",
+      instanceGeneration: "old",
+      now: () => 10_000_000,
+      orphans: table([]).processes,
+      beforePersist: () => {
+        if (failWrites) throw Error("disk full");
+      },
+      start: async () => {
+        throw Error("must not launch");
+      },
+    });
+    await supervisor.settleOrphans();
+    // not durable, so not settled: neither in memory nor on disk
+    expect(supervisor.retirementObligations("next")).toBe(1);
+    expect(byId(JSON.parse(await readFile(file, "utf8")).entries, "a")).toMatchObject({
+      identity: { pid: 67001 },
+    });
+    failWrites = false;
+    await supervisor.settleOrphans();
+    expect(supervisor.retirementObligations("next")).toBe(0);
+    expect(byId(JSON.parse(await readFile(file, "utf8")).entries, "a")).toMatchObject({
+      stop: { outcome: "stopped" },
+    });
   });
 
   it("a native operation that fails after its helper launched settles once the helper is gone", async () => {
@@ -1547,6 +1608,33 @@ describe("orphans a lost device process left behind", () => {
     expect(next.retirementObligations("next")).toBe(0);
   });
 
+  it("journals the launch time the spawner read next to its spawn, not a later one", async () => {
+    const stateDir = await mkdtemp(join(tmpdir(), "cap-supervisor-launch-time-"));
+    dirs.push(stateDir);
+    const supervisor = new MacOperationSupervisor({
+      stateDir,
+      deviceId: "d",
+      instanceGeneration: "g",
+      start: async (r: MacWorkerRequest) => {
+        await r.beforeLaunch();
+        await r.onLaunch({ pid: 68001, token: "child", launchedAtMs: 42_000 });
+        return {
+          ready: Promise.resolve(),
+          completion: new Promise(() => {}),
+          cancel: async () => {},
+        };
+      },
+    });
+    void supervisor.execute(foreground(stateDir, "op", Date.now() + 30_000), "hash", signal);
+    const journal = join(stateDir, `operation-journal-${digest("d")}.json`);
+    await vi.waitFor(async () =>
+      expect(byId(JSON.parse(await readFile(journal, "utf8")).entries, "op")).toMatchObject({
+        state: "running",
+        identity: { pid: 68001, launchedAtMs: 42_000 },
+      }),
+    );
+  });
+
   it("never touches an operation the current run owns live", async () => {
     const stateDir = await mkdtemp(join(tmpdir(), "cap-supervisor-live-"));
     dirs.push(stateDir);
@@ -1560,7 +1648,12 @@ describe("orphans a lost device process left behind", () => {
       start: async (r: MacWorkerRequest) => {
         await r.beforeLaunch();
         // the launched process: a group leader started just before its launch is recorded
-        t.rows.push({ pid: 66001, pgid: 66001, startMs: Math.floor(Date.now() / 1000) * 1000 });
+        t.rows.push({
+          pid: 66001,
+          ppid: 1,
+          pgid: 66001,
+          startMs: Math.floor(Date.now() / 1000) * 1000,
+        });
         await r.onLaunch({ pid: 66001, token: "child" });
         return {
           ready: Promise.resolve(),
@@ -1578,7 +1671,7 @@ describe("orphans a lost device process left behind", () => {
     );
     await vi.waitFor(() => expect(supervisor.ownership().workers).toBe(1));
     await supervisor.settleOrphans();
-    expect(t.killed).toEqual([]);
+    expect(t.signals).toEqual([]);
     finish(result);
     expect(await running).toEqual(result);
   });

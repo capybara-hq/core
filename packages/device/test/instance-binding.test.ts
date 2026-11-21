@@ -353,7 +353,12 @@ describe("device binding", () => {
     await b.bind(request(G1, B1, null), signal());
     await f.startTask(b, "op-1");
     // the next program run sees an empty process table: the lost task's process is gone
-    f.setOrphans({ list: async () => [], killGroup: () => {}, pause: async () => {} });
+    f.setOrphans({
+      list: async () => [],
+      signal: () => {},
+      killGroup: () => {},
+      pause: async () => {},
+    });
     const restarted = f.binder();
     await restarted.recover();
     const answer = await restarted.bind(request(G2, B2, G1), signal());
