@@ -1,5 +1,6 @@
-import { cleanup, render, screen, within } from "@testing-library/react";
+import { act, cleanup, render, screen, within } from "@testing-library/react";
 import { userEvent } from "@testing-library/user-event";
+import { useInsertionEffect } from "react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { TOP_BAR_FIXTURE } from "../src/fixtures/index";
 import {
@@ -365,6 +366,27 @@ describe("back never leaves the app", () => {
     rerender(shell("/agents/new"));
     expect(back().tagName).toBe("A"); // back at the deep link: up the path
     expect(back().getAttribute("href")).toBe("/agents");
+  });
+
+  it("a push from an insertion effect (Next's router updates the history there) schedules no update in it", async () => {
+    window.matchMedia = matchMediaFor(390).matchMedia;
+    window.history.replaceState(null, "", "/agents/new");
+    const nav = fakeNavigation();
+    const errors = vi.spyOn(console, "error").mockImplementation(() => {});
+    function Router({ pathname }: { pathname: string }) {
+      useInsertionEffect(() => {
+        if (window.location.pathname !== pathname) nav.push(pathname);
+      }, [pathname]);
+      return shell(pathname);
+    }
+    const { rerender } = render(<Router pathname="/agents/new" />);
+    rerender(<Router pathname="/agents/new/step" />);
+    await act(async () => {});
+    expect(errors.mock.calls.map((c) => String(c[0]))).not.toContainEqual(
+      expect.stringContaining("useInsertionEffect must not schedule updates"),
+    );
+    errors.mockRestore();
+    expect(back().tagName).toBe("BUTTON"); // the push still counts: one in-app entry behind
   });
 
   it("a replace (router.replace at the start) is no entry behind: back goes up the path", () => {
