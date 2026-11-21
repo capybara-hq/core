@@ -8,7 +8,7 @@ import {
 /** The managed task artifact placement and its pre-effect admission (cutover phase 8.2). */
 
 const scoped = (...writeRoots: string[]) => ({
-  filesystem: { kind: "scoped" as const, readRoots: writeRoots, writeRoots },
+  filesystem: { kind: "scoped" as const, projectRoot: writeRoots[0] ?? null, writeRoots },
 });
 const args = (cwd: string, taskId = "bt_abcdef") => ({
   cwd,

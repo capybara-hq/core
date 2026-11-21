@@ -947,7 +947,7 @@ export const DEVICE_DEFAULT_STATE_PATH = "~/.config/capybara-device";
 export const DEVICE_DENIED_SECRET_PATHS: readonly string[];
 
 // @public
-export const DEVICE_PROTOCOL_VERSION = 4;
+export const DEVICE_PROTOCOL_VERSION = 5;
 
 // @public
 export const DEVICE_PROVIDER_EXTENSION_POINT = "device-provider@1";
@@ -1044,7 +1044,7 @@ export interface DeviceHello extends LegacyDeviceHello {
     instanceGeneration: string | null;
     ownerCeiling: DeviceOwnerCeiling;
     permissionSupport: SandboxPermissionSupport;
-    protocol: 4;
+    protocol: typeof DEVICE_PROTOCOL_VERSION;
     runtimeIdentity?: DeviceRuntimeIdentity;
     transport: {
         maxFrameBytes: number;
@@ -2404,7 +2404,7 @@ export interface Lease {
 }
 
 // @public
-export const LEGACY_DEVICE_PROTOCOL_VERSION = 3;
+export const LEGACY_DEVICE_PROTOCOL_VERSION = 4;
 
 // @public
 export type LegacyDeviceFrame = LegacyDeviceHello | DeviceRes | LegacyDevicePolicyChanged | KernelReq | KernelCancel;
@@ -3806,7 +3806,7 @@ export type SandboxExecutionStatus = {
 // @public
 export type SandboxFileScope = {
     readonly kind: "scoped";
-    readonly readRoots: readonly string[];
+    readonly projectRoot: string | null;
     readonly writeRoots: readonly string[];
 } | {
     readonly kind: "device";

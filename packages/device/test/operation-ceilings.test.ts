@@ -5,6 +5,7 @@ import { afterEach, describe, expect, it } from "vitest";
 import {
   grantStillHolds,
   intersectOperation,
+  normalizedReadRoots,
   OUTSIDE_SANDBOX_REFUSAL,
   readStrictOwnerCeiling,
 } from "../src/exec/operation-types.js";
@@ -46,12 +47,65 @@ const scope = (roots: ReturnType<typeof osRoots>) => ({
   profile: "approve-for-me" as const,
   actor: { accountId: "a", conversationId: "root" },
   tag: "op",
-  filesystem: { kind: "scoped" as const, readRoots: [roots.workspace], writeRoots: [roots.tmp] },
+  filesystem: {
+    kind: "scoped" as const,
+    projectRoot: roots.workspace as string | null,
+    writeRoots: [roots.tmp],
+  },
   network: {
     kind: "allowlist" as const,
     hosts: ["a.example.com", "approved.test", "unknown.test"],
   },
 });
+describe("the read roots this program derives (the scope names none)", () => {
+  const roots = {
+    workspace: "/u/.capybara/workspace",
+    skills: "/u/.capybara/skills",
+    tmp: "/u/.capybara/tmp",
+  };
+  it("derives read roots from the project root, the write roots and the skills root", () => {
+    expect(
+      normalizedReadRoots(
+        { kind: "scoped", projectRoot: "/u/repo", writeRoots: ["/u/repo"] },
+        roots,
+      ),
+    ).toEqual(["/u/.capybara/skills", "/u/repo"]);
+    expect(
+      normalizedReadRoots(
+        { kind: "scoped", projectRoot: "/u/repo", writeRoots: ["/tmp/out", "/u/repo/build"] },
+        roots,
+      ),
+    ).toEqual(["/tmp/out", "/u/.capybara/skills", "/u/repo"]);
+  });
+  it("free mode reads the workspace; nested and duplicate entries collapse", () => {
+    expect(
+      normalizedReadRoots(
+        { kind: "scoped", projectRoot: null, writeRoots: [roots.workspace, roots.workspace] },
+        roots,
+      ),
+    ).toEqual([roots.skills, roots.workspace]);
+    // a project root above the skills root covers it
+    expect(
+      normalizedReadRoots({ kind: "scoped", projectRoot: "/u", writeRoots: [] }, roots),
+    ).toEqual(["/u"]);
+    expect(normalizedReadRoots({ kind: "device" }, roots)).toEqual(["/"]);
+  });
+  it("an operation grant carries the derived read roots, checked against the owner ceiling", async () => {
+    const f = await fixture();
+    const a = { operationId: "op", orgNetwork: { kind: "open-public" as const, hosts: [] } };
+    const s = scope(f.roots);
+    s.filesystem.projectRoot = null;
+    s.filesystem.writeRoots = [f.roots.workspace];
+    expect(intersectOperation(s, await f.read(), a).readRoots).toEqual(
+      [f.roots.skills, f.roots.workspace].sort(),
+    );
+    // a project root that is an owner-denied path is refused like a write root
+    s.filesystem.projectRoot = join(f.dir, "home", ".ssh");
+    const c = await f.read();
+    expect(() => intersectOperation(s, c, a)).toThrow(/denied by the owner/);
+  });
+});
+
 describe("independent owner ceiling", () => {
   it("fails closed for absent/malformed policy and freezes fresh snapshots", async () => {
     const f = await fixture();
@@ -135,7 +189,7 @@ describe("independent owner ceiling", () => {
   it("allows outside projects only under independent OS-user reach", async () => {
     const f = await fixture();
     const s = scope(f.roots);
-    s.filesystem.readRoots = [join(f.dir, "project")];
+    s.filesystem.projectRoot = join(f.dir, "project");
     const a = { operationId: "op", orgNetwork: { kind: "open-public" as const, hosts: [] } };
     expect(intersectOperation(s, await f.read(), a).readRoots).toContain(join(f.dir, "project"));
     writePolicy(join(f.dir, "state"), {
@@ -173,8 +227,8 @@ describe("independent owner ceiling", () => {
     expect(intersectOperation(own, c, a).writeRoots).toEqual(["/tmp/build"]);
     // reading one is no write
     const read = scope(f.roots);
-    read.filesystem.readRoots = ["/run/user/1000"];
-    expect(intersectOperation(read, c, a).readRoots).toEqual(["/run/user/1000"]);
+    read.filesystem.projectRoot = "/run/user/1000";
+    expect(intersectOperation(read, c, a).readRoots).toContain("/run/user/1000");
   });
   it("an escalated Full access call ignores the host baseline; the owner ceiling denies it", async () => {
     const f = await fixture();
@@ -226,7 +280,7 @@ describe("approval-only profiles: the sandbox under every profile", () => {
     };
     const g = intersectOperation(s, await f.read(), authority({ kind: "open-public", hosts: [] }));
     expect(g.full).toBe(false);
-    expect(g.readRoots).toEqual([f.roots.workspace]);
+    expect(g.readRoots).toEqual([f.roots.skills, f.roots.tmp, f.roots.workspace].sort());
     expect(g.writeRoots).toEqual([f.roots.tmp]);
     expect(g.readRoots).not.toContain("/");
     expect(g.deniedReadRoots).toContain(join(f.dir, "home", ".ssh"));

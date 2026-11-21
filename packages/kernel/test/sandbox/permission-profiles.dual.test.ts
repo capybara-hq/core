@@ -59,7 +59,9 @@ type Profile = "request-approval" | "approve-for-me" | "full-access";
 type ToolResult = Extract<ConversationEvent, { type: "tool_result" }>;
 type Scope = {
   profile: Profile;
-  filesystem: { kind: "device" } | { kind: "scoped"; readRoots: string[]; writeRoots: string[] };
+  filesystem:
+    | { kind: "device" }
+    | { kind: "scoped"; projectRoot: string | null; writeRoots: string[] };
   network: { kind: string };
 };
 
@@ -273,17 +275,12 @@ async function approveThrough(askId: string): Promise<void> {
   expect(res.statusCode, res.body).toBe(200);
 }
 
-/** A restricted scope that can read `root` (a native read may get no write roots at all). */
+/** A restricted scope whose project is `root` (a native read may get no write roots at all). */
 const readsWithin = (root: string) =>
-  expect.objectContaining({ kind: "scoped", readRoots: expect.arrayContaining([root]) });
+  expect.objectContaining({ kind: "scoped", projectRoot: root });
 
 /** The restricted scope the provider gets for a conversation working in `root`. */
-const scopedTo = (root: string) =>
-  expect.objectContaining({
-    kind: "scoped",
-    writeRoots: [root],
-    readRoots: expect.arrayContaining([root]),
-  });
+const scopedTo = (root: string) => expect.objectContaining({ kind: "scoped", writeRoots: [root] });
 
 /**
  * One profile through the matrix: in-project Bash, Read, Write, Edit and a background start and
@@ -817,9 +814,13 @@ describe("a local device's project outside its fixed workspace", () => {
     expect(outsideRead.payload.content).toContain("buy milk");
     const readReq = native("readFile", `${NOTES}/todo.txt`).at(-1);
     expect(readReq).toBeDefined();
-    expect(((readReq as KernelReq).args as { scope: Scope }).scope.filesystem).toEqual(
-      readsWithin(NOTES),
-    );
+    // an approved read outside the project is not conveyed: a scope names no read roots (what
+    // the machine reads is its own rule; a real machine refuses it until it reads the whole
+    // machine minus its denies, an accepted interim narrowing)
+    const readScope = ((readReq as KernelReq).args as { scope: Scope }).scope.filesystem;
+    expect(readScope).not.toHaveProperty("readRoots");
+    expect(readScope).toEqual(expect.objectContaining({ kind: "scoped" }));
+    expect(readScope.kind === "scoped" && readScope.writeRoots).not.toContain(NOTES);
     await crossing(
       "Edit",
       { file_path: `${NOTES}/todo.txt`, old_string: "milk", new_string: "tea" },

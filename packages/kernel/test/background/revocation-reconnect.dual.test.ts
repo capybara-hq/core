@@ -211,7 +211,7 @@ async function stagedDevice(deviceId: string) {
   const states = new StagedSessionStates();
   const hello: Omit<DeviceHello, "transport"> = {
     type: "hello",
-    protocol: 4,
+    protocol: 5,
     programVersion: "fixture",
     os: "darwin",
     arch: "arm64",

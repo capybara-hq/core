@@ -736,7 +736,7 @@ function openIntent(
       profile: "full-access",
       actor: { accountId: f.accountId, conversationId: f.conversationId },
       tag: operationId,
-      filesystem: { kind: "scoped", readRoots: ["/work"], writeRoots: ["/work"] },
+      filesystem: { kind: "scoped", projectRoot: "/work", writeRoots: ["/work"] },
       network: { kind: "open-public" },
     }),
     epochs: JSON.stringify({ platform: 0, org: 0, device: 0, root: 0 }),

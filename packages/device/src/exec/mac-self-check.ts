@@ -119,7 +119,7 @@ export async function macRestrictedSelfCheck(
         profile: "request-approval",
         actor: { accountId: "self-check", conversationId: "self-check" },
         tag: operationId,
-        filesystem: { kind: "scoped", readRoots: [], writeRoots: [allowed] },
+        filesystem: { kind: "scoped", projectRoot: allowed, writeRoots: [allowed] },
         network: { kind: "none" },
       };
       const request: MacWorkerRequest = {

@@ -587,7 +587,7 @@ async function stagedMachine(
   });
   const hello: DeviceHello = {
     ...HELLO,
-    protocol: 4,
+    protocol: 5,
     features: ["networkReport", "policyOp", "policyOpId"],
     policy: { allowedDomains: [] },
     transport: { maxFrameBytes: 69632 },

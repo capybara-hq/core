@@ -58,7 +58,7 @@ function bearer(req: FastifyRequest): string {
  * `@fastify/websocket`: a raw Fastify route outside Nest, so neither the API's `AuthGuard` nor its
  * CSRF check applies; the route checks the machine credential itself, before the upgrade (401
  * `device.credential_invalid`), then the protocol header (426 `device.program_outdated`): only
- * {@link DEVICE_PROTOCOL_VERSION} (4) is served; an older program (protocol 3 among them) must
+ * {@link DEVICE_PROTOCOL_VERSION} (5) is served; an older program (protocol 4 among them) must
  * update. A newer program reads the kernel's protocol in the message and asks for the deployment
  * to be upgraded instead.
  * Must be called before Nest `app.init()`, on the root instance.

@@ -32,14 +32,15 @@ import {
 } from "./device-provider.js";
 
 /** The protocol version carried in `X-Capybara-Device-Protocol` and the hello frame. */
-export const DEVICE_PROTOCOL_VERSION = 4;
+export const DEVICE_PROTOCOL_VERSION = 5;
 
 /**
- * Protocol 3's version, which a deployment speaking {@link DEVICE_PROTOCOL_VERSION} refuses (426
- * on the header, a protocol close on the hello): its owner report and runtime support describe the
- * removed Full access ceiling, so a protocol 3 program must be updated.
+ * Protocol 4's version, which a deployment speaking {@link DEVICE_PROTOCOL_VERSION} refuses (426
+ * on the header, a protocol close on the hello): its operation frames carry read roots in the
+ * filesystem scope, which protocol 5 replaced with the project root, so a protocol 4 program must
+ * be updated.
  */
-export const LEGACY_DEVICE_PROTOCOL_VERSION = 3;
+export const LEGACY_DEVICE_PROTOCOL_VERSION = 4;
 
 /** The operations the kernel asks a device to run. */
 export type DeviceOp =
@@ -959,7 +960,7 @@ export interface DevicePolicyChanged {
   ownerCeiling: DeviceOwnerCeiling;
 }
 export interface DeviceHello extends LegacyDeviceHello {
-  protocol: 4;
+  protocol: typeof DEVICE_PROTOCOL_VERSION;
   permissionSupport: SandboxPermissionSupport;
   ownerCeiling: DeviceOwnerCeiling;
   instanceGeneration: string | null;

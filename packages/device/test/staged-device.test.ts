@@ -306,7 +306,7 @@ describe("staged device parts (W3-M)", () => {
       );
     const unbound = await s.device.report({ bootId: "boot-1" });
     expect(unbound).toMatchObject({
-      protocol: 4,
+      protocol: 5,
       instanceGeneration: null,
       permissionSupport: UNBOUND_SUPPORT,
       bootId: "boot-1",
@@ -481,10 +481,10 @@ describe("staged connection (W3-M)", () => {
       return conn.done;
     });
     const hello = await k.waitFor("hello", () => k.of("hello")[0]);
-    expect(k.headers[0]?.["x-capybara-device-protocol"]).toBe("4");
+    expect(k.headers[0]?.["x-capybara-device-protocol"]).toBe("5");
     expect(k.headers[0]?.authorization).toBe("Bearer cap_dev_a");
     expect(hello).toMatchObject({
-      protocol: 4,
+      protocol: 5,
       instanceGeneration: null,
       transport: { maxFrameBytes: 69632 },
       // this process's run: every connection it makes names the same one

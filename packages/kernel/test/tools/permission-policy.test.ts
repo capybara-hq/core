@@ -179,7 +179,7 @@ it.each(["Write", "Edit"])(
     expect(f.effects()).toBe(1);
     expect(f.scopes[0]?.filesystem).toEqual({
       kind: "scoped",
-      readRoots: ["/outside/reports", "/skills", "/work"],
+      projectRoot: null,
       writeRoots: ["/outside/reports", "/work"],
     });
     const [grant] = await f.db.selectFrom("permission_call_grants").selectAll().execute();
@@ -875,7 +875,7 @@ it.each([
     expect(await f.db.selectFrom("permission_call_grants").selectAll().execute()).toEqual([]);
     expect(f.scopes[0]?.filesystem).toEqual({
       kind: "scoped",
-      readRoots: ["/skills", "/work"],
+      projectRoot: null,
       writeRoots: ["/work"],
     });
   },

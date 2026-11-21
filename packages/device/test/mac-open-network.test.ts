@@ -517,7 +517,7 @@ it.runIf(darwin)(
       preparation: { skillsRoot: join(root, "skills"), attachmentsBase: join(home, "attachments") },
     };
     const scope = fullAccessScope(
-      { kind: "scoped", readRoots: [home], writeRoots: [] },
+      { kind: "scoped", projectRoot: home, writeRoots: [] },
       { kind: "open-public" },
     );
     const grant = intersectOperation(scope, ceiling, {
@@ -574,7 +574,7 @@ it.runIf(darwin)(
 
 it.runIf(darwin)("the unwrapped branch runs only for the escalated pair", async () => {
   const scope = fullAccessScope(
-    { kind: "scoped", readRoots: ["/"], writeRoots: [] },
+    { kind: "scoped", projectRoot: "/", writeRoots: [] },
     { kind: "open-public" },
   );
   await expect(

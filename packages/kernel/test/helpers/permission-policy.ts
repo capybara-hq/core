@@ -137,7 +137,11 @@ export async function permissionFixture(
       scopes.push(scope);
       const check = (target: string, write: boolean) => {
         if (scope.filesystem.kind === "device") return;
-        const roots = write ? scope.filesystem.writeRoots : scope.filesystem.readRoots;
+        // the fixture's read rule: the project root and the write roots
+        const { projectRoot, writeRoots } = scope.filesystem;
+        const roots = write
+          ? writeRoots
+          : [...(projectRoot === null ? [] : [projectRoot]), ...writeRoots];
         if (!roots.some((root) => target === root || target.startsWith(`${root}/`)))
           throw new SandboxScopeDeniedError(
             "Fixture enforcement refused access outside the admitted directories",

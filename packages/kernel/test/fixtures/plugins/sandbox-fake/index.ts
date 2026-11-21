@@ -1214,19 +1214,34 @@ function managedSurface(
     return value;
   };
 
-  const readable = (scope: SandboxFileScope, path: string) => {
+  /**
+   * What an operation may reach here. A scoped operation names only its project root and write
+   * roots; the fake's read rule adds the project root (the workspace in free mode) and `/skills`.
+   */
+  type Reach =
+    | { kind: "device" }
+    | { kind: "scoped"; readRoots: readonly string[]; writeRoots: readonly string[] };
+  const reachOf = (scope: SandboxFileScope): Reach =>
+    scope.kind === "device"
+      ? scope
+      : {
+          kind: "scoped",
+          readRoots: [scope.projectRoot ?? "/workspace", "/skills"],
+          writeRoots: scope.writeRoots,
+        };
+  const readable = (scope: Reach, path: string) => {
     if (validateSandboxPathShape(path).length > 0) deny(`The path ${path}`);
     if (scope.kind === "device") return;
     if (![...scope.readRoots, ...scope.writeRoots].some((r) => within(path, r)))
       deny(`Reading ${path}`);
   };
-  const writable = (scope: SandboxFileScope, path: string) => {
+  const writable = (scope: Reach, path: string) => {
     if (validateSandboxPathShape(path).length > 0) deny(`The path ${path}`);
     if (scope.kind === "device") return;
     if (!scope.writeRoots.some((r) => within(path, r))) deny(`Writing ${path}`);
   };
   /** A command's working directory and the instance roots its text names (see the doc above). */
-  const runnable = (scope: SandboxFileScope, command: string, cwd: string) => {
+  const runnable = (scope: Reach, command: string, cwd: string) => {
     readable(scope, cwd);
     if (scope.kind === "device") return;
     const roots = [...scope.readRoots, ...scope.writeRoots];
@@ -1238,7 +1253,7 @@ function managedSurface(
 
   const native = (
     h: SandboxHandle,
-    fs: SandboxFileScope,
+    fs: Reach,
     signal: AbortSignal,
     once: <T>(input: unknown, work: () => Promise<T>) => Promise<T>,
   ) => ({
@@ -1349,8 +1364,8 @@ function managedSurface(
       if (generation === undefined || !/^[0-9]{1,16}$/.test(generation))
         throw new SandboxScopeDeniedError("The fake needs the kernel's instance generation");
       const cwd = args.cwd ?? "/workspace";
-      runnable(scope.filesystem, args.command, cwd);
-      writable(scope.filesystem, args.outputPath);
+      runnable(reachOf(scope.filesystem), args.command, cwd);
+      writable(reachOf(scope.filesystem), args.outputPath);
       const { signal: _signal, ...input } = args;
       const inputHash = sha256(JSON.stringify({ scope, input }));
       const dir = executionDir(h, scope.operationId);
@@ -1540,19 +1555,19 @@ function managedSurface(
       if (
         scope.filesystem.kind === "scoped" &&
         (await support()).boundary === "instance" &&
-        !(scope.filesystem.readRoots.includes("/") && scope.filesystem.writeRoots.includes("/"))
+        !scope.filesystem.writeRoots.includes("/")
       )
         throw new SandboxPermissionUnsupportedError(
-          "sandbox-fake's instance boundary runs only the instance scope: / readable and writable",
+          "sandbox-fake's instance boundary runs only the instance scope: / writable",
         );
       const once = <T>(input: unknown, work: () => Promise<T>) =>
         consume(scope.operationId, { scope, ...(input as object) }, work);
       await mkdir(join(f.root, "operation-tags"), { recursive: true });
       await writeFile(join(f.root, "operation-tags", sha256(scope.operationId)), scope.tag);
       return {
-        ...native(h, scope.filesystem, signal, once),
+        ...native(h, reachOf(scope.filesystem), signal, once),
         exec: async (args) => {
-          runnable(scope.filesystem, args.command, args.cwd ?? "/workspace");
+          runnable(reachOf(scope.filesystem), args.command, args.cwd ?? "/workspace");
           const { signal: callSignal, ...input } = args;
           return once({ method: "exec", args: input }, () =>
             raw.exec(h, {
@@ -1568,7 +1583,7 @@ function managedSurface(
 
     async prepare(h, given, signal) {
       const scope = parseSandboxPreparationScope(given);
-      const fs: SandboxFileScope = {
+      const fs: Reach = {
         kind: "scoped",
         readRoots: scope.writeRoots,
         writeRoots: scope.writeRoots,
@@ -1588,7 +1603,7 @@ function managedSurface(
     ...(f.list && {
       async browse(h, given, signal) {
         const scope = parseSandboxBrowseScope(given);
-        const fs: SandboxFileScope = { kind: "scoped", readRoots: scope.readRoots, writeRoots: [] };
+        const fs: Reach = { kind: "scoped", readRoots: scope.readRoots, writeRoots: [] };
         const n = native(h, fs, signal, (_input, work) => scopedCall.run(true, work));
         return {
           stat: n.stat,

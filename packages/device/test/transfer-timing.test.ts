@@ -73,7 +73,7 @@ it.runIf(process.platform === "darwin")(
         profile: "approve-for-me" as const,
         filesystem: {
           kind: "scoped" as const,
-          readRoots: [roots.workspace],
+          projectRoot: roots.workspace,
           writeRoots: [roots.workspace],
         },
         network: { kind: "none" as const },

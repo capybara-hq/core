@@ -91,7 +91,7 @@ it.runIf(process.platform === "darwin")(
       profile: "approve-for-me" as const,
       actor: { accountId: "a", conversationId: "r" },
       tag: "native-owned",
-      filesystem: { kind: "scoped" as const, readRoots: [project], writeRoots: [] },
+      filesystem: { kind: "scoped" as const, projectRoot: project, writeRoots: [] },
       network: { kind: "none" as const },
     };
     const workers = [];
@@ -160,7 +160,7 @@ it.runIf(process.platform === "darwin")(
             profile: "approve-for-me" as const,
             actor: { accountId: "a", conversationId: "r" },
             tag: "native-file",
-            filesystem: { kind: "scoped" as const, readRoots: [agents], writeRoots: [] },
+            filesystem: { kind: "scoped" as const, projectRoot: agents, writeRoots: [] },
             network: { kind: "none" as const },
           },
           purpose: "operation",
@@ -239,7 +239,7 @@ it
         ...(full
           ? { filesystem: { kind: "device" as const }, network: { kind: "environment" as const } }
           : {
-              filesystem: { kind: "scoped" as const, readRoots: [project], writeRoots: [project] },
+              filesystem: { kind: "scoped" as const, projectRoot: project, writeRoots: [project] },
               network: { kind: "none" as const },
             }),
       };

@@ -1031,7 +1031,7 @@ describe("managed background launch identity", () => {
     if (!call) throw new Error("no start");
     expect(call.scope.filesystem).toEqual({
       kind: "scoped",
-      readRoots: [project, "/skills"],
+      projectRoot: project,
       writeRoots: [project],
     });
     expect(call.args.cwd).toBe(project);
@@ -1064,7 +1064,7 @@ describe("managed background launch identity", () => {
     ).toHaveLength(1);
     expect(f.provider.calls[0]?.scope.filesystem).toEqual({
       kind: "scoped",
-      readRoots: ["/skills", "/work"],
+      projectRoot: null,
       writeRoots: ["/work"],
     });
   });

@@ -90,6 +90,11 @@ export type PermissionReviewSnapshot = Readonly<
     baseHosts: readonly string[];
     workingRoot: string;
     /**
+     * The bound project's path when it is the working root (`workingRootOf`), else null (free
+     * mode, or a project the review works around in the workspace). An operation scope names it.
+     */
+    projectRoot: string | null;
+    /**
      * The call's sandbox network (the device sandbox within the applied outer boundary): `open-public`,
      * `allowlist` (the base hosts plus accepted host grants) or `none`. Absent reads as `none`.
      */

@@ -54,6 +54,64 @@ describe("nested operation boundaries", () => {
 
 import type { DeviceProvider, SandboxOperationScope } from "@capybara-hq/plugin-sdk";
 import { createHeldOperations, withKernelGeneration } from "../../src/sandbox/held-operations.js";
+import { intersectPermissionScope } from "../../src/sandbox/operation-authority.js";
+
+describe("the filesystem of an operation scope", () => {
+  const facts = {
+    deviceId: "device",
+    rootConversationId: "root",
+    profileRevision: 1,
+    ceilingRevision: "epoch",
+    operationId: "operation",
+    admitBeforeMs: 1000,
+    profile: "approve-for-me" as const,
+    actor: { accountId: "owner", conversationId: "root" },
+    tag: "operation",
+    workingRoot: "/u/repo",
+    projectRoot: "/u/repo" as string | null,
+    writeRoots: ["/u/repo", "/tmp/out", "/u/repo"],
+    allowedHosts: [],
+    network: "none" as const,
+    boundary: "operation" as const,
+    outsideSandboxCeiling: false,
+  };
+  it("a scoped operation carries projectRoot and writeRoots and no read roots", () => {
+    const fs = intersectPermissionScope(facts).filesystem;
+    expect(fs).toEqual({
+      kind: "scoped",
+      projectRoot: "/u/repo",
+      writeRoots: ["/tmp/out", "/u/repo"],
+    });
+    expect(Object.keys(fs).sort()).toEqual(["kind", "projectRoot", "writeRoots"]);
+  });
+  it("an operation scope names the project root and the write roots; free mode has projectRoot null", () => {
+    expect(intersectPermissionScope({ ...facts, writeRoots: ["/u/repo"] }).filesystem).toEqual({
+      kind: "scoped",
+      projectRoot: "/u/repo",
+      writeRoots: ["/u/repo"],
+    });
+    expect(
+      intersectPermissionScope({
+        ...facts,
+        workingRoot: "/u/.capybara/workspace",
+        projectRoot: null,
+        writeRoots: ["/u/.capybara/workspace"],
+      }).filesystem,
+    ).toEqual({ kind: "scoped", projectRoot: null, writeRoots: ["/u/.capybara/workspace"] });
+  });
+  it("an instance-boundary scope keeps writeRoots [/, workingRoot]", () => {
+    for (const projectRoot of ["/workspace/app", null])
+      expect(
+        intersectPermissionScope({
+          ...facts,
+          boundary: "instance",
+          workingRoot: "/workspace/app",
+          projectRoot,
+          writeRoots: ["/workspace/app"],
+        }).filesystem,
+      ).toEqual({ kind: "scoped", projectRoot, writeRoots: ["/", "/workspace/app"] });
+  });
+});
 
 const scope = (revision: number): SandboxOperationScope => ({
   operationId: `op-${revision}`,
@@ -67,7 +125,7 @@ const scope = (revision: number): SandboxOperationScope => ({
   tag: `op-${revision}`,
   filesystem: {
     kind: "scoped",
-    readRoots: [`/root-${revision}`],
+    projectRoot: `/root-${revision}`,
     writeRoots: [`/root-${revision}`],
   },
   network: { kind: "none" },

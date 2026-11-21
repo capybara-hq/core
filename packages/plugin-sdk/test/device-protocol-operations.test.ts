@@ -19,12 +19,12 @@ const scope = {
   profile: "approve-for-me",
   actor: { accountId: "a", conversationId: "r" },
   tag: "op",
-  filesystem: { kind: "scoped", readRoots: ["/work"], writeRoots: ["/work"] },
+  filesystem: { kind: "scoped", projectRoot: "/work", writeRoots: ["/work"] },
   network: { kind: "none" },
 };
 const frame = (op: string, args: unknown) =>
   JSON.stringify({ type: "req", id: "request", op, args, deadlineMs: 1000 });
-describe("protocol 4 operations", () => {
+describe("protocol 5 operations", () => {
   it("carries every typed operation failure, an invalid scope included", () => {
     for (const kind of ["denied", "unsupported", "unknown", "invalid", "gone", "fs_gone"]) {
       const res = { type: "res", id: "request", ok: false, error: { kind, message: "m" } };
@@ -37,9 +37,9 @@ describe("protocol 4 operations", () => {
       ),
     ).toThrow(DeviceProtocolError);
   });
-  it("speaks protocol 4 and requires fresh user scopes", () => {
-    expect(DEVICE_PROTOCOL_VERSION).toBe(4);
-    expect(LEGACY_DEVICE_PROTOCOL_VERSION).toBe(3);
+  it("speaks protocol 5 and requires fresh user scopes", () => {
+    expect(DEVICE_PROTOCOL_VERSION).toBe(5);
+    expect(LEGACY_DEVICE_PROTOCOL_VERSION).toBe(4);
     for (const op of ["readFile", "writeFile", "stat", "list", "scan"]) {
       const args = {
         scope,
@@ -58,6 +58,12 @@ describe("protocol 4 operations", () => {
       expect(parseDeviceFrame(frame(op, args), "kernel").type).toBe("req");
       expect(() => parseDeviceFrame(frame(op, { ...args, scope: undefined }), "kernel")).toThrow();
       expect(() => parseDeviceFrame(frame(op, { ...args, untrusted: true }), "kernel")).toThrow();
+      // a protocol 4 scope (read roots, no project root) is not a protocol 5 frame
+      const legacy = {
+        ...scope,
+        filesystem: { kind: "scoped", readRoots: ["/work"], writeRoots: [] },
+      };
+      expect(() => parseDeviceFrame(frame(op, { ...args, scope: legacy }), "kernel")).toThrow();
     }
   });
   it("separates preparation, browse and background references", () => {
@@ -125,7 +131,7 @@ describe("protocol 4 operations", () => {
 it("keeps absent runtime identity unprobed and refuses incomplete or mismatched evidence", () => {
   const hello = {
     type: "hello",
-    protocol: 4,
+    protocol: 5,
     transport: { maxFrameBytes: 69632 },
     programVersion: "test-1",
     os: "darwin",
@@ -251,7 +257,7 @@ it("strict ready capacity and frame bounds never admit pre-negotiation data", ()
 it("canonical unbound hello remains unprobed and owner reports require independent reach", () => {
   const hello = {
     type: "hello",
-    protocol: 4,
+    protocol: 5,
     programVersion: "fixture",
     os: "darwin",
     arch: "arm64",
@@ -296,10 +302,11 @@ it("canonical unbound hello remains unprobed and owner reports require independe
         "device",
       ),
     ).toThrow();
-  // a protocol 3 hello (its version 1 support and version 2 owner report) is refused
-  expect(() => parseDeviceFrame(JSON.stringify({ ...hello, protocol: 3 }), "device")).toThrow(
-    "Expected protocol 4 hello",
-  );
+  // a protocol 3 or 4 hello is refused (4: its operation scopes carried read roots)
+  for (const protocol of [3, 4])
+    expect(() => parseDeviceFrame(JSON.stringify({ ...hello, protocol }), "device")).toThrow(
+      "Expected protocol 5 hello",
+    );
   expect(() =>
     parseDeviceFrame(
       JSON.stringify({

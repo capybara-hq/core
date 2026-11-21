@@ -159,7 +159,7 @@ async function fixture(clientCap = 69632, serverCap = 100000) {
   let beforeReply = async () => {};
   const hello: DeviceHello = {
     type: "hello",
-    protocol: 4,
+    protocol: 5,
     programVersion: "fixture",
     os: "darwin",
     arch: "arm64",

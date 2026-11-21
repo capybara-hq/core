@@ -34,7 +34,7 @@ const stored = (r: StoredOwnerReport["report"]): StoredOwnerReport => ({
 const op = (over: Partial<SandboxOperationScope> = {}) =>
   ({
     profile: "approve-for-me",
-    filesystem: { kind: "scoped", readRoots: ["/work"], writeRoots: ["/work"] },
+    filesystem: { kind: "scoped", projectRoot: "/work", writeRoots: ["/work"] },
     network: { kind: "allowlist", hosts: ["a.test"] },
     ...over,
   }) as SandboxOperationScope;
@@ -132,7 +132,7 @@ describe("owner report ordering (B2)", () => {
     // an owner who keeps the open network bounds no host
     expect(ownerReportRevokes(facts({ allowedDomains: [] }), op(), "exec", [], roots)).toBe(false);
     const outside = op({
-      filesystem: { kind: "scoped", readRoots: ["/home/o/p"], writeRoots: ["/home/o/p"] },
+      filesystem: { kind: "scoped", projectRoot: "/home/o/p", writeRoots: ["/home/o/p"] },
     } as never);
     expect(ownerReportRevokes(facts({}), outside, "readFile", [], roots)).toBe(false);
     expect(

@@ -83,6 +83,8 @@ const seen: {
   route: "operation" | "browse" | "raw";
   method: string;
   path: string;
+  projectRoot?: string | null;
+  writeRoots?: readonly string[];
   readRoots?: readonly string[];
   operationId?: string;
 }[] = [];
@@ -125,21 +127,29 @@ beforeAll(async () => {
     route: "operation" | "browse" | "raw",
     method: string,
     path: string,
-    scope?: { readRoots: readonly string[]; operationId: string },
+    scope?: {
+      projectRoot?: string | null;
+      writeRoots?: readonly string[];
+      readRoots: readonly string[];
+      operationId: string;
+    },
   ) => {
-    seen.push({
-      route,
-      method,
-      path,
-      ...(scope && { readRoots: scope.readRoots, operationId: scope.operationId }),
-    });
+    seen.push({ route, method, path, ...scope });
     if (scope && !within(path, scope.readRoots))
       throw new SandboxScopeDeniedError(`${path} is outside the scope`);
   };
-  const scoped = (scope: SandboxOperationScope) => ({
-    operationId: scope.operationId,
-    readRoots: scope.filesystem.kind === "device" ? ["/"] : scope.filesystem.readRoots,
-  });
+  // this fake's read rule: the project root and the write roots (the device filesystem: all)
+  const scoped = (scope: SandboxOperationScope) => {
+    const fs = scope.filesystem;
+    if (fs.kind === "device") return { operationId: scope.operationId, readRoots: ["/"] };
+    const project = fs.projectRoot === null ? [] : [fs.projectRoot];
+    return {
+      operationId: scope.operationId,
+      projectRoot: fs.projectRoot,
+      writeRoots: fs.writeRoots,
+      readRoots: [...new Set([...project, ...fs.writeRoots])],
+    };
+  };
   const impl: DeviceProvider = {
     ...base,
     stat: async (_h, path) => {
@@ -368,7 +378,7 @@ describe("a run start's project knowledge read (withKernelRead)", () => {
     expect(ops.every((s) => s.route === "operation")).toBe(true);
     expect(ops.every((s) => ["stat", "readFile", "list"].includes(s.method))).toBe(true);
     expect(ops.some((s) => s.path.endsWith("secret.txt"))).toBe(false);
-    // each operation's only read root is the narrowest one covering its path
+    // each operation's project root is the narrowest one covering its path, with no write roots
     for (const s of ops) {
       const expected =
         s.path === APP
@@ -376,7 +386,8 @@ describe("a run start's project knowledge read (withKernelRead)", () => {
           : s.path === `${APP}/AGENTS.md`
             ? `${APP}/AGENTS.md`
             : `${APP}/.agents/skills`;
-      expect(s.readRoots).toEqual([expected]);
+      expect(s.projectRoot).toBe(expected);
+      expect(s.writeRoots).toEqual([]);
     }
     // random operation ids, each recorded with the run for audit and no tool call identity
     const intents = await intentsOf(f);
@@ -387,6 +398,23 @@ describe("a run start's project knowledge read (withKernelRead)", () => {
       const scope = r.scope as unknown as SandboxOperationScope;
       expect(scope.filesystem).toMatchObject({ kind: "scoped", writeRoots: [] });
       expect(scope.network).toEqual({ kind: "none" });
+    }
+  });
+
+  it("a kernel read sends projectRoot = the covering directory and no write roots", async () => {
+    const f = await seed();
+    await bindProject(f);
+    const run = await claimRun(f);
+    expect(await recordKnowledge(f, run)).toBe(true);
+    const intents = await intentsOf(f);
+    expect(intents.length).toBeGreaterThan(0);
+    const covering = [APP, `${APP}/AGENTS.md`, `${APP}/.agents/skills`];
+    for (const r of intents) {
+      const fs = (r.scope as unknown as SandboxOperationScope).filesystem;
+      // exactly the two fields: no read roots ever reach the provider
+      expect(Object.keys(fs).sort()).toEqual(["kind", "projectRoot", "writeRoots"]);
+      expect(fs).toMatchObject({ kind: "scoped", writeRoots: [] });
+      expect(covering).toContain(fs.kind === "scoped" ? fs.projectRoot : null);
     }
   });
 
@@ -697,7 +725,8 @@ describe("the kernel read's route follows the device's recorded runtime support"
     const reads = seen.filter((y) => y.route === "operation");
     expect(reads.length).toBeGreaterThan(0);
     for (const x of reads) {
-      expect(x.readRoots).toEqual(["/", APP]);
+      expect(x.writeRoots).toEqual(["/", APP]);
+      expect(x.projectRoot === APP || x.projectRoot?.startsWith(`${APP}/`)).toBe(true);
       expect(x.path === APP || x.path.startsWith(`${APP}/`)).toBe(true);
     }
   });

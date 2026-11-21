@@ -118,7 +118,7 @@ async function fixture() {
     tag: "op",
     filesystem: {
       kind: "scoped" as const,
-      readRoots: [join(dir, "project")],
+      projectRoot: join(dir, "project"),
       writeRoots: [roots.tmp],
     },
     network: { kind: "none" as const },
@@ -149,7 +149,7 @@ it("first native read uses its explicit outside project without an earlier exec"
   const f = await fixture();
   const op = await f.backend.operation({ id: "d", roots: f.roots }, f.scope, signal);
   expect(f.launched).toHaveLength(0);
-  expect(await op.stat(`${f.scope.filesystem.readRoots[0]}/file`, signal)).toEqual({
+  expect(await op.stat(`${f.scope.filesystem.projectRoot}/file`, signal)).toEqual({
     size: 3,
     isDir: false,
   });
@@ -179,7 +179,7 @@ it("re-reads ceilings at invocation and rejects restricted exec without private 
     op.exec({ command: "true", timeoutMs: 1000, maxOutputBytes: 1000, signal }),
   ).rejects.toThrow(/authority/);
   f.setCeiling({ revision: "two", restrictedProjectReach: "workspace" });
-  await expect(op.stat(`${f.scope.filesystem.readRoots[0]}/file`, signal)).rejects.toThrow(
+  await expect(op.stat(`${f.scope.filesystem.projectRoot}/file`, signal)).rejects.toThrow(
     /ceiling/,
   );
   expect(f.launched).toHaveLength(0);
@@ -296,7 +296,7 @@ it("rejects a revision change during trusted startup before effects", async () =
     f.setCeiling({ revision: "changed-during-start" });
   });
   const op = await f.backend.operation({ id: "d" }, f.scope, signal);
-  await expect(op.stat(`${f.scope.filesystem.readRoots[0]}/file`, signal)).rejects.toThrow(
+  await expect(op.stat(`${f.scope.filesystem.projectRoot}/file`, signal)).rejects.toThrow(
     /changed before launch/,
   );
   expect(f.launched).toHaveLength(0);
@@ -453,7 +453,7 @@ it.runIf(process.platform === "darwin")(
       profile: "approve-for-me" as const,
       actor: { accountId: "a", conversationId: "r" },
       tag: "fixture",
-      filesystem: { kind: "scoped" as const, readRoots: [project], writeRoots: [] },
+      filesystem: { kind: "scoped" as const, projectRoot: project, writeRoots: [] },
       network: { kind: "none" as const },
     };
     const start = async (hosts: string[], token: string) => {
@@ -573,7 +573,7 @@ it.runIf(process.platform === "darwin")(
             profile: "approve-for-me" as const,
             actor: { accountId: "a", conversationId: "r" },
             tag: token,
-            filesystem: { kind: "scoped" as const, readRoots: [project], writeRoots: [] },
+            filesystem: { kind: "scoped" as const, projectRoot: project, writeRoots: [] },
             network: { kind: "none" as const },
           };
           const command = `creds=$(/bin/cat '${project}/creds-${i}'); peer=$(/bin/cat '${project}/peer-${i}'); /usr/bin/curl --fail --silent --show-error --max-time 3 --noproxy '' http://127.0.0.1:${own.port}/${token}-own >/dev/null; printf 'own:%s\\n' "$?"; /usr/bin/curl --fail --silent --show-error --max-time 3 --noproxy '' http://127.0.0.1:${peer.port}/${token}-denied >/dev/null; printf 'denied:%s\\n' "$?"; /usr/bin/curl --fail --silent --show-error --max-time 3 --noproxy '' --proxy "$peer" http://127.0.0.1:${peer.port}/${token}-borrow >/dev/null; printf 'borrow:%s\\n' "$?"; /usr/bin/curl --fail --silent --show-error --max-time 3 --noproxy '*' http://127.0.0.1:${peer.port}/${token}-direct >/dev/null; printf 'direct:%s\\n' "$?"`;
@@ -841,11 +841,7 @@ it.runIf(process.platform === "darwin")(
         profile: "approve-for-me",
         actor: { accountId: "a", conversationId: "r" },
         tag: "first",
-        filesystem: {
-          kind: "scoped",
-          readRoots: [conversation, join(root, "missing-optional")],
-          writeRoots: [],
-        },
+        filesystem: { kind: "scoped", projectRoot: conversation, writeRoots: [] },
         network: { kind: "none" },
       },
       signal,
@@ -1041,3 +1037,79 @@ it("a restricted exec and a background task both carry the device's sandbox home
   expect(requests.map((r) => r.kind === "exec" && r.sandboxHome)).toEqual([home, home]);
   await f.backend.background.stop({ id: "d" }, ref, { graceMs: 0, signal });
 });
+
+// A kernel read names its covering path as the project root (protocol 5): the program derives
+// the read roots from it, so a symlinked AGENTS.md pointing out of the project stays refused.
+it.runIf(process.platform === "darwin")(
+  "a symlink from the project to outside it is refused for a kernel read (unchanged)",
+  async () => {
+    const { mkdir, realpath, symlink, writeFile } = await import("node:fs/promises");
+    const { startMacOperationWorker } = await import("../src/exec/operation-worker.js");
+    const root = await realpath(await mkdtemp(join(tmpdir(), "cap-kernel-read-link-")));
+    dirs.push(root);
+    const stateDir = join(root, "state");
+    const roots = {
+      workspace: join(root, "workspace"),
+      skills: join(root, "skills"),
+      tmp: join(root, "tmp"),
+    };
+    for (const d of [stateDir, ...Object.values(roots)]) await mkdir(d, { mode: 0o700 });
+    const project = join(root, "project");
+    const linked = join(root, "linked");
+    const outside = join(root, "outside");
+    await mkdir(project);
+    await mkdir(linked);
+    await mkdir(outside);
+    await writeFile(join(project, "AGENTS.md"), "# rules");
+    await writeFile(join(outside, "secret"), "secret");
+    await symlink(join(outside, "secret"), join(linked, "AGENTS.md"));
+    const ceiling: DeviceOwnerCeiling = {
+      revision: "fixture",
+      outsideSandbox: false,
+      network: "allowlist",
+      roots,
+      restrictedProjectReach: "os-user",
+      allowedDomains: [],
+      restrictedDeniedReadRoots: [stateDir],
+      preparation: { skillsRoot: roots.skills, attachmentsBase: join(roots.workspace, "a") },
+    };
+    const backend = await createMacOperationBackend(
+      {
+        deviceId: "d",
+        instanceGeneration: "kernel-read",
+        stateDir,
+        roots,
+        pythonPath: "/usr/bin/python3",
+        runtimeHash: workspace.runtimeHash,
+        readOwnerCeiling: async () => ceiling,
+      },
+      { restrictedSupported: true, platform: "darwin", startWorker: startMacOperationWorker },
+    );
+    let id = 0;
+    const read = async (agents: string) =>
+      (
+        await backend.operation(
+          { id: "d" },
+          {
+            operationId: `kernel-read-${++id}`,
+            deviceId: "d",
+            rootConversationId: "r",
+            profileRevision: 0,
+            ceilingRevision: "fixture",
+            admitBeforeMs: Date.now() + 30000,
+            profile: "request-approval",
+            actor: { accountId: "a", conversationId: "r" },
+            tag: "kernel-read",
+            filesystem: { kind: "scoped", projectRoot: agents, writeRoots: [] },
+            network: { kind: "none" },
+          },
+          signal,
+        )
+      ).readFile(agents, { maxBytes: 100, signal });
+    expect(await read(join(project, "AGENTS.md"))).toEqual({
+      data: Buffer.from("# rules"),
+      truncated: false,
+    });
+    await expect(read(join(linked, "AGENTS.md"))).rejects.toThrow();
+  },
+);

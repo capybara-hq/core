@@ -427,7 +427,7 @@ describe.runIf(darwin)("capybara-device macOS operation backend", () => {
     const handle = { id: DEVICE_ID };
     const grant: SandboxPermissionGrant = {
       profile: "request-approval",
-      filesystem: { kind: "scoped", readRoots: [], writeRoots: [root] },
+      filesystem: { kind: "scoped", projectRoot: root, writeRoots: [root] },
       network: { kind: "none" },
     };
     const start = async (taskId: string) => {

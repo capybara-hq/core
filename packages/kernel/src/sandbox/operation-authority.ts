@@ -89,7 +89,8 @@ export interface PermissionScopeFacts {
   actor: SandboxActor;
   tag: string;
   workingRoot: string;
-  readRoots: readonly string[];
+  /** The bound project's path when it is the working root, else null (free mode). */
+  projectRoot: string | null;
   writeRoots: readonly string[];
   allowedHosts: readonly string[];
   /** The sandbox network of the call ({@link sandboxNetworkOf}); `allowlist` uses `allowedHosts`. */
@@ -168,7 +169,9 @@ const instanceRoots = (workingRoot: string): string[] =>
 /**
  * Only server-resolved facts enter this constructor; callers never submit roots or profile. It
  * never branches on the profile: every call is sandboxed (scoped filesystem, the sandbox network),
- * and only an escalated call within the outside-sandbox ceiling gets the device pair.
+ * and only an escalated call within the outside-sandbox ceiling gets the device pair. A scoped
+ * filesystem names the project root and the write roots only: what a sandboxed operation may read
+ * is the provider's rule.
  */
 export function intersectPermissionScope(f: PermissionScopeFacts): SandboxOperationScope {
   if (f.escalated && (!f.outsideSandboxCeiling || f.boundary === "instance"))
@@ -193,12 +196,12 @@ export function intersectPermissionScope(f: PermissionScopeFacts): SandboxOperat
       : f.boundary === "instance"
         ? {
             kind: "scoped",
-            readRoots: instanceRoots(f.workingRoot),
+            projectRoot: f.projectRoot,
             writeRoots: instanceRoots(f.workingRoot),
           }
         : {
             kind: "scoped",
-            readRoots: [...new Set([...f.readRoots, ...f.writeRoots])].sort(),
+            projectRoot: f.projectRoot,
             writeRoots: [...new Set(f.writeRoots)].sort(),
           },
     network: escalated
@@ -471,10 +474,8 @@ export class SandboxOperationAuthority {
       operation,
       {
         ...f,
-        baseReadDirectories: [
-          ...f.baseReadDirectories,
-          ...(grant?.expansion.readDirectories ?? []),
-        ],
+        // an accepted read-directory expansion stays in the review facts and the grant row but
+        // reaches no provider: a scope carries no read roots (the provider's read rule decides)
         baseWriteDirectories: [
           ...f.baseWriteDirectories,
           ...(grant?.expansion.writeDirectories ?? []),
@@ -574,7 +575,7 @@ export class SandboxOperationAuthority {
     const profile = this.scopeOf(ctx, method, f);
     if (
       profile.filesystem.kind === "scoped" &&
-      !profile.filesystem.readRoots.some(
+      !f.baseReadDirectories.some(
         (r) => covering === r || covering.startsWith(r === "/" ? "/" : `${r}/`),
       )
     )
@@ -591,10 +592,10 @@ export class SandboxOperationAuthority {
       filesystem: instance
         ? {
             kind: "scoped",
-            readRoots: instanceRoots(f.workingRoot),
+            projectRoot: covering,
             writeRoots: instanceRoots(f.workingRoot),
           }
-        : { kind: "scoped", readRoots: [covering], writeRoots: [] },
+        : { kind: "scoped", projectRoot: covering, writeRoots: [] },
       network: { kind: "none" },
     });
   }
@@ -650,7 +651,7 @@ export class SandboxOperationAuthority {
       actor: ctx.actor,
       tag: operationId,
       workingRoot: f.workingRoot,
-      readRoots: f.baseReadDirectories,
+      projectRoot: f.projectRoot,
       writeRoots: f.baseWriteDirectories,
       allowedHosts: isExecutionMethod(operation) ? f.baseHosts : [],
       // a native method reaches no network: only executions carry the sandbox network
@@ -782,6 +783,7 @@ export class SandboxOperationAuthority {
       scopeRevision: view.scopeRevision,
       authorityRevision: permissionScopeHash({ scopeRevision: view.scopeRevision, vector }),
       workingRoot,
+      projectRoot,
       baseReadDirectories: restrictedReadRoots(workingRoot, applied),
       baseWriteDirectories: [workingRoot],
       baseHosts: allowedHosts,

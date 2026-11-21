@@ -71,7 +71,7 @@ const scope = (profile: "approve-for-me" | "full-access") => ({
   filesystem:
     profile === "full-access"
       ? { kind: "device" }
-      : { kind: "scoped", readRoots: ["/work"], writeRoots: ["/work"] },
+      : { kind: "scoped", projectRoot: "/work", writeRoots: ["/work"] },
   network: profile === "full-access" ? { kind: "environment" } : { kind: "none" },
 });
 const never = new AbortController().signal;

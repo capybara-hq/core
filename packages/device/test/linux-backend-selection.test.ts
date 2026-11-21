@@ -98,7 +98,7 @@ async function setup(
     tag: "t",
     filesystem: full
       ? { kind: "device" as const }
-      : { kind: "scoped" as const, readRoots: [], writeRoots: [roots.workspace] },
+      : { kind: "scoped" as const, projectRoot: roots.workspace, writeRoots: [roots.workspace] },
     network: full ? { kind: "environment" as const } : { kind: "none" as const },
   });
   const exec = async (full: boolean) => {

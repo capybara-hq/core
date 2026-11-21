@@ -80,7 +80,7 @@ function replica(pool: ReturnType<typeof createDb>) {
         actor: ctx.actor,
         tag: "shape-only",
         workingRoot: "/work",
-        readRoots: ["/work"],
+        projectRoot: "/work",
         writeRoots: ["/work"],
         allowedHosts: [],
         network: "none",

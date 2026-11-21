@@ -13,7 +13,7 @@ describe("operation authority intersection", () => {
     actor: { accountId: "owner", conversationId: "root" },
     tag: "operation",
     workingRoot: "/work",
-    readRoots: ["/work"],
+    projectRoot: "/work",
     writeRoots: ["/work"],
     allowedHosts: ["api.example.com"],
     network: "allowlist" as const,
@@ -24,7 +24,7 @@ describe("operation authority intersection", () => {
     for (const profile of ["request-approval", "approve-for-me"] as const)
       expect(intersectPermissionScope({ ...base, profile })).toMatchObject({
         profile,
-        filesystem: { kind: "scoped", readRoots: ["/work"], writeRoots: ["/work"] },
+        filesystem: { kind: "scoped", projectRoot: "/work", writeRoots: ["/work"] },
         network: { kind: "allowlist", hosts: ["api.example.com"] },
       });
   });
@@ -34,23 +34,23 @@ describe("operation authority intersection", () => {
         intersectPermissionScope({ ...base, profile: "full-access", outsideSandboxCeiling }),
       ).toMatchObject({
         profile: "full-access",
-        filesystem: { kind: "scoped", readRoots: ["/work"], writeRoots: ["/work"] },
+        filesystem: { kind: "scoped", projectRoot: "/work", writeRoots: ["/work"] },
         network: { kind: "allowlist", hosts: ["api.example.com"] },
       });
   });
   it("empty restricted allowance denies network and returned grants are immutable copies", () => {
-    const readRoots = ["/work"];
+    const writeRoots = ["/work"];
     const scope = intersectPermissionScope({
       ...base,
       profile: "approve-for-me",
       allowedHosts: [],
       network: "none",
-      readRoots,
+      writeRoots,
     });
-    readRoots.push("/secret");
+    writeRoots.push("/secret");
     expect(scope.filesystem).toEqual({
       kind: "scoped",
-      readRoots: ["/work"],
+      projectRoot: "/work",
       writeRoots: ["/work"],
     });
     expect(scope.network).toEqual({ kind: "none" });
@@ -93,7 +93,7 @@ describe("per-call sandbox escalation", () => {
     actor: { accountId: "owner", conversationId: "root" },
     tag: "operation",
     workingRoot: "/work",
-    readRoots: ["/work"],
+    projectRoot: "/work",
     writeRoots: ["/work"],
     allowedHosts: [],
     network: "none" as const,
@@ -140,6 +140,7 @@ describe("per-call sandbox escalation", () => {
     baseWriteDirectories: ["/work"],
     baseHosts: [],
     workingRoot: "/work",
+    projectRoot: "/work",
     outsideSandboxCeiling: true,
     broadProjectReach: false,
     unattended: false,

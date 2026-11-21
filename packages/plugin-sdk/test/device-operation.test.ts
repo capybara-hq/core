@@ -154,7 +154,7 @@ const operationScope = () => ({
   profile: "approve-for-me",
   actor: { accountId: "account-1", conversationId: "child-1", runId: "run-1" },
   tag: "operation-1",
-  filesystem: { kind: "scoped", readRoots: ["/project"], writeRoots: ["/project/output"] },
+  filesystem: { kind: "scoped", projectRoot: "/project", writeRoots: ["/project/output"] },
   network: { kind: "allowlist", hosts: ["example.com", "*.example.org"] },
 });
 
@@ -188,7 +188,7 @@ describe("immutable operation scope parsing", () => {
     const input = operationScope();
     const parsed = parseSandboxOperationScope(input);
     input.actor.accountId = "other-account";
-    input.filesystem.readRoots.push("/private");
+    input.filesystem.projectRoot = "/private";
     input.filesystem.writeRoots[0] = "/";
     input.network.hosts.push("other.example.com");
     expect(parsed).toEqual(operationScope());
@@ -199,11 +199,7 @@ describe("immutable operation scope parsing", () => {
     if (parsed.filesystem.kind !== "scoped" || parsed.network.kind !== "allowlist") {
       throw new Error("Expected scoped filesystem and allowlist grants.");
     }
-    for (const value of [
-      parsed.filesystem.readRoots,
-      parsed.filesystem.writeRoots,
-      parsed.network.hosts,
-    ]) {
+    for (const value of [parsed.filesystem.writeRoots, parsed.network.hosts]) {
       expect(Object.isFrozen(value)).toBe(true);
     }
   });
@@ -222,17 +218,58 @@ describe("immutable operation scope parsing", () => {
       parseSandboxOperationScope({
         ...operationScope(),
         profile: "request-approval",
-        filesystem: { kind: "scoped", readRoots: ["/"], writeRoots: [] },
+        filesystem: { kind: "scoped", projectRoot: "/", writeRoots: [] },
         network: { kind: "none" },
       }).network,
     ).toEqual({ kind: "none" });
     expect(
       parseSandboxOperationScope({
         ...operationScope(),
-        filesystem: { kind: "scoped", readRoots: [], writeRoots: [] },
+        filesystem: { kind: "scoped", projectRoot: null, writeRoots: [] },
         network: { kind: "allowlist", hosts: [] },
       }).filesystem,
-    ).toEqual({ kind: "scoped", readRoots: [], writeRoots: [] });
+    ).toEqual({ kind: "scoped", projectRoot: null, writeRoots: [] });
+  });
+
+  it("a scoped filesystem carries projectRoot and writeRoots, never readRoots", () => {
+    const base = operationScope();
+    expect(
+      parseSandboxOperationScope({
+        ...base,
+        filesystem: { kind: "scoped", projectRoot: "/w/p", writeRoots: ["/w/p"] },
+      }).filesystem,
+    ).toEqual({ kind: "scoped", projectRoot: "/w/p", writeRoots: ["/w/p"] });
+    expect(() =>
+      parseSandboxOperationScope({
+        ...base,
+        filesystem: { kind: "scoped", projectRoot: null, readRoots: [], writeRoots: [] },
+      }),
+    ).toThrow(SandboxScopeValidationError);
+    // the protocol 4 shape: read roots and no project root
+    expect(() =>
+      parseSandboxOperationScope({
+        ...base,
+        filesystem: { kind: "scoped", readRoots: ["/w/p"], writeRoots: ["/w/p"] },
+      }),
+    ).toThrow(SandboxScopeValidationError);
+  });
+
+  it.each([
+    undefined,
+    "",
+    "relative",
+    "/a//b",
+    "/../secret",
+    "/a\u0000b",
+    `/${"a".repeat(4096)}`,
+    ["/w"],
+    1,
+  ])("rejects a missing or malformed projectRoot: %j", (projectRoot) => {
+    const filesystem: Record<string, unknown> = { kind: "scoped", writeRoots: [] };
+    if (projectRoot !== undefined) filesystem.projectRoot = projectRoot;
+    expect(() => parseSandboxOperationScope({ ...operationScope(), filesystem })).toThrow(
+      validationError,
+    );
   });
 
   it.each([
@@ -249,6 +286,7 @@ describe("immutable operation scope parsing", () => {
     { tag: "a".repeat(65) },
     { filesystem: { kind: "unknown" } },
     { filesystem: { kind: "device", readRoots: [] } },
+    { filesystem: { kind: "device", projectRoot: null } },
     { network: { kind: "open-public", hosts: [] } },
     { network: { kind: "open" } },
     { network: { kind: "public" } },
@@ -274,7 +312,7 @@ describe("immutable operation scope parsing", () => {
       profileRevision: Number.MAX_SAFE_INTEGER,
       admitBeforeMs: Number.MAX_SAFE_INTEGER,
       tag: "a".repeat(64),
-      filesystem: { kind: "scoped", readRoots: Array(64).fill("/"), writeRoots: [] },
+      filesystem: { kind: "scoped", projectRoot: "/", writeRoots: Array(64).fill("/") },
       network: { kind: "allowlist", hosts: Array(100).fill("example.com") },
     });
     expect(parsed.profileRevision).toBe(Number.MAX_SAFE_INTEGER);
@@ -296,8 +334,8 @@ describe("immutable operation scope parsing", () => {
   );
 
   it.each([
-    { kind: "scoped", readRoots: [], writeRoots: [] },
-    { kind: "scoped", readRoots: ["/"], writeRoots: ["/"] },
+    { kind: "scoped", projectRoot: null, writeRoots: [] },
+    { kind: "scoped", projectRoot: "/", writeRoots: ["/"] },
   ])("rejects the environment network without the device filesystem: %j", (filesystem) => {
     for (const profile of ["request-approval", "approve-for-me", "full-access"])
       expect(() =>
@@ -533,12 +571,7 @@ describe("browse and preparation grants", () => {
       () =>
         parseSandboxOperationScope({
           ...operationScope(),
-          filesystem: { kind: "scoped", readRoots: roots, writeRoots: [] },
-        }),
-      () =>
-        parseSandboxOperationScope({
-          ...operationScope(),
-          filesystem: { kind: "scoped", readRoots: [], writeRoots: roots },
+          filesystem: { kind: "scoped", projectRoot: null, writeRoots: roots },
         }),
     ])
       expect(parse).toThrow(validationError);

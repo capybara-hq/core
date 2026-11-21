@@ -56,10 +56,10 @@ describe.skipIf(unavailable !== null)(
     const sibling = "/workspace/sibling";
     const restricted = (
       network: SandboxPermissionGrant["network"] = { kind: "none" },
-      readRoots: string[] = [],
+      projectRoot: string = root,
     ): SandboxPermissionGrant => ({
       profile: "approve-for-me",
-      filesystem: { kind: "scoped", readRoots, writeRoots: [root] },
+      filesystem: { kind: "scoped", projectRoot, writeRoots: [root] },
       network,
     });
     const full: SandboxPermissionGrant = {
@@ -165,7 +165,7 @@ describe.skipIf(unavailable !== null)(
       it("uses the same pinned root descriptors for Landlock, the broker and the native helper", async (context) => {
         requireSupport(context);
         const exec = await run(
-          restricted({ kind: "none" }, [readOnly]),
+          restricted({ kind: "none" }, readOnly),
           "pwd -P; printf x > pinned.txt",
         );
         const pinned = exec.extra?.pinned ?? [];
@@ -313,7 +313,7 @@ attempt("unshare-net", lambda: os.unshare(0x40000000))
 attempt("clone3", lambda: raw(435, 0, 0))
 `;
         const result = await run(
-          restricted({ kind: "none" }, [readOnly]),
+          restricted({ kind: "none" }, readOnly),
           `python3 - ${readOnly}/file ${sibling}/secret ${sibling} <<'EOF'\n${probe}\nEOF`,
         );
         const lines = Object.fromEntries(

@@ -72,7 +72,9 @@ type ToolResult = Extract<ConversationEvent, { type: "tool_result" }>;
 type Scope = {
   operationId: string;
   profile: Profile;
-  filesystem: { kind: "device" } | { kind: "scoped"; readRoots: string[]; writeRoots: string[] };
+  filesystem:
+    | { kind: "device" }
+    | { kind: "scoped"; projectRoot: string | null; writeRoots: string[] };
   network: { kind: string; hosts?: string[] };
 };
 

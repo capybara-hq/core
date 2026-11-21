@@ -461,7 +461,7 @@ describe("verified runtime closure: verify-to-launch pinning (B-7)", () => {
               profile: "approve-for-me",
               actor: { accountId: "a", conversationId: "r" },
               tag: "fixture",
-              filesystem: { kind: "scoped", readRoots: [state], writeRoots: [] },
+              filesystem: { kind: "scoped", projectRoot: state, writeRoots: [] },
               network: { kind: "none" },
             },
             args: { command: "echo ok", cwd: state, timeoutMs: 8000, maxOutputBytes: 1000 },

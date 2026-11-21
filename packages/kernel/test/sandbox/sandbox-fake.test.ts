@@ -357,11 +357,11 @@ function scopeOf(
     network: filesystem.kind === "device" ? { kind: "environment" } : { kind: "none" },
   };
 }
-const scoped = (write: string[], read: string[] = []): SandboxOperationScope["filesystem"] => ({
-  kind: "scoped",
-  readRoots: read,
-  writeRoots: write,
-});
+/** The project root defaults to the first write root; the fake also reads `/skills`. */
+const scoped = (
+  write: string[],
+  projectRoot: string | null = write[0] ?? null,
+): SandboxOperationScope["filesystem"] => ({ kind: "scoped", projectRoot, writeRoots: write });
 
 describe("sandbox-fake permission-scoped surface", () => {
   it("reports restricted and Full support with background ownership, overridable", async () => {
@@ -379,14 +379,14 @@ describe("sandbox-fake permission-scoped surface", () => {
   it("enforces the scope's roots on native operations and commands", async () => {
     const p = createFakeSandbox(root);
     const h = await mk(p, "cap-scope");
-    const op = (id: string, fs = scoped(["/workspace/a"], ["/skills"])) =>
+    const op = (id: string, fs = scoped(["/workspace/a"])) =>
       (p.operation as NonNullable<DeviceProvider["operation"]>)(h, scopeOf(id, fs), sig());
     const data = new TextEncoder().encode("x");
     await (await op("op-w1")).writeFile("/workspace/a/f.txt", data, sig());
     await expect((await op("op-w2")).writeFile("/workspace/b.txt", data, sig())).rejects.toSatisfy(
       isSandboxScopeDeniedError,
     );
-    // a read root is readable, never writable
+    // the skills root is readable (the fake's read rule), never writable
     expect(await (await op("op-r1")).stat("/skills", sig())).toMatchObject({ isDir: true });
     await expect((await op("op-w3")).writeFile("/skills/s.txt", data, sig())).rejects.toSatisfy(
       isSandboxScopeDeniedError,

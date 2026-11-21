@@ -243,7 +243,7 @@ describe("recorded permission context recorder", () => {
     );
     expect(admitted.filesystem).toEqual({
       kind: "scoped",
-      readRoots: ["/skills", "/work"],
+      projectRoot: null,
       writeRoots: ["/work"],
     });
     expect(admitted.network).toEqual({ kind: "none" });

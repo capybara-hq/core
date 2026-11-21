@@ -225,7 +225,7 @@ const facts = (over: Partial<PermissionScopeFacts>): PermissionScopeFacts => ({
   },
   tag: "t",
   workingRoot: "/work",
-  readRoots: ["/work"],
+  projectRoot: "/work",
   writeRoots: ["/work"],
   allowedHosts: [],
   network: "none",
@@ -272,14 +272,14 @@ describe("admission: the sandbox is the same under every profile", () => {
       // the instance is the sandbox: its whole filesystem, never outside
       expect(scope.filesystem).toEqual({
         kind: "scoped",
-        readRoots: ["/", "/work"],
+        projectRoot: "/work",
         writeRoots: ["/", "/work"],
       });
       expect(box.outsideSandbox).toBe(false);
     } else
       expect(scope.filesystem).toEqual({
         kind: "scoped",
-        readRoots: ["/work"],
+        projectRoot: "/work",
         writeRoots: ["/work"],
       });
   });

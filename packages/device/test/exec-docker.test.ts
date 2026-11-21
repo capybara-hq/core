@@ -145,7 +145,11 @@ describe.skipIf(!hasDocker)("DockerContainer", () => {
       tag: `t${n}`,
       filesystem: full
         ? { kind: "device" as const }
-        : { kind: "scoped" as const, readRoots: [], writeRoots: ["/workspace/proj"] },
+        : {
+            kind: "scoped" as const,
+            projectRoot: "/workspace/proj",
+            writeRoots: ["/workspace/proj"],
+          },
       network: full ? { kind: "environment" as const } : { kind: "none" as const },
     });
     const authority = (operationId: string) => ({

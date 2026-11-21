@@ -408,7 +408,7 @@ it("a staged readFile asks for no more than fits in one frame (ruling R26)", asy
       profile: "approve-for-me",
       actor: { accountId: "owner", conversationId: "root" },
       tag: "operation",
-      filesystem: { kind: "scoped", readRoots: ["/work"], writeRoots: ["/work"] },
+      filesystem: { kind: "scoped", projectRoot: "/work", writeRoots: ["/work"] },
       network: { kind: "allowlist", hosts: [] },
     },
     signal,
@@ -458,7 +458,7 @@ it.each(["exec", "backgroundStart"] as const)(
       profile: "approve-for-me" as const,
       actor: { accountId: "owner", conversationId: "root", runId: "run" },
       tag: "operation",
-      filesystem: { kind: "scoped" as const, readRoots: ["/work"], writeRoots: ["/work"] },
+      filesystem: { kind: "scoped" as const, projectRoot: "/work", writeRoots: ["/work"] },
       network: { kind: "allowlist" as const, hosts: ["example.com"] },
     };
     const operation = await staged.operation({ id: "device" }, scope, signal);
@@ -530,7 +530,7 @@ it("staged exec re-layers the machine's refused hosts against the limits it carr
     profile: "approve-for-me" as const,
     actor: { accountId: "owner", conversationId: "root", runId: "run" },
     tag: "operation",
-    filesystem: { kind: "scoped" as const, readRoots: ["/work"], writeRoots: ["/work"] },
+    filesystem: { kind: "scoped" as const, projectRoot: "/work", writeRoots: ["/work"] },
     network: { kind: "none" as const },
   };
   admittedGrants = undefined;
@@ -569,7 +569,7 @@ it("staged exec: a wildcard the machine calls its own is an address, a bad name 
     profile: "approve-for-me" as const,
     actor: { accountId: "owner", conversationId: "root", runId: "run" },
     tag: "operation",
-    filesystem: { kind: "scoped" as const, readRoots: ["/work"], writeRoots: ["/work"] },
+    filesystem: { kind: "scoped" as const, projectRoot: "/work", writeRoots: ["/work"] },
     network: { kind: "none" as const },
   };
   admittedGrants = undefined;

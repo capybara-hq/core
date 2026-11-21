@@ -96,11 +96,15 @@ export function isSandboxOperationOutcomeUnknownError(
   );
 }
 
-/** Writable roots are also readable. Device scope uses the device's OS authority, never its host's. */
+/**
+ * A scoped operation names the project root (null in free mode) and the roots it may write; what
+ * it may read is the provider's rule. Writable roots are also readable. Device scope uses the
+ * device's OS authority, never its host's.
+ */
 export type SandboxFileScope =
   | {
       readonly kind: "scoped";
-      readonly readRoots: readonly string[];
+      readonly projectRoot: string | null;
       readonly writeRoots: readonly string[];
     }
   | { readonly kind: "device" };
@@ -393,8 +397,17 @@ function roots(value: unknown, field: string): readonly string[] {
   return strings(value, 64, validateSandboxPathShape, field);
 }
 
+function projectRoot(value: unknown): string | null {
+  if (value === null) return null;
+  if (typeof value !== "string")
+    return invalid("filesystem.projectRoot", "expected an absolute path or null");
+  const errors = validateSandboxPathShape(value);
+  if (errors.length > 0) return invalid("filesystem.projectRoot", errors.join("; "));
+  return value;
+}
+
 function fileScope(value: unknown): SandboxFileScope {
-  const v = record(value, ["kind", "readRoots", "writeRoots"], "filesystem");
+  const v = record(value, ["kind", "projectRoot", "writeRoots"], "filesystem");
   if (v.kind === "device") {
     record(value, ["kind"], "filesystem");
     return Object.freeze({ kind: "device" });
@@ -402,7 +415,7 @@ function fileScope(value: unknown): SandboxFileScope {
   if (v.kind !== "scoped") return invalid("filesystem.kind", "expected scoped or device");
   return Object.freeze({
     kind: "scoped",
-    readRoots: roots(v.readRoots, "filesystem.readRoots"),
+    projectRoot: projectRoot(v.projectRoot),
     writeRoots: roots(v.writeRoots, "filesystem.writeRoots"),
   });
 }

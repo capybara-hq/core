@@ -668,7 +668,7 @@ describe("the command review in the pipeline", () => {
     expect(exec.permission_grant_id).toBeNull();
     expect((exec.scope as { filesystem: unknown }).filesystem).toEqual({
       kind: "scoped",
-      readRoots: ["/skills", "/workspace"],
+      projectRoot: null,
       writeRoots: ["/workspace"],
     });
   });
@@ -1189,7 +1189,7 @@ describe("the permission review order", () => {
     expect(exec?.permission_grant_id).toBeNull();
     expect((exec?.scope as { filesystem: unknown } | undefined)?.filesystem).toEqual({
       kind: "scoped",
-      readRoots: ["/skills", "/workspace"],
+      projectRoot: null,
       writeRoots: ["/workspace"],
     });
   });

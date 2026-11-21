@@ -5,6 +5,7 @@ import { basename, dirname, join, resolve } from "node:path";
 import {
   type DeviceExecGrants,
   type DeviceNetworkMode,
+  type SandboxFileScope,
   type SandboxLimits,
   type SandboxOperationScope,
   type SandboxRoots,
@@ -201,6 +202,20 @@ export function freezeAuthority(a: LocalExecAuthority): LocalExecAuthority {
       : {}),
   });
 }
+/**
+ * The read roots of a scoped operation on this machine (the scope names only the project root
+ * and the write roots; what a sandboxed operation reads is this program's rule): the write roots,
+ * the project root (the workspace in free mode) and the kernel-staged skills root, sorted by code
+ * point, without duplicates or entries inside another entry. The device filesystem reads `/`.
+ */
+export function normalizedReadRoots(fs: SandboxFileScope, roots: SandboxRoots): string[] {
+  if (fs.kind === "device") return ["/"];
+  const all = [...new Set([...fs.writeRoots, fs.projectRoot ?? roots.workspace, roots.skills])];
+  return all
+    .filter((root) => !all.some((other) => other !== root && within(root, other)))
+    .sort((a, b) => (a < b ? -1 : a > b ? 1 : 0));
+}
+
 /** The refusal of an escalated call the owner ceiling does not allow. */
 export const OUTSIDE_SANDBOX_REFUSAL =
   "Running outside the sandbox is outside the current owner ceiling; the owner allows it on " +
@@ -237,7 +252,8 @@ export function intersectOperation(
     throw new SandboxScopeDeniedError(
       "The device filesystem and the environment network come only together, as one escalated call",
     );
-  checkRoots(scope.filesystem.readRoots, scope.filesystem.writeRoots, ceiling);
+  const readRoots = normalizedReadRoots(scope.filesystem, ceiling.roots);
+  checkRoots(readRoots, scope.filesystem.writeRoots, ceiling);
   if (!native && !authority)
     throw new SandboxScopeDeniedError("Restricted execution requires authenticated authority");
   let openNetwork = false;
@@ -268,7 +284,7 @@ export function intersectOperation(
   return Object.freeze({
     full: false,
     ...(openNetwork && { openNetwork: true }),
-    readRoots: Object.freeze([...scope.filesystem.readRoots]),
+    readRoots: Object.freeze(readRoots),
     writeRoots: Object.freeze([...scope.filesystem.writeRoots]),
     hosts: Object.freeze([...hosts]),
     deniedReadRoots: Object.freeze([...ceiling.restrictedDeniedReadRoots]),

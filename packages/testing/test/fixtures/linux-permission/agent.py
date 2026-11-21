@@ -128,7 +128,9 @@ def launch(request, endpoints):
         return process, None, None
     files = grant["filesystem"]
     write = pin(files["writeRoots"])
-    read = pin([path for path in files["readRoots"] if path not in files["writeRoots"]])
+    # the stand-in's read rule: the project root (the scope names no read roots)
+    project = [files["projectRoot"]] if files["projectRoot"] is not None else []
+    read = pin([path for path in project if path not in files["writeRoots"]])
     attack = request.get("attack")
     if attack and attack["kind"] == "swap-after-pin":
         # Evidence only: the root path changes between pinning and launch.

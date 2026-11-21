@@ -161,7 +161,7 @@ async function fixture(
   let { client, socket } = await open();
   const hello: DeviceHello = {
     type: "hello",
-    protocol: 4,
+    protocol: 5,
     programVersion: "fixture",
     os: "darwin",
     arch: "arm64",

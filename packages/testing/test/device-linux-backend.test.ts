@@ -367,7 +367,7 @@ describe.skipIf(unavailable !== null)("capybara-device Linux operation backends"
     device.run(`mkdir ${root}`);
     const scope = scopeFor(backend.deviceId, {
       profile: "approve-for-me",
-      filesystem: { kind: "scoped", readRoots: [], writeRoots: [root] },
+      filesystem: { kind: "scoped", projectRoot: root, writeRoots: [root] },
       network: { kind: "none" },
     });
     const probe = await backend.operation(scope, authorityFor(scope.operationId)).exec({

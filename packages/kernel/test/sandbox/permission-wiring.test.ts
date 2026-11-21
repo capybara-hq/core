@@ -1667,11 +1667,14 @@ describe("approval-only profiles: the device sandbox in admission and the record
       expect(scope.profile).toBe(profile);
       // the sandbox is the same under every profile: scoped, with the device's network
       expect(scope.filesystem.kind).toBe("scoped");
-      expect(recorded.scope?.filesystem).toEqual({
+      // the scope names the write roots and the project root; the readable directories stay the
+      // recorded context's (what the device reads is its own rule)
+      const fs = scope.filesystem.kind === "scoped" ? scope.filesystem : null;
+      expect(recorded.scope?.filesystem).toMatchObject({
         kind: "scoped",
-        readDirectories: scope.filesystem.kind === "scoped" ? scope.filesystem.readRoots : [],
-        writeDirectories: scope.filesystem.kind === "scoped" ? scope.filesystem.writeRoots : [],
+        writeDirectories: fs?.writeRoots,
       });
+      expect(fs?.writeRoots).toEqual([recorded.scope?.workingRoot]);
       expect(scope.network).toEqual(
         network === "open"
           ? { kind: "open-public" }
@@ -1718,7 +1721,7 @@ describe("approval-only profiles: the device sandbox in admission and the record
             profile: "full-access",
             actor: { accountId: owner.id, conversationId: f.root.id },
             tag: operationId,
-            filesystem: { kind: "scoped", readRoots: ["/work"], writeRoots: ["/work"] },
+            filesystem: { kind: "scoped", projectRoot: "/work", writeRoots: ["/work"] },
             network,
           }),
           epochs: JSON.stringify({ platform: 0, org: 0, device: 0, root: 0 }),
@@ -1833,11 +1836,8 @@ describe("approval-only profiles: the device sandbox in admission and the record
         .get(SandboxOperationAuthority)
         .resolve(f.ctx, "exec", new AbortController().signal);
       expect(scope.profile).toBe(profile);
-      expect(scope.filesystem).toEqual({
-        kind: "scoped",
-        readRoots: ["/", "/work"],
-        writeRoots: ["/", "/work"],
-      });
+      expect(scope.filesystem).toMatchObject({ kind: "scoped", writeRoots: ["/", "/work"] });
+      expect(Object.keys(scope.filesystem)).not.toContain("readRoots");
       const recorded = await context(f as never);
       expect(recorded.sandbox).toMatchObject({ boundary: "instance", outsideSandbox: false });
       expect(recorded.scope?.network).toEqual(scope.network);

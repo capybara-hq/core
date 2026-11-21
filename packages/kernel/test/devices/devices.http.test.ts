@@ -530,7 +530,7 @@ describe("a cloud device's sandbox network (approval-only profiles design)", () 
         profile: "full-access",
         actor: { accountId, conversationId },
         tag: "test",
-        filesystem: { kind: "scoped", readRoots: ["/w"], writeRoots: ["/w"] },
+        filesystem: { kind: "scoped", projectRoot: "/w", writeRoots: ["/w"] },
         network,
       };
       await db
