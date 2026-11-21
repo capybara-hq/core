@@ -18,6 +18,16 @@ Playwright (`apps/web/visual`), oxc-based checks in `tools/checks`.
 **Spec:** `docs/superpowers/specs/2026-11-22-responsive-system-design.md` (decisions D1–D10, §9).
 Read it before any task; section numbers below (§2.1 …) are that spec's.
 
+## Decisions (maintainer 2026-11-22)
+
+- **P1** Phase 0 ships as two PRs: system components (waves 1–2), then templates follow (waves 3–5).
+- **P2** Template-only props (`PageHeaderProps.primaryForm`, `Tabs look`, `Segmented` / `Tabs`
+  `chipsCompact`) are enforced by a check: rule `web-ui-template-only-props` in T0.4, proven red
+  first and listed in `tools/checks/README.md`.
+- **P3** An action sheet that holds a link stays the web sheet (links stay links: open in a new
+  window, copy the address); a native shell's `menu@1` is used only for sheets without links.
+- **P4** The responsive baselines are three widths (390 touch, 768, 1440) × two themes.
+
 ## Global Constraints
 
 - apps/web writes no styles and never reads the size class, pointer or shell (spec §4, §7).
@@ -89,8 +99,8 @@ task is `high` by the repo's definition; the four **judgment** tasks (hydration,
 scroll, touch input) are still reviewed alone on the most capable model because their failures
 are invisible in jsdom.
 
-Phase 0 ships as two PRs: wave 1–2 ("system pieces", no visible change until used) and waves 3–5
-("templates follow"). Phases 1–3 are one PR each.
+Phase 0 ships as two PRs (P1): waves 1–2 ("system pieces", no visible change until used) and
+waves 3–5 ("templates follow"). Phases 1–3 are one PR each.
 
 ---
 
@@ -157,6 +167,11 @@ Phase 0 ships as two PRs: wave 1–2 ("system pieces", no visible change until u
   - `actionSheetItems(a: ObjectActions): MenuItem[]` — primary first, then items; separators kept,
     a submenu flattened into its items; empty when nothing is actionable.
   - `ActionSheet(props: { open: boolean; onOpenChange(open: boolean): void; title: string; items: MenuItem[] }): JSX.Element` — on `BottomSheet`; rows `data-part="action-sheet-item"`, `touch.hit` high, `danger` → `data-tone="fail"`; a link row through `useDesignLink`; a pick closes, then runs.
+  - Native (P3): with `useNative()?.menu` and no `href` item, the sheet opens as the platform's
+    action sheet (`useNativeMenuTrigger`); with any link item it stays the web sheet, whose link
+    rows keep link behaviour (a modified click or the system's link menu opens a new window or
+    copies the address). Tests: `native menu used for a sheet without links`, `sheet with a link
+    stays the web sheet in a native shell`.
   - `useLongPress(onLongPress: () => void, opts?: { enabled?: boolean }): { onPointerDown; onPointerMove; onPointerUp; onPointerCancel; onContextMenu; onClickCapture }` — 500 ms, 10 px; touch pointers only for the timer; `contextmenu` always (when enabled) with `preventDefault`; after a fired long press the next click in the element is cancelled.
 
 - [ ] **Step 1: Failing tests**: `lists primary then menu items`; `danger item is in the fail tone`;
@@ -190,6 +205,10 @@ Phase 0 ships as two PRs: wave 1–2 ("system pieces", no visible change until u
   `app/(app)/agents/view.tsx`, `app/(app)/admin/agents/templates/view.tsx`,
   `app/(app)/admin/connectors/templates/view.tsx`, `app/(app)/admin/plugins/market/view.tsx`
   (ratchet: a clean entry fails as stale).
+- `web-ui-template-only-props` (P2): in `apps/web/src`, passing `primaryForm` to `PageHeader`
+  (or inside a `header` object given to a template), `look` to `Tabs`, or `chipsCompact` to
+  `Segmented` / `Tabs` fails; only `packages/design` templates set them. Red fixture
+  `tools/checks/fixtures/web-ui/template-only-props.tsx`.
 - `design-dual-render`: in `packages/design/src`, a function calling `useHydrated` and one of
   `useSizeClass` / `useMediaQuery(SIZE_CLASS_QUERIES.*)` / `useTouch` outside
   `shell/class-forms.tsx` fails; `DUAL_RENDER_PENDING` lists today's users (page-header, body,
@@ -198,7 +217,7 @@ Phase 0 ships as two PRs: wave 1–2 ("system pieces", no visible change until u
 - [ ] **Step 1: Red fixtures + failing tests** for each rule (violation found, allowlisted file
   passes, stale pending entry fails).
 - [ ] **Step 2: Run** `pnpm exec vitest run tools/checks/test/web-ui.test.ts tools/checks/test/design-dual-render.test.ts` → FAIL.
-- [ ] **Step 3: Implement**; README entries: all three full on PRs (cheap source scans).
+- [ ] **Step 3: Implement**; README entries: all four full on PRs (cheap source scans).
 - [ ] **Step 4: Run** tests → PASS; `pnpm check` → PASS on the real tree.
 - [ ] **Step 5: Commit** `feat(checks): keep size-class logic out of pages and in ClassForms (#568)`.
 
@@ -510,13 +529,3 @@ desktop-only notice), so tests use a fine pointer at 390.
   No row mappings (D8): admin tables keep the stacked fallback.
 
 ---
-
-## Decisions this plan needs from the maintainer
-
-- **P1** Phase 0 as two PRs (system pieces, then templates follow) — or one large PR?
-- **P2** `primaryForm` and `look` / `chipsCompact` are template-set props on design components; pages
-  can technically pass them. Enforce "templates only" by a check, or accept review?
-- **P3** The ActionSheet in a native shell: `menu@1` cannot carry links, so a sheet with links
-  stays the web sheet (proposed), or convert links to actions that navigate (uniform native look)?
-- **P4** `responsive.spec.ts` adds ~13 templates × 3 widths × 2 themes ≈ 80 baselines on the
-  visual job; acceptable, or 390 + 1440 only (768 covered by the existing matrix pages)?
