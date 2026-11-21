@@ -664,12 +664,15 @@ declare global {
   public contract shared with `capybara-hq/clients` (`packages/shell` implements it), and
   plugin-sdk is the package that imports nothing from Capybara (designer's call).
 - **`controls` versus `insets`** (designer's call): `insets` reserves whole bands at the edges;
-  `controls` says exactly where the window controls sit inside the top band, so the AppShell
-  keeps that rectangle clear (the sidebar head starts after it, the compact floating buttons
-  move aside) without hard-coding Apple's traffic-light width or assuming a
-  Windows overlay on the right. The design CSS reads it only through tokens (§9.3); a shell that
-  reports `controls` may still report a `top` inset for the band height. `data-shell-platform`
-  stays for platform conventions only (back gesture, title placement), never for geometry.
+  `controls` says exactly where the window controls sit, so the AppShell keeps that rectangle
+  clear (the sidebar head starts after it, the compact floating buttons move aside) without
+  hard-coding Apple's traffic-light width or assuming a Windows overlay on the right. The design
+  CSS reads it only through tokens (§9.3). A desktop shell reports `top` 0 and a rectangle from
+  the window's top edge as high as the row the controls are centred in: the web then runs to the
+  top edge and its top row takes that height (desktop spec §7.3, amended 2026-11-21); a rectangle
+  inside a reported `top` inset (an older desktop shell's title bar band) reserves nothing beyond
+  the band. `data-shell-platform` stays for platform conventions only (back gesture, title
+  placement), never for geometry.
 
 ### 9.2 Capabilities and versioning
 
@@ -724,8 +727,16 @@ declare global {
   changes.
 - **Design CSS does the rest**, under `[data-shell]` selectors: the insets join the safe areas in
   `--cb-inset-*` (§7.5), and the controls rectangle in `--cb-shell-controls-*` decides which
-  leading or trailing space the compact floating buttons and the sidebar head keep clear (the traffic lights on macOS,
-  a caption overlay on Windows) with no platform-specific widths in CSS; window
+  leading or trailing space the compact floating buttons and the sidebar head keep clear (the
+  traffic lights on macOS, a caption overlay on Windows) with no platform-specific widths in CSS.
+  A mobile shell's band (`--cb-shell-band`) runs down to the top inset or the controls' bottom
+  edge, whichever is lower, and the whole shell starts below it. On the desktop the band is the
+  top inset alone; controls reaching below it make a **top row** (`--cb-shell-row`, the
+  rectangle's bottom edge) that the first rows at the window's top (the sidebar's brand row, the
+  conversation title bar, the compact floating row, the shared file page's bar) take as their
+  height, centred on the controls, each keeping clear of the rectangle where it overlaps it
+  (`--cb-shell-reserve-start|end`, the side being the half of the window the rectangle's centre
+  lies in); full-height overlays start below the row on their controls' side. Window
   **drag regions** (`app-region: drag`) on the sidebar head and the conversation title bar, with `app-region: no-drag` on every interactive element inside them.
   Desktop-specific choices beyond that (which region drags, how wide) are the desktop spec's,
   realized in design CSS.
