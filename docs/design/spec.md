@@ -231,6 +231,7 @@ Every size a component uses is a step of one of these scales, stored in `tokens.
 - Wordmark: `CAPYBARA`, 600, 8 away from the Logo.
 - **The brand slot**: the sidebar's brand row (`Sidebar` prop `brand`, a function of the panel it is drawn in, `(v: { collapsed, panel: "full" | "rail" }) => ReactNode`, called once per drawn panel; default the `Logo` above, with the wordmark unless the sidebar is the rail) is the replaceable slot `shell.brand`: one chosen plugin `component` may draw the row's content instead (props `builtin`, the default node, `collapsed`, true on the rail, and `panel`). The row keeps its size and its `data-cap-part="sidebar.brand"`; a failing or still loading replacement shows the built-in (`ReplaceableFrame`, §4.5). The theme's logo (above) still reaches the built-in through the design context.
 - **Brand from a theme**: a theme may replace the logo mark and the wordmark. The web passes the resolved theme's brand to `DesignProvider` (`brand: { markUrl, wordmark }`, either part null), and `Logo` draws it where it draws the pixel capybara: `markUrl` as an `img` as high as the bitmap would be (10 × the pixel unit, so 20 / 30 / 60; its width follows the file; `alt` is the wordmark, or "Logo") instead of the bitmap, `wordmark` as the wordmark text instead of `CAPYBARA` (only where the wordmark is drawn: the rail has none). A null part keeps the built-in one. The sidebar, `AuthPage` and `StatusPage` draw `Logo` and take no props for it.
+- **Theme graphics**: the brand a theme gives (`Brand`: `markUrl`, `wordmark`, `illustrationUrl`, `decoration`) reaches three more places besides `Logo`: the working line's and the greeting's mark (§6.16.24, §6.16.25: the theme mark, 20 px high, width following the file up to 3 × the height) and the empty state's art (§6.18: `illustrationUrl ?? markUrl` as a mask filled with `faint`). The platform name is only ever the mark's `alt`. A mark that fails to load falls back to the pixel capybara it replaces. A URL reaches CSS only through the `--cb-brand-art` custom property, set as an escaped quoted string (`url("…")` with `"` and `\` escaped), never interpolated into a stylesheet. `decoration: "none"` removes the auth pages' dither columns (§5.10). The built-in `CAPYBARA` wordmark stays unless the theme gives its own `wordmark`.
 - **Dither dot matrix**: used only for the backgrounds on both sides of auth pages and (optionally) the PageHeader corner of the overview page; 4px squares in `line`, density decreasing from one side to the other, greyscale only (no accent squares). No other page may use it.
 - **Agent avatars** (§6.30) are the one place with pictures and their own colors: the ten pixel animals, drawn like the Logo (a 12×12 bitmap of solid squares, `crispEdges`), each in its animal's palette on a soft ground (the `avatar-*` color tokens, and `accent` for the capybara). Nothing else in the UI may use the animal palettes.
 - Apart from agent avatars and the generating image placeholder (§6.16.20, built from `accent`, `accent-hover`, `ink` and `panel` only): no illustrations, gradients, frosted glass or emoji. Nothing else may cite these exceptions.
@@ -765,16 +766,18 @@ States: `default`, `loading`, `content`, `loading-content`
 ### 5.10 Auth (T10)
 - **Title**: the card's h1 is a sentence (often mixed Chinese and Latin), so it uses the prose font at the `h1` step and weight (maintainer decision 2026-11-21); every AuthPage page gets it from the template.
 - **Loading** (`AuthPage.loading`, `{ fields, subtitle?, note?, hint?, buttons? }`): the page keeps its frame: the two dither columns, the logo, the 400 px card with the title and subtitle the page knows (an empty `title` is an h1-sized bar; `subtitle: true` is a 70% `body` slot for a subtitle that comes with the data), and its `footer` and `preferences`. The card's body is `fields` field placeholders (§5.3; a count or the page's static `FieldShape[]`), then `note` (static content the page shows for real after the data, such as a warning card), then the card's buttons: a gap-8 stack of `buttons` `prominent` boxes (§2.5; default 1, the submit button), opened by `hint` (a static `prose` `muted` line the page shows above its buttons) when given; these parts are `space.4` apart, in place of `children`. One busy announcement (§6.29). Nothing animates.
+- **No decoration** (`no-decoration`: the theme's `decoration` is `"none"`): no dither columns; the card and its width (400) are unchanged and the preference bar keeps its corner.
 - **Classes** (size classes, §4; mobile layout spec §5.1; each template draws its form, a page never branches on width): **compact**: full width with 16 px gutters and the safe areas; **medium**: centered; **expanded**: as above (the status and onboarding templates, T11 and T12, take the same forms).
 
 <!-- states: template-auth -->
-States: `default`, `loading`
+States: `default`, `loading`, `no-decoration`
 
 <!-- size-table: template-auth -->
 | Part | State | Property | Value |
 |---|---|---|---|
 | auth-card | default | width | 400 |
 | auth-card | loading | width | 400 |
+| auth-card | no-decoration | width | 400 |
 | skeleton-box[data-box=default] | loading | height | control.default |
 | skeleton-box[data-box=prominent] | loading | height | control.prominent |
 
@@ -2464,6 +2467,7 @@ after expansion layout settles, so the conversation's follow-bottom behavior can
 - **Mark**: the pixel capybara of §3 at pixel unit 2 (28 × 20, the sidebar logo's size), `accent`,
   `crispEdges`, in a `control.default` × `space.5` (28 × 20) box; the line stays `row.dense` high. It walks: two frames swap the legs (rows 9–10 of the bitmap; frame 2 moves
   each pair one pixel inward) every 400ms.
+- **Themed mark** (`branded`: the theme gives a `markUrl`): an `img` 20 px high (`space.5`) in place of the bitmap, width following the file, at most 3 × the height (60), `object-fit: contain`, in the same line (still `row.dense`, `gap space.2`); it does not walk: it pulses in opacity with the leg frames' period (`data-motion="pulse"`, a subtle change between full and 60 %), static under reduced motion and when `still`. A failed load falls back to the pixel capybara. Captions rotate unchanged.
 - **Caption**, rotating every 2.4s in place (no slide, no fade): 规划中… / 执行中… / 斟酌中… /
   整理中… (en: Planning… / Working… / Pondering… / Composing…), starting at the first. The
   captions share one box, so the line keeps the widest one's width.
@@ -2475,7 +2479,7 @@ after expansion layout settles, so the conversation's follow-bottom behavior can
 - Existing tokens only, no new colours.
 
 <!-- states: working-line -->
-States: `default`, `reduced-motion`
+States: `default`, `reduced-motion`, `branded`
 
 <!-- size-table: working-line -->
 | Part | State | Property | Value |
@@ -2490,6 +2494,9 @@ States: `default`, `reduced-motion`
 | working-line | reduced-motion | height | row.dense |
 | working-mark | reduced-motion | width | control.default |
 | working-mark | reduced-motion | color | color.accent |
+| working-line | branded | height | row.dense |
+| working-mark | branded | height | space.5 |
+| working-mark | branded | max-width | 60 |
 
 #### 6.16.25 Greeting
 
@@ -2498,6 +2505,7 @@ States: `default`, `reduced-motion`
 - **Line**: the pixel capybara of §3 at pixel unit 2 (28 × 20, the working line's mark, §6.16.24),
   `accent`, `crispEdges`, in a `control.default` × `space.5` box, then `space.3`, then the line:
   `h1` size and line height, 600, `ink`, one line with an ellipsis; a heading (`h2` element).
+- **Themed mark** (`branded`: the theme gives a `markUrl`): an `img` 20 px high (`space.5`), width following the file up to 3 × the height (60), instead of the bitmap, then `space.3` and the line; a failed load falls back to the bitmap. Decorative (`alt` empty).
 - **Typing**: the line is typed once, on first paint, one character every 40 ms, with a 2 px
   `accent` caret after the typed text that goes when the line is complete; a re-render with the
   same line never types it again. **Reduced motion** (and `still`, the reference set's form): the
@@ -2512,7 +2520,7 @@ States: `default`, `reduced-motion`
   decorative.
 
 <!-- states: greeting -->
-States: `default`, `placeholder`
+States: `default`, `placeholder`, `branded`
 
 <!-- size-table: greeting -->
 | Part | State | Property | Value |
@@ -2528,6 +2536,9 @@ States: `default`, `placeholder`
 | greeting-sub | default | color | color.muted |
 | greeting-line | placeholder | height | type.h1.line |
 | greeting-mark | placeholder | width | control.default |
+| greeting-mark | branded | height | space.5 |
+| greeting-mark | branded | max-width | 60 |
+| greeting-line | branded | column-gap | space.3 |
 
 #### 6.16.26 Agent row and agent panel
 
@@ -2961,6 +2972,7 @@ States: `person`
 One empty state for the whole product, in three styles. `EmptyState({ text, hint?, action?, size? })`:
 
 - **Illustration**: the pixel capybara of §3 drawn as a line (`LogoLine`: the outer edges of the bitmap's cells, the eye included, 1 px `faint` stroke, no fill), decorative, on the `page` and `panel` styles (never `compact`). No other art or icon stands in for it (a search that matched nothing is the same style with its own sentence).
+- **Themed art** (the theme gives `illustrationUrl` or `markUrl`): `page` and `panel` draw `illustrationUrl ?? markUrl` instead of the line-art capybara, as a CSS mask (`data-part="empty-brand-art"`, from `--cb-brand-art`, §3) filled with `faint`, inside `data-part="empty-illustration"`, a fixed box (`page` 96 × 60, `panel` 64 × 40), `mask-size: contain`, centred, `aria-hidden`. `compact` stays text only.
 - **Copy**: one sentence in `ink` (prose font) saying what will be here ("还没有 agent" / "No agents yet"), an optional second line in `muted` (`small`, prose font), and at most one action, the primary next step (a `default` or `primary` button or link). A `primary` action here is the screen's one primary: `ListPage` hides the head's primary while it is shown (§5.1). Never a table header over an icon, never a sentence about the absence of data in general ("暂无数据" is only the DataTable's fallback).
 - **Styles**: `page` (default) is the line-art capybara over the words, centered in the content frame, no frame of its own, `space.8` × 2 above and below, the illustration at scale 6 (85 × 61). `panel` (an empty region inside a box) is the same centered look sized down: the illustration at scale 4 (57 × 41), the sentence (+ hint) centered under it, the action `dense`, `space.8` above and below and `space.2` at the sides so it fits the 240 px sidebar. `compact` is the words alone, no art: left-aligned with `space.3` padding (none inside a card body, which pads it already) and `space.2` gaps, the action `dense`; inside a DataTable it is centered horizontally in the table body instead (§6.6).
 - **Where** (maintainer decision 2026-11-08, acceptance): the style follows the space the empty state fills, never the caller's taste.
@@ -2968,6 +2980,21 @@ One empty state for the whole product, in three styles. `EmptyState({ text, hint
   - `panel`: an empty region inside a box: an `ItemList` with no rows (§6.33: a template's tools / skills / connectors, a deployment config's org copies), an empty Card or FormSection card (no model providers, no tools to review, no agent to bind, no custom marketplace), a Sheet or Dialog whose list is empty (a tool group without tools, no member to reassign to, no evaluation set, no connector to bind), a ToolPolicyList filter matching nothing (§6.36), the span waterfall with no spans (§6.10), the sidebar's conversation list ("还没有会话" + 新会话, the archived list's "没有已归档的会话", a filter matching nothing: "没有匹配的会话" + 清除筛选), and an extension's schema view with nothing to show in a right panel, an inline card or a file preview (§6.16.17): no blocks, or only a checklist / key-value list / table without items, draws one panel empty state with the host's sentence "这里还没有内容。" / "Nothing here yet." (the UiView contract carries no empty text), and an empty checklist or key-value list among other blocks draws the same in its place. A properties section whose view is empty is not drawn at all (no header, no badge, no empty state; acceptance decision 2026-11-13, like the built-in 文件 and 后台任务 sections): it appears once its view has something to show (todo's 待办 after the first write), and it is not drawn during its first load either; once drawn (content or a load failure) it keeps its frame while it reloads.
   - `compact`: only where the space is one line: the DataTable's empty and no-results areas (§6.6, centered in the table body, the same in every table, an extension's table block too). A line inside a form field (a checkbox group with nothing to pick: "组织还没有技能。"), a Repeater with no items (§6.26), a ContentSection's or an ImpactPreview's empty line (a fact in a summary, §6.31, §6.35) and a menu or palette matching nothing are not empty states: they stay one muted line.
   - The action stays `default` (dense in `panel` and `compact`) unless it is the page's one primary.
+
+<!-- states: branded-page, branded-panel -->
+States: `branded-page`, `branded-panel`
+
+<!-- size-table: empty-state -->
+| Part | State | Property | Value |
+|---|---|---|---|
+| empty-illustration | branded-page | width | 96 |
+| empty-illustration | branded-page | height | 60 |
+| empty-brand-art | branded-page | width | 96 |
+| empty-brand-art | branded-page | height | 60 |
+| empty-illustration | branded-panel | width | 64 |
+| empty-illustration | branded-panel | height | 40 |
+| empty-brand-art | branded-panel | width | 64 |
+| empty-brand-art | branded-panel | height | 40 |
 
 ### 6.20 PendingState
 
