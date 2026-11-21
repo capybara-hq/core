@@ -1,6 +1,6 @@
 // The native wiring (mobile app spec §6): the frame hands the shell's nav@1 strip to the design
 // (the sections with the inbox count, taps navigate, the strip's menu button opens the drawer) and
-// profiles@1 to the account sheet and menu as 「切换平台」; downloads go to the system browser in a
+// profiles@1 to the account sheet and menu as "Switch platform"; downloads go to the system browser in a
 // shell with openExternal@1; DesignRoot passes the shell's menu / share / haptics and tells
 // chrome@1 the page has drawn.
 import { useHaptics, useNative } from "@capybara-hq/design";

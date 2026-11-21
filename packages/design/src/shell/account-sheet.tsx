@@ -31,7 +31,7 @@ export interface AccountSheetData {
   status: ReactNode;
   /** The PWA install hint, while the app is not installed. */
   installHint?: ReactNode;
-  /** A native shell's profile switcher (`profiles@1.show`); absent: no 「切换平台」 row. */
+  /** A native shell's profile switcher (`profiles@1.show`); absent: no "Switch platform" row. */
   onSwitchProfile?(): void;
   onSignOut(): void;
 }
@@ -46,8 +46,8 @@ export type AccountSheetProps = {
 
 /**
  * The account sheet (design spec §6.54): a bottom sheet from the drawer's account row with the
- * person and org, the org switcher, 个人设置, the theme, the system status, the install hint,
- * 切换平台 (a native shell only) and sign out. It holds its own history entry on a compact touch
+ * person and org, the org switcher, Personal settings, the theme, the system status, the install hint,
+ * Switch platform (a native shell only) and sign out. It holds its own history entry on a compact touch
  * window, so the system back closes it before the drawer under it (Decision 25); a row that goes
  * somewhere leaves the entry (the navigation is pending) and also closes the drawer.
  */

@@ -510,7 +510,8 @@ export class ConversationsController {
   }
 
   /**
-   * 下载 agent 交付的产物（`artifact_created`）：302 到预签名地址（一律 `attachment`，带文件名）;
+   * Download an artifact the agent delivered (`artifact_created`): a 302 to the presigned URL (always
+   * `attachment`, with the file name);
    * `as=url` answers `{ url }` with that address instead (never cached).
    * 会话可见性与会话流相同，不可见 → `conversation.not_found`；不是该会话的产物 → `conversation.artifact_not_found`。
    */

@@ -206,7 +206,7 @@ describe("the native strip (nav@1)", () => {
       r.getAttribute("data-nav-section"),
     );
     expect(rows).toEqual(expect.arrayContaining(["inbox", "agents", "schedules"]));
-    // the 「技能、连接器、设备…」 row stays
+    // the "Skills, connectors, devices…" row stays
     expect(screen.getByText("技能、连接器、设备…").closest("[data-nav-section]")).toBeNull();
   });
 
@@ -223,7 +223,7 @@ describe("the native strip (nav@1)", () => {
     expect(side.querySelector('[data-part="more-toggle"]')?.hasAttribute("data-nav-other")).toBe(
       true,
     );
-    // the account menu's first item: 更多 with the entries that are not strip sections
+    // the account menu's first item: More with the entries that are not strip sections
     await userEvent.setup().click(side.querySelector('[data-part="account"]') as HTMLElement);
     const items = await screen.findAllByRole("menuitem");
     expect(items.map((i) => i.textContent)).toEqual(["更多", "个人设置"]);

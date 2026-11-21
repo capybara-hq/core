@@ -22,9 +22,9 @@ export interface DrawerNavData {
     icon: IconName;
     badge?: NavBadge;
   }[];
-  /** The second level's entries: 技能, 连接器, 设备 and the org's extension pages. */
+  /** The second level's entries: Skills, Connectors, Devices and the org's extension pages. */
   more: { id: string; label: string; href: string; icon: IconName }[];
-  /** The row that opens the second level: 「技能、连接器、设备…」. */
+  /** The row that opens the second level: "Skills, connectors, devices…". */
   moreLabel: string;
   /** The sidebar's conversation section. */
   recent: SidebarConversations;
@@ -58,8 +58,8 @@ const under = (pathname: string, href: string) =>
 
 /**
  * The chat-first compact shell's drawer (design spec §6.53): search, the section entries with the
- * inbox count, the 「技能、连接器、设备…」 row that opens a second level (Decision 18), the recent
- * conversations with 「全部会话」, and at the foot the account row (it opens the account sheet,
+ * inbox count, the "Skills, connectors, devices…" row that opens a second level (Decision 18), the recent
+ * conversations with "All conversations", and at the foot the account row (it opens the account sheet,
  * §6.54) and the new-conversation button. A pick closes the drawer; the system back closes the
  * account sheet first, then the drawer (Decision 25).
  */

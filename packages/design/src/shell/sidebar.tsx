@@ -165,7 +165,7 @@ export type SidebarProps = {
   moreOpen?: boolean;
   /**
    * A native strip shows (the AppShell's `nativeNav`; mobile layout spec §4.3): the account menu
-   * then leads with 更多 (the entries that are not strip sections), whose entries the CSS hides
+   * then leads with More (the entries that are not strip sections), whose entries the CSS hides
    * from the sidebar itself.
    */
   nativeNav?: boolean;
@@ -983,7 +983,7 @@ function SetupNav({
 }
 
 /**
- * A native strip's marks (mobile layout spec §4.3): a section entry (智能体, 定时任务) carries
+ * A native strip's marks (mobile layout spec §4.3): a section entry (Agents, Scheduled tasks) carries
  * `data-nav-section`, every other navigation entry `data-nav-other`; both are hidden while the
  * strip shows (`[data-native-nav]`), when the sections come from the strip.
  */
@@ -995,7 +995,7 @@ function navSectionAttrs(id: string): Record<string, string> {
 
 /**
  * The work context's account menu while a native strip shows (mobile layout spec §4.3): its first
- * item is 更多 with the navigation entries that are not strip sections (技能, 连接器, 设备, the
+ * item is More with the navigation entries that are not strip sections (Skills, Connectors, Devices, the
  * extension pages). Only then: a hidden menu item would still take the menu's arrow keys.
  */
 function withNativeMore(

@@ -1,4 +1,4 @@
-// The 「请在电脑上管理」 notice and the touch route gate (mobile touch plan Task 29, Decision 20):
+// The "Manage this on a computer" notice and the touch route gate (mobile touch plan Task 29, Decision 20):
 // the server render holds the notice and the page and the touch query shows one; after hydration
 // only one is mounted. Presentation only: the kernel decides access.
 import { act, cleanup, fireEvent, render, screen } from "@testing-library/react";

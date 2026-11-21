@@ -169,7 +169,7 @@ export interface RouteEntry {
   none?: string;
   /**
    * A management page that is desktop-only on touch (mobile touch plan Task 29): the shell shows
-   * 「请在电脑上管理」 in its place. Set from {@link DESKTOP_ONLY_PREFIXES}; presentation only, the
+   * "Manage this on a computer" in its place. Set from {@link DESKTOP_ONLY_PREFIXES}; presentation only, the
    * kernel still decides access.
    */
   desktopOnly?: boolean;

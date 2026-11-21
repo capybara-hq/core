@@ -499,7 +499,7 @@ describe("back closes overlays first (Decision 25)", () => {
   });
 
   // T27 review (Important): sign out leaves the page, so it runs only once the popped entries'
-  // popstate has fired; 切换平台 opens the native switcher inside the click (user activation) and
+  // popstate has fired; Switch platform opens the native switcher inside the click (user activation) and
   // keeps the page, so the overlays pop as a close does.
   const openAccount = async () => {
     await userEvent.click(menuButton() as HTMLElement);

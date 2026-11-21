@@ -35,7 +35,7 @@ export type NavLevel = "guest" | "member" | "admin";
  * flyout (then the extension pages). Search and the inbox are icon buttons in the brand row. Items are hidden
  * by the current org role through `audience` (cosmetic only; the kernel decides). The admin
  * console is the entry above the account row, for super admins. `drawer` places an item in the
- * compact drawer (design spec §6.53): a section entry or its 「技能、连接器、设备…」 level; the
+ * compact drawer (design spec §6.53): a section entry or its "Skills, connectors, devices…" level; the
  * management items have none and never enter it (mobile layout spec §15, decision 4).
  */
 const NAV: readonly {
@@ -467,10 +467,10 @@ export type DrawerNav = Pick<
 
 /**
  * The compact drawer's navigation (design spec §6.53; mobile touch plan Task 28) from the same
- * `NAV` data and role levels as the sidebar: the sections 收件箱 (with the pending count), 智能体 and
- * 定时任务, and the 「技能、连接器、设备…」 level with 技能, 连接器, 设备 and the org's extension
- * pages (those not hidden on compact). The management items (插件, 扩展, 渠道, 评测与运行, 组织设置,
- * the admin console) never enter it: on touch they are managed on a computer.
+ * `NAV` data and role levels as the sidebar: the sections Inbox (with the pending count), Agents
+ * and Scheduled tasks, and the "Skills, connectors, devices…" level with Skills, Connectors, Devices
+ * and the org's extension pages (those not hidden on compact). The management items (Plugins,
+ * Extensions, Channels, Evals & runs, Organization settings, the admin console) never enter it: on touch they are managed on a computer.
  */
 export function useDrawerNav(
   level: NavLevel,

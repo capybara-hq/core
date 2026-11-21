@@ -244,7 +244,7 @@ describe("management pages on touch (Task 29)", () => {
     expect(
       document.querySelector('[data-part="admin-entry"]')?.hasAttribute("data-desktop-only"),
     ).toBe(true);
-    // the 更多 flyout: the management items are flagged, skills / connectors / devices are not
+    // the More flyout: the management items are flagged, skills / connectors / devices are not
     const toggle = document.querySelector('[data-part="more-toggle"]') as HTMLElement;
     await userEvent.click(toggle);
     const menu = document.querySelector('[role="menu"]') as HTMLElement;

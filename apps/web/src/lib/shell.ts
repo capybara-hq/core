@@ -451,7 +451,7 @@ export function useNativeNavHandle(): NativeNavHandle | undefined {
 }
 
 /**
- * The account sheet's 「切换平台」 (`profiles@1.show`, mobile app spec §5.2): undefined without
+ * The account sheet's "Switch platform" (`profiles@1.show`, mobile app spec §5.2): undefined without
  * the capability (the browser, an app locked to one deployment). Call it inside the click's
  * handler: the shell's switcher is confirming and needs the user activation. It resolves with
  * nothing whatever is picked; a refusal (`busy`, `no_activation`) is dropped.

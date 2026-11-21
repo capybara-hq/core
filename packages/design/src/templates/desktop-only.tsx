@@ -14,8 +14,8 @@ export type DesktopOnlyNoticeProps = {
 };
 
 /**
- * 「请在电脑上管理」 (mobile touch plan Task 29): the StatusPage form a management page shows on a
- * touch device: the title, one sentence, the page's URL in the code font, 复制链接 and 回到对话 as
+ * "Manage this on a computer" (mobile touch plan Task 29): the StatusPage form a management page shows on a
+ * touch device: the title, one sentence, the page's URL in the code font, Copy link and Back to chat as
  * the primary. Presentation only; the kernel still decides access.
  */
 export function DesktopOnlyNotice({

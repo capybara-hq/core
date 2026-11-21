@@ -38,9 +38,11 @@ class AttachmentDownloadQueryDto extends createZodDto(DownloadQuery, "Attachment
  * 2. 浏览器直传对象存储；
  * 3. `POST /:id/finalize` 核对大小与类型；
  * 4. 发消息时在 `files` 里引用 id。
- * 下载 `GET /:id/download` 302 到预签名地址（`Cache-Control: private, max-age=60`）; `?as=url` answers
- * `{ url }` with that address instead.上限 `GET /limits`（类型、单个大小、
- * 每条条数、单次请求的媒体预算、存储是否可用，供网页预检；不需要对象存储）。没有对象存储时其余接口 503 `storage.unavailable`。
+ * Download: `GET /:id/download` redirects (302) to the presigned URL (`Cache-Control: private,
+ * max-age=60`); `?as=url` answers `{ url }` with that address instead. Limits: `GET /limits` (types,
+ * per-file size, files per message, the media budget per request, whether storage is available; for the
+ * web's pre-checks; needs no object store). Without an object store the other routes answer 503
+ * `storage.unavailable`.
  */
 @Controller("api/v1/orgs/:orgId/attachments")
 export class AttachmentsController {
