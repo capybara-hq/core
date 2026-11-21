@@ -100,17 +100,12 @@ interface PlatformInput {
   topic?: string;
 }
 
-const SPEC: ToolSpec = {
-  name: BUILTIN.Platform,
-  description:
-    "Discover and use the platform's own operations (agents, skills, templates, plugins, " +
-    "connectors, extensions, conversations, devices, models, evals, channels, requests, " +
-    "approvals and the inbox, org settings, and for admins accounts, orgs and the admin console) " +
-    'and its documentation, as the person you are working for. Start with action "browse", which ' +
-    'lists every domain; "describe" gives an operation\'s input schema and an example. ' +
-    'Writes ask the person to confirm. Use "read" for how-to documentation (plugin ' +
-    "format, skills, extension points).",
-  inputSchema: {
+/**
+ * The input schema. `domain` is an enum of the registered domain ids, so the model picks a real id
+ * from the schema instead of guessing one (`browseDomain` still refuses an unknown id).
+ */
+function platformInputSchema(domainIds: readonly string[]): ToolSpec["inputSchema"] {
+  return {
     type: "object",
     properties: {
       action: {
@@ -124,8 +119,8 @@ const SPEC: ToolSpec = {
       },
       domain: {
         type: "string",
-        maxLength: 100,
-        description: 'For browse: a domain id from the browse result, e.g. "skills".',
+        enum: [...domainIds],
+        description: "For browse: the domain whose operations to list.",
       },
       query: {
         type: "string",
@@ -151,9 +146,8 @@ const SPEC: ToolSpec = {
     },
     required: ["action"],
     additionalProperties: false,
-  },
-  keyArgs: ["action", "operation", "domain"],
-};
+  };
+}
 
 /** What the tool needs; `BuiltinTools` passes the Nest providers. */
 export interface PlatformToolDeps {
@@ -449,6 +443,19 @@ const factsCtx = (ctx: BuiltinCallContext): CallPolicyContext => ({
 });
 
 export function platformTool(deps: PlatformToolDeps): BuiltinTool {
+  const spec: ToolSpec = {
+    name: BUILTIN.Platform,
+    description:
+      "Discover and use the platform's own operations (agents, skills, templates, plugins, " +
+      "connectors, extensions, conversations, devices, models, evals, channels, requests, " +
+      "approvals and the inbox, org settings, and for admins accounts, orgs and the admin console) " +
+      'and its documentation, as the person you are working for. Start with action "browse", which ' +
+      'lists every domain; "describe" gives an operation\'s input schema and an example. ' +
+      "Writes may need approval, depending on the conversation's permission profile. Use " +
+      '"read" for how-to documentation (plugin format, skills, extension points).',
+    inputSchema: platformInputSchema(deps.ops.domains().map((d) => d.id)),
+    keyArgs: ["action", "operation", "domain"],
+  };
   const facts = (ctx: CallPolicyContext) => deps.actor.facts(ctx);
 
   async function callPolicy(raw: unknown, ctx: CallPolicyContext): Promise<CallPolicy | null> {
@@ -766,7 +773,7 @@ export function platformTool(deps: PlatformToolDeps): BuiltinTool {
   }
 
   return {
-    spec: SPEC,
+    spec,
     defaultPolicy: "allow",
     run,
     callPolicy,
