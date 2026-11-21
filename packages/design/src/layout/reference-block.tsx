@@ -56,10 +56,10 @@ export function ReferenceBlock({
 }
 
 /**
- * A compact screen in a reference block (the reference set's `r-screen`): `top` (the top bar),
- * the body filling the rest, then `bottom` (the bottom navigation or a sticky row), so a block
+ * A compact screen in a reference block (the reference set's `r-screen`): `top` (the floating row or a bar),
+ * the body filling the rest, then `bottom` (a sticky row), so a block
  * shows a component in the frame the shell would give it at a phone's width in any window. It
- * stands in for the shell: a ListDetail inside draws no back bar of its own (the top bar has it).
+ * stands in for the shell: a ListDetail inside draws no back bar of its own (the floating row has it).
  * Development catalog only (`/dev/ui` reference blocks, spec §9.2), never a page.
  */
 export function ReferenceScreen({
@@ -70,7 +70,7 @@ export function ReferenceScreen({
 }: {
   top?: ReactNode;
   bottom?: ReactNode;
-  /** The body padded `space.4` at the top and the sides (a page body such as the MePanel). */
+  /** The body padded `space.4` at the top and the sides (a padded page body). */
   pad?: boolean;
   children?: ReactNode;
 }) {

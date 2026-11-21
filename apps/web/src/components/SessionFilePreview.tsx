@@ -2,7 +2,8 @@
 
 import { AttachmentPreview, useToast } from "@capybara-hq/design";
 import { useCallback, useRef, useState } from "react";
-import { ApiClientError, ensureSession } from "../lib/api";
+import { ApiClientError, apiFetch, ensureSession } from "../lib/api";
+import { useOpenExternalCapability } from "../lib/shell";
 import { useErrorMessage } from "../lib/use-error-message";
 
 /**
@@ -17,22 +18,53 @@ import { useErrorMessage } from "../lib/use-error-message";
  * Opens a same-origin download URL in a new tab after making sure the session is fresh: the tab
  * opens synchronously (keeping the user gesture, no opener), then navigates once the session is
  * confirmed; when the sign-in is really gone (401) the tab closes and the error shows here instead
- * of a bare 401.
+ * of a bare 401. `public: true` (a share link, which needs no session) opens the URL as is.
+ *
+ * Inside a native shell with `openExternal@1` the file opens in the system browser instead (the
+ * mobile app sends every popup to an in-app browser sheet that has none of the WebView's cookies).
+ * That browser does not hold the app's session either, so a kernel download route is first asked
+ * for its cookie-free form (`?as=url`: the presigned URL the 302 would send) under this page's
+ * session, and that URL is opened; a share link goes as is.
  */
-export function useOpenDownload(): (url: string) => void {
+export function useOpenDownload(): (url: string, opts?: { public?: boolean }) => void {
   const toast = useToast();
   const errorMessage = useErrorMessage();
+  const external = useOpenExternalCapability();
   return useCallback(
-    (url: string) => {
-      const target = new URL(url, window.location.href).href;
+    (url: string, opts: { public?: boolean } = {}) => {
+      const target = new URL(url, window.location.href);
+      if (external !== undefined) {
+        const open = (href: string) => {
+          try {
+            external.open(href).catch(() => {});
+          } catch {
+            // the shell refused it: nothing opens
+          }
+        };
+        if (opts.public === true) {
+          open(target.href);
+          return;
+        }
+        target.searchParams.set("as", "url");
+        // query-exempt: a one-off presigned URL for the system browser, not page data
+        apiFetch<{ url: string }>(`${target.pathname}${target.search}`).then(
+          (r) => open(r.url),
+          (e: unknown) => toast.error(errorMessage(e)),
+        );
+        return;
+      }
+      if (opts.public === true) {
+        window.open(url, "_blank", "noopener,noreferrer");
+        return;
+      }
       const tab = window.open("", "_blank");
       if (!tab) {
-        window.open(target, "_blank", "noopener,noreferrer");
+        window.open(target.href, "_blank", "noopener,noreferrer");
         return;
       }
       tab.opener = null;
       const go = () => {
-        tab.location.href = target;
+        tab.location.href = target.href;
       };
       // query-exempt: a session refresh before a download navigates, not a kernel read
       ensureSession().then(go, (e: unknown) => {
@@ -44,7 +76,7 @@ export function useOpenDownload(): (url: string) => void {
         go();
       });
     },
-    [toast, errorMessage],
+    [toast, errorMessage, external],
   );
 }
 

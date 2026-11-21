@@ -54,7 +54,7 @@ describe("manifest()", () => {
     expect(m).toMatchObject({
       name: "Example Corp",
       short_name: "Example Corp",
-      start_url: "/conversations",
+      start_url: "/",
       scope: "/",
       display: "standalone",
     });

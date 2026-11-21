@@ -14,6 +14,12 @@ export type NavRowProps = {
   current?: boolean;
   /** A chevron after the label: the row opens a deeper level instead of going somewhere. */
   trailing?: "chevron";
+  /**
+   * The row keeps the page (it opens a native sheet, say): a pick that pops the overlays' history
+   * entries as a close does (`data-drawer-pick="stay"`). Every other button row may navigate in the
+   * same tick, so the overlays leave their entries rather than race it with a back.
+   */
+  stay?: boolean;
   "data-nav-section"?: string;
 };
 
@@ -30,6 +36,7 @@ export function NavRow({
   badge,
   current,
   trailing,
+  stay,
   "data-nav-section": section,
 }: NavRowProps) {
   const Link = useDesignLink();
@@ -66,7 +73,7 @@ export function NavRow({
       type="button"
       {...common}
       onClick={onSelect}
-      {...(trailing === "chevron" ? {} : { "data-drawer-pick": "true" })}
+      {...(trailing === "chevron" ? {} : { "data-drawer-pick": stay ? "stay" : "true" })}
     >
       {body}
     </button>

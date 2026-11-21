@@ -52,10 +52,23 @@ function touch(selector: string): Record<string, string> {
 }
 
 describe("touch rules (stylesheets)", () => {
-  it("the composer pill is composer high and pill round", () => {
+  it("the composer pill is composer high; its radius is half that, so a grown box is no oval", () => {
     const pill = touch(".cb-composer::before");
     expect(pill["min-height"]).toBe("var(--cb-touch-composer)");
-    expect(pill["border-radius"]).toBe("var(--cb-radius-pill)");
+    expect(pill["border-radius"]).toBe("calc(var(--cb-touch-composer) / 2)");
+  });
+
+  it("＋ and send sit at the bottom of a grown composer, centred on its last line (T27 review)", () => {
+    const attach = touch(".cb-composer-bar > .cb-icon-btn:first-child");
+    const send = touch(".cb-composer-bar > .cb-send.cb-btn");
+    expect(attach["align-self"]).toBe("end");
+    expect(attach["margin-block-end"]).toBe(
+      "calc((var(--cb-touch-composer) - var(--cb-touch-hit)) / 2)",
+    );
+    expect(send["align-self"]).toBe("end");
+    expect(send["margin-block-end"]).toBe(
+      "calc((var(--cb-touch-composer) - var(--cb-touch-float)) / 2)",
+    );
   });
 
   it("send is a float-sized round accent button", () => {

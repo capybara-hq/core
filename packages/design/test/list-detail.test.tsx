@@ -128,7 +128,6 @@ describe("inside the shell the open item is a pushed page", () => {
           sidebar={SIDEBAR}
           status={{ context: "grant@acme:/", version: "0.1.0" }}
           pathname="/inbox"
-          bottomNav={[{ id: "inbox", label: "收件箱", href: "/inbox", icon: "inbox" }]}
         >
           <ListDetail
             list={<p>L</p>}
@@ -141,11 +140,10 @@ describe("inside the shell the open item is a pushed page", () => {
         </AppShell>
       </DesignProvider>,
     );
-    const top = document.querySelector('[data-part="top-bar"]') as HTMLElement;
-    expect(top.getAttribute("data-pushed")).toBe("true");
+    const top = document.querySelector('[data-part="floating-bar"]') as HTMLElement;
+    expect(top.getAttribute("data-lead")).toBe("back");
     await userEvent.click(within(top).getByRole("button", { name: "返回" }));
     expect(onBack).toHaveBeenCalledTimes(1);
-    expect(document.querySelector('[data-part="bottom-nav-slot"]')).toBeNull();
     expect(
       parseCss(css("templates.css")).some(
         (r) =>
@@ -194,9 +192,6 @@ describe("the compact forms of the templates", () => {
         "height",
       ),
     ).toBe("40px");
-    // on a tab root the bottom navigation pads the inset: the row adds only the keyboard
-    const tabRoot = ".cb-shell-main:has(~ .cb-shell-bottomnav) .cb-actionrow";
-    expect(decl(tabRoot, "padding-bottom")).not.toContain("inset-bottom");
   });
 
   it("WizardPage's compact step bar reads 2 / 4 and names the step", () => {

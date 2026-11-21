@@ -9,6 +9,7 @@ import {
   type NavLevel,
   statusPrompt,
   useAdminItems,
+  useDrawerNav,
   useNav,
 } from "../src/components/shell/nav";
 import { SessionContext } from "../src/components/shell/session";
@@ -190,6 +191,69 @@ describe("nav by level (role hiding is cosmetic; the kernel decides)", () => {
       ["模型", "/admin/models"],
       ["部署设置", "/admin/settings"],
     ]);
+  });
+});
+
+describe("the compact drawer's navigation (useDrawerNav, mobile touch plan Task 28)", () => {
+  const EXT = [
+    { id: "acme/board", label: "看板", href: "/p/acme/board", compact: "kept" as const },
+    { id: "acme/wide", label: "宽表", href: "/p/acme/wide", compact: "hidden" as const },
+  ];
+  function drawer(level: NavLevel, pending = { count: 0, more: false }) {
+    function DrawerProbe() {
+      return <pre data-testid="drawer">{JSON.stringify(useDrawerNav(level, pending, EXT))}</pre>;
+    }
+    render(
+      <NextIntlClientProvider locale="zh" messages={zh}>
+        <DrawerProbe />
+      </NextIntlClientProvider>,
+    );
+    const out = JSON.parse(screen.getByTestId("drawer").textContent ?? "{}");
+    cleanup();
+    return out as ReturnType<typeof useDrawerNav>;
+  }
+
+  it("a member: 收件箱 with the count, 智能体, 定时任务; more holds 技能 连接器 设备 and an org page", () => {
+    const d = drawer("member", { count: 3, more: false });
+    expect(d.sections.map((s) => [s.id, s.label, s.href])).toEqual([
+      ["inbox", "收件箱", "/inbox"],
+      ["agents", "智能体", "/agents"],
+      ["schedules", "定时任务", "/schedules"],
+    ]);
+    expect(d.sections[0]?.badge).toEqual({ count: 3 });
+    expect(d.menuBadge).toEqual({ count: 3 });
+    expect(d.more.map((m) => m.href)).toEqual([
+      "/skills",
+      "/connectors",
+      "/devices",
+      "/p/acme/board",
+    ]);
+    expect(d.moreLabel).toBe("技能、连接器、设备…");
+    expect(d.allConversations).toEqual({ label: "全部会话", href: "/conversations" });
+    expect(d.newConversation).toEqual({ label: "新会话", href: "/" });
+  });
+
+  it("the management items never enter it, whatever the role", () => {
+    const d = drawer("admin");
+    const hrefs = [...d.sections, ...d.more].map((i) => i.href);
+    for (const managed of ["/plugins", "/extensions", "/channels", "/evals", "/settings"])
+      expect(hrefs.some((h) => h.startsWith(managed))).toBe(false);
+    expect(hrefs).not.toContain("/admin");
+  });
+
+  it("a guest: no 定时任务 and no 技能; nothing pending, no badge", () => {
+    const d = drawer("guest");
+    expect(d.sections.map((s) => s.id)).toEqual(["inbox", "agents"]);
+    expect(d.more.map((m) => m.href)).toEqual(["/connectors", "/devices", "/p/acme/board"]);
+    expect(d.sections[0]?.badge).toBeUndefined();
+    expect(d.menuBadge).toBeUndefined();
+  });
+
+  it("a truncated inbox reads as more", () => {
+    expect(drawer("member", { count: 100, more: true }).menuBadge).toEqual({
+      count: 100,
+      more: true,
+    });
   });
 });
 

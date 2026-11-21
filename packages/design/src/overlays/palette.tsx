@@ -23,6 +23,8 @@ export type CommandItem = {
   /** More text the filter matches like the label, not shown ("superpowers:brainstorming"). */
   search?: string;
   shortcut?: string;
+  /** A desktop-only page's command: `data-desktop-only`, hidden under the touch query. */
+  desktopOnly?: boolean;
   onSelect(): void;
 };
 
@@ -175,6 +177,7 @@ function PaletteBody({
                 keywords={[it.label, it.search ?? "", it.description ?? ""]}
                 className="cb-palette-item"
                 data-part="palette-item"
+                data-desktop-only={it.desktopOnly ? "" : undefined}
                 onSelect={() => {
                   it.onSelect();
                   onOpenChange(false);

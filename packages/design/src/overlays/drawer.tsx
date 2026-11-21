@@ -3,15 +3,53 @@ import { type MouseEvent, type ReactNode, useEffect, useRef, useState } from "re
 import { Icon } from "../icons/icon";
 import { useDragDismiss } from "./drag";
 import { useFocusReturn } from "./focus-return";
-import { useOverlayHistory } from "./use-overlay-history";
+import { popOverlaysThen, useOverlayHistory } from "./use-overlay-history";
 
 export type DrawerProps = {
   open: boolean;
   onOpenChange(open: boolean): void;
   /** The accessible name of the dialog (the drawer draws no title of its own). */
   label: string;
+  /**
+   * Client navigation for a link pick (apps/web: the router's push). With it, a pick on a compact
+   * touch window pops the drawer's history entry (and a sheet's over it) first and navigates once
+   * the pop has landed, so one back returns to the page before; without it the link navigates
+   * itself and the entry stays behind.
+   */
+  onNavigate?(href: string): void;
   children: ReactNode;
 };
+
+/**
+ * The link a click on `e.target` follows in this tab, if any: the main button with no modifier key,
+ * no `target` other than `_self` and no `download`.
+ */
+function sameTabLink(e: MouseEvent<HTMLElement>): HTMLAnchorElement | null {
+  if (e.button !== 0 || e.metaKey || e.ctrlKey || e.shiftKey || e.altKey) return null;
+  const a = (e.target as HTMLElement).closest<HTMLAnchorElement>("a[href]");
+  if (a === null || (a.target !== "" && a.target !== "_self") || a.hasAttribute("download"))
+    return null;
+  return a;
+}
+
+/**
+ * Whether a pick may leave the page in the same tick: a link this tab follows, or a button row not
+ * marked `data-drawer-pick="stay"` (design spec §6.52). A link pick with `onNavigate` has already
+ * popped the entries in the capture phase; this only decides for the rest.
+ */
+export function picksAway(pick: HTMLElement, e: MouseEvent<HTMLElement>): boolean {
+  if (pick.tagName === "A") return sameTabLink(e) !== null;
+  return pick.getAttribute("data-drawer-pick") !== "stay";
+}
+
+/** The in-app address (same origin) a plain click on `e.target` follows, if any. */
+function inAppHref(e: MouseEvent<HTMLElement>): string | null {
+  const a = e.defaultPrevented ? null : sameTabLink(e);
+  if (a === null) return null;
+  const url = new URL(a.href, window.location.href);
+  if (url.origin !== window.location.origin) return null;
+  return `${url.pathname}${url.search}${url.hash}`;
+}
 
 const FIRST_ROW = "a[href], button:not([disabled]), [tabindex]:not([tabindex='-1'])";
 
@@ -22,7 +60,7 @@ const FIRST_ROW = "a[href], button:not([disabled]), [tabindex]:not([tabindex='-1
  * returns to the trigger. While closed it draws nothing, so no edge listens for a swipe (the menu
  * button is the way in). On a compact touch window the system back closes it (`useOverlayHistory`).
  */
-export function Drawer({ open, onOpenChange, label, children }: DrawerProps) {
+export function Drawer({ open, onOpenChange, label, onNavigate, children }: DrawerProps) {
   const focusReturn = useFocusReturn();
   const panel = useRef<HTMLDivElement | null>(null);
   const history = useOverlayHistory(open, () => onOpenChange(false));
@@ -52,11 +90,25 @@ export function Drawer({ open, onOpenChange, label, children }: DrawerProps) {
             panel.current?.querySelector<HTMLElement>(FIRST_ROW)?.focus();
           }}
           onCloseAutoFocus={focusReturn.restore}
+          onClickCapture={(e: MouseEvent<HTMLElement>) => {
+            // Before the link's own handler: a pick pops the overlays' entries, then navigates.
+            if (onNavigate === undefined) return;
+            const href = inAppHref(e);
+            if (href === null) return;
+            if (!popOverlaysThen(() => onNavigate(href))) return;
+            e.preventDefault();
+          }}
           onClick={(e: MouseEvent<HTMLElement>) => {
-            if ((e.target as HTMLElement).closest("[data-drawer-pick]")) {
-              history.leaveEntry();
-              onOpenChange(false);
-            }
+            // a link anywhere in the panel (a recent conversation) is a pick too
+            const pick = (e.target as HTMLElement).closest<HTMLElement>(
+              "[data-drawer-pick], a[href]",
+            );
+            if (pick === null) return;
+            // The page may be leaving (a navigation pending in this tick): the entry stays behind
+            // rather than race it with a back. A link that opens elsewhere and a row marked to
+            // stay keep the page, so the close pops the entry as usual.
+            if (picksAway(pick, e)) history.leaveEntry();
+            onOpenChange(false);
           }}
         >
           <RD.Title className="cb-sr-only">{label}</RD.Title>

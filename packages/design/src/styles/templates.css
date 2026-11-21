@@ -388,6 +388,43 @@
   margin-top: 12px;
 }
 
+/* 「请在电脑上管理」: the notice of a desktop-only page, shown on touch in the page's place */
+.cb-desktop-only-notice {
+  display: none;
+}
+.cb-desktop-only-page {
+  display: contents;
+}
+@media (pointer: coarse), (any-pointer: coarse) and (not (any-pointer: fine)) {
+  .cb-desktop-only-notice {
+    display: block;
+  }
+  .cb-desktop-only-page {
+    display: none;
+  }
+}
+.cb-desktop-only-body {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 16px;
+  max-width: 100%;
+}
+.cb-desktop-only-url {
+  max-width: 100%;
+  font-family: var(--cb-font-code);
+  font-size: var(--cb-type-small-size);
+  color: var(--cb-muted);
+  overflow-wrap: anywhere;
+  user-select: all;
+}
+.cb-desktop-only-actions {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: 8px;
+}
+
 /* Onboarding 清单 */
 .cb-checklist {
   box-sizing: border-box;
@@ -1311,8 +1348,9 @@ a.cb-object-name:hover {
     row-gap: var(--cb-space-2);
     /* the buttons span the row: no gutter kept for a scrollbar the row never has */
     scrollbar-gutter: auto;
-    padding: var(--cb-space-2) var(--cb-space-4)
-      calc(var(--cb-space-2) + var(--cb-inset-bottom) + var(--cb-keyboard-inset, 0px));
+    padding: var(--cb-space-2) calc(var(--cb-space-4) + var(--cb-inset-right))
+      calc(var(--cb-space-2) + var(--cb-inset-bottom) + var(--cb-keyboard-inset, 0px))
+      var(--cb-space-4);
   }
   .cb-actionrow .cb-actionrow-frame {
     flex-direction: column;
@@ -1353,10 +1391,6 @@ a.cb-object-name:hover {
 @media (max-width: 599px) {
   .cb-actionrow .cb-actionrow-primary {
     display: flex;
-  }
-  /* On a tab root the bottom navigation below the page already pads the bottom inset. */
-  .cb-shell-main:has(~ .cb-shell-bottomnav) .cb-actionrow {
-    padding-bottom: calc(var(--cb-space-2) + var(--cb-keyboard-inset, 0px));
   }
 }
 
@@ -1468,7 +1502,7 @@ a.cb-object-name:hover {
 }
 /* Two viewport segments (mobile layout spec §8): the media features are the authority for first
    paint (`data-segments="2"` only mirrors `useViewportSegments()` for script). The `env()` values
-   are viewport-relative while the region sits right of the sidebar and below the top bar, so the
+   are viewport-relative while the region sits right of the sidebar and below the floating row, so the
    second segment's track is anchored from the trailing edge (its size is the segment's own) and
    the first takes the rest; the hinge is the gap between them. `--cb-segment-trail` is a frame's
    inline-end inset and `--cb-segment-trail-block` its bottom inset (the vertical form); both
@@ -1555,7 +1589,7 @@ a.cb-object-name:hover {
     padding-inline: var(--cb-space-4);
   }
 }
-/* Inside the shell on compact the top bar is the one back (the open item is a pushed page); the
+/* Inside the shell on compact the floating row is the one back (the open item is a pushed page); the
    reference set's compact frame stands in for the shell. */
 @media (max-width: 599px) {
   .cb-shell .cb-listdetail[data-fit] > .cb-listdetail-detail > .cb-listdetail-bar,
@@ -1721,6 +1755,7 @@ li:first-child > .cb-ld-row {
   box-sizing: border-box;
   min-height: 0;
   padding: 0 var(--cb-content-pad);
+  padding-right: calc(var(--cb-content-pad) + var(--cb-inset-right));
   overflow: hidden;
   scrollbar-gutter: stable;
 }

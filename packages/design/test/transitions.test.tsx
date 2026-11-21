@@ -1,17 +1,11 @@
 // Push and pop transitions (mobile app spec §7.2, §4.4): the slide is tuned to the platform by
 // tokens, a pop the browser already animated (a back gesture: `hasUAVisualTransition`) swaps at
-// once, and a tab switch never slides.
+// once, and a move between chat surfaces (or a native shell's tab roots) never slides.
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { act, cleanup, render } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import {
-  AppShell,
-  DesignProvider,
-  type NativeNavHandle,
-  type NativeTabId,
-  withViewTransition,
-} from "../src/index";
+import { AppShell, DesignProvider, withViewTransition } from "../src/index";
 import { css, parseCss } from "./css-rules";
 import { matchMediaFor } from "./width";
 
@@ -31,18 +25,16 @@ const sidebar = {
   account: { name: "grant", menu: [] },
 };
 const status = { context: "demo", version: "0.1.0", timeZone: "UTC" };
-const items = [
-  { id: "chats" as const, label: "会话", href: "/conversations", icon: "chats" as const },
-  { id: "agents" as const, label: "智能体", href: "/agents", icon: "agent" as const },
-  { id: "inbox" as const, label: "收件箱", href: "/inbox", icon: "inbox" as const },
-  { id: "me" as const, label: "我", href: "/me", icon: "user" as const },
-];
-const shell = (
-  pathname: string,
-  extra: { nativeNav?: NativeNavHandle; onNavigate?: (href: string) => void } = {},
-) => (
+/** The chat surfaces (the home and a conversation) are one level; every other page is pushed. */
+const chatSurface = (pathname: string) => pathname === "/" || pathname.startsWith("/chat/");
+const shell = (pathname: string) => (
   <DesignProvider locale="zh">
-    <AppShell sidebar={sidebar} status={status} bottomNav={items} pathname={pathname} {...extra}>
+    <AppShell
+      sidebar={sidebar}
+      status={status}
+      pathname={pathname}
+      chatSurface={chatSurface(pathname)}
+    >
       <div>内容</div>
     </AppShell>
   </DesignProvider>
@@ -66,8 +58,8 @@ describe("a pop the browser already animated", () => {
     doc.startViewTransition = start;
     window.history.replaceState(null, "", "/agents/new");
     const { rerender } = render(shell("/agents/new"));
-    popTo("/agents", true);
-    rerender(shell("/agents"));
+    popTo("/", true);
+    rerender(shell("/"));
     expect(main().getAttribute("data-nav")).toBeNull();
     expect(start).not.toHaveBeenCalled();
   });
@@ -76,8 +68,8 @@ describe("a pop the browser already animated", () => {
     window.matchMedia = matchMediaFor(390).matchMedia;
     window.history.replaceState(null, "", "/agents/new");
     const { rerender } = render(shell("/agents/new"));
-    popTo("/agents", false);
-    rerender(shell("/agents"));
+    popTo("/", false);
+    rerender(shell("/"));
     expect(main().getAttribute("data-nav")).toMatch(/^pop-/);
   });
 
@@ -85,8 +77,8 @@ describe("a pop the browser already animated", () => {
     window.matchMedia = matchMediaFor(390).matchMedia;
     window.history.replaceState(null, "", "/agents/new");
     const { rerender } = render(shell("/agents/new"));
-    popTo("/agents", true);
-    rerender(shell("/agents"));
+    popTo("/", true);
+    rerender(shell("/"));
     window.history.pushState(null, "", "/agents/new");
     rerender(shell("/agents/new"));
     expect(main().getAttribute("data-nav")).toMatch(/^push-/);
@@ -94,46 +86,31 @@ describe("a pop the browser already animated", () => {
 
   it("a gesture that changed no route does not swallow the next push's slide", () => {
     window.matchMedia = matchMediaFor(390).matchMedia;
-    window.history.replaceState(null, "", "/agents");
-    const { rerender } = render(shell("/agents"));
+    window.history.replaceState(null, "", "/");
+    const { rerender } = render(shell("/"));
     // a back within the page (a hash) the browser animated: the route stays
-    popTo("/agents#x", true);
+    popTo("/#x", true);
     window.history.pushState(null, "", "/agents/new");
     rerender(shell("/agents/new"));
     expect(main().getAttribute("data-nav")).toMatch(/^push-/);
   });
 });
 
-describe("tab switches never slide", () => {
-  it("root to root through the web's bottom navigation, also right after a pop", () => {
-    window.matchMedia = matchMediaFor(390).matchMedia;
-    const { rerender } = render(shell("/agents/new"));
-    rerender(shell("/agents"));
-    expect(main().getAttribute("data-nav")).toMatch(/^pop-/);
-    rerender(shell("/inbox"));
-    expect(main().getAttribute("data-nav")).toBeNull();
-  });
+describe("moves on one level never slide", () => {
+  const chat = (pathname: string, chatSurface: boolean) => (
+    <DesignProvider locale="zh">
+      <AppShell sidebar={sidebar} status={status} pathname={pathname} chatSurface={chatSurface}>
+        <div>内容</div>
+      </AppShell>
+    </DesignProvider>
+  );
 
-  it("root to root through the native tab bar (nativeNav.onSelect)", () => {
+  it("chat surface to chat surface, also right after a pop (the chat-first shell)", () => {
     window.matchMedia = matchMediaFor(390).matchMedia;
-    const listeners = new Set<(id: NativeTabId) => void>();
-    const nativeNav: NativeNavHandle = {
-      set: vi.fn(),
-      onSelect: (l) => {
-        listeners.add(l);
-        return () => listeners.delete(l);
-      },
-    };
-    let view: ReturnType<typeof render> | null = null;
-    const onNavigate = (href: string) => view?.rerender(shell(href, { nativeNav, onNavigate }));
-    view = render(shell("/conversations", { nativeNav, onNavigate }));
-    act(() => {
-      for (const l of [...listeners]) l("inbox");
-    });
-    expect(main().getAttribute("data-nav")).toBeNull();
-    act(() => {
-      for (const l of [...listeners]) l("agents");
-    });
+    const { rerender } = render(chat("/inbox", false));
+    rerender(chat("/chat/c1", true));
+    expect(main().getAttribute("data-nav")).toMatch(/^pop-/);
+    rerender(chat("/", true));
     expect(main().getAttribute("data-nav")).toBeNull();
   });
 });

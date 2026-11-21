@@ -5,7 +5,7 @@ import type { SetupStep } from "./sidebar";
 /**
  * The setup frame's steps as a page of their own (spec §5.5, compact): the setup home and the
  * steps as rows, the current one marked, a waiting step with the reason under it. The shell pushes
- * it over the setup home (the tab root) from the top bar's steps button; a link leaves it.
+ * it over the setup home (the tab root) from the floating row's steps button; a link leaves it.
  */
 export function SetupSteps({
   home,

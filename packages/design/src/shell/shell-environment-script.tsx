@@ -5,9 +5,9 @@
  * root layout puts first in `<head>`, so it runs before the first paint. It reads the global a
  * native shell injects (`window.capybaraShell`, before any page script) and marks `<html>` with
  * `data-shell`, `data-shell-platform`, `--cb-shell-inset-*` and, when the shell reports window
- * controls, `--cb-shell-controls-x|y|width|height`; with the native tab bar (`nav@1` an own
- * object of `capabilities`), `data-native-nav`, so the web's bottom navigation never paints under
- * it.
+ * controls, `--cb-shell-controls-x|y|width|height`; with the native strip (`nav@1` an own
+ * object of `capabilities`), `data-native-nav`, so the web's section entries and menu button never
+ * paint beside it (the AppShell clears it when the strip goes).
  *
  * A fixed string: nothing of the page, the request or the user is interpolated into it, so the
  * request's CSP nonce is the only thing that differs between documents. It does nothing outside

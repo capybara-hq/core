@@ -24,3 +24,19 @@ describe("the shell capability types", () => {
     );
   });
 });
+
+describe("the nav@1 limits", () => {
+  // packages/design may not import @capybara-hq/plugin-sdk either, so native.ts keeps its own copy
+  it("design's NATIVE_NAV_LIMITS equal the SDK's MOBILE_SHELL_LIMITS navLabel / navCount", () => {
+    const sdk = read("../../../packages/plugin-sdk/src/shell-capabilities.ts");
+    const design = read("../../../packages/design/src/native.ts");
+    const num = (source: string, re: RegExp) => Number(re.exec(source)?.[1]);
+    const label = num(sdk, /navLabel: (\d+)/);
+    const count = num(sdk, /navCount: (\d+)/);
+    expect(label).toBeGreaterThan(0);
+    expect(count).toBeGreaterThan(0);
+    expect(design).toContain(
+      `export const NATIVE_NAV_LIMITS = { label: ${label}, count: ${count} } as const;`,
+    );
+  });
+});

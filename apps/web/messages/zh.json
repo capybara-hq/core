@@ -2036,9 +2036,7 @@
     "admin": "管理后台",
     "plugins": "插件",
     "extensions": "扩展",
-    "schedules": "定时任务",
-    "chats": "会话",
-    "me": "我"
+    "schedules": "定时任务"
   },
   "conversations": {
     "title": "会话",
@@ -2051,15 +2049,23 @@
     "running": "运行中",
     "waiting": "等待我"
   },
-  "me": {
-    "title": "我",
-    "adminTitle": "管理后台",
-    "back": "回到工作区"
+  "desktopOnly": {
+    "title": "请在电脑上管理",
+    "body": "插件、扩展、渠道、组织设置和管理后台这类配置，只在电脑上提供。",
+    "copy": "复制链接",
+    "copied": "链接已复制",
+    "back": "回到对话"
+  },
+  "drawer": {
+    "more": "技能、连接器、设备…",
+    "switchOrg": "切换组织",
+    "allConversations": "全部会话"
   },
   "shell": {
     "noOrg": "选择组织",
     "createOrg": "新建组织…",
     "accountSettings": "个人设置",
+    "switchProfile": "切换平台",
     "noCurrentOrg": "当前没有组织，无法操作会话。"
   },
   "notFound": {

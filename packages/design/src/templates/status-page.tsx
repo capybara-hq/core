@@ -7,6 +7,8 @@ import { Body, type PageHeaderProps } from "../shell/index";
 import { TemplateHead } from "./frame";
 
 const CODE = { "404": "404", "403": "403", maintenance: "503", disabled: "—" } as const;
+/** The kinds that draw an icon in the code's place. */
+const MARK = { "no-access": "lock", "desktop-only": "cpu" } as const;
 
 /**
  * T11 系统状态：Single 居中（404 / 403 / 维护中 / 未开通 / 没有访问权限）。
@@ -23,7 +25,7 @@ export function StatusPage({
   ask,
 }: {
   header: PageHeaderProps;
-  kind: "404" | "403" | "maintenance" | "disabled" | "no-access";
+  kind: "404" | "403" | "maintenance" | "disabled" | "no-access" | "desktop-only";
   title: string;
   description: string;
   action?: ReactNode;
@@ -39,9 +41,9 @@ export function StatusPage({
       <Body layout="single" width="content">
         <div className="cb-status-page">
           <Logo scale={3} tone="muted" />
-          {kind === "no-access" ? (
+          {kind === "no-access" || kind === "desktop-only" ? (
             <span className="cb-status-lock" data-part="status-lock" aria-hidden="true">
-              <Icon name="lock" size={16} />
+              <Icon name={MARK[kind]} size={16} />
             </span>
           ) : (
             <Text variant="h1" tone="faint" as="p">

@@ -18,10 +18,11 @@ export { type ForcedPseudo, ReferenceBlock, ReferenceScreen } from "./layout/ref
 export { ReferenceBoard } from "./layout/reference-board";
 export {
   isPlainMenu,
+  NATIVE_SECTION_ORDER,
   type NativeHandlers,
   type NativeHapticKind,
   type NativeNavHandle,
-  type NativeTabId,
+  type NativeSectionId,
   useHaptics,
   useNative,
 } from "./native";

@@ -1,7 +1,7 @@
 /**
  * The structural half of the compact rule set (mobile layout spec §11.3), next to
  * `findNestedBoxes`: rules on the rendered DOM that need no layout engine. The geometric half
- * (hit boxes, horizontal scroll, the bottom navigation covering the last item, 16 px fields) lives
+ * (hit boxes, horizontal scroll, the floating composer covering the last item, 16 px fields) lives
  * in `apps/web/visual/compact.interaction.spec.ts`.
  */
 export type CompactRule = "hover-only" | "unnamed-control" | "list-detail-back";
@@ -60,15 +60,17 @@ function visibleText(node: Node): string {
     .join("");
 }
 
-/** A list-detail region has a back control: its own back bar's, or the shell's top bar's. */
+/** A list-detail region has a back control: its own back bar's, or the shell's floating back. */
 function hasBack(region: Element): boolean {
   const own = region.querySelector("[data-part='back-bar'] :is(button, a[href], [role='button'])");
   if (own !== null && accessibleName(own) !== "") return true;
-  // Inside an AppShell the top bar owns back on compact (the region's own bar is hidden there),
-  // but only while the open item is a pushed page: the shell's bar must be marked pushed and
-  // carry a named back. A region outside any shell has no such bar to lean on.
+  // Inside an AppShell the floating row owns back on compact (the region's own bar is hidden
+  // there), but only while its leading control is back: the row must lead with back and carry a
+  // named control. A region outside any shell has no such row to lean on.
   const shell = region.closest(".cb-shell");
-  const bar = shell?.querySelector("[data-part='top-bar'][data-pushed='true'] [data-part='back']");
+  const bar = shell?.querySelector(
+    "[data-part='floating-bar'][data-lead='back'] :is(button, a[href])",
+  );
   return bar != null && accessibleName(bar) !== "";
 }
 

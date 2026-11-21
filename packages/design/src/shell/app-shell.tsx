@@ -8,11 +8,23 @@ import {
   useState,
   useSyncExternalStore,
 } from "react";
+import { IconButton } from "../controls/index";
 import type { ConvMenuEntry } from "../conversation/menu";
-import { type NativeNavHandle, type NativeTabId, useHaptics } from "../native";
+import { ConvMenu } from "../conversation/menu";
+import type { NavBadge } from "../display/nav-badge";
+import { Icon } from "../icons/icon";
+import {
+  NATIVE_NAV_LIMITS,
+  type NativeNavHandle,
+  type NativeSectionId,
+  useHaptics,
+} from "../native";
 import { type CommandGroup, CommandPalette } from "../overlays/index";
+import { popOverlaysThen } from "../overlays/use-overlay-history";
 import { useDesignT } from "../provider";
-import { BottomNav, type BottomNavItem, bottomNavCurrent, isTabRoot } from "./bottom-nav";
+import { DesktopOnlyNotice, type DesktopOnlyNoticeProps } from "../templates/desktop-only";
+import { backTarget, FloatingBar, type FloatingLead } from "./floating-bar";
+import { type DrawerNavData, NavDrawer } from "./nav-drawer";
 import { keyboardInset } from "./pointer";
 import { SetupSteps } from "./setup-steps";
 import { useShellEnvironment } from "./shell-environment";
@@ -20,37 +32,39 @@ import { type ShellPage, ShellPageContext } from "./shell-page";
 import { Sidebar, type SidebarProps, useSidebarWidthMode } from "./sidebar";
 import { useShortWindow, useSizeClass } from "./size-class";
 import { StatusBar, type StatusBarProps, StatusBarSetterContext } from "./status-bar";
-import { backTarget, TopBar } from "./top-bar";
+import { useTouch } from "./touch";
 import { useHydrated } from "./use-media-query";
 
 export type AppShellProps = {
   sidebar: Omit<SidebarProps, "onOpenCommands" | "mode" | "collapsed" | "onCollapsedChange">;
   /**
-   * The compact class's four navigation items (design spec §6.45), from the same `useNav` data the
-   * sidebar takes; drawn on tab roots only. Without them the compact shell has no bottom
-   * navigation (the setup frame, the catalog).
+   * The chat-first compact shell's drawer (design spec §4.6, §6.53): with it a chat surface shows
+   * the floating menu button (the badge is `menuBadge`), which opens the drawer.
    */
-  bottomNav?: BottomNavItem[];
+  drawer?: DrawerNavData;
   /**
-   * The route (`usePathname()`, without the locale): a route that is the target of a bottom
-   * navigation item is a tab root, every other route is pushed (design spec §4.6); the item
-   * whose root or pushed pages hold it is current.
+   * The page is a chat surface (the home's new conversation, a conversation): on compact its
+   * leading floating control is the menu button; every other page is pushed and shows back
+   * (design spec §4.6). A move between two chat surfaces never slides.
    */
+  chatSurface?: boolean;
+  /** The route (`usePathname()`, without the locale): the drawer's current row, the slide key. */
   pathname?: string;
   /**
-   * A native shell's tab bar (`nav@1`, mobile app spec §6.1), in place of the web's bottom
-   * navigation: the shell element carries `data-native-nav` (CSS drops the web's bar), the shell
-   * tells the handle the four items, the current one and `visible` (exactly when the web would
-   * have shown its own bar: compact, a tab root, no open keyboard) on every change, and a tap on a
-   * native tab plays the `selection` haptic and navigates to the item's `href` with `onNavigate`.
-   * The handle need not be stable: a new equivalent object per render sends no extra state (the
-   * latest one receives the next change); unmounting the shell hides the bar.
+   * A native shell's strip (`nav@1`, mobile app spec §6.1): the shell element and `<html>` carry
+   * `data-native-nav`, which hides the web's own section entries and menu button; the shell tells
+   * the strip the drawer's sections with the inbox count, the current one and (while compact) the
+   * menu button, and follows its taps. The handle may be a new object on every render: only its
+   * presence keys what is sent, so an equivalent handle sends nothing.
    */
   nativeNav?: NativeNavHandle;
-  /** Client navigation for the native tab bar (apps/web: the router's push). */
-  onNavigate?(href: string): void;
   /**
-   * The compact top bar's overflow menu for pages that do not register their own
+   * Client navigation (apps/web: the router's push): the drawer's picks and the strip's taps.
+   * `transition: "none"`: the move swaps at once (a native tab switch never slides).
+   */
+  onNavigate?(href: string, options?: { transition?: "none" }): void;
+  /**
+   * The compact floating row's trailing overflow menu for pages that do not register their own
    * ({@link useRegisterShellPage}); empty or absent: no button.
    */
   menu?: ConvMenuEntry[];
@@ -61,16 +75,11 @@ export type AppShellProps = {
   collapsed?: boolean;
   onCollapsedChange?(collapsed: boolean): void;
   /**
-   * The command palette's groups (⌘K, the sidebar's and the compact top bar's search). Without them
+   * The command palette's groups (⌘K, the sidebar's and the compact drawer's search). Without them
    * there is no palette and no search (the setup frame, T13).
    */
   commands?: CommandGroup[];
   status: Pick<StatusBarProps, "context" | "version" | "timeZone" | "system">;
-  /**
-   * The compact top bar's title for a page that has not registered its name yet (the PageHeader
-   * registers the h1 text); a tab root shows its item's label first.
-   */
-  title?: string;
   /** Draw the shell as the rail of the medium class whatever the window width (reference set only). */
   reference?: { rail: true };
   /**
@@ -78,6 +87,13 @@ export type AppShellProps = {
    * full-height right panel sits beside it); the shell then draws none.
    */
   ownStatusBar?: boolean;
+  /**
+   * The route is a management page that is desktop-only on touch (mobile touch plan Task 29): the
+   * shell draws the notice beside the page, the touch query shows one of them, and after hydration
+   * only the one that applies is mounted (so the page's queries never run on touch). Presentation
+   * only: the kernel decides access.
+   */
+  desktopOnly?: DesktopOnlyNoticeProps;
   /**
    * The state tokens for plugin CSS (`run=idle`, `motion=full`, `theme=builtin`, space-separated),
    * rendered as `data-cap-state` on the shell element. The shell appends its own `sidebar=rail`
@@ -100,13 +116,15 @@ export type AppShellProps = {
 };
 
 /**
- * The App Shell (spec §4): Sidebar | content column. The content column holds, top to bottom,
- * the top bar (compact only), the page (a template, with its ActionRow at its bottom), the
- * StatusBar and the bottom navigation (compact tab roots only). ⌘K opens the command palette.
+ * The App Shell (spec §4): Sidebar | content column. The content column holds the page (a
+ * template, with its ActionRow at its bottom) and the StatusBar; on compact the floating row
+ * (menu or back, §4.6) lies over the page's top and the drawer opens from the menu button. ⌘K
+ * opens the command palette.
  */
 export function AppShell({
   sidebar,
-  bottomNav,
+  drawer,
+  chatSurface,
   pathname,
   nativeNav,
   onNavigate,
@@ -115,20 +133,22 @@ export function AppShell({
   onCollapsedChange,
   commands,
   status,
-  title,
   reference,
   ownStatusBar,
   capState,
   banner,
   singleScheme,
+  desktopOnly,
   children,
 }: AppShellProps) {
   const t = useDesignT();
   const mainId = `cb-main-${useId().replace(/[^\w-]/g, "")}`;
   const [paletteOpen, setPaletteOpen] = useState(false);
+  const [drawerOpen, setDrawerOpen] = useState(false);
   const railRef = reference !== undefined && "rail" in reference;
   const [pageStatus, setPageStatus] = useState<ReactNode>(null);
   const hydrated = useHydrated();
+  const touch = useTouch();
   const sizeClass = useSizeClass();
   const short = useShortWindow();
   // Inside a native shell (mobile layout spec §9.3): its kind, after hydration; null in a browser.
@@ -162,7 +182,7 @@ export function AppShell({
         .filter(Boolean)
         .join(" ");
 
-  // What the page tells the shell about itself (name, path, overflow menu): the compact top bar's.
+  // What the page tells the shell about itself (name, path, overflow menu): the floating row's.
   const [pages, setPages] = useState<ReadonlyMap<symbol, { page: ShellPage; layer: number }>>(
     () => new Map(),
   );
@@ -210,13 +230,13 @@ export function AppShell({
       window.removeEventListener("popstate", read);
     };
   }, [inSetup, pathname]);
-  // The route: a tab root shows the bottom navigation, every other route is pushed (spec §4.6).
-  // Back goes to the previous in-app entry while one lies behind, else up the path.
-  const items = bottomNav ?? [];
-  const tabRoot = pathname === undefined || items.length === 0 || isTabRoot(items, pathname);
-  // An open list-detail item is a pushed page too, keyed by its URL state (spec §4.6, §6.47).
-  const pushed = !tabRoot || page.onBack !== undefined || (setup !== null && stepsOpen);
-  const currentTab = pathname === undefined ? null : bottomNavCurrent(items, pathname);
+  // The route (spec §4.6): a chat surface shows the menu button, every other page is pushed and
+  // shows back, which goes to the previous in-app entry while one lies behind, else up the path.
+  // An open list-detail item or right area is a pushed page too, keyed by its URL state (§6.47).
+  const surface = chatSurface === true;
+  const pushedPage = !surface || page.onBack !== undefined;
+  // What the slide compares: chat surfaces are one level.
+  const root = surface;
   // How many in-app history entries lie behind this one: the Navigation API's current index minus
   // the index when the shell mounted, so a replace (router.replace at the start) adds none and a
   // forward is no pop. Without the API there is no count: a counter cannot tell a push from a
@@ -236,12 +256,14 @@ export function AppShell({
   // The slide of the last route change: its direction and a parity that restarts the animation
   // when two pushes follow each other (the CSS animations are named by both).
   const [slide, setSlide] = useState<{ direction: "push" | "pop"; n: number } | null>(null);
-  const lastRoute = useRef({ pathname, tabRoot });
+  const lastRoute = useRef({ pathname, root });
   // A history move the browser animated itself (a back swipe: `hasUAVisualTransition`, mobile app
   // spec §4.4), keyed by the URL it landed on: the route change it causes swaps at once, so the
   // page never animates twice. A later navigation changes the URL, so a gesture that changed no
   // route never swallows the next slide.
   const uaTransition = useRef<string | null>(null);
+  // The path a native strip tap went to (`transition: "none"`): its route change swaps at once.
+  const instantRoute = useRef<string | null>(null);
   useEffect(() => {
     const onPop = (e: PopStateEvent) => {
       const animated = (e as PopStateEvent & { hasUAVisualTransition?: boolean })
@@ -254,96 +276,116 @@ export function AppShell({
   useEffect(() => {
     const last = lastRoute.current;
     if (last.pathname === pathname) return;
-    lastRoute.current = { pathname, tabRoot };
-    const animated = uaTransition.current === window.location.href;
+    lastRoute.current = { pathname, root };
+    const animated =
+      uaTransition.current === window.location.href || instantRoute.current === pathname;
     uaTransition.current = null;
-    // A pushed page slides in from the end edge and the way back to a root slides back; a move
-    // between tab roots (the web's or the native tab bar) and a move the browser animated do not.
+    instantRoute.current = null;
+    // A pushed page slides in from the end edge and the way back to a chat surface slides back; a
+    // move between chat surfaces and a move the browser animated do not.
     setSlide((prev) =>
-      animated || (tabRoot && last.tabRoot)
+      animated || (root && last.root)
         ? null
-        : { direction: tabRoot ? "pop" : "push", n: ((prev?.n ?? 0) + 1) % 2 },
+        : { direction: root ? "pop" : "push", n: ((prev?.n ?? 0) + 1) % 2 },
     );
-  }, [pathname, tabRoot]);
-  const tabLabel = items.find((i) => i.id === currentTab && tabRoot)?.label;
+  }, [pathname, root]);
 
-  // The native tab bar (mobile app spec §6.1): visible exactly when the web would show its own
-  // bar (the slot below, and the CSS that shows it on compact while no keyboard is open).
-  // The handle may be a new object on every render (a parent building it inline): only its
-  // presence keys the state and hide effects, which reach the latest handle through a ref, so an
-  // equivalent new handle sends nothing and never hides and shows the bar. Only the tap
-  // subscription follows the handle itself (resubscribing sends no state).
+  // The native strip (mobile app spec §6.1): its state comes from the drawer's data and the route.
   const haptics = useHaptics();
   const hasNav = nativeNav !== undefined;
-  const [keyboardOpen, setKeyboardOpen] = useState(false);
-  useEffect(() => {
-    const el = shellRef.current;
-    if (!hasNav || el === null || typeof MutationObserver === "undefined") return;
-    const read = () => setKeyboardOpen(el.dataset.keyboard === "open");
-    read();
-    const observer = new MutationObserver(read);
-    observer.observe(el, { attributes: true, attributeFilter: ["data-keyboard"] });
-    return () => observer.disconnect();
-  }, [hasNav]);
-  const navState = {
-    items: items.map(nativeTab),
-    current: currentTab,
-    visible: hydrated && sizeClass === "compact" && items.length > 0 && !pushed && !keyboardOpen,
-  };
-  const navKey = JSON.stringify(navState);
-  const navSent = useRef<string | null>(null);
-  const navLatest = useRef({ nav: nativeNav, items, onNavigate, haptics, navState });
-  navLatest.current = { nav: nativeNav, items, onNavigate, haptics, navState };
-  // The last handle the shell had: the hide below reaches it after `nativeNav` went undefined
-  // while the shell stays mounted (`navLatest` then holds no handle).
-  const navHandle = useRef(nativeNav);
-  if (nativeNav !== undefined) navHandle.current = nativeNav;
-  // the page without this shell (an auth page) has no tab bar: hidden once the shell or its handle
-  // goes
-  useEffect(() => {
-    if (!hasNav) return;
-    return () => {
-      const { navState: last } = navLatest.current;
-      try {
-        navHandle.current?.set({ ...last, visible: false });
-      } catch {
-        // the shell keeps its last state
+  const navState = drawer
+    ? {
+        items: [
+          { id: "chats" as const, label: navLabel(t("shell.chats")) },
+          ...drawer.sections.map((s) => ({
+            id: s.id,
+            label: navLabel(s.label),
+            ...navBadge(s.badge),
+          })),
+        ],
+        current: currentSection(pathname, surface, drawer),
+        menu:
+          hydrated && sizeClass === "compact"
+            ? { label: navLabel(t("shell.menu")), ...navBadge(drawer.menuBadge) }
+            : null,
       }
-      navSent.current = null;
-    };
-  }, [hasNav]);
-  // biome-ignore lint/correctness/useExhaustiveDependencies: `navKey` is `navState`, deduped
+    : null;
+  const navKey = navState === null ? null : JSON.stringify(navState);
+  const navSent = useRef<string | null>(null);
+  const navLatest = useRef({ nav: nativeNav, drawer, onNavigate, haptics, navState, pathname });
+  navLatest.current = { nav: nativeNav, drawer, onNavigate, haptics, navState, pathname };
+  // `nav.set` is the one capability call made from an effect: a state push, not confirming. Only
+  // the handle's presence and the state key it: an equivalent new handle sends nothing.
   useEffect(() => {
     const { nav, navState: state } = navLatest.current;
-    if (!hasNav || nav === undefined || navSent.current === navKey) return;
+    if (!hasNav) {
+      navSent.current = null;
+      return;
+    }
+    if (nav === undefined || state === null || navSent.current === navKey) return;
     navSent.current = navKey;
     try {
       nav.set(state);
     } catch {
-      // the shell keeps its last state
+      // the strip keeps its last state
     }
   }, [hasNav, navKey]);
+  // `<html data-native-nav>` (set before the first paint by the environment script) also reaches
+  // the drawer and the menus, which portal out of the shell element: set while the handle is
+  // there, cleared once it goes (the strip went away), never touched before a handle was seen.
+  const hadNav = useRef(false);
+  useEffect(() => {
+    if (reference !== undefined) return;
+    const root = document.documentElement;
+    if (hasNav) {
+      hadNav.current = true;
+      root.setAttribute("data-native-nav", "");
+    } else if (hadNav.current) {
+      hadNav.current = false;
+      root.removeAttribute("data-native-nav");
+    }
+  }, [hasNav, reference]);
+  // The strip's taps and its menu button: subscribed per handle (resubscribing sends no state).
   useEffect(() => {
     if (nativeNav === undefined) return;
-    let off: (() => void) | undefined;
-    try {
-      const r = nativeNav.onSelect((id) => {
-        const { items: now, onNavigate: go, haptics: buzz } = navLatest.current;
-        const item = now.find((i) => i.id === id);
-        if (item === undefined) return;
-        buzz("selection");
-        if (go) go(item.href);
-        else window.location.assign(item.href);
-      });
-      if (typeof r === "function") off = r;
-    } catch {
-      // a shell that cannot subscribe: its taps do nothing
-    }
-    return () => {
+    const offs: (() => void)[] = [];
+    const listen = (subscribe: () => unknown) => {
       try {
-        off?.();
+        const off = subscribe();
+        if (typeof off === "function") offs.push(off as () => void);
       } catch {
-        // already gone
+        // a shell that cannot subscribe: its taps do nothing
+      }
+    };
+    listen(() =>
+      nativeNav.onSelect((id) => {
+        const { drawer: d, onNavigate: go, haptics: buzz, pathname: now } = navLatest.current;
+        const href = d === undefined ? undefined : sectionHref(id, d);
+        if (href === undefined) return;
+        buzz("selection");
+        // An open drawer or sheet closes first: on a touch window its history entries are popped
+        // and the move runs once that landed (Task 28's pick rule), else it closes at once. A tap
+        // on the section whose root is already shown moves nowhere.
+        const move = () => {
+          if (href === now) return;
+          // a tab switch swaps at once (no slide)
+          instantRoute.current = href;
+          if (go) go(href, { transition: "none" });
+          else window.location.assign(href);
+        };
+        const popped = popOverlaysThen(move);
+        setDrawerOpen(false);
+        if (!popped) move();
+      }),
+    );
+    listen(() => nativeNav.onMenu(() => setDrawerOpen((open) => !open)));
+    return () => {
+      for (const off of offs) {
+        try {
+          off();
+        } catch {
+          // already gone
+        }
       }
     };
   }, [nativeNav]);
@@ -437,6 +479,23 @@ export function AppShell({
     };
   }, [reference]);
 
+  // The floating row's leading control (spec §4.6): the setup frame's steps (back while they are
+  // open), back on a pushed page, else the menu button where there is a drawer.
+  const back =
+    setup !== null && stepsOpen
+      ? closeSteps
+      : (page.onBack ??
+        (pushedPage && setup === null ? backTarget(page.path ?? [], depth > 0) : undefined));
+  const lead: FloatingLead | undefined =
+    back !== undefined
+      ? { kind: "back", target: back }
+      : setup !== null
+        ? { kind: "steps", onOpen: openSteps }
+        : drawer
+          ? { kind: "menu", onOpen: () => setDrawerOpen(true), badge: drawer.menuBadge }
+          : undefined;
+  const overflow = page.menu ?? menu ?? [];
+
   return (
     <ShellPageContext.Provider value={registerPage}>
       <StatusBarSetterContext.Provider value={setPageStatus}>
@@ -448,6 +507,7 @@ export function AppShell({
           data-banner={banner ? "true" : undefined}
           data-short={short ? "true" : undefined}
           data-native-nav={nativeNav ? "" : undefined}
+          data-surface={surface ? "chat" : "pushed"}
         >
           {/* The native shell's top band (spec mobile layout §9.3): a window drag region on the
               desktop, drawn only under `<html data-shell>` by CSS. */}
@@ -463,6 +523,7 @@ export function AppShell({
           ) : null}
           <Sidebar
             {...sidebar}
+            {...(nativeNav ? { nativeNav: true } : {})}
             collapsed={collapsed}
             onCollapsedChange={setCollapsed}
             onOpenCommands={() => setPaletteOpen(true)}
@@ -470,17 +531,27 @@ export function AppShell({
           />
           <div className="cb-shell-column" data-part="shell-content">
             {/* Drawn always, shown below 600 by CSS: the server render is right at every width. */}
-            <div className="cb-shell-topbar" data-part="top-bar-slot">
-              <TopBar
-                title={page.title ?? tabLabel ?? title}
-                back={
-                  setup !== null && stepsOpen
-                    ? closeSteps
-                    : (page.onBack ?? (pushed ? backTarget(page.path ?? [], depth > 0) : undefined))
+            <div className="cb-shell-float" data-part="floating-bar-slot">
+              <FloatingBar
+                lead={lead}
+                trailing={
+                  overflow.length > 0 ? (
+                    <ConvMenu
+                      label={t("shell.moreActions")}
+                      align="end"
+                      size="touch"
+                      sideOffset={2}
+                      entries={overflow}
+                      trigger={
+                        <IconButton
+                          part="more"
+                          label={t("shell.moreActions")}
+                          icon={<Icon name="more-horizontal" />}
+                        />
+                      }
+                    />
+                  ) : null
                 }
-                onSearch={searchable ? () => setPaletteOpen(true) : undefined}
-                menu={page.menu ?? menu}
-                onSteps={setup !== null ? openSteps : undefined}
               />
             </div>
             <main
@@ -505,48 +576,40 @@ export function AppShell({
                     </div>
                   ) : null}
                 </>
+              ) : desktopOnly ? (
+                // The server and the hydrating render draw both (CSS shows one under the touch
+                // query); once the pointer is known only the one that applies is mounted.
+                <>
+                  {touch === false ? null : (
+                    <div className="cb-desktop-only-notice" data-part="desktop-only-gate">
+                      <DesktopOnlyNotice {...desktopOnly} />
+                    </div>
+                  )}
+                  {touch === true ? null : <div className="cb-desktop-only-page">{children}</div>}
+                </>
               ) : (
                 children
               )}
             </main>
             {ownStatusBar ? null : <StatusBar {...status} pageStatus={pageStatus} />}
-            {items.length > 0 && !pushed ? (
-              <div className="cb-shell-bottomnav" data-part="bottom-nav-slot">
-                <BottomNav items={items} current={currentTab} />
-              </div>
-            ) : null}
           </div>
         </div>
+        {drawer ? (
+          <NavDrawer
+            open={drawerOpen}
+            onOpenChange={setDrawerOpen}
+            pathname={pathname}
+            onNavigate={onNavigate}
+            // The shell's own palette when it has one; the drawer closes first.
+            data={searchable ? { ...drawer, onSearch: () => setPaletteOpen(true) } : drawer}
+          />
+        ) : null}
         {commands ? (
           <CommandPalette open={paletteOpen} onOpenChange={setPaletteOpen} groups={commands} />
         ) : null}
       </StatusBarSetterContext.Provider>
     </ShellPageContext.Provider>
   );
-}
-
-/** The largest count the native tab bar takes (`nav@1`); more is that count, truncated. */
-const MAX_NATIVE_COUNT = 9999;
-/** The longest label the native tab bar takes (`nav@1`). */
-const MAX_NATIVE_LABEL = 32;
-
-/** A bottom navigation item as the native tab bar takes it: within its limits. */
-function nativeTab(item: BottomNavItem): {
-  id: NativeTabId;
-  label: string;
-  count?: number;
-  countMore?: boolean;
-} {
-  const tab: { id: NativeTabId; label: string; count?: number; countMore?: boolean } = {
-    id: item.id,
-    label: [...item.label].slice(0, MAX_NATIVE_LABEL).join(""),
-  };
-  if (item.count !== undefined && Number.isFinite(item.count)) {
-    const count = Math.max(0, Math.min(MAX_NATIVE_COUNT, Math.floor(item.count)));
-    tab.count = count;
-    if (item.countMore || item.count > MAX_NATIVE_COUNT) tab.countMore = true;
-  } else if (item.countMore) tab.countMore = true;
-  return tab;
 }
 
 /** The browser's Navigation API where it has one (not in every engine, and not in jsdom). */
@@ -559,6 +622,44 @@ function navigationApi(): NavigationApi | null {
   if (typeof window === "undefined") return null; // the server render: read during render now
   const nav = (window as { navigation?: NavigationApi }).navigation;
   return nav?.currentEntry ? nav : null;
+}
+
+const under = (pathname: string, href: string) =>
+  pathname === href || pathname.startsWith(`${href}/`);
+
+/** A label within the strip's bound (`navLabel`), cut by code point. */
+function navLabel(label: string): string {
+  const chars = Array.from(label);
+  return chars.length > NATIVE_NAV_LIMITS.label
+    ? chars.slice(0, NATIVE_NAV_LIMITS.label).join("")
+    : label;
+}
+
+/** A badge in the strip's shape: a count within `navCount`, `countMore` past it; none at 0. */
+function navBadge(badge: NavBadge | undefined): { count?: number; countMore?: boolean } {
+  const n = badge?.count ?? 0;
+  if (!(n > 0)) return {};
+  const count = Math.min(Math.floor(n), NATIVE_NAV_LIMITS.count);
+  const more = badge?.more === true || n > NATIVE_NAV_LIMITS.count;
+  return { count, ...(more ? { countMore: true } : {}) };
+}
+
+/** The section a route belongs to: chats for a chat surface and the conversations list. */
+function currentSection(
+  pathname: string | undefined,
+  surface: boolean,
+  drawer: DrawerNavData,
+): NativeSectionId | null {
+  if (surface) return "chats";
+  if (pathname === undefined) return null;
+  if (under(pathname, drawer.allConversations.href)) return "chats";
+  return drawer.sections.find((s) => under(pathname, s.href))?.id ?? null;
+}
+
+/** A section's root: the new conversation for chats, else the drawer's entry. */
+function sectionHref(id: NativeSectionId, drawer: DrawerNavData): string | undefined {
+  if (id === "chats") return drawer.newConversation.href;
+  return drawer.sections.find((s) => s.id === id)?.href;
 }
 
 /**

@@ -15,6 +15,7 @@ import { Logo } from "../display/logo";
 import { Tooltip } from "../display/tooltip";
 import { Icon } from "../icons/icon";
 import type { IconName } from "../icons/paths";
+import { NATIVE_SECTION_ORDER } from "../native";
 import { useDragDismiss } from "../overlays/drag";
 import { useFocusReturn } from "../overlays/focus-return";
 import { Menu, type MenuItem } from "../overlays/index";
@@ -43,6 +44,8 @@ export type SidebarNavItem = {
   /** Shown as a count (`99+` above 99, `n+` with `countMore`); the accessible name includes it. */
   count?: number;
   countMore?: boolean;
+  /** A desktop-only page's entry (plan Task 29): `data-desktop-only`, hidden under the touch query. */
+  desktopOnly?: boolean;
 };
 
 /** The current org in the switcher: `~/<slug> · <role>` under its name; `menu` switches it. */
@@ -143,7 +146,7 @@ export type SidebarProps = {
   onOpenCommands(): void;
   /**
    * Default from the size class (spec §4.1): `full` from 841 unless `collapsed`, `rail` on medium
-   * (and collapsed), `none` below 600 (the compact shell's bottom navigation and Me page hold its
+   * (and collapsed), `none` below 600 (the compact shell's drawer holds its
    * content; the sidebar has no drawer form).
    */
   mode?: "full" | "rail" | "none";
@@ -160,6 +163,12 @@ export type SidebarProps = {
   railTooltip?: string;
   /** Draw the 更多 flyout open (the reference set and the catalog only). */
   moreOpen?: boolean;
+  /**
+   * A native strip shows (the AppShell's `nativeNav`; mobile layout spec §4.3): the account menu
+   * then leads with More (the entries that are not strip sections), whose entries the CSS hides
+   * from the sidebar itself.
+   */
+  nativeNav?: boolean;
 };
 
 const countText = (n: { count?: number; countMore?: boolean }): string =>
@@ -404,7 +413,7 @@ function SidebarPanel({
         <AdminEntry href={ctx.adminHref} rail={rail} />
       ) : null}
       <Account
-        account={rail ? withTheme(p.account, p.theme) : p.account}
+        account={withNativeMore(rail ? withTheme(p.account, p.theme) : p.account, p, t)}
         rail={rail}
         trailing={p.theme && !rail ? <ThemeToggle {...p.theme} /> : null}
       />
@@ -457,6 +466,7 @@ function BrandTools({ p, rail }: { p: SidebarProps; rail: boolean }) {
               href={inbox.href}
               className="cb-btn cb-icon-btn cb-sidebar-inbox"
               data-part="inbox"
+              data-nav-section="inbox"
               data-variant="ghost"
               data-density="default"
               aria-label={inboxName}
@@ -502,7 +512,7 @@ export function OrgSwitcher({
 }: {
   org: SidebarOrg;
   rail: boolean;
-  /** Opens the org list another way than the popover menu (the Me page's bottom sheet). */
+  /** Opens the org list another way than the popover menu (a bottom sheet). */
   onOpen?: () => void;
 }) {
   const t = useDesignT();
@@ -568,7 +578,7 @@ export function OrgSwitcher({
   return <Menu items={org.menu} trigger={button} />;
 }
 
-/** The admin context's block: static, the shield in the accent tint (the Me page's too). */
+/** The admin context's block: static, the shield in the accent tint. */
 export function ContextBlock({ rail }: { rail: boolean }) {
   const t = useDesignT();
   return (
@@ -635,6 +645,7 @@ function AdminEntry({ href, rail }: { href: string; rail: boolean }) {
       href={href}
       className="cb-sidebar-item"
       data-part="admin-entry"
+      data-desktop-only=""
       {...(rail ? { "aria-label": label } : {})}
     >
       <Icon name="admin" />
@@ -691,7 +702,14 @@ function SidebarNav({
     );
   const item = (
     key: string,
-    n: { label: string; href: string; icon: IconName; count?: number; countMore?: boolean },
+    n: {
+      label: string;
+      href: string;
+      icon: IconName;
+      count?: number;
+      countMore?: boolean;
+      desktopOnly?: boolean;
+    },
     part: "nav-item" | "new-conversation" = "nav-item",
   ) => {
     const count = n.count ? countText(n) : null;
@@ -707,6 +725,8 @@ function SidebarNav({
         data-part={part}
         data-cap-part="sidebar.item"
         data-rove={key}
+        data-desktop-only={n.desktopOnly ? "" : undefined}
+        {...(work && part === "nav-item" ? navSectionAttrs(key) : {})}
         tabIndex={roving.tabIndexOf(key, keys)}
         {...(key === p.activeNav ? { "aria-current": "page" as const } : {})}
         {...(rail ? { "aria-label": name ?? n.label } : name ? { "aria-label": name } : {})}
@@ -732,6 +752,7 @@ function SidebarNav({
     label: n.label,
     href: n.href,
     icon: n.icon,
+    ...(n.desktopOnly ? { desktopOnly: true } : {}),
     ...(n.id === p.activeNav ? { current: true } : {}),
   });
   const moreItems: MenuItem[] = [
@@ -746,6 +767,7 @@ function SidebarNav({
       type="button"
       className="cb-sidebar-item"
       data-part="more-toggle"
+      data-nav-other=""
       data-rove="more"
       data-active={activeInMore ? "true" : undefined}
       tabIndex={roving.tabIndexOf("more", keys)}
@@ -958,6 +980,49 @@ function SetupNav({
       ) : null}
     </nav>
   );
+}
+
+/**
+ * A native strip's marks (mobile layout spec §4.3): a section entry (Agents, Scheduled tasks) carries
+ * `data-nav-section`, every other navigation entry `data-nav-other`; both are hidden while the
+ * strip shows (`[data-native-nav]`), when the sections come from the strip.
+ */
+function navSectionAttrs(id: string): Record<string, string> {
+  return (NATIVE_SECTION_ORDER as readonly string[]).includes(id)
+    ? { "data-nav-section": id }
+    : { "data-nav-other": "" };
+}
+
+/**
+ * The work context's account menu while a native strip shows (mobile layout spec §4.3): its first
+ * item is More with the navigation entries that are not strip sections (Skills, Connectors, Devices, the
+ * extension pages). Only then: a hidden menu item would still take the menu's arrow keys.
+ */
+function withNativeMore(
+  account: SidebarProps["account"],
+  p: SidebarProps,
+  t: ReturnType<typeof useDesignT>,
+): SidebarProps["account"] {
+  const ctx = p.context;
+  if (p.nativeNav !== true || ctx.kind !== "work" || account.menu.length === 0) return account;
+  const sections = NATIVE_SECTION_ORDER as readonly string[];
+  const entries = [
+    ...ctx.primary.filter((n) => !sections.includes(n.id)),
+    ...ctx.more,
+    ...(ctx.moreExtensions ?? []),
+  ];
+  if (entries.length === 0) return account;
+  const more: MenuItem = {
+    label: t("sidebar.moreGroup"),
+    submenu: entries.map((n) => ({
+      label: n.label,
+      href: n.href,
+      icon: n.icon,
+      ...(n.desktopOnly ? { desktopOnly: true } : {}),
+      ...(n.id === p.activeNav ? { current: true } : {}),
+    })),
+  };
+  return { ...account, menu: [more, ...account.menu] };
 }
 
 /** The rail's account menu: the theme switch as its first item. */

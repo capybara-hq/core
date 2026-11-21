@@ -2048,9 +2048,7 @@
     "admin": "Admin console",
     "plugins": "Plugins",
     "extensions": "Extensions",
-    "schedules": "Scheduled tasks",
-    "chats": "Conversations",
-    "me": "Me"
+    "schedules": "Scheduled tasks"
   },
   "conversations": {
     "title": "Conversations",
@@ -2063,15 +2061,23 @@
     "running": "Running",
     "waiting": "Waiting for you"
   },
-  "me": {
-    "title": "Me",
-    "adminTitle": "Admin console",
-    "back": "Back to workspace"
+  "desktopOnly": {
+    "title": "Manage this on a computer",
+    "body": "Plugins, extensions, channels, organization settings and the admin console are managed on a computer.",
+    "copy": "Copy link",
+    "copied": "Link copied",
+    "back": "Back to chat"
+  },
+  "drawer": {
+    "more": "Skills, connectors, devices…",
+    "switchOrg": "Switch organization",
+    "allConversations": "All conversations"
   },
   "shell": {
     "noOrg": "Select organization",
     "createOrg": "Create organization…",
     "accountSettings": "Personal settings",
+    "switchProfile": "Switch platform",
     "noCurrentOrg": "There is no current organization to act on."
   },
   "notFound": {
