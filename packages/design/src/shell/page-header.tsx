@@ -212,8 +212,14 @@ export function PageHeader(p: PageHeaderProps) {
       </Button>
     );
   };
+  // The primary in a wrapper of no box of its own: a ListPage with a FAB hides it below 600.
+  const renderPrimary = (a: HeaderAction) => (
+    <span key={`primary-${a.label}`} className="cb-pageheader-primary" data-head-primary="true">
+      {renderAction(a)}
+    </span>
+  );
   const drawn: ReactNode[] = !more
-    ? actions.map(renderAction)
+    ? [...rest.map(renderAction), ...primaries.map(renderPrimary)]
     : pre
       ? [
           ...rest.map((a) => (
@@ -226,11 +232,11 @@ export function PageHeader(p: PageHeaderProps) {
               {renderAction(more)}
             </span>
           ) : null,
-          ...primaries.map(renderAction),
+          ...primaries.map(renderPrimary),
         ]
       : narrow
-        ? [more ? renderAction(more) : null, ...primaries.map(renderAction)]
-        : actions.map(renderAction);
+        ? [more ? renderAction(more) : null, ...primaries.map(renderPrimary)]
+        : [...rest.map(renderAction), ...primaries.map(renderPrimary)];
   const loading = p.loading;
   const actionSlots = actions.length === 0 ? (loading?.actions ?? 0) : 0;
   const tabSlots = tabItems.length === 0 ? (loading?.tabs ?? 0) : 0;

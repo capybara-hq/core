@@ -63,7 +63,16 @@ export { ContentSection, type ContentSectionProps } from "./content-section";
 export { CopyCode, type CopyCodeProps, type CopyCodeState } from "./copy-code";
 export { CopyField, type CopyFieldProps } from "./copy-field";
 export { DangerZone, DangerZoneItem, type DangerZoneItemProps } from "./danger-zone";
-export { DateTime, formatDateTime, formatRelative, versionLabel } from "./date-time";
+export {
+  DateTime,
+  type DayBucket,
+  dayBucket,
+  daysAgo,
+  formatDateTime,
+  formatListTime,
+  formatRelative,
+  versionLabel,
+} from "./date-time";
 export {
   DeviceNameplate,
   type DeviceNameplateOrigin,
@@ -124,6 +133,11 @@ export {
   type ScheduleCalendarProps,
   type ScheduleCalendarState,
 } from "./schedule-calendar";
+export {
+  type ScopeChipOption,
+  ScopeChips,
+  type ScopeChipsProps,
+} from "./scope-chips";
 export { SecretReveal, type SecretRevealProps } from "./secret-reveal";
 export {
   SkeletonBox,

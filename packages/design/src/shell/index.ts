@@ -8,6 +8,12 @@ export { ActionRow, type ActionRowProps, type ButtonSpec } from "./action-row";
 export { AppShell, type AppShellProps } from "./app-shell";
 export { Body, type BodyProps } from "./body";
 export { ClassSwap } from "./class-swap";
+export {
+  ConversationList,
+  type ConversationListActions,
+  type ConversationListItem,
+  type ConversationListProps,
+} from "./conversation-list";
 export { DecorationLayer } from "./decoration-layer";
 export {
   backTarget,
@@ -16,8 +22,11 @@ export {
   type FloatingLead,
 } from "./floating-bar";
 export { FloatingIconButton, type FloatingIconButtonProps } from "./floating-button";
+export { ListFab, type ListFabProps } from "./list-fab";
 export {
+  DRAWER_RECENT_MAX,
   type DrawerNavData,
+  type DrawerRecent,
   type DrawerSectionId,
   NavDrawer,
   type NavDrawerProps,

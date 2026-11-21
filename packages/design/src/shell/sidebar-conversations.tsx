@@ -768,13 +768,14 @@ function RenameInput({
   );
 }
 
-function DeleteConfirm({
+/** The delete confirmation of a conversation row (the sidebar's and `ConversationList`'s). */
+export function DeleteConfirm({
   target,
   text,
   onClose,
   onDelete,
 }: {
-  target: SidebarConversation | null;
+  target: { id: string } | null;
   text: string;
   onClose(): void;
   onDelete(id: string): Promise<void>;

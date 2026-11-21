@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import { Avatar } from "../display/avatar";
+import { EmptyState } from "../display/empty-state";
 import type { NavBadge } from "../display/nav-badge";
 import { NavRow } from "../display/nav-row";
 import { Icon } from "../icons/icon";
@@ -7,12 +8,31 @@ import type { IconName } from "../icons/paths";
 import { Drawer, DrawerLevel } from "../overlays/drawer";
 import { LinkPendingMark, useDesignLink, useDesignT } from "../provider";
 import { AccountSheet, type AccountSheetData } from "./account-sheet";
-import { Conversations, type SidebarConversations } from "./sidebar-conversations";
+import {
+  ConversationList,
+  type ConversationListActions,
+  type ConversationListItem,
+} from "./conversation-list";
+
+/** The drawer's recent conversations (design spec §6.54): the newest first, by time. */
+export interface DrawerRecent {
+  state: "loading" | "ready" | "error";
+  /** The newest conversations, at most `DRAWER_RECENT_MAX` of them are drawn. */
+  items: ConversationListItem[];
+  /** The open conversation (its row is current). */
+  activeId?: string;
+  onRetry(): void;
+  /** A row's long press or right click: rename, archive, delete. */
+  actions?: ConversationListActions;
+}
+
+/** How many recent conversations the drawer lists (the rest are on the conversations page). */
+export const DRAWER_RECENT_MAX = 20;
 
 /** The drawer's section entries (mobile layout spec §4.2). */
 export type DrawerSectionId = "inbox" | "agents" | "schedules";
 
-/** What the chat-first compact shell's drawer holds (design spec §6.53). */
+/** What the chat-first compact shell's drawer holds (design spec §6.54). */
 export interface DrawerNavData {
   /** The sections in order (a guest has no schedules); `badge` is the pending inbox count. */
   sections: {
@@ -26,8 +46,9 @@ export interface DrawerNavData {
   more: { id: string; label: string; href: string; icon: IconName }[];
   /** The row that opens the second level: "Skills, connectors, devices…". */
   moreLabel: string;
-  /** The sidebar's conversation section. */
-  recent: SidebarConversations;
+  /** The recent conversations, by time (not grouped by agent). */
+  recent: DrawerRecent;
+  /** The conversations page: the recent section's 全部 link goes there. */
   allConversations: { label: string; href: string };
   newConversation: { label: string; href: string };
   /**
@@ -57,11 +78,12 @@ const under = (pathname: string, href: string) =>
   pathname === href || pathname.startsWith(`${href}/`);
 
 /**
- * The chat-first compact shell's drawer (design spec §6.53): search, the section entries with the
- * inbox count, the "Skills, connectors, devices…" row that opens a second level (Decision 18), the recent
- * conversations with "All conversations", and at the foot the account row (it opens the account sheet,
- * §6.54) and the new-conversation button. A pick closes the drawer; the system back closes the
- * account sheet first, then the drawer (Decision 25).
+ * The chat-first compact shell's drawer (design spec §6.54): at the top the search field and the
+ * 新会话 button, then the navigation as one grouped card (收件箱 with the pending count, 智能体,
+ * 定时任务, and 更多, which opens the "Skills, connectors, devices…" level, Decision 18), the recent
+ * conversations by time under 最近会话 with 全部 (the conversations page), and at the foot the
+ * account row, which opens the account sheet (§6.55). A pick closes the drawer; the system back
+ * closes the account sheet first, then the drawer (Decision 25).
  */
 export function NavDrawer({ open, onOpenChange, data, pathname, onNavigate }: NavDrawerProps) {
   const t = useDesignT();
@@ -78,6 +100,7 @@ export function NavDrawer({ open, onOpenChange, data, pathname, onNavigate }: Na
     onOpenChange(false);
     data.onSearch?.();
   };
+  const recent = data.recent;
   return (
     <Drawer
       open={open}
@@ -86,35 +109,54 @@ export function NavDrawer({ open, onOpenChange, data, pathname, onNavigate }: Na
       {...(onNavigate ? { onNavigate } : {})}
     >
       {level ? (
-        <DrawerLevel
-          title={data.moreLabel}
-          backLabel={t("drawer.back")}
-          onBack={() => setLevel(false)}
-        >
-          {data.more.map((m) => (
-            <NavRow
-              key={m.id}
-              icon={m.icon}
-              label={m.label}
-              href={m.href}
-              current={pathname !== undefined && under(pathname, m.href)}
-            />
-          ))}
-        </DrawerLevel>
+        <div className="cb-navdrawer-level">
+          <DrawerLevel
+            title={data.moreLabel}
+            backLabel={t("drawer.back")}
+            onBack={() => setLevel(false)}
+          >
+            {data.more.map((m) => (
+              <NavRow
+                key={m.id}
+                icon={m.icon}
+                label={m.label}
+                href={m.href}
+                current={pathname !== undefined && under(pathname, m.href)}
+              />
+            ))}
+          </DrawerLevel>
+        </div>
       ) : (
         <div className="cb-navdrawer" data-part="nav-drawer">
-          {data.onSearch ? (
-            <button
-              type="button"
-              className="cb-navdrawer-search"
-              data-part="drawer-search"
-              onClick={search}
+          <div className="cb-navdrawer-top" data-part="drawer-top">
+            {data.onSearch ? (
+              <button
+                type="button"
+                className="cb-navdrawer-search"
+                data-part="drawer-search"
+                onClick={search}
+              >
+                <Icon name="search" size={16} />
+                <span>{t("drawer.search")}</span>
+              </button>
+            ) : null}
+            <Link
+              href={data.newConversation.href}
+              className="cb-navdrawer-new"
+              data-part="drawer-new"
+              data-drawer-pick="true"
+              title={data.newConversation.label}
             >
-              <Icon name="search" size={16} />
-              <span>{t("drawer.search")}</span>
-            </button>
-          ) : null}
-          <nav className="cb-navdrawer-sections" aria-label={t("shell.nav")}>
+              <Icon name="square-pen" size={16} />
+              <span>{data.newConversation.label}</span>
+              <LinkPendingMark />
+            </Link>
+          </div>
+          <nav
+            className="cb-navdrawer-card"
+            data-part="drawer-nav-card"
+            aria-label={t("shell.nav")}
+          >
             {data.sections.map((s) => (
               <NavRow
                 key={s.id}
@@ -128,20 +170,42 @@ export function NavDrawer({ open, onOpenChange, data, pathname, onNavigate }: Na
             ))}
             {data.more.length > 0 ? (
               <NavRow
-                icon="skills"
-                label={data.moreLabel}
+                icon="more-horizontal"
+                label={t("drawer.moreRow")}
                 trailing="chevron"
                 onSelect={() => setLevel(true)}
               />
             ) : null}
           </nav>
           <div className="cb-navdrawer-recent" data-part="drawer-recent">
-            <Conversations c={data.recent} newHref={data.newConversation.href} />
-            <NavRow
-              icon="chats"
-              label={data.allConversations.label}
-              href={data.allConversations.href}
-              current={pathname !== undefined && under(pathname, data.allConversations.href)}
+            <div className="cb-navdrawer-recent-head">
+              <h2 className="cb-navdrawer-recent-label" data-part="drawer-recent-label">
+                {t("drawer.recent")}
+              </h2>
+              <Link
+                href={data.allConversations.href}
+                className="cb-navdrawer-recent-all"
+                data-part="drawer-recent-all"
+                data-drawer-pick="true"
+                aria-label={data.allConversations.label}
+                aria-current={
+                  pathname !== undefined && under(pathname, data.allConversations.href)
+                    ? "page"
+                    : undefined
+                }
+              >
+                {t("drawer.recentAll")}
+                <LinkPendingMark />
+              </Link>
+            </div>
+            <ConversationList
+              label={t("drawer.recent")}
+              items={recent.items.slice(0, DRAWER_RECENT_MAX)}
+              state={recent.state}
+              onRetry={recent.onRetry}
+              activeId={recent.activeId}
+              empty={<EmptyState size="panel" text={t("sidebar.empty")} />}
+              {...(recent.actions ? { actions: recent.actions } : {})}
             />
           </div>
           <div className="cb-navdrawer-foot" data-part="drawer-foot">
@@ -152,30 +216,22 @@ export function NavDrawer({ open, onOpenChange, data, pathname, onNavigate }: Na
               aria-haspopup="dialog"
               onClick={() => setAccountOpen(true)}
             >
-              <Avatar
-                value={data.account.avatar ?? null}
-                name={data.account.name}
-                size={40}
-                shape="circle"
-              />
+              <span className="cb-navdrawer-account-avatar">
+                <Avatar
+                  value={data.account.avatar ?? null}
+                  name={data.account.name}
+                  size={28}
+                  shape="circle"
+                />
+              </span>
               <span className="cb-account-names">
                 <span className="cb-account-name">{data.account.name}</span>
                 {data.account.orgName === null ? null : (
                   <span className="cb-account-org">{data.account.orgName}</span>
                 )}
               </span>
+              <Icon name="chevron-right" size={16} />
             </button>
-            <Link
-              href={data.newConversation.href}
-              className="cb-navdrawer-new"
-              data-part="drawer-new"
-              data-drawer-pick="true"
-              aria-label={data.newConversation.label}
-              title={data.newConversation.label}
-            >
-              <Icon name="square-pen" size={16} />
-              <LinkPendingMark />
-            </Link>
           </div>
         </div>
       )}

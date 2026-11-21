@@ -11,6 +11,7 @@ import {
   AppShell,
   DesignProvider,
   type DrawerNavData,
+  type DrawerRecent,
   type LinkComponent,
   PageHeader,
   useRegisterShellPage,
@@ -35,34 +36,20 @@ const sidebar = {
 };
 const status = { context: "demo", version: "0.1.0", timeZone: "UTC" };
 
-const conversations = {
-  state: "ready" as const,
-  groups: [
+const conversations: DrawerRecent = {
+  state: "ready",
+  items: [
     {
-      agentId: "a1",
-      agentName: "Claude",
-      conversations: [
-        {
-          id: "c1",
-          title: "沙箱内 pnpm 安装失败",
-          startedAt: new Date("2026-11-20T10:00:00Z"),
-          href: "/chat/c1",
-          activity: null,
-        },
-      ],
-      more: false,
-      onMore() {},
-      onNew() {},
+      id: "c1",
+      title: "沙箱内 pnpm 安装失败",
+      startedAt: new Date("2026-11-20T10:00:00Z"),
+      updatedAt: "2026-11-20T10:00:00Z",
+      href: "/chat/c1",
+      agent: { name: "Claude" },
+      activity: null,
     },
   ],
-  moreGroups: false,
-  onMoreGroups() {},
   onRetry() {},
-  filter: { q: "", state: "all" as const, onChange() {} },
-  archived: { count: 0, open: false, onOpenChange() {} },
-  onRename: async () => {},
-  onArchive: async () => {},
-  onDelete: async () => {},
 };
 
 function drawerData(over: Partial<DrawerNavData> = {}): DrawerNavData {
@@ -401,14 +388,14 @@ describe("the drawer from the menu button", () => {
       "schedules",
     ]);
     expect(sections[0]?.querySelector('[data-part="navrow-badge"]')?.textContent).toBe("3");
-    expect(within(panel).getByRole("link", { name: "沙箱内 pnpm 安装失败" })).toBeTruthy();
+    expect(within(panel).getByRole("link", { name: /沙箱内 pnpm 安装失败/ })).toBeTruthy();
     expect(within(panel).getByRole("link", { name: "全部会话" }).getAttribute("href")).toBe(
       "/conversations",
     );
     expect(within(panel).getByRole("button", { name: /Grant/ })).toBeTruthy();
     expect(within(panel).getByRole("link", { name: "新会话" }).getAttribute("href")).toBe("/");
     // the more row opens its level inside the same drawer
-    await userEvent.click(within(panel).getByRole("button", { name: "技能、连接器、设备…" }));
+    await userEvent.click(within(panel).getByRole("button", { name: "更多" }));
     const level = document.querySelector('[data-part="drawer-level"]') as HTMLElement;
     expect(
       within(level)
@@ -453,7 +440,7 @@ describe("the drawer from the menu button", () => {
     expect(visits).toEqual(["/inbox"]);
     await userEvent.click(menuButton() as HTMLElement);
     await userEvent.click(
-      within(drawerEl() as HTMLElement).getByRole("link", { name: "沙箱内 pnpm 安装失败" }),
+      within(drawerEl() as HTMLElement).getByRole("link", { name: /沙箱内 pnpm 安装失败/ }),
     );
     await waitFor(() => expect(drawerEl()).toBeNull());
     expect(visits).toEqual(["/inbox", "/chat/c1"]);

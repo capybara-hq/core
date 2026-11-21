@@ -2055,14 +2055,13 @@
   },
   "conversations": {
     "title": "Conversations",
-    "description": "Your conversations, grouped by agent.",
     "list": "Conversations",
     "new": "New conversation",
     "empty": "No conversations yet",
-    "loadMore": "Load more",
-    "moreOf": "More with {agent}",
-    "running": "Running",
-    "waiting": "Waiting for you"
+    "search": "Search conversations",
+    "byAgent": "Filter by agent",
+    "all": "All",
+    "noMatch": "No matching conversations"
   },
   "desktopOnly": {
     "title": "Manage this on a computer",

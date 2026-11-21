@@ -1,4 +1,10 @@
 export {
+  ActionSheet,
+  type ActionSheetProps,
+  actionSheetItems,
+  type ObjectActions,
+} from "./action-sheet";
+export {
   BottomSheet,
   BottomSheetContent,
   type BottomSheetContentProps,
@@ -25,6 +31,12 @@ export {
   type DrawerLevelProps,
   type DrawerProps,
 } from "./drawer";
+export {
+  LONG_PRESS_MS,
+  LONG_PRESS_SLOP,
+  type LongPressHandlers,
+  useLongPress,
+} from "./long-press";
 export { Menu, type MenuItem, menuActions, menuLone, Popover } from "./menus";
 export { type CommandGroup, type CommandItem, CommandPalette, commandScore } from "./palette";
 export { Sheet, type SheetProps } from "./sheet";

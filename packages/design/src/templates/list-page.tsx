@@ -6,11 +6,22 @@ import {
   EmptyState,
   type EmptyStateProps,
   ObjectList,
+  type ScopeChipOption,
+  ScopeChips,
   Skeleton,
   SkeletonGroup,
 } from "../display/index";
 import { useDesignT } from "../provider";
-import { ActionRow, type ActionRowProps, Body, type PageHeaderProps } from "../shell/index";
+import {
+  ActionRow,
+  type ActionRowProps,
+  Body,
+  type HeaderAction,
+  ListFab,
+  type PageHeaderProps,
+} from "../shell/index";
+import { useSizeClass } from "../shell/size-class";
+import { useHydrated } from "../shell/use-media-query";
 import { type Column, DataTable } from "../table/index";
 import { LoadingStats, loadingActionRow, loadingHeader, TemplateHead, WithStats } from "./frame";
 
@@ -40,6 +51,18 @@ export type ListLoading =
     };
 
 /**
+ * The list's view choice (responsive system spec §2.2 level 2, §4): a subset of the set the head's
+ * tabs choose, drawn as a row of scope chips (the minimal form this line needs; phase 0 draws it as
+ * a Segmented on wider windows when it has few options).
+ */
+export type ListScope = {
+  label: string;
+  value: string;
+  options: ScopeChipOption[];
+  onChange(value: string): void;
+};
+
+/**
  * T2 List: Rail + Content (Single without a rail), list width; StatCards from `metrics`.
  * `variant="objects"` wraps the children (ObjectRows) in one ObjectList panel; `cards` lays the
  * children (ObjectCards) out in one CardGrid on the page ground (spec §6.34); `records` (default)
@@ -53,7 +76,8 @@ export type ListLoading =
  * busy announcement.
  *
  * One primary per screen (spec §5.2): while `empty` is drawn with a primary action, the head's
- * primary is left out and the empty state carries it.
+ * primary is left out and the empty state carries it. Below 600 the head's primary is the
+ * floating action button (`ListFab`, responsive system spec §2.5) and the head's copy is hidden.
  */
 export function ListPage({
   header,
@@ -65,6 +89,7 @@ export function ListPage({
   empty,
   loading: loadingProp = false,
   filters,
+  scope,
   children,
 }: {
   header: PageHeaderProps;
@@ -82,6 +107,8 @@ export function ListPage({
    * views (the marketplace entries' sources). Kept while loading.
    */
   filters?: ReactNode;
+  /** The view choice (level 2): scope chips above the list. Kept while loading. */
+  scope?: ListScope;
   children?: ReactNode;
 }) {
   const t = useDesignT();
@@ -111,7 +138,24 @@ export function ListPage({
           actions: withTabs.actions.filter((a) => !("variant" in a && a.variant === "primary")),
         }
       : withTabs;
-  const head = callout ? { ...onePrimary, notice: <Callout {...callout} /> } : onePrimary;
+  // Below 600 the head's primary is the floating action button (responsive system spec §2.5).
+  // Before hydration both are drawn and CSS shows one; after it only the class's copy is mounted,
+  // so each control exists once (responsive system spec §5.3).
+  const fab = (onePrimary.actions ?? []).find(
+    (a): a is Extract<HeaderAction, { variant: string }> =>
+      "variant" in a && a.variant === "primary" && !a.loading && !a.disabled,
+  );
+  const sizeClass = useSizeClass();
+  const hydrated = useHydrated();
+  const fabShown = fab !== undefined && (!hydrated || sizeClass === "compact");
+  const headShown =
+    fab !== undefined && hydrated && sizeClass === "compact"
+      ? {
+          ...onePrimary,
+          actions: (onePrimary.actions ?? []).filter((a) => a !== fab),
+        }
+      : onePrimary;
+  const head = callout ? { ...headShown, notice: <Callout {...callout} /> } : headShown;
   const loadingList =
     variant === "objects" ? (
       <ObjectList label={listLabel ?? header.title} loading={spec.rows ?? true} />
@@ -153,14 +197,37 @@ export function ListPage({
         <WithStats header={header}>
           <LoadingStats count={slots} />
           {filters ? <div className="cb-list-filters">{filters}</div> : null}
+          {scope ? (
+            <div className="cb-list-scope" data-part="list-scope">
+              <ScopeChips
+                label={scope.label}
+                value={scope.value}
+                options={scope.options}
+                onChange={scope.onChange}
+              />
+            </div>
+          ) : null}
           {content}
         </WithStats>
       </Body>
       {actionRow ? <ActionRow {...(loading ? loadingActionRow(actionRow) : actionRow)} /> : null}
+      {fab && fabShown ? (
+        <ListFab
+          label={fab.label}
+          {...(fab.icon ? { icon: fab.icon } : {})}
+          {...(fab.href !== undefined ? { href: fab.href } : {})}
+          {...(fab.onSelect ? { onSelect: fab.onSelect } : {})}
+        />
+      ) : null}
     </>
   );
   return (
-    <div className="cb-template" data-template="ListPage" data-width="content">
+    <div
+      className="cb-template"
+      data-template="ListPage"
+      data-width="content"
+      data-fab={fab ? "true" : undefined}
+    >
       <SkeletonGroup label={header.title || t("table.loading")} active={loading}>
         {page}
       </SkeletonGroup>

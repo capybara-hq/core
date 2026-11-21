@@ -1856,3 +1856,48 @@ li:first-child > .cb-setup-step {
   font-size: var(--cb-type-small-size);
   line-height: var(--cb-type-small-line);
 }
+
+/* ListFab (responsive system spec §2.5; plan T0.12): the ListPage's primary at the bottom end of a
+   compact window, where the head's primary is hidden. Not drawn from 600 up. */
+.cb-list-fab {
+  display: none;
+}
+@media (max-width: 599px) {
+  .cb-list-fab {
+    position: fixed;
+    right: calc(var(--cb-space-4) + var(--cb-inset-right, 0px));
+    bottom: calc(var(--cb-space-4) + var(--cb-inset-bottom, 0px));
+    z-index: var(--cb-z-sheet);
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: var(--cb-touch-prominent);
+    height: var(--cb-touch-prominent);
+    padding: 0;
+    border: 0;
+    border-radius: var(--cb-radius-md);
+    background: var(--cb-accent);
+    box-shadow: var(--cb-shadow-float-touch);
+    color: var(--cb-on-accent);
+    cursor: pointer;
+  }
+  .cb-list-fab:active {
+    filter: brightness(0.92);
+  }
+  .cb-list-fab:focus-visible {
+    outline: 2px solid var(--cb-accent);
+    outline-offset: 2px;
+  }
+  .cb-list-fab > .cb-icon {
+    width: 24px;
+    height: 24px;
+  }
+  /* one primary per screen: the FAB stands for the head's primary */
+  .cb-template[data-fab="true"] [data-head-primary="true"] {
+    display: none;
+  }
+  /* the list ends above the FAB */
+  .cb-template[data-fab="true"] .cb-body-content {
+    padding-bottom: calc(var(--cb-touch-prominent) + 2 * var(--cb-space-4));
+  }
+}

@@ -340,6 +340,11 @@
   .cb-pageheader-tabs .cb-tabs {
     flex: 1 1 100%;
   }
+  /* The phone's search field (responsive system spec §0 item 2): filled ground, no border. */
+  .cb-pageheader-search .cb-input {
+    border-color: transparent;
+    background: var(--cb-selected);
+  }
 }
 
 /* Template head: the PageHeader in the content width, fixed above the body. */
@@ -965,4 +970,10 @@ a.cb-stat-card:focus-visible {
   [data-native-nav] [data-nav-other] {
     display: none;
   }
+}
+
+/* The head's primary sits in a wrapper of no box of its own (a ListPage with a FAB hides it below
+   600, templates.css). */
+.cb-pageheader-primary {
+  display: contents;
 }

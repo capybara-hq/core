@@ -51,13 +51,15 @@ describe("no sideways overflow", () => {
   const sidebar = read("sidebar.css");
   const conv = read("conversation-page.css");
 
-  it("the drawer's conversation section keeps to the panel: the sidebar's negative margin is undone", () => {
-    // the sidebar's section runs out over the sidebar's space.2 padding; the drawer has none
-    expect(topLevel(sidebar, ".cb-sidebar-convs")).toContain(
-      "margin: 0 calc(-1 * var(--cb-space-2));",
-    );
-    expect(topLevel(touch, ".cb-navdrawer-recent > .cb-sidebar-convs")).toContain(
-      "margin-inline: 0;",
+  it("the drawer's recent list keeps to the panel: no negative margin, titles end in an ellipsis", () => {
+    const list = read("conversation-list.css");
+    expect(topLevel(list, ".cb-convlist")).not.toContain("margin");
+    expect(topLevel(list, ".cb-convlist-card")).toContain("overflow: hidden;");
+    expect(topLevel(list, ".cb-convlist-title")).toContain("text-overflow: ellipsis;");
+    // the foot runs out exactly over the drawer content's space.3 side padding
+    expect(topLevel(touch, ".cb-navdrawer")).toContain("padding: var(--cb-space-3) var(--cb-space-3) 0;");
+    expect(topLevel(touch, ".cb-navdrawer-foot")).toContain(
+      "margin: 0 calc(-1 * var(--cb-space-3));",
     );
   });
 
