@@ -144,13 +144,25 @@ const isTestsOnlyEdge = (dependent: string, dependency: string) =>
 const ALWAYS_WITH_TESTS = "tools/checks";
 
 /**
- * The docker job builds the images from the CLI (kernel, plugin SDK) and the web app (design); the
+ * The docker job builds the images from the CLI (kernel, plugin SDK) and the web app (design, see
+ * {@link DOCKER_WEB_ROOT} for when a web change runs it); the
  * compose init downloads the bootstrap plugins pinned in packages/kernel/bootstrap.json at its first
  * start, and docker/test/compose-smoke.sh packs model-fake with packages/plugin-tools
  * (`pnpm pack-plugin`) and installs it into the running stack. Everything under docker/ (Dockerfiles, compose files, the
  * smoke script) and the root .dockerignore belong to no package, so they already run everything.
  */
-const DOCKER_ROOTS = ["apps/capybara", "apps/web", "plugins/model-fake", "packages/plugin-tools"];
+const DOCKER_ROOTS = ["apps/capybara", "plugins/model-fake", "packages/plugin-tools"];
+
+/**
+ * The web image's side of the docker job. A change to the web app's or the design system's sources
+ * (and the tests and catalogs beside them) reaches the image only through `next build`, which the
+ * web job already runs on the PR, so it skips the image build there (main still builds it after the
+ * merge). Every other file of those packages (package.json, next.config.mjs, server.mjs, public/,
+ * scripts/, …) can change how the image is assembled or started, and runs it.
+ */
+const DOCKER_WEB_ROOT = "apps/web";
+const WEB_BUILD_ONLY =
+  /^(src|test|e2e|visual|reference|compare|messages)\/|^playwright[^/]*\.config\.ts$/;
 
 /** The CLI package: its tests run `capybara bootstrap` (on packed fakes). */
 const CLI_DIR = "apps/capybara";
@@ -245,6 +257,23 @@ function owningPackage(f: string, ws: Workspace): WorkspacePackage | undefined {
   return best;
 }
 
+/**
+ * Whether a file of the web image's packages (apps/web and what it depends on) changed outside what
+ * only `next build` reads ({@link WEB_BUILD_ONLY}). Files mapped through EXTRA_INPUTS (the design
+ * spec and tokens) are build inputs too and own no package here, so they never count.
+ */
+function webImageChanged(files: string[], ws: Workspace, depsOf: (dir: string) => string[]) {
+  const webDirs = closure([DOCKER_WEB_ROOT], depsOf);
+  return files.some((f) => {
+    const p = owningPackage(f.trim(), ws);
+    return (
+      p !== undefined &&
+      webDirs.has(p.dir) &&
+      !WEB_BUILD_ONLY.test(f.trim().slice(p.dir.length + 1))
+    );
+  });
+}
+
 /** `start` plus everything reachable through `next`. */
 function closure(start: Iterable<string>, next: (dir: string) => string[]): Set<string> {
   const seen = new Set<string>();
@@ -319,7 +348,7 @@ export function planFromFiles(files: string[], ws: Workspace): Plan {
     web,
     visual: web,
     e2e: manifestChanged || hits(["apps/web", "apps/capybara", ...e2ePlugins]),
-    docker: manifestChanged || hits(DOCKER_ROOTS),
+    docker: manifestChanged || hits(DOCKER_ROOTS) || webImageChanged(files, ws, depsOf),
     bootstrapNetwork: files.some(isBootstrapNetworkInput),
   };
 }

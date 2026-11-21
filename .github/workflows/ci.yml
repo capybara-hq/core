@@ -4,13 +4,15 @@ on:
   push:
     branches: [main]
   pull_request:
+    # the default three, plus ready_for_review: a draft runs nothing until it is marked ready
+    types: [opened, synchronize, reopened, ready_for_review]
   # The merge queue tests each PR merged onto the current main before it lands.
   merge_group:
 
-# A new push to a PR cancels its older run; runs on main are never cancelled.
+# A new push cancels the older run on the same ref, on PRs and on main alike (tools/ci/README.md).
 concurrency:
   group: ci-${{ github.ref }}
-  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+  cancel-in-progress: true
 
 # No default token permissions: each job asks for what it needs (only `contents: read` to check out;
 # artifacts and the Actions cache use the runner's own token, not GITHUB_TOKEN).
@@ -27,6 +29,8 @@ permissions: {}
 # release.yml (push to main and workflow_dispatch only, never on PRs).
 jobs:
   changes:
+    # Drafts run nothing (every job needs this one; ci-ok is skipped too, and a draft cannot merge).
+    if: ${{ !github.event.pull_request.draft }}
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -374,7 +378,7 @@ jobs:
   # when the plan says it runs, and may be skipped only when the plan says it doesn't. always():
   # report failure when an upstream job failed instead of being skipped (skipped = passed).
   ci-ok:
-    if: always()
+    if: ${{ always() && !github.event.pull_request.draft }}
     needs: [changes, ci, test, web, e2e, visual, docker]
     runs-on: ubuntu-latest
     permissions: {}
