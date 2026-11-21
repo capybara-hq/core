@@ -45,7 +45,10 @@ test("成员页：管理员生成邀请链接 → 新用户凭链接注册加入
   const dialog = page.getByRole("dialog", { name: M.inviteDialog.title });
   await selectOption(dialog.getByRole("combobox", { name: M.inviteDialog.role }), "member");
   await dialog.getByRole("button", { name: M.inviteDialog.create }).click();
-  const link = await dialog.getByRole("textbox", { name: M.inviteDialog.link }).inputValue();
+  const link = await dialog
+    .getByRole("group", { name: M.inviteDialog.link })
+    .locator("code")
+    .innerText();
   expect(link).toMatch(/\/invite\/cap_inv_/);
   await dialog.getByRole("button", { name: M.inviteDialog.done }).click();
   await expect(dialog).toHaveCount(0);

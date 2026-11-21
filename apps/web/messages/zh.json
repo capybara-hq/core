@@ -1518,10 +1518,7 @@
     "deviceCode": {
       "title": "登录 GitHub",
       "body": "打开 GitHub 并输入下面的一次性代码，完成登录。登录在设备内进行，令牌不会离开设备。",
-      "codeLabel": "一次性代码",
-      "copy": "复制代码",
-      "copied": "已复制",
-      "copyManual": "请选中代码后复制"
+      "codeLabel": "一次性代码"
     },
     "toolLines": "第 {from}–{to} 行",
     "pickModel": "切换模型",
@@ -1768,8 +1765,6 @@
       "localHint": "在你自己的电脑或服务器上运行命令。",
       "installStep": "1. 在这台机器上安装连接程序",
       "loginStep": "2. 登录并在打开的网页上确认",
-      "copy": "复制",
-      "copied": "已复制。",
       "waiting": "正在等待机器登录…确认后它会出现在设备列表里，运行第 3 步后变为在线。",
       "connected": "已连接 {name}。",
       "close": "关闭",
@@ -5022,8 +5017,6 @@
       "create": "生成邀请链接",
       "link": "邀请链接",
       "linkHelp": "链接只显示这一次，只能使用一次；请通过可信的渠道发给对方。",
-      "copy": "复制链接",
-      "copied": "已复制邀请链接",
       "done": "完成"
     }
   },

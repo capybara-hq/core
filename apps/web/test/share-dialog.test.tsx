@@ -102,8 +102,8 @@ describe("the share dialog", () => {
     await user.click(await externalRadio());
     await pickOption(screen.getByRole("combobox", { name: "Expires" }), "30", user);
     await user.click(screen.getByRole("button", { name: "Create link" }));
-    const field = (await screen.findByRole("textbox", { name: "Link" })) as HTMLInputElement;
-    expect(field.value).toBe(`${window.location.origin}/s/AbCdEfGh12`);
+    const field = await screen.findByRole("group", { name: "Link" });
+    expect(field.querySelector("code")?.textContent).toBe(`${window.location.origin}/s/AbCdEfGh12`);
     expect(bodyOf(calls.find((c) => c.method === "POST"))).toEqual({
       audience: "external",
       expiresInDays: 30,
@@ -126,8 +126,10 @@ describe("the share dialog", () => {
     });
     const user = userEvent.setup();
     await user.click(await screen.findByRole("button", { name: "Create link" }));
-    const field = (await screen.findByRole("textbox", { name: "Link" })) as HTMLInputElement;
-    expect(field.value).toBe("https://capybara.example.com/s/AbCdEfGh12");
+    const field = await screen.findByRole("group", { name: "Link" });
+    expect(field.querySelector("code")?.textContent).toBe(
+      "https://capybara.example.com/s/AbCdEfGh12",
+    );
   });
 
   it("a suspended link sits under recent with Revoke (it revives when the switch is on)", async () => {
@@ -160,7 +162,7 @@ describe("the share dialog", () => {
     });
     const user = userEvent.setup();
     await user.click(await screen.findByRole("button", { name: "Create link" }));
-    await screen.findByRole("textbox", { name: "Link" });
+    await screen.findByRole("group", { name: "Link" });
     expect(bodyOf(calls.find((c) => c.method === "POST"))).toEqual({
       audience: "internal",
       expiresInDays: null,

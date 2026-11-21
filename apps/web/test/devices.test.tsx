@@ -569,9 +569,7 @@ describe("local devices (environments spec §6, §9)", () => {
     const dialog = await screen.findByRole("dialog");
     // no choice to make: only 本地设备, its steps at once
     expect(within(dialog).queryByRole("radiogroup")).toBeNull();
-    expect(
-      within(dialog).getByDisplayValue("npm install -g @capybara-hq/device@next"),
-    ).toBeTruthy();
+    expect(within(dialog).getByText("npm install -g @capybara-hq/device@next")).toBeTruthy();
   });
 
   it("新建设备 → 本地设备 shows the steps and waits until the new machine appears", async () => {
@@ -588,15 +586,19 @@ describe("local devices (environments spec §6, §9)", () => {
     await user.click(await screen.findByRole("button", { name: E.new }));
     const dialog = await screen.findByRole("dialog");
     await user.click(within(dialog).getByRole("radio", { name: new RegExp(E.create.local) }));
-    expect(
-      within(dialog).getByDisplayValue("npm install -g @capybara-hq/device@next"),
-    ).toBeTruthy();
-    expect(
-      within(dialog).getByDisplayValue(`capybara-device login --url ${window.location.origin}`),
-    ).toBeTruthy();
+    // each step is a CopyField: its label names the code line holding the command
+    const step = (name: string) => within(dialog).getByRole("group", { name });
+    expect(step(E.create.installStep).querySelector("code")?.textContent).toBe(
+      "npm install -g @capybara-hq/device@next",
+    );
+    expect(step(E.create.loginStep).querySelector("code")?.textContent).toBe(
+      `capybara-device login --url ${window.location.origin}`,
+    );
     // login only registers the machine: the third step keeps it online
-    expect(within(dialog).getByDisplayValue("capybara-device start")).toBeTruthy();
-    expect(within(dialog).getAllByRole("button", { name: E.create.copy })).toHaveLength(3);
+    expect(step(E.create.startStep).querySelector("code")?.textContent).toBe(
+      "capybara-device start",
+    );
+    expect(within(dialog).getAllByRole("button", { name: "Copy" })).toHaveLength(3);
     expect(within(dialog).getByText(E.create.waiting)).toBeTruthy();
     connected = true;
     await vi.waitFor(() => expect(router.push).toHaveBeenCalledWith("/devices/d7"), {
@@ -650,7 +652,7 @@ describe("local devices (environments spec §6, §9)", () => {
       const { user, dialog } = await openLocal();
       const button = await within(dialog).findByRole("button", { name: E.create.connectMachine });
       expect(button.getAttribute("data-variant")).toBe("primary");
-      const first = within(dialog).getByDisplayValue("npm install -g @capybara-hq/device@next");
+      const first = within(dialog).getByText("npm install -g @capybara-hq/device@next");
       expect(button.compareDocumentPosition(first) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
       await user.click(button);
       expect(connect).toHaveBeenCalledWith({ orgId: "o1" });
@@ -723,7 +725,7 @@ describe("local devices (environments spec §6, §9)", () => {
         ),
       ).toBeTruthy();
       expect(within(dialog).queryByRole("button", { name: E.create.connectMachine })).toBeNull();
-      expect(within(dialog).getAllByRole("button", { name: E.create.copy })).toHaveLength(3);
+      expect(within(dialog).getAllByRole("button", { name: "Copy" })).toHaveLength(3);
     });
 
     it("connected to another org of this person: the note and the terminal steps", async () => {
@@ -734,7 +736,7 @@ describe("local devices (environments spec §6, §9)", () => {
       const { dialog } = await openLocal();
       expect(await within(dialog).findByText(E.create.thisMachineOtherOrg)).toBeTruthy();
       expect(within(dialog).queryByRole("button", { name: E.create.connectMachine })).toBeNull();
-      expect(within(dialog).getAllByRole("button", { name: E.create.copy })).toHaveLength(3);
+      expect(within(dialog).getAllByRole("button", { name: "Copy" })).toHaveLength(3);
     });
 
     it("onStatus refreshes the status", async () => {
@@ -757,7 +759,7 @@ describe("local devices (environments spec §6, §9)", () => {
     it("in a browser nothing is offered", async () => {
       const { dialog } = await openLocal();
       expect(within(dialog).queryByRole("button", { name: E.create.connectMachine })).toBeNull();
-      expect(within(dialog).getAllByRole("button", { name: E.create.copy })).toHaveLength(3);
+      expect(within(dialog).getAllByRole("button", { name: "Copy" })).toHaveLength(3);
     });
   });
 
