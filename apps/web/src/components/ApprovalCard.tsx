@@ -304,6 +304,20 @@ export function ApprovalCard({
   // A secure input request (the person types a call's secret fields): known from the log's
   // event before the approval is read, from the approval itself once it is.
   const secure = view?.kind === "secure_input" || item.secureInput !== undefined;
+  // The fields shown and the fields submitted are this one list: the approval's (labels,
+  // descriptions) once read, the log's paths until then.
+  const secureFields: readonly PersonField[] = secure
+    ? (view?.personFields ??
+      (item.secureInput?.fields ?? []).map(
+        (path): PersonField => ({
+          path,
+          label: { zh: path, en: path },
+          multiline: false,
+          required: true,
+          isSet: false,
+        }),
+      ))
+    : [];
 
   async function onDecide(
     decision: "approve" | "deny",
@@ -311,7 +325,9 @@ export function ApprovalCard({
     reason?: string,
     hosts?: string[],
   ) {
-    const person = secure ? (view?.personFields ?? []) : [];
+    // values are submitted only once the approval is read (Submit is disabled until then)
+    if (secure && decision === "approve" && !view) return;
+    const person = secureFields;
     const r = await decide(
       item.approvalId,
       decision,
@@ -413,25 +429,14 @@ export function ApprovalCard({
       </div>
     );
   }
-  // The secure input variant: the fields from the approval once read (labels, descriptions), the
-  // log's paths until then; a refused value's error stays until a new one is typed.
+  // The secure input variant ({@link secureFields}); a refused value's error stays until a new one
+  // is typed.
   const secureTarget = view?.personTarget ?? item.secureInput?.target;
   const secureInput: ApprovalBlockProps["secureInput"] | undefined =
     secure && secureTarget !== undefined
       ? {
           target: secureTarget[lang(locale)],
-          fields: (
-            view?.personFields ??
-            (item.secureInput?.fields ?? []).map(
-              (path): PersonField => ({
-                path,
-                label: { zh: path, en: path },
-                multiline: false,
-                required: true,
-                isSet: false,
-              }),
-            )
-          ).map((f) => {
+          fields: secureFields.map((f) => {
             const error =
               fieldErrors[f.path] ??
               ((values[f.path] ?? "") === "" && view?.leakedFields?.includes(f.path)
@@ -452,6 +457,7 @@ export function ApprovalCard({
           }),
           onSubmit: () => void onDecide("approve", "once"),
           onCancel: () => void onDecide("deny", "once"),
+          ...(!view ? { submitDisabled: true } : {}),
         }
       : undefined;
   let state: ApprovalState;

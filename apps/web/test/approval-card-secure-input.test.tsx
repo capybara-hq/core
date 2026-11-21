@@ -96,6 +96,35 @@ describe("ApprovalCard: secure input", () => {
     expect(approve.disabled).toBe(false);
   });
 
+  it("shows the log's fields while the approval is read, with Submit disabled", async () => {
+    stubApi({ "GET /api/v1/orgs/o1/approvals/ap1": () => new Promise<Response>(() => {}) });
+    renderPage(<ApprovalCard orgId="o1" item={item} />, { locale: "en" });
+    expect(await screen.findByLabelText("apiKey")).toBeTruthy();
+    expect((screen.getByRole("button", { name: "Submit" }) as HTMLButtonElement).disabled).toBe(
+      true,
+    );
+  });
+
+  it("submits the fields it shows: the log's paths when the read approval names none", async () => {
+    const calls = stubApi({
+      "GET /api/v1/orgs/o1/approvals/ap1": () =>
+        json(200, { approval: { ...APPROVAL(), personFields: undefined } }),
+      "POST /api/v1/orgs/o1/approvals/ap1/decision": () => json(200, { approval: DECIDED }),
+    });
+    renderPage(<ApprovalCard orgId="o1" item={item} />, { locale: "en" });
+    const user = userEvent.setup();
+    const input = await screen.findByLabelText("apiKey");
+    await waitFor(() => expect((input as HTMLInputElement).disabled).toBe(false));
+    await user.type(input, SECRET);
+    await user.click(screen.getByRole("button", { name: "Submit" }));
+    await waitFor(() => expect(calls.some((c) => c.method === "POST")).toBe(true));
+    expect(bodyOf(calls.find((c) => c.method === "POST"))).toEqual({
+      decision: "approve",
+      scope: "once",
+      inputs: { apiKey: SECRET },
+    });
+  });
+
   it("posts the values once with the approve decision and clears them from the cache", async () => {
     const calls = stubApi({
       "GET /api/v1/orgs/o1/approvals/ap1": () => json(200, { approval: APPROVAL() }),
