@@ -513,7 +513,7 @@ puts `.cb-toast-region` at `bottom: calc(var(--cb-inset-bottom) + …)` above `-
 
 ### Task T0b.11: Duo: drawer entries, sheets and shots
 **Files:** `packages/design/src/shell/nav-drawer.tsx`, `sidebar.tsx`, `account-sheet.tsx` (技能、连接器、设备… row while `nav@1`), `overlays/bottom-sheet.tsx` + `overlays.css` (panel inside `--cb-inset-right`, scrim full bleed), `apps/web/visual/duo.spec.ts` (outer list with the pill primary, outer sheet, inner list).
-- [ ] Tests at 382 with `data-native-nav`: `no menu button`; `sheet panel ends at the strip inset`; `account sheet holds 技能、连接器、设备…`; with `data-strip="left"`: `sheet panel starts after the left inset`, `back button clears the left inset`; `a side change keeps the open sheet and the scroll position (no remount)`. `ShellEnvironmentScript` writes `data-strip` from `nav@1.side`, else the insets. Implement; commit.
+- [ ] Tests at 382 with `data-native-nav`: `no menu button`; `sheet panel ends at the strip inset`; `account sheet holds 技能、连接器、设备…`; with `data-strip="left"`: `sheet panel starts after the left inset`, `back button clears the left inset`; `a split side change keeps the open sheet and the scroll position (no remount)`; `without nav@1.side or a left inset the side is right`. `ShellEnvironmentScript` writes `data-strip` from `nav@1.side`, else the insets. Implement; commit.
 
 ## Phase 1: member pages (one PR)
 

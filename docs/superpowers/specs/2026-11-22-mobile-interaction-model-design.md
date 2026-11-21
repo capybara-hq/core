@@ -253,12 +253,13 @@ conversation's title menu items (#572).
 | Haptics | the components above call `useHaptics` | pages may not call `useNative()` (`web-ui-size-branch` extended to `useNative`, allowlist `AppFrame`) |
 | Hit sizes | tokens (#575) | `responsive.spec.ts` hit-size assertion (plan P4) |
 
-## 10. iPhone Duo: the strip on the app's outer edge (maintainer direction 2026-11-22)
+## 10. iPhone Duo: the strip (maintainer direction 2026-11-22)
 
 ### 10.1 What is already decided (mobile app spec §6.1, §8; layout spec §8)
 
-- The Duo's edge is a **strip** the system reserves (the right edge for a full-screen app; in split
-  screen the **outer** edge of each app, §10.7): it shows the status (time, location,
+- The Duo's **right** edge is a **strip** the system reserves (always the right edge with one app in
+  the foreground, on both displays; mirrored only for the left app of an inner-display split,
+  §10.7): it shows the status (time, location,
   Wi-Fi) at its top and an app may float its own controls in it. In the app (Capacitor shell) the
   WebView runs **edge to edge under the strip**; content and controls stay left of it, padded by
   `--cb-inset-right` (the strip arrives as `env(safe-area-inset-right)`, or `insets.right` when
@@ -352,35 +353,36 @@ plus `onAction(cb)` and `onAccount(cb)`; `menu` becomes optional and is no longe
 - A shell that loses the strip (a scene resize) withdraws `nav@1` with `change`; the web brings
   back its menu button, drawer sections and FAB on the next render, with no reload.
 
-### 10.7 The strip's side: mirrored in split screen
+### 10.7 The strip's side: right, except the left app of a split
 
-In split screen each app keeps its strip on **its outer edge**: the app on the left has the floating
-pill (and the avatar under the status) on the left edge, the app on the right on the right edge, as
-Apple's own apps do. "Right strip" above means "the strip side"; nothing is hard-coded right.
+Facts (maintainer, 2026-11-22):
 
-- **Where the side comes from**: only from what the shell reports. In order: a reported strip side
-  (proposed `nav@1` field `side: "left" | "right"`, sent with the capability and updated with the
-  envelope's `change`); else the inset that carries the strip (`env(safe-area-inset-left|right)` /
-  `insets.left|right`, the side with an inset and no matching inset on the other); else the
-  controls rectangle's side (desktop shell only). `ShellEnvironmentScript` writes it before first
-  paint as `data-strip="left|right"` on `<html>` and keeps it in step. Never the UA, never a
-  default of right.
-- **What mirrors**: the pill and the avatar (native: the OS places them; the web only reads the
-  side); every web part placed relative to the strip uses logical, side-driven insets: the content
-  and the floating row are padded by both `--cb-inset-left` and `--cb-inset-right` (they already
-  are), the sheet panel and toasts sit inside the strip side's inset, the scrim stays full bleed.
-  The floating back button stays at the top **start** of the content (clear of a left strip
-  through `--cb-inset-left`) and "…" at the top end; they do not swap.
+- With **one app in the foreground** the strip, and so the pill and the avatar under the status,
+  is **always on the right**, on the outer display and on the inner display.
+- The **outer display cannot split**.
+- Only in **split screen on the inner display** does each app keep its strip on its outer edge:
+  the app on the **left** puts it on the **left** edge, the app on the right on the right edge (as
+  Apple's own apps do).
+
+So the default is right, and the only mirrored case is the left app of an inner-display split.
+
+- **Mechanism**: the side still comes only from what the shell reports, never from the UA or a
+  device model: a reported strip side (proposed `nav@1` field `side: "left" | "right"`, sent with
+  the capability and updated with the envelope's `change`), else the inset that carries the strip
+  (`env(safe-area-inset-left|right)` / `insets.left|right`). Without either the side is right.
+  `ShellEnvironmentScript` writes `data-strip="left|right"` on `<html>` before first paint.
+- **In the mirrored case** (left app of a split): the OS places the pill and the avatar on the
+  left; the web's parts placed relative to the strip follow the side: the sheet panel and toasts
+  sit inside `--cb-inset-left`, the scrim stays full bleed, the content and the floating row are
+  padded by both insets (as always). The floating back button stays at the top start (clear of
+  the left strip through `--cb-inset-left`) and "…" at the top end; they do not swap.
 - **The drawer**: not drawn while the strip shows (§10.2). Where it is drawn (browser, PWA, a
-  shell without a strip), it opens from the **leading edge**, as everywhere else: the strip side
-  is the system's, and the drawer is the web's navigation, never both. *(Recommendation Q15.)*
-- **Long press menus**: anchored at the row (native) or a bottom sheet in the content width; no
-  side rule.
-- **A live change** (the app moves from the left half to the right, or goes full screen): the
-  shell sends `change` with the new side / insets; `data-strip` and the inset properties update
-  and CSS moves everything in the same frame. **No remount**: the page, scroll positions, open
-  sheets, the composer's draft and the drawer state are kept (the side is presentation only, read
-  by CSS, never a React key). The pill itself is native and moved by the OS.
+  shell without a strip) it opens from the leading edge as everywhere else *(Q15)*.
+- **A live split change** (inner display only: the app moves from the left half to the right, or a
+  split ends): the shell sends `change` with the new side / insets; `data-strip` and the inset
+  properties update and CSS moves everything in the same frame. **No remount**: the page, scroll
+  positions, open sheets, the composer's draft are kept (the side is presentation only, read by
+  CSS, never a React key). The pill itself is native and moved by the OS.
 
 ## 11. In-flight work mapped to the model
 
@@ -454,11 +456,12 @@ shell. The plan file is updated in this PR with these tasks.
 - **Q14 Inner display primary**: the head's button (medium / expanded head) with 新会话 on the
   pill, rather than the page primary on the pill. *Recommend yes* (D9 keeps the expanded head; the
   primary is visible in the head there).
-- **Q15 Drawer side on Duo split screen**: the drawer (where it is drawn at all) always opens from
-  the leading edge, not from the strip side. *Recommend leading edge* (the strip is the system's;
+- **Q15 Drawer side in an inner-display split**: the drawer (where it is drawn at all) always
+  opens from the leading edge, not from the strip side. *Recommend leading edge* (the strip is the system's;
   the drawer is the web's fallback navigation and never shows with the pill).
 - **Q16 Strip side source**: add `side` to `nav@1` (explicit), with the insets as fallback.
-  *Recommend yes* (an inset alone is ambiguous in landscape with a notch; the shell knows the side).
+  *Recommend yes* (an inset alone is ambiguous in landscape with a notch; the shell knows which
+  half of a split the app has). Default right when nothing is reported.
 - **Q9 Drawer recents grouping by time vs by agent**: approved by time on compact; the desktop
   sidebar stays by agent. *Recommend keep the split* (a phone glance is "what happened lately").
 
