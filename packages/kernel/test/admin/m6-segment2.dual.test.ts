@@ -25,7 +25,7 @@ import { anonymousGuestsFor } from "../helpers/channels.js";
 import { onlyBuiltins } from "../helpers/disabled-tools.js";
 import { accountsFor } from "../helpers/identity.js";
 import { MODEL_FAKE } from "../helpers/model-plugins.js";
-import { bootstrapFixture, packFake, deviceFakePkg } from "../helpers/plugin-packages.js";
+import { bootstrapFixture, deviceFakePkg, packFake } from "../helpers/plugin-packages.js";
 import { enableExtensions, eventsOf, PW, waitFor, waitForTerminal } from "../helpers/runs.js";
 
 /**
