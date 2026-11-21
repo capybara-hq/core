@@ -484,6 +484,7 @@ describe("the profile decides an ask addressed to the conversation's person", ()
     expect((await auditsOf("tool.ask_auto_decided")).map((a) => a.detail)).toEqual([
       expect.objectContaining({ outcome: "deny", reason: "It deletes data." }),
     ]);
+    expect(await auditsOf("tool.called")).toEqual([]);
   });
 
   it("Approve for me without a review model, or with a malformed answer: the person is asked", async () => {
@@ -493,6 +494,11 @@ describe("the profile decides an ask addressed to the conversation's person", ()
     const unmapped = await start(agentId, "p-unmapped", "approve-for-me");
     const a = await pendingApproval(unmapped);
     expect(a.detail).toEqual({ reviewUnsure: true });
+    const view = await owner({ method: "GET", url: `/api/v1/orgs/${orgId}/approvals/${a.id}` });
+    expect(view.statusCode, view.body).toBe(200);
+    expect((view.json() as { approval: { reviewUnsure?: boolean } }).approval.reviewUnsure).toBe(
+      true,
+    );
     expect(await decisionsOf(unmapped)).toEqual([]);
 
     await db
@@ -632,6 +638,39 @@ describe("what the profile never decides", () => {
     expect(reviewSpy).toHaveBeenCalledTimes(1);
     expect(await decisionsOf(conv)).toHaveLength(1);
     expect(await auditsOf("tool.ask_auto_decided")).toHaveLength(1);
+  });
+
+  it("a recorded decision governs the resumed call after a switch to Request approval", async () => {
+    const agentId = await createAgent();
+    script("p-resume-switch", FORM, { note: "f" }, verdict("allow"));
+    const conv = await start(agentId, "p-resume-switch", "approve-for-me", 3);
+    const question = await waitFor(
+      async () =>
+        db
+          .selectFrom("questions")
+          .select("id")
+          .where("conversation_id", "=", conv)
+          .where("status", "=", "pending")
+          .executeTakeFirst(),
+      30_000,
+      "the form's question",
+    );
+    // the person switches the profile while the call waits on its form: started work stays allowed
+    await setProfile(conv, "request-approval", 4);
+    const answered = await owner({
+      method: "POST",
+      url: `/api/v1/orgs/${orgId}/questions/${question.id}/answer`,
+      payload: { answer: { size: "s" } },
+    });
+    expect(answered.statusCode, answered.body).toBe(200);
+    await settled(conv);
+    expect((await resultsOf(conv))[0]?.payload).toMatchObject({
+      isError: false,
+      content: "size: s",
+    });
+    expect(await approvalsOf(conv)).toEqual([]);
+    expect(reviewSpy).toHaveBeenCalledTimes(1);
+    expect(await decisionsOf(conv)).toHaveLength(1);
   });
 
   it("a sub-agent of a root on Auto runs; the decision is in its own log, the profile the root's", async () => {

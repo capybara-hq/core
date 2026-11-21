@@ -1920,8 +1920,8 @@ export class ToolPipeline {
    * (their card stays the approval until secure input moves them) and for a tool that does not
    * itself require the person's interaction (D3). Request approval asks; Auto allows; Approve for
    * me asks the review model, whose unsure answer asks the person. An `allow` or `deny` is recorded
-   * once (`tool_ask_decided` and its audit row); a resumed call reads that record and never calls
-   * the review model again. Anything that cannot be read asks the person (fail closed).
+   * once (`tool_ask_decided` and its audit row); a resumed call reads that record before the profile
+   * and never calls the review model again. Anything that cannot be read asks the person (fail closed).
    */
   private async profileStep(
     ctx: ToolStepContext,
@@ -1939,6 +1939,12 @@ export class ToolPipeline {
     if (ctx.unattended != null) return asks;
     if (callPolicy?.personFields !== undefined) return asks;
     if (tool.spec.annotations?.requiresUserInteraction === true) return asks;
+    // a decision already recorded for this call governs it whatever the profile reads now (R2: a
+    // resumed call reuses it; a profile change never revokes started work)
+    const bindingHash = askBindingHash(ask.toolKey, ask.specHash, call.input);
+    const idemKey = `tool_ask_decided:${ctx.runId}:${call.id}:${bindingHash}`;
+    const recorded = await this.deps.eventLog.findByIdem(ctx.conversationId, idemKey);
+    if (recorded?.type === "tool_ask_decided") return askDecisionOf(recorded);
     const rootConversationId = ctx.parent?.rootConversationId ?? ctx.conversationId;
     let resolved: Awaited<ReturnType<ConversationApprovalProfile["resolve"]>>;
     try {
@@ -1956,10 +1962,6 @@ export class ToolPipeline {
       return asks;
     }
     if (resolved === null || resolved.profile === "request-approval") return asks;
-    const bindingHash = askBindingHash(ask.toolKey, ask.specHash, call.input);
-    const idemKey = `tool_ask_decided:${ctx.runId}:${call.id}:${bindingHash}`;
-    const recorded = await this.deps.eventLog.findByIdem(ctx.conversationId, idemKey);
-    if (recorded?.type === "tool_ask_decided") return askDecisionOf(recorded);
     let decision: { outcome: "allow" | "deny"; reason: string; source: AskDecisionSource };
     if (resolved.profile === "full-access") {
       decision = { outcome: "allow", reason: TOOL_AUTO_REASON, source: "full-access" };
