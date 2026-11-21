@@ -23,7 +23,7 @@ import { signIn } from "./support/sign-in";
  * three rows and its default, a change on an existing conversation (persisted, read back through
  * `GET …/permissions`), Auto only through its confirmation for a real device, a Request
  * approval write outside the workspace asking with its directory proposal, and a device whose
- * runtime cannot restrict execution: the restricted rows say so and nothing falls back to Full.
+ * runtime cannot restrict execution: the mode menu says so once and nothing falls back to Auto.
  */
 
 const p = zh.chat.permission;
@@ -36,7 +36,8 @@ type Permissions = {
   consentScope: { deviceId: string; scopeRevision: string } | null;
   availability:
     | { state: "supported"; report: { restricted: unknown; outsideSandbox: boolean } }
-    | { state: "unsupported" | "unprobed"; reason: string };
+    | { state: "unsupported"; reason: string; cause: { kind: string } }
+    | { state: "unprobed"; reason: string };
   outsideSandboxCeiling: boolean;
 };
 
@@ -276,7 +277,7 @@ test.describe("permission profiles", () => {
     );
   });
 
-  test("a device that cannot restrict execution: every profile says why, nothing falls back to 完全访问", async ({
+  test("a device that cannot restrict execution: the mode menu says why once, nothing falls back to 自动模式", async ({
     page,
   }) => {
     await signIn(page);
@@ -298,12 +299,13 @@ test.describe("permission profiles", () => {
       const deviceId = await createDevice(page, orgId, deviceName);
       devices.push({ orgId, id: deviceId });
 
-      // Not started yet: unprobed, so the restricted rows are offered (no note in the menu).
+      // Not started yet: unprobed, so every profile is offered and the menu carries no notice.
       await newChat(page, agentId);
       await pickDevice(page, deviceName);
       await permissionButton(page, PROFILE.approveForMe).click();
       await expect(row(page, PROFILE.requestApproval)).toBeEnabled();
       await expect(page.getByText("Checked when this device starts")).toHaveCount(0);
+      await expect(page.getByText(p.notice.runtime)).toHaveCount(0);
       await row(page, PROFILE.requestApproval).click();
       await expect(permissionButton(page, PROFILE.requestApproval)).toBeVisible();
 
@@ -324,19 +326,25 @@ test.describe("permission profiles", () => {
       // `echo ran` printed nothing: the output would end the reply
       await expect(replies(page).last()).not.toHaveText(/\bran\s*$/);
 
+      // The people-facing view applies admission's rule: the recorded report cannot enforce the
+      // sandbox, so device work reads unsupported with the runtime cause (no report).
       const view = await permissionsOf(page, orgId, convId);
       expect(view.profile).toBe("request-approval");
       expect(view.availability).toMatchObject({
-        state: "supported",
-        report: { restricted: null, outsideSandbox: true },
+        state: "unsupported",
+        reason: expect.any(String),
+        cause: { kind: "runtime" },
       });
+      expect(view.availability).not.toHaveProperty("report");
 
-      // The existing conversation's mode menu: every profile stays selectable (a
-      // profile chooses who approves; only the device's own tools refuse), Request approval still
-      // the selected profile, Auto never chosen.
+      // The existing conversation's mode menu: the runtime notice once at the top, every profile
+      // still selectable (a profile chooses who approves; only the device's own tools refuse),
+      // Request approval still the selected profile, Auto never chosen.
       await page.reload();
       await expect(page.locator('[data-template="ConversationPage"]')).toBeVisible();
       await permissionButton(page, PROFILE.requestApproval).click();
+      await expect(page.getByText(p.notice.runtime)).toHaveCount(1);
+      await expect(page.getByText(p.notice.runtime)).toBeVisible();
       for (const profile of [PROFILE.requestApproval, PROFILE.approveForMe, PROFILE.fullAccess]) {
         await expect(row(page, profile)).toBeEnabled();
       }
@@ -345,11 +353,12 @@ test.describe("permission profiles", () => {
       await page.keyboard.press("Escape");
       await expect(permissionButton(page, PROFILE.requestApproval)).toBeVisible();
 
-      // A new conversation on that device keeps every profile selectable; the default stays Approve for me
-      // (selected), never switched to Auto.
+      // A new conversation on that device shows the same notice and keeps every profile
+      // selectable; the default stays Approve for me (selected), never switched to Auto.
       await newChat(page, agentId);
       await pickDevice(page, deviceName);
       await permissionButton(page, PROFILE.approveForMe).click();
+      await expect(page.getByText(p.notice.runtime)).toHaveCount(1);
       for (const profile of [PROFILE.requestApproval, PROFILE.approveForMe, PROFILE.fullAccess]) {
         await expect(row(page, profile)).toBeEnabled();
       }
