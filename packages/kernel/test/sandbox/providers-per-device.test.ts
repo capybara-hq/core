@@ -54,13 +54,7 @@ const log = { info() {}, warn() {}, error() {} };
 
 /** Providers over a registry only: the org-bound reads are not used here. */
 const providersOf = (reg: Pick<ExtensionRegistry, "list">): SandboxProviders =>
-  new SandboxProviders(
-    reg,
-    undefined as never,
-    undefined as never,
-    undefined as never,
-    undefined as never,
-  );
+  new SandboxProviders(reg as never);
 
 /** A service whose cloud provider is `cloudEntry` and whose internal providers are `internal`. */
 const service = (
@@ -175,7 +169,7 @@ describe("SandboxProviders", () => {
     expect(p.forName(LOCAL_PROVIDER)).toBeUndefined();
     p.register({ plugin: LOCAL_PROVIDER, impl: internal });
     // an internal provider is handed out as registered (not guarded)
-    expect(p.forName(LOCAL_PROVIDER)).toEqual({ plugin: LOCAL_PROVIDER, impl: internal });
+    expect(p.forName(LOCAL_PROVIDER)).toMatchObject({ plugin: LOCAL_PROVIDER, impl: internal });
     expect(p.forName(LOCAL_PROVIDER)?.impl).toBe(internal);
     expect(p.forName("sandbox-docker")?.plugin).toBe("sandbox-docker");
     expect(p.forName("sandbox-e2b")).toBeUndefined();

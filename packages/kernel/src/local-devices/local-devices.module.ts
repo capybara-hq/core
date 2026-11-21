@@ -7,6 +7,7 @@ import {
 } from "../sandbox/providers.js";
 import { SandboxProviderRegistryModule } from "../sandbox/providers.module.js";
 import { SandboxModule } from "../sandbox/sandbox.module.js";
+import { KERNEL_VERSION } from "../version.js";
 import { DevicePolicyService } from "./device-policy.service.js";
 import { LocalInstanceBindings } from "./instance-bindings.js";
 import { LocalDeviceProvider } from "./local-device-provider.js";
@@ -82,6 +83,7 @@ export function localProviderEntry(deps: {
 }): SandboxProviderEntry {
   return {
     plugin: LOCAL_PROVIDER,
+    version: KERNEL_VERSION,
     impl: deps.provider.staged({
       call: deps.relay.callV3.bind(deps.relay),
       permissionSupport: (deviceId) => deps.bindings.permissionSupport(deviceId),

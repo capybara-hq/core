@@ -1,6 +1,7 @@
 import { Module } from "@nestjs/common";
 import { BackgroundStoreModule } from "../background/store.module.js";
 import { EventLogModule } from "../conversations/event-log.js";
+import { DeviceProviderSelectionModule } from "../devices/device-provider-selection.module.js";
 import { ExtensionsModule } from "../extensions/extensions.module.js";
 import { QueueModule } from "../infra/queue/queue.module.js";
 import { ModelsModule } from "../models/models.module.js";
@@ -26,6 +27,8 @@ import { SandboxService } from "./sandbox.service.js";
  */
 @Module({
   imports: [
+    // which providers serve an org (the services of the next tasks consume it)
+    DeviceProviderSelectionModule,
     SandboxProviderRegistryModule,
     PermissionAuthorityModule,
     PermissionFactsModule,

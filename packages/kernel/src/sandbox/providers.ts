@@ -1,14 +1,7 @@
 import { DEVICE_PROVIDER_EXTENSION_POINT, type DeviceProvider } from "@capybara-hq/plugin-sdk";
 import { Inject, Injectable } from "@nestjs/common";
-import { ModuleRef } from "@nestjs/core";
-import { readPlatformDefaultProvider } from "../devices/default-provider-setting.js";
-import type { ExtensionPointDefaults } from "../extensions/point-defaults.js";
 import { ExtensionRegistry } from "../extensions/registry.js";
-import { KernelConfigService } from "../infra/config/kernel-config.service.js";
-import { KernelDb } from "../infra/database/kernel-db.js";
-import { KERNEL_LOGGER } from "../infra/tokens.js";
-import type { KernelLogger } from "../log.js";
-import type { OrgSettingsService } from "../orgs/settings.service.js";
+import { KERNEL_VERSION } from "../version.js";
 import { guardProviderConnection } from "./unreachable.js";
 
 /** The kernel-internal provider of connected machines (local devices). */
@@ -40,8 +33,8 @@ export interface SandboxInstanceBinder {
 /** A device provider: its name (plugin name, or an internal `@…` name) and implementation. */
 export interface DeviceProviderEntry {
   plugin: string;
-  /** The loaded extension's version; absent on a kernel-internal provider. */
-  version?: string;
+  /** The loaded extension's version; a kernel-internal provider reports the kernel version. */
+  version: string;
   impl: DeviceProvider;
   /**
    * The staged path's instance binder: the exclusive lifecycle holder binds the generation before
@@ -50,14 +43,17 @@ export interface DeviceProviderEntry {
   binder?: SandboxInstanceBinder;
 }
 
-/** Until the old sandbox names go (Task 8 of the device-provider plan). */
-export type SandboxProviderEntry = DeviceProviderEntry;
+/**
+ * The entry as consumers and tests build it: `version` may be left out (a kernel-internal provider
+ * reports the kernel version). Until the old sandbox names go (Task 8 of the device-provider plan).
+ */
+export type SandboxProviderEntry = Omit<DeviceProviderEntry, "version"> & { version?: string };
 
 /**
- * The device providers of this process. A cloud provider is a loaded `device-provider@1` extension,
+ * The device providers of this process (a registry: which of them serve an org is
+ * `DeviceProviderSelection`). A cloud provider is a loaded `device-provider@1` extension,
  * read from the {@link ExtensionRegistry} at every call (providers are ready only after the
- * extension load, and change with installs); which of them serve an org is read from PG at every
- * call too (no in-process cache). Kernel-internal providers (`@local`) are registered by their
+ * extension load, and change with installs). Kernel-internal providers (`@local`) are registered by their
  * module on init, in every replica: they are code, not shared state.
  *
  * Every `device-provider@1` extension is handed out guarded: a network-level failure to reach it is
@@ -71,28 +67,18 @@ export class DeviceProviders {
 
   constructor(
     @Inject(ExtensionRegistry) private readonly registry: Pick<ExtensionRegistry, "list">,
-    /**
-     * Finds {@link OrgSettingsService} and {@link ExtensionPointDefaults} at the time of use:
-     * importing them here closes a file cycle (they reach the permission code that reaches this
-     * module).
-     */
-    @Inject(ModuleRef) private readonly modules: Pick<ModuleRef, "get">,
-    @Inject(KernelConfigService)
-    private readonly config: Pick<KernelConfigService, "get" | "fieldSource">,
-    @Inject(KernelDb) private readonly kdb: Pick<KernelDb, "db">,
-    @Inject(KERNEL_LOGGER) private readonly log: KernelLogger,
   ) {}
 
   /** Registers a kernel-internal provider (an `@…` name); a later registration replaces it. */
-  register(entry: DeviceProviderEntry): void {
+  register(entry: SandboxProviderEntry): void {
     if (!isInternalProvider(entry.plugin)) {
       throw new Error(`an internal device provider name starts with @: ${entry.plugin}`);
     }
-    this.internal.set(entry.plugin, entry);
+    this.internal.set(entry.plugin, { ...entry, version: entry.version ?? KERNEL_VERSION });
   }
 
   /** The cloud provider (the loaded `device-provider@1` extension); undefined without one. */
-  cloud(): DeviceProviderEntry | undefined {
+  cloud(): SandboxProviderEntry | undefined {
     const e = this.registry
       .list("device-provider")
       .find((x) => x.capability === DEVICE_PROVIDER_EXTENSION_POINT);
@@ -103,7 +89,7 @@ export class DeviceProviders {
    * A provider by name: a registered internal provider, else a still-loaded `device-provider@1`
    * extension of that plugin name (to destroy an earlier provider's resources).
    */
-  forName(name: string): DeviceProviderEntry | undefined {
+  forName(name: string): SandboxProviderEntry | undefined {
     return this.forDevice(name);
   }
 
@@ -127,53 +113,6 @@ export class DeviceProviders {
       .list("device-provider")
       .filter((x) => x.capability === DEVICE_PROVIDER_EXTENSION_POINT)
       .map((e) => this.guarded(e));
-  }
-
-  /**
-   * The providers that serve `orgId` now (loaded, switched on in the org, valid config), in
-   * extension-name order. Internal providers are never included.
-   */
-  async onInOrg(orgId: string): Promise<DeviceProviderEntry[]> {
-    const { providers } = await (await this.points()).providersFor<DeviceProvider>(
-      orgId,
-      "device-provider",
-    );
-    const out: DeviceProviderEntry[] = [];
-    for (const p of providers) {
-      const e = this.forDevice(p.extension);
-      if (e && !isInternalProvider(e.plugin)) out.push(e);
-    }
-    return out;
-  }
-
-  /** Whether `provider` serves `orgId` now; an internal provider: whether it is registered. */
-  async isOnInOrg(orgId: string, provider: string): Promise<boolean> {
-    if (isInternalProvider(provider)) return this.internal.has(provider);
-    return (await this.onInOrg(orgId)).some((e) => e.plugin === provider);
-  }
-
-  /**
-   * The provider a new device of `orgId` gets: the org's `deviceDefaultProvider`, else the
-   * platform's `devices.defaultProvider`, returned only while it serves the org (the setting is
-   * validated at write time and can go stale: unknown, unloaded or off in the org is none, never
-   * another provider).
-   */
-  async defaultFor(orgId: string): Promise<DeviceProviderEntry | undefined> {
-    const name =
-      (await this.orgSettings().then((o) => o.get(orgId))).deviceDefaultProvider ??
-      (await readPlatformDefaultProvider(this.config, this.kdb.db, this.log)).provider;
-    if (name === null || name === undefined) return undefined;
-    return (await this.onInOrg(orgId)).find((e) => e.plugin === name);
-  }
-
-  private async points(): Promise<Pick<ExtensionPointDefaults, "providersFor">> {
-    const { ExtensionPointDefaults } = await import("../extensions/point-defaults.js");
-    return this.modules.get(ExtensionPointDefaults, { strict: false });
-  }
-
-  private async orgSettings(): Promise<Pick<OrgSettingsService, "get">> {
-    const { OrgSettingsService } = await import("../orgs/settings.service.js");
-    return this.modules.get(OrgSettingsService, { strict: false });
   }
 
   private guarded(e: { plugin: string; version: string; impl: unknown }): DeviceProviderEntry {

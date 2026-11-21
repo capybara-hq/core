@@ -8,6 +8,7 @@ import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import { type KernelSchemaDb, kernelDb } from "../../src/db/kernel-schema.js";
 import { createDb } from "../../src/db/pool.js";
 import { DEVICES_DEFAULT_PROVIDER_SETTING } from "../../src/devices/default-provider-setting.js";
+import { DeviceProviderSelection } from "../../src/devices/device-provider-selection.js";
 import { OrgSettingsService } from "../../src/orgs/settings.service.js";
 import { DeviceProviders, LOCAL_PROVIDER } from "../../src/sandbox/providers.js";
 import { truncateTables } from "../helpers/db.js";
@@ -38,6 +39,7 @@ let db: KernelSchemaDb;
 let k: TestKernel;
 let root: string;
 let providers: DeviceProviders;
+let selection: DeviceProviderSelection;
 let settings: OrgSettingsService;
 let ownerId: string;
 let orgA: string;
@@ -63,6 +65,7 @@ beforeAll(async () => {
     ),
   );
   providers = k.app.get(DeviceProviders);
+  selection = k.app.get(DeviceProviderSelection);
   settings = k.app.get(OrgSettingsService);
 });
 afterAll(async () => {
@@ -88,7 +91,7 @@ const setEnabled = (orgId: string, plugin: string, enabled: boolean) =>
   sql`INSERT INTO capybara.extension_org_configs (plugin, org_id, enabled)
     VALUES (${plugin}, ${orgId}, ${enabled})
     ON CONFLICT (plugin, org_id) DO UPDATE SET enabled = ${enabled}`.execute(raw);
-const names = async (orgId: string) => (await providers.onInOrg(orgId)).map((e) => e.plugin);
+const names = async (orgId: string) => (await selection.onInOrg(orgId)).map((e) => e.plugin);
 const setPlatformDefault = (provider: string) =>
   sql`INSERT INTO capybara.deployment_settings (key, value)
     VALUES (${DEVICES_DEFAULT_PROVIDER_SETTING}, ${JSON.stringify({ provider })}::jsonb)
@@ -96,9 +99,9 @@ const setPlatformDefault = (provider: string) =>
 const setOrgDefault = (orgId: string, provider: string | null) =>
   settings.update(orgId, { deviceDefaultProvider: provider }, ownerId);
 
-describe("DeviceProviders", () => {
+describe("DeviceProviders and DeviceProviderSelection", () => {
   it("onInOrg lists the providers enabled in the org, in name order, never @local", async () => {
-    providers.register({ plugin: LOCAL_PROVIDER, impl: {} as never });
+    providers.register({ plugin: LOCAL_PROVIDER, version: "local-test", impl: {} as never });
     expect(await names(orgA)).toEqual([]);
     await enableExtensions(raw, orgA, "device-fake-b", "device-fake");
     expect(await names(orgA)).toEqual(["device-fake", "device-fake-b"]);
@@ -111,18 +114,19 @@ describe("DeviceProviders", () => {
     expect(await names(orgB)).toEqual(["device-fake-b"]);
     await setEnabled(orgA, "device-fake", false);
     expect(await names(orgA)).toEqual([]);
-    expect(await providers.isOnInOrg(orgB, "device-fake-b")).toBe(true);
-    expect(await providers.isOnInOrg(orgA, "device-fake")).toBe(false);
+    expect(await selection.isOnInOrg(orgB, "device-fake-b")).toBe(true);
+    expect(await selection.isOnInOrg(orgA, "device-fake")).toBe(false);
     await setEnabled(orgA, "device-fake", true);
     expect(await names(orgA)).toEqual(["device-fake"]);
   });
 
   it("forDevice finds @local in the internal map and an extension by plugin name; unknown → undefined", () => {
-    providers.register({ plugin: LOCAL_PROVIDER, impl: {} as never });
+    providers.register({ plugin: LOCAL_PROVIDER, version: "local-test", impl: {} as never });
     expect(providers.forDevice(LOCAL_PROVIDER)?.plugin).toBe(LOCAL_PROVIDER);
     const b = providers.forDevice("device-fake-b");
     expect(b?.plugin).toBe("device-fake-b");
     expect(b?.version).toBe("0.1.0");
+    expect(providers.forDevice(LOCAL_PROVIDER)?.version).toBe("local-test");
     expect(providers.forDevice("nope")).toBeUndefined();
     expect(providers.forDevice("@nope")).toBeUndefined();
     expect(
@@ -135,28 +139,28 @@ describe("DeviceProviders", () => {
 
   it("defaultFor: org override wins; platform otherwise; a default not on in the org → undefined", async () => {
     await enableExtensions(raw, orgA, "device-fake", "device-fake-b");
-    expect(await providers.defaultFor(orgA)).toBeUndefined();
+    expect(await selection.defaultFor(orgA)).toBeUndefined();
     await setPlatformDefault("device-fake");
-    expect((await providers.defaultFor(orgA))?.plugin).toBe("device-fake");
+    expect((await selection.defaultFor(orgA))?.plugin).toBe("device-fake");
     await setOrgDefault(orgA, "device-fake-b");
-    expect((await providers.defaultFor(orgA))?.plugin).toBe("device-fake-b");
+    expect((await selection.defaultFor(orgA))?.plugin).toBe("device-fake-b");
     // another org still follows the platform (it has the platform's provider on, so it resolves)
     await enableExtensions(raw, orgB, "device-fake");
-    expect((await providers.defaultFor(orgB))?.plugin).toBe("device-fake");
+    expect((await selection.defaultFor(orgB))?.plugin).toBe("device-fake");
     // switched off in the org: none, not the platform's provider
     await setEnabled(orgA, "device-fake-b", false);
-    expect(await providers.defaultFor(orgA)).toBeUndefined();
+    expect(await selection.defaultFor(orgA)).toBeUndefined();
     // clearing the override follows the platform again
     await setOrgDefault(orgA, null);
-    expect((await providers.defaultFor(orgA))?.plugin).toBe("device-fake");
+    expect((await selection.defaultFor(orgA))?.plugin).toBe("device-fake");
   });
 
   it("defaultFor: a platform default that is unknown or not on in the org is none", async () => {
     await enableExtensions(raw, orgA, "device-fake-b");
     await setPlatformDefault("device-fake");
-    expect(await providers.defaultFor(orgA)).toBeUndefined();
+    expect(await selection.defaultFor(orgA)).toBeUndefined();
     await setPlatformDefault("not-installed");
-    expect(await providers.defaultFor(orgA)).toBeUndefined();
+    expect(await selection.defaultFor(orgA)).toBeUndefined();
   });
 });
 
