@@ -1,5 +1,12 @@
 # @capybara-hq/web
 
+## 0.1.0-rc.75
+
+### Patch Changes
+
+- c0d3d2f: The profile page puts the avatar beside its actions: a labelled 上传头像 / 更换头像 button, 移除, and
+  one hint line (the accepted formats, the SSO picture in use, or why uploading is off).
+
 ## 0.1.0-rc.74
 
 ### Minor Changes
