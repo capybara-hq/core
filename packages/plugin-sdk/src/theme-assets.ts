@@ -1,11 +1,11 @@
 import { SaxesParser, type SaxesTagNS } from "saxes";
 import { isSafePackagePath } from "./plugin-package.js";
-import { type ParsedTheme, THEME_LIMITS } from "./theme.js";
+import { type ParsedTheme, THEME_LIMITS, type ThemeLogo } from "./theme.js";
 
 /**
  * Checks of a theme's asset files (themes spec §4.2-§4.4, theme brand coverage spec §1): woff2
- * fonts, PNG logos, app icons and avatars, and the SVG sanitizer. The sanitized SVG is served to every browser, so {@link sanitizeThemeSvg} is a trust
- * boundary: the output is re-serialized from the parsed tree (never the input bytes), elements are
+ * fonts, PNG logos, app icons and avatars, and the SVG sanitizer. The sanitized SVG is served to
+ * every browser, so {@link sanitizeThemeSvg} is a trust boundary: the output is re-serialized from the parsed tree (never the input bytes), elements are
  * allowlisted, every attribute value and text node is escaped on output.
  */
 
@@ -389,32 +389,35 @@ function readPng(bytes: Uint8Array, maxBytes: number): { width: number; height: 
  * served.
  */
 export function themeAssetRefs(theme: ParsedTheme): { field: string; ref: string }[] {
-  const refs: { field: string; ref: string }[] = [];
-  theme.fonts?.forEach((f, i) => {
-    refs.push({ field: `fonts.${i}.file`, ref: f.file });
-  });
-  for (const key of LOGO_ASSETS) {
-    const ref = theme.logo?.[key];
-    if (ref !== undefined) refs.push({ field: `logo.${key}`, ref });
-  }
-  theme.avatars?.forEach((a, i) => {
-    refs.push({ field: `avatars.${i}.file`, ref: a.file });
-  });
-  return refs;
+  return refsWithKind(theme).map(({ field, ref }) => ({ field, ref }));
 }
-
-const LOGO_ASSETS = ["mark", "favicon", "illustration", "appIcon", "appIconMaskable"] as const;
 
 /** How a field's file is checked. */
 type AssetKind = "font" | "image" | "favicon" | "appIcon" | "avatar";
 
-function assetKind(field: string): AssetKind {
-  if (field.startsWith("fonts.")) return "font";
-  if (field.startsWith("avatars.")) return "avatar";
-  if (field === "logo.favicon") return "favicon";
-  if (field === "logo.appIcon" || field === "logo.appIconMaskable") return "appIcon";
-  // logo.mark and logo.illustration
-  return "image";
+/** The kind each logo field is checked as, in {@link themeAssetRefs} order. */
+const LOGO_ASSETS = [
+  ["mark", "image"],
+  ["favicon", "favicon"],
+  ["illustration", "image"],
+  ["appIcon", "appIcon"],
+  ["appIconMaskable", "appIcon"],
+] as const satisfies readonly (readonly [keyof ThemeLogo, AssetKind])[];
+
+/** {@link themeAssetRefs} with the kind each file is checked as. */
+function refsWithKind(theme: ParsedTheme): { field: string; ref: string; kind: AssetKind }[] {
+  const refs: { field: string; ref: string; kind: AssetKind }[] = [];
+  theme.fonts?.forEach((f, i) => {
+    refs.push({ field: `fonts.${i}.file`, ref: f.file, kind: "font" });
+  });
+  for (const [key, kind] of LOGO_ASSETS) {
+    const ref = theme.logo?.[key];
+    if (ref !== undefined) refs.push({ field: `logo.${key}`, ref, kind });
+  }
+  theme.avatars?.forEach((a, i) => {
+    refs.push({ field: `avatars.${i}.file`, ref: a.file, kind: "avatar" });
+  });
+  return refs;
 }
 
 /**
@@ -489,8 +492,7 @@ export function validateThemeAssets(
     return b;
   };
 
-  for (const { field, ref } of themeAssetRefs(theme)) {
-    const kind = assetKind(field);
+  for (const { field, ref, kind } of refsWithKind(theme)) {
     const check =
       kind === "font"
         ? font

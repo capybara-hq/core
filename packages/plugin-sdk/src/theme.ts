@@ -13,11 +13,11 @@ import { THEME_OVERRIDABLE, THEME_TOKENS } from "./theme-tokens.generated.js";
  * {@link parseThemeFile} is the CSS-injection boundary: every token value is parsed against the
  * grammar `tokens.json` uses (`#RRGGBB`, `rgba(r,g,b,a)`, shadows `<x> <y> <blur> [<spread>]
  * <color>`) and re-rendered from its parts in canonical form. Asset paths (`fonts[].file`,
- * `logo.*`, `avatars[].file`) are relative to the plugin root (an optional leading `./`) and every segment is limited
- * to `[A-Za-z0-9._-]`, so they need no escaping inside `url(...)`. Font families are limited to
- * letters, digits, spaces and `-`. Free text (`name`, `description`, `logo.wordmark`, `avatars[].name`) carries no
- * control, format, line / paragraph separator or lone surrogate characters; it is text for the UI,
- * never CSS. Whether the files exist and their size / signature / SVG rules are checked by
+ * `logo.*`, `avatars[].file`) are relative to the plugin root (an optional leading `./`) and every
+ * segment is limited to `[A-Za-z0-9._-]`, so they need no escaping inside `url(...)`. Font
+ * families are limited to letters, digits, spaces and `-`. Free text (`name`, `description`,
+ * `logo.wordmark`, `avatars[].name`) carries no control, format, line / paragraph separator or
+ * lone surrogate characters; it is text for the UI, never CSS. Whether the files exist and their size / signature / SVG rules are checked by
  * the reader of the package, with {@link THEME_LIMITS}.
  *
  * The committed JSON Schema (`schemas/theme.v1.schema.json`) is generated from

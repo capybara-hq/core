@@ -355,6 +355,21 @@ describe("parseThemeFile", () => {
     expect(e).toEqual([expect.stringMatching(/^logo\.appIconMaskable: .*appIcon/)]);
   });
 
+  it("rejects an unsafe path or a wrong extension in the new asset fields", () => {
+    expect(errorsOf({ ...brandKit(), avatars: [avatar("bot", { file: "../x.svg" })] })).toEqual([
+      expect.stringMatching(/^avatars\.0\.file: .*inside the plugin/),
+    ]);
+    expect(errorsOf({ ...brandKit(), avatars: [avatar("bot", { file: "./x.gif" })] })).toEqual([
+      expect.stringMatching(/^avatars\.0\.file: .*\.svg or \.png/),
+    ]);
+    expect(errorsOf({ ...brandKit(), logo: { illustration: "./e.gif" } })).toEqual([
+      expect.stringMatching(/^logo\.illustration: .*\.svg or \.png/),
+    ]);
+    expect(errorsOf({ ...brandKit(), logo: { illustration: "../e.svg" } })).toEqual([
+      expect.stringMatching(/^logo\.illustration: .*inside the plugin/),
+    ]);
+  });
+
   it("rejects an SVG app icon", () => {
     const e = errorsOf({ ...brandKit(), logo: { appIcon: "./app.svg" } });
     expect(e).toEqual([expect.stringMatching(/^logo\.appIcon: .*\.png/)]);
