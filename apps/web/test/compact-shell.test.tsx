@@ -7,12 +7,14 @@
 import { useQuery } from "@tanstack/react-query";
 import { act, cleanup, screen, waitFor, within } from "@testing-library/react";
 import { userEvent } from "@testing-library/user-event";
+import { hydrateRoot } from "react-dom/client";
+import { renderToString } from "react-dom/server";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { membersQuery } from "../src/lib/query/members";
 import { stubApi } from "./support/api";
 import { pathname as currentPath, resetNavigation, router } from "./support/navigation";
 import { ME } from "./support/render";
-import { renderFrame, shellOf } from "./support/shell";
+import { frameElement, renderFrame, shellClient, shellOf } from "./support/shell";
 
 vi.mock("../src/i18n/navigation", () => import("./support/navigation"));
 
@@ -311,5 +313,55 @@ describe("management pages on touch (Task 29)", () => {
     resetNavigation("/agents");
     renderFrame(shellOf(ME, pending));
     expect(screen.queryByRole("heading", { name: "请在电脑上管理" })).toBeNull();
+  });
+
+  it("hydrating on touch over a stale cache fires no query of the gated page", async () => {
+    phone(true);
+    resetNavigation("/settings/members");
+    window.history.replaceState(null, "", "/settings/members");
+    const calls = stubApi({});
+    const initial = shellOf(ME, pending);
+    // an unclassified query, stale at once, already in the cache (as the layout's prefetch left it)
+    const Page = () => {
+      useQuery({
+        queryKey: ["gated-page"],
+        queryFn: async () => {
+          await fetch("/api/v1/gated-page");
+          return 1;
+        },
+        staleTime: 0,
+      });
+      return <p>成员页</p>;
+    };
+    const client = shellClient(initial);
+    client.setQueryData(["gated-page"], 0);
+    const html = renderToString(frameElement(initial, <Page />, {}, client));
+    expect(html).toContain("请在电脑上管理");
+    const host = document.createElement("div");
+    host.innerHTML = html;
+    document.body.append(host);
+    let root: ReturnType<typeof hydrateRoot> | undefined;
+    await act(async () => {
+      root = hydrateRoot(host, frameElement(initial, <Page />, {}, client));
+    });
+    await act(async () => {});
+    expect(calls.filter((c) => c.url.includes("gated-page"))).toEqual([]);
+    act(() => root?.unmount());
+    host.remove();
+  });
+
+  it("on touch the palette (hardware keyboard) lists no desktop-only command", async () => {
+    phone(true, 1440);
+    renderFrame(shellOf(ME, pending));
+    await userEvent.keyboard("{Control>}k{/Control}");
+    const labels = [...document.querySelectorAll('[data-part="palette-item"]')].map(
+      (i) => i.textContent,
+    );
+    expect(labels.some((l) => l?.includes("智能体"))).toBe(true);
+    for (const l of ["插件", "扩展", "组织设置", "管理后台"])
+      expect(
+        labels.some((x) => x?.includes(l)),
+        l,
+      ).toBe(false);
   });
 });

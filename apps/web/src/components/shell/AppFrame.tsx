@@ -16,8 +16,9 @@ import {
   type SidebarConversations,
   ThemeToggle,
   useToast,
+  useTouch,
 } from "@capybara-hq/design";
-import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { IsRestoringProvider, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useLocale, useTranslations } from "next-intl";
 import {
   createContext,
@@ -165,6 +166,16 @@ function useCapState(): string {
   ]
     .filter((t) => t !== null)
     .join(" ");
+}
+
+/**
+ * The children of a desktop-only route: while the pointer is unknown (the server render and the
+ * hydration commit) or touch, their queries are held (react-query's restoring state), so a gated
+ * page fires no read on a touch device; a fine pointer lets them run.
+ */
+function GatedChildren({ children }: { children: ReactNode }) {
+  const touch = useTouch();
+  return <IsRestoringProvider value={touch !== false}>{children}</IsRestoringProvider>;
 }
 
 /**
@@ -405,6 +416,13 @@ function ShellFrame({
   }
   const timeZone = useTimeZoneLabel();
   useConnectResultToast();
+  // A touch device with a hardware keyboard still opens the palette: its desktop-only commands
+  // are left out in JS too, not only hidden by CSS.
+  const touch = useTouch();
+  const paletteCommands =
+    touch === true
+      ? commands.map((g) => ({ ...g, items: g.items.filter((i) => i.desktopOnly !== true) }))
+      : commands;
   // A management page is desktop-only on touch (plan Task 29): the shell shows the notice there.
   const pageUrl = usePageUrl(pathname);
   const desktopOnly: DesktopOnlyNoticeProps | undefined =
@@ -796,7 +814,7 @@ function ShellFrame({
         ...schemeToggle,
         ...(brand === undefined ? {} : { brand }),
       }}
-      commands={commands}
+      commands={paletteCommands}
       drawer={drawer}
       chatSurface={isChatSurface(pathname)}
       onNavigate={navigate}
@@ -810,7 +828,7 @@ function ShellFrame({
     >
       <SessionContext.Provider value={session}>
         <SetupContext.Provider value={{ active: false, readiness: setupState, recheck: reload }}>
-          {children}
+          {desktopOnly === undefined ? children : <GatedChildren>{children}</GatedChildren>}
         </SetupContext.Provider>
         {dialogs}
       </SessionContext.Provider>

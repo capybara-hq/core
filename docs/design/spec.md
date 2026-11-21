@@ -3921,7 +3921,8 @@ States: `default`, `current`, `badge`
 
 - **The gate**: `AppShell`'s `desktopOnly` draws the notice and the page in the server render; the touch query (`TOUCH_QUERY`) shows the notice and hides the page, every other pointer the reverse. After hydration only one is mounted (`useTouch()`): on touch the page's components never mount, so its queries never run. Detection is the pointer media query, never the user agent; a wide window with a fine pointer is unchanged.
 - **Flagged entries**: the sidebar's, rail's and 更多 flyout's items and the command palette's commands of these pages carry `data-desktop-only` and are hidden under `TOUCH_QUERY`; the compact drawer has none of them.
-- Presentation only: the kernel's answers are unchanged.
+- **Held queries**: the web wraps a gated page in react-query's restoring state while the pointer is unknown or touch, so even the hydration commit starts no read. On touch the palette also drops the flagged commands in code (a hardware keyboard opens it).
+- Presentation only: the kernel's answers are unchanged. The server render may ship the gated page's own authorized data to a touch device (wasted bytes, not a leak), and the prefetch is kept so the desktop paints fast.
 
 ## 7. Copy and internationalization
 - All UI text goes through next-intl, in both Chinese and English. Text shown to the model (prompts, tool descriptions) is always English, and the prompt field in a form must say so.
