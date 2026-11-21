@@ -234,11 +234,13 @@
     display: none;
   }
 }
-/* Where the rail drops below the band, a hairline under the band across the whole window closes
+/* Where the rail drops below the band (only while the rail is shown: the drop length follows the
+   controls alone, so the full sidebar and compact need the rail selector), a hairline under the band across the whole window closes
    it: the band reads as the window's title bar and the rail's divider meets it in a T (the
    sidebar's own line colour), instead of the rail's surface stopping short below an open band. */
 @container not style(--cb-shell-rail-drop: 0px) {
-  :root[data-shell="desktop"] .cb-shell:not([data-banner="true"])::after {
+  :root[data-shell="desktop"]
+    .cb-shell:not([data-banner="true"]):has(> .cb-sidebar[data-mode="rail"])::after {
     content: "";
     position: absolute;
     z-index: 1;

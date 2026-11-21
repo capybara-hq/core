@@ -756,6 +756,7 @@ export class PermissionFacts {
         availability: preview?.availability ?? {
           state: "unsupported" as const,
           reason: unavailableReason,
+          cause: { kind: "runtime" as const },
         },
         outsideSandboxCeiling: preview?.outsideSandboxCeiling ?? false,
         broadProjectReach: preview?.broadProjectReach ?? false,

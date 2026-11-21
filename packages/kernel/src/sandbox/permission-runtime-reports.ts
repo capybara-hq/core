@@ -259,6 +259,7 @@ export async function readCurrentReport(
       availability: {
         state: "unsupported",
         reason: report.unavailableReason ?? "This runtime cannot enforce permission operations",
+        cause: { kind: "runtime" },
       },
       identityHash: row.identity_hash,
       instanceGeneration: row.instance_generation,
