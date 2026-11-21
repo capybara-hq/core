@@ -23,6 +23,28 @@ export type AvatarShape = "square" | "circle";
 /** An agent's avatar: a preset animal, an uploaded image, or none (the initial). */
 export type AvatarValue = { kind: "preset"; id: PresetId } | { kind: "image"; src: string } | null;
 
+/** What the picker holds: an `AvatarValue`, or a theme's own preset (its `key` and image). */
+export type AvatarChoice = AvatarValue | { kind: "theme"; key: string; src: string };
+
+/** A theme's extra preset: `name` arrives already localized. */
+export type AvatarExtraPreset = { key: string; name: string; src: string };
+
+/**
+ * The choices the picker shows, in order: the built-ins that are not `hidden`, then the theme's
+ * `extra` presets. (The web picks its random default from this list.)
+ */
+export function visibleAvatarChoices(
+  hidden: readonly PresetId[] = [],
+  extra: readonly AvatarExtraPreset[] = [],
+): AvatarChoice[] {
+  return [
+    ...AVATAR_PRESET_IDS.filter((id) => !hidden.includes(id)).map(
+      (id): AvatarChoice => ({ kind: "preset", id }),
+    ),
+    ...extra.map((e): AvatarChoice => ({ kind: "theme", key: e.key, src: e.src })),
+  ];
+}
+
 /** The formats an upload accepts (agent profile design §2.3). */
 export const AVATAR_UPLOAD_ACCEPT = "image/png,image/jpeg,image/webp";
 
@@ -121,8 +143,13 @@ export function Avatar({
 }
 
 export type AvatarPickerProps = {
-  value: AvatarValue;
-  onChange: (value: AvatarValue) => void;
+  value: AvatarChoice;
+  // method syntax: handlers that take only `AvatarValue` stay assignable
+  onChange(value: AvatarChoice): void;
+  /** Built-in presets not offered (a theme's list); a stored one still renders as an Avatar. */
+  hidden?: readonly PresetId[];
+  /** The theme's own presets, after the built-ins; `name` is already localized. */
+  extra?: readonly AvatarExtraPreset[];
   /** The chosen png, jpg or webp file; absent, the upload tile is disabled with its reason. */
   onUpload?: (file: File) => void;
   /** Why uploading is off (shown under the tiles when `onUpload` is absent). */
@@ -134,13 +161,15 @@ export type AvatarPickerProps = {
 };
 
 /**
- * AvatarPicker (spec §6.30): the ten presets as one radio group of 40 px tiles, then an upload
+ * AvatarPicker (spec §6.30): the presets (the ten, less `hidden`, plus the theme's `extra`) as one radio group of 40 px tiles, then an upload
  * tile, which shows the uploaded image when that is the avatar. Without `onUpload` the upload tile
  * is disabled and the reason is written under the tiles.
  */
 export function AvatarPicker({
   value,
   onChange,
+  hidden,
+  extra,
   onUpload,
   uploadOffReason,
   label,
@@ -166,7 +195,7 @@ export function AvatarPicker({
           role="radiogroup"
           aria-label={label ?? t("avatar.label")}
         >
-          {AVATAR_PRESET_IDS.map((id) => {
+          {AVATAR_PRESET_IDS.filter((id) => !hidden?.includes(id)).map((id) => {
             const checked = value?.kind === "preset" && value.id === id;
             const presetName = t(`avatar.preset.${id}`);
             return (
@@ -187,6 +216,29 @@ export function AvatarPicker({
                   onChange={() => onChange({ kind: "preset", id })}
                 />
                 <Avatar value={{ kind: "preset", id }} name={presetName} size={40} />
+              </label>
+            );
+          })}
+          {extra?.map((e) => {
+            const checked = value?.kind === "theme" && value.key === e.key;
+            return (
+              <label
+                key={`theme:${e.key}`}
+                className="cb-avatar-tile"
+                data-part="avatar-tile"
+                data-state={checked ? "checked" : "unchecked"}
+              >
+                <input
+                  className="cb-avatar-radio"
+                  type="radio"
+                  name={name}
+                  value={`theme:${e.key}`}
+                  checked={checked}
+                  disabled={disabled}
+                  aria-label={e.name}
+                  onChange={() => onChange({ kind: "theme", key: e.key, src: e.src })}
+                />
+                <Avatar value={{ kind: "image", src: e.src }} name={e.name} size={40} />
               </label>
             );
           })}
