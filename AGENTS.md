@@ -126,6 +126,8 @@ Each line is the rule you must not miss; the skill has the rest.
   extensions load and may fail without stopping the start; the rest optional preinstalls, off in
   every org until switched on; a deployment may add pinned entries through
   `bootstrap.extraManifest`, merged, never overriding);
+  `device-provider@1` is a `multi`, brokered, org-scoped point (several providers side by side; the
+  resolver refuses unknown point names);
   hooks observe or deny, never rewrite; every kernel model call fires `model.request`, an
   extension's `ctx.models.embed` too (`purpose: "embedding"`, no conversation fields) and
   `ctx.models.generateImage` (`purpose: "image"`), and policy hooks fail closed. An extension
@@ -169,15 +171,19 @@ Each line is the rule you must not miss; the skill has the rest.
   delivered by `usage.report` with purpose `embedding`; `generateImage` likewise, purpose
   `image`). [writing-model-providers](.agents/skills/writing-model-providers/SKILL.md)
 - **Sandboxes:** work happens in devices (one instance + a file system kept until the device is
-  deleted); commands run in the device's sandbox under every permission profile (scope: project,
-  workspace, tool directories; network: the open public internet or an allowlist; private ranges,
-  metadata and host services closed; minimal environment); a profile only chooses who approves a
-  crossing (person, review model, nobody); running outside the sandbox is a per-call escalation
-  bounded by the device's outside-sandbox setting; every command and every write outside the
-  workspace passes the command review, a kernel step that fails closed; abort must kill the
-  command; locking, suspension and destruction are the kernel's; never publish the socket proxy on
-  a host address.
-  [writing-sandbox-providers](.agents/skills/writing-sandbox-providers/SKILL.md)
+  deleted); a device is made on a chosen device provider (`device-provider@1`) and stays bound to
+  it for life, with no demotion: a provider that is not loaded or not on in the org makes the device
+  unavailable and changes nothing. The provider decides how operations are confined and reports it
+  (`report`); writes stay in the project and workspace (an operation scope names the project root
+  and write roots, reads are the provider's rule); the network (the open public internet, or an
+  allowlist) is one kernel setting per device under the org and platform ceilings, and every
+  provider enforces allowlists; private ranges, metadata and host services stay closed; minimal
+  environment. A profile only chooses who approves a crossing (person, review model, nobody);
+  running outside the sandbox is a per-call escalation bounded by the device's outside-sandbox
+  setting; every command and every write outside the workspace passes the command review, a kernel
+  step that fails closed; abort must kill the command; locking, suspension, destruction and the
+  per-provider sweeps are the kernel's; never publish the socket proxy on a host address.
+  [writing-device-providers](.agents/skills/writing-device-providers/SKILL.md)
 - **Push:** channels are `push-provider@1` plugins; delivery is the kernel's (an outbox row in the
   event's transaction, one `cap-push-deliver` job per registration, retries only there); a push
   token is sealed at rest and never logged, audited or returned; payloads carry no conversation

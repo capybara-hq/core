@@ -256,7 +256,7 @@ can read may flow out. For orgs that handle sensitive data, admins should set
 `ask` in org settings (write, execute and deliver need approval).
 Delivered files appear in the "Artifacts" tab on the right of the conversation page. For the
 lifetime and resource settings see `sandbox.*` and `devices.*` in `docs/config.md`; to write sandbox
-extensions, see [.agents/skills/writing-sandbox-providers](../../.agents/skills/writing-sandbox-providers/SKILL.md).
+extensions, see [.agents/skills/writing-device-providers](../../.agents/skills/writing-device-providers/SKILL.md).
 
 ## Docker
 

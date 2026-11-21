@@ -192,7 +192,7 @@ const json = (v: unknown): string => `${JSON.stringify(v, null, 2)}\n`;
 
 /**
  * `capybara permissions cutover report | freeze | snapshot` (permission runtime cutover B-10,
- * B-26; the runbook in `.agents/skills/writing-sandbox-providers/SKILL.md`):
+ * B-26; the runbook in `.agents/skills/writing-device-providers/SKILL.md`):
  * - `report`: the pre-checks and progress, no writes; PostgreSQL only (replica presence is read
  *   from Redis when it answers). Exit 0.
  * - `freeze`: publishes the legacy-launch freeze and enumerates until stable before returning

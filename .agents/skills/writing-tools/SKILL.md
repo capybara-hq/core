@@ -141,7 +141,7 @@ fails closed.
   (`isSessionGrantableRule`). Grants allow a line only when every ask hit is granted and nothing is
   unsure (`applySessionGrants`), and only in attended runs.
 - **Permission profiles choose only the approver** (approval-only profiles design, 2026-11-19).
-  The sandbox is a device setting, the same under every profile (writing-sandbox-providers); a
+  The sandbox is a device setting, the same under every profile (writing-device-providers); a
   call inside the scope and the sandbox network runs under every profile. Candidate building
   (`buildPermissionCandidate`) runs for every profile, Full access included, and a candidate is one
   **crossing** (`crossingOfCandidate`, `PermissionCrossingKind`): `directory` (outside the scope),
@@ -311,9 +311,9 @@ the same transaction as the business rows.
   `DeviceAccess.usable` for the conversation's **owner** on every call, so a conversation never reaches another person's device; an
   anonymous IM sender's conversation has no device (`sandbox.unavailable`, an anonymous-specific tool error). Then
   `SandboxService.withSandbox({ orgId, deviceId, holderConversationId, actor })` (instance created lazily, see
-  `.agents/skills/writing-sandbox-providers`), passing the lock-linked signal to every provider call; path leases (`withPathLease(deps, session, …)`)
+  `.agents/skills/writing-device-providers`), passing the lock-linked signal to every provider call; path leases (`withPathLease(deps, session, …)`)
   are on the device. `mapSandboxError` turns `device.not_found` / `forbidden` / `unavailable` / `files_lost` into actionable tool errors,
-  and a provider that can't be reached (`SandboxProviderUnreachableError`, see writing-sandbox-providers) into `SANDBOX_UNREACHABLE_TEXT` (never connected: nothing ran,
+  and a provider that can't be reached (`SandboxProviderUnreachableError`, see writing-device-providers) into `SANDBOX_UNREACHABLE_TEXT` (never connected: nothing ran,
   retrying won't help) or `SANDBOX_CONNECTION_DROPPED_TEXT` (broke mid-call: check before retrying), `kind: "unavailable"`, the raw error warned
   as `sandbox provider unreachable`.
   Paths go through `checkToolPath`, which follows `SandboxSession.pathBound` (`sessionPathBound`),
@@ -378,7 +378,7 @@ the same transaction as the business rows.
   the status and the output since this conversation's last read (`read_offset` in PG, spilled like any large result); `TaskStop {task_id}`
   claims the task (`stopping_at`) and calls `background.stop` on its exact ref (a grace, then a kill on the device). Both are `defaultPolicy: "allow"`, offered whenever
   `Bash` is (the registry adds them, `BASH_COMPANION_TOOLS`), given to sub-agents, and go through `SandboxService.ifRunning` (see
-  `.agents/skills/writing-sandbox-providers`). A conversation reads and stops only its own tasks.
+  `.agents/skills/writing-device-providers`). A conversation reads and stops only its own tasks.
 - `TaskList {status?: "running" | "all"}` (no required input; default `all`) lists the calling conversation's own tasks (owner
   `conversation_id`, never a sub-agent's or another conversation's): running ones first (oldest first), then the
   `TASK_LIST_FINISHED_LIMIT` (20) most recently finished, each with id, description, status (`running`, `completed`, `failed`,
