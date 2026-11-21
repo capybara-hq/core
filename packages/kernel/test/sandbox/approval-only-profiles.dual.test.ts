@@ -23,8 +23,8 @@ import {
   type PermissionAutoGrantHooks,
 } from "../../src/sandbox/permission-auto-grants.js";
 import { REVIEW_SYSTEM_PROMPT } from "../../src/sandbox/review/index.js";
-import { type ScriptRule, scriptRules } from "../fixtures/plugins/model-script/index.js";
 import { setFakeSandboxPermissionSupport } from "../fixtures/plugins/device-fake/index.js";
+import { type ScriptRule, scriptRules } from "../fixtures/plugins/model-script/index.js";
 import { onlyBuiltins } from "../helpers/disabled-tools.js";
 import { accountsFor } from "../helpers/identity.js";
 import { MODEL_FAKE } from "../helpers/model-plugins.js";

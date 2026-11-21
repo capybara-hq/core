@@ -12,10 +12,7 @@ import { createDb } from "../../src/db/pool.js";
 import { ApiError } from "../../src/errors.js";
 import { SANDBOX_DESTROY_JOB, SANDBOX_SUSPEND_JOB } from "../../src/sandbox/jobs.js";
 import { SandboxService } from "../../src/sandbox/sandbox.service.js";
-import {
-  readFakeSandboxOps,
-  setFakeSandboxDelays,
-} from "../fixtures/plugins/device-fake/index.js";
+import { readFakeSandboxOps, setFakeSandboxDelays } from "../fixtures/plugins/device-fake/index.js";
 import { startKernel, type TestKernel } from "../helpers/runs.js";
 
 /**

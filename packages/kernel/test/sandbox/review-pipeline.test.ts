@@ -36,11 +36,11 @@ import { type ScheduledTaskInsert, ScheduledTaskStore } from "../../src/schedule
 import type { TaskRun } from "../../src/schedules/types.js";
 import { DEVICE_OF_ANOTHER_ACCOUNT_TEXT } from "../../src/tools/builtins/sandbox/common.js";
 import { PERMISSION_SUPPORT_UNVERIFIED_TEXT, ToolPipeline } from "../../src/tools/pipeline.js";
-import { scriptRules } from "../fixtures/plugins/model-script/index.js";
 import {
   readFakeSandboxOps,
   setFakeSandboxPermissionSupport,
 } from "../fixtures/plugins/device-fake/index.js";
+import { scriptRules } from "../fixtures/plugins/model-script/index.js";
 import { onlyBuiltins } from "../helpers/disabled-tools.js";
 import { accountsFor } from "../helpers/identity.js";
 import { testMembers } from "../helpers/members.js";

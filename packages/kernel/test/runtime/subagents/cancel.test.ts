@@ -17,12 +17,12 @@ import { RUN_ORPHAN_CHECK_JOB, RunOrphanCheck } from "../../../src/runtime/run-o
 import { SUBAGENT_RUN_QUEUE_NAME } from "../../../src/runtime/run-queue.js";
 import { processStopTree } from "../../../src/runtime/subagents/tree-jobs.js";
 import { Waits } from "../../../src/runtime/waits.js";
+import { setFakeSandboxDelays } from "../../fixtures/plugins/device-fake/index.js";
 import {
   openBarrier,
   type ScriptRule,
   scriptRules,
 } from "../../fixtures/plugins/model-script/index.js";
-import { setFakeSandboxDelays } from "../../fixtures/plugins/device-fake/index.js";
 import { legacyDbFor } from "../../helpers/conversations.js";
 import { truncateTables } from "../../helpers/db.js";
 import { onlyBuiltins } from "../../helpers/disabled-tools.js";

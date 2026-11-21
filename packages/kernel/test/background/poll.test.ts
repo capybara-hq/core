@@ -34,8 +34,8 @@ import { PermissionFacts } from "../../src/sandbox/permission-facts.js";
 import { SandboxService } from "../../src/sandbox/sandbox.service.js";
 import { ApprovalsService } from "../../src/tools/approvals.service.js";
 import { sandboxBaseTimeoutMs } from "../../src/tools/builtins/sandbox/common.js";
-import type { ScriptRule } from "../fixtures/plugins/model-script/index.js";
 import { removeFakeSandbox } from "../fixtures/plugins/device-fake/index.js";
+import type { ScriptRule } from "../fixtures/plugins/model-script/index.js";
 import {
   fakeExecutionAlive,
   fakeExecutionExited,
