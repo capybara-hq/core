@@ -1,5 +1,15 @@
 # @capybara-hq/device
 
+## 0.1.0-rc.26
+
+### Patch Changes
+
+- 05eba7f: The device protocol gains the error kind `unsettled`: a device reports earlier work that has not
+  settled (a new instance or a supervisor close refused) as `SandboxWorkUnsettledError`, a subclass of
+  `SandboxPermissionUnsupportedError`, so every existing definite-refusal check still applies.
+  `isSandboxPermissionUnsupportedError` now matches any subclass by its inherited tag. Upgrade the
+  kernel before devices: a kernel that predates this kind answers a protocol error to that request.
+
 ## 0.1.0-rc.25
 
 ### Patch Changes
