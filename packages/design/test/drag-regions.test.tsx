@@ -12,6 +12,7 @@ import {
   AppShell,
   ConversationPage,
   DesignProvider,
+  type DrawerNavData,
   NewTitleBar,
   PageHeader,
   SharedFilePage,
@@ -118,6 +119,33 @@ const sidebar = {
 };
 const status = { context: "grant@acme:/", version: "0.1.0" };
 const noop = () => {};
+const drawer: DrawerNavData = {
+  sections: [{ id: "agents", label: "智能体", href: "/agents", icon: "agent" }],
+  more: [],
+  moreLabel: "更多",
+  recent: {
+    state: "ready",
+    groups: [],
+    moreGroups: false,
+    onMoreGroups: noop,
+    onRetry: noop,
+    filter: { q: "", state: "all", onChange: noop },
+    archived: { count: 0, open: false, onOpenChange: noop },
+    onRename: async () => {},
+    onArchive: async () => {},
+    onDelete: async () => {},
+  },
+  allConversations: { label: "全部会话", href: "/conversations" },
+  newConversation: { label: "新会话", href: "/" },
+  account: {
+    name: "grant",
+    orgName: "Acme",
+    personalSettingsHref: "/account",
+    theme: null,
+    status: null,
+    onSignOut: noop,
+  },
+};
 
 function tree() {
   return (
@@ -190,12 +218,61 @@ describe("the narrow window's row and the side panel's strip", () => {
     expect(gap).not.toBeNull();
     expect(gap?.childNodes.length).toBe(0);
     expect(gap?.getAttribute("aria-hidden")).toBe("true");
-    const off = parseCss(css("shell-environment.css")).some(
+    const rules = parseCss(css("shell-environment.css"));
+    // only while a conversation's title pill lies over the gap
+    const off = rules.filter(
       (r) =>
-        /\.cb-shell\[data-surface="chat"\] \.cb-floatbar > \.cb-drag-fill$/.test(r.selector) &&
-        r.decls["app-region"] === "no-drag",
+        /\.cb-floatbar > \.cb-drag-fill$/.test(r.selector) && r.decls["app-region"] === "no-drag",
     );
-    expect(off).toBe(true);
+    expect(off.map((r) => r.selector)).toEqual([
+      ':root[data-shell="desktop"] .cb-shell[data-surface="chat"]:has(.cb-title-bar:not([data-new])) .cb-floatbar > .cb-drag-fill',
+    ]);
+  });
+
+  it("the gap is as high as the top row where controls are reported, and 0 on a chat surface without", () => {
+    const compact = parseCss(css("shell-environment.css")).filter(
+      (r) => r.at === "(max-width: 599px)",
+    );
+    const height = (selector: string) =>
+      compact.find((r) => r.selector === selector)?.decls["--cb-float-gap-height"];
+    // with controls the row is their height (48), so the filler spans the row; without them
+    // `--cb-shell-row` is 0: a chat surface's gap has no height (taps reach the page as in a
+    // browser), a pushed page's keeps the floating row's height as before
+    expect(height(':root[data-shell="desktop"] .cb-floatbar > .cb-drag-fill')).toBe(
+      "max(var(--cb-float-size), var(--cb-shell-row))",
+    );
+    expect(
+      height(
+        ':root[data-shell="desktop"] .cb-shell[data-surface="chat"] .cb-floatbar > .cb-drag-fill',
+      ),
+    ).toBe("var(--cb-shell-row)");
+    // it starts at the window's top edge only with controls, and its margins keep the row's height
+    const gap = compact.find(
+      (r) => r.selector === ':root[data-shell="desktop"] .cb-floatbar > .cb-drag-fill',
+    );
+    expect(gap?.decls["--cb-float-gap-top"]).toBe(
+      "min(var(--cb-float-top), calc(var(--cb-shell-row) * 100000))",
+    );
+    expect(gap?.decls.height).toBe("var(--cb-float-gap-height)");
+  });
+
+  it("the home (a chat surface with no title pill) draws the gap filler in the floating row", () => {
+    vi.stubGlobal("matchMedia", matchMediaFor(480).matchMedia);
+    const { container } = render(
+      <DesignProvider locale="zh">
+        <AppShell sidebar={sidebar} status={status} chatSurface drawer={drawer}>
+          <NewTitleBar />
+        </AppShell>
+      </DesignProvider>,
+    );
+    const shell = container.querySelector(".cb-shell") as HTMLElement;
+    expect(shell.dataset.surface).toBe("chat");
+    // the menu button, then the filler
+    const row = container.querySelector(".cb-floatbar") as HTMLElement;
+    expect(row.firstElementChild?.tagName).toBe("BUTTON");
+    expect(row.querySelector(":scope > .cb-drag-fill")).not.toBeNull();
+    // no conversation title pill: the no-drag rule's `:has(...)` does not match
+    expect(shell.matches(":has(.cb-title-bar:not([data-new]))")).toBe(false);
   });
 
   it("an open side panel draws a filler for the strip above it", () => {
@@ -238,5 +315,139 @@ describe("a filler adds no gap", () => {
         ?.decls["margin-left"];
       expect(cancel, row).toBe(`calc(-1 * ${gap})`);
     }
+  });
+});
+
+describe("the rail's top row inside the desktop shell (desktop client spec §7.3)", () => {
+  const rules = () => parseCss(css("shell-environment.css"));
+  const decl = (selector: string, prop: string, at: string | null = null) =>
+    rules().find((r) => r.at === at && r.selector === selector && r.decls[prop] !== undefined)
+      ?.decls[prop];
+  const BAND_QUERY = "not style(--cb-shell-rail-drop: 0px)";
+  const COLLAPSED_RAIL =
+    ':root[data-shell="desktop"] .cb-shell:not([data-banner="true"]):has( > .cb-sidebar[data-mode="rail"][data-collapsed="true"] )';
+  const desktop = (on: boolean) => {
+    (window as unknown as { capybaraShell?: unknown }).capybaraShell = on
+      ? {
+          version: 1,
+          kind: "desktop",
+          platform: "macos",
+          insets: { top: 0, right: 0, bottom: 0, left: 0 },
+          controls: { x: 0, y: 0, width: 92, height: 48 },
+          capabilities: {},
+          on: () => () => {},
+        }
+      : undefined;
+  };
+  afterEach(() => desktop(false));
+  const shell = (collapsed: boolean, width: number) => {
+    vi.stubGlobal("matchMedia", matchMediaFor(width).matchMedia);
+    return render(
+      <DesignProvider locale="zh">
+        <AppShell sidebar={sidebar} status={status} collapsed={collapsed} onCollapsedChange={noop}>
+          <p>page</p>
+        </AppShell>
+      </DesignProvider>,
+    );
+  };
+
+  it("the rail drops below the band only when start controls reach past it", () => {
+    const css$ = css("shell-environment.css");
+    expect(css$).toMatch(/@property --cb-shell-rail-drop \{[^}]*syntax: "<length>";/);
+    // 0 without controls (row-start is 0), with controls at the end (reserve-start is 0) and with
+    // controls no wider than the rail (the step is 0)
+    expect(decl(':root[data-shell="desktop"]', "--cb-shell-rail-drop")).toBe(
+      "min( var(--cb-shell-row-start), max( 0px, calc( (var(--cb-shell-reserve-start) - var(--cb-inset-left) - var(--cb-layout-sidebar-rail)) * 100000 ) ) )",
+    );
+    // a banner is the first row: nothing below it drops
+    expect(
+      decl(':root[data-shell="desktop"] .cb-shell[data-banner="true"] > *', "--cb-shell-rail-drop"),
+    ).toBe("0px");
+  });
+
+  it("the rail's surface and divider start below the band; the full sidebar is unchanged", () => {
+    const rail = ':root[data-shell="desktop"] .cb-shell > .cb-sidebar[data-mode="rail"]';
+    expect(decl(rail, "margin-top")).toBe("var(--cb-shell-rail-drop)");
+    expect(decl(rail, "height")).toBe("auto");
+    // below the band the rail pads as in a browser (space.3)
+    expect(decl(rail, "padding-top")).toContain(
+      "min(var(--cb-space-3), calc(var(--cb-shell-rail-drop) * 100000))",
+    );
+    const full = rules().filter(
+      (r) => r.selector.includes('.cb-sidebar[data-mode="full"]') && r.decls["margin-top"],
+    );
+    expect(full).toEqual([]);
+    expect(
+      rules().filter(
+        (r) =>
+          /rail-drop/.test(Object.values(r.decls).join()) && /data-mode="full"/.test(r.selector),
+      ),
+    ).toEqual([]);
+  });
+
+  it("the expand button sits in the band right after the controls, and leaves the rail", () => {
+    const toggle =
+      ':root[data-shell="desktop"] .cb-shell:not([data-banner="true"]) > .cb-shell-rail-toggle';
+    expect(decl(".cb-shell-rail-toggle", "display")).toBe("none");
+    expect(decl(toggle, "display", BAND_QUERY)).toBe("flex");
+    expect(decl(toggle, "left", BAND_QUERY)).toBe("var(--cb-shell-reserve-start)");
+    expect(decl(toggle, "top", BAND_QUERY)).toBe(
+      "calc((var(--cb-shell-row) - var(--cb-control-default)) / 2)",
+    );
+    expect(
+      decl(
+        ':root[data-shell="desktop"] .cb-shell > .cb-sidebar[data-mode="rail"] [data-part="expand-toggle"]',
+        "display",
+        BAND_QUERY,
+      ),
+    ).toBe("none");
+    // the content column's title starts after it
+    expect(decl(COLLAPSED_RAIL, "--cb-shell-toggle", BAND_QUERY)).toBe(
+      "calc(var(--cb-control-default) + var(--cb-space-1))",
+    );
+    expect(
+      decl(':root[data-shell="desktop"] .cb-shell-column', "--cb-shell-column-reserve"),
+    ).toContain("var(--cb-shell-toggle, 0px)");
+    // a collapsed rail on medium has no expand button
+    expect(decl(COLLAPSED_RAIL, "--cb-shell-toggle", "(max-width: 840px)")).toBe("0px");
+  });
+
+  it("the AppShell draws the top-row toggle for the collapsed sidebar on expanded only", () => {
+    // a browser: none
+    const browser = shell(true, 1280);
+    expect(browser.container.querySelector(".cb-shell-rail-toggle")).toBeNull();
+    browser.unmount();
+
+    desktop(true);
+    const collapsed = shell(true, 1280);
+    const band = collapsed.container.querySelector(".cb-shell > .cb-shell-rail-toggle");
+    expect(band).not.toBeNull();
+    const button = band?.querySelector("button[data-part='top-row-expand-toggle']");
+    expect(button?.getAttribute("aria-label")).toBeTruthy();
+    // after the controls area, before the sidebar and the content column
+    const children = [...(collapsed.container.querySelector(".cb-shell")?.children ?? [])];
+    const at = (cls: string) => children.findIndex((c) => c.classList.contains(cls));
+    expect(at("cb-shell-band")).toBeLessThan(at("cb-shell-rail-toggle"));
+    expect(at("cb-shell-rail-toggle")).toBeLessThan(at("cb-sidebar"));
+    // the rail keeps its own button for a browser and windows whose controls fit; CSS hides it
+    expect(
+      collapsed.container.querySelector(
+        ".cb-sidebar[data-mode='rail'] [data-part='expand-toggle']",
+      ),
+    ).not.toBeNull();
+    // it is no drag region, and a band toggle is no filler
+    expect(band?.classList.contains("cb-drag-fill")).toBe(false);
+    collapsed.unmount();
+
+    // medium: the forced rail cannot expand
+    const medium = shell(true, 720);
+    expect(medium.container.querySelector(".cb-shell-rail-toggle")).toBeNull();
+    expect(medium.container.querySelector("[data-part='expand-toggle']")).toBeNull();
+    medium.unmount();
+
+    // the full sidebar: nothing in the band
+    const full = shell(false, 1280);
+    expect(full.container.querySelector(".cb-shell-rail-toggle")).toBeNull();
+    expect(full.container.querySelector(".cb-sidebar[data-mode='full']")).not.toBeNull();
   });
 });

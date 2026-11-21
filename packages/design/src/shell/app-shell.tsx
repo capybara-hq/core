@@ -12,6 +12,7 @@ import { IconButton } from "../controls/index";
 import type { ConvMenuEntry } from "../conversation/menu";
 import { ConvMenu } from "../conversation/menu";
 import type { NavBadge } from "../display/nav-badge";
+import { Tooltip } from "../display/tooltip";
 import { Icon } from "../icons/icon";
 import {
   NATIVE_NAV_LIMITS,
@@ -29,7 +30,7 @@ import { keyboardInset } from "./pointer";
 import { SetupSteps } from "./setup-steps";
 import { useShellEnvironment } from "./shell-environment";
 import { type ShellPage, ShellPageContext } from "./shell-page";
-import { Sidebar, type SidebarProps, useSidebarWidthMode } from "./sidebar";
+import { COLLAPSE_SHORTCUT, Sidebar, type SidebarProps, useSidebarWidthMode } from "./sidebar";
 import { useShortWindow, useSizeClass } from "./size-class";
 import { StatusBar, type StatusBarProps, StatusBarSetterContext } from "./status-bar";
 import { useTouch } from "./touch";
@@ -495,6 +496,12 @@ export function AppShell({
           ? { kind: "menu", onOpen: () => setDrawerOpen(true), badge: drawer.menuBadge }
           : undefined;
   const overflow = page.menu ?? menu ?? [];
+  // The collapsed sidebar's expand button in the desktop's top row (desktop client spec §7.3):
+  // drawn inside a desktop shell while the person has collapsed the sidebar on the expanded class
+  // (the medium rail cannot expand); CSS shows it only where the window controls reach past the
+  // rail, and hides the rail's own expand button then.
+  const topRowToggle =
+    shellKind === "desktop" && collapsed && reference === undefined && sizeClass === "expanded";
 
   return (
     <ShellPageContext.Provider value={registerPage}>
@@ -516,6 +523,18 @@ export function AppShell({
           <a className="cb-skip-link" href={`#${mainId}`}>
             {t("shell.skipToContent")}
           </a>
+          {topRowToggle ? (
+            <div className="cb-shell-rail-toggle">
+              <Tooltip content={`${t("sidebar.expand")} ${COLLAPSE_SHORTCUT}`}>
+                <IconButton
+                  label={t("sidebar.expand")}
+                  icon={<Icon name="panel-left" />}
+                  part="top-row-expand-toggle"
+                  onClick={() => setCollapsed(false)}
+                />
+              </Tooltip>
+            </div>
+          ) : null}
           {banner ? (
             <div className="cb-shell-banner" data-part="shell-banner">
               {banner}
