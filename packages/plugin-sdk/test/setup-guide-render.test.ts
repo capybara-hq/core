@@ -1,6 +1,8 @@
 import type { Root, RootContent } from "mdast";
 import { fromMarkdown } from "mdast-util-from-markdown";
 import { gfmFromMarkdown } from "mdast-util-gfm";
+import { cjkFriendlyExtension } from "micromark-extension-cjk-friendly";
+import { gfmStrikethroughCjkFriendly } from "micromark-extension-cjk-friendly-gfm-strikethrough";
 import { gfm } from "micromark-extension-gfm";
 import { describe, expect, it } from "vitest";
 import { parse as parseYaml } from "yaml";
@@ -335,6 +337,18 @@ describe("renderSetupGuide", () => {
     const link = all(t).find((n) => n.type === "link") as { url: string };
     expect(link.url).toBe("https://a.example/l.png");
     expect(md(img)).toContain("local");
+  });
+
+  it("keeps CJK-friendly strong text strong (as the design renderer reads it)", () => {
+    const r = render(doc("按**「框架」**来，~~「旧」~~删去。"));
+    const out = md(r);
+    expect(out).not.toContain("\\*");
+    const tree = fromMarkdown(out, {
+      extensions: [gfm(), cjkFriendlyExtension(), gfmStrikethroughCjkFriendly()],
+      mdastExtensions: [gfmFromMarkdown()],
+    });
+    expect(all(tree).some((n) => n.type === "strong")).toBe(true);
+    expect(all(tree).some((n) => n.type === "delete")).toBe(true);
   });
 
   it("resolves reference links and drops definitions", () => {

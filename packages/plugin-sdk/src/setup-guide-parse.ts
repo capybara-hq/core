@@ -9,6 +9,8 @@
 import type { Nodes, Root } from "mdast";
 import { fromMarkdown } from "mdast-util-from-markdown";
 import { gfmFromMarkdown } from "mdast-util-gfm";
+import { cjkFriendlyExtension } from "micromark-extension-cjk-friendly";
+import { gfmStrikethroughCjkFriendly } from "micromark-extension-cjk-friendly-gfm-strikethrough";
 import { gfm } from "micromark-extension-gfm";
 import { SETUP_CHECK_ID_RE } from "./setup-check.js";
 
@@ -259,9 +261,16 @@ export function preparedGuideText(
     .join("\n");
 }
 
-/** @internal Parses Markdown (CommonMark + GFM) to mdast. */
+/**
+ * @internal Parses Markdown (CommonMark + GFM, with the CJK-friendly emphasis amendment so that
+ * `**` between a CJK letter and CJK punctuation is strong, as the design renderer reads it) to
+ * mdast. The strikethrough extension must come after `gfm()`.
+ */
 export function parseGuideMarkdown(text: string): Root {
-  return fromMarkdown(text, { extensions: [gfm()], mdastExtensions: [gfmFromMarkdown()] });
+  return fromMarkdown(text, {
+    extensions: [gfm(), cjkFriendlyExtension(), gfmStrikethroughCjkFriendly()],
+    mdastExtensions: [gfmFromMarkdown()],
+  });
 }
 
 /** @internal The check index of a marker heading, or undefined. */
