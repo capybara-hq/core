@@ -259,7 +259,7 @@ export function resetPollInterval(
   return d.filesLost || d.sandbox.pendingFilesReset || d.reconcileRequired ? RESET_POLL_MS : false;
 }
 
-/** A device's name for people: its own name, else 个人设备 / "Personal" for the default. */
+/** A device's name for people: its own name, else the localized "Personal" for the default. */
 export const deviceName = (e: Pick<Device, "name">, personal: string): string => e.name ?? personal;
 
 /**

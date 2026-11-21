@@ -20,7 +20,7 @@ import { named, orElse } from "./summary.js";
 
 const DeviceId = z.object({ deviceId: DeviceParams.shape.id }).strict();
 
-/** Model-facing names are English: the default is "Personal" (the web shows 「个人设备」). */
+/** Model-facing names are English: the default is "Personal" (the web shows its localized label). */
 const labelOf = (e: Pick<DeviceView, "name">): string => deviceLabel(e, "en");
 
 /** A row's state: why it cannot be used now, else whether its instance runs. */

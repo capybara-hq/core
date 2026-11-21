@@ -4,8 +4,8 @@ const PERSONAL = { zh: "个人设备", en: "Personal" } as const;
 
 /**
  * A device's name for people outside the web (the IM `/device` list, the `Platform` tool): its
- * own name, else 「个人设备」 / "Personal" (the default device). The web builds the same label from
- * its own messages.
+ * own name, else the localized "Personal" (`PERSONAL`, for the default device). The web builds
+ * the same label from its own messages.
  */
 export function deviceLabel(v: Pick<DeviceView, "name">, locale: "zh" | "en"): string {
   return v.name ?? PERSONAL[locale];

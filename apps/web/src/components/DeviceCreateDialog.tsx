@@ -39,7 +39,7 @@ type Kind = "cloud" | "local";
  * 新建设备 on the 设备 page: two choices, 云端设备 and 本地设备 (only 本地设备, without the choice,
  * when no device provider is on in the org).
  *
- * - 云端设备: 名称 (1-64 characters) and, with two or more providers on, a 提供方 select (the
+ * - Cloud device: a name (1-64 characters) and, with two or more providers on, a provider select (the
  *   default preselected; the request names it); the primary is disabled until it is valid. A created
  *   device is ready at once (its files and instance are made on first use): the dialog
  *   invalidates the list and opens the detail page. A kernel refusal (name taken, limit reached,

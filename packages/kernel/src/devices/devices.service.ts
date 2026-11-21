@@ -59,7 +59,7 @@ import { DeviceProviderSelection } from "./device-provider-selection.js";
 /** A device as its owner sees it (`GET /orgs/:orgId/devices`). */
 export interface DeviceView {
   id: string;
-  /** null for the default device (shown as 「个人设备」 / "Personal"). */
+  /** null for the default device (shown as the localized "Personal"). */
   name: string | null;
   isDefault: boolean;
   ownerKind: "personal";
