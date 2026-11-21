@@ -19,6 +19,7 @@ import { SandboxService } from "../../../src/sandbox/sandbox.service.js";
 import {
   checkToolPath,
   checkToolWritable,
+  SCOPE_DENIED_TOOL_TEXT,
   sessionPathBound,
 } from "../../../src/tools/builtins/sandbox/common.js";
 import { onlyBuiltins } from "../../helpers/disabled-tools.js";
@@ -184,6 +185,7 @@ describe("file tool paths in the device's mode", () => {
     const read = await call(conv, "Read", { file_path: "/etc/capybara-t7/note.txt" }, 2);
     expect(read.payload.isError).toBe(true);
     expect(read.payload.content).not.toContain("hello");
+    expect(read.payload.content).toBe(SCOPE_DENIED_TOOL_TEXT);
     expect(read.payload.review).toMatchObject({ decision: "allow", decisionSource: "full-access" });
   });
 
@@ -206,6 +208,7 @@ describe("file tool paths in the device's mode", () => {
     // approved outside read is not conveyed until phase 4, ruling R1): the Edit stays guarded
     const read = await call(conv, "Read", { file_path: "/etc/capybara-t7/note.txt" }, 2);
     expect(read.payload.isError).toBe(true);
+    expect(read.payload.content).toBe(SCOPE_DENIED_TOOL_TEXT);
     const again = await call(
       conv,
       "Edit",

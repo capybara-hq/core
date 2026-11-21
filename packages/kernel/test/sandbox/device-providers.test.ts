@@ -9,14 +9,17 @@ import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import { type KernelSchemaDb, kernelDb } from "../../src/db/kernel-schema.js";
 import { createDb } from "../../src/db/pool.js";
 import { DeviceAccess } from "../../src/devices/access.js";
-import { ConversationDevices } from "../../src/devices/conversation-devices.js";
+import { ConversationDevices, NO_DEVICE } from "../../src/devices/conversation-devices.js";
 import { DEVICES_DEFAULT_PROVIDER_SETTING } from "../../src/devices/default-provider-setting.js";
 import { DeviceProviderSelection } from "../../src/devices/device-provider-selection.js";
+import { ApiError } from "../../src/errors.js";
 import { OrgSettingsService } from "../../src/orgs/settings.service.js";
 import { DeviceProviders, LOCAL_PROVIDER } from "../../src/sandbox/providers.js";
 import { SandboxService } from "../../src/sandbox/sandbox.service.js";
 import {
   ENV_UNAVAILABLE_TEXT,
+  mapSandboxError,
+  NO_DEVICE_TEXT,
   unavailableWhenNoSandbox,
 } from "../../src/tools/builtins/sandbox/common.js";
 import { truncateTables } from "../helpers/db.js";
@@ -242,6 +245,35 @@ describe("a device's use follows its own provider's org switch", () => {
     expect(await listing({ orgId: orgA })).toMatch(
       /^No device provider is on in this organization/,
     );
+  });
+
+  it("providers on but no default device and no default provider: no device, not no provider", async () => {
+    await enableExtensions(raw, orgA, "device-fake", "device-fake-b");
+    const agentId = randomUUID();
+    await sql`INSERT INTO capybara.agents (id, org_id, owner_account_id, visibility, current_version)
+      VALUES (${agentId}, ${orgA}, ${ownerId}, 'org', 1)`.execute(raw);
+    const conv = randomUUID();
+    await sql`INSERT INTO capybara.conversations (id, org_id, agent_id, account_id, device_id)
+      VALUES (${conv}, ${orgA}, ${agentId}, ${ownerId}, NULL)`.execute(raw);
+    const devices = k.app.get(ConversationDevices);
+    const listing = unavailableWhenNoSandbox({ devices } as never);
+    expect(await devices.unusableReason(orgA, conv)).toBe("no-device");
+    expect(await listing({ orgId: orgA, conversationId: conv })).toBe(NO_DEVICE_TEXT.slice(0, -1));
+    // a tool call finds nothing to bind: the same reason, mapped to the same text
+    const err = await devices.forTool(orgA, conv).catch((e: unknown) => e);
+    expect(err).toBeInstanceOf(ApiError);
+    expect((err as ApiError).code).toBe("sandbox.unavailable");
+    expect((err as ApiError).details).toEqual([{ reason: NO_DEVICE }]);
+    expect((mapSandboxError(err, undefined) as Error).message).toBe(NO_DEVICE_TEXT);
+    // with a default provider the default device can be made: usable
+    await setOrgDefault(orgA, "device-fake");
+    expect(await devices.unusableReason(orgA, conv)).toBeNull();
+    // every provider off: no provider is on, said as such
+    await setOrgDefault(orgA, null);
+    await setEnabled(orgA, "device-fake", false);
+    await setEnabled(orgA, "device-fake-b", false);
+    expect(await devices.unusableReason(orgA, conv)).toBe("none");
+    expect(await devices.forTool(orgA, conv).catch((e: ApiError) => e.details)).toBeUndefined();
   });
 
   it("isOnInOrg: @local is on in every org while registered (no catalog item, no org switch)", async () => {

@@ -24,11 +24,12 @@ import { RunQueue } from "../../../src/runtime/run-queue.js";
 import { SandboxService } from "../../../src/sandbox/sandbox.service.js";
 import { StorageService } from "../../../src/storage/storage.service.js";
 import { BuiltinTools } from "../../../src/tools/builtins/builtin-tools.js";
+import { ENV_UNAVAILABLE_TEXT } from "../../../src/tools/builtins/sandbox/common.js";
 import {
   READ_DESCRIPTION,
   READ_MAX_BYTES,
-  READ_NO_DEVICE_TEXT,
   READ_ONE_SOURCE_TEXT,
+  readNoDeviceText,
 } from "../../../src/tools/builtins/sandbox/read.js";
 import {
   NO_VISION_MODEL_TEXT,
@@ -690,8 +691,9 @@ describe("Read: limits and other files", () => {
 });
 
 describe("Read without a device", () => {
-  it("listed with an object store; file_id works, file_path gives the no-device text", async () => {
-    vi.spyOn(k.app.get(ConversationDevices), "usableNow").mockResolvedValue(false);
+  it("listed with an object store; file_id works, file_path says why the device is unusable", async () => {
+    // the conversation's device runs on a provider switched off in the org
+    vi.spyOn(k.app.get(ConversationDevices), "unusableReason").mockResolvedValue("provider-off");
     const conv = await createConv(owner, orgId, viewerId);
     expect(await tool().unavailable?.({ orgId, conversationId: conv })).toBeNull();
     // without an object store either, it is not listed
@@ -705,7 +707,7 @@ describe("Read without a device", () => {
     expect(byId.payload.media).toHaveLength(1);
     const byPath = await read(conv, { file_path: "/workspace/a.png" }, 2);
     expect(byPath.payload.isError).toBe(true);
-    expect(byPath.payload.content).toContain(READ_NO_DEVICE_TEXT);
+    expect(byPath.payload.content).toBe(readNoDeviceText(ENV_UNAVAILABLE_TEXT));
   });
 });
 

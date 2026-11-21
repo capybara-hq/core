@@ -18,6 +18,7 @@ import { type AgentDefinition, normalizeStoredDefinition } from "../../agents/de
 import type { EventLog } from "../../conversations/event-log.js";
 import type { ConversationEvent } from "../../conversations/events.js";
 import type { KernelSchemaDb, SkillManifest } from "../../db/kernel-schema.js";
+import type { DeviceUnusableReason } from "../../devices/conversation-devices.js";
 import { ApiError } from "../../errors.js";
 import {
   callableProjectSkills,
@@ -720,6 +721,15 @@ async function loadProjectSkill(
   };
 }
 
+/** Why a skill's files cannot reach the device, per {@link DeviceUnusableReason}. */
+const SKILL_NO_DEVICE_CAUSE: Record<DeviceUnusableReason, string> = {
+  "provider-off":
+    "This conversation's device runs on a device provider that is off in this organization or not installed",
+  "no-device":
+    "This conversation has no device (its owner has no default device and the organization has no default device provider)",
+  none: "No device provider is on in this organization",
+};
+
 /** 内置工具 `Skill`（见文件头）。 */
 export function skillLoadTool(deps: SkillLoadDeps): BuiltinTool {
   return {
@@ -798,9 +808,7 @@ export function skillLoadTool(deps: SkillLoadDeps): BuiltinTool {
       } else if (unusable !== null) {
         filesText =
           `Skill files (for reference):\n${fileList(manifest.files)}\n` +
-          (unusable === "provider-off"
-            ? "This conversation's device runs on a device provider that is off in this organization or not installed"
-            : "No device provider is on in this organization") +
+          SKILL_NO_DEVICE_CAUSE[unusable] +
           ", so the skill's scripts and other files are not available; follow the instructions without running them.";
       } else if (!hasSandboxTools(ctx)) {
         // 模型跑不了脚本：不为它创建沙箱、不复制

@@ -504,7 +504,8 @@ describe("skills at runtime", () => {
 describe("Skill handler", () => {
   type Snapshot = EventPayload<"skills_catalog">;
 
-  function tool(snapshot: Snapshot | null, sandboxAvailable: boolean) {
+  // false: no device provider on in the org; "no-device": providers on but nothing to bind
+  function tool(snapshot: Snapshot | null, sandboxAvailable: boolean | "no-device") {
     return skillLoadTool({
       db,
       storage: k.app.get(StorageService),
@@ -529,7 +530,12 @@ describe("Skill handler", () => {
           throw new Error("sandbox must not be used");
         },
       },
-      devices: { forTool: async () => randomUUID(), usableNow: async () => sandboxAvailable },
+      devices: {
+        forTool: async () => randomUUID(),
+        usableNow: async () => sandboxAvailable === true,
+        unusableReason: async () =>
+          sandboxAvailable === true ? null : sandboxAvailable === false ? "none" : "no-device",
+      },
       attachments: {
         listForConversation: async () => [],
         openForConversation: async () => null,
@@ -562,6 +568,22 @@ describe("Skill handler", () => {
     expect(text).toContain("run.py");
     expect(text).toMatch(/No device provider is on in this organization/);
     expect(text).toMatch(/scripts?.*(not available|unavailable|cannot)/i);
+  });
+
+  it("providers on but no device: says the conversation has no device, not that no provider is on", async () => {
+    const s = await seedSkill({
+      name: "nodev",
+      files: { "SKILL.md": skillMd("nodev", "Nodev body."), "run.py": "print(1)" },
+    });
+    const t = tool(
+      { skills: [{ id: s.id, name: "nodev", description: "d", version: 1, source: s.prefix }] },
+      "no-device",
+    );
+    const r = (await t.run({ skill: "nodev" }, ctx())) as ToolResult;
+    const text = (r.content[0] as { text: string }).text;
+    expect(text).toContain("Nodev body.");
+    expect(text).toMatch(/This conversation has no device/);
+    expect(text).not.toMatch(/No device provider is on/);
   });
 
   it("agent without sandbox tools: no sandbox is created, body only", async () => {

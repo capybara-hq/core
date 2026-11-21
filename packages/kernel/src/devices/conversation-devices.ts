@@ -30,6 +30,27 @@ export const anonymousNoDevice = (): ApiError =>
     [{ reason: ANONYMOUS_NO_DEVICE }],
   );
 
+/** `details[0].reason` of the error a conversation with no device gets while providers are on. */
+export const NO_DEVICE = "no_device";
+
+/**
+ * No device to bind although device providers are on in the org (503 `sandbox.unavailable`): the
+ * person has no default device and the org has no default device provider to make one.
+ */
+export const noDeviceToBind = (): ApiError =>
+  new ApiError(
+    "sandbox.unavailable",
+    "This conversation has no device: its owner has no default device and the organization has no default device provider to make one",
+    [{ reason: NO_DEVICE }],
+  );
+
+/**
+ * Why a sandbox tool call cannot run ({@link ConversationDevices.unusableReason}): the bound
+ * device's provider is off (`provider-off`), no device to bind while providers are on
+ * (`no-device`), or no device provider on in the org (`none`).
+ */
+export type DeviceUnusableReason = "provider-off" | "no-device" | "none";
+
 /** How a new conversation picks its device. */
 export interface NewConversationDevice {
   /** The device the person chose (the composer's picker); checked with `usable`. */
@@ -217,8 +238,8 @@ export class ConversationDevices {
    * enters, checked for its owner now. A conversation still unbound (created before
    * devices, or while no provider existed) is bound first, to the owner's IM default when it
    * is an IM thread, else to the owner's default device; a racing call binds it once.
-   * Throws `sandbox.unavailable` when there is no device to bind and for an anonymous IM
-   * conversation, and `device.not_found` / `device.unavailable` when the owner may not use it
+   * Throws `sandbox.unavailable` when there is no device to bind (`details[0].reason`
+   * {@link NO_DEVICE} while providers are on in the org) and for an anonymous IM conversation, and `device.not_found` / `device.unavailable` when the owner may not use it
    * now ({@link DeviceAccess.usable}: the device's own provider must be on in the org).
    */
   async forTool(orgId: string, rootConversationId: string): Promise<string> {
@@ -234,7 +255,11 @@ export class ConversationDevices {
     if (deviceId === null) {
       const im = await this.isImThread(rootConversationId);
       const chosen = await this.defaultFor(orgId, conv.account_id, im);
-      if (chosen === null) throw sandboxUnavailable();
+      if (chosen === null) {
+        throw (await this.selection.onInOrg(orgId)).length > 0
+          ? noDeviceToBind()
+          : sandboxUnavailable();
+      }
       deviceId = await withTransactionFencePrelude(
         () => this.ceilings.lock({ orgId, deviceId: chosen, rootConversationId }, "root"),
         () => this.bind(orgId, rootConversationId, chosen),
@@ -256,15 +281,15 @@ export class ConversationDevices {
    * Why a sandbox tool call of the tree rooted at `rootConversationId` cannot run now, or null when
    * it can (no binding, no access check): `provider-off` when the device the conversation is bound
    * to (an unbound IM thread: its owner's IM default; any unbound one: its owner's default device)
-   * has its provider off in the org or not installed (its files are kept); `none` when there is no
-   * device and no default provider on in the org to make one, or (without a conversation) no
-   * provider is on in the org at all. A forbidden or gone device still counts as usable: the call
+   * has its provider off in the org or not installed (its files are kept); `no-device` when there
+   * is no device and no default provider to make one while device providers are on in the org;
+   * `none` when no device provider is on in the org at all. A forbidden or gone device still counts as usable: the call
    * then says why.
    */
   async unusableReason(
     orgId: string,
     rootConversationId?: string,
-  ): Promise<"provider-off" | "none" | null> {
+  ): Promise<DeviceUnusableReason | null> {
     if (rootConversationId === undefined) {
       return (await this.selection.onInOrg(orgId)).length > 0 ? null : "none";
     }
@@ -297,7 +322,8 @@ export class ConversationDevices {
       .where("deleted_at", "is", null)
       .executeTakeFirst();
     if (own) return onOrOff(own.id);
-    return (await this.selection.defaultFor(orgId)) !== undefined ? null : "none";
+    if ((await this.selection.defaultFor(orgId)) !== undefined) return null;
+    return (await this.selection.onInOrg(orgId)).length > 0 ? "no-device" : "none";
   }
 
   /** The device of `orgId` has its provider on in the org now. */

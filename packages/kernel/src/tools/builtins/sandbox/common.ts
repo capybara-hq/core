@@ -26,6 +26,8 @@ import type { EventLog } from "../../../conversations/event-log.js";
 import {
   ANONYMOUS_NO_DEVICE,
   type ConversationDevices,
+  type DeviceUnusableReason,
+  NO_DEVICE,
   type WorkingFacts,
 } from "../../../devices/conversation-devices.js";
 import { canonicalRoot, workingRootOf } from "../../../devices/working-root.js";
@@ -206,6 +208,12 @@ const BUSY_TEXT =
   "The device is busy: all its command slots are taken by commands of this or another conversation sharing it; wait for one to finish and retry.";
 const NO_SANDBOX_TEXT =
   "No device provider is on in this organization; ask an org admin to switch one on, or do the task without the sandbox.";
+/**
+ * A conversation with no device while device providers are on in the org: its owner has no default
+ * device and the org has no default device provider to make one.
+ */
+export const NO_DEVICE_TEXT =
+  "This conversation has no device: its owner has no default device and the organization has no default device provider to make one. Ask the user to create a device on the devices page and start a new conversation on it, or ask an org admin to choose a default device provider; or do the task without the sandbox.";
 /** The message the kernel reports for a sandbox tool call with no provider, minus its final period. */
 export const SANDBOX_UNAVAILABLE_REASON = NO_SANDBOX_TEXT.slice(0, -1);
 
@@ -669,6 +677,7 @@ export function mapSandboxError(e: unknown, log: Pick<Logger, "warn"> | undefine
     if (e.code === "sandbox.unavailable") {
       const reason = (e.details?.[0] as { reason?: unknown } | undefined)?.reason;
       if (reason === ANONYMOUS_NO_DEVICE) return new ToolError(ANONYMOUS_TEXT);
+      if (reason === NO_DEVICE) return new ToolError(NO_DEVICE_TEXT);
       return new ToolError(NO_SANDBOX_TEXT);
     }
     const detail = e.details?.[0] as { reason?: unknown; source?: unknown } | undefined;
@@ -1039,11 +1048,19 @@ export async function sandboxUsable(
   return deps.devices.usableNow ? deps.devices.usableNow(orgId, conversationId) : true;
 }
 
+/** The model-facing text of each {@link DeviceUnusableReason}. */
+const UNUSABLE_TEXT: Record<DeviceUnusableReason, string> = {
+  "provider-off": ENV_UNAVAILABLE_TEXT,
+  "no-device": NO_DEVICE_TEXT,
+  none: NO_SANDBOX_TEXT,
+};
+
 /**
  * Why a sandbox tool call of the tree rooted at `conversationId` cannot run, as model-facing text,
  * or null when it can ({@link ConversationDevices.unusableReason}): the conversation's device has
- * its provider off ({@link ENV_UNAVAILABLE_TEXT}), or no device provider is on in the org
- * ({@link NO_SANDBOX_TEXT}). A stub with only `usableNow` reads a false answer as the latter.
+ * its provider off ({@link ENV_UNAVAILABLE_TEXT}), it has no device while providers are on
+ * ({@link NO_DEVICE_TEXT}), or no device provider is on in the org ({@link NO_SANDBOX_TEXT}). A
+ * stub with only `usableNow` reads a false answer as the last.
  */
 export async function sandboxUnusableText(
   deps: Pick<SandboxToolDeps, "devices">,
@@ -1051,8 +1068,7 @@ export async function sandboxUnusableText(
   conversationId: string | undefined,
 ): Promise<string | null> {
   const reason = await sandboxUnusableReason(deps, orgId, conversationId);
-  if (reason === null) return null;
-  return reason === "provider-off" ? ENV_UNAVAILABLE_TEXT : NO_SANDBOX_TEXT;
+  return reason === null ? null : UNUSABLE_TEXT[reason];
 }
 
 /**
@@ -1064,9 +1080,8 @@ export async function sandboxUnusableError(
   orgId: string,
   conversationId: string | undefined,
 ): Promise<ToolError | null> {
-  const reason = await sandboxUnusableReason(deps, orgId, conversationId);
-  if (reason === null) return null;
-  return reason === "provider-off" ? new ToolError(ENV_UNAVAILABLE_TEXT) : noSandboxError();
+  const text = await sandboxUnusableText(deps, orgId, conversationId);
+  return text === null ? null : new ToolError(text);
 }
 
 /** {@link ConversationDevices.unusableReason}, read from a stub's `usableNow` when it has only that. */
@@ -1074,7 +1089,7 @@ export async function sandboxUnusableReason(
   deps: Pick<SandboxToolDeps, "devices">,
   orgId: string,
   conversationId: string | undefined,
-): Promise<"provider-off" | "none" | null> {
+): Promise<DeviceUnusableReason | null> {
   if (deps.devices.unusableReason) return deps.devices.unusableReason(orgId, conversationId);
   return (await sandboxUsable(deps, orgId, conversationId)) ? null : "none";
 }

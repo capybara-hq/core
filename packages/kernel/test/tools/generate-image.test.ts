@@ -29,6 +29,7 @@ import { StorageService } from "../../src/storage/storage.service.js";
 import { NO_STORAGE_REASON } from "../../src/tools/builtins/artifacts.js";
 import { BuiltinTools } from "../../src/tools/builtins/builtin-tools.js";
 import {
+  DEVICE_UNUSABLE_LINE,
   GENERATE_IMAGE_DENIED_TEXT,
   generateImagePaths,
   NO_DEVICE_LINE,
@@ -876,6 +877,14 @@ describe("GenerateImage file_path", () => {
     const conv = await createConv(owner, orgId, agentId);
     const text = textOf(await direct(conv, { prompt: "a fox", file_path: "out/fox.png" }));
     expect(text.split("\n").at(-1)).toBe(NO_DEVICE_LINE);
+    expect(ofType(await eventsOf(db, conv), "artifact_created")).toHaveLength(1);
+  });
+
+  it("file_path on a device whose provider is off still delivers and says why", async () => {
+    vi.spyOn(k.app.get(ConversationDevices), "unusableReason").mockResolvedValue("provider-off");
+    const conv = await createConv(owner, orgId, agentId);
+    const text = textOf(await direct(conv, { prompt: "a fox", file_path: "out/fox.png" }));
+    expect(text.split("\n").at(-1)).toBe(DEVICE_UNUSABLE_LINE["provider-off"]);
     expect(ofType(await eventsOf(db, conv), "artifact_created")).toHaveLength(1);
   });
 
