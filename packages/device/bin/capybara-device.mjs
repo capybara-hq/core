@@ -8,4 +8,11 @@ if (!existsSync(dist)) {
   process.exit(1);
 }
 const { runCli } = await import(dist.href);
+if (process.argv[2] === "start") {
+  // The service log has no clock: date a crash like every other line, then exit 1 as Node does.
+  const { installCrashLog } = await import(
+    new URL("../dist/log-timestamp.js", import.meta.url).href
+  );
+  installCrashLog();
+}
 process.exitCode = await runCli(process.argv.slice(2));
