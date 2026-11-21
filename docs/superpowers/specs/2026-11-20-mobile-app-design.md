@@ -624,8 +624,9 @@ both on real devices before release.
    it; the bottom navigation is retired.
 5. Capabilities run in the TypeScript runtime in the local Capacitor WebView; native gates frame
    and origin first, the runtime re-checks, validates and gates activation.
-6. The code exchange runs in `WKContentWorld.defaultClient` on iOS and in the page world on
-   Android (accepted: the same trust as the page itself).
+6. The code exchange runs in `WKContentWorld.defaultClient` on iOS. Amended 2026-11-21: on
+   Android it no longer runs in the page world; a shell document-start script saves `fetch` before
+   any page script runs and the exchange uses that saved `fetch`, so the page cannot intercept it.
 7. In-WebView sign-in is blocked by a generated `WKContentRuleList` plus navigation cancel on iOS,
    and `shouldInterceptRequest` plus the service-worker client on Android, sharing one vector file.
 8. A brand with `lockToPreset: true` wins over MDM; otherwise valid managed values override the
