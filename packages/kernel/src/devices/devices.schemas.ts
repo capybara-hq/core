@@ -1,6 +1,6 @@
 import type { RouteSchemas } from "../platform/route-schemas.js";
 import {
-  DeviceNameBody,
+  DeviceCreateBody,
   DeviceParams,
   DevicePatchBody,
   DeviceProjectAddBody,
@@ -19,7 +19,7 @@ export { DevicePolicyBody } from "./dto.js";
  */
 export const DEVICE_ROUTES: readonly RouteSchemas[] = [
   { route: "GET /api/v1/orgs/:orgId/devices" },
-  { route: "POST /api/v1/orgs/:orgId/devices", body: DeviceNameBody },
+  { route: "POST /api/v1/orgs/:orgId/devices", body: DeviceCreateBody },
   { route: "GET /api/v1/orgs/:orgId/devices/:id", params: DeviceParams },
   {
     route: "PATCH /api/v1/orgs/:orgId/devices/:id",

@@ -443,8 +443,13 @@ export const ERROR_CODES = {
   "device.files_lost": 409,
   /** The caller may see the device but not use it (shared devices, later phases). */
   "device.forbidden": 403,
-  /** The device's provider is not the deployment's current one, or there is none. */
+  /** The device's provider is off in its org or not loaded, or it has none. */
   "device.unavailable": 503,
+  /**
+   * A new device names no provider and its org has no default device provider serving it; the
+   * message lists the providers on in the org.
+   */
+  "device.provider_required": 400,
   /** The person already has a live device with this name (case-insensitive). */
   "device.name_taken": 409,
   /** The person already has `devices.maxPersonal` live personal devices. */

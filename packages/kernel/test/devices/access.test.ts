@@ -12,7 +12,11 @@ import { createDb } from "../../src/db/pool.js";
 import { DeviceAccess } from "../../src/devices/access.js";
 import { ConversationDevices } from "../../src/devices/conversation-devices.js";
 import type { DeviceProviderSelection } from "../../src/devices/device-provider-selection.js";
-import { DevicesService, type DeviceView } from "../../src/devices/devices.service.js";
+import {
+  type DeviceList,
+  DevicesService,
+  type DeviceView,
+} from "../../src/devices/devices.service.js";
 import type { ApiError } from "../../src/errors.js";
 import { KernelConfigService } from "../../src/infra/config/kernel-config.service.js";
 import { KernelDb } from "../../src/infra/database/kernel-db.js";
@@ -171,7 +175,7 @@ describe("device access", () => {
     expect(await codeOf(access.usable(orgId, ownerId, id))).toBe("device.not_found");
   });
 
-  it("a device is bound to its provider: off in the org it is unavailable, files kept, nothing demoted", async () => {
+  it("ensureDefault never demotes: a default whose provider is off stays the default", async () => {
     const access = k.app.get(DeviceAccess);
     const service = k.app.get(DevicesService);
     const me = await newMember("off");
@@ -200,8 +204,8 @@ describe("device access", () => {
         isDefault: true,
         provider: "device-fake",
         available: false,
-        demotedFrom: null,
       });
+      expect(body.items[0]).not.toHaveProperty("demotedFrom");
       const reset = await me.req({
         method: "POST",
         url: `/api/v1/orgs/${orgId}/devices/${id}/files/reset`,
@@ -253,7 +257,7 @@ describe("device access", () => {
     });
   });
 
-  it("no default provider on in the org: no default device is made, the list still answers", async () => {
+  it("ensureDefault makes no default when defaultFor is undefined", async () => {
     const me = await newMember("nodef");
     await sql`UPDATE capybara.orgs SET settings = settings - 'deviceDefaultProvider'
       WHERE id = ${orgId}`.execute(raw);
@@ -261,7 +265,12 @@ describe("device access", () => {
       expect(await k.app.get(DevicesService).ensureDefault(orgId, me.id)).toBeNull();
       const res = await me.req({ method: "GET", url: `/api/v1/orgs/${orgId}/devices` });
       expect(res.statusCode, res.body).toBe(200);
-      expect(res.json()).toMatchObject({ items: [], defaultId: null, cloudAvailable: true });
+      expect(res.json()).toMatchObject({
+        items: [],
+        defaultId: null,
+        providers: [{ plugin: "device-fake" }],
+        defaultProvider: null,
+      });
       expect(await k.app.get(ConversationDevices).forNew(orgId, me.id)).toBeNull();
     } finally {
       await sql`UPDATE capybara.orgs
@@ -335,10 +344,10 @@ describe("local devices", () => {
     const list = async () => {
       const res = await me.req({ method: "GET", url: `/api/v1/orgs/${orgId}/devices` });
       expect(res.statusCode, res.body).toBe(200);
-      return res.json() as { items: DeviceView[]; defaultId: string; cloudAvailable: boolean };
+      return res.json() as DeviceList;
     };
     let body = await list();
-    expect(body.cloudAvailable).toBe(true);
+    expect(body.defaultProvider).toBe("device-fake");
     expect(body.items.find((e) => e.id === body.defaultId)).toMatchObject({
       source: "cloud",
       online: null,

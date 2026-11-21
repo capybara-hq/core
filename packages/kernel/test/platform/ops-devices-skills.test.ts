@@ -255,6 +255,13 @@ describe("devices", () => {
     );
     expect(s?.en).toContain("Analysis");
     expect(await precheck("devices.create", { name: "Analysis" }, ctx)).toEqual({ ok: true });
+    // a provider not on in the org is refused before the card
+    expect(
+      await precheck("devices.create", { name: "Analysis", provider: "nope" }, ctx),
+    ).toMatchObject({ ok: false, code: "validation_failed" });
+    expect(
+      await precheck("devices.create", { name: "Analysis", provider: "device-fake" }, ctx),
+    ).toEqual({ ok: true });
     const created = (await run("devices.create", { name: "Analysis" }, ctx)) as {
       device: { id: string; name: string };
     };
@@ -262,6 +269,7 @@ describe("devices", () => {
     const created2 = (await audits("device.created"))[0];
     expect(created2?.detail).toMatchObject({
       name: "Analysis",
+      provider: "device-fake",
       via: "agent",
       operation: "devices.create",
       agentConversationId: ctx.conversationId,
@@ -269,9 +277,12 @@ describe("devices", () => {
 
     const list = (await run("devices.list", {}, ctx)) as {
       items: { id: string; name: string; isDefault: boolean }[];
-      cloudAvailable: boolean;
+      providers: { plugin: string }[];
+      defaultProvider: string | null;
     };
-    expect(list.cloudAvailable).toBe(true);
+    expect(list).not.toHaveProperty("cloudAvailable");
+    expect(list.providers.map((p) => p.plugin)).toEqual(["device-fake"]);
+    expect(list.defaultProvider).toBe("device-fake");
     expect(list.items.map((e) => e.name)).toEqual(["Personal", "Analysis"]);
 
     const renamed = (await run(

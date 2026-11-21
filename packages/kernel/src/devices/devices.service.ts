@@ -2,6 +2,7 @@ import { randomUUID } from "node:crypto";
 import type {
   DeviceLocalPolicySummary,
   DeviceOwnerCeilingNarrowing,
+  DeviceReport,
   LocalizedName,
   SandboxBrowseScope,
   SandboxLimits,
@@ -11,6 +12,7 @@ import { Inject, Injectable } from "@nestjs/common";
 import { type Selectable, sql } from "kysely";
 import type { SandboxOperationIntentsTable } from "../db/kernel-schema.js";
 import { ApiError } from "../errors.js";
+import { ExtensionDisplayNames } from "../extensions/display-name.js";
 import { avatarColumns, type PersonRef, personAvatarUrl } from "../identity/account-avatar.js";
 import { audit } from "../identity/audit.js";
 import { KernelConfigService } from "../infra/config/kernel-config.service.js";
@@ -29,6 +31,7 @@ import { MachinesService } from "../local-devices/machines.js";
 import { type OwnerFacts, ownerFactsOf } from "../local-devices/owner-report.js";
 import { deviceFeaturesOf, localPolicyOf } from "../local-devices/policy-summary.js";
 import type { DeviceModeLevel } from "../runtime/context/device-paths.js";
+import { DeviceReports } from "../sandbox/device-reports.js";
 import type {
   DeviceSandbox,
   DeviceSandboxLayer,
@@ -48,7 +51,7 @@ import {
   PermissionCeilingWrites,
 } from "../sandbox/permission-ceiling-writes.js";
 import { cloudOwnNetwork, networkOfSandbox, PermissionFacts } from "../sandbox/permission-facts.js";
-import { LOCAL_PROVIDER } from "../sandbox/providers.js";
+import { type DeviceProviderEntry, LOCAL_PROVIDER } from "../sandbox/providers.js";
 import { deviceNotFound, SandboxService } from "../sandbox/sandbox.service.js";
 import { DeviceAccess } from "./access.js";
 import { DeviceProviderSelection } from "./device-provider-selection.js";
@@ -59,11 +62,6 @@ export interface DeviceView {
   /** null for the default device (shown as 「个人设备」 / "Personal"). */
   name: string | null;
   isDefault: boolean;
-  /**
-   * Always null: a device is bound to its provider for life, so no default is demoted any more
-   * (the field goes with the device list rework of the device-provider plan).
-   */
-  demotedFrom: { provider: string; displayName: LocalizedName | null; ordinal: number } | null;
   ownerKind: "personal";
   /** `local`: a machine connected with capybara-device (provider `@local`). */
   source: "cloud" | "local";
@@ -71,6 +69,11 @@ export interface DeviceView {
   provider: string | null;
   /** Its provider serves the org now (on in the org; `@local`: registered). */
   available: boolean;
+  /**
+   * What its provider last reported about it (`devices.report`, the stored copy: never asked on
+   * the request path); null until a first report is stored. Kept while the provider is off.
+   */
+  report: DeviceReport | null;
   /** A local device: some replica holds its machine's connection now; null for cloud. */
   online: boolean | null;
   /** A local device's connected machine (its unrevoked one); null for cloud or none. */
@@ -263,8 +266,20 @@ export interface DeviceList {
   defaultId: string | null;
   /** The device of the person's most recently updated conversation that has a live one. */
   lastUsedId: string | null;
-  /** Some device provider is on in the org (new cloud devices can be made; ruling R4). */
-  cloudAvailable: boolean;
+  /** The device providers on in the org now (a new device may name one), in name order. */
+  providers: DeviceProviderOption[];
+  /**
+   * The provider a new device gets when it names none: the org's (else the platform's) default,
+   * null when that serves the org no more or none is set (never another provider in its place).
+   */
+  defaultProvider: string | null;
+}
+
+/** A device provider a new device may be created on ({@link DeviceList.providers}). */
+export interface DeviceProviderOption {
+  plugin: string;
+  /** The extension's display name; null when it has none. */
+  displayName: LocalizedName | null;
 }
 
 const isUniqueViolation = (e: unknown, constraint: string): boolean =>
@@ -273,19 +288,32 @@ const isUniqueViolation = (e: unknown, constraint: string): boolean =>
   (e as { code?: unknown }).code === "23505" &&
   (e as { constraint?: unknown }).constraint === constraint;
 
-/** No default device provider is on in the org: a new cloud device has none to bind to (503). */
-const noDefaultProvider = (): ApiError =>
-  new ApiError(
-    "device.unavailable",
-    "No default device provider is on in this organization; ask an org admin to choose one",
-  );
+/** The names of `on`, for a refusal's message; a hint when there are none. */
+const providerChoices = (on: DeviceProviderEntry[]): string =>
+  on.length > 0
+    ? on.map((e) => e.plugin).join(", ")
+    : "none is on in this organization; ask an org admin to switch one on";
+
+/** A new device names no provider and the org has no default one serving it (400). */
+const providerRequired = (on: DeviceProviderEntry[]): ApiError =>
+  new ApiError("device.provider_required", `Choose a device provider: ${providerChoices(on)}`);
+
+/**
+ * A new device names a provider that does not serve the org (unknown, not loaded, off in the org,
+ * or kernel-internal): `validation_failed` at `provider`.
+ */
+const providerNotOn = (provider: string, on: DeviceProviderEntry[]): ApiError => {
+  const message = `Device provider ${provider} is not on in this organization; choose one of: ${providerChoices(on)}`;
+  return new ApiError("validation_failed", message, [{ path: "provider", message }]);
+};
 
 const nameTaken = (): ApiError =>
   new ApiError("device.name_taken", "You already have a device with this name");
 
 /**
  * Personal devices (spec 2026-11-07-environments-design §4.2 items 7, 12, 13; §6; §9):
- * cloud ones on the deployment's sandbox provider and `device` ones on a connected machine; a
+ * cloud ones, each bound for life to the device provider it was created on (device-provider spec
+ * §6.1), and `local` ones on a connected machine; a
  * person's devices in an org, visible and usable only by their owner (anyone else gets
  * `device.not_found`). Deleting one soft-deletes it and owes the destruction of its instance and
  * files (a `sandbox-destroy-for` job) in the same transaction.
@@ -317,15 +345,26 @@ export class DevicesService {
     @Inject(PermissionCeilingWrites) private readonly ceilings: PermissionCeilingWrites,
     @Inject(PermissionFacts)
     private readonly facts: Pick<PermissionFacts, "deviceSandbox" | "deviceSandboxFacts">,
+    @Inject(ExtensionDisplayNames)
+    private readonly displayNames: Pick<ExtensionDisplayNames, "many">,
+    /** Each device's stored provider report (read only; never asks the provider). */
+    @Inject(DeviceReports) private readonly reports: Pick<DeviceReports, "read">,
   ) {}
 
   /**
-   * The person's live devices in the org, the default first, then by creation. With a default
-   * provider on in the org the default device is created first if missing (its first need,
-   * spec §4.2 item 7; an existing one is only read).
+   * The person's live devices in the org, the default first, then by creation, with the device
+   * providers on in the org and its default one. With a default provider serving the org the
+   * default device is created first if missing (its first need, spec §4.2 item 7; an existing one
+   * is only read, whatever its provider's state).
    */
   async list(orgId: string, accountId: string): Promise<DeviceList> {
-    const cloudAvailable = (await this.selection.onInOrg(orgId)).length > 0;
+    const on = await this.selection.onInOrg(orgId);
+    const names = await this.displayNames.many(on.map((e) => e.plugin));
+    const providers = on.map((e) => ({
+      plugin: e.plugin,
+      displayName: names.get(e.plugin) ?? null,
+    }));
+    const defaultProvider = (await this.selection.defaultFor(orgId))?.plugin ?? null;
     const defaultId = await this.ensureDefault(orgId, accountId);
     const items = await this.views(orgId, accountId);
     const last = await this.db
@@ -345,7 +384,8 @@ export class DevicesService {
       items,
       defaultId: defaultId ?? items.find((v) => v.isDefault)?.id ?? null,
       lastUsedId: last?.device_id ?? null,
-      cloudAvailable,
+      providers,
+      defaultProvider,
     };
   }
 
@@ -357,20 +397,40 @@ export class DevicesService {
   }
 
   /**
-   * A new personal cloud device, ready at once (its instance and files are made on first
-   * use), bound for life to the org's default provider (`device.unavailable` without one); a
-   * live name of the person's (case-insensitive) → `device.name_taken`; `devices.maxPersonal` live ones (the
+   * A new personal cloud device, ready at once (its instance and files are made on first use),
+   * bound for life to `input.provider` or, without one, the org's default provider: a provider not
+   * on in the org (unknown, not loaded, off, kernel-internal) → `validation_failed` at `provider`;
+   * none named and no default serving the org → `device.provider_required`. A live name of the
+   * person's (case-insensitive) → `device.name_taken`; `devices.maxPersonal` live ones (the
    * default counts) → `device.limit_reached`. Serialized per person by their membership row.
+   * Nothing is written before every refusal is past.
    */
   async create(
     orgId: string,
     accountId: string,
-    input: { name: string },
+    input: { name: string; provider?: string },
     actorTokenId?: string,
     auditDetail?: Record<string, unknown>,
   ): Promise<DeviceView> {
-    const id = await this.insert(orgId, accountId, input.name, actorTokenId, auditDetail);
+    const provider = await this.providerFor(orgId, input.provider);
+    const id = await this.insert(orgId, accountId, input.name, provider, actorTokenId, auditDetail);
     return this.get(orgId, accountId, id);
+  }
+
+  /**
+   * The provider a new cloud device of `orgId` is bound to: `named` when it serves the org now
+   * (one of {@link DeviceProviderSelection.onInOrg}), else the org's default
+   * ({@link DeviceProviderSelection.defaultFor}) when none is named; never another one.
+   */
+  private async providerFor(orgId: string, named: string | undefined): Promise<string> {
+    const on = await this.selection.onInOrg(orgId);
+    if (named !== undefined) {
+      if (on.some((e) => e.plugin === named)) return named;
+      throw providerNotOn(named, on);
+    }
+    const fallback = await this.selection.defaultFor(orgId);
+    if (!fallback) throw providerRequired(on);
+    return fallback.plugin;
   }
 
   @Transactional()
@@ -378,17 +438,16 @@ export class DevicesService {
     orgId: string,
     accountId: string,
     name: string,
+    provider: string,
     actorTokenId: string | undefined,
     auditDetail?: Record<string, unknown>,
   ): Promise<string> {
-    const provider = await this.selection.defaultFor(orgId);
-    if (!provider) throw noDefaultProvider();
     return this.insertNamed(
       orgId,
       accountId,
       name,
       "cloud",
-      provider.plugin,
+      provider,
       actorTokenId,
       auditDetail ?? {},
     );
@@ -410,7 +469,8 @@ export class DevicesService {
 
   /**
    * Inserts a named personal device under the person's membership lock, after the limit
-   * and name checks, and audits `device.created`. Runs in the caller's transaction.
+   * and name checks, and audits `device.created` (with its provider). Runs in the caller's
+   * transaction.
    */
   private async insertNamed(
     orgId: string,
@@ -462,18 +522,24 @@ export class DevicesService {
       orgId,
       action: "device.created",
       target: id,
-      detail: { name, ...auditDetail },
+      detail: { name, provider, ...auditDetail },
     });
     return id;
   }
 
   /**
    * The refusals {@link create} would raise, read without locks or writes (a precheck before a
-   * confirmation card): no default provider, the person's limit, a name already taken. Throws the
-   * same {@link ApiError}s; a race still ends in `create`'s own refusal.
+   * confirmation card): the provider (named and not on in the org, or none and no default), the
+   * person's limit, a name already taken. Throws the same {@link ApiError}s; a race still ends in
+   * `create`'s own refusal.
    */
-  async checkCreate(orgId: string, accountId: string, name: string): Promise<void> {
-    if (!(await this.selection.defaultFor(orgId))) throw noDefaultProvider();
+  async checkCreate(
+    orgId: string,
+    accountId: string,
+    name: string,
+    provider?: string,
+  ): Promise<void> {
+    await this.providerFor(orgId, provider);
     const { n } = await this.db
       .selectFrom("devices")
       .select((eb) => eb.fn.countAll<string>().as("n"))
@@ -1182,14 +1248,15 @@ export class DevicesService {
       await Promise.all(
         rows.map(async (r) => {
           const policy = await this.sandbox.devicePolicy({ orgId, deviceId: r.id });
-          const [limits, state, facts] = await Promise.all([
+          const [limits, state, facts, report] = await Promise.all([
             this.sandbox.deviceLimits({ orgId, deviceId: r.id }, { policy, source: r.source }),
             r.source === "cloud"
               ? this.sandbox.limitsState({ orgId, deviceId: r.id }, { policy })
               : { pendingNextUse: false, pendingFilesReset: false },
             this.facts.deviceSandboxFacts(orgId, r.id),
+            this.reports.read(orgId, r.id),
           ]);
-          return [r.id, { limits, state, box: facts.box }] as const;
+          return [r.id, { limits, state, box: facts.box, report }] as const;
         }),
       ),
     );
@@ -1211,7 +1278,6 @@ export class DevicesService {
         id: r.id,
         name: r.name,
         isDefault: r.is_default,
-        demotedFrom: null,
         ownerKind: "personal",
         source: r.source,
         provider,
@@ -1220,6 +1286,7 @@ export class DevicesService {
           provider !== null &&
           (on.get(provider) ?? false) &&
           (r.instance_provider === null || r.instance_provider === provider),
+        report: perDevice.get(r.id)?.report ?? null,
         online: r.source === "local" ? (online.get(r.id) ?? false) : null,
         machine:
           r.machine_id !== null && r.machine_name !== null && r.machine_os !== null
