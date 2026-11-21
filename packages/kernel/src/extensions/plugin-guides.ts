@@ -184,6 +184,12 @@ function guidesOf(manifest: unknown): { guides: PluginSetupGuide[]; skipped: num
   return { guides, skipped: raw.length - guides.length };
 }
 
+/** The audience shown by default: admin, else the place's first (a device-connection guide is for members). */
+const defaultAudience = (place: SetupGuidePlace): SetupGuideAudience => {
+  const { audiences } = SETUP_GUIDE_PLACE_INFO[place];
+  return audiences.includes("admin") ? "admin" : (audiences[0] ?? "admin");
+};
+
 /** A plugin's guide for a place (and template): the manifest allows at most one. */
 const guideFor = (manifest: unknown, place: SetupGuidePlace, templateId?: string) =>
   guidesOf(manifest).guides.find(
@@ -733,7 +739,7 @@ export class PluginGuides {
     return this.renderPlatformDoc(row, guide, q.locale ?? "en");
   }
 
-  /** A guide rendered without an org: the admin audience, no target, `orgName` unresolved. */
+  /** A guide rendered without an org: the place's default audience, no target, `orgName` unresolved. */
   private async renderPlatformDoc(
     row: ItemRow,
     guide: PluginSetupGuide,
@@ -749,15 +755,16 @@ export class PluginGuides {
       org: null,
       query: {},
     });
-    return this.renderDoc(row, guide, docs, resolution, { mode: undefined, audience: "admin" });
+    return this.renderDoc(row, guide, docs, resolution, {
+      mode: undefined,
+      audience: defaultAudience(guide.place),
+    });
   }
 
   /** The audience asked for, after checking `mode` and `audience` against the place. */
   private checkQuery(guide: PluginSetupGuide, q: GuideQuery): SetupGuideAudience {
     const info = SETUP_GUIDE_PLACE_INFO[guide.place];
-    // the place's first audience when it has no admin one (a device-connection guide is for members)
-    const audience =
-      q.audience ?? (info.audiences.includes("admin") ? "admin" : (info.audiences[0] ?? "admin"));
+    const audience = q.audience ?? defaultAudience(guide.place);
     if (!info.audiences.includes(audience)) {
       throw invalidQuery(
         "audience",

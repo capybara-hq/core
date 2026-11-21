@@ -608,6 +608,22 @@ describe("setup guides v2: device-connection", () => {
     }
   });
 
+  it("renders the platform preview with the member audience and an unresolved orgId", async () => {
+    const itemId = await importPlugin(env, await devicePlugin());
+    const r = await env.root({
+      method: "GET",
+      url: `/api/v1/admin/catalog/${itemId}/guides/connect`,
+    });
+    expect(r.statusCode, r.body).toBe(200);
+    const g = (r.json() as { guide: Rendered }).guide;
+    expect(g).toMatchObject({ place: "device-connection", audience: "member", target: null });
+    expect(g.blocks.map((b) => b.kind)).toEqual(["markdown", "shell-action"]);
+    expect(g.unresolved).toEqual([
+      { name: "orgId", reason: "no_org" },
+      { name: "orgName", reason: "no_org" },
+    ]);
+  });
+
   it("refuses the admin audience and any target parameter (400 validation_failed)", async () => {
     const itemId = await importPlugin(env, await devicePlugin());
     for (const query of [
