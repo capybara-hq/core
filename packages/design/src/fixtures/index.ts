@@ -666,6 +666,7 @@ export const SELECT_PERSON_FIXTURE = {
   value: "grace",
 };
 
+export * from "./brand";
 export * from "./conversation";
 
 /**

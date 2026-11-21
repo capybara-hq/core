@@ -10,12 +10,19 @@
 <body>
 <main class="r-page">
 <h1>Auth template</h1>
-<p>Loading state (spec §5.10): the card keeps its place with the title and subtitle, its body is field placeholders and the prominent submit button box. The dither columns of the loaded page are drawn empty here. Nothing animates.</p>
+<p>Loading state (spec §5.10): the card keeps its place with the title and subtitle, its body is field placeholders and the prominent submit button box. The dither columns of the loaded page are drawn empty here. Nothing animates. No decoration: the fixture theme turns the dither off and brings its mark and wordmark; the columns stay empty, the card keeps its place and width.</p>
 <div class="r-blocks">
 <section data-ref-block="template-auth-loading" style="width:1280px;height:640px">
   <div class="r-auth" aria-busy="true">
     <div class="r-auth-side"></div>
     <div class="r-auth-main"><div class="r-auth-logo"><svg class="r-logo" width="84" height="60" viewBox="0 0 14 10" shape-rendering="crispEdges" aria-hidden="true"><path d="M10 0h1v1h-1zM9 1h3v1h-3zM3 2h11v1h-11zM2 3h9v1h-9zM12 3h2v1h-2zM1 4h13v1h-13zM1 5h13v1h-13zM1 6h12v1h-12zM2 7h10v1h-10zM2 8h2v1h-2zM6 8h1v1h-1zM9 8h2v1h-2zM2 9h2v1h-2zM6 9h1v1h-1zM9 9h2v1h-2z"/></svg></div><div class="r-auth-card" data-part="auth-card"><div class="r-auth-head"><h1 class="r-auth-title">登录</h1><p class="r-muted r-auth-sub">示例组织</p></div><div class="r-auth-body"><div class="r-field" data-part="loading-field"><div class="r-field-head"><div class="r-skel-text" data-part="skeleton-text" data-size="body" style="width:30%"><span class="r-skel-bar" data-part="skeleton-bar"></span></div></div><div class="r-skel-box" data-part="skeleton-box" data-box="default"></div></div><div class="r-field" data-part="loading-field"><div class="r-field-head"><div class="r-skel-text" data-part="skeleton-text" data-size="body" style="width:30%"><span class="r-skel-bar" data-part="skeleton-bar"></span></div></div><div class="r-skel-box" data-part="skeleton-box" data-box="default"></div></div><div class="r-skel-box" data-part="skeleton-box" data-box="prominent"></div></div></div></div>
+    <div class="r-auth-side"></div>
+  </div>
+</section>
+<section data-ref-block="template-auth-no-decoration" style="width:1280px;height:640px">
+  <div class="r-auth" aria-busy="true">
+    <div class="r-auth-side"></div>
+    <div class="r-auth-main"><div class="r-auth-logo"><img class="r-auth-brand-mark" src="data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20viewBox%3D%220%200%2040%2020%22%3E%3Cg%20fill%3D%22teal%22%3E%3Cpath%20d%3D%22M10%200%2020%2010%2010%2020%200%2010z%22%2F%3E%3Crect%20x%3D%2223%22%20y%3D%223%22%20width%3D%2217%22%20height%3D%225%22%2F%3E%3Crect%20x%3D%2223%22%20y%3D%2212%22%20width%3D%2212%22%20height%3D%225%22%2F%3E%3C%2Fg%3E%3C%2Fsvg%3E" height="60" alt="Brand Kit"><span class="r-auth-word">BRAND KIT</span></div><div class="r-auth-card" data-part="auth-card"><div class="r-auth-head"><h1 class="r-auth-title">登录</h1><p class="r-muted r-auth-sub">示例组织</p></div><div class="r-auth-body"><div class="r-field" data-part="loading-field"><div class="r-field-head"><div class="r-skel-text" data-part="skeleton-text" data-size="body" style="width:30%"><span class="r-skel-bar" data-part="skeleton-bar"></span></div></div><div class="r-skel-box" data-part="skeleton-box" data-box="default"></div></div><div class="r-field" data-part="loading-field"><div class="r-field-head"><div class="r-skel-text" data-part="skeleton-text" data-size="body" style="width:30%"><span class="r-skel-bar" data-part="skeleton-bar"></span></div></div><div class="r-skel-box" data-part="skeleton-box" data-box="default"></div></div><div class="r-skel-box" data-part="skeleton-box" data-box="prominent"></div></div></div></div>
     <div class="r-auth-side"></div>
   </div>
 </section>
