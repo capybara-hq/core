@@ -1,6 +1,7 @@
 import { expect, test } from "@playwright/test";
 import { signIn } from "./support/sign-in";
 
+/** The one spec that signs in on the login page (`signIn` defaults to the login route). */
 test("sign-in completes while an unrelated request is still pending", async ({ page }) => {
   let pending = false;
   let pendingAtSignIn = false;
@@ -22,7 +23,7 @@ test("sign-in completes while an unrelated request is still pending", async ({ p
     }
   });
   try {
-    await signIn(page);
+    await signIn(page, { ui: true });
     expect(pendingAtSignIn).toBe(true);
     await expect(page.locator('[data-template="ConversationPage"]')).toBeVisible();
   } finally {
