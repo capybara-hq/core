@@ -44,6 +44,7 @@ export interface NetworkProblem {
     | "bootstrap-marketplace"
     | "bootstrap-marketplace-url"
     | "bootstrap-haproxy"
+    | "bootstrap-sandbox-runtime"
     | "bootstrap-compose-ref";
   message: string;
 }
@@ -54,11 +55,18 @@ export interface PluginsRepoFiles {
   contexts?: ComposeGitContext[];
   /** Core's socket proxy config, which the sandbox-docker plugin's test copy must equal. */
   haproxy?: { file: string; bytes: Uint8Array };
+  /**
+   * The sha256 (hex) of each file of core's SDK `SANDBOX_RUNTIME_SOURCE`, which the sandbox-docker
+   * image stages: the image's `SHA256SUMS` must list each name with that digest.
+   */
+  sandboxRuntime?: readonly { name: string; sha256: string }[];
 }
 
 const MARKETPLACE_FILE = ".capybara-plugin/marketplace.json";
 /** The sandbox-docker plugin's test copy of core's `docker/sandbox-proxy/haproxy.cfg`. */
 export const PLUGIN_HAPROXY_COPY = "plugins/sandbox-docker/test/sandbox-proxy/haproxy.cfg";
+/** The digests of the SDK runtime files the sandbox-docker image stages (`sha256sum` format). */
+export const PLUGIN_SANDBOX_RUNTIME_SUMS = "plugins/sandbox-docker/image/runtime/SHA256SUMS";
 const dockerfileOf = (c: ComposeGitContext) => `${c.dir}/Dockerfile`;
 const errText = (e: unknown) => (e instanceof Error ? e.message : String(e));
 
@@ -149,6 +157,7 @@ async function checkMarketplace(
   const wanted = [
     MARKETPLACE_FILE,
     ...(extra.haproxy === undefined ? [] : [PLUGIN_HAPROXY_COPY]),
+    ...(extra.sandboxRuntime === undefined ? [] : [PLUGIN_SANDBOX_RUNTIME_SUMS]),
     ...(extra.contexts ?? []).map(dockerfileOf),
   ];
   const url = opts.marketplaceUrl ?? m.url;
@@ -220,10 +229,58 @@ async function checkMarketplace(
   return out;
 }
 
+/** `sha256sum` lines (`<hex>  <name>`, or `<hex> *<name>` in binary mode): name to digest. */
+function parseSums(text: string): Map<string, string> {
+  const out = new Map<string, string>();
+  for (const line of text.split("\n")) {
+    const m = /^([0-9a-fA-F]{64}) [ *](.+?)\r?$/.exec(line);
+    if (m?.[1] !== undefined && m[2] !== undefined) out.set(m[2], m[1].toLowerCase());
+  }
+  return out;
+}
+
+/**
+ * `bootstrap-sandbox-runtime`: the sandbox-docker image at the commit stages the SDK runtime files
+ * core's kernel verifies (`SANDBOX_RUNTIME_SOURCE`); its `SHA256SUMS` must list every file with the
+ * digest of core's in-repo source. A mismatch means every device on a current kernel refuses the
+ * staged file ("does not match its digest").
+ */
+function checkSandboxRuntime(
+  files: Map<string, Uint8Array>,
+  expected: readonly { name: string; sha256: string }[],
+  url: string,
+  at: string,
+): NetworkProblem[] {
+  const fix =
+    "restage the sandbox-docker image in capybara-hq/plugins with the current SDK runtime sources " +
+    "(plugins/sandbox-docker/image/runtime and its SHA256SUMS), then bump marketplace.commit and " +
+    "the sandbox-docker pin in packages/kernel/bootstrap.json in the same change";
+  const raw = files.get(PLUGIN_SANDBOX_RUNTIME_SUMS);
+  if (raw === undefined) {
+    return [
+      {
+        rule: "bootstrap-sandbox-runtime",
+        message: `${PLUGIN_SANDBOX_RUNTIME_SUMS} is missing at ${at} of ${url}; the sandbox-docker image must stage the SDK runtime files with their digests: ${fix}`,
+      },
+    ];
+  }
+  const sums = parseSums(new TextDecoder().decode(raw));
+  const out: NetworkProblem[] = [];
+  for (const f of expected) {
+    const listed = sums.get(f.name);
+    if (listed === f.sha256) continue;
+    out.push({
+      rule: "bootstrap-sandbox-runtime",
+      message: `${PLUGIN_SANDBOX_RUNTIME_SUMS} at ${at} of ${url} ${listed === undefined ? `does not list ${f.name}` : `lists ${f.name} as ${listed}`}, but core's SDK source hashes to ${f.sha256} (SANDBOX_RUNTIME_SOURCE); devices on this kernel would refuse the staged file: ${fix}`,
+    });
+  }
+  return out;
+}
+
 /**
  * `bootstrap-haproxy`: the sandbox-docker plugin's test copy of the socket proxy config equals
- * core's file byte for byte; `bootstrap-compose-ref`: every compose build context pinned to the
- * commit has its Dockerfile there.
+ * core's file byte for byte; `bootstrap-sandbox-runtime` ({@link checkSandboxRuntime});
+ * `bootstrap-compose-ref`: every compose build context pinned to the commit has its Dockerfile there.
  */
 function repoFiles(
   files: Map<string, Uint8Array>,
@@ -240,6 +297,9 @@ function repoFiles(
         message: `${PLUGIN_HAPROXY_COPY} at ${at} of ${url} ${copy === undefined ? "is missing" : `differs from ${extra.haproxy.file}`}; the plugin's tests must run the socket proxy core ships (change both in step)`,
       });
     }
+  }
+  if (extra.sandboxRuntime !== undefined) {
+    out.push(...checkSandboxRuntime(files, extra.sandboxRuntime, url, at));
   }
   for (const c of extra.contexts ?? []) {
     if (files.has(dockerfileOf(c))) continue;
@@ -258,7 +318,7 @@ function repoFiles(
  * registry (`bootstrap-npm`) and against the official marketplace at `marketplace.commit`
  * (`bootstrap-marketplace`), the official marketplace URL (`bootstrap-marketplace-url`), and what
  * else core takes from that commit ({@link PluginsRepoFiles}: `bootstrap-haproxy`,
- * `bootstrap-compose-ref`). Workspace entries are not published and are left to the offline half.
+ * `bootstrap-sandbox-runtime`, `bootstrap-compose-ref`). Workspace entries are not published and are left to the offline half.
  */
 export async function checkBootstrapNetwork(
   manifest: BootstrapManifest,
@@ -277,7 +337,10 @@ export async function checkBootstrapNetwork(
   }
   for (const e of npm) out.push(...(await checkNpmEntry(e, opts.registry, opts.npmToken)));
   const needsRepo =
-    npm.length > 0 || extra.haproxy !== undefined || (extra.contexts ?? []).length > 0;
+    npm.length > 0 ||
+    extra.haproxy !== undefined ||
+    extra.sandboxRuntime !== undefined ||
+    (extra.contexts ?? []).length > 0;
   if (m !== undefined && needsRepo) {
     out.push(...(await checkMarketplace(m, npm, opts, extra)));
   }

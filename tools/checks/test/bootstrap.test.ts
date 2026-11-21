@@ -493,6 +493,68 @@ describe("checkBootstrap --network (npm entries and the marketplace commit)", ()
         /^plugins\/sandbox-docker\/egress-proxy\/Dockerfile is missing at [0-9a-f]{12} of /,
       );
     });
+
+    describe("the sandbox-docker image's runtime digests (bootstrap-sandbox-runtime)", () => {
+      const SUMS = "plugins/sandbox-docker/image/runtime/SHA256SUMS";
+      /** Stand-ins for the SDK's SANDBOX_RUNTIME_SOURCE files. */
+      const runtime = [
+        { name: "native-files.py", source: "print('native')\n" },
+        { name: "linux-sandbox.py", source: "print('linux')\n" },
+      ];
+      const sha = (s: string) => createHash("sha256").update(s, "utf8").digest("hex");
+      /** `sha256sum` output: two spaces between digest and name, one file per line. */
+      const sums = (entries: [string, string][]) =>
+        entries.map(([digest, name]) => `${digest}  ${name}\n`).join("");
+      const check = async (files: Record<string, string>) => {
+        const commit = await repoCommit(files);
+        return checkBootstrap(await npmManifest(commit), dir, {
+          network: network(),
+          sandboxRuntime: runtime,
+        });
+      };
+
+      it("passes when SHA256SUMS lists every runtime file with the digest of core's source", async () => {
+        const f = await check({
+          [SUMS]: sums([
+            ["0".repeat(64), "capybara-operation.py"],
+            [sha(runtime[1]?.source ?? ""), "linux-sandbox.py"],
+            [sha(runtime[0]?.source ?? ""), "native-files.py"],
+          ]),
+        });
+        expect(f).toEqual([]);
+      });
+
+      it("reports a digest that differs from core's source, with the fix", async () => {
+        const stale = sha("print('old native')\n");
+        const f = await check({
+          [SUMS]: sums([
+            [sha(runtime[1]?.source ?? ""), "linux-sandbox.py"],
+            [stale, "native-files.py"],
+          ]),
+        });
+        expect(rules(f)).toEqual(["bootstrap-sandbox-runtime"]);
+        expect(f[0]?.message).toMatch(
+          new RegExp(
+            `^plugins/sandbox-docker/image/runtime/SHA256SUMS at [0-9a-f]{12} of .* lists native-files\\.py as ${stale}, but core's SDK source hashes to ${sha(runtime[0]?.source ?? "")}`,
+          ),
+        );
+        expect(f[0]?.message).toContain("restage the sandbox-docker image in capybara-hq/plugins");
+        expect(f[0]?.message).toContain(
+          "bump marketplace.commit and the sandbox-docker pin in packages/kernel/bootstrap.json in the same change",
+        );
+      });
+
+      it("reports a runtime file SHA256SUMS does not list, and a missing SHA256SUMS", async () => {
+        const f = await check({
+          [SUMS]: sums([[sha(runtime[0]?.source ?? ""), "native-files.py"]]),
+        });
+        expect(rules(f)).toEqual(["bootstrap-sandbox-runtime"]);
+        expect(f[0]?.message).toContain("does not list linux-sandbox.py");
+        const g = await check({});
+        expect(rules(g)).toEqual(["bootstrap-sandbox-runtime"]);
+        expect(g[0]?.message).toContain(`${SUMS} is missing`);
+      });
+    });
   });
 
   it("reports a marketplace URL other than the official one (bootstrap-marketplace-url)", async () => {
