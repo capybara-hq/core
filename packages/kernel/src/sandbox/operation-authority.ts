@@ -54,6 +54,7 @@ import {
   PermissionAdmissionUnavailable,
   type PermissionAvailability,
   type PermissionAvailabilityCause,
+  runtimeReportVerdict,
 } from "./permission-availability.js";
 import { PermissionCallGrants } from "./permission-call-grants.js";
 import type { PermissionCallRef, PermissionReviewSnapshot } from "./permission-call-types.js";
@@ -148,21 +149,8 @@ function withheldScope(input: {
     (input.projectPath === null && input.workingRoot !== applied.roots.workspace)
   )
     return { state: "unprobed", reason: UNPROVED_ENVIRONMENT };
-  // a local machine's sandbox is per operation; only a cloud provider's instance is the sandbox
-  if (availability.report.boundary === "instance" && input.location === "local")
-    return {
-      state: "unsupported",
-      reason: "A local device cannot report an instance boundary",
-      cause: RUNTIME_CAUSE,
-    };
-  if (availability.report.restricted === null && !instanceSupported(availability.report))
-    return {
-      state: "unsupported",
-      reason:
-        availability.report.unavailableReason ?? "This device's runtime cannot enforce its sandbox",
-      cause: RUNTIME_CAUSE,
-    };
-  return null;
+  const verdict = runtimeReportVerdict(availability.report, input.location);
+  return verdict === null ? null : { state: "unsupported", reason: verdict, cause: RUNTIME_CAUSE };
 }
 /**
  * The profile every kernel read is sent with: a restricted one, so the runtime enforces its single

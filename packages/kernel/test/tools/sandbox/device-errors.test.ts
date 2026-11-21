@@ -12,6 +12,7 @@ import { describe, expect, it } from "vitest";
 import { ApiError } from "../../../src/errors.js";
 import { InstanceBindingError } from "../../../src/local-devices/instance-bindings.js";
 import { DeviceRequestNotSentError } from "../../../src/local-devices/relay.js";
+import type { PermissionAvailabilityCause } from "../../../src/sandbox/permission-availability.js";
 import { DeviceProgramRestartedError } from "../../../src/sandbox/request-not-sent.js";
 import {
   recreateRequired,
@@ -198,16 +199,20 @@ describe("sandbox tool errors", () => {
   // admission's own refusal on a device without scoped operations: the kernel renders the text
   // from the cause, never from a provider-written reason (ruling R9)
   it("an admission refusal names its cause: an outdated sandbox plugin", () => {
-    const cause = { kind: "provider-outdated", plugin: "sandbox-docker", version: "0.1.0-rc.16" };
+    const cause = {
+      kind: "provider-outdated",
+      plugin: "sandbox-docker",
+      version: "0.1.0-rc.16",
+    } as const satisfies PermissionAvailabilityCause;
     const mapped = mapSandboxError(
-      new PermissionAdmissionUnavailable(cause as never, "provider secret reason"),
+      new PermissionAdmissionUnavailable(cause, "provider secret reason"),
       undefined,
     );
     expect(mapped).toBeInstanceOf(ToolError);
     expect(message(mapped)).toBe(
       "This device's sandbox plugin (sandbox-docker 0.1.0-rc.16) cannot run device tools under a permission profile, so nothing ran. A super admin updates the plugin on the Plugins page; until then, continue without the device, or ask the user to start a new conversation on another device.",
     );
-    expect(message(mapped)).toBe(admissionUnavailableText(cause as never));
+    expect(message(mapped)).toBe(admissionUnavailableText(cause));
   });
 
   it("an admission refusal names its cause: a runtime that cannot enforce its sandbox", () => {

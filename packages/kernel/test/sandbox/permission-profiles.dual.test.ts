@@ -1074,15 +1074,31 @@ describe("a device whose runtime cannot enforce its sandbox", () => {
       const view = await permissions(conv);
       expect(view.profile).toBe("approve-for-me");
       expect(view.availability.report?.restricted ?? null).toBeNull();
+      // the view names the verdict admission refuses with: unsupported, the runtime's cause
+      expect(view.availability).toMatchObject({
+        state: "unsupported",
+        cause: { kind: "runtime" },
+      });
+      // a background start is refused by admission the same way, with the same cause
+      const background = await call(
+        conv,
+        "Bash",
+        { command: "echo must-not-run-bg", description: "Try", run_in_background: true },
+        2,
+      );
+      expect(background.payload.isError).toBe(true);
+      expect(background.payload.content).toBe(
+        `The background task was not started; do not call Bash without run_in_background instead, it is refused the same way. ${RUNTIME_TEXT}`,
+      );
       // the same refusal for Request approval
       await setProfile(conv, "request-approval");
-      const again = await call(conv, "Read", { file_path: "/workspace/x.txt" }, 2);
+      const again = await call(conv, "Read", { file_path: "/workspace/x.txt" }, 3);
       expect(again.payload.content).toBe(RUNTIME_TEXT);
       // Auto stays selectable and keeps the sandbox: on a runtime that only runs outside it, a
       // call under Auto runs nothing either
       await setProfile(conv, "full-access");
       expect((await permissions(conv)).profile).toBe("full-access");
-      const full = await call(conv, "Bash", { command: "echo full-ok", description: "Run" }, 3);
+      const full = await call(conv, "Bash", { command: "echo full-ok", description: "Run" }, 4);
       expect(full.payload.isError).toBe(true);
       expect(full.payload.content).toBe(RUNTIME_TEXT);
       // admission refused every call: no operation intent was ever dispatched

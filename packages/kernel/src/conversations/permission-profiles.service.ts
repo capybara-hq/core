@@ -33,7 +33,11 @@ export class PermissionProfilesService {
     return this.facts.preview(orgId, accountId, deviceId, project);
   }
   async get(orgId: string, id: string, accountId: string) {
-    return this.facts.view(orgId, accountId, await this.store.readOwnedRoot(orgId, id, accountId));
+    return this.facts.peopleView(
+      orgId,
+      accountId,
+      await this.store.readOwnedRoot(orgId, id, accountId),
+    );
   }
   /** Reserve the root ID and authority before resolving its project or inserting first-send state. */
   @Transactional({ propagation: "mandatory" })

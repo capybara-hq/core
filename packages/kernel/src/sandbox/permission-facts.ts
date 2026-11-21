@@ -53,6 +53,7 @@ import {
 } from "./modes.js";
 import { assertAuthorityHeld } from "./permission-authority-lock.js";
 import {
+  deviceWorkAvailability,
   type PermissionAvailability,
   permissionAvailabilityFor,
 } from "./permission-availability.js";
@@ -664,6 +665,7 @@ export class PermissionFacts {
       consentIdentity,
       consentReach,
       availability,
+      location: source === "local" ? ("local" as const) : ("cloud" as const),
       sandbox,
       outsideSandboxCeiling: sandbox.outsideSandbox,
       // B2: broad restricted reach (directories outside the working root) is the owner's reach
@@ -676,16 +678,32 @@ export class PermissionFacts {
           : policy.mode === "auto" && policy.allowedMode === "auto"),
     };
   }
+  /**
+   * The preview people see before choosing a profile: availability is the device-work verdict
+   * ({@link deviceWorkAvailability}). Kernel callers only use it as a check.
+   */
   async preview(orgId: string, accountId: string, deviceId: string, project?: string) {
     await this.devices.usable(orgId, accountId, deviceId);
     const binding =
       project === undefined
         ? null
         : await this.resolveProjectForBinding(orgId, deviceId, accountId, project);
-    return this.scope(orgId, deviceId, binding?.path ?? null, project ?? null);
+    const scope = await this.scope(orgId, deviceId, binding?.path ?? null, project ?? null);
+    return { ...scope, availability: deviceWorkAvailability(scope.availability, scope.location) };
   }
   async view(orgId: string, accountId: string, row: PermissionRoot) {
     return (await this.viewWithAccess(orgId, accountId, row)).view;
+  }
+  /**
+   * {@link view} as people see it (`GET …/permissions`): availability is the device-work verdict
+   * admission applies ({@link deviceWorkAvailability}), so a device whose runtime cannot enforce
+   * its sandbox reads `unsupported` with the runtime cause. Kernel readers use {@link view}.
+   */
+  async peopleView(orgId: string, accountId: string, row: PermissionRoot) {
+    const { view, location } = await this.viewWithAccess(orgId, accountId, row);
+    return location === null
+      ? view
+      : { ...view, availability: deviceWorkAvailability(view.availability, location) };
   }
   /**
    * {@link view} plus how the actor reached the root's device: none selected, usable, refused for
@@ -724,6 +742,7 @@ export class PermissionFacts {
         : row.permission_profile;
     return {
       access,
+      location: preview?.location ?? null,
       view: {
         profile,
         revision: row.permission_revision,

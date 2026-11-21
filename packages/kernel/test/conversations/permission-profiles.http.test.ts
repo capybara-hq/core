@@ -362,6 +362,32 @@ describe("Conversation permission profiles", () => {
       .where("id", "=", id)
       .executeTakeFirstOrThrow();
     expect(row).toEqual({ permission_profile: "full-access", permission_consent: null });
+    // a device bound later (ConversationDevices.bind only writes device_id; written directly
+    // here): Auto has no consent for that device, so it reads Approve for me until confirmed
+    const deviceId = await localDevice(orgId);
+    await sql`UPDATE capybara.conversations SET device_id = ${deviceId} WHERE id = ${id}`.execute(
+      raw,
+    );
+    const bound = (await req({ method: "GET", url })).json();
+    expect(bound).toMatchObject({
+      profile: "approve-for-me",
+      deviceId,
+      consentScope: null,
+    });
+    const confirm = await req({
+      method: "PATCH",
+      url,
+      payload: {
+        profile: "full-access",
+        expectedRevision: bound.revision,
+        consentScopeRevision: bound.scopeRevision,
+      },
+    });
+    expect(confirm.statusCode, confirm.body).toBe(200);
+    expect((await req({ method: "GET", url })).json()).toMatchObject({
+      profile: "full-access",
+      consentScope: { deviceId, scopeRevision: bound.scopeRevision },
+    });
     const conv = await createConv(req, orgId, agentId);
     const convUrl = `/api/v1/orgs/${orgId}/conversations/${conv.id}/permissions`;
     const patch = await req({

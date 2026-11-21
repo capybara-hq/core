@@ -1,4 +1,5 @@
 import {
+  instanceSupported,
   type SandboxPermissionSupport,
   SandboxPermissionUnsupportedError,
   type SandboxProvider,
@@ -68,4 +69,39 @@ export function permissionAvailabilityFor(
     };
   }
   return unprobedPermissionAvailability();
+}
+
+/**
+ * Why a recorded runtime report cannot run permission-scoped work on a device at `location`, or
+ * null when it can: the one rule admission's withheld scope and the people's view both apply
+ * (the "one verdict" rule, B-16). A local machine's sandbox is per operation (only a cloud
+ * provider's instance is the sandbox); a runtime without a restricted mode and without an instance
+ * boundary only runs outside its sandbox.
+ */
+export function runtimeReportVerdict(
+  report: SandboxPermissionSupport,
+  location: "local" | "cloud",
+): string | null {
+  if (report.boundary === "instance" && location === "local")
+    return "A local device cannot report an instance boundary";
+  if (report.restricted === null && !instanceSupported(report))
+    return report.unavailableReason ?? "This device's runtime cannot enforce its sandbox";
+  return null;
+}
+
+/**
+ * The availability of device work as people see it (the HTTP views): a supported report that
+ * {@link runtimeReportVerdict} refuses reads `unsupported` with the runtime cause, as admission
+ * refuses it. Kernel readers keep the raw availability (its report decides the provider layer and
+ * the kernel read route).
+ */
+export function deviceWorkAvailability(
+  availability: PermissionAvailability,
+  location: "local" | "cloud",
+): PermissionAvailability {
+  if (availability.state !== "supported") return availability;
+  const reason = runtimeReportVerdict(availability.report, location);
+  return reason === null
+    ? availability
+    : { state: "unsupported", reason, cause: { kind: "runtime" } };
 }

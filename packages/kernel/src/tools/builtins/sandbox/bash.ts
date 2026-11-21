@@ -5,6 +5,7 @@ import {
   isSandboxOperationOutcomeUnknownError,
   isSandboxPermissionUnsupportedError,
   isSandboxScopeDeniedError,
+  isSandboxWorkUnsettledError,
   ToolError,
   type ToolSpec,
 } from "@capybara-hq/plugin-sdk";
@@ -27,11 +28,13 @@ import {
 } from "../../../sandbox/review/permission-candidate.js";
 import type { BuiltinCallContext, BuiltinResult, BuiltinTool } from "../../registry.js";
 import {
+  admissionUnavailableText,
   clip,
   display,
   ESCALATION_GRANT_MISSING_LAUNCH_WHY,
   inSandboxOperations,
   inToolSandbox,
+  PermissionAdmissionUnavailable,
   runBudgetNote,
   runTimeLeftMs,
   type SandboxToolDeps,
@@ -39,6 +42,7 @@ import {
   sandboxBaseTimeoutMs,
   sandboxConversationOf,
   unavailableWhenNoSandbox,
+  WORK_UNSETTLED_TOOL_TEXT,
   withNotices,
 } from "./common.js";
 import { parseDeviceCode } from "./device-code.js";
@@ -215,7 +219,7 @@ type ManagedLaunch =
   /** Dispatched, outcome unknown: reconciled later under the same identity, never relaunched. */
   | { kind: "unknown"; task: BackgroundTaskRow }
   /** Refused before any effect (the reservation is settled as failed). */
-  | { kind: "refused"; task: BackgroundTaskRow; why: string };
+  | { kind: "refused"; task: BackgroundTaskRow; why: string; text: string | undefined };
 
 /**
  * Managed `Bash` background launch (permission runtime cutover phase 8.2): the tool's only
@@ -313,7 +317,7 @@ export async function runInBackgroundManaged(
       });
     } catch (e) {
       // kernel-written text only: the provider's message is logged, never shown to the model
-      const why = launchRefusedWhy(e);
+      const { why, text } = launchRefusedWhy(e);
       deps.log?.warn("managed background start failed", { taskId: task.id, err: e });
       // a reservation that never dispatched is settled; a dispatched one never is here
       if (await failManagedPreEffect(task.id, `launch refused: ${why}`, claim.executionId)) {
@@ -321,6 +325,7 @@ export async function runInBackgroundManaged(
           kind: "refused",
           task: (await background.get(task.id)) ?? task,
           why,
+          text,
         } satisfies ManagedLaunch;
       }
       const now = (await background.get(task.id)) ?? task;
@@ -328,7 +333,7 @@ export async function runInBackgroundManaged(
         return { kind: "unknown", task: now } satisfies ManagedLaunch;
       // a dispatched start the provider refused was settled with it: the kernel's reason
       if (now.launchState === "terminal" && isRefusal(e))
-        return { kind: "refused", task: now, why } satisfies ManagedLaunch;
+        return { kind: "refused", task: now, why, text } satisfies ManagedLaunch;
       return { kind: "launched", task: now } satisfies ManagedLaunch;
     }
     return {
@@ -366,6 +371,12 @@ export async function runInBackgroundManaged(
       `Background task ${task.id} ("${description}") may have started before its launch was ${how} (${taskReasonText(task)}); any process it started is being stopped and will not keep running, but it may already have had effects. Check them before calling Bash again as a new call.`,
     );
   }
+  // the device cannot run any work (admission's cause, unsettled earlier work): its own sentence,
+  // since running the command without run_in_background is refused the same way
+  if (!started && launch.kind === "refused" && launch.text)
+    throw new ToolError(
+      `The background task was not started; do not call Bash without run_in_background instead, it is refused the same way. ${launch.text}`,
+    );
   if (!started && (launch.kind === "refused" || task.launchState === "terminal")) {
     // the recorded reason may hold a provider's words: the model gets kernel text only
     const why =
@@ -419,18 +430,31 @@ export async function runInBackgroundManaged(
   };
 }
 
-/** Why a managed start was refused, in the kernel's own words (never the provider's message). */
-function launchRefusedWhy(e: unknown): string {
-  if (isEscalationGrantMissing(e)) return ESCALATION_GRANT_MISSING_LAUNCH_WHY;
-  return launchRefusedText(
-    isDeviceRequestNotSent(e)
-      ? "not_sent"
-      : isSandboxScopeDeniedError(e)
-        ? "denied"
-        : isSandboxPermissionUnsupportedError(e)
-          ? "unsupported"
-          : undefined,
-  );
+/**
+ * Why a managed start was refused, in the kernel's own words (never the provider's message):
+ * `why` is the clause recorded after `launch refused: `; `text`, the complete sentence for the
+ * model when the device cannot run any work, whatever the call (admission's cause, unsettled
+ * earlier work).
+ */
+function launchRefusedWhy(e: unknown): { why: string; text?: string } {
+  if (isEscalationGrantMissing(e)) return { why: ESCALATION_GRANT_MISSING_LAUNCH_WHY };
+  if (e instanceof PermissionAdmissionUnavailable) {
+    const text = admissionUnavailableText(e.cause);
+    return { why: text, text };
+  }
+  if (isSandboxWorkUnsettledError(e))
+    return { why: WORK_UNSETTLED_TOOL_TEXT, text: WORK_UNSETTLED_TOOL_TEXT };
+  return {
+    why: launchRefusedText(
+      isDeviceRequestNotSent(e)
+        ? "not_sent"
+        : isSandboxScopeDeniedError(e)
+          ? "denied"
+          : isSandboxPermissionUnsupportedError(e)
+            ? "unsupported"
+            : undefined,
+    ),
+  };
 }
 
 /** A typed refusal: the provider or admission proved the start had no effect. */
