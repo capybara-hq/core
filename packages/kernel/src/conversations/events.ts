@@ -628,6 +628,11 @@ const FileStateViewSchema = z.object({
 
 /** The longest handoff card title (`ToolViewSchema` kind `handoff`), per language. */
 export const HANDOFF_TITLE_MAX_CHARS = 200;
+
+/** The longest secure input target name (`approval_requested.secureInput.target`), per language. */
+export const SECURE_INPUT_TARGET_MAX_CHARS = 200;
+/** The most field paths one secure input request lists (as `approval_decided.inputsProvided`). */
+export const SECURE_INPUT_MAX_FIELDS = 32;
 /** The longest handoff link (a relative web path). */
 export const HANDOFF_URL_MAX_CHARS = 2000;
 /** A relative web path: one leading `/`, never `//` (another host) or a backslash. */
@@ -694,6 +699,15 @@ export const ToolViewSchema = z.discriminatedUnion("kind", [
     reason: z.enum(["not_read", "modified"]),
   }),
   z.object({ kind: z.literal("not_loaded") }),
+  /**
+   * A `Platform` operation whose result is shown to the run's person once, read by call (the
+   * initial password, the invitation link; profiles govern every approval, ruling R6): the web
+   * draws the reveal under the tool row. Display only.
+   */
+  z.object({
+    kind: z.literal("reveal"),
+    reveal: z.enum(["initial_password", "invitation_link"]),
+  }),
   z.object({
     kind: z.literal("handoff"),
     title: z.object({
@@ -846,6 +860,34 @@ export const PluginContextSchema = z.object({
  */
 export const ConversationEventSchema = z.discriminatedUnion("type", [
   ev("permission_context", PermissionContextV2Schema),
+  /**
+   * An ask addressed to the conversation's person that the profile decided without asking (Auto,
+   * or the review model under Approve for me; profiles govern every approval, ruling R2). Only
+   * `allow` and `deny` are recorded; an unsure review creates the person's approval instead.
+   * Idempotency key `tool_ask_decided:<runId>:<callId>:<bindingHash>`. Not model-visible: display
+   * and audit only, so it needs no `DriftReason`.
+   */
+  ev(
+    "tool_ask_decided",
+    z.object({
+      step: count,
+      callId: z.string(),
+      /** The call's policy key. */
+      toolKey: z.string(),
+      specHash: z.string(),
+      /** First 16 hex chars of `sha256(canonicalJson([policyKey, specHash, call.input]))`. */
+      bindingHash: z.string(),
+      outcome: z.enum(["allow", "deny"]),
+      decisionSource: z.enum(["review-model", "full-access"]),
+      reason: z.string().max(2000),
+      profileRevision: z.number().int().nonnegative(),
+      /** The file bytes the decision was bound to (ruling R7), when the call references a file. */
+      fileSha256: z
+        .string()
+        .regex(/^[a-f0-9]{64}$/)
+        .optional(),
+    }),
+  ),
   ev(
     "permission_reviewed",
     z.object({
@@ -1472,6 +1514,20 @@ export const ConversationEventSchema = z.discriminatedUnion("type", [
        * model-visible, as `network` and `git`; the model sees the call's `tool_result` only.
        */
       command: CommandAskSchema.optional(),
+      /**
+       * A secure input request (`kind = 'secure_input'`; profiles govern every approval): what the
+       * values are for and the field paths the person enters. Display only, never a value and
+       * never model-visible.
+       */
+      secureInput: z
+        .object({
+          target: z.object({
+            zh: z.string().min(1).max(SECURE_INPUT_TARGET_MAX_CHARS),
+            en: z.string().min(1).max(SECURE_INPUT_TARGET_MAX_CHARS),
+          }),
+          fields: z.array(z.string().min(1).max(200)).min(1).max(SECURE_INPUT_MAX_FIELDS),
+        })
+        .optional(),
       ...ApproverFields,
     }),
   ),

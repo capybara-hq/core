@@ -2168,6 +2168,9 @@ export function isSandboxScopeDeniedError(e: unknown): e is SandboxScopeDeniedEr
 export function isSandboxScopeValidationError(e: unknown): e is SandboxScopeValidationError;
 
 // @public
+export function isSandboxWorkUnsettledError(e: unknown): e is SandboxWorkUnsettledError;
+
+// @public
 export function isSandboxWriteDenied(path: string): boolean;
 
 // @public
@@ -3867,6 +3870,12 @@ export type SandboxStopResult = {
 } | {
     outcome: "lost";
 };
+
+// @public
+export class SandboxWorkUnsettledError extends SandboxPermissionUnsupportedError {
+    constructor(message: string, opts?: ErrorOptions);
+    readonly sandboxWorkUnsettled: true;
+}
 
 // @public
 export function sanitizeParams(decl: ModelParameter[], params: Record<string, unknown>): {

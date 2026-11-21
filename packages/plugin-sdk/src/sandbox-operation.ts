@@ -26,14 +26,40 @@ export class SandboxPermissionUnsupportedError extends Error {
   }
 }
 
-/** Recognizes the name and tag across SDK copies without requiring this class's identity. */
+/**
+ * Recognizes the name and tag across SDK copies without requiring this class's identity; the
+ * subclass {@link SandboxWorkUnsettledError} counts too (it is the same definite refusal).
+ */
 export function isSandboxPermissionUnsupportedError(
   e: unknown,
 ): e is SandboxPermissionUnsupportedError {
   return (
     e instanceof Error &&
-    e.name === "SandboxPermissionUnsupportedError" &&
+    (e.name === "SandboxPermissionUnsupportedError" || e.name === "SandboxWorkUnsettledError") &&
     (e as { sandboxPermissionUnsupported?: unknown }).sandboxPermissionUnsupported === true
+  );
+}
+
+/**
+ * Earlier work on the device has not settled, so it refused to start a new operation. It extends
+ * {@link SandboxPermissionUnsupportedError} so every check that treats that error as a definite
+ * refusal (nothing ran) treats this one the same way.
+ */
+export class SandboxWorkUnsettledError extends SandboxPermissionUnsupportedError {
+  readonly sandboxWorkUnsettled = true as const;
+
+  constructor(message: string, opts?: ErrorOptions) {
+    super(message, opts);
+    this.name = "SandboxWorkUnsettledError";
+  }
+}
+
+/** Recognizes the name and tag across SDK copies without requiring this class's identity. */
+export function isSandboxWorkUnsettledError(e: unknown): e is SandboxWorkUnsettledError {
+  return (
+    e instanceof Error &&
+    e.name === "SandboxWorkUnsettledError" &&
+    (e as { sandboxWorkUnsettled?: unknown }).sandboxWorkUnsettled === true
   );
 }
 

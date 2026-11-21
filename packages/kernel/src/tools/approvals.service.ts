@@ -86,9 +86,10 @@ export type ApprovalStatus =
 export type ApprovalScope = "once" | "session" | "always";
 /**
  * What an approval asks: a tool call, the device owner about refused network hosts, the actor about
- * a git push the gateway held, or a person about a command the review held (auto mode spec §5.4).
+ * a git push the gateway held, a person about a command the review held (auto mode spec §5.4), or
+ * the person for a call's secret fields (`secure_input`; profiles govern every approval, R4).
  */
-export type ApprovalKind = "tool" | "network" | "git" | "command";
+export type ApprovalKind = "tool" | "network" | "git" | "command" | "secure_input";
 
 /**
  * The formatted `tool_result` of a command an ask kept (≤ 16 KB; larger output already archived),

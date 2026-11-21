@@ -144,6 +144,16 @@ export interface BuiltinCallContext extends ToolCallContext {
    * call with person fields reads the person's sealed values by it.
    */
   approvalId?: string;
+  /**
+   * The submitted secure input request of this call (profiles govern every approval, R4): a
+   * `Platform` call with person fields reads the person's sealed values by it.
+   */
+  secureInputId?: string;
+  /**
+   * The automatic decision the call runs under (`tool_ask_decided`, R2): Auto or the review model,
+   * and the file bytes it was bound to (R7). Absent for an approval, a grant or a policy allow.
+   */
+  decision?: { source: "review-model" | "full-access"; fileSha256?: string };
 }
 
 /** One image the builtin `Read` stored for a call (`tool_result.media`, vision-read design §1.2). */

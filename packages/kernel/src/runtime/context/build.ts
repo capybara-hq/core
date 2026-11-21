@@ -1277,6 +1277,9 @@ export function buildModelRequest(input: BuildModelRequestInput): {
       // its recorded permission_context, the review only through the tool result
       case "permission_profile_changed":
       case "permission_reviewed":
+      // an automatic decision of a person's ask is display and audit only; the model sees the
+      // call's tool result
+      case "tool_ask_decided":
         break;
       default: {
         const unrendered: never = e;
