@@ -683,3 +683,169 @@ describe("the medium rail's drawer (design spec §6.13, maintainer decision 2026
     ).toBe("max(var(--cb-shell-band), var(--cb-shell-row-start))");
   });
 });
+
+describe("the compact flat title bar inside the desktop shell (maintainer decision 2026-11-22)", () => {
+  const FLAT = "not style(--cb-shell-flat: 0px)";
+  const rules = () => parseCss(css("shell-environment.css"));
+  const flat = (selector: string) =>
+    Object.assign(
+      {},
+      ...rules()
+        .filter((r) => r.at === FLAT && selectors(r.selector).includes(selector))
+        .map((r) => r.decls),
+    ) as Record<string, string>;
+  const D = ':root[data-shell="desktop"]';
+
+  it("is on only below 600 inside the desktop shell, without a banner, where controls are reported", () => {
+    const source = css("shell-environment.css");
+    // a registered length, so the style query compares a computed value (0 without controls)
+    expect(source).toMatch(
+      /@property --cb-shell-flat \{[^}]*syntax: "<length>";[^}]*initial-value: 0px;/,
+    );
+    const set = rules().filter((r) => r.decls["--cb-shell-flat"] !== undefined);
+    expect(set.map((r) => [r.at, r.selector, r.decls["--cb-shell-flat"]])).toEqual([
+      ["(max-width: 599px)", `${D} .cb-shell:not([data-banner="true"])`, "var(--cb-shell-row)"],
+    ]);
+    // the browser, touch and mobile shells keep the floating row: nothing in the flat block
+    // applies outside the desktop shell
+    const block = rules().filter((r) => r.at === FLAT);
+    expect(block.length).toBeGreaterThan(5);
+    for (const r of block) {
+      for (const s of selectors(r.selector)) expect(s.startsWith(D), s).toBe(true);
+    }
+  });
+
+  it("is one row as high as the controls on the page ground with a line-soft hairline under it", () => {
+    const column = flat(`${D} .cb-shell-column`);
+    expect(column["--cb-float-row"]).toBe("var(--cb-shell-flat)");
+    expect(column["--cb-float-size"]).toBe("var(--cb-control-default)");
+    expect(column["--cb-float-top"]).toBe(
+      "calc((var(--cb-shell-flat) - var(--cb-float-size)) / 2)",
+    );
+    expect(flat(`${D} .cb-shell-column::before`)["border-bottom"]).toBe(
+      "1px solid var(--cb-line-soft)",
+    );
+    // the strip under the row is the page ground, as high as the row (shell.css)
+    const strip = parseCss(css("shell.css")).find(
+      (r) => r.at === "(max-width: 599px)" && r.selector === ".cb-shell-column::before",
+    );
+    expect(strip?.decls.background).toBe("var(--cb-bg)");
+    expect(strip?.decls.height).toBe("var(--cb-float-row)");
+  });
+
+  it("its buttons are ghost and one desktop size: menu or back, the page's and the conversation's …", () => {
+    for (const sel of [
+      `${D} .cb-shell-float .cb-float-btn`,
+      `${D} .cb-shell-float .cb-floatbar .cb-icon-btn`,
+      `${D} .cb-shell .cb-title-bar .cb-title-overflow > .cb-icon-btn`,
+    ]) {
+      const d = flat(sel);
+      expect(d.width, sel).toBe("var(--cb-control-default)");
+      expect(d.height, sel).toBe("var(--cb-control-default)");
+      expect(d.background, sel).toBe("transparent");
+      expect(d.border, sel).toBe("0");
+      expect(d["box-shadow"], sel).toBe("none");
+    }
+  });
+
+  it("shows the plain title and the flat …, hides the pill and the floating …", () => {
+    const bar = `${D} .cb-shell .cb-shell-main .cb-title-bar`;
+    expect(flat(`${bar} > .cb-title-btn`).display).toBe("none");
+    expect(
+      flat(`${D} .cb-shell .cb-shell-main .cb-title-overflow[data-form="float"]`).display,
+    ).toBe("none");
+    expect(flat(`${bar} > .cb-title-plain`).display).toBe("flex");
+    expect(flat(`${D} .cb-shell .cb-shell-main .cb-title-overflow[data-form="flat"]`).display).toBe(
+      "contents",
+    );
+    // the bar spans the row from the menu button to the window's end edge, its own filler last
+    expect(flat(bar).top).toBe("0");
+    expect(flat(bar).height).toBe("var(--cb-shell-flat)");
+    expect(flat(bar).right).toBe("0");
+    expect(flat(`${bar} > .cb-drag-fill`).display).toBe("block");
+    expect(flat(`${bar} > .cb-drag-fill`).width).toBe("var(--cb-float-end)");
+    // the filler laid over the title covers it whole (conversation-page.css)
+    const over = parseCss(css("conversation-page.css")).find(
+      (r) => r.selector === ".cb-title-plain > .cb-drag-fill",
+    );
+    expect(over?.decls).toMatchObject({ position: "absolute", inset: "0" });
+  });
+
+  it("the title is plain text inside a filler; only the menu and … take clicks", () => {
+    vi.stubGlobal("matchMedia", matchMediaFor(480).matchMedia);
+    const { container } = render(
+      <DesignProvider locale="zh">
+        <AppShell sidebar={sidebar} status={status} chatSurface drawer={drawer}>
+          <TitleBar
+            title="沙箱内 pnpm 安装失败"
+            untitled="U"
+            menu={[{ id: "rename", label: "重命名", icon: "square-pen", onSelect: noop }]}
+            properties={{ pressed: false, onToggle: noop }}
+            panels={[]}
+          />
+        </AppShell>
+      </DesignProvider>,
+    );
+    const plain = container.querySelector(".cb-title-plain") as HTMLElement;
+    expect(plain.tagName).toBe("SPAN");
+    expect(plain.textContent).toBe("沙箱内 pnpm 安装失败");
+    expect(plain.querySelector("button, a, [tabindex]")).toBeNull();
+    expect(plain.querySelector(":scope > .cb-drag-fill")).not.toBeNull();
+    // what the flat row shows that takes clicks: the floating row's menu button and the flat …
+    const row = container.querySelector(".cb-floatbar") as HTMLElement;
+    expect(row.querySelectorAll("button, a")).toHaveLength(1);
+    expect(row.querySelector("button")?.classList.contains("cb-shell-menu-btn")).toBe(true);
+    const flatMore = container.querySelector('[data-form="flat"]') as HTMLElement;
+    expect(
+      [...flatMore.querySelectorAll("button")].map((b) => b.getAttribute("aria-label")),
+    ).toEqual(["更多操作"]);
+    // every filler in the row stops dragging while an overlay is open: the title's filler is a
+    // `.cb-drag-fill` like the others, which the overlay rule switches off
+    const off = rules().find(
+      (r) => r.selector.includes(":has(") && r.decls["app-region"] === "no-drag",
+    );
+    expect(off?.selector).toContain(".cb-drag-fill");
+  });
+
+  it("the … holds the properties toggle, the panels, then the title menu's items", async () => {
+    vi.stubGlobal("matchMedia", matchMediaFor(480).matchMedia);
+    const onRename = vi.fn();
+    const { container } = render(
+      <DesignProvider locale="zh">
+        <TitleBar
+          title="T"
+          untitled="U"
+          menu={[
+            { id: "rename", label: "重命名", icon: "square-pen", onSelect: onRename },
+            { id: "copy-link", label: "复制链接", icon: "link", onSelect: noop },
+            { id: "compact", label: "压缩上下文", icon: "gauge", disabled: true, onSelect: noop },
+          ]}
+          properties={{ pressed: false, onToggle: noop }}
+          panels={[{ id: "files", label: "文件", icon: "file-text", pressed: false, onOpen: noop }]}
+        />
+      </DesignProvider>,
+    );
+    const flatMore = container.querySelector('[data-form="flat"]') as HTMLElement;
+    await userEvent.click(within(flatMore).getByRole("button", { name: "更多操作" }));
+    const menu = document.querySelector(".cb-cmenu") as HTMLElement;
+    expect(
+      within(menu)
+        .getAllByRole("menuitem")
+        .map((i) => i.textContent),
+    ).toEqual(["属性面板", "文件", "重命名", "复制链接", "压缩上下文"]);
+    expect(within(menu).getAllByRole("separator")).toHaveLength(1);
+    expect(
+      within(menu).getByRole("menuitem", { name: "压缩上下文" }).getAttribute("aria-disabled"),
+    ).toBe("true");
+    await userEvent.click(within(menu).getByRole("menuitem", { name: "重命名" }));
+    expect(onRename).toHaveBeenCalledTimes(1);
+    // the touch / browser overflow keeps its items: the title pill still opens the title menu
+    const float = container.querySelector('[data-form="float"]') as HTMLElement;
+    await userEvent.click(within(float).getByRole("button", { name: "更多操作" }));
+    expect(
+      within(document.querySelector(".cb-cmenu") as HTMLElement)
+        .getAllByRole("menuitem")
+        .map((i) => i.textContent),
+    ).toEqual(["属性面板", "文件"]);
+  });
+});

@@ -139,9 +139,34 @@ span.cb-title-btn {
   margin: 0 var(--cb-space-1);
   background: var(--cb-line);
 }
-/* The compact form's one overflow button (below): drawn always, shown only there. */
-.cb-title-overflow {
+/* The compact form's one overflow button (below): drawn always, shown only there. The flat
+   title bar's plain title and its own overflow (desktop shell with window controls, compact;
+   shell-environment.css) are drawn always too and shown only there. */
+.cb-title-overflow,
+.cb-title-plain {
   display: none;
+}
+.cb-title-plain {
+  position: relative;
+  flex: 1 1 auto;
+  align-self: stretch;
+  align-items: center;
+  min-width: 0;
+  padding: 0 var(--cb-space-2);
+  color: var(--cb-ink);
+  font-size: var(--cb-type-body-size);
+  line-height: var(--cb-type-body-line);
+}
+.cb-title-plain[data-untitled="true"] {
+  color: var(--cb-muted);
+}
+.cb-title-plain[data-loading="true"] > .cb-title-text {
+  flex: 0 1 30%;
+}
+/* The filler lies over the whole title: the title drags the window, the text stays readable. */
+.cb-title-plain > .cb-drag-fill {
+  position: absolute;
+  inset: 0;
 }
 /* Inside the chat-first compact shell (§6.16.1, spec §4.6): the title bar joins the floating row
    after the shell's menu button: the title is the centre pill (no path) and every icon folds into
@@ -180,13 +205,17 @@ span.cb-title-btn {
     box-shadow: var(--cb-shadow-float-touch);
     font-weight: 500;
   }
-  .cb-shell .cb-title-overflow {
+  .cb-shell .cb-title-overflow[data-form="float"] {
     display: contents;
   }
+  /* The same size as the menu button and the pill: the row's float size, never the title bar's
+     40 px tap-target floor (maintainer decision 2026-11-22). */
   .cb-shell .cb-title-overflow > .cb-icon-btn {
     flex: none;
     width: var(--cb-float-size);
     height: var(--cb-float-size);
+    min-width: var(--cb-float-size);
+    min-height: var(--cb-float-size);
     border: 1px solid var(--cb-float-line);
     border-radius: var(--cb-radius-pill);
     background: var(--cb-float-ground);

@@ -169,6 +169,19 @@ export function TitleBar({
           ))}
         </nav>
       ) : null}
+      {/* The compact form inside the desktop shell with reported window controls (§6.16.1, desktop
+          client spec §7.3, maintainer decision 2026-11-22): the title is plain text in a flat
+          title bar, and the whole of it is a window drag region (an empty filler laid over the
+          text, so the text stays readable to assistive tech); CSS shows it there only. */}
+      <span
+        className="cb-title-plain"
+        data-part="title-plain"
+        data-untitled={!loading && title === null ? "true" : undefined}
+        data-loading={loading ? "true" : undefined}
+      >
+        <span className="cb-title-text">{loading ? <SkeletonText width="100%" /> : text}</span>
+        <DragFill />
+      </span>
       {loading ? (
         <span className="cb-title-btn" data-part="title" data-loading="true">
           <span className="cb-title-text">
@@ -247,7 +260,7 @@ export function TitleBar({
       ) : null}
       {/* The compact form inside the chat-first shell (§6.16.1): the title is the floating centre
           pill and every icon folds into this one trailing overflow; CSS shows it there only. */}
-      <span className="cb-title-overflow" data-part="title-overflow">
+      <span className="cb-title-overflow" data-part="title-overflow" data-form="float">
         <ConvMenu
           label={t("shell.moreActions")}
           align="end"
@@ -278,8 +291,57 @@ export function TitleBar({
           ]}
         />
       </span>
+      {/* The flat title bar's overflow (desktop shell with window controls, compact; maintainer
+          decision 2026-11-22): the title is plain text there, so the title menu's items join the
+          icons here, after a separator; CSS shows it there only. */}
+      <span className="cb-title-overflow" data-part="title-overflow-flat" data-form="flat">
+        <ConvMenu
+          label={t("shell.moreActions")}
+          align="end"
+          size="touch"
+          sideOffset={2}
+          trigger={
+            <IconButton
+              part="title-more"
+              label={t("shell.moreActions")}
+              icon={<Icon name="more-horizontal" size={16} />}
+            />
+          }
+          entries={flatOverflowEntries(properties, panels, loading ? [] : entries, t)}
+        />
+      </span>
     </header>
   );
+}
+
+/**
+ * The flat title bar's "…" menu (§6.16.1, maintainer decision 2026-11-22): the properties toggle,
+ * the panels, then the title menu's items (rename, copy link, …) after a separator, in their own
+ * order and with their own separators.
+ */
+function flatOverflowEntries(
+  properties: TitleBarProps["properties"],
+  panels: TitleBarPanel[],
+  titleMenu: ConvMenuEntry[],
+  t: (key: "titlebar.properties") => string,
+): ConvMenuEntry[] {
+  return [
+    {
+      kind: "item",
+      id: "properties",
+      label: t("titlebar.properties"),
+      icon: "panel-right",
+      onSelect: properties.onToggle,
+    },
+    ...panels.map((p) => ({
+      kind: "item" as const,
+      id: p.id,
+      label: p.label,
+      icon: p.icon,
+      onSelect: p.onOpen,
+    })),
+    ...(titleMenu.length > 0 ? [{ kind: "separator" as const }, ...titleMenu] : []),
+  ];
 }
 
 /** The title bar of a new conversation: only the muted "新会话" label. */

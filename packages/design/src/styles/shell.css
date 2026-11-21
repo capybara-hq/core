@@ -942,15 +942,18 @@ a.cb-stat-card:focus-visible {
 }
 
 /* A short window (height below 480, spec §4.7; the shell's `data-short`): the StatusBar is hidden
-   whatever the width; the PageHeader drops its path row on compact only, where the floating row carries
-   back (medium and expanded have no floating row: the path row is their way up). The query is the first
-   paint's; the attribute follows it after hydration for plugin CSS. */
+   whatever the width. The query is the first paint's; the attribute follows it after hydration for
+   plugin CSS. */
 @media (max-height: 479px) {
   .cb-statusbar {
     display: none;
   }
 }
-@media (max-width: 599px) and (max-height: 479px) {
+/* Compact (spec §4.2, maintainer decision 2026-11-22): the PageHeader draws no path row at any
+   height, in a browser and in every shell: the floating row's back button and the h1 are enough
+   (medium and expanded have no floating row: the path row is their way up, and stays). A
+   title-less head keeps its actions. */
+@media (max-width: 599px) {
   .cb-pageheader-path {
     display: none;
   }
