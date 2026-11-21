@@ -36,6 +36,7 @@ import {
 } from "./artifacts.js";
 import {
   CompactBody,
+  DOWNLOAD_AS,
   EventsQuery,
   FilesQuery,
   IdParams,
@@ -84,8 +85,15 @@ const FileContentQuery = z.object({
   limit: z.coerce.number().int().min(1).max(FILE_CONTENT_MAX_BYTES).default(FILE_CONTENT_MAX_BYTES),
 });
 
-/** `inline=1`：要求以 inline 打开（只对位图生效，见 ConversationArtifacts）。 */
-const DownloadQuery = z.object({ inline: z.enum(["0", "1"]).optional() });
+/**
+ * `inline=1`: open inline (bitmaps only, see ConversationArtifacts). `as=url`: answer `{ url }`
+ * (the presigned location the 302 would send) instead of redirecting, so a page can hand a
+ * cookie-free URL to the system browser (a native shell's `openExternal@1`).
+ */
+const DownloadQuery = z.object({
+  inline: z.enum(["0", "1"]).optional(),
+  as: DOWNLOAD_AS.optional(),
+});
 
 const MessageFields = z.object({
   /** 用户输入的文本；只有带 `files` 且不带 `attachments` 时可以为空（只发图片 / 文件）。 */
@@ -502,7 +510,8 @@ export class ConversationsController {
   }
 
   /**
-   * 下载 agent 交付的产物（`artifact_created`）：302 到预签名地址（一律 `attachment`，带文件名）。
+   * 下载 agent 交付的产物（`artifact_created`）：302 到预签名地址（一律 `attachment`，带文件名）;
+   * `as=url` answers `{ url }` with that address instead (never cached).
    * 会话可见性与会话流相同，不可见 → `conversation.not_found`；不是该会话的产物 → `conversation.artifact_not_found`。
    */
   @Get(":id/artifacts/:artifactId/download")
@@ -519,6 +528,10 @@ export class ConversationsController {
     const { url } = await this.artifacts.downloadUrl(org.orgId, id, p.account.id, artifactId, {
       inline: q.inline === "1",
     });
+    if (q.as === "url") {
+      await reply.header("cache-control", "private, no-store").send({ url });
+      return;
+    }
     await reply
       .header("cache-control", `private, max-age=${ARTIFACT_DOWNLOAD_CACHE_SECONDS}`)
       .redirect(url, 302);

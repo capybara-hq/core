@@ -4,7 +4,7 @@ import type { FastifyReply } from "fastify";
 import { z } from "zod";
 import { CurrentPrincipal, type Principal, requireUser } from "../identity/principal.js";
 import { createZodDto } from "../infra/validation/create-zod-dto.js";
-import { ZBody } from "../infra/validation/zod-params.js";
+import { ZBody, ZQuery } from "../infra/validation/zod-params.js";
 import { CurrentOrg, OrgAction, type OrgContext } from "../orgs/org.guard.js";
 import {
   ATTACHMENT_DOWNLOAD_CACHE_SECONDS,
@@ -13,6 +13,7 @@ import {
   type AttachmentView,
   type CreatedAttachment,
 } from "./attachments.service.js";
+import { DOWNLOAD_AS } from "./conversations.schemas.js";
 
 const CreateBody = z
   .object({
@@ -28,13 +29,17 @@ const CreateBody = z
 
 class AttachmentCreateBodyDto extends createZodDto(CreateBody, "AttachmentCreateBody") {}
 
+const DownloadQuery = z.object({ as: DOWNLOAD_AS.optional() }).strict();
+class AttachmentDownloadQueryDto extends createZodDto(DownloadQuery, "AttachmentDownloadQuery") {}
+
 /**
  * 对话附件（`/api/v1/orgs/:orgId/attachments`，`agents.use`，只接受人类用户）：
  * 1. `POST /` 登记并取预签名上传（`upload.method` 为 `POST` 时按 multipart 表单：先放 `fields`，最后放 `file`）；
  * 2. 浏览器直传对象存储；
  * 3. `POST /:id/finalize` 核对大小与类型；
  * 4. 发消息时在 `files` 里引用 id。
- * 下载 `GET /:id/download` 302 到预签名地址（`Cache-Control: private, max-age=60`）。上限 `GET /limits`（类型、单个大小、
+ * 下载 `GET /:id/download` 302 到预签名地址（`Cache-Control: private, max-age=60`）; `?as=url` answers
+ * `{ url }` with that address instead.上限 `GET /limits`（类型、单个大小、
  * 每条条数、单次请求的媒体预算、存储是否可用，供网页预检；不需要对象存储）。没有对象存储时其余接口 503 `storage.unavailable`。
  */
 @Controller("api/v1/orgs/:orgId/attachments")
@@ -77,10 +82,15 @@ export class AttachmentsController {
     @CurrentPrincipal() principal: Principal,
     @CurrentOrg() org: OrgContext,
     @Param("id") id: string,
+    @ZQuery(AttachmentDownloadQueryDto) q: z.infer<typeof DownloadQuery>,
     @Res() reply: FastifyReply,
   ): Promise<void> {
     const p = requireUser(principal);
     const location = await this.attachments.downloadUrl(org.orgId, p.account.id, id);
+    if (q.as === "url") {
+      await reply.header("cache-control", "private, no-store").send({ url: location });
+      return;
+    }
     // 浏览器可在短时间内复用跳转（同一页面的缩略图）；预签名有效期不短于这段时间
     await reply
       .header("cache-control", `private, max-age=${ATTACHMENT_DOWNLOAD_CACHE_SECONDS}`)

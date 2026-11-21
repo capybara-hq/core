@@ -21,6 +21,7 @@ import { PrefixedStorage, StorageService } from "../../src/storage/storage.servi
 import type { MediaProvider } from "../fixtures/plugins/model-media/index.js";
 import { attachmentsFor } from "../helpers/conversations.js";
 import { truncateTables } from "../helpers/db.js";
+import { asUser, cookieJar } from "../helpers/http.js";
 import { accountsFor } from "../helpers/identity.js";
 import { testMembers } from "../helpers/members.js";
 import {
@@ -566,6 +567,31 @@ describe("下载", () => {
     const url = `/api/v1/orgs/${orgId}/attachments/${id}/download`;
     expect((await owner({ method: "GET", url })).statusCode).toBe(302);
     expect((await other({ method: "GET", url })).statusCode).toBe(404);
+  });
+});
+
+describe("the download URL as JSON (as=url)", () => {
+  it("returns the 302's presigned location under the same checks; never cached", async () => {
+    const id = await ready(owner, "notes.txt", "text/plain", TEXT);
+    const url = `/api/v1/orgs/${orgId}/attachments/${id}/download?as=url`;
+    const res = await owner({ method: "GET", url });
+    expect(res.statusCode, res.body).toBe(200);
+    expect(res.headers["cache-control"]).toBe("private, no-store");
+    const { url: presigned } = res.json() as { url: string };
+    // a cookie-free URL: fetched with no session, it serves the bytes with the 302's disposition
+    const got = await fetch(presigned);
+    expect(got.status).toBe(200);
+    expect(Buffer.from(await got.arrayBuffer()).equals(TEXT)).toBe(true);
+    expect(got.headers.get("content-disposition")).toMatch(/^attachment;.*notes\.txt/);
+    // no session: 401; another member: the same 404 as the redirect
+    const anonymous = await asUser(k.http, cookieJar())({ method: "GET", url });
+    expect(anonymous.statusCode).toBe(401);
+    const denied = await other({ method: "GET", url });
+    expect(denied.statusCode).toBe(404);
+    expect(denied.json().error.code).toBe("attachment.not_found");
+    // an unknown form is refused
+    const bad = await owner({ method: "GET", url: url.replace("as=url", "as=html") });
+    expect(bad.statusCode).toBe(400);
   });
 });
 
