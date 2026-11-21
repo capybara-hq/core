@@ -212,9 +212,86 @@
         "favicon": {
           "type": "string",
           "maxLength": 512
+        },
+        "illustration": {
+          "type": "string",
+          "maxLength": 512
+        },
+        "appIcon": {
+          "type": "string",
+          "maxLength": 512
+        },
+        "appIconMaskable": {
+          "type": "string",
+          "maxLength": 512
         }
       },
       "additionalProperties": false
+    },
+    "decoration": {
+      "type": "string",
+      "enum": [
+        "dither",
+        "none"
+      ]
+    },
+    "avatars": {
+      "maxItems": 12,
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "pattern": "^[a-z0-9][a-z0-9-]{0,31}$"
+          },
+          "name": {
+            "type": "object",
+            "properties": {
+              "en": {
+                "type": "string",
+                "pattern": "\\S"
+              },
+              "zh": {
+                "type": "string",
+                "pattern": "\\S"
+              }
+            },
+            "required": [
+              "en"
+            ],
+            "additionalProperties": false
+          },
+          "file": {
+            "type": "string",
+            "maxLength": 512
+          }
+        },
+        "required": [
+          "id",
+          "name",
+          "file"
+        ],
+        "additionalProperties": false
+      }
+    },
+    "hideAvatarPresets": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "enum": [
+          "capybara",
+          "black-bear",
+          "panda",
+          "elephant",
+          "fox",
+          "owl",
+          "penguin",
+          "rabbit",
+          "turtle",
+          "whale"
+        ]
+      }
     }
   },
   "required": [

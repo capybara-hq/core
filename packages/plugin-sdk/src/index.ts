@@ -1,5 +1,6 @@
 export const SDK_VERSION = "0.1.0-rc.49";
 export * from "./agent-template.js";
+export * from "./avatar-presets.js";
 export * from "./bootstrap.js";
 export * from "./cards.js";
 export * from "./channel.js";

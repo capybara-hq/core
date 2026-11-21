@@ -1,19 +1,21 @@
 import { z } from "zod";
+import { BUILTIN_AVATAR_PRESET_IDS, type BuiltinAvatarPresetId } from "./avatar-presets.js";
 import { CATALOG_ITEM_NAME_RE, isSafePackagePath, type LocalizedName } from "./plugin-package.js";
 import { checkThemeReadability, type MergedScheme, type ThemeScheme } from "./theme-readability.js";
 import { THEME_OVERRIDABLE, THEME_TOKENS } from "./theme-tokens.generated.js";
 
 /**
  * A theme file `themes/<id>.json` (themes spec §4): a partial override of the design tokens per
- * scheme, optional fonts and an optional logo. The id is the file's base name
+ * scheme, optional fonts, an optional logo and the brand fields (theme brand coverage spec §1:
+ * illustration, app icons, decoration, avatar presets). The id is the file's base name
  * ({@link themeIdOf}, `CATALOG_ITEM_NAME_RE`).
  *
  * {@link parseThemeFile} is the CSS-injection boundary: every token value is parsed against the
  * grammar `tokens.json` uses (`#RRGGBB`, `rgba(r,g,b,a)`, shadows `<x> <y> <blur> [<spread>]
  * <color>`) and re-rendered from its parts in canonical form. Asset paths (`fonts[].file`,
- * `logo.*`) are relative to the plugin root (an optional leading `./`) and every segment is limited
+ * `logo.*`, `avatars[].file`) are relative to the plugin root (an optional leading `./`) and every segment is limited
  * to `[A-Za-z0-9._-]`, so they need no escaping inside `url(...)`. Font families are limited to
- * letters, digits, spaces and `-`. Free text (`name`, `description`, `logo.wordmark`) carries no
+ * letters, digits, spaces and `-`. Free text (`name`, `description`, `logo.wordmark`, `avatars[].name`) carries no
  * control, format, line / paragraph separator or lone surrogate characters; it is text for the UI,
  * never CSS. Whether the files exist and their size / signature / SVG rules are checked by
  * the reader of the package, with {@link THEME_LIMITS}.
@@ -29,7 +31,7 @@ export const THEME_LIMITS = {
   fileBytes: 64 * 1024,
   /** Themes per plugin. */
   perPlugin: 10,
-  /** Total bytes of a plugin's theme assets (fonts and logos). */
+  /** Total bytes of a plugin's theme assets (fonts, logos, app icons and avatars). */
   assetsBytes: 16 * 1024 * 1024,
   /** Fonts per theme. */
   fonts: 8,
@@ -41,9 +43,22 @@ export const THEME_LIMITS = {
   pngBytes: 256 * 1024,
   /** Minimum pixel height of a logo PNG. */
   pngMinHeight: 64,
-  /** Characters of the wordmark. */
+  /** Characters of the wordmark (and of each avatar preset name). */
   wordmark: 24,
+  /** Avatar presets per theme. */
+  avatars: 12,
+  /** Bytes of an app icon PNG. */
+  appIconBytes: 1_048_576,
+  /** Minimum pixel size of an app icon PNG (square). */
+  appIconMinSize: 512,
 } as const;
+
+/** The id of a theme's avatar preset (`avatars[].id`); never a built-in preset id. */
+export const THEME_AVATAR_ID_RE = /^[a-z0-9][a-z0-9-]{0,31}$/;
+
+/** The empty-state decoration a theme asks for; omitted means `dither`. */
+export const THEME_DECORATIONS = ["dither", "none"] as const;
+export type ThemeDecoration = (typeof THEME_DECORATIONS)[number];
 
 /** A theme of the plugin: a `./…/<id>.json` file ({@link ThemeFile}). */
 export interface PluginThemeRef {
@@ -81,6 +96,22 @@ export interface ThemeLogo {
   wordmark?: string;
   /** `.svg` or `.png` path inside the plugin. */
   favicon?: string;
+  /** The empty-state art: `.svg` or `.png` path inside the plugin, the `mark` rules. */
+  illustration?: string;
+  /** Apple touch and manifest `any` icon: a square `.png` path, ≥ 512 px, ≤ 1 MiB. */
+  appIcon?: string;
+  /** Manifest `maskable` icon: a square `.png` path, ≥ 512 px, ≤ 1 MiB; requires `appIcon`. */
+  appIconMaskable?: string;
+}
+
+/** An agent avatar preset the theme adds to the picker. */
+export interface ThemeAvatarPreset {
+  /** {@link THEME_AVATAR_ID_RE}, unique in the theme, not a built-in preset id. */
+  id: string;
+  /** Each ≤ 24 characters, the wordmark's character rules. */
+  name: { en: string; zh?: string };
+  /** A square `.svg` or `.png` path inside the plugin (PNG ≥ 64 px, the `mark` size limits). */
+  file: string;
 }
 
 /** `themes/<id>.json`. */
@@ -91,6 +122,12 @@ export interface ThemeFile {
   schemes: Partial<Record<ThemeScheme, ThemeSchemeOverride>>;
   fonts?: ThemeFont[];
   logo?: ThemeLogo;
+  /** Omitted means `dither`; readers apply the default. */
+  decoration?: ThemeDecoration;
+  /** At most {@link THEME_LIMITS}`.avatars`. */
+  avatars?: ThemeAvatarPreset[];
+  /** Built-in presets not offered; hiding all of them requires at least one `avatars` entry. */
+  hideAvatarPresets?: BuiltinAvatarPresetId[];
 }
 
 /**
@@ -129,6 +166,8 @@ const PATH_SEGMENT_RE = /^[A-Za-z0-9._-]+$/;
 const FORBIDDEN_CHARS_MESSAGE =
   "must not contain control, format, line / paragraph separator or lone surrogate characters";
 const IMAGE_RE = /\.(?:svg|png)$/i;
+const PNG_RE = /\.png$/i;
+const BUILTIN_AVATARS: ReadonlySet<string> = new Set(BUILTIN_AVATAR_PRESET_IDS);
 const MAX_VALUE_CHARS = 256;
 
 const text = (max: number, what: string) =>
@@ -138,6 +177,16 @@ const text = (max: number, what: string) =>
     .max(max)
     .regex(/\S/, { message: `${what} must not be blank` })
     .refine((t) => !FORBIDDEN_CHARS_RE.test(t), { message: `${what} ${FORBIDDEN_CHARS_MESSAGE}` });
+
+/** Short free text (the wordmark, avatar names): not blank, ≤ 24 characters, no forbidden ones. */
+const shortText = (what: string) =>
+  z
+    .string()
+    .regex(/\S/, { message: `${what} must not be blank` })
+    .refine((w) => [...w].length <= THEME_LIMITS.wordmark, {
+      message: `${what} must be at most ${THEME_LIMITS.wordmark} characters`,
+    })
+    .refine((w) => !FORBIDDEN_CHARS_RE.test(w), { message: `${what} ${FORBIDDEN_CHARS_MESSAGE}` });
 
 /** A plugin-root relative path (optional `./`), each segment `[A-Za-z0-9._-]`, no `.` / `..`. */
 const isPlainAssetPath = (p: string) => {
@@ -167,51 +216,107 @@ const schemeOverride = z.strictObject({
     .optional(),
 });
 
-const shape = z.strictObject({
-  $schema: z.string().max(512).optional(),
-  name: z.strictObject({ zh: text(100, "name.zh"), en: text(100, "name.en") }),
-  description: z
-    .strictObject({
-      en: text(1024, "description.en"),
-      zh: text(1024, "description.zh").optional(),
-    })
-    .optional(),
-  schemes: z
-    .strictObject({ dark: schemeOverride.optional(), light: schemeOverride.optional() })
-    .refine((s) => s.dark !== undefined || s.light !== undefined, {
-      message: "schemes must define dark, light or both",
-    }),
-  fonts: z
-    .array(
-      z.strictObject({
-        family: z.string().regex(FAMILY_RE, {
-          message: "family must be 1-64 letters, digits, spaces or '-'",
-        }),
-        file: assetPath("file", /\.woff2$/i, ".woff2"),
-        weight: z.number().int().min(100).max(900),
-        style: z.enum(["normal", "italic"]).optional(),
-        role: z.enum(["prose", "mono"]),
-      }),
-    )
-    .max(THEME_LIMITS.fonts)
-    .optional(),
-  logo: z
-    .strictObject({
-      mark: assetPath("mark", IMAGE_RE, ".svg or .png").optional(),
-      wordmark: z
-        .string()
-        .regex(/\S/, { message: "wordmark must not be blank" })
-        .refine((w) => [...w].length <= THEME_LIMITS.wordmark, {
-          message: `wordmark must be at most ${THEME_LIMITS.wordmark} characters`,
-        })
-        .refine((w) => !FORBIDDEN_CHARS_RE.test(w), {
-          message: `wordmark ${FORBIDDEN_CHARS_MESSAGE}`,
-        })
-        .optional(),
-      favicon: assetPath("favicon", IMAGE_RE, ".svg or .png").optional(),
-    })
-    .optional(),
+const avatarPreset = z.strictObject({
+  id: z.string().regex(THEME_AVATAR_ID_RE, {
+    message: "id must match ^[a-z0-9][a-z0-9-]{0,31}$",
+  }),
+  name: z.strictObject({ en: shortText("name.en"), zh: shortText("name.zh").optional() }),
+  file: assetPath("file", IMAGE_RE, ".svg or .png"),
 });
+
+const shape = z
+  .strictObject({
+    $schema: z.string().max(512).optional(),
+    name: z.strictObject({ zh: text(100, "name.zh"), en: text(100, "name.en") }),
+    description: z
+      .strictObject({
+        en: text(1024, "description.en"),
+        zh: text(1024, "description.zh").optional(),
+      })
+      .optional(),
+    schemes: z
+      .strictObject({ dark: schemeOverride.optional(), light: schemeOverride.optional() })
+      .refine((s) => s.dark !== undefined || s.light !== undefined, {
+        message: "schemes must define dark, light or both",
+      }),
+    fonts: z
+      .array(
+        z.strictObject({
+          family: z.string().regex(FAMILY_RE, {
+            message: "family must be 1-64 letters, digits, spaces or '-'",
+          }),
+          file: assetPath("file", /\.woff2$/i, ".woff2"),
+          weight: z.number().int().min(100).max(900),
+          style: z.enum(["normal", "italic"]).optional(),
+          role: z.enum(["prose", "mono"]),
+        }),
+      )
+      .max(THEME_LIMITS.fonts)
+      .optional(),
+    logo: z
+      .strictObject({
+        mark: assetPath("mark", IMAGE_RE, ".svg or .png").optional(),
+        wordmark: shortText("wordmark").optional(),
+        favicon: assetPath("favicon", IMAGE_RE, ".svg or .png").optional(),
+        illustration: assetPath("illustration", IMAGE_RE, ".svg or .png").optional(),
+        appIcon: assetPath("appIcon", PNG_RE, ".png").optional(),
+        appIconMaskable: assetPath("appIconMaskable", PNG_RE, ".png").optional(),
+      })
+      .superRefine((l, ctx) => {
+        if (l.appIconMaskable !== undefined && l.appIcon === undefined) {
+          ctx.addIssue({
+            code: "custom",
+            path: ["appIconMaskable"],
+            message: "appIconMaskable requires appIcon",
+          });
+        }
+      })
+      .optional(),
+    decoration: z.enum(THEME_DECORATIONS).optional(),
+    avatars: z
+      .array(avatarPreset)
+      .max(THEME_LIMITS.avatars)
+      .superRefine((list, ctx) => {
+        const seen = new Set<string>();
+        list.forEach((a, i) => {
+          if (BUILTIN_AVATARS.has(a.id)) {
+            ctx.addIssue({
+              code: "custom",
+              path: [i, "id"],
+              message: `id must not be a built-in avatar preset id (${a.id})`,
+            });
+          } else if (seen.has(a.id)) {
+            ctx.addIssue({
+              code: "custom",
+              path: [i, "id"],
+              message: `duplicate avatar id ${a.id}`,
+            });
+          }
+          seen.add(a.id);
+        });
+      })
+      .optional(),
+    hideAvatarPresets: z
+      .array(z.enum(BUILTIN_AVATAR_PRESET_IDS))
+      .superRefine((list, ctx) => {
+        list.forEach((id, i) => {
+          if (list.indexOf(id) !== i) {
+            ctx.addIssue({ code: "custom", path: [i], message: `duplicate hidden preset ${id}` });
+          }
+        });
+      })
+      .optional(),
+  })
+  .superRefine((t, ctx) => {
+    const hidden = new Set(t.hideAvatarPresets ?? []);
+    if (hidden.size === BUILTIN_AVATAR_PRESET_IDS.length && (t.avatars?.length ?? 0) === 0) {
+      ctx.addIssue({
+        code: "custom",
+        path: ["hideAvatarPresets"],
+        message: "hiding every built-in avatar preset requires at least one entry in avatars",
+      });
+    }
+  });
 
 /**
  * The zod schema of a theme file's shape (strict objects). Token names and values are only
