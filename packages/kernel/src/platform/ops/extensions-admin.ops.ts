@@ -171,7 +171,7 @@ const pendingPlugin = (i: CatalogItemView) => ({
  * §14.5 item 1): the deployment's extensions (list, read), enable, disable and uninstall, and
  * storing an uploaded package (its review). Installing a package and approving permissions stay on
  * the web: a person reviews the permissions there. The deployment config is read (secrets as set or not) and written here, its
- * secrets entered by the person on the confirmation card (platform web parity spec §4).
+ * secrets entered by the person in a secure input request (platform web parity spec §4).
  */
 @Injectable()
 export class ExtensionsAdminOperations implements OnModuleInit {
@@ -595,7 +595,7 @@ export class ExtensionsAdminOperations implements OnModuleInit {
       defineOperation({
         id: "extensions.platform-set-config",
         description:
-          "Save fields of an extension's deployment config (super admin): values maps field dot paths to new values (null clears a non-secret field; a field left out keeps its value). Secret fields are never in values: list them in askPerson and the person types them on the confirmation card (on the web); list stored secrets to empty in clearSecrets. Required secrets without a stored value are asked even when not listed. Every replica applies the saved config without a restart. Read the fields first with extensions.platform-config.",
+          "Save fields of an extension's deployment config (super admin): values maps field dot paths to new values (null clears a non-secret field; a field left out keeps its value). Secret fields are never in values: list them in askPerson and the person types them in a secure input request (on the web); list stored secrets to empty in clearSecrets. Required secrets without a stored value are asked even when not listed. Every replica applies the saved config without a restart. Read the fields first with extensions.platform-config.",
         input: z
           .object({
             name: Name,
@@ -704,7 +704,7 @@ export class ExtensionsAdminOperations implements OnModuleInit {
       defineOperation({
         id: "extensions.platform-guides",
         description:
-          "Read an extension's platform setup guides (super admin): the guides it ships for its deployment config (for example a push provider's credentials), rendered with the steps and the checks as check rows (run them with extensions.platform-check). Secrets are never in a guide: the person types each one into the deployment config form in the admin console (Extensions → the extension), or on the confirmation card of extensions.platform-set-config. Empty when the extension ships none.",
+          "Read an extension's platform setup guides (super admin): the guides it ships for its deployment config (for example a push provider's credentials), rendered with the steps and the checks as check rows (run them with extensions.platform-check). Secrets are never in a guide: the person types each one into the deployment config form in the admin console (Extensions → the extension), or in the secure input request of extensions.platform-set-config. Empty when the extension ships none.",
         input: DeploymentGuidesPathParams.extend(DeploymentGuidesQuery.shape).strict(),
         example: { name: "push-apns" },
         authz: { superAdmin: true },

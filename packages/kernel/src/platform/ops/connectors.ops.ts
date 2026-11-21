@@ -56,7 +56,7 @@ const ClientParam = z
   .object({ clientId: z.string().min(1).max(500) })
   .strict()
   .describe(
-    "The OAuth client registered at the authorization server (oauth_client, or oauth_code with client manual): its id; the person enters the client secret on the confirmation card.",
+    "The OAuth client registered at the authorization server (oauth_client, or oauth_code with client manual): its id; the person enters the client secret in a secure input request.",
   );
 
 /** `connectors.create`: the create body without the credential, the client id and askPerson. */
@@ -172,8 +172,8 @@ const detail = (c: ConnectorDetail) => ({
  * Connector operations of the `Platform` tool (spec §7; platform web parity spec §7.2): reads,
  * the kinds and a preview, creating a connector (custom or from a platform template), editing it,
  * credentials, the setup guide acknowledgement, deleting and refreshing. Credentials are person
- * fields (ruling R3): the model names them in `askPerson`, the person types them on the
- * confirmation card, and the write gets them only through `personInputs`. Per-tool policies stay
+ * fields (ruling R3): the model names them in `askPerson`, the person types them in a secure
+ * input request, and the write gets them only through `personInputs`. Per-tool policies stay
  * on the web (ruling R4: the agent's own permissions).
  */
 @Injectable()
@@ -266,7 +266,7 @@ export class ConnectorsOperations implements OnModuleInit {
       defineOperation({
         id: "connectors.get",
         description:
-          "Read one connector: its tools with their state and default policy, whether your credential for it is connected, and for one made from a template its setup guide (version, hash for connectors.guide-ack, and whether the guide changed since it was set up). Credentials are never returned: the person enters them on the confirmation card of connectors.set-org-credential or connectors.set-my-credential.",
+          "Read one connector: its tools with their state and default policy, whether your credential for it is connected, and for one made from a template its setup guide (version, hash for connectors.guide-ack, and whether the guide changed since it was set up). Credentials are never returned: the person enters them in the secure input request of connectors.set-org-credential or connectors.set-my-credential.",
         input: z.object({ connectorId: ConnectorPathParams.shape.connectorId.max(100) }).strict(),
         example: { connectorId: "5d2e8f1a-0b3c-4d5e-8f9a-1b2c3d4e5f60" },
         authz: { orgAction: "connectors.use" },
@@ -489,7 +489,7 @@ export class ConnectorsOperations implements OnModuleInit {
       defineOperation<z.infer<typeof CreateInput>>({
         id: "connectors.create",
         description:
-          "Create a custom connector (org admins): name, connector kind (connectors.kinds), endpoint and auth method; it connects, lists the tools and stores them for review. The credential is never a param: the person enters it on the confirmation card (bearer and api_key: credential.token; basic: credential.username and credential.password; oauth_client, or oauth_code with client manual: client.clientSecret, with the client id in client). Required credential fields are asked even when not listed in askPerson. Custom header credentials are entered on the web. Preview first with connectors.preview.",
+          "Create a custom connector (org admins): name, connector kind (connectors.kinds), endpoint and auth method; it connects, lists the tools and stores them for review. The credential is never a param: the person enters it in a secure input request (bearer and api_key: credential.token; basic: credential.username and credential.password; oauth_client, or oauth_code with client manual: client.clientSecret, with the client id in client). Required credential fields are asked even when not listed in askPerson. Custom header credentials are entered on the web. Preview first with connectors.preview.",
         input: CreateInput,
         example: {
           name: "Docs",
@@ -622,7 +622,7 @@ export class ConnectorsOperations implements OnModuleInit {
       defineOperation({
         id: "connectors.set-org-credential",
         description:
-          "Replace the org's credential of an org-credential connector (org admins): the person enters it on the confirmation card (bearer and api_key: credential.token; basic: credential.username and credential.password). For an OAuth connector it replaces the OAuth client: pass its id in client, the person enters client.clientSecret. Every field of the credential is asked. Custom header credentials are entered by a person in the connector's settings in the web app.",
+          "Replace the org's credential of an org-credential connector (org admins): the person enters it in a secure input request (bearer and api_key: credential.token; basic: credential.username and credential.password). For an OAuth connector it replaces the OAuth client: pass its id in client, the person enters client.clientSecret. Every field of the credential is asked. Custom header credentials are entered by a person in the connector's settings in the web app.",
         input: z
           .object({
             connectorId: ConnectorId,
@@ -711,7 +711,7 @@ export class ConnectorsOperations implements OnModuleInit {
       defineOperation({
         id: "connectors.set-my-credential",
         description:
-          "Set your own credential for a connector that uses each member's own credential: you enter it on the confirmation card (bearer and api_key: credential.token; basic: credential.username and credential.password). An OAuth connector is connected with connectors.connect instead (it shows the person a Connect button). Every field of the credential is asked.",
+          "Set your own credential for a connector that uses each member's own credential: the person enters it in a secure input request (bearer and api_key: credential.token; basic: credential.username and credential.password). An OAuth connector is connected with connectors.connect instead (it shows the person a Connect button). Every field of the credential is asked.",
         input: z
           .object({ connectorId: ConnectorId, askPerson: personFieldParams.askPerson })
           .strict(),
@@ -881,7 +881,7 @@ export class ConnectorsOperations implements OnModuleInit {
       defineOperation<z.infer<typeof FromTemplateInput>>({
         id: "connectors.add-from-template",
         description:
-          "Create one more connector from a platform connector template that is on in the org (org admins; connectors.templates lists them): an optional name and slug (defaults: the first free ones), the endpoint fields the template lets the org edit, and for an OAuth template the client id in client. The credential is never a param: the person enters it on the confirmation card (credential.token; credential.username and credential.password; client.clientSecret). Required credential fields are asked even when not listed in askPerson.",
+          "Create one more connector from a platform connector template that is on in the org (org admins; connectors.templates lists them): an optional name and slug (defaults: the first free ones), the endpoint fields the template lets the org edit, and for an OAuth template the client id in client. The credential is never a param: the person enters it in a secure input request (credential.token; credential.username and credential.password; client.clientSecret). Required credential fields are asked even when not listed in askPerson.",
         input: FromTemplateInput,
         example: {
           templateId: "3f1c2a9e-5b7d-4e21-9c0a-1d2e3f4a5b6c",

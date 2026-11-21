@@ -13,12 +13,16 @@ import {
   validateToolDisplay,
 } from "@capybara-hq/plugin-sdk";
 import { Inject, Injectable, Optional } from "@nestjs/common";
+import { sql } from "kysely";
 import type { AgentDefinition } from "../agents/definition.js";
 import { backgroundMaxSeconds } from "../background/launch.js";
+import { ConversationApprovalProfile } from "../conversations/approval-profile.js";
 import { type AppendEvent, EventLog } from "../conversations/event-log.js";
 import {
   COMMAND_ASK_MAX_CHARS,
   COMMAND_ASK_TEXT_MAX_CHARS,
+  type ConversationEvent,
+  type EventPayload,
   type ReviewRecord,
   type ToolView,
   ToolViewSchema,
@@ -114,6 +118,7 @@ import { BUILTIN, SEND_MESSAGE, SUBAGENT_HANDBACK, TOOL_SEARCH } from "./builtin
 import { AGENT_TOOL, AgentToolInput } from "./builtins/agent.js";
 import { HandbackInput } from "./builtins/handback.js";
 import { generateImagePaths } from "./builtins/image/paths.js";
+import { admissionUnavailableText } from "./builtins/sandbox/common.js";
 import {
   DEVICE_CODE_PATTERN,
   deviceCodeIdemKey,
@@ -150,6 +155,7 @@ import {
   type ToolResultMedia,
 } from "./registry.js";
 import { runResourceTool } from "./resources.js";
+import { ToolAskReview, type ToolAskReviewer } from "./tool-review.js";
 import { validateInput } from "./validate.js";
 
 // ---- 模型可见文案（英文） ----
@@ -245,13 +251,27 @@ export const PERSON_FIELDS_ROLE_TEXT =
   "This write needs the person you work for to enter values; they lack the role. Ask an admin to do it on the web.";
 /**
  * A call only the person may confirm (`CallPolicy.personOnly`: its result is shown once to the
- * approver) in an unattended run: nobody is there to approve and read it.
+ * run's person) in an unattended run: nobody is there to read it.
  */
 export const PERSON_ONLY_UNATTENDED_TEXT =
-  "This write shows its result once, on the web, to the person who approves it; it cannot run unattended.";
+  "This write shows its result once, on the web, to the person you work for, and no one is there to read it; it cannot run unattended.";
 /** A call only the person may confirm whose ask would go to a role instead of the person. */
 export const PERSON_ONLY_ROLE_TEXT =
-  "This write shows its result once to the person you work for, who must approve it; they lack the role. Ask an admin to do it on the web.";
+  "This write shows its result once to the person you work for, so it runs only for them, and they lack the role. Ask an admin to do it on the web.";
+/**
+ * The review model declined, under Approve for me, a call whose approval would have gone to the
+ * person (profiles govern every approval, R3): nothing ran.
+ */
+export const toolReviewDeniedText = (reason: string): string =>
+  `The review model declined this call for the person (Approve for me): ${reason} Nothing ran. Tell the person what you wanted to do and why; they can do it themselves, or switch this conversation to Request approval and approve it when you call again.`;
+/** The reason recorded when Auto runs an approval addressed to the person (R2). */
+export const TOOL_AUTO_REASON = "Auto runs approvals addressed to the person without asking.";
+/** The person cancelled the secure input request of a call with person fields (R4): nothing ran. */
+export const secureInputCancelledText = (id: string): string =>
+  `The person cancelled secure input ${id}, so nothing ran. Never ask for the value in the conversation; call the operation again only if the person asks for it.`;
+/** A secure input request expired unanswered (R4): nothing ran. */
+export const secureInputExpiredText = (id: string, hours: number): string =>
+  `Secure input ${id} expired after ${hours} h without the person submitting it, so nothing ran. Call the operation again if it is still needed.`;
 /** 调用执行中 run 被中止 / 到达截止时间。 */
 export const RUN_STOPPED_DURING_TEXT =
   "The run was stopped while this tool call was running; its outcome is unknown. Verify before retrying.";
@@ -453,6 +473,8 @@ interface PipelineDeps {
     | "requestNetwork"
     | "commandForCall"
     | "requestCommand"
+    | "requestSecureInput"
+    | "secureInputForCall"
   >;
   /** 处理函数返回 `input_required` 时建输入请求；续跑时读该调用的各轮输入请求。 */
   readonly questions: Pick<QuestionsService, "ask" | "forCall">;
@@ -732,7 +754,59 @@ const textField = (input: unknown, field: string): string => {
 type Authorization =
   | { approvalId: string; approvedByAccountId: string | null; scope: ApprovalScope | null }
   | { grant: GrantKind }
-  | { policy: "allow" };
+  | { policy: "allow" }
+  /** The profile step decided the ask (R2): Auto or the review model; `decisionSeq` is its event. */
+  | {
+      decisionSource: AskDecisionSource;
+      profileRevision: number;
+      decisionSeq: number;
+    };
+
+/** Who decided an ask addressed to the person without asking them (profiles govern every approval). */
+type AskDecisionSource = "review-model" | "full-access";
+
+/** What the profile step found for one ask (R1-R3). */
+type ProfileStepOutcome =
+  /** Run under this automatic decision. */
+  | {
+      kind: "allow";
+      decision: {
+        source: AskDecisionSource;
+        revision: number;
+        seq: number;
+        fileSha256?: string;
+      };
+    }
+  /** The review model declined: the call ends with its reason. */
+  | { kind: "deny"; reason: string }
+  /** The person decides: the step did not apply, or (`unsure`) the review could not decide. */
+  | { kind: "ask"; unsure: boolean };
+
+/**
+ * The binding of an automatic decision (R2): the first 16 hex chars of the sha256 of the policy
+ * key, the definition and the raw input, as an approval binds them.
+ */
+const askBindingHash = (policyKey: string, specHash: string, rawInput: unknown): string =>
+  sha256Hex(canonicalJson([policyKey, specHash, rawInput ?? {}])).slice(0, 16);
+
+/** A recorded `tool_ask_decided` event. */
+type AskDecidedEvent = Extract<ConversationEvent, { type: "tool_ask_decided" }>;
+
+/** The profile step's outcome from a recorded automatic decision. */
+const askDecisionOf = (event: AskDecidedEvent): ProfileStepOutcome => {
+  const p = event.payload;
+  return p.outcome === "deny"
+    ? { kind: "deny", reason: p.reason }
+    : {
+        kind: "allow",
+        decision: {
+          source: p.decisionSource,
+          revision: p.profileRevision,
+          seq: event.seq,
+          ...(p.fileSha256 !== undefined && { fileSha256: p.fileSha256 }),
+        },
+      };
+};
 
 /** `tool.called` 审计的附加信息：传入即表示工具确实执行过（durationMs 为 null = 耗时未知）。 */
 interface CallAudit {
@@ -927,6 +1001,8 @@ export class ToolPipeline {
       | "requestNetwork"
       | "commandForCall"
       | "requestCommand"
+      | "requestSecureInput"
+      | "secureInputForCall"
     >,
     @Inject(QuestionsService) questions: Pick<QuestionsService, "ask" | "forCall">,
     @Inject(KernelConfigService) private readonly config: Pick<KernelConfigService, "get">,
@@ -967,6 +1043,17 @@ export class ToolPipeline {
     @Optional()
     @Inject(SandboxService)
     private readonly sandboxes?: Pick<SandboxService, "ensureRunning" | "hostRefusal">,
+    /**
+     * The profile of an ask addressed to the conversation's person (profiles govern every
+     * approval, R1); absent with {@link toolReview} (hand-built pipelines): every ask asks.
+     */
+    @Optional()
+    @Inject(ConversationApprovalProfile)
+    private readonly approvalProfile?: Pick<ConversationApprovalProfile, "resolve">,
+    /** The review model's judgment of an ask under Approve for me (R3); absent: every ask asks. */
+    @Optional()
+    @Inject(ToolAskReview)
+    private readonly toolReview?: ToolAskReviewer,
   ) {
     this.deps = {
       // the builtins that enter a device on the managed operation route once activated (common.ts
@@ -1288,12 +1375,13 @@ export class ToolPipeline {
       return fail(callPolicy.denyReason, outKey);
     }
     const policyKey = callPolicy?.key ?? tool.key;
-    // person fields (platform web parity spec §4.2, R6): the person types values on the card, so an
-    // unattended run (a trial run has its creator there) cannot make the call at all
+    // person fields (platform web parity spec §4.2; profiles govern every approval R4, R5): the
+    // person types the values in a secure input request, so an unattended run (a trial run has its
+    // creator there) cannot make the call at all
     const personFields = callPolicy?.personFields;
-    // a call whose result is shown once to its approver asks the person the same way
-    const personOnly = personFields !== undefined || callPolicy?.personOnly === true;
-    if (personOnly && unattendedRules(ctx.unattended)) {
+    // a call whose result is shown once to the run's person is refused there the same way
+    const personOnly = callPolicy?.personOnly === true;
+    if ((personFields !== undefined || personOnly) && unattendedRules(ctx.unattended)) {
       return fail(
         personFields !== undefined ? PERSON_FIELDS_UNATTENDED_TEXT : PERSON_ONLY_UNATTENDED_TEXT,
         outKey,
@@ -1324,10 +1412,11 @@ export class ToolPipeline {
     if (typeof decision === "object" && "unavailable" in decision) {
       return fail(unavailableText(tool.key, decision.unavailable), outKey);
     }
-    if (personOnly) {
-      // R6: always the person's own card, never a grant or an `allow` (the default policy already
-      // asks for them; this holds for any decision)
-      if (decision === "allow" || "grant" in decision) {
+    if (personOnly || personFields !== undefined) {
+      // R6: a call only the person may confirm is always their own ask, never a grant or an
+      // `allow` (the default policy already asks for them; this holds for any decision). Person
+      // fields no longer force the consent (R5): it follows the call's policy, grants and profile
+      if (personOnly && (decision === "allow" || "grant" in decision)) {
         decision = {
           ask: {
             toolKey: policyKey,
@@ -1339,8 +1428,9 @@ export class ToolPipeline {
           },
         };
       }
-      // R5: only the person the run works for types the values; a role escalation cannot ask them
-      if ("ask" in decision && decision.ask.requestedFor === null) {
+      // R5: only the person the run works for types the values or reads the result; a role
+      // escalation cannot ask them
+      if (typeof decision === "object" && "ask" in decision && decision.ask.requestedFor === null) {
         return fail(
           personFields !== undefined ? PERSON_FIELDS_ROLE_TEXT : PERSON_ONLY_ROLE_TEXT,
           outKey,
@@ -1358,9 +1448,25 @@ export class ToolPipeline {
       approval.specHash === tool.specHash &&
       canonicalJson(approval.input) === canonicalJson(call.input ?? {});
     const stale = approval?.status === "approved" && !approvedHere;
+    // the profile step (profiles govern every approval, R1-R3): an ask addressed to the person
+    // with no approval governing the call yet is decided by the conversation's profile
+    let auto: Extract<ProfileStepOutcome, { kind: "allow" }>["decision"] | undefined;
+    let reviewUnsure = false;
     if ((!approval || stale) && typeof decision === "object" && "ask" in decision) {
+      const step = await this.profileStep(ctx, call, tool, input, decision.ask, callPolicy);
+      if (step.kind === "deny") return fail(toolReviewDeniedText(step.reason), outKey);
+      if (step.kind === "allow") auto = step.decision;
+      else reviewUnsure = step.unsure;
+    }
+    if (
+      (!approval || stale) &&
+      auto === undefined &&
+      typeof decision === "object" &&
+      "ask" in decision
+    ) {
       approval = await this.deps.approvals.request({
-        attempt: (approval?.attempt ?? 0) + 1,
+        // after every earlier request of the call, whatever its kind (attempts share one key)
+        attempt: (await this.lastAttempt(ctx.runId, call.id)) + 1,
         orgId: ctx.orgId,
         conversationId: ctx.conversationId,
         runId: ctx.runId,
@@ -1374,18 +1480,12 @@ export class ToolPipeline {
         approverRole: decision.ask.approverRole,
         policy: decision.ask.policy,
         ...(callPolicy?.summary !== undefined && { summary: callPolicy.summary }),
-        ...((personFields !== undefined || (callPolicy !== null && !callPolicy.remember)) && {
-          scopes: ["once"],
-        }),
-        // the specs of the asked fields, never a value (the card draws its inputs from them), and
+        ...(callPolicy !== null && !callPolicy.remember && { scopes: ["once"] }),
         // the referenced file the approval binds by its sha256
-        ...((personFields !== undefined || callPolicy?.file !== undefined) && {
+        ...((callPolicy?.file !== undefined || reviewUnsure) && {
           detail: {
-            ...(personFields !== undefined && {
-              personFields: personFields.fields,
-              target: personFields.target,
-            }),
             ...(callPolicy?.file !== undefined && { file: callPolicy.file }),
+            ...(reviewUnsure && { reviewUnsure: true as const }),
           },
         }),
       });
@@ -1398,9 +1498,22 @@ export class ToolPipeline {
     let authorization: Authorization =
       approval?.status === "approved" && approvedHere
         ? approvalAuthorization(approval)
-        : typeof decision === "object" && "grant" in decision
-          ? { grant: decision.grant }
-          : { policy: "allow" };
+        : auto !== undefined
+          ? { decisionSource: auto.source, profileRevision: auto.revision, decisionSeq: auto.seq }
+          : typeof decision === "object" && "grant" in decision
+            ? { grant: decision.grant }
+            : { policy: "allow" };
+
+    // the secure input (profiles govern every approval, R4): once the call's consent is settled
+    // (approved here, a grant, an allow or the profile's decision), the person enters the call's
+    // secret fields under every profile, before the command review
+    let secureInputId: string | undefined;
+    if (personFields !== undefined) {
+      const secured = await this.secureInput(ctx, call, tool, policyKey, personFields);
+      if (secured.kind === "wait") return secured.wait;
+      if (secured.kind === "refused") return fail(secured.text, outKey);
+      secureInputId = secured.id;
+    }
 
     // Auto mode spec §5.1: the command review, after argument validation and the tool policy (and
     // its approval), before the plugin hooks and `tool_call_started`. A deny ends the call here; an
@@ -1608,6 +1721,15 @@ export class ToolPipeline {
       reviewedRoots,
       // the approval the call runs under (a Platform write reads the person's values by it)
       approval?.status === "approved" && approvedHere ? approval.id : undefined,
+      // or the automatic decision and the file bytes it was bound to (R7)
+      auto === undefined
+        ? undefined
+        : {
+            source: auto.source,
+            ...(auto.fileSha256 !== undefined && { fileSha256: auto.fileSha256 }),
+          },
+      // and the submitted secure input holding the person's values
+      secureInputId,
     );
     const durationMs = Date.now() - t0;
     await this.deps.hooks?.afterExecute?.(ctx.runId, call.id);
@@ -1810,6 +1932,160 @@ export class ToolPipeline {
       );
     }
     return undefined;
+  }
+
+  /**
+   * The profile step (profiles govern every approval, R1-R3) of an ask `decide` returned for a call
+   * no approval governs yet. It applies only to an ask addressed to the person (no role, the root
+   * conversation's own owner), in an attended interactive chat, and for a tool that does not
+   * itself require the person's interaction (D3); a call's secret fields are asked afterwards in a
+   * secure input request whatever it decides (R4). Request approval asks; Auto allows; Approve for
+   * me asks the review model, whose unsure answer asks the person. An `allow` or `deny` is recorded
+   * once (`tool_ask_decided` and its audit row); a resumed call reads that record before the profile
+   * and never calls the review model again. Anything that cannot be read asks the person (fail closed).
+   */
+  private async profileStep(
+    ctx: ToolStepContext,
+    call: ToolCall,
+    tool: ResolvedTool,
+    input: unknown,
+    ask: AskRequest,
+    callPolicy: CallPolicy | null,
+  ): Promise<ProfileStepOutcome> {
+    const asks: ProfileStepOutcome = { kind: "ask", unsure: false };
+    const profiles = this.approvalProfile;
+    const reviewer = this.toolReview;
+    if (profiles === undefined || reviewer === undefined) return asks;
+    if (ask.approverRole !== null || ask.requestedFor === null) return asks;
+    if (ctx.unattended != null) return asks;
+    if (tool.spec.annotations?.requiresUserInteraction === true) return asks;
+    // a decision already recorded for this call governs it whatever the profile reads now (R2: a
+    // resumed call reuses it; a profile change never revokes started work)
+    const bindingHash = askBindingHash(ask.toolKey, ask.specHash, call.input);
+    const idemKey = `tool_ask_decided:${ctx.runId}:${call.id}:${bindingHash}`;
+    const recorded = await this.deps.eventLog.findByIdem(ctx.conversationId, idemKey);
+    if (recorded?.type === "tool_ask_decided") return askDecisionOf(recorded);
+    const rootConversationId = ctx.parent?.rootConversationId ?? ctx.conversationId;
+    let resolved: Awaited<ReturnType<ConversationApprovalProfile["resolve"]>>;
+    try {
+      resolved = await profiles.resolve({
+        orgId: ctx.orgId,
+        rootConversationId,
+        requestedFor: ask.requestedFor,
+      });
+    } catch (err) {
+      this.deps.log.warn("cannot read the conversation's permission profile; asking the person", {
+        conversationId: ctx.conversationId,
+        callId: call.id,
+        err,
+      });
+      return asks;
+    }
+    if (resolved === null || resolved.profile === "request-approval") return asks;
+    let decision: { outcome: "allow" | "deny"; reason: string; source: AskDecisionSource };
+    if (resolved.profile === "full-access") {
+      decision = { outcome: "allow", reason: TOOL_AUTO_REASON, source: "full-access" };
+    } else {
+      const parent = ctx.parent;
+      const verdict = await reviewer.review({
+        orgId: ctx.orgId,
+        rootConversationId,
+        conversationId: ctx.conversationId,
+        runId: ctx.runId,
+        step: ctx.step,
+        callId: call.id,
+        accountId: ctx.accountId,
+        signal: ctx.signal,
+        toolKey: ask.toolKey,
+        title: tool.spec.title ?? null,
+        summary: callPolicy?.summary ?? null,
+        input,
+        inputSchema: tool.spec.inputSchema,
+        // a sub-agent's review counts on its parent run, as the command review's does
+        ...(parent !== undefined && {
+          parentRunId: parent.runId,
+          ...(parent.budgetRunId !== undefined && { budgetRunId: parent.budgetRunId }),
+        }),
+        hookFacts: {
+          accountId: ctx.accountId,
+          agentId: ctx.agentId,
+          agentVersion: ctx.agentVersion,
+          conversationKind: ctx.conversationKind,
+          parent:
+            parent === undefined
+              ? undefined
+              : {
+                  conversationId: parent.conversationId,
+                  runId: parent.runId,
+                  callId: parent.callId,
+                },
+        },
+      });
+      if (verdict.decision === "ask") return { kind: "ask", unsure: true };
+      decision = { outcome: verdict.decision, reason: verdict.reason, source: "review-model" };
+    }
+    const fileSha256 = callPolicy?.file?.sha256;
+    const event = await this.recordAskDecision(ctx, idemKey, {
+      step: ctx.step,
+      callId: call.id,
+      toolKey: ask.toolKey,
+      specHash: ask.specHash,
+      bindingHash,
+      outcome: decision.outcome,
+      decisionSource: decision.source,
+      reason: decision.reason,
+      profileRevision: resolved.revision,
+      ...(fileSha256 !== undefined && { fileSha256 }),
+    });
+    return askDecisionOf(event);
+  }
+
+  /** Records an automatic decision once (R2) and announces it after the commit. */
+  private async recordAskDecision(
+    ctx: ToolStepContext,
+    idemKey: string,
+    payload: EventPayload<"tool_ask_decided">,
+  ): Promise<AskDecidedEvent> {
+    const { event, fresh } = await this.recordAskDecisionIn(ctx, idemKey, payload);
+    if (fresh) await this.deps.eventLog.notify(ctx.conversationId, event.seq);
+    return event;
+  }
+
+  /**
+   * The `tool_ask_decided` event and, when this call wrote it, its audit row
+   * `tool.ask_auto_decided`, in one transaction: a retry or another replica returns the recorded
+   * event and audits nothing (every automatic decision is audited exactly once).
+   */
+  @Transactional()
+  private async recordAskDecisionIn(
+    ctx: ToolStepContext,
+    idemKey: string,
+    payload: EventPayload<"tool_ask_decided">,
+  ): Promise<{ event: AskDecidedEvent; fresh: boolean }> {
+    const report = await this.deps.eventLog.appendInReport(ctx.conversationId, [
+      { type: "tool_ask_decided", runId: ctx.runId, idemKey, payload },
+    ]);
+    const event = report.events[0];
+    if (event?.type !== "tool_ask_decided") throw new Error("The ask decision was not recorded");
+    const fresh = report.fresh[0] === true;
+    if (fresh) {
+      await audit(this.deps.db, {
+        actorAccountId: ctx.accountId,
+        orgId: ctx.orgId,
+        action: "tool.ask_auto_decided",
+        target: ctx.conversationId,
+        detail: {
+          callId: payload.callId,
+          runId: ctx.runId,
+          toolKey: payload.toolKey,
+          outcome: payload.outcome,
+          decisionSource: payload.decisionSource,
+          profileRevision: payload.profileRevision,
+          reason: payload.reason,
+        },
+      });
+    }
+    return { event, fresh };
   }
 
   /**
@@ -2112,8 +2388,13 @@ export class ToolPipeline {
         { backgroundMaxSeconds: backgroundMaxSeconds(this.config.get()) },
       );
       if (unverified.kind === "in-scope") return null;
+      // a device that cannot run scoped work at all says why (R9); one not checked yet says that
       const content =
-        unverified.kind === "proposal" ? PERMISSION_SUPPORT_UNVERIFIED_TEXT : unverified.message;
+        unverified.kind !== "proposal"
+          ? unverified.message
+          : facts.availability.state === "unsupported"
+            ? admissionUnavailableText(facts.availability.cause ?? { kind: "runtime" })
+            : PERMISSION_SUPPORT_UNVERIFIED_TEXT;
       return { kind: "result", content, review: denyRecord("rule", null, content) };
     }
     if (tool.key === "Bash" && textField(input, "command").length > COMMAND_ASK_MAX_CHARS)
@@ -2670,24 +2951,99 @@ export class ToolPipeline {
   }
 
   /**
-   * A decided approval other than approved → the model's text; still pending → null (wait). A
-   * person field refused on the card as leaked is named, so the agent has the key rotated.
+   * The secure input of a call with person fields (R4): the latest request of the call, bound like
+   * an approval to the definition and the raw input it was made for. None, or a submitted one made
+   * for another definition or input, asks again; a pending one waits. A cancel, an expiry or a
+   * stopped run ends the call with nothing run; a submitted one returns its id, which the tool
+   * reads the sealed values by. The request goes to the run's person, who alone may submit it.
+   */
+  private async secureInput(
+    ctx: ToolStepContext,
+    call: ToolCall,
+    tool: ResolvedTool,
+    policyKey: string,
+    personFields: NonNullable<CallPolicy["personFields"]>,
+  ): Promise<
+    | { kind: "wait"; wait: WaitingFor }
+    | { kind: "refused"; text: string }
+    | { kind: "submitted"; id: string }
+  > {
+    let si = await this.deps.approvals.secureInputForCall(ctx.runId, call.id);
+    const current =
+      si !== null &&
+      si.specHash === tool.specHash &&
+      canonicalJson(si.input) === canonicalJson(call.input ?? {});
+    // only a submitted request is re-asked when stale: a pending one keeps waiting (the person
+    // still sees and may submit it; the stale check then asks again), and a cancelled or expired
+    // one ends the call, as a decided approval keeps governing its call
+    if (si === null || (si.status === "approved" && !current)) {
+      si = await this.deps.approvals.requestSecureInput({
+        attempt: (await this.lastAttempt(ctx.runId, call.id)) + 1,
+        orgId: ctx.orgId,
+        conversationId: ctx.conversationId,
+        runId: ctx.runId,
+        step: ctx.step,
+        callId: call.id,
+        toolKey: policyKey,
+        specHash: tool.specHash,
+        connectorId: tool.source.kind === "connector" ? tool.source.connectorId : null,
+        input: call.input,
+        requestedFor: ctx.accountId,
+        target: personFields.target,
+        personFields: personFields.fields,
+      });
+    }
+    switch (si.status) {
+      case "pending":
+        return { kind: "wait", wait: approvalWait(si) };
+      case "approved":
+        return { kind: "submitted", id: si.id };
+      case "denied":
+        return {
+          kind: "refused",
+          text: withLeakedOnCard(secureInputCancelledText(si.id), si.leakedFields),
+        };
+      case "expired":
+        // the request's own wait (creation to expiry), not the current config
+        return {
+          kind: "refused",
+          text: withLeakedOnCard(secureInputExpiredText(si.id, approvalHours(si)), si.leakedFields),
+        };
+      default:
+        return {
+          kind: "refused",
+          text: withLeakedOnCard(APPROVAL_CANCELLED_TEXT, si.leakedFields),
+        };
+    }
+  }
+
+  /** The highest attempt of any approval of the call, of every kind (0: none yet). */
+  private async lastAttempt(runId: string, callId: string): Promise<number> {
+    const row = await this.deps.db
+      .selectFrom("approvals")
+      .select(sql<number | null>`max(attempt)`.as("attempt"))
+      .where("run_id", "=", runId)
+      .where("call_id", "=", callId)
+      .executeTakeFirst();
+    return Number(row?.attempt ?? 0);
+  }
+
+  /**
+   * A decided tool approval other than approved → the model's text; still pending → null (wait).
+   * A tool approval takes no values (a secure input does), so it never names leaked fields.
    */
   private refusalText(a: ApprovalRecord): string | null {
-    const text = ((): string | null => {
-      switch (a.status) {
-        case "denied":
-          return approvalDeniedText(a.denyReason);
-        case "expired":
-          // Use the approval's own wait (creation to expiry), not the current config: it can be hot-reloaded
-          return approvalExpiredText(approvalHours(a));
-        case "cancelled":
-          return APPROVAL_CANCELLED_TEXT;
-        default:
-          return null;
-      }
-    })();
-    return text === null ? null : withLeakedOnCard(text, a.leakedFields);
+    switch (a.status) {
+      case "denied":
+        return approvalDeniedText(a.denyReason);
+      case "expired":
+        // Use the approval's own wait (creation to expiry), not the current config: it can be hot-reloaded
+        return approvalExpiredText(approvalHours(a));
+      case "cancelled":
+        return APPROVAL_CANCELLED_TEXT;
+      default:
+        return null;
+    }
   }
 
   /**
@@ -2749,6 +3105,10 @@ export class ToolPipeline {
     },
     /** The approved approval of this call, matching its definition and input (builtins only). */
     approvalId?: string,
+    /** The automatic decision the call runs under instead of an approval (builtins only, R2). */
+    decision?: BuiltinCallContext["decision"],
+    /** The submitted secure input request of this call (builtins only, R4). */
+    secureInputId?: string,
   ): Promise<ExecOutcome> {
     const reviewedWorkingRoot = reviewed?.workingRoot;
     const reviewedAgainstRoot = reviewed?.against;
@@ -2777,6 +3137,8 @@ export class ToolPipeline {
       ...(tool.source.kind === "builtin" &&
         ctx.deadline !== undefined && { runDeadline: ctx.deadline }),
       ...(tool.source.kind === "builtin" && approvalId !== undefined && { approvalId }),
+      ...(tool.source.kind === "builtin" && decision !== undefined && { decision }),
+      ...(tool.source.kind === "builtin" && secureInputId !== undefined && { secureInputId }),
       // a reviewed call runs in the working root its review judged (project root spec §4.3)
       ...(tool.source.kind === "builtin" &&
         reviewedWorkingRoot !== undefined && { reviewedWorkingRoot }),

@@ -87,7 +87,7 @@ export class BuiltinTools {
     @Inject(PlatformOperations) platformOps: PlatformOperations,
     @Inject(PlatformActor) platformActor: PlatformActor,
     @Inject(AgentDocs) agentDocs: AgentDocs,
-    /** The person's sealed approval card values a Platform write with person fields reads. */
+    /** The person's sealed secure input values a Platform write with person fields reads. */
     @Inject(SealedInputs) sealedInputs: SealedInputs,
     /** A Platform write's file reference: a conversation file (spec §5). */
     @Inject(FileRefs) fileRefs: FileRefs,
@@ -200,29 +200,36 @@ export class BuiltinTools {
         setting: async (orgId) => (await readOrgSettings(db.db, orgId)).platformTool,
         log,
         sealed: sealedInputs,
-        approvalPersonPaths: async (approvalId, call) => {
-          // only this call's own approved approval in this org (anything else: none, fails closed)
+        secureInputPaths: async (secureInputId, call) => {
+          // only this call's own submitted secure input in this org (anything else: none, fails
+          // closed)
           const row = await db.db
             .selectFrom("approvals")
             .select(["kind", "detail"])
-            .where("id", "=", approvalId)
+            .where("id", "=", secureInputId)
             .where("org_id", "=", call.orgId)
             .where("run_id", "=", call.runId)
             .where("call_id", "=", call.callId)
+            .where("kind", "=", "secure_input")
             .where("status", "=", "approved")
             .executeTakeFirst();
           const fields = (row?.detail as { personFields?: unknown } | null | undefined)
             ?.personFields;
-          if (row?.kind !== "tool" || !Array.isArray(fields) || fields.length === 0) return null;
+          if (row?.kind !== "secure_input" || !Array.isArray(fields) || fields.length === 0) {
+            return null;
+          }
           return fields.map((f) => String((f as { path?: unknown }).path));
         },
         files: fileRefs,
+        // a call no approval governs binds its file to the automatic decision instead (R7)
         approvalFileSha256: async (approvalId, call) => {
-          // only this call's own approved approval in this org (anything else: none, fails closed)
+          // only this call's own approved tool approval in this org (anything else: none, fails
+          // closed)
           const row = await db.db
             .selectFrom("approvals")
             .select(["kind", "detail"])
             .where("id", "=", approvalId)
+            .where("kind", "=", "tool")
             .where("org_id", "=", call.orgId)
             .where("run_id", "=", call.runId)
             .where("call_id", "=", call.callId)

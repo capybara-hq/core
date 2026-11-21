@@ -1,5 +1,6 @@
 import { Controller, HttpCode, Inject, Post } from "@nestjs/common";
-import { z } from "zod";
+import type { z } from "zod";
+import { RevealCallParams } from "../identity/initial-passwords.controller.js";
 import {
   CurrentPrincipal,
   type Principal,
@@ -11,15 +12,16 @@ import { ZParam } from "../infra/validation/zod-params.js";
 import { CurrentOrg, OrgAction, type OrgContext } from "../orgs/org.guard.js";
 import { SealedReveals } from "./sealed-reveals.js";
 
-const ApprovalParams = z.object({ approvalId: z.string().min(1).max(100) });
-class ApprovalParamsDto extends createZodDto(ApprovalParams, "InvitationLinkParams") {}
+class RevealCallParamsDto extends createZodDto(RevealCallParams, "InvitationLinkParams") {}
 
 /**
  * The link of an invitation an org admin's agent created (platform web parity spec §7.2): shown
- * once, on the web, to the person who approved the `orgs.invite` call. A POST because reading
- * consumes it.
+ * once, on the web, to the person the `orgs.invite` call was made for, keyed by the call (plan
+ * ruling R6). A POST because reading consumes it.
  */
-@Controller("api/v1/orgs/:orgId/approvals/:approvalId/invitation-link")
+@Controller(
+  "api/v1/orgs/:orgId/conversations/:conversationId/runs/:runId/calls/:callId/invitation-link",
+)
 export class SealedRevealsController {
   constructor(@Inject(SealedReveals) private readonly reveals: SealedReveals) {}
 
@@ -30,9 +32,10 @@ export class SealedRevealsController {
   async reveal(
     @CurrentPrincipal() principal: Principal,
     @CurrentOrg() org: OrgContext,
-    @ZParam(ApprovalParamsDto) params: z.infer<typeof ApprovalParams>,
+    @ZParam(RevealCallParamsDto) params: z.infer<typeof RevealCallParams>,
   ): Promise<{ url: string }> {
     const p = requireUser(principal);
-    return this.reveals.reveal(org.orgId, params.approvalId, p.account.id);
+    const { conversationId, runId, callId } = params;
+    return this.reveals.reveal(org.orgId, { conversationId, runId, callId }, p.account.id);
   }
 }

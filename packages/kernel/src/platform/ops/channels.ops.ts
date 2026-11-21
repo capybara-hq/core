@@ -51,7 +51,7 @@ const detail = (c: ChannelConnectionView) => ({
  * Channel connection operations of the `Platform` tool (spec §14): read a connection and change
  * its binding (which agent answers, what happens to unbound people, on / off, inbound mode),
  * or remove it. Creating a connection takes the channel's secrets as person fields (the person types
- * them on the confirmation card; platform web parity spec §4, §7.2); changing the credentials or
+ * them in a secure input request; platform web parity spec §4, §7.2); changing the credentials or
  * the config of a connection stays on the web.
  */
 @Injectable()
@@ -152,7 +152,7 @@ export class ChannelsOperations implements OnModuleInit {
       defineOperation({
         id: "channels.create",
         description:
-          "Create a channel connection (IM bot) in the org (org admins): plugin, name, the agent that answers (agentId) and values, the non-secret connection config (read the fields with channels.schema). Secret fields (app secrets, tokens) are never in values: list them in askPerson and the person types them on the confirmation card (on the web); required secrets are asked even when not listed. The plugin verifies the credentials before anything is saved. Turn on webhook inbound with inboundMode webhook (only where supported); a setup guide, if any, is in channels.schema.",
+          "Create a channel connection (IM bot) in the org (org admins): plugin, name, the agent that answers (agentId) and values, the non-secret connection config (read the fields with channels.schema). Secret fields (app secrets, tokens) are never in values: list them in askPerson and the person types them in a secure input request (on the web); required secrets are asked even when not listed. The plugin verifies the credentials before anything is saved. Turn on webhook inbound with inboundMode webhook (only where supported); a setup guide, if any, is in channels.schema.",
         input: z
           .object({
             plugin: ChannelCreateSchema.shape.plugin,

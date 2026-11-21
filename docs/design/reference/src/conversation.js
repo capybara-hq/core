@@ -127,6 +127,7 @@ window.__CB_EXTRA__ = ({ F, esc, icon, state, stamp, sidebar }) => {
     const words = [
       ...(t.outsideSandbox ? ["在沙箱外运行"] : []),
       ...(t.autoGranted ? [`已自动批准：${CROSSING[t.autoGranted]}`] : []),
+      ...(t.approvedBy ? [t.approvedBy === "auto" ? "已自动批准" : "审查模型已批准"] : []),
     ];
     return words.length ? `<span class="r-tmeta r-muted">${words.map((w) => ` · ${esc(w)}`).join("")}</span>` : "";
   }
@@ -367,6 +368,27 @@ window.__CB_EXTRA__ = ({ F, esc, icon, state, stamp, sidebar }) => {
     return `<div class="r-card" data-pending role="group" aria-label="智能体想运行这条命令，允许吗？">${head}${reason}${lead}${facts}${root}${cmd}${actions}${hint}${notes}</div>`;
   }
 
+  // The secure input request (§6.16.11): the head names the target, the note, the secret fields,
+  // Submit (primary, disabled while a field is empty) and Cancel; decided, one line.
+  function secureInput(o) {
+    const S = H.secureInput;
+    if (o.state === "secure-input-submitted")
+      return `<div class="r-tline">${icon("check", 12)}<span class="r-tlabel">已提交 <span class="r-faint">${esc(S.target)} · ${esc(S.at)}</span></span></div>`;
+    if (o.state === "secure-input-cancelled")
+      return `<div class="r-tline">${icon("x", 12)}<span class="r-tlabel">已取消 <span class="r-faint">${esc(S.target)} · ${esc(S.at)}</span></span></div>`;
+    const title = `输入密钥：${S.target}`;
+    const head = `<div class="r-card-head"><span class="r-dot" aria-hidden="true"></span><strong class="r-strong">${esc(title)}</strong></div>`;
+    const fields = S.fields
+      .map(
+        (f) =>
+          `<div class="r-person-field" data-part="person-field"><label class="r-person-field-label r-small" for="si-${esc(f.path)}" data-part="person-field-label">${esc(f.label)}</label>${f.description ? `<span class="r-muted r-small" data-part="person-field-description">${esc(f.description)}</span>` : ""}<input class="r-input" id="si-${esc(f.path)}" type="password" autocomplete="new-password" aria-label="${esc(f.label)}"></div>`,
+      )
+      .join("");
+    const body = `<div class="r-person" data-part="person-fields"><span class="r-muted r-small" data-part="person-note">值直接保存，智能体看不到。</span>${fields}</div>`;
+    const actions = `<div class="r-card-actions"><button class="r-btn" data-variant="primary" disabled>提交</button>${btn("取消", "default")}</div>`;
+    return `<div class="r-card" data-pending data-secure-input role="group" aria-label="${esc(title)}">${head}${body}${actions}</div>`;
+  }
+
   function approval(o) {
     if (String(o.state).startsWith("network")) return networkApproval(o);
     if (String(o.state).startsWith("command")) return commandApproval(o);
@@ -376,8 +398,7 @@ window.__CB_EXTRA__ = ({ F, esc, icon, state, stamp, sidebar }) => {
       return `<div class="r-tline">${icon("check", 12)}<span class="r-tlabel">${esc(W.who)} 批准了 ${esc(W.approved.tool)} <span class="r-faint">${esc(W.approved.toolKey)} · ${esc(W.approved.scope)} · ${esc(W.approved.at)}</span></span></div>`;
     if (o.state === "denied")
       return `<div class="r-tline">${icon("x", 12)}<span class="r-tlabel">${esc(W.who)} 拒绝了 ${esc(W.denied.tool)} <span class="r-faint">${esc(W.denied.toolKey)}</span><span class="r-muted"> · 「${esc(W.denied.reason)}」</span><span class="r-faint"> · ${esc(W.denied.at)}</span></span></div>`;
-    if (o.state === "person")
-      return `<div class="r-tline">${icon("check", 12)}<span class="r-tlabel">${personName(F.PERSON_FIXTURE.name)} 批准了 ${esc(W.approved.tool)} <span class="r-faint">${esc(W.approved.toolKey)} · ${esc(W.approved.scope)} · ${esc(W.approved.at)}</span></span></div>`;
+    if (String(o.state).startsWith("secure-input")) return secureInput(o);
     const scopes = o.state === "pending-once" ? ["once"] : A.scopes;
     const head = `<div class="r-card-head"><span class="r-dot" aria-hidden="true"></span><strong>需要你批准</strong><span class="r-muted r-small">${esc(A.tool)}</span>${toolKey(A.toolKey)}</div>`;
     const summary =
@@ -582,12 +603,14 @@ window.__CB_EXTRA__ = ({ F, esc, icon, state, stamp, sidebar }) => {
       })
       .join("");
     const note = locked ? `<div class="r-menu-note" data-part="menu-note">${esc(M.locked)}</div>` : "";
+    // the notice (§6.16.3a): one muted line right after the head, before the profiles
+    const notice = o.state === "notice" ? `<div class="r-menu-note" data-part="menu-note">${esc(M.notice)}</div>` : "";
     const action = locked ? "" : `<div class="r-menu-sep"></div><div class="r-menu-item" data-part="menu-item" role="menuitem">${icon(PM.action.icon, 14)}<span>${esc(PM.action.label)}</span></div>`;
     const effort = o.state === "no-effort"
       ? ""
       : `<div class="r-menu-label r-menu-effort" data-part="menu-label">${esc(M.effortLabel)}</div><div class="r-menu-segments" data-part="menu-segments" role="group" aria-label="${esc(M.effortLabel)}">${C.models[0].models[0].efforts.map((e) => `<div class="r-menu-segment" data-part="menu-segment" role="menuitemradio" aria-checked="${e === C.selected.effort}">${esc(C.effortLabels[e])}</div>`).join("")}</div>`;
     const bar = composer({ state: o.state === "no-effort" ? "no-effort" : "idle", mode: locked ? "locked" : "open" });
-    return `<div class="r-menu-stage" data-tall>${bar}<div class="r-menu r-anchored-menu r-anchored-end" data-part="menu" role="menu">${head}${rows}${action}${note}${effort}</div></div>`;
+    return `<div class="r-menu-stage" data-tall>${bar}<div class="r-menu r-anchored-menu r-anchored-end" data-part="menu" role="menu">${head}${notice}${rows}${action}${note}${effort}</div></div>`;
   }
 
   /**
@@ -1197,6 +1220,8 @@ window.__CB_EXTRA__ = ({ F, esc, icon, state, stamp, sidebar }) => {
         "hook-denied": [T.hookDenied[0], { open: true }],
         waiting: [T.waiting[0], {}],
         "auto-granted": [T.autoGranted[0], {}],
+        "auto-approved": [T.autoApproved[0], {}],
+        "review-approved": [T.reviewApproved[0], {}],
       }[o.state];
       return col(`<div class="r-tbox">${toolRow(pick[0], pick[1])}</div>`);
     },

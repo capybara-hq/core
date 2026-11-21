@@ -33,6 +33,7 @@ export const AUDIT_ACTION_KEYS: Readonly<Record<string, string>> = {
   "catalog.upload_withdrawn": "catalogUploadWithdrawn",
   "catalog.ownership_transferred": "catalogOwnershipTransferred",
   "permission.crossing_auto_granted": "permissionCrossingAutoGranted",
+  "tool.ask_auto_decided": "toolAskAutoDecided",
   "plugin.platform_updated": "pluginPlatformUpdated",
   "plugin.platform_update_failed": "pluginPlatformUpdateFailed",
   "component.scope_changed": "componentScopeChanged",

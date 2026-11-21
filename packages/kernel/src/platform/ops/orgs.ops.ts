@@ -60,7 +60,7 @@ const ROLE_WORDS: Record<OrgRole, { zh: string; en: string }> = {
 };
 
 /** What `orgs.invite` returns in place of the token (model-visible English). */
-export const INVITATION_LINK_NOTE = `The invitation link is shown once, on the web, to the person who approved this call (on the approval card); they share it with the invitee. It is not shown to you. If it is not read within ${SEALED_REVEAL_TTL_MS / 3_600_000} hours it is lost: revoke the invitation (orgs.revoke-invitation) and invite again.`;
+export const INVITATION_LINK_NOTE = `The invitation link is shown once, on the web, to the person this call was made for, under the tool call in this conversation; they share it with the invitee. It is never shown to you. If it is not read within ${SEALED_REVEAL_TTL_MS / 3_600_000} hours it is lost: revoke the invitation (orgs.revoke-invitation) and invite again.`;
 
 /**
  * Why a member operation through the tool is never offered (spec §7.2, maintainer decision Q2):
@@ -601,14 +601,14 @@ export class OrgsOperations implements OnModuleInit {
       defineOperation({
         id: "orgs.invite",
         description:
-          "Invite a person into this conversation's org (org admins) with a role: admin, member or guest (never owner; never above your own role). expiresInHours is 1 to 720 (default 168). You never see the link: it is shown once, on the web, to the person who approves this call (on the approval card), who shares it with the invitee. If it is not read within 24 hours it is lost: revoke the invitation (orgs.revoke-invitation) and invite again.",
+          "Invite a person into this conversation's org (org admins) with a role: admin, member or guest (never owner; never above your own role). expiresInHours is 1 to 720 (default 168). You never see the link: it is shown once, on the web, to the person the call is made for (under the tool call in the conversation), who shares it with the invitee. If it is not read within 24 hours it is lost: revoke the invitation (orgs.revoke-invitation) and invite again.",
         input: InvitationCreateBody.strict(),
         example: { role: "member" },
         authz: { orgAction: "org.invitations.manage" },
         mirrors: ["POST /api/v1/orgs/:orgId/invitations"],
         confirm: "org",
         rememberable: false,
-        revealsToApprover: true,
+        revealsOnce: "invitation_link",
         errors: [
           {
             code: "member.role_above_actor",

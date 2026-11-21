@@ -130,8 +130,7 @@ const rows = (menu: HTMLElement) =>
   within(menu)
     .getAllByRole("menuitemradio")
     .filter((el) => el.getAttribute("data-part") === "menu-item");
-const full = (menu: HTMLElement) =>
-  within(menu).getByRole("menuitemradio", { name: /^Full access/ });
+const full = (menu: HTMLElement) => within(menu).getByRole("menuitemradio", { name: /^Auto/ });
 
 describe("the permission choice in the composer", () => {
   it("Request / Approve / Full use one neutral treatment in the mode menu before send", async () => {
@@ -165,13 +164,13 @@ describe("the permission choice in the composer", () => {
     expect(items.map((i) => i.getAttribute("aria-checked"))).toEqual(["false", "true", "false"]);
     expect(
       items.map((i) => [
-        within(i).getByText(/^(Request approval|Approve for me|Full access)$/).textContent,
+        within(i).getByText(/^(Request approval|Approve for me|Auto)$/).textContent,
         i.querySelector("[data-icon]")?.getAttribute("data-icon"),
       ]),
     ).toEqual([
       ["Request approval", "hand"],
       ["Approve for me", "shield-check"],
-      ["Full access", "lock-open"],
+      ["Auto", "lock-open"],
     ]);
     // one look for all three: no tone, badge, style or accent on any row (Full included)
     const look = (i: HTMLElement) =>
@@ -191,9 +190,9 @@ describe("the permission choice in the composer", () => {
         (i) => document.getElementById(i.getAttribute("aria-describedby") ?? "")?.textContent,
       ),
     ).toEqual([
-      "Works freely inside the sandbox; asks you before going beyond it or running sensitive commands.",
-      "Same sandbox; a review model decides requests to go beyond it and asks you when unsure.",
-      "Same sandbox; approves whatever this device allows, without asking. Credential reads outside the sandbox and sub-agents' requests to run outside it still go to the review model.",
+      "Asks you before every approval.",
+      "A review model decides for you and asks you when unsure.",
+      "Doesn't ask; the agent acts freely. Approvals that need someone else, and secrets only you can enter, still come to you.",
     ]);
     // the head hints the shortcut; no explanation closes the menu, not even for an unprobed device
     expect(menu.textContent).toContain("⇧Tab to switch");
@@ -231,32 +230,32 @@ describe("the permission choice in the composer", () => {
         i.querySelector('[data-part="menu-desc"]')?.textContent,
       ]),
     ).toEqual([
-      ["请求批准", "在沙箱内直接工作；超出沙箱或执行敏感命令前先问你。"],
-      ["帮我批准", "同样的沙箱；超出范围的请求交给审查模型，拿不准时问你。"],
-      [
-        "完全访问",
-        "同样的沙箱；在此设备允许的范围内自动批准，不再询问。在沙箱外读取凭据和子智能体在沙箱外运行的请求仍交给审查模型。",
-      ],
+      ["请求批准", "每个审批都先问你。"],
+      ["帮我批准", "审查模型替你判断，拿不准时问你。"],
+      ["自动模式", "不再询问，智能体可以自由操作；需要别人批准的、需要你输入密钥的仍会出现。"],
     ]);
     expect(menu.textContent).not.toMatch(/agent/i);
   });
 });
 
 describe("unavailable choices and their reasons", () => {
-  it("no device: Request and Approve stay available, Full needs a device, nothing is read", async () => {
+  it("no device: every profile is selectable; Auto asks the device-less question and sends no consent", async () => {
     const user = userEvent.setup();
     const { calls } = mount({});
     const menu = await openMenu(user);
-    const [request, approve, f] = rows(menu);
-    expect(request?.getAttribute("aria-disabled")).toBeNull();
-    expect(approve?.getAttribute("aria-disabled")).toBeNull();
-    expect(f?.getAttribute("aria-disabled")).toBe("true");
-    expect(within(f as HTMLElement).getByText("Choose a device first")).toBeTruthy();
-    expect(
-      within(menu).getByRole("menuitemradio", { name: "Full access Choose a device first" }),
-    ).toBe(f);
-    await user.click(f as HTMLElement);
-    expect(selection()).toEqual({ profile: "approve-for-me" });
+    expect(rows(menu).map((r) => r.getAttribute("aria-disabled"))).toEqual([null, null, null]);
+    await user.click(full(menu));
+    const dialog = screen.getByRole("dialog");
+    expect(within(dialog).getByText("Use Auto?")).toBeTruthy();
+    expect(dialog.textContent).toContain(
+      "Platform and connector actions run without asking, and are recorded.",
+    );
+    expect(dialog.textContent).toContain(
+      "Approvals that need someone else, and secrets only you can enter, still come to you.",
+    );
+    expect(dialog.textContent).not.toContain("Commands still run in the sandbox");
+    await user.click(within(dialog).getByRole("button", { name: "Use Auto" }));
+    expect(selection()).toEqual({ profile: "full-access" });
     expect(calls).toEqual([]);
   });
 
@@ -278,7 +277,7 @@ describe("unavailable choices and their reasons", () => {
       },
     ],
   ] as [string, Partial<PermissionPreview>][])(
-    "%s: Full access stays available (it never depends on a ceiling)",
+    "%s: Auto stays available (it never depends on a ceiling)",
     async (_name, preview) => {
       const user = userEvent.setup();
       const { calls } = mount({ deviceId: "d1" }, preview);
@@ -293,54 +292,87 @@ describe("unavailable choices and their reasons", () => {
     },
   );
 
-  it("an unsupported provider disables every profile with the same reason, never its raw text", async () => {
+  it("an unsupported provider keeps every profile selectable and says why in one notice line", async () => {
     const user = userEvent.setup();
-    mount({ deviceId: "d1" }, { availability: permissionAvailability("unsupported") });
+    mount(
+      { deviceId: "d1" },
+      {
+        availability: {
+          state: "unsupported",
+          reason: "Provider does not support permission-scoped operations",
+          cause: { kind: "provider-outdated", plugin: "sandbox-docker", version: "0.4.1" },
+        },
+      },
+    );
     await waitFor(async () => {
       const menu = await openMenu(user);
-      expect(full(menu).getAttribute("aria-disabled")).toBe("true");
+      expect(menu.textContent).toContain("needs an update");
       await user.keyboard("{Escape}");
     });
     const menu = await openMenu(user);
-    for (const r of rows(menu)) {
-      expect(r.getAttribute("aria-disabled")).toBe("true");
-      expect(within(r).getByText("Not supported on this device")).toBeTruthy();
-    }
+    expect(rows(menu).map((r) => r.getAttribute("aria-disabled"))).toEqual([null, null, null]);
+    expect(menu.textContent).toContain(
+      "This device's sandbox plugin (sandbox-docker 0.4.1) needs an update before device tools can run; a super admin updates it in Plugins.",
+    );
     expect(menu.textContent).not.toContain("Provider does not support");
+    expect(menu.textContent).not.toContain("Not supported on this device");
   });
 
-  it.each([
-    ["operation", true],
-    ["instance", false],
-  ] as const)(
-    "a %s-boundary report without restricted execution: every profile disabled = %s",
-    async (boundary, disabled) => {
-      const user = userEvent.setup();
-      const supported = permissionAvailability("supported") as { report: object };
-      const { calls } = mount(
-        { deviceId: "d1" },
-        {
-          availability: {
-            state: "supported",
-            report: { ...supported.report, boundary, restricted: null },
-          } as never,
+  it("a runtime that cannot enforce its sandbox says so in the notice, never in a tag", async () => {
+    const user = userEvent.setup();
+    mount(
+      { deviceId: "d1" },
+      {
+        availability: {
+          state: "unsupported",
+          reason: "raw runtime reason",
+          cause: { kind: "runtime" },
         },
-      );
-      await waitFor(() => expect(calls).toHaveLength(1));
-      await waitFor(async () => {
-        const menu = await openMenu(user);
-        expect(full(menu).getAttribute("aria-disabled")).toBe(disabled ? "true" : null);
-        await user.keyboard("{Escape}");
-      });
+      },
+    );
+    await waitFor(async () => {
       const menu = await openMenu(user);
-      expect(rows(menu).map((r) => r.getAttribute("aria-disabled") === "true")).toEqual([
-        disabled,
-        disabled,
-        disabled,
-      ]);
-      expect(menu.textContent).not.toContain("Can't keep work inside the project");
-    },
-  );
+      expect(menu.textContent).toContain("This device's runtime can't enforce its sandbox");
+      await user.keyboard("{Escape}");
+    });
+    const menu = await openMenu(user);
+    expect(rows(menu).map((r) => r.getAttribute("aria-disabled"))).toEqual([null, null, null]);
+    expect(menu.textContent).not.toContain("raw runtime reason");
+  });
+
+  it("a supported device shows no notice", async () => {
+    const user = userEvent.setup();
+    const { calls } = mount(
+      { deviceId: "d1" },
+      { availability: permissionAvailability("supported") },
+    );
+    await waitFor(() => expect(calls).toHaveLength(1));
+    const menu = await openMenu(user);
+    expect(menu.textContent).not.toContain("needs an update");
+    expect(menu.textContent).not.toContain("can't enforce its sandbox");
+  });
+
+  it("a boundary report without restricted execution keeps every profile selectable", async () => {
+    const user = userEvent.setup();
+    const supported = permissionAvailability("supported") as { report: object };
+    const { calls } = mount(
+      { deviceId: "d1" },
+      {
+        availability: {
+          state: "supported",
+          report: { ...supported.report, boundary: "operation", restricted: null },
+        } as never,
+      },
+    );
+    await waitFor(() => expect(calls).toHaveLength(1));
+    await waitFor(async () => {
+      const menu = await openMenu(user);
+      expect(full(menu).getAttribute("aria-disabled")).toBeNull();
+      await user.keyboard("{Escape}");
+    });
+    const menu = await openMenu(user);
+    expect(rows(menu).map((r) => r.getAttribute("aria-disabled"))).toEqual([null, null, null]);
+  });
 
   it("an unprobed device stays selectable with no note, without any provisioning", async () => {
     const user = userEvent.setup();
@@ -359,12 +391,13 @@ describe("unavailable choices and their reasons", () => {
     stubApi({ [previewUrl("d1")]: () => new Promise<Response>(() => {}) });
     renderPage(<Harness deviceId="d1" />, { client: testQueryClient() });
     const menu = await openMenu(user);
-    expect(full(menu).getAttribute("aria-disabled")).toBe("true");
+    expect(rows(menu).map((r) => r.getAttribute("aria-disabled"))).toEqual([null, null, "true"]);
+    expect(within(menu).getAllByText("Checking this device…")).toHaveLength(1);
     expect(within(full(menu)).getByText("Checking this device…")).toBeTruthy();
   });
 });
 
-describe("Full access consent", () => {
+describe("Auto consent", () => {
   async function chooseFull(user: ReturnType<typeof userEvent.setup>) {
     await waitFor(async () => {
       const menu = await openMenu(user);
@@ -381,16 +414,16 @@ describe("Full access consent", () => {
       { availability: permissionAvailability("supported"), outsideSandboxCeiling: true },
     );
     const dialog = await chooseFull(user);
-    expect(within(dialog).getByText("Use Full access on MacBook-Pro.local?")).toBeTruthy();
+    expect(within(dialog).getByText("Use Auto on MacBook-Pro.local?")).toBeTruthy();
     expect(
       within(dialog)
         .getAllByText(/./)
         .map((el) => el.textContent),
     ).toContain(
-      "Commands still run in the sandbox; the agent's requests to go beyond it (including running commands outside the sandbox) are approved automatically and recorded.",
+      "Commands still run in the sandbox; the agent's requests to go beyond it (including running commands outside the sandbox) are approved automatically and recorded. Platform and connector actions also run without asking, and are recorded.",
     );
     expect(dialog.textContent).toContain(
-      "Protected paths and platform and organization denials still apply. Credential reads outside the sandbox and sub-agents' requests to run outside it still go to the review model.",
+      "Protected paths and platform and organization denials still apply. Credential reads outside the sandbox and sub-agents' requests to run outside it still go to the review model. Approvals that need someone else, and secrets only you can enter, still come to you.",
     );
     await user.click(within(dialog).getByRole("button", { name: "Cancel" }));
     expect(screen.queryByRole("dialog")).toBeNull();
@@ -428,13 +461,13 @@ describe("Full access consent", () => {
       await waitFor(async () => {
         await user.click(screen.getByRole("button", { name: /^权限: / }));
         const f = within(screen.getByRole("menu")).getByRole("menuitemradio", {
-          name: /^完全访问/,
+          name: /^自动模式/,
         });
         expect(f.getAttribute("aria-disabled")).toBeNull();
         await user.click(f);
       });
       const dialog = screen.getByRole("dialog");
-      expect(within(dialog).getByText("在 云设备 上使用完全访问？")).toBeTruthy();
+      expect(within(dialog).getByText("在 云设备 上使用自动模式？")).toBeTruthy();
       expect(dialog.textContent).toContain(
         "命令仍在沙箱中运行；智能体超出沙箱的请求会自动批准并记录。",
       );
@@ -448,11 +481,9 @@ describe("Full access consent", () => {
     const user = userEvent.setup();
     mount({ deviceId: "d1" }, { scopeRevision: "scope-7" });
     const dialog = await chooseFull(user);
-    await user.click(within(dialog).getByRole("button", { name: "Use Full access" }));
+    await user.click(within(dialog).getByRole("button", { name: "Use Auto" }));
     expect(selection()).toEqual({ profile: "full-access", consentScopeRevision: "scope-7" });
-    expect(permissionButton().getAttribute("aria-label")).toBe(
-      "Permissions: Full access: Effort High",
-    );
+    expect(permissionButton().getAttribute("aria-label")).toBe("Permissions: Auto: Effort High");
     // Full is drawn as any other selection: the checkmark only
     const menu = await openMenu(user);
     expect(full(menu).getAttribute("aria-checked")).toBe("true");
@@ -463,7 +494,7 @@ describe("Full access consent", () => {
     const user = userEvent.setup();
     mount({ deviceId: "d1" }, { scopeRevision: "scope-7" });
     const dialog = await chooseFull(user);
-    await user.click(within(dialog).getByRole("button", { name: "Use Full access" }));
+    await user.click(within(dialog).getByRole("button", { name: "Use Auto" }));
     let menu = await openMenu(user);
     await user.click(within(menu).getByRole("menuitemradio", { name: "Approve for me" }));
     expect(selection()).toEqual({ profile: "approve-for-me" });
@@ -479,10 +510,10 @@ describe("Full access consent", () => {
     await waitFor(() => expect(calls).toHaveLength(1));
     screen.getByRole("textbox").focus();
     await user.keyboard("{Shift>}{Tab}{/Shift}");
-    // Approve for me -> Full access: the confirmation opens, nothing granted yet
+    // Approve for me -> Auto: the confirmation opens, nothing granted yet
     const dialog = await screen.findByRole("dialog");
     expect(selection()).toEqual({ profile: "approve-for-me" });
-    await user.click(within(dialog).getByRole("button", { name: "Use Full access" }));
+    await user.click(within(dialog).getByRole("button", { name: "Use Auto" }));
     expect(selection().profile).toBe("full-access");
     screen.getByRole("textbox").focus();
     await user.keyboard("{Shift>}{Tab}{/Shift}");
@@ -501,7 +532,7 @@ describe("Full access consent", () => {
         json(200, permissionPreview({ deviceId: "d1", project: "core", scopeRevision: "scope-2" })),
     });
     const dialog = await chooseFull(user);
-    await user.click(within(dialog).getByRole("button", { name: "Use Full access" }));
+    await user.click(within(dialog).getByRole("button", { name: "Use Auto" }));
     expect(selection().profile).toBe("full-access");
     // the same identity and scope under another name: consent stays
     rerender({ deviceId: "d1", deviceLabel: "Renamed laptop" });
@@ -513,7 +544,7 @@ describe("Full access consent", () => {
     expect(selection()).toEqual({ profile: "approve-for-me" });
     // a different scope revision on the same device clears it too
     const again = await chooseFull(user);
-    await user.click(within(again).getByRole("button", { name: "Use Full access" }));
+    await user.click(within(again).getByRole("button", { name: "Use Auto" }));
     rerender({ deviceId: "d1", project: "core" });
     await waitFor(() => expect(selection()).toEqual({ profile: "approve-for-me" }));
     // a non-Full choice stays chosen across devices
@@ -521,6 +552,50 @@ describe("Full access consent", () => {
     await user.click(within(menu).getByRole("menuitemradio", { name: "Request approval" }));
     rerender({ deviceId: "d2" });
     expect(selection()).toEqual({ profile: "request-approval" });
+  });
+});
+
+describe("Auto chosen without a device", () => {
+  it("falls back to the default when a device is then chosen, and asks again for it", async () => {
+    const user = userEvent.setup();
+    const { rerender } = mount({});
+    const menu = await openMenu(user);
+    await user.click(full(menu));
+    await user.click(within(screen.getByRole("dialog")).getByRole("button", { name: "Use Auto" }));
+    expect(selection()).toEqual({ profile: "full-access" });
+    stubApi({ [previewUrl("d1")]: () => json(200, permissionPreview({ deviceId: "d1" })) });
+    rerender({ deviceId: "d1" });
+    await waitFor(() => expect(selection()).toEqual({ profile: "approve-for-me" }));
+  });
+});
+
+describe("the notice on phones", () => {
+  it("the options sheet shows the same cause line as the mode menu", async () => {
+    const user = userEvent.setup();
+    mount(
+      { deviceId: "d1" },
+      {
+        availability: {
+          state: "unsupported",
+          reason: "raw",
+          cause: { kind: "provider-outdated", plugin: "sandbox-docker", version: "0.4.1" },
+        },
+      },
+    );
+    await waitFor(() => expect(screen.getByTestId("selection")).toBeTruthy());
+    await user.click(document.querySelector('[data-part="composer-options"]') as HTMLElement);
+    const sheet = screen.getByRole("dialog");
+    await waitFor(() =>
+      expect(sheet.querySelector('[data-part="options-notice"]')?.textContent).toBe(
+        "This device's sandbox plugin (sandbox-docker 0.4.1) needs an update before device tools can run; a super admin updates it in Plugins.",
+      ),
+    );
+    const group = within(sheet).getByRole("radiogroup", { name: "Permissions" });
+    expect(
+      within(group)
+        .getAllByRole("radio")
+        .map((r) => (r as HTMLInputElement).disabled),
+    ).toEqual([false, false, false]);
   });
 });
 
@@ -542,14 +617,12 @@ describe("a starting choice that arrives after mount (review M2)", () => {
   });
 });
 
-describe("a recorded Full access is the current state, never a new consent (10C review Minor 1)", () => {
+describe("a recorded Auto is the current state, never a new consent (10C review Minor 1)", () => {
   it("shows Full checked but yields no selection; choosing Full again needs the dialog", async () => {
     const user = userEvent.setup();
     mount({ deviceId: "d1", initial: "full-access" });
-    expect(permissionButton().getAttribute("aria-label")).toBe(
-      "Permissions: Full access: Effort High",
-    );
-    // no consent was given here: nothing could send or PATCH Full access
+    expect(permissionButton().getAttribute("aria-label")).toBe("Permissions: Auto: Effort High");
+    // no consent was given here: nothing could send or PATCH Auto
     expect(screen.getByTestId("selection").textContent).toBe("null");
     let menu = await openMenu(user);
     await user.click(within(menu).getByRole("menuitemradio", { name: "Approve for me" }));
@@ -560,7 +633,7 @@ describe("a recorded Full access is the current state, never a new consent (10C 
       await user.click(full(menu));
     });
     const dialog = screen.getByRole("dialog");
-    await user.click(within(dialog).getByRole("button", { name: "Use Full access" }));
+    await user.click(within(dialog).getByRole("button", { name: "Use Auto" }));
     expect(selection()).toEqual({ profile: "full-access", consentScopeRevision: "scope-1" });
   });
 });
@@ -601,8 +674,8 @@ describe("phones: the options sheet", () => {
       "full-access",
     ]);
     expect(radios.map((r) => r.checked)).toEqual([false, true, false]);
-    expect(radios[2]?.disabled).toBe(true);
-    expect(within(group).getByRole("radio", { name: "完全访问 请先选择设备" })).toBe(radios[2]);
+    expect(radios.map((r) => r.disabled)).toEqual([false, false, false]);
+    expect(within(group).getByRole("radio", { name: /^自动模式/ })).toBe(radios[2]);
     expect(group.querySelectorAll('[data-icon="check"]')).toHaveLength(1);
     expect(new Set(radios.map((r) => r.closest("label")?.className)).size).toBe(1);
     await user.click(radios[0] as HTMLInputElement);
@@ -669,7 +742,7 @@ describe("where the choice shows (editable in a new conversation and an owner's 
       ),
       { locale: "zh" },
     );
-    await screen.findAllByText("完全访问");
+    await screen.findAllByText("自动模式");
     expect(composerPermission()?.getAttribute("title")).toBe("跟随主对话的权限");
   });
 

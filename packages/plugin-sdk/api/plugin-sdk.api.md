@@ -1197,7 +1197,7 @@ export type DeviceResponse = Exclude<DeviceRes, {
     id: string;
     ok: false;
     error: {
-        kind: "gone" | "fs_gone" | "policy" | "error" | "denied" | "unsupported" | "unknown" | "invalid";
+        kind: "gone" | "fs_gone" | "policy" | "error" | "denied" | "unsupported" | "unsettled" | "unknown" | "invalid";
         message: string;
     };
 };
@@ -2218,6 +2218,9 @@ export function isSandboxScopeDeniedError(e: unknown): e is SandboxScopeDeniedEr
 
 // @public
 export function isSandboxScopeValidationError(e: unknown): e is SandboxScopeValidationError;
+
+// @public
+export function isSandboxWorkUnsettledError(e: unknown): e is SandboxWorkUnsettledError;
 
 // @public
 export function isSandboxWriteDenied(path: string): boolean;
@@ -3928,6 +3931,12 @@ export type SandboxStopResult = {
 } | {
     outcome: "lost";
 };
+
+// @public
+export class SandboxWorkUnsettledError extends SandboxPermissionUnsupportedError {
+    constructor(message: string, opts?: ErrorOptions);
+    readonly sandboxWorkUnsettled: true;
+}
 
 // @public
 export function sanitizeParams(decl: ModelParameter[], params: Record<string, unknown>): {

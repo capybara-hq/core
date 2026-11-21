@@ -41,11 +41,11 @@ const LOCKED =
 const NOTHING_INSTALLED = "nothing-installed";
 
 export const NEEDS_INPUT =
-  "This plugin needs connector input (endpoints, credentials): install it with plugins.install, or for an installed plugin missing connectors create them with plugins.configure-connectors; the person enters the credentials on the confirmation card.";
+  "This plugin needs connector input (endpoints, credentials): install it with plugins.install, or for an installed plugin missing connectors create them with plugins.configure-connectors; the person enters the credentials in a secure input request.";
 
 /** `plugin.needs_input` when what is missing is its extension's org config (an agent can set it). */
 export const needsOrgConfig = (extension: string): string =>
-  `This plugin's extension ${extension} needs its org config first: read what is missing with extensions.org-config, fill it in with extensions.set-org-config (the person enters secrets on the confirmation card; the org's own copy of overridable platform fields is extensions.save-org-config), then call plugins.set-enabled again.`;
+  `This plugin's extension ${extension} needs its org config first: read what is missing with extensions.org-config, fill it in with extensions.set-org-config (the person enters secrets in a secure input request; the org's own copy of overridable platform fields is extensions.save-org-config), then call plugins.set-enabled again.`;
 
 /** The English name of a plugin as next steps and messages name it. */
 const enName = (i: OrgCatalogItem): string => localized(i.displayName, i.name).en;

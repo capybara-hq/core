@@ -5,7 +5,7 @@ import type { RouteSchemas } from "../platform/route-schemas.js";
 /**
  * A credential value: `Credentials.validate` checks its shape by auth method (values are never
  * echoed); this only bounds its size. A secret (`secret()` meta, ruling R2): a Platform operation
- * never takes it as a param; the person enters it on the confirmation card.
+ * never takes it as a param; the person enters it in a secure input request.
  */
 export const CredentialValue = secret(
   z

@@ -7,7 +7,7 @@ import type {
 import { imLocale, recipientLocale } from "../conversations/message-context.js";
 import type { KernelSchemaDb } from "../db/kernel-schema.js";
 import { ApiError, type ErrorCode } from "../errors.js";
-import type { ApprovalsService } from "../tools/approvals.service.js";
+import type { ApprovalKind, ApprovalsService } from "../tools/approvals.service.js";
 import type { QuestionsService } from "../tools/questions.service.js";
 import type { ChannelConnectionRow, ChannelConnections } from "./connections.service.js";
 import { type ChannelJobs, idempotencyKey } from "./jobs.js";
@@ -37,7 +37,16 @@ export interface ChannelCardActionsDeps {
   resolveSpeaker: SpeakerResolver;
 }
 
-/** 授权 / 状态类失败 → 回给点击者的一句话（不改卡片）；其余错误照常抛出。 */
+/**
+ * The approval kinds that are the asked person's own, decided by them in person: a network ask, a
+ * git push ask, a command review ask.
+ */
+const OWNER_DECIDED: ReadonlySet<ApprovalKind> = new Set(["network", "git", "command"]);
+
+/**
+ * Authorization and state failures → one sentence back to the clicker (the card stays as it is);
+ * any other error is thrown as usual.
+ */
 const REPLY_FOR: Partial<Record<ErrorCode, ChannelPhrase>> = {
   "approval.not_found": "cannotHandle",
   "question.not_found": "cannotHandle",
@@ -128,6 +137,7 @@ export class ChannelCardActions {
     }
     // 匿名访客共用一个账号：只能处理自己话题里的卡片，且不能留下「本会话 / 以后都允许」的授权
     const anonymous = who.threadAccount === null;
+    const kind = a.cardKind === "approval" ? await this.kindOf(row.orgId, a.cardId) : undefined;
     if (anonymous) {
       const own = await findThread(this.deps.db, {
         connectionId,
@@ -149,10 +159,16 @@ export class ChannelCardActions {
       // a network, git push or command review ask is the device owner's, decided by them in
       // person (network ask-to-allow spec §5.2, auto mode spec §5.4): the shared guest account
       // never decides one, whoever clicks
-      if (a.cardKind === "approval" && (await this.isOwnerDecidedAsk(row.orgId, a.cardId))) {
+      if (kind !== undefined && OWNER_DECIDED.has(kind)) {
         await reply("cannotHandle");
         return;
       }
+    }
+    // a secure input is entered and cancelled on the web only (IM gets a link, never its card), so
+    // no click decides one, whoever sends it
+    if (kind === "secure_input") {
+      await reply("cannotHandle");
+      return;
     }
     try {
       if (a.cardKind === "approval" && (a.action === "approve" || a.action === "deny")) {
@@ -182,17 +198,14 @@ export class ChannelCardActions {
     await this.deps.outbound.enqueue(card.conversation_id);
   }
 
-  /**
-   * Whether the approval `id` of the org is a network ask, a git push ask or a command review ask
-   * (each the asked person's own, decided by them in person).
-   */
-  private async isOwnerDecidedAsk(orgId: string, id: string): Promise<boolean> {
+  /** The kind of the approval `id` of the org (undefined when there is none). */
+  private async kindOf(orgId: string, id: string): Promise<ApprovalKind | undefined> {
     const r = await this.deps.db
       .selectFrom("approvals")
       .select("kind")
       .where("id", "=", id)
       .where("org_id", "=", orgId)
       .executeTakeFirst();
-    return r?.kind === "network" || r?.kind === "git" || r?.kind === "command";
+    return r?.kind;
   }
 }

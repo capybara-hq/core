@@ -8,6 +8,7 @@ import {
   isSandboxPermissionUnsupportedError,
   isSandboxScopeDeniedError,
   isSandboxScopeValidationError,
+  isSandboxWorkUnsettledError,
   parseSandboxBrowseScope,
   parseSandboxExecutionRef,
   parseSandboxOperationRef,
@@ -20,6 +21,7 @@ import {
   SandboxPermissionUnsupportedError,
   SandboxScopeDeniedError,
   SandboxScopeValidationError,
+  SandboxWorkUnsettledError,
 } from "../src/index.js";
 
 describe("instanceSupported", () => {
@@ -122,11 +124,13 @@ describe.each([
   });
 
   it("requires an Error with both the exact name and a true tag", () => {
+    // the permission-unsupported predicate is tag-only: a subclass carries its own name
+    const tagOnly = name === "SandboxPermissionUnsupportedError";
     for (const error of [
       new Error("Operation failed."),
       new SandboxGoneError("Instance gone."),
       new FileSystemGoneError("File system gone."),
-      Object.assign(new Error("Wrong name."), { [tag]: true }),
+      ...(tagOnly ? [] : [Object.assign(new Error("Wrong name."), { [tag]: true })]),
       Object.assign(new Error("Missing tag."), { name }),
       Object.assign(new Error("False tag."), { name, [tag]: false }),
       Object.assign(new Error("Non-boolean tag."), { name, [tag]: "true" }),
@@ -622,4 +626,24 @@ it("requires exact-reference positional raw-byte reads without path or scope arg
   const incomplete: Success = { data: new Uint8Array(), nextOffset: 0 };
   expect(options.maxBytes).toBe(0);
   void [pathOptions, scopeOptions, incomplete];
+});
+
+describe("SandboxWorkUnsettledError", () => {
+  it("is its own refusal and also a permission-unsupported refusal", () => {
+    const e = new SandboxWorkUnsettledError("x");
+    expect(isSandboxWorkUnsettledError(e)).toBe(true);
+    expect(isSandboxPermissionUnsupportedError(e)).toBe(true);
+    expect(isSandboxWorkUnsettledError(new SandboxPermissionUnsupportedError("x"))).toBe(false);
+  });
+  it("the base predicate matches any subclass by the inherited tag", () => {
+    class AdHocRefusal extends SandboxPermissionUnsupportedError {
+      constructor(message: string) {
+        super(message);
+        this.name = "AdHocRefusal";
+      }
+    }
+    expect(isSandboxPermissionUnsupportedError(new AdHocRefusal("x"))).toBe(true);
+    expect(isSandboxPermissionUnsupportedError(new Error("x"))).toBe(false);
+    expect(isSandboxPermissionUnsupportedError({ sandboxPermissionUnsupported: true })).toBe(false);
+  });
 });

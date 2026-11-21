@@ -23,6 +23,7 @@ import {
   SandboxPermissionUnsupportedError,
   SandboxScopeDeniedError,
   type SandboxStopResult,
+  SandboxWorkUnsettledError,
 } from "@capybara-hq/plugin-sdk";
 import { type OrphanProcesses, reapOrphans } from "./mac-orphans.js";
 import type { NativeHelperResult } from "./native-helper-client.js";
@@ -1188,9 +1189,7 @@ export class MacOperationSupervisor {
   close(): void {
     const o = this.ownership();
     if (o.workers + o.cancellations + o.collectors + o.persistence > 0)
-      throw new SandboxPermissionUnsupportedError(
-        "The supervisor still owns work; settle it first",
-      );
+      throw new SandboxWorkUnsettledError("The supervisor still owns work; settle it first");
     this.draining = true;
     this.closed = true;
   }

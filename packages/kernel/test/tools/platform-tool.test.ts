@@ -752,6 +752,185 @@ describe("callPolicy: the card summary of a write with person fields", () => {
   });
 });
 
+describe("secure input, automatic decisions and reveals (profiles govern every approval)", () => {
+  const secretOp = defineOperation({
+    id: "requests.fixture-secret",
+    description: "Save a personal secret.",
+    input: z
+      .object({
+        values: z.record(z.string(), z.unknown()).default({}),
+        askPerson: personFieldParams.askPerson,
+        clearSecrets: personFieldParams.clearSecrets,
+      })
+      .strict(),
+    example: { values: {}, askPerson: ["apiKey"], clearSecrets: [] },
+    authz: { orgAction: "org.read" },
+    mirrors: [],
+    confirm: "personal",
+    summary: () => ({ zh: "Save a secret", en: "Save a secret" }),
+    personFields: async () => ({
+      target: { zh: "密钥", en: "Secret" },
+      ...secretFieldsOf(
+        { type: "object", properties: { apiKey: { type: "string", "x-secret": true } } },
+        new Set(),
+      ),
+    }),
+    run: async (_i, c) => ({ got: await c.personInputs?.apply(async (v) => v.apiKey) }),
+  });
+  const fileOp = defineOperation({
+    id: "requests.fixture-file",
+    description: "Store a file.",
+    input: z.object({ fileId: z.string().max(100) }).strict(),
+    example: { fileId: "f1" },
+    authz: { orgAction: "org.read" },
+    mirrors: [],
+    confirm: "personal",
+    summary: () => ({ zh: "Store a file", en: "Store a file" }),
+    fileRef: (i) => ({ ref: { fileId: i.fileId }, limits: { maxBytes: 1024 } }),
+    run: async (_i, c) => ({ sha256: c.file?.sha256 }),
+  });
+  const revealOp = defineOperation({
+    id: "requests.fixture-reveal",
+    description: "Create something whose secret is shown once.",
+    input: z.object({}).strict(),
+    example: {},
+    authz: { orgAction: "org.read" },
+    mirrors: [],
+    confirm: "personal",
+    summary: () => ({ zh: "Reveal once", en: "Reveal once" }),
+    revealsOnce: "invitation_link",
+    run: async () => ({ link: "shown once to the person" }),
+  });
+  const FILE_SHA = "a".repeat(64);
+  let consumed: { id: string; account: string }[];
+  let pathsAsked: string[];
+
+  const t = () => {
+    const ops = new PlatformOperations();
+    ops.register([secretOp, fileOp, revealOp] as PlatformOperation[]);
+    return platformTool({
+      ops,
+      actor: { facts: async () => ADMIN },
+      docs: { topics: () => [], read: () => null },
+      setting: async () => "on",
+      sealed: {
+        consume: async (id, account, apply) => {
+          consumed.push({ id, account });
+          return apply({ apiKey: "sk-entered" }) as never;
+        },
+      },
+      secureInputPaths: async (id, call) => {
+        pathsAsked.push(`${id}@${call.runId}/${call.callId}`);
+        return id === "si-1" ? ["apiKey"] : null;
+      },
+      files: {
+        resolve: async () => ({
+          name: "a.txt",
+          contentType: "text/plain",
+          size: 1,
+          sha256: FILE_SHA,
+          bytes: new Uint8Array([97]),
+        }),
+      },
+      approvalFileSha256: async (id) => (id === "ap-file" ? FILE_SHA : null),
+    });
+  };
+  const call = async (operation: string, params: unknown, over: Partial<BuiltinCallContext>) => {
+    const out = await t().run({ action: "call", operation, params }, { ...ctx, ...over });
+    if (!("content" in out)) throw new Error("expected a result");
+    return {
+      text: out.content.map((c) => (c.type === "text" ? c.text : "")).join("\n"),
+      view: out.view,
+    };
+  };
+
+  beforeEach(() => {
+    consumed = [];
+    pathsAsked = [];
+  });
+
+  it("a personal write with person fields may be remembered: the fields no longer decide the consent", async () => {
+    const p = await t().callPolicy?.(
+      { action: "call", operation: "requests.fixture-secret", params: { askPerson: ["apiKey"] } },
+      policyCtx,
+    );
+    expect(p).toMatchObject({ policy: "ask", remember: true });
+    expect(p?.personFields?.fields.map((f) => f.path)).toEqual(["apiKey"]);
+    expect(p?.personOnly).toBeUndefined();
+  });
+
+  it("reads the values by the secure input id and names the request, never the value", async () => {
+    const out = await call(
+      "requests.fixture-secret",
+      { askPerson: ["apiKey"] },
+      { secureInputId: "si-1", decision: { source: "full-access" } },
+    );
+    expect(consumed).toEqual([{ id: "si-1", account: "acc-1" }]);
+    expect(pathsAsked).toEqual(["si-1@run-1/call-1"]);
+    expect(out.text).toContain("Secure input si-1: submitted.\n`apiKey`: entered by the person");
+    // the handler's own echo is in the JSON result; the result lines carry no value
+    expect(out.text.split("\n").slice(1).join("\n")).not.toContain("sk-entered");
+  });
+
+  it("refuses a call with person fields without a secure input, even under an approval", async () => {
+    await expect(
+      call("requests.fixture-secret", { askPerson: ["apiKey"] }, { approvalId: "ap-1" }),
+    ).rejects.toThrow(
+      "needs values the person enters in a secure input request, and this call ran without one",
+    );
+    expect(consumed).toEqual([]);
+  });
+
+  it("refuses a secure input that is not this call's submitted one", async () => {
+    await expect(
+      call("requests.fixture-secret", { askPerson: ["apiKey"] }, { secureInputId: "si-other" }),
+    ).rejects.toThrow("The target changed after the person confirmed");
+    expect(consumed).toEqual([]);
+  });
+
+  it("binds a file to the approval when one governs, else to the automatic decision (R7)", async () => {
+    expect(
+      (await call("requests.fixture-file", { fileId: "f1" }, { approvalId: "ap-file" })).text,
+    ).toContain(FILE_SHA);
+    expect(
+      (
+        await call(
+          "requests.fixture-file",
+          { fileId: "f1" },
+          { decision: { source: "review-model", fileSha256: FILE_SHA } },
+        )
+      ).text,
+    ).toContain(FILE_SHA);
+    const changed = "The file changed after the person confirmed it";
+    // another file under the decision, a decision bound to no file, an approval without a file
+    await expect(
+      call(
+        "requests.fixture-file",
+        { fileId: "f1" },
+        { decision: { source: "full-access", fileSha256: "b".repeat(64) } },
+      ),
+    ).rejects.toThrow(changed);
+    await expect(
+      call("requests.fixture-file", { fileId: "f1" }, { decision: { source: "full-access" } }),
+    ).rejects.toThrow(changed);
+    await expect(
+      call("requests.fixture-file", { fileId: "f1" }, { approvalId: "ap-other" }),
+    ).rejects.toThrow(changed);
+    // a grant: no approval and no decision
+    await expect(call("requests.fixture-file", { fileId: "f1" }, {})).rejects.toThrow(changed);
+  });
+
+  it("a write whose result is shown once carries the reveal view and asks only its person", async () => {
+    const p = await t().callPolicy?.(
+      { action: "call", operation: "requests.fixture-reveal", params: {} },
+      policyCtx,
+    );
+    expect(p).toMatchObject({ policy: "ask", personOnly: true });
+    const out = await call("requests.fixture-reveal", {}, { decision: { source: "full-access" } });
+    expect(out.view).toEqual({ kind: "reveal", reveal: "invitation_link" });
+  });
+});
+
 describe("callPolicy: precheck before the card", () => {
   const input = { action: "call", operation: "skills.fixture-create", params: orgOp.example };
 

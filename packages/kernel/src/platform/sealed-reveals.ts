@@ -1,9 +1,11 @@
 import { Inject, Injectable } from "@nestjs/common";
 import { sql } from "kysely";
+import { accessibleTo } from "../conversations/access.js";
 import { platformSealedRevealAad as aadOf, type Keyring } from "../ctx/secrets.js";
 import type { KernelSchemaDb } from "../db/kernel-schema.js";
 import { ApiError } from "../errors.js";
 import { audit } from "../identity/audit.js";
+import type { RevealCall } from "../identity/initial-passwords.js";
 import { KernelConfigService } from "../infra/config/kernel-config.service.js";
 import { KernelDb } from "../infra/database/kernel-db.js";
 import { TransactionHost } from "../infra/database/transaction-host.js";
@@ -12,21 +14,18 @@ import { KEYRING } from "../infra/tokens.js";
 
 /**
  * How long a sealed invitation link waits for its reader, like a generated initial password: the
- * approving person reads it right after the call runs; one never read expires (revoke the
- * invitation and invite again).
+ * person the call was made for reads it right after the call runs; one never read expires
+ * (revoke the invitation and invite again).
  */
 export const SEALED_REVEAL_TTL_MS = 24 * 60 * 60 * 1000;
 
-/** The tool key of the approval an invitation link belongs to. */
-export const INVITE_TOOL_KEY = "Platform:orgs.invite";
-
-/** Where a sealed value is delivered: the approved tool call and the person who approved. */
+/** Where a sealed value is delivered: the tool call and the person it was made for. */
 export interface SealedRevealDelivery {
   conversationId: string;
   /** The run of the call: a call id is unique only within its run. */
   runId: string;
   callId: string;
-  /** The account that may read it: the actor who confirmed the call. */
+  /** The account that may read it: the person the call was made for (the run's own person). */
   recipientAccountId: string;
 }
 
@@ -34,11 +33,12 @@ export interface SealedRevealDelivery {
 export const invitationPath = (token: string) => `/invite/${encodeURIComponent(token)}`;
 
 /**
- * Values a Platform call makes that only the person who approved the call may read (platform web
- * parity spec §7.2, plan ruling R10): the token of an invitation an org admin's agent created. The
- * token never reaches the model, the tool result, the event log, the audit or a log line: it is
- * sealed with the master keyring in the creation's transaction and read once, on the web, by the
- * person who approved the call, like the generated initial password (`InitialPasswords`).
+ * Values a Platform call makes that only the person the call was made for may read (platform web
+ * parity spec §7.2; read by call: profiles govern every approval, plan ruling R6): the token of an
+ * invitation an org admin's agent created. The token never reaches the model, the tool result, the
+ * event log, the audit or a log line: it is sealed with the master keyring in the creation's
+ * transaction and read once, on the web, by that person, like the generated initial password
+ * (`InitialPasswords`).
  */
 @Injectable()
 export class SealedReveals {
@@ -79,43 +79,42 @@ export class SealedReveals {
   }
 
   /**
-   * The link of the invitation an approved `orgs.invite` call created, read once by the person who
-   * approved it (`approvalId` in `orgId`, decided by `accountId`), then deleted. Anything else (not
-   * that person, not approved, not run yet, read already, expired, the invitation no longer
-   * pending) is `invitation.link_unavailable`, saying nothing about which. Audits the read
-   * (without the token). The URL is absolute under `http.publicUrl`, else the web path.
+   * The link of the invitation an `orgs.invite` call created (`call` in `orgId`), read once by its
+   * recipient `accountId` while the call's conversation is still accessible to them, then deleted
+   * (plan ruling R6: read by call, whether the call ran under an approval or automatically).
+   * Anything else (not the recipient, the conversation not accessible, not run yet, read already,
+   * expired, the invitation no longer pending) is `invitation.link_unavailable`, saying nothing
+   * about which. Audits the read (without the token). The URL is absolute under
+   * `http.publicUrl`, else the web path.
    */
   @Transactional()
-  async reveal(orgId: string, approvalId: string, accountId: string): Promise<{ url: string }> {
+  async reveal(orgId: string, call: RevealCall, accountId: string): Promise<{ url: string }> {
     const unavailable = () =>
       new ApiError(
         "invitation.link_unavailable",
-        "No invitation link to show: it was shown already, has expired, the invitation is no longer pending, or it was not created by a call you approved",
+        "No invitation link to show: it was shown already, has expired, the invitation is no longer pending, or it was not created by a call made for you",
       );
-    const approval = await this.db
-      .selectFrom("approvals")
-      .select(["conversation_id", "run_id", "call_id", "tool_key", "status", "decided_by"])
-      .where("id", "=", approvalId)
-      .where("org_id", "=", orgId)
-      .executeTakeFirst();
-    if (
-      approval === undefined ||
-      approval.tool_key !== INVITE_TOOL_KEY ||
-      approval.status !== "approved" ||
-      approval.decided_by !== accountId
-    ) {
-      throw unavailable();
-    }
-    // exactly the row of this approval's call, for a still pending invitation: deleted as read
+    // exactly the row of this call, for its recipient in a conversation they can still see and
+    // a still pending invitation: deleted as read
     const row = await this.db
       .deleteFrom("platform_sealed_reveals")
       .where("kind", "=", "invitation_link")
       .where("org_id", "=", orgId)
-      .where("conversation_id", "=", approval.conversation_id)
-      .where("run_id", "=", approval.run_id)
-      .where("call_id", "=", approval.call_id)
+      .where("conversation_id", "=", call.conversationId)
+      .where("run_id", "=", call.runId)
+      .where("call_id", "=", call.callId)
       .where("recipient_account_id", "=", accountId)
       .where("expires_at", ">", sql<Date>`now()`)
+      .where((eb) =>
+        eb.exists(
+          eb
+            .selectFrom("conversations")
+            .select("conversations.id")
+            .whereRef("conversations.id", "=", "platform_sealed_reveals.conversation_id")
+            .where("conversations.org_id", "=", orgId)
+            .where(accessibleTo(accountId)),
+        ),
+      )
       .where((eb) =>
         eb.exists(
           eb
@@ -143,7 +142,7 @@ export class SealedReveals {
       orgId,
       action: "org.invitation.link_shown",
       target: row.id,
-      detail: { approvalId },
+      detail: { conversationId: call.conversationId, runId: call.runId, callId: call.callId },
     });
     const base = this.config.get().http.publicUrl?.replace(/\/+$/, "") ?? "";
     return { url: `${base}${invitationPath(token)}` };

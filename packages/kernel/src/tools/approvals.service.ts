@@ -17,6 +17,7 @@ import {
   NETWORK_ASK_MAX_HOSTS,
   NETWORK_HOST_MAX_CHARS,
   type ReviewRecord,
+  SECURE_INPUT_MAX_FIELDS,
   type ToolView,
 } from "../conversations/events.js";
 import { ConversationLeakCheck } from "../conversations/leak-check.js";
@@ -86,9 +87,10 @@ export type ApprovalStatus =
 export type ApprovalScope = "once" | "session" | "always";
 /**
  * What an approval asks: a tool call, the device owner about refused network hosts, the actor about
- * a git push the gateway held, or a person about a command the review held (auto mode spec §5.4).
+ * a git push the gateway held, a person about a command the review held (auto mode spec §5.4), or
+ * the person for a call's secret fields (`secure_input`; profiles govern every approval, R4).
  */
-export type ApprovalKind = "tool" | "network" | "git" | "command";
+export type ApprovalKind = "tool" | "network" | "git" | "command" | "secure_input";
 
 /**
  * The formatted `tool_result` of a command an ask kept (≤ 16 KB; larger output already archived),
@@ -220,8 +222,9 @@ export interface ApprovalRecord {
   /** A command review ask's facts; null for any other kind. */
   command: CommandAskDetail | null;
   /**
-   * A tool ask with person fields (platform web parity spec §4.2): the secret fields the person
-   * enters on the card, as specs (path, label, schema node), never values. Absent otherwise.
+   * A secure input request (kind `secure_input`; platform web parity spec §4.2, profiles govern
+   * every approval R4): the secret fields the person enters, as specs (path, label, schema node),
+   * never values. Absent otherwise.
    */
   personFields?: PersonFieldSpec[];
   /** The card's target name with {@link personFields} ("Anthropic: deployment config"). */
@@ -236,6 +239,11 @@ export interface ApprovalRecord {
    * then ends without running tells the agent to have them rotated.
    */
   leakedFields?: string[];
+  /**
+   * A tool ask the review model could not decide under Approve for me (profiles govern every
+   * approval, R3): the card says it is the person's call. Absent otherwise.
+   */
+  reviewUnsure?: true;
   toolKey: string;
   specHash: string;
   connectorId: string | null;
@@ -294,7 +302,10 @@ interface CommandDecision {
   via: DecisionVia;
 }
 
-/** The record without an ask's kept command result (what routes and cards may show). */
+/**
+ * The record without an ask's kept command result (what routes and cards may show). A secure
+ * input request shows its fields and target, never the call's input it binds.
+ */
 export function publicRecord(r: ApprovalRecord): ApprovalPublicRecord {
   const strip = <T extends { result: KeptToolResult }>(d: T | null): Omit<T, "result"> | null => {
     if (d === null) return null;
@@ -311,6 +322,7 @@ export function publicRecord(r: ApprovalRecord): ApprovalPublicRecord {
         : r.scopes,
     detail: strip(r.detail),
     git: strip(r.git),
+    ...(r.kind === "secure_input" && { input: null }),
   };
 }
 
@@ -359,22 +371,60 @@ export interface ApprovalRequestInput {
   summary?: { zh: string; en: string };
   /** The scopes the decider may choose; unset: derived (see {@link ApprovalRecord.scopes}). */
   scopes?: ApprovalScope[];
-  /**
-   * A tool ask's person fields and their target (specs only, no values) and the file it takes
-   * (stored in `detail`).
-   */
-  detail?: Omit<ToolAskDetail, "personFields" | "target"> &
-    Partial<Pick<ToolAskDetail, "personFields" | "target">>;
+  /** The file a tool ask's call takes and the review's unsure mark (stored in `detail`). */
+  detail?: ToolAskDetail;
 }
 
-/** A tool ask's `detail`: the person fields the card asks for and the target they belong to. */
+/**
+ * A secure input request (profiles govern every approval, R4), made by the tool pipeline once the
+ * call's own consent is settled: the person enters the call's secret fields on the web.
+ */
+export interface SecureInputRequestInput {
+  /** The call's attempt (after its other approvals). */
+  attempt: number;
+  orgId: string;
+  conversationId: string;
+  runId: string;
+  /** The call's step (written to `approval_requested`). */
+  step: number;
+  callId: string;
+  /** The call's policy key. */
+  toolKey: string;
+  specHash: string;
+  connectorId: string | null;
+  /** The raw call input, stored for binding only (never shown). */
+  input: unknown;
+  /** The run's person: the only one who may submit or cancel. */
+  requestedFor: string;
+  /** What the values are for ("Anthropic: deployment config"). */
+  target: { zh: string; en: string };
+  /** The secret fields to enter (1 to {@link SECURE_INPUT_MAX_FIELDS}), specs only. */
+  personFields: PersonFieldSpec[];
+}
+
+/** A tool ask's `detail`: the file its call takes and whether the review was unsure. */
 export interface ToolAskDetail {
+  /** The file the call takes in place of an upload (its sha256 is what the approval binds). */
+  file?: FileCardDetail;
+  /** The review model could not decide the ask under Approve for me (R3). */
+  reviewUnsure?: true;
+}
+
+/** A secure input request's `detail`: the fields the person enters and their target. */
+export interface SecureInputDetail {
   personFields: PersonFieldSpec[];
   target: { zh: string; en: string };
   /** The paths whose entered value the decision refused as leaked (written by the decision). */
   leakedFields?: string[];
-  /** The file the call takes in place of an upload (its sha256 is what the approval binds). */
-  file?: FileCardDetail;
+}
+
+/** Whether a tool ask's stored `detail` says the review model could not decide it. */
+function reviewUnsureOf(detail: unknown): Pick<ApprovalRecord, "reviewUnsure"> | null {
+  return typeof detail === "object" &&
+    detail !== null &&
+    (detail as { reviewUnsure?: unknown }).reviewUnsure === true
+    ? { reviewUnsure: true }
+    : null;
 }
 
 /** A tool ask's file from its stored `detail` (none: the call takes no file). */
@@ -385,12 +435,12 @@ function fileOf(detail: unknown): Pick<ApprovalRecord, "file"> | null {
   return { file: f as FileCardDetail };
 }
 
-/** A tool ask's person fields from its stored `detail` (none: an ordinary tool ask). */
+/** The person fields of a secure input request from its stored `detail`. */
 function personFieldsOf(
   detail: unknown,
 ): Pick<ApprovalRecord, "personFields" | "personTarget" | "leakedFields"> | null {
   if (typeof detail !== "object" || detail === null) return null;
-  const d = detail as Partial<ToolAskDetail>;
+  const d = detail as Partial<SecureInputDetail>;
   if (!Array.isArray(d.personFields) || d.personFields.length === 0 || d.target === undefined) {
     return null;
   }
@@ -541,8 +591,9 @@ function toRecord(r: Selectable<ApprovalsTable>): ApprovalRecord {
     detail: r.kind === "network" ? ((r.detail as NetworkAskDetail | null) ?? null) : null,
     git: r.kind === "git" ? ((r.detail as GitAskDetail | null) ?? null) : null,
     command: r.kind === "command" ? ((r.detail as CommandAskDetail | null) ?? null) : null,
-    ...(r.kind === "tool" && personFieldsOf(r.detail)),
+    ...(r.kind === "secure_input" && personFieldsOf(r.detail)),
     ...(r.kind === "tool" && fileOf(r.detail)),
+    ...(r.kind === "tool" && reviewUnsureOf(r.detail)),
     toolKey: r.tool_key,
     specHash: r.spec_hash,
     connectorId: r.connector_id,
@@ -568,13 +619,15 @@ function toRecord(r: Selectable<ApprovalsTable>): ApprovalRecord {
  * - 指定了 `requested_for` → 只有那个人；
  * - 按角色升级（`approver_role`）→ 当前角色不低于它、且不是该运行发起人的成员（发起人不能批准按角色升级到别人的请求）。
  * agent / 服务令牌不能处理任何审批（路由动作 `approvals.decide` 仅限用户主体）。
+ * A secure input request is only ever its `requested_for` person's, never a role's.
  */
 function canHandle(
-  a: { requestedFor: string | null; approverRole: OrgRole | null },
+  a: { kind: ApprovalKind; requestedFor: string | null; approverRole: OrgRole | null },
   initiator: string,
   accountId: string,
   role: OrgRole | null,
 ): boolean {
+  if (a.kind === "secure_input") return a.requestedFor !== null && a.requestedFor === accountId;
   if (a.requestedFor !== null) return a.requestedFor === accountId;
   return (
     a.approverRole !== null &&
@@ -700,6 +753,101 @@ export class ApprovalsService {
           ...(input.policy !== undefined && { policy: input.policy }),
           requestedFor: rec.requestedFor,
           approverRole: rec.approverRole,
+        },
+      },
+    ]);
+    return { record: rec, toSeq: Math.max(...written.map((e) => e.seq)) };
+  }
+
+  /**
+   * A secure input request (profiles govern every approval, R4): a pending approval of kind
+   * `secure_input` asking `requestedFor` for the call's secret fields, expiring like a tool
+   * approval, and its `approval_requested` (the display-only `secureInput`: the target and the
+   * field paths), in one transaction. It carries no consent: scopes `["once"]`, and Submit is a
+   * decision `approve` with the values, Cancel a `deny`. The raw call input is stored for binding
+   * only and shown nowhere. Idempotent per (run, call, attempt); an attempt already held by
+   * another kind is refused.
+   */
+  async requestSecureInput(input: SecureInputRequestInput): Promise<ApprovalRecord> {
+    const n = input.personFields.length;
+    if (n === 0 || n > SECURE_INPUT_MAX_FIELDS) {
+      throw new Error(`a secure input asks for 1 to ${SECURE_INPUT_MAX_FIELDS} fields`);
+    }
+    if (input.requestedFor.length === 0) throw new Error("a secure input names its person");
+    const { record, toSeq } = await this.requestSecureInputIn(input);
+    if (toSeq !== null) await this.eventLog.notify(record.conversationId, toSeq);
+    return record;
+  }
+
+  @Transactional()
+  private async requestSecureInputIn(
+    input: SecureInputRequestInput,
+  ): Promise<{ record: ApprovalRecord; toSeq: number | null }> {
+    const hours = this.config.get().tools.approvalTimeoutHours;
+    const t = this.db.db;
+    // the conversation row first (the append's lock), as `requestIn`
+    await t
+      .selectFrom("conversations")
+      .select("id")
+      .where("id", "=", input.conversationId)
+      .forUpdate()
+      .execute();
+    const detail: SecureInputDetail = { personFields: input.personFields, target: input.target };
+    const inserted = await t
+      .insertInto("approvals")
+      .values({
+        id: randomUUID(),
+        org_id: input.orgId,
+        conversation_id: input.conversationId,
+        run_id: input.runId,
+        call_id: input.callId,
+        attempt: input.attempt,
+        kind: "secure_input",
+        detail: JSON.stringify(detail),
+        tool_key: input.toolKey,
+        spec_hash: input.specHash,
+        connector_id: input.connectorId,
+        input: JSON.stringify(input.input ?? {}),
+        requested_for: input.requestedFor,
+        approver_role: null,
+        scopes: ["once"],
+        scope: null,
+        decided_by: null,
+        expires_at: sql<Date>`now() + ${hours}::integer * interval '1 hour'`,
+      })
+      .onConflict((oc) => oc.columns(["run_id", "call_id", "attempt"]).doNothing())
+      .returningAll()
+      .executeTakeFirst();
+    if (inserted === undefined) {
+      const row = await t
+        .selectFrom("approvals")
+        .selectAll()
+        .where("run_id", "=", input.runId)
+        .where("call_id", "=", input.callId)
+        .where("attempt", "=", input.attempt)
+        .executeTakeFirstOrThrow();
+      if (row.kind !== "secure_input") {
+        throw new Error(
+          `attempt ${input.attempt} of call ${input.callId} is an approval of kind ${row.kind}`,
+        );
+      }
+      return { record: toRecord(row), toSeq: null };
+    }
+    const rec = toRecord(inserted);
+    const written = await this.eventLog.appendIn(rec.conversationId, [
+      {
+        type: "approval_requested",
+        runId: rec.runId,
+        idemKey: `approval_requested:${rec.id}`,
+        payload: {
+          step: input.step,
+          callId: rec.callId,
+          approvalId: rec.id,
+          toolKey: rec.toolKey,
+          expiresAt: rec.expiresAt,
+          secureInput: { target: input.target, fields: input.personFields.map((f) => f.path) },
+          requestedFor: rec.requestedFor,
+          approverRole: null,
         },
       },
     ]);
@@ -1477,17 +1625,20 @@ export class ApprovalsService {
   ): Promise<{ record: ApprovalRecord; toSeq: number }> {
     return this.decideTx(orgId, id, accountId, body, actorTokenId, network, git, command).then(
       (o) => {
-        // only a tool ask takes inputs (refused for every other kind before)
-        if ("leaked" in o) throw new Error(`approval ${id}: a leak outcome outside a tool ask`);
+        // only a secure input takes inputs (refused for every other kind before)
+        if ("leaked" in o) {
+          throw new Error(`approval ${id}: a leak outcome outside a secure input request`);
+        }
         return o;
       },
     );
   }
 
   /**
-   * A tool ask's decision in its own transaction. With person fields, a leak refusal commits the
-   * leaked paths in `detail.leakedFields` and returns them (the caller refuses after the commit,
-   * the approval still pending); the same transaction cannot both keep that write and throw.
+   * A tool ask's or a secure input's decision in its own transaction. For a secure input, a leak
+   * refusal commits the leaked paths in `detail.leakedFields` and returns them (the caller refuses
+   * after the commit, the request still pending); the same transaction cannot both keep that write
+   * and throw.
    */
   @Transactional({ propagation: "requires_new" })
   private decideToolIn(
@@ -1572,12 +1723,13 @@ export class ApprovalsService {
       await this.permissionGrants.assertCurrent(before.command.permissionCandidate.binding);
     }
     const approved = body.decision === "approve";
-    const person = before.kind === "tool" ? before.personFields : undefined;
+    // only a secure input request takes values
+    const person = before.kind === "secure_input" ? before.personFields : undefined;
     if (body.inputs !== undefined && (person === undefined || !approved)) {
       throw inputsNotExpected();
     }
-    // an approval with person fields (platform web parity spec §4.2, §4.3, R5): approved only by
-    // its person, in a web session, with every asked value, valid and never seen in the
+    // a secure input (platform web parity spec §4.2, §4.3, R5; profiles govern every approval R4):
+    // submitted only by its person, in a web session, with every asked value, valid and never seen in the
     // conversation; the values are sealed before the status changes. A deny takes no values.
     let inputsProvided: string[] | undefined;
     if (person !== undefined && approved) {
@@ -1614,9 +1766,9 @@ export class ApprovalsService {
           .updateTable("approvals")
           .set({
             detail: JSON.stringify({
-              ...(locked.detail as ToolAskDetail),
+              ...(locked.detail as SecureInputDetail),
               leakedFields: [...new Set([...(before.leakedFields ?? []), ...leaked])],
-            } satisfies ToolAskDetail),
+            } satisfies SecureInputDetail),
           })
           .where("id", "=", id)
           .execute();
@@ -1852,6 +2004,7 @@ export class ApprovalsService {
       action: "approval.decided",
       target: id,
       detail: {
+        ...(before.kind === "secure_input" && { kind: "secure_input" }),
         ...(git !== undefined &&
           before.git !== null && {
             kind: "git",
@@ -2058,6 +2211,20 @@ export class ApprovalsService {
       .where("run_id", "=", runId)
       .where("call_id", "=", callId)
       .where("kind", "=", "tool")
+      .orderBy("attempt", "desc")
+      .limit(1)
+      .executeTakeFirst();
+    return row ? toRecord(row) : null;
+  }
+
+  /** The latest secure input request of a tool call (highest attempt); null when it has none. */
+  async secureInputForCall(runId: string, callId: string): Promise<ApprovalRecord | null> {
+    const row = await this.db
+      .selectFrom("approvals")
+      .selectAll()
+      .where("run_id", "=", runId)
+      .where("call_id", "=", callId)
+      .where("kind", "=", "secure_input")
       .orderBy("attempt", "desc")
       .limit(1)
       .executeTakeFirst();

@@ -73,6 +73,9 @@ beforeAll(async () => {
         roles: ["api", "worker"],
         extensions: [MODEL_FAKE, SANDBOX_FAKE],
         extensionConfig: { "sandbox-fake": { root } },
+        // the test drives the background poll itself (`pollOnce`): the worker's own tick would
+        // finish a task between a step and the poll that should see it
+        sandbox: { background: { pollSeconds: 3600 } },
       },
     ),
   );

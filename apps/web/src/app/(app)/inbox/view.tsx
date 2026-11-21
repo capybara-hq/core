@@ -776,9 +776,11 @@ function toolApprovalDetail({
   const lead = command === null ? undefined : commandLeadOf({}, approval);
   // decided or superseded meanwhile (a cached item): final, without approve, deny or a scope
   const final = approval.status !== "pending";
-  // Secret fields are typed on the web card only (as the IM card says): no approve here.
+  // A secure input request: the secret fields are typed on the web card only (as the IM card
+  // says), so there is no submit here.
+  const secure = approval.kind === "secure_input";
   const personCount = approval.personFields?.length ?? 0;
-  const person = personCount > 0 && !final;
+  const person = secure && !final;
   return {
     title:
       command === null
@@ -874,7 +876,9 @@ function toolApprovalDetail({
     content: (
       <div data-approval-id={approval.id}>
         <Stack gap={12}>
-          {person && <Text variant="prose">{ta("person.fillOnWeb", { n: personCount })}</Text>}
+          {person && (
+            <Text variant="prose">{ta("secureInput.webOnly", { count: personCount })}</Text>
+          )}
           {/* the file the call takes: the person decides on these bytes, not the bare fileId */}
           {approval.file !== undefined && (
             <ApprovalFileRow
@@ -888,7 +892,7 @@ function toolApprovalDetail({
               }}
             />
           )}
-          {command === null ? (
+          {secure ? null : command === null ? (
             <Stack gap={4}>
               <Text variant="small" tone="muted">
                 {ta("input")}

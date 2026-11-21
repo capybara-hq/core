@@ -33,7 +33,7 @@ const target = (stored: string[] = []): PersonFieldTarget => {
 };
 
 const SECRET_IN_VALUES =
-  "Secret fields are entered by the person on the confirmation card; leave `apiKey` out of values and list it in askPerson. A value passed in params has been seen by the model and counts as leaked: tell the person to rotate it.";
+  "Secret fields are entered by the person in a secure input request; leave `apiKey` out of values and list it in askPerson. A value passed in params has been seen by the model and counts as leaked: tell the person to rotate it.";
 
 describe("secretFieldsOf", () => {
   it("finds the secret leaves by dot path, with required along the whole path", () => {

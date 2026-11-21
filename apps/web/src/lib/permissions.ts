@@ -27,7 +27,12 @@ export type PermissionAvailability =
         unavailableReason?: string;
       };
     }
-  | { state: "unsupported" | "unprobed"; reason: string };
+  | {
+      state: "unsupported";
+      reason: string;
+      cause: { kind: "provider-outdated"; plugin: string; version: string } | { kind: "runtime" };
+    }
+  | { state: "unprobed"; reason: string };
 
 export interface PermissionPreview {
   deviceId: string;

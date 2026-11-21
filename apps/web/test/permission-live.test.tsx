@@ -168,7 +168,7 @@ describe("live profile change of an interactive root (Task 10D)", () => {
     });
     await choose(user, "Request approval");
     await waitFor(() =>
-      expect(editable()?.getAttribute("aria-label")).toMatch(/^Permissions: Full access(:|$)/),
+      expect(editable()?.getAttribute("aria-label")).toMatch(/^Permissions: Auto(:|$)/),
     );
     expect(patches(calls)).toHaveLength(1);
   });
@@ -199,7 +199,7 @@ describe("live profile change of an interactive root (Task 10D)", () => {
     expect(patches(calls)).toHaveLength(1);
   });
 
-  it("Full access asks about the conversation's own device and scope, then PATCHes that consent", async () => {
+  it("Auto asks about the conversation's own device and scope, then PATCHes that consent", async () => {
     const user = userEvent.setup();
     const view = permissionsView({
       revision: 2,
@@ -218,16 +218,14 @@ describe("live profile change of an interactive root (Task 10D)", () => {
         json(409, { error: { code: "conflict", message: "Device authority changed" } }),
     });
     await renderRouteWithCache("/chat/c1", routes, { locale: "en" });
-    await choose(user, /^Full access/);
+    await choose(user, /^Auto/);
     const dialog = screen.getByRole("dialog");
-    expect(within(dialog).getByText("Use Full access on Build box?")).toBeTruthy();
+    expect(within(dialog).getByText("Use Auto on Build box?")).toBeTruthy();
     // cancel changes nothing and sends nothing
     await user.click(within(dialog).getByRole("button", { name: "Cancel" }));
     expect(patches(calls)).toHaveLength(0);
-    await choose(user, /^Full access/);
-    await user.click(
-      within(screen.getByRole("dialog")).getByRole("button", { name: "Use Full access" }),
-    );
+    await choose(user, /^Auto/);
+    await user.click(within(screen.getByRole("dialog")).getByRole("button", { name: "Use Auto" }));
     await waitFor(() => expect(patches(calls)).toHaveLength(1));
     expect(bodyOf(patches(calls)[0])).toEqual({
       profile: "full-access",
@@ -238,9 +236,26 @@ describe("live profile change of an interactive root (Task 10D)", () => {
     await screen.findByText(
       "The permissions or their scope changed meanwhile. Check the current choice and choose again.",
     );
-    await choose(user, /^Full access/);
+    await choose(user, /^Auto/);
     expect(screen.getByRole("dialog")).toBeTruthy();
     expect(patches(calls)).toHaveLength(1);
+  });
+
+  it("without a device, Auto asks the device-less question, then PATCHes with no consent", async () => {
+    const user = userEvent.setup();
+    const view = permissionsView({ revision: 2 });
+    const routes = chatRoutes("c1", {}, view);
+    const calls = stubApi({
+      ...routes,
+      [`PATCH ${BASE}/c1/permissions`]: () => json(200, { revision: 3 }),
+    });
+    await renderRouteWithCache("/chat/c1", routes, { locale: "en" });
+    await choose(user, /^Auto/);
+    const dialog = screen.getByRole("dialog");
+    expect(within(dialog).getByText("Use Auto?")).toBeTruthy();
+    await user.click(within(dialog).getByRole("button", { name: "Use Auto" }));
+    await waitFor(() => expect(patches(calls)).toHaveLength(1));
+    expect(bodyOf(patches(calls)[0])).toEqual({ profile: "full-access", expectedRevision: 2 });
   });
 
   it("a root profile event raises the watermark: a lower read keeps the editor locked", async () => {
@@ -366,7 +381,7 @@ describe("fix round 1 (10D review minors)", () => {
     const es = FakeEventSource.instances[0] as FakeEventSource;
     act(() => es.emit("event", { ...profileEvent(1, 0), type: "run_started", payload: {} }));
     await waitFor(() => expect(read).toBe(1));
-    await choose(user, /^Full access/);
+    await choose(user, /^Auto/);
     expect(screen.getByRole("dialog")).toBeTruthy();
     act(() => es.emit("event", profileEvent(2, 3, "approve-for-me")));
     await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
@@ -443,7 +458,7 @@ describe("fix round 1 (10D review minors)", () => {
     });
     await user.click(button);
     const full = within(screen.getByRole("menu")).getByRole("menuitemradio", {
-      name: /^Full access/,
+      name: /^Auto/,
     });
     expect(full.getAttribute("aria-disabled")).toBe("true");
     expect(full.textContent).toContain("Checking this device…");
@@ -557,7 +572,7 @@ describe("an owner's child follows its root's profile (Important 1)", () => {
     // only the root's profile changes: the child's label follows, nothing else happens
     current = inherited({ profile: "full-access", revision: 4 });
     act(() => es.emit("event", profileEvent(8, 4, "full-access")));
-    await waitFor(() => expect(lockedProfile("Full access")).toBeTruthy());
+    await waitFor(() => expect(lockedProfile("Auto")).toBeTruthy());
     expect(reads(calls, "c2")).toHaveLength(2);
     expect(router.push).not.toHaveBeenCalled();
     expect(router.replace).not.toHaveBeenCalled();

@@ -1,6 +1,7 @@
 import { randomInt } from "node:crypto";
 import { Inject, Injectable } from "@nestjs/common";
 import { sql } from "kysely";
+import { accessibleTo } from "../conversations/access.js";
 import { initialPasswordAad as aadOf, type Keyring } from "../ctx/secrets.js";
 import type { KernelSchemaDb } from "../db/kernel-schema.js";
 import { ApiError } from "../errors.js";
@@ -17,13 +18,11 @@ const ALPHABET = "ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz23456789";
 const LENGTH = 20;
 
 /**
- * How long a generated password waits for its reader. The approving person reads it right after
- * the call runs; one that is never read expires (the account can still be disabled and recreated).
+ * How long a generated password waits for its reader. The person the call was made for reads it
+ * right after the call runs; one that is never read expires (the account can still be disabled
+ * and recreated).
  */
 export const INITIAL_PASSWORD_TTL_MS = 24 * 60 * 60 * 1000;
-
-/** The tool key of the approval a generated password belongs to. */
-export const CREATE_ACCOUNT_TOOL_KEY = "Platform:accounts.create";
 
 /** A one-time initial password, cryptographically random. */
 export function generateInitialPassword(): string {
@@ -32,13 +31,23 @@ export function generateInitialPassword(): string {
   return out;
 }
 
-/** Where a generated password is delivered: the approved tool call and the person who approved. */
+/**
+ * The tool call a once-shown value (an initial password, an invitation link) was made by: a call
+ * id is unique only within its run.
+ */
+export interface RevealCall {
+  conversationId: string;
+  runId: string;
+  callId: string;
+}
+
+/** Where a generated password is delivered: the tool call and the person it was made for. */
 export interface InitialPasswordDelivery {
   conversationId: string;
   /** The run of the call: a call id is unique only within its run. */
   runId: string;
   callId: string;
-  /** The account that may read it: the actor who confirmed the call. */
+  /** The account that may read it: the person the call was made for (the run's own person). */
   recipientAccountId: string;
 }
 
@@ -46,7 +55,7 @@ export interface InitialPasswordDelivery {
  * Accounts created with a kernel-generated one-time password (Platform tool spec §14.5 item 2).
  * The password never leaves the kernel except through {@link reveal}: it is not returned to the
  * caller, not written to the audit, the event log or the logs. It is sealed with the master keyring
- * in the creation's transaction and read once, on the web, by the person who approved the call.
+ * in the creation's transaction and read once, on the web, by the person the call was made for.
  */
 @Injectable()
 export class InitialPasswords {
@@ -105,46 +114,44 @@ export class InitialPasswords {
   }
 
   /**
-   * The password created by an approved `accounts.create` call, read once by the person who
-   * approved it (`approvalId` in `orgId`, decided by `accountId`), then deleted. Anything else (not
-   * that person, not approved, not run yet, read already, expired) is
-   * `account.initial_password_unavailable`, saying nothing about which. Audits the read (without
-   * the password).
+   * The password created by an `accounts.create` call (`call` in `orgId`), read once by its
+   * recipient `accountId` while the call's conversation is still accessible to them, then deleted
+   * (plan ruling R6: read by call, whether the call ran under an approval or automatically).
+   * Anything else (not the recipient, the conversation not accessible, not run yet, read already,
+   * expired) is `account.initial_password_unavailable`, saying nothing about which. Audits the read
+   * (without the password).
    */
   @Transactional()
   async reveal(
     orgId: string,
-    approvalId: string,
+    call: RevealCall,
     accountId: string,
   ): Promise<{ accountId: string; login: string | null; password: string }> {
     const unavailable = () =>
       new ApiError(
         "account.initial_password_unavailable",
-        "No initial password to show: it was shown already, has expired, or the account was not created by a call you approved",
+        "No initial password to show: it was shown already, has expired, or the account was not created by a call made for you",
       );
-    const approval = await this.db
-      .selectFrom("approvals")
-      .select(["conversation_id", "run_id", "call_id", "tool_key", "status", "decided_by"])
-      .where("id", "=", approvalId)
-      .where("org_id", "=", orgId)
-      .executeTakeFirst();
-    if (
-      approval === undefined ||
-      approval.tool_key !== CREATE_ACCOUNT_TOOL_KEY ||
-      approval.status !== "approved" ||
-      approval.decided_by !== accountId
-    ) {
-      throw unavailable();
-    }
-    // exactly the row of this approval's call: locked, then deleted by its key
+    // exactly the row of this call, for its recipient in a conversation of this org they can
+    // still see: locked, then deleted by its key
     const found = await this.db
       .selectFrom("account_initial_passwords")
       .select("account_id")
-      .where("conversation_id", "=", approval.conversation_id)
-      .where("run_id", "=", approval.run_id)
-      .where("call_id", "=", approval.call_id)
+      .where("conversation_id", "=", call.conversationId)
+      .where("run_id", "=", call.runId)
+      .where("call_id", "=", call.callId)
       .where("recipient_account_id", "=", accountId)
       .where("expires_at", ">", sql<Date>`now()`)
+      .where((eb) =>
+        eb.exists(
+          eb
+            .selectFrom("conversations")
+            .select("conversations.id")
+            .whereRef("conversations.id", "=", "account_initial_passwords.conversation_id")
+            .where("conversations.org_id", "=", orgId)
+            .where(accessibleTo(accountId)),
+        ),
+      )
       .limit(1)
       .forUpdate()
       .executeTakeFirst();
@@ -164,7 +171,7 @@ export class InitialPasswords {
       orgId,
       action: "account.initial_password_shown",
       target: row.account_id,
-      detail: { approvalId },
+      detail: { conversationId: call.conversationId, runId: call.runId, callId: call.callId },
     });
     return { accountId: row.account_id, login, password };
   }

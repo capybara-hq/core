@@ -40,6 +40,11 @@ export type ModeMenuProps = {
     onPick(id: string): void;
   };
   /**
+   * One muted line right after the head, before the profiles: a standing fact about the choice
+   * ("This device's runtime can't enforce its sandbox"). Not focusable; `note` still closes the menu.
+   */
+  notice?: string;
+  /**
    * A transient fact closing the modes ("Checked when this device starts"), never a standing explanation; a locked
    * menu's reason comes first.
    */
@@ -60,6 +65,7 @@ export function modeMenuEntries(p: ModeMenuProps): ConvMenuEntry[] {
       ...(p.locked === undefined && p.hint !== undefined ? { hint: p.hint } : {}),
     },
   ];
+  if (p.notice !== undefined && p.notice !== "") entries.push({ kind: "note", text: p.notice });
   for (const m of p.modes) {
     const disabled = p.locked !== undefined || m.disabled === true;
     entries.push({

@@ -4,7 +4,8 @@ import { hintedSecretPaths } from "../extensions/config-json-schema.js";
 
 /**
  * Person fields (platform web parity spec §4.1, §4.2): the secret fields of a write's target config
- * schema that the person types on the approval card instead of the model passing them in params.
+ * schema that the person types in a secure input request instead of the model passing them in
+ * params.
  * Pure rules shared by the Platform operations: find the secret fields of a JSON Schema produced by
  * the SDK's `configJsonSchema` (`"x-secret": true`), plan which ones one call asks for, and check
  * one typed value. Paths are the dot paths the config routes use in `values` (ruling R1); secret
@@ -14,12 +15,12 @@ import { hintedSecretPaths } from "../extensions/config-json-schema.js";
 
 /** UTF-8 bytes of one value the person types. */
 export const PERSON_FIELD_MAX_BYTES = 16 * 1024;
-/** Person fields one call may ask for (one approval card). */
+/** Person fields one call may ask for (one secure input request). */
 export const PERSON_FIELDS_MAX = 32;
 /** Characters of one dot path in `askPerson` / `clearSecrets`. */
 const PATH_MAX_CHARS = 200;
 
-/** One secret field the person may enter on the approval card. */
+/** One secret field the person may enter in a secure input request. */
 export interface PersonFieldSpec {
   /** Dot path from the schema root (R1). */
   path: string;
@@ -76,7 +77,7 @@ export const personFieldParams: {
   clearSecrets: z.ZodType<string[]>;
 } = {
   askPerson: pathList(
-    "Dot paths of secret fields the person enters on the confirmation card. Never put a secret in values; required secrets without a stored value are asked even when not listed.",
+    "Dot paths of secret fields the person enters in a secure input request. Never put a secret in values; required secrets without a stored value are asked even when not listed.",
   ),
   clearSecrets: pathList("Dot paths of stored secret fields to clear."),
 };
@@ -371,7 +372,7 @@ export function planPersonFields(
     if (leaks(f.path)) {
       return {
         ok: false,
-        message: `Secret fields are entered by the person on the confirmation card; leave \`${f.path}\` out of values and list it in askPerson. A value passed in params has been seen by the model and counts as leaked: tell the person to rotate it.`,
+        message: `Secret fields are entered by the person in a secure input request; leave \`${f.path}\` out of values and list it in askPerson. A value passed in params has been seen by the model and counts as leaked: tell the person to rotate it.`,
       };
     }
   }
@@ -418,7 +419,7 @@ export function planPersonFields(
   if (ask.length > PERSON_FIELDS_MAX) {
     return {
       ok: false,
-      message: `This call would ask the person for ${ask.length} fields; one confirmation card holds at most ${PERSON_FIELDS_MAX}. Split the change into several calls.`,
+      message: `This call would ask the person for ${ask.length} fields; one secure input request holds at most ${PERSON_FIELDS_MAX}. Split the change into several calls.`,
     };
   }
   return { ok: true, ask, clear: t.fields.filter((f) => clear.has(f.path)).map((f) => f.path) };

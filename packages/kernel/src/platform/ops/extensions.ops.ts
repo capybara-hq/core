@@ -46,7 +46,7 @@ const SwitchConfirm = OrgToolSwitchPut.shape.confirm.unwrap();
 /** The next step of an extension that needs its org config. */
 const NEEDS_ORG_CONFIG = {
   orgAdmin:
-    "Read what is missing with extensions.org-config, then fill it in with extensions.set-org-config (or the org's own copy of overridable platform fields with extensions.save-org-config); the person enters secrets on the confirmation card.",
+    "Read what is missing with extensions.org-config, then fill it in with extensions.set-org-config (or the org's own copy of overridable platform fields with extensions.save-org-config); the person enters secrets in a secure input request.",
   member: "Ask an org admin to fill in its org config on the Extensions page.",
 };
 
@@ -104,7 +104,7 @@ function stateOf(v: OrgExtensionView): "on" | "off" | "needs_config" | "unavaila
  * of `GET /orgs/:orgId/extensions`, whatever the actor's role), their tool switches and point
  * defaults, and for org admins the org config and the org's copy of overridable platform fields
  * (read, write, take, save, drop; platform web parity spec §7.2). Secrets are never returned (only
- * whether each is set) and never taken as params: the person enters them on the confirmation card.
+ * whether each is set) and never taken as params: the person enters them in a secure input request.
  */
 @Injectable()
 export class ExtensionsOperations implements OnModuleInit {
@@ -344,7 +344,7 @@ export class ExtensionsOperations implements OnModuleInit {
       defineOperation({
         id: "extensions.set-org-config",
         description:
-          "Save an extension's org config (org admins): values is the whole non-secret config and replaces the stored one (read it first with extensions.org-config and keep the fields you do not change). Secret fields are never in values: list them in askPerson and the person types them on the confirmation card (on the web); a secret not listed keeps its stored value; list stored secrets to empty in clearSecrets. Required secrets without a stored value are asked even when not listed. For overridable fields of the platform's deployment config (an org's own API key for a model provider, say) use extensions.save-org-config. Switching the extension on is plugins.set-enabled.",
+          "Save an extension's org config (org admins): values is the whole non-secret config and replaces the stored one (read it first with extensions.org-config and keep the fields you do not change). Secret fields are never in values: list them in askPerson and the person types them in a secure input request (on the web); a secret not listed keeps its stored value; list stored secrets to empty in clearSecrets. Required secrets without a stored value are asked even when not listed. For overridable fields of the platform's deployment config (an org's own API key for a model provider, say) use extensions.save-org-config. Switching the extension on is plugins.set-enabled.",
         input: z
           .object({
             extension: Extension,
@@ -425,7 +425,7 @@ export class ExtensionsOperations implements OnModuleInit {
       defineOperation({
         id: "extensions.save-org-config",
         description:
-          "Save fields of the org's own copy of an extension's platform deployment config (org admins): only overridable fields (extensions.org-config lists them under deploymentCopy). values maps field dot paths to values (null clears; a field left out keeps). Secret fields are never in values: list them in askPerson and the person types them on the confirmation card (on the web); list stored secrets to empty in clearSecrets. The first save makes the copy from the platform's non-secret values and must be valid on its own (its required secrets are asked).",
+          "Save fields of the org's own copy of an extension's platform deployment config (org admins): only overridable fields (extensions.org-config lists them under deploymentCopy). values maps field dot paths to values (null clears; a field left out keeps). Secret fields are never in values: list them in askPerson and the person types them in a secure input request (on the web); list stored secrets to empty in clearSecrets. The first save makes the copy from the platform's non-secret values and must be valid on its own (its required secrets are asked).",
         input: z
           .object({
             extension: Extension,

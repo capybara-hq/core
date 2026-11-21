@@ -384,9 +384,10 @@ export function commandCardText(
 }
 
 /**
- * The `bind` card of an approval whose Platform call needs the person to type secrets: the values
- * pass only through the web, never an IM vendor, so IM gets a link to the conversation instead of
- * an approval card. Undefined when the approval does not exist or has no person fields.
+ * The `bind` card of a secure input request (or an approval whose Platform call needs the person
+ * to type secrets): the values pass only through the web, never an IM vendor, so IM gets a link to
+ * the conversation instead of an approval card. Undefined when the approval does not exist or has
+ * no person fields.
  */
 export async function personFieldsCard(
   d: CardDeps,
@@ -421,7 +422,8 @@ export async function approvalCard(
   redact?: (s: string) => string,
 ): Promise<Extract<ChannelCard, { kind: "approval" }> | undefined> {
   const v = await d.approvals.describe(approvalId);
-  if (!v) return undefined;
+  // a secure input is web-only: never an approval card, only the bind link (personFieldsCard)
+  if (!v || v.kind === "secure_input") return undefined;
   const decidedBy = await displayName(d.db, v.decidedBy);
   // a network, git or command ask names what it asks about instead of a tool call (same shape)
   const network =

@@ -6,6 +6,8 @@ import en from "../messages/en.json";
 import zh from "../messages/zh.json";
 import { ApprovalCard } from "../src/components/ApprovalCard";
 import { ConnectCard } from "../src/components/ConnectCard";
+import { InitialPasswordReveal } from "../src/components/InitialPasswordReveal";
+import { InvitationLinkReveal } from "../src/components/InvitationLinkReveal";
 import { QuestionCard } from "../src/components/QuestionCard";
 import type { InputForm, ToolInfo } from "../src/lib/conversations";
 import { PeopleContext, type PeopleMap } from "../src/lib/people";
@@ -106,30 +108,16 @@ describe("ApprovalCard (design ApprovalBlock)", () => {
     expect(screen.queryByRole("button", { name: "总是批准" })).toBeNull();
   });
 
-  describe("an approved accounts.create shows its generated password once to the approver", () => {
-    const createInput = {
-      action: "call",
-      operation: "accounts.create",
-      params: { login: "alice", displayName: "Alice" },
-    };
-    const createItem = (byAccountId: string): ApprovalItem => ({
-      ...item({
-        approvalId: "ap1",
-        callId: "call_1",
-        decision: "approved",
-        scope: "once",
-        byAccountId,
-      }),
-      toolKey: "Platform:accounts.create",
-      input: createInput,
-    });
+  describe("a reveal is read by call, once", () => {
+    const CALL = { conversationId: "c1", runId: "r1", callId: "call_1" };
+    const CALL_BASE = "/api/v1/orgs/o1/conversations/c1/runs/r1/calls/call_1";
 
-    it("the approver reads it on a click; it is shown in a secret field, never fetched before", async () => {
+    it("the initial password is read on a click; it is shown in a secret field, never fetched before", async () => {
       const calls = stubApi({
-        "POST /api/v1/orgs/o1/approvals/ap1/initial-password": () =>
+        [`POST ${CALL_BASE}/initial-password`]: () =>
           json(200, { accountId: "acc9", login: "alice", password: "Gen3ratedPassw0rdXyz" }),
       });
-      renderPage(<ApprovalCard orgId="o1" item={createItem(ME.account.id)} />, { locale: "zh" });
+      renderPage(<InitialPasswordReveal orgId="o1" call={CALL} />, { locale: "zh" });
       const show = await screen.findByRole("button", { name: zh.approval.initialPassword.show });
       expect(calls.filter((c) => c.method === "POST")).toEqual([]);
       await userEvent.setup().click(show);
@@ -138,14 +126,14 @@ describe("ApprovalCard (design ApprovalBlock)", () => {
       expect(screen.queryByRole("button", { name: zh.approval.initialPassword.show })).toBeNull();
     });
 
-    it("read already: the error says so, the button goes, nothing is shown", async () => {
+    it("the initial password read already: the error says so, the button goes", async () => {
       stubApi({
-        "POST /api/v1/orgs/o1/approvals/ap1/initial-password": () =>
+        [`POST ${CALL_BASE}/initial-password`]: () =>
           json(404, {
             error: { code: "account.initial_password_unavailable", message: "No initial password" },
           }),
       });
-      renderPage(<ApprovalCard orgId="o1" item={createItem(ME.account.id)} />, { locale: "en" });
+      renderPage(<InitialPasswordReveal orgId="o1" call={CALL} />, { locale: "en" });
       await userEvent
         .setup()
         .click(await screen.findByRole("button", { name: en.approval.initialPassword.show }));
@@ -153,43 +141,11 @@ describe("ApprovalCard (design ApprovalBlock)", () => {
       expect(screen.queryByRole("button", { name: en.approval.initialPassword.show })).toBeNull();
     });
 
-    it("someone else's approval, or another operation, offers nothing", async () => {
-      stubApi({});
-      renderPage(<ApprovalCard orgId="o1" item={createItem("someone-else")} />, { locale: "en" });
-      await screen.findByText(/Approved|approved/);
-      expect(screen.queryByRole("button", { name: en.approval.initialPassword.show })).toBeNull();
-      cleanup();
-      const other = {
-        ...createItem(ME.account.id),
-        toolKey: "Platform:accounts.disable",
-        input: { ...createInput, operation: "accounts.disable" },
-      };
-      renderPage(<ApprovalCard orgId="o1" item={other} />, { locale: "en" });
-      await screen.findByText(/Approved|approved/);
-      expect(screen.queryByRole("button", { name: en.approval.initialPassword.show })).toBeNull();
-    });
-  });
-
-  describe("an approved orgs.invite shows its invitation link once to the approver", () => {
-    const inviteInput = { action: "call", operation: "orgs.invite", params: { role: "member" } };
-    const inviteItem = (byAccountId: string): ApprovalItem => ({
-      ...item({
-        approvalId: "ap1",
-        callId: "call_1",
-        decision: "approved",
-        scope: "once",
-        byAccountId,
-      }),
-      toolKey: "Platform:orgs.invite",
-      input: inviteInput,
-    });
-
-    it("the approver reads it on a click; a path answer is shown on this origin", async () => {
+    it("the invitation link is read on a click; a path answer is shown on this origin", async () => {
       const calls = stubApi({
-        "POST /api/v1/orgs/o1/approvals/ap1/invitation-link": () =>
-          json(200, { url: "/invite/cap_inv_Abc123" }),
+        [`POST ${CALL_BASE}/invitation-link`]: () => json(200, { url: "/invite/cap_inv_Abc123" }),
       });
-      renderPage(<ApprovalCard orgId="o1" item={inviteItem(ME.account.id)} />, { locale: "zh" });
+      renderPage(<InvitationLinkReveal orgId="o1" call={CALL} />, { locale: "zh" });
       const show = await screen.findByRole("button", { name: zh.approval.invitationLink.show });
       expect(calls.filter((c) => c.method === "POST")).toEqual([]);
       await userEvent.setup().click(show);
@@ -200,25 +156,17 @@ describe("ApprovalCard (design ApprovalBlock)", () => {
       expect(screen.queryByRole("button", { name: zh.approval.invitationLink.show })).toBeNull();
     });
 
-    it("read already: the error says so, the button goes, nothing is shown", async () => {
+    it("the invitation link read already: the error says so, the button goes", async () => {
       stubApi({
-        "POST /api/v1/orgs/o1/approvals/ap1/invitation-link": () =>
+        [`POST ${CALL_BASE}/invitation-link`]: () =>
           json(404, { error: { code: "invitation.link_unavailable", message: "No link" } }),
       });
-      renderPage(<ApprovalCard orgId="o1" item={inviteItem(ME.account.id)} />, { locale: "en" });
+      renderPage(<InvitationLinkReveal orgId="o1" call={CALL} />, { locale: "en" });
       await userEvent
         .setup()
         .click(await screen.findByRole("button", { name: en.approval.invitationLink.show }));
       expect(await screen.findByText(en.errors.invitation.link_unavailable)).toBeTruthy();
       expect(screen.queryByRole("button", { name: en.approval.invitationLink.show })).toBeNull();
-    });
-
-    it("someone else's approval offers nothing", async () => {
-      stubApi({});
-      renderPage(<ApprovalCard orgId="o1" item={inviteItem("someone-else")} />, { locale: "en" });
-      await screen.findByText(/Approved|approved/);
-      expect(screen.queryByRole("button", { name: en.approval.invitationLink.show })).toBeNull();
-      expect(screen.queryByRole("button", { name: en.approval.initialPassword.show })).toBeNull();
     });
   });
 
