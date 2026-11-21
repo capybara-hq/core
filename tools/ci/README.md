@@ -5,6 +5,10 @@ How `.github/workflows/ci.yml` decides what to run. The plan is computed by `too
 sync. The rules for each custom check are in [tools/checks/README.md](../checks/README.md).
 
 - The required statuses are `ci-ok` and `issue-linked`. `ci-ok` aggregates every job in `.github/workflows/ci.yml`, which must all feed into it. `issue-linked` is set by `.github/workflows/community.yml` (the shared gate from `capybara-hq/.github`) and is not part of `ci-ok`. No workflow uses `pull_request_target` (GitHub restricts it by default from 2026-12-02): `.github/workflows/pr-event.yml` runs on `pull_request` with no permissions and only uploads the PR number; `community.yml` and `cla.yml` listen for its completed runs on `workflow_run`, validate the number (a PR of this repository whose head is the run's head SHA) and read the PR through the API, never checking out its code. `workflow_run` runs the listener files from `main`, so a change to them takes effect only once merged; a first-time contributor's `pull_request` run waits for "Approve and run", and so do `issue-linked` and `cla`. Details: the "Issue gate and CLA" section of the `capybara-hq/.github` README.
+- **Draft PRs run nothing.** Every CI job is skipped while a PR is a draft; marking it ready for
+  review (`ready_for_review`) starts the run, and later pushes run as usual. Open a PR as a draft
+  while it is still changing, so each push doesn't take a full set of runners (the free plan's
+  concurrent jobs are shared by every repository of the organization).
 - **PRs run what the diff affects; pushes to `main` run everything.** Cheap checks or checks that inherently look at the whole repo run in full on PRs too; expensive checks that can be scoped run only when affected. The plan is computed by `tools/ci/src/affected.ts` (rules unit-tested in `tools/ci/test`); keep this list, that file and the comments in `ci.yml` in sync:
 
   | Job | On PRs | Runs when |
@@ -14,7 +18,7 @@ sync. The rules for each custom check are in [tools/checks/README.md](../checks/
   | `web` (Next build) | by diff | `apps/web/**`, `packages/design/**` |
   | `visual`: screenshot regression, measuring and state-coverage tests (`apps/web/visual/fidelity.spec.ts`: `/dev/ui/reference/<component>` against the size tables and state lists in `docs/design/spec.md`, plus a completeness case: `apps/web/visual/accepted.ts` lists every component with a state list; `apps/web/visual/skeleton-alignment.spec.ts`: for every template in `LOADING_TEMPLATES` (`accepted.ts`) each `data-part` shared by the loading and the loaded reference block has the same box within ±1 px, height too except the parts in `VARIABLE_HEIGHT`; interaction specs such as `apps/web/visual/sidebar.interaction.spec.ts` (keyboard paths, collapse motion and reduced motion, rail and drawer) and `apps/web/visual/conversation.interaction.spec.ts` (expand motion and reduced motion, panel exclusivity, the resize handle, the narrow sheet)) | by diff (builds Next and runs Playwright: minutes) | `apps/web/**`, `packages/design/**`, and `docs/design/{spec.md,tokens.json}` through `EXTRA_INPUTS`. The side-by-side page (`pnpm --filter @capybara-hq/web compare`) is a local review tool, not CI |
   | `e2e` | by diff | anything in the dependency closure of `apps/web`, `apps/capybara` (kernel, plugin-sdk, testing), the plugins `apps/web/e2e` loads (`"apps/web/e2e"` in `test-plugins.json`: model-fake), `packages/kernel/bootstrap.json` (the e2e setup's `capybara bootstrap` downloads and installs its npm pins); four jobs, each with its own stack and a quarter of the tests (`--shard`; `fullyParallel` shards by test, a serial file stays in one shard, the specs still run one at a time) |
-  | `docker`: builds the four images for linux/amd64 (loaded, never pushed), then `docker/test/compose-smoke.sh` | by diff (~15 min) | anything in the dependency closure of `apps/capybara` and `apps/web` (kernel, plugin-sdk, design, testing), `packages/kernel/bootstrap.json` (the compose init downloads its npm pins) and `plugins/model-fake` / `packages/plugin-tools` (the smoke test packs model-fake with it and installs it); `docker/**`, the Dockerfiles and `.dockerignore` belong to no package, so they run everything. Layer cache: GitHub Actions cache, written only on `main` |
+  | `docker`: builds the four images for linux/amd64 (loaded, never pushed), then `docker/test/compose-smoke.sh` | by diff (~15 min) | anything in the dependency closure of `apps/capybara` (kernel, plugin-sdk, testing); files of `apps/web` and `packages/design` other than what only `next build` reads (`src/`, `test/`, `e2e/`, `visual/`, `reference/`, `compare/`, `messages/`, `playwright*.config.ts`: the `web` job builds those; `package.json`, `next.config.mjs`, `server.mjs`, `public/` and the rest run it), `packages/kernel/bootstrap.json` (the compose init downloads its npm pins) and `plugins/model-fake` / `packages/plugin-tools` (the smoke test packs model-fake with it and installs it); `docker/**`, the Dockerfiles and `.dockerignore` belong to no package, so they run everything. Layer cache: GitHub Actions cache, written only on `main` |
 
 - **Run everything** when the diff touches root `package.json`, `pnpm-lock.yaml`, `pnpm-workspace.yaml`, `vitest.config.*`, `tsconfig*.json`, `biome.json`, `.github/**` (except the files below that no PR check reads), `tools/ci/**`, `packages/testing/**`, any file that is neither a doc nor inside a workspace package (e.g. `docker/**`, `tools/fixtures/**`, `commitlint.config.ts`), or when the diff can't be computed.
 - **Docs-only** diffs (`.github/CODEOWNERS` and the workflows `cla.yml`, `community.yml`, `pr-event.yml`, `merge-queue.yml`, `visual-update.yml`, `reference-update.yml` (`GITHUB_NO_TESTS`), `docs/**` except `docs/config.md`, `docs/design/spec.md` and `docs/design/tokens.json`, `*.md` outside packages, `.gitignore`, `.agents/**`, `.claude/**` except hooks and `settings.json`) skip test / web / e2e / visual / docker.
@@ -29,8 +33,14 @@ sync. The rules for each custom check are in [tools/checks/README.md](../checks/
 
 The `main-quality` ruleset requires `ci-ok` and `issue-linked` but not that a PR be up to date with
 `main` (strict off): a merge doesn't send every open PR back to merge `main` and rerun. Two PRs
-that pass apart can still break together; the full run on every push to `main` catches that, and
-a follow-up PR fixes it.
+that pass apart can still break together; the full run on `main` catches that, and a follow-up PR
+fixes it.
+
+A new push to `main` cancels the run still going for an older `main` commit (the same
+`cancel-in-progress` as on PRs): the newest commit contains every earlier one, so its full run
+covers them, and merging several PRs in a row costs one full run instead of one each. The price:
+a red run on `main` may span several merged PRs, so finding the culprit can take a look at each;
+and only a run that finishes writes the Docker layer cache.
 
 `ci.yml` also runs on `merge_group`, and `merge-queue.yml` reports `issue-linked` on a merge
 group's commit (`community.yml` sets it on PR heads only), so a GitHub merge queue can be turned on

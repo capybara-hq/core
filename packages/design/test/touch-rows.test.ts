@@ -1,9 +1,10 @@
 import { describe, expect, it } from "vitest";
-import { TOUCH_QUERY } from "../src/index";
+import { MOBILE_SIZE_QUERY } from "../src/index";
 import { css, parseCss } from "./css-rules";
 
-// Rows on touch (spec §6.17 ObjectRow, §6.33 ItemList): 52 high, 56 with a second line, no
-// dividers and no box around the list; outside the touch query the desktop rules stand.
+// Rows under the mobile sizes (spec §6.17 ObjectRow, §6.33 ItemList; compact or touch, maintainer
+// decision 2026-11-22): 52 high, 56 with a second line, no dividers and no box around the list;
+// outside MOBILE_SIZE_QUERY the desktop rules stand.
 
 const touch = parseCss(css("touch.css"));
 const templates = parseCss(css("templates.css"));
@@ -12,28 +13,28 @@ const under = (rules: ReturnType<typeof parseCss>, at: string | null, selector: 
 
 describe("touch rows", () => {
   it("ObjectRow is touch.row high, touch.row.roomy with a second line, with no divider", () => {
-    expect(under(touch, TOUCH_QUERY, ".cb-object-row")).toMatchObject({
+    expect(under(touch, MOBILE_SIZE_QUERY, ".cb-object-row")).toMatchObject({
       "min-height": "var(--cb-touch-row)",
       "border-top": "0",
     });
     expect(
-      under(touch, TOUCH_QUERY, ".cb-object-row:has(.cb-object-desc, .cb-object-meta)"),
+      under(touch, MOBILE_SIZE_QUERY, ".cb-object-row:has(.cb-object-desc, .cb-object-meta)"),
     ).toEqual({ "min-height": "var(--cb-touch-row-roomy)" });
   });
 
   it("the object list loses its card border and ground", () => {
-    expect(under(touch, TOUCH_QUERY, ".cb-object-list")).toMatchObject({
+    expect(under(touch, MOBILE_SIZE_QUERY, ".cb-object-list")).toMatchObject({
       border: "0",
       background: "transparent",
     });
   });
 
   it("ItemList rows follow the same sizes with no divider", () => {
-    expect(under(touch, TOUCH_QUERY, ".cb-item-list-row")).toMatchObject({
+    expect(under(touch, MOBILE_SIZE_QUERY, ".cb-item-list-row")).toMatchObject({
       "min-height": "var(--cb-touch-row)",
       "border-top": "0",
     });
-    expect(under(touch, TOUCH_QUERY, ".cb-item-list-row:has(.cb-item-list-meta)")).toEqual({
+    expect(under(touch, MOBILE_SIZE_QUERY, ".cb-item-list-row:has(.cb-item-list-meta)")).toEqual({
       "min-height": "var(--cb-touch-row-roomy)",
     });
   });

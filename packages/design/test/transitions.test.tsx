@@ -6,6 +6,7 @@ import { resolve } from "node:path";
 import { act, cleanup, render } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { AppShell, DesignProvider, withViewTransition } from "../src/index";
+import { goBack, SETTLE_LIMIT_MS } from "../src/shell/floating-bar";
 import { css, parseCss } from "./css-rules";
 import { matchMediaFor } from "./width";
 
@@ -93,6 +94,93 @@ describe("a pop the browser already animated", () => {
     window.history.pushState(null, "", "/agents/new");
     rerender(shell("/agents/new"));
     expect(main().getAttribute("data-nav")).toMatch(/^push-/);
+  });
+});
+
+describe("a pop the back button animates with a view transition", () => {
+  it("sets no CSS slide, so the page does not slide in again once the transition ends", async () => {
+    window.matchMedia = matchMediaFor(390).matchMedia;
+    let finish: () => void = () => {};
+    let update: Promise<unknown> = Promise.resolve();
+    doc.startViewTransition = vi.fn((cb: () => unknown) => {
+      update = Promise.resolve(cb());
+      return { finished: new Promise<void>((r) => (finish = r)) };
+    });
+    window.history.replaceState(null, "", "/");
+    const { rerender } = render(shell("/"));
+    window.history.pushState(null, "", "/inbox");
+    rerender(shell("/inbox"));
+    expect(main().getAttribute("data-nav")).toMatch(/^push-/);
+    // the back button: the route changes inside the view transition's update
+    withViewTransition(() => {
+      window.history.replaceState(null, "", "/");
+      rerender(shell("/"));
+    }, "pop");
+    await act(async () => {
+      await update;
+    });
+    expect(document.documentElement.dataset.cbTransition).toBe("pop");
+    expect(main().getAttribute("data-nav")).toBeNull();
+    await act(async () => {
+      finish();
+    });
+    expect(document.documentElement.dataset.cbTransition).toBeUndefined();
+    expect(main().getAttribute("data-nav")).toBeNull();
+  });
+});
+
+describe("goBack settles on the new route, not on a frame", () => {
+  // Inside a view transition's update the browser renders no frame until the update settles, so
+  // a requestAnimationFrame never runs there: model that with a frame that never comes.
+  const realRaf = window.requestAnimationFrame;
+  afterEach(() => {
+    window.requestAnimationFrame = realRaf;
+    vi.useRealTimers();
+  });
+  const noFrames = () => {
+    window.requestAnimationFrame = (() => 0) as typeof window.requestAnimationFrame;
+  };
+
+  it("resolves once the shell commits the route the back landed on", async () => {
+    window.matchMedia = matchMediaFor(390).matchMedia;
+    noFrames();
+    window.history.replaceState(null, "", "/");
+    const { rerender } = render(shell("/"));
+    window.history.pushState(null, "", "/inbox");
+    rerender(shell("/inbox"));
+    // the router: a popstate renders the page the history now points at
+    const onPop = () => act(() => rerender(shell(window.location.pathname)));
+    window.addEventListener("popstate", onPop, { once: true });
+    const t0 = performance.now();
+    await goBack();
+    expect(window.location.pathname).toBe("/");
+    expect(performance.now() - t0).toBeLessThan(SETTLE_LIMIT_MS / 2);
+  });
+
+  it("resolves after the popstate when the back changed no route", async () => {
+    window.matchMedia = matchMediaFor(390).matchMedia;
+    noFrames();
+    window.history.replaceState(null, "", "/agents");
+    render(shell("/agents"));
+    window.history.pushState(null, "", "/agents#x");
+    const t0 = performance.now();
+    await goBack();
+    expect(window.location.hash).toBe("");
+    expect(performance.now() - t0).toBeLessThan(SETTLE_LIMIT_MS / 2);
+  });
+
+  it("still resolves at the bound when no popstate comes", async () => {
+    vi.useFakeTimers();
+    const back = vi.spyOn(window.history, "back").mockImplementation(() => {});
+    let settled = false;
+    void goBack().then(() => {
+      settled = true;
+    });
+    await vi.advanceTimersByTimeAsync(SETTLE_LIMIT_MS - 1);
+    expect(settled).toBe(false);
+    await vi.advanceTimersByTimeAsync(1);
+    expect(settled).toBe(true);
+    back.mockRestore();
   });
 });
 

@@ -282,38 +282,44 @@ describe("DataTable below 640: stacked rows", () => {
   });
 });
 
-describe("tap targets below 640 are at least 40 px", () => {
+describe("tap targets below 600", () => {
   const narrow = ["shell.css", "conversation-page.css", "table.css", "templates.css"]
     .map((f) => media(css(f)))
     .join("\n");
 
+  it(".cb-title-bar .cb-icon-btn", () => {
+    const d = decls(narrow, ".cb-title-bar .cb-icon-btn");
+    expect(d).toContain("min-height: var(--cb-touch-hit);");
+    expect(d).toContain("min-width: var(--cb-touch-hit);");
+  });
+
+  // The mobile sizes (spec §2.5, maintainer decision 2026-11-22): below 600 the control scale is
+  // 44 whatever the pointer, so the page head's tabs and actions, the row menu and an object row's
+  // buttons are their own 44 px targets; no invisible ring and no 40 px override is left.
   for (const sel of [
-    ".cb-title-bar .cb-icon-btn",
     ".cb-pageheader-tabs .cb-tab",
     ".cb-table-menu .cb-btn",
+    ".cb-pageheader-actions .cb-btn",
+    ".cb-object-row .cb-btn",
   ]) {
-    it(sel, () => {
-      const d = decls(narrow, sel);
-      expect(d).toContain("min-height: 40px;");
-      expect(d).toContain("min-width: 40px;");
+    it(`${sel} takes the mobile control size (no ring, no 40 px override)`, () => {
+      expect(decls(narrow, `${sel}::after`)).toBe("");
+      expect(decls(narrow, sel)).not.toContain("40px");
     });
   }
 
-  // The page head's actions and an object row's buttons keep their compact look and reach 40 px
-  // through an invisible ring (spec §4.3).
-  for (const sel of [".cb-pageheader-actions .cb-btn", ".cb-object-row .cb-btn"]) {
-    it(`${sel} (a 40 px ring around the compact button)`, () => {
-      expect(decls(narrow, sel)).toContain("position: relative;");
-      const ring = decls(narrow, `${sel}::after`);
-      expect(ring).toContain("position: absolute;");
-      expect(ring).toContain("min-height: 40px;");
-      expect(ring).toContain("min-width: 40px;");
-      expect(decls(narrow, sel)).not.toContain("min-height: 40px;");
-    });
-  }
+  it("the control scale is 44 below 600", () => {
+    const tokens = css("tokens.css");
+    const block = media(
+      tokens,
+      "(max-width: 599px), (pointer: coarse), (any-pointer: coarse) and (not (any-pointer: fine))",
+    );
+    expect(block).toContain("--cb-control-default: 44px;");
+    expect(block).toContain("--cb-control-dense: 44px;");
+  });
 
   it("the conversation title button", () => {
-    expect(decls(narrow, ".cb-title-btn")).toContain("height: 40px;");
+    expect(decls(narrow, ".cb-title-btn")).toContain("height: var(--cb-touch-hit);");
   });
 });
 
