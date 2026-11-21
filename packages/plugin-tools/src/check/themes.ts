@@ -41,7 +41,8 @@ export function themePathsOf(dir: string): { paths: string[]; listed: boolean } 
  * - `theme-invalid`: a theme file that is missing, over the size limit, not JSON or rejected by
  *   `parseThemeFile`, or more themes than {@link THEME_LIMITS}`.perPlugin`;
  * - `theme-readability`: a theme whose merged scheme fails the readability pairs (`unreadable:`);
- * - `theme-asset`: a font or logo that is missing or invalid (`validateThemeAssets`), and the sum
+ * - `theme-asset`: a file the theme names (`themeAssetRefs`: fonts, logo files, avatar files) that
+ *   is missing or invalid (`validateThemeAssets`), and the sum
  *   of the distinct asset sizes over all of the plugin's themes above
  *   {@link THEME_LIMITS}`.assetsBytes` (the limit is per plugin; the SDK checks one theme).
  */

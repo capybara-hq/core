@@ -180,13 +180,18 @@ the "carries nothing" check counts them.
 Three optional top-level fields (see the [theme brand coverage spec](2026-11-22-theme-brand-coverage-design.md) §1 for the design):
 
 - `decoration`: `"dither"` (default when omitted) or `"none"`, the background decoration of the
-  sign-in pages and empty states.
+  sign-in pages (the dither columns).
 - `avatars`: at most 12 extra agent avatar presets, `{ id, name, file }`. `id` matches
   `^[a-z0-9][a-z0-9-]{0,31}$`, is unique in the theme and is not a built-in preset id; `name` is a
   localized name (≤ 24 characters per language, the wordmark's character rules); `file` is a square
   SVG (sanitized) or a PNG ≥ 64 px, with the `logo.mark` size limits.
 - `hideAvatarPresets`: built-in preset ids (`BUILTIN_AVATAR_PRESET_IDS` in the SDK) the theme does
   not offer; hiding every built-in preset requires at least one `avatars` entry.
+
+The kernel checks, stores and serves these fields from the contract PR on; the web draws them in
+later #451 PRs (the avatar picker and pinned theme avatars with the avatars PR, the sign-in
+decoration with the graphics PR, the app icons in the manifest and apple-touch icon with the pages
+outside the theme PR).
 
 The assets count toward the 16 MB theme asset limit (§4.4). `themeAssetRefs` (SDK) is the one list of
 every file a theme names (fonts, `logo.mark`, `favicon`, `illustration`, `appIcon`,
@@ -323,9 +328,9 @@ Three levels, most specific first:
   `@font-face` rules and the font stacks. A single-scheme theme writes its one scheme under both
   selectors and pins `color-scheme`, so it needs nothing from the root layout (which owns
   `<html data-theme>` from the `cb-theme` cookie and cannot see the workspace's data).
-  Asset routes `GET /api/v1/themes/:id/:version/assets/:file` serve the re-serialized logo, every other
-  file the version names through `themeAssetRefs` (fonts, favicon, illustration, app icons, avatar
-  files). Both are immutable per version (`Cache-Control: public, max-age=31536000, immutable`)
+  Asset routes `GET /api/v1/themes/:id/:version/assets/:file` serve every file the version names
+  through `themeAssetRefs` (fonts, logo mark and favicon re-serialized when SVG, illustration, app
+  icons, avatar files). Both are immutable per version (`Cache-Control: public, max-age=31536000, immutable`)
   and identical on every replica (rendered from PG / object storage; no process state).
 - **Rendering re-validates**: stored values are checked again when the stylesheet is rendered; a
   failing value (a tampered row, a token core no longer knows) is left out and logged. The stored

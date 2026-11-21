@@ -17,8 +17,8 @@ import { THEME_OVERRIDABLE, THEME_TOKENS } from "./theme-tokens.generated.js";
  * segment is limited to `[A-Za-z0-9._-]`, so they need no escaping inside `url(...)`. Font
  * families are limited to letters, digits, spaces and `-`. Free text (`name`, `description`,
  * `logo.wordmark`, `avatars[].name`) carries no control, format, line / paragraph separator or
- * lone surrogate characters; it is text for the UI, never CSS. Whether the files exist and their size / signature / SVG rules are checked by
- * the reader of the package, with {@link THEME_LIMITS}.
+ * lone surrogate characters; it is text for the UI, never CSS. Whether the files exist and their
+ * size / signature / SVG rules are checked by the reader of the package, with {@link THEME_LIMITS}.
  *
  * The committed JSON Schema (`schemas/theme.v1.schema.json`) is generated from
  * {@link ThemeFileSchema} (the shape only) by `pnpm gen:package-schemas`; token names, value
@@ -56,7 +56,8 @@ export const THEME_LIMITS = {
 /** The id of a theme's avatar preset (`avatars[].id`); never a built-in preset id. */
 export const THEME_AVATAR_ID_RE = /^[a-z0-9][a-z0-9-]{0,31}$/;
 
-/** The empty-state decoration a theme asks for; omitted means `dither`. */
+/** The sign-in page background decoration (the dither columns) a theme asks for; omitted means
+ * `dither`. */
 export const THEME_DECORATIONS = ["dither", "none"] as const;
 export type ThemeDecoration = (typeof THEME_DECORATIONS)[number];
 

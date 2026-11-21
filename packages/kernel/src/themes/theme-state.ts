@@ -125,7 +125,7 @@ export function themeRefOf(
         ? null
         : {
             markUrl: url(def.logo.mark),
-            wordmark: def.logo.wordmark ?? null,
+            wordmark: typeof def.logo.wordmark === "string" ? def.logo.wordmark : null,
             faviconUrl: url(def.logo.favicon),
             illustrationUrl: url(def.logo.illustration),
             appIconUrl: url(def.logo.appIcon),

@@ -5,8 +5,9 @@ import { type ParsedTheme, THEME_LIMITS, type ThemeLogo } from "./theme.js";
 /**
  * Checks of a theme's asset files (themes spec §4.2-§4.4, theme brand coverage spec §1): woff2
  * fonts, PNG logos, app icons and avatars, and the SVG sanitizer. The sanitized SVG is served to
- * every browser, so {@link sanitizeThemeSvg} is a trust boundary: the output is re-serialized from the parsed tree (never the input bytes), elements are
- * allowlisted, every attribute value and text node is escaped on output.
+ * every browser, so {@link sanitizeThemeSvg} is a trust boundary: the output is re-serialized from
+ * the parsed tree (never the input bytes), elements are allowlisted, every attribute value and text
+ * node is escaped on output.
  */
 
 const SVG_NS = "http://www.w3.org/2000/svg";
