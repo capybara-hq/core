@@ -2032,9 +2032,7 @@
     "admin": "管理后台",
     "plugins": "插件",
     "extensions": "扩展",
-    "schedules": "定时任务",
-    "chats": "会话",
-    "me": "我"
+    "schedules": "定时任务"
   },
   "conversations": {
     "title": "会话",
@@ -2047,10 +2045,10 @@
     "running": "运行中",
     "waiting": "等待我"
   },
-  "me": {
-    "title": "我",
-    "adminTitle": "管理后台",
-    "back": "回到工作区"
+  "drawer": {
+    "more": "技能、连接器、设备…",
+    "switchOrg": "切换组织",
+    "allConversations": "全部会话"
   },
   "shell": {
     "noOrg": "选择组织",

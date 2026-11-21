@@ -182,7 +182,7 @@ export type BottomSheetProps = Omit<BottomSheetContentProps, "onDismiss"> & {
   onOpenChange(open: boolean): void;
 };
 
-/** A controlled bottom sheet (a Filter sheet, the Me page's org and language sheets). */
+/** A controlled bottom sheet (a Filter sheet, the account sheet). */
 export function BottomSheet({ open, onOpenChange, ...content }: BottomSheetProps) {
   // Back closes an open sheet first on a compact touch window (mobile app plan Decision 25).
   useOverlayHistory(open, () => onOpenChange(false));

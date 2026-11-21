@@ -120,7 +120,7 @@ export function hasTabRow(p: PageHeaderProps): boolean {
  */
 export function PageHeader(p: PageHeaderProps) {
   assertHeader(p);
-  // The compact top bar shows the page's name and goes up its path (design spec §4.6, §6.46).
+  // The compact floating row goes up the page's path (design spec §4.6, §6.56).
   useRegisterShellPage({ ...(p.title ? { title: p.title } : {}), path: p.path });
   const t = useDesignT();
   const Link = useDesignLink();

@@ -73,7 +73,6 @@ import {
 import { createContext, type ReactNode, useContext } from "react";
 import { BOX_BLOCKS } from "./box-blocks";
 import { CARD_GRID_BLOCKS } from "./card-grid-blocks";
-import { COMPACT_SHELL_BLOCKS } from "./compact-shell-blocks";
 import { CONFIG_FORM_BLOCKS } from "./config-form-blocks";
 import { CONVERSATION_BLOCKS } from "./conversation-blocks";
 import { CONVERSATION_PAGE_BLOCKS } from "./conversation-page-blocks";
@@ -1410,7 +1409,6 @@ export const REFERENCE_BLOCKS = {
   ...SCHEDULE_CALENDAR_BLOCKS,
   ...THEME_SWATCH_BLOCKS,
   ...DEVICE_BLOCKS,
-  ...COMPACT_SHELL_BLOCKS,
   ...TOUCH_BLOCKS,
   ...SHEET_BLOCKS,
   ...SHARE_BLOCKS,

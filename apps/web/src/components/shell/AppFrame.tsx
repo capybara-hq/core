@@ -2,17 +2,18 @@
 
 import {
   AppShell,
-  ClassSwap,
+  Button,
+  type DrawerNavData,
   initialOf,
   Logo,
+  Menu,
   type MenuItem,
-  type MeRow,
   OverviewPage,
   SetupPage,
   type SidebarBrandVariant,
   type SidebarContext,
   type SidebarConversations,
-  type SidebarNavItem,
+  ThemeToggle,
   useToast,
 } from "@capybara-hq/design";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
@@ -34,6 +35,7 @@ import { type OrgReadiness, setupReady } from "../../lib/agents";
 import { ApiClientError } from "../../lib/api";
 import { loginPathFor } from "../../lib/auth-sources";
 import { navigateBrowser } from "../../lib/browser";
+import { isChatSurface } from "../../lib/chat-surface";
 import { useConnectResultToast } from "../../lib/connect";
 import { NoCurrentOrgError } from "../../lib/conversations";
 import { usePreferences } from "../../lib/preferences";
@@ -59,16 +61,15 @@ import { usePluginPendingCount } from "../PluginsHead";
 import { ACCOUNT_HOME } from "../settings-nav";
 import { useResolvedTheme } from "../theme-root";
 import { noOrgConversations, useConversationGroups } from "./conversations";
-import { AdminMePage, type MePanels, MePanelsContext } from "./me";
 import {
   activeAdminOf,
   activeNavOf,
   type ExtensionNavItem,
   navLevelOf,
-  shownOnCompact,
   statusPrompt,
   useAdminInboxCount,
   useAdminItems,
+  useDrawerNav,
   useExtensions,
   useNav,
   usePendingApprovals,
@@ -338,16 +339,15 @@ function ShellFrame({
   const brandReplaced = brandCode || brandWinner.status !== "none";
   const conversations = sections?.conversations ?? noOrgConversations(pathname);
   const pending = sections?.pending ?? NO_PENDING;
-  const {
-    primary,
-    more,
-    inbox,
-    adminHref,
-    commands,
-    bottom,
-    me: meNav,
-  } = useNav(pending.count, navLevelOf(me), pending.more, me.account.isSuperAdmin);
+  const level = navLevelOf(me);
+  const { primary, more, inbox, adminHref, commands } = useNav(
+    pending.count,
+    level,
+    pending.more,
+    me.account.isSuperAdmin,
+  );
   const extensions = sections?.extensions ?? [];
+  const drawerNav = useDrawerNav(level, pending, extensions);
   // Under /admin (super admins only) the 收件箱 item shows what waits on the platform and the 插件
   // item what waits in its 待确认 tab; the persistent sidebar refetches the stale counts on each
   // path change.
@@ -359,10 +359,6 @@ function ShellFrame({
       plugins: usePluginPendingCount(adminContext),
     },
     adminPages,
-  );
-  // the Me panel is the compact class's navigation: pages that are hidden on compact are not in it
-  const hiddenOnCompact = new Set(
-    adminPages.filter((p) => p.compact === "hidden").map((p) => `ext:${p.id}`),
   );
   const preferences = usePreferences();
   // The account row's scheme toggle; usePreferences leaves it out under a single-scheme theme.
@@ -563,77 +559,35 @@ function ShellFrame({
     ...(timeZone === "" ? {} : { timeZone }),
   };
 
-  // The Me page's panels (design spec §6.48): the same nav, org and account data as the sidebar.
-  const toRow = (n: SidebarNavItem): MeRow => ({
-    id: n.id,
-    label: n.label,
-    icon: n.icon,
-    href: n.href,
-  });
-  const languageValue = preferences.language.options.find(
-    (o) => o.value === preferences.language.value,
-  )?.label;
-  const accountRows: MeRow[] = [
-    {
-      id: "account",
-      label: t("shell.accountSettings"),
-      icon: "user",
-      href: ACCOUNT_HOME,
+  // The compact drawer (design spec §6.53): the navigation's sections and level, the sidebar's
+  // conversations, and the account sheet (§6.54) from the same account, org and status data as
+  // the sidebar and the status bar.
+  const multiOrg = me.memberships.length > 1 || me.canCreateOrg;
+  const drawer: DrawerNavData = {
+    ...drawerNav,
+    recent: conversations,
+    // the shell opens its own command palette in place of this one
+    onSearch: () => {},
+    account: {
+      name: me.account.displayName,
+      orgName: currentOrg?.name ?? null,
+      avatar: me.account.avatarUrl ? { kind: "image", src: me.account.avatarUrl } : null,
+      ...(currentOrg !== null && multiOrg
+        ? {
+            orgSwitcher: (
+              <Menu
+                items={orgItems}
+                label={t("drawer.switchOrg")}
+                trigger={<Button variant="ghost">{t("drawer.switchOrg")}</Button>}
+              />
+            ),
+          }
+        : {}),
+      personalSettingsHref: ACCOUNT_HOME,
+      theme: preferences.theme ? <ThemeToggle {...preferences.theme} /> : null,
+      status: [status.context, version, timeZone].filter((v) => v !== "").join(" · "),
+      onSignOut: () => void onLogout(),
     },
-    {
-      id: "language",
-      label: t("common.language"),
-      icon: "languages",
-      menu: languageMenu.submenu ?? [],
-      ...(languageValue === undefined ? {} : { value: languageValue }),
-    },
-    ...(preferences.theme
-      ? [{ id: "theme", label: t("common.theme"), icon: "sun" as const, theme: preferences.theme }]
-      : []),
-    { id: "sign-out", label: t("common.logout"), icon: "log-out", onSelect: () => void onLogout() },
-  ];
-  const system = [version, timeZone].filter((v) => v !== "").join(" · ");
-  const mePanels: MePanels = {
-    work: {
-      account: { name: me.account.displayName, avatarUrl: me.account.avatarUrl },
-      org: sidebarOrg(orgItems),
-      workspace: [
-        ...meNav.workspace.map(toRow),
-        ...shownOnCompact(extensions).map((x) => ({
-          id: `ext:${x.id}`,
-          label: x.label,
-          icon: "extension" as const,
-          href: x.href,
-        })),
-      ],
-      manage: [
-        ...meNav.manage.map(toRow),
-        ...(adminHref === undefined
-          ? []
-          : [
-              {
-                id: "admin",
-                label: t("nav.admin"),
-                icon: "admin" as const,
-                href: adminHref,
-                external: true,
-              },
-            ]),
-      ],
-      accountRows,
-      system,
-    },
-    admin: me.account.isSuperAdmin
-      ? {
-          account: { name: me.account.displayName, avatarUrl: me.account.avatarUrl },
-          org: null,
-          adminContext: true,
-          manage: adminItems.filter((i) => !hiddenOnCompact.has(i.id)).map(toRow),
-          back: { id: "back", label: t("me.back"), icon: "arrow-left", href: HOME_PATH },
-          accountRows,
-          system,
-        }
-      : null,
   };
 
   const dialogs = (
@@ -664,7 +618,6 @@ function ShellFrame({
 
   if (inSetup && readiness !== null) {
     const home = setupRoute === "home" || setupRoute === "redirect";
-    const multiOrg = me.memberships.length > 1 || me.canCreateOrg;
     return (
       <SessionContext.Provider value={session}>
         <SetupContext.Provider value={{ active: true, readiness: setupState, recheck: reload }}>
@@ -780,7 +733,8 @@ function ShellFrame({
         ...(brand === undefined ? {} : { brand }),
       }}
       commands={commands}
-      bottomNav={bottom}
+      drawer={drawer}
+      chatSurface={isChatSurface(pathname)}
       onNavigate={navigate}
       pathname={pathname}
       status={status}
@@ -790,17 +744,9 @@ function ShellFrame({
       singleScheme={singleScheme}
     >
       <SessionContext.Provider value={session}>
-        <MePanelsContext.Provider value={mePanels}>
-          <SetupContext.Provider value={{ active: false, readiness: setupState, recheck: reload }}>
-            {/* The admin console has no overview page of its own on the compact class: the Me
-                page in the admin context takes `/admin`'s place (design spec §6.48). */}
-            {inAdmin && pathname === "/admin" ? (
-              <ClassSwap compact={<AdminMePage />}>{children}</ClassSwap>
-            ) : (
-              children
-            )}
-          </SetupContext.Provider>
-        </MePanelsContext.Provider>
+        <SetupContext.Provider value={{ active: false, readiness: setupState, recheck: reload }}>
+          {children}
+        </SetupContext.Provider>
         {dialogs}
       </SessionContext.Provider>
       {workspaceOrg === null ? null : (

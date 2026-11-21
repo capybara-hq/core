@@ -143,7 +143,7 @@ export type SidebarProps = {
   onOpenCommands(): void;
   /**
    * Default from the size class (spec §4.1): `full` from 841 unless `collapsed`, `rail` on medium
-   * (and collapsed), `none` below 600 (the compact shell's bottom navigation and Me page hold its
+   * (and collapsed), `none` below 600 (the compact shell's drawer holds its
    * content; the sidebar has no drawer form).
    */
   mode?: "full" | "rail" | "none";
@@ -502,7 +502,7 @@ export function OrgSwitcher({
 }: {
   org: SidebarOrg;
   rail: boolean;
-  /** Opens the org list another way than the popover menu (the Me page's bottom sheet). */
+  /** Opens the org list another way than the popover menu (a bottom sheet). */
   onOpen?: () => void;
 }) {
   const t = useDesignT();
@@ -568,7 +568,7 @@ export function OrgSwitcher({
   return <Menu items={org.menu} trigger={button} />;
 }
 
-/** The admin context's block: static, the shield in the accent tint (the Me page's too). */
+/** The admin context's block: static, the shield in the accent tint. */
 export function ContextBlock({ rail }: { rail: boolean }) {
   const t = useDesignT();
   return (

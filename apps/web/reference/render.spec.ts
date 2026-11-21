@@ -98,11 +98,8 @@ const PAGES = [
   "schedule-calendar",
   // a device's head and its two modes (auto mode design §4, plan Task 10)
   "device-nameplate",
-  // the mobile and foldable layout: the compact shell, the list-detail region, the sheet drag states
-  "bottom-nav",
-  "top-bar",
+  // the mobile and foldable layout: the list-detail region, the sheet drag states
   "list-detail",
-  "me-panel",
   "sheet",
 ];
 const THEMES = ["dark", "light"] as const;

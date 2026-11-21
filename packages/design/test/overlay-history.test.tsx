@@ -181,23 +181,104 @@ describe("useOverlayHistory", () => {
     await waitFor(() => expect(back).toHaveBeenCalledTimes(1));
   });
 
-  // I3: a pick that navigates must not pop: the router's push is still pending when the drawer
-  // closes, and a traversal queued now would run after the push and land on the wrong entry.
-  it("a pick closes the drawer without popping its entry", async () => {
-    function Pick() {
-      const [open, setOpen] = useState(true);
+  // A link pick pops the drawer's entry first and navigates after the pop (mobile touch plan
+  // Task 28): the router's push would otherwise still be pending when the traversal runs, so the
+  // pick could not pop at all and left a stale entry (an extra back step to the same page).
+  function Pick({ onNavigate }: { onNavigate?: (href: string) => void }) {
+    const [open, setOpen] = useState(true);
+    return (
+      <DesignProvider locale="en">
+        <Drawer
+          open={open}
+          onOpenChange={setOpen}
+          label="Menu"
+          {...(onNavigate ? { onNavigate } : {})}
+        >
+          <a href="/next" data-drawer-pick="true">
+            go
+          </a>
+          <a href="/new-tab" target="_blank" rel="noreferrer">
+            tab
+          </a>
+        </Drawer>
+      </DesignProvider>
+    );
+  }
+
+  it("a link pick pops the drawer's entry, then navigates after the pop", async () => {
+    history.replaceState(null, "", "/prev");
+    history.pushState(null, "", "/");
+    const visits: { href: string; marker: unknown; path: string }[] = [];
+    const onNavigate = vi.fn((href: string) =>
+      visits.push({ href, marker: markerOf(), path: location.pathname }),
+    );
+    render(<Pick onNavigate={onNavigate} />);
+    expect(typeof markerOf()).toBe("string");
+    await userEvent.click(screen.getByText("go"));
+    await waitFor(() => expect(hasDrawer()).toBe(false));
+    await waitFor(() => expect(onNavigate).toHaveBeenCalledTimes(1));
+    // navigated from the entry under the drawer's: one back goes to the previous page
+    expect(visits).toEqual([{ href: "/next", marker: undefined, path: "/" }]);
+    await settled();
+    expect(onNavigate).toHaveBeenCalledTimes(1);
+  });
+
+  it("a modified click or a new-tab link is the browser's own: no pop, no navigate", async () => {
+    const onNavigate = vi.fn();
+    render(<Pick onNavigate={onNavigate} />);
+    const back = vi.spyOn(history, "back");
+    const go = vi.spyOn(history, "go");
+    const tab = screen.getByText("tab");
+    tab.addEventListener("click", (e) => e.preventDefault());
+    await userEvent.click(tab);
+    await settled();
+    expect(onNavigate).not.toHaveBeenCalled();
+    expect(go).not.toHaveBeenCalled();
+    // the drawer still closes on the pick and pops its entry the ordinary way
+    await waitFor(() => expect(hasDrawer()).toBe(false));
+    await waitFor(() => expect(back).toHaveBeenCalledTimes(1));
+    await waitFor(() => expect(markerOf()).toBeUndefined());
+    await settled();
+  });
+
+  it("a pick in a sheet over the drawer pops both entries in one step, then navigates", async () => {
+    history.replaceState(null, "", "/");
+    function Stack({ onNavigate }: { onNavigate: (href: string) => void }) {
+      const [drawer, setDrawer] = useState(true);
+      const [sheet, setSheet] = useState(false);
       return (
         <DesignProvider locale="en">
-          <Drawer open={open} onOpenChange={setOpen} label="Menu">
-            <a href="/next" data-drawer-pick="true" onClick={(e) => e.preventDefault()}>
-              go
-            </a>
+          <Drawer open={drawer} onOpenChange={setDrawer} label="Menu" onNavigate={onNavigate}>
+            <button type="button" onClick={() => setSheet(true)}>
+              open-sheet
+            </button>
+            <BottomSheet open={sheet} onOpenChange={setSheet} title="Account">
+              <a href="/account/profile" data-drawer-pick="true">
+                settings
+              </a>
+            </BottomSheet>
           </Drawer>
         </DesignProvider>
       );
     }
+    const onNavigate = vi.fn((_href: string) => markerOf());
+    render(<Stack onNavigate={onNavigate} />);
+    const drawerEntry = markerOf();
+    await userEvent.click(screen.getByText("open-sheet"));
+    expect(markerOf()).not.toBe(drawerEntry);
+    const go = vi.spyOn(history, "go");
+    await userEvent.click(screen.getByText("settings"));
+    await waitFor(() => expect(onNavigate).toHaveBeenCalledWith("/account/profile"));
+    expect(onNavigate.mock.results[0]?.value).toBeUndefined();
+    expect(go).toHaveBeenCalledWith(-2);
+    await waitFor(() => expect(hasDrawer()).toBe(false));
+    expect(hasSheet()).toBe(false);
+  });
+
+  it("without onNavigate a link pick closes the drawer and leaves its entry", async () => {
     render(<Pick />);
     const back = vi.spyOn(history, "back");
+    screen.getByText("go").addEventListener("click", (e) => e.preventDefault());
     await userEvent.click(screen.getByText("go"));
     await waitFor(() => expect(hasDrawer()).toBe(false));
     await settled();

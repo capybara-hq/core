@@ -2044,9 +2044,7 @@
     "admin": "Admin console",
     "plugins": "Plugins",
     "extensions": "Extensions",
-    "schedules": "Scheduled tasks",
-    "chats": "Conversations",
-    "me": "Me"
+    "schedules": "Scheduled tasks"
   },
   "conversations": {
     "title": "Conversations",
@@ -2059,10 +2057,10 @@
     "running": "Running",
     "waiting": "Waiting for you"
   },
-  "me": {
-    "title": "Me",
-    "adminTitle": "Admin console",
-    "back": "Back to workspace"
+  "drawer": {
+    "more": "Skills, connectors, devices…",
+    "switchOrg": "Switch organization",
+    "allConversations": "All conversations"
   },
   "shell": {
     "noOrg": "Select organization",

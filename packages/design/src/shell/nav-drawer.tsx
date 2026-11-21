@@ -43,6 +43,11 @@ export type NavDrawerProps = {
   data: DrawerNavData;
   /** The route, for the current section row. */
   pathname?: string | undefined;
+  /**
+   * Client navigation for a pick (the shell's `onNavigate`): a pick then pops the drawer's history
+   * entry before it navigates (Drawer's `onNavigate`).
+   */
+  onNavigate?: ((href: string) => void) | undefined;
 };
 
 const under = (pathname: string, href: string) =>
@@ -55,7 +60,7 @@ const under = (pathname: string, href: string) =>
  * §6.54) and the new-conversation button. A pick closes the drawer; the system back closes the
  * account sheet first, then the drawer (Decision 25).
  */
-export function NavDrawer({ open, onOpenChange, data, pathname }: NavDrawerProps) {
+export function NavDrawer({ open, onOpenChange, data, pathname, onNavigate }: NavDrawerProps) {
   const t = useDesignT();
   const Link = useDesignLink();
   const [level, setLevel] = useState(false);
@@ -71,7 +76,12 @@ export function NavDrawer({ open, onOpenChange, data, pathname }: NavDrawerProps
     data.onSearch();
   };
   return (
-    <Drawer open={open} onOpenChange={onOpenChange} label={t("drawer.label")}>
+    <Drawer
+      open={open}
+      onOpenChange={onOpenChange}
+      label={t("drawer.label")}
+      {...(onNavigate ? { onNavigate } : {})}
+    >
       {level ? (
         <DrawerLevel
           title={data.moreLabel}

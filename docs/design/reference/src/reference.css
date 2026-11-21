@@ -6850,6 +6850,27 @@ span.r-scal-daynum {
   white-space: nowrap;
 }
 
+/* The floating row (spec §6.56): the leading round button over the page's top, 16 in from the
+   start edge. */
+.r-float-row {
+  flex: none;
+  display: flex;
+  align-items: center;
+  padding: var(--cb-space-2) var(--cb-space-4);
+}
+.r-float-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  box-sizing: border-box;
+  width: var(--cb-control-prominent);
+  height: var(--cb-control-prominent);
+  border: 1px solid var(--cb-line);
+  border-radius: var(--cb-radius-pill);
+  background: var(--cb-panel);
+  color: var(--cb-ink);
+}
+
 /* TopBar: layout.top-bar high, back (pushed), the title, search and the overflow menu. */
 .r-tb {
   flex: none;

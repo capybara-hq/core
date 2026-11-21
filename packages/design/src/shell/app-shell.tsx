@@ -3,10 +3,9 @@ import { IconButton } from "../controls/index";
 import type { ConvMenuEntry } from "../conversation/menu";
 import { ConvMenu } from "../conversation/menu";
 import { Icon } from "../icons/icon";
-import { type NativeNavHandle, type NativeTabId, useHaptics } from "../native";
+import type { NativeNavHandle } from "../native";
 import { type CommandGroup, CommandPalette } from "../overlays/index";
 import { useDesignT } from "../provider";
-import { type BottomNavItem, bottomNavCurrent, isTabRoot } from "./bottom-nav";
 import { backTarget, FloatingBar, type FloatingLead } from "./floating-bar";
 import { type DrawerNavData, NavDrawer } from "./nav-drawer";
 import { keyboardInset } from "./pointer";
@@ -21,11 +20,6 @@ import { useHydrated } from "./use-media-query";
 export type AppShellProps = {
   sidebar: Omit<SidebarProps, "onOpenCommands" | "mode" | "collapsed" | "onCollapsedChange">;
   /**
-   * Accepted and no longer drawn (the chat-first shell has no bottom navigation, design spec
-   * §4.6): until the `nav@1` strip rework it only feeds `nativeNav`'s items. Task 28 removes it.
-   */
-  bottomNav?: BottomNavItem[];
-  /**
    * The chat-first compact shell's drawer (design spec §4.6, §6.53): with it a chat surface shows
    * the floating menu button (the badge is `menuBadge`), which opens the drawer.
    */
@@ -39,16 +33,12 @@ export type AppShellProps = {
   /** The route (`usePathname()`, without the locale): the drawer's current row, the slide key. */
   pathname?: string;
   /**
-   * A native shell's tab bar (`nav@1`, mobile app spec §6.1), in place of the web's bottom
-   * navigation: the shell element carries `data-native-nav` (CSS drops the web's bar), the shell
-   * tells the handle the four items, the current one and `visible` (exactly when the web would
-   * have shown its own bar: compact, a tab root, no open keyboard) on every change, and a tap on a
-   * native tab plays the `selection` haptic and navigates to the item's `href` with `onNavigate`.
-   * The handle need not be stable: a new equivalent object per render sends no extra state (the
-   * latest one receives the next change); unmounting the shell hides the bar.
+   * A native shell's navigation (`nav@1`): the shell element carries `data-native-nav`. Until the
+   * strip rework (mobile touch plan Task 30) the shell sends it nothing: the chat-first shell has
+   * no tab items to give it.
    */
   nativeNav?: NativeNavHandle;
-  /** Client navigation for the native tab bar (apps/web: the router's push). */
+  /** Client navigation (apps/web: the router's push): the drawer's picks. */
   onNavigate?(href: string): void;
   /**
    * The compact floating row's trailing overflow menu for pages that do not register their own
@@ -62,7 +52,7 @@ export type AppShellProps = {
   collapsed?: boolean;
   onCollapsedChange?(collapsed: boolean): void;
   /**
-   * The command palette's groups (⌘K, the sidebar's and the compact top bar's search). Without them
+   * The command palette's groups (⌘K, the sidebar's and the compact drawer's search). Without them
    * there is no palette and no search (the setup frame, T13).
    */
   commands?: CommandGroup[];
@@ -108,7 +98,6 @@ export type AppShellProps = {
  */
 export function AppShell({
   sidebar,
-  bottomNav,
   drawer,
   chatSurface,
   pathname,
@@ -166,7 +155,7 @@ export function AppShell({
         .filter(Boolean)
         .join(" ");
 
-  // What the page tells the shell about itself (name, path, overflow menu): the compact top bar's.
+  // What the page tells the shell about itself (name, path, overflow menu): the floating row's.
   const [pages, setPages] = useState<ReadonlyMap<symbol, { page: ShellPage; layer: number }>>(
     () => new Map(),
   );
@@ -219,13 +208,8 @@ export function AppShell({
   // An open list-detail item or right area is a pushed page too, keyed by its URL state (§6.47).
   const surface = chatSurface === true;
   const pushedPage = !surface || page.onBack !== undefined;
-  // The native tab bar's items (until the `nav@1` strip rework): a tab root is an item's target.
-  const items = bottomNav ?? [];
-  const tabRoot = pathname === undefined || items.length === 0 || isTabRoot(items, pathname);
-  const pushed = !tabRoot || page.onBack !== undefined || (setup !== null && stepsOpen);
-  const currentTab = pathname === undefined ? null : bottomNavCurrent(items, pathname);
-  // What the slide compares: chat surfaces, and the native tab roots, are one level.
-  const root = surface || (items.length > 0 && tabRoot);
+  // What the slide compares: chat surfaces are one level.
+  const root = surface;
   // How many in-app history entries lie behind this one: the Navigation API's current index minus
   // the index when the shell mounted, so a replace (router.replace at the start) adds none and a
   // forward is no pop. Without the API there is no count: a counter cannot tell a push from a
@@ -264,94 +248,13 @@ export function AppShell({
     const animated = uaTransition.current === window.location.href;
     uaTransition.current = null;
     // A pushed page slides in from the end edge and the way back to a chat surface slides back; a
-    // move between chat surfaces (or native tab roots) and a move the browser animated do not.
+    // move between chat surfaces and a move the browser animated do not.
     setSlide((prev) =>
       animated || (root && last.root)
         ? null
         : { direction: root ? "pop" : "push", n: ((prev?.n ?? 0) + 1) % 2 },
     );
   }, [pathname, root]);
-
-  // The native tab bar (mobile app spec §6.1): visible exactly when the web would show its own
-  // bar (the slot below, and the CSS that shows it on compact while no keyboard is open).
-  // The handle may be a new object on every render (a parent building it inline): only its
-  // presence keys the state and hide effects, which reach the latest handle through a ref, so an
-  // equivalent new handle sends nothing and never hides and shows the bar. Only the tap
-  // subscription follows the handle itself (resubscribing sends no state).
-  const haptics = useHaptics();
-  const hasNav = nativeNav !== undefined;
-  const [keyboardOpen, setKeyboardOpen] = useState(false);
-  useEffect(() => {
-    const el = shellRef.current;
-    if (!hasNav || el === null || typeof MutationObserver === "undefined") return;
-    const read = () => setKeyboardOpen(el.dataset.keyboard === "open");
-    read();
-    const observer = new MutationObserver(read);
-    observer.observe(el, { attributes: true, attributeFilter: ["data-keyboard"] });
-    return () => observer.disconnect();
-  }, [hasNav]);
-  const navState = {
-    items: items.map(nativeTab),
-    current: currentTab,
-    visible: hydrated && sizeClass === "compact" && items.length > 0 && !pushed && !keyboardOpen,
-  };
-  const navKey = JSON.stringify(navState);
-  const navSent = useRef<string | null>(null);
-  const navLatest = useRef({ nav: nativeNav, items, onNavigate, haptics, navState });
-  navLatest.current = { nav: nativeNav, items, onNavigate, haptics, navState };
-  // The last handle the shell had: the hide below reaches it after `nativeNav` went undefined
-  // while the shell stays mounted (`navLatest` then holds no handle).
-  const navHandle = useRef(nativeNav);
-  if (nativeNav !== undefined) navHandle.current = nativeNav;
-  // the page without this shell (an auth page) has no tab bar: hidden once the shell or its handle
-  // goes
-  useEffect(() => {
-    if (!hasNav) return;
-    return () => {
-      const { navState: last } = navLatest.current;
-      try {
-        navHandle.current?.set({ ...last, visible: false });
-      } catch {
-        // the shell keeps its last state
-      }
-      navSent.current = null;
-    };
-  }, [hasNav]);
-  // biome-ignore lint/correctness/useExhaustiveDependencies: `navKey` is `navState`, deduped
-  useEffect(() => {
-    const { nav, navState: state } = navLatest.current;
-    if (!hasNav || nav === undefined || navSent.current === navKey) return;
-    navSent.current = navKey;
-    try {
-      nav.set(state);
-    } catch {
-      // the shell keeps its last state
-    }
-  }, [hasNav, navKey]);
-  useEffect(() => {
-    if (nativeNav === undefined) return;
-    let off: (() => void) | undefined;
-    try {
-      const r = nativeNav.onSelect((id) => {
-        const { items: now, onNavigate: go, haptics: buzz } = navLatest.current;
-        const item = now.find((i) => i.id === id);
-        if (item === undefined) return;
-        buzz("selection");
-        if (go) go(item.href);
-        else window.location.assign(item.href);
-      });
-      if (typeof r === "function") off = r;
-    } catch {
-      // a shell that cannot subscribe: its taps do nothing
-    }
-    return () => {
-      try {
-        off?.();
-      } catch {
-        // already gone
-      }
-    };
-  }, [nativeNav]);
 
   const openSteps = useCallback(() => {
     stepsPushed.current = true;
@@ -550,6 +453,7 @@ export function AppShell({
             open={drawerOpen}
             onOpenChange={setDrawerOpen}
             pathname={pathname}
+            onNavigate={onNavigate}
             // The shell's own palette when it has one; the drawer closes first.
             data={searchable ? { ...drawer, onSearch: () => setPaletteOpen(true) } : drawer}
           />
@@ -560,30 +464,6 @@ export function AppShell({
       </StatusBarSetterContext.Provider>
     </ShellPageContext.Provider>
   );
-}
-
-/** The largest count the native tab bar takes (`nav@1`); more is that count, truncated. */
-const MAX_NATIVE_COUNT = 9999;
-/** The longest label the native tab bar takes (`nav@1`). */
-const MAX_NATIVE_LABEL = 32;
-
-/** A bottom navigation item as the native tab bar takes it: within its limits. */
-function nativeTab(item: BottomNavItem): {
-  id: NativeTabId;
-  label: string;
-  count?: number;
-  countMore?: boolean;
-} {
-  const tab: { id: NativeTabId; label: string; count?: number; countMore?: boolean } = {
-    id: item.id,
-    label: [...item.label].slice(0, MAX_NATIVE_LABEL).join(""),
-  };
-  if (item.count !== undefined && Number.isFinite(item.count)) {
-    const count = Math.max(0, Math.min(MAX_NATIVE_COUNT, Math.floor(item.count)));
-    tab.count = count;
-    if (item.countMore || item.count > MAX_NATIVE_COUNT) tab.countMore = true;
-  } else if (item.countMore) tab.countMore = true;
-  return tab;
 }
 
 /** The browser's Navigation API where it has one (not in every engine, and not in jsdom). */

@@ -806,7 +806,7 @@
  * Before hydration (no explicit mode) both the full and the rail panel are drawn; the size class
  * and the person's choice (`data-collapsed`, from the cb-sidebar cookie) pick one, so the first
  * paint is right: the full sidebar from 841 unless collapsed, the rail on medium and when
- * collapsed, neither below 600 (the bottom navigation and the Me page hold its content). The rail's expand
+ * collapsed, neither below 600 (the chat-first shell's drawer holds its content). The rail's expand
  * button is for the expanded class only.
  */
 @media (max-width: 840px) {

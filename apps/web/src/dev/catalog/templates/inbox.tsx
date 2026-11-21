@@ -1,6 +1,6 @@
 import {
   ActionRow,
-  BottomNav,
+  FloatingBar,
   InboxPage,
   ListDetail,
   ListDetailItem,
@@ -10,12 +10,10 @@ import {
   Stack,
   StatusMark,
   Text,
-  TopBar,
   useStatusBar,
 } from "@capybara-hq/design";
 import { LIST_DETAIL_FIXTURE as F } from "@capybara-hq/design/fixtures";
 import { type ReactNode, useState } from "react";
-import { bottomItems, overflow } from "../compact-shell-blocks";
 import { FixtureShell } from "../frame";
 import { RefBlock } from "../ref-block";
 import { TraceSummary } from "../table";
@@ -91,7 +89,7 @@ export function InboxTemplate() {
 
 // ListDetail (spec §6.47): the region in its three states, with the ids and boxes of
 // docs/design/reference/src/list-detail.html: the compact ones in the screen the shell gives them
-// (the top bar, and the bottom navigation on the list, a tab root), two panes alone.
+// (the floating row with back), two panes alone.
 const LD_ITEMS: ListDetailListItem[] = F.items.map((i) => ({
   id: i.id,
   title: i.title,
@@ -149,17 +147,13 @@ export function listDetailBlocks(): ReactNode {
   return (
     <>
       <RefBlock id="list-detail-compact-list" width={390} height={844}>
-        <ReferenceScreen
-          top={<TopBar title={F.listTitle} onSearch={noop} menu={overflow} />}
-          bottom={<BottomNav items={bottomItems(true)} current="inbox" />}
-        >
+        {/* the inbox is a pushed page of the chat-first shell: the floating row leads with back */}
+        <ReferenceScreen top={<FloatingBar lead={{ kind: "back", target: "#" }} />}>
           <LdRegion open={false} />
         </ReferenceScreen>
       </RefBlock>
       <RefBlock id="list-detail-compact-detail" width={390} height={844}>
-        <ReferenceScreen
-          top={<TopBar title={F.detail.title} back={noop} onSearch={noop} menu={overflow} />}
-        >
+        <ReferenceScreen top={<FloatingBar lead={{ kind: "back", target: noop }} />}>
           <LdRegion open />
         </ReferenceScreen>
       </RefBlock>

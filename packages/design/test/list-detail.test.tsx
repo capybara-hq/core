@@ -128,7 +128,6 @@ describe("inside the shell the open item is a pushed page", () => {
           sidebar={SIDEBAR}
           status={{ context: "grant@acme:/", version: "0.1.0" }}
           pathname="/inbox"
-          bottomNav={[{ id: "inbox", label: "收件箱", href: "/inbox", icon: "inbox" }]}
         >
           <ListDetail
             list={<p>L</p>}
@@ -145,7 +144,6 @@ describe("inside the shell the open item is a pushed page", () => {
     expect(top.getAttribute("data-lead")).toBe("back");
     await userEvent.click(within(top).getByRole("button", { name: "返回" }));
     expect(onBack).toHaveBeenCalledTimes(1);
-    expect(document.querySelector('[data-part="bottom-nav-slot"]')).toBeNull();
     expect(
       parseCss(css("templates.css")).some(
         (r) =>

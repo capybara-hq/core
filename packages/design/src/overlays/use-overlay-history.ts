@@ -18,6 +18,8 @@ const entries: { id: string; close: () => void }[] = [];
 let releasing: { href: string }[] = [];
 /** Traversals this module started whose popstate has not arrived yet. */
 let selfPops = 0;
+/** What runs once the traversal of {@link popOverlaysThen} has landed. */
+let afterPop: (() => void) | null = null;
 let listening = false;
 
 const hrefNow = () => `${window.location.pathname}${window.location.search}`;
@@ -32,6 +34,11 @@ function active(): boolean {
 function onPopState() {
   if (selfPops > 0) {
     selfPops--;
+    if (selfPops === 0 && afterPop !== null) {
+      const run = afterPop;
+      afterPop = null;
+      run();
+    }
     return;
   }
   // A back that is not ours leaves the top overlay's entry: that overlay closes.
@@ -57,6 +64,28 @@ function flushReleased() {
   selfPops++;
   if (count === 1) window.history.back();
   else window.history.go(-count);
+}
+
+/**
+ * Pops the entries of every open overlay in one traversal and runs `then` once it has landed
+ * (mobile touch plan Task 28): a drawer pick navigates from the page's own entry, so one back
+ * returns to the page before it and no stale overlay entry is left. The overlays stop holding
+ * their entries at once (their closes pop nothing more). Returns false, running nothing, when no
+ * overlay holds an entry (a fine pointer, a wider window): the caller navigates its usual way.
+ */
+export function popOverlaysThen(then: () => void): boolean {
+  if (entries.length === 0) return false;
+  const count = entries.length;
+  entries.length = 0;
+  // closes released earlier in this tick are covered by the same traversal
+  const pending = releasing.filter((i) => i.href === hrefNow()).length;
+  releasing = [];
+  selfPops++;
+  afterPop = then;
+  const n = count + pending;
+  if (n === 1) window.history.back();
+  else window.history.go(-n);
+  return true;
 }
 
 /**

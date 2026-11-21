@@ -35,14 +35,12 @@ const FIELDS = ':where(input, textarea, [contenteditable]:not([contenteditable="
 
 /**
  * The interactive design classes. The brief's `.cb-card[href]` does not exist (a card is not a link),
- * `.cb-sidebar-item` stands for the sidebar's items and `.cb-bottomnav a` is `.cb-bottomnav-item`;
- * the sidebar's more row and conversation title button are interactive too.
+ * `.cb-sidebar-item` stands for the sidebar's items; the sidebar's more row and conversation title button are interactive too.
  */
 const INTERACTIVE = [
   ".cb-btn",
   ".cb-icon-btn",
   ".cb-row-link",
-  ".cb-bottomnav-item",
   ".cb-sidebar-item",
   ".cb-sidebar-more",
   ".cb-sidebar-conv",

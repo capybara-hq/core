@@ -1047,11 +1047,6 @@ export const ROUTES: readonly RouteEntry[] = [
     queries: () => [q(authSourcesQuery()), q(maybeMeQuery())],
   },
   {
-    pattern: "/me",
-    queries: () => [],
-    none: "reads nothing of its own: the Me page draws the sidebar's data, which the layout prefetches as shell data",
-  },
-  {
     pattern: "/p/[plugin]/[id]",
     // Anyone in the org: the UI contributions, then the page's view when it is a schema view (an
     // embed's token handshake stays in the browser).

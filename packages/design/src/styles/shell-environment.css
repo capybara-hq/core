@@ -43,12 +43,12 @@
   -webkit-app-region: drag;
   app-region: drag;
 }
-:root[data-shell="desktop"] :is(.cb-sidebar-top, .cb-topbar, .cb-title-bar) {
+:root[data-shell="desktop"] :is(.cb-sidebar-top, .cb-title-bar) {
   -webkit-app-region: drag;
   app-region: drag;
 }
 :root[data-shell="desktop"]
-  :is(.cb-sidebar-top, .cb-topbar, .cb-title-bar)
+  :is(.cb-sidebar-top, .cb-title-bar)
   :is(a, button, input, select, textarea, summary, label, [role], [tabindex]) {
   -webkit-app-region: no-drag;
   app-region: no-drag;
