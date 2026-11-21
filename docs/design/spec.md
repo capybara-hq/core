@@ -277,6 +277,8 @@ The content area holds, top to bottom, in a fixed order:
 - There is no floating row on medium and expanded; on compact it lies over the page's top (§4.6).
 - **Short window** (`data-short`, §4.7): height below 480 sets `data-short` on the shell, whatever the width.
 
+**Inside the desktop shell** (desktop client spec §7.3 "The top row", mobile layout spec §9.3): the shell has no band above it; the sidebar's brand row, the conversation title bar, a template head's path row, the compact floating row and the shared file page's bar are the window's top row, as high as the window controls' rectangle and keeping clear of it (the brand's wordmark gives way beside the lights; the rail's mark moves below them). The window drags only from `DragFill` spacers (empty, `aria-hidden`, drawn by those templates between their controls) and the controls area, never from a row that holds controls, and not while an overlay is open.
+
 ### 4.1 Sidebar
 
 See §6.13 for the component.

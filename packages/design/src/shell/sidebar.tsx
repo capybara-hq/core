@@ -21,6 +21,7 @@ import { useFocusReturn } from "../overlays/focus-return";
 import { Menu, type MenuItem } from "../overlays/index";
 import { LinkPendingMark, useDesignLink, useDesignT } from "../provider";
 import { SIZES } from "../tokens";
+import { DragFill } from "./drag-fill";
 import { type PreferenceBarProps, ThemeToggle } from "./preference-bar";
 import { Conversations, type SidebarConversations, useRoving } from "./sidebar-conversations";
 import { type SizeClass, useSizeClass } from "./size-class";
@@ -377,6 +378,7 @@ function SidebarPanel({
         ) : (
           <Logo scale={2} wordmark={!rail} />
         )}
+        {rail ? null : <DragFill />}
         {rail ? null : (
           <span className="cb-sidebar-top-tools">
             {ctx.kind === "work" ? <BrandTools p={p} rail={false} /> : null}

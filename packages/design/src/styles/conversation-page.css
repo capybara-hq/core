@@ -92,7 +92,7 @@ a.cb-title-path-seg:hover {
   flex: 0 1 auto;
   min-width: 0;
   height: var(--cb-control-default);
-  margin: 0 auto 0 calc(-1 * var(--cb-space-2));
+  margin: 0 0 0 calc(-1 * var(--cb-space-2));
   padding: 0 var(--cb-space-2);
   border: 0;
   border-radius: var(--cb-radius-sm);
@@ -163,6 +163,7 @@ span.cb-title-btn {
     pointer-events: auto;
   }
   .cb-shell .cb-title-bar[data-new="true"],
+  .cb-shell .cb-title-bar > .cb-drag-fill,
   .cb-shell .cb-title-bar > .cb-title-path,
   .cb-shell .cb-title-bar > .cb-icon-btn,
   .cb-shell .cb-title-bar > .cb-title-sep {
@@ -1373,6 +1374,13 @@ button.cb-property-row {
   flex: 0 1 var(--cb-conv-panel-w, var(--cb-layout-panel));
   min-width: var(--cb-layout-panel-min);
   min-height: 0;
+}
+/* The drag filler over the strip a desktop shell's end controls leave above the panel (0 high
+   elsewhere); it starts after the resize handle. */
+.cb-conv-panel > .cb-drag-fill {
+  position: absolute;
+  inset: 0 0 auto var(--cb-space-1);
+  height: var(--cb-shell-row-end, 0px);
 }
 /*
  * Below 1280 an "auto" right area is a sheet, but the server render and hydration cannot know the
