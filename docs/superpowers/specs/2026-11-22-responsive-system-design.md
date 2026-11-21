@@ -1,6 +1,6 @@
 # One responsive system: expanded web to compact
 
-Status: **design for review** (doc only; nothing is implemented by this PR). Author: the
+Status: **approved design** (maintainer decisions 2026-11-22, §9; implementation plan `docs/superpowers/plans/2026-11-22-responsive-system.md`). Author: the
 compact-list line, 2026-11-22. Supersedes nothing yet; once approved, its §§ 2–6 become changes to
 `docs/design/spec.md` (§4, §5, §6.4, §6.6, §6.17, §6.34, §6.56, new components) and to the mobile
 layout spec (`2026-11-19-mobile-layout-design.md` §4.5, §5.1).
@@ -130,8 +130,8 @@ type ObjectActions = {
   fail, links navigate, a pick closes then runs, system back closes it). In a native shell with
   `menu@1` a sheet of plain actions may use the platform sheet.
 - Every action stays reachable on the object's detail page (a page requirement, §4.4).
-- Discoverability: the first time a person opens a compact list with actions, nothing hints at the
-  long press (open question Q3).
+- Discoverability: nothing hints at the long press; that is accepted, since every action is also on
+  the detail page (decision D3).
 
 `ObjectCard` (`primary` + `menu`), `ObjectRow` (`action` + `menu`) and `DataTable` (`rowMenu`)
 already carry this data; the change is the type name and the compact drawing, so cards and object
@@ -224,8 +224,7 @@ side by side and wrap).
 
 List + item (facts inline) / ListDetail two panes when they fit / two-level stack on compact with
 the sticky decision row (all kept). ★ The list rows follow §2.3's grouped-row look on compact; the
-row long press opens the same decisions as an action sheet only if Q6 says so (decisions are
-deliberate; default: no long press on inbox rows).
+rows have no long press: decisions are deliberate and made on the pushed item (decision D6).
 
 ### 3.7 TracePage (T8)
 
@@ -273,7 +272,7 @@ No page writes styles and no page learns about size classes; every change above 
 - Row height ≥ 64 with a lead (avatar or mark), ≥ 52 without; chevron when the row opens.
 - Interactive cells (`interactive: true`, a switch) render in the trailing slot only when declared
   `trailing`; otherwise the action must be in `rowMenu`.
-- Selection and bulk actions: hidden on compact (open question Q5).
+- Selection and bulk actions: hidden on compact (decision D5); bulk work is desktop work.
 
 ## 5. Same DOM or two DOMs
 
@@ -299,8 +298,8 @@ Not reasons: different sizes, order, wrapping, visibility of decoration, a butto
 
 | Mechanism | First paint | Hydration | a11y / ids / focus | Resize / fold | Verdict |
 |---|---|---|---|---|---|
-| A. CSS-switched dual render: server renders both, `display: none` hides one; after hydration only the matching one stays mounted (`useHydrated` + `useSizeClass`, today's `data-responsive` / `data-fold` pattern) | right, no flash | prune after hydration (one commit) | hidden copy is out of the a11y tree; ids must come from `useId` (unique per copy); focus targets exist once visibly | live (CSS before JS, then remount) | **recommended for two-DOM cases** |
-| B. Container queries only | right | none | one copy | live | **recommended default** (same DOM) |
+| A. CSS-switched dual render: server renders both, `display: none` hides one; after hydration only the matching one stays mounted (`useHydrated` + `useSizeClass`, today's `data-responsive` / `data-fold` pattern) | right, no flash | prune after hydration (one commit) | hidden copy is out of the a11y tree; ids must come from `useId` (unique per copy); focus targets exist once visibly | live (CSS before JS, then remount) | **chosen for two-DOM cases** |
+| B. Container queries only | right | none | one copy | live | **chosen default** (same DOM) |
 | C. Size-class cookie / `Sec-CH-Viewport-Width` client hint, server renders one form | right only if the guess holds; wrong after a resize, a fold, a split view, a first visit (cookie empty), Safari/Firefox (no client hints) | mismatch = hydration error or flash | one copy | needs a re-render | rejected as the mechanism; allowed later only as an optimisation that skips the hidden copy when the hint is certain |
 | D. Render after hydration only (nothing on the server) | flash / layout shift; no SSR content | — | one copy | live | rejected (breaks the no-flash and SSR-loading rules) |
 
@@ -446,7 +445,7 @@ first task re-derives them with a script (`tools/checks` can list template use p
 | Visual baselines | per template one page at 390 (touch), 768, 1440, light and dark (`visual-update` only) | visual job |
 | Size tables | `narrow` states of `card-grid`, `object-list`, `data-table`, `page-header`, new `action-sheet` and `list-fab` re-measured | fidelity |
 
-## 8. Phasing (recommendation)
+## 8. Phasing
 
 1. **Phase 0 — system pieces (design package only)**: the spec text of §§ 2–5, `ClassForms`,
    `ActionSheet`, `ListFab`, `Tabs look="segmented"`, scope chips, CardGrid / ObjectRow compact
@@ -457,37 +456,39 @@ first task re-derives them with a script (`tools/checks` can list template use p
    action reachability audit (connectors, devices). Visual baselines for agents, skills,
    connectors, schedules, conversations, inbox, account.
 3. **Phase 2 — org admin pages**: they are desktop-only on touch, so compact means a narrow desktop
-   window; row mapping on their 8 pages with tables. Recommended because a narrow desktop window is common
+   window; row mapping on their 8 pages with tables. Done because a narrow desktop window is common
    (split screen) and the declarations are small.
 4. **Phase 3 — super admin**: **automatic forms and sizing only, no row mappings**: tables keep
    the stacked fallback, the 3 `scope` migrations done because the `filters` guard requires them.
-   Reason: desktop-only on touch, used by one or two people, rarely in a narrow window; the
+   Decided (D8): desktop-only on touch, used by one or two people, rarely in a narrow window; the
    fallback is readable; every declaration is maintenance.
 
 Each phase is one PR (phase 0 possibly two: overlays + templates), reviewed with screenshots at
 390 / 768 / 1440.
 
-## 9. Open questions (maintainer)
+## 9. Decisions (maintainer 2026-11-22)
 
-- **Q1** Secondary actions on compact: always the top row's "…" (proposed), or a second row of
-  buttons under the title when there is exactly one (today's "one secondary stays a button")?
-- **Q2** Primary on non-list pages at compact: full-width button under the title (proposed), or a
-  FAB there too (iOS-like consistency), or the top row's trailing slot as a text button?
-- **Q3** Long press is invisible: accept (iOS/Android convention, everything is on the detail page),
-  or add a one-time hint / keep a trailing "⋯" button on rows (contradicts the mockup)?
-- **Q4** Four or more first-level tabs on compact (extensions: 7): keep the scrolling tab row
-  (proposed), use chips, or a `Select`-like scope picker?
-- **Q5** DataTable selection / bulk actions on compact: hidden (proposed; bulk work is desktop),
-  or a select mode from the "…"?
-- **Q6** Inbox rows: long press with the decisions (fast triage) or none (deliberate decisions,
-  proposed)?
-- **Q7** One scroller for every pushed page on compact (proposed: Detail, Settings, Overview, Trace
-  too), or only list pages?
-- **Q8** Super admin phase 3 as sizing-only (proposed) — agreed?
-- **Q9** Medium (tablet portrait 600–840): keep the expanded head and actions (proposed), or take
-  compact's FAB / segmented there too on touch?
-- **Q10** The count beside the title: the first tab's count by default (proposed) or only an
-  explicit `header.count`?
+All ten open questions of the review draft were answered as the draft proposed:
+
+- **D1** Secondary actions on compact always go into the top row's "…", also when there is only
+  one (today's "one secondary stays a button" rule ends on compact).
+- **D2** The primary on non-list pages at compact is a full-width button under the title (no FAB,
+  no text button in the top row); the FAB is the ListPage's only.
+- **D3** Long press is accepted as invisible: no hint and no trailing ⋯ on rows; every row action
+  is also on the object's detail page.
+- **D4** Four or more first-level tabs stay the sideways-scrolling tab row; two or three are the
+  segmented control.
+- **D5** DataTable selection and bulk actions are hidden on compact.
+- **D6** Inbox rows have no long press; decisions are made on the pushed item.
+- **D7** Every pushed page scrolls as one scroller on compact (List, Detail, Settings, Overview,
+  Trace, Form, Wizard), with the scrolled title in the top row; the conversation keeps its thread
+  scroller, sticky sub-navs and ActionRows stay sticky.
+- **D8** Super admin pages get the automatic forms and sizing only (no row mappings; the three
+  `scope` migrations still happen because the guard requires them).
+- **D9** Medium (600–840) keeps the expanded head and actions, touch or not; only sizes follow
+  touch there.
+- **D10** The count beside the large title is the first head tab's count by default; `header.count`
+  overrides it.
 
 ## 10. Rejected alternatives
 
@@ -504,7 +505,7 @@ Each phase is one PR (phase 0 possibly two: overlays + templates), reviewed with
 
 - **Web UI**: pages stay template + design components and write no styles; new behaviour lives in
   `packages/design`; pages only declare data (`scope`, column `compact` roles). The new guards
-  extend `check:web-ui`. AGENTS.md change proposed after approval: one line "pages never read the
+  extend `check:web-ui`. AGENTS.md change, made with phase 0: one line "pages never read the
   size class (`web-ui-size-branch`); a structure that differs per class goes through `ClassForms`".
 - **Mobile and shells**: layout follows size classes by window width, adapted in templates and the
   shell, never in pages (`design-breakpoint`, unchanged); sizes follow "compact or touch" (the
