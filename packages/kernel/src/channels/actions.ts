@@ -37,13 +37,16 @@ export interface ChannelCardActionsDeps {
   resolveSpeaker: SpeakerResolver;
 }
 
-/** 授权 / 状态类失败 → 回给点击者的一句话（不改卡片）；其余错误照常抛出。 */
 /**
  * The approval kinds that are the asked person's own, decided by them in person: a network ask, a
  * git push ask, a command review ask.
  */
 const OWNER_DECIDED: ReadonlySet<ApprovalKind> = new Set(["network", "git", "command"]);
 
+/**
+ * Authorization and state failures → one sentence back to the clicker (the card stays as it is);
+ * any other error is thrown as usual.
+ */
 const REPLY_FOR: Partial<Record<ErrorCode, ChannelPhrase>> = {
   "approval.not_found": "cannotHandle",
   "question.not_found": "cannotHandle",

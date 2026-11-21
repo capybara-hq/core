@@ -7,7 +7,7 @@ import type { OperationContext } from "../../src/platform/operation.js";
 import { PlatformOperations } from "../../src/platform/registry.js";
 import { type OrgEnv, startOrgEnv } from "../catalog/org-env.js";
 import { accountsFor } from "../helpers/identity.js";
-import { createConv, PW, type Req, session } from "../helpers/runs.js";
+import { createConv, createOrg, PW, type Req, session } from "../helpers/runs.js";
 
 /**
  * Results shown once are read by tool call, not by approval (profiles govern every approval, plan
@@ -65,8 +65,12 @@ interface CallRef {
   callId: string;
 }
 
-const urlOf = (c: CallRef, what: "initial-password" | "invitation-link") =>
-  `/api/v1/orgs/${env.orgId}/conversations/${c.conversationId}/runs/${c.runId}/calls/${c.callId}/${what}`;
+const urlOf = (
+  c: CallRef,
+  what: "initial-password" | "invitation-link",
+  orgId: string = env.orgId,
+) =>
+  `/api/v1/orgs/${orgId}/conversations/${c.conversationId}/runs/${c.runId}/calls/${c.callId}/${what}`;
 
 const readPassword = (who: Req, c: CallRef) =>
   who({ method: "POST", url: urlOf(c, "initial-password") });
@@ -200,6 +204,31 @@ describe("initial password by call", () => {
     expect(errCode(res)).toBe("auth.session_required");
     // still readable by the recipient's session
     expect((await readPassword(env.root, call)).statusCode).toBe(200);
+  });
+});
+
+describe("by call under another org", () => {
+  it("a call whose conversation belongs to another org than the URL's: unavailable", async () => {
+    // root owns org B too; the call and its conversation are org A's
+    const orgB = await createOrg(env.root, "Other");
+    const pw = await callOf(env.root);
+    await sealPassword(pw, env.rootId);
+    const link = await callOf(env.root);
+    await sealLink(link, env.rootId);
+
+    const password = await env.root({ method: "POST", url: urlOf(pw, "initial-password", orgB) });
+    expect(password.statusCode).toBe(404);
+    expect(errCode(password)).toBe("account.initial_password_unavailable");
+    const invitation = await env.root({
+      method: "POST",
+      url: urlOf(link, "invitation-link", orgB),
+    });
+    expect(invitation.statusCode).toBe(404);
+    expect(errCode(invitation)).toBe("invitation.link_unavailable");
+
+    // both stay readable once under their own org
+    expect((await readPassword(env.root, pw)).statusCode).toBe(200);
+    expect((await readLink(env.root, link)).statusCode).toBe(200);
   });
 });
 

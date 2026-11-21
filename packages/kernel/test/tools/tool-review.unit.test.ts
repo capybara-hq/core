@@ -156,6 +156,28 @@ describe("scrubToolInput", () => {
     ).toEqual({ viaRef: { other: 1 }, viaUnion: { user: "u" }, map: {}, free: "kept" });
   });
 
+  it("applies matching patternProperties beside properties; additionalProperties only otherwise", () => {
+    const s = {
+      type: "object",
+      properties: { token: { type: "string" }, name: { type: "string" } },
+      patternProperties: { "^tok": { type: "string", "x-secret": true } },
+      additionalProperties: { type: "string", writeOnly: true },
+    };
+    expect(scrubToolInput({ token: "t", tokenB: "b", name: "n", extra: "e" }, s)).toEqual({
+      name: "n",
+    });
+    const open = {
+      type: "object",
+      properties: { name: { type: "string" } },
+      patternProperties: { "^x-": { type: "string" } },
+      additionalProperties: { type: "string", "x-secret": true },
+    };
+    expect(scrubToolInput({ name: "n", "x-a": "a", other: "o" }, open)).toEqual({
+      name: "n",
+      "x-a": "a",
+    });
+  });
+
   it("a secret root yields null; scalars and missing schemas pass through", () => {
     expect(scrubToolInput("x", { type: "string", "x-secret": true })).toBeNull();
     expect(scrubToolInput({ a: 1 }, {})).toEqual({ a: 1 });
