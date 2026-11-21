@@ -8,7 +8,7 @@ import { defineQuery } from "./define";
 import { keys } from "./keys";
 
 /**
- * The person's devices in the org (`{ items, defaultId, lastUsedId, cloudAvailable }`): the 设备
+ * The person's devices in the org (`{ items, defaultId, lastUsedId, providers, defaultProvider }`): the 设备
  * page, and the composer's picker and the properties panel read it too.
  */
 export const devicesQuery = (orgId: string) =>

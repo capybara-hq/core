@@ -1742,7 +1742,6 @@
     "title": "Devices",
     "listLabel": "Your devices",
     "personal": "Personal",
-    "demotedName": "Personal ({provider})",
     "new": "New device",
     "none": "None",
     "source": {
@@ -1764,9 +1763,9 @@
     },
     "empty": "You have no devices yet.",
     "noCloud": {
-      "text": "The platform has no cloud sandbox.",
-      "hint": "Ask the super admin to set up a sandbox provider.",
-      "notice": "The platform has no cloud sandbox, so these cloud devices are unavailable. You can still delete them. Ask the super admin to set up a sandbox provider."
+      "text": "No device provider is on in this organization.",
+      "hint": "Ask an org admin to switch one on.",
+      "notice": "No device provider is on in this organization, so these cloud devices are unavailable. You can still delete them. Ask an org admin to switch one on."
     },
     "create": {
       "title": "New device",
@@ -1775,6 +1774,8 @@
       "cancel": "Cancel",
       "submit": "Create",
       "created": "Device {name} created.",
+      "provider": "Provider",
+      "providerHelp": "Where the device runs. It cannot be changed later.",
       "kindLabel": "Device type",
       "cloud": "Cloud",
       "cloudHint": "Runs in the platform's sandbox, ready as soon as it is created.",
@@ -1801,7 +1802,8 @@
       }
     },
     "detail": {
-      "demotedNote": "This was your personal device before the platform changed its sandbox provider. When the platform switches back to {provider}, it becomes your default device again, with its files.",
+      "providerOffNote": "The provider of this device is switched off or not installed in this organization. Its files are kept.",
+      "about": "About",
       "filesLostNote": "The files of this device are gone at the provider. Rebuild the files to use it again.",
       "reconcileNote": "This device's sandbox limits must be established again before it runs anything. Rebuild its files to apply them; the workspace is wiped.",
       "localFilesLostNote": "The files directory of this local device is gone from the machine. On the machine, run capybara-device logout, then capybara-device login into this device to recreate the directory.",

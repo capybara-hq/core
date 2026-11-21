@@ -59,11 +59,11 @@ const local = (id: string, over: Record<string, unknown> = {}) => ({
   id,
   name: `Laptop ${id}`,
   isDefault: false,
-  demotedFrom: null,
   ownerKind: "personal",
   source: "local",
   provider: "@local",
   available: true,
+  report: null,
   online: true,
   machine: {
     id: "m1",
@@ -414,7 +414,8 @@ describe("marks", () => {
           items: [local("e1"), local("e2")],
           defaultId: null,
           lastUsedId: null,
-          cloudAvailable: true,
+          providers: [{ plugin: "sandbox-docker", displayName: null }],
+          defaultProvider: "sandbox-docker",
         }),
     });
     await renderRouteWithCache("/devices", lastStubRoutes(), {});
@@ -434,7 +435,8 @@ describe("marks", () => {
       items: [local("e1"), local("e2")],
       defaultId: null,
       lastUsedId: null,
-      cloudAvailable: false,
+      providers: [],
+      defaultProvider: null,
     } as never;
     renderPage(<div />);
     const wrapper = ({ children }: { children: ReactNode }) => pageElement(children);

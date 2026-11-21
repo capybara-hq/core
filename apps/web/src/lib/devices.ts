@@ -1,6 +1,5 @@
 import { apiFetch } from "./api";
 import type { LocalizedName } from "./catalog";
-import { extensionLabel } from "./extension-label";
 
 /**
  * The kernel's devices API (`packages/kernel/src/devices/devices.service.ts`; only the
@@ -142,22 +141,18 @@ export interface Device {
   id: string;
   /**
    * null for the person's default device (shown as 个人设备 / "Personal"; english-comments-ok:
-   * the zh UI label) and for a former default (shown from `demotedFrom`); see {@link deviceName}.
+   * the zh UI label); see {@link deviceName}.
    */
   name: string | null;
   isDefault: boolean;
-  /**
-   * A former default demoted by a sandbox provider switch: the provider it was demoted from, its
-   * display name (null: show the id) and its place among the unnamed ones of that provider (1, 2,
-   * …). It becomes the default again when the platform switches back to that provider.
-   */
-  demotedFrom: { provider: string; displayName: LocalizedName | null; ordinal: number } | null;
   ownerKind: "personal";
   /** `local`: a machine connected with `capybara-device` (provider `@local`). */
   source: "cloud" | "local";
   provider: string | null;
-  /** Its provider is there: the deployment's current sandbox provider, or `@local`. */
+  /** Its provider serves the org now (on in the org; `@local`: registered). */
   available: boolean;
+  /** What its provider last reported about it (the stored copy); null until a first one. */
+  report: DeviceReport | null;
   /** A local device: its machine is connected now; null for a cloud one. */
   online: boolean | null;
   /** A local device's connected machine; null for a cloud one, or when none is connected. */
@@ -185,12 +180,39 @@ export interface Device {
   createdAt: string;
 }
 
+/** A text in English with an optional Chinese translation (a provider's words for people). */
+export interface DeviceText {
+  en: string;
+  zh?: string;
+}
+
+/** What a device's provider told about it: shown as is, never used for enforcement. */
+export interface DeviceReport {
+  revision: string;
+  description: DeviceText;
+  home: string | null;
+  limits: { label: DeviceText; value: string }[];
+  reset: boolean;
+}
+
+/** The text in the page language (English when it has no translation). */
+export const deviceText = (t: DeviceText, locale: "zh" | "en"): string =>
+  locale === "zh" ? (t.zh ?? t.en) : t.en;
+
+/** A device provider a new device may be created on. */
+export interface DeviceProviderOption {
+  plugin: string;
+  displayName: LocalizedName | null;
+}
+
 export interface DeviceList {
   items: Device[];
   defaultId: string | null;
   lastUsedId: string | null;
-  /** The platform has a sandbox provider: new cloud devices can be made. */
-  cloudAvailable: boolean;
+  /** The device providers on in the org: a new cloud device names one. */
+  providers: DeviceProviderOption[];
+  /** The provider a new device gets when it names none; null when there is none. */
+  defaultProvider: string | null;
 }
 
 /**
@@ -237,22 +259,8 @@ export function resetPollInterval(
   return d.filesLost || d.sandbox.pendingFilesReset || d.reconcileRequired ? RESET_POLL_MS : false;
 }
 
-/**
- * A device's name for people: its own name, else 个人设备 / "Personal" for the default, else
- * for a former default 个人设备（Docker 沙箱） / "Personal (Docker sandbox)" (the provider's display
- * name, its id when it has none), with " 2", " 3", … after the first of the same provider.
- */
-export function deviceName(
-  e: Pick<Device, "name" | "demotedFrom">,
-  text: { personal: string; demoted(provider: string): string },
-  locale: "zh" | "en",
-): string {
-  if (e.name !== null) return e.name;
-  const d = e.demotedFrom;
-  if (!d) return text.personal;
-  const provider = extensionLabel({ name: d.provider, displayName: d.displayName }, locale);
-  return text.demoted(provider) + (d.ordinal > 1 ? ` ${d.ordinal}` : "");
-}
+/** A device's name for people: its own name, else 个人设备 / "Personal" for the default. */
+export const deviceName = (e: Pick<Device, "name">, personal: string): string => e.name ?? personal;
 
 /**
  * Whether a new conversation can be bound to it now: its provider is there, its files are not
@@ -264,11 +272,11 @@ export const devicePickable = (e: Device): boolean => {
 };
 
 /**
- * Whether the new conversation's device picker shows at all: the platform has a cloud sandbox, or
+ * Whether the new conversation's device picker shows at all: a device provider is on in the org, or
  * the person has a local device.
  */
 export const deviceChoiceShown = (list: DeviceList): boolean =>
-  list.cloudAvailable || list.items.some((e) => e.source === "local");
+  list.providers.length > 0 || list.items.some((e) => e.source === "local");
 
 /**
  * The device a new conversation starts on (environments design §4.1 item 2): the one `picked`,
@@ -302,10 +310,10 @@ export const listDevices = (orgId: string) => apiFetch<DeviceList>(org(orgId));
 export const getDevice = (orgId: string, id: string) =>
   apiFetch<{ device: Device }>(`${org(orgId)}/${enc(id)}`);
 
-export const createDevice = (orgId: string, name: string) =>
+export const createDevice = (orgId: string, name: string, provider?: string) =>
   apiFetch<{ device: Device }>(org(orgId), {
     method: "POST",
-    body: JSON.stringify({ name: name.trim() }),
+    body: JSON.stringify({ name: name.trim(), ...(provider === undefined ? {} : { provider }) }),
   });
 
 export const renameDevice = (orgId: string, id: string, name: string) =>

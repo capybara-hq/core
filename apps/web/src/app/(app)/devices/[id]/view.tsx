@@ -17,7 +17,7 @@ import {
   Text,
   useToast,
 } from "@capybara-hq/design";
-import { useLocale, useTranslations } from "next-intl";
+import { useTranslations } from "next-intl";
 import { useState } from "react";
 import {
   DeviceOverview,
@@ -46,7 +46,6 @@ import {
   resetPollInterval,
   revokeDeviceMachine,
 } from "../../../../lib/devices";
-import { extensionLabel, labelLocale } from "../../../../lib/extension-label";
 import { deviceQuery } from "../../../../lib/query/devices";
 import { keys } from "../../../../lib/query/keys";
 import { useAppMutation } from "../../../../lib/query/mutation";
@@ -147,7 +146,6 @@ function Detail({
   const [open, setOpen] = useState<Dialogs>(null);
   const [tab, setTab] = useState<"overview" | "settings">("overview");
   const name = useDeviceName()(e);
-  const lang = labelLocale(useLocale());
   const state = deviceState(e);
   const invalidates = () => [keys.org(orgId).devices(), keys.org(orgId).device(e.id)];
   const rename = useAppMutation({
@@ -230,16 +228,7 @@ function Detail({
         {e.reconcileRequired && !e.filesLost && (
           <Callout tone="warn">{t("detail.reconcileNote")}</Callout>
         )}
-        {e.demotedFrom !== null && (
-          <Callout tone="info">
-            {t("detail.demotedNote", {
-              provider: extensionLabel(
-                { name: e.demotedFrom.provider, displayName: e.demotedFrom.displayName },
-                lang,
-              ),
-            })}
-          </Callout>
-        )}
+        {!e.available && <Callout tone="warn">{t("detail.providerOffNote")}</Callout>}
         {tab === "overview" ? (
           <Stack gap={12}>
             <ThisMachineSection orgId={orgId} device={e} />

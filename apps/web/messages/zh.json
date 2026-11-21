@@ -1730,7 +1730,6 @@
     "title": "设备",
     "listLabel": "我的设备",
     "personal": "个人设备",
-    "demotedName": "个人设备（{provider}）",
     "new": "新建设备",
     "none": "无",
     "source": {
@@ -1752,9 +1751,9 @@
     },
     "empty": "你还没有设备。",
     "noCloud": {
-      "text": "平台没有云端沙箱。",
-      "hint": "请联系超级管理员配置沙箱提供方。",
-      "notice": "平台没有云端沙箱，下列云端设备不可用，但仍可删除。请联系超级管理员配置沙箱提供方。"
+      "text": "本组织没有开启设备提供方。",
+      "hint": "请联系组织管理员开启。",
+      "notice": "本组织没有开启设备提供方，下列云端设备不可用，但仍可删除。请联系组织管理员开启。"
     },
     "create": {
       "title": "新建设备",
@@ -1763,6 +1762,8 @@
       "cancel": "取消",
       "submit": "创建",
       "created": "已创建设备 {name}。",
+      "provider": "提供方",
+      "providerHelp": "设备运行的位置，创建后不能更改。",
       "kindLabel": "设备类型",
       "cloud": "云端",
       "cloudHint": "在平台的沙箱里运行，创建后即可使用。",
@@ -1789,7 +1790,8 @@
       }
     },
     "detail": {
-      "demotedNote": "这是平台更换沙箱提供方之前你的个人设备。平台换回{provider}后，它会重新成为你的默认设备，文件也随之回来。",
+      "providerOffNote": "此设备的提供方已在本组织关闭或未安装，文件仍保留",
+      "about": "说明",
       "filesLostNote": "该设备的文件已在提供方丢失。重建文件后才能再次使用。",
       "reconcileNote": "该设备的沙箱限制需要重新确立，确立之前不会运行任何命令。重建文件即可应用它们，工作区会被清空。",
       "localFilesLostNote": "这个本地设备在机器上的文件目录已丢失。在这台机器上先运行 capybara-device logout，再运行 capybara-device login 并连接到这个设备，即可重建目录后继续使用。",

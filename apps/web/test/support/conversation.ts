@@ -165,6 +165,7 @@ export const envView = (id: string, name: string | null, over: Record<string, un
   source: "cloud",
   provider: "sandbox-docker",
   available: true,
+  report: null,
   online: null,
   machine: null,
   sessionIsolation: false,
@@ -185,7 +186,8 @@ export const DEVICES = {
   ],
   defaultId: "e1",
   lastUsedId: null,
-  cloudAvailable: true,
+  providers: [{ plugin: "sandbox-docker", displayName: null }],
+  defaultProvider: "sandbox-docker",
 };
 
 /**

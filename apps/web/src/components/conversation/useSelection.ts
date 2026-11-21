@@ -279,7 +279,7 @@ export function useDeviceChoice(orgId: string, list: DeviceList | undefined): De
   return {
     deviceId: id,
     project,
-    ...(id === undefined && !list.cloudAvailable ? { unavailable: t("deviceOffline") } : {}),
+    ...(id === undefined && list.providers.length === 0 ? { unavailable: t("deviceOffline") } : {}),
     picker: {
       label: t("pickDevice"),
       value: project === undefined ? name : `${name} · ${project}`,
@@ -332,8 +332,8 @@ export function useDeviceChoice(orgId: string, list: DeviceList | undefined): De
 export function lockedDevicePicker(
   text: { label: string; hint: string; deleted: string },
   deviceId: string | null | undefined,
-  device: Pick<Device, "name" | "demotedFrom"> | null | undefined,
-  nameOf: (e: Pick<Device, "name" | "demotedFrom">) => string,
+  device: Pick<Device, "name"> | null | undefined,
+  nameOf: (e: Pick<Device, "name">) => string,
   /** The project it is bound to (project root §4.3: shown, never changed here). */
   project?: string | null,
 ): PickerProps | undefined {

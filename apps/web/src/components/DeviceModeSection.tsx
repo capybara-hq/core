@@ -19,7 +19,7 @@ import {
   useTimeZone,
   useToast,
 } from "@capybara-hq/design";
-import { useTranslations } from "next-intl";
+import { useLocale, useTranslations } from "next-intl";
 import { useState } from "react";
 import { osLabel } from "../lib/device-sign-in";
 import {
@@ -31,9 +31,11 @@ import {
   type DeviceSandboxView,
   type DeviceSettingChange,
   deviceCeilingOf,
+  deviceText,
   setCloudDeviceNetwork,
   updateDevicePolicy,
 } from "../lib/devices";
+import { labelLocale } from "../lib/extension-label";
 import { allowHostProblem } from "../lib/network-hosts";
 import { keys } from "../lib/query/keys";
 import { useAppMutation } from "../lib/query/mutation";
@@ -139,6 +141,7 @@ export function DeviceOverview({
 }) {
   const t = useTranslations("devices");
   const tc = useTranslations("devices.network");
+  const lang = labelLocale(useLocale());
   const local = e.source === "local";
   const sandbox = deviceCeilingOf(e).sandbox;
   const hosts = sandbox?.hosts ?? [];
@@ -177,6 +180,9 @@ export function DeviceOverview({
             keyWidth="10ch"
             rows={[
               { k: t("detail.provider"), v: e.provider ?? t("none") },
+              ...(e.report === null
+                ? []
+                : [{ k: t("detail.about"), v: deviceText(e.report.description, lang) }]),
               {
                 k: t("detail.resources"),
                 v: t("detail.resourcesValue", {

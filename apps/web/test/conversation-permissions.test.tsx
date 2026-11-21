@@ -185,11 +185,12 @@ describe("permission query foundation", () => {
   });
 
   it.each([
-    { ...DEVICES, items: [], defaultId: null, cloudAvailable: false },
+    { ...DEVICES, items: [], defaultId: null, providers: [], defaultProvider: null },
     {
       ...DEVICES,
       items: DEVICES.items.map((d) => ({ ...d, source: "local", available: false, online: false })),
-      cloudAvailable: false,
+      providers: [],
+      defaultProvider: null,
     },
   ])("no selected usable device means no preview or provision", async (devices) => {
     const browser = expectNoFirstPaintFetch();
