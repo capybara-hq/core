@@ -724,6 +724,76 @@ describe("what the profile never decides", () => {
     expect(await approvalsOf(child)).toEqual([]);
   });
 
+  it("a sub-agent of a root on Approve for me: its review's usage lands in its own conversation", async () => {
+    const agentId = await createAgent({
+      subagents: {
+        inline: [{ name: "helper", description: "Helps.", instructions: "You are helper." }],
+      },
+    });
+    scriptRules([
+      verdict("allow", "The person asked for it."),
+      {
+        when: { systemIncludes: CHILD, lastUserIncludes: "child-go", assistantTurns: 0 },
+        reply: { toolCalls: [{ name: ASK, input: { note: "child" } }] },
+      },
+      { when: { systemIncludes: CHILD, assistantTurns: 1 }, reply: { text: "child done" } },
+      {
+        when: { lastUserIncludes: "p-sub-review", assistantTurns: 0 },
+        reply: {
+          toolCalls: [
+            {
+              name: "Agent",
+              input: { description: "Help", prompt: "child-go", subagent_type: "helper" },
+            },
+          ],
+        },
+      },
+      { when: { assistantTurns: 1 }, reply: { text: "done" } },
+    ]);
+    const root = await start(agentId, "p-sub-review", "approve-for-me", 6);
+    const child = await waitFor(
+      async () =>
+        (
+          await db
+            .selectFrom("conversations")
+            .select("id")
+            .where("parent_conversation_id", "=", root)
+            .executeTakeFirst()
+        )?.id,
+      30_000,
+      "the sub-agent's conversation",
+    );
+    const result = await waitFor(
+      async () => (await resultsOf(child)).find((r) => r.payload.toolKey === ASK),
+      30_000,
+      "the child's tool result",
+    );
+    expect(result.payload).toMatchObject({ isError: false, content: "noted: child" });
+    const [decision] = await decisionsOf(child);
+    expect(decision?.payload).toMatchObject({
+      decisionSource: "review-model",
+      profileRevision: 6,
+    });
+    const childRunId = decision?.runId;
+    const callId = decision?.payload.callId;
+    expect(reviewSpy.mock.calls[0]?.[0]).toMatchObject({
+      rootConversationId: root,
+      conversationId: child,
+    });
+    const usageKey = `usage_review_tool:${childRunId}:${callId}`;
+    const usageIn = async (conv: string) =>
+      (
+        await db
+          .selectFrom("conversation_events")
+          .select("idem_key")
+          .where("conversation_id", "=", conv)
+          .where("idem_key", "=", usageKey)
+          .execute()
+      ).length;
+    expect(await usageIn(child)).toBe(1);
+    expect(await usageIn(root)).toBe(0);
+  });
+
   it("a pending approval keeps governing the call after the profile changed to Auto", async () => {
     const agentId = await createAgent();
     script("p-switch", ASK, { note: "s" });

@@ -154,16 +154,20 @@ function expand(node: unknown, root: Obj, out: Obj[] = [], seen = new Set<unknow
 const isSecret = (nodes: readonly Obj[]): boolean =>
   nodes.some((n) => n["x-secret"] === true || n.writeOnly === true);
 
-/** The schema nodes of the property `key` of an object matched by `nodes`. */
+/**
+ * The schema nodes of the property `key` of an object matched by `nodes`. As in JSON Schema, a
+ * listed property and every matching `patternProperties` entry both apply; `additionalProperties`
+ * applies only when neither does.
+ */
 function propertyNodes(nodes: readonly Obj[], key: string): unknown[] {
   const out: unknown[] = [];
   for (const n of nodes) {
     const props = n.properties;
+    let matched = false;
     if (isObj(props) && Object.hasOwn(props, key)) {
       out.push(props[key]);
-      continue;
+      matched = true;
     }
-    let matched = false;
     if (isObj(n.patternProperties)) {
       for (const [pattern, sub] of Object.entries(n.patternProperties)) {
         let re: RegExp | undefined;
@@ -239,8 +243,12 @@ export function scrubToolInput(input: unknown, inputSchema: Record<string, unkno
 /** One tool call addressed to the person that the review model judges under Approve for me (R3). */
 export interface ToolReviewInput {
   orgId: string;
-  /** Where the person's messages are read and the usage event is written. */
+  /** The root of the run tree: only where the person's messages are read. */
   rootConversationId: string;
+  /**
+   * The calling conversation (a sub-agent's own): the review's usage, hook events and
+   * `model.request` scope, as the command review's.
+   */
   conversationId: string;
   runId: string;
   step: number;
@@ -324,7 +332,8 @@ export class ToolAskReview implements ToolAskReviewer {
     };
     const args = {
       orgId: input.orgId,
-      conversationId: input.rootConversationId,
+      // the calling conversation, as the command review: `runId` is this conversation's run
+      conversationId: input.conversationId,
       runId: input.runId,
       step: input.step,
       callId: input.callId,
