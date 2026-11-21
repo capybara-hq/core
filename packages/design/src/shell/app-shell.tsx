@@ -11,6 +11,7 @@ import {
   useHaptics,
 } from "../native";
 import { type CommandGroup, CommandPalette } from "../overlays/index";
+import { popOverlaysThen } from "../overlays/use-overlay-history";
 import { useDesignT } from "../provider";
 import { DesktopOnlyNotice, type DesktopOnlyNoticeProps } from "../templates/desktop-only";
 import { backTarget, FloatingBar, type FloatingLead } from "./floating-bar";
@@ -350,10 +351,19 @@ export function AppShell({
         const href = d === undefined ? undefined : sectionHref(id, d);
         if (href === undefined) return;
         buzz("selection");
-        // a tab switch swaps at once; the current section's root is the same page (no route change)
-        if (href !== now) instantRoute.current = href;
-        if (go) go(href, { transition: "none" });
-        else window.location.assign(href);
+        // An open drawer or sheet closes first: on a touch window its history entries are popped
+        // and the move runs once that landed (Task 28's pick rule), else it closes at once. A tap
+        // on the section whose root is already shown moves nowhere.
+        const move = () => {
+          if (href === now) return;
+          // a tab switch swaps at once (no slide)
+          instantRoute.current = href;
+          if (go) go(href, { transition: "none" });
+          else window.location.assign(href);
+        };
+        const popped = popOverlaysThen(move);
+        setDrawerOpen(false);
+        if (!popped) move();
       }),
     );
     listen(() => nativeNav.onMenu(() => setDrawerOpen((open) => !open)));

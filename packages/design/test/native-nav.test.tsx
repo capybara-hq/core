@@ -3,7 +3,7 @@
 // it the four sections with the inbox count, the current one and the menu button (while compact),
 // routes its taps and its menu button, and hides its own section entries and menu button while
 // the handle is there.
-import { act, cleanup, fireEvent, render, screen } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
@@ -18,8 +18,22 @@ import { css, parseCss } from "./css-rules";
 import { matchMediaFor } from "./width";
 
 const realMatchMedia = window.matchMedia;
+
+/** A compact touch window (the overlays hold history entries there). */
+function touchWindow(width = 390) {
+  const sized = matchMediaFor(width).matchMedia;
+  vi.stubGlobal("matchMedia", (q: string) => {
+    const t = q.trim();
+    if (/pointer/.test(t)) {
+      const matches = t !== "(any-pointer: fine)";
+      return { matches, media: q, addEventListener() {}, removeEventListener() {} };
+    }
+    return sized(q);
+  });
+}
 afterEach(() => {
   cleanup();
+  vi.unstubAllGlobals();
   window.matchMedia = realMatchMedia;
   document.documentElement.removeAttribute("data-native-nav");
 });
@@ -290,7 +304,11 @@ describe("the native strip (nav@1)", () => {
     expect(onNavigate).toHaveBeenCalledWith("/agents", { transition: "none" });
     view.rerender(shell(fake.nav, "/agents", { onNavigate, native: { haptics } }));
     expect(document.querySelector(".cb-shell-main")?.hasAttribute("data-nav")).toBe(false);
-    // the current section again: its root
+    // the current section again, at its root: no second push of the same URL
+    act(() => fake.select("agents"));
+    expect(onNavigate).toHaveBeenCalledTimes(1);
+    // below its root: back to the root
+    view.rerender(shell(fake.nav, "/agents/a1", { onNavigate, native: { haptics } }));
     act(() => fake.select("agents"));
     expect(onNavigate).toHaveBeenLastCalledWith("/agents", { transition: "none" });
     act(() => fake.select("chats"));
@@ -306,6 +324,38 @@ describe("the native strip (nav@1)", () => {
     expect(document.querySelector('[data-part="nav-drawer"]')).not.toBeNull();
     act(() => fake.menu());
     expect(document.querySelector('[data-part="nav-drawer"]')).toBeNull();
+  });
+
+  it("a tap with the drawer open closes it before navigating (fine pointer: no entries)", () => {
+    window.matchMedia = matchMediaFor(390).matchMedia;
+    const fake = fakeNav();
+    const onNavigate = vi.fn();
+    render(shell(fake.nav, "/", { onNavigate }));
+    act(() => fake.menu());
+    expect(document.querySelector('[data-part="nav-drawer"]')).not.toBeNull();
+    act(() => fake.select("inbox"));
+    expect(document.querySelector('[data-part="nav-drawer"]')).toBeNull();
+    expect(onNavigate).toHaveBeenCalledWith("/inbox", { transition: "none" });
+  });
+
+  it("on touch a tap with the drawer open pops its entry first, then navigates", async () => {
+    touchWindow();
+    window.history.replaceState(null, "", "/");
+    const fake = fakeNav();
+    const at: { href: string; overlay: unknown }[] = [];
+    const onNavigate = vi.fn((href: string) => {
+      at.push({
+        href,
+        overlay: (window.history.state as Record<string, unknown> | null)?.cbOverlay,
+      });
+    });
+    render(shell(fake.nav, "/", { onNavigate }));
+    act(() => fake.menu());
+    expect((window.history.state as Record<string, unknown> | null)?.cbOverlay).toBeDefined();
+    act(() => fake.select("inbox"));
+    await waitFor(() => expect(onNavigate).toHaveBeenCalledTimes(1));
+    expect(at).toEqual([{ href: "/inbox", overlay: undefined }]);
+    await waitFor(() => expect(document.querySelector('[data-part="nav-drawer"]')).toBeNull());
   });
 
   it("the handle going away clears data-native-nav on the shell and <html>", () => {

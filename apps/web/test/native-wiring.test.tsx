@@ -9,6 +9,7 @@ import { userEvent } from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { DesignRoot } from "../src/components/design-root";
 import { useOpenDownload } from "../src/components/SessionFilePreview";
+import { json, stubApi } from "./support/api";
 import { resetNavigation, router } from "./support/navigation";
 import { ME, renderPage } from "./support/render";
 import { renderFrame, shellOf } from "./support/shell";
@@ -149,25 +150,63 @@ describe("profiles@1: 切换平台", () => {
 });
 
 describe("downloads in a shell with openExternal@1", () => {
-  function Download({ url }: { url: string }) {
+  const ROUTE = "/api/v1/orgs/o1/attachments/f1/download";
+  const PRESIGNED = "https://store.example/bucket/f1?X-Amz-Signature=abc";
+  function Download({ url, isPublic }: { url: string; isPublic?: boolean }) {
     const open = useOpenDownload();
     return (
-      <button type="button" onClick={() => open(url)}>
+      <button type="button" onClick={() => open(url, isPublic ? { public: true } : {})}>
         下载
       </button>
     );
   }
 
-  it("go to the system browser inside the click, not a blank popup", () => {
+  it("hand the system browser the presigned URL from the JSON form, never the cookie route", async () => {
     const open = vi.fn(async () => {});
     install(shellWith({ "openExternal@1": { open } }));
     const popup = vi.spyOn(window, "open");
-    const { getByRole } = renderPage(<Download url="/api/v1/orgs/o1/attachments/f1/download" />);
+    // the kernel route needs the app's session cookie: without it (the system browser) it is a 401
+    const calls = stubApi({
+      [`GET ${ROUTE}`]: () => json(401, { error: { code: "auth.required", message: "x" } }),
+      [`GET ${ROUTE}?as=url`]: () => json(200, { url: PRESIGNED }),
+    });
+    const { getByRole } = renderPage(<Download url={ROUTE} />);
     fireEvent.click(getByRole("button", { name: "下载" }));
-    expect(open).toHaveBeenCalledWith(
-      new URL("/api/v1/orgs/o1/attachments/f1/download", window.location.href).href,
-    );
+    await waitFor(() => expect(open).toHaveBeenCalledTimes(1));
+    expect(open).toHaveBeenCalledWith(PRESIGNED);
+    expect(calls.map((c) => c.url)).toEqual([`${ROUTE}?as=url`]);
     expect(popup).not.toHaveBeenCalled();
+  });
+
+  it("a sign-in that is really gone opens nothing and says so here", async () => {
+    const open = vi.fn(async () => {});
+    install(shellWith({ "openExternal@1": { open } }));
+    stubApi({
+      [`GET ${ROUTE}?as=url`]: () => json(401, { error: { code: "auth.required", message: "x" } }),
+      "POST /api/v1/auth/refresh": () =>
+        json(401, { error: { code: "auth.required", message: "x" } }),
+    });
+    const { getByRole, findByRole } = renderPage(<Download url={ROUTE} />);
+    fireEvent.click(getByRole("button", { name: "下载" }));
+    expect(await findByRole("status")).toBeTruthy();
+    expect(open).not.toHaveBeenCalled();
+  });
+
+  it("a public share link needs no session: it goes to the system browser as is", () => {
+    const open = vi.fn(async () => {});
+    install(shellWith({ "openExternal@1": { open } }));
+    const calls = stubApi({});
+    const { getByRole } = renderPage(<Download url="/api/v1/s/abc/inline" isPublic />);
+    fireEvent.click(getByRole("button", { name: "下载" }));
+    expect(open).toHaveBeenCalledWith(new URL("/api/v1/s/abc/inline", window.location.href).href);
+    expect(calls).toEqual([]);
+  });
+
+  it("without openExternal@1 a public link opens in a new tab as before", () => {
+    const popup = vi.spyOn(window, "open").mockReturnValue(null);
+    const { getByRole } = renderPage(<Download url="/api/v1/s/abc/inline" isPublic />);
+    fireEvent.click(getByRole("button", { name: "下载" }));
+    expect(popup).toHaveBeenCalledWith("/api/v1/s/abc/inline", "_blank", "noopener,noreferrer");
   });
 });
 
