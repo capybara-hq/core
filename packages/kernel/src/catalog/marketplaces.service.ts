@@ -76,7 +76,8 @@ import { compareVersions, newestFirst, sameRelease } from "./versions.js";
 
 /** 官方清单来源的 id。 */
 export const OFFICIAL_MARKETPLACE_ID = "official";
-const OFFICIAL_MARKETPLACE_NAME = "Capybara official marketplace";
+/** Neutral: the official marketplace lists the upstream project's plugins under any platform name. */
+const OFFICIAL_MARKETPLACE_NAME = "Official marketplace";
 /** 企业清单的可选令牌：secrets 的 namespace `kernel`、org `_deployment`、键 `catalog-token:<id>`（preflight #65）。 */
 const SECRETS_NAMESPACE = "kernel";
 const tokenKey = (id: string) => `catalog-token:${id}`;

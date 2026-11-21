@@ -386,7 +386,25 @@ export async function readPersonMessages(
     .orderBy("seq", "desc")
     .limit(PERSON_MESSAGES_READ)
     .execute();
-  const texts = rows.map((r) => textOfUserMessage(r.payload)).filter((t) => t !== "");
+  return personMessagesText(
+    rows.map((r) => r.payload),
+    budget,
+  );
+}
+
+/**
+ * The bounded text of person messages read newest first (as {@link readPersonMessages} queries
+ * them): put back in conversation order, oldest first, before {@link boundMessages}, which keeps
+ * the newest within the budget and which the review prompts present as "oldest first".
+ */
+export function personMessagesText(
+  payloadsNewestFirst: readonly unknown[],
+  budget: number,
+): string {
+  const texts = payloadsNewestFirst
+    .map((p) => textOfUserMessage(p))
+    .filter((t) => t !== "")
+    .reverse();
   return boundMessages(texts, budget);
 }
 

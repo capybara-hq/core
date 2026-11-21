@@ -2,6 +2,7 @@ import { Inject, Injectable, type OnModuleInit } from "@nestjs/common";
 import { z } from "zod";
 import type { AgentView } from "../../agents/agent-lookup.js";
 import { AgentsService } from "../../agents/agents.service.js";
+import { productName } from "../../config/product-name.js";
 import { conversationSourceOf } from "../../conversations/source.js";
 import { AccountsService } from "../../identity/accounts.js";
 import { PreferencesSchema } from "../../identity/me.schemas.js";
@@ -136,8 +137,7 @@ export class PlatformOperationsProvider implements OnModuleInit {
           });
           const role = facts.role;
           return {
-            platform:
-              "Capybara is an enterprise agent platform: orgs of people build and use agents that work with skills, tools and connectors. Everything it can do is offered by extensions and plugins.",
+            platform: `${productName(this.config.get())} is an enterprise agent platform: orgs of people build and use agents that work with skills, tools and connectors. Everything it can do is offered by extensions and plugins.`,
             toolFamilies: FAMILIES,
             you: {
               role,

@@ -144,7 +144,10 @@ test("IM binding: enable fake channel → create connection → sign in and conf
     await expect(visitor.locator('[data-template="AuthPage"]')).toBeVisible();
     // Without an IM display name, the external account ID is the identity heading.
     await expect(visitor.getByRole("heading", { name: "u-e2e" })).toBeVisible();
-    await expect(visitor.getByRole("note")).toContainText(zh.bind.warning);
+    await expect(visitor.getByRole("note")).toContainText(
+      // the e2e deployment sets no platform.name: the built-in name fills {product}
+      zh.bind.warning.replace("{product}", "Capybara"),
+    );
     await expect(confirm).toBeDisabled();
     await expect(cancel).toBeDisabled();
     expect(confirmationPosts).toBe(0);

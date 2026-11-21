@@ -279,6 +279,29 @@ describe("scheduled fires through the outbox", () => {
       ).rows.map((r) => ({ ...r, run_at: new Date(r.run_at).getTime() }));
 
     /**
+     * Claimed check `check` of `taskRunId`, owed and not run: its owed row, or the delayed job the
+     * worker's relay added from it (the settle checks turn the seam off, and the relay adds a row
+     * due later within its next tick, deleting the row). `dueAt` is the row's `run_at`, or the
+     * job's add time plus its delay (the relay computes the delay from `run_at` just before the
+     * add, so it is `run_at` plus the few ms between the two, never earlier). The row is read
+     * first: a relay pass adds the job before it commits the row's deletion.
+     */
+    async function owedCheck(
+      taskRunId: string,
+      check: number,
+    ): Promise<{ data: unknown; dueAt: number }> {
+      const jobId = schedSettleJobId(taskRunId, check);
+      const owed = await owedSettles(taskRunId);
+      expect(owed.filter((r) => r.job_id !== jobId)).toEqual([]);
+      const row = owed.find((r) => r.job_id === jobId);
+      if (row) return { data: row.data, dueAt: row.run_at };
+      const job = await maintenance.getJob(jobId);
+      if (!job) throw new Error(`${jobId} is neither owed nor queued`);
+      expect(await job.getState()).toBe("delayed");
+      return { data: job.data, dueAt: job.timestamp + (job.opts.delay ?? 0) };
+    }
+
+    /**
      * Makes job `jobId` due now and waits until it is done: an owed row is brought forward and
      * delivered in one relay pass; one the relay already added with its delay (it adds rows due
      * later ahead of time) is promoted in the queue.
@@ -551,14 +574,13 @@ describe("scheduled fires through the outbox", () => {
 
       const before = Date.now();
       await settleNow(run.id);
-      const after = Date.now();
       expect((await runOf(run.id)).status).toBe("pending");
-      const next = await owedSettles(run.id);
-      expect(next).toMatchObject([
-        { job_id: schedSettleJobId(run.id, 1), data: { taskRunId: run.id, check: 1 } },
-      ]);
-      expect(next[0]?.run_at).toBeGreaterThanOrEqual(before + SCHED_SETTLE_RECHECK_MS);
-      expect(next[0]?.run_at).toBeLessThanOrEqual(after + SCHED_SETTLE_RECHECK_MS);
+      const next = await owedCheck(run.id, 1);
+      // after the read: a job the relay added has its add time before it
+      const after = Date.now();
+      expect(next).toMatchObject({ data: { taskRunId: run.id, check: 1 } });
+      expect(next.dueAt).toBeGreaterThanOrEqual(before + SCHED_SETTLE_RECHECK_MS);
+      expect(next.dueAt).toBeLessThanOrEqual(after + SCHED_SETTLE_RECHECK_MS);
       // the conversation goes, so the run is released by the next check
       await db.deleteFrom("conversation_events").where("conversation_id", "=", conv).execute();
       await db.deleteFrom("conversations").where("id", "=", conv).execute();

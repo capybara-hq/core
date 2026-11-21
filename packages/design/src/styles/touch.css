@@ -70,8 +70,11 @@
   background: var(--cb-panel);
   box-shadow: var(--cb-shadow-float-touch);
   outline: none;
-  overflow-y: auto;
+  /* a vertical scroller only (§6.52); nothing inside is wider than the panel */
+  overflow: hidden auto;
   overscroll-behavior: contain;
+  scrollbar-width: thin;
+  scrollbar-color: var(--cb-scroll-thumb) transparent;
   touch-action: pan-y;
 }
 @media (prefers-reduced-motion: no-preference) {
@@ -225,6 +228,12 @@
   flex-direction: column;
   margin-top: var(--cb-space-4);
 }
+/* The sidebar's conversation section runs out over the sidebar's space.2 side padding (§6.13); the
+   drawer has no side padding, so here it keeps to the panel's width (it overflowed by space.2 and
+   the panel scrolled sideways) and its own space.2 padding insets the rows as in the sidebar. */
+.cb-navdrawer-recent > .cb-sidebar-convs {
+  margin-inline: 0;
+}
 .cb-navdrawer-foot {
   position: sticky;
   bottom: 0;
@@ -292,11 +301,18 @@
   line-height: var(--cb-type-small-line);
 }
 
-/* AccountSheet (§6.54): the person, then rows on the sheet's own surface. */
+/* AccountSheet (§6.55): the person, then rows on the sheet's own surface. The section runs out over
+   the sheet body's space.2 side padding to the sheet's edges (no further: it overflowed by space.2
+   each side and the body scrolled sideways), so every row pads space.4 like a NavRow. One text
+   column for every row: a NavRow's label sits past its icon (`--cb-account-icon`, 20, 22 on touch)
+   and space.3, and the rows without an icon (语言, 外观, 状态, the org switcher, the install hint)
+   reserve that column; the person's avatar starts where the icons do. */
 .cb-account {
+  --cb-account-icon: 20px;
+  --cb-account-text: calc(var(--cb-space-4) + var(--cb-account-icon) + var(--cb-space-3));
   display: flex;
   flex-direction: column;
-  margin: 0 calc(-1 * var(--cb-space-4));
+  margin: 0 calc(-1 * var(--cb-space-2));
 }
 .cb-account-who {
   display: flex;
@@ -305,7 +321,17 @@
   padding: var(--cb-space-2) var(--cb-space-4) var(--cb-space-3);
 }
 .cb-account-slot {
-  padding: var(--cb-space-2) var(--cb-space-4);
+  padding: var(--cb-space-2) var(--cb-space-4) var(--cb-space-2) var(--cb-account-text);
+}
+/* A ghost button in a slot (the org switcher's trigger) reads on the text column: its own side
+   padding and 1px border hang into the reserved icon column. */
+.cb-account-slot > .cb-btn[data-variant="ghost"] {
+  margin-inline-start: calc(-1 * (var(--cb-pad-default-x) + 1px));
+}
+/* A ghost control at a line's end (the language menu's trigger) ends on the rows' end edge, where
+   the theme switch and the status line end. */
+.cb-account-line > .cb-btn[data-variant="ghost"]:last-child {
+  margin-inline-end: calc(-1 * (var(--cb-pad-default-x) + 1px));
 }
 .cb-account-line {
   display: flex;
@@ -313,15 +339,24 @@
   justify-content: space-between;
   gap: var(--cb-space-3);
   min-height: var(--cb-row-default);
-  padding: 0 var(--cb-space-4);
+  padding: 0 var(--cb-space-4) 0 var(--cb-account-text);
 }
+/* The label never wraps or yields; the control or value at the end takes what is left. */
 .cb-account-label {
+  flex: none;
   color: var(--cb-ink);
+  white-space: nowrap;
 }
+/* The status line (context · version · zone) holds long unbroken mono runs (a path, an id): it
+   wraps anywhere inside its column, end-aligned, rather than squeeze the label or overflow. */
 .cb-account-status {
+  flex: 0 1 auto;
   min-width: 0;
+  padding: var(--cb-space-2) 0;
   color: var(--cb-muted);
   font-size: var(--cb-type-small-size);
+  line-height: var(--cb-type-small-line);
+  overflow-wrap: anywhere;
   text-align: end;
 }
 
@@ -332,6 +367,9 @@
   }
   .cb-navdrawer-search {
     min-height: var(--cb-touch-primary);
+  }
+  .cb-account {
+    --cb-account-icon: var(--cb-touch-icon);
   }
   .cb-account-line {
     min-height: var(--cb-touch-row);

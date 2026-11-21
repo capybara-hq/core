@@ -116,7 +116,7 @@ export function checkClientFiles(
     throw new ApiError(
       "client.api_unsupported",
       `The plugin's client code was built for client API ${section.apiVersion}; this deployment ` +
-        `supports ${CLIENT_API_VERSION}. Upgrade Capybara, or build the plugin against ` +
+        `supports ${CLIENT_API_VERSION}. Upgrade the platform, or build the plugin against ` +
         `@capybara-hq/plugin-client for client API ${CLIENT_API_VERSION}.`,
       [{ apiVersion: section.apiVersion, supported: CLIENT_API_VERSION }],
     );

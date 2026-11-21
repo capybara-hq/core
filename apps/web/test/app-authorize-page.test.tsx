@@ -4,13 +4,18 @@
 import { cleanup, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import en from "../messages/en.json";
-import zh from "../messages/zh.json";
+import enCatalog from "../messages/en.json";
+import zhCatalog from "../messages/zh.json";
+import { withProductName } from "../src/i18n/product";
 import { bodyOf, json, lastStubRoutes, stubApi } from "./support/api";
 import { resetNavigation, router } from "./support/navigation";
 import { renderAuthRouteWithCache } from "./support/query";
 import { ME } from "./support/render";
 import type { Routes } from "./support/server";
+
+// the request config fills {product} with the platform name; unset here: the built-in one
+const en = withProductName(enCatalog, null);
+const zh = withProductName(zhCatalog, null);
 
 vi.mock("../src/i18n/navigation", () => import("./support/navigation"));
 const navigateBrowser = vi.hoisted(() => vi.fn());

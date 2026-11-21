@@ -22,6 +22,12 @@ import { type KernelSchemaDb, kernelDb } from "../../src/db/kernel-schema.js";
 import { migrate } from "../../src/db/migrator.js";
 import { createDb } from "../../src/db/pool.js";
 import { ApiError } from "../../src/errors.js";
+import {
+  ACQUIRE_EXCLUSIVE,
+  ACQUIRE_SHARED,
+  DOWNGRADE_SHARED_LEASE,
+  RENEW_SHARED_LEASE,
+} from "../../src/infra/lock/shared-lease.js";
 import { SandboxLeases } from "../../src/sandbox/leases.js";
 import { SandboxLockLostError, type SandboxService } from "../../src/sandbox/sandbox.service.js";
 import {
@@ -1303,17 +1309,35 @@ describe("扫描失败的排在后面（fix round 1）", () => {
   });
 });
 
-/** Leases whose renewals always fail with a Redis error (the renew script throws). */
-const renewThrows = (ttlMs: number) =>
-  sandboxLeasesFor({
+/** The scripts whose success moves a lease's renewal deadline (acquire, renew, downgrade). */
+const DEADLINE_MOVES = new Set([
+  ACQUIRE_SHARED,
+  ACQUIRE_EXCLUSIVE,
+  RENEW_SHARED_LEASE,
+  DOWNGRADE_SHARED_LEASE,
+]);
+
+/**
+ * Leases whose renewals fail with a Redis error once `fail()` is called (until then they pass
+ * through, so a slow create or resume before `fn` runs never loses the lease). `lastMovedAt()` is
+ * the send time of the last acquire, renewal or downgrade that succeeded: the deadline counts from
+ * it, never from when `fn` started.
+ */
+const renewThrows = (ttlMs: number) => {
+  let failing = false;
+  let lastMovedAt = 0;
+  const leases = sandboxLeasesFor({
     redis: new Proxy(redis, {
       get(t, k) {
         if (k === "eval") {
-          return (script: string, ...args: unknown[]) =>
-            script.includes("'XX'")
-              ? Promise.reject(new Error("redis timeout"))
-              : // biome-ignore lint/suspicious/noExplicitAny: forwards the call unchanged
-                (t.eval as any)(script, ...args);
+          return async (script: string, ...args: unknown[]) => {
+            if (failing && script === RENEW_SHARED_LEASE) throw new Error("redis timeout");
+            const sentAt = Date.now();
+            // biome-ignore lint/suspicious/noExplicitAny: forwards the call unchanged
+            const r = await (t.eval as any)(script, ...args);
+            if (r === 1 && DEADLINE_MOVES.has(script)) lastMovedAt = Math.max(lastMovedAt, sentAt);
+            return r;
+          };
         }
         const v = Reflect.get(t, k);
         return typeof v === "function" ? v.bind(t) : v;
@@ -1323,6 +1347,14 @@ const renewThrows = (ttlMs: number) =>
     ttlMs,
     pollMs: 20,
   });
+  return {
+    leases,
+    fail: () => {
+      failing = true;
+    },
+    lastMovedAt: () => lastMovedAt,
+  };
+};
 
 describe("锁的防护（fix round 2）", () => {
   it("每次拿到锁都防护地把 generation 加一（运行中的路径也是）", async () => {
@@ -1412,11 +1444,14 @@ describe("锁的防护（fix round 2）", () => {
     expect((await row())?.status).toBe("running");
   });
 
-  it("续租一直报错：超过 TTL 没有成功续租即视为锁丢失，中止 fn 的 signal", async () => {
-    const s = service(undefined, undefined, { leases: renewThrows(300) });
+  it("renewals keep failing: no successful renewal before the deadline is a lost lease and aborts fn's signal", async () => {
+    const r = renewThrows(300);
+    const s = service(undefined, undefined, { leases: r.leases });
     const reason = await s.withSandbox(
       at(),
       async (_h, _p, _info, sig) => {
+        // renewals start failing only now: how long the create took before fn decides nothing
+        r.fail();
         await waitAborted(sig);
         return sig.reason;
       },
@@ -1425,15 +1460,17 @@ describe("锁的防护（fix round 2）", () => {
     expect((reason as Error).name).toBe("SandboxLockLostError");
   });
 
-  it("续租一直报错：在 TTL 的 2/3 之后、键过期之前就中止 fn 的 signal", async () => {
+  it("renewals keep failing: fn's signal aborts after 2/3 of the TTL, before the key expires", async () => {
     const ttl = 1500;
-    const s = service(undefined, undefined, { leases: renewThrows(ttl) });
+    const r = renewThrows(ttl);
+    const s = service(undefined, undefined, { leases: r.leases });
     const elapsed = await s.withSandbox(
       at(),
       async (_h, _p, _info, sig) => {
-        const t0 = Date.now();
+        r.fail();
         await waitAborted(sig);
-        return Date.now() - t0;
+        // measured from the last renewal that succeeded: the deadline counts from its send time
+        return Date.now() - r.lastMovedAt();
       },
       signal(),
     );

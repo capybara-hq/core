@@ -133,6 +133,7 @@ export {
   type FakeOAuthClient,
   type FakeOAuthServer,
   type FakeOAuthServerOptions,
+  type FakeOidcClaims,
   type FakeTokenRequest,
   startFakeOAuthServer,
 } from "./fake-oauth-server.js";

@@ -342,7 +342,7 @@ export const KernelConfigSchema = z.strictObject({
           meta({
             hot: true,
             description:
-              "The platform's display name (1 to 64 characters), shown by native clients and the installed web app before sign-in (GET /api/v1/meta); unset: clients show their own name",
+              "The platform's display name (1 to 64 characters): the product name people see in the web app, the installed web app and native clients (GET /api/v1/meta), IM bot replies, git gateway messages, OAuth client registrations and the attribution defaults; unset: Capybara",
           }),
         ),
     })
@@ -1663,7 +1663,7 @@ export const KernelConfigSchema = z.strictObject({
           meta({
             hot: true,
             description:
-              "The trailer an agent ends the message of a git commit it creates with; an empty string turns it off. Overridable per agent; unset follows the admin console's value, else 'Co-Authored-By: Capybara <noreply@capybarahq.com>'",
+              "The trailer an agent ends the message of a git commit it creates with; an empty string turns it off. Overridable per agent; unset follows the admin console's value, else 'Co-Authored-By: <platform.name> <noreply@capybarahq.com>'",
           }),
         ),
       pr: z
@@ -1675,7 +1675,7 @@ export const KernelConfigSchema = z.strictObject({
           meta({
             hot: true,
             description:
-              "The line an agent ends the body of a pull request it opens with; an empty string turns it off. Overridable per agent; unset follows the admin console's value, else '🤖 Generated with [Capybara](https://github.com/capybara-hq/core)'",
+              "The line an agent ends the body of a pull request it opens with; an empty string turns it off. Overridable per agent; unset follows the admin console's value, else '🤖 Generated with [Capybara](https://github.com/capybara-hq/core)' ('🤖 Generated with <platform.name>' when platform.name is set to another name)",
           }),
         ),
       sessionUrl: z

@@ -2,9 +2,10 @@ import { describeNestedBox, findNestedBoxes } from "@capybara-hq/design/referenc
 import { act, cleanup, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import en from "../messages/en.json";
-import zh from "../messages/zh.json";
+import enCatalog from "../messages/en.json";
+import zhCatalog from "../messages/zh.json";
 import { defaultSlug, installTemplates, slugOf } from "../src/components/CatalogInstallWizard";
+import { withProductName } from "../src/i18n/product";
 import {
   keptTemplates,
   MARKETPLACE_ERROR_KINDS,
@@ -22,6 +23,10 @@ import { renderRouteEmptyCache, renderRouteWithCache } from "./support/query";
 import { ME } from "./support/render";
 import { expectNoFirstPaintFetch, type Routes } from "./support/server";
 import { NOT_READY } from "./support/shell";
+
+// the request config fills {product} with the platform name; unset here: the built-in one
+const en = withProductName(enCatalog, null);
+const zh = withProductName(zhCatalog, null);
 
 vi.mock("../src/i18n/navigation", () => import("./support/navigation"));
 // The admin pages take their query and params from the address (a first load of that path)

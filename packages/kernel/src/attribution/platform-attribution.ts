@@ -1,14 +1,15 @@
 import { z } from "zod";
+import { DEFAULT_PRODUCT_NAME, productName } from "../config/product-name.js";
 import type { KernelConfig } from "../config/schema.js";
 import type { KernelSchemaDb } from "../db/kernel-schema.js";
 import type { KernelLogger } from "../log.js";
 
 /**
- * The Capybara attribution of agent-created git commits and pull requests (spec
+ * The attribution of agent-created git commits and pull requests (spec
  * 2026-11-14-agent-attribution): the platform defaults, and the merge of an agent's own override
  * over them. Each field is read env > config file (or Nacos) > the super admin's choice in the
  * admin console (deployment setting {@link PLATFORM_ATTRIBUTION_SETTING}) > {@link
- * ATTRIBUTION_DEFAULTS}; a field set in the startup config is read-only in the admin console.
+ * attributionDefaults} for the platform name; a field set in the startup config is read-only in the admin console.
  * Nothing here is enforcement: the run records the effective values in its log and the model is
  * instructed to use them.
  */
@@ -80,12 +81,25 @@ export interface PlatformAttribution {
   sessionUrl: boolean;
 }
 
-/** What a field falls back to when neither the startup config nor the admin console sets it. */
-export const ATTRIBUTION_DEFAULTS: Readonly<PlatformAttribution> = Object.freeze({
-  commit: "Co-Authored-By: Capybara <noreply@capybarahq.com>",
-  pr: "🤖 Generated with [Capybara](https://github.com/capybara-hq/core)",
-  sessionUrl: false,
-});
+/**
+ * What a field falls back to when neither the startup config nor the admin console sets it, for
+ * the platform name `product` (`platform.name`): the trailer names the platform (the address stays
+ * the no-reply one), and the pull-request line links the upstream project only under its own name.
+ */
+export function attributionDefaults(product: string): Readonly<PlatformAttribution> {
+  return Object.freeze({
+    commit: `Co-Authored-By: ${product} <noreply@capybarahq.com>`,
+    pr:
+      product === DEFAULT_PRODUCT_NAME
+        ? `🤖 Generated with [${DEFAULT_PRODUCT_NAME}](https://github.com/capybara-hq/core)`
+        : `🤖 Generated with ${product}`,
+    sessionUrl: false,
+  });
+}
+
+/** The defaults of a deployment that sets no `platform.name`. */
+export const ATTRIBUTION_DEFAULTS: Readonly<PlatformAttribution> =
+  attributionDefaults(DEFAULT_PRODUCT_NAME);
 
 /** Where a field's effective value comes from. */
 export type PlatformAttributionSource = "env" | "file" | "nacos" | "db" | "default";
@@ -116,15 +130,20 @@ export function parseStoredPlatformAttribution(
   return {};
 }
 
-/** The effective defaults of the startup config over the stored choice. */
+/**
+ * The effective defaults of the startup config over the stored choice, else the built-in ones for
+ * the platform name `product`.
+ */
 export function resolvePlatformAttribution(
   config: ConfigAttribution,
   stored: PlatformAttributionStored,
+  product: string,
 ): PlatformAttribution {
+  const defaults = attributionDefaults(product);
   return {
-    commit: config.commit ?? stored.commit ?? ATTRIBUTION_DEFAULTS.commit,
-    pr: config.pr ?? stored.pr ?? ATTRIBUTION_DEFAULTS.pr,
-    sessionUrl: config.sessionUrl ?? stored.sessionUrl ?? ATTRIBUTION_DEFAULTS.sessionUrl,
+    commit: config.commit ?? stored.commit ?? defaults.commit,
+    pr: config.pr ?? stored.pr ?? defaults.pr,
+    sessionUrl: config.sessionUrl ?? stored.sessionUrl ?? defaults.sessionUrl,
   };
 }
 
@@ -158,13 +177,12 @@ export async function readStoredPlatformAttribution(
 /** The platform's effective defaults, read live: see {@link resolvePlatformAttribution}. */
 export async function readPlatformAttribution(
   db: KernelSchemaDb,
-  config: { get(): Pick<KernelConfig, "attribution"> },
+  config: { get(): Pick<KernelConfig, "attribution" | "platform"> },
   log?: Pick<KernelLogger, "warn">,
 ): Promise<PlatformAttribution> {
-  return resolvePlatformAttribution(
-    config.get().attribution,
-    await readStoredPlatformAttribution(db, log),
-  );
+  const stored = await readStoredPlatformAttribution(db, log);
+  const current = config.get();
+  return resolvePlatformAttribution(current.attribution, stored, productName(current));
 }
 
 /**

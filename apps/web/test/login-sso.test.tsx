@@ -52,6 +52,7 @@ describe("登录错误码", () => {
     expect(parseLoginError("?error=sso.access_denied")).toBe("sso.access_denied");
     expect(parseLoginError("?error=auth.account_disabled")).toBe("auth.account_disabled");
     expect(parseLoginError("?error=sso.identity_not_verified")).toBe("sso.identity_not_verified");
+    expect(parseLoginError("?error=sso.account_not_allowed")).toBe("sso.account_not_allowed");
     expect(parseLoginError("?error=<script>")).toBe("unknown");
     expect(parseLoginError("?x=1")).toBeNull();
   });
@@ -71,6 +72,16 @@ describe("登录错误码", () => {
     ["zh", "sso.session_mismatch", zh.login.ssoError.sso.session_mismatch],
     ["en", "sso.unavailable", en.login.ssoError.sso.unavailable],
     ["en", "auth.account_disabled", en.login.ssoError.auth.account_disabled],
+    [
+      "en",
+      "sso.account_not_allowed",
+      "This account is not allowed to sign in on this platform. Use an account of an allowed organization, or contact an administrator.",
+    ],
+    [
+      "zh",
+      "sso.account_not_allowed",
+      "这个账号不允许登录本平台。请使用允许的组织的账号，或联系管理员。",
+    ],
     ["en", "weird", en.login.ssoError.unknown],
   ] as const)("登录页把 ?error=%s 显示为译文（%s）", async (locale, code, text) => {
     stubApi({

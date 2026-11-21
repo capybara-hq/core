@@ -127,7 +127,7 @@ describe("registerClient（DCR）", () => {
   it("注册成功：回调地址、授权码 + refresh 授权类型；返回 client 与端点", async () => {
     const { as, mcp } = await setup("header");
     const meta = await discoverMcp(mcp.url, HTTP);
-    const client = await registerClient(meta, CALLBACK, HTTP);
+    const client = await registerClient(meta, CALLBACK, HTTP, "Acme Agents");
     expect(client).toMatchObject({
       clientId: expect.stringMatching(/^client_/),
       clientSecret: expect.stringMatching(/^secret_/),
@@ -138,6 +138,7 @@ describe("registerClient（DCR）", () => {
       issuer: as.issuer,
     });
     expect(as.registrations[0]).toMatchObject({
+      client_name: "Acme Agents",
       redirect_uris: [CALLBACK],
       grant_types: ["authorization_code", "refresh_token"],
       response_types: ["code"],
@@ -147,7 +148,7 @@ describe("registerClient（DCR）", () => {
   it("指定 client_secret_post → 按此注册", async () => {
     const { as, mcp } = await setup("header");
     const meta = await discoverMcp(mcp.url, HTTP);
-    const client = await registerClient(meta, CALLBACK, HTTP, "client_secret_post");
+    const client = await registerClient(meta, CALLBACK, HTTP, "Capybara", "client_secret_post");
     expect(client.authMethod).toBe("client_secret_post");
     expect(as.registrations[0]).toMatchObject({ token_endpoint_auth_method: "client_secret_post" });
   });
@@ -155,7 +156,7 @@ describe("registerClient（DCR）", () => {
   it("授权服务器不支持 DCR → dcr_unsupported", async () => {
     const { mcp } = await setup("header", { dcr: false });
     const meta = await discoverMcp(mcp.url, HTTP);
-    await expect(registerClient(meta, CALLBACK, HTTP)).rejects.toThrow(
+    await expect(registerClient(meta, CALLBACK, HTTP, "Capybara")).rejects.toThrow(
       expect.objectContaining({ reason: "dcr_unsupported" }),
     );
   });

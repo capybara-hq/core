@@ -2007,6 +2007,11 @@ export interface IdentitySource {
 }
 
 // @public
+export class IdentitySourceRefused extends Error {
+    constructor(message: string);
+}
+
+// @public
 export const IMAGE_ASPECT_RATIOS: readonly ["1:1", "4:3", "3:4", "3:2", "2:3", "16:9", "9:16"];
 
 // @public
@@ -2176,6 +2181,9 @@ export function isDisallowedSkillRef(v: unknown): v is string;
 
 // @public
 export function isFileSystemGoneError(e: unknown): e is FileSystemGoneError;
+
+// @public
+export function isIdentitySourceRefused(err: unknown): boolean;
 
 // @public
 export function isModelError(e: unknown): e is ModelError;

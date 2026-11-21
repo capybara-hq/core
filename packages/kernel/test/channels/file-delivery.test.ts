@@ -114,6 +114,7 @@ describe("fileLinkText / fileRootText", () => {
     size: 2_411_724,
     artifactId: "a1",
     conversationId: "c1",
+    product: "Capybara",
   };
   it("with and without a base", () => {
     expect(fileLinkText({ ...input, base: "https://cap.example", locale: "en" })).toBe(
@@ -124,6 +125,9 @@ describe("fileLinkText / fileRootText", () => {
     );
     expect(fileLinkText({ ...input, base: undefined, locale: "en" })).toBe(
       "`report.pdf` (2.3 MB) was delivered; open the conversation in Capybara on the web to get it.",
+    );
+    expect(fileLinkText({ ...input, base: undefined, locale: "zh", product: "Acme $& AI" })).toBe(
+      "`report.pdf`（2.3 MB）已交付，请在网页上打开 Acme $& AI 中的这个会话获取。",
     );
   });
   it("names always appear as asCode(name)", () => {

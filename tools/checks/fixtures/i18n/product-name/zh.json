@@ -1,0 +1,10 @@
+{
+  "bind": {
+    "goHome": "进入 Capybara",
+    "ok": "进入 {product}",
+    "program": "运行 capybara-device login",
+    "manifest": "读取 .capybara-plugin/plugin.json",
+    "select": "{kind, select, app {Capybara 应用} other {其他}}"
+  },
+  "catalog": { "admin": { "detail": { "format": { "capybara": "Capybara" } } } }
+}

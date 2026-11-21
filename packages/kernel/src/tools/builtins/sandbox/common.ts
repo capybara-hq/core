@@ -582,7 +582,7 @@ export function admissionUnavailableText(cause: PermissionAvailabilityCause): st
  * model's doing; whether anything ran is not proven.
  */
 export const SCOPE_INVALID_TOOL_TEXT =
-  "The device refused this operation as malformed, which points to a problem in Capybara itself, not in the request. Tell the user the device rejected the operation and that it should be reported; do not retry it unchanged.";
+  "The device refused this operation as malformed, which points to a problem in the platform itself, not in the request. Tell the user the device rejected the operation and that it should be reported; do not retry it unchanged.";
 /**
  * A device request whose machine came back as a new run of capybara-device before answering
  * (`DeviceProgramRestartedError`, also as the cause of an unknown outcome): its result is lost.

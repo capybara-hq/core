@@ -265,6 +265,48 @@ describe("SSO 回调", () => {
     ).toEqual([]);
   });
 
+  it("a source that refuses the account → sso.account_not_allowed, no identity row", async () => {
+    const reason = "hosted domain evil.example is not allowed";
+    const r = await sso({ sub: "u-refused", email: "x@evil.example", refuse: reason });
+    // a fixed code only: the plugin's text never reaches the URL
+    expect(r.location).toBe(`${PUBLIC}/login?error=sso.account_not_allowed`);
+    expect(r.location).not.toContain("evil.example is not allowed");
+    expect(decodeURIComponent(r.location)).not.toContain(reason);
+    expect(r.res.body).not.toContain(reason);
+    expect(r.jar.get("cap_at")).toBeUndefined();
+    expect(
+      await db
+        .selectFrom("identities")
+        .selectAll()
+        .where("external_id", "=", "u-refused")
+        .execute(),
+    ).toEqual([]);
+    expect(await db.selectFrom("accounts").select("id").execute()).toEqual([]);
+    expect(await db.selectFrom("sessions").select("id").execute()).toEqual([]);
+    // the state was consumed before the source ran: a replay is a stale state, not a refusal
+    const replay = await callback(r.jar, {
+      state: r.state,
+      code: fakeIdpCode({ sub: "u-refused", nonce: r.nonce }),
+    });
+    expect(replay.headers.location).toBe(`${PUBLIC}/login?error=sso.state_invalid`);
+  });
+
+  it("a refusal from a different browser is still a session mismatch (binding checked first)", async () => {
+    const jar = cookieJar();
+    const s = await start(jar);
+    const other = cookieJar({ cap_sso: "C".repeat(43) });
+    const res = await callback(other, {
+      state: s.state,
+      code: fakeIdpCode({
+        sub: "u-refused-2",
+        nonce: s.nonce,
+        challenge: s.challenge,
+        refuse: "no",
+      }),
+    });
+    expect(res.headers.location).toBe(`${PUBLIC}/login?error=sso.session_mismatch`);
+  });
+
   it("账号已停用 → 回登录页带 auth.account_disabled，不建会话", async () => {
     const a = await sso({ sub: "u8" });
     const id = await me(a.jar);

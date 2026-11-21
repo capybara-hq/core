@@ -1,10 +1,9 @@
 {
   "metadata": {
-    "title": "Capybara",
     "description": "Agent platform for organizations"
   },
   "common": {
-    "appName": "Capybara",
+    "appName": "{product}",
     "loading": "Loading…",
     "logout": "Sign out",
     "localeName": {
@@ -36,6 +35,7 @@
         "session_mismatch": "The sign-in was started in a different browser. Please start again here.",
         "access_denied": "Sign-in was cancelled or access was denied.",
         "provider_error": "The identity provider returned an error. Please try again later.",
+        "account_not_allowed": "This account is not allowed to sign in on this platform. Use an account of an allowed organization, or contact an administrator.",
         "identity_not_verified": "This account was linked through an IM binding link and cannot be used to sign in yet. Sign in another way first, then sign in with it once while signed in to verify it."
       },
       "auth": {
@@ -319,7 +319,7 @@
       "guide_changed": "The setup guide changed after you opened it. Review the new guide before confirming."
     },
     "identity": {
-      "taken": "This IM account is already linked to another Capybara account.",
+      "taken": "This IM account is already linked to another {product} account.",
       "not_found": "The identity does not exist or is already unlinked.",
       "last_login_method": "This is your only way to sign in. Set a password before unlinking it."
     },
@@ -364,7 +364,7 @@
       "files_lost": "The files of this device were lost. For a cloud device, rebuild its files on the devices page; for a local device, run capybara-device logout, then capybara-device login into the same device on the machine.",
       "forbidden": "You can no longer use this device.",
       "files_on_device": "A local device keeps its files on the machine, so they cannot be rebuilt from the platform. On the machine, run capybara-device logout, then capybara-device login into the same device.",
-      "offline": "This computer is not connected. Start the Capybara device program on it and try again.",
+      "offline": "This computer is not connected. Start capybara-device on it and try again.",
       "program_outdated": "The device program on this computer is out of date. Update it and connect again.",
       "credential_invalid": "This computer's connection credential is no longer valid. Connect again on the computer.",
       "policy_refused": "This device does not accept this change from the platform. Change it on the machine.",
@@ -391,8 +391,8 @@
       "recreate_required": "Background work started by an earlier version may still be running on an earlier instance of this device, and that instance can no longer be verified as destroyed. Delete this device and create it again."
     },
     "app_auth": {
-      "code_invalid": "This sign-in link is invalid or has expired. Start signing in again from the Capybara app.",
-      "redirect_uri_invalid": "This sign-in request came from an app address this platform does not accept, so it was not sent. Start signing in again from the Capybara app.",
+      "code_invalid": "This sign-in link is invalid or has expired. Start signing in again from the {product} app.",
+      "redirect_uri_invalid": "This sign-in request came from an app address this platform does not accept, so it was not sent. Start signing in again from the {product} app.",
       "unavailable": "This platform cannot sign apps in yet: its public address is not set. Ask your super admin."
     },
     "device_sign_in": {
@@ -483,7 +483,7 @@
       "undeclared": "This plugin ships client code that its extension does not declare (permissions.client). Repack it with capybara-plugin pack and import it again.",
       "integrity_mismatch": "A client file of this plugin does not match the integrity recorded in its manifest. The package may be damaged or altered; get a fresh copy and import it again.",
       "invalid": "The client code of this plugin is invalid: a file is missing, unlisted, too large, or a stylesheet is not allowed. Repack it with capybara-plugin pack and import it again.",
-      "api_unsupported": "This plugin's client code was built for a newer client API than this deployment supports. Upgrade Capybara, or rebuild the plugin for this version.",
+      "api_unsupported": "This plugin's client code was built for a newer client API than this deployment supports. Upgrade {product}, or rebuild the plugin for this version.",
       "not_found": "This plugin's interface code is not available: the plugin may have been switched off or upgraded, or its interface code stopped. Reload the page."
     },
     "invitation": {
@@ -2981,7 +2981,7 @@
       "anonymous": "Anonymous guests"
     },
     "policyHint": {
-      "bind": "People who have not linked their Capybara account get a link prompt in a direct message (recommended).",
+      "bind": "People who have not linked their {product} account get a link prompt in a direct message (recommended).",
       "anonymous": "People who have not linked chat as anonymous guests. Only agents visible to the whole organization can be used, and no personal credentials."
     },
     "form": {
@@ -3044,7 +3044,7 @@
       "dangerTitle": "Danger zone",
       "delete": "Delete channel",
       "deleteTitle": "Delete {name}?",
-      "deleteHint": "The bot disconnects and stops answering. Conversations already held in IM stay in Capybara.",
+      "deleteHint": "The bot disconnects and stops answering. Conversations already held in IM stay in {product}.",
       "inboundTitle": "Inbound mode",
       "inboundHint": "How the bot receives messages. A long connection works from an internal network; webhooks need the platform to reach this deployment over a public address.",
       "inboundLabel": "Inbound mode",
@@ -3317,9 +3317,9 @@
   },
   "identities": {
     "title": "IM identities",
-    "hint": "IM and sign-in accounts linked to your Capybara account. Messages from a linked IM account act as you.",
+    "hint": "IM and sign-in accounts linked to your {product} account. Messages from a linked IM account act as you.",
     "empty": "No linked identities.",
-    "emptyHint": "Message a Capybara bot in IM and follow its link, or sign in with a third-party account.",
+    "emptyHint": "Message a {product} bot in IM and follow its link, or sign in with a third-party account.",
     "columns": {
       "name": "Name",
       "source": "Source",
@@ -3336,37 +3336,37 @@
   },
   "bind": {
     "title": "Link IM account",
-    "subtitle": "An IM account is asking to link to your Capybara account.",
+    "subtitle": "An IM account is asking to link to your {product} account.",
     "source": "Source",
     "tenant": "Tenant",
     "externalId": "Account ID",
     "email": "Email",
-    "warning": "Only confirm if you just requested this from IM yourself; this links that IM account to your Capybara account, and its messages will act as you.",
+    "warning": "Only confirm if you just requested this from IM yourself; this links that IM account to your {product} account, and its messages will act as you.",
     "confirm": "Link account",
     "cancel": "Cancel",
     "doneTitle": "Account linked",
     "doneHint": "Go back to IM and continue the chat.",
     "invalidTitle": "Link expired",
     "invalidHint": "Send the bot a new message in IM to get a fresh link.",
-    "goHome": "Go to Capybara"
+    "goHome": "Go to {product}"
   },
   "appAuth": {
     "clients": {
       "desktop": {
         "title": "Sign in to {platform} from the desktop app?",
-        "subtitle": "Only continue if you just started this from the Capybara desktop app.",
+        "subtitle": "Only continue if you just started this from the {product} desktop app.",
         "machine": "Computer",
-        "invalidHint": "This link is incomplete. Start signing in again from the Capybara desktop app.",
-        "redirectUriInvalid": "This sign-in request came from an app address this platform does not accept, so it was not sent. Start signing in again from the Capybara desktop app.",
-        "codeInvalid": "This sign-in link is invalid or has expired. Start signing in again from the Capybara desktop app."
+        "invalidHint": "This link is incomplete. Start signing in again from the {product} desktop app.",
+        "redirectUriInvalid": "This sign-in request came from an app address this platform does not accept, so it was not sent. Start signing in again from the {product} desktop app.",
+        "codeInvalid": "This sign-in link is invalid or has expired. Start signing in again from the {product} desktop app."
       },
       "mobile": {
         "title": "Sign in to {platform} from the mobile app?",
-        "subtitle": "Only continue if you just started this from the Capybara mobile app.",
+        "subtitle": "Only continue if you just started this from the {product} mobile app.",
         "machine": "Device",
-        "invalidHint": "This link is incomplete. Start signing in again from the Capybara mobile app.",
-        "redirectUriInvalid": "This sign-in request came from an app address this platform does not accept, so it was not sent. Start signing in again from the Capybara mobile app.",
-        "codeInvalid": "This sign-in link is invalid or has expired. Start signing in again from the Capybara mobile app."
+        "invalidHint": "This link is incomplete. Start signing in again from the {product} mobile app.",
+        "redirectUriInvalid": "This sign-in request came from an app address this platform does not accept, so it was not sent. Start signing in again from the {product} mobile app.",
+        "codeInvalid": "This sign-in link is invalid or has expired. Start signing in again from the {product} mobile app."
       }
     },
     "account": "Account",
@@ -3374,9 +3374,9 @@
     "confirm": "Sign in",
     "cancel": "Cancel",
     "invalidTitle": "Cannot sign in",
-    "invalidHint": "This link is incomplete. Start signing in again from the Capybara app.",
+    "invalidHint": "This link is incomplete. Start signing in again from the {product} app.",
     "doneTitle": "Done",
-    "doneHint": "Returned to Capybara. You can close this page."
+    "doneHint": "Returned to {product}. You can close this page."
   },
   "deviceLink": {
     "title": "Connect this machine",
@@ -3404,7 +3404,7 @@
     "deniedHint": "This machine will not be connected.",
     "invalidTitle": "Code expired",
     "invalidHint": "Run capybara-device login on the machine again to get a new code.",
-    "goHome": "Go to Capybara"
+    "goHome": "Go to {product}"
   },
   "trajectories": {
     "title": "Evals & runs",
@@ -5062,7 +5062,7 @@
     "backToSignIn": "Have an account? Sign in",
     "invalidTitle": "Invitation link no longer valid",
     "invalidHint": "Ask the org admin who invited you to send a new invitation.",
-    "goHome": "Go to Capybara"
+    "goHome": "Go to {product}"
   },
   "catalog": {
     "scope": {
@@ -5272,9 +5272,9 @@
         "translation": {
           "title": "Translation from Claude Code",
           "formatClaude": "Claude Code plugin",
-          "summary": "Read as a Claude Code plugin: only what Capybara supports is taken over, and every other part is listed with the reason.",
+          "summary": "Read as a Claude Code plugin: only what {product} supports is taken over, and every other part is listed with the reason.",
           "noManifest": "The plugin has no .claude-plugin/plugin.json; it was read from its directory layout.",
-          "claudeManifestIgnored": "The plugin has both .capybara-plugin/plugin.json and .claude-plugin/plugin.json: the Capybara manifest was read and the Claude Code one ignored.",
+          "claudeManifestIgnored": "The plugin has both .capybara-plugin/plugin.json and .claude-plugin/plugin.json: the .capybara-plugin manifest was read and the Claude Code one ignored.",
           "groupTitle": "{group} ({n})",
           "groups": {
             "imported": "Imported",
@@ -5312,10 +5312,10 @@
             "skill_manual_only": "only people invoke it, from the / menu (disable-model-invocation); the model does not see it",
             "skill_forked": "runs as a sub-agent ({agent}) when a person invokes it (context: fork)",
             "command_invalid": "not imported: the command cannot become a skill",
-            "skill_shell_injection": "runs shell commands when invoked in Claude Code; Capybara gives them to the model as text",
+            "skill_shell_injection": "runs shell commands when invoked in Claude Code; {product} gives them to the model as text",
             "skill_agent_unknown": "the sub-agent type {agent} is neither built in nor an agent of this plugin: it runs as general-purpose unless the agent has it",
-            "skill_invocation_key_ignored": "the invocation keys {keys} were left out: Capybara cannot read them as written",
-            "skill_file_reference": "refers to files with @ ({files}), which Claude Code reads in; Capybara gives the model the text as written",
+            "skill_invocation_key_ignored": "the invocation keys {keys} were left out: {product} cannot read them as written",
+            "skill_file_reference": "refers to files with @ ({files}), which Claude Code reads in; {product} gives the model the text as written",
             "agent_imported": "imported as the agent template {type} (model tier {model})",
             "mcp_template": "became the connector template {template} (authentication {auth})",
             "skill_root_relocated": "the root SKILL.md moved to {to}",
@@ -5340,17 +5340,17 @@
             "mcp_unsupported_transport": "the {transport} transport is not supported (only remote http servers)",
             "mcp_invalid": "the MCP server declaration is invalid",
             "skill_invalid": "not imported: the skill is invalid",
-            "not_applicable": "does not apply in Capybara",
+            "not_applicable": "does not apply in {product}",
             "unknown_field": "unknown or malformed, ignored",
             "other_harness": "files for another tool, ignored",
             "skill_ignored_restrictions": "the frontmatter {keys} is ignored",
             "skill_claude_variables": "uses Claude Code variables ({variables}), which are not replaced",
-            "session_start_pin_hint": "in Claude Code the plugin injects a skill when a session starts; Capybara does not run hooks",
-            "session_start_hook": "In Claude Code this plugin runs a SessionStart hook, which usually adds instructions (often one of its skills) at the start of every session. Capybara does not run hooks. The plugin's skills are in every agent's catalog; if an agent must always follow what the hook adds, put its gist in the agent's instructions.",
+            "session_start_pin_hint": "in Claude Code the plugin injects a skill when a session starts; {product} does not run hooks",
+            "session_start_hook": "In Claude Code this plugin runs a SessionStart hook, which usually adds instructions (often one of its skills) at the start of every session. {product} does not run hooks. The plugin's skills are in every agent's catalog; if an agent must always follow what the hook adds, put its gist in the agent's instructions.",
             "mcp_auth_none": "no authentication declared, so none is used (Claude Code would start OAuth when the server asks for it)",
             "mcp_type_assumed": "no type declared; http is assumed",
             "connector_not_loaded": "the {connector} connector is not loaded on this replica: the template was only checked statically",
-            "agent_tools_unmapped": "tools with no Capybara equivalent are left out: {tools}",
+            "agent_tools_unmapped": "tools with no {product} equivalent are left out: {tools}",
             "agent_tools_narrowed": "a pattern in disallowedTools disallows the whole tool: {tools}",
             "agent_skills_truncated": "preloaded skills left out (at most 3 skill names of this plugin): {skills}"
           },
@@ -6614,7 +6614,7 @@
   },
   "appIcon": {
     "title": "App icon",
-    "description": "The icon of the installed app and the browser tab for the whole platform. Without an upload, the Capybara icon is used.",
+    "description": "The icon of the installed app and the browser tab for the whole platform. Without an upload, the built-in icon is used.",
     "app": {
       "title": "Standard icon",
       "hint": "PNG, exactly 512 × 512"

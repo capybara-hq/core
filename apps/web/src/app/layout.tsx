@@ -13,6 +13,7 @@ import { QueryProvider } from "../components/QueryProvider";
 import { isAppLocale, routing } from "../i18n/routing";
 import type { PlatformMeta } from "../lib/app-auth";
 import { NONCE_HEADER } from "../lib/headers";
+import { DEFAULT_PLATFORM_NAME } from "../lib/platform-icons";
 import { platformMetaQuery } from "../lib/query/app-auth";
 import { serverQueryClient } from "../lib/server/query";
 import { parseTimeZone, TIME_ZONE_COOKIE } from "../lib/time";
@@ -62,7 +63,7 @@ export async function generateMetadata(): Promise<Metadata> {
   } catch {
     // an unreachable kernel: the defaults
   }
-  const name = meta?.name ?? t("title");
+  const name = meta?.name ?? DEFAULT_PLATFORM_NAME;
   return {
     title: name,
     description: t("description"),

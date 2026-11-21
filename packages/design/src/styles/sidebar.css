@@ -795,6 +795,21 @@
   inset: 0 auto 0 var(--cb-layout-sidebar-rail);
   pointer-events: auto;
 }
+/* The medium rail's drawer (spec §6.13, maintainer decision 2026-11-21): the full sidebar from the
+   start edge over a scrim, over the rail and the content (nothing is pushed). */
+.cb-sidebar-scrim {
+  position: absolute;
+  inset: 0;
+  background: var(--cb-scrim);
+}
+@media (prefers-reduced-motion: no-preference) {
+  .cb-sidebar-scrim {
+    animation: cb-fade var(--cb-motion) ease-out;
+  }
+}
+.cb-sidebar[data-variant="drawer"] {
+  border-right-color: var(--cb-line-strong);
+}
 .cb-sidebar[data-variant="sheet"] .cb-sidebar-sheet-title {
   margin: 0;
   padding-left: var(--cb-pad-dense-x);
@@ -807,13 +822,18 @@
  * and the person's choice (`data-collapsed`, from the cb-sidebar cookie) pick one, so the first
  * paint is right: the full sidebar from 841 unless collapsed, the rail on medium and when
  * collapsed, neither below 600 (the chat-first shell's drawer holds its content). The rail's expand
- * button is for the expanded class only.
+ * button is for the expanded class only, its sidebar toggle (the drawer) for medium only.
  */
 @media (max-width: 840px) {
   .cb-sidebar[data-responsive="true"][data-mode="full"] {
     display: none;
   }
   .cb-sidebar[data-responsive="true"] [data-rail-for="expanded"] {
+    display: none;
+  }
+}
+@media (min-width: 841px) {
+  .cb-sidebar[data-responsive="true"] [data-rail-for="medium"] {
     display: none;
   }
 }

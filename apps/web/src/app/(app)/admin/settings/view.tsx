@@ -32,10 +32,10 @@ import {
   UiReplacementsSection,
 } from "../../../../components/UiArrangementSection";
 import {
-  ATTRIBUTION_DEFAULTS,
   ATTRIBUTION_FIELDS,
   type AttributionField,
   type AttributionPatch,
+  attributionDefaults,
   CLIENT_EXTENSIONS_DEFAULT,
   type ClientExtensionsSetting,
   type CustomPolicy,
@@ -61,6 +61,7 @@ import {
   narrowerNetwork,
   lockedSource as startupLocked,
 } from "../../../../lib/org-settings";
+import { useProductName } from "../../../../lib/product-name";
 import {
   adminExtensionsQuery,
   deploymentSettingsQuery,
@@ -913,7 +914,8 @@ function DeviceNetworkSection({
  * message, the line ending an agent-created pull-request body, and whether a pull request also
  * carries the conversation link (needs `http.publicUrl`, off by default). A field the startup
  * config sets is read-only with its source. The preview shows what a commit and a pull request end
- * with. 恢复默认 puts the built-in values back into the draft; the page's ActionRow saves it.
+ * with. The restore button puts the built-in values (for the platform name) back into the draft;
+ * the page's ActionRow saves it.
  */
 function AttributionSection({
   saved,
@@ -926,6 +928,7 @@ function AttributionSection({
 }) {
   const t = useTranslations("admin.settings.attribution");
   const tf = useTranslations("configForm");
+  const defaults = attributionDefaults(useProductName());
   const locked = (f: AttributionField) => lockedSource(saved.sources[f]);
   const lockedNote = (f: AttributionField) => {
     const source = locked(f);
@@ -982,9 +985,9 @@ function AttributionSection({
               // only the fields this console may change: a field the startup config sets keeps its
               // read-only value (restoring it to the built-in default would show a value not in effect)
               const next: AttributionDraft = {};
-              if (locked("commit") === null) next.commit = ATTRIBUTION_DEFAULTS.commit;
-              if (locked("pr") === null) next.pr = ATTRIBUTION_DEFAULTS.pr;
-              if (locked("sessionUrl") === null) next.sessionUrl = ATTRIBUTION_DEFAULTS.sessionUrl;
+              if (locked("commit") === null) next.commit = defaults.commit;
+              if (locked("pr") === null) next.pr = defaults.pr;
+              if (locked("sessionUrl") === null) next.sessionUrl = defaults.sessionUrl;
               onChange(next);
             }}
           >
