@@ -15,6 +15,7 @@ import { createDb } from "../../src/db/pool.js";
 import type { DeviceReports } from "../../src/sandbox/device-reports.js";
 import type { DeviceProviderEntry } from "../../src/sandbox/providers.js";
 import type { SandboxService } from "../../src/sandbox/sandbox.service.js";
+import { guardProviderConnection } from "../../src/sandbox/unreachable.js";
 import {
   createFakeSandbox,
   DEFAULT_DESCRIPTION,
@@ -61,7 +62,7 @@ const report = (revision: string): DeviceReport => ({
   reset: true,
 });
 
-const service = (): SandboxService =>
+const service = (r: DeviceReports = reports): SandboxService =>
   sandboxServiceFor({
     db,
     redis,
@@ -69,7 +70,7 @@ const service = (): SandboxService =>
     config: () => config,
     log: { warn },
     lockPollMs: 20,
-    reports,
+    reports: r,
   });
 
 beforeAll(async () => {
@@ -295,5 +296,41 @@ describe("the stored device report", () => {
     await sql`UPDATE capybara.devices SET provider = 'device-fake' WHERE id = ${id}`.execute(raw);
     expect(await reports.refresh(entry, ref, signal())).toEqual({ changed: true });
     expect(await reports.read(orgId, id)).toEqual(report("r3"));
+  });
+
+  it("a provider whose report never settles and ignores its signal is given up at the bound; the device stays usable", async () => {
+    const bounded = deviceReportsFor(db, redis, { warn }, 50);
+    const s = service(bounded);
+    const id = await seedDevice(raw, orgId, accountId);
+    let seen: AbortSignal | undefined;
+    answer = (_device, sig) => {
+      seen = sig;
+      return new Promise<never>(() => {});
+    };
+    // the use that creates the instance completes although the report never does
+    await run(s, id);
+    expect(seen?.aborted).toBe(true);
+    expect(await stored(id)).toEqual({ report: null, report_at: null });
+    expect(reportWarnings()).toHaveLength(1);
+    // the exclusive lease was released: the next use and a resume run too
+    await run(s, id);
+    expect(await s.suspendIdle(later(DAY))).toBe(1);
+    await run(s, id);
+    // a direct refresh returns within the bound, writing nothing
+    const ref = { deviceId: id, orgId, handle: null };
+    const started = Date.now();
+    expect(await bounded.refresh(entry, ref, signal())).toEqual({ changed: false });
+    expect(Date.now() - started).toBeLessThan(5_000);
+    expect(await stored(id)).toEqual({ report: null, report_at: null });
+  });
+
+  it("a guarded extension provider hands report its arguments and answer unchanged", async () => {
+    const ref = { deviceId: randomUUID(), orgId, handle: null };
+    const sig = signal();
+    const spy = vi.fn(async (_d: DeviceRef, _s: AbortSignal) => report("g1"));
+    const impl = Object.create(fake) as DeviceProvider;
+    Object.defineProperty(impl, "report", { value: spy, writable: true, configurable: true });
+    expect(await guardProviderConnection(impl).report(ref, sig)).toEqual(report("g1"));
+    expect(spy).toHaveBeenCalledWith(ref, sig);
   });
 });

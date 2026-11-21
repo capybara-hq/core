@@ -103,10 +103,11 @@ export function deviceReportsFor(
   db: KernelSchemaDb,
   redis: Redis,
   log: Partial<Pick<Logger, "warn">> = {},
+  timeoutMs?: number,
 ): DeviceReports {
   const h = handlesFor(db);
   const kl = kernelLog(log);
-  return new DeviceReports(h.db, h.txHost, new LockService(redis, kl), kl);
+  return new DeviceReports(h.db, h.txHost, new LockService(redis, kl), kl, timeoutMs);
 }
 
 /** A {@link SandboxService} over a test's own database, Redis and provider. */

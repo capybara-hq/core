@@ -16,6 +16,7 @@ import { Transactional } from "../infra/database/transactional.decorator.js";
 import { KERNEL_LOGGER } from "../infra/tokens.js";
 import type { KernelLogger } from "../log.js";
 import type { OrgRole } from "../orgs/roles.js";
+import { untilAborted } from "../until-aborted.js";
 import { latestPluginContexts, pluginContextIdemKey } from "./context/plugin-context.js";
 import { runEndedIn } from "./run-status.js";
 
@@ -236,17 +237,4 @@ export class PluginContextService {
     );
     return Math.max(...written.map((e) => e.seq));
   }
-}
-
-/** `p`, or a rejection once `signal` aborts (a provider that ignores its signal never holds a run). */
-function untilAborted<T>(p: Promise<T>, signal: AbortSignal): Promise<T> {
-  return new Promise<T>((resolve, reject) => {
-    const onAbort = () => reject(signal.reason);
-    if (signal.aborted) {
-      onAbort();
-      return;
-    }
-    signal.addEventListener("abort", onAbort, { once: true });
-    p.then(resolve, reject).finally(() => signal.removeEventListener("abort", onAbort));
-  });
 }

@@ -1,5 +1,5 @@
 import { type DeviceRef, type DeviceReport, parseDeviceReport } from "@capybara-hq/plugin-sdk";
-import { Inject, Injectable } from "@nestjs/common";
+import { Inject, Injectable, Optional } from "@nestjs/common";
 import { sql } from "kysely";
 import { KernelDb } from "../infra/database/kernel-db.js";
 import { TransactionHost } from "../infra/database/transaction-host.js";
@@ -7,10 +7,14 @@ import { Transactional } from "../infra/database/transactional.decorator.js";
 import { LockService } from "../infra/lock/lock.service.js";
 import { KERNEL_LOGGER } from "../infra/tokens.js";
 import type { KernelLogger } from "../log.js";
+import { untilAborted } from "../until-aborted.js";
 import type { DeviceProviderEntry } from "./providers.js";
 
 /** How long a provider's `report` may take before the refresh gives up (keeps the stored one). */
 export const DEVICE_REPORT_TIMEOUT_MS = 10_000;
+
+/** Overrides {@link DEVICE_REPORT_TIMEOUT_MS} (ms; tests only). */
+export const DEVICE_REPORT_TIMEOUT = Symbol("DEVICE_REPORT_TIMEOUT");
 
 /** A device's report failures are logged at most once per this window. */
 const FAILURE_LOG_WINDOW_MS = 60 * 60_000;
@@ -37,11 +41,14 @@ export class DeviceReports {
     @Inject(TransactionHost) readonly txHost: TransactionHost,
     @Inject(LockService) private readonly locks: Pick<LockService, "lease">,
     @Inject(KERNEL_LOGGER) private readonly log: Pick<KernelLogger, "warn">,
+    @Optional()
+    @Inject(DEVICE_REPORT_TIMEOUT)
+    private readonly timeoutMs: number = DEVICE_REPORT_TIMEOUT_MS,
   ) {}
 
   /**
-   * Asks `entry` for the report of `ref`'s device (bounded at {@link DEVICE_REPORT_TIMEOUT_MS}
-   * and by `signal`), checks it ({@link parseDeviceReport}) and stores it with `report_at`, only
+   * Asks `entry` for the report of `ref`'s device (given up after {@link DEVICE_REPORT_TIMEOUT_MS}
+   * or on `signal`, even when the provider ignores its signal), checks it ({@link parseDeviceReport}) and stores it with `report_at`, only
    * while the device is live and still bound to `entry` (`devices.provider = entry.plugin`).
    * `changed`: the stored revision differs from the one before (true for a first report). Never
    * throws: a failing or invalid answer leaves the stored report as it was and is logged at most
@@ -55,8 +62,9 @@ export class DeviceReports {
   ): Promise<{ changed: boolean }> {
     let report: DeviceReport;
     try {
-      const bounded = AbortSignal.any([signal, AbortSignal.timeout(DEVICE_REPORT_TIMEOUT_MS)]);
-      report = parseDeviceReport(await entry.impl.report(ref, bounded));
+      const bounded = AbortSignal.any([signal, AbortSignal.timeout(this.timeoutMs)]);
+      // raced, not only signalled: a provider that ignores the signal never holds the lease past it
+      report = parseDeviceReport(await untilAborted(entry.impl.report(ref, bounded), bounded));
     } catch (err) {
       if (!signal.aborted) await this.noteFailure(entry, ref.deviceId, err);
       return { changed: false };
