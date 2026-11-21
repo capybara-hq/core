@@ -4,6 +4,7 @@ import {
   AppShell,
   type DesktopOnlyNoticeProps,
   type DrawerNavData,
+  type DrawerRecent,
   initialOf,
   Logo,
   type MenuItem,
@@ -62,7 +63,7 @@ import { LeaveOrgDialog } from "../LeaveOrgDialog";
 import { usePluginPendingCount } from "../PluginsHead";
 import { ACCOUNT_HOME } from "../settings-nav";
 import { useResolvedTheme } from "../theme-root";
-import { noOrgConversations, useConversationGroups } from "./conversations";
+import { noOrgConversations, useConversationGroups, useDrawerRecent } from "./conversations";
 import {
   activeAdminOf,
   activeNavOf,
@@ -268,6 +269,8 @@ function Frame({ version, children }: { version: string; children: ReactNode }) 
 /** The sidebar's sections of the current org, each read from its own query. */
 type Sections = {
   conversations: SidebarConversations;
+  /** The compact drawer's recent conversations, by time. */
+  recent: DrawerRecent;
   pending: { count: number; more: boolean; refresh(): void };
   extensions: ExtensionNavItem[];
 };
@@ -295,10 +298,10 @@ function OrgFrame({
   // A failed readiness read draws the shell (as the server's `null` did).
   const readiness =
     useQuery({ ...readinessQ, retryOnMount: retryOnMountOf(readinessQ.queryKey) }).data ?? null;
-  const conversations = useConversationGroups(orgId, pathname, {
-    onError: (e) =>
-      toast.error(e instanceof NoCurrentOrgError ? t("shell.noCurrentOrg") : errorMessage(e)),
-  });
+  const onSectionError = (e: unknown) =>
+    toast.error(e instanceof NoCurrentOrgError ? t("shell.noCurrentOrg") : errorMessage(e));
+  const conversations = useConversationGroups(orgId, pathname, { onError: onSectionError });
+  const recent = useDrawerRecent(orgId, pathname, { onError: onSectionError });
   const pending = usePendingApprovals(orgId);
   const extensions = useExtensions(orgId, locale);
   // native notifications for new inbox items, in the desktop shell only
@@ -318,7 +321,7 @@ function OrgFrame({
       me={me}
       org={org}
       readiness={readiness}
-      sections={{ conversations, pending, extensions }}
+      sections={{ conversations, recent, pending, extensions }}
       version={version}
     >
       {children}
@@ -327,6 +330,8 @@ function OrgFrame({
 }
 
 const NO_PENDING: Sections["pending"] = { count: 0, more: false, refresh: () => {} };
+/** The drawer of an account without a current org: no conversations to read. */
+const NO_RECENT: DrawerRecent = { state: "ready", items: [], onRetry: () => {} };
 
 function ShellFrame({
   me,
@@ -642,7 +647,7 @@ function ShellFrame({
   const multiOrg = me.memberships.length > 1 || me.canCreateOrg;
   const drawer: DrawerNavData = {
     ...drawerNav,
-    recent: conversations,
+    recent: sections?.recent ?? NO_RECENT,
     account: {
       name: me.account.displayName,
       orgName: currentOrg?.name ?? null,

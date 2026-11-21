@@ -86,6 +86,36 @@ export const moreGroupsQuery = (orgId: string, opts: { after: string } & Convers
     freshness: "live",
   });
 
+/** How many conversations a page of the by-time list holds (the drawer shows the first 20). */
+export const CONVERSATION_PAGE = 30;
+
+/** What narrows the by-time list: a title substring and one agent. */
+export type ConversationListSearch = { q?: string; agentId?: string };
+
+const listParams = (s: ConversationListSearch, after?: string) =>
+  JSON.stringify([s.q?.trim() ?? "", s.agentId ?? "", after ?? ""]);
+
+/**
+ * A page of my conversations by time, newest first (`GET …/conversations`: the drawer's recent
+ * list and the conversations page); `after` continues from the previous page's `next`.
+ */
+export const conversationListQuery = (
+  orgId: string,
+  search: ConversationListSearch = {},
+  after?: string,
+) =>
+  defineQuery({
+    key: keys.org(orgId).conversationList(listParams(search, after)),
+    fn: () =>
+      listConversations(orgId, {
+        limit: CONVERSATION_PAGE,
+        ...(search.q?.trim() ? { q: search.q } : {}),
+        ...(search.agentId ? { agentId: search.agentId } : {}),
+        ...(after !== undefined ? { after } : {}),
+      }),
+    freshness: "live",
+  });
+
 /** The inbox entry's count. */
 export const inboxCountQuery = (orgId: string) =>
   defineQuery<PendingCount>({

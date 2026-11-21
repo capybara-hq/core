@@ -149,6 +149,9 @@ export async function findTallPadding(page: Page): Promise<string[]> {
       let right = Number.NEGATIVE_INFINITY;
       let top = Number.POSITIVE_INFINITY;
       let bottom = Number.NEGATIVE_INFINITY;
+      // whether any visible text is drawn: a control whose text is only its visually hidden
+      // accessible name (the list's floating action button) is an icon control, square by design
+      let drawnText = false;
       const add = (b: DOMRect) => {
         if (b.width === 0 && b.height === 0) return;
         left = Math.min(left, b.left);
@@ -162,13 +165,17 @@ export async function findTallPadding(page: Page): Promise<string[]> {
             if ((child.textContent ?? "").trim() === "") continue;
             const range = document.createRange();
             range.selectNodeContents(child);
-            for (const b of Array.from(range.getClientRects())) add(b);
+            for (const b of Array.from(range.getClientRects())) {
+              drawnText = true;
+              add(b);
+            }
           } else if (child instanceof HTMLElement || child instanceof SVGElement) {
             const ccs = getComputedStyle(child);
             if (ccs.display === "none" || ccs.visibility === "hidden") continue;
             if (child instanceof HTMLElement && ccs.position === "absolute") continue;
             // a child that clips (a label cut with an ellipsis) counts with its own box
             if (child instanceof HTMLElement && ccs.overflowX !== "visible") {
+              if ((child.textContent ?? "").trim() !== "") drawnText = true;
               add(child.getBoundingClientRect());
             } else if (ccs.display === "contents" || child instanceof HTMLElement) walk(child);
             else add(child.getBoundingClientRect());
@@ -176,7 +183,7 @@ export async function findTallPadding(page: Page): Promise<string[]> {
         }
       };
       walk(el);
-      if (!Number.isFinite(left)) continue;
+      if (!Number.isFinite(left) || !drawnText) continue;
       const bl = Number.parseFloat(cs.borderLeftWidth);
       const br = Number.parseFloat(cs.borderRightWidth);
       const bt = Number.parseFloat(cs.borderTopWidth);

@@ -14,6 +14,7 @@
 @import "./shell.css" layer(design);
 @import "./shell-environment.css" layer(design);
 @import "./sidebar.css" layer(design);
+@import "./conversation-list.css" layer(design);
 @import "./templates.css" layer(design);
 @import "./card-grid.css" layer(design);
 @import "./conversation.css" layer(design);

@@ -124,7 +124,12 @@ import {
 import { deploymentGuidesQuery, memberGuideQuery, setupGuideQuery } from "./setup";
 import { deploymentCheckStatesQuery, setupCheckStatesQuery } from "./setup-checks";
 import { orgSharesQuery, shareMetaQuery } from "./shares";
-import { conversationGroupsQuery, maybeMeQuery, readinessQuery } from "./shell";
+import {
+  conversationGroupsQuery,
+  conversationListQuery,
+  maybeMeQuery,
+  readinessQuery,
+} from "./shell";
 import { skillQuery, skillsQuery } from "./skills";
 import { orgThemesQuery, platformThemeQuery } from "./themes";
 import { trajectoriesQuery, trajectoryFilters, trajectoryQuery } from "./trajectories";
@@ -916,9 +921,10 @@ const ROUTE_TABLE: readonly RouteEntry[] = [
   },
   {
     pattern: "/conversations",
-    // The compact class's Conversations tab: the first page of the groups, the sidebar's own read (the
-    // layout prefetches it as shell data too).
-    queries: ({ orgId }) => (orgId === null ? [] : [q(conversationGroupsQuery(orgId))]),
+    // My conversations by time (the drawer's recent list reads the same first page) and the
+    // sidebar's groups, whose agents name the rows and the chips (the layout prefetches them too).
+    queries: ({ orgId }) =>
+      orgId === null ? [] : [q(conversationListQuery(orgId)), q(conversationGroupsQuery(orgId))],
   },
   {
     pattern: "/devices",

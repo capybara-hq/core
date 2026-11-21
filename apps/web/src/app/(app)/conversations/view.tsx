@@ -1,44 +1,39 @@
 "use client";
 
-import {
-  formatDateTime,
-  ListPage,
-  ObjectRow,
-  type PageHeaderProps,
-  untitledLabel,
-  useDesignLocale,
-  useTimeZone,
-} from "@capybara-hq/design";
-import { useQueryClient } from "@tanstack/react-query";
+import { ConversationList, ListPage, useToast } from "@capybara-hq/design";
+import { keepPreviousData, useQuery } from "@tanstack/react-query";
 import { useTranslations } from "next-intl";
-import { useState } from "react";
+import { useEffect, useState } from "react";
+import {
+  conversationRow,
+  useConversationAgents,
+  useConversationRowActions,
+} from "../../../components/conversation-rows";
 import { useCursorPages } from "../../../components/cursor-pages";
 import { ErrorFrame } from "../../../components/ErrorFrame";
 import { NoAccess } from "../../../components/NoAccess";
 import { usePagePath } from "../../../components/shell/path";
-import { avatarValue } from "../../../lib/agents";
-import type {
-  Conversation,
-  ConversationGroup,
-  ConversationGroupsPage,
-} from "../../../lib/conversations";
-import { usePageQuery } from "../../../lib/query/page-query";
-import {
-  conversationGroupsQuery,
-  moreConversationsQuery,
-  moreGroupsQuery,
-} from "../../../lib/query/shell";
+import { usePathname } from "../../../i18n/navigation";
+import type { Conversation } from "../../../lib/conversations";
+import { retryOnMountOf } from "../../../lib/query/client";
+import { type ConversationListSearch, conversationListQuery } from "../../../lib/query/shell";
 import { useWorkspace } from "../../../lib/query/workspace";
 import { HOME_PATH } from "../../../lib/routes";
 import { useErrorMessage } from "../../../lib/use-error-message";
 import NotFound from "../not-found";
 
+/** Typing in the search asks the kernel once the input settles. */
+const QUERY_SETTLE_MS = 200;
+/** The chip of every agent. */
+const ALL = "all";
+
 /**
- * `/conversations`: my conversations grouped by agent (ListPage `objects`, the compact class's Conversations
- * tab). The first page of the groups comes from the query cache (the layout prefetched it on a
- * first load, and the sidebar reads the same query); later groups are read through the cache by
- * cursor (Load more) and a group's older rows by its own More row. The primary action starts a new
- * conversation.
+ * `/conversations` (All conversations, maintainer decision 2026-11-22): my conversations by time, newest
+ * first, sectioned Today / Yesterday / This week / Earlier (design spec §6.60), with a title search and a chip per
+ * agent (the agents of the sidebar's groups). The first page comes from the query cache (the
+ * drawer reads the same one); the next is read as the list's end comes near (no Load more row).
+ * The primary starts a new conversation (the floating action button below 600); a row's long
+ * press, right click or ⋯ offers rename, archive and delete.
  */
 export default function ConversationsView() {
   const ws = useWorkspace();
@@ -47,142 +42,107 @@ export default function ConversationsView() {
   return <Conversations orgId={ws.orgId} />;
 }
 
-/** The rows a group's More row read past its first rows, and where it stands. */
-type Extra = { rows: Conversation[]; done: boolean; loading: boolean };
-
 function Conversations({ orgId }: { orgId: string }) {
   const t = useTranslations("conversations");
   const scope = usePagePath("org");
-  const read = usePageQuery(conversationGroupsQuery(orgId));
-  if (read.kind === "notFound") return <NotFound />;
-  if (read.kind === "error") return <ErrorFrame reset={read.retry} />;
+  const pathname = usePathname();
+  const toast = useToast();
+  const errorMessage = useErrorMessage();
+  const [q, setQ] = useState("");
+  const [settledQ, setSettledQ] = useState("");
+  const [agent, setAgent] = useState(ALL);
+  useEffect(() => {
+    if (q === settledQ) return;
+    const timer = setTimeout(() => setSettledQ(q), QUERY_SETTLE_MS);
+    return () => clearTimeout(timer);
+  }, [q, settledQ]);
+  const search: ConversationListSearch = {
+    ...(settledQ.trim() !== "" ? { q: settledQ } : {}),
+    ...(agent !== ALL ? { agentId: agent } : {}),
+  };
+  const query = conversationListQuery(orgId, search);
+  // A new search keeps the previous rows until its answer arrives (no skeleton flash).
+  const read = useQuery({
+    ...query,
+    retryOnMount: retryOnMountOf(query.queryKey),
+    placeholderData: keepPreviousData,
+  });
+  const pages = useCursorPages(
+    read.data,
+    (after) => conversationListQuery(orgId, search, after),
+    (page) => ({ rows: page.conversations, next: page.next }),
+  );
+  const rows = dedupe(pages.rows);
+  const { byId, agents } = useConversationAgents(
+    orgId,
+    rows.map((c) => c.agentId),
+  );
+  const actions = useConversationRowActions(orgId, pathname, (e) => toast.error(errorMessage(e)));
+  if (read.error?.status === 404) return <NotFound />;
+  const loading = read.data === undefined && read.error === null;
+  if (read.data === undefined && read.error !== null) {
+    return <ErrorFrame reset={() => void read.refetch()} />;
+  }
+  // The total is known once the last page is in; before that the loaded rows and a "+".
+  const count = loading ? undefined : pages.next === null ? rows.length : `${rows.length}+`;
   const header = {
     path: [...scope, { label: "conversations" }],
     title: t("title"),
-    description: t("description"),
+    ...(count !== undefined ? { count } : {}),
     actions: [
       { label: t("new"), variant: "primary" as const, icon: "plus" as const, href: HOME_PATH },
     ],
+    search: { label: t("search"), value: q, onChange: setQ },
   };
-  if (read.kind === "loading") {
-    return <ListPage header={header} variant="objects" listLabel={t("list")} loading />;
-  }
-  return <Groups orgId={orgId} first={read.data} header={header} />;
-}
-
-function Groups({
-  orgId,
-  first,
-  header,
-}: {
-  orgId: string;
-  first: ConversationGroupsPage;
-  header: PageHeaderProps;
-}) {
-  const t = useTranslations("conversations");
-  const qc = useQueryClient();
-  const errorMessage = useErrorMessage();
-  const locale = useDesignLocale();
-  const timeZone = useTimeZone();
-  const pages = useCursorPages(
-    first,
-    (after) => moreGroupsQuery(orgId, { after }),
-    (page) => ({ rows: page.groups, next: page.next }),
-  );
-  // Groups merged by agent id: the cursor can bring one back (the sidebar's rule).
-  const seen = new Set<string>();
-  const groups = pages.rows.filter((g) => !seen.has(g.agent.id) && seen.add(g.agent.id));
-  const [extra, setExtra] = useState<Record<string, Extra>>({});
-  // a failed "more" read is shown on that group's row only (keyed by agent id)
-  const [moreError, setMoreError] = useState<Record<string, string>>({});
-  const loadRows = async (g: ConversationGroup, rows: Conversation[]) => {
-    const key = g.agent.id;
-    const last = rows.at(-1);
-    setExtra((e) => ({ ...e, [key]: { rows: e[key]?.rows ?? [], done: false, loading: true } }));
-    try {
-      const page = await qc.fetchQuery(
-        moreConversationsQuery(orgId, { agentId: key, ...(last ? { after: last.id } : {}) }),
-      );
-      setMoreError(({ [key]: _, ...rest }) => rest);
-      setExtra((e) => ({
-        ...e,
-        [key]: {
-          rows: [...(e[key]?.rows ?? []), ...page.conversations],
-          done: page.next === null,
-          loading: false,
-        },
-      }));
-    } catch (e) {
-      setMoreError((m) => ({ ...m, [key]: errorMessage(e) }));
-      setExtra((x) => ({ ...x, [key]: { rows: x[key]?.rows ?? [], done: false, loading: false } }));
-    }
-  };
-  const empty = groups.length === 0;
+  const chips =
+    agents.length > 1 || agent !== ALL
+      ? {
+          label: t("byAgent"),
+          value: agent,
+          options: [
+            { value: ALL, label: t("all") },
+            ...agents.map((a) => ({ value: a.id, label: a.name, avatar: a.avatar })),
+          ],
+          onChange: setAgent,
+        }
+      : undefined;
+  const filtered = settledQ.trim() !== "" || agent !== ALL;
+  const empty = !loading && rows.length === 0;
   return (
     <ListPage
       header={header}
-      variant="objects"
       listLabel={t("list")}
+      loading={loading ? { keep: true } : false}
+      {...(chips ? { scope: chips } : {})}
       {...(empty && {
-        empty: {
-          text: t("empty"),
-          action: { label: t("new"), variant: "primary" as const, href: HOME_PATH },
-        },
+        empty: filtered
+          ? { text: t("noMatch") }
+          : {
+              text: t("empty"),
+              action: { label: t("new"), variant: "primary" as const, href: HOME_PATH },
+            },
       })}
     >
-      {groups.flatMap((g) => {
-        const more = extra[g.agent.id];
-        const rows = [...g.conversations, ...(more?.rows ?? [])];
-        const avatar = g.agent.profile ? avatarValue(g.agent, orgId) : null;
-        const items = rows.map((c) => (
-          <ObjectRow
-            key={c.id}
-            mark={{ avatar, text: g.agent.name }}
-            name={c.title ?? untitledLabel(new Date(c.createdAt), locale, timeZone)}
-            href={`/chat/${encodeURIComponent(c.id)}`}
-            meta={g.agent.name}
-            trailing={formatDateTime(c.updatedAt, "compact", timeZone)}
-            {...(c.activity === "running"
-              ? { state: { label: t("running"), tone: "ok" as const } }
-              : c.activity === "waiting"
-                ? { state: { label: t("waiting"), tone: "warn" as const } }
-                : {})}
-          />
-        ));
-        return g.more && more?.done !== true
-          ? [
-              ...items,
-              <ObjectRow
-                key={`${g.agent.id}-more`}
-                mark={{ icon: "more-horizontal" }}
-                name={t("moreOf", { agent: g.agent.name })}
-                action={{
-                  label: t("loadMore"),
-                  loading: more?.loading === true,
-                  onSelect: () => void loadRows(g, rows),
-                }}
-                {...(moreError[g.agent.id] !== undefined
-                  ? { description: moreError[g.agent.id] }
-                  : {})}
-              />,
-            ]
-          : items;
-      })}
-      {pages.next === null
-        ? null
-        : [
-            <ObjectRow
-              key="more-groups"
-              mark={{ icon: "more-horizontal" }}
-              name={t("loadMore")}
-              action={{
-                label: t("loadMore"),
-                loading: pages.loadingMore,
-                onSelect: pages.loadMore,
-              }}
-              {...(pages.error !== null ? { description: pages.error } : {})}
-            />,
-          ]}
+      <ConversationList
+        label={t("list")}
+        items={rows.map((c) => conversationRow(c, byId))}
+        sections
+        state={loading ? "loading" : "ready"}
+        actions={actions}
+        end={{
+          // the previous search's rows stand in while a new one loads: no page past them
+          more: pages.next !== null && !read.isPlaceholderData,
+          loading: pages.loadingMore,
+          error: pages.error,
+          onMore: pages.loadMore,
+        }}
+      />
     </ListPage>
   );
+}
+
+/** Pages read by cursor can repeat a row that moved between two reads: the first one stays. */
+function dedupe(rows: Conversation[]): Conversation[] {
+  const seen = new Set<string>();
+  return rows.filter((c) => !seen.has(c.id) && seen.add(c.id));
 }

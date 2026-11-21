@@ -1,6 +1,12 @@
 "use client";
 
-import type { SidebarConversations, SidebarFilter, SidebarGroup } from "@capybara-hq/design";
+import {
+  type DrawerRecent,
+  type SidebarConversations,
+  type SidebarFilter,
+  type SidebarGroup,
+  useSizeClass,
+} from "@capybara-hq/design";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useRouter } from "../../i18n/navigation";
@@ -19,12 +25,18 @@ import { keys } from "../../lib/query/keys";
 import { useAppMutation } from "../../lib/query/mutation";
 import {
   conversationGroupsQuery,
+  conversationListQuery,
   groupsViewKey,
   moreConversationsQuery,
   moreGroupsQuery,
 } from "../../lib/query/shell";
 import { useWarm } from "../../lib/query/warm";
 import { HOME_PATH, newConversationPath } from "../../lib/routes";
+import {
+  conversationRow,
+  useConversationAgents,
+  useConversationRowActions,
+} from "../conversation-rows";
 
 /** The conversation id of a `/chat/<id>` route. */
 export function activeIdFrom(pathname: string): string | undefined {
@@ -409,6 +421,42 @@ export function useConversationGroups(
     onArchive: (id: string, archived: boolean) =>
       report(archive.mutateAsync({ id, archived }), false),
     onDelete: (id: string) => report(remove.mutateAsync(id), true),
+    ...(activeId ? { activeId } : {}),
+  };
+}
+
+/**
+ * The compact drawer's recent conversations (design spec §6.54, maintainer decision 2026-11-22):
+ * my newest conversations by time (`GET …/conversations`, the conversations page's first page, so
+ * the two share one read), with their agents from the sidebar's groups. Read only on a compact
+ * window, where the drawer exists, and then again every 30 s for the state dots; a row's actions
+ * invalidate every view of my conversations.
+ */
+export function useDrawerRecent(
+  orgId: string,
+  pathname: string,
+  options: ConversationGroupsOptions = {},
+): DrawerRecent {
+  const compact = useSizeClass() === "compact";
+  const query = conversationListQuery(orgId);
+  const q = useQuery({
+    ...query,
+    enabled: compact,
+    retryOnMount: retryOnMountOf(query.queryKey),
+    refetchInterval: compact ? GROUPS_POLL_MS : false,
+  });
+  const rows = q.data?.conversations ?? [];
+  const { byId } = useConversationAgents(
+    orgId,
+    rows.map((c) => c.agentId),
+  );
+  const actions = useConversationRowActions(orgId, pathname, options.onError);
+  const activeId = activeIdFrom(pathname);
+  return {
+    state: q.data !== undefined ? "ready" : q.error !== null ? "error" : "loading",
+    items: rows.map((c) => conversationRow(c, byId)),
+    onRetry: () => void q.refetch(),
+    actions,
     ...(activeId ? { activeId } : {}),
   };
 }

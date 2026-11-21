@@ -25,6 +25,7 @@ test("the desktop sizes fail: small hit boxes and tall padding", async ({ page }
       <button class="cb-btn" style="height: 44px; padding: 0 8px">开始会话</button>
       <button class="cb-tab" role="tab" style="height: 40px; padding: 0 10px">个人资料</button>
       <div class="cb-input"><input aria-label="名称" style="height: 26px; padding: 0 8px" /></div>
+      <button class="cb-btn" style="height: 44px; padding: 0 8px; width: 120px"><span style="overflow: hidden; text-overflow: ellipsis; white-space: nowrap; display: block">一个很长的按钮标签</span></button>
     `),
   );
   const small = await findSmallTargets(page);
@@ -32,7 +33,8 @@ test("the desktop sizes fail: small hit boxes and tall padding", async ({ page }
   expect(small.out.join("\n")).toContain("28");
   expect(small.out.join("\n")).toContain("名称");
   const tall = await findTallPadding(page);
-  expect(tall).toHaveLength(2);
+  // an ellipsis label still counts as drawn text
+  expect(tall).toHaveLength(3);
   expect(tall.join("\n")).toContain("inline 8.0");
   expect(tall.join("\n")).toContain("个人资料");
 });
@@ -45,8 +47,10 @@ test("the mobile sizes pass", async ({ page }) => {
       <button class="cb-tab" role="tab" style="height: 44px; padding: 0 16px">个人资料</button>
       <button class="cb-chip" style="height: 44px; padding: 0 16px">全部 <span>12</span></button>
       <div class="cb-input"><input aria-label="名称" style="height: 42px; padding: 0 12px" /></div>
+      <a class="cb-btn" href="/" style="width: 52px; height: 52px; padding: 0; justify-content: center"><svg width="24" height="24"></svg><span style="position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%)">新建智能体</span></a>
     `),
   );
+  // the last: the list's floating action button, an icon control whose label is visually hidden
   expect((await findSmallTargets(page)).out).toEqual([]);
   expect(await findTallPadding(page)).toEqual([]);
 });

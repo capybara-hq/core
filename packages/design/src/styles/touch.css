@@ -183,66 +183,131 @@
   text-align: center;
 }
 
-/* NavDrawer (§6.53): search, the sections, the recent list, the foot. The rows are NavRows on the
-   drawer's own surface; the search pill and the account row are the only grounds inside it. */
+/* NavDrawer (§6.54, maintainer decision 2026-11-22): on the page ground, the top row (the search
+   field and the 新会话 button, one height), the navigation as one grouped card, the recent
+   conversations (a ConversationList card) under their label, the account row at the foot. The
+   cards are the drawer's only boxes; nothing sits in a box inside them. */
+.cb-drawer:has(> .cb-navdrawer, > .cb-navdrawer-level) {
+  background: var(--cb-bg);
+}
+.cb-navdrawer-level {
+  display: contents;
+}
 .cb-navdrawer {
   display: flex;
   flex: 1;
   flex-direction: column;
+  gap: var(--cb-space-4);
   min-height: 0;
-  padding-top: var(--cb-space-3);
+  padding: var(--cb-space-3) var(--cb-space-3) 0;
 }
-.cb-navdrawer-search {
+.cb-navdrawer-top {
   display: flex;
   flex: none;
   align-items: center;
-  gap: var(--cb-space-3);
-  min-height: var(--cb-control-prominent);
-  margin: 0 var(--cb-space-3) var(--cb-space-3);
+  gap: var(--cb-space-2);
+}
+.cb-navdrawer-search,
+.cb-navdrawer-new {
+  display: flex;
+  align-items: center;
+  gap: var(--cb-space-2);
+  min-height: var(--cb-control-default);
   padding: 0 var(--cb-space-4);
   border: 0;
-  border-radius: var(--cb-radius-pill);
-  background: var(--cb-hover);
-  color: var(--cb-muted);
+  border-radius: var(--cb-radius-sm);
   font: inherit;
-  text-align: start;
   cursor: pointer;
 }
-.cb-navdrawer-search:active {
+.cb-navdrawer-search {
+  flex: 1;
+  min-width: 0;
   background: var(--cb-selected);
+  color: var(--cb-muted);
+  text-align: start;
+}
+.cb-navdrawer-search:active {
+  background: var(--cb-hover);
+}
+.cb-navdrawer-new {
+  flex: none;
+  margin-inline-start: auto;
+  background: var(--cb-accent);
+  color: var(--cb-on-accent);
+  font-weight: 500;
+  text-decoration: none;
+  white-space: nowrap;
+}
+.cb-navdrawer-new:active {
+  filter: brightness(0.92);
 }
 .cb-navdrawer-search:focus-visible,
 .cb-navdrawer-account:focus-visible,
-.cb-navdrawer-new:focus-visible {
+.cb-navdrawer-new:focus-visible,
+.cb-navdrawer-recent-all:focus-visible {
   outline: 2px solid var(--cb-accent);
   outline-offset: 2px;
 }
-.cb-navdrawer-sections {
+/* The navigation card: rows of row.default (44 under the mobile sizes), the icon column, hairlines
+   inset to the label. */
+.cb-navdrawer-card {
   display: flex;
   flex: none;
   flex-direction: column;
+  overflow: hidden;
+  border: 1px solid var(--cb-line-soft);
+  border-radius: var(--cb-radius-sm);
+  background: var(--cb-panel);
+}
+.cb-navdrawer-card > .cb-navrow {
+  position: relative;
+  min-height: var(--cb-row-default);
+}
+.cb-navdrawer-card > .cb-navrow + .cb-navrow::before {
+  position: absolute;
+  top: 0;
+  right: 0;
+  left: calc(var(--cb-space-4) + var(--cb-navrow-icon, 20px) + var(--cb-space-3));
+  border-top: 1px solid var(--cb-line-soft);
+  content: "";
+}
+.cb-navdrawer-card > .cb-navrow > .cb-icon:last-child:not(:first-child) {
+  color: var(--cb-faint);
 }
 .cb-navdrawer-recent {
   display: flex;
   flex: 1 0 auto;
   flex-direction: column;
-  margin-top: var(--cb-space-4);
+  gap: var(--cb-space-2);
 }
-/* The sidebar's conversation section runs out over the sidebar's space.2 side padding (§6.13); the
-   drawer has no side padding, so here it keeps to the panel's width (it overflowed by space.2 and
-   the panel scrolled sideways) and its own space.2 padding insets the rows as in the sidebar. */
-.cb-navdrawer-recent > .cb-sidebar-convs {
-  margin-inline: 0;
+.cb-navdrawer-recent-head {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: var(--cb-space-3);
+  padding: 0 var(--cb-space-1);
+}
+.cb-navdrawer-recent-label {
+  margin: 0;
+  color: var(--cb-muted);
+  font-size: var(--cb-type-small-size);
+  font-weight: 500;
+  line-height: var(--cb-type-small-line);
+}
+.cb-navdrawer-recent-all {
+  color: var(--cb-accent);
+  font-size: var(--cb-type-small-size);
+  line-height: var(--cb-type-small-line);
+  text-decoration: none;
 }
 .cb-navdrawer-foot {
   position: sticky;
   bottom: 0;
   display: flex;
   flex: none;
-  align-items: center;
-  gap: var(--cb-space-2);
-  padding: var(--cb-space-3);
-  background: var(--cb-panel);
+  margin: 0 calc(-1 * var(--cb-space-3));
+  padding: var(--cb-space-2) var(--cb-space-3) var(--cb-space-3);
+  background: var(--cb-bg);
 }
 .cb-navdrawer-account {
   display: flex;
@@ -251,35 +316,37 @@
   gap: var(--cb-space-3);
   min-width: 0;
   min-height: var(--cb-touch-row);
-  padding: 0 var(--cb-space-3) 0 var(--cb-space-1);
-  border: 0;
-  border-radius: var(--cb-radius-pill);
-  background: var(--cb-hover);
+  padding: 0 var(--cb-space-3);
+  border: 1px solid var(--cb-line-soft);
+  border-radius: var(--cb-radius-sm);
+  background: var(--cb-panel);
   color: var(--cb-ink);
   font: inherit;
   text-align: start;
   cursor: pointer;
 }
 .cb-navdrawer-account:active {
-  background: var(--cb-selected);
+  background: var(--cb-hover);
 }
-.cb-navdrawer-new {
+.cb-navdrawer-account > .cb-account-names {
+  flex: 1;
+}
+.cb-navdrawer-account > .cb-icon {
+  flex: none;
+  color: var(--cb-faint);
+}
+/* The account avatar is 32 (the Avatar's 28 drawn at the row's size). */
+.cb-navdrawer-account-avatar {
   display: inline-flex;
   flex: none;
-  align-items: center;
-  justify-content: center;
-  width: var(--cb-touch-row);
-  height: var(--cb-touch-row);
-  border-radius: var(--cb-radius-pill);
-  background: var(--cb-accent);
-  color: var(--cb-on-accent);
 }
-.cb-navdrawer-new:active {
-  filter: brightness(0.92);
+.cb-navdrawer-account-avatar > .cb-avatar {
+  width: 32px;
+  height: 32px;
 }
-.cb-navdrawer-new > .cb-icon {
-  width: 20px;
-  height: 20px;
+.cb-navdrawer-account-avatar > .cb-avatar > :is(svg, img) {
+  width: 100%;
+  height: 100%;
 }
 .cb-account-names {
   display: flex;
@@ -435,9 +502,6 @@
   .cb-shell {
     --cb-float-size: var(--cb-touch-float);
   }
-  .cb-navdrawer-search {
-    min-height: var(--cb-touch-primary);
-  }
   .cb-float-btn {
     width: var(--cb-touch-float);
     height: var(--cb-touch-float);
@@ -452,6 +516,13 @@
   .cb-navrow > .cb-icon {
     width: var(--cb-touch-icon);
     height: var(--cb-touch-icon);
+  }
+  .cb-navdrawer-card {
+    --cb-navrow-icon: var(--cb-touch-icon);
+  }
+  /* the navigation card's rows are row.default (44) here, not the drawer level's touch.row */
+  .cb-navdrawer-card > .cb-navrow {
+    min-height: var(--cb-row-default);
   }
   /* Rows of lists: 52 high (56 with a second line), no dividers, no box around the list. */
   .cb-object-list {
