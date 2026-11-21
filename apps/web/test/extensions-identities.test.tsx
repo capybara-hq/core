@@ -137,10 +137,10 @@ const DUO = {
     {
       category: "provides",
       sensitive: false,
-      items: ["model-provider@2", "sandbox@1"],
+      items: ["model-provider@2", "device-provider@1"],
       entries: [
         { value: "model-provider@2", sensitive: false },
-        { value: "sandbox@1", sensitive: false },
+        { value: "device-provider@1", sensitive: false },
       ],
     },
     {
@@ -150,7 +150,7 @@ const DUO = {
       entries: [{ value: "run", sensitive: true, reason: "tools" }],
     },
   ],
-  provides: ["model-provider@2", "sandbox@1"],
+  provides: ["model-provider@2", "device-provider@1"],
 };
 
 const isDisabled = (el: HTMLElement) =>
@@ -187,7 +187,7 @@ describe("/extensions (ListPage + DataTable by capability, details in a Sheet)",
         ["model", 1],
         ["web", 1],
         ["connector", 0],
-        ["sandbox", 1],
+        ["deviceProvider", 1],
         ["storage", 0],
         // fake-im (channel, directory, tools) and core-dir (an unknown point) fall to the catch-all
         ["tools", 2],
@@ -198,16 +198,16 @@ describe("/extensions (ListPage + DataTable by capability, details in a Sheet)",
       // In 全部 duo shows everything it can do
       const duo = screen.getByRole("row", { name: /duo/ });
       expect(duo.textContent).toContain(m.capability.model);
-      expect(duo.textContent).toContain(m.capability.sandbox);
+      expect(duo.textContent).toContain(m.capability.deviceProvider);
       expect(duo.textContent).toContain(m.capability.tools);
       const user = userEvent.setup();
       // Under 沙箱 its row shows only what it provides there
-      await user.click(tab("sandbox"));
+      await user.click(tab("deviceProvider"));
       expect(rowNames()).toEqual(["duo"]);
       const sandboxRow = screen.getByRole("row", { name: /duo/ });
-      expect(sandboxRow.textContent).toContain(m.capability.sandbox);
+      expect(sandboxRow.textContent).toContain(m.capability.deviceProvider);
       expect(sandboxRow.textContent).not.toContain(m.capability.model);
-      expect(window.location.search).toBe("?tab=sandbox");
+      expect(window.location.search).toBe("?tab=deviceProvider");
       await user.click(tab("model"));
       expect(rowNames()).toEqual(["duo"]);
       await user.click(tab("web"));

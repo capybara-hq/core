@@ -3237,7 +3237,7 @@
       "model": "Models",
       "web": "Web",
       "connector": "Connectors",
-      "sandbox": "Sandboxes",
+      "deviceProvider": "Device providers",
       "storage": "Storage",
       "tools": "Tools and UI"
     },
@@ -3252,7 +3252,7 @@
       "webSearch": "Web search",
       "webFetch": "Web fetch",
       "connector": "Connectors",
-      "sandbox": "Sandbox",
+      "deviceProvider": "Device provider",
       "objectStore": "Object storage",
       "channel": "Channel",
       "directory": "Directory",

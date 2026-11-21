@@ -3225,7 +3225,7 @@
       "model": "模型",
       "web": "网页",
       "connector": "连接器",
-      "sandbox": "沙箱",
+      "deviceProvider": "设备提供方",
       "storage": "存储",
       "tools": "工具与界面"
     },
@@ -3240,7 +3240,7 @@
       "webSearch": "网页搜索",
       "webFetch": "网页读取",
       "connector": "连接器",
-      "sandbox": "沙箱",
+      "deviceProvider": "设备",
       "objectStore": "对象存储",
       "channel": "渠道",
       "directory": "通讯录",

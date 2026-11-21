@@ -17,7 +17,7 @@ export const CAPABILITY_TABS = [
   "model",
   "web",
   "connector",
-  "sandbox",
+  "deviceProvider",
   "storage",
   "tools",
 ] as const;
@@ -30,7 +30,7 @@ export type Capability =
   | "webSearch"
   | "webFetch"
   | "connector"
-  | "sandbox"
+  | "deviceProvider"
   | "objectStore"
   | "channel"
   | "directory"
@@ -47,7 +47,7 @@ const POINTS: Record<string, { capability: Capability; tab: CapabilityTab }> = {
   "web-search": { capability: "webSearch", tab: "web" },
   "web-fetch": { capability: "webFetch", tab: "web" },
   connector: { capability: "connector", tab: "connector" },
-  "device-provider": { capability: "sandbox", tab: "sandbox" },
+  "device-provider": { capability: "deviceProvider", tab: "deviceProvider" },
   "object-store": { capability: "objectStore", tab: "storage" },
   // Points with no tab of their own: they go to the catch-all with a chip of their own.
   channel: { capability: "channel", tab: "tools" },
@@ -56,7 +56,7 @@ const POINTS: Record<string, { capability: Capability; tab: CapabilityTab }> = {
   "file-preview": { capability: "filePreview", tab: "tools" },
 };
 
-/** The capability of an extension point ref (`device-provider@1` → `sandbox`, the capability and tab id the web keeps; an unknown one by its name). */
+/** The capability of an extension point ref (`device-provider@1` → `deviceProvider`, the capability and tab id; an unknown one by its name). */
 export const capabilityOfPoint = (ref: string): Capability => {
   const p = ref.split("@")[0] ?? ref;
   return POINTS[p]?.capability ?? `point:${p}`;

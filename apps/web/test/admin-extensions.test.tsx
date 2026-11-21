@@ -588,7 +588,7 @@ describe("/admin/extensions (ListPage + DataTable by capability, details in a Sh
       );
       const sheet = await screen.findByRole("dialog");
       const line = fill(p.detail.conflictLine, {
-        point: msgs[locale].extensions.capability.sandbox,
+        point: msgs[locale].extensions.capability.deviceProvider,
         others: locale === "zh" ? "Docker 沙箱" : "Docker sandbox",
         name: locale === "zh" ? "E2B 沙箱" : "E2B sandbox",
       });
@@ -596,7 +596,7 @@ describe("/admin/extensions (ListPage + DataTable by capability, details in a Sh
       if (locale === "zh") {
         expect(p.status.conflict).toBe("冲突");
         expect(line).toBe(
-          "沙箱只能启用一个提供方：Docker 沙箱已启用，先停用它，E2B 沙箱就会加载。",
+          "设备只能启用一个提供方：Docker 沙箱已启用，先停用它，E2B 沙箱就会加载。",
         );
       }
       expect(within(sheet).getAllByText(p.detail.replicaReason.conflict).length).toBeGreaterThan(0);
@@ -638,12 +638,12 @@ describe("/admin/extensions (ListPage + DataTable by capability, details in a Sh
       );
       const sheet = await screen.findByRole("dialog");
       const line = fill(p.detail.enableBlocked, {
-        point: msgs[locale].extensions.capability.sandbox,
+        point: msgs[locale].extensions.capability.deviceProvider,
         other: locale === "zh" ? "Docker 沙箱" : "Docker sandbox",
         name: locale === "zh" ? "E2B 沙箱" : "E2B sandbox",
       });
       if (locale === "zh") {
-        expect(line).toBe("沙箱只能启用一个提供方：请先停用 Docker 沙箱，再启用 E2B 沙箱。");
+        expect(line).toBe("设备只能启用一个提供方：请先停用 Docker 沙箱，再启用 E2B 沙箱。");
       }
       expect(within(sheet).getByText(line)).toBeTruthy();
       const enable = within(sheet).getByRole("button", { name: p.detail.actions.enable });
@@ -691,7 +691,7 @@ describe("/admin/extensions (ListPage + DataTable by capability, details in a Sh
     const user = userEvent.setup();
     await user.click(await screen.findByRole("button", { name: p.detail.actions.enable }));
     const line = fill(p.detail.enableBlocked, {
-      point: en.extensions.capability.sandbox,
+      point: en.extensions.capability.deviceProvider,
       other: "Other sandbox",
       name: "demo",
     });
@@ -822,9 +822,9 @@ describe("/admin/extensions (ListPage + DataTable by capability, details in a Sh
       });
       listRoutes([e2b]);
       await renderRouteWithCache("/admin/extensions", lastStubRoutes(), { locale });
-      const sandbox = msgs[locale].extensions.capability.sandbox;
+      const sandbox = msgs[locale].extensions.capability.deviceProvider;
       const noProvider = fill(p.calloutNoProvider, { point: sandbox });
-      if (locale === "zh") expect(noProvider).toBe("沙箱没有正在运行的提供方。");
+      if (locale === "zh") expect(noProvider).toBe("设备没有正在运行的提供方。");
       expect(screen.getByText(noProvider, { exact: false })).toBeTruthy();
       const user = userEvent.setup();
       await user.click(
