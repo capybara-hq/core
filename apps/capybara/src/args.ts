@@ -8,7 +8,7 @@ export type Role = (typeof ROLES)[number];
 export type Command =
   | { command: "start"; roles?: Role[]; activatePermissionConfig?: string }
   | { command: "migrate" }
-  | { command: "bootstrap"; dir?: string; manifest?: string }
+  | { command: "bootstrap"; dir?: string; manifest?: string; extraManifest?: string }
   | {
       command: "admin-create";
       login: string;
@@ -48,13 +48,15 @@ export const USAGE = `Usage:
                          [--activate-permission-config <expected-active-hash>]
                                                Intentionally activate resolved permission config
   capybara migrate                             Run kernel and plugin migrations, then exit
-  capybara bootstrap [--dir <path>] [--manifest <path>]
+  capybara bootstrap [--dir <path>] [--manifest <path>] [--extra-manifest <path>]
                                                Install the plugins bootstrap.json pins: a .tgz in
                                                --dir (default config bootstrap.dir, ./bootstrap)
                                                with the pinned sha512, else downloaded from
                                                packages.npmRegistry; --manifest replaces the
-                                               bootstrap.json shipped with the kernel. Done once
-                                               per manifest: a re-run does nothing
+                                               bootstrap.json shipped with the kernel;
+                                               --extra-manifest (default config
+                                               bootstrap.extraManifest) is merged into it. Done
+                                               once per manifest: a re-run does nothing
   capybara admin create --login <login> --display-name <name> [--email <email>]
                          [--if-none] [--password-file <path>]
                                                Create a super admin; reads the password
@@ -243,7 +245,14 @@ export function parseCli(argv: string[]): Command {
           : `unknown config command "${sub}"`,
       );
     if (extra.length > 0) throw new UsageError(`unexpected argument "${extra[0]}"`);
-    for (const opt of ["role", "yes", "dir", "manifest", ...ADMIN_CREATE_OPTIONS] as const) {
+    for (const opt of [
+      "role",
+      "yes",
+      "dir",
+      "manifest",
+      "extra-manifest",
+      ...ADMIN_CREATE_OPTIONS,
+    ] as const) {
       if (v[opt] !== undefined) throw new UsageError(`--${opt} is not valid for config`);
     }
     for (const opt of ["in", "out"] as const) {
@@ -263,7 +272,7 @@ export function parseCli(argv: string[]): Command {
     );
   }
   if (command !== "bootstrap") {
-    for (const opt of ["dir", "manifest"] as const) {
+    for (const opt of ["dir", "manifest", "extra-manifest"] as const) {
       if (v[opt] !== undefined) throw new UsageError(`--${opt} is only valid for bootstrap`);
     }
   }
@@ -382,7 +391,7 @@ export function parseCli(argv: string[]): Command {
   if (command === "migrate" || command === "bootstrap") {
     if (parsed.values.role !== undefined) throw new UsageError("--role is only valid for start");
     if (command === "migrate") return { command: "migrate" };
-    for (const opt of ["dir", "manifest"] as const) {
+    for (const opt of ["dir", "manifest", "extra-manifest"] as const) {
       if (v[opt] !== undefined && v[opt].trim() === "") {
         throw new UsageError(`--${opt} needs a path`);
       }
@@ -391,6 +400,7 @@ export function parseCli(argv: string[]): Command {
       command: "bootstrap",
       ...(v.dir !== undefined && { dir: v.dir }),
       ...(v.manifest !== undefined && { manifest: v.manifest }),
+      ...(v["extra-manifest"] !== undefined && { extraManifest: v["extra-manifest"] }),
     };
   }
   if (command === "start") {
@@ -430,6 +440,7 @@ function parse(argv: string[]) {
       yes: { type: "boolean", short: "y" },
       dir: { type: "string" },
       manifest: { type: "string" },
+      "extra-manifest": { type: "string" },
       in: { type: "string" },
       out: { type: "string" },
       json: { type: "boolean" },

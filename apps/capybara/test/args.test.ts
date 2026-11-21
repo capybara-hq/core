@@ -219,6 +219,14 @@ describe("parseCli", () => {
       dir: "/b",
       manifest: "/m.json",
     });
+    expect(parseCli(["bootstrap", "--extra-manifest", "/e.json"])).toEqual({
+      command: "bootstrap",
+      extraManifest: "/e.json",
+    });
+    expect(() => parseCli(["bootstrap", "--extra-manifest", " "])).toThrow(/needs a path/);
+    expect(() => parseCli(["migrate", "--extra-manifest", "/e.json"])).toThrow(
+      /only valid for bootstrap/,
+    );
     // Removed: the directory is the config key bootstrap.dir
     expect(() => parseCli(["start", "--bootstrap-dir", "/b"])).toThrow(UsageError);
     expect(() => parseCli(["bootstrap", "--dir", " "])).toThrow(/--dir needs a path/);

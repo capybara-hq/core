@@ -2272,6 +2272,105 @@ describe("/admin/plugins/sources (ListPage)", () => {
   );
 });
 
+describe("/admin/plugins/sources: git username and config-managed sources", () => {
+  const MANAGED = {
+    ...SOURCES.items[1],
+    id: "m1",
+    name: "Managed",
+    url: "https://git.acme.com/market.git",
+    form: "git",
+    ref: "main",
+    lastCommit: null,
+    managed: "config",
+    username: "oauth2",
+    hasToken: true,
+  };
+
+  it.each(LOCALES)(
+    "the add form pre-fills the username for a known git host (%s)",
+    async (locale) => {
+      const s = msgs[locale].catalog.admin.marketplaces;
+      stubApi({ "GET /api/v1/admin/marketplaces": () => json(200, SOURCES) });
+      await renderRouteWithCache("/admin/plugins/sources", lastStubRoutes(), { locale });
+      const user = userEvent.setup();
+      const add = await screen.findByRole("region", { name: s.add });
+      // An http marketplace has no username field
+      expect(within(add).queryByRole("textbox", { name: startsWith(s.username) })).toBeNull();
+      await user.click(within(add).getByRole("radio", { name: s.formGit }));
+      const username = within(add).getByRole("textbox", {
+        name: startsWith(s.username),
+      }) as HTMLInputElement;
+      expect(username.value).toBe("");
+      const url = within(add).getByRole("textbox", { name: s.url });
+      await user.type(url, "https://bitbucket.org/acme/m.git");
+      expect(username.value).toBe("x-token-auth");
+      // The suggestion follows the host; a host without one empties it again
+      await user.clear(url);
+      await user.type(url, "https://gitlab.com/acme/m.git");
+      expect(username.value).toBe("oauth2");
+      await user.clear(url);
+      await user.type(url, "https://gitee.com/acme/m.git");
+      expect(username.value).toBe("");
+    },
+  );
+
+  it("a typed username is never overwritten by a suggestion", async () => {
+    const s = en.catalog.admin.marketplaces;
+    stubApi({ "GET /api/v1/admin/marketplaces": () => json(200, SOURCES) });
+    await renderRouteWithCache("/admin/plugins/sources", lastStubRoutes());
+    const user = userEvent.setup();
+    const add = await screen.findByRole("region", { name: s.add });
+    await user.click(within(add).getByRole("radio", { name: s.formGit }));
+    await user.type(within(add).getByRole("textbox", { name: startsWith(s.username) }), "mine");
+    await user.type(
+      within(add).getByRole("textbox", { name: s.url }),
+      "https://bitbucket.org/acme/m.git",
+    );
+    expect(
+      (within(add).getByRole("textbox", { name: startsWith(s.username) }) as HTMLInputElement)
+        .value,
+    ).toBe("mine");
+  });
+
+  it.each(LOCALES)(
+    "a config-managed row is read-only with only its switch (%s)",
+    async (locale) => {
+      const s = msgs[locale].catalog.admin.marketplaces;
+      stubApi({
+        "GET /api/v1/admin/marketplaces": () => json(200, { offline: false, items: [MANAGED] }),
+      });
+      await renderRouteWithCache("/admin/plugins/sources", lastStubRoutes(), { locale });
+      expect(await screen.findByText(s.managed)).toBeTruthy();
+      for (const v of [MANAGED.url, "main", "oauth2"]) {
+        expect((screen.getByDisplayValue(v) as HTMLInputElement).readOnly).toBe(true);
+      }
+      expect(screen.queryByRole("button", { name: s.remove })).toBeNull();
+      expect(screen.queryByRole("button", { name: s.save })).toBeNull();
+      const sw = screen.getByRole("switch", { name: fill(s.enabledLabel, { name: "Managed" }) });
+      expect((sw as HTMLButtonElement).disabled).toBe(false);
+    },
+  );
+
+  it.each(LOCALES)(
+    "a config-managed row says whether the deployment set its token (%s)",
+    async (locale) => {
+      const s = msgs[locale].catalog.admin.marketplaces;
+      stubApi({
+        "GET /api/v1/admin/marketplaces": () =>
+          json(200, {
+            offline: false,
+            items: [MANAGED, { ...MANAGED, id: "m2", name: "Public", hasToken: false }],
+          }),
+      });
+      await renderRouteWithCache("/admin/plugins/sources", lastStubRoutes(), { locale });
+      expect(await screen.findByText(s.managedTokenSet)).toBeTruthy();
+      expect(screen.getByText(s.managedTokenUnset)).toBeTruthy();
+      // no clear button: the token lives in the deployment config
+      expect(screen.queryByRole("button", { name: s.clearToken })).toBeNull();
+    },
+  );
+});
+
 describe("marketplaces: the two tabs share one head", () => {
   const ENTRY = {
     sourceId: "s2",

@@ -1,6 +1,8 @@
-import { mkdtemp, rm } from "node:fs/promises";
+import { createHash } from "node:crypto";
+import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import type { BootstrapExtraManifest } from "@capybara-hq/plugin-sdk";
 import {
   createDualReplicaHarness,
   type FakeNpmRegistry,
@@ -11,7 +13,7 @@ import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { type KernelSchemaDb, kernelDb } from "../../src/db/kernel-schema.js";
 import { createDb } from "../../src/db/pool.js";
 import { MODEL_FAKE } from "../helpers/model-plugins.js";
-import { bootstrapFixture, lifePkg } from "../helpers/plugin-packages.js";
+import { bootstrapFixture, lifePkg, packFake, pluginTgz } from "../helpers/plugin-packages.js";
 import { waitFor } from "../helpers/runs.js";
 
 const ICON = '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1 1"/>';
@@ -123,5 +125,103 @@ describe("bootstrap with two replicas starting together", () => {
       30_000,
       "both replicas load alpha and beta",
     );
+  });
+});
+
+/**
+ * Bootstrap extra manifest Review Focus 4: two replicas start together with an extra manifest whose
+ * `defaultTheme` names a builtin theme plugin. Each start applies the default once the theme is
+ * imported; the super admin lock and the `uiTheme` row lock serialize them, so the setting is
+ * written once and audited once.
+ */
+describe("the extra manifest's default theme with two replicas starting together", () => {
+  let h: Harness;
+  let raw: ReturnType<typeof createDb>;
+  let db: KernelSchemaDb;
+  let fx: Awaited<ReturnType<typeof bootstrapFixture>>;
+  let extensionsDir: string;
+  let extraDir: string;
+
+  beforeAll(async () => {
+    // The object store (themes are kept there) in the built-in manifest, offline
+    fx = await bootstrapFixture([{ bytes: await packFake("fake-bootstrap-b") }]);
+    const brand = await pluginTgz({
+      manifest: { name: "brand", version: "1.0.0" },
+      files: {
+        "themes/neon.json": JSON.stringify({
+          name: { en: "Neon", zh: "Neon" },
+          schemes: { dark: { radius: { sm: 2 } }, light: { radius: { md: 4 } } },
+        }),
+      },
+    });
+    await writeFile(join(fx.dir, "brand-1.0.0.tgz"), brand);
+    const extra: BootstrapExtraManifest = {
+      schemaVersion: 1,
+      marketplaces: [],
+      plugins: [
+        {
+          name: "brand",
+          source: "npm",
+          npm: "@test/plugin-brand",
+          version: "1.0.0",
+          integrity: `sha512-${createHash("sha512").update(brand).digest("base64")}`,
+          builtin: true,
+        },
+      ],
+      defaultTheme: { plugin: "brand", theme: "neon" },
+    };
+    extraDir = await mkdtemp(join(tmpdir(), "cap-bootstrap-dual-extra-"));
+    const extraManifest = join(extraDir, "bootstrap.extra.json");
+    await writeFile(extraManifest, JSON.stringify(extra));
+    extensionsDir = await mkdtemp(join(tmpdir(), "cap-bootstrap-dual-theme-"));
+    h = await createDualReplicaHarness({
+      extensions: [MODEL_FAKE],
+      bootstrap: { ...fx, extraManifest },
+      extensionConfig: { "fake-bootstrap-b": { bucket: "bootstrap", secretKey: "s3cret" } },
+      config: { extensionHost: { dir: extensionsDir, reconcileIntervalSeconds: 2 } },
+    });
+    raw = createDb(h.dbUrl, 2);
+    db = kernelDb(raw);
+  });
+
+  afterAll(async () => {
+    await h?.stop();
+    await raw?.destroy();
+    await fx?.cleanup();
+    if (extensionsDir) await rm(extensionsDir, { recursive: true, force: true });
+    if (extraDir) await rm(extraDir, { recursive: true, force: true });
+  });
+
+  it("two replicas starting together write once", async () => {
+    const neon = await db
+      .selectFrom("platform_themes")
+      .select("id")
+      .where("plugin_name", "=", "brand")
+      .where("name", "=", "neon")
+      .executeTakeFirstOrThrow();
+    expect(
+      await db
+        .selectFrom("deployment_settings")
+        .select(["value", "updated_by"])
+        .where("key", "=", "uiTheme")
+        .executeTakeFirstOrThrow(),
+    ).toEqual({ value: { id: neon.id }, updated_by: null });
+    const writes = await db
+      .selectFrom("audit_events")
+      .select("detail")
+      .where("action", "=", "deployment.settings.updated")
+      .execute();
+    expect(writes.map((r) => r.detail)).toEqual([
+      {
+        source: "bootstrap",
+        uiTheme: { id: neon.id },
+        defaultTheme: { plugin: "brand", theme: "neon" },
+      },
+    ]);
+    // Both replicas serve it
+    for (const i of [0, 1]) {
+      const res = await h.requestTo(i, "/api/v1/platform/theme");
+      expect(((await res.json()) as { id: string } | null)?.id).toBe(neon.id);
+    }
   });
 });

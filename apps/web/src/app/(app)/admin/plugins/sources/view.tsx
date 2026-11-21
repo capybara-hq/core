@@ -36,6 +36,7 @@ import {
   shortCommit,
   updateMarketplace,
 } from "../../../../../lib/catalog";
+import { suggestGitUsernameForUrl } from "../../../../../lib/git-usernames";
 import { marketplacesQuery } from "../../../../../lib/query/admin";
 import { keys } from "../../../../../lib/query/keys";
 import { useAppMutation } from "../../../../../lib/query/mutation";
@@ -278,14 +279,20 @@ function SourceEditor({
   const [url, setUrl] = useState(source.url);
   const [ref, setRef] = useState(source.ref ?? "");
   const [token, setToken] = useState("");
+  const [username, setUsername] = useState(source.username ?? "");
   const [busy, setBusy] = useState<"save" | "toggle" | "refresh" | "token">();
   const [error, setError] = useState<Problem>();
   const [confirm, setConfirm] = useState(false);
   const builtin = source.builtin;
+  // Set by the deployment config: shown read-only, only the switch works
+  const managed = source.managed === "config";
+  const locked = builtin || managed;
   const git = source.form === "git";
   const refChanged = git && ref.trim() !== (source.ref ?? "");
+  const usernameChanged = git && username.trim() !== (source.username ?? "");
   const dirty =
-    !builtin && (name !== source.name || url !== source.url || token !== "" || refChanged);
+    !locked &&
+    (name !== source.name || url !== source.url || token !== "" || refChanged || usernameChanged);
   const update = useAppMutation({
     fn: (body: Parameters<typeof updateMarketplace>[1]) => updateMarketplace(source.id, body),
     invalidates: sourceChangeKeys,
@@ -334,13 +341,24 @@ function SourceEditor({
           )
         }
       />
-      {!builtin && (
+      {managed && (
+        <>
+          <Text variant="small" tone="muted">
+            {t("managed")}
+          </Text>
+          {/* The token is in the deployment config (marketplaces.tokens), never shown */}
+          <Text variant="small" tone="muted">
+            {source.hasToken ? t("managedTokenSet") : t("managedTokenUnset")}
+          </Text>
+        </>
+      )}
+      {!locked && (
         <Field label={t("name")}>
           <Input value={name} onChange={(e) => setName(e.target.value)} />
         </Field>
       )}
       <Field label={t("url")}>
-        {builtin ? (
+        {locked ? (
           <Input value={source.url} readOnly aria-readonly="true" />
         ) : (
           <Input value={url} onChange={(e) => setUrl(e.target.value)} />
@@ -359,14 +377,25 @@ function SourceEditor({
             )}
           </Stack>
           <Field label={t("ref")} help={t("refHelp")} optional>
-            <Input value={ref} onChange={(e) => setRef(e.target.value)} />
+            {managed ? (
+              <Input value={ref} readOnly aria-readonly="true" />
+            ) : (
+              <Input value={ref} onChange={(e) => setRef(e.target.value)} />
+            )}
+          </Field>
+          <Field label={t("username")} help={t("usernameHelp")} optional>
+            {managed ? (
+              <Input value={username} readOnly aria-readonly="true" />
+            ) : (
+              <Input value={username} onChange={(e) => setUsername(e.target.value)} />
+            )}
           </Field>
         </>
       )}
       {source.mirrors.length > 0 && (
         <Text variant="small" tone="muted">{`${t("mirrors")}: ${source.mirrors.join(", ")}`}</Text>
       )}
-      {!builtin && (
+      {!locked && (
         <Field label={t("token")} help={source.hasToken ? t("tokenSet") : t("tokenHelp")} optional>
           <Input
             type="password"
@@ -396,7 +425,7 @@ function SourceEditor({
         >
           {t("refresh")}
         </Button>
-        {!builtin && (
+        {!locked && (
           <>
             <Button
               variant="primary"
@@ -410,6 +439,9 @@ function SourceEditor({
                       ...(name !== source.name && { name: name.trim() }),
                       ...(url !== source.url && { url: url.trim() }),
                       ...(refChanged && { ref: ref.trim() === "" ? null : ref.trim() }),
+                      ...(usernameChanged && {
+                        username: username.trim() === "" ? null : username.trim(),
+                      }),
                       ...(token !== "" && { token }),
                     }),
                   t("saved", { name: name.trim() }),
@@ -439,7 +471,7 @@ function SourceEditor({
           </>
         )}
       </Stack>
-      {!builtin && (
+      {!locked && (
         <DangerConfirm
           open={confirm}
           onOpenChange={setConfirm}
@@ -474,6 +506,11 @@ function AddSource({ onAdded }: { onAdded(): void }) {
   const [url, setUrl] = useState("");
   const [ref, setRef] = useState("");
   const [token, setToken] = useState("");
+  const [username, setUsername] = useState("");
+  // Once the admin edits the username, a suggestion never overwrites it
+  const [usernameTouched, setUsernameTouched] = useState(false);
+  // The value the last suggestion filled in: the field follows the host while it still holds it
+  const [lastSuggested, setLastSuggested] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<Problem>();
   const create = useAppMutation({
@@ -487,7 +524,11 @@ function AddSource({ onAdded }: { onAdded(): void }) {
       const s = await create.mutateAsync({
         name: name.trim(),
         url: url.trim(),
-        ...(form === "git" && { form, ...(ref.trim() !== "" && { ref: ref.trim() }) }),
+        ...(form === "git" && {
+          form,
+          ...(ref.trim() !== "" && { ref: ref.trim() }),
+          ...(username.trim() !== "" && { username: username.trim() }),
+        }),
         ...(token !== "" && { token }),
       });
       toast.success(t("added", { name: s.name }));
@@ -495,6 +536,9 @@ function AddSource({ onAdded }: { onAdded(): void }) {
       setUrl("");
       setRef("");
       setToken("");
+      setUsername("");
+      setUsernameTouched(false);
+      setLastSuggested("");
       onAdded();
     } catch (e) {
       setError(problem(e));
@@ -522,13 +566,36 @@ function AddSource({ onAdded }: { onAdded(): void }) {
           <Input
             value={url}
             placeholder={form === "git" ? "owner/repo" : "https://"}
-            onChange={(e) => setUrl(e.target.value)}
+            onChange={(e) => {
+              setUrl(e.target.value);
+              // Follow the host: fill an empty username or replace the last suggestion (never a typed value)
+              if (
+                form === "git" &&
+                !usernameTouched &&
+                (username === "" || username === lastSuggested)
+              ) {
+                const next = suggestGitUsernameForUrl(e.target.value) ?? "";
+                setUsername(next);
+                setLastSuggested(next);
+              }
+            }}
           />
         </Field>
         {form === "git" && (
-          <Field label={t("ref")} help={t("refHelp")} optional>
-            <Input value={ref} onChange={(e) => setRef(e.target.value)} />
-          </Field>
+          <>
+            <Field label={t("ref")} help={t("refHelp")} optional>
+              <Input value={ref} onChange={(e) => setRef(e.target.value)} />
+            </Field>
+            <Field label={t("username")} help={t("usernameHelp")} optional>
+              <Input
+                value={username}
+                onChange={(e) => {
+                  setUsername(e.target.value);
+                  setUsernameTouched(true);
+                }}
+              />
+            </Field>
+          </>
         )}
         <Field label={t("token")} optional>
           <Input

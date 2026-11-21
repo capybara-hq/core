@@ -9,6 +9,7 @@ import { ClientModule } from "./client/client.module.js";
 import type { KernelConfig } from "./config/schema.js";
 import { PromptSuggestionsModule } from "./conversations/prompt-suggestions.js";
 import { TitlesModule } from "./conversations/titles.js";
+import { BootstrapDefaultsService } from "./extensions/bootstrap-defaults.js";
 import { ExtensionsModule } from "./extensions/extensions.module.js";
 import { ApiModule } from "./http/api.module.js";
 import { ErrorFilterModule } from "./http/error-filter.module.js";
@@ -149,6 +150,8 @@ export class KernelModule {
             redis: redisCheck(redis),
           }),
         },
+        // the extra bootstrap manifest's defaults, applied by the start (settings: IdentityModule)
+        BootstrapDefaultsService,
         KernelLifecycle,
       ],
     };

@@ -25,7 +25,23 @@ export const GIT_HOST_USERNAMES = {
   "*.ghe.com": "x-access-token",
 } as const;
 
-const USERNAME_RE = /^[A-Za-z0-9._-]{1,64}$/;
+/** A valid HTTP basic username: `^[A-Za-z0-9._-]{1,64}$`. */
+export const GIT_USERNAME_RE = /^[A-Za-z0-9._-]{1,64}$/;
+
+/** The username a git marketplace credential is presented with when none is stored. */
+export const GIT_MARKETPLACE_USERNAME_DEFAULT = "x-access-token";
+
+/**
+ * A hint for forms: the basic username well-known git hosts document for a token. Other hosts
+ * return `undefined`; the user enters the username the host's documentation names.
+ */
+export function suggestGitUsername(host: string): string | undefined {
+  const h = host.toLowerCase();
+  if (h === "github.com" || h.endsWith(".ghe.com")) return GIT_MARKETPLACE_USERNAME_DEFAULT;
+  if (h === "bitbucket.org") return "x-token-auth";
+  if (h === "gitlab.com") return "oauth2";
+  return undefined;
+}
 
 /** One git host and the username its credential is presented with. */
 export interface GitHostEntry {
@@ -58,7 +74,7 @@ const GitHostEntrySchema = z.strictObject({
   username: z
     .string()
     .regex(
-      USERNAME_RE,
+      GIT_USERNAME_RE,
       "username must match ^[A-Za-z0-9._-]{1,64}$ (letters, digits, '.', '_', '-')",
     ),
 });

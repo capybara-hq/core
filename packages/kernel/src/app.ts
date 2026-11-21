@@ -43,7 +43,11 @@ export interface KernelAppOptions {
    * directory is an empty one); entries without a matching file are downloaded from
    * `packages.npmRegistry`. Omitted: no bootstrap step (tests, unless they ask for it).
    */
-  bootstrap?: { dir?: string };
+  bootstrap?: {
+    dir?: string;
+    /** Path of the extra bootstrap manifest merged into the built-in one (already resolved). */
+    extraManifest?: string;
+  };
   /** The bootstrap manifest; default the `bootstrap.json` shipped with the kernel package. */
   bootstrapManifest?: BootstrapManifest;
   /**

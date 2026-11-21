@@ -3,6 +3,7 @@
  * as a library. Subpaths without the kernel: `./pack`, `./release`, `./source` (the source scanner
  * the checks are built on).
  */
+export * from "./bootstrap/index.js";
 export * from "./check/index.js";
 export {
   DEFAULT_PLUGINS_GLOB,

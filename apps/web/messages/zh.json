@@ -263,6 +263,9 @@
       "needs_config": "这个扩展需要先在本组织完成配置"
     },
     "bootstrap": {
+      "extra_conflict": "部署的额外引导清单里有插件与内置插件重名。",
+      "extra_invalid": "部署的额外引导清单无效，详见服务器日志或错误信息。",
+      "git_read_failed": "无法从 git 市场读取某个插件。",
       "download_failed": "无法从 npm registry 下载部署锁定的某个引导插件。请检查 registry（packages.npmRegistry），或把包放进引导目录。",
       "integrity_mismatch": "某个引导插件的包与锁定的 sha512 不符，部署拒绝安装它。registry 或文件可能被篡改。",
       "missing_file": "部署锁定的某个引导插件包不在引导目录里。"
@@ -502,6 +505,7 @@
       "entry_deprecated": "这个版本已被市场标为废弃，不能安装，请选择其他版本。",
       "package_mismatch": "下载的包与市场条目不一致。",
       "builtin": "官方市场由部署配置决定，这里只能启用或停用。",
+      "config_managed": "这个市场由部署配置，在这里只能启用或停用。",
       "git_failed": "读取 git 仓库失败（服务器、分支或提交有问题），具体原因见错误信息。",
       "git_too_large": "git 仓库超出了插件的大小或文件数限制。",
       "git_unsupported_entry": "git 仓库里有符号链接或子模块，插件不能使用。",
@@ -5440,6 +5444,11 @@
         "token": "令牌",
         "tokenHelp": "可选；留空不改。",
         "tokenSet": "已设置令牌",
+        "username": "用户名",
+        "usernameHelp": "可选；令牌配合使用的用户名，留空用默认值 x-access-token。常见主机：Bitbucket 为 x-token-auth，GitLab 为 oauth2。",
+        "managed": "由部署配置管理",
+        "managedTokenSet": "部署已配置令牌",
+        "managedTokenUnset": "部署未配置令牌",
         "clearToken": "清除令牌",
         "save": "保存",
         "saved": "已保存「{name}」。",

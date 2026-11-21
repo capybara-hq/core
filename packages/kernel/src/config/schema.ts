@@ -1,5 +1,6 @@
 import { isIP } from "node:net";
 import {
+  CATALOG_ITEM_NAME_RE,
   DOCUMENT_MEDIA_TYPES,
   IMAGE_MEDIA_TYPES,
   validateAllowHost,
@@ -511,6 +512,16 @@ export const KernelConfigSchema = z.strictObject({
               "Offline directory for the bootstrap plugins, resolved against the working directory (/app/bootstrap in the image): a .tgz file here whose sha512 matches a pinned plugin is installed instead of downloading it from packages.npmRegistry",
           }),
         ),
+      extraManifest: z
+        .string()
+        .min(1)
+        .optional()
+        .meta(
+          meta({
+            description:
+              "Path of a bootstrap-extra.v1 manifest, resolved against the working directory like bootstrap.dir, that is merged with the built-in bootstrap manifest (extra plugins and marketplaces for a distribution). Absent by default",
+          }),
+        ),
     })
     .prefault({} as never),
   catalog: z
@@ -530,6 +541,25 @@ export const KernelConfigSchema = z.strictObject({
     .prefault({} as never),
   marketplaces: z
     .strictObject({
+      tokens: z
+        .record(
+          z.string().regex(CATALOG_ITEM_NAME_RE, {
+            message: "marketplace name must match ^[a-z0-9][a-z0-9-]{0,63}$",
+          }),
+          z
+            .string()
+            .min(1)
+            .max(4096)
+            .refine((t) => !/[\r\n]/.test(t), { message: "a token must not contain a newline" }),
+        )
+        .default({})
+        .meta(
+          meta({
+            description:
+              "Access tokens by marketplace name for the marketplaces the extra bootstrap manifest declares (bootstrap.extraManifest); never put a token in the manifest file",
+            secret: true,
+          }),
+        ),
       official: z
         .strictObject({
           enabled: z

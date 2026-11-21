@@ -1,0 +1,172 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://capybarahq.com/schemas/bootstrap-extra.v1.schema.json",
+  "title": "Capybara extra bootstrap manifest bootstrap.extra.json (schemaVersion 1)",
+  "type": "object",
+  "properties": {
+    "$schema": {
+      "type": "string",
+      "maxLength": 2000
+    },
+    "schemaVersion": {
+      "type": "number",
+      "const": 1
+    },
+    "marketplaces": {
+      "maxItems": 50,
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "name": {
+            "type": "string",
+            "pattern": "^[a-z0-9][a-z0-9-]{0,63}$"
+          },
+          "url": {
+            "type": "string",
+            "maxLength": 2000,
+            "pattern": "^https:\\/\\/\\S+$"
+          },
+          "ref": {
+            "type": "string",
+            "minLength": 1,
+            "maxLength": 256
+          },
+          "username": {
+            "type": "string",
+            "pattern": "^[A-Za-z0-9._-]{1,64}$"
+          }
+        },
+        "required": [
+          "name",
+          "url"
+        ],
+        "additionalProperties": false
+      }
+    },
+    "plugins": {
+      "maxItems": 500,
+      "type": "array",
+      "items": {
+        "oneOf": [
+          {
+            "type": "object",
+            "properties": {
+              "name": {
+                "type": "string",
+                "pattern": "^[a-z0-9][a-z0-9-]{0,63}$"
+              },
+              "version": {
+                "type": "string",
+                "maxLength": 256,
+                "pattern": "^(?:0|[1-9]\\d*)\\.(?:0|[1-9]\\d*)\\.(?:0|[1-9]\\d*)(?:-(?:0|[1-9]\\d*|\\d*[a-zA-Z-][0-9a-zA-Z-]*)(?:\\.(?:0|[1-9]\\d*|\\d*[a-zA-Z-][0-9a-zA-Z-]*))*)?(?:\\+[0-9a-zA-Z-]+(?:\\.[0-9a-zA-Z-]+)*)?$"
+              },
+              "integrity": {
+                "type": "string",
+                "pattern": "^sha512-[A-Za-z0-9+/]{86}==$"
+              },
+              "required": {
+                "type": "boolean"
+              },
+              "builtin": {
+                "type": "boolean"
+              },
+              "source": {
+                "type": "string",
+                "const": "npm"
+              },
+              "npm": {
+                "type": "string",
+                "maxLength": 214,
+                "pattern": "^(?:@[a-z0-9][a-z0-9._~-]*\\/)?[a-z0-9][a-z0-9._~-]*$"
+              }
+            },
+            "required": [
+              "name",
+              "version",
+              "integrity",
+              "source",
+              "npm"
+            ],
+            "additionalProperties": false
+          },
+          {
+            "type": "object",
+            "properties": {
+              "name": {
+                "type": "string",
+                "pattern": "^[a-z0-9][a-z0-9-]{0,63}$"
+              },
+              "version": {
+                "type": "string",
+                "maxLength": 256,
+                "pattern": "^(?:0|[1-9]\\d*)\\.(?:0|[1-9]\\d*)\\.(?:0|[1-9]\\d*)(?:-(?:0|[1-9]\\d*|\\d*[a-zA-Z-][0-9a-zA-Z-]*)(?:\\.(?:0|[1-9]\\d*|\\d*[a-zA-Z-][0-9a-zA-Z-]*))*)?(?:\\+[0-9a-zA-Z-]+(?:\\.[0-9a-zA-Z-]+)*)?$"
+              },
+              "integrity": {
+                "type": "string",
+                "pattern": "^sha512-[A-Za-z0-9+/]{86}==$"
+              },
+              "required": {
+                "type": "boolean"
+              },
+              "builtin": {
+                "type": "boolean"
+              },
+              "source": {
+                "type": "string",
+                "const": "git"
+              },
+              "marketplace": {
+                "type": "string",
+                "pattern": "^[a-z0-9][a-z0-9-]{0,63}$"
+              },
+              "commit": {
+                "type": "string",
+                "pattern": "^[0-9a-f]{40}$"
+              },
+              "path": {
+                "type": "string",
+                "maxLength": 512
+              }
+            },
+            "required": [
+              "name",
+              "version",
+              "integrity",
+              "source",
+              "marketplace",
+              "commit",
+              "path"
+            ],
+            "additionalProperties": false
+          }
+        ]
+      }
+    },
+    "defaultTheme": {
+      "type": "object",
+      "properties": {
+        "plugin": {
+          "type": "string",
+          "pattern": "^[a-z0-9][a-z0-9-]{0,63}$"
+        },
+        "theme": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 256
+        }
+      },
+      "required": [
+        "plugin",
+        "theme"
+      ],
+      "additionalProperties": false
+    }
+  },
+  "required": [
+    "schemaVersion",
+    "marketplaces",
+    "plugins"
+  ],
+  "additionalProperties": false
+}

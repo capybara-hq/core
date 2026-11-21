@@ -24,8 +24,16 @@ import {
   BootstrapFailedError,
   BootstrapService,
   bootstrapManifestSha256,
-  readBootstrapManifest,
 } from "../extensions/bootstrap.js";
+import { BootstrapDefaultsService } from "../extensions/bootstrap-defaults.js";
+import {
+  BootstrapExtraMismatchError,
+  hasExtraManifestTraces,
+  type LoadedBootstrapManifest,
+  loadBootstrapManifest,
+  missingExtraManifestMessage,
+  syncExtraMarketplaces,
+} from "../extensions/bootstrap-extra.js";
 import { ExtensionHost } from "../extensions/host.js";
 import { ExtensionInstalls } from "../extensions/installs.js";
 import { ExtensionLifecycle } from "../extensions/lifecycle.js";
@@ -116,6 +124,8 @@ export class KernelLifecycle
   private bootstrapCarry: BootstrapEntryResult[] | undefined;
   /** The packages the first bootstrap pass obtained, so the second downloads nothing again. */
   private bootstrapPackages: ReadonlyMap<string, Uint8Array> | undefined;
+  /** The merged bootstrap manifest, read once per start. */
+  private mergedManifest: Promise<LoadedBootstrapManifest> | undefined;
 
   constructor(
     @Inject(PermissionConfigPublication)
@@ -136,6 +146,7 @@ export class KernelLifecycle
     @Inject(ExtensionLifecycle) private readonly extensionLifecycle: ExtensionLifecycle,
     @Inject(ReplicaStatusStore) private readonly replicaStatus: ReplicaStatusStore,
     @Inject(BootstrapService) private readonly bootstrap: BootstrapService,
+    @Inject(BootstrapDefaultsService) private readonly bootstrapDefaults: BootstrapDefaultsService,
     @Inject(MarketplacesService) private readonly marketplaces: MarketplacesService,
     @Inject(PluginImport) private readonly pluginImport: PluginImport,
     @Inject(KERNEL_BUS)
@@ -232,6 +243,32 @@ export class KernelLifecycle
     this.checkpoint();
     // official 清单来源按配置同步（幂等；每个副本启动时都做）
     await this.marketplaces.syncOfficialFromConfig();
+    // No extra manifest here while one left traces (config-managed marketplaces, or entries the
+    // last bootstrap run took from one): this service is configured differently from the one
+    // that wrote them. Syncing would demote them, and the bootstrap step
+    // would clear the extra entries' required / builtin under the built-in manifest's sha, which
+    // the correctly configured services then find done and never repair. So both are skipped
+    // (decided from the database before either runs); the start goes on with the state as it is
+    const traces =
+      opts.bootstrap?.extraManifest === undefined
+        ? await this.bootstrap.extraManifestTraces()
+        : { marketplaces: [], plugins: [] };
+    const mismatch = hasExtraManifestTraces(traces);
+    if (mismatch) {
+      this.log.error(
+        `${missingExtraManifestMessage(traces)}. The bootstrap step and the marketplace sync are skipped in this start`,
+        { ...traces },
+      );
+    } else {
+      // The extra manifest's marketplaces (an empty list demotes the config-managed rows). Without
+      // an extra manifest nothing is synced or demoted: the check above may have run before
+      // another replica's sync committed (ruling R16)
+      await syncExtraMarketplaces(
+        (m) => this.marketplaces.syncExtraFromConfig(m),
+        opts.bootstrap !== undefined ? (await this.manifest()).extra?.marketplaces : undefined,
+        this.log,
+      );
+    }
     // The bootstrap plugins (spec §7), once per manifest across replicas (the Redis lock
     // `lock:bootstrap`); a bootstrap entry named like a config-declared extension is kept
     if (opts.bootstrap !== undefined) {
@@ -242,7 +279,7 @@ export class KernelLifecycle
       );
     }
     const bootstrapAgain =
-      opts.bootstrap !== undefined && (await this.runBootstrap(opts.bootstrap.dir));
+      opts.bootstrap !== undefined && !mismatch && (await this.runBootstrap(opts.bootstrap.dir));
     this.checkpoint();
     // 配置声明 → 安装记录（C15 / C13）。安装记录的包在本副本同步到 extensionHost.dir 后导入，
     // 与运行中的 reconcile 走同一条路径；迁移由一个副本持锁执行（ensureMigrated，C16）
@@ -300,6 +337,13 @@ export class KernelLifecycle
       await this.runBootstrap(opts.bootstrap.dir, true);
       this.checkpoint();
     }
+    // The extra manifest's defaults (the platform default theme), at every start whether or not
+    // the step ran in it (compose's `init` usually ran it): its themes exist only once the second
+    // pass imported them. A no-op once applied or once a super admin chose; never fails the start
+    if (opts.bootstrap !== undefined) {
+      await this.bootstrapDefaults.apply((await this.manifest()).extra?.defaultTheme);
+      this.checkpoint();
+    }
     if (opts.source?.watch) {
       // 热更新：重新校验；只应用 hot 字段，其余变化 warn 并列出需重启的键；校验失败保持原配置
       let reload = Promise.resolve();
@@ -344,6 +388,19 @@ export class KernelLifecycle
     return this.listening;
   }
 
+  /** The built-in manifest (or `options.bootstrapManifest`) merged with the extra manifest, if any. */
+  private manifest(): Promise<LoadedBootstrapManifest> {
+    this.mergedManifest ??= loadBootstrapManifest({
+      ...(this.options.bootstrapManifest !== undefined && {
+        builtin: this.options.bootstrapManifest,
+      }),
+      ...(this.options.bootstrap?.extraManifest !== undefined && {
+        extraManifest: this.options.bootstrap.extraManifest,
+      }),
+    });
+    return this.mergedManifest;
+  }
+
   /**
    * Runs the bootstrap step unless it is done for the manifest. A required entry that cannot be
    * completed (or a missing / tampered package: then nothing was installed) stops the start, so the
@@ -355,7 +412,7 @@ export class KernelLifecycle
    * them too; the final pass imports them, and one that fails is logged like an optional entry.
    */
   private async runBootstrap(dir: string | undefined, final = false): Promise<boolean> {
-    const manifest = this.options.bootstrapManifest ?? (await readBootstrapManifest());
+    const manifest = await this.manifest();
     const bootstrap = this.bootstrap;
     if (await bootstrap.isDone(bootstrapManifestSha256(manifest))) return false;
     try {
@@ -371,6 +428,14 @@ export class KernelLifecycle
       });
       return false;
     } catch (e) {
+      // The step's own check under the lock (ruling R16): another replica's sync committed after
+      // this start's check. Nothing was written; the start goes on like an R14 mismatch
+      if (e instanceof BootstrapExtraMismatchError) {
+        this.log.error(`${e.message}. The bootstrap step is skipped in this start`, {
+          ...e.traces,
+        });
+        return false;
+      }
       if (e instanceof BootstrapFailedError && !e.requiredFailed) {
         this.bootstrapCarry = e.results;
         this.bootstrapPackages = e.packages;

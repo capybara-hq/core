@@ -940,6 +940,50 @@ export class SettingsService {
     return this.view();
   }
 
+  /**
+   * The extra bootstrap manifest's default theme (bootstrap extra manifest spec §7), a system write
+   * with no actor: sets `uiTheme` to `themeId` only while it is still the migration seed (`{ id:
+   * null }` that nobody saved, `updated_by` null), so a restart or a second replica keeps it and a
+   * super admin's choice (an explicit built-in theme too) is never reset. The locks are taken in
+   * the order of {@link write}: the super admin lock, the theme's rows FOR SHARE, the `uiTheme` row
+   * FOR UPDATE; then the eligibility check (400 `theme.not_available`). Audited
+   * `deployment.settings.updated` with no actor account and `source: "bootstrap"`.
+   */
+  @Transactional()
+  async applyBootstrapUiTheme(themeId: string): Promise<"applied" | "kept"> {
+    await this.adminLock.lock();
+    await lockThemeShared(this.db.db, themeId);
+    await lockUiThemeRow(this.db.db);
+    const row = await this.db
+      .selectFrom("deployment_settings")
+      .select(["value", "updated_by"])
+      .where("key", "=", UI_THEME_SETTING)
+      .executeTakeFirstOrThrow();
+    const current = UiThemeSetting.safeParse(row.value);
+    if (row.updated_by !== null || !current.success || current.data.id !== null) return "kept";
+    await assertPlatformDefaultEligible(this.db.db, themeId);
+    // eligible, so the row is a live platform theme (held FOR SHARE above)
+    const theme = await this.db
+      .selectFrom("platform_themes")
+      .select(["plugin_name", "name"])
+      .where("id", "=", themeId)
+      .executeTakeFirstOrThrow();
+    await this.db
+      .updateTable("deployment_settings")
+      .set({ value: JSON.stringify({ id: themeId }), updated_by: null, updated_at: new Date() })
+      .where("key", "=", UI_THEME_SETTING)
+      .execute();
+    await audit(this.db.db, {
+      action: "deployment.settings.updated",
+      detail: {
+        source: "bootstrap",
+        uiTheme: { id: themeId },
+        defaultTheme: { plugin: theme.plugin_name, theme: theme.name },
+      },
+    });
+    return "applied";
+  }
+
   @Transactional({ propagation: "mandatory" })
   private async lockFor(patch: DeploymentSettingsPatch, actorAccountId: string): Promise<void> {
     await this.adminLock.lockAndAuthorize(actorAccountId);

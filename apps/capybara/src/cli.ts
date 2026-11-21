@@ -115,6 +115,7 @@ export async function main(
         {
           ...(cmd.dir !== undefined && { dir: cmd.dir }),
           ...(cmd.manifest !== undefined && { manifest: cmd.manifest }),
+          ...(cmd.extraManifest !== undefined && { extraManifest: cmd.extraManifest }),
         },
         log,
         env,
