@@ -67,11 +67,17 @@ export type ToolRowData = {
    */
   outsideSandbox?: boolean;
   /**
-   * A boundary crossing Full access granted by itself (`tool_result.review.decisionSource:
+   * A boundary crossing Auto granted by itself (`tool_result.review.decisionSource:
    * "full-access"` with a `crossing`): a done or failed row adds the neutral words "Approved
    * automatically: <kind>" (`tool.autoGranted`) in `muted` (§6.16.9).
    */
   autoGranted?: ToolAutoGranted;
+  /**
+   * Who approved the call without asking the person (`tool_ask_decided`): "auto" (the Auto profile)
+   * or "review-model" (Approve for me). A done or failed row adds the neutral words "Approved
+   * automatically" / "Approved by the review model" (`tool.approvedBy.*`) in `muted` (§6.16.9).
+   */
+  approvedBy?: "auto" | "review-model";
   /** The error; its first line is shown after "Failed". */
   error?: string;
   /** The extension whose policy hook denied the call. */
@@ -173,7 +179,7 @@ export function ToolMeta({ row }: { row: ToolRowData }): JSX.Element | null {
   const ended = row.status === "done" || row.status === "failed";
   const any =
     (row.status === "done" && (row.guard || row.notice)) ||
-    (ended && (row.outsideSandbox || row.autoGranted)) ||
+    (ended && (row.outsideSandbox || row.autoGranted || row.approvedBy)) ||
     row.status === "cancelled";
   if (!any) return null;
   return (
@@ -196,6 +202,11 @@ export function ToolMeta({ row }: { row: ToolRowData }): JSX.Element | null {
       {(row.status === "done" || row.status === "failed") && row.autoGranted ? (
         <span className="cb-muted" data-part="auto-granted-word">
           {` · ${t("tool.autoGranted").replace("{kind}", t(`tool.crossing.${row.autoGranted}`))}`}
+        </span>
+      ) : null}
+      {(row.status === "done" || row.status === "failed") && row.approvedBy ? (
+        <span className="cb-muted" data-part="approved-by-word">
+          {` · ${t(row.approvedBy === "auto" ? "tool.approvedBy.auto" : "tool.approvedBy.reviewModel")}`}
         </span>
       ) : null}
       {row.status === "cancelled" ? (

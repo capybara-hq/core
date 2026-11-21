@@ -10,7 +10,7 @@
 <body>
 <main class="r-page">
 <h1>Tool row</h1>
-<p>verb + source: title + key arguments (ink) + extra (faint). Expanded: key / value inputs, the command, output on the bg ground (max 120), duration and Copy output. Failure is the word, never a color alone.</p>
+<p>verb + source: title + key arguments (ink) + extra (faint). Expanded: key / value inputs, the command, output on the bg ground (max 120), duration and Copy output. Failure is the word, never a color alone. A call the Auto profile ran without asking, or the review model approved, adds the neutral words 已自动批准 / 审查模型已批准 after the label in muted.</p>
 <div class="r-blocks">
 <section data-ref-block="tool-row-default" style="width:752px" data-pad>
   <template data-fixture="tool-row" data-opts='{"state": "default"}'></template>
@@ -47,6 +47,12 @@
 </section>
 <section data-ref-block="tool-row-auto-granted" style="width:752px" data-pad>
   <template data-fixture="tool-row" data-opts='{"state": "auto-granted"}'></template>
+</section>
+<section data-ref-block="tool-row-auto-approved" style="width:752px" data-pad>
+  <template data-fixture="tool-row" data-opts='{"state": "auto-approved"}'></template>
+</section>
+<section data-ref-block="tool-row-review-approved" style="width:752px" data-pad>
+  <template data-fixture="tool-row" data-opts='{"state": "review-approved"}'></template>
 </section>
 </div>
 </main>

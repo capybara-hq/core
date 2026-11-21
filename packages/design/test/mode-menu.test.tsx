@@ -25,6 +25,7 @@ function Harness(p: {
   effort?: boolean;
   locked?: string;
   fullDisabled?: boolean;
+  notice?: string;
 }) {
   const [mode, setMode] = useState("approve");
   const [effort, setEffort] = useState("high");
@@ -43,6 +44,7 @@ function Harness(p: {
       setMode(id);
     },
     ...(p.locked !== undefined ? { locked: p.locked } : {}),
+    ...(p.notice !== undefined ? { notice: p.notice } : {}),
     ...(p.effort !== false
       ? {
           effort: {
@@ -87,6 +89,37 @@ describe("ModeMenu", () => {
     // the effort sits under the scrolling profile list, always in view
     expect(menu.querySelector('[data-part="menu-list"] + .cb-cmenu-segments')).not.toBeNull();
     expect(findNestedBoxes(document.body)).toEqual([]);
+  });
+
+  it("draws the notice right after the head, before the profiles, and it is not focusable", async () => {
+    const user = userEvent.setup();
+    wrap(<Harness notice="This device's runtime can't enforce its sandbox." />);
+    await user.click(screen.getByRole("button", { name: /^Permissions:/ }));
+    const menu = screen.getByRole("menu");
+    const notice = within(menu).getByText("This device's runtime can't enforce its sandbox.");
+    expect(notice.getAttribute("data-part")).toBe("menu-note");
+    const parts = [
+      ...menu.querySelectorAll(
+        '[data-part="menu-label"], [data-part="menu-note"], [data-part="menu-item"]',
+      ),
+    ];
+    expect(parts[0]?.getAttribute("data-part")).toBe("menu-label");
+    expect(parts[1]).toBe(notice);
+    expect(parts[2]?.getAttribute("data-part")).toBe("menu-item");
+    expect(notice.hasAttribute("tabindex")).toBe(false);
+    expect(notice.getAttribute("role")).toBeNull();
+    // the menu opens on the first profile, not on the notice
+    expect(document.activeElement?.textContent).toContain("Request approval");
+    // the closing note stays separate
+    expect(menu.querySelectorAll('[data-part="menu-note"]').length).toBe(1);
+  });
+
+  it("a locked menu keeps its closing note beside the notice", async () => {
+    const user = userEvent.setup();
+    wrap(<Harness notice="Runtime note" locked="Follows the main conversation" />);
+    await user.click(screen.getByRole("button", { name: /^Permissions:/ }));
+    const menu = screen.getByRole("menu");
+    expect(menu.querySelectorAll('[data-part="menu-note"]').length).toBe(2);
   });
 
   it("picks a profile and closes; picks an effort and stays open", async () => {
