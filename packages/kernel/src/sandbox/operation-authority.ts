@@ -9,7 +9,6 @@ import {
   type SandboxBoundary,
   type SandboxBrowseScope,
   type SandboxOperationScope,
-  SandboxPermissionUnsupportedError,
 } from "@capybara-hq/plugin-sdk";
 import { Inject, Injectable } from "@nestjs/common";
 import { sql } from "kysely";
@@ -51,7 +50,11 @@ import {
 } from "./operation-authority-types.js";
 import { PermissionAuthorityEpochStore } from "./permission-authority-epochs.js";
 import { assertAuthorityHeld, PermissionAuthorityLock } from "./permission-authority-lock.js";
-import type { PermissionAvailability } from "./permission-availability.js";
+import {
+  PermissionAdmissionUnavailable,
+  type PermissionAvailability,
+  type PermissionAvailabilityCause,
+} from "./permission-availability.js";
 import { PermissionCallGrants } from "./permission-call-grants.js";
 import type { PermissionCallRef, PermissionReviewSnapshot } from "./permission-call-types.js";
 import { PermissionConfigPublication } from "./permission-config-publication.js";
@@ -106,8 +109,15 @@ export interface PermissionScopeFacts {
 }
 const UNPROVED_ENVIRONMENT =
   "The device's installed environment is not verified yet; it is checked when the device starts";
-/** A device state for which the recorded context carries no scope and admission refuses. */
-type WithheldScope = { state: "unsupported" | "unprobed"; reason: string };
+/**
+ * A device state for which the recorded context carries no scope and admission refuses. An
+ * `unsupported` state carries its cause, from which admission renders the model's text (R9); the
+ * recorded context keeps only the state and the reason.
+ */
+type WithheldScope =
+  | { state: "unsupported"; reason: string; cause: PermissionAvailabilityCause }
+  | { state: "unprobed"; reason: string };
+const RUNTIME_CAUSE: PermissionAvailabilityCause = { kind: "runtime" };
 /**
  * The one verdict over a device's runtime report and its applied environment (B1, B-16): the
  * recorded permission context withholds its scope exactly when this returns a verdict, and
@@ -125,8 +135,13 @@ function withheldScope(input: {
   applied: AppliedEnvironment | null;
 }): WithheldScope | null {
   const { availability, applied } = input;
-  if (availability.state !== "supported")
-    return { state: availability.state, reason: availability.reason };
+  if (availability.state === "unprobed") return { state: "unprobed", reason: availability.reason };
+  if (availability.state === "unsupported")
+    return {
+      state: "unsupported",
+      reason: availability.reason,
+      cause: availability.cause ?? RUNTIME_CAUSE,
+    };
   if (
     applied === null ||
     applied.location !== input.location ||
@@ -135,12 +150,17 @@ function withheldScope(input: {
     return { state: "unprobed", reason: UNPROVED_ENVIRONMENT };
   // a local machine's sandbox is per operation; only a cloud provider's instance is the sandbox
   if (availability.report.boundary === "instance" && input.location === "local")
-    return { state: "unsupported", reason: "A local device cannot report an instance boundary" };
+    return {
+      state: "unsupported",
+      reason: "A local device cannot report an instance boundary",
+      cause: RUNTIME_CAUSE,
+    };
   if (availability.report.restricted === null && !instanceSupported(availability.report))
     return {
       state: "unsupported",
       reason:
         availability.report.unavailableReason ?? "This device's runtime cannot enforce its sandbox",
+      cause: RUNTIME_CAUSE,
     };
   return null;
 }
@@ -632,10 +652,13 @@ export class SandboxOperationAuthority {
       throw new ApiError("forbidden", "Unknown sandbox operation");
     // the recorded context withholds its scope for exactly these states (B-16)
     if (f.admissionRefusal) {
-      // a runtime that cannot enforce the profile is the typed pre-effect refusal: the model gets
-      // the actionable unsupported text, never the generic "may not have completed" one
+      // a device that cannot run scoped work is the typed pre-effect refusal: the model gets the
+      // kernel's text for its cause, never the generic "may not have completed" one
       if (f.availability.state === "unsupported")
-        throw new SandboxPermissionUnsupportedError(f.admissionRefusal);
+        throw new PermissionAdmissionUnavailable(
+          f.availability.cause ?? RUNTIME_CAUSE,
+          f.admissionRefusal,
+        );
       throw new ApiError("forbidden", f.admissionRefusal);
     }
     const operationId = randomUUID();

@@ -395,7 +395,7 @@ export class PermissionFacts {
       .where("org_id", "=", orgId)
       .executeTakeFirst();
     const provider = device ? providerForDevice(this.providers, device.provider) : undefined;
-    let availability = permissionAvailabilityFor(provider?.impl);
+    let availability = permissionAvailabilityFor(provider);
     if (availability.state === "unprobed" && provider) {
       const machine =
         provider.plugin === "@local"
@@ -412,6 +412,9 @@ export class PermissionFacts {
         provider.plugin,
         machine?.program_version ?? provider.version,
       );
+      // a recorded runtime report that cannot enforce the sandbox is the runtime's cause
+      if (availability.state === "unsupported")
+        availability = { ...availability, cause: { kind: "runtime" } };
     }
     return availability;
   }
@@ -710,11 +713,13 @@ export class PermissionFacts {
       }
     }
     const consent = row.permission_consent as StoredConsent | null;
+    // Auto holds whatever the device supports (device tools refuse at admission instead) and
+    // without a device (no consent row, ruling R8); with a device it needs that device to be
+    // reachable and its consent to still cover the device's ceilings
     const profile: PermissionProfile =
       row.permission_profile === "full-access" &&
-      (!preview ||
-        preview.availability.state === "unsupported" ||
-        !consentHolds(consent, row.device_id, preview))
+      row.device_id !== null &&
+      (!preview || !consentHolds(consent, row.device_id, preview))
         ? "approve-for-me"
         : row.permission_profile;
     return {

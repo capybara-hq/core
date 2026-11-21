@@ -263,28 +263,37 @@ describe("Conversation permission profiles", () => {
       expect(await permissionState()).toEqual(before);
     },
   );
-  it("a known missing factory is unsupported rather than unprobed and cannot receive Full consent", async () => {
+  it("a device whose provider lacks scoped operations keeps every profile and names the cause", async () => {
     const req = await session("owner"),
       orgId = await createOrg(req),
       agentId = await createAgent(req, orgId),
       deviceId = await localDevice(orgId);
-    // a provider without the operation factory (since the paired activation, @local has them)
+    // a provider without the operation factory (an outdated sandbox plugin)
     const local = k.app.get(SandboxProviders).forName("@local");
     if (!local) throw new Error("Local provider was not registered");
     const impl = Object.create(local.impl);
     Object.assign(impl, { operation: undefined, revokeOperation: undefined });
-    k.app.get(SandboxProviders).register({ plugin: "@no-factory-test", impl });
+    k.app
+      .get(SandboxProviders)
+      .register({ plugin: "@no-factory-test", version: "0.1.0-rc.16", impl });
     await kernelDb(raw)
       .updateTable("devices")
       .set({ provider: "@no-factory-test" })
       .where("id", "=", deviceId)
       .execute();
+    const cause = { kind: "provider-outdated", plugin: "@no-factory-test", version: "0.1.0-rc.16" };
     const preview = await req({
       method: "GET",
       url: `/api/v1/orgs/${orgId}/conversation-permission-preview?deviceId=${deviceId}`,
     });
     expect(preview.statusCode, preview.body).toBe(200);
-    expect(preview.json().availability.state).toBe("unsupported");
+    expect(preview.json().availability).toEqual({
+      state: "unsupported",
+      reason:
+        "This device's sandbox plugin (@no-factory-test 0.1.0-rc.16) does not implement permission-scoped operations; a super admin updates it",
+      cause,
+    });
+    // a first message with Auto on such a device is accepted
     const first = await req({
       method: "POST",
       url: `/api/v1/orgs/${orgId}/conversations/first-message`,
@@ -295,7 +304,76 @@ describe("Conversation permission profiles", () => {
         permission: { profile: "full-access", consentScopeRevision: preview.json().scopeRevision },
       },
     });
-    expect(first.statusCode, first.body).toBe(409);
+    expect(first.statusCode, first.body).toBe(201);
+    const id = first.json().conversation.id;
+    const url = `/api/v1/orgs/${orgId}/conversations/${id}/permissions`;
+    expect((await req({ method: "GET", url })).json()).toMatchObject({
+      profile: "full-access",
+      availability: { state: "unsupported", cause },
+    });
+    // every profile stays selectable, Auto with the preview's scope revision
+    let revision = 0;
+    for (const profile of ["request-approval", "approve-for-me", "full-access"] as const) {
+      const patch = await req({
+        method: "PATCH",
+        url,
+        payload: {
+          profile,
+          expectedRevision: revision,
+          ...(profile === "full-access"
+            ? { consentScopeRevision: preview.json().scopeRevision }
+            : {}),
+        },
+      });
+      expect(patch.statusCode, patch.body).toBe(200);
+      revision = patch.json().revision;
+      const view = await req({ method: "GET", url });
+      expect(view.json()).toMatchObject({
+        profile,
+        revision,
+        availability: { state: "unsupported", cause },
+      });
+    }
+  });
+  it("a conversation without a device keeps Auto without a scope consent", async () => {
+    const req = await session("owner"),
+      orgId = await createOrg(req),
+      agentId = await createAgent(req, orgId);
+    const first = await req({
+      method: "POST",
+      url: `/api/v1/orgs/${orgId}/conversations/first-message`,
+      payload: {
+        agentId,
+        message: { text: "hello", clientMessageId: "auto-no-device" },
+        permission: { profile: "full-access" },
+      },
+    });
+    expect(first.statusCode, first.body).toBe(201);
+    const id = first.json().conversation.id;
+    const url = `/api/v1/orgs/${orgId}/conversations/${id}/permissions`;
+    expect((await req({ method: "GET", url })).json()).toMatchObject({
+      profile: "full-access",
+      deviceId: null,
+      consentScope: null,
+    });
+    const row = await kernelDb(raw)
+      .selectFrom("conversations")
+      .select(["permission_profile", "permission_consent"])
+      .where("id", "=", id)
+      .executeTakeFirstOrThrow();
+    expect(row).toEqual({ permission_profile: "full-access", permission_consent: null });
+    const conv = await createConv(req, orgId, agentId);
+    const convUrl = `/api/v1/orgs/${orgId}/conversations/${conv.id}/permissions`;
+    const patch = await req({
+      method: "PATCH",
+      url: convUrl,
+      payload: { profile: "full-access", expectedRevision: 0 },
+    });
+    expect(patch.statusCode, patch.body).toBe(200);
+    expect((await req({ method: "GET", url: convUrl })).json()).toMatchObject({
+      profile: "full-access",
+      revision: 1,
+    });
   });
   it("a semantic Full ceiling change invalidates displayed Full consent even when policy values return to their old values", async () => {
     const req = await session("owner"),
@@ -864,7 +942,7 @@ describe("Conversation permission profiles", () => {
       expect(changed.statusCode, changed.body).toBe(409);
     }
   });
-  it("defaults existing create to approve-for-me; owner session PATCH is versioned and Full requires a device", async () => {
+  it("defaults existing create to approve-for-me; owner session PATCH is versioned", async () => {
     const req = await session("owner");
     const orgId = await createOrg(req);
     const agentId = await createAgent(req, orgId);
@@ -900,23 +978,6 @@ describe("Conversation permission profiles", () => {
         })
       ).statusCode,
     ).toBe(404);
-    const full = await req({
-      method: "POST",
-      url: `/api/v1/orgs/${orgId}/conversations/first-message`,
-      payload: {
-        agentId,
-        message: { text: "hello", clientMessageId: "full" },
-        permission: { profile: "full-access" },
-      },
-    });
-    expect(full.statusCode, full.body).toBe(409);
-    expect(
-      await kernelDb(raw)
-        .selectFrom("conversations")
-        .select("id")
-        .where("create_request_id", "=", "full")
-        .execute(),
-    ).toEqual([]);
   });
 });
 

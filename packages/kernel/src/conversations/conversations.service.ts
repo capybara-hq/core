@@ -549,8 +549,6 @@ export class ConversationsService {
     events: ConversationEvent[];
     created: boolean;
   }> {
-    if (internal.initialPermission?.profile === "full-access" && !pick.deviceId)
-      throw new ApiError("conflict", "Full access requires an explicit device selection");
     const requestHash = internal.initialPermission
       ? permissionScopeHash({ agentId, input, pick, permission: internal.initialPermission })
       : undefined;

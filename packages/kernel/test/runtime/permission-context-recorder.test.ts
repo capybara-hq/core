@@ -862,11 +862,10 @@ describe("permission context projection", () => {
       await record(f);
       const payload = (await contexts(raw, f.rootId))[0]?.payload;
       expect(payload?.selectedProfile).toBe(profile);
-      // view keeps Full only with a current consent and a runtime not explicitly unsupported
+      // the view keeps Auto with a current consent, whatever the runtime supports (device tools
+      // refuse at admission instead)
       expect(payload?.effectiveProfile).toBe(
-        profile === "full-access" && (consent === false || report === "neither")
-          ? "approve-for-me"
-          : profile,
+        profile === "full-access" && consent === false ? "approve-for-me" : profile,
       );
       expect(payload?.availability.state).toBe(state);
       // Full access keeps the sandbox: a scoped filesystem and the sandbox network

@@ -1,6 +1,7 @@
 import type { PermissionProfile } from "@capybara-hq/plugin-sdk";
 import type { HostGrantCeiling } from "./device-sandbox.js";
 import type { EffectiveDevicePolicy } from "./modes.js";
+import type { PermissionAvailabilityCause } from "./permission-availability.js";
 import type { AppliedOuterNetwork } from "./permission-context-types.js";
 
 export type PermissionCallRef = { runId: string; callId: string };
@@ -101,7 +102,8 @@ export type PermissionReviewSnapshot = Readonly<
     broadProjectReach: boolean;
     unattended: boolean;
     fullConsent: boolean;
-    availability: { state: string; reason?: string };
+    /** An `unsupported` state carries its cause (R9), from which admission renders the text. */
+    availability: { state: string; reason?: string; cause?: PermissionAvailabilityCause };
     /**
      * The reason admission refuses this device (B-16): the recorded permission context withholds
      * its scope for the same state. Null or absent when admission may proceed.
