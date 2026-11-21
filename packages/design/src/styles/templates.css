@@ -1348,8 +1348,9 @@ a.cb-object-name:hover {
     row-gap: var(--cb-space-2);
     /* the buttons span the row: no gutter kept for a scrollbar the row never has */
     scrollbar-gutter: auto;
-    padding: var(--cb-space-2) var(--cb-space-4)
-      calc(var(--cb-space-2) + var(--cb-inset-bottom) + var(--cb-keyboard-inset, 0px));
+    padding: var(--cb-space-2) calc(var(--cb-space-4) + var(--cb-inset-right))
+      calc(var(--cb-space-2) + var(--cb-inset-bottom) + var(--cb-keyboard-inset, 0px))
+      var(--cb-space-4);
   }
   .cb-actionrow .cb-actionrow-frame {
     flex-direction: column;
@@ -1754,6 +1755,7 @@ li:first-child > .cb-ld-row {
   box-sizing: border-box;
   min-height: 0;
   padding: 0 var(--cb-content-pad);
+  padding-inline-end: calc(var(--cb-content-pad) + var(--cb-inset-right));
   overflow: hidden;
   scrollbar-gutter: stable;
 }

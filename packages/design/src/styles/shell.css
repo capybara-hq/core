@@ -49,8 +49,8 @@
   height: 100dvh;
   min-height: 0;
   overflow: clip;
-  /* the landscape notch, or a shell's side chrome (spec §4.7) */
-  padding-right: var(--cb-inset-right);
+  /* the landscape notch, or a shell's side chrome (spec §4.7): the ground runs under a right-hand
+     strip (the iPhone Duo's, spec §8), so only the content pads its end by `--cb-inset-right` */
   padding-left: var(--cb-inset-left);
   background: var(--cb-bg);
   color: var(--cb-ink);
@@ -340,6 +340,8 @@
 .cb-template-head {
   flex: none;
   padding: var(--cb-space-5) var(--cb-content-pad) var(--cb-layout-head-content);
+  /* the content ends before a right-hand strip (spec §8) */
+  padding-inline-end: calc(var(--cb-content-pad) + var(--cb-inset-right));
   /* Reserve the same scrollbar gutter as the scrolling body below, so a classic (non-overlay)
      scrollbar does not shift the content column against the head; scrollbar-gutter only applies
      to a scroll container, hence overflow: hidden. No effect with overlay scrollbars. */
@@ -638,6 +640,8 @@ a.cb-stat-card:focus-visible {
   flex: 1;
   min-width: min(var(--cb-layout-content-min), 100%);
   overflow: auto;
+  /* the ground runs under a right-hand strip; the content ends before it (spec §8) */
+  padding-inline-end: var(--cb-inset-right);
   /* Same gutter as .cb-template-head: the column keeps its x whether or not the page scrolls. */
   scrollbar-gutter: stable;
 }
@@ -655,15 +659,18 @@ a.cb-stat-card:focus-visible {
 .cb-body-content[data-padded="true"] {
   box-sizing: border-box;
   padding: var(--cb-space-4) var(--cb-layout-gutter);
+  padding-inline-end: calc(var(--cb-layout-gutter) + var(--cb-inset-right));
 }
 /* In the content width the head's bottom padding is the gap above the first block (spec §4.2). */
 .cb-body-content[data-padded="true"]:has(> .cb-body-frame[data-width="content"]) {
   padding: 0 var(--cb-content-pad) var(--cb-space-6);
+  padding-inline-end: calc(var(--cb-content-pad) + var(--cb-inset-right));
 }
 /* The content width: the side padding on both sides, the frame centered, space at the bottom. */
 .cb-body-content:not([data-padded="true"]):has(> .cb-body-frame[data-width="content"]) {
   box-sizing: border-box;
   padding: 0 var(--cb-content-pad) var(--cb-space-6);
+  padding-inline-end: calc(var(--cb-content-pad) + var(--cb-inset-right));
 }
 .cb-body-frame[data-width="full"] {
   height: 100%;
@@ -715,7 +722,8 @@ a.cb-stat-card:focus-visible {
   flex: none;
   align-items: center;
   height: var(--cb-layout-action-row);
-  padding: 0 var(--cb-content-pad, var(--cb-layout-gutter));
+  padding: 0 calc(var(--cb-content-pad, var(--cb-layout-gutter)) + var(--cb-inset-right)) 0
+    var(--cb-content-pad, var(--cb-layout-gutter));
   overflow: hidden;
   scrollbar-gutter: stable;
   border-top: 1px solid var(--cb-line-soft);
@@ -770,7 +778,7 @@ a.cb-stat-card:focus-visible {
   align-items: center;
   gap: var(--cb-space-3);
   height: var(--cb-layout-status-bar);
-  padding: 0 var(--cb-layout-gutter);
+  padding: 0 calc(var(--cb-layout-gutter) + var(--cb-inset-right)) 0 var(--cb-layout-gutter);
   border-top: 1px solid var(--cb-line-soft);
   color: var(--cb-muted);
   font-size: var(--cb-type-micro-size);
