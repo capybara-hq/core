@@ -326,6 +326,22 @@ Colors are unchanged: the palette of design spec §2.1, dark `#0A0A0A` / accent 
 
 §7's interaction rules are unchanged; §11.3's 40 × 40 compact rule becomes 44 × 44 on touch.
 
+**Mobile sizes follow the width too (maintainer decision 2026-11-22).** There is no separate
+mobile component set: the same components switch by media query, and the size half of the touch
+set (the control, row, radius and type steps above, the floating buttons' 48) applies under
+`MOBILE_SIZE_QUERY`, `(max-width: 599px), <TOUCH_QUERY>`, exported once beside `TOUCH_QUERY` in
+`touch.ts`: at the compact class whatever the pointer (a narrowed desktop window too) or on a
+touch device at any width (an iPad at medium or expanded keeps the touch sizes). `pnpm
+gen:tokens` writes the size overrides into their own `@media MOBILE_SIZE_QUERY` block; the font
+overrides (the system font) stay under `@media TOUCH_QUERY`, as do the touch components' own
+forms (the large list rows, the bottom sheet's touch form, the drawer's rows) and the
+desktop-only gate (§4.6). Under the mobile sizes every control is a 44 tap target with its
+visible box (no invisible ring), and **a control with text pads wider than it is tall**
+("左右大于上下"): buttons and chips 16 at the sides (20 at `prominent`), tabs 16, segments 16 in a
+52 high group, text fields their text 12 from the border, at least 16 px; icon-only buttons stay
+square (design spec §2.5 "Mobile sizes of the controls"). The compact tab rows (the page head's
+tabs, the settings sub-nav) scroll sideways with the edge fade and keep the current item in view.
+
 ### 4.6 Management pages on touch (decided 2026-11-21)
 
 - **Desktop-only on touch**, at every class: 插件 (`/plugins/**`), 扩展 (`/extensions/**`), 渠道
@@ -903,16 +919,18 @@ state lists, size tables, reference blocks, the blind side-by-side review, `ACCE
 ### 11.3 The compact rule set
 
 - **Playwright** (`apps/web/visual/compact.interaction.spec.ts`, designer's call): for every
-  template's catalog page at 382 and 390, with JavaScript on and off (the first paint, as the
+  template's catalog page at 382 and 390 on touch and at 480 with a fine pointer (the mobile sizes
+  follow the width, decided 2026-11-22), with JavaScript on and off (the first paint, as the
   writing-web-ui skill requires): no horizontal page scroll
-  (`scrollingElement.scrollWidth <= innerWidth`); the controls design spec §4.3 lists (the
-  floating buttons, the drawer's rows, the page head's tabs and actions, ObjectRow, the row menu,
-  the composer's buttons) have a 40 × 40 hit area with a fine pointer and 44 × 44 on touch
-  (decided 2026-11-21), every other interactive element is counted, not failed (maintainer to
-  confirm: R22); the primary action is reachable without horizontal scrolling; nothing is covered
-  by the floating composer or buttons at the end of a scroll; text fields are at least 16 px on a
-  coarse pointer (17 with the touch set); on touch no management entry is reachable from the
-  navigation and a management URL shows the 「请在电脑上管理」 page (§4.6).
+  (`scrollingElement.scrollWidth <= innerWidth`); the controls the mobile sizes cover (buttons,
+  icon buttons, chips, tabs, segments, text fields, selects, the floating and title bar buttons)
+  have a 44 × 44 hit area, every other interactive element is counted, not failed (maintainer to
+  confirm: R22); those controls with text have more space at their sides than above and below
+  their text; the primary action is reachable without horizontal scrolling; text fields are at
+  least 16 px (17 with the mobile type); on touch no management entry is reachable from the
+  navigation and a management URL shows the 「请在电脑上管理」 page (§4.6). The measurements live
+  in `apps/web/visual/mobile-sizes.ts` and are proven red on violating fixtures in
+  `mobile-sizes.interaction.spec.ts`.
 - **jsdom** (`findCompactViolations` in `@capybara-hq/design/reference`, next to
   `findNestedBoxes`): structural rules on the rendered DOM: no action reachable only by hover,
   `title` or a context menu; every icon-only control has an accessible name; a list-detail region
@@ -1078,4 +1096,6 @@ short-window trim (§3.2) (decided); the lock-screen text moved to the later pus
   shell, never in pages; native shells are detected only through `window.capybaraShell`
   capabilities, never the user agent; dangerous shell capabilities are confirmed natively; on a
   touch screen sizes come from the design's touch tokens and management pages are desktop-only."
-  (The last clause added 2026-11-21.)
+  (The last clause added 2026-11-21.) Amended 2026-11-22 (maintainer decision): control sizes
+  follow the compact class too, so the line says layout and the mobile sizes follow size classes
+  by window width, the mobile sizes also on a touch device at any width (`MOBILE_SIZE_QUERY`).

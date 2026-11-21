@@ -166,11 +166,10 @@
   .cb-card-grid {
     grid-template-columns: 1fr;
   }
-  /* The primary and the menu are 40 px tap targets on phones. */
-  .cb-object-card-foot > .cb-btn,
+  /* The skeleton of the foot's buttons takes the mobile control height the buttons have. */
   .cb-object-card-foot > .cb-skeleton-box {
-    min-width: 40px;
-    min-height: 40px;
+    min-width: var(--cb-touch-hit);
+    min-height: var(--cb-touch-hit);
   }
 }
 

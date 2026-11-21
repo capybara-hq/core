@@ -1,6 +1,6 @@
 import { type ReactNode, useEffect, useRef } from "react";
 import { SkeletonGroup } from "../display/skeleton";
-import { Tabs } from "../display/tabs";
+import { edgeAttrs, Tabs, useScrollEdges } from "../display/tabs";
 import { Stack } from "../layout/index";
 import { LinkPendingMark, useDesignLink, useDesignT } from "../provider";
 import { ActionRow, type ActionRowProps, Body, type PageHeaderProps } from "../shell/index";
@@ -83,13 +83,19 @@ export function SettingsPage({
     if (!nav || !current || nav.scrollWidth <= nav.clientWidth) return;
     const box = nav.getBoundingClientRect();
     const item = current.getBoundingClientRect();
-    if (item.left < box.left || item.right > box.right) nav.scrollLeft += item.left - box.left;
+    // the edges fade over space.6 (the scroll hint, spec §6.4): an item under a fade is out of view
+    const fade = 24;
+    if (item.left < box.left + fade || item.right > box.right - fade) {
+      nav.scrollLeft += item.left + item.width / 2 - (box.left + box.width / 2);
+    }
   }, [activeNav]);
+  const edges = useScrollEdges(navRef, nav.length);
   const rail = (
     <nav
       ref={navRef}
       className="cb-settings-nav"
       data-part="settings-nav"
+      {...edgeAttrs(edges)}
       aria-label={t("settings.nav")}
     >
       {nav.map((g) => (

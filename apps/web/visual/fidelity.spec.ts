@@ -57,7 +57,9 @@ type Row = (typeof tables)[number]["rows"][number];
 async function measure(page: Page, component: string, rows: Row[], theme: Theme) {
   const failures: string[] = [];
   for (const r of rows) {
-    const expected = resolveToken(tokens, r.value, theme);
+    // a phone-window state is measured under the mobile sizes (spec §2.5): tokens take their
+    // `touch.size` override there
+    const expected = resolveToken(tokens, r.value, theme, isNarrow(r.state));
     const got = await page.evaluate(
       ({ block, selector, property, expected, isColor }) => {
         const b = document.querySelector(`[data-ref-block="${block}"]`);

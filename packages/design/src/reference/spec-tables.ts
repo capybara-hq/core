@@ -143,9 +143,16 @@ const isRecord = (v: unknown): v is Record<string, unknown> =>
 /**
  * A size-table value: a literal number (px), a size path without the `size.` prefix
  * (`row.default`, `pad.default.x`, `type.body`, `type.body.line`), `color.<token>` for `theme`, or
- * a percentage literal (`50%`, a circle's radius; measured as its number).
+ * a percentage literal (`50%`, a circle's radius; measured as its number). With `mobile` (a state
+ * measured in a phone window, where `MOBILE_SIZE_QUERY` holds) a size path takes its `touch.size`
+ * override when tokens.json has one (spec §2.5 "Mobile sizes").
  */
-export function resolveToken(tokens: unknown, value: string, theme: Theme): string | number {
+export function resolveToken(
+  tokens: unknown,
+  value: string,
+  theme: Theme,
+  mobile = false,
+): string | number {
   if (/^-?\d+(\.\d+)?$/.test(value)) return Number(value);
   if (/^-?\d+(\.\d+)?%$/.test(value)) return Number.parseFloat(value);
   const fail = (): never => {
@@ -163,7 +170,9 @@ export function resolveToken(tokens: unknown, value: string, theme: Theme): stri
   const [group, step, sub] = parts as [string, string | undefined, string | undefined];
   const g = size[group];
   if (!isRecord(g) || step === undefined) return fail();
-  const v = g[step];
+  const touch = isRecord(tokens.touch) && isRecord(tokens.touch.size) ? tokens.touch.size : {};
+  const over = mobile && isRecord(touch[group]) ? touch[group][step] : undefined;
+  const v = over ?? g[step];
   if (typeof v === "number") return sub === undefined ? v : fail();
   if (Array.isArray(v) && v.length === 2) {
     const [a, b] = v as [number, number];

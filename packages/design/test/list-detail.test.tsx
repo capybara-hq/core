@@ -191,7 +191,10 @@ describe("the compact forms of the templates", () => {
         ".cb-actionrow .cb-actionrow-others > *, .cb-actionrow .cb-actionrow-primary > *",
         "height",
       ),
-    ).toBe("40px");
+    ).toBe("var(--cb-touch-hit)");
+    expect(decl(".cb-actionrow .cb-actionrow-primary > *", "height")).toBe(
+      "var(--cb-touch-primary)",
+    );
   });
 
   it("WizardPage's compact step bar reads 2 / 4 and names the step", () => {

@@ -360,6 +360,23 @@
   text-align: end;
 }
 
+/* Mobile sizes (spec §2.5, maintainer decision 2026-11-22): a compact window with a fine pointer
+   takes the touch float size too, so the floating buttons are touch.float (48) under
+   MOBILE_SIZE_QUERY, not the 52 control.prominent the mobile control scale would give them. */
+@media (max-width: 599px) {
+  .cb-shell {
+    --cb-float-size: var(--cb-touch-float);
+  }
+  .cb-float-btn {
+    width: var(--cb-touch-float);
+    height: var(--cb-touch-float);
+  }
+  .cb-float-btn > .cb-icon {
+    width: var(--cb-touch-icon-float);
+    height: var(--cb-touch-icon-float);
+  }
+}
+
 @media (pointer: coarse), (any-pointer: coarse) and (not (any-pointer: fine)) {
   /* the chat-first shell's floating row (shell.css) takes the touch size of its buttons */
   .cb-shell {

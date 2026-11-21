@@ -1254,3 +1254,36 @@
 .cb-input-affix:first-child + input {
   padding-left: calc(var(--cb-space-2) + 2px);
 }
+
+/* Mobile sizes (spec §2.5 "Mobile sizes", maintainer decision 2026-11-22): under MOBILE_SIZE_QUERY
+   (a compact window whatever the pointer, or a touch device at any width) the control tokens are
+   44 / 44 / 52 and these controls follow them. A control with text pads wider than it is tall
+   from its text: a 44 high button with a 24 px line has 10 above and below, so 16 at the sides
+   (20 for the 52 high prominent one); an icon-only button stays a square of the control height.
+   Text fields pad their text 12 from the border. */
+@media (max-width: 599px), (pointer: coarse), (any-pointer: coarse) and (not (any-pointer: fine)) {
+  .cb-btn:not(.cb-icon-btn),
+  .cb-btn[data-density="dense"]:not(.cb-icon-btn),
+  .cb-chip,
+  .cb-chip[data-density="dense"] {
+    padding-inline: var(--cb-space-4);
+  }
+  .cb-btn[data-density="prominent"]:not(.cb-icon-btn) {
+    padding-inline: var(--cb-space-5);
+  }
+  .cb-input input,
+  .cb-textarea textarea,
+  .cb-stepper input,
+  .cb-input-affix:first-child + input {
+    padding-inline: var(--cb-space-3);
+  }
+  .cb-input-affix {
+    padding-inline: var(--cb-space-3);
+  }
+  .cb-input-affix:first-child {
+    padding-right: 0;
+  }
+  .cb-select-value {
+    padding-left: var(--cb-space-3);
+  }
+}

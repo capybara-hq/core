@@ -3,11 +3,12 @@ import { resolve } from "node:path";
 import { act, cleanup, renderHook } from "@testing-library/react";
 import { renderToString } from "react-dom/server";
 import { afterEach, describe, expect, it } from "vitest";
-import { isTouchPointer, TOUCH_QUERY, useTouch } from "../src/index";
+import { isTouchPointer, MOBILE_SIZE_QUERY, TOUCH_QUERY, useTouch } from "../src/index";
 import { css, parseCss } from "./css-rules";
 
-// The touch tokens (spec §2.2, §2.5, §2.6, §4.3): one `@media TOUCH_QUERY` block in the generated
-// tokens.css holds every override and nothing else; every pre-touch declaration is unchanged; the
+// The touch tokens (spec §2.2, §2.5, §2.6, §4.3): in the generated tokens.css one `@media
+// TOUCH_QUERY` block holds the font overrides and one `@media MOBILE_SIZE_QUERY` block (compact or
+// touch, maintainer decision 2026-11-22) the size overrides, and nothing else; every pre-touch declaration is unchanged; the
 // code font role (`--cb-font-code`) keeps Sarasa where the UI font turns into the system font.
 
 const tokensCss = css("tokens.css");
@@ -65,11 +66,27 @@ describe("TOUCH_QUERY", () => {
   });
 });
 
-describe("tokens.css touch block", () => {
-  it("has exactly one @media block, with TOUCH_QUERY, holding the overrides and nothing else", () => {
+describe("MOBILE_SIZE_QUERY", () => {
+  it("is the compact class or the touch query", () => {
+    expect(MOBILE_SIZE_QUERY).toBe(`(max-width: 599px), ${TOUCH_QUERY}`);
+  });
+});
+
+describe("tokens.css touch blocks", () => {
+  it("has the fonts under TOUCH_QUERY and the sizes under MOBILE_SIZE_QUERY, nothing else", () => {
     const media = parseCss(tokensCss).filter((r) => r.at !== null);
-    expect(media.map((r) => [r.at, r.selector])).toEqual([[TOUCH_QUERY, ":root"]]);
-    expect(media[0]?.decls).toEqual(OVERRIDES);
+    expect(media.map((r) => [r.at, r.selector])).toEqual([
+      [TOUCH_QUERY, ":root"],
+      [MOBILE_SIZE_QUERY, ":root"],
+    ]);
+    const fonts = Object.fromEntries(
+      Object.entries(OVERRIDES).filter(([k]) => k.startsWith("--cb-font")),
+    );
+    const sizes = Object.fromEntries(
+      Object.entries(OVERRIDES).filter(([k]) => !k.startsWith("--cb-font")),
+    );
+    expect(media[0]?.decls).toEqual(fonts);
+    expect(media[1]?.decls).toEqual(sizes);
   });
 
   it("comes after the scheme blocks", () => {

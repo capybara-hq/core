@@ -319,11 +319,11 @@
   max-width: 100%;
 }
 /* Phones (below 600): the search takes its own full-width line above the tabs, and the tabs
-   scroll on theirs; the tabs are 40 px tap targets. */
+   scroll on theirs (the mobile size tabs are touch.hit targets, display.css). */
 @media (max-width: 599px) {
-  /* The placeholders follow the loaded parts' phone sizes (40 px tabs), so nothing moves. */
+  /* The placeholders follow the loaded parts' phone sizes (44 px tabs), so nothing moves. */
   .cb-pageheader-tabs .cb-pageheader-tab-slots {
-    height: 40px;
+    height: var(--cb-touch-hit);
   }
   .cb-pageheader-tabs {
     flex-wrap: wrap;
@@ -336,9 +336,8 @@
     width: 100%;
     margin-left: 0;
   }
-  .cb-pageheader-tabs .cb-tab {
-    min-width: 40px;
-    min-height: 40px;
+  .cb-pageheader-tabs .cb-tabs {
+    flex: 1 1 100%;
   }
 }
 
@@ -516,8 +515,8 @@ a.cb-pageheader-path-seg:hover {
 }
 /* Phones (below 600, spec §4.2, §4.3): the title and the description take the full width (the
    description wraps), and the actions go under them, start-aligned: the primary as a button, the
-   others folded into ⋯ when there are several. The buttons keep their default height and reach a
-   40 px tap target through an invisible ring around them. */
+   others folded into ⋯ when there are several. The buttons are the mobile size controls (44,
+   spec §2.5). */
 @media (max-width: 599px) {
   .cb-pageheader-actions[data-responsive="true"] [data-fold="inline"] {
     display: none;
@@ -544,16 +543,6 @@ a.cb-pageheader-path-seg:hover {
   }
   .cb-pageheader-actions {
     flex: 1 1 100%;
-  }
-  .cb-pageheader-actions .cb-btn {
-    position: relative;
-  }
-  .cb-pageheader-actions .cb-btn::after {
-    content: "";
-    position: absolute;
-    inset: calc((var(--cb-control-default) - 40px) / 2) min(0px, calc((100% - 40px) / 2));
-    min-height: 40px;
-    min-width: 40px;
   }
 }
 @media (min-width: 600px) {

@@ -169,6 +169,26 @@
   flex: 1 1 0;
 }
 
+/* Mobile sizes (spec §2.5 "Mobile sizes", §6.4; MOBILE_SIZE_QUERY): a tab is a touch.hit (44) target
+   padded 16 at the sides; the segmented group is control.prominent (52) high, so each segment
+   inside its 2 px inset and border is at least 44, padded 16 at the sides (more than the 13
+   above and below its line), and never narrower than it is tall. */
+@media (max-width: 599px), (pointer: coarse), (any-pointer: coarse) and (not (any-pointer: fine)) {
+  .cb-tab {
+    height: var(--cb-touch-hit);
+    padding: 0 var(--cb-space-4);
+  }
+  .cb-segmented,
+  .cb-segmented[data-density="dense"],
+  .cb-segmented[data-density="prominent"] {
+    height: var(--cb-control-prominent);
+  }
+  .cb-seg {
+    min-width: var(--cb-touch-hit);
+    padding: 0 var(--cb-space-4);
+  }
+}
+
 /* Pagination (the signed reference: summary left, icon buttons right) */
 .cb-pagination {
   display: flex;

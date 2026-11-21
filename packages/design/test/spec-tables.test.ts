@@ -79,6 +79,14 @@ describe("resolveToken", () => {
     expect(resolveToken(tokens, "50%", "dark")).toBe(50);
   });
 
+  it("takes the touch.size override for a mobile (phone window) state", () => {
+    expect(resolveToken(tokens, "control.default", "dark", true)).toBe(44);
+    expect(resolveToken(tokens, "type.small", "dark", true)).toBe(15);
+    expect(resolveToken(tokens, "type.body.line", "dark", true)).toBe(24);
+    expect(resolveToken(tokens, "pad.default.x", "dark", true)).toBe(12);
+    expect(resolveToken(tokens, "control.default", "dark")).toBe(28);
+  });
+
   it("throws on a path tokens.json lacks", () => {
     expect(() => resolveToken(tokens, "row.huge", "dark")).toThrow(/row\.huge/);
     expect(() => resolveToken(tokens, "color.nope", "dark")).toThrow(/color\.nope/);
