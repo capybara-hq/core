@@ -3,6 +3,7 @@ import {
   defineExtension,
   type ExternalIdentity,
   type IdentitySource,
+  IdentitySourceRefused,
   secret,
 } from "@capybara-hq/plugin-sdk";
 import { z } from "zod";
@@ -19,6 +20,8 @@ export interface FakeIdpCode {
   emailVerified?: boolean;
   name?: string;
   source?: string;
+  /** Refuse the account on purpose (after the nonce and PKCE checks), like a disallowed domain. */
+  refuse?: string;
 }
 
 export const fakeIdpCode = (c: FakeIdpCode): string =>
@@ -62,6 +65,7 @@ export default defineExtension({
               : createHash("sha256").update(codeVerifier).digest("base64url");
           if (derived !== p.challenge) throw new Error("PKCE verification failed");
         }
+        if (p.refuse !== undefined) throw new IdentitySourceRefused(p.refuse);
         return {
           source: p.source ?? `fake-idp:${c.tenant}`,
           externalId: p.sub,
