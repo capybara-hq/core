@@ -364,6 +364,10 @@
   gap: 4px;
   margin-bottom: 16px;
 }
+/* The auth title is a sentence, often mixed Chinese and Latin: the prose font, not the mono skeleton. */
+.cb-auth-head > .cb-text[data-variant="h1"] {
+  font-family: var(--cb-font-prose);
+}
 .cb-auth-footer {
   color: var(--cb-muted);
 }

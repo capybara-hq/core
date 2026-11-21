@@ -68,9 +68,8 @@ describe("/apps/authorize", () => {
     const calls = stubApi(ROUTES);
     const { container } = await renderAuthRouteWithCache(PAGE, lastStubRoutes(), { locale: "zh" });
     expect(container.querySelector('[data-template="AuthPage"]')).not.toBeNull();
-    expect(
-      await screen.findByText("在 Ada's MacBook 上的 Capybara 桌面端登录 Example Corp？"),
-    ).toBeTruthy();
+    expect(await screen.findByText("在桌面端登录 Example Corp？")).toBeTruthy();
+    expect(screen.getByText("Ada's MacBook")).toBeTruthy();
     expect(screen.getByText(ME.account.email ?? ME.account.displayName)).toBeTruthy();
     expect(screen.getByRole("button", { name: "登录" })).toBeTruthy();
     expect(screen.getByRole("button", { name: "取消" })).toBeTruthy();
@@ -80,9 +79,7 @@ describe("/apps/authorize", () => {
   it("falls back to the product name when the platform has none (en)", async () => {
     stubApi({ ...ROUTES, "GET /api/v1/meta": () => json(200, { name: null }) });
     await renderAuthRouteWithCache(PAGE, lastStubRoutes(), { locale: "en" });
-    expect(
-      await screen.findByText("Sign in to Capybara with Capybara Desktop on Ada's MacBook?"),
-    ).toBeTruthy();
+    expect(await screen.findByText("Sign in to Capybara from the desktop app?")).toBeTruthy();
   });
 
   it.each(["zh", "en"] as const)("signing in posts the body and navigates (%s)", async (locale) => {
@@ -149,7 +146,7 @@ describe("/apps/authorize", () => {
     await renderAuthRouteWithCache(`/apps/authorize?${mobile.toString()}`, lastStubRoutes(), {
       locale: "zh",
     });
-    expect(await screen.findByText("在 iPhone 上的 Capybara 移动端登录 Acme？")).toBeTruthy();
+    expect(await screen.findByText("在移动端登录 Acme？")).toBeTruthy();
     expect(screen.getByText(zh.appAuth.clients.mobile.subtitle)).toBeTruthy();
     await userEvent.setup().click(screen.getByRole("button", { name: "登录" }));
     expect(await screen.findByText(zh.appAuth.doneHint)).toBeTruthy();

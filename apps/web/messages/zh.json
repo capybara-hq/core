@@ -3335,7 +3335,7 @@
   "appAuth": {
     "clients": {
       "desktop": {
-        "title": "在 {machine} 上的 Capybara 桌面端登录 {platform}？",
+        "title": "在桌面端登录 {platform}？",
         "subtitle": "只有在你刚从 Capybara 桌面端发起登录时才继续。",
         "machine": "机器",
         "invalidHint": "这个链接不完整。请回到 Capybara 桌面端重新发起登录。",
@@ -3343,7 +3343,7 @@
         "codeInvalid": "登录链接已失效，请在 Capybara 桌面端重新登录。"
       },
       "mobile": {
-        "title": "在 {machine} 上的 Capybara 移动端登录 {platform}？",
+        "title": "在移动端登录 {platform}？",
         "subtitle": "只有在你刚从 Capybara 移动端发起登录时才继续。",
         "machine": "设备",
         "invalidHint": "这个链接不完整。请回到 Capybara 移动端重新发起登录。",

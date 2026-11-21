@@ -3347,7 +3347,7 @@
   "appAuth": {
     "clients": {
       "desktop": {
-        "title": "Sign in to {platform} with Capybara Desktop on {machine}?",
+        "title": "Sign in to {platform} from the desktop app?",
         "subtitle": "Only continue if you just started this from the Capybara desktop app.",
         "machine": "Computer",
         "invalidHint": "This link is incomplete. Start signing in again from the Capybara desktop app.",
@@ -3355,7 +3355,7 @@
         "codeInvalid": "This sign-in link is invalid or has expired. Start signing in again from the Capybara desktop app."
       },
       "mobile": {
-        "title": "Sign in to {platform} with Capybara Mobile on {machine}?",
+        "title": "Sign in to {platform} from the mobile app?",
         "subtitle": "Only continue if you just started this from the Capybara mobile app.",
         "machine": "Device",
         "invalidHint": "This link is incomplete. Start signing in again from the Capybara mobile app.",
