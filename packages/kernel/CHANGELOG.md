@@ -1,5 +1,18 @@
 # @capybara-hq/kernel
 
+## 0.1.0-rc.62
+
+### Minor Changes
+
+- 8453226: The attachment and artifact download routes take `?as=url`: under the same session and org checks
+  they answer `{ url }` (the presigned location the 302 would send, `Cache-Control: private,
+  no-store`), so the web can hand a native shell's system browser a cookie-free download URL.
+
+### Patch Changes
+
+- Updated dependencies [0756b7b]
+  - @capybara-hq/plugin-sdk@0.1.0-rc.47
+
 ## 0.1.0-rc.61
 
 ### Minor Changes
