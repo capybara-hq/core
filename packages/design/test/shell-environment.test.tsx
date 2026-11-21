@@ -636,11 +636,9 @@ describe("desktop drag regions (desktop client spec §7.3)", () => {
         cls,
       ).toBe(true);
       expect(desktopRule(cls, /padding-right: max\([^;]*--cb-shell-reserve-end/), cls).toBe(true);
-      expect(desktopRule(cls, /(^|[^-])app-region: drag/), cls).toBe(true);
     }
     expect(desktopRule("cb-shell-float", /left: var\(--cb-float-start\)/)).toBe(true);
-    expect(
-      desktopRule("cb-shell-band", /width: max\(\s*min\(var\(--cb-shell-reserve-start\)/),
-    ).toBe(true);
+    expect(desktopRule("cb-shell-band", /width: max\(var\(--cb-shell-reserve-start\)/)).toBe(true);
+    expect(desktopRule("cb-pageheader-path", /min-height: var\(--cb-shell-row\)/)).toBe(true);
   });
 });

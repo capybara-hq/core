@@ -1193,10 +1193,6 @@ a.cb-object-name:hover {
   text-overflow: ellipsis;
   white-space: nowrap;
 }
-.cb-shared-grow {
-  flex: 1;
-  min-width: 0;
-}
 .cb-shared-body {
   flex: 1;
   min-height: 0;

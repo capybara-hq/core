@@ -138,6 +138,28 @@
     calc(var(--cb-shell-reserve-start) - var(--cb-space-2) - var(--cb-inset-left))
   );
 }
+/* With the lights at its start the full sidebar's brand row is lights, brand mark, filler, tools:
+   the wordmark gives way (it would push the tools past the sidebar), and whatever brand a theme
+   draws shrinks before the tools do. The wordmark returns in fullscreen. */
+:root[data-shell="desktop"]
+  .cb-shell
+  > .cb-sidebar[data-mode="full"]
+  .cb-sidebar-top
+  > :first-child {
+  min-width: 0;
+  overflow: hidden;
+}
+:root[data-shell="desktop"] .cb-shell > .cb-sidebar[data-mode="full"] .cb-sidebar-top-tools {
+  flex: none;
+}
+:root[data-shell="desktop"]
+  .cb-shell
+  > .cb-sidebar[data-mode="full"]
+  .cb-sidebar-top
+  .cb-logo-word {
+  max-width: max(0px, calc(1000px - var(--cb-shell-reserve-start) * 100000));
+  overflow: hidden;
+}
 :root[data-shell="desktop"] .cb-shell > .cb-sidebar[data-mode="rail"] {
   padding-top: max(
     0px,
@@ -177,6 +199,37 @@
   padding-right: max(var(--cb-space-4), calc(var(--cb-shell-reserve-end) + var(--cb-space-2)));
 }
 
+/* A template's head: its path row is the content column's top row on medium and expanded, as
+   high as the row and centred on the controls; past a rail it starts after the controls, and its
+   end keeps clear of end controls (a title-less head's actions share the row). Below 600 the
+   floating row is the top row instead. */
+@media (min-width: 600px) {
+  :root[data-shell="desktop"] .cb-shell-main .cb-template-head {
+    padding-top: max(0px, calc(var(--cb-space-5) - var(--cb-shell-row) * 100000));
+  }
+  :root[data-shell="desktop"] .cb-shell-main .cb-pageheader-path {
+    min-height: var(--cb-shell-row);
+    padding-left: max(
+      0px,
+      calc(var(--cb-shell-column-reserve) + var(--cb-space-3) - var(--cb-content-pad))
+    );
+  }
+  :root[data-shell="desktop"] .cb-shell-main :is(.cb-pageheader-path, .cb-pageheader-titleless) {
+    padding-right: max(
+      0px,
+      calc(
+        var(--cb-shell-reserve-end) +
+        var(--cb-space-2) -
+        var(--cb-content-pad) -
+        var(--cb-inset-right)
+      )
+    );
+  }
+  :root[data-shell="desktop"] .cb-shell-main .cb-pageheader-titleless .cb-pageheader-path {
+    padding-right: 0;
+  }
+}
+
 /* Below 600 the floating row is the top row: centred on the controls and clear of them. */
 :root[data-shell="desktop"] .cb-shell {
   --cb-float-top: max(
@@ -205,13 +258,13 @@
   }
 }
 
-/* Window drag regions (desktop client spec §7.3): the controls' own area of the top row
-   (`.cb-shell-band`, a real element drawn by the AppShell: a pseudo-element's drag region is not
-   reliably honoured; across the whole window while there is a band), the sidebar's brand row,
-   the compact top bar, the conversation title bar and the shared file page's bar move the window;
-   every control inside them stays clickable. The band element covers only space the rows above
-   keep empty, so it never lies over a control: past a rail the content column's own rows lie
-   under the controls, so it stops at the rail's edge. */
+/* Window drag regions (desktop client spec §7.3 "The top row"). In Electron a drag region swallows
+   every mouse event over it whatever is stacked above it, and a control inside one cannot be used,
+   so only dedicated empty fillers drag: the flex spacers the templates draw between a top row's
+   controls (`.cb-drag-fill`: the sidebar's brand row, the conversation title bar, the page head's
+   path row, the shared file page's bar) and the controls area itself (`.cb-shell-band`, a real
+   element the AppShell draws over the space every row there keeps empty; across the whole window
+   while there is a band). Never a container that holds controls (drag-regions.test.tsx). */
 .cb-shell-band {
   display: none;
 }
@@ -220,32 +273,45 @@
   position: absolute;
   top: 0;
   left: 0;
-  width: max(
-    min(var(--cb-shell-reserve-start), calc(var(--cb-inset-left) + var(--cb-shell-lead))),
-    min(100%, calc(var(--cb-shell-band) * 100000))
-  );
+  width: max(var(--cb-shell-reserve-start), min(100%, calc(var(--cb-shell-band) * 100000)));
   height: max(var(--cb-shell-band), var(--cb-shell-row-start));
-  -webkit-app-region: drag;
-  app-region: drag;
 }
 :root[data-shell="desktop"] .cb-shell[data-banner="true"] > .cb-shell-band {
   width: 100%;
   height: max(var(--cb-shell-band), var(--cb-shell-row));
 }
-:root[data-shell="desktop"] :is(.cb-sidebar-top, .cb-title-bar, .cb-shared-bar) {
+:root[data-shell="desktop"] .cb-drag-fill,
+:root[data-shell="desktop"] .cb-shell-band {
   -webkit-app-region: drag;
   app-region: drag;
 }
-:root[data-shell="desktop"]
-  :is(.cb-sidebar-top, .cb-title-bar, .cb-shared-bar)
-  :is(a, button, input, select, textarea, summary, label, [role], [tabindex]) {
+/* While an overlay is open (a menu, a popover, a tooltip, a toast, a dialog, a sheet, the palette,
+   a drawer) no filler drags: an overlay that lands over one (the org switcher's menu, the title
+   menu) stays clickable and hoverable everywhere, and the window does not move under a modal. */
+:root[data-shell="desktop"]:has(
+  :is(
+      .cb-scrim,
+      .cb-dialog,
+      .cb-sheet,
+      .cb-bsheet,
+      .cb-menu,
+      .cb-popover,
+      .cb-cmenu,
+      .cb-tooltip,
+      .cb-toast,
+      .cb-palette,
+      .cb-viewer,
+      .cb-conv-sheet,
+      .cb-sidebar-layer,
+      .cb-drawer
+    )
+) :is(.cb-drag-fill, .cb-shell-band) {
   -webkit-app-region: no-drag;
   app-region: no-drag;
 }
 
-/* Overlays are portaled under <body>, over the drag regions: a drag region under them would
-   swallow their clicks, so each overlay root is no-drag (its scrim too: while a modal is open the
-   window does not drag from the band). */
+/* Every overlay root is no-drag as well (Chromium subtracts a later no-drag region from earlier
+   drag regions), so an overlay opened before the rule above applies is never a drag region. */
 :root[data-shell="desktop"]
 :is(
   .cb-scrim,

@@ -5,6 +5,7 @@ import { SkeletonText } from "../display/skeleton";
 import { Icon } from "../icons/icon";
 import { BoxScope } from "../layout/box";
 import { useDesignT } from "../provider";
+import { DragFill } from "../shell/drag-fill";
 
 export type SharedFilePageProps = {
   /** The file name; an empty string while loading draws a skeleton bar. */
@@ -63,7 +64,7 @@ export function SharedFilePage({
           ) : loading ? (
             <SkeletonText width={160} size="small" />
           ) : null}
-          <span className="cb-shared-grow" />
+          <DragFill />
           {onDownload && !loading ? (
             <Button onClick={onDownload}>
               <Icon name="download" size={14} />

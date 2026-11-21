@@ -7,6 +7,7 @@ import { Icon } from "../icons/icon";
 import type { IconName } from "../icons/paths";
 import { Dialog } from "../overlays/dialog";
 import { useDesignLink, useDesignT } from "../provider";
+import { DragFill } from "../shell/drag-fill";
 import { SIZE_CLASS_QUERIES } from "../shell/size-class";
 import { useMediaQuery } from "../shell/use-media-query";
 import { ConvMenu, type ConvMenuEntry } from "./menu";
@@ -195,6 +196,7 @@ export function TitleBar({
           entries={entries}
         />
       )}
+      <DragFill />
       <IconButton
         part="title-bar-button"
         label={t("titlebar.properties")}
@@ -294,6 +296,7 @@ export function NewTitleBar(): JSX.Element {
       <span className="cb-title-btn" data-part="title" data-untitled="true">
         <span className="cb-title-text">{t("titlebar.new")}</span>
       </span>
+      <DragFill />
     </header>
   );
 }

@@ -97,6 +97,13 @@
   flex-direction: column;
   min-height: 0;
 }
+/* A top row's drag filler (DragFill): the empty room between a row's controls, the row's full
+   height. Only the desktop shell makes it drag (shell-environment.css); elsewhere a spacer. */
+.cb-drag-fill {
+  flex: 1 1 0;
+  align-self: stretch;
+  min-width: 0;
+}
 
 /* The chat-first compact shell (spec §4.6, §4.7, §6.55): below 600 the floating row lies over the
    page's top, under the OS top inset: the menu button on a chat surface, back on a pushed page.

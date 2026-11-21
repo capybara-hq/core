@@ -737,7 +737,9 @@ declare global {
   height, centred on the controls, each keeping clear of the rectangle where it overlaps it
   (`--cb-shell-reserve-start|end`, the side being the half of the window the rectangle's centre
   lies in); full-height overlays start below the row on their controls' side. Window
-  **drag regions** (`app-region: drag`) on the sidebar head and the conversation title bar, with `app-region: no-drag` on every interactive element inside them.
+  **drag regions** (`app-region: drag`) only on dedicated empty fillers the templates draw
+  (`DragFill` between a top row's controls, the controls area itself), never on a container that
+  holds controls, and none while an overlay is open (desktop spec §7.3).
   Desktop-specific choices beyond that (which region drags, how wide) are the desktop spec's,
   realized in design CSS.
 - **Features** that use a capability live in one small adapter in apps/web

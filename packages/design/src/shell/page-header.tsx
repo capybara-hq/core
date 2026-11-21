@@ -12,6 +12,7 @@ import { Icon } from "../icons/icon";
 import type { IconName } from "../icons/paths";
 import { Menu, type MenuItem, menuActions, menuLone } from "../overlays/index";
 import { LinkPendingMark, useDesignLink, useDesignT } from "../provider";
+import { DragFill } from "./drag-fill";
 import { useRegisterShellPage } from "./shell-page";
 import { SIZE_CLASS_QUERIES } from "./size-class";
 import { useHydrated, useMediaQuery } from "./use-media-query";
@@ -263,6 +264,7 @@ export function PageHeader(p: PageHeaderProps) {
             </Fragment>
           );
         })}
+        <DragFill />
       </nav>
     ) : null;
   const actionsNode =
