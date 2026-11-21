@@ -1,5 +1,9 @@
 # @capybara-hq/capybara
 
+## 0.1.0-rc.78
+
+No changes in this release.
+
 ## 0.1.0-rc.77
 
 ### Patch Changes
