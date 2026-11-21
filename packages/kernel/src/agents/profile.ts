@@ -1,20 +1,26 @@
 import { randomInt } from "node:crypto";
+import {
+  BUILTIN_AVATAR_PRESET_IDS,
+  type BuiltinAvatarPresetId,
+  CATALOG_ITEM_NAME_RE,
+  THEME_AVATAR_ID_RE,
+} from "@capybara-hq/plugin-sdk";
 import { z } from "zod";
 
 /** The ten built-in pixel-animal avatars (drawn by `@capybara-hq/design`). */
-export const PRESET_IDS = [
-  "capybara",
-  "black-bear",
-  "panda",
-  "elephant",
-  "fox",
-  "owl",
-  "penguin",
-  "rabbit",
-  "turtle",
-  "whale",
-] as const;
-export type PresetId = (typeof PRESET_IDS)[number];
+export const PRESET_IDS = BUILTIN_AVATAR_PRESET_IDS;
+export type PresetId = BuiltinAvatarPresetId;
+
+/** A pattern's source without its `^` / `$` anchors. */
+const body = (re: RegExp) => re.source.replace(/^\^/, "").replace(/\$$/, "");
+
+/**
+ * A theme avatar preset's key (theme brand coverage spec §4): `<plugin>/<theme file id>/<preset
+ * id>`, the plugin and theme ids as catalog item names, the preset id as {@link THEME_AVATAR_ID_RE}.
+ */
+export const THEME_PRESET_KEY_RE = new RegExp(
+  `^${body(CATALOG_ITEM_NAME_RE)}/${body(CATALOG_ITEM_NAME_RE)}/${body(THEME_AVATAR_ID_RE)}$`,
+);
 
 export const PROFILE_LIMITS = {
   description: 500,
@@ -31,6 +37,17 @@ export function randomPreset(): PresetId {
 export const AgentAvatarSchema = z.discriminatedUnion("kind", [
   z.object({ kind: z.literal("preset"), id: z.enum(PRESET_IDS) }).strict(),
   z.object({ kind: z.literal("upload"), uploadId: z.string().min(1).max(200) }).strict(),
+  // a theme preset pinned to the theme version it was chosen from (theme brand coverage spec §4);
+  // only produced by the kernel from a preset key, never accepted from a client
+  z
+    .object({
+      kind: z.literal("theme"),
+      themeId: z.string().min(1).max(200),
+      version: z.string().min(1).max(64),
+      preset: z.string().regex(THEME_AVATAR_ID_RE),
+      file: z.string().min(1).max(512),
+    })
+    .strict(),
   // only produced by the migration of `definition.avatarUrl`; never accepted from a client
   z.object({ kind: z.literal("external"), url: z.url() }).strict(),
 ]);
@@ -48,10 +65,23 @@ export type QuickAction = z.infer<typeof QuickActionSchema>;
 export const DescriptionSchema = z.string().max(PROFILE_LIMITS.description);
 export const QuickActionsSchema = z.array(QuickActionSchema).max(PROFILE_LIMITS.quickActions);
 
-/** What a client may write (`external` is migrated data only). */
-/** A preset avatar: the only kind the `Platform` tool sets (an upload is the web's). */
+/** What a client may write (`external` is migrated data only, `theme` the kernel's). */
+/**
+ * A preset avatar: the only kind the `Platform` tool sets (an upload is the web's). `id` is a
+ * built-in preset id or a theme preset key ({@link THEME_PRESET_KEY_RE}; the org's theme listing
+ * returns the keys it offers).
+ */
 export const PresetAvatarSchema = z
-  .object({ kind: z.literal("preset"), id: z.enum(PRESET_IDS) })
+  .object({
+    kind: z.literal("preset"),
+    id: z.union([
+      z.enum(PRESET_IDS),
+      z.string().regex(THEME_PRESET_KEY_RE, {
+        message:
+          "id must be a built-in preset id or a theme preset key <plugin>/<theme>/<preset> from the org's theme listing (avatars.presets[].key)",
+      }),
+    ]),
+  })
   .strict();
 
 export const AvatarInputSchema = z.discriminatedUnion("kind", [

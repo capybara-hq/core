@@ -6,7 +6,10 @@ import { DEFAULT_ORG_THEME, readOrgSettings } from "../orgs/settings.service.js"
 import {
   eligiblePlatformDefault,
   type ListedTheme,
+  type OrgAvatars,
+  type ThemeDefinition,
   type ThemeRef,
+  themeAvatarPresets,
   themeDefinitions,
   themeOnForAccount,
   themeOnIn,
@@ -27,6 +30,12 @@ export interface OrgThemes {
    * chosen; resolution skips it): the UI shows it as unavailable, not as selected.
    */
   org: { id: string | null; personal: "allowed" | "locked" };
+  /**
+   * The agent avatar presets of the org's effective default theme ({@link ThemesService.avatarPresets};
+   * the same for every member, never the viewer's pick): the built-ins it hides and the presets it
+   * adds, whose `key` an avatar input sends as its preset id.
+   */
+  avatars: { hidden: string[]; presets: { key: string; name: LocalizedName; url: string }[] };
 }
 
 /**
@@ -102,7 +111,41 @@ export class ThemesService {
       const { swatches: _swatches, ...ref } = hit;
       resolved = ref;
     }
-    return { themes, resolved, org: { id: org.id, personal: org.personal } };
+    const { hidden, presets } = await this.avatarPresets(orgId);
+    return {
+      themes,
+      resolved,
+      org: { id: org.id, personal: org.personal },
+      avatars: { hidden, presets: presets.map(({ key, name, url }) => ({ key, name, url })) },
+    };
+  }
+
+  /**
+   * The org's effective default theme (theme brand coverage spec §4): the org's default if it is
+   * on in the org, else the platform default if it is on in the org, else null. The same
+   * predicates as {@link forOrg} without the personal pick: what every member of the org shares.
+   */
+  async orgDefault(orgId: string): Promise<(ThemeDefinition & { id: string }) | null> {
+    const org = (await readOrgSettings(this.db.db, orgId)).theme ?? DEFAULT_ORG_THEME;
+    const platform = (await readUiTheme(this.db.db)).id;
+    for (const id of [org.id, platform]) {
+      if (id === null || !(await themeOnIn(this.db.db, orgId, id))) continue;
+      const d = (await themeDefinitions(this.db.db, [id])).get(id);
+      if (d) return { id, ...d };
+    }
+    return null;
+  }
+
+  /**
+   * The agent avatar presets of the org's effective default theme ({@link orgDefault}): the
+   * built-ins it hides and the presets it adds, each with what a stored avatar pins. No default
+   * theme in effect: nothing hidden, no presets.
+   */
+  async avatarPresets(orgId: string): Promise<OrgAvatars> {
+    const d = await this.orgDefault(orgId);
+    return d
+      ? themeAvatarPresets(d.id, d.version, d.definition, d.plugin)
+      : { hidden: [], presets: [] };
   }
 
   /** A live theme's name (the super admin's summaries); null when there is no such theme. */
