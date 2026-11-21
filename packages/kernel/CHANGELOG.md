@@ -1,5 +1,27 @@
 # @capybara-hq/kernel
 
+## 0.1.0-rc.63
+
+### Minor Changes
+
+- 56af2e0: Add the `bootstrap.extraManifest` and `marketplaces.tokens` config fields for a second bootstrap manifest.
+- b491e2a: Install the `git` entries of the extra bootstrap manifest: the tree at the pinned commit (or its pack
+  from the offline directory), verified against the entry's integrity before anything is imported,
+  with the marketplace's token and username sent only to its origin, and recorded as the
+  config-managed marketplace's source. New error code `bootstrap.git_read_failed`.
+- 24fa482: Marketplaces declared by the extra bootstrap manifest are owned by the config (read-only except `enabled`, token from `marketplaces.tokens`), and every marketplace can store the git username its token is sent with.
+- 59e2551: Merge the extra bootstrap manifest into the built-in one at start and in `capybara bootstrap` (`--extra-manifest`, else `bootstrap.extraManifest`), and sync its marketplaces.
+- 8416855: Apply the extra bootstrap manifest's `defaultTheme` as the platform default theme at every start while the `uiTheme` setting is still the seed (a super admin's choice is never reset); the dual-replica harness takes `bootstrap.extraManifest`.
+
+### Patch Changes
+
+- 13369a0: Add `capybara-plugin bootstrap --check|--write` to validate and pin a distribution's extra bootstrap
+  manifest (git entries are pinned to the kernel's canonical pack; every git entry is read from
+  `--root`, and `--marketplace <name>` limits the run to one marketplace's repository), and export
+  `packPackageTgz` from the kernel.
+- Updated dependencies [09a0bc5]
+  - @capybara-hq/plugin-sdk@0.1.0-rc.48
+
 ## 0.1.0-rc.62
 
 ### Minor Changes

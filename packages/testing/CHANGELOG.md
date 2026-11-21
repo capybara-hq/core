@@ -1,5 +1,24 @@
 # @capybara-hq/testing
 
+## 0.1.0-rc.31
+
+### Minor Changes
+
+- 8416855: Apply the extra bootstrap manifest's `defaultTheme` as the platform default theme at every start while the `uiTheme` setting is still the seed (a super admin's choice is never reset); the dual-replica harness takes `bootstrap.extraManifest`.
+
+### Patch Changes
+
+- Updated dependencies [56af2e0]
+- Updated dependencies [09a0bc5]
+- Updated dependencies [b491e2a]
+- Updated dependencies [24fa482]
+- Updated dependencies [59e2551]
+- Updated dependencies [8416855]
+- Updated dependencies [13369a0]
+  - @capybara-hq/kernel@0.1.0-rc.63
+  - @capybara-hq/plugin-sdk@0.1.0-rc.48
+  - @capybara-hq/plugin-tools@0.1.0-rc.18
+
 ## 0.1.0-rc.30
 
 ### Minor Changes

@@ -1,5 +1,12 @@
 # @capybara-hq/design
 
+## 0.2.0-rc.28
+
+### Patch Changes
+
+- 8c0ca79: Desktop app: the web runs to the window's top edge. The traffic lights sit in the sidebar's brand
+  row, centred on it, and the conversation title bar shares that row; no empty band above the page.
+
 ## 0.2.0-rc.27
 
 ### Patch Changes
