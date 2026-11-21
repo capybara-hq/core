@@ -2,7 +2,7 @@ import "@capybara-hq/design/styles.css";
 // A server component imports only the stateless subpaths (the main entry holds createContext, a
 // client module).
 import { ShellEnvironmentScript } from "@capybara-hq/design/shell-environment";
-import { PAGE_BACKGROUND, parseTheme, THEME_COOKIE } from "@capybara-hq/design/theme";
+import { parseTheme, THEME_COOKIE } from "@capybara-hq/design/theme";
 import type { Metadata, Viewport } from "next";
 import { cookies, headers } from "next/headers";
 import { NextIntlClientProvider } from "next-intl";
@@ -12,12 +12,17 @@ import { DesignRoot } from "../components/design-root";
 import { QueryProvider } from "../components/QueryProvider";
 import { isAppLocale, routing } from "../i18n/routing";
 import type { PlatformMeta } from "../lib/app-auth";
+import { BRAND_COOKIE, decodeBrandCookie } from "../lib/brand-cookie";
 import { NONCE_HEADER } from "../lib/headers";
 import { DEFAULT_PLATFORM_NAME } from "../lib/platform-icons";
 import { platformMetaQuery } from "../lib/query/app-auth";
+import { platformThemeQuery } from "../lib/query/themes";
+import { outsideTheme } from "../lib/server/outside-theme";
+import { currentCookie } from "../lib/server/page";
 import { serverQueryClient } from "../lib/server/query";
+import type { ThemeRef } from "../lib/themes";
 import { parseTimeZone, TIME_ZONE_COOKIE } from "../lib/time";
-import { platformIconsMetadata } from "../lib/web-manifest";
+import { platformIconsMetadata, rootViewport } from "../lib/web-manifest";
 // Server components' loaders (`apiFetch`) reach the kernel through the server transport.
 import "../lib/server/register";
 
@@ -33,22 +38,15 @@ const regularFont = new URL(
 const REGULAR_FONT = `${regularFont.pathname}${regularFont.search}`;
 
 /**
- * The viewport (mobile layout spec §7.1, §7.5): edge to edge (`viewport-fit=cover`, the design
- * pads by the safe areas through `--cb-inset-*`), Chromium on Android shrinks the layout viewport
- * for the keyboard (`resizes-content`; iOS ignores it and keeps the AppShell's visualViewport
- * path), and the browser chrome takes the page's background per scheme. Pinch zoom stays: no
- * `maximum-scale`, no `user-scalable`.
+ * The viewport ({@link rootViewport}): edge to edge, and the browser chrome in the page colour of
+ * the scheme this document renders (`cb-theme`) under the outside-theme reference (the brand
+ * cookie, else the platform default; theme brand coverage spec §6). The route-group layouts
+ * override the colour with their resolved theme's.
  */
-export const viewport: Viewport = {
-  width: "device-width",
-  initialScale: 1,
-  viewportFit: "cover",
-  interactiveWidget: "resizes-content",
-  themeColor: [
-    { media: "(prefers-color-scheme: light)", color: PAGE_BACKGROUND.light },
-    { media: "(prefers-color-scheme: dark)", color: PAGE_BACKGROUND.dark },
-  ],
-};
+export async function generateViewport(): Promise<Viewport> {
+  const scheme = parseTheme((await cookies()).get(THEME_COOKIE)?.value);
+  return rootViewport(scheme, await outsideTheme());
+}
 
 /**
  * The document's title, the iOS web app title, and the page icons follow the deployment (mobile
@@ -57,18 +55,23 @@ export const viewport: Viewport = {
  */
 export async function generateMetadata(): Promise<Metadata> {
   const t = await getTranslations("metadata");
-  let meta: PlatformMeta | null = null;
-  try {
-    meta = await serverQueryClient().fetchQuery({ ...platformMetaQuery(), retry: false });
-  } catch {
-    // an unreachable kernel: the defaults
-  }
+  const qc = serverQueryClient();
+  // an unreachable kernel: the defaults
+  const [meta, theme, cookie] = await Promise.all([
+    qc.fetchQuery({ ...platformMetaQuery(), retry: false }).catch((): PlatformMeta | null => null),
+    qc.fetchQuery({ ...platformThemeQuery(), retry: false }).catch((): ThemeRef | null => null),
+    currentCookie(BRAND_COOKIE),
+  ]);
   const name = meta?.name ?? DEFAULT_PLATFORM_NAME;
+  const icons = platformIconsMetadata(meta, theme);
+  // the favicon follows the theme this browser last drew (theme brand coverage spec §5); the
+  // route-group layouts set their own
+  const favicon = decodeBrandCookie(cookie)?.faviconUrl ?? null;
   return {
     title: name,
     description: t("description"),
     appleWebApp: { capable: true, title: name, statusBarStyle: "black-translucent" },
-    icons: platformIconsMetadata(meta),
+    icons: favicon === null ? icons : { ...icons, icon: favicon },
   };
 }
 
