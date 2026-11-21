@@ -109,7 +109,7 @@ function ChildRecord({
   const child = useConversation(orgId, subagentId);
   const keys = useMemo(() => toolKeysOf(child.events), [child.events]);
   const info = useToolInfo(orgId, subagentId, keys);
-  const whoWaits = useWhoWaits(orgId, child.events);
+  const whoWaits = useWhoWaits(child.people);
   const entries = useMemo(
     () => buildTimeline(child.events, child.state.drafts, info, locale, { whoWaits }),
     [child.events, child.state.drafts, info, locale, whoWaits],
@@ -180,6 +180,7 @@ function ChildRecord({
         conversationId={subagentId}
         entries={entries}
         info={info}
+        people={child.people}
         reasoningOf={reasoningOf}
         {...(onOpenAgent ? { onOpenAgent } : {})}
         {...(onOpenAgentMap ? { onOpenAgentMap } : {})}

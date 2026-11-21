@@ -7,7 +7,12 @@ import { useEffect, useState } from "react";
 import { FormError } from "../../../../components/form-error";
 import { useRouter } from "../../../../i18n/navigation";
 import { ApiClientError } from "../../../../lib/api";
-import { type AuthorizeAppBody, authorizeApp, authorizeRequest } from "../../../../lib/app-auth";
+import {
+  type AuthorizeAppBody,
+  appClientOf,
+  authorizeApp,
+  authorizeRequest,
+} from "../../../../lib/app-auth";
 import { loginPathFor } from "../../../../lib/auth-sources";
 import { navigateBrowser } from "../../../../lib/browser";
 import { usePreferences } from "../../../../lib/preferences";
@@ -21,20 +26,30 @@ type Query = Readonly<Record<string, string | undefined>>;
 
 const needsLogin = (e: unknown) => e instanceof ApiClientError && e.status === 401;
 
+/** The errors whose copy names the app that asked (`appAuth.clients.<client>.<key>`). */
+const CLIENT_ERRORS: Readonly<Partial<Record<string, "redirectUriInvalid" | "codeInvalid">>> = {
+  "app_auth.redirect_uri_invalid": "redirectUriInvalid",
+  "app_auth.code_invalid": "codeInvalid",
+};
+
 /**
- * `/apps/authorize`: the one confirmation before the Capybara desktop app is signed in (desktop
- * client spec §6.5). the Sign in and Cancel buttons post the kernel's authorize route (Cancel with `deny`); the page
- * navigates only to the redirect the kernel returned, never to the query's `redirect_uri`, and
- * not at all when the kernel refused.
+ * `/apps/authorize`: the one confirmation before a Capybara app (`client`: the desktop app, desktop
+ * client spec §6.5, or the mobile app, mobile spec §4.3) is signed in. The Sign in and Cancel
+ * buttons post the kernel's authorize route (Cancel with `deny`); the page navigates only to the
+ * redirect the kernel returned, never to the query's `redirect_uri`, and not at all when the
+ * kernel refused. An unknown `client` is an invalid link.
  */
 export default function AppAuthorizeView({ query }: { query: Query }) {
   const request = authorizeRequest(query);
   const t = useTranslations("appAuth");
   const preferences = usePreferences();
   if (request === null) {
+    const client = appClientOf(query);
     return (
       <AuthPage title={t("invalidTitle")} preferences={preferences}>
-        <FormError message={t("invalidHint")} />
+        <FormError
+          message={client === null ? t("invalidHint") : t(`clients.${client}.invalidHint`)}
+        />
       </AuthPage>
     );
   }
@@ -110,15 +125,18 @@ function Consent({ request }: { request: AuthorizeAppBody }) {
       navigateBrowser(r.redirect);
     } catch (e) {
       if (needsLogin(e)) router.replace(loginPathFor(here));
-      else setError(errorMessage(e));
+      else {
+        const key = e instanceof ApiClientError ? CLIENT_ERRORS[e.code] : undefined;
+        setError(key === undefined ? errorMessage(e) : t(`clients.${request.client}.${key}`));
+      }
     }
   };
 
   const platform = meta.data?.name ?? tc("appName");
   return (
     <AuthPage
-      title={t("title", { machine: request.name, platform })}
-      subtitle={t("subtitle")}
+      title={t(`clients.${request.client}.title`, { machine: request.name, platform })}
+      subtitle={t(`clients.${request.client}.subtitle`)}
       preferences={preferences}
     >
       <Stack gap={16}>
@@ -126,7 +144,7 @@ function Consent({ request }: { request: AuthorizeAppBody }) {
           keyWidth="10ch"
           rows={[
             { k: t("account"), v: account.email ?? account.displayName },
-            { k: t("machine"), v: request.name },
+            { k: t(`clients.${request.client}.machine`), v: request.name },
             { k: t("appVersion"), v: versionLabel(request.appVersion) },
           ]}
         />

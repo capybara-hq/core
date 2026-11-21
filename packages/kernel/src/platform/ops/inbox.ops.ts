@@ -14,6 +14,7 @@ import { roleAtLeast } from "../../orgs/roles.js";
 import { defineOperation, type PrecheckResult } from "../operation.js";
 import { PlatformOperations } from "../registry.js";
 import { approvalRow } from "./approvals.ops.js";
+import { listCard } from "./list-handoff.js";
 import { Cursor, pageOf, startOf } from "./paging.js";
 import { named, orElse } from "./summary.js";
 
@@ -211,6 +212,14 @@ function platformRow(i: PlatformInboxItem) {
         summary: platformNoticeSummary(i.notice.detail),
         next: "Dismiss it with inbox.platform-dismiss-notice once read.",
       };
+    case "push_auth_failed":
+      return {
+        ...base,
+        name: i.notice.detail.plugin,
+        state: "open",
+        summary: `The push provider ${i.notice.detail.plugin} had its credentials refused on a delivery; pushes through it fail until its deployment config is fixed.`,
+        next: "Fix the extension's deployment config in the admin console, then dismiss it with inbox.platform-dismiss-notice.",
+      };
   }
 }
 
@@ -251,17 +260,18 @@ export class InboxOperations implements OnModuleInit {
     return { ...base, kind: row.kind, detail: row.detail } as OrgNoticeView;
   }
 
-  /** A platform notice by id (dismissed or not), or null. */
-  private async platformNotice(id: string) {
+  /** A platform notice's subject name by id (dismissed or not), or null. */
+  private async platformNotice(id: string): Promise<{ name: string } | null> {
     if (!UUID_RE.test(id)) return null;
     const row = await this.kdb.db
       .selectFrom("platform_notices")
-      .select(["id", "detail"])
+      .select(["id", "kind", "detail"])
       .where("id", "=", id)
       .executeTakeFirst();
-    return row === undefined
-      ? null
-      : (row.detail as unknown as PlatformNoticeDetails["ownership_transferred"]);
+    if (row === undefined) return null;
+    return row.kind === "push_auth_failed"
+      ? { name: (row.detail as unknown as PlatformNoticeDetails["push_auth_failed"]).plugin }
+      : { name: (row.detail as unknown as PlatformNoticeDetails["ownership_transferred"]).name };
   }
 
   /** Org ids that own each of `itemIds` (platform items: absent). */
@@ -294,6 +304,11 @@ export class InboxOperations implements OnModuleInit {
             truncated: view.truncated,
           };
         },
+        handoff: (_i, result) =>
+          listCard(result, "/inbox", {
+            zh: "打开收件箱处理待办",
+            en: "Open the inbox to decide what waits",
+          }),
       }),
       defineOperation({
         id: "inbox.dismiss-notice",
@@ -330,6 +345,8 @@ export class InboxOperations implements OnModuleInit {
           await this.inbox.dismissNotice(ctx.orgId, ctx.actorAccountId, input.id);
           return { dismissed: input.id };
         },
+        noHandoff:
+          "A dismissal: nothing waits for the person afterwards, the sentence only says where approvals are decided.",
       }),
       defineOperation({
         id: "inbox.platform-list",
@@ -379,11 +396,16 @@ export class InboxOperations implements OnModuleInit {
             otherOrgItems: view.items.length - shown.length,
           };
         },
+        handoff: (_i, result) =>
+          listCard(result, "/admin/inbox", {
+            zh: "打开平台收件箱处理待办",
+            en: "Open the platform inbox to decide what waits",
+          }),
       }),
       defineOperation({
         id: "inbox.platform-dismiss-notice",
         description:
-          "Dismiss a platform notice (super admin) for every super admin: the id of an ownership_transferred row from inbox.platform-list. Other platform inbox items go away when they are dealt with in the admin console.",
+          "Dismiss a platform notice (super admin) for every super admin: the id of an ownership_transferred or push_auth_failed row from inbox.platform-list. Other platform inbox items go away when they are dealt with in the admin console.",
         input: NoticeInput,
         example: NOTICE_EXAMPLE,
         authz: { superAdmin: true },
@@ -392,7 +414,7 @@ export class InboxOperations implements OnModuleInit {
         errors: [
           {
             code: "inbox.notice_not_found",
-            next: "No platform notice has that id; list them with inbox.platform-list (ownership_transferred rows).",
+            next: "No platform notice has that id; list them with inbox.platform-list (ownership_transferred and push_auth_failed rows).",
           },
         ],
         precheck: async (input) =>

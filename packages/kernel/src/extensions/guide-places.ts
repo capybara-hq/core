@@ -32,12 +32,17 @@ export type UnresolvedReason =
   /** Rendered for the platform (the super admin's preview), not for an org. */
   | "no_org";
 
-/** The org action each audience of a place needs besides `catalog.read` (spec §9.1). */
+/**
+ * The org action each audience of a place needs besides `catalog.read` (spec §9.1).
+ * `extension-deployment` has none: its guides are the super admin's (the admin extension routes),
+ * so an org route refuses them (`forbidden`).
+ */
 export const PLACE_ACTIONS: Readonly<
   Record<SetupGuidePlace, Readonly<Partial<Record<SetupGuideAudience, OrgAction>>>>
 > = {
   "channel-connection": { admin: "channels.manage" },
   "connector-template": { admin: "connectors.manage", member: "connectors.use" },
+  "extension-deployment": {},
 };
 
 /** The object a guide is rendered for. */
@@ -87,6 +92,7 @@ const invalidQuery = (path: string, message: string) =>
 const TARGET_PARAMS: Record<SetupGuidePlace, readonly (keyof GuideTargetQuery)[]> = {
   "channel-connection": ["connectionId", "name"],
   "connector-template": ["connectorId"],
+  "extension-deployment": [],
 };
 
 /**
@@ -135,7 +141,7 @@ export async function resolvePlace(ctx: PlaceContext): Promise<PlaceResolution> 
       target = { kind: "channel-connection", id: connection.id };
       storedMode = connection.inbound_mode;
     }
-  } else {
+  } else if (place === "connector-template") {
     const connector =
       ctx.query.connectorId === undefined
         ? undefined
@@ -148,6 +154,7 @@ export async function resolvePlace(ctx: PlaceContext): Promise<PlaceResolution> 
     reasons.connectorName = "no_connector";
     if (connector !== undefined) target = { kind: "connector", id: connector.id };
   }
+  // `extension-deployment`: the common variables only, no org and no target (the deployment)
   reasons.publicUrl = "public_url";
   reasons.signInCallbackUrl = "public_url";
   reasons.oauthCallbackUrl = "public_url";

@@ -26,6 +26,36 @@ export interface Preferences {
 }
 export class PreferencesBody extends createZodDto(PreferencesSchema, "PreferencesBody") {}
 
+/**
+ * `POST /me/avatar/uploads`: the image to upload. The type (png / jpeg / webp) and the 2 MB limit
+ * are checked by the service, so they answer `attachment.type_not_allowed` / `attachment.too_large`
+ * like the agent avatar's codes.
+ */
+export const AvatarUploadSchema = z
+  .object({
+    contentType: z.string().min(1).max(200),
+    size: z.number().int().min(1),
+  })
+  .strict();
+export class AvatarUploadBody extends createZodDto(AvatarUploadSchema, "AccountAvatarUploadBody") {}
+
+/**
+ * `PATCH /me/profile`: a field left out keeps its value. `displayName` is trimmed; the 1000 bound
+ * is a body sanity bound, a changed name must have at most 64 code points (the service checks,
+ * `account.display_name_too_long`). `avatar: null` removes the own avatar.
+ */
+export const ProfilePatchSchema = z
+  .object({
+    displayName: z.string().trim().min(1).max(1000).optional(),
+    avatar: z
+      .object({ kind: z.literal("upload"), uploadId: z.string().min(1).max(100) })
+      .strict()
+      .nullable()
+      .optional(),
+  })
+  .strict();
+export class ProfilePatchBody extends createZodDto(ProfilePatchSchema, "ProfilePatchBody") {}
+
 /** The `/me` routes the Platform operations mirror (`check:platform-ops` keys). */
 export const ME_ROUTES: readonly RouteSchemas[] = [
   { route: "GET /api/v1/me/preferences" },

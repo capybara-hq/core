@@ -638,3 +638,54 @@ describe("the quick actions menu with 100 items", () => {
     expect(screen.queryByRole("menu")).toBeNull();
   });
 });
+
+describe("the composer's settings chip (touch, §6.16.2)", () => {
+  const realMatchMedia = window.matchMedia;
+  afterEach(() => {
+    window.matchMedia = realMatchMedia;
+  });
+
+  it("keeps the thinking choice a Segmented under the touch query and a radio list otherwise", async () => {
+    const box = (
+      <DesignProvider locale="zh">
+        <ComposerBox
+          value=""
+          onChange={() => {}}
+          placeholder="p"
+          onAttach={() => {}}
+          pickers={{
+            model: { label: "模型", value: "m", groups: [], onPick: () => {} },
+            effort: {
+              label: "思考档位",
+              value: "中",
+              groups: [
+                {
+                  items: ["低", "中", "高"].map((l) => ({ id: l, label: l, checked: l === "中" })),
+                },
+              ],
+              onPick: () => {},
+            },
+          }}
+          send={{ mode: "send", onClick: () => {} }}
+        />
+      </DesignProvider>
+    );
+    const open = async () => {
+      await userEvent.click(
+        document.querySelector('[data-part="composer-options"]') as HTMLElement,
+      );
+      return screen.getByRole("dialog");
+    };
+    const first = render(box);
+    expect((await open()).querySelector('[data-part="segmented"]')).toBeNull();
+    first.unmount();
+    window.matchMedia = ((q: string) => ({
+      matches: q === "(pointer: coarse)",
+      media: q,
+      addEventListener: () => {},
+      removeEventListener: () => {},
+    })) as unknown as typeof window.matchMedia;
+    render(box);
+    expect((await open()).querySelector('[data-part="segmented"]')).not.toBeNull();
+  });
+});

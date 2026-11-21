@@ -159,6 +159,14 @@ beforeEach(() => resetNavigation("/settings/organization"));
 afterEach(cleanup);
 
 describe("first paint comes from the hydrated cache (no browser read)", () => {
+  it("/account/profile: a first render from the hydrated cache makes no browser read (me is the layout's)", async () => {
+    const browser = expectNoFirstPaintFetch();
+    await renderRouteWithCache("/account/profile", ROUTES);
+    expect(screen.getByRole("textbox", { name: /Name/ })).toHaveProperty("value", "Grant");
+    await settle();
+    expect(browser).toEqual([]);
+  });
+
   it("/account/connections: a first render from the hydrated cache makes no browser read (the layout's `then` read the details)", async () => {
     const browser = expectNoFirstPaintFetch();
     const { calls } = await renderRouteWithCache("/account/connections", ROUTES);
@@ -170,10 +178,10 @@ describe("first paint comes from the hydrated cache (no browser read)", () => {
     expect(browser).toEqual([]);
   });
 
-  it("the path's `account` leads to the first personal settings page (preferences)", async () => {
+  it("the path's `account` leads to the first personal settings page (profile)", async () => {
     await renderRouteWithCache("/account/connections", ROUTES);
     const link = await screen.findByRole("link", { name: "account" });
-    expect(link.getAttribute("href")).toBe("/account/preferences");
+    expect(link.getAttribute("href")).toBe("/account/profile");
   });
 
   it("/account/connections: a connector the kernel no longer shows is left out", async () => {

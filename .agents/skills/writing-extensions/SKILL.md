@@ -192,6 +192,31 @@ The `sdk` range is validated by the kernel against `SDK_VERSION` (equal to the p
 
 Both are single-select, brokered extension points: a deployment installs only one provider, other extensions cannot `requires` them, and they are consumed by the kernel (sandboxes through `SandboxService` and the builtin sandbox tools (`Bash`, `Read`, `Write`, `Edit`, `Glob`, `Grep`, `Deliver`, `GenerateImage` with `file_path`), storage through `ctx.storage` and kernel features). A provider only implements the primitives; the lifecycle, locks, prefix isolation and cleanup are all in the kernel. Since the permission activation every builtin enters a device only through the provider's permission-scoped surface (`permissionSupport`, `operation`, `prepare`, `browse`, `revokeOperation`, `background`): a sandbox extension without it loads, but its devices read `unsupported` and run no tool (no fallback to the raw methods), and each run records its permission context. The `@capybara-hq/testing` helpers run on the activated kernel. For details see `.agents/skills/writing-sandbox-providers` (official [`sandbox-docker`](https://github.com/capybara-hq/plugins/tree/main/plugins/sandbox-docker), [`sandbox-e2b`](https://github.com/capybara-hq/plugins/tree/main/plugins/sandbox-e2b)) and `.agents/skills/writing-object-store-providers` (official [`object-store-s3`](https://github.com/capybara-hq/plugins/tree/main/plugins/object-store-s3)).
 
+### Push channels (`push-provider@1`)
+
+`provides: [PUSH_PROVIDER_EXTENSION_POINT]` and `ctx.provide(PUSH_PROVIDER_EXTENSION_POINT,
+provider)` makes the plugin one push channel (the provider key is the plugin's name: `push-apns`,
+`push-fcm`, `push-jpush`). It is a brokered, multi-select and sensitive point (review and `capybara
+extensions review` mark it): other extensions cannot `requires` it, the kernel's push domain
+(`packages/kernel/src/push`) is the only consumer and calls exactly the extension a registration
+names, if it is enabled and its `apps()` covers the registration's app id. Key points: config is `{
+deployment }` only (credentials are platform deployment config, `secret()` fields, no org level);
+`apps()` is synchronous and derived from config; `send({ registrations, message })` returns one
+result per registration (`delivered`, `unregistered` = the token is dead and the kernel deletes the
+registration, `failed` with a `PushError` kind `auth` / `rate_limited` / `transient`) and **never
+retries inside the extension** (the `cap-push-deliver` queue retries); the message carries
+`collapseId`, the same for every send of one event to one device (map it to the channel's collapse
+key, so a resend of the same event after a crash or a timeout replaces the notification); a push
+token is never put in an error, a log or a result message (the kernel checks results with
+`checkPushResults` and never reads a failed result's message); cache short-lived vendor auth tokens
+in `ctx.kv` with a TTL below their lifetime. Credentials are checked by a setup check declared in
+`permissions.setupChecks` and shown by a guide with place `extension-deployment` (target `{ kind:
+"extension-deployment", plugin, config }`, platform routes on `AdminExtensionsController`, run with
+locale `en`, and the result is model-visible, so it carries no secret); the setup check is
+read-only: only a delivery's `auth` result opens the platform notice `push_auth_failed` (one open
+per plugin). Test with `fake-push` and `describePushProviderConformance` from
+`@capybara-hq/testing`.
+
 ### Channels, login, directory (`channel@1` / `identity-source@1` / `directory@1`)
 
 The extension for an IM platform usually provides all three: in `setup`, `ctx.provide(CHANNEL_EXTENSION_POINT, …)`, `ctx.provide(IDENTITY_SOURCE_EXTENSION_POINT, …)` and `ctx.provide(DIRECTORY_EXTENSION_POINT, …)` respectively. Channels and directories are only available after an org enables the extension, and login is enabled through the kernel config `auth.loginSources`. Long connections (including multi-replica leader election), inbound dedup and durable queueing, outbound redelivery and authorization of card actions are all done by the kernel; the extension only handles protocol conversion. Key points: the identity key `<plugin name>:<tenant id>` + platform user id must be consistent in all three places; only acknowledge to the platform after `onEvent` resolves; escape model text to prevent @everyone; a directory that cannot be listed completely must throw. For details see `.agents/skills/writing-channels`; the official implementations are [`slack`](https://github.com/capybara-hq/plugins/tree/main/plugins/slack) and [`lark`](https://github.com/capybara-hq/plugins/tree/main/plugins/lark).
@@ -240,7 +265,7 @@ registered in `setup` with `ctx.setup.check(id, { place, run })` (SDK `setup-che
 `permissions.setupChecks`; `capybara:*` checks are the kernel's (`packages/kernel/src/setup/kernel-checks.ts`).
 
 - **What `run` gets** (`SetupCheckArgs`): `orgId`, the extension's effective `config` for the org,
-  `locale`, `mode`, `signal` and the target. A `channel-connection` target carries the connection
+  `locale`, `mode`, `signal` and the target. An `extension-deployment` target carries the extension's deployment config (platform routes; never an org's). A `channel-connection` target carries the connection
   config as `channel@1` `verify` / `connect` receive it; a `connector` target carries only the
   connector id, the template id, the manual OAuth client id and, for member checks, the viewing
   account id. **A check never gets the OAuth client secret or a member's token** (they stay with

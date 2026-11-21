@@ -248,10 +248,23 @@
   font: inherit;
   white-space: nowrap;
   cursor: pointer;
+  -webkit-touch-callout: none;
+  -webkit-user-select: none;
+  user-select: none;
   transition:
     background-color var(--cb-motion-hover),
     border-color var(--cb-motion-hover),
     color var(--cb-motion-hover);
+}
+/* Pressed (§7.1): the hover ground; every data-variant below sets its own, with more specificity
+   (touch.test.ts enumerates them). */
+.cb-btn:active:not(:disabled) {
+  background: var(--cb-hover);
+}
+.cb-icon-btn {
+  -webkit-touch-callout: none;
+  -webkit-user-select: none;
+  user-select: none;
 }
 .cb-btn[data-density="dense"] {
   height: var(--cb-control-dense);
@@ -269,6 +282,10 @@
   color: var(--cb-muted);
 }
 .cb-icon-btn:hover:not(:disabled) {
+  color: var(--cb-ink);
+}
+.cb-icon-btn:active:not(:disabled) {
+  background: var(--cb-hover);
   color: var(--cb-ink);
 }
 .cb-icon-btn[data-density="dense"] {
@@ -337,6 +354,10 @@
   background: var(--cb-fail);
   border-color: transparent;
   color: var(--cb-on-accent);
+}
+/* Pressed keeps the label's contrast: the solid ground moves toward the ink, never to the pale hover. */
+.cb-btn[data-variant="danger-solid"]:active:not(:disabled) {
+  background: color-mix(in srgb, var(--cb-fail) 85%, var(--cb-ink));
 }
 
 /* Disabled never adds a border (spec §6.1): a ghost or icon button stays borderless, default and
@@ -621,6 +642,17 @@
   white-space: nowrap;
   visibility: hidden;
 }
+/* an option with a person (spec §6.2): the 16 circle, then the label cut with an ellipsis */
+.cb-select-label[data-person="true"] {
+  display: flex;
+  align-items: center;
+  gap: var(--cb-space-1);
+}
+.cb-select-label-text {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
 .cb-select-label[data-current="true"] {
   visibility: visible;
 }
@@ -643,6 +675,7 @@
   line-height: var(--cb-type-body-line);
 }
 .cb-textarea textarea[data-code="true"] {
+  font-family: var(--cb-font-code);
   white-space: pre;
 }
 .cb-stepper {

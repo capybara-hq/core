@@ -34,7 +34,6 @@ import { useHashItem } from "../../../../lib/hash-item";
 import { canUpdateOrg } from "../../../../lib/org-settings";
 import { evalSetsQuery } from "../../../../lib/query/evals";
 import { keys } from "../../../../lib/query/keys";
-import { useMemberNames } from "../../../../lib/query/member-names";
 import { useAppMutation } from "../../../../lib/query/mutation";
 import { usePageQuery } from "../../../../lib/query/page-query";
 import { trajectoryQuery } from "../../../../lib/query/trajectories";
@@ -52,8 +51,8 @@ import NotFound from "../../not-found";
  * the selected span's detail below; the header sums the loaded runs (tokens, estimated cost, calls,
  * duration). By run: the latest runs come from the query cache (the layout prefetched them on a
  * first load; the kernel audits every read, the page says so), "Load earlier runs" pages back in
- * the browser. The members name the runs' starters (the id shows when the kernel refuses them:
- * 403 / 404; any other failure is the page's error state). "Add to eval set" shows only for org
+ * the browser. The response's `people` name the runs' starters and who decided (an account that left reads
+ * "Former member"). "Add to eval set" shows only for org
  * admins, never for an eval conversation (kind = eval); its dialog reads the sets when opened.
  */
 export default function TrajectoryPageView({ conversationId }: { conversationId: string }) {
@@ -66,11 +65,9 @@ export default function TrajectoryPageView({ conversationId }: { conversationId:
 function TrajectoryData({ orgId, conversationId }: { orgId: string; conversationId: string }) {
   const scope = usePagePath("org");
   const read = usePageQuery(trajectoryQuery(orgId, conversationId));
-  const names = useMemberNames(orgId);
   if (read.kind === "notFound") return <NotFound />;
   if (read.kind === "error") return <ErrorFrame reset={read.retry} />;
-  if (names.kind === "error") return <ErrorFrame reset={names.retry} />;
-  if (read.kind === "loading" || names.kind === "loading") {
+  if (read.kind === "loading") {
     return (
       <TracePage
         header={{ path: [...scope, { label: "trajectories", href: "/trajectories" }], title: "" }}
@@ -80,19 +77,13 @@ function TrajectoryData({ orgId, conversationId }: { orgId: string; conversation
       />
     );
   }
-  return <TrajectoryView orgId={orgId} first={read.data} people={names.people} />;
+  return <TrajectoryView orgId={orgId} first={read.data} />;
 }
 
-function TrajectoryView({
-  orgId,
-  first,
-  people,
-}: {
-  orgId: string;
-  first: TrajectoryDetail;
-  /** Account id -> display name (empty when the members are not readable). */
-  people: Record<string, string>;
-}) {
+function TrajectoryView({ orgId, first }: { orgId: string; first: TrajectoryDetail }) {
+  // the response names every account the runs and approvals name, so a reader who cannot list
+  // members sees names too
+  const people = first.people;
   const scope = usePagePath("org");
   const t = useTranslations("trajectories");
   const { me } = useSession();

@@ -3,6 +3,7 @@ import { ApiClientError, apiFetch, CSRF_HEADER, ensureSession, toError } from ".
 import type { SuggestedAppearance } from "./appearance";
 import type { Owner, PlatformComponentKind } from "./components";
 import type { ExtensionUnavailableReason, PermissionGroup, PermissionItem } from "./extensions";
+import type { PersonRef } from "./people";
 
 /**
  * The platform catalog (kernel `catalog/*.controller.ts`). Every catalog item is a plugin: an
@@ -793,6 +794,7 @@ export interface CatalogRequest {
   reason: string | null;
   requestedBy: string | null;
   requestedByName: string | null;
+  requestedByAvatarUrl: string | null;
   decidedBy: string | null;
   decidedAt: string | null;
   /** The prepared import of an approved `import` request that is not confirmed yet. */
@@ -1379,6 +1381,10 @@ export async function uploadOrgPluginPackage(orgId: string, file: Blob): Promise
   return (await res.json()) as OrgUploadReview;
 }
 
+/** One of the org's staged uploads (`plugin.staging_not_found` once expired or confirmed). */
+export const getOrgUpload = (orgId: string, stagingId: string) =>
+  apiFetch<OrgUploadReview>(`${org(orgId)}/catalog/uploads/${enc(stagingId)}`);
+
 /**
  * Confirms the org's staged upload: `shareable` only for a new plugin (default false).
  */
@@ -1578,9 +1584,16 @@ export const requestSubject = (
 export const requestVersion = (r: Pick<CatalogRequest, "entry">): string | null =>
   r.entry?.version ?? null;
 
-/** 申请人：显示名，账号已删除时退回账号 id，都没有为「—」。 */
-export const requesterOf = (r: Pick<CatalogRequest, "requestedBy" | "requestedByName">): string =>
-  r.requestedByName ?? r.requestedBy ?? "—";
+/**
+ * The requester as a person; null (drawn as "Former member") once the account no longer exists:
+ * the kernel then names no one, and a raw account id is never shown.
+ */
+export const requesterOf = (
+  r: Pick<CatalogRequest, "requestedBy" | "requestedByName" | "requestedByAvatarUrl">,
+): PersonRef | null =>
+  r.requestedByName === null
+    ? null
+    : { id: r.requestedBy ?? "", name: r.requestedByName, avatarUrl: r.requestedByAvatarUrl };
 
 /** An item's source filter key: `manual` (file / npm import) or `marketplace:<marketplace id>`. */
 export const sourceKeyOf = (i: Pick<CatalogItem, "marketplaceId">): string =>

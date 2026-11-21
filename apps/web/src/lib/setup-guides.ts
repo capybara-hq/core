@@ -8,8 +8,11 @@ export interface SetupGuideRef {
   version?: string;
 }
 
-/** A place a setup guide is shown at (setup guides v2 spec §9.1). */
-export type SetupGuidePlace = "channel-connection" | "connector-template";
+/**
+ * A place a setup guide is shown at (setup guides v2 spec §9.1; `extension-deployment`: the super
+ * admin's extension page, checks against the platform deployment config).
+ */
+export type SetupGuidePlace = "channel-connection" | "connector-template" | "extension-deployment";
 
 /** Who the guide's text is for: the page passes the audience it serves (spec §8). */
 export type SetupGuideAudience = "admin" | "member";
@@ -166,6 +169,37 @@ export const runSetupCheck = (
       method: "POST",
       body: JSON.stringify({ ...selectionOf(s), ...(s.force && { force: true }) }),
     },
+  );
+
+const deploymentGuidesPath = (plugin: string) =>
+  `/api/v1/admin/extensions/${encodeURIComponent(plugin)}/guides`;
+const deploymentChecksPath = (plugin: string, guideId: string) =>
+  `${deploymentGuidesPath(plugin)}/${encodeURIComponent(guideId)}/checks`;
+
+/**
+ * An extension's `extension-deployment` guides, rendered for the platform (super admins): no org,
+ * no target; empty when it ships none.
+ */
+export const getDeploymentGuides = (plugin: string, q: { locale?: "en" | "zh" } = {}) =>
+  apiFetch<{ guides: RenderedSetupGuide[] }>(`${deploymentGuidesPath(plugin)}${guideParams(q)}`);
+
+/** The cached state of each check of a deployment guide (shared by every super admin). */
+export const getDeploymentCheckStates = (plugin: string, guideId: string, signal?: AbortSignal) =>
+  apiFetch<{ results: Record<string, SetupCheckState> }>(
+    deploymentChecksPath(plugin, guideId),
+    signal ? { signal } : {},
+  );
+
+/** Runs one check of a deployment guide against the platform deployment config. */
+export const runDeploymentCheck = (
+  plugin: string,
+  guideId: string,
+  checkId: string,
+  o: { force?: boolean } = {},
+) =>
+  apiFetch<{ result: SetupCheckState }>(
+    `${deploymentChecksPath(plugin, guideId)}/${encodeURIComponent(checkId)}/run`,
+    { method: "POST", body: JSON.stringify(o.force ? { force: true } : {}) },
   );
 
 /** A top-level thematic break line of serialized Markdown (the kernel writes `***`). */

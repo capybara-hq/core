@@ -21,6 +21,7 @@ import { PrefixedStorage, StorageService } from "../../src/storage/storage.servi
 import type { MediaProvider } from "../fixtures/plugins/model-media/index.js";
 import { attachmentsFor } from "../helpers/conversations.js";
 import { truncateTables } from "../helpers/db.js";
+import { asUser, cookieJar } from "../helpers/http.js";
 import { accountsFor } from "../helpers/identity.js";
 import { testMembers } from "../helpers/members.js";
 import {
@@ -569,6 +570,42 @@ describe("下载", () => {
   });
 });
 
+describe("the download URL as JSON (as=url)", () => {
+  it("returns the 302's presigned location under the same checks; never cached", async () => {
+    const id = await ready(owner, "notes.txt", "text/plain", TEXT);
+    const url = `/api/v1/orgs/${orgId}/attachments/${id}/download?as=url`;
+    const res = await owner({ method: "GET", url });
+    expect(res.statusCode, res.body).toBe(200);
+    expect(res.headers["cache-control"]).toBe("private, no-store");
+    const { url: presigned } = res.json() as { url: string };
+    // a cookie-free URL: fetched with no session, it serves the bytes with the 302's disposition
+    const got = await fetch(presigned);
+    expect(got.status).toBe(200);
+    expect(Buffer.from(await got.arrayBuffer()).equals(TEXT)).toBe(true);
+    expect(got.headers.get("content-disposition")).toMatch(/^attachment;.*notes\.txt/);
+    // no session: 401; another member: the same 404 as the redirect
+    const anonymous = await asUser(k.http, cookieJar())({ method: "GET", url });
+    expect(anonymous.statusCode).toBe(401);
+    const denied = await other({ method: "GET", url });
+    expect(denied.statusCode).toBe(404);
+    expect(denied.json().error.code).toBe("attachment.not_found");
+    // an unknown form is refused
+    const bad = await owner({ method: "GET", url: url.replace("as=url", "as=html") });
+    expect(bad.statusCode).toBe(400);
+  });
+
+  it("ignores the web's cache-busting retry param: it still redirects, and combines with as=url", async () => {
+    const id = await ready(owner, "notes.txt", "text/plain", TEXT);
+    const base = `/api/v1/orgs/${orgId}/attachments/${id}/download`;
+    const retried = await owner({ method: "GET", url: `${base}?retry=1` });
+    expect(retried.statusCode, retried.body).toBe(302);
+    expect(retried.headers.location).toBeTruthy();
+    const asUrl = await owner({ method: "GET", url: `${base}?retry=1&as=url` });
+    expect(asUrl.statusCode, asUrl.body).toBe(200);
+    expect(typeof (asUrl.json() as { url: string }).url).toBe("string");
+  });
+});
+
 describe("只有附件的消息", () => {
   it("text 为空 + files：202，日志与请求里都没有空文本块", async () => {
     const convId = await conversationWith("see-1");
@@ -713,6 +750,113 @@ describe("待上传配额", () => {
       payload: body,
     });
     expect(ok.statusCode, ok.body).toBe(201);
+  });
+});
+
+describe("createFromBytes (a Platform write's file)", () => {
+  const svc = () => k.app.get(AttachmentsService);
+  const rowOf = (id: string) =>
+    db
+      .selectFrom("attachments")
+      .select([
+        "status",
+        "purpose",
+        "content_type",
+        "size",
+        "object_key",
+        "etag",
+        "account_id",
+        sql<number>`extract(epoch from expires_at - now())`.as("ttl"),
+      ])
+      .where("id", "=", id)
+      .executeTakeFirstOrThrow();
+
+  it("stores the bytes in the purpose's key family as a ready upload the route's next step takes", async () => {
+    const avatar = await svc().createFromBytes(orgId, ownerId, "agent-avatar", {
+      name: "cat.png",
+      contentType: "image/png",
+      bytes: new Uint8Array(PNG),
+    });
+    const a = await rowOf(avatar.id);
+    expect(a).toMatchObject({
+      status: "ready",
+      purpose: "agent-avatar",
+      content_type: "image/png",
+      size: String(PNG.length),
+      object_key: `agent-avatars/${avatar.id}`,
+      account_id: ownerId,
+    });
+    expect(a.etag).not.toBeNull();
+    // the avatar upload's 24 hours
+    expect(Number(a.ttl)).toBeGreaterThan(23 * 3600);
+    expect(Number(a.ttl)).toBeLessThanOrEqual(24 * 3600);
+    const got = await k.app.get(StorageService).kernel(orgId).get(`agent-avatars/${avatar.id}`);
+    expect(Buffer.from(await new Response(got?.body).arrayBuffer())).toEqual(PNG);
+    // the profile save's check takes it (no finalize: it is ready)
+    const agentId = await createAgent(owner, orgId, { provider: "model-media", model: "see-1" });
+    await expect(svc().prepareAgentAvatar(orgId, ownerId, avatar.id, agentId)).resolves.toBe(
+      undefined,
+    );
+
+    const zip = new Uint8Array(Buffer.from("PK\u0003\u0004skill package bytes"));
+    const pkg = await svc().createFromBytes(orgId, ownerId, "skill-package", {
+      name: "report.zip",
+      contentType: "application/zip",
+      bytes: zip,
+    });
+    const p = await rowOf(pkg.id);
+    expect(p).toMatchObject({
+      status: "ready",
+      purpose: "skill-package",
+      object_key: `skill-packages/${pkg.id}`,
+    });
+    expect(Number(p.ttl)).toBeLessThanOrEqual(3600);
+    expect(await svc().readSkillPackage(orgId, ownerId, pkg.id)).toEqual(zip);
+    // no presigned upload: nothing else is registered
+    expect(
+      await db.selectFrom("attachments").select("id").where("status", "=", "pending").execute(),
+    ).toEqual([]);
+  });
+
+  it("applies the upload route's type, size and pending caps", async () => {
+    const put = (purpose: "agent-avatar" | "skill-package", contentType: string, size: number) =>
+      svc().createFromBytes(orgId, ownerId, purpose, {
+        name: "f",
+        contentType,
+        bytes: new Uint8Array(size).fill(1),
+      });
+    await expect(put("agent-avatar", "image/gif", 10)).rejects.toMatchObject({
+      code: "attachment.type_not_allowed",
+    });
+    await expect(put("skill-package", "application/gzip", 10)).rejects.toMatchObject({
+      code: "attachment.type_not_allowed",
+    });
+    await expect(put("agent-avatar", "image/png", 2 * 1024 * 1024 + 1)).rejects.toMatchObject({
+      code: "attachment.too_large",
+    });
+    // ten unused avatar uploads (registered or stored) are the cap
+    for (let i = 0; i < 10; i++) {
+      await svc().createFromBytes(orgId, ownerId, "agent-avatar", {
+        name: `a${i}.png`,
+        contentType: "image/png",
+        bytes: new Uint8Array(PNG),
+      });
+    }
+    await expect(
+      svc().createFromBytes(orgId, ownerId, "agent-avatar", {
+        name: "one-more.png",
+        contentType: "image/png",
+        bytes: new Uint8Array(PNG),
+      }),
+    ).rejects.toMatchObject({ code: "attachment.too_many_pending" });
+    // another account is not affected
+    await expect(
+      svc().createFromBytes(orgId, otherId, "agent-avatar", {
+        name: "theirs.png",
+        contentType: "image/png",
+        bytes: new Uint8Array(PNG),
+      }),
+    ).resolves.toMatchObject({ id: expect.any(String) });
   });
 });
 

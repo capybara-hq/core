@@ -3,12 +3,14 @@ import { BackgroundModule } from "../background/background.module.js";
 import { ConversationAccessModule } from "../conversations/access.js";
 import { AttachmentsModule } from "../conversations/attachments.module.js";
 import { EventLogModule } from "../conversations/event-log.js";
+import { ConversationLeakCheckModule } from "../conversations/leak-check.js";
 import { DevicesModule } from "../devices/devices.module.js";
 import { ExtensionsModule } from "../extensions/extensions.module.js";
 import { QueueModule } from "../infra/queue/queue.module.js";
 import { LocalDevicesModule } from "../local-devices/local-devices.module.js";
 import { ModelsModule } from "../models/models.module.js";
 import { OrgLockModule } from "../orgs/org-lock.js";
+import { FileRefs } from "../platform/file-ref.js";
 import { PlatformModule } from "../platform/platform.module.js";
 import { MAINTENANCE_QUEUE_NAME } from "../runtime/maintenance-queue.js";
 import { ProvidersModule } from "../runtime/providers.js";
@@ -58,6 +60,8 @@ import { ToolRegistry } from "./registry.js";
     PermissionAuthorityModule,
     OperationAuthorityModule,
     EventLogModule,
+    // the approval decision's leak check of a person's card values
+    ConversationLeakCheckModule,
     AttachmentsModule,
     ExtensionsModule,
     StorageModule,
@@ -95,6 +99,8 @@ import { ToolRegistry } from "./registry.js";
     PermissionApprovalJobs,
     ToolOutputs,
     BuiltinTools,
+    // a Platform write's file reference (a conversation file)
+    FileRefs,
     // `ScheduleUpdate`'s write in one transaction (scheduled tasks spec §11)
     ScheduleUpdates,
     // where `SchedulesModule` binds the task service for the schedule tools (no provider cycle)

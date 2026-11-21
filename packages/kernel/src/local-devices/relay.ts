@@ -29,7 +29,11 @@ import { KernelConfigService } from "../infra/config/kernel-config.service.js";
 import { LockService } from "../infra/lock/lock.service.js";
 import { KERNEL_BUS, KERNEL_LOGGER, REDIS } from "../infra/tokens.js";
 import type { KernelLogger } from "../log.js";
-import { DeviceRequestNotSentError, isDeviceRequestNotSent } from "../sandbox/request-not-sent.js";
+import {
+  DeviceProgramRestartedError,
+  DeviceRequestNotSentError,
+  isDeviceRequestNotSent,
+} from "../sandbox/request-not-sent.js";
 import { deviceNotFound } from "../sandbox/sandbox.service.js";
 import {
   deviceLeaseKey,
@@ -38,7 +42,7 @@ import {
   deviceResKey,
   deviceResTopic,
 } from "./keys.js";
-import { type DeviceTargetState, DeviceTargets } from "./targets.js";
+import { type DeviceConnectionInfo, type DeviceTargetState, DeviceTargets } from "./targets.js";
 
 /** The device's connected machine is not connected (no replica holds its lease). */
 export const deviceOffline = (): ApiError =>
@@ -204,8 +208,10 @@ const errMsg = (e: unknown) => (e instanceof Error ? e.message : String(e));
  * and once more before giving up (the run-abort pattern; a publish lost while the subscriber
  * reconnects is still found). It waits within its own call for at most `deadlineMs` plus
  * `devices.local.reconnectGraceSeconds`; when the lease disappears meanwhile (checked every
- * {@link HOLDER_POLL_MS}) the wait ends at most one grace later. A result produced while the
- * machine was disconnected arrives after it reconnects. Giving up (grace, abort, a bad result)
+ * {@link HOLDER_POLL_MS}) the wait ends at most one grace later, and when the machine is connected
+ * again as another run of its program (`programRunId`) it ends at that poll with
+ * {@link DeviceProgramRestartedError}: the old run's kept results died with it. A result produced
+ * while the machine was disconnected arrives after it reconnects. Giving up (grace, abort, a bad result)
  * removes the request from the list, or queues a `cancel` when the machine already took it
  * (ruling R15). Nothing is kept in process memory beyond the call.
  */
@@ -217,7 +223,8 @@ export class LocalDeviceRelay {
     @Inject(LockService) private readonly locks: Pick<LockService, "holderOf">,
     @Inject(KernelConfigService) private readonly config: Pick<KernelConfigService, "get">,
     @Inject(KERNEL_LOGGER) private readonly log: Pick<KernelLogger, "warn">,
-    @Inject(DeviceTargets) private readonly targets: Pick<DeviceTargets, "state" | "transport">,
+    @Inject(DeviceTargets)
+    private readonly targets: Pick<DeviceTargets, "state" | "current">,
   ) {}
 
   /** Whether a gateway replica holds the machine's connection now. */
@@ -239,12 +246,14 @@ export class LocalDeviceRelay {
   /**
    * The negotiated transport of the machine's current connection, for a staged call. Liveness is
    * checked first (ruling R27): no holder throws `device.not_found` for a deleted device,
-   * `device.forbidden` for a revoked machine and `device.offline` otherwise.
+   * `device.forbidden` for a revoked machine and `device.offline` otherwise. It carries the program
+   * run the connection's hello named (`programRunId`, when reported): kernel-internal evidence a
+   * staged call keeps, never put into a frame. Every staged call reads its connection here.
    */
-  async connection(deviceId: string): Promise<{ connectionId: string; maxFrameBytes: number }> {
+  async connection(deviceId: string): Promise<DeviceConnectionInfo> {
     if (await this.holderLive(deviceId)) {
-      const transport = await this.targets.transport(deviceId);
-      if (transport) return transport;
+      const current = await this.targets.current(deviceId);
+      if (current) return current;
     }
     throw this.goneError(await this.targetState(deviceId)) ?? deviceOffline();
   }
@@ -317,7 +326,14 @@ export class LocalDeviceRelay {
     const { signal } = opts;
     signal.throwIfAborted();
     // liveness first: a deleted device or a revoked machine keeps its typed error (R27)
-    const connection = staged ? await this.connection(deviceId) : undefined;
+    const current = staged ? await this.connection(deviceId) : undefined;
+    const connection = current && {
+      connectionId: current.connectionId,
+      maxFrameBytes: current.maxFrameBytes,
+    };
+    // the program run the request goes to: the drain sends it only on this connection (a newer
+    // one refuses it as not sent), so a later connection of another run proves its result lost
+    const sentToRun = current?.programRunId;
     if (!staged && !(await this.holderLive(deviceId))) {
       throw this.goneError(await this.targetState(deviceId)) ?? deviceOffline();
     }
@@ -379,13 +395,29 @@ export class LocalDeviceRelay {
           const live = await this.leaseCheck(deviceId);
           if (fenced && connection && live === true) {
             // an output read never waits across a reconnect: its range was sized for this socket
-            const current = await this.targets.transport(deviceId);
+            const current = await this.targets.current(deviceId);
             if (
               current &&
               (current.connectionId !== connection.connectionId ||
                 current.maxFrameBytes !== connection.maxFrameBytes)
             ) {
               settle({ error: new DeviceProtocolError(connectionChangedMessage(op)) });
+              return;
+            }
+          }
+          if (!fenced && sentToRun !== undefined && live === true) {
+            // results a program keeps for a reconnect live in its memory: once the machine is
+            // connected as another run, this request's result can never arrive (unless it was
+            // stored before the old run went away, which the last look below still finds)
+            const now = await this.targets.current(deviceId).catch(() => null);
+            if (now?.programRunId !== undefined && now.programRunId !== sentToRun) {
+              this.redis.get(deviceResKey(id)).then(
+                (raw) =>
+                  raw !== null
+                    ? onStored(raw)
+                    : settle({ error: new DeviceProgramRestartedError(op) }),
+                () => settle({ error: new DeviceProgramRestartedError(op) }),
+              );
               return;
             }
           }

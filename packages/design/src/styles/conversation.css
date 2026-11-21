@@ -205,6 +205,9 @@ button.cb-tool-line:focus-visible {
   font-family: var(--cb-font);
   font-size: var(--cb-type-body-size);
 }
+.cb-md-code {
+  font-family: var(--cb-font-code);
+}
 .cb-md-chip {
   border: 0;
   color: var(--cb-ink);
@@ -280,7 +283,7 @@ button.cb-tool-line:focus-visible {
   line-height: var(--cb-type-small-line);
 }
 .cb-md .cb-code {
-  font-family: var(--cb-font);
+  font-family: var(--cb-font-code);
   font-size: var(--cb-type-small-size);
   line-height: var(--cb-type-small-line);
 }
@@ -359,6 +362,28 @@ button.cb-tool-line:focus-visible {
 /* Another agent's message (agent map spec §9.4): its sender above the bubble. */
 .cb-bubble-sender {
   max-width: 75%;
+  overflow: hidden;
+  color: var(--cb-muted);
+  font-size: var(--cb-type-small-size);
+  line-height: var(--cb-type-small-line);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+/* A message with an author (spec §6.16.6): the 24 circle after the bubble, top-aligned. */
+.cb-bubble-row {
+  display: flex;
+  align-items: flex-start;
+  justify-content: flex-end;
+  gap: var(--cb-space-2);
+  width: 100%;
+  min-width: 0;
+}
+.cb-bubble-row > .cb-avatar {
+  flex: none;
+}
+.cb-bubble-author-name {
+  max-width: 75%;
+  margin-inline-end: calc(40px + var(--cb-space-2));
   overflow: hidden;
   color: var(--cb-muted);
   font-size: var(--cb-type-small-size);
@@ -911,6 +936,7 @@ button.cb-tool-toggle:focus-visible {
 }
 .cb-tool-command {
   color: var(--cb-ink);
+  font-family: var(--cb-font-code);
   word-break: break-all;
 }
 .cb-tool-output {
@@ -922,6 +948,7 @@ button.cb-tool-toggle:focus-visible {
   background: var(--cb-bg);
   color: var(--cb-ink);
   font: inherit;
+  font-family: var(--cb-font-code);
   font-size: var(--cb-type-small-size);
   line-height: var(--cb-type-small-line);
   white-space: pre-wrap;
@@ -943,6 +970,7 @@ button.cb-tool-toggle:focus-visible {
 
 .cb-diff {
   padding: var(--cb-space-1) 0;
+  font-family: var(--cb-font-code);
   font-size: var(--cb-type-small-size);
   line-height: var(--cb-type-small-line);
 }
@@ -1082,6 +1110,102 @@ button.cb-tool-toggle:focus-visible {
   line-clamp: 3;
   overflow: hidden;
 }
+/* The requester's reason (§6.16.11 "Details inside the card"): a quote, not a box. */
+.cb-hcard-reason {
+  display: flex;
+  flex-direction: column;
+  gap: var(--cb-space-1);
+  min-width: 0;
+  margin: 0;
+  padding-left: var(--cb-space-3);
+  border-left: 2px solid var(--cb-line-strong);
+}
+.cb-hcard-reason-text {
+  margin: 0;
+  color: var(--cb-ink);
+  font-family: var(--cb-font-prose);
+  font-size: var(--cb-type-prose-size);
+  line-height: var(--cb-type-prose-line);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+.cb-hcard-facts {
+  display: grid;
+  grid-template-columns: max-content minmax(0, 1fr);
+  column-gap: var(--cb-space-3);
+  row-gap: var(--cb-space-1);
+  margin: 0;
+  font-size: var(--cb-type-small-size);
+  line-height: var(--cb-type-small-line);
+}
+.cb-hcard-fact {
+  display: contents;
+}
+.cb-hcard-fact-label {
+  grid-column: 1;
+  color: var(--cb-faint);
+}
+.cb-hcard-fact-value {
+  grid-column: 2;
+  margin: 0;
+  color: var(--cb-ink);
+  font-family: var(--cb-font);
+  font-size: inherit;
+  overflow-wrap: anywhere;
+}
+.cb-hcard-root {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+.cb-hcard-root-path {
+  font-family: var(--cb-font-code);
+  font-size: inherit;
+}
+.cb-hcard-file {
+  display: flex;
+  align-items: center;
+  gap: var(--cb-space-3);
+  min-width: 0;
+}
+.cb-hcard-file-thumb {
+  flex: none;
+  width: var(--cb-space-8);
+  height: var(--cb-space-8);
+  object-fit: cover;
+  border-radius: var(--cb-radius-sm);
+}
+.cb-hcard-file-text {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+.cb-hcard-file-name {
+  font-weight: 600;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.cb-hcard-person {
+  display: flex;
+  flex-direction: column;
+  gap: var(--cb-space-2);
+  min-width: 0;
+}
+.cb-person-field {
+  display: flex;
+  flex-direction: column;
+  gap: var(--cb-space-1);
+  min-width: 0;
+}
+.cb-person-field-label {
+  font-weight: 600;
+}
+.cb-person-field-error {
+  color: var(--cb-fail);
+}
+.cb-person-field textarea[data-masked="true"] {
+  -webkit-text-security: disc;
+}
 .cb-hcard-json {
   align-self: stretch;
   max-height: var(--cb-layout-tool-output);
@@ -1092,6 +1216,7 @@ button.cb-tool-toggle:focus-visible {
   background: var(--cb-bg);
   color: var(--cb-ink);
   font: inherit;
+  font-family: var(--cb-font-code);
   font-size: var(--cb-type-small-size);
   line-height: var(--cb-type-small-line);
   white-space: pre-wrap;
@@ -1550,6 +1675,7 @@ button.cb-file-card:focus-visible {
   padding: var(--cb-space-2) var(--cb-space-3);
   color: var(--cb-muted);
   font: inherit;
+  font-family: var(--cb-font-code);
   font-size: var(--cb-type-small-size);
   line-height: var(--cb-type-small-line);
   white-space: pre-wrap;
@@ -1676,6 +1802,8 @@ button.cb-file-card:focus-visible {
   border-left: 1px solid var(--cb-line-soft);
   background: var(--cb-panel-2);
   color: var(--cb-ink);
+  /* the ground runs under a right-hand strip; head and body end before it (spec §8) */
+  padding-right: var(--cb-inset-right);
 }
 .cb-rpanel-head {
   flex: none;
@@ -1748,6 +1876,7 @@ button.cb-file-card:focus-visible {
   margin: 0;
   color: var(--cb-ink);
   font: inherit;
+  font-family: var(--cb-font-code);
   font-size: var(--cb-type-small-size);
   line-height: var(--cb-type-small-line);
   white-space: pre-wrap;
@@ -2127,4 +2256,10 @@ button.cb-file-card:focus-visible {
 .cb-run-status[data-status="warning"],
 .cb-run-status[data-status="warning"] .cb-run-mark {
   color: var(--cb-warn);
+}
+
+/* The command an approval card asks about: the code font role (spec §6.16.11). */
+.cb-hcard-command {
+  min-width: 0;
+  font-family: var(--cb-font-code);
 }

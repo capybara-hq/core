@@ -1,10 +1,20 @@
 import { Inject, Injectable, type OnModuleInit } from "@nestjs/common";
 import { z } from "zod";
-import { AdminExtensionNamePathParams } from "../../admin/extensions.schemas.js";
+import {
+  AdminExtensionConfigBody,
+  AdminExtensionNamePathParams,
+} from "../../admin/extensions.schemas.js";
 import { type CatalogItemView, CatalogService } from "../../catalog/catalog.service.js";
+import { ApiError } from "../../errors.js";
 import { ExtensionAdminOps } from "../../extensions/admin-ops.js";
 import { ExtensionAdmin } from "../../extensions/admin-view.js";
+import {
+  type DeploymentConfigView,
+  ExtensionDeploymentConfigService,
+} from "../../extensions/deployment-config.js";
+import { ExtensionInstalls } from "../../extensions/installs.js";
 import type { AdminExtensionView } from "../../extensions/permission-view.js";
+import { PluginGuides } from "../../extensions/plugin-guides.js";
 import {
   SINGLE_PROVIDER_ENABLED,
   SINGLE_PROVIDER_REQUIRED,
@@ -13,18 +23,82 @@ import {
 import { unavailableReason } from "../../extensions/unavailable.js";
 import { KernelConfigService } from "../../infra/config/kernel-config.service.js";
 import { KernelDb } from "../../infra/database/kernel-db.js";
+import {
+  DeploymentCheckPathParams,
+  DeploymentCheckRunBody,
+  DeploymentGuidePathParams,
+  DeploymentGuidesPathParams,
+  DeploymentGuidesQuery,
+} from "../../setup/setup-checks.schemas.js";
+import { SetupChecksService } from "../../setup/setup-checks.service.js";
+import { FileRefSchema } from "../file-ref.js";
 import { defineOperation, type PrecheckResult } from "../operation.js";
+import {
+  type PersonFieldTarget,
+  pathsTouched,
+  personFieldParams,
+  secretFieldsOf,
+} from "../person-fields.js";
 import { PlatformOperations } from "../registry.js";
 import { precheckBy, viaAgent } from "./errors.js";
 import { assertExtensionNotOtherOrgs, OTHER_ORG, otherOrgExtensions } from "./other-orgs.js";
 import { Cursor, pageOf, startOf } from "./paging.js";
-import { localized } from "./summary.js";
+import { configChanges, flatValues, withPersonInputs } from "./person-inputs.js";
+import { localized, named } from "./summary.js";
 import { unavailableFields } from "./unavailable.js";
 
 /** An extension's name (`:name` of the admin routes), bounded like the org routes' `:extension`. */
 const Name = AdminExtensionNamePathParams.shape.name.max(64);
 const NameInput = z.object({ name: Name }).strict();
 const EXAMPLE = { name: "model-anthropic" };
+
+/** `values` of the deployment config route: field dot path -> value (`null` clears). */
+const ConfigValues = AdminExtensionConfigBody.shape.values;
+
+/**
+ * The person fields of an extension's deployment config (platform web parity spec §4.1): the
+ * secret fields of its form schema, set or not. A secret field the schema walk cannot address (no
+ * form schema, a record) is never asked, and a value for it in `values` is refused as web only. A
+ * secret set in the startup config (read-only here) is never asked either: naming it in
+ * `askPerson` / `clearSecrets`, or giving it in `values`, is refused before the card with the
+ * route's `extension.config_readonly`, so the person never types a value the write would refuse.
+ */
+export function deploymentPersonFields(
+  v: DeploymentConfigView,
+  named: readonly string[] = [],
+  values?: Readonly<Record<string, unknown>>,
+): PersonFieldTarget {
+  const secrets = v.fields.filter((f) => f.secret);
+  const readonly = secrets.filter((f) => f.readonly);
+  const ro = new Set(readonly.map((f) => f.path));
+  const hit = [
+    ...new Set([
+      ...named.filter((p) => ro.has(p)),
+      ...pathsTouched(
+        values,
+        readonly.map((f) => f.path),
+      ),
+    ]),
+  ];
+  if (hit.length > 0) {
+    throw new ApiError(
+      "extension.config_readonly",
+      `These deployment config fields of extension ${v.plugin} are set in the startup config (file, Nacos or environment) and are read-only here: ${hit.join(", ")}`,
+      hit.map((path) => ({ path, source: readonly.find((f) => f.path === path)?.source })),
+    );
+  }
+  const found = secretFieldsOf(v.schema, new Set(secrets.filter((f) => f.set).map((f) => f.path)));
+  const fields = found.fields.filter((f) => !ro.has(f.path));
+  const asked = new Set(fields.map((f) => f.path));
+  const n = localized(v.displayName, v.plugin);
+  return {
+    target: { zh: `扩展「${n.zh}」的部署配置`, en: `${n.en}: deployment config` },
+    fields,
+    recordOnly: [
+      ...new Set([...found.recordOnly, ...secrets.map((f) => f.path).filter((p) => !asked.has(p))]),
+    ],
+  };
+}
 
 /** The English name of an extension as next steps name it. */
 const enName = (v: AdminExtensionView): string => localized(v.displayName, v.name).en;
@@ -94,9 +168,10 @@ const pendingPlugin = (i: CatalogItemView) => ({
 
 /**
  * The super admin's extension operations of the `Platform` tool (spec §14.2 "admin console",
- * §14.5 item 1): the deployment's extensions (list, read), enable, disable and uninstall. Installing
- * a package (upload, npm) and approving permissions stay on the web: a person reviews the
- * permissions there. Deployment config is never read or written here (secrets).
+ * §14.5 item 1): the deployment's extensions (list, read), enable, disable and uninstall, and
+ * storing an uploaded package (its review). Installing a package and approving permissions stay on
+ * the web: a person reviews the permissions there. The deployment config is read (secrets as set or not) and written here, its
+ * secrets entered by the person on the confirmation card (platform web parity spec §4).
  */
 @Injectable()
 export class ExtensionsAdminOperations implements OnModuleInit {
@@ -107,6 +182,12 @@ export class ExtensionsAdminOperations implements OnModuleInit {
     @Inject(KernelConfigService) private readonly config: KernelConfigService,
     @Inject(KernelDb) private readonly kdb: KernelDb,
     @Inject(CatalogService) private readonly catalog: CatalogService,
+    @Inject(ExtensionDeploymentConfigService)
+    private readonly deploymentConfigs: ExtensionDeploymentConfigService,
+    @Inject(ExtensionInstalls) private readonly installs: ExtensionInstalls,
+    @Inject(PluginGuides) private readonly guides: Pick<PluginGuides, "deploymentGuides">,
+    @Inject(SetupChecksService)
+    private readonly checks: Pick<SetupChecksService, "deploymentStates" | "deploymentRun">,
   ) {}
 
   /** The view of `name` for a precheck, or the refusal (unknown, startup-declared). */
@@ -185,6 +266,96 @@ export class ExtensionsAdminOperations implements OnModuleInit {
             otherOrgExtensions: waiting.length - exts.length,
           };
         },
+        handoff: (_i, result) => {
+          const r = result as {
+            items?: { kind?: unknown; id?: unknown }[];
+            total?: unknown;
+          } | null;
+          const rows = r?.items;
+          if (rows === undefined || rows.length === 0) return null;
+          // the one extension's page only when the whole waiting set is that extension
+          const onlyExtension =
+            r?.total === 1 && rows.length === 1 && rows[0]?.kind === "extension";
+          const id = rows[0]?.id;
+          return {
+            kind: "handoff",
+            title: {
+              zh: "审阅待确认的权限",
+              en: "Review the permissions waiting for confirmation",
+            },
+            target: {
+              type: "link",
+              url:
+                onlyExtension && typeof id === "string"
+                  ? `/admin/extensions/${encodeURIComponent(id)}`
+                  : "/admin/plugins/pending",
+            },
+          };
+        },
+      }),
+      defineOperation({
+        id: "extensions.upload-package",
+        description:
+          "Store an extension package in the deployment's package store (super admin): a .tgz extension package of this conversation, e.g. one you packed in the sandbox and delivered with Deliver, passed as file: { fileId }; at most the deployment's package limit. Returns its review: name, version, sha256, the permissions it asks for and those added or removed against the approved ones, migration warnings. Nothing is installed or run. No web page shows a stored package: the person installs the stored package with the super admin API (`POST /api/v1/admin/extensions/:name/install` with `{ sha256 }` from the review), or with the capybara CLI (`capybara extensions install <file.tgz>`, which shows the permission review and asks them to confirm) after downloading the .tgz from this conversation.",
+        input: z.object({ file: FileRefSchema }).strict(),
+        example: { file: { fileId: "0b9f2c4e-1d3a-4c55-9e0a-7a2f6d1c8b11" } },
+        authz: { superAdmin: true },
+        mirrors: ["POST /api/v1/admin/extensions/packages/file"],
+        // the route's raw body
+        extras: ["file"],
+        confirm: "platform",
+        errors: [
+          {
+            code: "extension.package_invalid",
+            next: "The package is not a valid extension package (the details list each problem); fix it, pack and deliver it again.",
+          },
+          {
+            code: "extension.package_too_large",
+            next: "The package is over the deployment's package limit; make it smaller.",
+          },
+          {
+            code: "extension.config_declared",
+            next: "An extension of this name is declared in the startup config; tell the person, who removes it there first.",
+          },
+          {
+            code: "extension.name_conflict",
+            next: "An extension of this name is installed from another npm package; check the package name.",
+          },
+        ],
+        fileRef: (i) => ({
+          ref: i.file,
+          // the route takes the raw bytes whatever their type (a delivered .tgz is
+          // application/octet-stream); the package reader checks them
+          limits: { maxBytes: this.config.get().packages.maxBytes },
+        }),
+        summary: (_i, ctx) => {
+          const f = named(ctx.file?.name ?? "?");
+          return {
+            zh: `把扩展包「${f}」存入平台的包存储（尚未安装）`,
+            en: `Store the extension package "${f}" in the platform's package store (nothing is installed yet)`,
+          };
+        },
+        run: async (_input, ctx) => {
+          const f = ctx.file;
+          if (f === undefined) throw new Error("extensions.upload-package: the file is missing");
+          const r = await this.installs.ingestFile(ctx.actorAccountId, f.bytes, {
+            auditDetail: viaAgent("extensions.upload-package", ctx),
+          });
+          return {
+            review: {
+              name: r.name,
+              version: r.version,
+              sha256: r.sha256,
+              permissions: r.permissions,
+              addedPermissions: r.added,
+              removedPermissions: r.removed,
+              warnings: r.warnings,
+            },
+            next: `Nothing is installed yet; the web has no page for a stored package. Tell the person to install it with the super admin API: POST /api/v1/admin/extensions/${r.name}/install with { "sha256": "${r.sha256}" }; or with \`capybara extensions install <file.tgz>\` (it shows the permission review and asks for confirmation) after downloading the .tgz from this conversation.`,
+          };
+        },
+        noHandoff:
+          "No web page shows a stored package; the person installs it and confirms its permissions with the super admin API or the capybara CLI.",
       }),
       defineOperation({
         id: "extensions.platform-get",
@@ -213,7 +384,7 @@ export class ExtensionsAdminOperations implements OnModuleInit {
       defineOperation({
         id: "extensions.platform-enable",
         description:
-          "Enable an installed extension on the platform (super admin): every replica loads it, without a restart. It runs once its permissions are approved and its deployment config is valid (both on the web); orgs then switch it on themselves.",
+          "Enable an installed extension on the platform (super admin): every replica loads it, without a restart. It runs once its permissions are approved (on the web) and its deployment config is valid (extensions.platform-config, extensions.platform-set-config); orgs then switch it on themselves.",
         input: NameInput,
         example: EXAMPLE,
         authz: { superAdmin: true },
@@ -269,6 +440,18 @@ export class ExtensionsAdminOperations implements OnModuleInit {
           return {
             extension: row(v),
             next: "Replicas load it in the background; check its state with extensions.platform-get.",
+          };
+        },
+        handoff: (input, result) => {
+          const state = (result as { extension?: { state?: unknown } } | null)?.extension?.state;
+          if (state !== "pending_approval") return null;
+          return {
+            kind: "handoff",
+            title: {
+              zh: "审阅并确认扩展的权限",
+              en: "Review and confirm the extension's permissions",
+            },
+            target: { type: "link", url: `/admin/extensions/${encodeURIComponent(input.name)}` },
           };
         },
       }),
@@ -387,6 +570,234 @@ export class ExtensionsAdminOperations implements OnModuleInit {
             viaAgent("extensions.uninstall", ctx),
           );
           return { uninstalled: input.name };
+        },
+      }),
+      defineOperation({
+        id: "extensions.platform-config",
+        description:
+          "Read an extension's deployment config (super admin): each field's source (env, file or nacos: read-only here; db: saved here; default; unset), the effective value of non-secret fields, whether each secret field is set (never its value), the form's JSON Schema (secret fields carry x-secret), whether the config is valid and the problems (paths only), and the overridable fields every org must fill in itself (orgMustConfigure).",
+        input: NameInput,
+        example: EXAMPLE,
+        authz: { superAdmin: true },
+        mirrors: ["GET /api/v1/admin/extensions/:name/config"],
+        confirm: "read",
+        errors: [
+          {
+            code: "extension.not_found",
+            next: "Check the extension name with extensions.platform-list.",
+          },
+        ],
+        run: async (input, ctx) => {
+          await assertExtensionNotOtherOrgs(this.kdb.db, input.name, ctx.orgId);
+          return this.deploymentConfigs.view(input.name);
+        },
+      }),
+      defineOperation({
+        id: "extensions.platform-set-config",
+        description:
+          "Save fields of an extension's deployment config (super admin): values maps field dot paths to new values (null clears a non-secret field; a field left out keeps its value). Secret fields are never in values: list them in askPerson and the person types them on the confirmation card (on the web); list stored secrets to empty in clearSecrets. Required secrets without a stored value are asked even when not listed. Every replica applies the saved config without a restart. Read the fields first with extensions.platform-config.",
+        input: z
+          .object({
+            name: Name,
+            values: ConfigValues.default({}),
+            askPerson: personFieldParams.askPerson,
+            clearSecrets: personFieldParams.clearSecrets,
+          })
+          .strict(),
+        example: { name: "model-anthropic", values: {}, askPerson: ["apiKey"], clearSecrets: [] },
+        authz: { superAdmin: true },
+        mirrors: ["PUT /api/v1/admin/extensions/:name/config"],
+        // secret record entries are entered on the web page (ruling R1)
+        omits: ["secretEntries"],
+        extras: ["askPerson", "clearSecrets"],
+        loosens: {
+          values: "defaults to {} so a call that only asks the person for secrets needs no values",
+        },
+        confirm: "platform",
+        errors: [
+          {
+            code: "extension.not_found",
+            next: "Check the extension name with extensions.platform-list.",
+          },
+          {
+            code: "extension.config_invalid",
+            next: "Read the fields and their schema with extensions.platform-config, correct the values (the error's details name the fields), then call again.",
+          },
+          {
+            code: "extension.config_readonly",
+            next: "These fields come from the startup config (file, Nacos or environment): only the deployment's config changes them. Leave them out and call again.",
+          },
+        ],
+        personFields: async (i, ctx) => {
+          await assertExtensionNotOtherOrgs(this.kdb.db, i.name, ctx.orgId);
+          return deploymentPersonFields(
+            await this.deploymentConfigs.view(i.name),
+            [...i.askPerson, ...i.clearSecrets],
+            i.values,
+          );
+        },
+        summary: async (i, ctx) => {
+          const v = await this.deploymentConfigs.view(i.name);
+          const n = localized(v.displayName, v.plugin);
+          const c = configChanges(i, ctx);
+          return {
+            zh: `保存扩展「${n.zh}」的平台部署配置：${c.zh}`,
+            en: `Save the platform deployment config of extension "${n.en}": ${c.en}`,
+          };
+        },
+        run: async (input, ctx) => {
+          await assertExtensionNotOtherOrgs(this.kdb.db, input.name, ctx.orgId);
+          const view = await withPersonInputs(
+            "extensions.platform-set-config",
+            ctx,
+            (entered, detail) =>
+              this.deploymentConfigs.put(
+                input.name,
+                flatValues(input.values, entered, input.clearSecrets),
+                ctx.actorAccountId,
+                undefined,
+                [],
+                detail,
+              ),
+          );
+          return {
+            config: view,
+            next: "Replicas apply it in the background; check the extension's state with extensions.platform-get.",
+          };
+        },
+      }),
+      defineOperation({
+        id: "extensions.platform-clear-config",
+        description:
+          "Clear the deployment config saved on the platform for an extension (super admin): every saved field and every stored secret. Fields from the startup config (file, Nacos, environment) stay in effect. The extension reloads from what remains, or waits for configuration when that is missing or invalid.",
+        input: NameInput,
+        example: EXAMPLE,
+        authz: { superAdmin: true },
+        mirrors: ["DELETE /api/v1/admin/extensions/:name/config"],
+        confirm: "platform",
+        rememberable: false,
+        errors: [
+          {
+            code: "extension.not_found",
+            next: "Check the extension name with extensions.platform-list.",
+          },
+        ],
+        summary: async (i) => {
+          const v = await this.deploymentConfigs.view(i.name);
+          const n = localized(v.displayName, v.plugin);
+          return {
+            zh: `清除扩展「${n.zh}」保存在平台上的部署配置（含全部密钥；启动配置中的字段保留）`,
+            en: `Clear the deployment config of extension "${n.en}" saved on the platform (every secret too; startup config fields stay)`,
+          };
+        },
+        run: async (input, ctx) => {
+          await assertExtensionNotOtherOrgs(this.kdb.db, input.name, ctx.orgId);
+          const view = await this.deploymentConfigs.clear(
+            input.name,
+            ctx.actorAccountId,
+            undefined,
+            viaAgent("extensions.platform-clear-config", ctx),
+          );
+          return { config: view };
+        },
+      }),
+      defineOperation({
+        id: "extensions.platform-guides",
+        description:
+          "Read an extension's platform setup guides (super admin): the guides it ships for its deployment config (for example a push provider's credentials), rendered with the steps and the checks as check rows (run them with extensions.platform-check). Secrets are never in a guide: the person types each one into the deployment config form in the admin console (Extensions → the extension), or on the confirmation card of extensions.platform-set-config. Empty when the extension ships none.",
+        input: DeploymentGuidesPathParams.extend(DeploymentGuidesQuery.shape).strict(),
+        example: { name: "push-apns" },
+        authz: { superAdmin: true },
+        mirrors: ["GET /api/v1/admin/extensions/:name/guides"],
+        confirm: "read",
+        errors: [
+          {
+            code: "extension.not_found",
+            next: "Check the extension name with extensions.platform-list.",
+          },
+        ],
+        run: async (input, ctx) => {
+          await assertExtensionNotOtherOrgs(this.kdb.db, input.name, ctx.orgId);
+          return { guides: await this.guides.deploymentGuides(input.name, input) };
+        },
+        handoff: (input) => ({
+          kind: "handoff",
+          title: {
+            zh: "在扩展页面填写部署配置",
+            en: "Fill in the deployment config on the extension page",
+          },
+          target: { type: "link", url: `/admin/extensions/${encodeURIComponent(input.name)}` },
+        }),
+      }),
+      defineOperation({
+        id: "extensions.platform-check-status",
+        description:
+          "Read the cached state of every check of an extension's platform setup guide, by check id: ok, failing, unknown, running or not_run, with the reason and fix to show the person. Runs nothing; run a check with extensions.platform-check.",
+        input: DeploymentGuidePathParams.strict(),
+        example: { name: "push-apns", guideId: "apns-key" },
+        authz: { superAdmin: true },
+        mirrors: ["GET /api/v1/admin/extensions/:name/guides/:guideId/checks"],
+        confirm: "read",
+        errors: [
+          {
+            code: "extension.not_found",
+            next: "Check the extension name with extensions.platform-list.",
+          },
+          {
+            code: "catalog.guide_not_found",
+            next: "The extension has no platform setup guide with that id; list them with extensions.platform-guides.",
+          },
+        ],
+        run: async (input, ctx) => {
+          await assertExtensionNotOtherOrgs(this.kdb.db, input.name, ctx.orgId);
+          return {
+            results: await this.checks.deploymentStates(
+              ctx.actorAccountId,
+              input.name,
+              input.guideId,
+            ),
+          };
+        },
+      }),
+      defineOperation({
+        id: "extensions.platform-check",
+        description:
+          "Run one check of an extension's platform setup guide against its deployment config and return its state: ok, failing (with a reason and a fix to explain), unknown, or running (try again in a moment). A fresh cached result is returned as is; force reruns it, at most once per 10 seconds per check. A check only reads; run it after the person says they saved the config. The result is shown to you: the kernel redacts exact matches of whole secret values of 8 characters or more, so a well-behaved check never echoes any part of a secret, and you never repeat a value that looks like one.",
+        input: DeploymentCheckPathParams.extend(DeploymentCheckRunBody.shape).strict(),
+        example: { name: "push-apns", guideId: "apns-key", checkId: "key-works" },
+        authz: { superAdmin: true },
+        mirrors: ["POST /api/v1/admin/extensions/:name/guides/:guideId/checks/:checkId/run"],
+        confirm: "read",
+        errors: [
+          {
+            code: "extension.not_found",
+            next: "Check the extension name with extensions.platform-list.",
+          },
+          {
+            code: "catalog.guide_not_found",
+            next: "The extension has no platform setup guide with that id; list them with extensions.platform-guides.",
+          },
+          {
+            code: "catalog.check_not_found",
+            next: "That check is not in the guide; read the check ids with extensions.platform-check-status.",
+          },
+          {
+            code: "rate_limited",
+            next: "This person ran 30 checks in the last minute; wait a minute before running another, and read the cached states with extensions.platform-check-status meanwhile.",
+          },
+        ],
+        run: async (input, ctx) => {
+          await assertExtensionNotOtherOrgs(this.kdb.db, input.name, ctx.orgId);
+          const { name, guideId, checkId, ...body } = input;
+          return {
+            result: await this.checks.deploymentRun(
+              ctx.actorAccountId,
+              name,
+              guideId,
+              checkId,
+              body,
+            ),
+          };
         },
       }),
     ]);

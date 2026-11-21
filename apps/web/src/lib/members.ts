@@ -14,7 +14,7 @@ export const DEFAULT_INVITATION_HOURS = 168;
 
 /** `GET /api/v1/orgs/:orgId/members` 的一项。 */
 export interface Member {
-  account: { id: string; displayName: string; email: string | null };
+  account: { id: string; displayName: string; email: string | null; avatarUrl: string | null };
   role: OrgRole;
   joinedAt: string;
   /** 该组织的匿名访客（渠道连接的匿名策略用）：不能改角色、移出或转让所有权。 */

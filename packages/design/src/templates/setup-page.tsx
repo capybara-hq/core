@@ -18,12 +18,12 @@ export type SetupPageProps = {
     adminHref?: string;
   };
   status: AppShellProps["status"];
-  /** The page title in the compact top bar (below 600) until the page head registers its own. */
-  title?: string;
   /** Draw as the rail of the medium class (the reference set and the catalog). */
   reference?: AppShellProps["reference"];
   /** A shell-wide notice row (safe mode's banner), as {@link AppShellProps.banner}. */
   banner?: ReactNode;
+  /** The resolved UI theme has a single scheme, as {@link AppShellProps.singleScheme}. */
+  singleScheme?: boolean;
   /** The page: a template (its own page head), in the shell's content area. */
   children?: ReactNode;
 };
@@ -31,10 +31,17 @@ export type SetupPageProps = {
 /**
  * T13 Setup: the guided setup layout (web-SSR spec §4), drawn by the app frame while the current
  * org cannot run yet. The shell's geometry (sidebar | content area | status bar, the same rail;
- * below 600 the steps are a menu in the top bar) with the setup sidebar: the setup home and the steps are its navigation; no search, no
+ * below 600 the steps button leads the floating row) with the setup sidebar: the setup home and the steps are its navigation; no search, no
  * inbox, no conversations, no command palette. The page brings its own template and page head.
  */
-export function SetupPage({ sidebar, status, title, reference, banner, children }: SetupPageProps) {
+export function SetupPage({
+  sidebar,
+  status,
+  reference,
+  banner,
+  singleScheme,
+  children,
+}: SetupPageProps) {
   const { org, home, steps, adminHref, ...rest } = sidebar;
   return (
     <div className="cb-setup" data-template="SetupPage">
@@ -50,9 +57,9 @@ export function SetupPage({ sidebar, status, title, reference, banner, children 
           },
         }}
         status={status}
-        {...(title !== undefined ? { title } : {})}
         {...(reference !== undefined ? { reference } : {})}
         {...(banner !== undefined ? { banner } : {})}
+        {...(singleScheme !== undefined ? { singleScheme } : {})}
       >
         {children}
       </AppShell>

@@ -61,7 +61,7 @@ Each concern is done one way; `pnpm check:kernel-conventions` (rules `kc-*`, lis
 | Transaction-scoped advisory locks (decision R9) | `pg_advisory_xact_lock` is transaction semantics, like `FOR UPDATE`: only through `XactLock.lock(key)` inside a `@Transactional({ propagation: "mandatory" })` method of one small `*Lock` provider per lock (`OrgLock`, `SuperAdminLock`, `SetupLock`, `CatalogItemLock`, …) | session-level `pg_advisory_lock` / `pg_try_advisory_lock` outside the migration runners (`kc-lock`) |
 | Distributed mutual exclusion | `LockService` (`acquire` / `run` / `lease` / `hold` / shared leases, Redis, renewed every TTL/3) or `@WithLock`; `acquire`, `run`, `hold`, `lease`, `tryShared` and `tryExclusive` throw inside a transaction; `lock.acquire_failed` (409, key in `details[0].lockKey`) when the wait runs out | hand-written `SET NX`, renewal timers (`kc-lock`) |
 | Fixed-period jobs | `@LockedCron(expression, { name })`, or `@LockedInterval(name, (config) => ms, { runOnStart? })` for a config-driven period; the class has `lockService` and `log` (and `config` for intervals) and is provided only under `WorkerModule` | bare `@Cron` / `@Interval` (`kc-cron`), BullMQ repeatable schedulers, a job provider outside `WorkerModule` (`kc-worker-only`) |
-| One-off and delayed jobs | `QueueModule.registerQueue(name)` for the queue; a job is added with `OutboxService.add` in the transaction that owes it (below), deterministic job ids without `:`; `cap-kernel-maintenance` has one consumer, `MaintenanceProcessor`, which dispatches by name and also runs a periodic job's name once (`ScheduledRuns.runNow`, decision R23: no tick marker, no run lock) | `new Queue` / `new Worker` (`kc-queue`; extension queues behind `ctx.queue` are the exception); a direct `queue.add` (`kc-enqueue-via-outbox`) |
+| One-off and delayed jobs | `QueueModule.registerQueue(name)` for the queue; a job is added with `OutboxService.add` in the transaction that owes it (below), deterministic job ids without `:`; `cap-kernel-maintenance` has one consumer, `MaintenanceProcessor`, which dispatches by name and also runs a periodic job's name once (`ScheduledRuns.runNow`, decision R23: no tick marker, no run lock); `cap-push-deliver` (jobs `push-fanout-<eventId>` and `push-<eventId>-<registrationId>`, `PushProcessor`, the only place a push send is retried) | `new Queue` / `new Worker` (`kc-queue`; extension queues behind `ctx.queue` are the exception); a direct `queue.add` (`kc-enqueue-via-outbox`) |
 | Queue consumers | a `WorkerHost` with `@Processor(queue)` (or `configuredProcessor(Base, …)` when its options come from the config), provided only under `WorkerModule`; every job runs inside `runJob(queue, job, fn)` (fresh async context, log context) | `kc-queue`, `kc-worker-only` |
 | Cache | `@Cacheable` / `@CacheEvict` (Redis, fail-open, keys prefixed `cache:`); inside a transaction `@CacheEvict` evicts after the COMMIT (nothing on rollback) and `@Cacheable` is bypassed (no read, no write: a cached value may be older than the transaction's own writes) | ad-hoc read-through Redis caches (`kc-cache`) |
 | Rate limits | `@Throttled(...)` per route; credential routes `CredentialThrottler` (below) | hand-written counters (`kc-rate-limit`) |
@@ -200,6 +200,15 @@ async create(@ZBody(WidgetCreateBody) body: z.infer<typeof CreateSchema>) {}
 ```
 
 `createZodDto` (`src/infra/validation/create-zod-dto.ts`) turns a zod schema into a named DTO class; `@ZBody(Dto)` / `@ZQuery(Dto)` / `@ZParam(Dto)` pass the DTO to the global validation pipe (no decorator metadata, so a bare `@Body()` typed with a DTO is never validated and `kc-zod-pipe` rejects it) and feed the OpenAPI document (`http.swagger`, served at `/docs`). A failure returns 400 `validation_failed` with `details` as the list of field problems. Route parameters that need validation go through a `@ZParam` DTO too (decision R20), so `details[].path` names the parameter. Give every string an upper bound (`max`) to prevent oversized input.
+
+## People in responses
+
+A response that shows a person carries their avatar through `identity/account-avatar.ts`: join
+`accounts` and select `avatarColumns(eb, alias, prefix)` (one prefix per person in the row), read it
+with `personAvatarUrl`, or turn ids into `PersonRef { id, name, avatarUrl }` with one `loadPeople`
+call; responses returning log events add a `people` map, never a change to logged payloads. A gone
+account is `null` (or absent from `people`), never an empty name. Avatars are display data: Platform
+operation outputs never carry `avatarUrl` (the model never sees a face).
 
 ## Error codes
 
@@ -364,6 +373,35 @@ imports no domain module). `defineOperation({...})` fields:
   write's own `conversationId` / `runId` survive the merge). Results hold no secrets, tokens,
   credential fields or secret config.
 
+**Person fields** (platform web parity spec §4, `platform/person-fields.ts`). A write whose target
+holds secrets never takes them as params: the person types them on the approval card.
+
+- The input adds `personFieldParams` (`askPerson`, `clearSecrets`: dot paths, as the config routes'
+  `values`), the route's secret fields go into `omits`, and `personFields(input, ctx)` returns the
+  target (`{ zh, en }` card name) and `secretFieldsOf(jsonSchema, storedPaths)` of its form schema
+  (`x-secret` nodes; a secret it cannot address, such as a record or one with no form schema, goes to
+  `recordOnly`: web only, `platform.secret_record_web_only`).
+- The tool plans the call before the card (`planPersonFields`): a secret in `values` is refused as
+  leaked without echoing it, a path that is no secret field is refused, a required secret without a
+  stored value is asked anyway. A call with person fields always asks, once, and only its
+  `requested_for` person approves it in a web session with the values (`inputs` on the decision;
+  never from IM, never unattended, never remembered).
+- The decision seals the values (`SealedInputs`, AES-GCM, 15 minutes, read once). `run` gets them
+  only through `ctx.personInputs.apply(fn)`: the whole service write happens inside `fn`, in the
+  transaction that consumes the row (`withPersonInputs` in `platform/ops/person-inputs.ts`; without
+  `personInputs` it calls the service directly). A write made of several transactions of its own
+  (`requires_new` steps under the org row lock: the catalog install, missing template connectors)
+  would wait inside `fn` on a lock the consuming transaction holds: it takes the values first with
+  `takePersonInputs` and runs outside. A connector's person fields come from its auth method
+  (`connectorPersonFields`, `platform/connector-person-fields.ts`), not from a schema. A service whose post-write side effects must see the
+  commit puts them in `afterCommit` when it runs inside a caller's transaction
+  (`ExtensionDeploymentConfigService.put`). The audit detail adds `inputsProvided` (paths); results and
+  events carry paths, never values.
+- A route schema field carrying a secret is marked with the SDK's `secret()` (`SecretEntry.value`);
+  the parity rule `platform-op-secret-param` then requires it in `omits` and the operation to define
+  `personFields`, or to say in `withoutSecrets` why it takes none (a preview without the credential). Dynamic records (`values`, `config`) cannot carry the marker; the runtime plan
+  covers them.
+
 **Results.** A list returns compact rows: `id`, `name`, `state`, `reason?`, `next?` and at most 3
 domain fields; details come from the domain's `get`. Lists page by 50 with `pageOf(rows,
 startOf(cursor), 50)` (`params.cursor`, result `{ items, total, next }`). A route that pages by
@@ -380,13 +418,22 @@ service error naming that org's items is rethrown without them).
 
 **Exclusions.** `PLATFORM_EXCLUSIONS` entries have a category and a reason: `human-only` (deciding
 approvals and requests, confirming extension permissions, roles, the super-admin flag, sign-in and
-setup), `secret` (tokens, credentials, secret config values, cross-org config state), `transport`
-(uploads, downloads, streams, presigned URLs), `internal` (the web's own plumbing). A `@SessionOnly()`
+setup), `secret` (a route that delivers a secret to a browser: SSO / OAuth callbacks, the
+initial-password reveal, other orgs' config copies; "it carries a secret" is no reason: that is a
+person field), `transport`
+(downloads, streams, embeds, health, public share pages; never an upload: a file reaches an operation
+as a file reference `{ fileId }`, and `platform-op-upload` fails an exclusion whose reason or category
+says upload, multipart or raw bytes, except the three attachment routes, which are `internal` and name
+"a person's file into a conversation"), `internal` (a helper of a web screen; its reason names the
+operation that gives the same facts, or says no agent use). An operation whose description sends the
+person to confirm, review, approve or decide on the web defines `handoff` (the link card, display
+only), or `noHandoff: "<reason>"` when no web page shows it (`platform-op-handoff`). A `@SessionOnly()`
 route is `human-only` or `secret`, never mirrored (`platform-op-session-only`). A controller that
 switches a mirrored route to a schema not in its `ROUTE_SCHEMAS` entry is caught only by review: the
 parity test compares the registered schemas, and tying a `@ZBody` / `@ZQuery` DTO back to that entry
 would need cross-file resolution the source scan does not do. There is no `later`:
-`platform-op-later` fails any such exclusion. An operation that would touch a secret refuses with a
+`platform-op-later` fails any such exclusion. An operation that writes a secret takes it as a
+person field (above); one whose secret the card cannot ask for (a secret record) refuses with a
 pointer to the web page.
 
 **Adding a domain.** Add the id and its one-line description to `PLATFORM_DOMAINS`

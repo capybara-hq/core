@@ -20,7 +20,7 @@ import { readOrgMarketplaceBrowse } from "../../identity/settings.js";
 import { KernelDb } from "../../infra/database/kernel-db.js";
 import { defineOperation, type PrecheckResult } from "../operation.js";
 import { PlatformOperations } from "../registry.js";
-import { CONFIRM_ON_WEB, reviewBrief, reviewUrl } from "./catalog-admin.ops.js";
+import { CONFIRM_ON_WEB, importHandoff, reviewBrief, reviewUrl } from "./catalog-admin.ops.js";
 import { viaAgent } from "./errors.js";
 import { Cursor, pageOf, startOf } from "./paging.js";
 
@@ -528,6 +528,7 @@ export class MarketplacesOperations implements OnModuleInit {
             next: CONFIRM_ON_WEB,
           };
         },
+        handoff: (_i, result) => importHandoff(result),
       }),
     ]);
   }

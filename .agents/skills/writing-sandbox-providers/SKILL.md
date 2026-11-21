@@ -388,7 +388,12 @@ no plugin can take the name.
   (`devices.provider`), not by the deployment's one sandbox extension, so cloud and local
   devices coexist. Handle ids are the device id (parsed from `cap-device-<deviceId>`).
 - **Relay.** Calls become requests on `capk:device-req:<deviceId>` and results come back under
-  `capk:device-res:<requestId>`; no holder means `device.offline` at once. See
+  `capk:device-res:<requestId>`; no holder means `device.offline` at once. A waiting staged call
+  ends at its deadline plus `reconnectGraceSeconds`, or at the next holder poll once the machine is
+  connected as another program run (the hello's `programRunId`, random per process: the results a
+  program keeps for a reconnect live in its memory), with `DeviceProgramRestartedError`; the
+  operation path records it as an unknown outcome and the model gets
+  `DEVICE_PROGRAM_RESTARTED_TOOL_TEXT`. See
   `packages/kernel/src/local-devices` and spec §13.4. The handle carries the org's limits from `create`; a
   handle without them answers `SandboxGoneError`, which rebuilds the instance.
 - **Offline-safe destroys.** `destroy`, `destroyByName`, `destroyFileSystem` and
@@ -630,6 +635,10 @@ suite in `@capybara-hq/testing` checks it):
   host reads the version manager directories of the device user's home (`TOOL_HOME_DIRS`) and asdf's
   global `~/.tool-versions` read only (`restrictedToolHomes`, never a path at, under or holding an
   owner-denied one), even when the owner limited restricted project reach to the workspace.
+- **Packages that ship `.idea` / `.vscode` do not install in the sandbox.** The editor denies hold
+  below `node_modules` too (a directory moved or linked out of it would carry the configuration
+  into a folder the owner opens); pnpm's own tarball ships `iconv-lite/.idea`, so its switch to a
+  pinned version needs the escalation or a global pnpm of that version.
 - **`DockerContainer.ready` is not reset after a `docker rm` or a daemon restart.** The Docker provider keeps
   its readiness flag, so operations on that container fail closed until the provider (the kernel process)
   restarts.

@@ -13,6 +13,7 @@ import {
   type MessageInput,
   postMessage,
 } from "../../lib/conversations";
+import type { PersonRef } from "../../lib/people";
 import { retryOnMountOf } from "../../lib/query/client";
 import {
   appendEvents,
@@ -24,6 +25,7 @@ import {
   invalidateAfterPlatformCall,
   isFreshlySeeded,
   isPlatformCallDone,
+  learnPeople,
   loadEarlierEvents,
 } from "../../lib/query/conversation";
 import { inboxChangeKeys } from "../../lib/query/inbox";
@@ -55,6 +57,9 @@ import { useErrorMessage } from "../../lib/use-error-message";
 
 /** Consecutive reopen attempts after the browser gave up the stream (reset by any open). */
 const MAX_REOPEN = 3;
+
+/** The people map of a window nothing has read yet: stable, so memo keys hold. */
+const NO_PEOPLE: Readonly<Record<string, PersonRef>> = {};
 
 const frame = (cb: () => void): number =>
   typeof requestAnimationFrame === "function"
@@ -108,6 +113,8 @@ export type ConversationState = {
   events: ConversationEvent[];
   /** How many runs started before the window's first event (the status bar's turn count). */
   turnsBefore: number;
+  /** The accounts the events name, by id; an id it lacks has left the platform. */
+  people: Readonly<Record<string, PersonRef>>;
   /** The thread's top edge and the read of the page before it; undefined while the log loads. */
   history: { state: HistoryState; loadEarlier(): void } | undefined;
   /**
@@ -171,6 +178,7 @@ export function useConversation(orgId: string, conversationId: string): Conversa
   const log = useQuery({ ...eventsQ, retryOnMount: retryOnMountOf(eventsQ.queryKey) });
   const row = useQuery({ ...rowQ, retryOnMount: retryOnMountOf(rowQ.queryKey) });
   const events = log.data?.events;
+  const peopleOfWindow = log.data?.people ?? NO_PEOPLE;
   /** The deltas since the log last changed in a way that drops them (applied per frame). */
   const [deltas, setDeltas] = useState<readonly StreamDelta[]>([]);
   const [progress, dispatchProgress] = useReducer(reduceProgress, {});
@@ -322,6 +330,8 @@ export function useConversation(orgId: string, conversationId: string): Conversa
           flush();
           delivered.set(scope, Math.max(delivered.get(scope) ?? 0, e.seq));
           const { added } = appendEvents(qc, orgId, conversationId, [e]);
+          // an account the page has not read yet: its name and avatar come with one small read
+          if (added > 0) void learnPeople(qc, orgId, conversationId, e);
           // The agent changed something for the person: what the pages show may be stale.
           if (added > 0 && isPlatformCallDone(e)) void invalidateAfterPlatformCall(qc);
           // A run start recorded a new project snapshot: the header's project state is the row's.
@@ -570,6 +580,7 @@ export function useConversation(orgId: string, conversationId: string): Conversa
     state,
     events: state.events,
     turnsBefore: log.data?.turnsBefore ?? 0,
+    people: peopleOfWindow,
     history,
     loading: !loaded && log.error === null,
     conversation: row.data,

@@ -1,4 +1,9 @@
-import { getSetupCheckStates, type SetupCheckSelection, type SetupGuideRef } from "../setup-guides";
+import {
+  getDeploymentCheckStates,
+  getSetupCheckStates,
+  type SetupCheckSelection,
+  type SetupGuideRef,
+} from "../setup-guides";
 import { defineQuery } from "./define";
 import { keys } from "./keys";
 
@@ -15,5 +20,13 @@ export const setupCheckStatesQuery = (orgId: string, ref: SetupGuideRef, s: Setu
       audience: s.audience ?? "",
     }),
     fn: ({ signal }) => getSetupCheckStates(orgId, ref, s, signal).then((r) => r.results),
+    freshness: "live",
+  });
+
+/** The cached states of an extension's platform guide checks (super admins); runs nothing. */
+export const deploymentCheckStatesQuery = (plugin: string, guideId: string) =>
+  defineQuery({
+    key: keys.deployment().deploymentChecks(plugin, guideId),
+    fn: ({ signal }) => getDeploymentCheckStates(plugin, guideId, signal).then((r) => r.results),
     freshness: "live",
   });

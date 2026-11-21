@@ -14,6 +14,7 @@ import {
   ThinkingRow,
   UserBubble,
 } from "../src/index";
+import { describeNestedBox, findNestedBoxes } from "../src/reference/index";
 
 afterEach(cleanup);
 
@@ -391,6 +392,43 @@ describe("the thinking row's live spinner (§6.16.5)", () => {
     const tool = wrap(<Spinner />);
     expect(tool.container.querySelector('[data-part="spinner"] svg')?.getAttribute("width")).toBe(
       "12",
+    );
+  });
+});
+
+describe("UserBubble author (§6.16.6)", () => {
+  it("draws a 40 circle avatar after the bubble and, with showName, the name above", () => {
+    const { container } = wrap(
+      <UserBubble text="hello" author={{ name: "Ada", avatarUrl: null, showName: true }} />,
+    );
+    const row = container.querySelector('[data-part="bubble-row"]') as HTMLElement;
+    const avatar = row.querySelector('[data-part="avatar"]') as HTMLElement;
+    expect(avatar.getAttribute("data-shape")).toBe("circle");
+    expect(avatar.getAttribute("data-size")).toBe("40");
+    expect(avatar.textContent).toBe("A");
+    expect(row.firstElementChild?.getAttribute("data-part")).toBe("bubble");
+    expect(row.lastElementChild).toBe(avatar);
+    expect(container.querySelector('[data-part="bubble-author-name"]')?.textContent).toBe("Ada");
+    expect(findNestedBoxes(document.body).map(describeNestedBox)).toEqual([]);
+  });
+
+  it("draws no name without showName, and an image avatar when the url is set", () => {
+    const { container } = wrap(
+      <UserBubble text="hello" author={{ name: "Ada", avatarUrl: "/a.png" }} />,
+    );
+    expect(container.querySelector('[data-part="bubble-author-name"]')).toBeNull();
+    expect(container.querySelector('[data-part="bubble-row"] img')?.getAttribute("src")).toBe(
+      "/a.png",
+    );
+  });
+
+  it("changes nothing without an author", () => {
+    const { container } = wrap(<UserBubble text="hello" />);
+    expect(container.querySelector('[data-part="bubble-row"]')).toBeNull();
+    expect(container.querySelector('[data-part="avatar"]')).toBeNull();
+    expect(container.querySelector('[data-part="bubble-author-name"]')).toBeNull();
+    expect(container.querySelector('[data-part="bubble"]')?.parentElement?.className).toBe(
+      "cb-user-msg",
     );
   });
 });

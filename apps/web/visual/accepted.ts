@@ -70,6 +70,10 @@ export const ACCEPTED: string[] = [
   // place; the reference PNGs and the side-by-side review wait for the reference-update and
   // visual-update workflows
   "mode-menu",
+  // mobile touch (Task 25): size tables and state lists in the spec, reference blocks in the catalog
+  "drawer",
+  "floating-button",
+  "nav-row",
   // phase D (Task 10): accepted by the blind side-by-side review (compare-out-d)
   "command-palette",
   "inline-card",
@@ -107,6 +111,13 @@ export const ACCEPTED: string[] = [
   // agent avatars (agent profile design §2.3): blocks and size table in place; the reference PNGs
   // and the side-by-side review wait for the reference-update and visual-update workflows
   "avatar",
+  // PersonName (account profile design): blocks and size table in place; the reference PNGs and
+  // the side-by-side review wait for the reference-update and visual-update workflows
+  "person-name",
+  // ObjectRow's person meta (account profile, spec §6.17 state `person`): the block is in place;
+  // the reference PNGs and the side-by-side review wait for the reference-update and visual-update
+  // workflows
+  "object-list",
   // config forms (Task 6): blocks and size tables in place; the reference PNGs and the
   // side-by-side review wait for the reference-update and visual-update workflows
   "repeater",
@@ -188,12 +199,8 @@ export const ACCEPTED: string[] = [
   // reference-update and visual-update workflows
   "sheet",
   "icon-preview",
-  // the compact shell and the list-detail region (mobile layout spec §4, §5.2; spec §6.45–§6.48):
-  // accepted side by side in the Linux image (blind review round 2); minor: top-bar-overflow's
-  // menu sits 0.5 css px higher than the reference (the popper's position vs its calc)
-  "bottom-nav",
-  "top-bar",
-  "me-panel",
+  // the list-detail region (mobile layout spec §5.2; spec §6.47): accepted side by side in the
+  // Linux image (blind review round 2)
   "list-detail",
 ];
 

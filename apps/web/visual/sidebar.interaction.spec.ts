@@ -225,15 +225,13 @@ test.describe("viewport widths (full shell)", () => {
       0,
     );
   });
-  test("599: no sidebar and no drawer; the top bar has the search", async ({ page }) => {
+  test("599: no sidebar; the floating row leads the page", async ({ page }) => {
     await page.setViewportSize({ width: 599, height: 900 });
     await page.goto("/dev/ui/templates/list");
     await page.waitForLoadState("networkidle");
     await expect(page.locator('[data-part="sidebar"]')).toHaveCount(0);
     await expect(page.getByRole("button", { name: "打开导航" })).toHaveCount(0);
-    await expect(
-      page.locator('[data-part="top-bar"]').getByRole("button", { name: "搜索" }),
-    ).toBeVisible();
+    await expect(page.locator('[data-part="floating-bar"]')).toBeVisible();
   });
 });
 
@@ -252,14 +250,14 @@ test.describe("first paint without JavaScript", () => {
     [599, [], true],
     [390, [], true],
   ] as const) {
-    test(`${width}: sidebar ${modes.join(",") || "hidden"}, top bar ${bar ? "shown" : "hidden"}`, async ({
+    test(`${width}: sidebar ${modes.join(",") || "hidden"}, floating row ${bar ? "shown" : "hidden"}`, async ({
       page,
     }) => {
       await page.setViewportSize({ width, height: 900 });
       await page.goto("/dev/ui/templates/list");
       expect(await visibleModes(page)).toEqual([...modes]);
       const barShown = await page
-        .locator('[data-part="top-bar-slot"]')
+        .locator('[data-part="floating-bar-slot"]')
         .evaluate((e) => getComputedStyle(e).display !== "none");
       expect(barShown).toBe(bar);
       const { scroll, inner } = await page.evaluate(() => ({

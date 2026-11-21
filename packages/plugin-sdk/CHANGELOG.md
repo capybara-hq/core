@@ -1,5 +1,84 @@
 # @capybara-hq/plugin-sdk
 
+## 0.1.0-rc.47
+
+### Minor Changes
+
+- 0756b7b: `MOBILE_SHELL_LIMITS` gains `navLabel` (32) and `navCount` (9999), the bounds a shell validates
+  `nav@1` state against (section and menu labels, badge counts).
+
+## 0.1.0-rc.46
+
+### Minor Changes
+
+- a007fee: Add the `push-provider@1` extension point (`PushProvider`, `PushError`, `PUSH_LIMITS`,
+  `checkPushResults`, `validatePushMessage`; a message carries a `collapseId` per event) and the
+  `push@1` shell capability types.
+- 12a6582: Add the setup guide place `extension-deployment`: a plugin's guide on the super admin's extension
+  page whose checks get the extension's platform deployment config (`SetupCheckTarget` kind
+  `extension-deployment`; `SetupCheckArgs.orgId` is now `string | null`, null for this place). The
+  `fake-push` fixture ships such a guide with the check `fake-push-key`. The kernel serves these guides
+  and runs their checks on super admin routes (`/api/v1/admin/extensions/:name/guides…`) and the
+  `extensions.platform-guides`, `extensions.platform-check-status` and `extensions.platform-check`
+  Platform operations; the web shows them with live check rows on the extension's config tab.
+
+## 0.1.0-rc.45
+
+### Minor Changes
+
+- dfea642: Add the `nav@1` shell capability (the native strip's sections, current section and menu button:
+  `NavCapabilityV1`, `NavStateV1`, `NAV_SECTION_ORDER`) and `profiles@1` (`ProfilesCapabilityV1`,
+  the native profile switcher).
+- 614d852: Touch tokens and the code font role. One `@media` block in the generated tokens carries the touch
+  overrides (system font, larger type, 44 px controls and rows, rounder corners) for a coarse
+  pointer; `--cb-font-code` keeps Sarasa on code, commands, paths, versions and times. New tokens:
+  `float-ground`, `float-line`, `shadow-float-touch`, `radius-pill`, `layout-drawer` and the
+  `touch-*` sizes. The new colors and the shadow join the SDK's overridable theme tokens.
+
+## 0.1.0-rc.44
+
+### Minor Changes
+
+- e21de78: Shell capability types for the mobile app: `haptics@1`, `share@1`, `menu@1`, `chrome@1`
+  (with an optional `ready`), the `MOBILE_SHELL_LIMITS` and `MENU_ITEM_ID`.
+
+### Patch Changes
+
+- 072362d: Desktop onboarding: `GET /api/v1/meta` lists `appRedirectUris` (`auth.appRedirectUris` while app
+  sign-in is available, else empty), so the desktop app can say before opening the browser that the
+  platform does not allow it; the app token exchange answers `auth.account_disabled` (403) for an
+  account that is not active instead of `app_auth.code_invalid`. `chrome@1.setAppearance` also
+  carries the page's seven main color tokens (only when all are plain colors) and `singleScheme`
+  under a single-scheme UI theme; the SDK gains `ChromeCapabilityV1`, `ShellChromeTokens` and
+  `SHELL_CAPABILITY_KEYS.chrome`.
+- 8f684ad: A local device's hello names its program run (`programRunId`, random per process). When the machine
+  reconnects as a new run before answering a request, the kernel ends that request's wait at once with
+  a tool error saying capybara-device restarted and the result is lost, instead of waiting out the
+  command's whole timeout plus the reconnect grace.
+
+## 0.1.0-rc.43
+
+### Patch Changes
+
+- 2c2841e: The Platform tool creates connectors, sets their credentials, installs catalog items with their
+  connector and config secrets, and creates channels, with every secret typed by the person on the
+  confirmation card. Org admins' agents invite, revoke and manage members (never self, never an owner,
+  never above the actor); an invitation link is sealed for the approver and revealed once on the web.
+  Platform results can pop up a handoff card (a link to a web page, or a Connect button for OAuth).
+- ff64a43: A native read whose read root is a single file works: the device pins the file's parent directory
+  and the native helper reaches only that one name through it (macOS and Linux). A kernel read of a
+  project narrows `AGENTS.md` to itself, and the device refused it with `ENOTDIR`, so a project's
+  `AGENTS.md` never reached a run.
+
+## 0.1.0-rc.42
+
+### Patch Changes
+
+- e788a1a: Person fields: a Platform write that needs a secret takes its field name in `askPerson`, and the
+  person types the value on the approval card on the web; it is sealed, read once by the resumed call
+  and never reaches the conversation, the audit or a log. Agents can now read and set extension
+  deployment config, org config and the org's config copy through the Platform tool.
+
 ## 0.1.0-rc.41
 
 ### Minor Changes

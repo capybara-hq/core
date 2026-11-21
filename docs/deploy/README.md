@@ -774,7 +774,8 @@ long-lived WebSocket connection to the kernel's `gateway` role.
   in through `/api/v1/app-auth` and the web consent page `/apps/authorize`. It needs `http.publicUrl`: without
   it the authorize route answers `app_auth.unavailable` and `GET /api/v1/meta` reports
   `features.appSignIn: false`. `auth.appRedirectUris` lists the redirect URIs an app may receive
-  the code at (default `capybara://auth/callback`; a fork shipping its own build adds its URI).
+  the code at (default `capybara://auth/callback`; a fork shipping its own build adds its URI);
+  `GET /api/v1/meta` returns them as `appRedirectUris` (an empty list while app sign-in is off).
   `platform.name` and the platform icon (admin settings) are what `GET /api/v1/meta` shows the
   client before sign-in.
 
@@ -855,12 +856,15 @@ restarted with it. Without downtime, in this order:
    It first checks that the config holds every master key the database uses (otherwise it fails
    before writing anything and names the org or account ids and key ids; add the missing key to
    `masterKeyPrevious` and run it again). Then it rewraps every org data key and every unexpired
-   initial password still sealed with an old key, 500 rows per transaction, and prints the counts
-   (`rewrapped N org data key(s) and M initial password(s) to master key <id>`; the id is a hash
-   prefix, never the key). It needs only PostgreSQL. It is idempotent: a re-run, or a run after a
-   failure part way through, rewraps only what is left; a run that prints `0` and `0` confirms the
-   rewrap is complete. Expired initial passwords are not rewrapped: nobody can read them any more
-   and the hourly cleanup deletes them.
+   initial password, invitation link and push token still sealed with an old key, 500 rows per
+   transaction, and prints the counts (`rewrapped N org data key(s), M initial password(s), L
+   invitation link(s) and P push token(s) to master key <id>`; the id is a hash prefix, never the
+   key). It needs only PostgreSQL. It is idempotent: a re-run, or a run after a failure part way
+   through, rewraps only what is left; a run that prints only `0` counts confirms the rewrap is
+   complete. Expired initial passwords and invitation links are not rewrapped: nobody can read
+   them any more and the hourly cleanup deletes them. Sealed person inputs (values typed on an
+   approval card) are not rewrapped either: their 15-minute TTL is no longer than the wait before
+   the old key is removed (step 5), and a row that can no longer be read fails closed as expired.
 5. **Remove the old key.** Wait at least `auth.accessTokenTtlSeconds` after step 3 finished (15
    minutes by default; web sessions signed with the old key renew themselves), then clear
    `masterKeyPrevious` and restart every replica. Keep the old key with the backups taken before

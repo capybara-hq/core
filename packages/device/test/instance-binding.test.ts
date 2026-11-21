@@ -14,6 +14,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import WebSocket, { WebSocketServer } from "ws";
 import { bindingFile, InstanceBinder } from "../src/exec/instance-binding.js";
 import { createMacOperationBackend } from "../src/exec/mac-operation-backend.js";
+import type { OrphanProcesses } from "../src/exec/mac-orphans.js";
 import { RuntimeManifestError } from "../src/exec/runtime-manifest.js";
 import { createStagedSessionState, serveStagedSession } from "../src/staged-session.js";
 
@@ -66,6 +67,8 @@ async function fixture() {
   let hangCancel = false;
   // the backends' clock: retention expiry is driven by moving it
   let clock = 1;
+  // the process table orphans settle against (none: work of a lost process blocks for good)
+  let orphans: OrphanProcesses | undefined;
   const hold = () => {
     let release!: () => void;
     const gate = new Promise<void>((r) => {
@@ -97,6 +100,7 @@ async function fixture() {
         platform: "darwin",
         now: () => clock,
         watch: () => () => {},
+        ...(orphans ? { orphans } : {}),
         startWorker: async (r) => {
           await launchGate;
           await r.beforeLaunch();
@@ -198,6 +202,9 @@ async function fixture() {
     },
     setNow: (n: number) => {
       clock = n;
+    },
+    setOrphans: (o: OrphanProcesses) => {
+      orphans = o;
     },
     finishers,
     startTask,
@@ -338,6 +345,24 @@ describe("device binding", () => {
     expect(JSON.parse(await readFile(bindingFile(f.root, "d"), "utf8")).instanceGeneration).toBe(
       G1,
     );
+  });
+
+  it("after a restart a lost task whose process is proven gone no longer blocks", async () => {
+    const f = await fixture();
+    const b = f.binder();
+    await b.bind(request(G1, B1, null), signal());
+    await f.startTask(b, "op-1");
+    // the next program run sees an empty process table: the lost task's process is gone
+    f.setOrphans({
+      list: async () => [],
+      signal: () => {},
+      killGroup: () => {},
+      pause: async () => {},
+    });
+    const restarted = f.binder();
+    await restarted.recover();
+    const answer = await restarted.bind(request(G2, B2, G1), signal());
+    expect(answer.instanceGeneration).toBe(G2);
   });
 
   it("completed work whose retention expired never blocks a newer generation", async () => {

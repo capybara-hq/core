@@ -6,6 +6,10 @@ export interface Account {
   displayName: string;
   email: string | null;
   isSuperAdmin: boolean;
+  /** The avatar route (`/api/v1/accounts/<id>/avatar?v=…`); null draws the initial. */
+  avatarUrl: string | null;
+  /** Where the shown avatar comes from: an upload, the SSO identity, or nothing. */
+  avatarSource: { kind: "upload" } | { kind: "identity"; source: string } | null;
   /** Signed in with a generated initial password: must set its own before anything else. */
   mustChangePassword?: boolean;
 }

@@ -36,22 +36,8 @@ export const PLATFORM_EXCLUSIONS: readonly {
   {
     route: "GET /api/v1/admin/extensions/:name/org-overrides",
     category: "secret",
-    reason: "Lists every org's config copy of an extension: cross-org config state",
-  },
-  {
-    route: "GET /api/v1/admin/extensions/:name/config",
-    category: "secret",
-    reason: "Returns deployment config that can include secret fields",
-  },
-  {
-    route: "PUT /api/v1/admin/extensions/:name/config",
-    category: "secret",
-    reason: "Writes deployment config that can include secret fields",
-  },
-  {
-    route: "DELETE /api/v1/admin/extensions/:name/config",
-    category: "secret",
-    reason: "Clears deployment config including secret values; done on the web",
+    reason:
+      "Delivers other orgs' config copies of an extension (which differ, which secrets each holds) to the super admin's browser; an agent works in its own org",
   },
   {
     route: "POST /api/v1/admin/extensions/:name/approve",
@@ -62,12 +48,7 @@ export const PLATFORM_EXCLUSIONS: readonly {
     route: "POST /api/v1/admin/extensions/:name/install",
     category: "human-only",
     reason:
-      "Points an extension at a package from the package store (a new install or a version change); the package comes from an upload or npm import whose permissions a person reviews, and new permissions wait for that person's approval, so the install stays with the review on the web",
-  },
-  {
-    route: "POST /api/v1/admin/extensions/packages/file",
-    category: "transport",
-    reason: "Uploads a package file as multipart bytes",
+      "Points an extension at a package from the package store (a new install or a version change); the package comes from an npm import or a stored package whose permissions a person reviews, and new permissions wait for that person's approval, so the install stays with the review the person confirms",
   },
   {
     route: "POST /api/v1/admin/extensions/packages/npm",
@@ -96,7 +77,8 @@ export const PLATFORM_EXCLUSIONS: readonly {
   {
     route: "GET /api/v1/setup",
     category: "internal",
-    reason: "First-run setup status used by the web app before any login",
+    reason:
+      "First-run setup status the web app reads before any login, with no org and no actor yet; no operation gives it, an agent exists only after setup",
   },
   {
     route: "POST /api/v1/setup",
@@ -104,11 +86,6 @@ export const PLATFORM_EXCLUSIONS: readonly {
     reason: "Creates the first super admin account and password",
   },
   // agents
-  {
-    route: "POST /api/v1/orgs/:orgId/agents/:agentId/avatar/uploads",
-    category: "transport",
-    reason: "Creates a presigned avatar upload",
-  },
   {
     route: "GET /api/v1/orgs/:orgId/agents/:agentId/avatar",
     category: "transport",
@@ -125,6 +102,12 @@ export const PLATFORM_EXCLUSIONS: readonly {
     reason:
       "Transfers ownership of an org's agent to another person on the platform's behalf, as the org's own transfer route",
   },
+  // accounts
+  {
+    route: "GET /api/v1/accounts/:accountId/avatar",
+    category: "transport",
+    reason: "Redirects to the avatar image for <img>; no agent use",
+  },
   // background
   {
     route: "GET /api/v1/orgs/:orgId/conversations/:id/background-tasks/:taskId/output",
@@ -132,11 +115,6 @@ export const PLATFORM_EXCLUSIONS: readonly {
     reason: "Streams raw task output bytes",
   },
   // catalog-admin
-  {
-    route: "POST /api/v1/admin/catalog/import/file",
-    category: "transport",
-    reason: "Uploads a plugin archive as multipart bytes",
-  },
   {
     route: "POST /api/v1/admin/catalog/imports/:stagingId/confirm",
     category: "human-only",
@@ -157,7 +135,7 @@ export const PLATFORM_EXCLUSIONS: readonly {
     route: "GET /api/v1/admin/catalog/:itemId/guides/:guideId",
     category: "internal",
     reason:
-      "The super admin's preview of a plugin's setup guide for the admin console, with no org and no target; agents assist with the org guides an org member sees",
+      "The super admin's preview of a plugin's setup guide for the admin console, with no org and no target; no operation gives it, agents assist with the org guides an org member sees (channels.schema, connectors.kinds)",
   },
   {
     route: "POST /api/v1/admin/catalog/items/:id/confirm",
@@ -170,11 +148,6 @@ export const PLATFORM_EXCLUSIONS: readonly {
     reason: "Rejects a catalog item's reviewed changes, an approval decision",
   },
   // components
-  {
-    route: "POST /api/v1/admin/components/skill/:id/versions",
-    category: "transport",
-    reason: "Uploads a platform skill package as raw bytes",
-  },
   // marketplaces
   {
     route: "GET /api/v1/admin/marketplaces/:id/icons/:sha256",
@@ -191,22 +164,6 @@ export const PLATFORM_EXCLUSIONS: readonly {
     route: "GET /api/v1/orgs/:orgId/catalog/:itemId/icon",
     category: "transport",
     reason: "Serves icon image bytes",
-  },
-  {
-    route: "POST /api/v1/orgs/:orgId/catalog/:itemId/install",
-    category: "secret",
-    reason:
-      "Install body carries connector credentials, client secrets and extension config entered by a person",
-  },
-  {
-    route: "POST /api/v1/orgs/:orgId/catalog/:itemId/connectors",
-    category: "secret",
-    reason: "Body carries connector credentials and client secrets entered by a person",
-  },
-  {
-    route: "POST /api/v1/orgs/:orgId/connector-templates/:templateId/connectors",
-    category: "secret",
-    reason: "Body carries connector credentials and client secrets entered by a person",
   },
   {
     route: "POST /api/v1/orgs/:orgId/catalog-requests/network",
@@ -229,76 +186,32 @@ export const PLATFORM_EXCLUSIONS: readonly {
     category: "human-only",
     reason: "Decides an org's catalog request as super admin",
   },
-  {
-    route: "PUT /api/v1/orgs/:orgId/extensions/:extension",
-    category: "secret",
-    reason: "Org extension config may hold secret fields",
-  },
-  {
-    route: "GET /api/v1/orgs/:orgId/extensions/:extension/overrides",
-    category: "secret",
-    reason: "The org's copy of an extension's deployment config, with secret fields as set or not",
-  },
-  {
-    route: "PUT /api/v1/orgs/:orgId/extensions/:extension/overrides",
-    category: "secret",
-    reason: "Saves the org's config copy, including the org's own secrets entered in the same save",
-  },
-  {
-    route: "DELETE /api/v1/orgs/:orgId/extensions/:extension/overrides",
-    category: "secret",
-    reason:
-      "Drops the org's config copy and its secrets; part of the config-copy lifecycle on the web",
-  },
-  {
-    route: "POST /api/v1/orgs/:orgId/extensions/:extension/overrides/take",
-    category: "secret",
-    reason: "Starts an org config copy whose secrets a person enters on the web",
-  },
   // org-uploads
-  {
-    route: "POST /api/v1/orgs/:orgId/catalog/uploads/file",
-    category: "transport",
-    reason: "Uploads a plugin archive as multipart bytes",
-  },
   {
     route: "POST /api/v1/orgs/:orgId/catalog/uploads/:stagingId/confirm",
     category: "human-only",
-    reason: "Confirms an upload review, an approval decision",
+    reason:
+      "Confirms a staged plugin review (reached by the link card of the staged plugin), a trust decision by the person",
   },
   // channels
-  {
-    route: "GET /api/v1/orgs/:orgId/channels/schema/:plugin",
-    category: "internal",
-    reason:
-      "The config form schema of the create and credential routes, which stay on the web; an agent has no use for it",
-  },
-  {
-    route: "POST /api/v1/orgs/:orgId/channels",
-    category: "secret",
-    reason: "Creates a channel connection with app secrets",
-  },
-  {
-    route: "POST /api/v1/orgs/:orgId/channels/:connectionId/guide-ack",
-    category: "human-only",
-    reason:
-      "A person confirms they updated the app on the third-party platform after a setup guide changed; only that person knows it was done",
-  },
   // attachments
   {
     route: "GET /api/v1/orgs/:orgId/attachments/limits",
     category: "internal",
-    reason: "The composer's pre-upload check on the web; an agent does not upload attachments",
+    reason:
+      "The composer's size check for a person's file into a conversation; an agent gets files by file reference, not by attaching",
   },
   {
     route: "POST /api/v1/orgs/:orgId/attachments",
-    category: "transport",
-    reason: "Creates a presigned attachment upload",
+    category: "internal",
+    reason:
+      "Registers a person's file into a conversation from the composer; an agent gets files by file reference (fileId), not through attachments",
   },
   {
     route: "POST /api/v1/orgs/:orgId/attachments/:id/finalize",
-    category: "transport",
-    reason: "Finishes a presigned attachment upload",
+    category: "internal",
+    reason:
+      "Finishes a person's file into a conversation from the composer; an agent gets files by file reference (fileId), not through attachments",
   },
   {
     route: "GET /api/v1/orgs/:orgId/attachments/:id/download",
@@ -518,6 +431,12 @@ export const PLATFORM_EXCLUSIONS: readonly {
     reason:
       "Returns a generated initial password once, on the web, to the person who approved the account creation",
   },
+  {
+    route: "POST /api/v1/orgs/:orgId/approvals/:approvalId/invitation-link",
+    category: "secret",
+    reason:
+      "Returns an invitation link once, on the web, to the person who approved the orgs.invite call",
+  },
   { route: "POST /api/v1/auth/login", category: "human-only", reason: "Password login" },
   { route: "POST /api/v1/auth/refresh", category: "human-only", reason: "Rotates a refresh token" },
   { route: "POST /api/v1/auth/logout", category: "human-only", reason: "Ends the login session" },
@@ -525,12 +444,22 @@ export const PLATFORM_EXCLUSIONS: readonly {
     route: "GET /api/v1/me",
     category: "internal",
     reason:
-      "Account profile the web app loads for its own session; not an operation an agent needs",
+      "Account profile the web app loads for its own session; platform.me gives an agent the same facts",
   },
   {
     route: "PUT /api/v1/me/current-org",
     category: "human-only",
     reason: "Switches the web session's current org",
+  },
+  {
+    route: "PATCH /api/v1/me/profile",
+    category: "human-only",
+    reason: "Changes the person's own name and avatar",
+  },
+  {
+    route: "POST /api/v1/me/avatar/uploads",
+    category: "human-only",
+    reason: "The person's own avatar: only the person sets it, an agent never does",
   },
   {
     route: "PUT /api/v1/me/password",
@@ -553,9 +482,26 @@ export const PLATFORM_EXCLUSIONS: readonly {
     reason: "Revokes a personal access token",
   },
   {
+    route: "POST /api/v1/me/push-registrations",
+    category: "human-only",
+    reason: "Registers the person's own app install for push; a device action of the person's app",
+  },
+  {
+    route: "DELETE /api/v1/me/push-registrations/:id",
+    category: "human-only",
+    reason:
+      "Removes one of the person's app installs from push (sign-out, profile removal, settings)",
+  },
+  {
+    route: "GET /api/v1/me/push-registrations",
+    category: "human-only",
+    reason: "Lists the person's own app installs that receive push, for the settings page",
+  },
+  {
     route: "GET /api/v1/auth/sources",
     category: "internal",
-    reason: "Login source list the web sign-in page renders; no agent use",
+    reason:
+      "Login source list the web sign-in page renders before a session exists; no operation gives it, a signed-in agent has nothing to choose",
   },
   {
     route: "GET /api/v1/auth/sso/:plugin/start",
@@ -598,21 +544,6 @@ export const PLATFORM_EXCLUSIONS: readonly {
     reason: "Adds and removes org members from the directory; only an admin, by hand, starts it",
   },
   {
-    route: "POST /api/v1/orgs/:orgId/invitations",
-    category: "human-only",
-    reason: "Invites a person into the org",
-  },
-  {
-    route: "GET /api/v1/orgs/:orgId/invitations",
-    category: "human-only",
-    reason: "Lists invitations with their tokens",
-  },
-  {
-    route: "DELETE /api/v1/orgs/:orgId/invitations/:id",
-    category: "human-only",
-    reason: "Revokes an invitation",
-  },
-  {
     route: "GET /api/v1/invitations/:token",
     category: "human-only",
     reason: "Shows an invitation to its recipient",
@@ -643,16 +574,6 @@ export const PLATFORM_EXCLUSIONS: readonly {
     route: "POST /api/v1/orgs/:orgId/leave",
     category: "human-only",
     reason: "Removes the caller from the org",
-  },
-  {
-    route: "PATCH /api/v1/orgs/:orgId/members/:accountId",
-    category: "human-only",
-    reason: "Changes a member's role",
-  },
-  {
-    route: "DELETE /api/v1/orgs/:orgId/members/:accountId",
-    category: "human-only",
-    reason: "Removes a member from the org",
   },
   {
     route: "POST /api/v1/orgs/:orgId/service-tokens",
@@ -686,21 +607,6 @@ export const PLATFORM_EXCLUSIONS: readonly {
     category: "human-only",
     reason: "Decides a proposed skill change",
   },
-  {
-    route: "POST /api/v1/orgs/:orgId/skills/uploads",
-    category: "transport",
-    reason: "Uploads a skill archive as multipart bytes",
-  },
-  {
-    route: "POST /api/v1/orgs/:orgId/skills",
-    category: "transport",
-    reason: "Creates an org skill from an uploaded archive; uploads are multipart bytes",
-  },
-  {
-    route: "POST /api/v1/orgs/:orgId/agents/:agentId/skills/uploads",
-    category: "transport",
-    reason: "Uploads a skill archive as multipart bytes",
-  },
   // approvals
   {
     route: "POST /api/v1/orgs/:orgId/approvals/:id/decision",
@@ -723,13 +629,13 @@ export const PLATFORM_EXCLUSIONS: readonly {
     route: "GET /api/v1/orgs/:orgId/connectors/prompts",
     category: "internal",
     reason:
-      "Feeds the slash menu of the web input box: prompt templates of remote servers, written for a person to fill in and send; an agent has no one to send them to",
+      "Feeds the slash menu of the web input box: prompt templates of remote servers, written for a person to fill in and send; no operation gives them, an agent has no one to send them to",
   },
   {
     route: "GET /api/v1/orgs/:orgId/connectors/resources",
     category: "internal",
     reason:
-      "Feeds the @ reference picker of the web input box; an agent reads connector resources through its connector tools",
+      "Feeds the @ reference picker of the web input box; no operation gives it, an agent reads connector resources through its connector tools",
   },
   {
     route: "POST /api/v1/orgs/:orgId/connectors/:connectorId/prompts/:name",
@@ -738,46 +644,9 @@ export const PLATFORM_EXCLUSIONS: readonly {
       "Renders a remote server's prompt into text for the web input box, for the person to send; it calls the server with the person's own credential",
   },
   {
-    route: "GET /api/v1/orgs/:orgId/connectors/kinds",
-    category: "internal",
-    reason:
-      "The protocols the web's create-connector form offers; creating a connector stays on the web (secret credentials)",
-  },
-  {
-    route: "POST /api/v1/orgs/:orgId/connectors",
-    category: "secret",
-    reason: "Creates a connector whose endpoint config can carry credentials",
-  },
-  {
-    route: "POST /api/v1/orgs/:orgId/connectors/preview",
-    category: "secret",
-    reason: "Preview body carries a connector credential entered by a person",
-  },
-  {
-    route: "PATCH /api/v1/orgs/:orgId/connectors/:connectorId",
-    category: "secret",
-    reason: "Edits connector endpoint config that can carry credentials",
-  },
-  {
-    route: "POST /api/v1/orgs/:orgId/connectors/:connectorId/guide-ack",
-    category: "human-only",
-    reason:
-      "A person confirms they updated the app on the third-party platform after a connector template's setup guide changed; only that person knows it was done",
-  },
-  {
     route: "POST /api/v1/orgs/:orgId/connectors/:connectorId/tools/:name/review",
     category: "human-only",
     reason: "Reviews a connector tool change, an approval decision",
-  },
-  {
-    route: "PUT /api/v1/orgs/:orgId/connectors/:connectorId/credentials/org",
-    category: "secret",
-    reason: "Writes the org's connector credentials",
-  },
-  {
-    route: "PUT /api/v1/orgs/:orgId/connectors/:connectorId/credentials/me",
-    category: "secret",
-    reason: "Writes the caller's connector credentials",
   },
   {
     route: "GET /api/v1/orgs/:orgId/connectors/:connectorId/tool-policies/me",
@@ -792,20 +661,10 @@ export const PLATFORM_EXCLUSIONS: readonly {
       "A member's own tool policies decide what agents may call with their connection without asking; an agent must never loosen them for itself",
   },
   {
-    route: "DELETE /api/v1/orgs/:orgId/connectors/:connectorId/credentials/me",
-    category: "secret",
-    reason: "Deletes the caller's connector credentials",
-  },
-  {
     route: "GET /api/v1/orgs/:orgId/tools/extensions",
     category: "internal",
     reason:
       "Display list of the agent form's tools picker; extensions.tools gives an agent the same facts",
-  },
-  {
-    route: "POST /api/v1/orgs/:orgId/connectors/:connectorId/connect",
-    category: "secret",
-    reason: "Starts a connector OAuth flow",
   },
   {
     route: "GET /api/v1/oauth/callback",
@@ -826,7 +685,8 @@ export const PLATFORM_EXCLUSIONS: readonly {
   {
     route: "GET /api/v1/orgs/:orgId/ui/contributions",
     category: "internal",
-    reason: "Navigation entries of the web shell (panels, pages, embeds); nothing an agent acts on",
+    reason:
+      "Navigation entries of the web shell (panels, pages, embeds); ui.slots gives an agent the slots, nothing else here is acted on",
   },
   {
     route: "GET /api/v1/orgs/:orgId/ui/arrangement",
@@ -857,7 +717,8 @@ export const PLATFORM_EXCLUSIONS: readonly {
   {
     route: "GET /api/v1/admin/ui/contributions",
     category: "internal",
-    reason: "Navigation entries of the admin console (platform pages)",
+    reason:
+      "Navigation entries of the admin console (platform pages); ui.slots gives an agent the slots, nothing else here is acted on",
   },
   {
     route: "GET /api/v1/admin/ui/arrangement",
@@ -895,13 +756,13 @@ export const PLATFORM_EXCLUSIONS: readonly {
     route: "GET /api/v1/orgs/:orgId/ui/client",
     category: "internal",
     reason:
-      "The web shell's list of client code to load (file URLs and integrity); nothing an agent acts on",
+      "The web shell's list of client code to load (file URLs and integrity); no operation gives it, nothing an agent acts on",
   },
   {
     route: "GET /api/v1/admin/ui/client",
     category: "internal",
     reason:
-      "The admin console's list of platform page client code to load; nothing an agent acts on",
+      "The admin console's list of platform page client code to load; no operation gives it, nothing an agent acts on",
   },
   {
     route: "POST /api/v1/orgs/:orgId/ui/client/reports",

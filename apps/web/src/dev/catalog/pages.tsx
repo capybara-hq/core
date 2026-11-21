@@ -34,7 +34,14 @@ import { sidebarProps, statusFixture } from "./shell-fixture";
 const T = "2026-11-10T08:30:00.000Z";
 
 const ME: Me = {
-  account: { id: "a1", displayName: "Grant", email: null, isSuperAdmin: true },
+  account: {
+    id: "a1",
+    displayName: "Grant",
+    email: null,
+    isSuperAdmin: true,
+    avatarUrl: null,
+    avatarSource: null,
+  },
   via: "session",
   currentOrgId: "o1",
   memberships: [{ orgId: "o1", slug: "acme", name: "Acme", role: "owner" }],
@@ -54,6 +61,7 @@ const INBOX: PlatformInboxView = {
     extension_disabled: 0,
     ownership_transferred: 0,
     org_upload_pending: 0,
+    push_auth_failed: 0,
   },
 };
 
@@ -105,7 +113,7 @@ const AUDIT: AuditPage = {
     {
       id: "12",
       at: T,
-      actor: { id: "a1", name: "Grant", email: null },
+      actor: { id: "a1", name: "Grant", email: null, avatarUrl: null },
       viaToken: false,
       viaAgent: false,
       action: "deployment.settings.updated",
@@ -114,7 +122,7 @@ const AUDIT: AuditPage = {
     {
       id: "11",
       at: T,
-      actor: { id: "a1", name: "Grant", email: null },
+      actor: { id: "a1", name: "Grant", email: null, avatarUrl: null },
       viaToken: false,
       viaAgent: true,
       action: "catalog.scope_changed",
@@ -132,7 +140,7 @@ const AUDIT: AuditPage = {
     {
       id: "9",
       at: T,
-      actor: { id: "a2", name: "Mia", email: "mia@example.com" },
+      actor: { id: "a2", name: "Mia", email: "mia@example.com", avatarUrl: null },
       viaToken: true,
       viaAgent: false,
       action: "marketplace.added",

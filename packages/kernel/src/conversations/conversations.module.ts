@@ -17,6 +17,7 @@ import { ConversationsService } from "./conversations.service.js";
 import { ConversationDeviceStatus } from "./device-status.js";
 import { EventLogModule } from "./event-log.js";
 import { ConversationFiles } from "./files.js";
+import { ConversationLeakCheckModule } from "./leak-check.js";
 import { ConversationOutputs } from "./outputs-read.js";
 import { PermissionProfileStoreModule } from "./permission-profile-store.module.js";
 import { PermissionProfilesService } from "./permission-profiles.service.js";
@@ -48,6 +49,8 @@ import { ConversationQueue } from "./queue.service.js";
     DevicesModule,
     // the stop of a deleted conversation's background tasks
     BackgroundModule,
+    // the leak check of a person's card values (its own module: the tools module uses it too)
+    ConversationLeakCheckModule,
   ],
   providers: [
     PermissionProfilesService,
@@ -70,6 +73,7 @@ import { ConversationQueue } from "./queue.service.js";
     ConversationArtifacts,
     ConversationFiles,
     ConversationDeviceStatus,
+    ConversationLeakCheckModule,
   ],
 })
 export class ConversationsModule {}

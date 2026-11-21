@@ -157,6 +157,11 @@ export const CHANNEL_PHRASES = {
     zh: "启动一个后台进程，它在沙箱外持续运行，直到自行退出或被停止。",
     en: "Starts a background process that keeps running outside the sandbox until it exits or is stopped.",
   },
+  /** An approval card's line about the file the call takes (`{name}`, `{size}`, `{sha}`: 12 hex). */
+  approvalFile: {
+    zh: "文件：{name}（{size}，sha256 {sha}）",
+    en: "File: {name} ({size}, sha256 {sha})",
+  },
   /** An escalation card's working directory line (`{dir}`). */
   escalationCwd: { zh: "运行目录：{dir}", en: "Runs in: {dir}" },
   /** An escalation card's justification line (`{text}`: the agent's words, quoted). */
@@ -172,6 +177,16 @@ export const CHANNEL_PHRASES = {
   questionTitle: { zh: "需要你的回答", en: "Your input is needed" },
   /** 连接卡片的随附文本。 */
   connectTitle: { zh: "需要先完成连接器授权", en: "A connector needs to be connected first" },
+  /** A person-field approval (secrets typed on the web) with one field: the bind card's text. */
+  personFieldOnWeb: {
+    zh: "需要在网页填写 1 项",
+    en: "1 field to fill in on the web",
+  },
+  /** A person-field approval with several fields: the bind card's text; `{count}` fields. */
+  personFieldsOnWeb: {
+    zh: "需要在网页填写 {count} 项",
+    en: "{count} fields to fill in on the web",
+  },
   /** 部署未配置 http.publicUrl，无法给出网页链接与卡片时的退回文本。 */
   handleOnWeb: {
     zh: "有一条请求需要你到 Capybara 网页上处理。",

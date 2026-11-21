@@ -13,7 +13,7 @@ export type ListDetailProps = {
   detail: ReactNode | null;
   /**
    * Closes the open item: the stack's own back bar calls it, and inside an `AppShell` the shell's
-   * top bar does (the item is a pushed page there, spec §4.6).
+   * floating row does (the item is a pushed page there, spec §4.6).
    */
   onBack(): void;
   /** The list column's width and the detail's least width: both panes need `listMin + detailMin`. */
@@ -66,7 +66,7 @@ export function ListDetail({
   const listPane = useRef<HTMLDivElement>(null);
   const scrolled = useRef(0);
 
-  // Inside an AppShell an open item is a pushed page: the top bar's back closes it.
+  // Inside an AppShell an open item is a pushed page: the floating row's back closes it.
   const back = useRef(onBack);
   back.current = onBack;
   const shellBack = useCallback(() => back.current(), []);

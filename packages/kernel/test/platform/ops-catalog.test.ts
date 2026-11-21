@@ -117,30 +117,52 @@ describe("registration", () => {
         .map((o) => o.id)
         .filter((id) => /^(plugins|marketplaces|requests|connectors|extensions)\./.test(id)),
     ).toEqual([
+      "connectors.add-from-template",
+      "connectors.clear-my-credential",
+      "connectors.connect",
+      "connectors.create",
       "connectors.delete",
       "connectors.get",
+      "connectors.guide-ack",
+      "connectors.kinds",
       "connectors.list",
+      "connectors.preview",
       "connectors.refresh",
       "connectors.set-git-push-policy",
+      "connectors.set-my-credential",
+      "connectors.set-org-credential",
       "connectors.set-template-enabled",
       "connectors.template-disable-preview",
       "connectors.templates",
+      "connectors.update",
+      "extensions.drop-org-config",
       "extensions.list",
+      "extensions.org-config",
       "extensions.pending-permissions",
+      "extensions.platform-check",
+      "extensions.platform-check-status",
+      "extensions.platform-clear-config",
+      "extensions.platform-config",
       "extensions.platform-disable",
       "extensions.platform-enable",
       "extensions.platform-get",
+      "extensions.platform-guides",
       "extensions.platform-list",
+      "extensions.platform-set-config",
       "extensions.point-availability",
       "extensions.point-defaults",
       "extensions.points",
       "extensions.previewers",
+      "extensions.save-org-config",
+      "extensions.set-org-config",
       "extensions.set-point-default",
       "extensions.set-previewers",
       "extensions.set-tool-enabled",
+      "extensions.take-org-config",
       "extensions.tool-disable-preview",
       "extensions.tools",
       "extensions.uninstall",
+      "extensions.upload-package",
       "marketplaces.add",
       "marketplaces.entries",
       "marketplaces.import",
@@ -153,13 +175,16 @@ describe("registration", () => {
       "plugins.component-scope-preview",
       "plugins.component-versions",
       "plugins.components",
+      "plugins.configure-connectors",
       "plugins.delete",
       "plugins.disable-preview",
       "plugins.get",
+      "plugins.import-file",
       "plugins.import-git",
       "plugins.import-npm",
       "plugins.import-review",
       "plugins.import-update-preview",
+      "plugins.install",
       "plugins.installs",
       "plugins.list",
       "plugins.owned-delete",
@@ -180,6 +205,8 @@ describe("registration", () => {
       "plugins.update",
       "plugins.update-agent-template",
       "plugins.update-preview",
+      "plugins.update-skill",
+      "plugins.upload",
       "plugins.upload-review",
       "plugins.withdraw-upload",
       "requests.create",
@@ -343,13 +370,28 @@ describe("marketplaces", () => {
 });
 
 describe("plugins in the org", () => {
-  it("enabling a plugin that needs connector inputs is refused with the Plugins page pointer", async () => {
+  it("a needs_config plugin missing its connector gets the connector input text (plugins.install), never the org config ops", async () => {
+    const item = await seedPlugin(env, { name: "tpl-needs", skills: [] });
+    await setScope(env, item, "all");
+    const rows = (await run("plugins.list", {}, ctxOf(env.bossId))) as {
+      items: { id: string; state: string }[];
+    };
+    expect(rows.items.find((r) => r.id === item)?.state).toBe("needs_config");
+    const pre = await precheck(
+      "plugins.set-enabled",
+      { itemId: item, enabled: true },
+      ctxOf(env.bossId),
+    );
+    expect(pre).toEqual({ ok: false, code: "plugin.needs_input", message: NEEDS_INPUT });
+  });
+
+  it("enabling a plugin that needs connector inputs is refused with the plugins.install pointer", async () => {
     const item = await importTemplate(env);
     const e = await failure(
       run("plugins.set-enabled", { itemId: item, enabled: true }, ctxOf(env.bossId)),
     );
     expect(e.message).toBe(NEEDS_INPUT);
-    expect(e.message).toContain("the Plugins page");
+    expect(e.message).toContain("plugins.install");
     // known before the card
     expect(
       await precheck("plugins.set-enabled", { itemId: item, enabled: true }, ctxOf(env.bossId)),

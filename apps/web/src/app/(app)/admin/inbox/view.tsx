@@ -20,6 +20,7 @@ import { useLocale, useTranslations } from "next-intl";
 import { type ReactNode, useMemo, useState } from "react";
 import { ErrorFrame } from "../../../../components/ErrorFrame";
 import { NoAccess } from "../../../../components/NoAccess";
+import { Person } from "../../../../components/Person";
 import { usePagePath } from "../../../../components/shell/path";
 import { useRouter } from "../../../../i18n/navigation";
 import {
@@ -111,7 +112,7 @@ function AdminInbox({
     ],
   });
   const open = (item: PlatformInboxItem): ActionRowProps =>
-    item.type === "ownership_transferred"
+    item.type === "ownership_transferred" || item.type === "push_auth_failed"
       ? {
           secondary: {
             label: t("transferred.view"),
@@ -165,7 +166,9 @@ function AdminInbox({
               meta: r.description,
               at: formatDateTime(item.createdAt, "compact", timeZone),
               // everything here waits for a super admin but a transfer, which is a notice
-              ...(item.type !== "ownership_transferred" ? { waiting: true } : {}),
+              ...(item.type !== "ownership_transferred" && item.type !== "push_auth_failed"
+                ? { waiting: true }
+                : {}),
             };
           })}
           current={active?.id}
@@ -250,6 +253,12 @@ function rowOf(
         trailing: versionLabel(item.item.pendingVersion ?? item.item.latestVersion),
         description: `${t("orgUpload.label")} · ${ownerOrgOf(item.item)?.name ?? ""}`,
       };
+    case "push_auth_failed":
+      return {
+        title: t("pushAuth.title", { plugin: item.notice.detail.plugin }),
+        trailing: null,
+        description: t("pushAuth.label"),
+      };
     case "ownership_transferred":
       return {
         title: item.notice.detail.name,
@@ -275,6 +284,8 @@ function titleOf(item: PlatformInboxItem, t: Translate, locale: string): string 
         org: ownerOrgOf(item.item)?.name ?? "",
         name: displayNameOf(item.item, locale),
       });
+    case "push_auth_failed":
+      return t("pushAuth.title", { plugin: item.notice.detail.plugin });
     case "ownership_transferred":
       return transferredTitle(item.notice, t);
   }
@@ -301,7 +312,7 @@ function detailOf(
       return {
         facts: [
           { label: t("org"), value: r.orgName },
-          { label: t("request.requester"), value: requesterOf(r) },
+          { label: t("request.requester"), value: <Person person={requesterOf(r)} size={16} /> },
           { label: t("request.version"), value: version === null ? "—" : versionLabel(version) },
           { label: t("time"), value: <DateTime value={r.createdAt} /> },
         ],
@@ -395,6 +406,15 @@ function detailOf(
         content: <Text variant="prose">{t("orgUpload.hint")}</Text>,
       };
     }
+    case "push_auth_failed":
+      return {
+        facts: [
+          { label: t("pushAuth.plugin"), value: item.notice.detail.plugin },
+          { label: t("time"), value: <DateTime value={item.createdAt} /> },
+        ],
+        title: t("pushAuth.title", { plugin: item.notice.detail.plugin }),
+        content: <Text variant="prose">{t("pushAuth.hint")}</Text>,
+      };
     case "ownership_transferred": {
       const d = item.notice.detail;
       return {

@@ -1,7 +1,16 @@
 import { type ChildProcess, fork, spawn, spawnSync } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import { constants, realpathSync } from "node:fs";
-import { type FileHandle, mkdtemp, open, readdir, realpath, rm, stat } from "node:fs/promises";
+import {
+  type FileHandle,
+  lstat,
+  mkdtemp,
+  open,
+  readdir,
+  realpath,
+  rm,
+  stat,
+} from "node:fs/promises";
 import { homedir, tmpdir } from "node:os";
 import { basename, dirname, join } from "node:path";
 import {
@@ -62,6 +71,13 @@ export interface TrustedLaunchIdentity {
    */
   session?: { sid: number; start: number };
   process?: string;
+  /**
+   * When the launch happened (wall clock, epoch ms), read next to the spawn by whoever spawned
+   * (the macOS worker for an exec, the native launch callback for a helper): the launched process
+   * started at or just before it. With the pid it identifies that process after a restart (macOS
+   * orphan reaping, mac-orphans.ts); a leader at that pid that started later is another process.
+   */
+  launchedAtMs?: number;
 }
 type Scope = SandboxOperationScope | SandboxBrowseScope | SandboxPreparationScope;
 interface Common {
@@ -487,7 +503,7 @@ process.on('message',async message=>{try{
  }else if(message.type==='execute'){
   if(!wrapped||child||closing)throw Error('Immutable worker already consumed');
   child=spawn('/bin/bash',['-c',message.script],{cwd:message.cwd,env:message.env,detached:true,stdio:['ignore','pipe','pipe']});
-  const identity={pid:child.pid,token:randomUUID()};if(!identity.pid)throw Error('Missing trusted launch identity');
+  const identity={pid:child.pid,token:randomUUID(),launchedAtMs:Date.now()};if(!identity.pid)throw Error('Missing trusted launch identity');
   owned.set(identity.pid,identity.token);
   childClosed=new Promise(resolve=>child.once('close',async code=>{clearTimeout(timer);clearTimeout(settleTimer);await outputDone;send({event:'completed',code,timedOut,killed,outputFailed});resolve();}));
   child.once('error',error=>send({event:'error',message:String(error)}));
@@ -704,16 +720,29 @@ export async function startMacOperationWorker(
                 "Native grant root changed or contains an unpinned symlink",
               );
             rootAliases.push({ original: path, canonical });
+            // A read root that is an existing file (a kernel read narrows `AGENTS.md` to itself)
+            // pins its parent directory; the helper reaches only the file's name through it.
+            const single =
+              access === "read" &&
+              components.length === 0 &&
+              (await lstat(canonicalAnchor)).isFile();
+            const pinAt = single ? dirname(canonicalAnchor) : canonicalAnchor;
             const file = await open(
-              canonicalAnchor,
+              pinAt,
               constants.O_RDONLY | constants.O_DIRECTORY | constants.O_NOFOLLOW,
             );
             files.push(file);
             const pinned = await file.stat();
-            const current = await stat(canonicalAnchor);
+            const current = await stat(pinAt);
             if (pinned.dev !== current.dev || pinned.ino !== current.ino)
               throw new Error("Pinned root changed during launch");
-            roots.push({ path: canonical, fd: file.fd, access, components });
+            roots.push({
+              path: canonical,
+              fd: file.fd,
+              access,
+              components,
+              ...(single ? { file: true as const } : {}),
+            });
           }
         }
       // Version managers (asdf, nvm, pyenv, ...) read their data under the real home, while HOME
@@ -761,6 +790,12 @@ export async function startMacOperationWorker(
           stdio: ["ignore", "ignore", "ignore", "ipc"],
           env: { PATH: process.env.PATH, HOME: process.env.HOME, TMPDIR: process.env.TMPDIR },
         });
+        // A send to a worker that has just exited fails asynchronously (EPIPE, a closed channel)
+        // as an `error` event; without a listener it would take the whole device program down
+        // with every other operation. The operation itself learns of the exit from `exit`.
+        runtime.on("error", (error) =>
+          request.onDiagnostic?.(`Operation worker channel: ${error.message}`),
+        );
         const runtimeRoots = roots.length
           ? roots.map((r) => r.path)
           : [...request.grant.readRoots, ...request.grant.writeRoots];
@@ -895,7 +930,8 @@ export async function startMacOperationWorker(
       }
       controller.signal.throwIfAborted();
       const recordLaunch = async (pid: number) => {
-        const identity = { pid, token: randomUUID() };
+        // taken synchronously right after the spawn: the helper started at or before it
+        const identity = { pid, token: randomUUID(), launchedAtMs: Date.now() };
         if (!runtime) throw new Error("Missing private supervisor");
         const ack = message(runtime, "registered");
         runtime.send({ type: "register", ...identity });
@@ -1053,7 +1089,14 @@ export async function startMacOperationWorker(
       });
       try {
         const identity = await launched;
-        registered = { pid: Number(identity.pid), token: String(identity.token) };
+        registered = {
+          pid: Number(identity.pid),
+          token: String(identity.token),
+          // the worker's own clock reading next to its spawn (the same machine's wall clock)
+          ...(Number.isSafeInteger(identity.launchedAtMs)
+            ? { launchedAtMs: Number(identity.launchedAtMs) }
+            : {}),
+        };
         await request.onLaunch(registered);
         readyResolve();
         const result = await completed;
@@ -1082,16 +1125,22 @@ export async function startMacOperationWorker(
       await Promise.all(files.map((f) => f.close()));
       if (runtime) {
         const worker = runtime;
+        const exited = () => worker.exitCode !== null || worker.signalCode !== null;
         if (worker.connected) {
           if (registered && (request.kind !== "exec" || execCompleted)) {
             const released = message(worker, "released");
-            worker.send({ type: "release", ...registered });
-            await released;
+            worker.send({ type: "release", ...registered }, () => {});
+            // a worker that exits before answering has released nothing more to release
+            await released.catch(() => undefined);
           }
-          const ended = new Promise<void>((r) => worker.once("exit", () => r()));
-          worker.send({ type: "stop" });
+          // the worker may exit between the check and the send: never wait for an exit already seen
+          const ended = new Promise<void>((r) => {
+            if (exited()) r();
+            else worker.once("exit", () => r());
+          });
+          if (worker.connected) worker.send({ type: "stop" }, () => {});
           await ended;
-        } else if (worker.exitCode === null) worker.kill("SIGTERM");
+        } else if (!exited()) worker.kill("SIGTERM");
       }
       // the sandbox keeps git's sequencer directory (it may hold a kept HEAD) from being removed
       // by the command; once the command is gone, the trusted worker removes it where empty

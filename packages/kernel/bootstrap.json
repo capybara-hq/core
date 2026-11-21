@@ -3,7 +3,7 @@
   "schemaVersion": 1,
   "marketplace": {
     "url": "https://github.com/capybara-hq/plugins.git",
-    "commit": "ae438abbbe7e200961c9f09f9463450769f9dbaa"
+    "commit": "895bfc11d7ed76726b20e2e6140764b7fadc6598"
   },
   "plugins": [
     {
@@ -90,8 +90,8 @@
       "name": "sandbox-docker",
       "source": "npm",
       "npm": "@capybara-hq/plugin-sandbox-docker",
-      "version": "0.1.0-rc.20",
-      "integrity": "sha512-jWPQZ3TpxMuw8QcP22vkSKp2vSSexL8N66SBm8DcSX7HiveeU1O3nVGiPk/esZ4BKXCkjfYpYCtbBW68y+38Sw==",
+      "version": "0.1.0-rc.21",
+      "integrity": "sha512-os0kmtDtTPUyBEJUNQdxfuYCwet6X7lZrIq6Dyo2hXLCV0ZkPPfONY8ctRh6+qzD52PjHC1YWKAZQesYW5I6ww==",
       "required": false
     },
     {

@@ -16,6 +16,7 @@ import { z } from "zod";
 import { ModelRef } from "../agents/definition.js";
 import type { NewConversationDevice } from "../devices/conversation-devices.js";
 import type { DeviceView } from "../devices/devices.service.js";
+import type { PersonRef } from "../identity/account-avatar.js";
 import { CurrentPrincipal, type Principal, requireUser } from "../identity/principal.js";
 import { createZodDto } from "../infra/validation/create-zod-dto.js";
 import { ZBody, ZParam, ZQuery } from "../infra/validation/zod-params.js";
@@ -35,6 +36,7 @@ import {
 } from "./artifacts.js";
 import {
   CompactBody,
+  DOWNLOAD_AS,
   EventsQuery,
   FilesQuery,
   IdParams,
@@ -83,8 +85,15 @@ const FileContentQuery = z.object({
   limit: z.coerce.number().int().min(1).max(FILE_CONTENT_MAX_BYTES).default(FILE_CONTENT_MAX_BYTES),
 });
 
-/** `inline=1`：要求以 inline 打开（只对位图生效，见 ConversationArtifacts）。 */
-const DownloadQuery = z.object({ inline: z.enum(["0", "1"]).optional() });
+/**
+ * `inline=1`: open inline (bitmaps only, see ConversationArtifacts). `as=url`: answer `{ url }`
+ * (the presigned location the 302 would send) instead of redirecting, so a page can hand a
+ * cookie-free URL to the system browser (a native shell's `openExternal@1`).
+ */
+const DownloadQuery = z.object({
+  inline: z.enum(["0", "1"]).optional(),
+  as: DOWNLOAD_AS.optional(),
+});
 
 const MessageFields = z.object({
   /** 用户输入的文本；只有带 `files` 且不带 `attachments` 时可以为空（只发图片 / 文件）。 */
@@ -379,9 +388,15 @@ export class ConversationsController {
     @CurrentPrincipal() principal: Principal,
     @CurrentOrg() org: OrgContext,
     @Param("id") id: string,
-  ): Promise<{ conversation: ConversationView }> {
+  ): Promise<{ conversation: ConversationView & { owner: PersonRef | null } }> {
     const p = requireUser(principal);
-    return { conversation: await this.conversations.get(org.orgId, id, p.account.id) };
+    const conversation = await this.conversations.get(org.orgId, id, p.account.id);
+    return {
+      conversation: {
+        ...conversation,
+        owner: await this.conversations.person(conversation.accountId),
+      },
+    };
   }
 
   /**
@@ -396,21 +411,31 @@ export class ConversationsController {
     @CurrentOrg() org: OrgContext,
     @Param("id") id: string,
     @ZQuery(ConversationEventsQueryDto) q: z.infer<typeof EventsQuery>,
-  ): Promise<{ events: ConversationEvent[]; turnsBefore?: number }> {
+  ): Promise<{
+    events: ConversationEvent[];
+    turnsBefore?: number;
+    people: Record<string, PersonRef>;
+  }> {
     const p = requireUser(principal);
     if (q.before !== undefined) {
       const before = q.before === "end" ? null : q.before;
-      return this.conversations.listEventsBefore(org.orgId, id, p.account.id, before, q.limit);
-    }
-    return {
-      events: await this.conversations.listEvents(
+      const page = await this.conversations.listEventsBefore(
         org.orgId,
         id,
         p.account.id,
-        q.after ?? 0,
+        before,
         q.limit,
-      ),
-    };
+      );
+      return { ...page, people: await this.conversations.eventPeople(page.events) };
+    }
+    const events = await this.conversations.listEvents(
+      org.orgId,
+      id,
+      p.account.id,
+      q.after ?? 0,
+      q.limit,
+    );
+    return { events, people: await this.conversations.eventPeople(events) };
   }
 
   /**
@@ -485,7 +510,9 @@ export class ConversationsController {
   }
 
   /**
-   * 下载 agent 交付的产物（`artifact_created`）：302 到预签名地址（一律 `attachment`，带文件名）。
+   * Download an artifact the agent delivered (`artifact_created`): a 302 to the presigned URL (always
+   * `attachment`, with the file name);
+   * `as=url` answers `{ url }` with that address instead (never cached).
    * 会话可见性与会话流相同，不可见 → `conversation.not_found`；不是该会话的产物 → `conversation.artifact_not_found`。
    */
   @Get(":id/artifacts/:artifactId/download")
@@ -502,6 +529,10 @@ export class ConversationsController {
     const { url } = await this.artifacts.downloadUrl(org.orgId, id, p.account.id, artifactId, {
       inline: q.inline === "1",
     });
+    if (q.as === "url") {
+      await reply.header("cache-control", "private, no-store").send({ url });
+      return;
+    }
     await reply
       .header("cache-control", `private, max-age=${ARTIFACT_DOWNLOAD_CACHE_SECONDS}`)
       .redirect(url, 302);

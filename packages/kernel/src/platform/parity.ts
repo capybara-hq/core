@@ -8,12 +8,19 @@ export interface ParityFinding {
   route: string;
   /** The operation field (or declaration entry) it is about; absent when about the whole route. */
   field?: string;
+  /** The named rule of a finding that has one (`platform-op-secret-param`). */
+  rule?: "platform-op-secret-param";
   message: string;
 }
 
 /** What {@link inputParity} reads of an operation. */
 export type ParityOperation = Pick<PlatformOperation, "id" | "input" | "mirrors"> &
-  Partial<Pick<PlatformOperation, "omits" | "extras" | "renames" | "loosens">>;
+  Partial<
+    Pick<
+      PlatformOperation,
+      "omits" | "extras" | "renames" | "loosens" | "personFields" | "withoutSecrets"
+    >
+  >;
 
 type Json = Record<string, unknown>;
 
@@ -30,6 +37,21 @@ const LOWER = ["minLength", "minimum", "exclusiveMinimum", "minItems", "minPrope
 
 const toJson = (s: z.ZodType): Json =>
   z.toJSONSchema(s, { io: "input", unrepresentable: "any" }) as Json;
+
+/** Keywords whose value is data, never a schema: a `secret` key inside them is no marker. */
+const DATA_KEYWORDS = new Set(["const", "enum", "default", "examples"]);
+
+/**
+ * Whether a JSON Schema holds the SDK's `secret()` meta anywhere (`z.toJSONSchema` copies the meta
+ * `{ secret: true }` onto the node), nested objects, items, unions and `$defs` included.
+ */
+function holdsSecret(node: unknown): boolean {
+  if (Array.isArray(node)) return node.some(holdsSecret);
+  if (typeof node !== "object" || node === null) return false;
+  const o = node as Json;
+  if (o.secret === true) return true;
+  return Object.entries(o).some(([k, v]) => !DATA_KEYWORDS.has(k) && holdsSecret(v));
+}
 
 /** A schema's alternatives: the branches of `anyOf` / `oneOf` (flattened), else itself. */
 function alternatives(s: Json): Json[] {
@@ -207,8 +229,10 @@ function fieldMismatch(op: Json, route: Json, path: string, top: string): string
 }
 
 /**
- * Compares an operation's input with one mirrored route's body + query + path params (spec
- * §14.5 item 3), on their input JSON Schemas:
+ * Compares an operation's input with its mirrored routes' body + query + path params (spec
+ * §14.5 item 3), on their input JSON Schemas. An operation mirroring several routes (an upload
+ * and the write that takes its id) is compared with the fields of all of them: a field is
+ * compared with each route that has it, and `omits` / `extras` are read against the union.
  * - each input field is compared with the route field of the same name, or the route path its
  *   `renames` entry names (`skillId` → `id`, `name` → `definition.name`): the same type (an
  *   operation `integer` fits a route `number`), enum values a subset, bounds no looser
@@ -219,67 +243,124 @@ function fieldMismatch(op: Json, route: Json, path: string, top: string): string
  * - a `loosens` entry names an input field allowed to accept more than the route (with the
  *   reason); it is still compared by type, and an entry that loosens nothing is stale;
  * - a top-level route field the input neither has nor renames into is listed in `omits`, an input
- *   field with no route counterpart in `extras`; stale entries of either are findings.
+ *   field with no route counterpart in `extras`; stale entries of either are findings;
+ * - rule `platform-op-secret-param`: a route field holding the SDK's `secret()` meta anywhere is
+ *   never an input field (it is in `omits`), and the operation defines `personFields`, or says in
+ *   `withoutSecrets` why it takes none of them and asks for none (a preview without the credential).
  */
-export function inputParity(op: ParityOperation, route: RouteSchemas): ParityFinding[] {
+export function inputParity(
+  op: ParityOperation,
+  routes: RouteSchemas | readonly RouteSchemas[],
+): ParityFinding[] {
+  const list: readonly RouteSchemas[] = Array.isArray(routes) ? routes : [routes as RouteSchemas];
   const out: ParityFinding[] = [];
-  const add = (field: string, message: string) =>
-    out.push({ op: op.id, route: route.route, field, message: `${op.id}: ${message}` });
+  const allRoutes = list.map((x) => x.route).join(", ");
+  const add = (field: string, message: string, route = allRoutes) =>
+    out.push({ op: op.id, route, field, message: `${op.id}: ${message}` });
   const opFields = fieldsOf(toJson(op.input));
-  const routeFields = new Map<string, Field>();
-  for (const part of [route.params, route.query, route.body]) {
-    if (part === undefined) continue;
-    for (const [k, v] of fieldsOf(toJson(part))) if (!IMPLICIT.has(k)) routeFields.set(k, v);
-  }
+  /** Each route's top-level fields (but the implicit ones). */
+  const perRoute = list.map((x) => {
+    const fields = new Map<string, Field>();
+    for (const part of [x.params, x.query, x.body]) {
+      if (part === undefined) continue;
+      for (const [k, v] of fieldsOf(toJson(part))) if (!IMPLICIT.has(k)) fields.set(k, v);
+    }
+    return { route: x.route, r: `\`${x.route}\``, fields };
+  });
+  const routeKeys = new Set(perRoute.flatMap((p) => [...p.fields.keys()]));
+  const all = list.map((x) => `\`${x.route}\``).join(", ");
   const omits = new Set(op.omits ?? []);
   const extras = new Set(op.extras ?? []);
   const renames = new Map(Object.entries(op.renames ?? {}));
   const loosens = new Map(Object.entries(op.loosens ?? {}));
-  const r = `\`${route.route}\``;
   /** Top-level route fields an input field covers (by name or by a rename into it). */
   const covered = new Set<string>();
 
   for (const [k, opField] of opFields) {
     const target = renames.get(k) ?? k;
-    const routeField = fieldAt(routeFields, target);
-    if (routeField === undefined) {
-      if (renames.has(k)) add(k, `\`renames\` maps \`${k}\` to \`${target}\`, no field of ${r}`);
-      else if (!extras.has(k)) add(k, `\`${k}\` is no field of ${r} and not in \`extras\``);
+    const holders = perRoute.flatMap((p) => {
+      const f = fieldAt(p.fields, target);
+      return f === undefined ? [] : [{ ...p, routeField: f }];
+    });
+    if (holders.length === 0) {
+      if (renames.has(k)) add(k, `\`renames\` maps \`${k}\` to \`${target}\`, no field of ${all}`);
+      else if (!extras.has(k)) add(k, `\`${k}\` is no field of ${all} and not in \`extras\``);
       continue;
     }
     covered.add(target.split(".")[0] as string);
-    if (extras.has(k)) add(k, `\`extras\` names \`${k}\`, which ${r} has as \`${target}\``);
-    const reason = loosens.get(k);
     const name = target === k ? `\`${k}\`` : `\`${k}\` (\`${target}\`)`;
+    if (extras.has(k)) {
+      const first = holders[0] as (typeof holders)[number];
+      add(k, `\`extras\` names \`${k}\`, which ${first.r} has as \`${target}\``, first.route);
+    }
+    const reason = loosens.get(k);
     if (reason !== undefined) {
       if (reason.trim() === "") add(k, `\`loosens\` names \`${k}\` without a reason`);
-      const want = typesOf(routeField.schema);
-      const got = typesOf(opField.schema);
-      if (want !== undefined && (got === undefined || [...got].some((t) => !typeFits(t, want)))) {
-        add(
-          k,
-          `${name}: type ${describeTypes(got)} in the operation, ${describeTypes(want)} in the route (${r}; \`loosens\` excuses bounds, never the type)`,
-        );
+      let looser = false;
+      for (const { route, r, routeField } of holders) {
+        const want = typesOf(routeField.schema);
+        const got = typesOf(opField.schema);
+        if (want !== undefined && (got === undefined || [...got].some((t) => !typeFits(t, want)))) {
+          add(
+            k,
+            `${name}: type ${describeTypes(got)} in the operation, ${describeTypes(want)} in the route (${r}; \`loosens\` excuses bounds, never the type)`,
+            route,
+          );
+        }
+        looser ||=
+          (routeField.required && !opField.required) ||
+          fieldMismatch(opField.schema, routeField.schema, target, target) !== null;
       }
-      const looser =
-        (routeField.required && !opField.required) ||
-        fieldMismatch(opField.schema, routeField.schema, target, target) !== null;
-      if (!looser) add(k, `\`loosens\` names ${name}, which is no looser than ${r}`);
+      if (!looser) add(k, `\`loosens\` names ${name}, which is no looser than ${all}`);
       continue;
     }
-    if (routeField.required && !opField.required) {
-      add(k, `${name} is required by ${r} but optional here (declare it in \`loosens\` if meant)`);
+    for (const { route, r, routeField } of holders) {
+      if (routeField.required && !opField.required) {
+        add(
+          k,
+          `${name} is required by ${r} but optional here (declare it in \`loosens\` if meant)`,
+          route,
+        );
+      }
+      const why = fieldMismatch(opField.schema, routeField.schema, target, target);
+      if (why !== null) add(k, `${name}: ${why} (${r})`, route);
     }
-    const why = fieldMismatch(opField.schema, routeField.schema, target, target);
-    if (why !== null) add(k, `${name}: ${why} (${r})`);
   }
-  for (const k of routeFields.keys()) {
-    if (!covered.has(k) && !omits.has(k)) {
-      add(k, `\`${k}\` of ${r} is missing from the input and not in \`omits\``);
+  // rule `platform-op-secret-param` (platform web parity spec §9): a route field carrying a
+  // `secret()` value is entered by the person on the card, never passed by the model
+  for (const { route, r, fields } of perRoute) {
+    for (const [k, f] of fields) {
+      if (!holdsSecret(f.schema)) continue;
+      const secretRule = (message: string) =>
+        out.push({
+          op: op.id,
+          route,
+          field: k,
+          rule: "platform-op-secret-param",
+          message: `${op.id}: platform-op-secret-param: ${message}`,
+        });
+      if (covered.has(k)) {
+        secretRule(
+          `\`${k}\` of ${r} carries a secret (\`secret()\` meta): leave it out of the input, list it in \`omits\`, and have the person enter it on the card (\`personFields\`)`,
+        );
+      } else if (op.personFields === undefined && !op.withoutSecrets?.trim()) {
+        secretRule(
+          `\`${k}\` of ${r} carries a secret (\`secret()\` meta): the operation must define \`personFields\`, so the person enters secrets on the card, or say in \`withoutSecrets\` why it takes none`,
+        );
+      }
+    }
+  }
+  const reported = new Set<string>();
+  for (const { route, r, fields } of perRoute) {
+    for (const k of fields.keys()) {
+      if (!covered.has(k) && !omits.has(k) && !reported.has(k)) {
+        reported.add(k);
+        add(k, `\`${k}\` of ${r} is missing from the input and not in \`omits\``, route);
+      }
     }
   }
   for (const k of omits) {
-    if (!routeFields.has(k)) add(k, `\`omits\` names \`${k}\`, no field of ${r}`);
+    if (!routeKeys.has(k)) add(k, `\`omits\` names \`${k}\`, no field of ${all}`);
     else if (covered.has(k)) add(k, `\`omits\` names \`${k}\`, but the input has it`);
   }
   for (const k of extras) {
@@ -295,7 +376,7 @@ export function inputParity(op: ParityOperation, route: RouteSchemas): ParityFin
 }
 
 /**
- * {@link inputParity} of every operation against each route it mirrors; a mirrored route whose
+ * {@link inputParity} of every operation against the routes it mirrors; a mirrored route whose
  * schemas are not registered is a finding too (a removed route is `check:platform-ops`'s orphan).
  */
 export function checkInputParity(
@@ -303,18 +384,44 @@ export function checkInputParity(
   routes: readonly RouteSchemas[],
 ): ParityFinding[] {
   const byRoute = new Map(routes.map((r) => [r.route, r]));
-  return ops.flatMap((op) =>
-    op.mirrors.flatMap((m) => {
-      const r = byRoute.get(m);
-      return r !== undefined
-        ? inputParity(op, r)
-        : [
-            {
-              op: op.id,
-              route: m,
-              message: `${op.id} mirrors \`${m}\`, whose schemas are not in ROUTE_SCHEMAS: export them from the controller's <domain>.schemas.ts and list them there`,
-            },
-          ];
-    }),
+  return ops.flatMap((op) => {
+    const registered = op.mirrors.flatMap((m) => byRoute.get(m) ?? []);
+    return [
+      ...staleWithoutSecrets(op, byRoute),
+      ...op.mirrors
+        .filter((m) => !byRoute.has(m))
+        .map((m) => ({
+          op: op.id,
+          route: m,
+          message: `${op.id} mirrors \`${m}\`, whose schemas are not in ROUTE_SCHEMAS: export them from the controller's <domain>.schemas.ts and list them there`,
+        })),
+      // the registered mirrors together: an upload route and the write taking its id are one op
+      ...(registered.length > 0 ? inputParity(op, registered) : []),
+    ];
+  });
+}
+
+/**
+ * Rule `platform-op-secret-param`: a `withoutSecrets` reason on an operation none of whose
+ * registered mirrored routes carries a secret field is stale (it would hide a later secret).
+ */
+function staleWithoutSecrets(
+  op: ParityOperation,
+  byRoute: ReadonlyMap<string, RouteSchemas>,
+): ParityFinding[] {
+  if (op.withoutSecrets === undefined) return [];
+  const routes = op.mirrors.flatMap((m) => byRoute.get(m) ?? []);
+  const secret = routes.some((r) =>
+    [r.params, r.query, r.body].some((part) => part !== undefined && holdsSecret(toJson(part))),
   );
+  if (secret || routes.length === 0) return [];
+  return [
+    {
+      op: op.id,
+      route: op.mirrors.join(", "),
+      field: "withoutSecrets",
+      rule: "platform-op-secret-param",
+      message: `${op.id}: platform-op-secret-param: \`withoutSecrets\` is stale: no mirrored route carries a secret field; remove it`,
+    },
+  ];
 }

@@ -24,6 +24,7 @@ import {
   INPUT_CANCELLED_TEXT,
   RUN_STOPPED_TEXT,
   ToolPipeline,
+  withLeakedOnCard,
 } from "../tools/pipeline.js";
 import { QuestionsService } from "../tools/questions.service.js";
 import { RunAbort, type RunAbortBy, type RunAbortDetail } from "./abort.js";
@@ -407,7 +408,16 @@ export class Waits implements OnApplicationShutdown {
               text: `${kept.content}\n\n${a.kind === "git" ? GIT_ASK_CANCELLED_NOTE : NETWORK_ASK_CANCELLED_NOTE}`,
               isError: kept.isError,
             }
-          : { toolKey: a.tool_key, text: APPROVAL_CANCELLED_TEXT },
+          : {
+              toolKey: a.tool_key,
+              // a tool ask whose card refused a person's value as leaked says so (§4.5)
+              text: withLeakedOnCard(
+                APPROVAL_CANCELLED_TEXT,
+                a.kind === "tool"
+                  ? (a.detail as { leakedFields?: string[] } | null)?.leakedFields
+                  : undefined,
+              ),
+            },
       );
       const step = await this.approvalStep(t, conversationId, a.id);
       if (step !== null) steps.add(step);

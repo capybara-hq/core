@@ -36,6 +36,7 @@
   min-width: 0;
   height: var(--cb-layout-title-bar);
   padding: 0 var(--cb-space-3) 0 var(--cb-space-5);
+  padding-right: calc(var(--cb-space-3) + var(--cb-inset-right));
 }
 .cb-title-path {
   display: flex;
@@ -45,7 +46,7 @@
   gap: var(--cb-space-2);
   min-width: 0;
   color: var(--cb-faint);
-  font-family: var(--cb-font);
+  font-family: var(--cb-font-code);
   font-size: var(--cb-type-small-size);
   line-height: var(--cb-type-small-line);
 }
@@ -138,6 +139,66 @@ span.cb-title-btn {
   margin: 0 var(--cb-space-1);
   background: var(--cb-line);
 }
+/* The compact form's one overflow button (below): drawn always, shown only there. */
+.cb-title-overflow {
+  display: none;
+}
+/* Inside the chat-first compact shell (§6.16.1, spec §4.6): the title bar joins the floating row
+   after the shell's menu button: the title is the centre pill (no path) and every icon folds into
+   the trailing overflow; the new conversation's bar is not drawn (the home's centre and trailing
+   slots stay empty, plan Decision 27). The thread and the new conversation clear the row. */
+@media (max-width: 599px) {
+  .cb-shell .cb-title-bar {
+    position: absolute;
+    z-index: calc(var(--cb-z-sheet) - 10);
+    top: var(--cb-float-top);
+    left: calc(var(--cb-space-4) + var(--cb-inset-left) + var(--cb-float-size) + var(--cb-space-2));
+    right: calc(var(--cb-space-4) + var(--cb-inset-right));
+    gap: var(--cb-space-2);
+    height: var(--cb-float-size);
+    padding: 0;
+    pointer-events: none;
+  }
+  .cb-shell .cb-title-bar > * {
+    pointer-events: auto;
+  }
+  .cb-shell .cb-title-bar[data-new="true"],
+  .cb-shell .cb-title-bar > .cb-title-path,
+  .cb-shell .cb-title-bar > .cb-icon-btn,
+  .cb-shell .cb-title-bar > .cb-title-sep {
+    display: none;
+  }
+  .cb-shell .cb-title-bar > .cb-title-btn {
+    flex: 1 1 auto;
+    height: var(--cb-float-size);
+    margin: 0;
+    padding: 0 var(--cb-space-4);
+    border: 1px solid var(--cb-float-line);
+    border-radius: var(--cb-radius-pill);
+    background: var(--cb-float-ground);
+    box-shadow: var(--cb-shadow-float-touch);
+    font-weight: 500;
+  }
+  .cb-shell .cb-title-overflow {
+    display: contents;
+  }
+  .cb-shell .cb-title-overflow > .cb-icon-btn {
+    flex: none;
+    width: var(--cb-float-size);
+    height: var(--cb-float-size);
+    border: 1px solid var(--cb-float-line);
+    border-radius: var(--cb-radius-pill);
+    background: var(--cb-float-ground);
+    box-shadow: var(--cb-shadow-float-touch);
+  }
+  .cb-shell .cb-conv-scroll:not([data-center="true"]),
+  .cb-shell .cb-conv-pushed[data-shell="true"] {
+    padding-top: var(--cb-float-row);
+  }
+  .cb-shell .cb-conv-new {
+    padding-top: var(--cb-float-row);
+  }
+}
 
 /* ── Conversation menus (title, More, pickers, panel switcher; §6.7, §6.16.3) ── */
 
@@ -155,7 +216,7 @@ span.cb-title-btn {
 .cb-cmenu[data-size="narrow"] {
   min-width: 160px;
 }
-/* The compact top bar's overflow menu: 40 high items (tap targets), their icons 16 and `muted`. */
+/* The compact floating row's overflow menu: 40 high items (tap targets), their icons 16 and `muted`. */
 .cb-cmenu[data-size="touch"] .cb-cmenu-item {
   height: 40px;
 }
@@ -1188,7 +1249,8 @@ button.cb-property-row {
   flex: 1;
   min-height: 0;
   overflow-y: auto;
-  padding: var(--cb-space-4) var(--cb-conv-thread-pad);
+  padding: var(--cb-space-4) calc(var(--cb-conv-thread-pad) + var(--cb-inset-right))
+    var(--cb-space-4) var(--cb-conv-thread-pad);
   /* A classic (non-overlay) scrollbar's gutter on both sides: the centered empty state keeps the
      composer's center line whether or not the thread scrolls (the composer is outside it). */
   scrollbar-gutter: stable both-edges;
@@ -1249,7 +1311,8 @@ button.cb-property-row {
   width: 100%;
   max-width: calc(var(--cb-layout-chat) + 2 * var(--cb-layout-gutter));
   margin: 0 auto;
-  padding: 0 var(--cb-layout-gutter) var(--cb-space-3);
+  padding: 0 calc(var(--cb-layout-gutter) + var(--cb-inset-right)) var(--cb-space-3)
+    var(--cb-layout-gutter);
 }
 .cb-conv-cols > .cb-properties {
   flex: none;
@@ -1387,16 +1450,17 @@ button.cb-property-row {
   }
   .cb-conv-composer {
     padding-inline: var(--cb-space-4);
+    padding-right: calc(var(--cb-space-4) + var(--cb-inset-right));
     /* pinned at the window's bottom on a pushed page: above the home indicator (spec §4.7) */
     padding-bottom: calc(var(--cb-space-3) + var(--cb-inset-bottom));
   }
-  /* A tab root's bottom navigation pads the inset already; an open keyboard covers it. */
-  .cb-shell-main:has(~ .cb-shell-bottomnav) .cb-conv-composer,
+  /* An open keyboard covers the home indicator's inset. */
   .cb-shell[data-keyboard="open"] .cb-conv-composer {
     padding-bottom: var(--cb-space-3);
   }
   .cb-title-bar {
     padding-inline: var(--cb-space-4) var(--cb-space-1);
+    padding-right: calc(var(--cb-space-1) + var(--cb-inset-right));
   }
   .cb-title-bar .cb-icon-btn {
     min-width: 40px;
@@ -1662,7 +1726,7 @@ button.cb-property-row {
 }
 .cb-task-command {
   color: var(--cb-ink);
-  font-family: var(--cb-font);
+  font-family: var(--cb-font-code);
   overflow-wrap: anywhere;
 }
 .cb-task-output-note,
@@ -1671,7 +1735,7 @@ button.cb-property-row {
   line-height: var(--cb-type-small-line);
 }
 .cb-task-output-detail {
-  font-family: var(--cb-font);
+  font-family: var(--cb-font-code);
   font-size: var(--cb-type-small-size);
   line-height: var(--cb-type-small-line);
   overflow-wrap: anywhere;
@@ -1694,7 +1758,7 @@ button.cb-property-row {
 }
 .cb-conv-latest {
   position: absolute;
-  inset-inline-end: var(--cb-layout-gutter);
+  right: calc(var(--cb-layout-gutter) + var(--cb-inset-right));
   bottom: 100%;
   z-index: 1;
   display: flex;
@@ -1705,7 +1769,11 @@ button.cb-property-row {
 }
 @media (max-width: 599px) {
   .cb-conv-latest {
-    inset-inline-end: var(--cb-space-4);
+    right: calc(var(--cb-space-4) + var(--cb-inset-right));
+  }
+  /* The compact class has no StatusBar (mobile layout spec §4): the page draws its own. */
+  .cb-conv-page .cb-statusbar {
+    display: none;
   }
 }
 /*
@@ -1723,7 +1791,7 @@ button.cb-property-row {
   padding-bottom: var(--cb-inset-bottom);
   background: var(--cb-panel-2);
 }
-/* Inside an AppShell the shell's top bar is the back: the page sits in the content area. */
+/* Inside an AppShell the shell's floating row is the back: the page sits in the content area. */
 .cb-conv-pushed[data-shell="true"] {
   position: static;
   flex: 1;
@@ -1744,7 +1812,7 @@ button.cb-property-row {
   align-items: center;
   gap: var(--cb-space-2);
   height: var(--cb-row-roomy);
-  padding: 0 var(--cb-space-2);
+  padding: 0 calc(var(--cb-space-2) + var(--cb-inset-right)) 0 var(--cb-space-2);
   border-bottom: 1px solid var(--cb-line-soft);
 }
 .cb-conv-pushed-body {
@@ -1754,6 +1822,8 @@ button.cb-property-row {
   display: flex;
   flex-direction: column;
   overflow-y: auto;
+  /* the ground runs under a right-hand strip; the content ends before it (spec §8) */
+  padding-right: var(--cb-inset-right);
 }
 .cb-conv-pushed-body > .cb-properties {
   width: 100%;
@@ -1761,8 +1831,236 @@ button.cb-property-row {
   padding: var(--cb-space-2) var(--cb-space-4);
 }
 .cb-conv-pushed-body > .cb-rpanel {
+  /* the pushed body already pads the inset */
+  padding-right: 0;
   flex: 1;
   width: 100%;
   min-width: 0;
   border-left: 0;
+}
+
+/*
+ * Touch (spec §6.16.2, §6.16.6, §6.16.8, §6.16.11; mobile layout spec touch amendments). Only
+ * under the touch query: the composer is a floating pill (attach, input, send) with the settings
+ * chip above it, the thread runs under it, the user's bubble sits at the end edge and the
+ * approval card's buttons are 48 high. Desktop and mouse layouts above are untouched.
+ *
+ * The frame turns into a grid of three columns; the pill itself is the frame's ::before in row 4,
+ * and the controls sit on it. Rows: 1 token warning, 2 attachments, 3 chip and agent picker,
+ * 4 the pill, 5 quick actions, 6 the agents chip.
+ */
+@media (pointer: coarse), (any-pointer: coarse) and (not (any-pointer: fine)) {
+  .cb-composer {
+    display: grid;
+    grid-template-columns: auto minmax(0, 1fr) auto;
+    align-items: center;
+    column-gap: var(--cb-space-1);
+    /* no row gap: an empty row would still take it; the rows above and below the pill carry
+       their own margin */
+    row-gap: 0;
+    padding: 0;
+    border: 0;
+    background: transparent;
+    box-shadow: none;
+  }
+  .cb-composer:has(.cb-composer-input:focus) {
+    border: 0;
+    box-shadow: none;
+  }
+  .cb-composer::before {
+    content: "";
+    grid-row: 4;
+    grid-column: 1 / -1;
+    align-self: stretch;
+    min-height: var(--cb-touch-composer);
+    border: 1px solid var(--cb-float-line);
+    /* half the one-line height: round ends on one line, a rounded box (not an oval) once grown */
+    border-radius: calc(var(--cb-touch-composer) / 2);
+    background: var(--cb-float-ground);
+    box-shadow: var(--cb-shadow-float-touch);
+    transition:
+      border-color var(--cb-motion-hover),
+      box-shadow var(--cb-motion-hover);
+  }
+  .cb-composer:has(.cb-composer-input:focus)::before {
+    border-color: var(--cb-accent);
+    box-shadow:
+      0 0 0 3px var(--cb-focus-ring),
+      var(--cb-shadow-float-touch);
+  }
+  .cb-composer[data-frame="bare"]::before {
+    content: none;
+  }
+  .cb-composer > .cb-callout {
+    grid-row: 1;
+    grid-column: 1 / -1;
+    margin-bottom: var(--cb-space-2);
+  }
+  .cb-composer > .cb-attachment-strip {
+    grid-row: 2;
+    grid-column: 1 / -1;
+    margin-bottom: var(--cb-space-2);
+  }
+  /* the bar's controls take their cells in the frame's grid */
+  .cb-composer-bar {
+    display: contents;
+  }
+  .cb-composer > .cb-composer-input,
+  .cb-composer > .cb-composer-line {
+    grid-row: 4;
+    grid-column: 2;
+    margin: 0;
+    padding-block: var(--cb-space-3);
+  }
+  .cb-composer > .cb-composer-line {
+    padding-block: 0;
+  }
+  /* ＋ and send sit at the pill's bottom, centred on its last line, however far the input grew */
+  .cb-composer-bar > .cb-icon-btn:first-child {
+    grid-row: 4;
+    grid-column: 1;
+    align-self: end;
+    margin-block-end: calc((var(--cb-touch-composer) - var(--cb-touch-hit)) / 2);
+    width: var(--cb-touch-hit);
+    height: var(--cb-touch-hit);
+    margin-inline-start: var(--cb-space-2);
+    color: var(--cb-muted);
+  }
+  .cb-composer-bar > .cb-send.cb-btn,
+  .cb-composer-bar > .cb-stop.cb-btn {
+    grid-row: 4;
+    grid-column: 3;
+    align-self: end;
+    margin-block-end: calc((var(--cb-touch-composer) - var(--cb-touch-float)) / 2);
+    width: var(--cb-touch-float);
+    height: var(--cb-touch-float);
+    margin-inline-end: var(--cb-space-2);
+    padding: 0;
+    border-radius: var(--cb-radius-pill);
+  }
+  .cb-composer-bar > .cb-send.cb-btn {
+    background: var(--cb-accent);
+    color: var(--cb-on-accent);
+  }
+  .cb-composer-bar > .cb-send.cb-btn:disabled {
+    background: var(--cb-selected);
+    color: var(--cb-disabled);
+  }
+  /* the pickers fold into the chip and its sheet at every width; the suggestion button stays out */
+  .cb-composer-pickers,
+  .cb-composer-mode {
+    display: none;
+  }
+  .cb-composer-bar > .cb-composer-options.cb-btn {
+    display: inline-flex;
+    grid-row: 3;
+    grid-column: 1 / 3;
+    justify-self: start;
+    margin-bottom: var(--cb-space-2);
+    min-height: var(--cb-touch-hit);
+    max-width: 100%;
+    padding: 0 var(--cb-space-3);
+    border: 1px solid var(--cb-float-line);
+    border-radius: var(--cb-radius-pill);
+    background: var(--cb-float-ground);
+    color: var(--cb-muted);
+  }
+  .cb-composer-bar > .cb-picker.cb-btn {
+    grid-row: 3;
+    grid-column: 3;
+    margin-bottom: var(--cb-space-2);
+  }
+  .cb-composer-bar > [data-part="quick-actions"] {
+    grid-row: 5;
+    grid-column: 1 / -1;
+    margin-top: var(--cb-space-2);
+  }
+  .cb-composer-bar > .cb-agents-chip {
+    grid-row: 6;
+    grid-column: 1 / -1;
+    margin-top: var(--cb-space-2);
+  }
+  .cb-composer-bar > .cb-composer-suggestion-use.cb-btn {
+    grid-row: 3;
+    grid-column: 3;
+  }
+  .cb-composer-bar > .cb-grow {
+    display: none;
+  }
+  .cb-options-sheet-note {
+    margin: var(--cb-space-3) 0 0;
+    color: var(--cb-muted);
+    font-size: var(--cb-type-small-size);
+    line-height: var(--cb-type-small-line);
+  }
+
+  /* The composer floats over the thread's bottom; the thread's padding clears it. The page lifts
+     the whole column by the keyboard's height (`--cb-keyboard-inset`, above), so the floating
+     composer rises with it; the home indicator's inset counts only while the keyboard is shut. */
+  .cb-conv-center {
+    position: relative;
+  }
+  .cb-conv-composer {
+    position: absolute;
+    inset-inline: 0;
+    bottom: 0;
+    padding-bottom: calc(var(--cb-space-3) + var(--cb-inset-bottom));
+    pointer-events: none;
+  }
+  .cb-conv-composer > * {
+    pointer-events: auto;
+  }
+  .cb-shell[data-keyboard="open"] .cb-conv-composer {
+    padding-bottom: var(--cb-space-3);
+  }
+  /* the composer's measured height (`--cb-composer-h`, a ResizeObserver in the page) clears a
+     grown textarea; before the first measure, a one-line pill with its chip row */
+  .cb-conv-scroll {
+    padding-bottom: calc(
+      var(
+        --cb-composer-h,
+        calc(
+          var(--cb-touch-composer) +
+          var(--cb-touch-hit) +
+          var(--cb-space-3) +
+          var(--cb-inset-bottom)
+        )
+      ) +
+      var(--cb-space-3)
+    );
+  }
+  .cb-conv-latest {
+    bottom: calc(100% + var(--cb-touch-hit) + var(--cb-space-2));
+  }
+
+  /* The user's bubble at the end edge; the approval card's two buttons 48 high, side by side. */
+  .cb-user-msg > .cb-bubble {
+    max-width: 85%;
+    margin-inline-start: auto;
+  }
+  /* one row: 拒绝, the wider grants, 批准. The buttons' flex-basis is 0, so they never wrap to a
+     second row (a label too long wraps inside its button); the policy note takes the row under. */
+  .cb-hcard-actions {
+    align-items: stretch;
+  }
+  .cb-hcard-actions > .cb-btn {
+    flex: 1 1 0;
+    min-width: 0;
+    padding-inline: var(--cb-space-2);
+    min-height: var(--cb-touch-primary);
+    height: auto;
+    padding-block: var(--cb-space-2);
+    white-space: normal;
+    line-height: var(--cb-type-small-line);
+  }
+  .cb-hcard-actions > .cb-hcard-note {
+    flex: 0 0 100%;
+  }
+  .cb-tool-group > .cb-tool-line {
+    width: 100%;
+    min-height: var(--cb-touch-hit);
+  }
+  .cb-tool-group > .cb-tool-line > .cb-tool-label {
+    flex: 1 1 auto;
+  }
 }

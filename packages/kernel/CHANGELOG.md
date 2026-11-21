@@ -1,5 +1,98 @@
 # @capybara-hq/kernel
 
+## 0.1.0-rc.62
+
+### Minor Changes
+
+- 8453226: The attachment and artifact download routes take `?as=url`: under the same session and org checks
+  they answer `{ url }` (the presigned location the 302 would send, `Cache-Control: private,
+  no-store`), so the web can hand a native shell's system browser a cookie-free download URL.
+
+### Patch Changes
+
+- Updated dependencies [0756b7b]
+  - @capybara-hq/plugin-sdk@0.1.0-rc.47
+
+## 0.1.0-rc.61
+
+### Minor Changes
+
+- 33074e1: Push notification registrations and delivery: the `push_registrations` and `push_preferences`
+  tables, push tokens sealed with the master keyring (rewrapped by `capybara secrets rewrap`).
+  Trigger events (approvals, questions, connect requests, run ends, background and sub-agent finishes,
+  scheduled task runs) owe a push fanout in their own transaction; the fanout resolves recipients when
+  it runs and owes one delivery per registration. New config `push.previews` (`off` | `titles`).
+- 12a6582: Add the setup guide place `extension-deployment`: a plugin's guide on the super admin's extension
+  page whose checks get the extension's platform deployment config (`SetupCheckTarget` kind
+  `extension-deployment`; `SetupCheckArgs.orgId` is now `string | null`, null for this place). The
+  `fake-push` fixture ships such a guide with the check `fake-push-key`. The kernel serves these guides
+  and runs their checks on super admin routes (`/api/v1/admin/extensions/:name/guides…`) and the
+  `extensions.platform-guides`, `extensions.platform-check-status` and `extensions.platform-check`
+  Platform operations; the web shows them with live check rows on the extension's config tab.
+
+### Patch Changes
+
+- Updated dependencies [a007fee]
+- Updated dependencies [12a6582]
+  - @capybara-hq/plugin-sdk@0.1.0-rc.46
+
+## 0.1.0-rc.60
+
+### Patch Changes
+
+- a767452: A person edits their own name and avatar (`PATCH /api/v1/me/profile`, presigned avatar uploads);
+  every response that shows a person carries their avatar URL, served by a guarded
+  `GET /api/v1/accounts/:id/avatar`.
+- 072362d: Desktop onboarding: `GET /api/v1/meta` lists `appRedirectUris` (`auth.appRedirectUris` while app
+  sign-in is available, else empty), so the desktop app can say before opening the browser that the
+  platform does not allow it; the app token exchange answers `auth.account_disabled` (403) for an
+  account that is not active instead of `app_auth.code_invalid`. `chrome@1.setAppearance` also
+  carries the page's seven main color tokens (only when all are plain colors) and `singleScheme`
+  under a single-scheme UI theme; the SDK gains `ChromeCapabilityV1`, `ShellChromeTokens` and
+  `SHELL_CAPABILITY_KEYS.chrome`.
+- 10c0ee8: Native-app sign-in accepts the mobile app: `POST /api/v1/app-auth/authorize` takes
+  `client: "mobile"` next to `"desktop"`, and its session's user agent reads
+  `Capybara Mobile/<version> (<device>)`. The consent page `/apps/authorize` names the app that asked
+  (desktop or mobile) in its title, hints and errors, and treats an unknown `client` as an invalid
+  link. The redirect allow-list (`auth.appRedirectUris`) is unchanged.
+- 4ae3971: The Platform tool takes conversation files where the web takes an upload: an agent avatar from a
+  generated image, skill and plugin packages, extension packages and skill versions, passed as
+  `file: { fileId }` (a device file is delivered with Deliver first). The card shows the file's name,
+  size, sha256 prefix and a thumbnail, and the bytes that run are the bytes the person confirmed.
+  Imports, uploads and anything else a person reviews on a web page pop up a link card to that page.
+  Two new platform-ops rules keep it that way: an exclusion may not cite an upload, and an operation
+  that sends the person to a web page links it or says why not (`noHandoff`).
+- Updated dependencies [072362d]
+- Updated dependencies [8f684ad]
+- Updated dependencies [e21de78]
+  - @capybara-hq/plugin-sdk@0.1.0-rc.44
+
+## 0.1.0-rc.59
+
+### Patch Changes
+
+- 2c2841e: The Platform tool creates connectors, sets their credentials, installs catalog items with their
+  connector and config secrets, and creates channels, with every secret typed by the person on the
+  confirmation card. Org admins' agents invite, revoke and manage members (never self, never an owner,
+  never above the actor); an invitation link is sealed for the approver and revealed once on the web.
+  Platform results can pop up a handoff card (a link to a web page, or a Connect button for OAuth).
+- ff64a43: A run start reads the project's `AGENTS.md` and lists its skills at the same time instead of one
+  after the other: each is a device round trip of its own.
+- Updated dependencies [2c2841e]
+- Updated dependencies [ff64a43]
+  - @capybara-hq/plugin-sdk@0.1.0-rc.43
+
+## 0.1.0-rc.58
+
+### Patch Changes
+
+- e788a1a: Person fields: a Platform write that needs a secret takes its field name in `askPerson`, and the
+  person types the value on the approval card on the web; it is sealed, read once by the resumed call
+  and never reaches the conversation, the audit or a log. Agents can now read and set extension
+  deployment config, org config and the org's config copy through the Platform tool.
+- Updated dependencies [e788a1a]
+  - @capybara-hq/plugin-sdk@0.1.0-rc.42
+
 ## 0.1.0-rc.57
 
 ### Patch Changes

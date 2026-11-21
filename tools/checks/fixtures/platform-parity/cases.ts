@@ -1,3 +1,4 @@
+import { secret } from "@capybara-hq/plugin-sdk";
 import { z } from "zod";
 
 /** A route both cases mirror: `name` a bounded string, `visibility` required. */
@@ -138,3 +139,127 @@ export const flattenedLooser = op2("things.flat", {
   title: z.string().min(1),
   spec: Spec,
 }, { renames: { thingId: "id", title: "spec.title" } });
+
+/**
+ * A third route whose body carries a secret: `secretEntries[].value` has the SDK's `secret()` meta
+ * (rule `platform-op-secret-param`, platform web parity spec §9).
+ */
+export const route3 = {
+  route: "PUT /api/v1/orgs/:orgId/things/:id/config",
+  params: z.object({ id: z.string().min(1).max(100) }),
+  body: z
+    .object({
+      values: z.record(z.string().min(1).max(256), z.unknown()),
+      secretEntries: z
+        .array(z.object({ key: z.string().min(1).max(256), value: secret(z.string().max(100)) }))
+        .max(10)
+        .optional(),
+    })
+    .strict(),
+};
+
+/** What an operation with person fields declares: its target's secret fields. */
+const personFields = async () => ({ target: { zh: "配置", en: "Config" }, fields: [] });
+
+const op3 = (id: string, shape: z.ZodRawShape, more: Record<string, unknown> = {}) => ({
+  id,
+  input: z.object(shape).strict(),
+  mirrors: [route3.route],
+  renames: { thingId: "id" },
+  ...more,
+});
+const Values = z.record(z.string().min(1).max(256), z.unknown());
+const AskPerson = z.array(z.string().min(1).max(200)).max(32);
+
+/** Clean: the secret field is omitted and the operation asks the person for it. */
+export const secretClean = op3(
+  "things.configure",
+  { thingId: z.string().min(1).max(100), values: Values, askPerson: AskPerson },
+  { omits: ["secretEntries"], extras: ["askPerson"], personFields },
+);
+
+/** The route's `secret()` field taken as a param: the model would see the secret. */
+export const secretParam = op3(
+  "things.secret-param",
+  {
+    thingId: z.string().min(1).max(100),
+    values: Values,
+    secretEntries: z
+      .array(z.object({ key: z.string().min(1).max(256), value: z.string().max(100) }))
+      .max(10)
+      .optional(),
+  },
+  { personFields },
+);
+
+/** The secret field left out, but nothing asks the person for it. */
+export const secretNoPersonFields = op3(
+  "things.secret-unasked",
+  { thingId: z.string().min(1).max(100), values: Values },
+  { omits: ["secretEntries"] },
+);
+
+/** The secret field left out with the reason no person field is needed (clean). */
+export const secretWithout = op3(
+  "things.preview",
+  { thingId: z.string().min(1).max(100), values: Values },
+  { omits: ["secretEntries"], withoutSecrets: "a preview never stores the secret entries" },
+);
+
+/** `withoutSecrets` with an empty reason: no exemption. */
+export const secretWithoutBlank = op3(
+  "things.preview-blank",
+  { thingId: z.string().min(1).max(100), values: Values },
+  { omits: ["secretEntries"], withoutSecrets: " " },
+);
+
+/** The route's `secret()` field taken as a param despite `withoutSecrets`: still a finding. */
+export const secretWithoutParam = op3(
+  "things.preview-param",
+  {
+    thingId: z.string().min(1).max(100),
+    values: Values,
+    secretEntries: z
+      .array(z.object({ key: z.string().min(1).max(256), value: z.string().max(100) }))
+      .max(10)
+      .optional(),
+  },
+  { withoutSecrets: "a preview never stores the secret entries" },
+);
+
+/** `withoutSecrets` on an operation whose route carries no secret: stale. */
+export const staleWithoutSecrets = {
+  id: "things.stale-without",
+  input: route.body,
+  mirrors: [route.route],
+  withoutSecrets: "nothing secret here",
+};
+
+/** An upload route (presigned) and the create route that takes its id: one operation mirrors both. */
+export const uploadRoute = {
+  route: "POST /api/v1/orgs/:orgId/things/uploads",
+  body: z.object({ name: z.string().min(1).max(200), size: z.number().int().min(1) }).strict(),
+};
+export const createRoute = {
+  route: "POST /api/v1/orgs/:orgId/things/from-upload",
+  body: z.object({ uploadId: z.string().min(1).max(100), shareable: z.boolean().optional() }).strict(),
+};
+
+/** Fields of either route: `shareable` the create route's, the upload fields left out. */
+export const twoRoutes = {
+  id: "things.create-from-file",
+  input: z.object({ file: z.object({ fileId: z.uuid() }).strict(), shareable: z.boolean() }).strict(),
+  mirrors: [uploadRoute.route, createRoute.route],
+  omits: ["name", "size", "uploadId"],
+  extras: ["file"],
+};
+
+/** The same, with the create route's `uploadId` neither taken nor in `omits`. */
+export const twoRoutesMissing = { ...twoRoutes, id: "things.missing", omits: ["name", "size"] };
+
+/** The same, with a `shareable` looser than the create route's (a string). */
+export const twoRoutesMismatch = {
+  ...twoRoutes,
+  id: "things.mismatch",
+  input: z.object({ file: z.object({ fileId: z.uuid() }).strict(), shareable: z.string() }).strict(),
+};

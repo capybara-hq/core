@@ -2,6 +2,8 @@
 // reads `window.capybaraShell` (`lib/shell.ts`), capability by `name@major` and absent = the
 // browser; the event-handler accessor that refuses a call during a render (plan Review Focus 4);
 // and the root layout: the viewport and the no-flash script carrying the request's nonce.
+
+import type { NativeHandlers } from "@capybara-hq/design";
 import { act, cleanup, fireEvent, render, screen } from "@testing-library/react";
 import { useState } from "react";
 import { flushSync } from "react-dom";
@@ -10,9 +12,16 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   shellCapability,
   useDeviceCapability,
+  useHapticsCapability,
+  useMenuCapability,
+  useNativeHandlers,
+  useNativeNavHandle,
   useNotifyCapability,
+  useProfilesCapability,
+  useShareCapability,
   useShellCapability,
   useSignInCapability,
+  useSwitchProfile,
 } from "../src/lib/shell";
 
 /** A fake shell whose capabilities a test changes, announcing them with `change`. */
@@ -344,5 +353,134 @@ describe("typed capability accessors", () => {
     expect(screen.getByTestId("typed").textContent).toBe("-++");
     act(() => f.change({ "device@1": {} }));
     expect(screen.getByTestId("typed").textContent).toBe("+--");
+  });
+});
+
+describe("the mobile capability accessors", () => {
+  const caps = {
+    "haptics@1": { impact: vi.fn(async () => {}) },
+    "share@1": { share: vi.fn(async () => {}) },
+    "menu@1": { show: vi.fn(async () => null) },
+  };
+
+  function Accessors() {
+    const a = [useHapticsCapability(), useShareCapability(), useMenuCapability()];
+    return <p data-testid="a">{a.map((x) => (x === undefined ? "-" : "+")).join("")}</p>;
+  }
+
+  it("each is undefined without its key and the object after a change adds it", () => {
+    const f = fakeShell();
+    install(f.shell);
+    render(<Accessors />);
+    expect(screen.getByTestId("a").textContent).toBe("---");
+    act(() => f.change({ "haptics@1": caps["haptics@1"] }));
+    expect(screen.getByTestId("a").textContent).toBe("+--");
+    act(() => f.change(caps));
+    expect(screen.getByTestId("a").textContent).toBe("+++");
+  });
+
+  it("useNativeHandlers holds menu only when menu@1 is present", () => {
+    const seen: NativeHandlers[] = [];
+    function H() {
+      seen.push(useNativeHandlers());
+      return null;
+    }
+    const f = fakeShell({ capabilities: { "haptics@1": caps["haptics@1"] } });
+    install(f.shell);
+    render(<H />);
+    const last = () => seen[seen.length - 1] as NativeHandlers;
+    expect(last().menu).toBeUndefined();
+    expect(last().share).toBeUndefined();
+    expect(last().haptics).toBeDefined();
+    act(() => f.change({ "haptics@1": caps["haptics@1"], "menu@1": caps["menu@1"] }));
+    expect(last().menu).toBeDefined();
+  });
+
+  it("the haptics handler swallows a rejected impact", async () => {
+    const impact = vi.fn(() => Promise.reject(new Error("no")));
+    const seen: NativeHandlers[] = [];
+    function H() {
+      seen.push(useNativeHandlers());
+      return null;
+    }
+    install(fakeShell({ capabilities: { "haptics@1": { impact } } }).shell);
+    render(<H />);
+    const unhandled = vi.fn();
+    process.on("unhandledRejection", unhandled);
+    (seen[seen.length - 1] as NativeHandlers).haptics?.("selection");
+    await Promise.resolve();
+    await new Promise((r) => setImmediate(r));
+    process.off("unhandledRejection", unhandled);
+    expect(impact).toHaveBeenCalledWith("selection");
+    expect(unhandled).not.toHaveBeenCalled();
+  });
+});
+
+describe("the nav@1 and profiles@1 accessors", () => {
+  const unhandledDuring = async (fn: () => void) => {
+    const unhandled = vi.fn();
+    process.on("unhandledRejection", unhandled);
+    fn();
+    await Promise.resolve();
+    await new Promise((r) => setImmediate(r));
+    process.off("unhandledRejection", unhandled);
+    return unhandled;
+  };
+
+  it("useNativeNavHandle is undefined without nav@1 and swallows a rejected or throwing set", async () => {
+    const seen: (ReturnType<typeof useNativeNavHandle> | null)[] = [];
+    function H() {
+      seen.push(useNativeNavHandle() ?? null);
+      return null;
+    }
+    const f = fakeShell();
+    install(f.shell);
+    const view = render(<H />);
+    expect(seen.at(-1)).toBeNull();
+    const set = vi.fn(() => Promise.reject(new Error("no strip")));
+    const off = vi.fn();
+    const nav = { set, onSelect: vi.fn(() => off), onMenu: vi.fn(() => off) };
+    act(() => f.change({ "nav@1": nav }));
+    const handle = seen.at(-1);
+    expect(handle).toBeTruthy();
+    const state = { items: [{ id: "chats" as const, label: "对话" }], current: null, menu: null };
+    const unhandled = await unhandledDuring(() => handle?.set(state));
+    expect(set).toHaveBeenCalledWith(state);
+    expect(unhandled).not.toHaveBeenCalled();
+    set.mockImplementation(() => {
+      throw new Error("gone");
+    });
+    expect(() => handle?.set(state)).not.toThrow();
+    // the listeners pass through
+    const l = () => {};
+    expect(handle?.onSelect(l)).toBe(off);
+    expect(handle?.onMenu(l)).toBe(off);
+    expect(nav.onSelect).toHaveBeenCalledWith(l);
+    // a rerender keeps the handle while the capability object stays
+    const before = seen.at(-1);
+    view.rerender(<H />);
+    expect(seen.length).toBeGreaterThan(2);
+    expect(seen.at(-1)).toBe(before);
+  });
+
+  it("useSwitchProfile is undefined without profiles@1; it calls show() and swallows a rejection", async () => {
+    const seen: (ReturnType<typeof useSwitchProfile> | null)[] = [];
+    const caps: unknown[] = [];
+    function H() {
+      caps.push(useProfilesCapability());
+      seen.push(useSwitchProfile() ?? null);
+      return null;
+    }
+    const f = fakeShell();
+    install(f.shell);
+    render(<H />);
+    expect(seen.at(-1)).toBeNull();
+    expect(caps.at(-1)).toBeUndefined();
+    const show = vi.fn(() => Promise.reject(new Error("busy")));
+    act(() => f.change({ "profiles@1": { show } }));
+    expect(caps.at(-1)).toEqual({ show });
+    const unhandled = await unhandledDuring(() => seen.at(-1)?.());
+    expect(show).toHaveBeenCalledTimes(1);
+    expect(unhandled).not.toHaveBeenCalled();
   });
 });

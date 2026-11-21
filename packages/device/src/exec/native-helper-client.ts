@@ -13,6 +13,11 @@ export interface PinnedNativeRoot {
   access: "read" | "write";
   /** Trusted components from the pinned ancestor to this exact logical root. */
   components?: readonly string[];
+  /**
+   * A read root that is a single existing file (a kernel read's `AGENTS.md`): `fd` is its parent
+   * directory, and the helper reaches only that one name through it.
+   */
+  file?: true;
 }
 export interface NativeHelperRequest {
   method: "readFile" | "writeFile" | "stat" | "list" | "scan";
@@ -111,6 +116,7 @@ export function nativeHelperInvocation(
     args: ["-I", "-c", PRELUDE, NATIVE_FILES_SOURCE, JSON.stringify(expected)],
   };
 }
+type MappedRoot = { path: string; fd: number; components?: readonly string[]; file?: true };
 /** Fixed helper only. Descriptor 3 is a private handshake, never command stdout. */
 export async function runNativeHelper(
   request: NativeHelperRequest,
@@ -194,14 +200,15 @@ export async function runNativeHelper(
           await launch.beforeDispatch?.();
           signal.throwIfAborted();
           const mapped = {
-            read: [] as { path: string; fd: number; components?: readonly string[] }[],
-            write: [] as { path: string; fd: number; components?: readonly string[] }[],
+            read: [] as MappedRoot[],
+            write: [] as MappedRoot[],
           };
           roots.forEach((r, i) => {
             mapped[r.access].push({
               path: r.path,
               fd: i + 4,
               ...(r.components ? { components: r.components } : {}),
+              ...(r.file ? { file: true as const } : {}),
             });
           });
           const body = timed(request.method, "serialise", () =>

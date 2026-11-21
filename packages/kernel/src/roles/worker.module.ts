@@ -20,12 +20,15 @@ import { EvalWorkersModule } from "../evals/evals.module.js";
 import { ExtensionsModule } from "../extensions/extensions.module.js";
 import { PluginsReconcileJob } from "../extensions/lifecycle.js";
 import { LifecycleHookWorkersModule } from "../extensions/lifecycle-hooks.js";
+import { AccountAvatarCleanupJob } from "../identity/account-avatars.service.js";
+import { IdentityModule } from "../identity/identity.module.js";
 import { InitialPasswordCleanupJob } from "../identity/initial-passwords.job.js";
 import { OutboxRelayModule } from "../infra/outbox/outbox-relay.module.js";
 import { KernelScheduleModule } from "../infra/schedule/schedule.module.js";
 import { DirectoryScanJob } from "../orgs/directory-sync.js";
 import { OrgLockModule } from "../orgs/org-lock.js";
 import { OrgsModule } from "../orgs/orgs.module.js";
+import { PushWorkersModule } from "../push/push-processor.js";
 import { MaintenanceModule } from "../runtime/maintenance.js";
 import { RunJobsModule } from "../runtime/run-jobs.js";
 import { RunOrphanCheck } from "../runtime/run-orphan-check.job.js";
@@ -48,7 +51,7 @@ import { WorkerRole } from "./worker-role.js";
  * `worker`: the cron scheduler and the `@LockedInterval` scheduler (`KernelScheduleModule`, the one
  * place `ScheduleModule.forRoot` is imported), every fixed-period job (`@LockedCron` /
  * `@LockedInterval`, each once per tick across replicas), every queue consumer (`@Processor`: runs,
- * sub-agent runs, `usage.report`, titles, evals, maintenance, channel deliveries, the plugin scope sync) and
+ * sub-agent runs, `usage.report`, titles, evals, maintenance, channel deliveries, the plugin scope sync, push deliveries) and
  * {@link WorkerRole}, which `KernelLifecycle` drives. A process without the worker role runs no cron
  * and no BullMQ worker (the queues' producers exist on every role).
  */
@@ -70,6 +73,8 @@ export class WorkerModule {
         MaintenanceModule,
         PluginScopeWorkersModule,
         LifecycleHookWorkersModule,
+        // push deliveries (`cap-push-deliver`) and the daily stale registration prune
+        PushWorkersModule,
         // the domains the fixed-period jobs call
         RuntimeModule,
         RunJobsModule,
@@ -77,6 +82,7 @@ export class WorkerModule {
         TitlesModule,
         PromptSuggestionsModule,
         AttachmentsModule,
+        IdentityModule,
         StorageModule,
         SandboxModule,
         BackgroundModule,
@@ -105,6 +111,8 @@ export class WorkerModule {
         RetireLegacyTasksJob,
         ToolJobs,
         InitialPasswordCleanupJob,
+        // expired, unbound avatar uploads of accounts (account profile spec §5.3)
+        AccountAvatarCleanupJob,
         ClientReportsCron,
         CatalogJobs,
         DirectoryScanJob,

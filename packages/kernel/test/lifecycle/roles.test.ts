@@ -25,6 +25,7 @@ import { LockedIntervalScheduler } from "../../src/infra/schedule/locked-interva
 import { LOCKED_JOB } from "../../src/infra/schedule/locked-tick.js";
 import { KernelLifecycle } from "../../src/lifecycle/kernel-lifecycle.js";
 import { createLogger } from "../../src/log.js";
+import { PUSH_QUEUE } from "../../src/push/jobs.js";
 import { GatewayRole } from "../../src/roles/gateway-role.js";
 import { WorkerRole } from "../../src/roles/worker-role.js";
 import { MAINTENANCE_QUEUE_NAME } from "../../src/runtime/maintenance-queue.js";
@@ -58,6 +59,7 @@ const KERNEL_QUEUES = [
   CHANNEL_QUEUE_NAME,
   PLUGIN_SCOPE_QUEUE,
   LIFECYCLE_QUEUE,
+  PUSH_QUEUE,
 ];
 
 let pgc: TestContainer;
@@ -230,6 +232,7 @@ describe("role modules", () => {
     workerSchedules = schedulesOf(a);
     const { jobHosts, processors } = scan(a);
     expect(jobHosts).toEqual([
+      "AccountAvatarCleanupJob",
       "AttachmentCleanupJob",
       "BackgroundTaskPollJob",
       "CatalogJobs",
@@ -240,6 +243,7 @@ describe("role modules", () => {
       "LegacySandboxCleanupJob",
       "OutboxRelay",
       "PluginsReconcileJob",
+      "PushStaleJob",
       "RetireLegacyTasksJob",
       "RunOrphanCheck",
       "SandboxSweepJobs",
@@ -255,7 +259,7 @@ describe("role modules", () => {
   it("all roles in one process: the same crons and consumers, once each", async () => {
     const a = await start(["api", "worker", "gateway"]);
     const { jobHosts, processors } = scan(a);
-    expect(jobHosts).toHaveLength(17);
+    expect(jobHosts).toHaveLength(19);
     // the same cron jobs and intervals as the worker-only process, each registered once
     expect(workerSchedules).toBeDefined();
     expect(schedulesOf(a)).toEqual(workerSchedules);

@@ -2,20 +2,23 @@
 
 import {
   AppShell,
-  ClassSwap,
+  Button,
+  type DesktopOnlyNoticeProps,
+  type DrawerNavData,
   initialOf,
   Logo,
+  Menu,
   type MenuItem,
-  type MeRow,
   OverviewPage,
   SetupPage,
   type SidebarBrandVariant,
   type SidebarContext,
   type SidebarConversations,
-  type SidebarNavItem,
+  ThemeToggle,
   useToast,
+  useTouch,
 } from "@capybara-hq/design";
-import { useQuery, useQueryClient } from "@tanstack/react-query";
+import { IsRestoringProvider, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useLocale, useTranslations } from "next-intl";
 import {
   createContext,
@@ -34,19 +37,23 @@ import { type OrgReadiness, setupReady } from "../../lib/agents";
 import { ApiClientError } from "../../lib/api";
 import { loginPathFor } from "../../lib/auth-sources";
 import { navigateBrowser } from "../../lib/browser";
+import { isChatSurface } from "../../lib/chat-surface";
 import { useConnectResultToast } from "../../lib/connect";
 import { NoCurrentOrgError } from "../../lib/conversations";
 import { usePreferences } from "../../lib/preferences";
 import { retryOnMountOf } from "../../lib/query/client";
 import { keys } from "../../lib/query/keys";
 import { useAppMutation } from "../../lib/query/mutation";
+import { matchRoute } from "../../lib/query/routes";
 import { meQuery, readinessQuery } from "../../lib/query/shell";
 import { markSigningOut, resetSession } from "../../lib/query/workspace";
 import { HOME_PATH } from "../../lib/routes";
 import { logout, type Me, type Membership, setCurrentOrg } from "../../lib/session";
 import { broadcastSession, useSessionSync } from "../../lib/session-sync";
+import { useNativeNavHandle, useSwitchProfile } from "../../lib/shell";
 import { sidebarCookie } from "../../lib/sidebar-cookie";
 import { useErrorMessage } from "../../lib/use-error-message";
+import { useForgetPushRegistration } from "../../lib/use-push-registration";
 import { useShellNotifications } from "../../lib/use-shell-notifications";
 import { useAdminExtensionPages } from "../admin-nav";
 import { CreateOrgDialog } from "../CreateOrgDialog";
@@ -56,23 +63,25 @@ import { useClientComponent, useSlotHasClientCode } from "../extension-ui/Client
 import { ExtensionSlot, useSlotContributions } from "../extension-ui/ExtensionSlot";
 import { LeaveOrgDialog } from "../LeaveOrgDialog";
 import { usePluginPendingCount } from "../PluginsHead";
+import { ACCOUNT_HOME } from "../settings-nav";
 import { useResolvedTheme } from "../theme-root";
 import { noOrgConversations, useConversationGroups } from "./conversations";
-import { AdminMePage, type MePanels, MePanelsContext } from "./me";
 import {
   activeAdminOf,
   activeNavOf,
   type ExtensionNavItem,
   navLevelOf,
-  shownOnCompact,
   statusPrompt,
   useAdminInboxCount,
   useAdminItems,
+  useDrawerNav,
   useExtensions,
   useNav,
   usePendingApprovals,
 } from "./nav";
 import { OrgChooser } from "./OrgChooser";
+import { useOrgParam } from "./org-param";
+import { usePushPrompt } from "./PushPrompt";
 import { type Session, SessionContext } from "./session";
 import {
   activeStepOf,
@@ -82,6 +91,21 @@ import {
   setupRouteOf,
   useSetupSteps,
 } from "./setup";
+
+/** `items` with `after` run once an item's own action has (the account sheet's `done`). */
+function closingAfter(items: MenuItem[], after: () => void): MenuItem[] {
+  return items.map((i) =>
+    i === "separator" || i.onSelect === undefined
+      ? i
+      : {
+          ...i,
+          onSelect: () => {
+            i.onSelect?.();
+            after();
+          },
+        },
+  );
+}
 
 /** The local time zone, e.g. `UTC+8`, `UTC-3:30` (the status bar's right side, spec §4.4). */
 function timeZoneLabel(): string {
@@ -146,6 +170,28 @@ function useCapState(): string {
   ]
     .filter((t) => t !== null)
     .join(" ");
+}
+
+/**
+ * The children of a desktop-only route: while the pointer is unknown (the server render and the
+ * hydration commit) or touch, their queries are held (react-query's restoring state), so a gated
+ * page fires no read on a touch device; a fine pointer lets them run.
+ */
+function GatedChildren({ children }: { children: ReactNode }) {
+  const touch = useTouch();
+  return <IsRestoringProvider value={touch !== false}>{children}</IsRestoringProvider>;
+}
+
+/**
+ * The page's full URL for the desktop-only notice: the path in the server render and the first
+ * hydration (the server does not know the origin), `location.href` afterwards.
+ */
+function usePageUrl(pathname: string): string {
+  return useSyncExternalStore(
+    noSubscribe,
+    () => window.location.href,
+    () => pathname,
+  );
 }
 
 /**
@@ -319,6 +365,10 @@ function ShellFrame({
 }) {
   const t = useTranslations();
   const router = useRouter();
+  const navigate = useCallback((href: string) => router.push(href), [router]);
+  // A native shell's strip (`nav@1`) and profile switcher (`profiles@1`): undefined in a browser.
+  const nativeNav = useNativeNavHandle();
+  const switchProfile = useSwitchProfile();
   const qc = useQueryClient();
   const pathname = usePathname();
   const errorMessage = useErrorMessage();
@@ -326,7 +376,21 @@ function ShellFrame({
   const capState = useCapState();
   const sidebarChoice = useContext(SidebarChoiceContext);
   // Safe mode's banner (from the client host): a row of the shell, so nothing is clipped
-  const banner = useShellBanner();
+  const safeBanner = useShellBanner();
+  // the push prompt shares the banner row; safe mode's banner comes first
+  const pushPrompt = usePushPrompt(sections?.pending.count ?? 0);
+  const banner =
+    safeBanner !== null && pushPrompt !== null ? (
+      <>
+        {safeBanner}
+        {pushPrompt}
+      </>
+    ) : (
+      (safeBanner ?? pushPrompt)
+    );
+  // `?org=` on a link (a push's path) switches the current org when the person is a member
+  useOrgParam(me);
+  const forgetPush = useForgetPushRegistration();
   const orgId = currentOrg?.orgId ?? null;
   // A brand replacement: client code for the slot, or a winner the layout prefetched that the
   // document's set delivers (then the server render is already pending, no flash of the logo).
@@ -336,16 +400,15 @@ function ShellFrame({
   const brandReplaced = brandCode || brandWinner.status !== "none";
   const conversations = sections?.conversations ?? noOrgConversations(pathname);
   const pending = sections?.pending ?? NO_PENDING;
-  const {
-    primary,
-    more,
-    inbox,
-    adminHref,
-    commands,
-    bottom,
-    me: meNav,
-  } = useNav(pending.count, navLevelOf(me), pending.more, me.account.isSuperAdmin);
+  const level = navLevelOf(me);
+  const { primary, more, inbox, adminHref, commands } = useNav(
+    pending.count,
+    level,
+    pending.more,
+    me.account.isSuperAdmin,
+  );
   const extensions = sections?.extensions ?? [];
+  const drawerNav = useDrawerNav(level, pending, extensions);
   // Under /admin (super admins only) the 收件箱 item shows what waits on the platform and the 插件
   // item what waits in its 待确认 tab; the persistent sidebar refetches the stale counts on each
   // path change.
@@ -358,13 +421,11 @@ function ShellFrame({
     },
     adminPages,
   );
-  // the Me panel is the compact class's navigation: pages that are hidden on compact are not in it
-  const hiddenOnCompact = new Set(
-    adminPages.filter((p) => p.compact === "hidden").map((p) => `ext:${p.id}`),
-  );
   const preferences = usePreferences();
   // The account row's scheme toggle; usePreferences leaves it out under a single-scheme theme.
   const schemeToggle = preferences.theme ? { theme: preferences.theme } : {};
+  // A native shell is told so its own pages hide the toggle too (desktop client spec §6.10).
+  const singleScheme = (useResolvedTheme()?.singleScheme ?? null) !== null;
   const [creatingOrg, setCreatingOrg] = useState(false);
   const [leavingOrg, setLeavingOrg] = useState(false);
   // The org dialogs stay open (pending) until the new org's frame arrives, then close.
@@ -376,6 +437,36 @@ function ShellFrame({
   }
   const timeZone = useTimeZoneLabel();
   useConnectResultToast();
+  // A touch device with a hardware keyboard still opens the palette: its desktop-only commands
+  // are left out in JS too, not only hidden by CSS.
+  const touch = useTouch();
+  const paletteCommands =
+    touch === true
+      ? commands.map((g) => ({ ...g, items: g.items.filter((i) => i.desktopOnly !== true) }))
+      : commands;
+  // A management page is desktop-only on touch (plan Task 29): the shell shows the notice there.
+  const pageUrl = usePageUrl(pathname);
+  const desktopOnly: DesktopOnlyNoticeProps | undefined =
+    matchRoute(pathname)?.entry.desktopOnly === true
+      ? {
+          title: t("desktopOnly.title"),
+          description: t("desktopOnly.body"),
+          url: pageUrl,
+          copyLabel: t("desktopOnly.copy"),
+          backLabel: t("desktopOnly.back"),
+          backHref: HOME_PATH,
+          onCopy: () => {
+            void (async () => {
+              try {
+                await navigator.clipboard.writeText(pageUrl);
+                toast.success(t("desktopOnly.copied"));
+              } catch (e) {
+                toast.error(errorMessage(e));
+              }
+            })();
+          },
+        }
+      : undefined;
 
   const [switching, setSwitching] = useState(false);
   const [refreshing, startRefresh] = useTransition();
@@ -438,6 +529,8 @@ function ShellFrame({
     // down, so it cannot send the page to sign-in with a return path meanwhile.
     markSigningOut();
     try {
+      // this install's push registration goes first, while the session is still valid
+      await forgetPush();
       await postLogout();
     } finally {
       broadcastSession("signed-out");
@@ -533,7 +626,9 @@ function ShellFrame({
   };
   const personalMenu: MenuItem[] = [
     languageMenu,
-    { label: t("shell.accountSettings"), href: "/account/preferences" },
+    { label: t("shell.accountSettings"), href: ACCOUNT_HOME },
+    // the native switcher opens inside the item's select (user activation)
+    ...(switchProfile ? [{ label: t("shell.switchProfile"), onSelect: switchProfile }] : []),
     "separator",
     { label: t("common.logout"), onSelect: () => void onLogout() },
   ];
@@ -559,77 +654,48 @@ function ShellFrame({
     ...(timeZone === "" ? {} : { timeZone }),
   };
 
-  // The Me page's panels (design spec §6.48): the same nav, org and account data as the sidebar.
-  const toRow = (n: SidebarNavItem): MeRow => ({
-    id: n.id,
-    label: n.label,
-    icon: n.icon,
-    href: n.href,
-  });
-  const languageValue = preferences.language.options.find(
-    (o) => o.value === preferences.language.value,
-  )?.label;
-  const accountRows: MeRow[] = [
-    {
-      id: "account",
-      label: t("shell.accountSettings"),
-      icon: "user",
-      href: "/account/preferences",
+  // The compact drawer (design spec §6.53): the navigation's sections and level, the sidebar's
+  // conversations, and the account sheet (§6.54) from the same account, org and status data as
+  // the sidebar and the status bar.
+  const multiOrg = me.memberships.length > 1 || me.canCreateOrg;
+  const drawer: DrawerNavData = {
+    ...drawerNav,
+    recent: conversations,
+    account: {
+      name: me.account.displayName,
+      orgName: currentOrg?.name ?? null,
+      avatar: me.account.avatarUrl ? { kind: "image", src: me.account.avatarUrl } : null,
+      // A pick in either menu closes the sheet and the drawer (`done`): an org switch replaces the
+      // page anyway, a language pick re-renders it, and an org dialog opens over the page.
+      ...(currentOrg !== null && multiOrg
+        ? {
+            orgSwitcher: (done: () => void) => (
+              <Menu
+                items={closingAfter(orgItems, done)}
+                label={t("drawer.switchOrg")}
+                trigger={<Button variant="ghost">{t("drawer.switchOrg")}</Button>}
+              />
+            ),
+          }
+        : {}),
+      language: (done: () => void) => (
+        <Menu
+          items={closingAfter(languageMenu.submenu ?? [], done)}
+          label={preferences.language.label}
+          trigger={
+            <Button variant="ghost">
+              {preferences.language.options.find((o) => o.value === preferences.language.value)
+                ?.label ?? preferences.language.value}
+            </Button>
+          }
+        />
+      ),
+      personalSettingsHref: ACCOUNT_HOME,
+      theme: preferences.theme ? <ThemeToggle {...preferences.theme} /> : null,
+      status: [status.context, version, timeZone].filter((v) => v !== "").join(" · "),
+      ...(switchProfile ? { onSwitchProfile: switchProfile } : {}),
+      onSignOut: () => void onLogout(),
     },
-    {
-      id: "language",
-      label: t("common.language"),
-      icon: "languages",
-      menu: languageMenu.submenu ?? [],
-      ...(languageValue === undefined ? {} : { value: languageValue }),
-    },
-    ...(preferences.theme
-      ? [{ id: "theme", label: t("common.theme"), icon: "sun" as const, theme: preferences.theme }]
-      : []),
-    { id: "sign-out", label: t("common.logout"), icon: "log-out", onSelect: () => void onLogout() },
-  ];
-  const system = [version, timeZone].filter((v) => v !== "").join(" · ");
-  const mePanels: MePanels = {
-    work: {
-      account: { name: me.account.displayName },
-      org: sidebarOrg(orgItems),
-      workspace: [
-        ...meNav.workspace.map(toRow),
-        ...shownOnCompact(extensions).map((x) => ({
-          id: `ext:${x.id}`,
-          label: x.label,
-          icon: "extension" as const,
-          href: x.href,
-        })),
-      ],
-      manage: [
-        ...meNav.manage.map(toRow),
-        ...(adminHref === undefined
-          ? []
-          : [
-              {
-                id: "admin",
-                label: t("nav.admin"),
-                icon: "admin" as const,
-                href: adminHref,
-                external: true,
-              },
-            ]),
-      ],
-      accountRows,
-      system,
-    },
-    admin: me.account.isSuperAdmin
-      ? {
-          account: { name: me.account.displayName },
-          org: null,
-          adminContext: true,
-          manage: adminItems.filter((i) => !hiddenOnCompact.has(i.id)).map(toRow),
-          back: { id: "back", label: t("me.back"), icon: "arrow-left", href: HOME_PATH },
-          accountRows,
-          system,
-        }
-      : null,
   };
 
   const dialogs = (
@@ -660,7 +726,6 @@ function ShellFrame({
 
   if (inSetup && readiness !== null) {
     const home = setupRoute === "home" || setupRoute === "redirect";
-    const multiOrg = me.memberships.length > 1 || me.canCreateOrg;
     return (
       <SessionContext.Provider value={session}>
         <SetupContext.Provider value={{ active: true, readiness: setupState, recheck: reload }}>
@@ -671,7 +736,11 @@ function ShellFrame({
               steps,
               activeNav: activeStepOf(pathname, steps),
               // The org has its own menu in the switcher.
-              account: { name: me.account.displayName, menu: personalMenu },
+              account: {
+                name: me.account.displayName,
+                avatarUrl: me.account.avatarUrl,
+                menu: personalMenu,
+              },
               ...schemeToggle,
               ...(me.account.isSuperAdmin ? { adminHref: "/admin" } : {}),
             }}
@@ -684,6 +753,7 @@ function ShellFrame({
               ),
             }}
             {...(banner === null ? {} : { banner })}
+            singleScheme={singleScheme}
           >
             {home ? (
               <OverviewPage
@@ -762,30 +832,31 @@ function ShellFrame({
         newConversation: { href: HOME_PATH },
         activeNav: inAdmin ? activeAdminOf(pathname, adminItems) : activeNavOf(pathname),
         conversations,
-        account: { name: me.account.displayName, menu: personalMenu },
+        account: {
+          name: me.account.displayName,
+          avatarUrl: me.account.avatarUrl,
+          menu: personalMenu,
+        },
         ...schemeToggle,
         ...(brand === undefined ? {} : { brand }),
       }}
-      commands={commands}
-      bottomNav={bottom}
+      commands={paletteCommands}
+      drawer={drawer}
+      chatSurface={isChatSurface(pathname)}
+      onNavigate={navigate}
+      {...(nativeNav ? { nativeNav } : {})}
       pathname={pathname}
       status={status}
       ownStatusBar={pathname === HOME_PATH || under(pathname, "/chat")}
       capState={capState}
       {...(banner === null ? {} : { banner })}
+      singleScheme={singleScheme}
+      {...(desktopOnly === undefined ? {} : { desktopOnly })}
     >
       <SessionContext.Provider value={session}>
-        <MePanelsContext.Provider value={mePanels}>
-          <SetupContext.Provider value={{ active: false, readiness: setupState, recheck: reload }}>
-            {/* The admin console has no overview page of its own on the compact class: the Me
-                page in the admin context takes `/admin`'s place (design spec §6.48). */}
-            {inAdmin && pathname === "/admin" ? (
-              <ClassSwap compact={<AdminMePage />}>{children}</ClassSwap>
-            ) : (
-              children
-            )}
-          </SetupContext.Provider>
-        </MePanelsContext.Provider>
+        <SetupContext.Provider value={{ active: false, readiness: setupState, recheck: reload }}>
+          {desktopOnly === undefined ? children : <GatedChildren>{children}</GatedChildren>}
+        </SetupContext.Provider>
         {dialogs}
       </SessionContext.Provider>
       {workspaceOrg === null ? null : (

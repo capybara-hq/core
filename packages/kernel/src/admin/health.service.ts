@@ -13,6 +13,7 @@ import { KernelDb } from "../infra/database/kernel-db.js";
 import { type LiveReplica, ReplicaPresence } from "../infra/presence/replica-presence.js";
 import { KERNEL_LOGGER, REDIS } from "../infra/tokens.js";
 import type { KernelLogger } from "../log.js";
+import { PUSH_QUEUE } from "../push/jobs.js";
 import { MAINTENANCE_QUEUE_NAME } from "../runtime/maintenance-queue.js";
 import { RUN_QUEUE_NAME, SUBAGENT_RUN_QUEUE_NAME } from "../runtime/run-jobs.js";
 import { USAGE_REPORT_QUEUE } from "../runtime/usage-report-jobs.js";
@@ -30,6 +31,7 @@ export const KERNEL_QUEUE_NAMES = [
   USAGE_REPORT_QUEUE,
   EVAL_QUEUE_NAME,
   LIFECYCLE_QUEUE,
+  PUSH_QUEUE,
 ] as const;
 
 /** How long each source's reads may take before the answer marks it unavailable. */
@@ -154,6 +156,7 @@ export class AdminHealthService {
     @Inject(getQueueToken(USAGE_REPORT_QUEUE)) usageReport: Queue,
     @Inject(getQueueToken(EVAL_QUEUE_NAME)) evals: Queue,
     @Inject(getQueueToken(LIFECYCLE_QUEUE)) lifecycle: Queue,
+    @Inject(getQueueToken(PUSH_QUEUE)) push: Queue,
   ) {
     // the order of KERNEL_QUEUE_NAMES
     this.queues = [
@@ -167,6 +170,7 @@ export class AdminHealthService {
       usageReport,
       evals,
       lifecycle,
+      push,
     ];
   }
 

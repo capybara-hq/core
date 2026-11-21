@@ -10,6 +10,7 @@ import { IdentityModule } from "../identity/identity.module.js";
 import { InboxModule } from "../inbox/inbox.module.js";
 import { ModelsModule } from "../models/models.module.js";
 import { OrgsModule } from "../orgs/orgs.module.js";
+import { PushModule } from "../push/push.module.js";
 import { ProvidersModule } from "../runtime/providers.js";
 import { RunJobsModule } from "../runtime/run-jobs.js";
 import { UsageReportModule } from "../runtime/usage-report.js";
@@ -46,6 +47,8 @@ import { AdminUsageService } from "./usage.service.js";
     UsageReportModule,
     EvalsModule,
     LifecycleHooksModule,
+    // the push queue the overview counts
+    PushModule,
     // the price table of the usage aggregate
     ModelsModule,
   ],

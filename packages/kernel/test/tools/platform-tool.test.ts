@@ -6,6 +6,8 @@ import type { ActorFacts } from "../../src/platform/actor.js";
 import { PLATFORM_UNAVAILABLE_OFF } from "../../src/platform/availability.js";
 import { nextStepFor, OPERATION_ERROR_NEXT, toToolError } from "../../src/platform/errors.js";
 import { defineOperation, type PlatformOperation } from "../../src/platform/operation.js";
+import { configChanges } from "../../src/platform/ops/person-inputs.js";
+import { personFieldParams, secretFieldsOf } from "../../src/platform/person-fields.js";
 import { PlatformOperations } from "../../src/platform/registry.js";
 import { paramsLine, platformTool } from "../../src/tools/builtins/platform.js";
 import type {
@@ -125,6 +127,30 @@ const orgOp = defineOperation({
   },
 });
 
+/** Returns every person shape the admin, audit, schedule and request outputs carry (K1). */
+const peopleOp = defineOperation({
+  id: "admin.fixture-people",
+  description: "Read rows that name people.",
+  input: z.object({}),
+  example: {},
+  authz: { orgAction: "org.read" },
+  mirrors: [],
+  confirm: "read",
+  run: async () => ({
+    agents: [
+      { id: "a1", ownerName: "Ada", ownerAvatarUrl: "/api/v1/accounts/u1/avatar?v=abc" },
+      { id: "a2", ownerName: "Bob", ownerAvatarUrl: null },
+    ],
+    connector: { createdByName: "Ada", createdByAvatarUrl: "/api/v1/accounts/u1/avatar?v=abc" },
+    request: { requestedByName: "Ada", requestedByAvatarUrl: null },
+    audit: [{ actor: { id: "u1", name: "Ada", avatarUrl: "/api/v1/accounts/u1/avatar?v=a" } }],
+    members: [{ account: { id: "u2", name: "Bob", avatarUrl: null } }],
+    schedule: { pausedBy: { id: "u1", name: "Ada", avatarUrl: "/api/v1/accounts/u1/avatar" } },
+    agent: { id: "a3", avatarUrl: "/api/v1/orgs/o1/agents/a3/avatar?v=1" },
+    at: new Date("2026-11-20T00:00:00.000Z"),
+  }),
+});
+
 /** The class depends on the target (finding 1): personal on "mine", org otherwise; throws on "boom". */
 let targetClassCtx: unknown[] = [];
 const targetedOp = defineOperation({
@@ -174,7 +200,7 @@ beforeEach(() => {
   setting = "on";
   const ops = new PlatformOperations();
   targetClassCtx = [];
-  ops.register([listOp, personalOp, orgOp, targetedOp, neverOp] as PlatformOperation[]);
+  ops.register([listOp, personalOp, orgOp, targetedOp, neverOp, peopleOp] as PlatformOperation[]);
   tool = platformTool({
     ops,
     actor: {
@@ -388,6 +414,26 @@ describe("browse, search, describe, read", () => {
 });
 
 describe("call", () => {
+  it("never shows the model a person's avatar: names stay, an agent's avatar stays", async () => {
+    const out = await run({ action: "call", operation: "admin.fixture-people" });
+    expect(JSON.stringify(out)).not.toMatch(
+      /"(avatarUrl|\w+AvatarUrl)":(null|"\/api\/v1\/accounts)/,
+    );
+    expect(out).toEqual({
+      agents: [
+        { id: "a1", ownerName: "Ada" },
+        { id: "a2", ownerName: "Bob" },
+      ],
+      connector: { createdByName: "Ada" },
+      request: { requestedByName: "Ada" },
+      audit: [{ actor: { id: "u1", name: "Ada" } }],
+      members: [{ account: { id: "u2", name: "Bob" } }],
+      schedule: { pausedBy: { id: "u1", name: "Ada" } },
+      agent: { id: "a3", avatarUrl: "/api/v1/orgs/o1/agents/a3/avatar?v=1" },
+      at: "2026-11-20T00:00:00.000Z",
+    });
+  });
+
   it("runs a read operation and caps a list at 50 entries", async () => {
     const out = await run({ action: "call", operation: "skills.list" });
     expect((out.items as unknown[]).length).toBe(50);
@@ -633,6 +679,76 @@ describe("callPolicy: target-dependent class, async summaries, output references
         { ...policyCtx, rawInput: read },
       ),
     ).toMatchObject({ policy: "allow" });
+  });
+});
+
+describe("callPolicy: the card summary of a write with person fields", () => {
+  /** A config write whose target has a required secret (`apiKey`) and an optional one (`token`). */
+  const configOp = defineOperation({
+    id: "extensions.fixture-config",
+    description: "Save a fixture config.",
+    input: z
+      .object({
+        values: z.record(z.string(), z.unknown()).default({}),
+        askPerson: personFieldParams.askPerson,
+        clearSecrets: personFieldParams.clearSecrets,
+      })
+      .strict(),
+    example: { values: {}, askPerson: [], clearSecrets: [] },
+    authz: { orgAction: "org.update" },
+    mirrors: [],
+    confirm: "org",
+    personFields: async () => ({
+      target: { zh: "配置", en: "Config" },
+      ...secretFieldsOf(
+        {
+          type: "object",
+          properties: {
+            baseUrl: { type: "string" },
+            apiKey: { type: "string", "x-secret": true },
+            token: { type: "string", "x-secret": true },
+          },
+          required: ["apiKey"],
+        },
+        new Set(),
+      ),
+    }),
+    summary: (i, c) => {
+      const changes = configChanges(i, c);
+      return { zh: `保存：${changes.zh}`, en: `Save: ${changes.en}` };
+    },
+    run: async () => ({ ok: true }),
+  });
+
+  it("names the required secrets the plan adds, not only askPerson", async () => {
+    const ops = new PlatformOperations();
+    ops.register([configOp] as PlatformOperation[]);
+    const t = platformTool({
+      ops,
+      actor: { facts: async () => ADMIN },
+      docs: { topics: () => [], read: () => null },
+      setting: async () => "on",
+    });
+    const p = await t.callPolicy?.(
+      {
+        action: "call",
+        operation: "extensions.fixture-config",
+        params: { values: { baseUrl: "https://a.example" }, askPerson: ["token"] },
+      },
+      policyCtx,
+    );
+    expect(p?.personFields?.fields.map((f) => f.path)).toEqual(["apiKey", "token"]);
+    expect(p?.summary).toEqual({
+      zh: '保存：设置 baseUrl="https://a.example"；由本人填写 apiKey、token',
+      en: 'Save: sets baseUrl="https://a.example"; the person enters apiKey, token',
+    });
+  });
+
+  it("falls back to askPerson where no plan is at hand", () => {
+    expect(configChanges({ values: {}, askPerson: ["token"], clearSecrets: ["old"] }, {})).toEqual({
+      zh: "由本人填写 token；清除 old",
+      en: "the person enters token; clears old",
+    });
   });
 });
 

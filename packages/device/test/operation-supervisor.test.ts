@@ -2,6 +2,11 @@ import { mkdtemp, readdir, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from "vitest";
+import {
+  LEGACY_MARGIN_MS,
+  type OrphanProcesses,
+  type ProcessRow,
+} from "../src/exec/mac-orphans.js";
 import { MacOperationSupervisor } from "../src/exec/operation-supervisor.js";
 import { digest } from "../src/exec/operation-types.js";
 import type { MacWorkerRequest } from "../src/exec/operation-worker.js";
@@ -1274,4 +1279,400 @@ it("an unknown exec of a lost process keeps its identity past retention and keep
   expect(restarted.blockersBesidesLiveBackground("next")).toBe(1);
   f.finish();
   await running;
+});
+
+// A settled entry is dropped an hour past its retention; anything still owed stays. The commit
+// that pruned is accepted as the successor on restart, and the dropped id stays spent.
+it("prunes settled entries past retention, keeps owed ones, and a restart accepts the pruned commit", async () => {
+  const stateDir = await mkdtemp(join(tmpdir(), "cap-supervisor-prune-"));
+  dirs.push(stateDir);
+  const hour = 60 * 60 * 1000;
+  const entry = (operationId: string, extra: Record<string, unknown> = {}) => ({
+    ref: { executionId: `e-${operationId}`, operationId, instanceId: "d", instanceGeneration: "g" },
+    admitBeforeMs: 100,
+    hash: "h",
+    retainUntilMs: 100,
+    state: "completed",
+    revoked: false,
+    ...extra,
+  });
+  const file = join(stateDir, `operation-journal-${digest("d")}.json`);
+  const text = JSON.stringify({
+    version: 1,
+    entries: [
+      entry("settled"),
+      entry("settled-unknown", { state: "unknown" }),
+      entry("recent", { retainUntilMs: 2 * hour }),
+      entry("lost", { state: "unknown", identity: { pid: 123, token: "t" } }),
+      entry("revoked", { revoked: true, stop: { outcome: "stopped" } }),
+      entry("cancel-owed", { state: "unknown", stop: { outcome: "cancel-pending" } }),
+      entry("uncleaned", {
+        output: { locator: { committed: 0 }, state: "complete", interruptedCancellation: false },
+      }),
+    ],
+  });
+  await writeFile(file, text);
+  await writeFile(`${file}.rollback`, text);
+  let now = 1;
+  const options = {
+    stateDir,
+    deviceId: "d",
+    instanceGeneration: "g",
+    now: () => now,
+    start: async (r: MacWorkerRequest) => {
+      await r.beforeLaunch();
+      await r.onLaunch({ pid: 456, token: "child" });
+      return {
+        ready: Promise.resolve(),
+        completion: Promise.resolve({ size: 1, isDir: false }),
+        cancel: async () => {},
+      };
+    },
+  };
+  const stat = (operationId: string, admitBeforeMs: number) => ({
+    kind: "native" as const,
+    native: { method: "stat" as const, path: "/f" },
+    purpose: "operation" as const,
+    scope: { ...scope, operationId, tag: operationId, admitBeforeMs },
+    grant,
+    stateDir,
+    pythonPath: "/usr/bin/python3",
+    beforeLaunch: async () => {},
+    onLaunch: async () => {},
+  });
+  const supervisor = new MacOperationSupervisor(options);
+  await supervisor.execute(stat("new", 30_000), "h-new", signal);
+  // an hour on: a retry's admission sweeps, so the journal's last commit is the pruning one
+  now = hour + 10_000;
+  await expect(supervisor.execute(stat("new", 30_000), "h-new", signal)).rejects.toThrow(/unknown/);
+  const kept = JSON.parse(await readFile(file, "utf8")).entries.map(
+    (e: { ref: { operationId: string } }) => e.ref.operationId,
+  );
+  expect(kept.sort()).toEqual(["cancel-owed", "lost", "new", "recent", "revoked", "uncleaned"]);
+  // the last commit on disk is a successor that dropped entries of its predecessor
+  const restarted = new MacOperationSupervisor(options);
+  expect(await restarted.execute(stat("after", now + 30_000), "h-after", signal)).toEqual({
+    size: 1,
+    isDir: false,
+  });
+  // a duplicate delivery of a pruned operation carries its long-past deadline: never run again
+  await expect(restarted.execute(stat("settled", 100), "h", signal)).rejects.toThrow(/expired/);
+});
+
+describe("orphans a lost device process left behind", () => {
+  // a fake process table: SIGKILL (of a process or a group) removes rows, unless kills do not take;
+  // `signals` records every signal sent, SIGSTOP included
+  const table = (rows: Omit<ProcessRow, "ppid">[], opts: { killTakes?: boolean } = {}) => {
+    const live: ProcessRow[] = rows.map((row) => ({ ppid: 1, ...row }));
+    const signals: string[] = [];
+    const remove = (match: (row: ProcessRow) => boolean) => {
+      if (opts.killTakes === false) return;
+      for (let i = live.length - 1; i >= 0; i--)
+        if (match(live[i] as ProcessRow)) live.splice(i, 1);
+    };
+    const processes: OrphanProcesses = {
+      list: async () => live.map((row) => ({ ...row })),
+      signal: (pid, signal) => {
+        signals.push(`${signal} ${pid}`);
+        if (signal === "SIGKILL") remove((row) => row.pid === pid);
+      },
+      killGroup: (pgid) => {
+        signals.push(`SIGKILL -${pgid}`);
+        remove((row) => row.pgid === pgid);
+      },
+      pause: async () => {},
+    };
+    return { rows: live, signals, processes };
+  };
+  const entry = (operationId: string, extra: Record<string, unknown> = {}) => ({
+    ref: {
+      executionId: `e-${operationId}`,
+      operationId,
+      instanceId: "d",
+      instanceGeneration: "old",
+    },
+    admitBeforeMs: 100_000,
+    hash: "h",
+    retainUntilMs: 100_000,
+    state: "unknown",
+    revoked: false,
+    ...extra,
+  });
+  const journalAt = async (entries: unknown[]) => {
+    const stateDir = await mkdtemp(join(tmpdir(), "cap-supervisor-orphans-"));
+    dirs.push(stateDir);
+    const file = join(stateDir, `operation-journal-${digest("d")}.json`);
+    const text = JSON.stringify({ version: 1, entries });
+    await writeFile(file, text);
+    await writeFile(`${file}.rollback`, text);
+    return { stateDir, file };
+  };
+  const open = (stateDir: string, processes?: OrphanProcesses) =>
+    new MacOperationSupervisor({
+      stateDir,
+      deviceId: "d",
+      instanceGeneration: "old",
+      now: () => 10_000_000,
+      ...(processes ? { orphans: processes } : {}),
+      start: async () => {
+        throw Error("must not launch");
+      },
+    });
+  const byId = (entries: { ref: { operationId: string } }[], id: string) =>
+    entries.find((e) => e.ref.operationId === id) as Record<string, unknown>;
+
+  it("settles the journal the observed device was stuck on: lost execs beside revoked never-launched ones", async () => {
+    const { stateDir, file } = await journalAt([
+      entry("a", { identity: { pid: 61001, token: "t1" } }),
+      entry("b", { identity: { pid: 61002, token: "t2" } }),
+      entry("c", { identity: { pid: 61003, token: "t3" } }),
+      entry("r1", { revoked: true, hash: "revoked", stop: { outcome: "cancel-pending" } }),
+      entry("r2", { revoked: true, hash: "revoked", stop: { outcome: "cancel-pending" } }),
+    ]);
+    // without orphan reaping (the earlier behaviour) the three lost execs block for good
+    const before = open(stateDir);
+    expect(before.retirementObligations("next")).toBe(3);
+    before.close();
+    const t = table([]);
+    const supervisor = open(stateDir, t.processes);
+    await supervisor.settleOrphans();
+    expect(supervisor.retirementObligations("next")).toBe(0);
+    expect(supervisor.blockersBesidesLiveBackground("next")).toBe(0);
+    expect(t.signals).toEqual([]);
+    // durable: a restarted program without reaping finds them settled too
+    supervisor.close();
+    expect(open(stateDir).retirementObligations("next")).toBe(0);
+    const entries = JSON.parse(await readFile(file, "utf8")).entries;
+    expect(byId(entries, "a")).toMatchObject({ state: "unknown", stop: { outcome: "stopped" } });
+    expect(byId(entries, "a").identity).toBeUndefined();
+  });
+
+  it("revoked entries that never launched are no obligation, before or after the reap", async () => {
+    const { stateDir } = await journalAt([
+      entry("r1", { revoked: true, hash: "revoked", stop: { outcome: "cancel-pending" } }),
+    ]);
+    const supervisor = open(stateDir, table([]).processes);
+    expect(supervisor.retirementObligations("next")).toBe(0);
+    await supervisor.settleOrphans();
+    expect(supervisor.retirementObligations("next")).toBe(0);
+  });
+
+  it("settles a reused pid without a signal: another group's member, or a leader started later", async () => {
+    const { stateDir } = await journalAt([
+      // the pid now belongs to a member of another group
+      entry("member", { identity: { pid: 62001, token: "t" } }),
+      // a group leader that started long after the entry's admission deadline
+      entry("later", { identity: { pid: 62002, token: "t" } }),
+      // recorded with a launch time; the leader at that pid started an hour after it
+      entry("timed", { identity: { pid: 62003, token: "t", launchedAtMs: 5_000_000 } }),
+    ]);
+    const t = table([
+      { pid: 62001, pgid: 1, startMs: 0 },
+      { pid: 62002, pgid: 62002, startMs: 100_000 + LEGACY_MARGIN_MS + 1000 },
+      { pid: 62003, pgid: 62003, startMs: 5_000_000 + 3_600_000 },
+    ]);
+    const supervisor = open(stateDir, t.processes);
+    await supervisor.settleOrphans();
+    expect(supervisor.retirementObligations("next")).toBe(0);
+    expect(t.signals).toEqual([]);
+  });
+
+  it("never kills or settles what it cannot prove ours", async () => {
+    const { stateDir } = await journalAt([
+      // an earlier version's identity: a leader that started before the admission deadline
+      entry("legacy", { identity: { pid: 63001, token: "t" } }),
+      // the leader is gone but its group still has a member
+      entry("remnant", { identity: { pid: 63002, token: "t", launchedAtMs: 50_000 } }),
+      // a live leader that looks older than its launch window (a late record, a stepped clock)
+      entry("old-looking", { identity: { pid: 63003, token: "t", launchedAtMs: 500_000 } }),
+    ]);
+    const t = table([
+      { pid: 63001, pgid: 63001, startMs: 90_000 },
+      { pid: 63010, pgid: 63002, startMs: 60_000 },
+      { pid: 63003, pgid: 63003, startMs: 500_000 - 120_000 },
+    ]);
+    const supervisor = open(stateDir, t.processes);
+    await supervisor.settleOrphans();
+    expect(t.signals).toEqual([]);
+    expect(supervisor.retirementObligations("next")).toBe(3);
+  });
+
+  it("kills a provably ours process tree, settles once it is gone, and blocks while it is not", async () => {
+    const launchedAtMs = 50_400;
+    const rows = () => [
+      { pid: 64001, pgid: 64001, startMs: 50_000 },
+      { pid: 64002, pgid: 64001, startMs: 50_000 },
+    ];
+    const journal = [entry("live", { identity: { pid: 64001, token: "t", launchedAtMs } })];
+    const stubborn = await journalAt(journal);
+    const refused = table(rows(), { killTakes: false });
+    const blocked = open(stubborn.stateDir, refused.processes);
+    await blocked.settleOrphans();
+    expect(refused.signals).toContain("SIGKILL 64001");
+    expect(blocked.retirementObligations("next")).toBe(1);
+    // nothing was written: the journal on disk keeps the entry unsettled, identity and all
+    const kept = byId(JSON.parse(await readFile(stubborn.file, "utf8")).entries, "live");
+    expect(kept).toMatchObject({ state: "unknown", identity: { pid: 64001, launchedAtMs } });
+    expect(kept.stop).toBeUndefined();
+    blocked.close();
+    expect(open(stubborn.stateDir).retirementObligations("next")).toBe(1);
+
+    const { stateDir } = await journalAt(journal);
+    const t = table(rows());
+    const supervisor = open(stateDir, t.processes);
+    await supervisor.settleOrphans();
+    expect(t.signals).toEqual([
+      "SIGSTOP 64001",
+      "SIGSTOP 64002",
+      "SIGKILL 64001",
+      "SIGKILL 64002",
+      "SIGKILL -64001",
+    ]);
+    expect(t.rows).toEqual([]);
+    expect(supervisor.retirementObligations("next")).toBe(0);
+  });
+
+  it("a settlement whose journal write fails is rolled back and retried by a later pass", async () => {
+    const { stateDir, file } = await journalAt([
+      entry("a", { identity: { pid: 67001, token: "t" } }),
+    ]);
+    let failWrites = true;
+    const supervisor = new MacOperationSupervisor({
+      stateDir,
+      deviceId: "d",
+      instanceGeneration: "old",
+      now: () => 10_000_000,
+      orphans: table([]).processes,
+      beforePersist: () => {
+        if (failWrites) throw Error("disk full");
+      },
+      start: async () => {
+        throw Error("must not launch");
+      },
+    });
+    await supervisor.settleOrphans();
+    // not durable, so not settled: neither in memory nor on disk
+    expect(supervisor.retirementObligations("next")).toBe(1);
+    expect(byId(JSON.parse(await readFile(file, "utf8")).entries, "a")).toMatchObject({
+      identity: { pid: 67001 },
+    });
+    failWrites = false;
+    await supervisor.settleOrphans();
+    expect(supervisor.retirementObligations("next")).toBe(0);
+    expect(byId(JSON.parse(await readFile(file, "utf8")).entries, "a")).toMatchObject({
+      stop: { outcome: "stopped" },
+    });
+  });
+
+  it("a native operation that fails after its helper launched settles once the helper is gone", async () => {
+    const stateDir = await mkdtemp(join(tmpdir(), "cap-supervisor-native-fail-"));
+    dirs.push(stateDir);
+    const t = table([]);
+    const options = {
+      stateDir,
+      deviceId: "d",
+      instanceGeneration: "g",
+      orphans: t.processes,
+      start: async (r: MacWorkerRequest) => {
+        await r.beforeLaunch();
+        await r.onLaunch({ pid: 65001, token: "helper" });
+        const failed = Promise.reject(
+          Object.assign(new Error("ENOTDIR: not a directory, open '/s/.capybara/x.json'"), {
+            code: "ENOTDIR",
+          }),
+        );
+        failed.catch(() => {});
+        return { ready: Promise.resolve(), completion: failed, cancel: async () => {} };
+      },
+    };
+    const supervisor = new MacOperationSupervisor(options);
+    const write = {
+      kind: "native" as const,
+      native: { method: "writeFile" as const, path: "/s/.capybara/x.json", dataB64: "" },
+      purpose: "preparation" as const,
+      scope: { ...scope, operationId: "prep", tag: "prep", admitBeforeMs: Date.now() + 30_000 },
+      grant,
+      stateDir,
+      pythonPath: "/usr/bin/python3",
+      beforeLaunch: async () => {},
+      onLaunch: async () => {},
+    };
+    await expect(supervisor.execute(write, "hash", signal)).rejects.toThrow(/ENOTDIR/);
+    await vi.waitFor(() => expect(supervisor.ownership().workers).toBe(0));
+    await supervisor.settleOrphans();
+    expect(supervisor.retirementObligations("next")).toBe(0);
+    // a later program run (of another generation) finds it settled on disk
+    supervisor.close();
+    const { orphans: _, ...withoutReaping } = options;
+    const next = new MacOperationSupervisor(withoutReaping);
+    expect(next.retirementObligations("next")).toBe(0);
+  });
+
+  it("journals the launch time the spawner read next to its spawn, not a later one", async () => {
+    const stateDir = await mkdtemp(join(tmpdir(), "cap-supervisor-launch-time-"));
+    dirs.push(stateDir);
+    const supervisor = new MacOperationSupervisor({
+      stateDir,
+      deviceId: "d",
+      instanceGeneration: "g",
+      start: async (r: MacWorkerRequest) => {
+        await r.beforeLaunch();
+        await r.onLaunch({ pid: 68001, token: "child", launchedAtMs: 42_000 });
+        return {
+          ready: Promise.resolve(),
+          completion: new Promise(() => {}),
+          cancel: async () => {},
+        };
+      },
+    });
+    void supervisor.execute(foreground(stateDir, "op", Date.now() + 30_000), "hash", signal);
+    const journal = join(stateDir, `operation-journal-${digest("d")}.json`);
+    await vi.waitFor(async () =>
+      expect(byId(JSON.parse(await readFile(journal, "utf8")).entries, "op")).toMatchObject({
+        state: "running",
+        identity: { pid: 68001, launchedAtMs: 42_000 },
+      }),
+    );
+  });
+
+  it("never touches an operation the current run owns live", async () => {
+    const stateDir = await mkdtemp(join(tmpdir(), "cap-supervisor-live-"));
+    dirs.push(stateDir);
+    let finish!: (v: typeof result) => void;
+    const t = table([]);
+    const supervisor = new MacOperationSupervisor({
+      stateDir,
+      deviceId: "d",
+      instanceGeneration: "g",
+      orphans: t.processes,
+      start: async (r: MacWorkerRequest) => {
+        await r.beforeLaunch();
+        // the launched process: a group leader started just before its launch is recorded
+        t.rows.push({
+          pid: 66001,
+          ppid: 1,
+          pgid: 66001,
+          startMs: Math.floor(Date.now() / 1000) * 1000,
+        });
+        await r.onLaunch({ pid: 66001, token: "child" });
+        return {
+          ready: Promise.resolve(),
+          completion: new Promise<typeof result>((r) => {
+            finish = r;
+          }),
+          cancel: async () => {},
+        };
+      },
+    });
+    const running = supervisor.execute(
+      foreground(stateDir, "op", Date.now() + 30_000),
+      "hash",
+      signal,
+    );
+    await vi.waitFor(() => expect(supervisor.ownership().workers).toBe(1));
+    await supervisor.settleOrphans();
+    expect(t.signals).toEqual([]);
+    finish(result);
+    expect(await running).toEqual(result);
+  });
 });

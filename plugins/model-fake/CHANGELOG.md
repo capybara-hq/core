@@ -1,5 +1,52 @@
 # @capybara-hq/plugin-model-fake
 
+## 0.1.0-rc.48
+
+### Patch Changes
+
+- Updated dependencies [0756b7b]
+  - @capybara-hq/plugin-sdk@0.1.0-rc.47
+
+## 0.1.0-rc.47
+
+### Patch Changes
+
+- Updated dependencies [a007fee]
+- Updated dependencies [12a6582]
+  - @capybara-hq/plugin-sdk@0.1.0-rc.46
+
+## 0.1.0-rc.46
+
+### Patch Changes
+
+- Updated dependencies [dfea642]
+- Updated dependencies [614d852]
+  - @capybara-hq/plugin-sdk@0.1.0-rc.45
+
+## 0.1.0-rc.45
+
+### Patch Changes
+
+- Updated dependencies [072362d]
+- Updated dependencies [8f684ad]
+- Updated dependencies [e21de78]
+  - @capybara-hq/plugin-sdk@0.1.0-rc.44
+
+## 0.1.0-rc.44
+
+### Patch Changes
+
+- Updated dependencies [2c2841e]
+- Updated dependencies [ff64a43]
+  - @capybara-hq/plugin-sdk@0.1.0-rc.43
+
+## 0.1.0-rc.43
+
+### Patch Changes
+
+- Updated dependencies [e788a1a]
+  - @capybara-hq/plugin-sdk@0.1.0-rc.42
+
 ## 0.1.0-rc.42
 
 ### Patch Changes

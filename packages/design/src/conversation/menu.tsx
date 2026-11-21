@@ -14,7 +14,9 @@ import {
 import { Badge } from "../display/basic";
 import { Icon } from "../icons/icon";
 import type { IconName } from "../icons/paths";
+import { NATIVE_MENU_ID, useNative, useNativeMenuTrigger } from "../native";
 import { useDesignT } from "../provider";
+import { useSizeClass } from "../shell/size-class";
 import { SIZES } from "../tokens";
 
 // The menus of the conversation page (spec §6.7, §6.16.1, §6.16.3, §6.16.18): the title menu,
@@ -79,7 +81,7 @@ export type ConvMenuProps = {
   /** Gap between the trigger and the menu (default 4, `space.1`). */
   sideOffset?: number;
   align?: "start" | "end";
-  /** `touch`: 40 high items, the compact top bar's overflow menu (design spec §6.46). */
+  /** `touch`: 40 high items, the compact floating row's overflow menu (design spec §6.16.1). */
   size?: "narrow" | "default" | "wide" | "touch";
   /**
    * A composer toolbar menu (§6.16.3): anchored to its trigger, below it unless the space below
@@ -361,6 +363,18 @@ function Segments({ e }: { e: Extract<ConvMenuEntry, { kind: "segments" }> }): J
   );
 }
 
+/**
+ * Whether a conversation menu can open as the platform's action sheet: it has an item, every item
+ * is a plain action (no choice of a set) and nothing else is in it but separators (a group label,
+ * a note or segments would be lost there).
+ */
+export function isPlainConvMenu(entries: readonly ConvMenuEntry[]): boolean {
+  return (
+    entries.some((e) => e.kind === "item") &&
+    entries.every((e) => e.kind === "separator" || (e.kind === "item" && e.checked === undefined))
+  );
+}
+
 const entryKey = (e: ConvMenuEntry, i: number) =>
   e.kind === "item"
     ? e.id
@@ -396,6 +410,36 @@ export function ConvMenu({
     if (open === undefined) setOwn(o);
     onOpenChange?.(o);
   };
+  // On the compact class inside a shell with `menu@1`, a plain menu is the platform's action
+  // sheet (mobile app spec §6.3), anchored to the trigger; a failure opens this one instead.
+  const native = useNative();
+  const compact = useSizeClass() === "compact";
+  const nativeMenu =
+    native?.menu && compact && !inline && !listbox && isPlainConvMenu(entries)
+      ? native.menu
+      : undefined;
+  const nativeTrigger = useNativeMenuTrigger(
+    nativeMenu,
+    () => {
+      const ids = new Set<string>();
+      const actions = entries.flatMap((e, i) => {
+        if (e.kind !== "item") return [];
+        const id = NATIVE_MENU_ID.test(e.id) && !ids.has(e.id) ? e.id : `item-${i}`;
+        ids.add(id);
+        return [
+          {
+            id,
+            label: e.label,
+            ...(e.tone === "fail" ? { destructive: true } : {}),
+            ...(e.disabled ? { disabled: true } : {}),
+            run: () => e.onSelect(),
+          },
+        ];
+      });
+      return { title: label, actions };
+    },
+    () => setOpen(true),
+  );
   const closeAutoFocus = (e: Event) => {
     const dir = tabOut.current;
     tabOut.current = 0;
@@ -455,7 +499,7 @@ export function ConvMenu({
         ? { open: true, modal: false, onOpenChange: () => {} }
         : { open: isOpen, onOpenChange: setOpen })}
     >
-      <RM.Trigger ref={triggerRef} asChild>
+      <RM.Trigger ref={triggerRef} asChild {...nativeTrigger}>
         {trigger}
       </RM.Trigger>
       {inline ? content : <RM.Portal>{content}</RM.Portal>}

@@ -3395,7 +3395,9 @@ describe("/admin/plugins/pending shows the requester", () => {
     });
     await renderRouteWithCache("/admin/plugins/pending", lastStubRoutes());
     const p = en.catalog.admin.pending;
-    expect(await screen.findByText(new RegExp(fill(p.requester, { name: "Mia" })))).toBeTruthy();
+    const requester = (await screen.findByText("Mia")).closest('[data-part="object-row-person"]');
+    expect(requester).not.toBeNull();
+    expect(requester?.closest(".cb-object-meta-text")?.textContent).toContain(p.requester);
     expect(screen.getByText(p.kind.access)).toBeTruthy();
     expect(screen.getByText("Acme · crm")).toBeTruthy();
     const tab = en.catalog.admin.tabs;

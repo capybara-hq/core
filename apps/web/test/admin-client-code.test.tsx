@@ -214,6 +214,7 @@ const detailRoutes = (
 ) =>
   stubApi({
     "GET /api/v1/admin/extensions": () => json(200, { extensions: [view], drainSeconds: 30 }),
+    [`GET /api/v1/admin/extensions/${String(view.name)}/guides`]: () => json(200, { guides: [] }),
     [`GET /api/v1/admin/extensions/${String(view.name)}/config`]: () =>
       json(200, {
         plugin: view.name,

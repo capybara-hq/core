@@ -1,0 +1,5 @@
+@media (pointer: coarse), (any-pointer: coarse) and (not (any-pointer: fine)) and (max-width: 500px) {
+  .a {
+    gap: 4px;
+  }
+}

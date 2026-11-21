@@ -17,6 +17,7 @@ import {
   validateSandboxPathShape,
 } from "@capybara-hq/plugin-sdk";
 import { implicitWritePaths } from "../policy.js";
+import type { OrphanProcesses } from "./mac-orphans.js";
 import type { NativeHelperRequest, NativeHelperResult } from "./native-helper-client.js";
 import {
   MacOperationSupervisor,
@@ -78,6 +79,12 @@ export type MacOperationBackend = Required<
     /** Unsettled work of generations other than `generation` (default: this backend's). */
     retirementObligations(generation?: string): number;
     /**
+     * Settles unknown work whose processes no worker of this run owns (an earlier program run's,
+     * or a worker that failed after its launch) once they are proven gone, killing a process group
+     * proven ours first (macOS; elsewhere a no-op). Never rejects.
+     */
+    settleOrphans(): Promise<void>;
+    /**
      * Exact-stops what this backend owns live, each by its recorded ref (machine stop: all of it;
      * a replacement instance: its background tasks only). Resolves once each attempt settled.
      */
@@ -111,6 +118,12 @@ export interface MacBackendDependencies {
   restrictedProof?: RestrictedProof;
   now?: () => number;
   watch?: (tick: () => Promise<void>) => () => void;
+  /**
+   * The process table unknown work with a launch identity is settled against (macOS only; the
+   * program passes the real one, `macOrphanProcesses`, with the real worker). Absent, such work
+   * stays an obligation for good.
+   */
+  orphans?: OrphanProcesses;
 }
 const PENDING =
   "Restricted macOS per-instance validation and coordinated policy/background activation are pending";
@@ -156,6 +169,8 @@ export interface LocalBackendHost {
   };
   /** Called once per recorded launch identity a previous device process left running. */
   reapOrphan?: SupervisorOptions["reapOrphan"];
+  /** The process table unknown work with a launch identity is settled against (macOS). */
+  orphans?: OrphanProcesses;
   /** Restricted operations run only while this proof holds (see {@link RestrictedProof}). */
   proof?: RestrictedProof;
   /**
@@ -190,6 +205,7 @@ export async function createMacOperationBackend(
     openPublic: platform === "darwin",
     pending: (!restricted && dependencies.unavailableReason) || PENDING,
     ...(dependencies.startWorker ? { startWorker: dependencies.startWorker } : {}),
+    ...(platform === "darwin" && dependencies.orphans ? { orphans: dependencies.orphans } : {}),
     ...(restricted && dependencies.restrictedProof ? { proof: dependencies.restrictedProof } : {}),
     ...(options.sandboxHome ? { sandboxHome: options.sandboxHome } : {}),
     checkArtifactTarget: (outputPath) => {
@@ -249,6 +265,7 @@ export async function createLocalOperationBackend(
     ...(dependencies.now ? { now: dependencies.now } : {}),
     ...(host.startWorker ? { start: host.startWorker } : {}),
     ...(host.reapOrphan ? { reapOrphan: host.reapOrphan } : {}),
+    ...(host.orphans ? { orphans: host.orphans } : {}),
     ...(options.onOperationEnded ? { onLiveEnded: options.onOperationEnded } : {}),
     onLiveChanged: (live) => {
       if (live && !stopWatch) {
@@ -576,6 +593,7 @@ export async function createLocalOperationBackend(
         supervisor.blockersBesidesLiveBackground(generation),
       retirementObligations: (generation) =>
         supervisor.retirementObligations(generation ?? options.instanceGeneration),
+      settleOrphans: () => supervisor.settleOrphans(),
       dispose: () => {
         supervisor.close();
         disposed = true;

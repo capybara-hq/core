@@ -365,6 +365,36 @@ describe("file outputs", () => {
   });
 });
 
+describe("artifact download URL as JSON (as=url)", () => {
+  it("returns the presigned location the 302 would; same visibility; inline kept", async () => {
+    const conv = await sandboxConversation();
+    const t = await deliver(conv, "report.txt", Buffer.from("report"), "text/plain");
+    const base = `/api/v1/orgs/${orgId}/conversations/${conv}/artifacts/${t.artifactId}/download`;
+    const res = await owner({ method: "GET", url: `${base}?as=url` });
+    expect(res.statusCode, res.body).toBe(200);
+    expect(res.headers["cache-control"]).toBe("private, no-store");
+    const got = await fetch((res.json() as { url: string }).url);
+    expect(got.status).toBe(200);
+    expect(await got.text()).toBe("report");
+    expect(got.headers.get("content-disposition")).toMatch(/^attachment;/);
+    // `inline=1` combines with it
+    const inline = await owner({ method: "GET", url: `${base}?inline=1&as=url` });
+    expect(inline.statusCode).toBe(200);
+    // the web's cache-busting retry param is ignored, as on the attachment route
+    const retried = await owner({ method: "GET", url: `${base}?retry=1&as=url` });
+    expect(retried.statusCode, retried.body).toBe(200);
+    // no session: 401; a member who cannot see the conversation: its usual 404
+    expect(
+      (await asUser(k.http, cookieJar())({ method: "GET", url: `${base}?as=url` })).statusCode,
+    ).toBe(401);
+    const denied = await other({ method: "GET", url: `${base}?as=url` });
+    expect(denied.statusCode).toBe(404);
+    expect((denied.json() as { error: { code: string } }).error.code).toBe(
+      "conversation.not_found",
+    );
+  });
+});
+
 /** Uploads a chat attachment through the presigned flow and finalizes it; returns its id. */
 async function upload(name: string, contentType: string, bytes: Buffer): Promise<string> {
   const created = await owner({

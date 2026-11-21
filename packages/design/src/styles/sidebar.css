@@ -15,6 +15,9 @@
   border-right: 1px solid var(--cb-line-soft);
   background: var(--cb-sidebar);
   color: var(--cb-ink);
+  -webkit-touch-callout: none;
+  -webkit-user-select: none;
+  user-select: none;
 }
 .cb-sidebar .cb-icon-btn {
   color: var(--cb-muted);
@@ -202,6 +205,12 @@
 .cb-sidebar-item:not([aria-current="page"]):hover,
 .cb-sidebar-more:hover,
 .cb-sidebar-archived:hover {
+  background: var(--cb-hover);
+  color: var(--cb-ink);
+}
+/* Pressed (§7.1): the hover ground while a finger is down, the current item keeping its own. */
+.cb-sidebar-item:not([aria-current="page"]):active,
+.cb-sidebar-more:active {
   background: var(--cb-hover);
   color: var(--cb-ink);
 }
@@ -428,6 +437,14 @@
   background: transparent;
   color: var(--cb-ink);
 }
+/* A conversation row is pressed through its title button (the button keeps its transparent ground). */
+.cb-sidebar-row:not([data-current="true"]):has(.cb-sidebar-conv:active) {
+  background: var(--cb-hover);
+}
+.cb-sidebar-conv:active {
+  background: transparent;
+  color: var(--cb-ink);
+}
 .cb-sidebar-row-menu {
   display: inline-grid;
   flex: none;
@@ -584,19 +601,6 @@
   background: var(--cb-hover);
   color: var(--cb-ink);
 }
-.cb-sidebar-avatar {
-  display: inline-flex;
-  flex: none;
-  align-items: center;
-  justify-content: center;
-  width: var(--cb-control-dense);
-  height: var(--cb-control-dense);
-  border-radius: 50%;
-  background: var(--cb-selected);
-  color: var(--cb-ink);
-  font-size: var(--cb-type-micro-size);
-  line-height: var(--cb-type-micro-line);
-}
 
 /* Setup context (web-SSR spec §4): the steps are the navigation; each carries a state mark. */
 .cb-sidebar-step-mark {
@@ -712,7 +716,7 @@
   background: var(--cb-hover);
 }
 /* The nav badge (spec §6.13 "Nav badge"): 14 wide at least, `type.micro.line` high, one look on
-   the rail and the bottom navigation. The full sidebar's brand-row inbox keeps the inset form
+   the rail and the drawer rows. The full sidebar's brand-row inbox keeps the inset form
    (2px inside its box's top right). The selected ground is translucent in light, so it is drawn
    over an opaque sidebar layer; the background color stays `selected` (spec §6.13 measures it)
    under both. */
@@ -802,7 +806,7 @@
  * Before hydration (no explicit mode) both the full and the rail panel are drawn; the size class
  * and the person's choice (`data-collapsed`, from the cb-sidebar cookie) pick one, so the first
  * paint is right: the full sidebar from 841 unless collapsed, the rail on medium and when
- * collapsed, neither below 600 (the bottom navigation and the Me page hold its content). The rail's expand
+ * collapsed, neither below 600 (the chat-first shell's drawer holds its content). The rail's expand
  * button is for the expanded class only.
  */
 @media (max-width: 840px) {

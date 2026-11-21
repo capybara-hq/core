@@ -6,6 +6,7 @@ import {
   DataTable,
   DateTime,
   Dialog,
+  PersonName,
   Stack,
   StatusMark,
   Text,
@@ -49,7 +50,13 @@ export function SharesTable({ orgId, scope }: { orgId: string; scope: "mine" | "
           {
             key: "owner",
             header: t("list.owner"),
-            cell: (r: ShareView) => r.createdBy.displayName,
+            cell: (r: ShareView) => (
+              <PersonName
+                name={r.createdBy.displayName}
+                avatarUrl={r.createdBy.avatarUrl}
+                size={16}
+              />
+            ),
           },
         ]
       : []),

@@ -67,6 +67,7 @@ import { FilePreviewersController } from "../files/previewers.controller.js";
 import { GitModule } from "../git/git.module.js";
 import { HtmlModule } from "../html/html.module.js";
 import { HtmlDocumentController } from "../html/html-document.controller.js";
+import { AccountAvatarController } from "../identity/account-avatar.controller.js";
 import { AppAuthController } from "../identity/app-auth.controller.js";
 import { AuthController } from "../identity/auth.controller.js";
 import { AuthGuard } from "../identity/auth.guard.js";
@@ -90,6 +91,11 @@ import { InvitationsController } from "../orgs/invitations.controller.js";
 import { OrgsController } from "../orgs/orgs.controller.js";
 import { OrgsModule } from "../orgs/orgs.module.js";
 import { OrgSettingsController } from "../orgs/settings.controller.js";
+import { PlatformModule } from "../platform/platform.module.js";
+import { SealedRevealsController } from "../platform/sealed-reveals.controller.js";
+import { PushHostModule } from "../push/provider-host.js";
+import { PushController } from "../push/push.controller.js";
+import { PushModule } from "../push/push.module.js";
 import { RuntimeModule } from "../runtime/runtime.module.js";
 import { ConversationStreamController } from "../runtime/stream.controller.js";
 import { SchedulesController } from "../schedules/schedules.controller.js";
@@ -137,7 +143,11 @@ const CONTROLLERS: Type[] = [
   AppAuthController,
   MetaController,
   MeController,
+  AccountAvatarController,
+  PushController,
   InitialPasswordsController,
+  // the invitation link an org admin's agent created, read once by its approver (web parity §7.2)
+  SealedRevealsController,
   OrgsController,
   OrgSettingsController,
   InvitationsController,
@@ -235,8 +245,13 @@ const CONTROLLERS: Type[] = [
     SkillsModule,
     IdentityModule,
     OrgsModule,
+    // the sealed reveals (SealedRevealsController)
+    PlatformModule,
     AdminModule,
     ExtensionsModule,
+    PushHostModule,
+    // push registrations and preferences under /api/v1/me
+    PushModule,
     CatalogModule,
     // a plugin's suggested appearance (its own module: it writes through the org settings)
     AppearanceModule,

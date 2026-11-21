@@ -1,6 +1,9 @@
 import type { z } from "zod";
+import type { ToolView } from "../conversations/events.js";
 import type { OrgAction } from "../orgs/roles.js";
 import type { ErrorRole } from "./errors.js";
+import type { FileLimits, FileRef, ResolvedFile } from "./file-ref.js";
+import type { PersonFieldTarget } from "./person-fields.js";
 
 /**
  * How an operation is confirmed (spec §6.2): `read` runs; `personal` asks each time and may be
@@ -32,6 +35,31 @@ export interface OperationContext {
    * then with `roleFor` in ./ops/unavailable.ts.
    */
   errorRole?: ErrorRole;
+  /**
+   * The values the person typed on the approval card for this call's secret fields (platform web
+   * parity spec §4.3): present only when the approved call asked for person fields. `paths` are the
+   * asked fields; `apply` consumes the sealed values once and runs `fn` with them in the same
+   * transaction (a throw puts them back), so the handler passes them to the route's service method
+   * inside `fn`. The values never go into the result: the tool appends a line per entered path.
+   * `apply` throws when the values expired; the tool returns the "expired" text then.
+   */
+  personInputs?: {
+    paths: readonly string[];
+    apply<T>(fn: (values: Readonly<Record<string, string>>) => Promise<T>): Promise<T>;
+  };
+  /**
+   * At confirmation time, for an operation with `personFields`: the paths the planned card asks
+   * the person for (`askPerson` plus the required secrets without a stored value), so `summary`
+   * names every field the card shows. Absent elsewhere.
+   */
+  personAsk?: readonly string[];
+  /**
+   * The file the call's {@link PlatformOperation.fileRef} names (platform web parity spec §5),
+   * resolved and checked against its limits. In `run`: read again right before it, and the same
+   * bytes the person confirmed (the tool refuses a different sha256 before `run`). In `summary`:
+   * the bytes the card shows. Absent when the operation takes no file for this input.
+   */
+  file?: ResolvedFile;
 }
 
 /**
@@ -57,12 +85,22 @@ export interface OperationError {
  * Some codes exist only in the tool, never answered by a route: `marketplace.already_added` (the
  * `marketplaces.add` duplicate check is tool policy; the web accepts a duplicate source),
  * `plugin.needs_input` (input only a person enters on the web), `agent.visibility_web_only`,
- * `catalog.org_owned` (`plugins.set-shown` leaves an org's own plugin to that org), and
- * `account.self` / `account.no_change` (disabling your own account, a status that is set already).
+ * `catalog.org_owned` (`plugins.set-shown` leaves an org's own plugin to that org),
+ * `account.self` / `account.no_change` (disabling your own account, a status that is set already),
+ * and `platform.secret_record_web_only` (a secret record the card cannot ask for; ruling R1).
  */
 export type PrecheckResult =
   | { ok: true }
   | { ok: false; code: string; message: string; next?: OperationErrorNext };
+
+/**
+ * A link card the conversation pops up after an operation (platform web parity spec §4.4, §6): the
+ * write's decision stays with a person on a web page (an import review, an OAuth connect), and the
+ * card names what waits for them with one button. `link` opens a relative web path (the tool also
+ * puts it in the result text as `reviewUrl`); `connect` starts a connector's OAuth flow from the
+ * person's web session. Display only (`tool_result.view`): never model-visible.
+ */
+export type HandoffView = Extract<ToolView, { kind: "handoff" }>;
 
 /** How long a precheck may take before the tool skips it (spec §14.2 item 2). */
 export const PRECHECK_TIMEOUT_MS = 2000;
@@ -110,6 +148,13 @@ export interface PlatformOperation<I = unknown> {
    */
   rememberable?: false;
   /**
+   * `true`: the write's result is shown once, on the web, to the person who approves the call (an
+   * invitation link, a generated initial password), so only the person the run works for may
+   * confirm it: the call always asks them (never a grant, an `allow`, a role escalation) and is
+   * refused in an unattended run (`CallPolicy.personOnly`, like person fields, ruling R6).
+   */
+  revealsToApprover?: true;
+  /**
    * The class of one call when it depends on the target (read at confirmation time): e.g.
    * `agents.update` is `personal` only on a private agent the actor owns and `org` otherwise, so a
    * remembered grant never carries over to a shared agent. Only for writes, never returns `read`;
@@ -131,6 +176,36 @@ export interface PlatformOperation<I = unknown> {
    */
   precheck?(input: I, ctx: OperationContext): Promise<PrecheckResult>;
   /**
+   * The secret fields of the write's target (platform web parity spec §4.1): read at confirmation
+   * time, after availability, and planned against the input's `values`, `askPerson` and
+   * `clearSecrets` (`planPersonFields`). Only for writes whose input carries
+   * `personFieldParams`; a secret in `values` is refused before the card, and the asked fields
+   * make the call always ask the person, once, on the web. Absent: the write has no person fields.
+   */
+  personFields?(input: I, ctx: OperationContext): Promise<PersonFieldTarget>;
+  /**
+   * The file this input takes in place of an upload (platform web parity spec §5), with the
+   * mirrored route's byte limit and content types; null: none for this input (another variant).
+   * The tool resolves it at the policy step (a file over the limit or of another type is refused
+   * before the card; the card shows its name, size, sha256 and an image's thumbnail, and the
+   * approval binds the sha256), and again before `run`, which gets it as `ctx.file`.
+   */
+  fileRef?(input: I): { ref: FileRef; limits: FileLimits } | null;
+  /**
+   * Why the operation takes none of its mirrored route's secret fields (`secret()` meta, left in
+   * `omits`) and asks the person for none, e.g. a preview without the credential, or a switch that
+   * refuses a plugin needing input (`plugins.install` takes it). Rule `platform-op-secret-param`
+   * otherwise requires {@link personFields}.
+   */
+  withoutSecrets?: string;
+  /**
+   * Why the operation sends the person to the web (its description names a place where they
+   * confirm, review, approve or decide) yet pops no {@link handoff} card: no web page shows it.
+   * Rule `platform-op-handoff` otherwise requires `handoff`; the opt-out is stale once the
+   * description stops sending the person there.
+   */
+  noHandoff?: string;
+  /**
    * The bilingual card summary of a write, rendered from the input and kernel reads (names of
    * the targets, preview counts), never from model text; required unless `confirm` is `read`.
    * May read PG; the tool falls back to the operation id when it throws. Method syntax so an
@@ -141,6 +216,12 @@ export interface PlatformOperation<I = unknown> {
     ctx: OperationContext,
   ): { zh: string; en: string } | Promise<{ zh: string; en: string }>;
   run(input: I, ctx: OperationContext): Promise<unknown>;
+  /**
+   * The link card to pop up after a successful `run` (platform web parity spec §6), built from the
+   * input and the result, never from model text; null: none for this result. A throw leaves the
+   * card out (the result stands).
+   */
+  handoff?(input: I, result: unknown, ctx: OperationContext): HandoffView | null;
 }
 
 /** Identity helper that types an operation's handler and summary from its input schema. */
@@ -175,7 +256,7 @@ export const PLATFORM_DOMAINS: readonly { id: string; description: string }[] = 
   {
     id: "plugins",
     description:
-      "Plugins in the org and on the platform: list, read, enable, disable, update, scope, import, the org's own uploads.",
+      "Plugins in the org and on the platform: list, read, install with inputs, enable, disable, update, scope, import, the org's own uploads.",
   },
   {
     id: "marketplaces",
@@ -189,12 +270,13 @@ export const PLATFORM_DOMAINS: readonly { id: string; description: string }[] = 
   },
   {
     id: "connectors",
-    description: "Connectors and connector templates: list and read, refresh tools, delete.",
+    description:
+      "Connectors and connector templates: list, read, preview, create (custom or from a template), edit, credentials (the person enters them on the card), OAuth connect (a Connect button for the person), guide acknowledgement, refresh tools, delete.",
   },
   {
     id: "extensions",
     description:
-      "Extensions in the org (state, tool switches, extension point defaults, file previewers) and, for the super admin, on the platform (state, pending permission confirmations, enable, disable, uninstall).",
+      "Extensions in the org (state, tool switches, extension point defaults, file previewers, the org config and the org's copy of platform config) and, for the super admin, on the platform (state, deployment config, pending permission confirmations, enable, disable, uninstall). Secrets are entered by the person on the confirmation card.",
   },
   {
     id: "conversations",
@@ -204,7 +286,7 @@ export const PLATFORM_DOMAINS: readonly { id: string; description: string }[] = 
   {
     id: "orgs",
     description:
-      "This org (read, rename, members, its audit log) and, for the super admin, every org and its limits.",
+      "This org (read, rename, members and invitations, its audit log) and, for the super admin, every org and its limits.",
   },
   {
     id: "accounts",

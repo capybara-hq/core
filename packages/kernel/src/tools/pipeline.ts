@@ -98,6 +98,7 @@ import {
   UNATTENDED_QUESTION_ERROR,
   type UnattendedRun,
   unattendedFails,
+  unattendedRules,
   unattendedRunOf,
 } from "../schedules/unattended.js";
 import { skillLoadOfferedIn } from "../skills/catalog.js";
@@ -167,6 +168,17 @@ export const approvalExpiredText = (hours: number) =>
   `Approval timed out after ${hours}h; treated as denied.`;
 /** 等待审批期间 run 被中止。 */
 export const APPROVAL_CANCELLED_TEXT = "The run was stopped while waiting for approval.";
+/** A person field refused on the approval card as leaked, for a call that then did not run. */
+export const leakedOnCardText = (path: string): string =>
+  `The person's \`${path}\` appeared in the conversation earlier and was refused as leaked; ask them to rotate it.`;
+/**
+ * A call that ended without running: its text, then the leaked-on-card line per person field the
+ * approval card refused as leaked (`detail.leakedFields`), so the agent has the key rotated.
+ */
+export const withLeakedOnCard = (text: string, leakedFields: readonly string[] | undefined) =>
+  leakedFields === undefined || leakedFields.length === 0
+    ? text
+    : [text, ...leakedFields.map(leakedOnCardText)].join("\n");
 /** What the review held: a shell command, a file write, or a file read outside the scope. */
 export type ReviewKind = "command" | "write" | "read";
 /**
@@ -219,6 +231,27 @@ export const INPUT_SKIPPED_TEXT =
 export const TOO_MANY_INPUT_REQUESTS_TEXT = "Tool requested user input too many times.";
 /** run 已被中止 / 到达截止时间，调用尚未开始执行。 */
 export const RUN_STOPPED_TEXT = "The run was stopped before this tool call was executed.";
+/**
+ * A call with person fields in an unattended run (ruling R6): no person is there to type the
+ * values on the card.
+ */
+export const PERSON_FIELDS_UNATTENDED_TEXT =
+  "This write needs the person to enter values on the web; it cannot run unattended.";
+/**
+ * A call with person fields whose ask would go to a role instead of the person (ruling R5): only the
+ * person the run works for may type the values, and they lack the role.
+ */
+export const PERSON_FIELDS_ROLE_TEXT =
+  "This write needs the person you work for to enter values; they lack the role. Ask an admin to do it on the web.";
+/**
+ * A call only the person may confirm (`CallPolicy.personOnly`: its result is shown once to the
+ * approver) in an unattended run: nobody is there to approve and read it.
+ */
+export const PERSON_ONLY_UNATTENDED_TEXT =
+  "This write shows its result once, on the web, to the person who approves it; it cannot run unattended.";
+/** A call only the person may confirm whose ask would go to a role instead of the person. */
+export const PERSON_ONLY_ROLE_TEXT =
+  "This write shows its result once to the person you work for, who must approve it; they lack the role. Ask an admin to do it on the web.";
 /** 调用执行中 run 被中止 / 到达截止时间。 */
 export const RUN_STOPPED_DURING_TEXT =
   "The run was stopped while this tool call was running; its outcome is unknown. Verify before retrying.";
@@ -1246,6 +1279,7 @@ export class ToolPipeline {
         agentId: ctx.agentId,
         conversationId: ctx.conversationId,
         runId: ctx.runId,
+        callId: call.id,
         rawInput: call.input,
         signal: ctx.signal,
       })) ?? null;
@@ -1254,8 +1288,19 @@ export class ToolPipeline {
       return fail(callPolicy.denyReason, outKey);
     }
     const policyKey = callPolicy?.key ?? tool.key;
+    // person fields (platform web parity spec §4.2, R6): the person types values on the card, so an
+    // unattended run (a trial run has its creator there) cannot make the call at all
+    const personFields = callPolicy?.personFields;
+    // a call whose result is shown once to its approver asks the person the same way
+    const personOnly = personFields !== undefined || callPolicy?.personOnly === true;
+    if (personOnly && unattendedRules(ctx.unattended)) {
+      return fail(
+        personFields !== undefined ? PERSON_FIELDS_UNATTENDED_TEXT : PERSON_ONLY_UNATTENDED_TEXT,
+        outKey,
+      );
+    }
 
-    const decision = await this.decide(tool, ctx.agent, {
+    let decision = await this.decide(tool, ctx.agent, {
       orgId: ctx.orgId,
       accountId: ctx.accountId,
       agentId: ctx.agentId,
@@ -1278,6 +1323,29 @@ export class ToolPipeline {
     }
     if (typeof decision === "object" && "unavailable" in decision) {
       return fail(unavailableText(tool.key, decision.unavailable), outKey);
+    }
+    if (personOnly) {
+      // R6: always the person's own card, never a grant or an `allow` (the default policy already
+      // asks for them; this holds for any decision)
+      if (decision === "allow" || "grant" in decision) {
+        decision = {
+          ask: {
+            toolKey: policyKey,
+            specHash: tool.specHash,
+            connectorId: tool.source.kind === "connector" ? tool.source.connectorId : null,
+            requestedFor: ctx.accountId,
+            approverRole: null,
+            policy: "fixed",
+          },
+        };
+      }
+      // R5: only the person the run works for types the values; a role escalation cannot ask them
+      if ("ask" in decision && decision.ask.requestedFor === null) {
+        return fail(
+          personFields !== undefined ? PERSON_FIELDS_ROLE_TEXT : PERSON_ONLY_ROLE_TEXT,
+          outKey,
+        );
+      }
     }
     // 该调用已有审批（续跑）→ 按审批结果；没有且策略为 ask → 建审批并等待
     // （不写 tool_call_started：此时尚未开始执行）。
@@ -1306,7 +1374,20 @@ export class ToolPipeline {
         approverRole: decision.ask.approverRole,
         policy: decision.ask.policy,
         ...(callPolicy?.summary !== undefined && { summary: callPolicy.summary }),
-        ...(callPolicy !== null && !callPolicy.remember && { scopes: ["once"] }),
+        ...((personFields !== undefined || (callPolicy !== null && !callPolicy.remember)) && {
+          scopes: ["once"],
+        }),
+        // the specs of the asked fields, never a value (the card draws its inputs from them), and
+        // the referenced file the approval binds by its sha256
+        ...((personFields !== undefined || callPolicy?.file !== undefined) && {
+          detail: {
+            ...(personFields !== undefined && {
+              personFields: personFields.fields,
+              target: personFields.target,
+            }),
+            ...(callPolicy?.file !== undefined && { file: callPolicy.file }),
+          },
+        }),
       });
     }
     if (approval && approval.status !== "approved") {
@@ -1525,6 +1606,8 @@ export class ToolPipeline {
       resume,
       resolved.tools,
       reviewedRoots,
+      // the approval the call runs under (a Platform write reads the person's values by it)
+      approval?.status === "approved" && approvedHere ? approval.id : undefined,
     );
     const durationMs = Date.now() - t0;
     await this.deps.hooks?.afterExecute?.(ctx.runId, call.id);
@@ -2586,19 +2669,25 @@ export class ToolPipeline {
     return null;
   }
 
-  /** A decided approval other than approved → the model's text; still pending → null (wait). */
+  /**
+   * A decided approval other than approved → the model's text; still pending → null (wait). A
+   * person field refused on the card as leaked is named, so the agent has the key rotated.
+   */
   private refusalText(a: ApprovalRecord): string | null {
-    switch (a.status) {
-      case "denied":
-        return approvalDeniedText(a.denyReason);
-      case "expired":
-        // 按该审批实际的等待时长（创建到到期），不读当前配置（配置可热更新）
-        return approvalExpiredText(approvalHours(a));
-      case "cancelled":
-        return APPROVAL_CANCELLED_TEXT;
-      default:
-        return null;
-    }
+    const text = ((): string | null => {
+      switch (a.status) {
+        case "denied":
+          return approvalDeniedText(a.denyReason);
+        case "expired":
+          // Use the approval's own wait (creation to expiry), not the current config: it can be hot-reloaded
+          return approvalExpiredText(approvalHours(a));
+        case "cancelled":
+          return APPROVAL_CANCELLED_TEXT;
+        default:
+          return null;
+      }
+    })();
+    return text === null ? null : withLeakedOnCard(text, a.leakedFields);
   }
 
   /**
@@ -2658,6 +2747,8 @@ export class ToolPipeline {
       escalation?: "available" | "escalated" | undefined;
       escalationRefusal?: string | undefined;
     },
+    /** The approved approval of this call, matching its definition and input (builtins only). */
+    approvalId?: string,
   ): Promise<ExecOutcome> {
     const reviewedWorkingRoot = reviewed?.workingRoot;
     const reviewedAgainstRoot = reviewed?.against;
@@ -2685,6 +2776,7 @@ export class ToolPipeline {
       }),
       ...(tool.source.kind === "builtin" &&
         ctx.deadline !== undefined && { runDeadline: ctx.deadline }),
+      ...(tool.source.kind === "builtin" && approvalId !== undefined && { approvalId }),
       // a reviewed call runs in the working root its review judged (project root spec §4.3)
       ...(tool.source.kind === "builtin" &&
         reviewedWorkingRoot !== undefined && { reviewedWorkingRoot }),

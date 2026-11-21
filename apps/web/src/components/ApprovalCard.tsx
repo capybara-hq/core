@@ -2,9 +2,12 @@
 
 import {
   ApprovalBlock,
+  type ApprovalBlockProps,
+  type ApprovalFact,
   type ApprovalState,
   type CommandAsk as CommandAskBlock,
   type NetworkAsk,
+  type PersonLike,
   RadioGroup,
   Stack,
   StatusMark,
@@ -15,29 +18,33 @@ import {
 } from "@capybara-hq/design";
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useLocale, useTranslations } from "next-intl";
-import { useCallback, useState } from "react";
+import { useCallback, useRef, useState } from "react";
+import { ApiClientError } from "../lib/api";
 import {
   type Approval,
   type ApprovalScope,
   CREATE_ACCOUNT_OPERATION,
   decideApproval,
   formatInput,
+  INVITE_OPERATION,
   scopesFor,
 } from "../lib/approvals";
 import type { PermissionScope, SandboxEscalation, ToolInfo } from "../lib/conversations";
+import { withNode } from "../lib/node-slot";
+import { type PersonRef, usePersonLookup, useViewerPerson } from "../lib/people";
 import { retryOnMountOf } from "../lib/query/client";
 import { approvalQuery } from "../lib/query/conversation";
 import { inboxChangeKeys } from "../lib/query/inbox";
 import { keys } from "../lib/query/keys";
 import { useAppMutation } from "../lib/query/mutation";
-import { useWaiterWords } from "../lib/query/who-waits";
+import { useThreadWaitTarget, type WaitTarget } from "../lib/query/who-waits";
 import { shortTime } from "../lib/time";
 import type { ApprovalDecision, ApprovalItem } from "../lib/timeline";
 import { lang, PLATFORM_PREFIX, toolLabel, toolLabelOfKey, toolLabelText } from "../lib/tool-label";
 import { useErrorMessage } from "../lib/use-error-message";
 import { InitialPasswordReveal } from "./InitialPasswordReveal";
-import { PermissionScopeDetail } from "./PermissionScopeDetail";
-import { SandboxEscalationDetail } from "./SandboxEscalationDetail";
+import { InvitationLinkReveal } from "./InvitationLinkReveal";
+import { Person } from "./Person";
 import { useSession } from "./shell/session";
 
 /**
@@ -47,7 +54,10 @@ import { useSession } from "./shell/session";
 export type Outcome = Pick<
   ApprovalDecision,
   "decision" | "scope" | "byAccountId" | "reason" | "revision"
->;
+> & {
+  /** The decider as the approval read names them (null: the account is gone); absent: not read. */
+  byPerson?: PersonRef | null;
+};
 
 /** An approval detail's status as its outcome (null while pending). */
 export function outcomeOf(a: Approval): Outcome | null {
@@ -64,6 +74,7 @@ export function outcomeOf(a: Approval): Outcome | null {
     decision: a.status,
     ...(a.scope !== null ? { scope: a.scope } : {}),
     byAccountId: a.decidedBy,
+    byPerson: a.decidedByPerson,
   };
 }
 
@@ -104,45 +115,39 @@ export function ScopePicker({
   );
 }
 
-/** 处理结果：状态标记 + 范围 + 处理人。 */
-export function ApprovalOutcome({ outcome }: { outcome: Outcome }) {
-  const t = useTranslations("approval");
-  const { me } = useSession();
-  const who =
-    outcome.byAccountId === null
-      ? t("system")
-      : outcome.byAccountId === me.account.id
-        ? t("you")
-        : outcome.byAccountId;
-  const status =
-    outcome.decision === "approved"
-      ? "success"
-      : outcome.decision === "denied"
-        ? "failed"
-        : "cancelled"; // expired, cancelled, skipped and superseded alike
-  return (
-    <Stack direction="row" gap={12} align="center" wrap>
-      <StatusMark status={status} label={t(`decision.${outcome.decision}`)} />
-      {outcome.decision === "approved" && outcome.scope !== undefined && (
-        <Text variant="small" tone="muted">
-          {t(`scope.${outcome.scope}`)}
-        </Text>
-      )}
-      <Text variant="small" tone="muted">
-        {t("decidedBy", { who })}
-      </Text>
-    </Stack>
-  );
+/**
+ * The per-field problems of a refused person-field approval: `approval.input_leaked` names paths,
+ * `approval.inputs_invalid` names `{ path, problem }`. Null for any other error. The kernel never
+ * echoes a value, so nothing here can show one.
+ */
+function personFieldErrors(e: unknown, leakCopy: string): Record<string, string> | null {
+  if (!(e instanceof ApiClientError)) return null;
+  const fields = (e.rawDetails[0] as { fields?: unknown } | undefined)?.fields;
+  if (!Array.isArray(fields)) return null;
+  const out: Record<string, string> = {};
+  if (e.code === "approval.input_leaked") {
+    for (const f of fields) if (typeof f === "string") out[f] = leakCopy;
+  } else if (e.code === "approval.inputs_invalid") {
+    for (const f of fields) {
+      const { path, problem } = (f ?? {}) as { path?: unknown; problem?: unknown };
+      if (typeof path === "string" && typeof problem === "string") out[path] = problem;
+    }
+  } else return null;
+  return out;
 }
 
 /**
  * 提交审批决定：成功返回处理后的结果；已被处理（`approval.already_decided`）等错误以 toast 告知并返回 null。
  */
 export function useDecide(orgId: string) {
+  // The person's typed values travel in a ref, never as mutation variables: TanStack keeps those
+  // in the mutation cache.
+  const inputsRef = useRef<Record<string, string> | undefined>(undefined);
   const qc = useQueryClient();
   const session = useSession();
   const toast = useToast();
   const errorMessage = useErrorMessage();
+  const leakCopy = useTranslations("approval")("person.leaked");
   const [pending, setPending] = useState<"approve" | "deny">();
   // The answer is the decided approval: it replaces the cached one. The inbox and its count
   // change too, wherever the decision was taken (here in a conversation, or on /inbox).
@@ -158,6 +163,9 @@ export function useDecide(orgId: string) {
         decision: v.decision,
         ...(v.decision === "approve" ? { scope: v.scope } : {}),
         ...(v.decision === "approve" && v.hosts !== undefined ? { hosts: v.hosts } : {}),
+        ...(v.decision === "approve" && inputsRef.current !== undefined
+          ? { inputs: inputsRef.current }
+          : {}),
         ...(v.decision === "deny" && v.reason !== undefined ? { reason: v.reason } : {}),
       }),
     invalidates: () => inboxChangeKeys(orgId),
@@ -171,8 +179,14 @@ export function useDecide(orgId: string) {
       reason?: string,
       /** A network ask's checked hosts. */
       hosts?: string[],
+      /** Person field values (approve only) and where a refused field's problem goes. */
+      person?: {
+        inputs: Record<string, string>;
+        onFieldErrors(errors: Record<string, string>, leaked: boolean): void;
+      },
     ) => {
       setPending(decision);
+      inputsRef.current = decision === "approve" ? person?.inputs : undefined;
       try {
         const { approval } = await mutateAsync({
           id,
@@ -183,6 +197,15 @@ export function useDecide(orgId: string) {
         });
         return approval;
       } catch (e) {
+        const fieldErrors = person && personFieldErrors(e, leakCopy);
+        if (fieldErrors) {
+          // the card stays pending: each refused field says why, nothing else changes
+          person?.onFieldErrors(
+            fieldErrors,
+            e instanceof ApiClientError && e.code === "approval.input_leaked",
+          );
+          return null;
+        }
         toast.error(errorMessage(e));
         // most likely decided or superseded meanwhile: the card and the inbox read it again
         // (never a second decision)
@@ -190,13 +213,14 @@ export function useDecide(orgId: string) {
           void qc.invalidateQueries({ queryKey });
         return null;
       } finally {
+        inputsRef.current = undefined;
         setPending(undefined);
         // The sidebar's pending count follows at once (a failure most likely means someone
         // already decided: it changed too).
         session.refreshPending?.();
       }
     },
-    [toast, errorMessage, session, mutateAsync, qc, orgId],
+    [toast, errorMessage, session, mutateAsync, qc, orgId, leakCopy],
   );
   return { decide, pending };
 }
@@ -233,13 +257,25 @@ export function ApprovalCard({
   const { me } = useSession();
   const [local, setLocal] = useState<(Outcome & { at: string }) | null>(null);
   const { decide, pending } = useDecide(orgId);
+  // What the person types lives only here: sent once with the approve, cleared after, never cached.
+  const [values, setValues] = useState<Record<string, string>>({});
+  const [fieldErrors, setFieldErrors] = useState<Record<string, string>>({});
   const decided = item.decided;
+  const lookup = usePersonLookup();
+  const viewer = useViewerPerson();
+  // a decided card whose decider the thread's people do not name (a sub-agent's, decided in its
+  // own log) reads the approval for the person
+  const decidedByUnknown =
+    decided !== null &&
+    decided.byAccountId !== null &&
+    decided.byAccountId !== me.account.id &&
+    lookup(decided.byAccountId) === null;
   // Pending, the approval tells who may decide; not visible = may not decide (assigned to
   // someone else, or the role is too low). A network ask reads it decided too (granted hosts).
   const approvalQ = approvalQuery(orgId, item.approvalId);
   const approval = useQuery({
     ...approvalQ,
-    enabled: decided === null || item.network !== undefined,
+    enabled: decided === null || item.network !== undefined || decidedByUnknown,
     retry: false,
     // a 404 the server read (not this viewer's to decide) stays as it was painted
     retryOnMount: retryOnMountOf(approvalQ.queryKey),
@@ -250,18 +286,23 @@ export function ApprovalCard({
   const fromView = view ? outcomeOf(view) : null;
   const outcome: (Outcome & { at: string | null }) | null =
     decided !== null
-      ? { ...decided, at: item.decidedAt }
+      ? {
+          ...decided,
+          ...(fromView?.byPerson !== undefined ? { byPerson: fromView.byPerson } : {}),
+          at: item.decidedAt,
+        }
       : (local ?? (fromView !== null && view ? { ...fromView, at: view.decidedAt } : null));
-  // Names only when someone else decided, or is awaited, so a person's own card reads nothing more
-  const by = outcome?.byAccountId ?? null;
   const awaited = outcome === null && view === null ? item.approver : undefined;
-  const words = useWaiterWords(
-    orgId,
-    (by !== null && by !== me.account.id) ||
-      (awaited?.kind === "account" && awaited.accountId !== me.account.id),
-  );
-  const who = (id: string | null) =>
-    id === null ? t("system") : (words({ kind: "account", accountId: id }) ?? t("you"));
+  const waitTarget = useThreadWaitTarget();
+  const tp = useTranslations("people");
+  // The decider: the system, the viewer ("you"), or a person with their avatar; one who left
+  // reads "Former member". Names come from the thread's people, else from the approval read.
+  const who = (o: Outcome): PersonLike | string => {
+    if (o.byAccountId === null) return t("system");
+    if (o.byAccountId === me.account.id) return viewer;
+    const p = lookup(o.byAccountId) ?? o.byPerson ?? null;
+    return p ? { name: p.name, avatarUrl: p.avatarUrl } : { name: tp("departed"), avatarUrl: null };
+  };
 
   async function onDecide(
     decision: "approve" | "deny",
@@ -269,12 +310,35 @@ export function ApprovalCard({
     reason?: string,
     hosts?: string[],
   ) {
-    const r = await decide(item.approvalId, decision, scope, reason, hosts);
+    const person = view?.personFields;
+    const r = await decide(
+      item.approvalId,
+      decision,
+      scope,
+      reason,
+      hosts,
+      decision === "approve" && person && person.length > 0
+        ? {
+            inputs: Object.fromEntries(person.map((f) => [f.path, values[f.path] ?? ""])),
+            onFieldErrors: (errors, leaked) => {
+              setFieldErrors(errors);
+              // a leaked value is cleared (its error stays) so it is never resubmitted by accident
+              if (leaked)
+                setValues((o) =>
+                  Object.fromEntries(Object.entries(o).filter(([path]) => !(path in errors))),
+                );
+            },
+          }
+        : undefined,
+    );
     if (r) {
+      setValues({});
+      setFieldErrors({});
       setLocal({
         decision: r.status === "pending" ? "cancelled" : r.status,
         ...(r.scope !== null ? { scope: r.scope } : {}),
         byAccountId: r.decidedBy,
+        byPerson: r.decidedByPerson,
         ...(reason !== undefined ? { reason } : {}),
         at: r.decidedAt ?? new Date().toISOString(),
       });
@@ -294,12 +358,15 @@ export function ApprovalCard({
       : view && typeof view.input === "object" && view.input !== null
         ? (view.input as Record<string, unknown>)
         : {};
-  // an approved accounts.create: its generated password is shown once to the person who approved
-  const revealsPassword =
+  // an approved Platform call of `operation`, decided by me (what it made is shown to me once)
+  const approvedByMe = (operation: string) =>
     outcome?.decision === "approved" &&
     outcome.byAccountId === me.account.id &&
-    ((platformKey ?? item.toolKey) === `${PLATFORM_PREFIX}${CREATE_ACCOUNT_OPERATION}` ||
-      (item.toolKey === "Platform" && input.operation === CREATE_ACCOUNT_OPERATION));
+    ((platformKey ?? item.toolKey) === `${PLATFORM_PREFIX}${operation}` ||
+      (item.toolKey === "Platform" && input.operation === operation));
+  // accounts.create: its generated password; orgs.invite: the invitation's link
+  const revealsPassword = approvedByMe(CREATE_ACCOUNT_OPERATION);
+  const revealsInvitation = approvedByMe(INVITE_OPERATION);
   const network = networkAskOf(item, view);
   const asked = commandAskOf(item, view);
   const lead = asked === undefined ? undefined : commandLeadOf(item, view);
@@ -316,11 +383,19 @@ export function ApprovalCard({
         };
   const scope = permissionScopeOf(item, view);
   const escalation = escalationOf(item, view);
+  // The crossing's details live inside the pending card (design spec §6.16.11, maintainer
+  // decision 2026-11-21); decided or superseded, only its one line remains.
+  const details = useCardDetails(scope, escalation, command?.path);
   const detail = view?.kind === "network" ? (view.detail ?? null) : null;
   // a network ask is granted for this run only: an "always" is never offered (device protocol 4)
-  const scopes = view
-    ? scopesFor(view).filter((s) => network === undefined || s !== "always")
-    : (["once"] as const);
+  const personFields = view?.personFields ?? [];
+  // values are typed once for one call: a person-field approval is never remembered
+  const scopes =
+    personFields.length > 0
+      ? (["once"] as const)
+      : view
+        ? scopesFor(view).filter((s) => network === undefined || s !== "always")
+        : (["once"] as const);
   // A permission change replaced the ask before anyone decided it: a final line, never actions.
   if (outcome?.decision === "superseded") {
     return (
@@ -347,17 +422,6 @@ export function ApprovalCard({
               {t("superseded.revision", { n: outcome.revision })}
             </Text>
           )}
-          {scope !== undefined && (
-            <PermissionScopeDetail scope={scope.permissionScope} targetPath={scope.targetPath} />
-          )}
-          {escalation !== undefined && (
-            <SandboxEscalationDetail
-              justification={escalation.justification}
-              workingRoot={escalation.workingRoot}
-              background={escalation.background}
-              maxSeconds={escalation.maxSeconds}
-            />
-          )}
         </Stack>
       </div>
     );
@@ -368,7 +432,7 @@ export function ApprovalCard({
     state = {
       kind: "decided",
       decision: outcome.decision,
-      who: who(outcome.byAccountId),
+      who: who(outcome),
       when: outcome.at ? shortTime(outcome.at, locale, timeZone) : "",
       ...(outcome.scope !== undefined ? { scope: outcome.scope } : {}),
       ...(granted !== undefined && granted.length > 0 ? { hosts: granted } : {}),
@@ -399,12 +463,16 @@ export function ApprovalCard({
         </div>
       );
     }
+    const target = awaited === undefined ? undefined : waitTarget(awaited);
     return (
       <div data-role="approval" data-approval-id={item.approvalId}>
         <Text variant="small" tone="muted">
-          {awaited !== undefined && words(awaited) !== undefined
-            ? t("otherApproverNamed", { tool, key: item.toolKey, who: words(awaited) ?? "" })
-            : t("otherApproverFor", { tool, key: item.toolKey })}
+          {target === undefined
+            ? t("otherApproverFor", { tool, key: item.toolKey })
+            : withNode(
+                (mark) => t("otherApproverNamed", { tool, key: item.toolKey, who: mark }),
+                <WaitTargetName target={target} />,
+              )}
         </Text>
       </div>
     );
@@ -428,23 +496,44 @@ export function ApprovalCard({
         {...(network !== undefined ? { network } : {})}
         {...(command !== undefined ? { command } : {})}
         state={state}
+        {...(view?.file !== undefined
+          ? {
+              file: {
+                name: view.file.name,
+                size: view.file.size,
+                sha256: view.file.sha256,
+                ...(view.file.thumbnail !== undefined ? { thumbnail: view.file.thumbnail } : {}),
+              },
+            }
+          : {})}
+        {...(personFields.length > 0 && view?.personTarget
+          ? {
+              personTarget: view.personTarget[lang(locale)],
+              approveDisabled: personFields.some((f) => (values[f.path] ?? "") === ""),
+              personFields: personFields.map((f) => ({
+                path: f.path,
+                label: f.label[lang(locale)],
+                ...(f.description !== undefined
+                  ? { description: f.description[lang(locale)] }
+                  : {}),
+                multiline: f.multiline,
+                value: values[f.path] ?? "",
+                ...(fieldErrors[f.path] !== undefined ? { error: fieldErrors[f.path] } : {}),
+                onChange: (v: string) => {
+                  setValues((o) => ({ ...o, [f.path]: v }));
+                  setFieldErrors(({ [f.path]: _drop, ...rest }) => rest);
+                },
+              })),
+            }
+          : {})}
         onApprove={(scope, hosts) =>
           void onDecide("approve", scope, undefined, network !== undefined ? hosts : undefined)
         }
         onDeny={(reason) => void onDecide("deny", "once", reason)}
+        {...details}
       />
-      {scope !== undefined && (
-        <PermissionScopeDetail scope={scope.permissionScope} targetPath={scope.targetPath} />
-      )}
-      {escalation !== undefined && (
-        <SandboxEscalationDetail
-          justification={escalation.justification}
-          workingRoot={escalation.workingRoot}
-          background={escalation.background}
-          maxSeconds={escalation.maxSeconds}
-        />
-      )}
       {revealsPassword && <InitialPasswordReveal orgId={orgId} approvalId={item.approvalId} />}
+      {revealsInvitation && <InvitationLinkReveal orgId={orgId} approvalId={item.approvalId} />}
     </div>
   );
 }
@@ -577,6 +666,57 @@ export function permissionScopeOf(
 }
 
 /**
+ * What a crossing puts inside the pending card (design spec §6.16.11, "Details inside the card"):
+ * an escalation leads with the agent's justification (plain text, never clipped), names the
+ * directory it runs in above the command, says under Allow once that only this call leaves the
+ * sandbox, adds a note when it starts a background process (its deadline in whole minutes, rounded
+ * up), and its decided line says it ran outside the sandbox. A permission crossing lists its exact
+ * reach above the command (every directory and host, nothing inferred; the target file only when
+ * it is not the path the card already shows) and hints that a directory includes its contents.
+ */
+function useCardDetails(
+  scope: ReturnType<typeof permissionScopeOf>,
+  escalation: ReturnType<typeof escalationOf>,
+  shownPath: string | undefined,
+): Pick<
+  ApprovalBlockProps,
+  "reason" | "workingRoot" | "facts" | "scopeHints" | "notes" | "decidedNote"
+> {
+  const t = useTranslations("approval");
+  if (escalation !== undefined) {
+    const { justification, workingRoot, background, maxSeconds } = escalation;
+    return {
+      reason: { text: justification, label: t("escalation.justification") },
+      ...(workingRoot !== undefined ? { workingRoot } : {}),
+      scopeHints: { once: t("escalation.hint") },
+      ...(background === true
+        ? {
+            notes: [
+              maxSeconds !== undefined
+                ? t("escalation.backgroundLimit", { minutes: Math.ceil(maxSeconds / 60) })
+                : t("escalation.background"),
+            ],
+          }
+        : {}),
+      decidedNote: t("escalation.decided"),
+    };
+  }
+  if (scope !== undefined) {
+    const { permissionScope: reach, targetPath } = scope;
+    const facts: ApprovalFact[] = [
+      { label: t("permissionScope.write"), values: reach.writeDirectories },
+      { label: t("permissionScope.read"), values: reach.readDirectories },
+      { label: t("permissionScope.hosts"), values: reach.hosts },
+      ...(targetPath !== undefined && targetPath !== shownPath
+        ? [{ label: t("permissionScope.target"), values: [targetPath] }]
+        : []),
+    ];
+    return { facts, scopeHints: { once: t("permissionScope.hint") } };
+  }
+  return {};
+}
+
+/**
  * The per-call sandbox escalation an ask requests: from its detail once read, else from the log's
  * `approval_requested.command`; undefined for any other ask.
  */
@@ -593,4 +733,9 @@ export function escalationOf(
     ...(from.escalation.maxSeconds !== undefined ? { maxSeconds: from.escalation.maxSeconds } : {}),
     ...(from.workingRoot !== undefined ? { workingRoot: from.workingRoot } : {}),
   };
+}
+
+/** Who an approval waits for: a role in words, or the person (16) with their avatar. */
+function WaitTargetName({ target }: { target: WaitTarget }) {
+  return target.kind === "role" ? target.words : <Person person={target.person} size={16} />;
 }

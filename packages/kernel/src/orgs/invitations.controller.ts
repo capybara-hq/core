@@ -28,23 +28,19 @@ import { KernelConfigService } from "../infra/config/kernel-config.service.js";
 import { CredentialThrottler } from "../infra/throttler/credential-throttler.js";
 import { createZodDto } from "../infra/validation/create-zod-dto.js";
 import { parseWithZod } from "../infra/validation/parse-with-zod.js";
-import { ZBody } from "../infra/validation/zod-params.js";
+import { ZBody, ZParam } from "../infra/validation/zod-params.js";
 import {
-  INVITABLE_ROLES,
   type InvitableRole,
   type Invitation,
   type InvitationStatus,
   InvitationsService,
-  MAX_INVITATION_HOURS,
 } from "./invitations.service.js";
 import { CurrentOrg, OrgAction, type OrgContext } from "./org.guard.js";
+import { InvitationCreateBody, InvitationIdParams } from "./orgs.schemas.js";
 import type { OrgRole } from "./roles.js";
 
-const CreateSchema = z.object({
-  role: z.enum(INVITABLE_ROLES),
-  expiresInHours: z.number().int().min(1).max(MAX_INVITATION_HOURS).optional(),
-});
-class InvitationCreateBody extends createZodDto(CreateSchema, "InvitationCreateBody") {}
+class InvitationCreateBodyDto extends createZodDto(InvitationCreateBody, "InvitationCreateBody") {}
+class InvitationIdParamsDto extends createZodDto(InvitationIdParams, "InvitationIdParams") {}
 /** Validated inside the handler, after the attempt is reserved (a signed-in principal sends none). */
 const SignupBody = z.object({
   login: z.string(),
@@ -71,7 +67,7 @@ export class InvitationsController {
   async create(
     @CurrentPrincipal() principal: Principal,
     @CurrentOrg() org: OrgContext,
-    @ZBody(InvitationCreateBody) body: z.infer<typeof CreateSchema>,
+    @ZBody(InvitationCreateBodyDto) body: z.infer<typeof InvitationCreateBody>,
   ): Promise<{ invitation: Invitation; token: string }> {
     const p = requireUser(principal);
     return this.invitations.create(org.orgId, body, p.account.id, patTokenId(p));
@@ -91,7 +87,7 @@ export class InvitationsController {
   async revoke(
     @CurrentPrincipal() principal: Principal,
     @CurrentOrg() org: OrgContext,
-    @Param("id") id: string,
+    @ZParam(InvitationIdParamsDto) { id }: z.infer<typeof InvitationIdParams>,
   ): Promise<void> {
     const p = requireUser(principal);
     await this.invitations.revoke(org.orgId, id, p.account.id, patTokenId(p));

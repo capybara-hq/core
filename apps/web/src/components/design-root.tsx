@@ -5,18 +5,41 @@ import {
   DesignProvider,
   type LinkComponent,
   type ServerClock,
+  ShellReady,
   ToastProvider,
   useDesignLink,
   useDesignLocale,
 } from "@capybara-hq/design";
 import { useLinkStatus } from "next/link";
-import { createContext, type ReactNode, useContext, useEffect } from "react";
-import { Link } from "../i18n/navigation";
+import { createContext, type PointerEvent, type ReactNode, useContext, useEffect } from "react";
+import { Link, useRouter } from "../i18n/navigation";
 import type { AppLocale } from "../i18n/routing";
+import { useWarm } from "../lib/query/warm";
+import { useNativeHandlers } from "../lib/shell";
 import { TIME_ZONE_COOKIE } from "../lib/time";
 
 /** Whether the enclosing next/link navigation is pending (called inside each design link). */
 const useLinkPending = () => useLinkStatus().pending;
+
+/**
+ * The design link: next-intl's Link, which also warms its route on `pointerdown` (the route's
+ * queries and code, mobile spec §7.3), so the page is often cached by the time the tap lands.
+ */
+const WarmLink: LinkComponent = (props) => {
+  const router = useRouter();
+  const warm = useWarm(router);
+  const own = (props as { onPointerDown?: (e: PointerEvent<HTMLAnchorElement>) => void })
+    .onPointerDown;
+  return (
+    <Link
+      {...props}
+      onPointerDown={(e) => {
+        own?.(e);
+        warm(props.href);
+      }}
+    />
+  );
+};
 
 /** The clock `DesignRoot` was given, so `BrandRoot` can provide the same design context again. */
 const ClockContext = createContext<ServerClock | undefined>(undefined);
@@ -46,14 +69,18 @@ export function DesignRoot({
     // biome-ignore lint/suspicious/noDocumentCookie: the Cookie Store API is async and not everywhere
     document.cookie = `${TIME_ZONE_COOKIE}=${zone}; max-age=31536000; path=/; samesite=lax`;
   }, [serverZone]);
+  const native = useNativeHandlers();
   return (
     <ClockContext.Provider value={clock}>
       <DesignProvider
         locale={locale}
-        link={Link as LinkComponent}
+        native={native}
+        link={WarmLink}
         useLinkPending={useLinkPending}
         {...(clock !== undefined && { clock })}
       >
+        {/* once per document: the native shell drops its splash (chrome@1.ready) */}
+        <ShellReady />
         <ToastProvider>{children}</ToastProvider>
       </DesignProvider>
     </ClockContext.Provider>
@@ -68,9 +95,11 @@ export function DesignRoot({
  */
 export function BrandRoot({ brand, children }: { brand: Brand | null; children: ReactNode }) {
   const clock = useContext(ClockContext);
+  const native = useNativeHandlers();
   return (
     <DesignProvider
       locale={useDesignLocale()}
+      native={native}
       link={useDesignLink()}
       useLinkPending={useLinkPending}
       {...(clock !== undefined && { clock })}

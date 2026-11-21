@@ -119,7 +119,8 @@
       "not_found": "The account does not exist.",
       "last_super_admin": "The last super admin cannot be revoked or deactivated.",
       "initial_password_unavailable": "There is no initial password to show: it was shown already, has expired, or the account was not created by a call you approved.",
-      "create_needs_approval": "Create the account from a conversation where you approve the call yourself, or on the web."
+      "create_needs_approval": "Create the account from a conversation where you approve the call yourself, or on the web.",
+      "display_name_too_long": "The name is too long: at most 64 characters."
     },
     "org": {
       "not_found": "The organization does not exist or you are no longer a member.",
@@ -220,7 +221,10 @@
       "not_found": "The approval does not exist or you cannot handle it.",
       "not_yours": "Only the device owner can allow network access on this device.",
       "already_decided": "This approval has already been handled or has expired.",
-      "scope_not_allowed": "This approval can only be allowed once."
+      "scope_not_allowed": "This approval can only be allowed once.",
+      "inputs_invalid": "Some entered values are invalid.",
+      "input_leaked": "This value appeared in the conversation, so it counts as leaked. Create a new one at the provider and enter that.",
+      "inputs_not_expected": "This approval does not take entered values."
     },
     "question": {
       "not_found": "The question does not exist or you cannot answer it.",
@@ -325,7 +329,10 @@
     "member": {
       "anonymous_guest": "The anonymous guest cannot be given a role, ownership or agents, invited or removed.",
       "not_found": "Member not found.",
-      "already_exists": "You are already a member of this organization."
+      "already_exists": "You are already a member of this organization.",
+      "self": "Your own membership is changed by you on the web, never through an agent.",
+      "owner_untouchable": "Owners and ownership are changed by an owner on the Members page, never through an agent.",
+      "role_above_actor": "An agent cannot give anyone a role above your own."
     },
     "attachment": {
       "too_large": "The file is larger than the size limit for one attachment.",
@@ -384,8 +391,8 @@
       "recreate_required": "Background work started by an earlier version may still be running on an earlier instance of this device, and that instance can no longer be verified as destroyed. Delete this device and create it again."
     },
     "app_auth": {
-      "code_invalid": "This sign-in link is invalid or has expired. Start signing in again from the Capybara desktop app.",
-      "redirect_uri_invalid": "This sign-in request came from an app address this platform does not accept, so it was not sent. Start signing in again from the Capybara desktop app.",
+      "code_invalid": "This sign-in link is invalid or has expired. Start signing in again from the Capybara app.",
+      "redirect_uri_invalid": "This sign-in request came from an app address this platform does not accept, so it was not sent. Start signing in again from the Capybara app.",
       "unavailable": "This platform cannot sign apps in yet: its public address is not set. Ask your super admin."
     },
     "device_sign_in": {
@@ -482,7 +489,9 @@
     "invitation": {
       "invalid": "This invitation link is invalid or has been revoked.",
       "expired": "This invitation has expired.",
-      "used": "This invitation has already been used."
+      "used": "This invitation has already been used.",
+      "link_unavailable": "There is no invitation link to show: it was shown already, has expired, the invitation is no longer pending, or it was not created by a call you approved.",
+      "create_needs_approval": "Invite from a conversation where you approve the call yourself, or on the Members page."
     },
     "marketplace": {
       "not_found": "The marketplace does not exist.",
@@ -582,6 +591,10 @@
       "too_large": "The file is too large: at most 1 MiB (an SVG favicon at most 128 KiB).",
       "storage_unavailable": "Object storage is unavailable, so the icon cannot be saved. Try again later.",
       "not_found": "This icon has not been uploaded."
+    },
+    "push": {
+      "provider_unavailable": "This app can't receive notifications from this platform: no enabled push channel covers it. Ask your super admin.",
+      "registration_not_found": "This device no longer receives notifications."
     }
   },
   "agents": {
@@ -1416,7 +1429,6 @@
   },
   "chat": {
     "waitingFor": {
-      "someone": "another member",
       "role": {
         "guest": "a guest",
         "member": "an org member",
@@ -1432,7 +1444,6 @@
     "stopped": "Stopped",
     "running": "Replying…",
     "you": "You",
-    "anotherMember": "another member",
     "assistant": "Agent",
     "failed": "This reply failed ({code}).",
     "empty": "Send a message to start the conversation.",
@@ -1502,6 +1513,12 @@
     },
     "stats": "Turn {n} · {elapsed} elapsed",
     "contextPct": "Context {n}%",
+    "handoff": {
+      "open": "Open",
+      "connect": "Connect",
+      "linkBody": "This waits for you on its page.",
+      "connectBody": "You authorize in your browser; only your own account is connected."
+    },
     "deviceCode": {
       "title": "Sign in to GitHub",
       "body": "Open GitHub and enter this one-time code to finish signing in. The sign-in runs inside this device; the token never leaves it.",
@@ -2035,9 +2052,7 @@
     "admin": "Admin console",
     "plugins": "Plugins",
     "extensions": "Extensions",
-    "schedules": "Scheduled tasks",
-    "chats": "Conversations",
-    "me": "Me"
+    "schedules": "Scheduled tasks"
   },
   "conversations": {
     "title": "Conversations",
@@ -2050,15 +2065,23 @@
     "running": "Running",
     "waiting": "Waiting for you"
   },
-  "me": {
-    "title": "Me",
-    "adminTitle": "Admin console",
-    "back": "Back to workspace"
+  "desktopOnly": {
+    "title": "Manage this on a computer",
+    "body": "Plugins, extensions, channels, organization settings and the admin console are managed on a computer.",
+    "copy": "Copy link",
+    "copied": "Link copied",
+    "back": "Back to chat"
+  },
+  "drawer": {
+    "more": "Skills, connectors, devices…",
+    "switchOrg": "Switch organization",
+    "allConversations": "All conversations"
   },
   "shell": {
     "noOrg": "Select organization",
     "createOrg": "Create organization…",
     "accountSettings": "Personal settings",
+    "switchProfile": "Switch platform",
     "noCurrentOrg": "There is no current organization to act on."
   },
   "notFound": {
@@ -2081,6 +2104,15 @@
       "show": "Show the initial password",
       "label": "Initial password of {login}",
       "hint": "The platform generated it for the new account. It is shown only once; the account must change it at first sign-in."
+    },
+    "invitationLink": {
+      "show": "Show the invitation link",
+      "label": "Invitation link",
+      "hint": "Send it to the person you are inviting. It is shown only once; the invitation itself stays on the Members page."
+    },
+    "person": {
+      "fillOnWeb": "Open the conversation to fill in {n, plural, one {# field} other {# fields}}",
+      "leaked": "This value appeared in the conversation, so it counts as leaked. Create a new one at the provider and enter that."
     },
     "title": "Approval required",
     "waiting": "Waiting",
@@ -2158,12 +2190,15 @@
       "write": "Read and write",
       "read": "Read only",
       "hosts": "Network hosts",
-      "target": "Target file (for reference)"
+      "target": "Target file (for reference)",
+      "hint": "This call only; each directory includes everything inside it"
     },
     "escalation": {
       "intro": "Approving runs this command outside the sandbox for this call only, with full access to this device's files and network. The next call runs in the sandbox again.",
       "cwd": "Runs in",
-      "justification": "Why the agent asks",
+      "justification": "Agent's reason",
+      "hint": "This call only; the next one runs in the sandbox again",
+      "decided": "outside the sandbox",
       "background": "Approving starts a background process that keeps running outside the sandbox until it exits or is stopped.",
       "backgroundLimit": "Approving starts a background process that keeps running outside the sandbox until it exits or is stopped, at most {minutes, plural, one {# minute} other {# minutes}}."
     },
@@ -2676,12 +2711,14 @@
       "models": "Models",
       "members": "Members",
       "tokens": "Service tokens",
+      "profile": "Profile",
       "preferences": "Preferences",
       "appearance": "Appearance",
       "schedules": "Scheduled tasks",
       "audit": "Audit log",
       "shares": "Shares",
-      "myShares": "My shares"
+      "myShares": "My shares",
+      "notifications": "Notifications"
     },
     "empty": "No connector needs your own credential.",
     "emptyHint": "Connectors that use personal credentials show up here.",
@@ -3033,6 +3070,7 @@
   },
   "setupGuide": {
     "title": "Setup guide",
+    "deploymentHint": "Save the deployment config above first; the checks below then verify it on this server.",
     "hint": "Create the app on the platform with the plugin's instructions; the text below is filled in for this channel, ready to copy and paste.",
     "modeLabel": "Inbound mode",
     "modes": {
@@ -3157,7 +3195,8 @@
         "sandbox": "runs arbitrary commands in the deployment",
         "object_store": "holds every attachment and extension package",
         "context": "adds text to the model's context in conversations of organizations that enable it",
-        "migration_warnings": "the migration warnings changed (see Migration warnings below); approve again"
+        "migration_warnings": "the migration warnings changed (see Migration warnings below); approve again",
+        "push_provider": "delivers push notifications with the platform's credentials"
       },
       "warnings": "Migration warnings",
       "warningsHint": "Extension migrations should only expand: old and new versions run side by side on different replicas, so destructive migrations can break the old version or lose data.",
@@ -3310,15 +3349,30 @@
     "goHome": "Go to Capybara"
   },
   "appAuth": {
-    "title": "Sign in to {platform} with Capybara Desktop on {machine}?",
-    "subtitle": "Only continue if you just started this from the Capybara desktop app.",
+    "clients": {
+      "desktop": {
+        "title": "Sign in to {platform} with Capybara Desktop on {machine}?",
+        "subtitle": "Only continue if you just started this from the Capybara desktop app.",
+        "machine": "Computer",
+        "invalidHint": "This link is incomplete. Start signing in again from the Capybara desktop app.",
+        "redirectUriInvalid": "This sign-in request came from an app address this platform does not accept, so it was not sent. Start signing in again from the Capybara desktop app.",
+        "codeInvalid": "This sign-in link is invalid or has expired. Start signing in again from the Capybara desktop app."
+      },
+      "mobile": {
+        "title": "Sign in to {platform} with Capybara Mobile on {machine}?",
+        "subtitle": "Only continue if you just started this from the Capybara mobile app.",
+        "machine": "Device",
+        "invalidHint": "This link is incomplete. Start signing in again from the Capybara mobile app.",
+        "redirectUriInvalid": "This sign-in request came from an app address this platform does not accept, so it was not sent. Start signing in again from the Capybara mobile app.",
+        "codeInvalid": "This sign-in link is invalid or has expired. Start signing in again from the Capybara mobile app."
+      }
+    },
     "account": "Account",
-    "machine": "Computer",
     "appVersion": "App version",
     "confirm": "Sign in",
     "cancel": "Cancel",
     "invalidTitle": "Cannot sign in",
-    "invalidHint": "This link is incomplete. Start signing in again from the Capybara desktop app.",
+    "invalidHint": "This link is incomplete. Start signing in again from the Capybara app.",
     "doneTitle": "Done",
     "doneHint": "Returned to Capybara. You can close this page."
   },
@@ -4023,7 +4077,8 @@
           "scope_sync_failed": "Scope sync failures",
           "extension_disabled": "Extensions disabled",
           "ownership_transferred": "Ownership transfers",
-          "org_upload_pending": "Org uploads to confirm"
+          "org_upload_pending": "Org uploads to confirm",
+          "push_auth_failed": "Push credentials rejected"
         },
         "reasons": {
           "missingConfig": "Deployment config missing",
@@ -4108,7 +4163,8 @@
           "suggestions": "Prompt suggestions",
           "usageReport": "Usage reports",
           "evals": "Evals",
-          "lifecycle": "Lifecycle notices"
+          "lifecycle": "Lifecycle notices",
+          "pushDeliver": "Push delivery"
         },
         "connections": {
           "channels": "Channels",
@@ -4238,6 +4294,12 @@
         "dismiss": "Got it",
         "view": "View",
         "dismissed": "Dismissed."
+      },
+      "pushAuth": {
+        "label": "Push credentials rejected",
+        "title": "Push credentials rejected: {plugin}",
+        "plugin": "Extension",
+        "hint": "The push service refused the credentials of this extension, so no one receives its notifications. Check them in the extension's deployment config; the notice returns if they are refused again."
       }
     },
     "audit": {
@@ -4259,6 +4321,7 @@
       "actions": {
         "accountCreated": "Created an account",
         "accountUpdated": "Updated an account",
+        "accountProfileUpdated": "Edited their profile",
         "authAppAuthorized": "Allowed an app to sign in",
         "authAppSignedIn": "An app signed in",
         "platformIconUpdated": "Changed the platform icon",
@@ -4386,6 +4449,7 @@
         "orgFilePreviewersUpdated": "Changed the file previewers",
         "orgInvitationAccepted": "Accepted an invitation",
         "orgInvitationCreated": "Invited a member",
+        "orgInvitationLinkShown": "Viewed an invitation link",
         "orgInvitationRevoked": "Revoked an invitation",
         "orgMemberAdded": "Added a member",
         "orgMemberLeft": "Left the organization",
@@ -4428,7 +4492,9 @@
         "subagentRefused": "Refused a sub-agent",
         "toolCalled": "Called a tool",
         "toolGrantRevoked": "Revoked a remembered approval",
-        "trajectoryViewed": "Viewed a trajectory"
+        "trajectoryViewed": "Viewed a trajectory",
+        "pushRegistered": "Turned on notifications on a device",
+        "pushUnregistered": "Removed a notification device"
       }
     },
     "accounts": {
@@ -5520,7 +5586,7 @@
           "import": "Asks to install",
           "enable": "Asks to enable"
         },
-        "requester": "By {name}",
+        "requester": "Requested by",
         "approve": "Approve",
         "reject": "Reject",
         "approved": "Approved",
@@ -6463,6 +6529,31 @@
     "listUnavailable": "The platform components' state in this organization could not be read: the ones that are off and their switches are not shown.",
     "retry": "Retry"
   },
+  "people": {
+    "you": "You",
+    "departed": "Former member"
+  },
+  "profile": {
+    "title": "Profile",
+    "section": "Profile",
+    "description": "How you appear to the other people in your organizations.",
+    "avatarLabel": "Avatar",
+    "upload": "Upload avatar",
+    "replace": "Change avatar",
+    "remove": "Remove",
+    "avatarHint": "A png, jpg or webp image, cropped to a square.",
+    "fromSourceHint": "Your {source} picture is in use. Upload an image to replace it.",
+    "uploadOff": "Uploading needs object storage, which this deployment has not configured.",
+    "uploadType": "Choose a png, jpg or webp image.",
+    "uploadFailed": "The image could not be read. Pick a png, jpg or webp file.",
+    "avatarSaved": "Avatar saved.",
+    "avatarRemoved": "Avatar removed.",
+    "nameLabel": "Name",
+    "nameRequired": "Enter a name.",
+    "nameTooLong": "At most {max} characters.",
+    "save": "Save",
+    "saved": "Profile saved."
+  },
   "preferences": {
     "title": "Preferences",
     "save": "Save",
@@ -6705,8 +6796,7 @@
       "missingTitle": "Refused in the latest runs",
       "addMissing": "Add to approved tools",
       "connect": "Connect {slug}",
-      "readOnly": "This task belongs to {name}. Organization admins can pause, resume or delete it, not change it.",
-      "creatorUnknown": "another member",
+      "readOnlyOwner": "This task belongs to {name}. Organization admins can pause, resume or delete it, not change it.",
       "chatAgentFixed": "A chat task uses the agent of the chat's connection.",
       "minInterval": "This organization runs a task at most once every {n} minutes.",
       "expiresHelp": "The task ends after this day. Leave empty to keep it running, unless the organization sets a default end; then it ends that many days from now.",
@@ -6922,7 +7012,6 @@
       "missing_grants": "Its latest run was refused tools it isn't approved for",
       "failed": "Its latest run failed",
       "admin": "Paused by {name}",
-      "adminUnknown": "Paused by an organization admin",
       "failures": "Paused after repeated failures",
       "creator_inactive": "Paused: you are no longer active in the organization",
       "agent_gone": "Paused: its agent is gone",
@@ -7034,6 +7123,44 @@
       "stateLive": "Active",
       "state": "State",
       "actions": "Actions"
+    }
+  },
+  "notifications": {
+    "title": "Notifications",
+    "description": "Where notifications reach you, and what they tell you about. They carry no message text.",
+    "devices": {
+      "title": "Devices",
+      "description": "Devices that receive push notifications for your account.",
+      "device": "Device",
+      "thisDevice": "This device",
+      "lastSeen": "Last seen",
+      "actions": "Actions",
+      "remove": "Remove",
+      "removed": "Device removed.",
+      "empty": "No device receives notifications yet",
+      "enable": "Turn on for this device",
+      "denied": "Notifications are turned off for this app in the system settings."
+    },
+    "categories": {
+      "title": "What to notify",
+      "description": "Each switch applies to all your organizations.",
+      "waiting": "Waiting for you",
+      "waitingHint": "An approval, a question or a connection an agent needs from you.",
+      "replies": "Agent replies",
+      "repliesHint": "A conversation run finished or failed.",
+      "tasks": "Task status",
+      "tasksHint": "A background task or a sub-agent finished.",
+      "schedules": "Scheduled tasks",
+      "schedulesHint": "One of your scheduled tasks ran or failed."
+    },
+    "deviceName": {
+      "ios": "iOS device",
+      "android": "Android device"
+    },
+    "prompt": {
+      "text": "Turn on notifications to hear when something is waiting for you",
+      "enable": "Turn on",
+      "later": "Not now"
     }
   }
 }

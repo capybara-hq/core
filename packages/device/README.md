@@ -289,6 +289,12 @@ program only when it exits non-zero: the macOS agent uses `KeepAlive { Successfu
 most every 30 s (`ThrottleInterval`); systemd `Restart=on-failure`, after 5 s. Exit 0 is a deliberate
 stop and stays stopped.
 
+Every line the program writes while it runs as `start` (so everything in `service.log`) begins with a
+local-time ISO-8601 timestamp with offset, e.g.
+`2026-11-21T12:56:30.913+08:00 capybara-device: serving device <id> (os mode)`; an uncaught
+exception is logged the same way, stack included, and the program exits 1. The interactive commands
+(`status`, `login`, `ceiling`, `policy`, ...) print plain lines.
+
 `service start|stop|restart` control it without knowing launchctl or systemctl. `stop` unloads the
 service (the plist or unit stays) rather than signalling the program; running commands end with
 it, and it reports a failure when the service is still loaded afterwards. `start` and `restart`

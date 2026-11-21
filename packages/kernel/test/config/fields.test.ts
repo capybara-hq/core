@@ -30,6 +30,7 @@ describe("configFields", () => {
       "attachments.readPurgeAfterHours",
       "sharing.external",
       "sharing.maxExpiryDays",
+      "push.previews",
       "subagents.maxDepth",
       "subagents.maxConcurrentPerConversation",
       "subagents.maxDispatchesPerRun",

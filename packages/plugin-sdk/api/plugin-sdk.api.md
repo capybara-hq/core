@@ -521,6 +521,9 @@ export function checkParamValue(schema: ParamSchema, v: unknown): string | undef
 export function checkPng(bytes: Uint8Array): string | undefined;
 
 // @public
+export function checkPushResults(registrations: readonly PushTarget[], results: unknown): string | null;
+
+// @public
 export function checkThemeReadability(_scheme: ThemeScheme, merged: MergedScheme, rules?: {
     contrast: readonly (readonly [string, string, number, string?])[];
     separation: readonly (readonly [string, string, number])[];
@@ -528,6 +531,17 @@ export function checkThemeReadability(_scheme: ThemeScheme, merged: MergedScheme
 
 // @public
 export function checkWoff2(bytes: Uint8Array): string | undefined;
+
+// @public
+export interface ChromeCapabilityV1 {
+    ready?(): Promise<void>;
+    setAppearance(input: {
+        scheme: "light" | "dark";
+        background: string;
+        tokens?: ShellChromeTokens;
+        singleScheme?: boolean;
+    }): Promise<void>;
+}
 
 // @public
 export function classifyAddress(ip: string): AddressClass;
@@ -1842,6 +1856,14 @@ export interface GitSource {
 export const GitSourceSchema: z.ZodType<GitSource>;
 
 // @public
+export type HapticKind = "selection" | "light" | "success" | "warning";
+
+// @public
+export interface HapticsCapabilityV1 {
+    impact(kind: HapticKind): Promise<void>;
+}
+
+// @public
 export function hasControlChars(s: string): boolean;
 
 // @public
@@ -2278,6 +2300,7 @@ export interface LegacyDeviceHello {
     mode: "os" | "docker";
     os: "darwin" | "linux";
     policy?: DeviceLocalPolicySummary;
+    programRunId?: string;
     programVersion: string;
     protocol: number;
     recentOps?: DevicePolicyOpReport[];
@@ -2487,6 +2510,34 @@ type MediaSource_2 = {
 export { MediaSource_2 as MediaSource }
 
 // @public
+export const MENU_ITEM_ID: RegExp;
+
+// @public
+export interface MenuCapabilityV1 {
+    show(input: MenuInputV1): Promise<string | null>;
+}
+
+// @public
+export interface MenuInputV1 {
+    anchor?: {
+        x: number;
+        y: number;
+        width: number;
+        height: number;
+    };
+    items: MenuItemV1[];
+    title?: string;
+}
+
+// @public
+export interface MenuItemV1 {
+    destructive?: boolean;
+    disabled?: boolean;
+    id: string;
+    label: string;
+}
+
+// @public
 export type MergedScheme = {
     color: Record<string, string>;
     shadow: Record<string, string>;
@@ -2498,6 +2549,18 @@ export function mergeThemeSchemes(theme: Pick<ThemeFile, "schemes">): Partial<Re
 
 // @public
 export function missingInboundModeFields(schema: JsonSchema, mode: ChannelInboundMode, has: (field: string) => boolean): string[];
+
+// @public
+export const MOBILE_SHELL_LIMITS: {
+    readonly menuItems: 12;
+    readonly menuLabel: 64;
+    readonly menuTitle: 128;
+    readonly shareTitle: 256;
+    readonly shareText: 4000;
+    readonly url: 2048;
+    readonly navLabel: 32;
+    readonly navCount: 9999;
+};
 
 // @public
 export const MODEL_PROVIDER_EXTENSION_POINT_V2 = "model-provider@2";
@@ -2680,6 +2743,43 @@ export interface ModelUsage {
     inputTokens: number;
     outputImages?: number;
     outputTokens: number;
+}
+
+// @public
+export const NAV_SECTION_ORDER: readonly NavSectionId[];
+
+// @public
+export interface NavBadgeV1 {
+    count?: number;
+    countMore?: boolean;
+}
+
+// @public
+export interface NavCapabilityV1 {
+    onMenu(listener: () => void): () => void;
+    onSelect(listener: (id: NavSectionId) => void): () => void;
+    set(state: NavStateV1): Promise<void>;
+}
+
+// @public
+export interface NavItemV1 extends NavBadgeV1 {
+    id: NavSectionId;
+    label: string;
+}
+
+// @public
+export interface NavMenuV1 extends NavBadgeV1 {
+    label: string;
+}
+
+// @public
+export type NavSectionId = "chats" | "inbox" | "agents" | "schedules";
+
+// @public
+export interface NavStateV1 {
+    current: NavSectionId | null;
+    items: NavItemV1[];
+    menu: NavMenuV1 | null;
 }
 
 // @public
@@ -3168,6 +3268,11 @@ export function previewerAccepts(p: Pick<FilePreviewer, "accepts" | "maxBytes">,
 }): boolean;
 
 // @public
+export interface ProfilesCapabilityV1 {
+    show(): Promise<void>;
+}
+
+// @public
 export interface PromptInfo {
     arguments: {
         name: string;
@@ -3187,6 +3292,108 @@ export interface ProviderOpaque {
     data: unknown;
     model: string;
     provider: string;
+}
+
+// @public
+export const PUSH_LIMITS: {
+    readonly titleChars: 100;
+    readonly bodyChars: 240;
+    readonly pathChars: 512;
+    readonly collapseIdChars: 64;
+    readonly tokenChars: 4096;
+    readonly appIdChars: 255;
+    readonly deviceNameChars: 64;
+    readonly sendTimeoutMs: 15000;
+    readonly registrationsPerAccount: 20;
+};
+
+// @public
+export const PUSH_PROVIDER_EXTENSION_POINT = "push-provider@1";
+
+// @public
+export interface PushCapabilityV1 {
+    register(): Promise<PushRegistration>;
+    registered(id: string): Promise<void>;
+    status(): Promise<PushStatus>;
+    unregister(): Promise<void>;
+}
+
+// @public
+export class PushError extends Error {
+    constructor(message: string, opts: {
+        kind: PushErrorKind;
+        retryAfterMs?: number;
+    });
+    readonly kind: PushErrorKind;
+    readonly retryAfterMs?: number;
+}
+
+// @public
+export type PushErrorKind = "auth" | "rate_limited" | "transient";
+
+// @public
+export interface PushMessage {
+    badge?: number;
+    body: string;
+    collapseId: string;
+    origin: string;
+    path: string;
+    threadId: string;
+    title: string;
+}
+
+// @public
+export type PushPermission = "granted" | "denied" | "prompt";
+
+// @public
+export type PushPlatform = "ios" | "android";
+
+// @public
+export interface PushProvider {
+    apps(): readonly string[];
+    send(args: {
+        registrations: readonly PushTarget[];
+        message: PushMessage;
+        signal: AbortSignal;
+    }): Promise<PushResult[]>;
+}
+
+// @public
+export interface PushRegistration {
+    appId: string;
+    platform: PushPlatform;
+    provider: string;
+    token: string;
+}
+
+// @public
+export type PushResult = {
+    registrationId: string;
+    status: "delivered";
+} | {
+    registrationId: string;
+    status: "unregistered";
+} | {
+    registrationId: string;
+    status: "failed";
+    kind: PushErrorKind;
+    message: string;
+    retryAfterMs?: number;
+};
+
+// @public
+export interface PushStatus {
+    permission: PushPermission;
+    registrationId: string | null;
+    tokenChanged: boolean;
+}
+
+// @public
+export interface PushTarget {
+    appId: string;
+    id: string;
+    platform: PushPlatform;
+    token: string;
 }
 
 // @public
@@ -3736,7 +3943,7 @@ export function sanitizeThemeSvg(bytes: Uint8Array): {
 };
 
 // @public
-export const SDK_VERSION = "0.1.0-rc.41";
+export const SDK_VERSION = "0.1.0-rc.47";
 
 // @public
 export function secret<T extends z.ZodTypeAny>(schema: T): T;
@@ -3776,14 +3983,14 @@ export const SETUP_GUIDE_LIMITS: {
 export const SETUP_GUIDE_PLACE_INFO: Readonly<Record<SetupGuidePlace, SetupGuidePlaceInfo>>;
 
 // @public
-export const SETUP_GUIDE_PLACES: readonly ["channel-connection", "connector-template"];
+export const SETUP_GUIDE_PLACES: readonly ["channel-connection", "connector-template", "extension-deployment"];
 
 // @public
 export interface SetupCheckArgs {
     readonly config: unknown;
     readonly locale: "en" | "zh";
     readonly mode: string | null;
-    readonly orgId: string;
+    readonly orgId: string | null;
     readonly signal: AbortSignal;
     readonly target: SetupCheckTarget;
 }
@@ -3815,6 +4022,10 @@ export type SetupCheckTarget = {
     readonly templateId: string;
     readonly clientId: string | null;
     readonly accountId: string | null;
+} | {
+    readonly kind: "extension-deployment";
+    readonly plugin: string;
+    readonly config: unknown;
 };
 
 // @public
@@ -3912,6 +4123,11 @@ export type SetupGuideVariableType = "url" | "text" | "token";
 export const SHA512_INTEGRITY_RE: RegExp;
 
 // @public
+export interface ShareCapabilityV1 {
+    share(input: ShareInputV1): Promise<void>;
+}
+
+// @public
 export interface ShareEmbedClaims extends EmbedClaimsBase {
     accountId?: undefined;
     agentId?: undefined;
@@ -3925,6 +4141,13 @@ export interface ShareEmbedClaims extends EmbedClaimsBase {
 }
 
 // @public
+export interface ShareInputV1 {
+    text?: string;
+    title?: string;
+    url?: string;
+}
+
+// @public
 export const SHELL_CAPABILITIES: readonly {
     key: string;
     owner: string;
@@ -3932,14 +4155,32 @@ export const SHELL_CAPABILITIES: readonly {
 
 // @public
 export const SHELL_CAPABILITY_KEYS: {
+    readonly chrome: "chrome@1";
     readonly device: "device@1";
     readonly notify: "notify@1";
     readonly openExternal: "openExternal@1";
     readonly signIn: "signIn@1";
+    readonly haptics: "haptics@1";
+    readonly share: "share@1";
+    readonly menu: "menu@1";
+    readonly nav: "nav@1";
+    readonly profiles: "profiles@1";
+    readonly push: "push@1";
 };
 
 // @public
 export type ShellCallError = "busy" | "no_activation" | "cancelled" | "failed";
+
+// @public
+export interface ShellChromeTokens {
+    accent: string;
+    bg: string;
+    ink: string;
+    line: string;
+    muted: string;
+    onAccent: string;
+    panel: string;
+}
 
 // @public
 export interface SignInCapabilityV1 {
@@ -4067,8 +4308,8 @@ export const THEME_LIMITS: {
 
 // @public
 export const THEME_OVERRIDABLE: {
-    readonly color: readonly ["bg", "panel", "panel-2", "sidebar", "sidebar-active", "raised", "selected", "hover", "line-soft", "line", "line-strong", "line-card", "scroll-thumb", "ink", "muted", "faint", "disabled", "accent", "accent-hover", "accent-press", "on-accent", "focus-ring", "ok", "fail", "warn", "scrim", "lightbox", "diff-add", "diff-del"];
-    readonly shadow: readonly ["shadow-1", "shadow-2", "shadow-sheet", "shadow-float"];
+    readonly color: readonly ["bg", "panel", "panel-2", "sidebar", "sidebar-active", "raised", "selected", "hover", "line-soft", "line", "line-strong", "line-card", "scroll-thumb", "ink", "muted", "faint", "disabled", "accent", "accent-hover", "accent-press", "on-accent", "focus-ring", "ok", "fail", "warn", "scrim", "lightbox", "float-ground", "float-line", "diff-add", "diff-del"];
+    readonly shadow: readonly ["shadow-1", "shadow-2", "shadow-sheet", "shadow-float", "shadow-float-touch"];
     readonly radius: readonly ["sm", "md", "bubble"];
 };
 
@@ -4197,6 +4438,14 @@ export const THEME_TOKENS: {
         readonly lightbox: {
             readonly dark: "rgba(0,0,0,.88)";
             readonly light: "rgba(10,10,10,.80)";
+        };
+        readonly "float-ground": {
+            readonly dark: "rgba(28,28,26,0.85)";
+            readonly light: "rgba(255,255,255,0.85)";
+        };
+        readonly "float-line": {
+            readonly dark: "rgba(255,255,255,0.08)";
+            readonly light: "rgba(26,26,24,0.08)";
         };
         readonly "diff-add": {
             readonly dark: "rgba(63,212,131,.08)";
@@ -4339,6 +4588,10 @@ export const THEME_TOKENS: {
         readonly "shadow-float": {
             readonly dark: "0 8px 24px rgba(0,0,0,.45)";
             readonly light: "0 8px 24px rgba(26,26,24,.08)";
+        };
+        readonly "shadow-float-touch": {
+            readonly dark: "0 6px 20px rgba(0,0,0,.35)";
+            readonly light: "0 6px 20px rgba(26,26,24,.10)";
         };
     };
     readonly radius: {
@@ -4878,6 +5131,9 @@ export function validatePermissions(plugin: string, p: unknown): string[];
 export function validatePluginPackageJsonFor(pkg: unknown, manifest: PluginManifest, hostSdkVersion: string, opts?: {
     hostZodVersion?: string;
 }): string[];
+
+// @public
+export function validatePushMessage(m: PushMessage): string | null;
 
 // @public
 export function validateSandboxPath(p: string, roots?: SandboxRoots): string[];

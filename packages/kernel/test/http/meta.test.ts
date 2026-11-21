@@ -1,12 +1,19 @@
 import { DEVICE_PROTOCOL_VERSION } from "@capybara-hq/plugin-sdk";
-import { startTestPostgres, startTestRedis, type TestContainer } from "@capybara-hq/testing";
+import {
+  fakeExtensionEntry,
+  startTestPostgres,
+  startTestRedis,
+  type TestContainer,
+} from "@capybara-hq/testing";
 import type { NestFastifyApplication } from "@nestjs/platform-fastify";
-import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
+import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 import { closeKernelApp, createKernelApp } from "../../src/app.js";
 import { KernelConfigSchema } from "../../src/config/schema.js";
+import { ExtensionHost } from "../../src/extensions/host.js";
 import { KernelConfigService } from "../../src/infra/config/kernel-config.service.js";
 import { KernelDb } from "../../src/infra/database/kernel-db.js";
 import { createLogger } from "../../src/log.js";
+import { PushProviderHost } from "../../src/push/provider-host.js";
 
 let pgc: TestContainer;
 let rd: TestContainer;
@@ -18,6 +25,9 @@ const rawConfig = () => ({
   masterKey: Buffer.alloc(32, 7).toString("base64"),
   marketplaces: { official: { enabled: false } },
   http: { port: 0 },
+  extensions: [fakeExtensionEntry("fake-push")],
+  extensionPermissions: { autoApprove: true },
+  extensionConfig: { "fake-push": { apps: ["com.example.b", "com.example.a"] } },
 });
 
 beforeAll(async () => {
@@ -33,6 +43,8 @@ afterAll(async () => {
 });
 
 describe("GET /api/v1/meta", () => {
+  afterEach(() => vi.restoreAllMocks());
+
   it("answers without a session, uncached", async () => {
     const res = await app.inject({ method: "GET", url: "/api/v1/meta" });
     expect(res.statusCode).toBe(200);
@@ -43,7 +55,8 @@ describe("GET /api/v1/meta", () => {
       icons: { app: null, maskable: null, favicon: null },
       // device protocol 4 only: a protocol 3 program is refused (426)
       protocols: { device: { min: 4, max: 4 } },
-      features: { localDevices: true, appSignIn: false },
+      features: { localDevices: true, appSignIn: false, push: [] },
+      appRedirectUris: [],
     });
   });
 
@@ -78,6 +91,24 @@ describe("GET /api/v1/meta", () => {
     expect(off.features.appSignIn).toBe(false);
   });
 
+  it("lists auth.appRedirectUris only while app sign-in is available", async () => {
+    const config = app.get(KernelConfigService);
+    const real = config.get();
+    const uris = ["capybara://auth/callback", "https://app.example.com/callback"];
+    const spy = vi.spyOn(config, "get").mockReturnValue({
+      ...real,
+      http: { ...real.http, publicUrl: "https://cap.example.com" },
+      auth: { ...real.auth, appRedirectUris: uris },
+    });
+    const on = (await app.inject({ method: "GET", url: "/api/v1/meta" })).json();
+    spy.mockRestore();
+    expect(on.appRedirectUris).toEqual(uris);
+    // without http.publicUrl the configured list stays hidden: there is no app sign-in
+    expect(real.auth.appRedirectUris).toEqual(["capybara://auth/callback"]);
+    const off = (await app.inject({ method: "GET", url: "/api/v1/meta" })).json();
+    expect(off.appRedirectUris).toEqual([]);
+  });
+
   it("returns each platform icon URL, null for the default; icon is icons.app", async () => {
     const db = app.get(KernelDb);
     const get = async () => (await app.inject({ method: "GET", url: "/api/v1/meta" })).json();
@@ -101,5 +132,27 @@ describe("GET /api/v1/meta", () => {
     expect((await get()).icons.maskable).toBeNull();
     expect((await get()).icons.app).not.toBeNull();
     await db.deleteFrom("platform_icons").execute();
+  });
+
+  // Last: unloads the extension the cases above read.
+  it("lists push coverage from the loaded provider with http.publicUrl, until it is unloaded", async () => {
+    const config = app.get(KernelConfigService);
+    const real = config.get();
+    vi.spyOn(config, "get").mockReturnValue({
+      ...real,
+      http: { ...real.http, publicUrl: "https://cap.example.com" },
+    });
+    const get = async () => (await app.inject({ method: "GET", url: "/api/v1/meta" })).json();
+    expect((await get()).features.push).toEqual([
+      { appId: "com.example.a", providers: ["fake-push"] },
+      { appId: "com.example.b", providers: ["fake-push"] },
+    ]);
+    // the tracked proxy keeps apps() synchronous
+    expect(app.get(PushProviderHost).provider("fake-push")?.apps()).toEqual([
+      "com.example.b",
+      "com.example.a",
+    ]);
+    await app.get(ExtensionHost).unload("fake-push");
+    expect((await get()).features.push).toEqual([]);
   });
 });

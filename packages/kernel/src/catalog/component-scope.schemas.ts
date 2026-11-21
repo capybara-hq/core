@@ -105,6 +105,8 @@ export const COMPONENT_SCOPE_ROUTES: readonly RouteSchemas[] = [
     params: ComponentParams,
     body: ComponentShownSchema,
   },
+  // the skill package is the raw body (no schema)
+  { route: "POST /api/v1/admin/components/skill/:id/versions", params: ComponentIdSchema },
   {
     route: "POST /api/v1/admin/components/agent_template/:id/versions",
     params: ComponentIdSchema,

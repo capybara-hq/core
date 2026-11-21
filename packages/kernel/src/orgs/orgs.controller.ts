@@ -10,13 +10,19 @@ import {
   SessionOnly,
 } from "../identity/principal.js";
 import { createZodDto } from "../infra/validation/create-zod-dto.js";
-import { ZBody } from "../infra/validation/zod-params.js";
+import { ZBody, ZParam } from "../infra/validation/zod-params.js";
 import { type Member, MembersService } from "./members.service.js";
 import { OrgNetworkAllowances } from "./network-allowances.service.js";
 import { CurrentOrg, OrgAction, type OrgContext } from "./org.guard.js";
-import { type NetworkAllowanceView, networkAllowanceView, OrgUpdateBody } from "./orgs.schemas.js";
+import {
+  MemberParams,
+  MemberRoleBody,
+  type NetworkAllowanceView,
+  networkAllowanceView,
+  OrgUpdateBody,
+} from "./orgs.schemas.js";
 import { type Org, OrgsService } from "./orgs.service.js";
-import { ORG_ROLES, type OrgRole } from "./roles.js";
+import type { OrgRole } from "./roles.js";
 
 const CreateSchema = z.object({
   name: z.string().min(1).max(100),
@@ -32,8 +38,8 @@ const ServiceTokenSchema = z.object({
   expiresAt: FutureIsoDate.optional(),
 });
 class ServiceTokenBody extends createZodDto(ServiceTokenSchema, "ServiceTokenBody") {}
-const RoleSchema = z.object({ role: z.enum(ORG_ROLES) });
-class MemberRoleBody extends createZodDto(RoleSchema, "MemberRoleBody") {}
+class MemberRoleBodyDto extends createZodDto(MemberRoleBody, "MemberRoleBody") {}
+class MemberParamsDto extends createZodDto(MemberParams, "MemberParams") {}
 
 /** 组织与成员（`/api/v1/orgs`）。组织级路由由 `@OrgAction` + OrgGuard 每请求实时鉴权。 */
 @Controller("api/v1/orgs")
@@ -139,8 +145,8 @@ export class OrgsController {
   async changeRole(
     @CurrentPrincipal() principal: Principal,
     @CurrentOrg() org: OrgContext,
-    @Param("accountId") accountId: string,
-    @ZBody(MemberRoleBody) body: z.infer<typeof RoleSchema>,
+    @ZParam(MemberParamsDto) { accountId }: z.infer<typeof MemberParams>,
+    @ZBody(MemberRoleBodyDto) body: z.infer<typeof MemberRoleBody>,
   ): Promise<{ accountId: string; role: OrgRole }> {
     const p = requireUser(principal);
     await this.members.changeRole(org.orgId, accountId, body.role, p.account.id, patTokenId(p));
@@ -153,7 +159,7 @@ export class OrgsController {
   async removeMember(
     @CurrentPrincipal() principal: Principal,
     @CurrentOrg() org: OrgContext,
-    @Param("accountId") accountId: string,
+    @ZParam(MemberParamsDto) { accountId }: z.infer<typeof MemberParams>,
   ): Promise<void> {
     const p = requireUser(principal);
     await this.members.remove(org.orgId, accountId, p.account.id, patTokenId(p));

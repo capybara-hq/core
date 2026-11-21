@@ -85,6 +85,7 @@ const EXPECTED: Record<FakeExtensionName, { provides: string[]; requires?: strin
   "fake-web-2": { provides: ["web-search@1", "web-fetch@1"] },
   "fake-context": { provides: ["context@1"] },
   "fake-config-form": { provides: [] },
+  "fake-push": { provides: ["push-provider@1"] },
   "fake-client": { provides: [] },
   "fake-client-broken": { provides: [] },
 };
@@ -1166,7 +1167,8 @@ describe("core fixtures", () => {
         } else if (/\.ts$/.test(e.name)) {
           const text = await readFile(full, "utf8");
           // a setup check's `place` (setup guides v2) names a guide place, not a UI place
-          const uiPlace = /\bplace:\s*"(?!channel-connection"|connector-template")|"place"\s*:/;
+          const uiPlace =
+            /\bplace:\s*"(?!channel-connection"|connector-template"|extension-deployment")|"place"\s*:/;
           if (uiPlace.test(text)) offenders.push(full);
         }
       }

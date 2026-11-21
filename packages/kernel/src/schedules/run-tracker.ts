@@ -5,6 +5,7 @@ import { KernelConfigService } from "../infra/config/kernel-config.service.js";
 import { KernelDb } from "../infra/database/kernel-db.js";
 import { TransactionHost } from "../infra/database/transaction-host.js";
 import { Transactional } from "../infra/database/transactional.decorator.js";
+import { PushOwed, PushOwedModule } from "../push/push-owed.js";
 import { readScheduleSettings } from "./effective-settings.js";
 import { pauseTaskIn } from "./pause.js";
 import type { TaskRun } from "./types.js";
@@ -45,6 +46,8 @@ export class ScheduledTaskRunTracker {
     @Inject(KernelDb) private readonly kdb: KernelDb,
     @Inject(TransactionHost) readonly txHost: TransactionHost,
     @Inject(KernelConfigService) private readonly config: Pick<KernelConfigService, "get">,
+    /** Owes the task owner's push (`schedules`) with every settle. */
+    @Inject(PushOwed) private readonly push: Pick<PushOwed, "oweScheduleRun">,
   ) {}
 
   private get db(): KernelSchemaDb {
@@ -214,7 +217,10 @@ export class ScheduledTaskRunTracker {
     await this.settle(tr, "failed", error);
   }
 
-  /** Writes the task run's end and the task's failure count (non-trial runs). */
+  /**
+   * Writes the task run's end, owes the owner's push (trial runs too) and writes the task's failure
+   * count (non-trial runs).
+   */
   private async settle(tr: TaskRunRow, outcome: RunOutcome, error?: string): Promise<void> {
     const t = this.db;
     const failed = outcome === "failed";
@@ -226,6 +232,7 @@ export class ScheduledTaskRunTracker {
       })
       .where("id", "=", tr.id)
       .execute();
+    await this.push.oweScheduleRun(tr.id, tr.org_id);
     if (tr.trial) return;
     if (!failed) {
       await t
@@ -308,5 +315,9 @@ export async function lockTaskRow(t: KernelSchemaDb, taskId: string): Promise<vo
 }
 
 /** The run tracker alone: the runtime (`RunFinish`) imports it without the schedules service. */
-@Module({ providers: [ScheduledTaskRunTracker], exports: [ScheduledTaskRunTracker] })
+@Module({
+  imports: [PushOwedModule],
+  providers: [ScheduledTaskRunTracker],
+  exports: [ScheduledTaskRunTracker],
+})
 export class ScheduledTaskTrackerModule {}

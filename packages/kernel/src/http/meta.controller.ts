@@ -3,6 +3,7 @@ import { Controller, Get, Header, Inject } from "@nestjs/common";
 import { z } from "zod";
 import { Public } from "../identity/principal.js";
 import { KernelConfigService } from "../infra/config/kernel-config.service.js";
+import { PushProviderHost } from "../push/provider-host.js";
 import type { PlatformIconPurpose } from "../themes/platform-icon.schemas.js";
 import { PlatformIconService } from "../themes/platform-icon.service.js";
 
@@ -18,7 +19,14 @@ export const MetaResponseSchema = z.object({
   protocols: z.object({
     device: z.object({ min: z.number().int(), max: z.number().int() }),
   }),
-  features: z.object({ localDevices: z.boolean(), appSignIn: z.boolean() }),
+  features: z.object({
+    localDevices: z.boolean(),
+    appSignIn: z.boolean(),
+    /** App ids a push provider covers with the providers that do; `[]` without `http.publicUrl`. */
+    push: z.array(z.object({ appId: z.string(), providers: z.array(z.string()) })),
+  }),
+  /** The redirect URIs app sign-in accepts (`auth.appRedirectUris`); [] while appSignIn is off. */
+  appRedirectUris: z.array(z.string()),
 });
 export type MetaResponse = z.infer<typeof MetaResponseSchema>;
 
@@ -28,6 +36,7 @@ export class MetaController {
   constructor(
     @Inject(KernelConfigService) private readonly config: KernelConfigService,
     @Inject(PlatformIconService) private readonly icons: PlatformIconService,
+    @Inject(PushProviderHost) private readonly push: PushProviderHost,
   ) {}
 
   @Public()
@@ -40,6 +49,7 @@ export class MetaController {
       this.iconUrl("maskable"),
       this.iconUrl("favicon"),
     ]);
+    const appSignIn = Boolean(config.http.publicUrl);
     return {
       name: config.platform.name ?? null,
       icon: app,
@@ -48,8 +58,12 @@ export class MetaController {
       features: {
         localDevices: true,
         // The authorize route answers app_auth.unavailable without http.publicUrl.
-        appSignIn: Boolean(config.http.publicUrl),
+        appSignIn,
+        // A push message carries the deployment origin, which needs http.publicUrl.
+        push: config.http.publicUrl ? this.push.coverage() : [],
       },
+      // Not secret: an app that finds its own URI missing says so before opening the browser.
+      appRedirectUris: appSignIn ? [...config.auth.appRedirectUris] : [],
     };
   }
 

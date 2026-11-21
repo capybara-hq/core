@@ -1,34 +1,14 @@
-// Mobile-layout renderers of the reference set (design spec §6.45–§6.48, §6.7 sheet drag states).
+// Mobile-layout renderers of the reference set (design spec §6.47, §6.7 sheet drag states).
 // Loaded before fill.js, which merges them into its RENDER table: window.__CB_EXTRA__(helpers)
 // returns { kind: (opts) => html }. Not product code: it draws the target design from
-// BOTTOM_NAV_FIXTURE, TOP_BAR_FIXTURE, ME_PANEL_FIXTURE, LIST_DETAIL_FIXTURE and SHEET_FIXTURE
+// TOP_BAR_FIXTURE, LIST_DETAIL_FIXTURE and SHEET_FIXTURE
 // (@capybara-hq/design/fixtures). Every size is a token step (reference.css, "Mobile layout").
 window.__CB_EXTRA__ = ({ F, esc, icon, table }) => {
-  const B = F.BOTTOM_NAV_FIXTURE;
   const T = F.TOP_BAR_FIXTURE;
-  const M = F.ME_PANEL_FIXTURE;
   const L = F.LIST_DETAIL_FIXTURE;
   const S = F.SHEET_FIXTURE;
 
-  // ── BottomNav (§6.45) ────────────────────────────────────────────────────
-
-  function bottomNav(o) {
-    const current = o.current ?? "chats";
-    const items = B.items
-      .map((n) => {
-        const count = o.badge && n.count !== undefined ? n.count : undefined;
-        const text = count > B.countMax ? `${B.countMax}+` : count;
-        const label = count !== undefined ? `${n.label}，${text} 项待处理` : n.label;
-        const badge =
-          count !== undefined ? `<span class="r-nav-badge" data-part="item-badge">${text}</span>` : "";
-        const name = o.short ? ` aria-label="${esc(label)}"` : "";
-        return `<a class="r-bn-item" data-part="item" href="#"${name}${n.id === current ? ' aria-current="page"' : ""}><span class="r-badged">${icon(n.icon)}${badge}</span>${o.short ? "" : `<span class="r-bn-label" data-part="item-label">${esc(n.label)}</span>`}</a>`;
-      })
-      .join("");
-    return `<nav class="r-bn" data-part="bottom-nav" aria-label="${esc(B.label)}"${o.short ? ' data-short="true"' : ""}>${items}</nav>`;
-  }
-
-  // ── TopBar (§6.46) ───────────────────────────────────────────────────────
+  // ── TopBar (the sheet stage's page head) ──────────────────────────────
 
   function topBar(o) {
     const pushed = o.pushed === true;
@@ -95,67 +75,23 @@ window.__CB_EXTRA__ = ({ F, esc, icon, table }) => {
     return `<div class="r-actionrow r-ld-actions" data-part="action-row" data-compact>${line(others, "action-secondary")}${line(primary, "action-primary")}</div>`;
   }
 
+  // The floating row's back (§6.56): a round control.prominent button over the page's top.
+  function floatBack() {
+    return `<div class="r-float-row" data-part="floating-bar"><a class="r-float-btn" data-part="float-btn" href="#" aria-label="返回">${icon("chevron-left")}</a></div>`;
+  }
+
   function listDetail(o) {
     if (o.mode === "compact-list") {
-      return `<div class="r-screen" data-part="screen">${topBar({ title: L.listTitle })}<div class="r-ld-scroll">${listRows({})}</div>${bottomNav({ current: "inbox", badge: true })}</div>`;
+      // The chat-first shell (§4.6): the inbox is a pushed page, the floating row leads with back.
+      return `<div class="r-screen" data-part="screen">${floatBack()}<div class="r-ld-scroll">${listRows({})}</div></div>`;
     }
     if (o.mode === "compact-detail") {
-      // The detail is a pushed page: the top bar's back returns to the list, the bottom
-      // navigation is hidden and the decision row is sticky at the bottom.
-      return `<div class="r-screen" data-part="screen">${topBar({ pushed: true, title: L.detail.title })}<div class="r-ld-scroll">${detailBody()}</div>${decisionRow({ compact: true })}</div>`;
+      // The detail is a pushed page: the floating back returns to the list and the decision row
+      // is sticky at the bottom.
+      return `<div class="r-screen" data-part="screen">${floatBack()}<div class="r-ld-scroll">${detailBody()}</div>${decisionRow({ compact: true })}</div>`;
     }
     // two-pane: the list column (320) beside the detail (at least 360)
     return `<div class="r-ld-panes" data-part="list-detail" data-mode="two-pane"><div class="r-ld-listcol" data-part="list-pane">${listRows({ current: "ib1" })}</div><div class="r-ld-detailcol" data-part="detail-pane"><div class="r-ld-scroll">${detailBody()}</div>${decisionRow()}</div></div>`;
-  }
-
-  // ── MePanel (§6.48) ──────────────────────────────────────────────────────
-
-  function meRow(it) {
-    const trailing = it.value
-      ? `<span class="r-me-value">${esc(it.value)}</span>`
-      : it.id === "theme"
-        ? // The ThemeToggle (spec §6.13 account row): light / dark icon radio, the chosen one on `selected`.
-          `<span class="r-theme r-me-theme" role="radiogroup"><span class="r-me-theme-opt" role="radio" aria-checked="true">${icon("sun", 14)}</span><span class="r-me-theme-opt" role="radio" aria-checked="false">${icon("moon", 14)}</span></span>`
-        : it.external
-          ? icon("arrow-up-right", 14)
-          : it.id === "sign-out"
-            ? ""
-            : icon("chevron-right", 12);
-    const tag = it.id === "theme" || it.id === "language" || it.id === "sign-out" ? "button" : "a";
-    const href = tag === "a" ? ' href="#"' : "";
-    return `<${tag} class="r-me-row" data-part="row" data-id="${it.id}"${href}>${icon(it.icon)}<span class="r-ellipsis">${esc(it.label)}</span>${trailing}</${tag}>`;
-  }
-
-  function mePanel(o) {
-    const role = o.role || "member";
-    const visible = M.visible[role];
-    const items = M.items.filter((n) => visible.includes(n.audience));
-    // The admin console entry closes the manage group for super admins (whatever the org role).
-    const admin =
-      role === "super-admin"
-        ? `<a class="r-me-row" data-part="admin-entry" data-id="admin" href="#">${icon(M.adminEntry.icon)}<span class="r-ellipsis">${esc(M.adminEntry.label)}</span>${icon("arrow-up-right", 14)}</a>`
-        : "";
-    // A group with no row draws nothing (a guest has no manage group).
-    const group = (id, extra = "") => {
-      const rows = items.filter((n) => n.group === id).map((n) => meRow(n)).join("") + extra;
-      return rows
-        ? `<section class="r-me-group" data-part="group" aria-label="${esc(M.groups[id])}"><h2 class="r-me-label" data-part="group-label">${esc(M.groups[id])}</h2>${rows}</section>`
-        : "";
-    };
-    const A = M.adminContext;
-    const inAdmin = o.context === "admin";
-    // The super-admin block is an org member who is a super admin (the meta shows the org role).
-    const orgRole = role === "admin" ? "组织管理员" : "组织成员";
-    const org = inAdmin
-      ? `<div class="r-sb-org r-me-org" data-static="true" data-part="context-block"><span class="r-sb-org-initial" data-tone="accent">${icon(A.block.icon, 14)}</span><span class="r-sb-org-text"><span class="r-sb-org-name">${esc(A.block.label)}</span><span class="r-sb-org-meta">${esc(A.block.meta)}</span></span></div>`
-      : `<button class="r-sb-org r-me-org" data-part="org-switcher" aria-label="当前组织：${esc(M.org.name)}，切换组织"><span class="r-sb-org-initial">${esc(M.org.initial)}</span><span class="r-sb-org-text"><span class="r-sb-org-name">${esc(M.org.name)}</span><span class="r-sb-org-meta">~/${esc(M.org.slug)} · ${esc(orgRole)}</span></span>${icon("chevrons-up-down", 14)}</button>`;
-    // The admin context: the console's pages in the manage group, the back row last, no
-    // workspace group; the account group and the status line stay.
-    const groups = inAdmin
-      ? `<section class="r-me-group" data-part="group" aria-label="${esc(M.groups.manage)}"><h2 class="r-me-label" data-part="group-label">${esc(M.groups.manage)}</h2>${A.items.map((n) => meRow(n)).join("")}<a class="r-me-row" data-part="back-row" data-id="back" href="#">${icon(A.back.icon)}<span class="r-ellipsis">${esc(A.back.label)}</span></a></section>`
-      : `${group("workspace")}${group("manage", admin)}`;
-    const body = `<div class="r-me" data-part="me-panel" data-role="${role}"${inAdmin ? ' data-context="admin"' : ""}><div class="r-me-head"><div class="r-me-account" data-part="account"><span class="r-avatar">${esc(M.account.initial)}</span><span class="r-ellipsis">${esc(M.account.name)}</span></div>${org}</div>${groups}<section class="r-me-group" data-part="group" aria-label="${esc(M.accountGroup)}"><h2 class="r-me-label" data-part="group-label">${esc(M.accountGroup)}</h2>${M.accountItems.map((n) => meRow(n)).join("")}</section><p class="r-me-system" data-part="system-status">${esc(M.system)}</p></div>`;
-    return `<div class="r-screen" data-part="screen" data-auto>${topBar({ title: M.title })}<div class="r-ld-scroll">${body}</div>${bottomNav({ current: "me", badge: true })}</div>`;
   }
 
   // ── Sheet drag states (§6.7, §7.4 of the layout spec) ────────────────────
@@ -171,11 +107,10 @@ window.__CB_EXTRA__ = ({ F, esc, icon, table }) => {
     return `<div class="r-sh-stage" data-part="sheet-stage" style="--r-drag:${drag}"><div class="r-sh-page">${topBar({ title: F.LIST_PAGE_FIXTURE.title })}<div class="r-ld-scroll"><div class="r-sh-rows">${table({ narrow: true, rows: 3 })}</div></div></div><div class="r-sh-scrim" data-part="scrim"></div><div class="r-sh" role="dialog" aria-modal="true" aria-label="${esc(S.title)}" data-drag="${o.state}" data-part="sheet"><div class="r-sh-handle-zone" data-part="handle-zone"><span class="r-sh-handle" data-part="sheet-handle" aria-label="${esc(S.handle)}"></span></div><div class="r-sh-head" data-part="sheet-head"><h2 class="r-sh-title">${esc(S.title)}</h2><button class="r-icon-btn r-tb-btn" aria-label="${esc(S.close)}">${icon("x")}</button></div><div class="r-sh-body" role="radiogroup">${options}</div></div></div>`;
   }
 
+  // bottom-nav, top-bar and me-panel left the design with the chat-first shell (mobile touch plan
+  // Task 28); their renderers stay only where list-detail and sheet still draw them
   return {
-    "bottom-nav": bottomNav,
-    "top-bar": topBar,
     "list-detail": listDetail,
-    "me-panel": mePanel,
     sheet,
   };
 };

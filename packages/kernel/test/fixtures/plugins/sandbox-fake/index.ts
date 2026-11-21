@@ -1566,6 +1566,12 @@ function managedSurface(
       const { readFile, writeFile, stat } = native(h, fs, signal, (_input, work) =>
         scopedCall.run(true, work),
       );
+      // a real device pins every write root as a directory: an existing file there is refused
+      for (const root of scope.writeRoots) {
+        const s = await stat(root, signal);
+        if (s !== null && !s.isDir)
+          throw new Error(`On the connected machine: ENOTDIR: not a directory, open '${root}'`);
+      }
       return { readFile, writeFile, stat };
     },
 

@@ -26,6 +26,7 @@ import { ME_ROUTES } from "../identity/me.schemas.js";
 import { INBOX_ROUTES } from "../inbox/inbox.schemas.js";
 import { ORG_MODEL_ROUTES } from "../models/org-models.schemas.js";
 import { ORG_ROUTES, ORG_SETTINGS_ROUTES } from "../orgs/orgs.schemas.js";
+import { PUSH_ROUTES } from "../push/push.schemas.js";
 import { SCHEDULE_ROUTES } from "../schedules/schedules.schemas.js";
 import { SETUP_CHECK_ROUTES } from "../setup/setup-checks.schemas.js";
 import { SETUP_GUIDE_ROUTES } from "../setup/setup-guides.schemas.js";
@@ -35,6 +36,7 @@ import { PLATFORM_ICON_ROUTES } from "../themes/platform-icon.schemas.js";
 import { THEME_ROUTES } from "../themes/themes.schemas.js";
 import { APPROVAL_ROUTES } from "../tools/approvals.schemas.js";
 import { CONNECTOR_ROUTES } from "../tools/connectors.schemas.js";
+import { OAUTH_ROUTES } from "../tools/oauth/oauth.schemas.js";
 import { UI_ROUTES } from "../ui/ui.schemas.js";
 
 /**
@@ -62,6 +64,7 @@ export const ROUTE_SCHEMAS: readonly RouteSchemas[] = [
   ...ADMIN_CATALOG_ROUTES,
   ...MARKETPLACE_ROUTES,
   ...CONNECTOR_ROUTES,
+  ...OAUTH_ROUTES,
   ...COMPONENT_SCOPE_ROUTES,
   ...ORG_EXTENSION_ROUTES,
   ...CONVERSATION_ROUTES,
@@ -87,6 +90,8 @@ export const ROUTE_SCHEMAS: readonly RouteSchemas[] = [
   ...DEVICE_ROUTES,
   // personal preferences (run context spec §3.4)
   ...ME_ROUTES,
+  // push preferences (mobile app spec §9.4)
+  ...PUSH_ROUTES,
   // themes (themes spec §9)
   ...THEME_ROUTES,
   // the platform icon (mobile layout spec §10.2.1)

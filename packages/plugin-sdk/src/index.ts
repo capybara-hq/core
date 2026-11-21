@@ -1,4 +1,4 @@
-export const SDK_VERSION = "0.1.0-rc.41";
+export const SDK_VERSION = "0.1.0-rc.47";
 export * from "./agent-template.js";
 export * from "./bootstrap.js";
 export * from "./cards.js";
@@ -29,6 +29,7 @@ export * from "./org-access.js";
 export * from "./permissions.js";
 export * from "./plugin-manifest.js";
 export * from "./plugin-package.js";
+export * from "./push.js";
 export * from "./sandbox.js";
 export * from "./sandbox-operation.js";
 export { SANDBOX_RUNTIME_SOURCE } from "./sandbox-runtime-source.js";

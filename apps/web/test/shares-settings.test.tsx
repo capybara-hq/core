@@ -6,6 +6,7 @@ import zh from "../messages/zh.json";
 import type { Me } from "../src/lib/session";
 import { json, lastStubRoutes, noContent, stubApi } from "./support/api";
 import { resetNavigation } from "./support/navigation";
+import { personAvatarSrc, personInitial } from "./support/person";
 import { renderRouteWithCache } from "./support/query";
 import { ME } from "./support/render";
 
@@ -27,7 +28,7 @@ const share = (id: string, over: Record<string, unknown> = {}) => ({
   contentType: "text/html",
   size: 10,
   generation: 1,
-  createdBy: { id: "a1", displayName: "Grant" },
+  createdBy: { id: "a1", displayName: "Grant", avatarUrl: "/api/v1/accounts/a1/avatar?v=abc123" },
   createdAt: "2026-11-01T00:00:00Z",
   expiresAt: "2026-12-01T00:00:00Z",
   lastOpenedAt: null,
@@ -52,7 +53,10 @@ describe("Shares pages", () => {
         json(200, {
           shares: [
             share("s1", revoked ? { state: "revoked", revokedAt: "2026-11-02T00:00:00Z" } : {}),
-            share("s2", { createdBy: { id: "a2", displayName: "Ada" }, audience: "internal" }),
+            share("s2", {
+              createdBy: { id: "a2", displayName: "Ada", avatarUrl: null },
+              audience: "internal",
+            }),
           ],
         }),
       "DELETE /api/v1/orgs/o1/shares/s1": () => {
@@ -63,6 +67,10 @@ describe("Shares pages", () => {
     await renderRouteWithCache("/settings/shares", lastStubRoutes());
     const row = (await screen.findByText("report-s1.html")).closest("tr") as HTMLElement;
     expect(screen.getByText("Ada")).toBeTruthy();
+    expect(personAvatarSrc(row)).toBe("/api/v1/accounts/a1/avatar?v=abc123");
+    const adaRow = screen.getByText("Ada").closest("tr") as HTMLElement;
+    expect(personAvatarSrc(adaRow)).toBeNull();
+    expect(personInitial(adaRow)).toBe("A");
     const user = userEvent.setup();
     await user.click(within(row).getByRole("button", { name: /Revoke report-s1/ }));
     const dialog = await screen.findByRole("dialog");

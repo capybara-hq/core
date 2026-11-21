@@ -92,6 +92,20 @@ describe("checkTokens", () => {
     expect(f[0]?.file).toMatch(/tokens\.json$/);
   });
 
+  it("a touch override of a token the base scale lacks -> one tokens-invalid naming the path", () => {
+    const f = checkTokens(fixture("touch-unknown-override"));
+    expect(f.map((x) => x.rule)).toEqual(["tokens-invalid"]);
+    expect(f[0]?.message).toContain("touch.size.control.huge");
+    expect(f[0]?.message).toContain("overrides no token");
+  });
+
+  it("a touch type size below 13 -> one tokens-touch-type naming the step", () => {
+    const f = checkTokens(fixture("touch-small-type"));
+    expect(f.map((x) => x.rule)).toEqual(["tokens-touch-type"]);
+    expect(f[0]?.message).toContain("touch.size.type.body");
+    expect(f[0]?.message).toContain("13");
+  });
+
   it("a pair below its floor -> one tokens-contrast naming pair, theme, ratio and floor", () => {
     const f = checkTokens(fixture("low-contrast"));
     expect(f.map((x) => x.rule)).toEqual(["tokens-contrast"]);
@@ -274,6 +288,29 @@ describe("parseTokens", () => {
       "shadow.shadow-1.dark",
     ],
     [
+      "an easing that is not a keyword or cubic-bezier",
+      (j: Loose) => {
+        (j as unknown as { ease: unknown }).ease = { push: "spring(1)" };
+      },
+      "ease.push",
+    ],
+    [
+      "a platform override of a token the top level lacks",
+      (j: Loose) => {
+        (j as unknown as { platform: unknown }).platform = {
+          android: { motion: { nope: "300ms" } },
+        };
+      },
+      "platform.android.motion.nope",
+    ],
+    [
+      "an unknown platform",
+      (j: Loose) => {
+        (j as unknown as { platform: unknown }).platform = { web: { motion: {} } };
+      },
+      "platform.web",
+    ],
+    [
       "invalid JSON",
       () => {
         throw new Error("replaced below");
@@ -302,6 +339,53 @@ describe("rendering", () => {
     expect(renderTokensCss(tokens)).toBe(readFileSync(join(root, CSS_PATH), "utf8"));
     expect(renderTokensTs(tokens)).toBe(readFileSync(join(root, TS_PATH), "utf8"));
     expect(renderThemeTokensTs(tokens)).toBe(readFileSync(join(root, SDK_PATH), "utf8"));
+  });
+
+  it("renderTokensCss writes the touch overrides in one media block after the scheme blocks", () => {
+    const root = fixture("valid");
+    const { tokens } = parseTokens(readFileSync(join(root, JSON_PATH), "utf8"), "tokens.json");
+    if (!tokens) throw new Error("valid fixture must parse");
+    const out = renderTokensCss(tokens);
+    const media = out.match(/@media ([^{]*)\{\n([\s\S]*?)\n\}\n/);
+    expect(media?.[1]?.trim()).toBe(
+      "(pointer: coarse), (any-pointer: coarse) and (not (any-pointer: fine))",
+    );
+    expect(media?.[2]).toBe(
+      [
+        "  :root {",
+        "    --cb-font: system-ui, sans-serif;",
+        "    --cb-type-body-size: 17px;",
+        "    --cb-type-body-line: 24px;",
+        "    --cb-control-dense: 44px;",
+        "    --cb-radius-sm: 12px;",
+        "  }",
+      ].join("\n"),
+    );
+    expect(out.indexOf("@media")).toBeGreaterThan(out.indexOf(':root[data-theme="light"]'));
+    expect(out).toContain("  --cb-touch-hit: 44px;");
+    expect(renderTokensTs(tokens)).toContain("touch: { hit: 44 },");
+  });
+
+  it("renderTokensCss writes easing in :root and a block per platform override", () => {
+    const root = fixture("valid");
+    const j = JSON.parse(readFileSync(join(root, JSON_PATH), "utf8"));
+    j.motion.push = "350ms";
+    j.ease = { push: "cubic-bezier(0.2, 0.9, 0.3, 1)" };
+    j.platform = {
+      android: { motion: { push: "300ms" }, ease: { push: "cubic-bezier(0.2, 0, 0, 1)" } },
+    };
+    const { tokens, findings } = parseTokens(JSON.stringify(j), "tokens.json");
+    expect(findings).toEqual([]);
+    if (!tokens) return;
+    const out = renderTokensCss(tokens);
+    expect(out).toContain(
+      "  --cb-motion-push: 350ms;\n  --cb-ease-push: cubic-bezier(0.2, 0.9, 0.3, 1);\n",
+    );
+    expect(
+      out.endsWith(
+        ':root[data-shell-platform="android"] {\n  --cb-motion-push: 300ms;\n  --cb-ease-push: cubic-bezier(0.2, 0, 0, 1);\n}\n',
+      ),
+    ).toBe(true);
   });
 
   it("the SDK file excludes avatar, preview-ground and color-mix tokens from the overridable list", () => {

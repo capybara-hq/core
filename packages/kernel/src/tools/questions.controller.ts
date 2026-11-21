@@ -41,12 +41,7 @@ export class QuestionsController {
     @ZBody(QuestionAnswerBody) body: z.infer<typeof AnswerBody>,
   ): Promise<{ question: QuestionView }> {
     const p = requireUser(principal);
-    const { state: _state, ...view } = await this.questions.answer(
-      id,
-      p.account.id,
-      body.answer,
-      org.orgId,
-    );
-    return { question: view };
+    const answered = await this.questions.answer(id, p.account.id, body.answer, org.orgId);
+    return { question: await this.questions.view(answered) };
   }
 }

@@ -2,6 +2,18 @@ import { hasControlChars, MEDIA_NAME_MAX_CHARS } from "@capybara-hq/plugin-sdk";
 import { z } from "zod";
 import { SKILL_PACKAGE_UPLOAD_MAX_BYTES } from "../conversations/attachments.service.js";
 import type { RouteSchemas } from "../platform/route-schemas.js";
+
+/** `POST /skills/uploads`: registers a skill package upload (a presigned form). */
+export const SkillUploadBody = z
+  .object({
+    name: z
+      .string()
+      .min(1)
+      .max(MEDIA_NAME_MAX_CHARS)
+      .refine((s) => !hasControlChars(s), "name must not contain control characters"),
+    size: z.number().int().min(1).max(SKILL_PACKAGE_UPLOAD_MAX_BYTES),
+  })
+  .strict();
 /** `POST /skills`: an uploaded skill package (`POST /skills/uploads` gives the id); no text form. */
 export const SkillCreateBody = z
   .object({ uploadId: z.string().min(1).max(100), shareable: z.boolean().optional() })
@@ -42,6 +54,11 @@ export const SKILL_ROUTES: readonly RouteSchemas[] = [
   { route: "GET /api/v1/orgs/:orgId/skill-changes/:id", params: SkillChangePathParams },
   { route: "GET /api/v1/orgs/:orgId/agents/:agentId/skills", params: AgentSkillsListParams },
   {
+    route: "POST /api/v1/orgs/:orgId/agents/:agentId/skills/uploads",
+    params: AgentSkillsListParams,
+    body: AgentSkillUploadBody,
+  },
+  {
     route: "POST /api/v1/orgs/:orgId/agents/:agentId/skills",
     params: AgentSkillsListParams,
     body: AgentSkillRegisterBody,
@@ -61,6 +78,7 @@ export const SKILL_ROUTES: readonly RouteSchemas[] = [
   },
   { route: "GET /api/v1/orgs/:orgId/skills" },
   { route: "GET /api/v1/orgs/:orgId/skills/:id", params: SkillPathParams },
+  { route: "POST /api/v1/orgs/:orgId/skills/uploads", body: SkillUploadBody },
   { route: "POST /api/v1/orgs/:orgId/skills", body: SkillCreateBody },
   {
     route: "PUT /api/v1/orgs/:orgId/skills/:id/shareable",

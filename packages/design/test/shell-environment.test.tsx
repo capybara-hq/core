@@ -6,7 +6,7 @@ import { resolve } from "node:path";
 import { act, cleanup, render } from "@testing-library/react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { AppShell, DesignProvider, readShellEnvironment } from "../src/index";
+import { AppShell, DesignProvider, readShellEnvironment, ShellReady } from "../src/index";
 import {
   SHELL_ENVIRONMENT_SCRIPT,
   ShellEnvironmentScript,
@@ -66,6 +66,7 @@ const untouched = () => {
 function clearRoot() {
   root().removeAttribute("data-shell");
   root().removeAttribute("data-shell-platform");
+  root().removeAttribute("data-native-nav");
   for (const p of PROPS) root().style.removeProperty(p);
   root().removeAttribute("data-theme");
 }
@@ -176,6 +177,25 @@ describe("the inline script (before the first paint)", () => {
     expect(renderToStaticMarkup(<ShellEnvironmentScript nonce="" />)).not.toContain("nonce");
   });
 
+  it("marks <html> with data-native-nav when nav@1 is an own object, and not otherwise", () => {
+    install(fakeShell({ kind: "mobile", platform: "ios", capabilities: { "nav@1": {} } }).shell);
+    runScript();
+    expect(root().hasAttribute("data-native-nav")).toBe(true);
+    for (const capabilities of [
+      {},
+      { "nav@1": null },
+      { "nav@1": "yes" },
+      Object.create({ "nav@1": {} }),
+      undefined,
+    ]) {
+      clearRoot();
+      install(fakeShell({ kind: "mobile", platform: "ios", capabilities }).shell);
+      runScript();
+      expect(root().dataset.shell).toBe("mobile");
+      expect(root().hasAttribute("data-native-nav")).toBe(false);
+    }
+  });
+
   it("agrees with readShellEnvironment (the AppShell's reader) on every case", () => {
     const cases: unknown[] = [
       undefined,
@@ -221,14 +241,36 @@ const sidebar = {
   account: { name: "grant", menu: [] },
 };
 const status = { context: "grant@acme:/", version: "0.1.0" };
-const renderShell = () =>
-  render(
-    <DesignProvider locale="zh">
-      <AppShell sidebar={sidebar} status={status} capState="run=idle">
-        <p>page</p>
-      </AppShell>
-    </DesignProvider>,
-  );
+const shellTree = (singleScheme?: boolean) => (
+  <DesignProvider locale="zh">
+    <AppShell
+      sidebar={sidebar}
+      status={status}
+      capState="run=idle"
+      {...(singleScheme === undefined ? {} : { singleScheme })}
+    >
+      <p>page</p>
+    </AppShell>
+  </DesignProvider>
+);
+const renderShell = () => render(shellTree());
+
+/** The seven main color tokens chrome@1 carries, as a theme would set them on <html>. */
+const TOKENS = {
+  "--cb-bg": "#101010",
+  "--cb-panel": "#181818",
+  "--cb-ink": "rgb(240, 240, 240)",
+  "--cb-muted": "#888",
+  "--cb-line": "rgba(255, 255, 255, 0.12)",
+  "--cb-accent": "#00ff99",
+  "--cb-on-accent": "#000000",
+};
+const setTokens = (over: Record<string, string> = {}) => {
+  for (const [k, v] of Object.entries({ ...TOKENS, ...over })) root().style.setProperty(k, v);
+};
+const clearTokens = () => {
+  for (const k of Object.keys(TOKENS)) root().style.removeProperty(k);
+};
 const capState = (c: HTMLElement) =>
   (c.querySelector(".cb-shell") as HTMLElement).dataset.capState ?? "";
 
@@ -293,6 +335,67 @@ describe("the AppShell in a shell (after hydration)", () => {
     root().style.removeProperty("--cb-bg");
   });
 
+  it("adds the seven color tokens only when every one is a plain color", async () => {
+    const setAppearance = vi.fn();
+    install(fakeShell({ capabilities: { "chrome@1": { setAppearance } } }).shell);
+    root().dataset.theme = "dark";
+    setTokens();
+    try {
+      renderShell();
+      expect(setAppearance).toHaveBeenCalledTimes(1);
+      expect(setAppearance).toHaveBeenCalledWith({
+        scheme: "dark",
+        background: "#101010",
+        tokens: {
+          bg: "#101010",
+          panel: "#181818",
+          ink: "rgb(240, 240, 240)",
+          muted: "#888",
+          line: "rgba(255, 255, 255, 0.12)",
+          accent: "#00ff99",
+          onAccent: "#000000",
+        },
+      });
+      setAppearance.mockClear();
+      // a token the shell cannot check (color-mix) drops all of them, not just that one
+      await act(async () => {
+        root().style.setProperty("--cb-line", "color-mix(in srgb, #fff 12%, transparent)");
+        await Promise.resolve();
+      });
+      expect(setAppearance).toHaveBeenCalledTimes(1);
+      expect(setAppearance).toHaveBeenCalledWith({ scheme: "dark", background: "#101010" });
+      setAppearance.mockClear();
+      // a changed token is a new report
+      await act(async () => {
+        setTokens({ "--cb-accent": "#ff0066" });
+        await Promise.resolve();
+      });
+      expect(setAppearance).toHaveBeenCalledTimes(1);
+      expect(setAppearance.mock.calls[0]?.[0].tokens.accent).toBe("#ff0066");
+    } finally {
+      clearTokens();
+    }
+  });
+
+  it("says singleScheme when the AppShell is told so, and reports a flip once", () => {
+    const setAppearance = vi.fn();
+    install(fakeShell({ capabilities: { "chrome@1": { setAppearance } } }).shell);
+    root().dataset.theme = "dark";
+    const view = render(shellTree(true));
+    expect(setAppearance).toHaveBeenCalledTimes(1);
+    expect(setAppearance).toHaveBeenCalledWith({
+      scheme: "dark",
+      background: "#0A0A0A",
+      singleScheme: true,
+    });
+    setAppearance.mockClear();
+    view.rerender(shellTree(true));
+    expect(setAppearance).not.toHaveBeenCalled();
+    view.rerender(shellTree(false));
+    expect(setAppearance).toHaveBeenCalledTimes(1);
+    expect(setAppearance).toHaveBeenCalledWith({ scheme: "dark", background: "#0A0A0A" });
+  });
+
   it("draws the window drag band as a real element, hidden from assistive tech", () => {
     const { container } = renderShell();
     const band = container.querySelector(".cb-shell > .cb-shell-band") as HTMLElement;
@@ -317,6 +420,80 @@ describe("the AppShell in a shell (after hydration)", () => {
       }).shell,
     );
     expect(renderShell).not.toThrow();
+  });
+});
+
+describe("ShellReady (chrome@1.ready, once per document)", () => {
+  /** Holds animation frames until a test runs them. */
+  function frames() {
+    const queue: FrameRequestCallback[] = [];
+    vi.spyOn(window, "requestAnimationFrame").mockImplementation((cb) => {
+      queue.push(cb);
+      return queue.length;
+    });
+    vi.spyOn(window, "cancelAnimationFrame").mockImplementation(() => {});
+    return () => {
+      for (const cb of queue.splice(0)) cb(0);
+    };
+  }
+  const ready = (over: Record<string, unknown> = {}) =>
+    fakeShell({ kind: "mobile", platform: "ios", capabilities: { "chrome@1": over } }).shell;
+
+  it("calls ready once after a frame, and not again on a rerender or a remount", () => {
+    const run = frames();
+    const fn = vi.fn();
+    install(ready({ ready: fn }));
+    const view = render(<ShellReady />);
+    expect(fn).not.toHaveBeenCalled();
+    act(run);
+    expect(fn).toHaveBeenCalledTimes(1);
+    view.rerender(<ShellReady />);
+    act(run);
+    view.unmount();
+    render(<ShellReady />);
+    act(run);
+    expect(fn).toHaveBeenCalledTimes(1);
+  });
+
+  it("skips silently when ready is absent, throws or rejects", () => {
+    const run = frames();
+    install(ready({}));
+    expect(() => {
+      render(<ShellReady />);
+      act(run);
+    }).not.toThrow();
+    cleanup();
+    install(
+      ready({
+        ready: () => {
+          throw new Error("native");
+        },
+      }),
+    );
+    expect(() => {
+      render(<ShellReady />);
+      act(run);
+    }).not.toThrow();
+    cleanup();
+    install(ready({ ready: () => Promise.reject(new Error("native")) }));
+    expect(() => {
+      render(<ShellReady />);
+      act(run);
+    }).not.toThrow();
+  });
+
+  it("does nothing in a frame", () => {
+    const run = frames();
+    const fn = vi.fn();
+    install(ready({ ready: fn }));
+    vi.spyOn(window, "top", "get").mockReturnValue({} as Window);
+    render(<ShellReady />);
+    act(run);
+    expect(fn).not.toHaveBeenCalled();
+  });
+
+  it("renders nothing", () => {
+    expect(renderToStaticMarkup(<ShellReady />)).toBe("");
   });
 });
 

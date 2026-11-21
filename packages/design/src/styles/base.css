@@ -14,9 +14,36 @@
   --cb-inset-left: max(env(safe-area-inset-left, 0px), var(--cb-shell-inset-left, 0px));
 }
 
+/* Touch behaviour (mobile app spec §7.1), for the browser, the PWA and the app alike: no grey tap
+   flash, no double-tap-zoom delay on a control (pinch zoom of the page stays), and no rubber
+   band at the page's edge. Zero specificity: a component's own touch-action (a drag handle's
+   `none`) wins. */
+:where(
+  a,
+  button,
+  [role="button"],
+  [role="tab"],
+  [role="menuitem"],
+  summary,
+  label,
+  input,
+  select,
+  textarea
+) {
+  -webkit-tap-highlight-color: transparent;
+  touch-action: manipulation;
+}
+/* Text you type into stays selectable under chrome that is not (Safari makes an input under a
+   `user-select: none` ancestor untypable). */
+:where(input, textarea, [contenteditable]:not([contenteditable="false"])) {
+  -webkit-user-select: text;
+  user-select: text;
+}
+
 /* Scrollbars (inherited): a quiet thumb on a transparent track in both themes. */
 html {
   scrollbar-color: var(--cb-scroll-thumb) transparent;
+  overscroll-behavior: none;
 }
 
 :root:has(.cb-shell:not(.cb-ref-block .cb-shell)) {
@@ -36,6 +63,12 @@ body {
   font-style: normal;
   font-variant-numeric: tabular-nums;
   font-kerning: none;
+}
+
+/* Code, commands, paths, versions and times keep the code font where the UI font turns into the
+   system font on touch (spec §2.2). Zero specificity: a component's own font-family wins. */
+:where(code, pre, kbd, samp) {
+  font-family: var(--cb-font-code);
 }
 
 /* 焦点环（spec §2.5）：控件 2px 外描边，表格行 / 列表项 1px 内描边；仅 :focus-visible。 */
@@ -173,7 +206,7 @@ body {
 .cb-ref-block[data-pad="true"] {
   padding: var(--cb-space-4);
 }
-/* A compact screen in a reference block: the top bar, the body filling the rest, the bottom bar. */
+/* A compact screen in a reference block: the top row, the body filling the rest, the bottom row. */
 .cb-ref-screen {
   display: flex;
   flex-direction: column;

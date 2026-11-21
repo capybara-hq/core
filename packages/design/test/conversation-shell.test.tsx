@@ -855,7 +855,7 @@ describe("ConversationPage on a phone (§5.4, mobile layout spec §5.4)", () => 
       </DesignProvider>
     );
     const shellBack = () =>
-      document.querySelector('[data-part="top-bar"] button[aria-label="返回"]') as HTMLElement;
+      document.querySelector('[data-part="floating-bar"] button[aria-label="返回"]') as HTMLElement;
 
     it("the shell's back steps within the panel first (opened from the conversation)", async () => {
       phone(true);

@@ -82,8 +82,8 @@ export interface DeviceSettingChange {
   ceiling: { from: DeviceCeilingChangeSide | null; to: DeviceCeilingChangeSide } | null;
   /** The cloud network change (`network` rows only); else null. */
   network: { from: DeviceNetworkSetting; to: DeviceNetworkSetting } | null;
-  /** The deciding account's display name (null once the account is gone). */
-  by: string | null;
+  /** The deciding account (null once the account is gone). */
+  by: { id: string; name: string; avatarUrl: string | null } | null;
   /**
    * `device`: made or reported on the machine itself; `agent`: an agent's Platform tool call;
    * `token`: an API token.

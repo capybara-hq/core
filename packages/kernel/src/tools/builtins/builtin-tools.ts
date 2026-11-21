@@ -19,7 +19,9 @@ import { ModelPurposesService } from "../../models/purposes.js";
 import { readOrgSettings } from "../../orgs/settings.service.js";
 import { PlatformActor } from "../../platform/actor.js";
 import { AgentDocs } from "../../platform/agent-docs.js";
+import { FileRefs } from "../../platform/file-ref.js";
 import { PlatformOperations } from "../../platform/registry.js";
+import { SealedInputs } from "../../platform/sealed-inputs.js";
 import type { HookRunner } from "../../runtime/hook-calls.js";
 import { ProviderListError, ProviderRegistry } from "../../runtime/providers.js";
 import { conversationTimeZone, RUN_CONTEXT_CLOCK } from "../../runtime/run-context.service.js";
@@ -85,6 +87,10 @@ export class BuiltinTools {
     @Inject(PlatformOperations) platformOps: PlatformOperations,
     @Inject(PlatformActor) platformActor: PlatformActor,
     @Inject(AgentDocs) agentDocs: AgentDocs,
+    /** The person's sealed approval card values a Platform write with person fields reads. */
+    @Inject(SealedInputs) sealedInputs: SealedInputs,
+    /** A Platform write's file reference: a conversation file (spec §5). */
+    @Inject(FileRefs) fileRefs: FileRefs,
     /** The schedule tools read tasks and grants; their writes go through the task service. */
     @Inject(ScheduledTaskStore) scheduleStore: ScheduledTaskStore,
     /** `ScheduleUpdate`'s write: its field change and grant changes in one transaction. */
@@ -193,6 +199,39 @@ export class BuiltinTools {
         docs: agentDocs,
         setting: async (orgId) => (await readOrgSettings(db.db, orgId)).platformTool,
         log,
+        sealed: sealedInputs,
+        approvalPersonPaths: async (approvalId, call) => {
+          // only this call's own approved approval in this org (anything else: none, fails closed)
+          const row = await db.db
+            .selectFrom("approvals")
+            .select(["kind", "detail"])
+            .where("id", "=", approvalId)
+            .where("org_id", "=", call.orgId)
+            .where("run_id", "=", call.runId)
+            .where("call_id", "=", call.callId)
+            .where("status", "=", "approved")
+            .executeTakeFirst();
+          const fields = (row?.detail as { personFields?: unknown } | null | undefined)
+            ?.personFields;
+          if (row?.kind !== "tool" || !Array.isArray(fields) || fields.length === 0) return null;
+          return fields.map((f) => String((f as { path?: unknown }).path));
+        },
+        files: fileRefs,
+        approvalFileSha256: async (approvalId, call) => {
+          // only this call's own approved approval in this org (anything else: none, fails closed)
+          const row = await db.db
+            .selectFrom("approvals")
+            .select(["kind", "detail"])
+            .where("id", "=", approvalId)
+            .where("org_id", "=", call.orgId)
+            .where("run_id", "=", call.runId)
+            .where("call_id", "=", call.callId)
+            .where("status", "=", "approved")
+            .executeTakeFirst();
+          const sha = (row?.detail as { file?: { sha256?: unknown } } | null | undefined)?.file
+            ?.sha256;
+          return row?.kind === "tool" && typeof sha === "string" ? sha : null;
+        },
       }),
       // the clock in the run context's time zone (the run context carries only the date)
       currentTimeTool({

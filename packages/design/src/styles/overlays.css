@@ -120,7 +120,7 @@
 }
 .cb-dialog-confirm code {
   color: var(--cb-ink);
-  font-family: inherit;
+  font-family: var(--cb-font-code);
   font-weight: 600;
 }
 
@@ -138,6 +138,8 @@
   color: var(--cb-ink);
   border-left: 1px solid var(--cb-line-strong);
   box-shadow: var(--cb-shadow-sheet);
+  /* the ground runs to the edge, under a right-hand strip; the head, body and foot end before it */
+  padding-right: var(--cb-inset-right);
   animation: cb-sheet-in var(--cb-motion) ease-out;
 }
 .cb-sheet[data-width="720"] {

@@ -1,6 +1,7 @@
 import { type ComponentType, createContext, type ReactNode, useContext } from "react";
 import { type ServerClock, ServerClockProvider } from "./clock";
 import { type DesignKey, type Locale, messages } from "./i18n";
+import { NativeContext, type NativeHandlers } from "./native";
 
 /** 框架无关的链接组件；apps/web 可传入 next-intl 的 Link。 */
 export type LinkComponent = ComponentType<{
@@ -17,10 +18,14 @@ export type LinkComponent = ComponentType<{
   /** The size-table part (spec §9.2) and the roving-focus key (Sidebar). */
   "data-part"?: string;
   "data-rove"?: string;
-  /** The item's id (the bottom navigation's and the Me page's rows). */
+  /** The item's id (a navigation row's). */
   "data-id"?: string;
   "data-state"?: string;
   "data-optional"?: string;
+  /** A touch row's own attributes (NavRow, FloatingIconButton): current, drawer pick, section. */
+  "data-current"?: string | undefined;
+  "data-drawer-pick"?: string | undefined;
+  "data-nav-section"?: string | undefined;
 }>;
 
 const DefaultLink: LinkComponent = ({ href, children, ...rest }) => (
@@ -48,6 +53,7 @@ export function DesignProvider({
   useLinkPending,
   clock,
   brand,
+  native,
   children,
 }: {
   locale: Locale;
@@ -68,6 +74,13 @@ export function DesignProvider({
    * auth and status pages. Without it the logo is the pixel capybara and `CAPYBARA`.
    */
   brand?: Brand;
+  /**
+   * A native shell's handlers (mobile app spec §6; apps/web passes them from the shell's
+   * capabilities): plain menus open as the platform's action sheet on the compact class, and
+   * sends, approvals, destructive confirmations and selection changes play haptics. Without
+   * them (the browser) the design draws its own menus and plays nothing.
+   */
+  native?: NativeHandlers;
   children: ReactNode;
 }) {
   return (
@@ -75,7 +88,9 @@ export function DesignProvider({
       <LinkContext.Provider value={link ?? DefaultLink}>
         <LinkPendingContext.Provider value={useLinkPending ?? neverPending}>
           <BrandContext.Provider value={brand ?? null}>
-            <ServerClockProvider clock={clock}>{children}</ServerClockProvider>
+            <NativeContext.Provider value={native ?? null}>
+              <ServerClockProvider clock={clock}>{children}</ServerClockProvider>
+            </NativeContext.Provider>
           </BrandContext.Provider>
         </LinkPendingContext.Provider>
       </LinkContext.Provider>

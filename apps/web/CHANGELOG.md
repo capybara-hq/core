@@ -1,5 +1,174 @@
 # @capybara-hq/web
 
+## 0.1.0-rc.79
+
+No changes in this release.
+
+## 0.1.0-rc.78
+
+### Patch Changes
+
+- 7c22f02: The viewer's own messages show no avatar beside the bubble; a message another person wrote keeps
+  its author's circle.
+
+## 0.1.0-rc.77
+
+### Minor Changes
+
+- f316cf8: Chat-first compact shell (design): no top bar and no bottom navigation below 600; a floating row
+  with the menu button (pending inbox count) on chat surfaces and back on pushed pages; the drawer
+  (`NavDrawer`: search, sections, the 技能、连接器、设备… level, recent conversations, account and new
+  conversation) and the `AccountSheet`; the conversation title bar's compact form (centre pill,
+  trailing overflow); the thread's bottom reserve follows the floating composer's measured height;
+  the composer's settings sheet closes on the system back first.
+- 7136000: Chat-first compact navigation; the Me page is retired. The home and a conversation are chat
+  surfaces (menu button with the inbox count), every other page is pushed (back). The drawer holds
+  收件箱 (with its count), 智能体 and 定时任务, the 技能、连接器、设备… level (with the org's extension
+  pages), the recent conversations, 全部会话, the account sheet (org switcher, personal settings,
+  appearance, status, sign out) and 新会话; management pages are not in it. A drawer pick pops its
+  history entry before it navigates, so one back returns to the page before. `/me` is gone (404),
+  the PWA starts at `/`, and the design's `BottomNav`, `TopBar` and `MePanel` are removed.
+- 7a8c38f: Management pages are desktop-only on touch. Plugins, extensions, channels, organization settings,
+  evals and runs, and the admin console show 「请在电脑上管理」 (the page's URL, 复制链接, 回到对话) on a
+  touch device instead of the page, whose queries do not run there; their sidebar entries and palette
+  commands are hidden on touch. Desktop and wide windows with a fine pointer are unchanged.
+- 9cf373b: Inside the mobile app on the iPhone Duo the web hands the native strip its sections (`nav@1`: 对话,
+  收件箱 with the pending count, 智能体, 定时任务), follows its taps without a slide, opens the drawer
+  from the strip's menu button and hides its own section entries and menu button while the strip
+  shows. The account sheet and menu offer 「切换平台」 through `profiles@1`, and downloads in a shell
+  with `openExternal@1` open in the system browser.
+
+### Patch Changes
+
+- 82e5a16: The page ground, the action row and the composer run edge to edge under the iPhone Duo's strip;
+  their content ends before it (`--cb-inset-right`).
+
+## 0.1.0-rc.76
+
+### Minor Changes
+
+- 0f951f6: Add the 通知 / Notifications personal settings page (push devices and the four category switches), the in-context push prompt for shells that offer `push@1`, sign-out that forgets the install's push registration, and `?org=` on app links that switches the current org.
+- 12a6582: Add the setup guide place `extension-deployment`: a plugin's guide on the super admin's extension
+  page whose checks get the extension's platform deployment config (`SetupCheckTarget` kind
+  `extension-deployment`; `SetupCheckArgs.orgId` is now `string | null`, null for this place). The
+  `fake-push` fixture ships such a guide with the check `fake-push-key`. The kernel serves these guides
+  and runs their checks on super admin routes (`/api/v1/admin/extensions/:name/guides…`) and the
+  `extensions.platform-guides`, `extensions.platform-check-status` and `extensions.platform-check`
+  Platform operations; the web shows them with live check rows on the extension's config tab.
+
+### Patch Changes
+
+- 0ecdba4: The author circle beside a user message is 40 px, as tall as a one-line bubble (was 24).
+- 783f457: The shell no longer schedules a React update from inside Next's history insertion effect
+  ("useInsertionEffect must not schedule updates" in development) when it counts in-app history.
+- Updated dependencies [0ecdba4]
+- Updated dependencies [783f457]
+  - @capybara-hq/design@0.2.0-rc.27
+
+## 0.1.0-rc.75
+
+### Patch Changes
+
+- c0d3d2f: The profile page puts the avatar beside its actions: a labelled 上传头像 / 更换头像 button, 移除, and
+  one hint line (the accepted formats, the SSO picture in use, or why uploading is off).
+
+## 0.1.0-rc.74
+
+### Minor Changes
+
+- 7bb3837: Design native handles for the mobile app: `DesignProvider` takes `native` handlers (menu, share,
+  haptics) and `AppShell` a `nativeNav` tab bar handle with `onNavigate`. Inside a shell with
+  `nav@1` the web's bottom navigation is dropped before the first paint (`data-native-nav`) and the
+  native bar is told the items, the current tab and when it belongs on screen. Plain menus open as
+  the platform's action sheet on phones, sends, approvals, destructive confirmations and selection
+  changes play haptics, and `ShellReady` tells `chrome@1` the page has drawn.
+- dbd5022: Touch conversation layout: a floating composer pill with a settings chip and sheet, a bubble at the end edge, 48 px approval buttons.
+- 60af950: Touch components in the design system: `FloatingIconButton` (the chat-first shell's round menu and
+  back button with a count badge), `Drawer` and `DrawerLevel` (a panel from the start edge, drag to
+  close, a deeper level), `NavRow`, large list rows without dividers or a card border on touch, and the
+  bottom sheet's touch form. Opening a drawer or a bottom sheet on a compact touch window holds one
+  history entry, so the system back closes it first (`useOverlayHistory`).
+- 614d852: Touch tokens and the code font role. One `@media` block in the generated tokens carries the touch
+  overrides (system font, larger type, 44 px controls and rows, rounder corners) for a coarse
+  pointer; `--cb-font-code` keeps Sarasa on code, commands, paths, versions and times. New tokens:
+  `float-ground`, `float-line`, `shadow-float-touch`, `radius-pill`, `layout-drawer` and the
+  `touch-*` sizes. The new colors and the shadow join the SDK's overridable theme tokens.
+- 664d58b: Mobile shell capabilities in the web adapter: inside the mobile app `menu@1`, `share@1` and
+  `haptics@1` reach the design as native handlers, and `chrome@1.ready` is called once the page has
+  drawn. Sharing a file link or a conversation link uses the system share sheet (or Web Share), else
+  copies it.
+
+### Patch Changes
+
+- ced9476: Push and pop slides use the platform's navigation timing (350ms iOS curve; 300ms Material
+  emphasized under `data-shell-platform="android"`), with the page underneath parallaxed and dimmed
+  on the way back. A back gesture the browser already animated (`hasUAVisualTransition`) swaps at
+  once, and tab switches (including the native tab bar's) never slide. A lost Space keyup on a
+  native menu trigger no longer swallows the next tap, and a native tab bar whose handle goes away
+  while the shell stays is hidden.
+- 6c7aed3: Touch behaviour pass: controls draw no tap highlight and take no double-tap zoom delay, interactive
+  rows and buttons have a pressed state, chrome (top bar, bottom nav, sidebar, buttons) is not
+  selectable and has no long-press callout, and the page no longer rubber bands. Pinch zoom stays.
+- 7dc0ecd: Warm routes on touch: a link reads its route's first-paint queries on `pointerdown`, and a sidebar
+  conversation row does it when it scrolls into view, so the page is often cached when the tap lands.
+
+## 0.1.0-rc.73
+
+No changes in this release.
+
+## 0.1.0-rc.72
+
+### Patch Changes
+
+- a767452: New 个人资料 page for one's name and avatar; every place that shows a person shows their avatar.
+- 072362d: Desktop onboarding: `GET /api/v1/meta` lists `appRedirectUris` (`auth.appRedirectUris` while app
+  sign-in is available, else empty), so the desktop app can say before opening the browser that the
+  platform does not allow it; the app token exchange answers `auth.account_disabled` (403) for an
+  account that is not active instead of `app_auth.code_invalid`. `chrome@1.setAppearance` also
+  carries the page's seven main color tokens (only when all are plain colors) and `singleScheme`
+  under a single-scheme UI theme; the SDK gains `ChromeCapabilityV1`, `ShellChromeTokens` and
+  `SHELL_CAPABILITY_KEYS.chrome`.
+- 10c0ee8: Native-app sign-in accepts the mobile app: `POST /api/v1/app-auth/authorize` takes
+  `client: "mobile"` next to `"desktop"`, and its session's user agent reads
+  `Capybara Mobile/<version> (<device>)`. The consent page `/apps/authorize` names the app that asked
+  (desktop or mobile) in its title, hints and errors, and treats an unknown `client` as an invalid
+  link. The redirect allow-list (`auth.appRedirectUris`) is unchanged.
+- e21de78: Shell capability types for the mobile app: `haptics@1`, `share@1`, `menu@1`, `chrome@1`
+  (with an optional `ready`), the `MOBILE_SHELL_LIMITS` and `MENU_ITEM_ID`.
+- 4ae3971: The Platform tool takes conversation files where the web takes an upload: an agent avatar from a
+  generated image, skill and plugin packages, extension packages and skill versions, passed as
+  `file: { fileId }` (a device file is delivered with Deliver first). The card shows the file's name,
+  size, sha256 prefix and a thumbnail, and the bytes that run are the bytes the person confirmed.
+  Imports, uploads and anything else a person reviews on a web page pop up a link card to that page.
+  Two new platform-ops rules keep it that way: an exclusion may not cite an upload, and an operation
+  that sends the person to a web page links it or says why not (`noHandoff`).
+- Updated dependencies [072362d]
+- Updated dependencies [4ae3971]
+  - @capybara-hq/design@0.2.0-rc.26
+
+## 0.1.0-rc.71
+
+### Patch Changes
+
+- 2c2841e: The Platform tool creates connectors, sets their credentials, installs catalog items with their
+  connector and config secrets, and creates channels, with every secret typed by the person on the
+  confirmation card. Org admins' agents invite, revoke and manage members (never self, never an owner,
+  never above the actor); an invitation link is sealed for the approver and revealed once on the web.
+  Platform results can pop up a handoff card (a link to a web page, or a Connect button for OAuth).
+
+## 0.1.0-rc.70
+
+### Patch Changes
+
+- e788a1a: Person fields: a Platform write that needs a secret takes its field name in `askPerson`, and the
+  person types the value on the approval card on the web; it is sealed, read once by the resumed call
+  and never reaches the conversation, the audit or a log. Agents can now read and set extension
+  deployment config, org config and the org's config copy through the Platform tool.
+- 28520b3: The installed web app (PWA) opens on the conversation list, a tab root with the bottom navigation,
+  instead of the new conversation page; the conversation page draws no status bar on a phone.
+- Updated dependencies [e788a1a]
+  - @capybara-hq/design@0.2.0-rc.25
+
 ## 0.1.0-rc.69
 
 No changes in this release.

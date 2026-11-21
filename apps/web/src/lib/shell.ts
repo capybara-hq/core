@@ -1,7 +1,8 @@
 "use client";
 
+import type { NativeHandlers, NativeNavHandle } from "@capybara-hq/design";
 import * as React from "react";
-import { useCallback, useSyncExternalStore } from "react";
+import { useCallback, useMemo, useSyncExternalStore } from "react";
 
 /**
  * The Shell environment adapter (mobile layout spec §9.2–§9.4): the one place in apps/web that
@@ -187,16 +188,26 @@ export function shellCapability<T extends object>(key: string): T | undefined {
   return read<T>(key);
 }
 
+/** `PushPlatform` of the SDK's `push.ts` (not part of the mirrored slice below). */
+type PushPlatform = "ios" | "android";
+
 /**
  * The desktop shell's capability shapes: a mirror of `packages/plugin-sdk/src/shell-capabilities.ts`
  * (`@capybara-hq/plugin-sdk`; apps/web depends only on the design system and may not import it),
  * keep in step. Capability keys are `name@major`; a rejected call carries `{ code: ShellCallError }`.
  */
 export const SHELL_CAPABILITY_KEYS = {
+  chrome: "chrome@1",
   device: "device@1",
   notify: "notify@1",
   openExternal: "openExternal@1",
   signIn: "signIn@1",
+  haptics: "haptics@1",
+  share: "share@1",
+  menu: "menu@1",
+  nav: "nav@1",
+  profiles: "profiles@1",
+  push: "push@1",
 } as const;
 
 export type KeepAwakeMode = "off" | "while-busy" | "connected";
@@ -271,9 +282,264 @@ export interface SignInCapabilityV1 {
   start(): Promise<"signedIn" | "cancelled">;
 }
 
+/**
+ * The page's main color tokens (the computed `--cb-bg`, `--cb-panel`, `--cb-ink`, `--cb-muted`,
+ * `--cb-line`, `--cb-accent`, `--cb-on-accent`), each a CSS hex or `rgb()` / `rgba()` color. The
+ * shell validates them and uses them only as custom properties of its own pages, never as markup.
+ */
+export interface ShellChromeTokens {
+  bg: string;
+  panel: string;
+  ink: string;
+  muted: string;
+  line: string;
+  accent: string;
+  onAccent: string;
+}
+
+/**
+ * `chrome@1` (mobile layout spec §9.2): the native chrome (window background, title bar, the
+ * shell's own pages) follows the page's theme. `tokens` is sent only when all seven are colors;
+ * `singleScheme` is true under a UI theme with one scheme (no light / dark toggle on either side).
+ */
+export interface ChromeCapabilityV1 {
+  setAppearance(input: {
+    scheme: "light" | "dark";
+    background: string;
+    tokens?: ShellChromeTokens;
+    singleScheme?: boolean;
+  }): Promise<void>;
+  /** The web's first paint is done (mobile app spec §5.2); a shell may leave it out. */
+  ready?(): Promise<void>;
+}
+
+export type HapticKind = "selection" | "light" | "success" | "warning";
+
+/** `haptics@1`: a haptic impact (mobile app spec §5.2). */
+export interface HapticsCapabilityV1 {
+  impact(kind: HapticKind): Promise<void>;
+}
+
+export interface ShareInputV1 {
+  title?: string;
+  text?: string;
+  url?: string;
+}
+
+/** `share@1`: the system share sheet; resolves whether shared or dismissed. */
+export interface ShareCapabilityV1 {
+  share(input: ShareInputV1): Promise<void>;
+}
+
+export interface MenuItemV1 {
+  id: string;
+  label: string;
+  destructive?: boolean;
+  disabled?: boolean;
+}
+
+export interface MenuInputV1 {
+  title?: string;
+  items: MenuItemV1[];
+  /** A rect in CSS px from the web view's top-left corner. */
+  anchor?: { x: number; y: number; width: number; height: number };
+}
+
+/** `menu@1`: a native menu; resolves the chosen item id, or null when dismissed. */
+export interface MenuCapabilityV1 {
+  show(input: MenuInputV1): Promise<string | null>;
+}
+
+/** The shell validates every input against these (and the web keeps within them). */
+export const MOBILE_SHELL_LIMITS = {
+  menuItems: 12,
+  menuLabel: 64,
+  menuTitle: 128,
+  shareTitle: 256,
+  shareText: 4000,
+  url: 2048,
+  /** `nav@1`: a section or menu label is 1..32 characters. */
+  navLabel: 32,
+  /** `nav@1`: a badge count is an integer 0..9999 (`countMore` says there are more). */
+  navCount: 9999,
+} as const;
+
+/** The menu item id pattern, checked on `menu@1.show` (the shell validates every input). */
+export const MENU_ITEM_ID = /^[A-Za-z0-9_.-]{1,64}$/;
+
+export type NavSectionId = "chats" | "inbox" | "agents" | "schedules";
+
+/** The strip's sections in display order. */
+export const NAV_SECTION_ORDER: readonly NavSectionId[] = ["chats", "inbox", "agents", "schedules"];
+
+export interface NavBadgeV1 {
+  count?: number;
+  countMore?: boolean;
+}
+
+export interface NavItemV1 extends NavBadgeV1 {
+  id: NavSectionId;
+  label: string;
+}
+
+export interface NavMenuV1 extends NavBadgeV1 {
+  label: string;
+}
+
+export interface NavStateV1 {
+  /** The sections the person sees, in NAV_SECTION_ORDER (a guest has no `schedules`). */
+  items: NavItemV1[];
+  current: NavSectionId | null;
+  /** The strip's menu button, or null for none (non-null while the web's class is compact). */
+  menu: NavMenuV1 | null;
+}
+
+/** `nav@1`: offered only while the window has a strip (mobile app spec §6.1): presence is visibility. */
+export interface NavCapabilityV1 {
+  set(state: NavStateV1): Promise<void>;
+  onSelect(listener: (id: NavSectionId) => void): () => void;
+  onMenu(listener: () => void): () => void;
+}
+
+/** `profiles@1`: the native profile switcher. */
+export interface ProfilesCapabilityV1 {
+  /** Opens the native profile switcher; resolves when it closes, with nothing. */
+  show(): Promise<void>;
+}
+
+export type PushPermission = "granted" | "denied" | "prompt";
+
+export interface PushStatus {
+  permission: PushPermission;
+  /** The server-side registration id this install holds, or null. */
+  registrationId: string | null;
+  /** The OS token differs from the one last registered. */
+  tokenChanged: boolean;
+}
+
+/** What the shell hands the web app to register with the deployment. */
+export interface PushRegistration {
+  platform: PushPlatform;
+  appId: string;
+  provider: string;
+  token: string;
+}
+
+/** `push@1`: native push registration (mobile shells). */
+export interface PushCapabilityV1 {
+  status(): Promise<PushStatus>;
+  /** User activation only when permission is "prompt"; rejects { code: "cancelled" } when denied. */
+  register(): Promise<PushRegistration>;
+  /** Tells the shell the deployment's registration id for this install. */
+  registered(id: string): Promise<void>;
+  unregister(): Promise<void>;
+}
+
 export const useDeviceCapability = () =>
   useShellCapability(SHELL_CAPABILITY_KEYS.device) as DeviceCapabilityV1 | undefined;
 export const useNotifyCapability = () =>
   useShellCapability(SHELL_CAPABILITY_KEYS.notify) as NotifyCapabilityV1 | undefined;
 export const useSignInCapability = () =>
   useShellCapability(SHELL_CAPABILITY_KEYS.signIn) as SignInCapabilityV1 | undefined;
+export const useHapticsCapability = () =>
+  useShellCapability(SHELL_CAPABILITY_KEYS.haptics) as HapticsCapabilityV1 | undefined;
+export const useShareCapability = () =>
+  useShellCapability(SHELL_CAPABILITY_KEYS.share) as ShareCapabilityV1 | undefined;
+export const useMenuCapability = () =>
+  useShellCapability(SHELL_CAPABILITY_KEYS.menu) as MenuCapabilityV1 | undefined;
+export const useNavCapability = () =>
+  useShellCapability(SHELL_CAPABILITY_KEYS.nav) as NavCapabilityV1 | undefined;
+export const useProfilesCapability = () =>
+  useShellCapability(SHELL_CAPABILITY_KEYS.profiles) as ProfilesCapabilityV1 | undefined;
+export const useOpenExternalCapability = () =>
+  useShellCapability(SHELL_CAPABILITY_KEYS.openExternal) as OpenExternalCapabilityV1 | undefined;
+
+/**
+ * The native strip as the design takes it (`nav@1` adapted; mobile app spec §6.1): present exactly
+ * while the shell has a strip. `set` is a state push, not confirming (the shell needs no
+ * activation), and the one capability call made from an effect: a rejection or a throw is dropped
+ * (the strip keeps its last state). The handle keeps its reference while the capability object
+ * does.
+ */
+export function useNativeNavHandle(): NativeNavHandle | undefined {
+  const nav = useNavCapability();
+  return useMemo(
+    () =>
+      nav === undefined
+        ? undefined
+        : {
+            set: (state) => {
+              try {
+                nav.set(state).catch(() => {});
+              } catch {
+                // a shell that throws leaves the strip as it was
+              }
+            },
+            onSelect: (listener) => nav.onSelect(listener),
+            onMenu: (listener) => nav.onMenu(listener),
+          },
+    [nav],
+  );
+}
+
+/**
+ * The account sheet's "Switch platform" (`profiles@1.show`, mobile app spec §5.2): undefined without
+ * the capability (the browser, an app locked to one deployment). Call it inside the click's
+ * handler: the shell's switcher is confirming and needs the user activation. It resolves with
+ * nothing whatever is picked; a refusal (`busy`, `no_activation`) is dropped.
+ */
+export function useSwitchProfile(): (() => void) | undefined {
+  const profiles = useProfilesCapability();
+  return useMemo(
+    () =>
+      profiles === undefined
+        ? undefined
+        : () => {
+            try {
+              profiles.show().catch(() => {});
+            } catch {
+              // the switcher did not open
+            }
+          },
+    [profiles],
+  );
+}
+
+/**
+ * The design's native handlers, only for the capabilities the shell has (none in a browser). Each
+ * call runs in the design's event handlers (spec §9.4). A haptic is decoration: a rejection is
+ * swallowed.
+ */
+export function useNativeHandlers(): NativeHandlers {
+  const haptics = useHapticsCapability();
+  const share = useShareCapability();
+  const menu = useMenuCapability();
+  return useMemo(
+    () => ({
+      ...(menu === undefined
+        ? {}
+        : {
+            menu: (input) => {
+              const { anchor: a, ...rest } = input;
+              // the shell takes a whole rect (a DOMRectInit's fields are optional)
+              const anchor =
+                a?.x === undefined || a.y === undefined
+                  ? undefined
+                  : { x: a.x, y: a.y, width: a.width ?? 0, height: a.height ?? 0 };
+              return menu.show(anchor === undefined ? rest : { ...rest, anchor });
+            },
+          }),
+      ...(share === undefined ? {} : { share: (input) => share.share(input) }),
+      ...(haptics === undefined
+        ? {}
+        : {
+            haptics: (kind) => {
+              haptics.impact(kind).catch(() => {});
+            },
+          }),
+    }),
+    [haptics, share, menu],
+  );
+}
+export const usePushCapability = () =>
+  useShellCapability(SHELL_CAPABILITY_KEYS.push) as PushCapabilityV1 | undefined;

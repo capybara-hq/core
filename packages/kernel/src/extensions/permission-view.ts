@@ -81,6 +81,7 @@ export type SensitiveReason =
   | "sandbox"
   | "object_store"
   | "context"
+  | "push_provider"
   | "migration_warnings";
 
 /** 权限清单里的一项（分组里的一项，或 `added` 里的一个权限键）。 */
@@ -97,9 +98,11 @@ export interface PermissionItem {
  * receives the org's IM conversations (Ruling A33), `directory@1` can add people to orgs (creating
  * their accounts and identities), `identity-source@1` decides who can sign in as which account;
  * `context@1` adds text to the model's context in conversations of orgs that enable it (memory
- * plugin spec §6.1). A plugin providing any of them has its "provides" group marked sensitive and
- * `sensitive` true in the admin plugin list, for the super admin to approve. Display only: the keys
- * of the permission snapshot do not change.
+ * plugin spec §6.1); `push-provider@1` receives the title and in-app path of every push
+ * notification and the device tokens it delivers to (mobile app spec §9). A plugin providing any
+ * of them has its "provides" group marked sensitive and `sensitive` true in the admin plugin
+ * list, for the super admin to approve. Display only: the keys of the permission snapshot do not
+ * change.
  */
 export const SENSITIVE_EXTENSION_POINTS: readonly string[] = [
   "channel@1",
@@ -108,6 +111,7 @@ export const SENSITIVE_EXTENSION_POINTS: readonly string[] = [
   "sandbox@2",
   "object-store@1",
   "context@1",
+  "push-provider@1",
 ];
 
 type Category = PermissionGroup["category"];

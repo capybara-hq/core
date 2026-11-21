@@ -29,6 +29,11 @@ export type SidebarConversation = {
   startedAt: Date;
   href: string;
   activity: SidebarActivity;
+  /**
+   * Called with `href` the first time the row scrolls into view (the app warms the route); never
+   * again for the same mounted row.
+   */
+  onVisible?(href: string): void;
 };
 
 export type SidebarGroup = {
@@ -513,6 +518,8 @@ function Group({
             icon={<Icon name="plus" size={14} />}
             data-rove={`n:${g.agentId}`}
             tabIndex={tab(`n:${g.agentId}`)}
+            // starts a conversation: inside the compact drawer it is a pick (closes it, §6.52)
+            data-drawer-pick="true"
             onClick={g.onNew}
           />
         )}
@@ -593,6 +600,21 @@ function Row({
   // A rename chosen from the menu keeps focus in the input (the menu would return it to ⋯).
   const keepFocus = useRef(false);
   const wasRenaming = useRef(renaming);
+  const onVisible = useRef(x.onVisible);
+  onVisible.current = x.onVisible;
+  const hasVisible = x.onVisible !== undefined;
+  const href = x.href;
+  useEffect(() => {
+    const el = rowRef.current;
+    if (!hasVisible || el === null || typeof IntersectionObserver === "undefined") return;
+    const io = new IntersectionObserver((entries) => {
+      if (!entries.some((e) => e.isIntersecting)) return;
+      io.disconnect();
+      onVisible.current?.(href);
+    });
+    io.observe(el);
+    return () => io.disconnect();
+  }, [hasVisible, href]);
   useEffect(() => {
     // Back from the input: focus returns to the row.
     if (wasRenaming.current && !renaming)

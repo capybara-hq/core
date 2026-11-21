@@ -5,6 +5,7 @@ import { Icon } from "../icons/icon";
 import { useDesignT } from "../provider";
 import { type DragState, useDragDismiss } from "./drag";
 import { useFocusReturn } from "./focus-return";
+import { useOverlayHistory } from "./use-overlay-history";
 
 // The bottom sheet (spec §6.7 "Follow-finger sheets"; mobile layout spec §7.4): a grab handle over
 // a head with the title and a 40 px close button, then the body, over a scrim. The handle and the
@@ -181,8 +182,10 @@ export type BottomSheetProps = Omit<BottomSheetContentProps, "onDismiss"> & {
   onOpenChange(open: boolean): void;
 };
 
-/** A controlled bottom sheet (a Filter sheet, the Me page's org and language sheets). */
+/** A controlled bottom sheet (a Filter sheet, the account sheet). */
 export function BottomSheet({ open, onOpenChange, ...content }: BottomSheetProps) {
+  // Back closes an open sheet first on a compact touch window (mobile app plan Decision 25).
+  useOverlayHistory(open, () => onOpenChange(false));
   return (
     <RD.Root open={open} onOpenChange={onOpenChange}>
       <BottomSheetContent {...content} onDismiss={() => onOpenChange(false)} />

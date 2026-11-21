@@ -48,6 +48,7 @@ function ChildQuestion({ orgId, wait }: { orgId: string; wait: Wait }) {
                 callId: "",
                 answer: question.answer,
                 byAccountId: question.answeredBy,
+                byPerson: question.answeredByPerson,
                 outcome: question.status,
               },
       }}

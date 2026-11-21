@@ -20,6 +20,7 @@ import {
   useStatusBar,
 } from "../src/index";
 import { describeNestedBox, findNestedBoxes } from "../src/reference/index";
+import { css, parseCss } from "./css-rules";
 import { matchMediaFor } from "./width";
 
 afterEach(() => {
@@ -110,6 +111,17 @@ describe("AppShell", () => {
     expect(screen.getByRole("link", { name: "Agents" }).getAttribute("aria-current")).toBe("page");
   });
 
+  it("the shell root carries the class whose rules stop rubber banding; chrome no-select is on its classes", () => {
+    zh(shell());
+    const root = document.querySelector('[data-cap-part="shell"]') as HTMLElement;
+    expect(root.classList.contains("cb-shell")).toBe(true);
+    const decls = (file: string, sel: string) =>
+      parseCss(css(file)).find((r) => r.selector === sel && r.at === null)?.decls;
+    expect(decls("shell.css", ".cb-shell")?.["overscroll-behavior"]).toBe("none");
+    expect(document.querySelector(".cb-sidebar")).toBeTruthy();
+    expect(decls("sidebar.css", ".cb-sidebar")?.["user-select"]).toBe("none");
+  });
+
   it("a banner (safe mode) is a row of the shell: the regions share the rest of the window", () => {
     zh(
       <AppShell
@@ -194,19 +206,15 @@ describe("AppShell", () => {
     expect(screen.getByRole("dialog")).toBeTruthy();
   });
 
-  it("below 600 there is no sidebar and no drawer: the top bar has a search button that opens the palette", async () => {
+  it("below 600 there is no sidebar and no top bar: the floating row draws only the leading control", () => {
     stubWidth(500);
     zh(shell());
     expect(document.querySelector('[data-part="sidebar"]')).toBeNull();
-    expect(screen.queryByRole("button", { name: "打开导航" })).toBeNull();
-    const bar = document.querySelector('[data-part="top-bar"]') as HTMLElement;
-    const search = within(bar).getByRole("button", { name: "搜索" });
-    expect(search.querySelector('[data-icon="search"]')).not.toBeNull();
-    // the bar's controls are search, then the overflow menu when the page has one: search is last
-    // here (no page menu)
-    expect(bar.lastElementChild).toBe(search);
-    await userEvent.click(search);
-    expect(screen.getByRole("dialog", { name: "命令面板" })).toBeTruthy();
+    expect(document.querySelector('[data-part="top-bar"]')).toBeNull();
+    const bar = document.querySelector('[data-part="floating-bar"]') as HTMLElement;
+    // no chat surface here: a pushed page's back, and no search of its own (the drawer has it)
+    expect(within(bar).getByRole("link", { name: "返回" })).toBeTruthy();
+    expect(within(bar).queryByRole("button", { name: "搜索" })).toBeNull();
   });
 
   it("a skip link is the first tab stop and leads to the main content (m9)", async () => {
@@ -220,12 +228,14 @@ describe("AppShell", () => {
     expect(main.getAttribute("tabindex")).toBe("-1");
   });
 
-  it("draws the top bar in every render and lets CSS show it below 600 only", () => {
+  it("draws the floating row in every render and lets CSS show it below 600 only", () => {
     const html = renderToString(<DesignProvider locale="zh">{shell()}</DesignProvider>);
-    expect(html).toContain('data-part="top-bar"');
+    expect(html).toContain('data-part="floating-bar"');
     const css = readFileSync(resolve(import.meta.dirname, "../src/styles/shell.css"), "utf8");
-    expect(css).toMatch(/\.cb-shell-topbar,\s*\.cb-shell-bottomnav \{\s*display: none;/);
-    expect(css).toMatch(/@media \(max-width: 599px\) \{\s*\.cb-shell-topbar \{\s*display: block;/);
+    expect(css).toMatch(/\.cb-shell-float \{\s*display: none;/);
+    expect(css).toMatch(
+      /@media \(max-width: 599px\) \{[\s\S]*?\.cb-shell-float \{\s*display: block;/,
+    );
   });
 });
 

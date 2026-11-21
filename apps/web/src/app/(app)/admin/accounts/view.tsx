@@ -9,6 +9,7 @@ import {
   Field,
   Input,
   ListPage,
+  PersonName,
   Stack,
   StatusMark,
   Text,
@@ -82,7 +83,11 @@ type T = ReturnType<typeof useTranslations<"admin.accounts">>;
 
 /** The table's columns (the loading table draws the same header). */
 const accountColumns = (t: T): Column<AdminAccount>[] => [
-  { key: "name", header: t("columns.name"), cell: (a) => a.displayName },
+  {
+    key: "name",
+    header: t("columns.name"),
+    cell: (a) => <PersonName name={a.displayName} avatarUrl={a.avatarUrl} size={24} />,
+  },
   { key: "email", header: t("columns.email"), tone: "muted", cell: (a) => a.email ?? "—" },
   {
     key: "status",

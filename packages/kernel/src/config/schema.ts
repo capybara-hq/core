@@ -1564,6 +1564,21 @@ export const KernelConfigSchema = z.strictObject({
         ),
     })
     .prefault({} as never),
+  /** Push notifications to people's mobile apps (mobile app spec §9.5); platform only. */
+  push: z
+    .strictObject({
+      previews: z
+        .enum(["off", "titles"])
+        .default("off")
+        .meta(
+          meta({
+            hot: true,
+            description:
+              "What a push notification may carry beyond the agent's name and a fixed sentence: off sends no conversation content; titles adds the conversation title to the body. Message and tool text are never sent",
+          }),
+        ),
+    })
+    .prefault({} as never),
   subagents: z
     .strictObject({
       maxDepth: z

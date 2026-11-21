@@ -53,7 +53,7 @@ export function TracePage({
   detail: ReactNode;
   /**
    * Whether a span is open (spec §5.11, compact): the waterfall is the page until it is, then the
-   * span is pushed as its own screen (`onBack` closes it; inside an `AppShell` the top bar's back
+   * span is pushed as its own screen (`onBack` closes it; inside an `AppShell` the floating row's back
    * does). Medium and expanded draw both whatever it is. Default false.
    */
   open?: boolean;

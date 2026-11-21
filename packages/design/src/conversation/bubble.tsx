@@ -9,6 +9,8 @@ import {
 } from "react";
 import { IconButton } from "../controls/button";
 import { isSafeAttachmentHref } from "../display/attachments";
+import { Avatar } from "../display/avatar";
+import type { PersonLike } from "../display/person-name";
 import { Icon } from "../icons/icon";
 import { useDesignT } from "../provider";
 import { fillCopy } from "./tool-copy";
@@ -31,6 +33,12 @@ export type UserBubbleProps = {
    * sub-agent's transcript, agent map spec §9.4). Shown above the bubble as "来自 <sender>".
    */
   sender?: string;
+  /**
+   * Who wrote it (spec §6.16.6): a 24 circle avatar at the bubble's end side; `showName` puts the
+   * name above the bubble (a shared conversation's trajectory, where the writer is not the viewer).
+   * Absent, nothing is drawn.
+   */
+  author?: PersonLike & { showName?: boolean };
   /** A long message starts open (uncontrolled; the reference set's `expanded` state). */
   defaultExpanded?: boolean;
   /**
@@ -75,6 +83,28 @@ export function BubbleSkill({ label }: { label: string }): JSX.Element {
   );
 }
 
+/** The bubble, with the author's 40 circle at its end side when it has one (spec §6.16.6). */
+function BubbleRow({
+  author,
+  children,
+}: {
+  author: UserBubbleProps["author"];
+  children: ReactNode;
+}): JSX.Element {
+  if (!author) return <>{children}</>;
+  return (
+    <div className="cb-bubble-row" data-part="bubble-row">
+      {children}
+      <Avatar
+        shape="circle"
+        size={40}
+        name={author.initialFrom ?? author.name}
+        value={author.avatarUrl ? { kind: "image", src: author.avatarUrl } : null}
+      />
+    </div>
+  );
+}
+
 /**
  * A user message (§6.16.6): right-aligned `selected` bubble, at most 75% of the thread. A message
  * taller than `layout.bubble-clamp` (eight prose lines) is clamped with its last line fading out,
@@ -88,6 +118,7 @@ export function UserBubble({
   skill,
   details,
   sender,
+  author,
   defaultExpanded,
   referenceLong,
 }: UserBubbleProps): JSX.Element {
@@ -119,27 +150,34 @@ export function UserBubble({
           {fillCopy(t("bubble.from"), { name: sender })}
         </div>
       ) : null}
+      {author?.showName ? (
+        <div className="cb-bubble-author-name" data-part="bubble-author-name">
+          {author.name}
+        </div>
+      ) : null}
       {attachments}
       {/* An attachment-only message (an image sent without words) draws no empty bubble */}
       {text.trim() === "" && skill === undefined ? null : (
-        <div
-          className="cb-bubble"
-          data-part="bubble"
-          data-cap-part="message.user.bubble"
-          data-queued={queued ? "true" : undefined}
-        >
+        <BubbleRow author={author}>
           <div
-            ref={bodyRef}
-            id={bodyId}
-            className="cb-bubble-body"
-            data-part="bubble-body"
-            data-expanded={expanded ? "true" : "false"}
-            data-overflows={overflows && !expanded ? "true" : undefined}
+            className="cb-bubble"
+            data-part="bubble"
+            data-cap-part="message.user.bubble"
+            data-queued={queued ? "true" : undefined}
           >
-            {skill !== undefined ? <BubbleSkill label={skill} /> : null}
-            {text}
+            <div
+              ref={bodyRef}
+              id={bodyId}
+              className="cb-bubble-body"
+              data-part="bubble-body"
+              data-expanded={expanded ? "true" : "false"}
+              data-overflows={overflows && !expanded ? "true" : undefined}
+            >
+              {skill !== undefined ? <BubbleSkill label={skill} /> : null}
+              {text}
+            </div>
           </div>
-        </div>
+        </BubbleRow>
       )}
       {expanded || overflows ? (
         <button

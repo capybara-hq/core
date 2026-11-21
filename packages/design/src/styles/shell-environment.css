@@ -16,13 +16,11 @@
 }
 
 /* The whole shell starts below the band (the banner, the sidebar, the content column and the
-   compact top bar alike), so the top bar pads nothing more; on medium and expanded the shell pads
-   the bottom inset too (the compact class pads it in its bottom bars). */
+   compact floating row alike), so the floating row adds no top inset of its own; on medium and
+   expanded the shell pads the bottom inset too (the compact pages pad it themselves). */
 :root[data-shell] .cb-shell {
   padding-top: var(--cb-shell-band);
-}
-:root[data-shell] .cb-shell-topbar {
-  padding-top: 0;
+  --cb-float-top: var(--cb-space-2);
 }
 @media (min-width: 600px) {
   :root[data-shell] .cb-shell {
@@ -45,12 +43,12 @@
   -webkit-app-region: drag;
   app-region: drag;
 }
-:root[data-shell="desktop"] :is(.cb-sidebar-top, .cb-topbar, .cb-title-bar) {
+:root[data-shell="desktop"] :is(.cb-sidebar-top, .cb-title-bar) {
   -webkit-app-region: drag;
   app-region: drag;
 }
 :root[data-shell="desktop"]
-  :is(.cb-sidebar-top, .cb-topbar, .cb-title-bar)
+  :is(.cb-sidebar-top, .cb-title-bar)
   :is(a, button, input, select, textarea, summary, label, [role], [tabindex]) {
   -webkit-app-region: no-drag;
   app-region: no-drag;

@@ -7,6 +7,7 @@
   "mac-abort-escape.test.ts",
   "mac-open-network.test.ts",
   "mac-operation-backend.test.ts",
+  "mac-orphans.test.ts",
   "mac-read-scope.test.ts",
   "mac-self-check.test.ts",
   "mac-tool-homes.test.ts",

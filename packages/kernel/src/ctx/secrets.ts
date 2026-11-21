@@ -192,6 +192,10 @@ export interface RewrapResult {
   dataKeys: number;
   /** Unexpired one-time initial passwords (`account_initial_passwords`) now sealed with it. */
   initialPasswords: number;
+  /** Unexpired sealed Platform reveals (`platform_sealed_reveals`, invitation links) now sealed with it. */
+  sealedReveals: number;
+  /** Mobile app push tokens (`push_registrations`) now sealed with it. */
+  pushTokens: number;
 }
 
 /** Rows rewrapped per transaction by default. */
@@ -200,14 +204,33 @@ export const REWRAP_BATCH_SIZE = 500;
 /** The AAD binding a sealed initial password to its account (a row moved to another one fails). */
 export const initialPasswordAad = (accountId: string) => `capybara:initial-password:${accountId}`;
 
+/**
+ * The AAD binding a person's sealed card values to their approval and field paths (sorted, joined
+ * by ","): a row moved to another approval, or whose paths are altered, fails to unwrap.
+ */
+export const platformSealedInputAad = (approvalId: string, paths: readonly string[]) =>
+  `capybara:platform-sealed-input:${approvalId}:${[...paths].sort().join(",")}`;
+
+/**
+ * The AAD binding a sealed Platform reveal (an invitation link) to its subject: a row moved to
+ * another subject fails to unwrap.
+ */
+export const platformSealedRevealAad = (id: string) => `capybara:platform-sealed-reveal:${id}`;
+/** The AAD binding a sealed push token to its registration (a row moved to another one fails). */
+export const pushTokenAad = (registrationId: string) => `capybara:push-token:${registrationId}`;
+
 type RewrapHandles = { db: Pick<KernelDb, "db">; txHost: Pick<TransactionHost, "run"> };
 
 /** One table whose rows are sealed directly with a master key. */
 interface MasterKeyedTable {
-  table: "org_data_keys" | "account_initial_passwords";
+  table:
+    | "org_data_keys"
+    | "account_initial_passwords"
+    | "platform_sealed_reveals"
+    | "push_registrations";
   /** The row key column; also names the row in errors (an id, never key material). */
-  idColumn: "org_id" | "account_id";
-  dataColumn: "wrapped_key" | "ciphertext";
+  idColumn: "org_id" | "account_id" | "id";
+  dataColumn: "wrapped_key" | "ciphertext" | "token_ciphertext";
   aad(id: string): string;
   /**
    * The table has `expires_at`: expired rows are never read again, so they are left to their
@@ -231,6 +254,20 @@ const MASTER_KEYED: MasterKeyedTable[] = [
     aad: initialPasswordAad,
     hasExpiresAt: true,
   },
+  {
+    table: "platform_sealed_reveals",
+    idColumn: "id",
+    dataColumn: "ciphertext",
+    aad: platformSealedRevealAad,
+    hasExpiresAt: true,
+  },
+  {
+    table: "push_registrations",
+    idColumn: "id",
+    dataColumn: "token_ciphertext",
+    aad: pushTokenAad,
+    hasExpiresAt: false,
+  },
 ];
 
 function staleRows(db: AnyDb, t: MasterKeyedTable, keyring: Keyring) {
@@ -252,11 +289,12 @@ function assertKnown(t: MasterKeyedTable, keyring: Keyring, rows: { id: string; 
 }
 
 /**
- * Rewraps everything sealed with a master key other than the keyring's current one (org data keys
- * and unexpired initial passwords) with the current key, `batchSize` rows per transaction, until
- * none is left. Checks first that the keyring holds every master key in use and throws (naming row
- * ids and key ids, never key material) before writing anything when it does not. Idempotent: a
- * second run finds nothing; concurrent runs lock the same rows and skip the ones already done.
+ * Rewraps everything sealed with a master key other than the keyring's current one (org data keys,
+ * unexpired initial passwords and sealed reveals, push tokens) with the current key, `batchSize` rows per
+ * transaction, until none is left. Checks first that the keyring holds every master key in use and
+ * throws (naming row ids and key ids, never key material) before writing anything when it does not.
+ * Idempotent: a second run finds nothing; concurrent runs lock the same rows and skip the ones
+ * already done.
  */
 export async function rewrapToCurrentMasterKey(
   handles: RewrapHandles,
@@ -320,5 +358,7 @@ export async function rewrapToCurrentMasterKey(
   return {
     dataKeys: counts.get("org_data_keys") ?? 0,
     initialPasswords: counts.get("account_initial_passwords") ?? 0,
+    sealedReveals: counts.get("platform_sealed_reveals") ?? 0,
+    pushTokens: counts.get("push_registrations") ?? 0,
   };
 }

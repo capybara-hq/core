@@ -10,6 +10,7 @@ import { serviceCommand } from "./commands/service.js";
 import { start } from "./commands/start.js";
 import { status } from "./commands/status.js";
 import { stop } from "./commands/stop.js";
+import { stamped } from "./log-timestamp.js";
 import type { ProcessLookup } from "./pid.js";
 import type { PolicyStore } from "./policy-store.js";
 import type { RunSystem } from "./service/manager.js";
@@ -122,11 +123,12 @@ export async function runCli(argv: string[], io: CliEnv = {}): Promise<number> {
         ...(io.ps && { ps: io.ps }),
       });
     case "start":
+      // The service log has no other clock: every line `start` writes carries a timestamp.
       return start({
         service: { home, platform },
         stateDir: dir,
-        out,
-        err,
+        out: stamped(out),
+        err: stamped(err),
         createStaged: io.createStaged ?? defaultCreateStaged(dir, home),
         ...(io.env && { env: io.env }),
         ...(io.kill && { kill: io.kill }),

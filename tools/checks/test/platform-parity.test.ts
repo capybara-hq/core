@@ -12,6 +12,7 @@ import { z } from "zod";
 import {
   clean,
   clean2,
+  createRoute,
   flattenedLooser,
   looserBound,
   nestedLooser,
@@ -22,10 +23,22 @@ import {
   requiredLoosened,
   route,
   route2,
+  route3,
+  secretClean,
+  secretNoPersonFields,
+  secretParam,
+  secretWithout,
+  secretWithoutBlank,
+  secretWithoutParam,
   staleLoosens,
+  staleWithoutSecrets,
+  twoRoutes,
+  twoRoutesMismatch,
+  twoRoutesMissing,
   typeMismatch,
   undeclaredExtra,
   undeclaredOmission,
+  uploadRoute,
 } from "../fixtures/platform-parity/cases.js";
 import { checkPlatformOps, kernelRoutes } from "../src/platform-ops.js";
 
@@ -131,6 +144,57 @@ describe("inputParity", () => {
     const flat = inputParity(flattenedLooser, route2);
     expect(brief(flat)).toEqual([{ op: "things.flat", field: "title" }]);
     expect(flat[0]?.message).toContain("`title` (`spec.title`): maxLength unbounded");
+  });
+
+  it("platform-op-secret-param: a route field with secret() meta is a person field, never a param", () => {
+    expect(inputParity(secretClean, route3)).toEqual([]);
+    const param = inputParity(secretParam, route3);
+    expect(param.map((f) => ({ op: f.op, field: f.field, rule: f.rule }))).toEqual([
+      { op: "things.secret-param", field: "secretEntries", rule: "platform-op-secret-param" },
+    ]);
+    expect(param[0]?.message).toContain("platform-op-secret-param");
+    expect(param[0]?.message).toContain("omits");
+    const unasked = inputParity(secretNoPersonFields, route3);
+    expect(unasked.map((f) => ({ op: f.op, field: f.field, rule: f.rule }))).toEqual([
+      { op: "things.secret-unasked", field: "secretEntries", rule: "platform-op-secret-param" },
+    ]);
+    expect(unasked[0]?.message).toContain("personFields");
+  });
+
+  it("platform-op-secret-param: a withoutSecrets on an op whose route carries no secret is stale", () => {
+    expect(
+      checkInputParity([staleWithoutSecrets], [route]).map((f) => ({
+        op: f.op,
+        field: f.field,
+        rule: f.rule,
+      })),
+    ).toEqual([
+      { op: "things.stale-without", field: "withoutSecrets", rule: "platform-op-secret-param" },
+    ]);
+    // with a secret route it is not stale
+    expect(checkInputParity([secretWithout], [route3])).toEqual([]);
+  });
+
+  it("platform-op-secret-param: withoutSecrets with a reason exempts an op that takes no secret, never one that does", () => {
+    expect(inputParity(secretWithout, route3)).toEqual([]);
+    for (const [op, id] of [
+      [secretWithoutBlank, "things.preview-blank"],
+      [secretWithoutParam, "things.preview-param"],
+    ] as const) {
+      expect(
+        inputParity(op, route3).map((f) => ({ op: f.op, field: f.field, rule: f.rule })),
+      ).toEqual([{ op: id, field: "secretEntries", rule: "platform-op-secret-param" }]);
+    }
+  });
+
+  it("compares an operation mirroring two routes with the fields of both", () => {
+    expect(checkInputParity([twoRoutes], [uploadRoute, createRoute])).toEqual([]);
+    expect(brief(checkInputParity([twoRoutesMissing], [uploadRoute, createRoute]))).toEqual([
+      { op: "things.missing", field: "uploadId" },
+    ]);
+    const mismatch = checkInputParity([twoRoutesMismatch], [uploadRoute, createRoute]);
+    expect(brief(mismatch)).toEqual([{ op: "things.mismatch", field: "shareable" }]);
+    expect(mismatch[0]?.route).toBe(createRoute.route);
   });
 
   it("(d) a mirror of a removed route: not registered here, an orphan for check:platform-ops", () => {

@@ -53,9 +53,10 @@ export interface Plan {
   /**
    * Run the network half of check:bootstrap (`pnpm check:bootstrap --network`: npm entries against
    * the registry, the official marketplace commit, the sandbox-docker plugin's copy of the socket
-   * proxy config and the compose build contexts there). It needs GitHub and npm, so on a PR only
-   * when one of its inputs changed ({@link BOOTSTRAP_NETWORK_INPUTS}: the pins and the check's own
-   * code; docker/ files run everything anyway); always on main.
+   * proxy config, the image's runtime digests and the compose build contexts there). It needs
+   * GitHub and npm, so on a PR only when one of its inputs changed ({@link BOOTSTRAP_NETWORK_INPUTS}:
+   * the pins, the check's own code, the SDK runtime sources; docker/ files run everything anyway);
+   * always on main.
    */
   bootstrapNetwork: boolean;
 }
@@ -170,7 +171,9 @@ const BOOTSTRAP_MANIFEST = "packages/kernel/bootstrap.json";
 /**
  * Inputs of the network half of check:bootstrap: the pins (packages/kernel/bootstrap.json), the
  * check's own code (tools/checks' bootstrap*.ts and its CLI), the npm fetcher it downloads with
- * (packages/plugin-tools/src/pack/npm.ts) and the SDK's manifest parser. Its other inputs are
+ * (packages/plugin-tools/src/pack/npm.ts), the SDK's manifest parser and the SDK runtime sources
+ * the sandbox-docker image stages (packages/plugin-sdk/src/sandbox-*runtime-source.ts, whose
+ * digests the image's SHA256SUMS must list: bootstrap-sandbox-runtime). Its other inputs are
  * core's socket proxy config (docker/sandbox-proxy/**, compared with the sandbox-docker plugin's
  * copy, bootstrap-haproxy) and the compose files (their git build contexts, bootstrap-compose-ref):
  * docker/ belongs to no package, so those already run everything (planAll), the network check
@@ -182,6 +185,7 @@ const BOOTSTRAP_NETWORK_INPUTS: ((f: string) => boolean)[] = [
   (f) => f === "tools/checks/src/cli/bootstrap.ts",
   (f) => f === "packages/plugin-tools/src/pack/npm.ts",
   (f) => f === "packages/plugin-sdk/src/bootstrap.ts",
+  (f) => /^packages\/plugin-sdk\/src\/sandbox-[^/]*runtime-source\.ts$/.test(f),
 ];
 const isBootstrapNetworkInput = (f: string) => BOOTSTRAP_NETWORK_INPUTS.some((m) => m(f.trim()));
 

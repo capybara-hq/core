@@ -97,6 +97,7 @@ import { setupRequestQuery } from "./from-template";
 import { inboxQuery, skillChangeQuery } from "./inbox";
 import { membersQuery } from "./members";
 import { permissionPreviewQuery } from "./permissions";
+import { pushPreferencesQuery, pushRegistrationsQuery } from "./push";
 import {
   chatTargetsQuery,
   conversationSchedulesQuery,
@@ -120,8 +121,8 @@ import {
   pluginInstallsQuery,
   serviceTokensQuery,
 } from "./settings";
-import { memberGuideQuery, setupGuideQuery } from "./setup";
-import { setupCheckStatesQuery } from "./setup-checks";
+import { deploymentGuidesQuery, memberGuideQuery, setupGuideQuery } from "./setup";
+import { deploymentCheckStatesQuery, setupCheckStatesQuery } from "./setup-checks";
 import { orgSharesQuery, shareMetaQuery } from "./shares";
 import { conversationGroupsQuery, maybeMeQuery, readinessQuery } from "./shell";
 import { skillQuery, skillsQuery } from "./skills";
@@ -167,6 +168,12 @@ export interface RouteEntry {
   then?(ctx: RouteCtx, qc: QueryClient): Promise<void>;
   /** Why the entry prefetches nothing. */
   none?: string;
+  /**
+   * A management page that is desktop-only on touch (mobile touch plan Task 29): the shell shows
+   * "Manage this on a computer" in its place. Set from {@link DESKTOP_ONLY_PREFIXES}; presentation only, the
+   * kernel still decides access.
+   */
+  desktopOnly?: boolean;
 }
 
 /**
@@ -215,7 +222,7 @@ async function prefetchFirstTemplateGuide(
   });
 }
 
-export const ROUTES: readonly RouteEntry[] = [
+const ROUTE_TABLE: readonly RouteEntry[] = [
   {
     pattern: "/account/connections",
     queries: ({ orgId }) => (orgId === null ? [] : [q(connectorsQuery(orgId))]),
@@ -253,11 +260,25 @@ export const ROUTES: readonly RouteEntry[] = [
       me === null ? [] : [q(identitiesQuery(me.account.id)), q(authSourcesQuery())],
   },
   {
+    pattern: "/account/notifications",
+    // No org needed: my registrations and the four switches.
+    queries: ({ me }) =>
+      me === null
+        ? []
+        : [q(pushRegistrationsQuery(me.account.id)), q(pushPreferencesQuery(me.account.id))],
+  },
+  {
     pattern: "/account/shares",
     // Every role, guests too (sharing needs `agents.use`, which guests hold): the person's own
     // shares; the nav offers the page to everyone.
     queries: ({ orgId, me }) =>
       orgId === null || !atLeast(me, "guest") ? [] : [q(orgSharesQuery(orgId, "mine"))],
+  },
+  {
+    // Nothing to read: `me` (the layout's) holds the name and the avatar.
+    pattern: "/account/profile",
+    // No org needed: me (the shell's), and the sign-in sources that name an SSO avatar's origin.
+    queries: ({ me }) => (me === null ? [] : [q(authSourcesQuery())]),
   },
   {
     pattern: "/account/preferences",
@@ -297,20 +318,31 @@ export const ROUTES: readonly RouteEntry[] = [
   {
     pattern: "/admin/extensions/[name]",
     // The list (the extension is found in it) and its deployment config (the Config tab); for an
-    // extension with client code, the settings too (界面代码 says whether it is stopped), and the
-    // orgs when its reports name any (each report row shows the org's name).
+    // extension in the list, its platform setup guides (the Config tab) and each guide's cached
+    // check states; for an extension with client code, the settings too (the client code section
+    // says whether it is stopped), and the orgs when its reports name any (each report row shows
+    // the org's name).
     queries: ({ me, params }) =>
       superAdmin(me) && params.name !== undefined
         ? [q(adminExtensionsQuery()), q(extensionConfigQuery(params.name))]
         : [],
     // biome-ignore lint/suspicious/noThenProperty: RouteEntry's `then` step (controller ruling)
-    then: async ({ me, params }, qc) => {
+    then: async ({ me, params, locale }, qc) => {
       if (!superAdmin(me) || params.name === undefined) return;
+      const name = params.name;
       const list = qc.getQueryData<{ extensions: AdminExtension[] }>(
         adminExtensionsQuery().queryKey,
       );
-      const ext = list?.extensions.find((e) => e.name === params.name);
-      if (ext?.client == null) return;
+      const ext = list?.extensions.find((e) => e.name === name);
+      if (ext === undefined) return;
+      const guidesQuery = deploymentGuidesQuery(name, labelLocale(locale));
+      await qc.prefetchQuery({ ...guidesQuery, retry: false });
+      await Promise.all(
+        (qc.getQueryData<{ id: string }[]>(guidesQuery.queryKey) ?? []).map((g) =>
+          qc.prefetchQuery({ ...deploymentCheckStatesQuery(name, g.id), retry: false }),
+        ),
+      );
+      if (ext.client == null) return;
       await Promise.all([
         qc.prefetchQuery({ ...deploymentSettingsQuery(), retry: false }),
         ...((ext.clientReports ?? []).some((r) => r.orgId !== null)
@@ -1041,11 +1073,6 @@ export const ROUTES: readonly RouteEntry[] = [
     queries: () => [q(authSourcesQuery()), q(maybeMeQuery())],
   },
   {
-    pattern: "/me",
-    queries: () => [],
-    none: "reads nothing of its own: the Me page draws the sidebar's data, which the layout prefetches as shell data",
-  },
-  {
     pattern: "/p/[plugin]/[id]",
     // Anyone in the org: the UI contributions, then the page's view when it is a schema view (an
     // embed's token handshake stays in the browser).
@@ -1334,15 +1361,40 @@ export const ROUTES: readonly RouteEntry[] = [
   },
   {
     pattern: "/trajectories/[conversationId]",
-    // Members up (the kernel decides who may see it): the latest runs (audited) and the members.
+    // Members up (the kernel decides who may see it): the latest runs (audited); the response
+    // names the people.
     queries: ({ orgId, me, params }) =>
       orgId === null || params.conversationId === undefined || !atLeast(me, "member")
         ? []
-        : [q(trajectoryQuery(orgId, params.conversationId)), q(membersQuery(orgId))],
+        : [q(trajectoryQuery(orgId, params.conversationId))],
   },
   // Any other path under (app): its page throws `notFound()` (HTTP 404 inside the App Shell).
   { pattern: "/[...rest]", queries: () => [], none: "unknown route: 404" },
 ];
+
+/**
+ * The route prefixes that are desktop-only on touch: plugins, extensions, channels, organization
+ * settings, evals and runs, and the admin console (mobile layout spec §15, decision 4).
+ */
+export const DESKTOP_ONLY_PREFIXES = [
+  "/plugins",
+  "/extensions",
+  "/channels",
+  "/settings",
+  "/evals",
+  "/trajectories",
+  "/admin",
+] as const;
+
+const underPrefix = (pattern: string, prefix: string) =>
+  pattern === prefix || pattern.startsWith(`${prefix}/`);
+
+/** The route table: every entry, the ones under {@link DESKTOP_ONLY_PREFIXES} flagged. */
+export const ROUTES: readonly RouteEntry[] = ROUTE_TABLE.map((entry) =>
+  DESKTOP_ONLY_PREFIXES.some((p) => underPrefix(entry.pattern, p))
+    ? { ...entry, desktopOnly: true }
+    : entry,
+);
 
 /** The catch-all entry: a path no page serves. */
 export const UNKNOWN_ROUTE = "/[...rest]";

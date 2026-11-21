@@ -23,6 +23,7 @@ export {
   AvatarPicker,
   type AvatarPickerProps,
   type AvatarPreset,
+  type AvatarShape,
   type AvatarSize,
   type AvatarValue,
   type PresetId,
@@ -108,10 +109,13 @@ export {
   Markdown,
   type MarkdownProps,
 } from "./markdown";
+export { badgeText, type NavBadge } from "./nav-badge";
+export { NavRow, type NavRowProps } from "./nav-row";
 export { ObjectList, ObjectRow, type ObjectRowProps } from "./object-list";
 export { ObjectMark, type ObjectMarkSize } from "./object-mark";
 export { Pagination, type PaginationProps } from "./pagination";
 export { PENDING_DELAY_MS, PendingState } from "./pending-state";
+export { type PersonLike, PersonName } from "./person-name";
 export {
   ScheduleCalendar,
   type ScheduleCalendarCollapsed,

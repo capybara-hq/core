@@ -10,12 +10,15 @@
  * - A check never writes, at the third party or in Capybara, and stays cheap (one or two reads).
  * - Pass `signal` to every request; the kernel aborts it at {@link SETUP_CHECK_LIMITS}.timeoutMs.
  * - No retries inside the check: the person retries, retry policy is the kernel's.
- * - Never put a secret in `reason` or `fix`. The kernel replaces known secret values with
- *   `[REDACTED]` before caching or returning, but it can only redact what it knows.
+ * - Never put a secret, or any part of one, in `reason` or `fix`: the result is shown to people
+ *   and to models (the `Platform` tool returns it). The kernel replaces known secret values with
+ *   `[REDACTED]` before caching or returning, but only as exact matches of whole values of 8
+ *   characters or more: a prefix, suffix, shorter secret or transformed copy is not redacted.
  *
  * What a check receives is what the extension already receives for the same target, nothing more:
- * a channel connection's config (as `channel@1` `verify` and `connect` get it), or a connector's
- * ids and OAuth client id. A check never gets the OAuth client secret or a member's token; those
+ * a channel connection's config (as `channel@1` `verify` and `connect` get it), a connector's
+ * ids and OAuth client id, or the extension's own platform deployment config (as its `ctx.config`,
+ * for the `extension-deployment` place, run only by a super admin). A check never gets the OAuth client secret or a member's token; those
  * stay with the kernel and the connector extension's `auth()` (decided 2026-11-09).
  */
 import type { SetupGuidePlace } from "./setup-guide.js";
@@ -48,7 +51,7 @@ export interface SetupCheckResult {
 /**
  * What a check is about. The kernel builds it field by field; it only ever names targets of the
  * check's own plugin (a channel connection on the plugin, a connector made from one of its
- * templates).
+ * templates, the plugin's own deployment).
  */
 export type SetupCheckTarget =
   | {
@@ -65,12 +68,23 @@ export type SetupCheckTarget =
       readonly clientId: string | null;
       /** The viewing member's account, for member-audience checks; never their token. */
       readonly accountId: string | null;
+    }
+  | {
+      readonly kind: "extension-deployment";
+      /** The check's own plugin. */
+      readonly plugin: string;
+      /** The extension's platform deployment config as its `ctx.config` holds it, secrets included. */
+      readonly config: unknown;
     };
 
 /** What `run` receives. */
 export interface SetupCheckArgs {
-  readonly orgId: string;
-  /** The extension's effective config for the org (platform config plus the org's copy). */
+  /** The org the check runs for; null for the `extension-deployment` place (the platform). */
+  readonly orgId: string | null;
+  /**
+   * The extension's effective config for the org (platform config plus the org's copy); for the
+   * `extension-deployment` place, its platform deployment config.
+   */
   readonly config: unknown;
   readonly locale: "en" | "zh";
   /** The guide's mode (`long_connection`, `webhook`), or null when the place has none. */

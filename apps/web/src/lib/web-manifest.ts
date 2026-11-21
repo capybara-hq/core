@@ -26,7 +26,8 @@ function iconsOf(meta: PlatformMeta | null): PlatformMeta["icons"] {
  * The web app manifest (mobile layout spec §10.2): the deployment's name ("Capybara" unset), its
  * app icon (`any`) and maskable icon by their versioned URLs, else the web's default for each; an
  * uploaded app icon without a maskable one is listed alone. `meta` null (the kernel could not be
- * read): the defaults.
+ * read): the defaults. It starts on the home, `/`: the new conversation is the chat-first shell's
+ * home (a chat surface, design spec §4.6), so an installed app opens on the composer.
  */
 export function webManifest(meta: PlatformMeta | null): MetadataRoute.Manifest {
   const name = meta?.name ?? DEFAULT_PLATFORM_NAME;

@@ -153,6 +153,28 @@ it.runIf(process.platform === "darwin")(
     expect(existsSync(join(home, "written"))).toBe(false);
     // nothing of the home lands in the working directory
     expect(existsSync(join(project, ".cache"))).toBe(false);
+    // a package manager's data and configuration land in the home (the XDG directories exist,
+    // though the sandbox may not create a directory leading to a protected entry), and the
+    // protected entries beneath them stay denied
+    const tools = await run(
+      [
+        'mkdir -p "$XDG_DATA_HOME/pnpm/store" "$XDG_CONFIG_HOME/pnpm" "$XDG_STATE_HOME/pnpm"',
+        'touch linked && ln linked "$XDG_DATA_HOME/pnpm/store/linked"',
+        '(mkdir -p "$XDG_CONFIG_HOME/git" && printf x > "$XDG_CONFIG_HOME/git/config") 2>/dev/null && printf w > wrote-git',
+        '(mkdir -p "$XDG_DATA_HOME/systemd") 2>/dev/null && printf w > wrote-systemd',
+        '(mkdir -p "$HOME/Library/LaunchAgents") 2>/dev/null && printf w > wrote-agents',
+        "true",
+      ].join("; "),
+    );
+    expect(tools.exitCode, tools.stderr).toBe(0);
+    expect(existsSync(join(sandboxHome, ".local/share/pnpm/store/linked"))).toBe(true);
+    expect(existsSync(join(sandboxHome, ".local/state/pnpm"))).toBe(true);
+    for (const wrote of ["wrote-git", "wrote-systemd", "wrote-agents"])
+      expect(existsSync(join(project, wrote)), wrote).toBe(false);
+    // nor can the command remove the directories it could not create
+    await run('rm -rf "$HOME/.config" "$HOME/.local" 2>/dev/null; true');
+    expect(existsSync(join(sandboxHome, ".config"))).toBe(true);
+    expect(existsSync(join(sandboxHome, ".local/share"))).toBe(true);
     // the home is kept for the next command
     const second = await run('cat "$XDG_CACHE_HOME/state"');
     expect(second.exitCode, second.stderr).toBe(0);
