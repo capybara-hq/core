@@ -495,9 +495,9 @@ export class AgentsOperations implements OnModuleInit {
           let presetName: { zh: string; en: string } | undefined;
           if (i.avatar?.kind === "preset" && !isBuiltinPresetId(i.avatar.id)) {
             const key = i.avatar.id;
-            const p = (await this.themes.avatarPresets(ctx.orgId)).presets.find(
-              (x) => x.key === key,
-            );
+            // a summary never fails on a name: a read failure shows the key
+            const offered = await orElse(() => this.themes.avatarPresets(ctx.orgId), null);
+            const p = offered?.presets.find((x) => x.key === key);
             // the name in both languages (a missing zh already reads as en), else the key
             if (p !== undefined) presetName = localized(p.name, key);
           }
