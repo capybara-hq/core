@@ -386,7 +386,8 @@ describe("the rail's top row inside the desktop shell (desktop client spec §7.3
   });
 
   it("a hairline under the band closes it where the rail drops, and nowhere else", () => {
-    const line = ':root[data-shell="desktop"] .cb-shell:not([data-banner="true"])::after';
+    const line =
+      ':root[data-shell="desktop"] .cb-shell:not([data-banner="true"]):has(> .cb-sidebar[data-mode="rail"])::after';
     expect(decl(line, "top", BAND_QUERY)).toBe(
       "calc(var(--cb-shell-band) + var(--cb-shell-rail-drop) - 1px)",
     );

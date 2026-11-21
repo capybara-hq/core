@@ -33,7 +33,7 @@ export class PermissionAdmissionUnavailable extends SandboxPermissionUnsupported
 /** Read models never provision or probe. Runtime activation will persist provenance-bound reports. */
 export type PermissionAvailability =
   | { state: "supported"; report: SandboxPermissionSupport }
-  | { state: "unsupported"; reason: string; cause?: PermissionAvailabilityCause }
+  | { state: "unsupported"; reason: string; cause: PermissionAvailabilityCause }
   | { state: "unprobed"; reason: string };
 export const unprobedPermissionAvailability = (): PermissionAvailability => ({
   state: "unprobed",
