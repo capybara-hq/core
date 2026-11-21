@@ -348,6 +348,20 @@ describe("ModelImages.run", () => {
     expect(JSON.stringify(res)).not.toContain(out.images[0]?.data);
   });
 
+  it("reports one latency: the model.response payload and the result read the clock once", async () => {
+    const hooks = fakeHooks();
+    const prepared = await images.prepare(orgId, "image", { prompt: "a cat" });
+    // every clock read advances, so two separate reads after the call can never agree
+    const realNow = Date.now.bind(Date);
+    let tick = 0;
+    vi.spyOn(Date, "now").mockImplementation(() => realNow() + ++tick * 1000);
+    const out = await images.run(orgId, prepared, EXT, new AbortController().signal, hooks.runner);
+    vi.mocked(Date.now).mockRestore();
+    await vi.waitFor(() => expect(hooks.of("model.response")).toHaveLength(1));
+    const [res] = hooks.of<ImageResponseHookPayload>("model.response");
+    expect(res?.latencyMs).toBe(out.latencyMs);
+  });
+
   it("rejects an invalid provider result as ModelError server and reports it failed", async () => {
     for (const prompt of ["short", "url"]) {
       const hooks = fakeHooks();

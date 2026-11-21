@@ -388,12 +388,16 @@ export class ModelImages {
     signal.throwIfAborted();
 
     const sentAt = Date.now();
-    const respond = (r: Omit<ImageResponseHookPayload, keyof typeof base | "latencyMs">) => {
+    // the caller measures the latency once, so the hook payload and the result report the same value
+    const respond = (
+      r: Omit<ImageResponseHookPayload, keyof typeof base | "latencyMs">,
+      latencyMs: number,
+    ) => {
       if (!hooks) return;
       fireObserve(
         hooks,
         "model.response",
-        { ...base, ...identity, ...r, latencyMs: Date.now() - sentAt },
+        { ...base, ...identity, ...r, latencyMs },
         signal,
         this.log,
       );
@@ -411,22 +415,28 @@ export class ModelImages {
     } catch (err) {
       // a call the caller aborted gets no model.response (as a chat call the user stopped)
       if (!signal.aborted) {
-        respond({
-          outcome: "failed",
-          images: [],
-          usage: null,
-          errorCode: isModelError(err) ? `model.${err.kind}` : "model.unknown",
-        });
+        respond(
+          {
+            outcome: "failed",
+            images: [],
+            usage: null,
+            errorCode: isModelError(err) ? `model.${err.kind}` : "model.unknown",
+          },
+          Date.now() - sentAt,
+        );
       }
       throw err;
     }
     const latencyMs = Date.now() - sentAt;
-    respond({
-      outcome: "ok",
-      images: res.images.map((i) => ({ mediaType: i.mediaType, size: base64Bytes(i.data) })),
-      ...(typeof res.revisedPrompt === "string" && { revisedPrompt: res.revisedPrompt }),
-      usage: res.usage ?? null,
-    });
+    respond(
+      {
+        outcome: "ok",
+        images: res.images.map((i) => ({ mediaType: i.mediaType, size: base64Bytes(i.data) })),
+        ...(typeof res.revisedPrompt === "string" && { revisedPrompt: res.revisedPrompt }),
+        usage: res.usage ?? null,
+      },
+      latencyMs,
+    );
     return { ...res, latencyMs };
   }
 
