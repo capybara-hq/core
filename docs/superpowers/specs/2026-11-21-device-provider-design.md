@@ -58,8 +58,8 @@ Goals
    in the kernel for every device.
 7. The local provider holds many connections per machine (different deployments, different orgs
    of one deployment), isolated from each other, each with its own credential, state, service and
-   limits. Existing single-connection machines become "the first connection" without the owner
-   doing anything.
+   limits. No migration of existing machines or deployments (maintainer, 2026-11-21: nothing was
+   ever released, so no compatibility): §7.4.
 8. The desktop's 「连接本机」 works in every platform window independently; the tray shows all
    connections.
 
@@ -185,14 +185,11 @@ background, `list` / `scan`) renamed, with `multi` cardinality and these changes
   name or empty) names the provider that makes a person's default device; an org may override it
   among the providers on in it. Empty: no automatic default; the person creates one. (Designer's
   call; replaces "the current cloud provider makes it".)
-- Existing rows: a migration maps `devices.provider` / `device_instances.provider`
-  `sandbox-docker` → `device-docker`, `sandbox-e2b` → `device-e2b`, `@local` → `device-local`.
-- **Existing deployments keep their provider without re-configuring** (designer's call): the same
-  kernel migration renames the catalog item of `sandbox-docker` / `sandbox-e2b` to the new plugin
-  name, with its deployment config (file / PG), sealed secrets, scope, org switches, org config
-  copies and approved permission snapshot; the next bootstrap / marketplace upgrade then installs
-  the renamed package over it as an ordinary upgrade. A deployment that installed neither has
-  nothing to rename. No compatibility alias for the old names is kept afterwards.
+- **No compatibility** (maintainer, 2026-11-21): `device-docker` / `device-e2b` / `device-local`
+  are new plugins. A deployment installs and configures them afresh; devices whose `provider` names
+  `sandbox-docker`, `sandbox-e2b` or `@local` read as unavailable (their provider is not loaded) and
+  are deleted or recreated by their owners. No migration renames rows, catalog items or config, and
+  no alias for the old names exists.
 
 ### 6.3 Network: aligned with Claude Code
 
@@ -211,9 +208,7 @@ sandbox switch, so the two become the two network modes, for every provider (mai
 - **One setting in the kernel for every device**: mode and hosts live in `devices.network_mode` /
   `network_hosts` for every device, edited on the device page's 网络 section by the device's owner
   (and org admins for org devices), clamped to the ceilings. A local device's network is no longer
-  kept on the machine: at its first connection after the upgrade, `device-local` writes the
-  machine's current `network` and `allowedDomains` into the device's setting once (so nothing
-  widens or narrows), and from then on the kernel's setting is the source.
+  kept on the machine; a new local device starts from the org default like a cloud device.
 - **A new host asks** (the existing network asks, migration 0114): the conversation's profile
   decides who approves (the person, the review model, or full access auto-approves, recorded),
   as Claude Code's prompt does. The approval offers "this run" or "add to this device's list".
@@ -369,16 +364,15 @@ Owner ceiling, network narrowing, project reach, `keepAwake`, `cpu` / `memoryMb`
 `policy.json`. The deployment may only narrow them, as today. Nothing is machine-wide except the
 deny list of other connections and `machine.json`.
 
-### 7.4 Upgrade of existing machines
+### 7.4 Existing machines
 
-The new program, on any command, finds the old flat layout (`credential.json` directly in the
-state dir), moves the files into `connections/<deviceId>/` under the policy lock, and writes
-`machine.json` with that connection as `defaultConnection`. The old launchd agent
-`top.capybara.device` runs `start` without `-c`; with one connection that is implied, so the
-service keeps working across `npm i -g` and `service restart`. `service install` (or the desktop's
-service repair) replaces the old label with the per-connection one. A machine mid-operation is not
-touched: the move happens only when no runner holds the pid file, else at the runner's next start.
-No deployment change is needed for the move (device id and credential are kept).
+No migration (maintainer, 2026-11-21). The new program reads only the `connections/` layout; an old
+flat `credential.json` / `policy.json` is ignored and `status` says the machine has no connection.
+The owner runs `capybara-device login` again (into a new device, or into their existing one, which
+replaces its old credential as any re-login does) and `service install`. The old launchd agent
+`top.capybara.device` / systemd unit `capybara-device.service` is not touched by the program; its
+`start` finds no connection and exits 0, so its manager leaves it stopped; the owner removes it with
+the old program's `service uninstall` before upgrading, as the upgrade note says.
 
 ## 8. Resources
 
@@ -440,7 +434,7 @@ connections to that deployment (desktop spec §6.3, now plural).
 3. Network setting in the kernel for every device (local included), device page, 新建设备 with
    guides.
 4. Local read model (Claude Code alignment, per-connection project reach).
-5. Many connections in `capybara-device` + upgrade move; `device@2` in the web and desktop; tray.
+5. Many connections in `capybara-device`; `device@2` in the web and desktop; tray.
 
 Steps 4 and 5 touch only `capybara-device`, `device-local` and the clients, and may run in
 parallel once 2 is merged.
@@ -482,8 +476,7 @@ Designer's calls to check:
 4. `devices.defaultProvider` for the person's default device (§6.2).
 5. Default project reach of a new connection: `machine` (Claude Code alignment); `paths` for
    connections that must not see each other's code is set by the owner on the machine.
-6. The catalog items of `sandbox-docker` / `sandbox-e2b` are renamed in place by a migration,
-   config and secrets kept (§6.2).
+6. (withdrawn: no compatibility, §6.2)
 7. `device-local` is on in every org by default but switchable, not a fixed builtin;
    `bootstrap.json` gains a `scope` for preinstalls (§10).
 8. Providers are trusted, machines are not; reports carry a revision that drives the
