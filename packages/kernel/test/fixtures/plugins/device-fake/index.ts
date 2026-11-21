@@ -116,8 +116,9 @@ import { z } from "zod";
  *   access with background ownership by default ({@link FAKE_PERMISSION_SUPPORT};
  *   `root/permission-support.json` overrides it, {@link setFakeSandboxPermissionSupport}).
  *   While it reports `boundary: "instance"`, `operation` runs only the instance scope, as
- *   sandbox-docker and sandbox-e2b do: a scoped filesystem must name `/` in both its read and
- *   write roots, else `SandboxPermissionUnsupportedError`.
+ *   sandbox-docker and sandbox-e2b do: a scoped filesystem must name `/` in its write roots,
+ *   else `SandboxPermissionUnsupportedError`. A scoped operation names no read roots: the fake
+ *   reads its project root (`/workspace` when null), `/skills` and its write roots.
  *   Operation records live in `root/operation-records`, revocation tombstones in
  *   `root/operation-revoked`, background executions in `root/instances/<id>/executions/<hash>`
  *   (`ref.json`, `pgid`, `exit`, `claim`, `lost`); `ops.log` adds `bg-start <id> <operationId>

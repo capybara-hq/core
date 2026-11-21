@@ -165,7 +165,10 @@ async function call(conv: string, key: string, input: unknown, n: number): Promi
 }
 
 describe("file tool paths in the device's mode", () => {
-  it("Full access: a write outside the workspace runs with no ask, then is read anywhere", async () => {
+  // An operation scope names no read roots (device provider phase 1, ruling R1): an approved read
+  // outside the project reaches the provider without its directory, and this operation-boundary
+  // fake (like a local device until phase 4) refuses it. Phase 4 restores the read.
+  it("Full access: a write outside the workspace runs with no ask; a later Read there is the provider's call", async () => {
     const conv = await createConv(owner, orgId, agentId);
     await fullAccess(conv);
     // Full access: no discretionary review, so nothing asks
@@ -177,11 +180,11 @@ describe("file tool paths in the device's mode", () => {
     );
     expect(written.payload.isError).toBe(false);
     expect(written.payload.content).toContain("Created /etc/capybara-t7/note.txt");
-    // a Read outside the workspace needs no review and reaches the machine's file
+    // a Read outside the workspace needs no review, and the provider's read rule refuses it
     const read = await call(conv, "Read", { file_path: "/etc/capybara-t7/note.txt" }, 2);
-    expect(read.payload.isError).toBe(false);
-    expect(read.payload.content).toContain("hello");
-    expect(read.payload.view).toMatchObject({ kind: "read", path: "/etc/capybara-t7/note.txt" });
+    expect(read.payload.isError).toBe(true);
+    expect(read.payload.content).not.toContain("hello");
+    expect(read.payload.review).toMatchObject({ decision: "allow", decisionSource: "full-access" });
   });
 
   it("Full access: an Edit of a file outside the workspace that was never read hits the guard, with no review", async () => {
@@ -199,16 +202,18 @@ describe("file tool paths in the device's mode", () => {
     expect(edit.payload.content).toContain("File has not been read yet");
     expect(edit.payload.view).toMatchObject({ kind: "guard", reason: "not_read" });
     expect(edit.payload.review).toMatchObject({ decision: "allow", decisionSource: "full-access" });
-    // reading it first makes the edit succeed
-    await call(conv, "Read", { file_path: "/etc/capybara-t7/note.txt" }, 2);
-    const ok = await call(
+    // reading it first does not lift the guard while the provider refuses the read (an
+    // approved outside read is not conveyed until phase 4, ruling R1): the Edit stays guarded
+    const read = await call(conv, "Read", { file_path: "/etc/capybara-t7/note.txt" }, 2);
+    expect(read.payload.isError).toBe(true);
+    const again = await call(
       conv,
       "Edit",
       { file_path: "/etc/capybara-t7/note.txt", old_string: "hello", new_string: "bye" },
       3,
     );
-    expect(ok.payload.isError).toBe(false);
-    expect(ok.payload.content).toContain("Edited /etc/capybara-t7/note.txt");
+    expect(again.payload.isError).toBe(true);
+    expect(again.payload.view).toMatchObject({ kind: "guard", reason: "not_read" });
   });
 
   it("auto mode: the skills directory stays read-only", async () => {
