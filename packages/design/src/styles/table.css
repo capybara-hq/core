@@ -533,5 +533,5 @@
   line-height: var(--cb-type-small-line);
 }
 .cb-cell-title-desc[data-mono="true"] {
-  font-family: var(--cb-font);
+  font-family: var(--cb-font-code);
 }

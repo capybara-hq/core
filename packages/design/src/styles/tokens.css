@@ -5,6 +5,7 @@
 :root {
   --cb-font: "Sarasa Mono SC", ui-monospace, monospace;
   --cb-font-prose: "Inter", "Source Han Sans SC", system-ui, sans-serif;
+  --cb-font-code: "Sarasa Mono SC", ui-monospace, monospace;
   --cb-z-sheet: 40;
   --cb-z-dialog: 50;
   --cb-z-popover: 60;
@@ -41,6 +42,7 @@
   --cb-radius-sm: 4px;
   --cb-radius-md: 8px;
   --cb-radius-bubble: 10px;
+  --cb-radius-pill: 999px;
   --cb-type-micro-size: 11px;
   --cb-type-micro-line: 14px;
   --cb-type-small-size: 12px;
@@ -91,6 +93,16 @@
   --cb-layout-content-min: 552px;
   --cb-layout-bottom-nav: 56px;
   --cb-layout-top-bar: 44px;
+  --cb-layout-drawer: 320px;
+  --cb-touch-hit: 44px;
+  --cb-touch-float: 48px;
+  --cb-touch-primary: 48px;
+  --cb-touch-prominent: 52px;
+  --cb-touch-composer: 60px;
+  --cb-touch-row: 52px;
+  --cb-touch-row-roomy: 56px;
+  --cb-touch-icon: 22px;
+  --cb-touch-icon-float: 24px;
   --cb-builtin-dark-bg: #0A0A0A;
   --cb-builtin-dark-panel: #111110;
   --cb-builtin-dark-ink: #E6E6E3;
@@ -132,6 +144,8 @@
   --cb-preview-light: #FAF9F6;
   --cb-preview-dark: #0A0A0A;
   --cb-lightbox: rgba(0,0,0,.88);
+  --cb-float-ground: rgba(28,28,26,0.85);
+  --cb-float-line: rgba(255,255,255,0.08);
   --cb-diff-add: rgba(63,212,131,.08);
   --cb-diff-del: rgba(255,92,82,.08);
   --cb-avatar-black: #1C1C1A;
@@ -167,6 +181,7 @@
   --cb-shadow-2: 0 16px 48px rgba(0,0,0,.50);
   --cb-shadow-sheet: -16px 0 40px rgba(0,0,0,.40);
   --cb-shadow-float: 0 8px 24px rgba(0,0,0,.45);
+  --cb-shadow-float-touch: 0 6px 20px rgba(0,0,0,.35);
   color-scheme: dark;
 }
 
@@ -201,6 +216,8 @@
   --cb-preview-light: #FAF9F6;
   --cb-preview-dark: #0A0A0A;
   --cb-lightbox: rgba(10,10,10,.80);
+  --cb-float-ground: rgba(255,255,255,0.85);
+  --cb-float-line: rgba(26,26,24,0.08);
   --cb-diff-add: rgba(22,128,63,.10);
   --cb-diff-del: rgba(207,34,46,.08);
   --cb-avatar-black: #1C1C1A;
@@ -236,7 +253,40 @@
   --cb-shadow-2: 0 8px 24px rgba(10,10,10,.12);
   --cb-shadow-sheet: -4px 0 16px rgba(10,10,10,.08);
   --cb-shadow-float: 0 8px 24px rgba(26,26,24,.08);
+  --cb-shadow-float-touch: 0 6px 20px rgba(26,26,24,.10);
   color-scheme: light;
+}
+
+@media (pointer: coarse), (any-pointer: coarse) and (not (any-pointer: fine)) {
+  :root {
+    --cb-font: system-ui, -apple-system, 'PingFang SC', 'Noto Sans SC', sans-serif;
+    --cb-font-prose: system-ui, -apple-system, 'PingFang SC', 'Noto Sans SC', sans-serif;
+    --cb-type-body-size: 17px;
+    --cb-type-body-line: 24px;
+    --cb-type-small-size: 15px;
+    --cb-type-small-line: 20px;
+    --cb-type-micro-size: 13px;
+    --cb-type-micro-line: 18px;
+    --cb-type-h2-size: 22px;
+    --cb-type-h2-line: 28px;
+    --cb-type-h1-size: 28px;
+    --cb-type-h1-line: 34px;
+    --cb-type-prose-size: 17px;
+    --cb-type-prose-line: 26px;
+    --cb-type-prose-small-size: 15px;
+    --cb-type-prose-small-line: 22px;
+    --cb-type-metric-size: 22px;
+    --cb-type-metric-line: 28px;
+    --cb-control-dense: 44px;
+    --cb-control-default: 44px;
+    --cb-control-prominent: 52px;
+    --cb-row-dense: 44px;
+    --cb-row-default: 44px;
+    --cb-row-roomy: 56px;
+    --cb-radius-sm: 12px;
+    --cb-radius-md: 20px;
+    --cb-radius-bubble: 20px;
+  }
 }
 
 :root[data-shell-platform="android"] {

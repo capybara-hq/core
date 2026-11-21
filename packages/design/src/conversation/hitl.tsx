@@ -18,6 +18,7 @@ import { type PersonLike, PersonName } from "../display/person-name";
 import { Icon } from "../icons/icon";
 import { useHaptics } from "../native";
 import { useDesignT } from "../provider";
+import { useTouch } from "../shell/touch";
 import { PersonFieldRow } from "./person-field";
 import { registrableDomain } from "./registrable";
 import { fillCopy } from "./tool-copy";
@@ -335,6 +336,17 @@ const fullInput = (input: Record<string, unknown>): string => {
   }
 };
 
+/**
+ * Orders a pending approval's buttons for the form factor: the approvals then the deny button, and
+ * on touch (spec §6.16.11) the short deny button first, the wider grants next and the primary approval
+ * (the first scope) last, at the thumb's end of the row.
+ */
+function useActionOrder() {
+  const touch = useTouch() === true;
+  return (approve: ReactNode[], deny: ReactNode, touchDeny: ReactNode): ReactNode[] =>
+    touch ? [touchDeny, ...approve.slice(1), ...approve.slice(0, 1)] : [...approve, deny];
+}
+
 const SCOPE_LABEL = {
   once: "hitl.approve",
   session: "hitl.approveSession",
@@ -344,6 +356,7 @@ const SCOPE_LABEL = {
 /** An approval request (§6.16.11). */
 export function ApprovalBlock(p: ApprovalBlockProps): JSX.Element {
   const t = useDesignT();
+  const actionOrder = useActionOrder();
   const [denying, setDenying] = useState(p.defaultDeny !== undefined);
   const [reason, setReason] = useState(p.defaultDeny?.reason ?? "");
   const [showInput, setShowInput] = useState(false);
@@ -447,19 +460,24 @@ export function ApprovalBlock(p: ApprovalBlockProps): JSX.Element {
   } else {
     actions = (
       <div className="cb-hcard-actions">
-        {p.scopes.map((scope, i) => (
-          <ScopeChoice
-            key={scope}
-            primary={i === 0}
-            disabled={busy || p.approveDisabled === true}
-            label={p.scopeLabels?.[scope] ?? t(SCOPE_LABEL[scope])}
-            hint={undefined}
-            onClick={() => p.onApprove?.(scope)}
-          />
-        ))}
-        <Button disabled={busy} onClick={() => setDenying(true)}>
-          {t("hitl.denyEllipsis")}
-        </Button>
+        {actionOrder(
+          p.scopes.map((scope, i) => (
+            <ScopeChoice
+              key={scope}
+              primary={i === 0}
+              disabled={busy || p.approveDisabled === true}
+              label={p.scopeLabels?.[scope] ?? t(SCOPE_LABEL[scope])}
+              hint={undefined}
+              onClick={() => p.onApprove?.(scope)}
+            />
+          )),
+          <Button key="deny" disabled={busy} onClick={() => setDenying(true)}>
+            {t("hitl.denyEllipsis")}
+          </Button>,
+          <Button key="deny" disabled={busy} onClick={() => setDenying(true)}>
+            {t("hitl.deny")}
+          </Button>,
+        )}
         {p.policy ? (
           <span className="cb-hcard-note" data-part="card-note">
             {p.policy}
@@ -690,6 +708,7 @@ const NETWORK_DECIDED = {
 
 /** The network variant of {@link ApprovalBlock} (network ask spec §6.5). */
 function NetworkApproval(p: ApprovalBlockProps & { network: NetworkAsk }): JSX.Element {
+  const actionOrder = useActionOrder();
   const t = useDesignT();
   const hosts = p.network.hosts;
   const [checked, setChecked] = useState<string[]>(hosts);
@@ -783,19 +802,24 @@ function NetworkApproval(p: ApprovalBlockProps & { network: NetworkAsk }): JSX.E
   } else {
     actions = (
       <div className="cb-hcard-actions" data-hints="true">
-        {scopes.map((scope, i) => (
-          <ScopeChoice
-            key={scope}
-            primary={i === 0}
-            disabled={busy || none}
-            label={label(scope)}
-            hint={hint(scope)}
-            onClick={() => p.onApprove?.(scope, picked)}
-          />
-        ))}
-        <Button disabled={busy} onClick={() => setDenying(true)}>
-          {t("hitl.network.deny")}
-        </Button>
+        {actionOrder(
+          scopes.map((scope, i) => (
+            <ScopeChoice
+              key={scope}
+              primary={i === 0}
+              disabled={busy || none}
+              label={label(scope)}
+              hint={hint(scope)}
+              onClick={() => p.onApprove?.(scope, picked)}
+            />
+          )),
+          <Button key="deny" disabled={busy} onClick={() => setDenying(true)}>
+            {t("hitl.network.deny")}
+          </Button>,
+          <Button key="deny" disabled={busy} onClick={() => setDenying(true)}>
+            {t("hitl.deny")}
+          </Button>,
+        )}
       </div>
     );
   }
@@ -873,6 +897,7 @@ const COMMAND_DECIDED = {
 /** The command review variant of {@link ApprovalBlock} (auto mode spec §5.4). */
 function CommandApproval(p: ApprovalBlockProps & { command: CommandAsk }): JSX.Element {
   const t = useDesignT();
+  const actionOrder = useActionOrder();
   const [denying, setDenying] = useState(p.defaultDeny !== undefined);
   const [reason, setReason] = useState(p.defaultDeny?.reason ?? "");
   const inputId = useId();
@@ -973,19 +998,24 @@ function CommandApproval(p: ApprovalBlockProps & { command: CommandAsk }): JSX.E
   } else {
     actions = (
       <div className="cb-hcard-actions">
-        {p.scopes.map((scope, i) => (
-          <ScopeChoice
-            key={scope}
-            primary={i === 0}
-            disabled={busy}
-            label={label(scope)}
-            hint={undefined}
-            onClick={() => p.onApprove?.(scope)}
-          />
-        ))}
-        <Button disabled={busy} onClick={() => setDenying(true)}>
-          {t("hitl.command.deny")}
-        </Button>
+        {actionOrder(
+          p.scopes.map((scope, i) => (
+            <ScopeChoice
+              key={scope}
+              primary={i === 0}
+              disabled={busy}
+              label={label(scope)}
+              hint={undefined}
+              onClick={() => p.onApprove?.(scope)}
+            />
+          )),
+          <Button key="deny" disabled={busy} onClick={() => setDenying(true)}>
+            {t("hitl.command.deny")}
+          </Button>,
+          <Button key="deny" disabled={busy} onClick={() => setDenying(true)}>
+            {t("hitl.deny")}
+          </Button>,
+        )}
       </div>
     );
   }
@@ -1019,11 +1049,13 @@ function CommandApproval(p: ApprovalBlockProps & { command: CommandAsk }): JSX.E
       ) : null}
       {p.facts ? <ApprovalFacts facts={p.facts} /> : null}
       {p.workingRoot !== undefined ? <WorkingRoot path={p.workingRoot} /> : null}
-      <CodeBlock
-        text={clipCommand(shown)}
-        framed={false}
-        {...(file ? { title: t("hitl.command.path") } : {})}
-      />
+      <div className="cb-hcard-command" data-part="command-text">
+        <CodeBlock
+          text={clipCommand(shown)}
+          framed={false}
+          {...(file ? { title: t("hitl.command.path") } : {})}
+        />
+      </div>
       {actions}
       {denying ? null : <ScopeHintLines scopes={p.scopes} hints={p.scopeHints} label={label} />}
       {denying ? null : <ApprovalNotes notes={p.notes} />}

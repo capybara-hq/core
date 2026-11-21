@@ -65,6 +65,12 @@ body {
   font-kerning: none;
 }
 
+/* Code, commands, paths, versions and times keep the code font where the UI font turns into the
+   system font on touch (spec §2.2). Zero specificity: a component's own font-family wins. */
+:where(code, pre, kbd, samp) {
+  font-family: var(--cb-font-code);
+}
+
 /* 焦点环（spec §2.5）：控件 2px 外描边，表格行 / 列表项 1px 内描边；仅 :focus-visible。 */
 :focus-visible {
   outline: 2px solid var(--cb-accent);

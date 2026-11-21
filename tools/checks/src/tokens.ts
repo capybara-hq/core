@@ -18,6 +18,13 @@ export type ThemedToken = { dark: string; light: string; purpose: string };
 /** A scale step: a pixel value, or a pair (`pad`: [vertical, horizontal]; `type`: [size, line]). */
 export type SizeStep = number | [number, number];
 
+/** The touch media query the overrides sit in (`packages/design/src/shell/touch.ts`, the same text). */
+export const TOUCH_QUERY = "(pointer: coarse), (any-pointer: coarse) and (not (any-pointer: fine))";
+
+/** The size groups a touch override may replace, and the smallest touch type size (px). */
+const TOUCH_GROUPS = ["type", "control", "row", "radius"] as const;
+const TOUCH_MIN_TYPE = 13;
+
 export type DesignTokens = {
   version: 1;
   color: Record<string, ThemedToken>;
@@ -30,6 +37,21 @@ export type DesignTokens = {
     radius: Record<string, number>;
     type: Record<string, [number, number]>;
     layout: Record<string, number>;
+    /** Touch sizes (`--cb-touch-<step>`); optional. */
+    touch?: Record<string, number>;
+  };
+  /**
+   * What replaces a base value under `TOUCH_QUERY`: font stacks and steps of the type, control, row
+   * and radius scales; each name must exist at its base. Optional.
+   */
+  touch?: {
+    font?: Partial<Record<"mono" | "prose", string>>;
+    size?: {
+      type?: Record<string, [number, number]>;
+      control?: Record<string, number>;
+      row?: Record<string, number>;
+      radius?: Record<string, number>;
+    };
   };
   motion: Record<string, string>;
   /** Easing curves (`--cb-ease-<name>`); optional. */
@@ -39,7 +61,7 @@ export type DesignTokens = {
    * mobile app spec §7.2); each name must exist at the top level. Optional.
    */
   platform?: Record<string, { motion?: Record<string, string>; ease?: Record<string, string> }>;
-  font: { mono: string; prose: string };
+  font: { mono: string; prose: string; code?: string };
   z: Record<string, number>;
   /** [foreground, background, floor] or, with a fourth element, the surface rgba values sit on. */
   contrast: ([string, string, number] | [string, string, number, string])[];
@@ -59,6 +81,7 @@ const SIZE_GROUPS: Record<keyof DesignTokens["size"], [string, string] | undefin
   radius: undefined,
   type: ["size", "line"],
   layout: undefined,
+  touch: undefined,
 };
 
 const TOP_KEYS = [
@@ -66,6 +89,7 @@ const TOP_KEYS = [
   "color",
   "shadow",
   "size",
+  "touch",
   "motion",
   "ease",
   "platform",
@@ -110,11 +134,11 @@ export function parseTokens(
   file: string,
 ): { tokens?: DesignTokens; findings: Finding[] } {
   const findings: Finding[] = [];
-  const bad = (path: string, message: string) =>
+  const bad = (path: string, message: string, rule = "tokens-invalid") =>
     findings.push({
       file,
       line: lineOf(text, path),
-      rule: "tokens-invalid",
+      rule,
       message: `${path}: ${message}`,
     });
 
@@ -185,6 +209,7 @@ export function parseTokens(
     }
     for (const [group, pair] of Object.entries(SIZE_GROUPS)) {
       const g = size[group];
+      if (group === "touch" && g === undefined) continue;
       if (!isObject(g) || Object.keys(g).length === 0) {
         bad(`size.${group}`, "must be a non-empty object");
         continue;
@@ -257,8 +282,73 @@ export function parseTokens(
       const v = font[k];
       if (typeof v !== "string" || !SAFE_CSS_RE.test(v)) bad(`font.${k}`, "must be a font stack");
     }
+    if (
+      font.code !== undefined &&
+      (typeof font.code !== "string" || !SAFE_CSS_RE.test(font.code))
+    ) {
+      bad("font.code", "must be a font stack");
+    }
     for (const k of Object.keys(font)) {
-      if (k !== "mono" && k !== "prose") bad(`font.${k}`, "unknown key");
+      if (k !== "mono" && k !== "prose" && k !== "code") bad(`font.${k}`, "unknown key");
+    }
+  }
+
+  const touch = json.touch;
+  if (touch !== undefined) {
+    if (!isObject(touch)) bad("touch", "must be an object with font and/or size");
+    else {
+      for (const k of Object.keys(touch)) {
+        if (k !== "font" && k !== "size") bad(`touch.${k}`, "unknown key; allowed: font, size");
+      }
+      const tf = touch.font;
+      if (tf !== undefined) {
+        if (!isObject(tf)) bad("touch.font", "must be an object");
+        else {
+          for (const [k, v] of Object.entries(tf)) {
+            if (k !== "mono" && k !== "prose") bad(`touch.font.${k}`, "overrides no token");
+            else if (typeof v !== "string" || !SAFE_CSS_RE.test(v))
+              bad(`touch.font.${k}`, "must be a font stack");
+          }
+        }
+      }
+      const ts = touch.size;
+      if (ts !== undefined) {
+        if (!isObject(ts)) bad("touch.size", "must be an object");
+        else {
+          for (const [group, steps] of Object.entries(ts)) {
+            const path = `touch.size.${group}`;
+            if (!(TOUCH_GROUPS as readonly string[]).includes(group)) {
+              bad(path, `unknown group; allowed: ${TOUCH_GROUPS.join(", ")}`);
+              continue;
+            }
+            const base = isObject(size) ? size[group] : undefined;
+            if (!isObject(steps)) {
+              bad(path, "must be an object of steps");
+              continue;
+            }
+            for (const [step, v] of Object.entries(steps)) {
+              const sp = `${path}.${step}`;
+              if (!isObject(base) || !(step in base)) {
+                bad(sp, "overrides no token");
+                continue;
+              }
+              if (group === "type") {
+                if (!Array.isArray(v) || v.length !== 2 || !v.every(isPositiveInt)) {
+                  bad(sp, "must be [size, line], two positive integers (px)");
+                } else if ((v[0] as number) < TOUCH_MIN_TYPE) {
+                  bad(
+                    sp,
+                    `a touch type size is at least ${TOUCH_MIN_TYPE}px, not ${v[0]}`,
+                    "tokens-touch-type",
+                  );
+                }
+              } else if (!isPositiveInt(v)) {
+                bad(sp, "must be a positive integer (px)");
+              }
+            }
+          }
+        }
+      }
     }
   }
 
@@ -331,10 +421,11 @@ export function renderTokensCss(t: DesignTokens): string {
   const root: string[] = [`--cb-font: ${t.font.mono};`, `--cb-font-prose: ${t.font.prose};`];
   for (const [name, v] of Object.entries(t.z)) root.push(`--cb-z-${name}: ${v};`);
   root.push(`--cb-motion: ${t.motion.hover};`);
+  if (t.font.code !== undefined) root.splice(2, 0, `--cb-font-code: ${t.font.code};`);
   for (const [name, v] of Object.entries(t.motion)) root.push(`--cb-motion-${name}: ${v};`);
   for (const [name, v] of Object.entries(t.ease ?? {})) root.push(`--cb-ease-${name}: ${v};`);
   for (const [group, pair] of Object.entries(SIZE_GROUPS)) {
-    const steps = t.size[group as keyof DesignTokens["size"]] as Record<string, SizeStep>;
+    const steps = (t.size[group as keyof DesignTokens["size"]] ?? {}) as Record<string, SizeStep>;
     for (const [step, v] of Object.entries(steps)) {
       if (pair === undefined) root.push(`--cb-${group}-${step}: ${px(v as number)};`);
       else {
@@ -367,6 +458,7 @@ export function renderTokensCss(t: DesignTokens): string {
     ];
     return `\n:root[data-shell-platform="${name}"] {\n${lines.map((l) => `  ${l}`).join("\n")}\n}\n`;
   });
+  const touch = renderTouchBlock(t);
   return [
     "/* biome-ignore-all format: token values stay verbatim (uppercase hex, rgba spelling) */\n",
     "/* Generated by pnpm gen:tokens from docs/design/tokens.json; do not edit. */\n",
@@ -377,8 +469,30 @@ export function renderTokensCss(t: DesignTokens): string {
     theme("dark"),
     "\n",
     theme("light"),
+    ...(touch === "" ? [] : ["\n", touch]),
     ...platforms,
   ].join("");
+}
+
+/** The `@media TOUCH_QUERY` block: the touch overrides, as one `:root` rule. */
+function renderTouchBlock(t: DesignTokens): string {
+  if (t.touch === undefined) return "";
+  const lines: string[] = [];
+  if (t.touch.font?.mono !== undefined) lines.push(`--cb-font: ${t.touch.font.mono};`);
+  if (t.touch.font?.prose !== undefined) lines.push(`--cb-font-prose: ${t.touch.font.prose};`);
+  for (const group of TOUCH_GROUPS) {
+    const pair = SIZE_GROUPS[group];
+    for (const [step, v] of Object.entries(t.touch.size?.[group] ?? {})) {
+      if (pair === undefined) lines.push(`--cb-${group}-${step}: ${px(v as number)};`);
+      else {
+        const [a, b] = v as [number, number];
+        lines.push(`--cb-${group}-${step}-${pair[0]}: ${px(a)};`);
+        lines.push(`--cb-${group}-${step}-${pair[1]}: ${px(b)};`);
+      }
+    }
+  }
+  if (lines.length === 0) return "";
+  return `@media ${TOUCH_QUERY} {\n  :root {\n${lines.map((l) => `    ${l}`).join("\n")}\n  }\n}\n`;
 }
 
 const WIDTH = 100;
@@ -396,13 +510,15 @@ export function renderTokensTs(t: DesignTokens): string {
     oneLine.length <= WIDTH
       ? oneLine
       : `export const TOKEN_NAMES = [\n${names.map((n) => `  ${JSON.stringify(n)},`).join("\n")}\n] as const;`;
-  const groups = Object.keys(SIZE_GROUPS).map((group) => {
-    const steps = t.size[group as keyof DesignTokens["size"]] as Record<string, SizeStep>;
-    const entries = Object.entries(steps).map(([k, v]) => `${key(k)}: ${value(v)}`);
-    const single = `  ${group}: { ${entries.join(", ")} },`;
-    if (single.length <= WIDTH) return single;
-    return `  ${group}: {\n${entries.map((e) => `    ${e},`).join("\n")}\n  },`;
-  });
+  const groups = Object.keys(SIZE_GROUPS)
+    .filter((group) => t.size[group as keyof DesignTokens["size"]] !== undefined)
+    .map((group) => {
+      const steps = t.size[group as keyof DesignTokens["size"]] as Record<string, SizeStep>;
+      const entries = Object.entries(steps).map(([k, v]) => `${key(k)}: ${value(v)}`);
+      const single = `  ${group}: { ${entries.join(", ")} },`;
+      if (single.length <= WIDTH) return single;
+      return `  ${group}: {\n${entries.map((e) => `    ${e},`).join("\n")}\n  },`;
+    });
   return [
     "// Generated by pnpm gen:tokens from docs/design/tokens.json; do not edit.",
     "",

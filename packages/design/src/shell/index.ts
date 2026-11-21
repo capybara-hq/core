@@ -10,6 +10,7 @@ export {
 } from "./bottom-nav";
 export { ClassSwap } from "./class-swap";
 export { DecorationLayer } from "./decoration-layer";
+export { FloatingIconButton, type FloatingIconButtonProps } from "./floating-button";
 export { MePanel, type MePanelProps, type MeRow } from "./me-panel";
 export {
   assertHeader,
@@ -63,4 +64,5 @@ export {
 } from "./size-class";
 export { StatusBar, type StatusBarProps, useStatusBar } from "./status-bar";
 export { backTarget, TopBar, type TopBarProps } from "./top-bar";
+export { TOUCH_QUERY, useTouch } from "./touch";
 export { withViewTransition } from "./view-transition";

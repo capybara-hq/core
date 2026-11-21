@@ -561,6 +561,7 @@ a.cb-item-list-title:hover {
   font-weight: 500;
 }
 .cb-item-list-code {
+  font-family: var(--cb-font-code);
   flex: none;
   color: var(--cb-muted);
   font-size: var(--cb-type-small-size);
@@ -1101,6 +1102,7 @@ a.cb-object-name:hover {
 }
 .cb-copy-field-value > .cb-input {
   flex: 1;
+  font-family: var(--cb-font-code);
 }
 .cb-copy-field-manual {
   display: inline-flex;
@@ -1244,7 +1246,7 @@ a.cb-object-name:hover {
   padding-left: var(--cb-space-2);
   border-left: 1px solid var(--cb-line);
   color: var(--cb-muted);
-  font-family: var(--cb-font);
+  font-family: var(--cb-font-code);
   font-size: var(--cb-type-small-size);
   line-height: var(--cb-type-small-line);
   white-space: pre-wrap;

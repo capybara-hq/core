@@ -89,6 +89,7 @@ import { type SidebarFixture, sidebarProps, statusFixture } from "./shell-fixtur
 import { listLoadingBlocks, TEMPLATE_LOADING_BLOCKS } from "./template-loading-blocks";
 import { listDetailBlocks } from "./templates/inbox";
 import { THEME_SWATCH_BLOCKS } from "./theme-swatch-blocks";
+import { TOUCH_BLOCKS } from "./touch-blocks";
 import { TREND_CHART_BLOCKS } from "./trend-chart-blocks";
 
 // The /dev/ui side of the reference set (docs/design/reference/src): one RefBlock per state, with
@@ -1410,6 +1411,7 @@ export const REFERENCE_BLOCKS = {
   ...THEME_SWATCH_BLOCKS,
   ...DEVICE_BLOCKS,
   ...COMPACT_SHELL_BLOCKS,
+  ...TOUCH_BLOCKS,
   ...SHEET_BLOCKS,
   ...SHARE_BLOCKS,
   "list-detail": listDetailBlocks,

@@ -48,3 +48,9 @@
     display: none;
   }
 }
+/* the touch query (design spec §2.5): pointer features are not widths */
+@media (pointer: coarse), (any-pointer: coarse) and (not (any-pointer: fine)) {
+  :root {
+    --a: 1px;
+  }
+}

@@ -2650,6 +2650,8 @@
 <tr><td><code>preview-light</code></td><td><span class="sw" style="background:#FAF9F6"></span><code>#FAF9F6</code></td><td><span class="sw" style="background:#FAF9F6"></span><code>#FAF9F6</code></td><td>The light ground of an icon preview (§6.49): the same in both themes, so an icon is judged on a light ground in the dark theme too</td></tr>
 <tr><td><code>preview-dark</code></td><td><span class="sw" style="background:#0A0A0A"></span><code>#0A0A0A</code></td><td><span class="sw" style="background:#0A0A0A"></span><code>#0A0A0A</code></td><td>The dark ground of an icon preview (§6.49): the same in both themes</td></tr>
 <tr><td><code>lightbox</code></td><td><span class="sw" style="background:rgba(0,0,0,.88)"></span><code>rgba(0,0,0,.88)</code></td><td><span class="sw" style="background:rgba(10,10,10,.80)"></span><code>rgba(10,10,10,.80)</code></td><td>Behind the image viewer (a heavier dim than scrim: the image is the page)</td></tr>
+<tr><td><code>float-ground</code></td><td><span class="sw" style="background:rgba(28,28,26,0.85)"></span><code>rgba(28,28,26,0.85)</code></td><td><span class="sw" style="background:rgba(255,255,255,0.85)"></span><code>rgba(255,255,255,0.85)</code></td><td>Touch floating controls (the floating button, the touch composer's chrome): a translucent ground over the page</td></tr>
+<tr><td><code>float-line</code></td><td><span class="sw" style="background:rgba(255,255,255,0.08)"></span><code>rgba(255,255,255,0.08)</code></td><td><span class="sw" style="background:rgba(26,26,24,0.08)"></span><code>rgba(26,26,24,0.08)</code></td><td>The hairline around a touch floating control</td></tr>
 <tr><td><code>diff-add</code></td><td><span class="sw" style="background:rgba(63,212,131,.08)"></span><code>rgba(63,212,131,.08)</code></td><td><span class="sw" style="background:rgba(22,128,63,.10)"></span><code>rgba(22,128,63,.10)</code></td><td>Added lines in a diff</td></tr>
 <tr><td><code>diff-del</code></td><td><span class="sw" style="background:rgba(255,92,82,.08)"></span><code>rgba(255,92,82,.08)</code></td><td><span class="sw" style="background:rgba(207,34,46,.08)"></span><code>rgba(207,34,46,.08)</code></td><td>Removed lines in a diff</td></tr>
 <tr><td><code>avatar-black</code></td><td><span class="sw" style="background:#1C1C1A"></span><code>#1C1C1A</code></td><td><span class="sw" style="background:#1C1C1A"></span><code>#1C1C1A</code></td><td>Agent avatars only (§3): black fur and feathers, eyes, noses</td></tr>
@@ -2685,15 +2687,17 @@
 <tr><td><code>shadow-2</code></td><td><code>0 16px 48px rgba(0,0,0,.50)</code></td><td><code>0 8px 24px rgba(10,10,10,.12)</code></td><td>Dialogs</td></tr>
 <tr><td><code>shadow-sheet</code></td><td><code>-16px 0 40px rgba(0,0,0,.40)</code></td><td><code>-4px 0 16px rgba(10,10,10,.08)</code></td><td>Side sheets</td></tr>
 <tr><td><code>shadow-float</code></td><td><code>0 8px 24px rgba(0,0,0,.45)</code></td><td><code>0 8px 24px rgba(26,26,24,.08)</code></td><td>The composer</td></tr>
+<tr><td><code>shadow-float-touch</code></td><td><code>0 6px 20px rgba(0,0,0,.35)</code></td><td><code>0 6px 20px rgba(26,26,24,.10)</code></td><td>Touch floating controls (float-ground)</td></tr>
 </table></details>
 <details open><summary>Size scales (px)</summary>
 <table><tr><td><code>control</code></td><td>dense 24 · default 28 · prominent 32</td></tr>
 <tr><td><code>row</code></td><td>dense 28 · default 32 · roomy 44</td></tr>
 <tr><td><code>space</code></td><td>1 4 · 2 8 · 3 12 · 4 16 · 5 20 · 6 24 · 7 32 · 8 40</td></tr>
 <tr><td><code>pad</code></td><td>dense 4/8 · default 6/12</td></tr>
-<tr><td><code>radius</code></td><td>sm 4 · md 8 · bubble 10</td></tr>
+<tr><td><code>radius</code></td><td>sm 4 · md 8 · bubble 10 · pill 999</td></tr>
 <tr><td><code>type</code></td><td>micro 11/14 · small 12/16 · body 13/20 · h2 16/24 · h1 20/28 · prose 15/26 · prose-small 13/20 · metric 18/24</td></tr>
-<tr><td><code>layout</code></td><td>sidebar 256 · sidebar-rail 48 · content 1120 · content-pad 32 · chat 720 · status-bar 24 · action-row 40 · gutter 20 · title-bar 48 · properties 300 · panel-min 520 · panel 560 · chat-min 480 · tool-output 120 · file-card 240 · thumb 56 · inline-image 360 · menu-max-height 328 · bubble-clamp 208 · head-path 12 · head-description 4 · head-tabs 16 · head-tabs-content 16 · head-content 24 · card-min 280 · policy-select 160 · swatch-min 160 · calendar-axis 48 · calendar-hour 48 · calendar-day-min 76 · calendar-cell 112 · content-min 552 · bottom-nav 56 · top-bar 44</td></tr></table></details>
+<tr><td><code>layout</code></td><td>sidebar 256 · sidebar-rail 48 · content 1120 · content-pad 32 · chat 720 · status-bar 24 · action-row 40 · gutter 20 · title-bar 48 · properties 300 · panel-min 520 · panel 560 · chat-min 480 · tool-output 120 · file-card 240 · thumb 56 · inline-image 360 · menu-max-height 328 · bubble-clamp 208 · head-path 12 · head-description 4 · head-tabs 16 · head-tabs-content 16 · head-content 24 · card-min 280 · policy-select 160 · swatch-min 160 · calendar-axis 48 · calendar-hour 48 · calendar-day-min 76 · calendar-cell 112 · content-min 552 · bottom-nav 56 · top-bar 44 · drawer 320</td></tr>
+<tr><td><code>touch</code></td><td>hit 44 · float 48 · primary 48 · prominent 52 · composer 60 · row 52 · row-roomy 56 · icon 22 · icon-float 24</td></tr></table></details>
 </section>
 </main>
 </body>

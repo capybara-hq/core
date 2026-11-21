@@ -675,6 +675,7 @@
   line-height: var(--cb-type-body-line);
 }
 .cb-textarea textarea[data-code="true"] {
+  font-family: var(--cb-font-code);
   white-space: pre;
 }
 .cb-stepper {

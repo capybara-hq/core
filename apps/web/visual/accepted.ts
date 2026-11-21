@@ -70,6 +70,10 @@ export const ACCEPTED: string[] = [
   // place; the reference PNGs and the side-by-side review wait for the reference-update and
   // visual-update workflows
   "mode-menu",
+  // mobile touch (Task 25): size tables and state lists in the spec, reference blocks in the catalog
+  "drawer",
+  "floating-button",
+  "nav-row",
   // phase D (Task 10): accepted by the blind side-by-side review (compare-out-d)
   "command-palette",
   "inline-card",

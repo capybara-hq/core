@@ -45,7 +45,7 @@
   gap: var(--cb-space-2);
   min-width: 0;
   color: var(--cb-faint);
-  font-family: var(--cb-font);
+  font-family: var(--cb-font-code);
   font-size: var(--cb-type-small-size);
   line-height: var(--cb-type-small-line);
 }
@@ -1662,7 +1662,7 @@ button.cb-property-row {
 }
 .cb-task-command {
   color: var(--cb-ink);
-  font-family: var(--cb-font);
+  font-family: var(--cb-font-code);
   overflow-wrap: anywhere;
 }
 .cb-task-output-note,
@@ -1671,7 +1671,7 @@ button.cb-property-row {
   line-height: var(--cb-type-small-line);
 }
 .cb-task-output-detail {
-  font-family: var(--cb-font);
+  font-family: var(--cb-font-code);
   font-size: var(--cb-type-small-size);
   line-height: var(--cb-type-small-line);
   overflow-wrap: anywhere;
@@ -1769,4 +1769,216 @@ button.cb-property-row {
   width: 100%;
   min-width: 0;
   border-left: 0;
+}
+
+/*
+ * Touch (spec §6.16.2, §6.16.6, §6.16.8, §6.16.11; mobile layout spec touch amendments). Only
+ * under the touch query: the composer is a floating pill (attach, input, send) with the settings
+ * chip above it, the thread runs under it, the user's bubble sits at the end edge and the
+ * approval card's buttons are 48 high. Desktop and mouse layouts above are untouched.
+ *
+ * The frame turns into a grid of three columns; the pill itself is the frame's ::before in row 4,
+ * and the controls sit on it. Rows: 1 token warning, 2 attachments, 3 chip and agent picker,
+ * 4 the pill, 5 quick actions, 6 the agents chip.
+ */
+@media (pointer: coarse), (any-pointer: coarse) and (not (any-pointer: fine)) {
+  .cb-composer {
+    display: grid;
+    grid-template-columns: auto minmax(0, 1fr) auto;
+    align-items: center;
+    column-gap: var(--cb-space-1);
+    /* no row gap: an empty row would still take it; the rows above and below the pill carry
+       their own margin */
+    row-gap: 0;
+    padding: 0;
+    border: 0;
+    background: transparent;
+    box-shadow: none;
+  }
+  .cb-composer:has(.cb-composer-input:focus) {
+    border: 0;
+    box-shadow: none;
+  }
+  .cb-composer::before {
+    content: "";
+    grid-row: 4;
+    grid-column: 1 / -1;
+    align-self: stretch;
+    min-height: var(--cb-touch-composer);
+    border: 1px solid var(--cb-float-line);
+    border-radius: var(--cb-radius-pill);
+    background: var(--cb-float-ground);
+    box-shadow: var(--cb-shadow-float-touch);
+    transition:
+      border-color var(--cb-motion-hover),
+      box-shadow var(--cb-motion-hover);
+  }
+  .cb-composer:has(.cb-composer-input:focus)::before {
+    border-color: var(--cb-accent);
+    box-shadow:
+      0 0 0 3px var(--cb-focus-ring),
+      var(--cb-shadow-float-touch);
+  }
+  .cb-composer[data-frame="bare"]::before {
+    content: none;
+  }
+  .cb-composer > .cb-callout {
+    grid-row: 1;
+    grid-column: 1 / -1;
+    margin-bottom: var(--cb-space-2);
+  }
+  .cb-composer > .cb-attachment-strip {
+    grid-row: 2;
+    grid-column: 1 / -1;
+    margin-bottom: var(--cb-space-2);
+  }
+  /* the bar's controls take their cells in the frame's grid */
+  .cb-composer-bar {
+    display: contents;
+  }
+  .cb-composer > .cb-composer-input,
+  .cb-composer > .cb-composer-line {
+    grid-row: 4;
+    grid-column: 2;
+    margin: 0;
+    padding-block: var(--cb-space-3);
+  }
+  .cb-composer > .cb-composer-line {
+    padding-block: 0;
+  }
+  .cb-composer-bar > .cb-icon-btn:first-child {
+    grid-row: 4;
+    grid-column: 1;
+    width: var(--cb-touch-hit);
+    height: var(--cb-touch-hit);
+    margin-inline-start: var(--cb-space-2);
+    color: var(--cb-muted);
+  }
+  .cb-composer-bar > .cb-send.cb-btn,
+  .cb-composer-bar > .cb-stop.cb-btn {
+    grid-row: 4;
+    grid-column: 3;
+    width: var(--cb-touch-float);
+    height: var(--cb-touch-float);
+    margin-inline-end: var(--cb-space-2);
+    padding: 0;
+    border-radius: var(--cb-radius-pill);
+  }
+  .cb-composer-bar > .cb-send.cb-btn {
+    background: var(--cb-accent);
+    color: var(--cb-on-accent);
+  }
+  .cb-composer-bar > .cb-send.cb-btn:disabled {
+    background: var(--cb-selected);
+    color: var(--cb-disabled);
+  }
+  /* the pickers fold into the chip and its sheet at every width; the suggestion button stays out */
+  .cb-composer-pickers,
+  .cb-composer-mode {
+    display: none;
+  }
+  .cb-composer-bar > .cb-composer-options.cb-btn {
+    display: inline-flex;
+    grid-row: 3;
+    grid-column: 1 / 3;
+    justify-self: start;
+    margin-bottom: var(--cb-space-2);
+    min-height: var(--cb-touch-hit);
+    max-width: 100%;
+    padding: 0 var(--cb-space-3);
+    border: 1px solid var(--cb-float-line);
+    border-radius: var(--cb-radius-pill);
+    background: var(--cb-float-ground);
+    color: var(--cb-muted);
+  }
+  .cb-composer-bar > .cb-picker.cb-btn {
+    grid-row: 3;
+    grid-column: 3;
+    margin-bottom: var(--cb-space-2);
+  }
+  .cb-composer-bar > [data-part="quick-actions"] {
+    grid-row: 5;
+    grid-column: 1 / -1;
+    margin-top: var(--cb-space-2);
+  }
+  .cb-composer-bar > .cb-agents-chip {
+    grid-row: 6;
+    grid-column: 1 / -1;
+    margin-top: var(--cb-space-2);
+  }
+  .cb-composer-bar > .cb-composer-suggestion-use.cb-btn {
+    grid-row: 3;
+    grid-column: 3;
+  }
+  .cb-composer-bar > .cb-grow {
+    display: none;
+  }
+  .cb-options-sheet-note {
+    margin: var(--cb-space-3) 0 0;
+    color: var(--cb-muted);
+    font-size: var(--cb-type-small-size);
+    line-height: var(--cb-type-small-line);
+  }
+
+  /* The composer floats over the thread's bottom; the thread's padding clears it. The page lifts
+     the whole column by the keyboard's height (`--cb-keyboard-inset`, above), so the floating
+     composer rises with it; the home indicator's inset counts only while the keyboard is shut. */
+  .cb-conv-center {
+    position: relative;
+  }
+  .cb-conv-composer {
+    position: absolute;
+    inset-inline: 0;
+    bottom: 0;
+    padding-bottom: calc(var(--cb-space-3) + var(--cb-inset-bottom));
+    pointer-events: none;
+  }
+  .cb-conv-composer > * {
+    pointer-events: auto;
+  }
+  .cb-shell[data-keyboard="open"] .cb-conv-composer {
+    padding-bottom: var(--cb-space-3);
+  }
+  .cb-conv-scroll {
+    padding-bottom: calc(
+      var(--cb-touch-composer) +
+      var(--cb-touch-hit) +
+      var(--cb-space-6) +
+      var(--cb-inset-bottom)
+    );
+  }
+  .cb-conv-latest {
+    bottom: calc(100% + var(--cb-touch-hit) + var(--cb-space-2));
+  }
+
+  /* The user's bubble at the end edge; the approval card's two buttons 48 high, side by side. */
+  .cb-user-msg > .cb-bubble {
+    max-width: 85%;
+    margin-inline-start: auto;
+  }
+  /* one row: 拒绝, the wider grants, 批准. The buttons' flex-basis is 0, so they never wrap to a
+     second row (a label too long wraps inside its button); the policy note takes the row under. */
+  .cb-hcard-actions {
+    align-items: stretch;
+  }
+  .cb-hcard-actions > .cb-btn {
+    flex: 1 1 0;
+    min-width: 0;
+    padding-inline: var(--cb-space-2);
+    min-height: var(--cb-touch-primary);
+    height: auto;
+    padding-block: var(--cb-space-2);
+    white-space: normal;
+    line-height: var(--cb-type-small-line);
+  }
+  .cb-hcard-actions > .cb-hcard-note {
+    flex: 0 0 100%;
+  }
+  .cb-tool-group > .cb-tool-line {
+    width: 100%;
+    min-height: var(--cb-touch-hit);
+  }
+  .cb-tool-group > .cb-tool-line > .cb-tool-label {
+    flex: 1 1 auto;
+  }
 }
