@@ -48,7 +48,7 @@ export function Logo({
     <span className="cb-logo" data-tone={tone}>
       {mark && !mark.failed ? (
         // A theme's mark: an image as high as the pixel capybara, its width follows the file; if
-        // it fails to load, this mount draws the pixel capybara instead.
+        // it fails to load (also before hydration: the ref), this mount draws the pixel capybara.
         // biome-ignore lint/performance/noImgElement: the mark is a theme asset of any size
         <img
           className="cb-logo-mark"
@@ -57,6 +57,7 @@ export function Logo({
           height={ROWS * scale}
           alt={brand?.productName ?? brand?.wordmark ?? "Logo"}
           onError={mark.onError}
+          ref={mark.ref}
         />
       ) : (
         <svg

@@ -29,7 +29,7 @@ export {
   type PresetId,
 } from "./avatar";
 export { Badge, Kbd, Metric, type MetricProps, StatusMark } from "./basic";
-export { brandArtStyle, cssUrlValue, useBrandMark } from "./brand-art";
+export { type BrandMark, brandArtStyle, cssUrlValue, useBrandMark } from "./brand-art";
 export { Callout, type CalloutAction, type CalloutProps } from "./callout";
 export {
   CardGrid,

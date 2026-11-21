@@ -99,6 +99,16 @@ describe("cssUrlValue", () => {
     expect(readCssUrl(cssUrlValue("a\u0000b"))).toBe("a�b");
   });
 
+  it("a lone surrogate becomes U+FFFD; a surrogate pair stays", () => {
+    expect(cssUrlValue("a\uD800b")).toBe('url("a\uFFFDb")');
+    expect(cssUrlValue("a\uDC00")).toBe('url("a\uFFFD")');
+    expect(cssUrlValue("\uDC00\uD800")).toBe('url("\uFFFD\uFFFD")');
+    expect(cssUrlValue("🐹")).toBe('url("🐹")');
+    // well formed: survives a UTF-8 round trip unchanged
+    const v = cssUrlValue("x\uDBFFy\uD83D");
+    expect(new TextDecoder().decode(new TextEncoder().encode(v))).toBe(v);
+  });
+
   it('a URL with ")" and ";" stays inside the string', () => {
     const u = "/a.svg); color: red; --y: (";
     const v = cssUrlValue(u);
@@ -157,6 +167,37 @@ describe("useBrandMark", () => {
       </DesignProvider>,
     );
     expect(screen.getByTestId("m").textContent).toBe("none");
+  });
+
+  it("an empty markUrl is no mark", () => {
+    render(
+      <DesignProvider locale="en" brand={brandOf("")}>
+        <Probe />
+      </DesignProvider>,
+    );
+    expect(screen.getByTestId("m").textContent).toBe("none");
+  });
+
+  it("a src that already failed in this mount stays failed (A, B, back to A)", () => {
+    const { rerender } = render(
+      <DesignProvider locale="en" brand={brandOf("/a.svg")}>
+        <Probe />
+      </DesignProvider>,
+    );
+    act(() => last?.onError());
+    rerender(
+      <DesignProvider locale="en" brand={brandOf("/b.svg")}>
+        <Probe />
+      </DesignProvider>,
+    );
+    act(() => last?.onError());
+    expect(screen.getByTestId("m").textContent).toBe("/b.svg:true");
+    rerender(
+      <DesignProvider locale="en" brand={brandOf("/a.svg")}>
+        <Probe />
+      </DesignProvider>,
+    );
+    expect(screen.getByTestId("m").textContent).toBe("/a.svg:true");
   });
 
   it("onError marks the mark failed for this mount; a new src or a new mount starts fresh", () => {

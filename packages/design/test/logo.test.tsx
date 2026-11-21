@@ -1,8 +1,11 @@
-import { cleanup, fireEvent, render, screen } from "@testing-library/react";
-import { afterEach, describe, expect, it } from "vitest";
+import { act, cleanup, fireEvent, render, screen } from "@testing-library/react";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { type Brand, DesignProvider, Logo, useBrand } from "../src/index";
 
-afterEach(cleanup);
+afterEach(() => {
+  cleanup();
+  vi.restoreAllMocks();
+});
 
 /** A brand with only the given parts (the rest null, the decoration the default). */
 const brand = (parts: Partial<Brand>): Brand => ({
@@ -164,5 +167,56 @@ describe("Logo with a theme brand", () => {
     expect(altOf(brand({ markUrl: "/m.svg", wordmark: "W", productName: "P" }))).toBe("P");
     expect(altOf(brand({ markUrl: "/m.svg", wordmark: "W" }))).toBe("W");
     expect(altOf(brand({ markUrl: "/m.svg" }))).toBe("Logo");
+  });
+
+  describe("a mark that settled before hydration (no error event reaches React)", () => {
+    /** Stubs the image state the browser reports once the img is in the DOM. */
+    const settled = (naturalWidth: number, decode?: () => Promise<void>) => {
+      vi.spyOn(HTMLImageElement.prototype, "complete", "get").mockReturnValue(true);
+      vi.spyOn(HTMLImageElement.prototype, "naturalWidth", "get").mockReturnValue(naturalWidth);
+      if (decode)
+        Object.defineProperty(HTMLImageElement.prototype, "decode", {
+          configurable: true,
+          value: decode,
+        });
+    };
+    afterEach(() => {
+      // biome-ignore lint/suspicious/noExplicitAny: removing the stub jsdom does not have
+      delete (HTMLImageElement.prototype as any).decode;
+    });
+    const renderMark = () =>
+      render(
+        <DesignProvider locale="en" brand={brand({ markUrl: "/m.svg" })}>
+          <Logo />
+        </DesignProvider>,
+      );
+
+    it("a broken image (complete, no width) falls back to the pixel capybara", () => {
+      settled(0);
+      const { container } = renderMark();
+      expect(container.querySelector("img")).toBeNull();
+      expect(container.querySelector("svg path")).not.toBeNull();
+    });
+
+    it("a loaded image stays", () => {
+      settled(28);
+      const { container } = renderMark();
+      expect(container.querySelector('img[src="/m.svg"]')).not.toBeNull();
+    });
+
+    it("a zero width is confirmed with decode(): a loaded SVG without a size stays", async () => {
+      settled(0, () => Promise.resolve());
+      const { container } = renderMark();
+      await act(async () => {});
+      expect(container.querySelector('img[src="/m.svg"]')).not.toBeNull();
+    });
+
+    it("a zero width whose decode() rejects falls back", async () => {
+      settled(0, () => Promise.reject(new Error("EncodingError")));
+      const { container } = renderMark();
+      await act(async () => {});
+      expect(container.querySelector("img")).toBeNull();
+      expect(container.querySelector("svg path")).not.toBeNull();
+    });
   });
 });
