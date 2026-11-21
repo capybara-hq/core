@@ -222,8 +222,8 @@ export interface ApprovalRecord {
   /** A command review ask's facts; null for any other kind. */
   command: CommandAskDetail | null;
   /**
-   * A secure input request (kind `secure_input`), or a tool ask with person fields (platform web
-   * parity spec §4.2): the secret fields the person enters, as specs (path, label, schema node),
+   * A secure input request (kind `secure_input`; platform web parity spec §4.2, profiles govern
+   * every approval R4): the secret fields the person enters, as specs (path, label, schema node),
    * never values. Absent otherwise.
    */
   personFields?: PersonFieldSpec[];
@@ -371,12 +371,8 @@ export interface ApprovalRequestInput {
   summary?: { zh: string; en: string };
   /** The scopes the decider may choose; unset: derived (see {@link ApprovalRecord.scopes}). */
   scopes?: ApprovalScope[];
-  /**
-   * A tool ask's person fields and their target (specs only, no values) and the file it takes
-   * (stored in `detail`).
-   */
-  detail?: Omit<ToolAskDetail, "personFields" | "target"> &
-    Partial<Pick<ToolAskDetail, "personFields" | "target">>;
+  /** The file a tool ask's call takes and the review's unsure mark (stored in `detail`). */
+  detail?: ToolAskDetail;
 }
 
 /**
@@ -406,19 +402,20 @@ export interface SecureInputRequestInput {
   personFields: PersonFieldSpec[];
 }
 
-/**
- * A tool ask's or a secure input request's `detail`: the person fields the card asks for and the
- * target they belong to.
- */
+/** A tool ask's `detail`: the file its call takes and whether the review was unsure. */
 export interface ToolAskDetail {
-  personFields: PersonFieldSpec[];
-  target: { zh: string; en: string };
-  /** The paths whose entered value the decision refused as leaked (written by the decision). */
-  leakedFields?: string[];
   /** The file the call takes in place of an upload (its sha256 is what the approval binds). */
   file?: FileCardDetail;
   /** The review model could not decide the ask under Approve for me (R3). */
   reviewUnsure?: true;
+}
+
+/** A secure input request's `detail`: the fields the person enters and their target. */
+export interface SecureInputDetail {
+  personFields: PersonFieldSpec[];
+  target: { zh: string; en: string };
+  /** The paths whose entered value the decision refused as leaked (written by the decision). */
+  leakedFields?: string[];
 }
 
 /** Whether a tool ask's stored `detail` says the review model could not decide it. */
@@ -438,15 +435,12 @@ function fileOf(detail: unknown): Pick<ApprovalRecord, "file"> | null {
   return { file: f as FileCardDetail };
 }
 
-/**
- * The person fields of a secure input request or a tool ask from its stored `detail` (none: an
- * ordinary tool ask).
- */
+/** The person fields of a secure input request from its stored `detail`. */
 function personFieldsOf(
   detail: unknown,
 ): Pick<ApprovalRecord, "personFields" | "personTarget" | "leakedFields"> | null {
   if (typeof detail !== "object" || detail === null) return null;
-  const d = detail as Partial<ToolAskDetail>;
+  const d = detail as Partial<SecureInputDetail>;
   if (!Array.isArray(d.personFields) || d.personFields.length === 0 || d.target === undefined) {
     return null;
   }
@@ -597,7 +591,7 @@ function toRecord(r: Selectable<ApprovalsTable>): ApprovalRecord {
     detail: r.kind === "network" ? ((r.detail as NetworkAskDetail | null) ?? null) : null,
     git: r.kind === "git" ? ((r.detail as GitAskDetail | null) ?? null) : null,
     command: r.kind === "command" ? ((r.detail as CommandAskDetail | null) ?? null) : null,
-    ...((r.kind === "tool" || r.kind === "secure_input") && personFieldsOf(r.detail)),
+    ...(r.kind === "secure_input" && personFieldsOf(r.detail)),
     ...(r.kind === "tool" && fileOf(r.detail)),
     ...(r.kind === "tool" && reviewUnsureOf(r.detail)),
     toolKey: r.tool_key,
@@ -798,7 +792,7 @@ export class ApprovalsService {
       .where("id", "=", input.conversationId)
       .forUpdate()
       .execute();
-    const detail: ToolAskDetail = { personFields: input.personFields, target: input.target };
+    const detail: SecureInputDetail = { personFields: input.personFields, target: input.target };
     const inserted = await t
       .insertInto("approvals")
       .values({
@@ -1631,17 +1625,20 @@ export class ApprovalsService {
   ): Promise<{ record: ApprovalRecord; toSeq: number }> {
     return this.decideTx(orgId, id, accountId, body, actorTokenId, network, git, command).then(
       (o) => {
-        // only a tool ask or a secure input takes inputs (refused for every other kind before)
-        if ("leaked" in o) throw new Error(`approval ${id}: a leak outcome outside a tool ask`);
+        // only a secure input takes inputs (refused for every other kind before)
+        if ("leaked" in o) {
+          throw new Error(`approval ${id}: a leak outcome outside a secure input request`);
+        }
         return o;
       },
     );
   }
 
   /**
-   * A tool ask's decision in its own transaction. With person fields, a leak refusal commits the
-   * leaked paths in `detail.leakedFields` and returns them (the caller refuses after the commit,
-   * the approval still pending); the same transaction cannot both keep that write and throw.
+   * A tool ask's or a secure input's decision in its own transaction. For a secure input, a leak
+   * refusal commits the leaked paths in `detail.leakedFields` and returns them (the caller refuses
+   * after the commit, the request still pending); the same transaction cannot both keep that write
+   * and throw.
    */
   @Transactional({ propagation: "requires_new" })
   private decideToolIn(
@@ -1726,15 +1723,13 @@ export class ApprovalsService {
       await this.permissionGrants.assertCurrent(before.command.permissionCandidate.binding);
     }
     const approved = body.decision === "approve";
-    // a secure input request's fields (and, until the pipeline raises only secure inputs, a tool
-    // ask's person fields)
-    const person =
-      before.kind === "tool" || before.kind === "secure_input" ? before.personFields : undefined;
+    // only a secure input request takes values
+    const person = before.kind === "secure_input" ? before.personFields : undefined;
     if (body.inputs !== undefined && (person === undefined || !approved)) {
       throw inputsNotExpected();
     }
-    // an approval with person fields (platform web parity spec §4.2, §4.3, R5): approved only by
-    // its person, in a web session, with every asked value, valid and never seen in the
+    // a secure input (platform web parity spec §4.2, §4.3, R5; profiles govern every approval R4):
+    // submitted only by its person, in a web session, with every asked value, valid and never seen in the
     // conversation; the values are sealed before the status changes. A deny takes no values.
     let inputsProvided: string[] | undefined;
     if (person !== undefined && approved) {
@@ -1771,9 +1766,9 @@ export class ApprovalsService {
           .updateTable("approvals")
           .set({
             detail: JSON.stringify({
-              ...(locked.detail as ToolAskDetail),
+              ...(locked.detail as SecureInputDetail),
               leakedFields: [...new Set([...(before.leakedFields ?? []), ...leaked])],
-            } satisfies ToolAskDetail),
+            } satisfies SecureInputDetail),
           })
           .where("id", "=", id)
           .execute();

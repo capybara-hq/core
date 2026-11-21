@@ -371,7 +371,7 @@ export function planPersonFields(
     if (leaks(f.path)) {
       return {
         ok: false,
-        message: `Secret fields are entered by the person on the confirmation card; leave \`${f.path}\` out of values and list it in askPerson. A value passed in params has been seen by the model and counts as leaked: tell the person to rotate it.`,
+        message: `Secret fields are entered by the person in a secure input request; leave \`${f.path}\` out of values and list it in askPerson. A value passed in params has been seen by the model and counts as leaked: tell the person to rotate it.`,
       };
     }
   }

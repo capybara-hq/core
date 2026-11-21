@@ -22,9 +22,9 @@ import {
   enableConnectorExtensions,
   eventsOf,
   postMessage,
-  waitFor,
   waitForTerminal,
 } from "../helpers/runs.js";
+import { consentAndSubmit } from "../helpers/secure-input.js";
 
 /**
  * Connector and catalog operations on person fields (platform web parity spec §7.2, Task 10): a
@@ -120,8 +120,9 @@ async function platformAgent(name: string): Promise<string> {
 }
 
 /**
- * Calls one operation through the tool, approves its card with `inputs` and waits for the run:
- * returns the approval's person field paths and the tool result.
+ * Calls one operation through the tool, approves its consent and submits `inputs` on its secure
+ * input request (none when `inputs` is empty), and waits for the run: returns the secure input's
+ * field paths and the tool result.
  */
 async function callWithCard(
   agentId: string,
@@ -132,30 +133,7 @@ async function callWithCard(
   const convId = await createConv(env.root, env.orgId, agentId);
   const call = { action: "call", operation, params };
   await postMessage(env.root, env.orgId, convId, `tool:Platform:${JSON.stringify(call)}`);
-  const asked = await waitFor(
-    async () => ofType(await eventsOf(env.db, convId), "approval_requested")[0],
-    20_000,
-    "approval_requested",
-  );
-  const row = await env.db
-    .selectFrom("approvals")
-    .selectAll()
-    .where("id", "=", asked.payload.approvalId)
-    .executeTakeFirstOrThrow();
-  const paths =
-    (row.detail as { personFields?: { path: string }[] } | null)?.personFields?.map(
-      (f) => f.path,
-    ) ?? [];
-  const ok = await env.root({
-    method: "POST",
-    url: `/api/v1/orgs/${env.orgId}/approvals/${row.id}/decision`,
-    payload: {
-      decision: "approve",
-      scope: "once",
-      ...(Object.keys(inputs).length > 0 && { inputs }),
-    },
-  });
-  expect(ok.statusCode, ok.body).toBe(200);
+  const { paths } = await consentAndSubmit(env.db, env.root, env.orgId, convId, inputs);
   await waitForTerminal(env.db, convId, 1, 30_000);
   const result = ofType(await eventsOf(env.db, convId), "tool_result").at(-1)?.payload;
   return { convId, paths, result };

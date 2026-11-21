@@ -201,6 +201,8 @@ describe("accounts.create through the super admin's private agent", () => {
     };
     expect(out.account).toMatchObject({ login: "alice", mustChangePassword: true });
     expect(out.initialPassword).toBe(INITIAL_PASSWORD_NOTE);
+    // the web draws the reveal under the tool row, read by this call (R6)
+    expect(result?.view).toEqual({ kind: "reveal", reveal: "initial_password" });
 
     // another super admin, for whom the call was not made, gets nothing
     expect((await reveal(other, ref)).statusCode).toBe(404);
@@ -271,6 +273,53 @@ describe("accounts.create through the super admin's private agent", () => {
     expect(now.statusCode, now.body).toBe(200);
     const after = await first.req({ method: "GET", url: "/api/v1/me" });
     expect(after.json()).toMatchObject({ account: { mustChangePassword: false } });
+  });
+
+  it("under Auto runs without an approval, and the run's person reads the password once", async () => {
+    const convId = await createConv(root, orgId, agentId);
+    await db
+      .updateTable("conversations")
+      .set({ permission_profile: "full-access", permission_revision: 1 })
+      .where("id", "=", convId)
+      .execute();
+    await postMessage(
+      root,
+      orgId,
+      convId,
+      call("accounts.create", { login: "bob", displayName: "Bob Auto" }),
+    );
+    await waitForTerminal(db, convId, 1, 30_000);
+    const evs = await eventsOf(db, convId);
+    expect(ofType(evs, "approval_requested")).toEqual([]);
+    expect(ofType(evs, "tool_ask_decided").map((e) => e.payload)).toEqual([
+      expect.objectContaining({ outcome: "allow", decisionSource: "full-access" }),
+    ]);
+    const done = ofType(evs, "tool_result").at(-1);
+    expect(done?.payload).toMatchObject({
+      toolKey: "Platform",
+      isError: false,
+      view: { kind: "reveal", reveal: "initial_password" },
+    });
+    const ref: CallRef = {
+      conversationId: convId,
+      runId: done?.runId ?? "",
+      callId: done?.payload.callId ?? "",
+    };
+    expect((await reveal(other, ref)).statusCode).toBe(404);
+    const shown = await reveal(root, ref);
+    expect(shown.statusCode, shown.body).toBe(200);
+    const { password, login } = shown.json() as { password: string; login: string };
+    expect(login).toBe("bob");
+    expect((await reveal(root, ref)).statusCode).toBe(404);
+    const eventRows = await sql<{ payload: unknown }>`
+      SELECT payload FROM capybara.conversation_events WHERE conversation_id = ${convId}`.execute(
+      db,
+    );
+    expect(JSON.stringify(eventRows.rows)).not.toContain(password);
+    expect(JSON.stringify(await db.selectFrom("audit_events").selectAll().execute())).not.toContain(
+      password,
+    );
+    expect(lines.join("\n")).not.toContain(password);
   });
 
   it("a taken login is refused before the card", async () => {

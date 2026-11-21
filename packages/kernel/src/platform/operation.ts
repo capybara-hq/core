@@ -148,12 +148,14 @@ export interface PlatformOperation<I = unknown> {
    */
   rememberable?: false;
   /**
-   * `true`: the write's result is shown once, on the web, to the person who approves the call (an
-   * invitation link, a generated initial password), so only the person the run works for may
-   * confirm it: the call always asks them (never a grant, an `allow`, a role escalation) and is
-   * refused in an unattended run (`CallPolicy.personOnly`, like person fields, ruling R6).
+   * The write's result is shown once, on the web, to the person the call is made for (an
+   * invitation link, a generated initial password), read by the call (profiles govern every
+   * approval, R6); the value names which, and the tool result carries the reveal view. Only the
+   * person the run works for may consent to it: the call always asks them (never a grant, an
+   * `allow`, a role escalation; the conversation's profile decides the ask) and is refused in an
+   * unattended run (`CallPolicy.personOnly`).
    */
-  revealsToApprover?: true;
+  revealsToApprover?: "initial_password" | "invitation_link";
   /**
    * The class of one call when it depends on the target (read at confirmation time): e.g.
    * `agents.update` is `personal` only on a private agent the actor owns and `org` otherwise, so a

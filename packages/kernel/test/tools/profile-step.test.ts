@@ -747,7 +747,7 @@ describe("what the profile never decides", () => {
     expect(await decisionsOf(conv)).toEqual([]);
   });
 
-  it("Auto: a Platform call with person fields keeps its person-field approval", async () => {
+  it("Auto: a Platform call with person fields runs its consent, never its secure input", async () => {
     const agentId = await createAgent();
     script("p-secret", "Platform", {
       action: "call",
@@ -756,11 +756,14 @@ describe("what the profile never decides", () => {
     });
     const conv = await start(agentId, "p-secret", "full-access");
     const ask = await pendingApproval(conv);
-    expect(ask.kind).toBe("tool");
+    expect(ask.kind).toBe("secure_input");
     expect(ask.detail).toMatchObject({
       personFields: [expect.objectContaining({ path: "apiKey" })],
     });
-    expect(await decisionsOf(conv)).toEqual([]);
+    expect((await approvalsOf(conv)).map((a) => a.kind)).toEqual(["secure_input"]);
+    expect((await decisionsOf(conv)).map((d) => d.payload)).toEqual([
+      expect.objectContaining({ outcome: "allow", decisionSource: "full-access" }),
+    ]);
   });
 
   it("a review that allows everything cannot cross a role escalation or a policy deny", async () => {

@@ -1,6 +1,6 @@
 import { ToolError, type ToolSpec } from "@capybara-hq/plugin-sdk";
 import { z } from "zod";
-import { ToolViewSchema } from "../../conversations/events.js";
+import { type ToolView, ToolViewSchema } from "../../conversations/events.js";
 import type { KernelLogger } from "../../log.js";
 import type { OrgSettings } from "../../orgs/settings.service.js";
 import type { ActorFacts } from "../../platform/actor.js";
@@ -68,14 +68,18 @@ import type {
  * - An `ApiError` gets the next step the operation declares for its code and the actor's role.
  * - The actor, the agent and the conversation come from the runtime context, never from input.
  * - A write with person fields (platform web parity spec §4: `op.personFields`) is planned at the
- *   policy step: a secret in `values` is denied before the card, and the asked fields go to the
- *   card through {@link CallPolicy.personFields} (never remembered). The approved call reads the
- *   person's sealed values through `personInputs` and its result names each entered path, never a
- *   value.
+ *   policy step: a secret in `values` is denied before any card, and the asked fields go to the
+ *   pipeline through {@link CallPolicy.personFields}, which asks for them in a secure input request
+ *   after the consent (profiles govern every approval, R4). The call reads the person's sealed
+ *   values by that request (`BuiltinCallContext.secureInputId`) through `personInputs`, and its
+ *   result names the request and each entered path, never a value.
  * - A write that takes a file in place of an upload (spec §5: `op.fileRef`) resolves it at the
  *   policy step: a file over the limit or of another type is denied before the card; the card
- *   shows it (`CallPolicy.file`, never remembered) and the approval binds its sha256. Right before
- *   `op.run` the file is read again, and bytes with another sha256 are refused.
+ *   shows it (`CallPolicy.file`, never remembered) and the approval binds its sha256, or, with no
+ *   approval, the automatic decision does (R7). Right before `op.run` the file is read again, and
+ *   bytes with another sha256 are refused.
+ * - A write whose result is shown once to the run's person (`op.revealsToApprover`) carries the
+ *   reveal view, which the web reads by the call (R6).
  * - Results are JSON text; a list an operation returns is capped at {@link LIST_MAX} entries.
  */
 
@@ -162,15 +166,15 @@ export interface PlatformToolDeps {
   precheckTimeoutMs?: number;
   /** A precheck that throws is logged (warn) and one that times out (debug), with the op id. */
   log?: Pick<KernelLogger, "warn"> & Partial<Pick<KernelLogger, "debug">>;
-  /** The person's sealed card values (`personInputs`); absent: no write has person fields. */
+  /** The person's sealed values (`personInputs`); absent: no write has person fields. */
   sealed?: Pick<SealedInputs, "consume">;
   /**
-   * The person field paths an approval's card showed (its stored `detail.personFields`), or null
-   * when it has none or is not this call's approved approval in the org: what an approved call's
-   * values are bound to.
+   * The person field paths a secure input request asked for (its stored `detail.personFields`), or
+   * null when it is not this call's submitted secure input in the org: what the call's values are
+   * bound to.
    */
-  approvalPersonPaths?(
-    approvalId: string,
+  secureInputPaths?(
+    secureInputId: string,
     call: { orgId: string; runId: string; callId: string },
   ): Promise<string[] | null>;
   /** Resolves a write's file reference (`op.fileRef`); absent: no write takes a file. */
@@ -357,7 +361,7 @@ export const PERSON_INPUTS_EXPIRED_TEXT =
   "The values the person entered expired before they were applied; call the operation again.";
 /** Model-visible: an approved call with person fields that has no approval to read them by. */
 const personInputsMissingText = (id: string) =>
-  `Operation ${id} needs values the person enters on the confirmation card, and this call ran without one; call the operation again.`;
+  `Operation ${id} needs values the person enters in a secure input request, and this call ran without one; call the operation again.`;
 /**
  * Model-visible: the person-field plan refused an approved call when it resumed (the target's
  * secret fields changed while the card waited); `message` is the plan's English refusal.
@@ -372,6 +376,8 @@ const PERSON_FIELDS_CHANGED_TEXT =
   "The target changed after the person confirmed (the fields to enter differ); call the operation again.";
 /** Model-visible result line: the approved call's operation never applied the person's values. */
 const unusedValuesText = (id: string) => `The values the person entered were not used by ${id}.`;
+/** The result line naming the submitted secure input request (never a value). */
+const submittedLine = (id: string) => `Secure input ${id}: submitted.`;
 /** The result line of one field the person entered (never its value). */
 const enteredLine = (path: string) => `\`${path}\`: entered by the person`;
 /** Model-visible: an operation takes a file, and this kernel has no resolver wired (a bug). */
@@ -520,16 +526,14 @@ export function platformTool(deps: PlatformToolDeps): BuiltinTool {
     return {
       key,
       policy: "ask",
-      // org / platform writes are confirmed every time (spec §6.2); so is a write with person
-      // fields, whatever its class (spec §4.2, R6), and one whose card shows a file (§5: the
-      // person confirms these bytes)
-      remember:
-        personFields === null && card === null && cls === "personal" && op.rememberable !== false,
+      // org / platform writes are confirmed every time (spec §6.2); so is one whose card shows a
+      // file (§5: the person confirms these bytes). Person fields do not decide the consent (R5)
+      remember: card === null && cls === "personal" && op.rememberable !== false,
       summary,
       ...(personFields !== null && { personFields }),
       ...(card !== null && { file: card }),
-      // its result is shown once to the approver: only the person may confirm it
-      ...(op.revealsToApprover === true && { personOnly: true as const }),
+      // its result is shown once to the run's person: only they may consent to it
+      ...(op.revealsToApprover !== undefined && { personOnly: true as const }),
     };
   }
 
@@ -648,31 +652,32 @@ export function platformTool(deps: PlatformToolDeps): BuiltinTool {
       // the file is read again, and must be the bytes the person confirmed (Review Focus 5)
       const file = await fileOf(op, params, deps, octx, ctx.signal);
       if (file !== null) {
-        // fails closed: bytes run only under this call's approval whose card showed them (no
-        // approval, one whose card showed no file or another one does not cover these bytes)
+        // fails closed: bytes run only under this call's approval whose card showed them or,
+        // with no approval, the automatic decision that was bound to them (R7); a grant, an
+        // approval whose card showed no file or another one does not cover these bytes
         const bound =
-          ctx.approvalId === undefined ||
-          ctx.runId === undefined ||
-          deps.approvalFileSha256 === undefined
-            ? null
-            : await deps.approvalFileSha256(ctx.approvalId, {
-                orgId: ctx.orgId,
-                runId: ctx.runId,
-                callId: ctx.callId,
-              });
+          ctx.approvalId !== undefined
+            ? ctx.runId === undefined || deps.approvalFileSha256 === undefined
+              ? null
+              : await deps.approvalFileSha256(ctx.approvalId, {
+                  orgId: ctx.orgId,
+                  runId: ctx.runId,
+                  callId: ctx.callId,
+                })
+            : (ctx.decision?.fileSha256 ?? null);
         if (bound === null || bound !== file.sha256) throw new ToolError(FILE_CHANGED_TEXT);
         octx.file = file;
       }
       const person = await personFieldsOf(op, params, octx);
-      // what the card showed (the approval's stored specs) binds what runs: the run-time plan
-      // must ask exactly those fields, and the sealed values must carry exactly them
-      const approvalId = ctx.approvalId;
+      // what the secure input asked (its stored specs) binds what runs: the run-time plan must
+      // ask exactly those fields, and the sealed values must carry exactly them
+      const secureInputId = ctx.secureInputId;
       const shown =
-        approvalId === undefined ||
-        deps.approvalPersonPaths === undefined ||
+        secureInputId === undefined ||
+        deps.secureInputPaths === undefined ||
         ctx.runId === undefined
           ? null
-          : await deps.approvalPersonPaths(approvalId, {
+          : await deps.secureInputPaths(secureInputId, {
               orgId: ctx.orgId,
               runId: ctx.runId,
               callId: ctx.callId,
@@ -680,10 +685,10 @@ export function platformTool(deps: PlatformToolDeps): BuiltinTool {
       if (person === null && shown !== null) throw new PersonFieldsChanged();
       if (person !== null) {
         const sealed = deps.sealed;
-        if (approvalId === undefined || sealed === undefined) {
+        if (secureInputId === undefined || sealed === undefined) {
           throw new ToolError(personInputsMissingText(op.id));
         }
-        // an approval made before the call had person fields (the target changed since)
+        // a request that is not this call's submitted one, or asked before the target changed
         if (shown === null) throw new PersonFieldsChanged();
         const asked = person.fields.map((p) => p.path);
         if (!sameSet(asked, shown)) throw new PersonFieldsChanged();
@@ -692,9 +697,9 @@ export function platformTool(deps: PlatformToolDeps): BuiltinTool {
           apply: (fn) => {
             if (applied) throw new Error("personInputs.apply called twice");
             applied = true;
-            // the person who typed the values is the run's trigger account, the approval's
-            // `requested_for` (a role escalation is refused before the card, R5)
-            return sealed.consume(approvalId, ctx.accountId, async (values) => {
+            // the person who typed the values is the run's trigger account, the secure input's
+            // `requested_for` (a role escalation is refused before any card, R5)
+            return sealed.consume(secureInputId, ctx.accountId, async (values) => {
               // a throw here rolls the row's delete back: nothing is applied
               if (!sameSet(Object.keys(values), shown) || !sameSet(asked, shown)) {
                 throw new PersonFieldsChanged();
@@ -717,14 +722,22 @@ export function platformTool(deps: PlatformToolDeps): BuiltinTool {
       throw toToolError(e, (code) => nextStepFor(op.errors, code, role));
     }
     const summary = { zh: `调用平台操作 ${op.id}`, en: `Called ${op.id}` };
-    const lines = entered.map(enteredLine);
+    const lines =
+      octx.personInputs !== undefined && ctx.secureInputId !== undefined
+        ? [submittedLine(ctx.secureInputId), ...entered.map(enteredLine)]
+        : entered.map(enteredLine);
     if (octx.personInputs !== undefined && !applied) {
       // an operation bug: the person typed values the write never used (they expire unread)
       deps.log?.warn("platform operation did not use the person's values", { operation: op.id });
       lines.push(unusedValuesText(op.id));
     }
-    const view = handoffOf(op, params, result, octx, deps.log);
-    const out = withReviewUrl(asResult(withoutPersonAvatars(result)), view);
+    const handoff = handoffOf(op, params, result, octx, deps.log);
+    const out = withReviewUrl(asResult(withoutPersonAvatars(result)), handoff);
+    // a result shown once to the run's person: the web reads it by this call (R6)
+    const view: ToolView | null =
+      op.revealsToApprover !== undefined
+        ? { kind: "reveal", reveal: op.revealsToApprover }
+        : handoff;
     return {
       content: [
         { type: "text", text: JSON.stringify(out) },
