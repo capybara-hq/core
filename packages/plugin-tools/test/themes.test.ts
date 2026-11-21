@@ -38,7 +38,9 @@ describe("checkThemes", () => {
   it("a bad asset is theme-asset", () => {
     const f = checkThemes([fixture("plugin-theme-asset")]);
     expect(new Set(f.map((x) => x.rule))).toEqual(new Set(["theme-asset"]));
-    expect(f.some((x) => x.message.includes("bad.woff2"))).toBe(true);
+    const own = f.filter((x) => x.file.endsWith("bad-font.json"));
+    expect(own.map((x) => x.rule)).toEqual(["theme-asset"]);
+    expect(own[0]?.message).toContain("bad.woff2");
   });
 
   it("a non-square app icon is theme-asset", () => {
