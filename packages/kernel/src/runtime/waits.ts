@@ -152,7 +152,8 @@ export class Waits implements OnApplicationShutdown {
    * A run no longer running (ended by another path) → nothing.
    * A stop received while suspending (`abort`), or found in the stop marker after `waiting` is set
    * → the wait is cancelled and the run ended as {@link abortWaiting} does (a stop arriving after
-   * `waiting` is set is handled by `POST .../abort`, which sees `waiting`; neither side misses it).
+   * `waiting` is set is handled by its caller, which reads the run's status again after setting
+   * the marker and sees `waiting`; neither side misses it).
    */
   async suspend(
     runId: string,
