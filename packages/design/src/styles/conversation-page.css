@@ -1870,7 +1870,8 @@ button.cb-property-row {
     align-self: stretch;
     min-height: var(--cb-touch-composer);
     border: 1px solid var(--cb-float-line);
-    border-radius: var(--cb-radius-pill);
+    /* half the one-line height: round ends on one line, a rounded box (not an oval) once grown */
+    border-radius: calc(var(--cb-touch-composer) / 2);
     background: var(--cb-float-ground);
     box-shadow: var(--cb-shadow-float-touch);
     transition:
@@ -1910,9 +1911,12 @@ button.cb-property-row {
   .cb-composer > .cb-composer-line {
     padding-block: 0;
   }
+  /* ＋ and send sit at the pill's bottom, centred on its last line, however far the input grew */
   .cb-composer-bar > .cb-icon-btn:first-child {
     grid-row: 4;
     grid-column: 1;
+    align-self: end;
+    margin-block-end: calc((var(--cb-touch-composer) - var(--cb-touch-hit)) / 2);
     width: var(--cb-touch-hit);
     height: var(--cb-touch-hit);
     margin-inline-start: var(--cb-space-2);
@@ -1922,6 +1926,8 @@ button.cb-property-row {
   .cb-composer-bar > .cb-stop.cb-btn {
     grid-row: 4;
     grid-column: 3;
+    align-self: end;
+    margin-block-end: calc((var(--cb-touch-composer) - var(--cb-touch-float)) / 2);
     width: var(--cb-touch-float);
     height: var(--cb-touch-float);
     margin-inline-end: var(--cb-space-2);

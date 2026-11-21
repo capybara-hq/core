@@ -118,6 +118,18 @@
   .cb-shell-column {
     position: relative;
   }
+  /* A solid strip of the page ground under the row (T27 review): the thread and a scrolled pushed
+     page slide under it instead of showing through the floating controls. Solid, not a fade: the
+     spec allows no gradients (§1). */
+  .cb-shell-column::before {
+    content: "";
+    position: absolute;
+    z-index: calc(var(--cb-z-sheet) - 11);
+    inset: 0 0 auto;
+    height: var(--cb-float-row);
+    background: var(--cb-bg);
+    pointer-events: none;
+  }
   .cb-shell-float {
     display: block;
     position: absolute;

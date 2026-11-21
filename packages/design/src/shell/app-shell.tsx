@@ -57,11 +57,6 @@ export type AppShellProps = {
    */
   commands?: CommandGroup[];
   status: Pick<StatusBarProps, "context" | "version" | "timeZone" | "system">;
-  /**
-   * The page's name for a page that has not registered one (the PageHeader registers the h1
-   * text). The chat-first compact shell draws no title row of its own: the page's head carries it.
-   */
-  title?: string;
   /** Draw the shell as the rail of the medium class whatever the window width (reference set only). */
   reference?: { rail: true };
   /**

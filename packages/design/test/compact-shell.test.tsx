@@ -2,7 +2,7 @@
 // 19, 25, 27): no top bar and no bottom navigation; a floating row with the menu button on a chat
 // surface and back on a pushed page; the menu opens the drawer, and the system back closes an open
 // overlay before it navigates.
-import { act, cleanup, render, waitFor, within } from "@testing-library/react";
+import { act, cleanup, render, screen, waitFor, within } from "@testing-library/react";
 import { userEvent } from "@testing-library/user-event";
 import { renderToString } from "react-dom/server";
 import { afterEach, describe, expect, it, vi } from "vitest";
@@ -193,6 +193,16 @@ describe("the compact frame", () => {
     expect(compact('.cb-shell[data-surface="pushed"] .cb-shell-main')?.["padding-top"]).toBe(
       "var(--cb-float-row)",
     );
+  });
+
+  it("a solid bg strip lies under the row, so scrolled text never shows through it (no gradient, spec §1)", () => {
+    const strip = parseCss(css("shell.css")).find(
+      (r) => r.selector === ".cb-shell-column::before" && r.at === "(max-width: 599px)",
+    )?.decls;
+    expect(strip?.height).toBe("var(--cb-float-row)");
+    expect(strip?.background).toBe("var(--cb-bg)");
+    expect(strip?.["pointer-events"]).toBe("none");
+    expect(strip?.position).toBe("absolute");
   });
 
   it("the floating row's size is touch.float on touch (one shell for every pointer)", () => {
@@ -421,6 +431,39 @@ describe("the drawer from the menu button", () => {
   });
 });
 
+describe("drawer search opens the palette (T27 review)", () => {
+  it.each([
+    ["a fine pointer", false],
+    ["a touch window", true],
+  ])("on %s the palette stays open and focus lands in its input", async (_n, coarse) => {
+    if (coarse) touchWindow();
+    else window.matchMedia = matchMediaFor(390).matchMedia;
+    render(
+      <DesignProvider locale="zh">
+        <AppShell
+          sidebar={sidebar}
+          status={status}
+          commands={[{ label: "跳转", items: [{ id: "a", label: "智能体", onSelect: () => {} }] }]}
+          pathname="/"
+          chatSurface
+          drawer={drawerData()}
+        >
+          <div>内容</div>
+        </AppShell>
+      </DesignProvider>,
+    );
+    await userEvent.click(menuButton() as HTMLElement);
+    await userEvent.click(within(drawerEl() as HTMLElement).getByRole("button", { name: "搜索" }));
+    await waitFor(() => expect(drawerEl()).toBeNull());
+    const palette = () => document.querySelector("[cmdk-root]") as HTMLElement | null;
+    await waitFor(() => expect(palette()?.contains(document.activeElement)).toBe(true));
+    await new Promise<void>((r) => setTimeout(r, 0));
+    expect(palette()).not.toBeNull();
+    expect(document.activeElement?.tagName).toBe("INPUT");
+    expect(palette()?.contains(document.activeElement)).toBe(true);
+  });
+});
+
 describe("back closes overlays first (Decision 25)", () => {
   const settled = () => new Promise<void>((r) => setTimeout(r, 0));
 
@@ -434,6 +477,47 @@ describe("back closes overlays first (Decision 25)", () => {
     await waitFor(() => expect(drawerEl()).toBeNull());
     await settled();
     expect(window.location.pathname).toBe("/");
+  });
+
+  // T27 review (Important): sign out leaves the page, so it runs only once the popped entries'
+  // popstate has fired; 切换平台 opens the native switcher inside the click (user activation) and
+  // keeps the page, so the overlays pop as a close does.
+  const openAccount = async () => {
+    await userEvent.click(menuButton() as HTMLElement);
+    await userEvent.click(within(drawerEl() as HTMLElement).getByRole("button", { name: /Grant/ }));
+  };
+  const marker = () => (window.history.state as Record<string, unknown> | null)?.cbOverlay;
+
+  it("sign out runs after the drawer's and the sheet's entries are popped", async () => {
+    touchWindow();
+    window.history.replaceState(null, "", "/");
+    const seen: unknown[] = [];
+    const onSignOut = vi.fn(() => seen.push(marker()));
+    const data = drawerData();
+    render(shell({ drawer: { ...data, account: { ...data.account, onSignOut } } }));
+    await openAccount();
+    const go = vi.spyOn(window.history, "go");
+    await userEvent.click(screen.getByRole("button", { name: "退出登录" }));
+    // called from the entry under the overlays' (in the click it would still see the sheet's)
+    await waitFor(() => expect(onSignOut).toHaveBeenCalledTimes(1));
+    expect(seen).toEqual([undefined]);
+    expect(go).toHaveBeenCalledWith(-2);
+    await waitFor(() => expect(drawerEl()).toBeNull());
+  });
+
+  it("切换平台 runs inside the click and the overlays pop as a close does", async () => {
+    touchWindow();
+    window.history.replaceState(null, "", "/");
+    const onSwitchProfile = vi.fn();
+    const data = drawerData();
+    render(shell({ drawer: { ...data, account: { ...data.account, onSwitchProfile } } }));
+    await openAccount();
+    const go = vi.spyOn(window.history, "go");
+    await userEvent.click(screen.getByRole("button", { name: "切换平台" }));
+    expect(onSwitchProfile).toHaveBeenCalledTimes(1);
+    await waitFor(() => expect(drawerEl()).toBeNull());
+    await waitFor(() => expect(go).toHaveBeenCalledWith(-2));
+    await waitFor(() => expect(marker()).toBeUndefined());
   });
 
   it("the account sheet over the drawer: back closes the sheet, then the drawer, then navigates", async () => {

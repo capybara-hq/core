@@ -285,6 +285,68 @@ describe("useOverlayHistory", () => {
     expect(back).not.toHaveBeenCalled();
   });
 
+  // T27 review (Important): a button pick usually navigates in the same tick (a router push); a
+  // back() queued then would win over the push and lose the navigation. It leaves its entry, unless
+  // it is marked to stay on the page (`data-drawer-pick="stay"`), which pops as usual.
+  it("a button pick leaves the drawer's entry: no back() races its navigation", async () => {
+    const pushed: string[] = [];
+    function ButtonPick() {
+      const [open, setOpen] = useState(true);
+      return (
+        <DesignProvider locale="en">
+          <Drawer open={open} onOpenChange={setOpen} label="Menu" onNavigate={() => {}}>
+            <button
+              type="button"
+              data-drawer-pick="true"
+              onClick={() => {
+                // a router's push commits later than the click (Next pushes in a transition)
+                setTimeout(() => {
+                  pushed.push("/c/new");
+                  history.pushState(null, "", "/c/new");
+                }, 0);
+              }}
+            >
+              new
+            </button>
+          </Drawer>
+        </DesignProvider>
+      );
+    }
+    history.replaceState(null, "", "/");
+    render(<ButtonPick />);
+    const back = vi.spyOn(history, "back");
+    const go = vi.spyOn(history, "go");
+    await userEvent.click(screen.getByText("new"));
+    await waitFor(() => expect(hasDrawer()).toBe(false));
+    await waitFor(() => expect(pushed).toEqual(["/c/new"]));
+    await settled();
+    expect(back).not.toHaveBeenCalled();
+    expect(go).not.toHaveBeenCalled();
+    expect(location.pathname).toBe("/c/new");
+  });
+
+  it('a button pick marked data-drawer-pick="stay" pops its entry as a close does', async () => {
+    function StayPick() {
+      const [open, setOpen] = useState(true);
+      return (
+        <DesignProvider locale="en">
+          <Drawer open={open} onOpenChange={setOpen} label="Menu">
+            <button type="button" data-drawer-pick="stay">
+              stay
+            </button>
+          </Drawer>
+        </DesignProvider>
+      );
+    }
+    render(<StayPick />);
+    const back = vi.spyOn(history, "back");
+    await userEvent.click(screen.getByText("stay"));
+    await waitFor(() => expect(hasDrawer()).toBe(false));
+    await waitFor(() => expect(back).toHaveBeenCalledTimes(1));
+    await waitFor(() => expect(markerOf()).toBeUndefined());
+    await settled();
+  });
+
   it("the back after an orphaned pick entry still closes the next drawer first", async () => {
     render(<Overlays />);
     await userEvent.click(screen.getByText("open-drawer"));

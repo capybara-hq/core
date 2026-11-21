@@ -3,7 +3,8 @@ import type { MouseEvent, ReactNode } from "react";
 import { Avatar, type AvatarValue } from "../display/avatar";
 import { NavRow } from "../display/nav-row";
 import { BottomSheetContent } from "../overlays/bottom-sheet";
-import { useOverlayHistory } from "../overlays/use-overlay-history";
+import { picksAway } from "../overlays/drawer";
+import { popOverlaysThen, useOverlayHistory } from "../overlays/use-overlay-history";
 import { useDesignT } from "../provider";
 
 /** What the drawer's account row opens (design spec §6.54). */
@@ -44,10 +45,15 @@ export function AccountSheet({ open, onOpenChange, data }: AccountSheetProps) {
   const t = useDesignT();
   const history = useOverlayHistory(open, () => onOpenChange(false));
   const onClick = (e: MouseEvent<HTMLDivElement>) => {
-    const pick = (e.target as HTMLElement).closest("[data-drawer-pick]");
+    const pick = (e.target as HTMLElement).closest<HTMLElement>("[data-drawer-pick]");
     if (pick === null) return;
-    if (pick.tagName === "A") history.leaveEntry();
+    if (picksAway(pick, e)) history.leaveEntry();
     onOpenChange(false);
+  };
+  // Sign out leaves the page: it runs once the overlays' entries are popped, so no back() races
+  // its navigation and one back afterwards is the page before (T27 review).
+  const signOut = () => {
+    if (!popOverlaysThen(data.onSignOut)) data.onSignOut();
   };
   return (
     <RD.Root open={open} onOpenChange={onOpenChange}>
@@ -80,13 +86,15 @@ export function AccountSheet({ open, onOpenChange, data }: AccountSheetProps) {
           </div>
           {data.installHint ? <div className="cb-account-slot">{data.installHint}</div> : null}
           {data.onSwitchProfile ? (
+            // the native switcher opens inside the click (user activation) and keeps the page
             <NavRow
+              stay
               icon="arrow-up-down"
               label={t("account.switchProfile")}
               onSelect={data.onSwitchProfile}
             />
           ) : null}
-          <NavRow icon="log-out" label={t("account.signOut")} onSelect={data.onSignOut} />
+          <NavRow icon="log-out" label={t("account.signOut")} onSelect={signOut} />
         </div>
       </BottomSheetContent>
     </RD.Root>

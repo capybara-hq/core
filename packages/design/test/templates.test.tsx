@@ -787,7 +787,7 @@ describe("SetupPage (the guided setup layout)", () => {
 
   it("the compact floating row pushes the steps as a page of their own; back closes it", async () => {
     window.history.replaceState(null, "", "/setup");
-    zh(<SetupPage sidebar={sidebar} status={status} title="开始之前" />);
+    zh(<SetupPage sidebar={sidebar} status={status} />);
     const bar = document.querySelector('[data-part="floating-bar"]') as HTMLElement;
     expect(bar.querySelector('[aria-label^="打开菜单"]')).toBeNull();
     expect(bar.querySelector('[aria-label^="搜索"]')).toBeNull();

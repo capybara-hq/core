@@ -32,6 +32,16 @@ function sameTabLink(e: MouseEvent<HTMLElement>): HTMLAnchorElement | null {
   return a;
 }
 
+/**
+ * Whether a pick may leave the page in the same tick: a link this tab follows, or a button row not
+ * marked `data-drawer-pick="stay"` (design spec §6.52). A link pick with `onNavigate` has already
+ * popped the entries in the capture phase; this only decides for the rest.
+ */
+export function picksAway(pick: HTMLElement, e: MouseEvent<HTMLElement>): boolean {
+  if (pick.tagName === "A") return sameTabLink(e) !== null;
+  return pick.getAttribute("data-drawer-pick") !== "stay";
+}
+
 /** The in-app address (same origin) a plain click on `e.target` follows, if any. */
 function inAppHref(e: MouseEvent<HTMLElement>): string | null {
   const a = e.defaultPrevented ? null : sameTabLink(e);
@@ -90,12 +100,15 @@ export function Drawer({ open, onOpenChange, label, onNavigate, children }: Draw
           }}
           onClick={(e: MouseEvent<HTMLElement>) => {
             // a link anywhere in the panel (a recent conversation) is a pick too
-            if ((e.target as HTMLElement).closest("[data-drawer-pick], a[href]")) {
-              // the page is leaving (the navigation is pending): the entry stays behind; a link
-              // that opens elsewhere keeps the page, so the close pops the entry as usual
-              if (sameTabLink(e) !== null) history.leaveEntry();
-              onOpenChange(false);
-            }
+            const pick = (e.target as HTMLElement).closest<HTMLElement>(
+              "[data-drawer-pick], a[href]",
+            );
+            if (pick === null) return;
+            // The page may be leaving (a navigation pending in this tick): the entry stays behind
+            // rather than race it with a back. A link that opens elsewhere and a row marked to
+            // stay keep the page, so the close pops the entry as usual.
+            if (picksAway(pick, e)) history.leaveEntry();
+            onOpenChange(false);
           }}
         >
           <RD.Title className="cb-sr-only">{label}</RD.Title>
