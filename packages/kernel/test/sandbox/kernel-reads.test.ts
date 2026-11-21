@@ -30,7 +30,7 @@ import { PermissionAuthorityLock } from "../../src/sandbox/permission-authority-
 import { PERMISSION_CONTEXT_ACTIVATION } from "../../src/sandbox/permission-context-types.js";
 import { PermissionFacts } from "../../src/sandbox/permission-facts.js";
 import { PermissionRuntimeReports } from "../../src/sandbox/permission-runtime-reports.js";
-import { SandboxProviders } from "../../src/sandbox/providers.js";
+import { DeviceProviders } from "../../src/sandbox/providers.js";
 import { SandboxService } from "../../src/sandbox/sandbox.service.js";
 import { SandboxFileReader } from "../../src/sandbox/sandbox-file-reader.js";
 import {
@@ -233,7 +233,7 @@ beforeAll(async () => {
       };
     },
   };
-  k.app.get(SandboxProviders).register({ plugin: CLOUD, version: "v1", impl });
+  k.app.get(DeviceProviders).register({ plugin: CLOUD, version: "v1", impl });
 });
 afterAll(async () => {
   await k?.close();
@@ -478,7 +478,7 @@ describe("a run start's project knowledge read (withKernelRead)", () => {
     await new SandboxOperationReconcileJob(
       k.app.get(SandboxOperationIntents),
       k.app.get(KernelDb),
-      k.app.get(SandboxProviders),
+      k.app.get(DeviceProviders),
       k.app.get(SandboxService),
       k.app.get(BackgroundTaskStore),
       k.app.get(BackgroundTaskStopper),

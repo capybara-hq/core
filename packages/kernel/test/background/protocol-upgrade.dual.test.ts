@@ -102,8 +102,7 @@ function replica(): { s: SandboxService; store: LegacyRetirementStore } {
   const s = sandboxServiceFor({
     db: kernelDb(pool),
     redis,
-    provider: () => ({ plugin: "device-fake", impl: provider }),
-    lookup: (plugin) => (plugin === "device-fake" ? provider : undefined),
+    providers: () => [{ plugin: "device-fake", version: "1.0.0", impl: provider }],
     config: () => config,
     log: {},
     lockPollMs: 20,

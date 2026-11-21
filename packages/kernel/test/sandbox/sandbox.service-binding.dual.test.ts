@@ -17,8 +17,9 @@ import { LocalInstanceBindings } from "../../src/local-devices/instance-bindings
 import { LocalDeviceRelay } from "../../src/local-devices/relay.js";
 import { createLogger } from "../../src/log.js";
 import { SandboxLeases } from "../../src/sandbox/leases.js";
-import { LOCAL_PROVIDER, SandboxProviders } from "../../src/sandbox/providers.js";
+import { DeviceProviders, LOCAL_PROVIDER } from "../../src/sandbox/providers.js";
 import { SandboxService } from "../../src/sandbox/sandbox.service.js";
+import { KERNEL_VERSION } from "../../src/version.js";
 import { readFakeSandboxOps } from "../fixtures/plugins/device-fake/index.js";
 import { truncateTables } from "../helpers/db.js";
 import { startKernel, type TestKernel } from "../helpers/runs.js";
@@ -169,8 +170,9 @@ async function device(opts: { binder?: boolean } = {}) {
     release: Promise.resolve() as Promise<void>,
   };
   kernels.forEach((k, replica) => {
-    k.app.get(SandboxProviders).register({
+    k.app.get(DeviceProviders).register({
       plugin: LOCAL_PROVIDER,
+      version: KERNEL_VERSION,
       impl: fakeLocal(creates),
       ...(opts.binder !== false && { binder: k.app.get(LocalInstanceBindings) }),
     });

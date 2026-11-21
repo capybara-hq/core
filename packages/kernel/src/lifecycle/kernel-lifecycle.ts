@@ -312,11 +312,12 @@ export class KernelLifecycle
       },
     });
     this.checkpoint();
-    const sandboxEntry = this.host
+    const deviceProviders = this.host
       .list("device-provider")
-      .find((x) => x.capability === DEVICE_PROVIDER_EXTENSION_POINT);
-    if (sandboxEntry !== undefined) {
-      for (const w of sandboxConfigWarnings(cfg(), sandboxEntry.plugin)) {
+      .filter((x) => x.capability === DEVICE_PROVIDER_EXTENSION_POINT)
+      .map((x) => x.plugin);
+    if (deviceProviders.length > 0) {
+      for (const w of sandboxConfigWarnings(cfg(), deviceProviders)) {
         this.log[w.level](w.message);
       }
     }

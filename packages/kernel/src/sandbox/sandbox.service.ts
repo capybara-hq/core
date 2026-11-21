@@ -86,6 +86,8 @@ import {
 import { MANAGED_STOP_GRACE_MS } from "../background/managed.js";
 import type { KernelConfig } from "../config/schema.js";
 import type { DeviceInstancesTable, KernelDatabase } from "../db/kernel-schema.js";
+import { deviceUnavailable } from "../devices/access.js";
+import { DeviceProviderSelection } from "../devices/device-provider-selection.js";
 import { deviceNotFound } from "../devices/errors.js";
 import { ApiError } from "../errors.js";
 import { readSandboxLimitOverride } from "../identity/settings.js";
@@ -136,11 +138,10 @@ import type { HeldDeviceContextEvidence } from "./permission-context-types.js";
 import { networkOfSandbox, PermissionFacts } from "./permission-facts.js";
 import { cloudReportOwed, cloudSupportOf } from "./permission-runtime-reports.js";
 import {
+  type DeviceProviderEntry,
+  DeviceProviders,
   isInternalProvider,
   LOCAL_PROVIDER,
-  providerForDevice,
-  type SandboxProviderEntry,
-  SandboxProviders,
 } from "./providers.js";
 import { isDeviceRequestNotSent } from "./request-not-sent.js";
 import { SandboxProviderUnreachableError } from "./unreachable.js";
@@ -164,8 +165,11 @@ const PATH_LEASE_WAIT_MS = 30_000;
 const SWEEP_OP_TIMEOUT_MS = 120_000;
 /** How long a cloud device's lifecycle reconcile waits before the sweep tries it again (B-12). */
 const RECONCILE_RETRY_SECONDS = 600;
-/** Where the reconcile sweep goes on from (the last device id it visited; B-12). */
-const RECONCILE_CURSOR_KEY = "capk:cloud-reconcile-cursor";
+/**
+ * Where the reconcile sweep goes on from for one provider (the last device id it visited; B-12):
+ * one cursor per provider, since each provider's rows are swept on their own.
+ */
+const reconcileCursorKey = (plugin: string): string => `capk:sandbox-reconcile-cursor:${plugin}`;
 /** The bound on one cloud `permissionSupport` read under a lifecycle lease (B-15). */
 const PERMISSION_SUPPORT_TIMEOUT_MS = 30_000;
 /** How long the suspension sweep holds the intent on a sandbox past `maxRunningMinutes` (ms). */
@@ -240,8 +244,6 @@ export interface SandboxUseInfo {
 
 /** {@link SandboxUseInfo} before the roots are read from the handle. */
 type EnteredInfo = Omit<SandboxUseInfo, "roots" | "contextEvidence">;
-
-export type { SandboxProviderEntry } from "./providers.js";
 
 type Row = Selectable<DeviceInstancesTable>;
 type Patch = UpdateObject<KernelDatabase, "device_instances">;
@@ -432,8 +434,8 @@ function tagged<P>(
  * Sandbox config problems to tell operators at startup (English log lines):
  * - `runtime.maxRunSeconds` below `sandbox.limits.maxCommandSeconds`: long commands are cut by the
  *   run time limit (Ruling M20);
- * - the current provider plugin refuses the open public network (`refuseOpenNetwork: true` in its
- *   startup config) while an org can be on it: auto mode always is, and a sandbox-mode cloud device
+ * - a loaded provider plugin refuses the open public network (`refuseOpenNetwork: true` in its
+ *   startup config; one line per such provider) while an org can be on it: auto mode always is, and a sandbox-mode cloud device
  *   keeps its org's cloud network, open by default, so turning auto mode off does not avoid it
  *   (auto mode hardening spec K3). Only the kill switch (`sandbox.limits.egress: none`) does.
  * - `sandbox.limits.orgHosts: within` while the startup config does not turn auto mode off: the
@@ -445,10 +447,10 @@ function tagged<P>(
 export function sandboxConfigWarnings(
   cfg: Pick<KernelConfig, "runtime" | "sandbox" | "extensionConfig"> &
     Partial<Pick<KernelConfig, "devices">>,
-  providerPlugin?: string,
+  providerPlugins: readonly string[] = [],
 ): { level: "warn"; message: string }[] {
   const out: { level: "warn"; message: string }[] = [];
-  if (providerPlugin !== undefined && cfg.sandbox.limits.egress !== "none") {
+  for (const providerPlugin of cfg.sandbox.limits.egress !== "none" ? providerPlugins : []) {
     const pc = cfg.extensionConfig[providerPlugin] as { refuseOpenNetwork?: unknown } | undefined;
     if (pc?.refuseOpenNetwork === true) {
       out.push({
@@ -479,21 +481,11 @@ export function sandboxConfigWarnings(
   return out;
 }
 
-/** No sandbox provider (503). */
+/** No device to run on: none bound and none can be made (no device provider on in the org; 503). */
 export const sandboxUnavailable = (): ApiError =>
   new ApiError(
     "sandbox.unavailable",
-    "Sandbox is not available in this deployment; install a sandbox plugin",
-  );
-
-/**
- * The device's files are kept by a provider that is not the current one (503); its files are
- * not migrated, so it stays unusable until that provider is back (spec §4.2 item 13).
- */
-const otherProvider = (provider: string): ApiError =>
-  new ApiError(
-    "device.unavailable",
-    `This device's files are kept by the sandbox provider ${provider}, which is not the current provider; it can be used again once ${provider} is the deployment's sandbox provider`,
+    "No device provider is on in this organization; ask an org admin to switch one on",
   );
 
 /**
@@ -599,7 +591,7 @@ async function inPool<T>(items: T[], limit: number, fn: (x: T) => Promise<void>)
  *   `fs_status` becomes `lost` and uses fail with `device.files_lost` until
  *   {@link resetFileSystem}.
  * - **Leases** (phase C, spec §10, {@link SandboxLeases}), keyed by device id: using an
- *   instance recorded `running` with the current provider takes a **shared** lease, so up to
+ *   instance recorded `running` with the device's provider takes a **shared** lease, so up to
  *   `sandbox.maxConcurrentCommands` holders (all sessions of the device) run at once. Every
  *   lifecycle change (create, resume, rebuild, suspend, destroy, reset) takes the **exclusive**
  *   lease, alone; a caller that needs one on the use path sets the intent so new shared leases wait
@@ -635,18 +627,20 @@ async function inPool<T>(items: T[], limit: number, fn: (x: T) => Promise<void>)
  *   row's `created_at` (set by the fenced write after each `create`); the handle alone is the same
  *   after a rebuild on providers whose handle is the instance name (sandbox-docker).
  *
- * - **Provider per device** (environments spec §6): each call resolves the provider from
- *   the device's `devices.provider` ({@link providerForDevice}): a `device`
- *   device runs on the kernel-internal `@local` provider (never the cloud one), a cloud
- *   device on the loaded `device-provider@1` extension. A `@local` instance is never suspended or
- *   destroyed for inactivity; a deleted `@local` device (or one of a deleted org) is
- *   destroyed by the sweep like any other.
+ * - **Provider per device** (device-provider spec §6.1): a device is bound to its provider
+ *   (`devices.provider`, fixed at creation) for life, resolved at every call
+ *   ({@link DeviceProviders.forDevice}): a local device runs on the kernel-internal `@local`
+ *   provider, any other on the loaded `device-provider@1` extension of that name. Several
+ *   providers serve one org side by side. A use needs the provider loaded **and** on in the
+ *   device's org ({@link DeviceProviderSelection.isOnInOrg}); otherwise, and for an instance row
+ *   naming another provider, the use fails `device.unavailable` (503) and nothing changes: the
+ *   files and instance stay, nothing is demoted, recreated or moved to another provider.
+ *   Lifecycle cleanup (destroy, sweeps, reset) only needs the provider loaded. The sweeps run
+ *   per loaded provider over its own rows; rows of a provider that is not loaded are never
+ *   touched. A `@local` instance is never suspended or destroyed for inactivity; a deleted
+ *   `@local` device (or one of a deleted org) is destroyed by the sweep like any other.
  *
- * Files kept by another provider than the current one make the device unusable
- * (`device.unavailable`) until that provider is back; deleting it still works while that
- * provider is loaded ({@link SandboxProviders.forName}). Without the device's provider
- * {@link availableFor} is false and uses throw `sandbox.unavailable` (503). No in-process state:
- * replicas share it through PG and Redis.
+ * No in-process state: replicas share it through PG and Redis.
  */
 /** Available only to kernel staging callbacks, never to a held user-operation callback. */
 export interface SandboxStaging {
@@ -666,6 +660,18 @@ export type OperationSessionInvocation = Omit<OperationInvocation, "ordinal"> & 
   ) => Promise<void>;
 };
 
+/**
+ * Lifecycle work on an instance row runs only with the row's own provider (a device is bound to
+ * its provider for life; an instance row of another provider is never written by this kernel).
+ */
+function assertOwnRow(row: Row, p: DeviceProviderEntry): void {
+  if (row.provider !== null && row.provider !== p.plugin) {
+    throw new Error(
+      `device ${row.device_id}: its instance row belongs to ${row.provider}, not ${p.plugin}`,
+    );
+  }
+}
+
 @Injectable()
 export class SandboxService {
   constructor(
@@ -674,8 +680,11 @@ export class SandboxService {
     @Inject(REDIS) private readonly redis: Pick<Redis, "get" | "set" | "getdel">,
     @Inject(SandboxLeases) private readonly leases: SandboxLeases,
     /** The providers (read at every call: providers are ready after the extension load). */
-    @Inject(SandboxProviders)
-    private readonly providers: Pick<SandboxProviders, "cloud" | "forName">,
+    @Inject(DeviceProviders)
+    private readonly providers: Pick<DeviceProviders, "forDevice" | "loaded">,
+    /** Whether a device's provider serves its org now (read at every use, never cached). */
+    @Inject(DeviceProviderSelection)
+    private readonly selection: Pick<DeviceProviderSelection, "isOnInOrg">,
     @Inject(KernelConfigService)
     private readonly config: Pick<KernelConfigService, "get" | "fieldSource">,
     @Inject(KERNEL_LOGGER) private readonly log: Pick<KernelLogger, "info" | "warn">,
@@ -722,41 +731,75 @@ export class SandboxService {
   }
 
   /**
-   * Whether there is a cloud sandbox provider (a loaded `device-provider@1` extension). For gates that have
-   * no device yet (tool listing, skill files); a call on a device asks
-   * {@link availableFor}.
+   * Whether the device of `orgId` can be used now: its provider is loaded and on in the org
+   * ({@link DeviceProviderSelection.isOnInOrg}; `@local`: registered). A missing device, one of
+   * another org or one without a provider is not.
    */
-  get cloudAvailable(): boolean {
-    return this.providers.cloud() !== undefined;
+  async availableFor(deviceId: string, orgId: string): Promise<boolean> {
+    const provider = await this.deviceProvider(deviceId, orgId);
+    return provider != null && (await this.selection.isOnInOrg(orgId, provider));
   }
 
-  /** Whether the device's provider is there (`@local` registered, or a cloud provider). */
-  async availableFor(deviceId: string): Promise<boolean> {
+  /**
+   * Whether the provider the device is bound to is loaded here (`@local`: registered), whatever
+   * its org says: for lifecycle work that goes on while the org has the provider off (owed
+   * revocations, cleanup).
+   */
+  async providerLoaded(deviceId: string): Promise<boolean> {
     return (await this.providerOf(deviceId)) !== undefined;
   }
 
   /**
-   * The provider the device works with, read from its row ({@link providerForDevice});
-   * a missing row (or one of another org, with `orgId`) reads as a cloud device, whose use
-   * then fails as not found.
+   * The device's `devices.provider` (null: none recorded; undefined: no such device, or one of
+   * another org with `orgId`).
    */
-  private async providerOf(
+  private async deviceProvider(
     deviceId: string,
     orgId?: string,
-  ): Promise<SandboxProviderEntry | undefined> {
+  ): Promise<string | null | undefined> {
     const row = await this.db
       .selectFrom("devices")
       .select("provider")
       .where("id", "=", deviceId)
       .$if(orgId !== undefined, (q) => q.where("org_id", "=", orgId as string))
       .executeTakeFirst();
-    return providerForDevice(this.providers, row?.provider ?? null);
+    return row === undefined ? undefined : row.provider;
   }
 
-  /** {@link providerOf}, or `sandbox.unavailable` (503) without it. */
-  private async require(deviceId: string, orgId?: string): Promise<SandboxProviderEntry> {
-    const p = await this.providerOf(deviceId, orgId);
-    if (!p) throw sandboxUnavailable();
+  /**
+   * The loaded provider the device is bound to (no org check: lifecycle work and reads that
+   * need no use); undefined when the device is missing, has none or its provider is not loaded.
+   */
+  private async providerOf(
+    deviceId: string,
+    orgId?: string,
+  ): Promise<DeviceProviderEntry | undefined> {
+    return this.providers.forDevice((await this.deviceProvider(deviceId, orgId)) ?? null);
+  }
+
+  /**
+   * The provider a use of the device of `orgId` runs on: loaded and on in the org, else
+   * `device.unavailable` (503, files kept); a missing device or one of another org is
+   * `device.not_found`.
+   */
+  private async require(deviceId: string, orgId: string): Promise<DeviceProviderEntry> {
+    const provider = await this.deviceProvider(deviceId, orgId);
+    if (provider === undefined) throw deviceNotFound();
+    const p = this.providers.forDevice(provider);
+    if (!p || !(await this.selection.isOnInOrg(orgId, p.plugin))) throw deviceUnavailable(provider);
+    return p;
+  }
+
+  /**
+   * The loaded provider for lifecycle work on the device (no org check: cleanup and maintenance
+   * go on while its org has the provider off), else `device.unavailable`; a missing device is
+   * `device.not_found`.
+   */
+  private async loadedFor(deviceId: string): Promise<DeviceProviderEntry> {
+    const provider = await this.deviceProvider(deviceId);
+    if (provider === undefined) throw deviceNotFound();
+    const p = this.providers.forDevice(provider);
+    if (!p) throw deviceUnavailable(provider);
     return p;
   }
 
@@ -922,7 +965,7 @@ export class SandboxService {
    * without a file reset: it has no `update`, or its `update` already answered `recreate` for it.
    */
   private fsBound(
-    p: SandboxProviderEntry,
+    p: DeviceProviderEntry,
     rec: ReturnType<typeof readInstanceLimits>,
     effective: AppliedLimits,
   ): boolean {
@@ -940,7 +983,7 @@ export class SandboxService {
    * until the reset, never silently supported). `want` null: a local device (the mode travels
    * with each command).
    */
-  private mustApply(row: Row, p: SandboxProviderEntry, want: DeviceLimits | null): boolean {
+  private mustApply(row: Row, p: DeviceProviderEntry, want: DeviceLimits | null): boolean {
     if (want === null) return false;
     const rec = readInstanceLimits(row.instance_limits);
     const target = appliedOf(want);
@@ -1024,7 +1067,7 @@ export class SandboxService {
     signal: AbortSignal,
     use: boolean,
   ): Promise<IfRunningResult<T>> {
-    const p = await this.require(deviceId);
+    const p = await this.loadedFor(deviceId);
     const env = deviceId;
     const deadline = Date.now() + this.config.get().sandbox.lockWaitSeconds * 1000;
     const token = randomUUID();
@@ -1221,7 +1264,7 @@ export class SandboxService {
             ctx,
             {
               provider: entry.plugin,
-              providerVersion: entry.version ?? "internal-v2",
+              providerVersion: entry.version,
               generation: String(row.created_at.getTime()),
             },
             method,
@@ -1460,7 +1503,7 @@ export class SandboxService {
    */
   private async wantedLimits(
     _ctx: SandboxUseContext,
-    p: SandboxProviderEntry,
+    p: DeviceProviderEntry,
     _row?: Row,
   ): Promise<DeviceLimits | null> {
     if (p.plugin === LOCAL_PROVIDER) return null;
@@ -1475,7 +1518,7 @@ export class SandboxService {
    * `device.files_lost` to throw. Uses then fail until the files are reset (a connected
    * machine: until a new login, which resets the row). A failed write only logs.
    */
-  private async filesGone(env: string, p: SandboxProviderEntry, e: Entered): Promise<ApiError> {
+  private async filesGone(env: string, p: DeviceProviderEntry, e: Entered): Promise<ApiError> {
     this.log.warn("device file system is gone at the provider; its files are lost", {
       deviceId: env,
       provider: p.plugin,
@@ -1589,7 +1632,7 @@ export class SandboxService {
   private async runAs<T>(
     e: Entered,
     ctx: SandboxUseContext,
-    p: SandboxProviderEntry,
+    p: DeviceProviderEntry,
     fn: (
       h: SandboxHandle,
       p: HeldProvider,
@@ -1631,7 +1674,7 @@ export class SandboxService {
                 identity,
                 {
                   provider: p.plugin,
-                  providerVersion: p.version ?? "internal-v2",
+                  providerVersion: p.version,
                   generation: String(e.createdAt),
                 },
                 method,
@@ -1689,7 +1732,7 @@ export class SandboxService {
                   identity,
                   {
                     provider: p.plugin,
-                    providerVersion: p.version ?? "internal-v2",
+                    providerVersion: p.version,
                     generation: String(e.createdAt),
                   },
                   method,
@@ -1830,7 +1873,7 @@ export class SandboxService {
   private kernelReadProvider(
     e: Entered,
     ctx: SandboxUseContext,
-    p: SandboxProviderEntry,
+    p: DeviceProviderEntry,
     read: KernelReadInvocation,
     sig: AbortSignal,
   ): HeldProvider {
@@ -1850,7 +1893,7 @@ export class SandboxService {
             read,
             {
               provider: p.plugin,
-              providerVersion: p.version ?? "internal-v2",
+              providerVersion: p.version,
               generation: String(e.createdAt),
             },
             method,
@@ -1893,7 +1936,7 @@ export class SandboxService {
    */
   private async heldContextEvidence(
     ctx: SandboxUseContext,
-    p: SandboxProviderEntry,
+    p: DeviceProviderEntry,
     e: Entered,
   ): Promise<HeldDeviceContextEvidence | undefined> {
     try {
@@ -1908,7 +1951,7 @@ export class SandboxService {
 
   private async readHeldContextEvidence(
     ctx: SandboxUseContext,
-    p: SandboxProviderEntry,
+    p: DeviceProviderEntry,
     e: Entered,
   ): Promise<HeldDeviceContextEvidence | undefined> {
     const instanceGeneration = String(e.createdAt);
@@ -1962,7 +2005,7 @@ export class SandboxService {
 
   /**
    * Becomes a holder: loops until it has a shared lease on a running instance, or `sandbox.busy`.
-   * An instance recorded `running` (with the current provider, not the `gone` instance) is used
+   * An instance recorded `running` (with the device's provider, not the `gone` instance) is used
    * under a shared lease; otherwise the exclusive lease (with intent) makes it run and is
    * downgraded. One token serves both, so the waiter passes its own intent. `wantNow` reads the
    * limits this use wants ({@link wantedLimits}), again after each wait, so a mode narrowed
@@ -1970,7 +2013,7 @@ export class SandboxService {
    */
   private async enter(
     ctx: SandboxUseContext,
-    p: SandboxProviderEntry,
+    p: DeviceProviderEntry,
     signal: AbortSignal,
     gone: Instance | null,
     wantNow: () => Promise<DeviceLimits | null>,
@@ -2045,7 +2088,7 @@ export class SandboxService {
    */
   private async recordsCloudSupport(
     ctx: { orgId: string; deviceId: string },
-    p: SandboxProviderEntry,
+    p: DeviceProviderEntry,
   ): Promise<boolean> {
     return (
       p.plugin !== LOCAL_PROVIDER &&
@@ -2065,7 +2108,7 @@ export class SandboxService {
    */
   private async cloudSupport(
     deviceId: string,
-    p: SandboxProviderEntry,
+    p: DeviceProviderEntry,
     handle: SandboxHandle,
     signal: AbortSignal,
     warnOnce?: string,
@@ -2113,7 +2156,7 @@ export class SandboxService {
    */
   private async refreshCloudSupport(
     ctx: { orgId: string; deviceId: string },
-    p: SandboxProviderEntry,
+    p: DeviceProviderEntry,
     e: { handle: SandboxHandle; createdAt: number },
     signal: AbortSignal,
     force: boolean,
@@ -2154,7 +2197,7 @@ export class SandboxService {
   }
 
   /** No binder (protocol 2), or the current generation's binding is installed (B-8). */
-  private async bound(p: SandboxProviderEntry, env: string): Promise<boolean> {
+  private async bound(p: DeviceProviderEntry, env: string): Promise<boolean> {
     return !p.binder || (await p.binder.status(env)) === "installed";
   }
 
@@ -2182,12 +2225,12 @@ export class SandboxService {
   }
 
   /**
-   * Recorded running with the current provider on files not lost (lost ones go through the
+   * Recorded running with the device's provider on files not lost (lost ones go through the
    * exclusive path, which refuses them), and not the instance found gone.
    */
   private usable(
     row: Row | undefined,
-    p: SandboxProviderEntry,
+    p: DeviceProviderEntry,
     gone: Instance | null,
   ): row is Row & { handle: SandboxHandle } {
     return (
@@ -2206,7 +2249,7 @@ export class SandboxService {
    */
   private async asShared(
     ctx: { orgId: string; deviceId: string },
-    p: SandboxProviderEntry,
+    p: DeviceProviderEntry,
     lease: SandboxLease,
     accept: (row: Row | undefined) => row is Row & { handle: SandboxHandle },
     signal: AbortSignal,
@@ -2271,7 +2314,7 @@ export class SandboxService {
    */
   private async asExclusive(
     ctx: SandboxUseContext,
-    p: SandboxProviderEntry,
+    p: DeviceProviderEntry,
     lease: SandboxLease,
     gone: Instance | null,
     signal: AbortSignal,
@@ -2370,7 +2413,7 @@ export class SandboxService {
     env: string,
     instance: RevokedIncarnation,
     handle: SandboxHandle,
-    p: SandboxProviderEntry,
+    p: DeviceProviderEntry,
     signal: AbortSignal,
     lease: SandboxLease,
     delivered = false,
@@ -2441,7 +2484,7 @@ export class SandboxService {
     env: string,
     instance: RevokedIncarnation,
     handle: SandboxHandle,
-    p: SandboxProviderEntry,
+    p: DeviceProviderEntry,
     signal: AbortSignal,
     strict: boolean,
   ): Promise<void> {
@@ -2471,7 +2514,7 @@ export class SandboxService {
     env: string,
     instance: RevokedIncarnation,
     handle: SandboxHandle,
-    p: SandboxProviderEntry,
+    p: DeviceProviderEntry,
     signal: AbortSignal,
   ): Promise<void> {
     const revoke = p.impl.revokeOperation?.bind(p.impl);
@@ -2525,9 +2568,15 @@ export class SandboxService {
    * many it suspended. Called every minute by the `sandbox-suspend-idle` cron.
    */
   async suspendIdle(now: Date): Promise<number> {
-    // cloud only: suspendDue keeps to this provider's rows, so `@local` is never suspended here
-    const p = this.providers.cloud();
-    if (!p) return 0;
+    let n = 0;
+    // each loaded extension provider over its own rows only (`@local` is never one of them, so it
+    // is never suspended here); rows of a provider that is not loaded are left as they are
+    for (const p of this.providers.loaded()) n += await this.suspendIdleOf(p, now);
+    return n;
+  }
+
+  /** {@link suspendIdle} for the rows of one provider. */
+  private async suspendIdleOf(p: DeviceProviderEntry, now: Date): Promise<number> {
     const due = this.suspendDue(now, p.plugin);
     const runningBefore = new Date(
       now.getTime() - this.config.get().sandbox.limits.maxRunningMinutes * 60_000,
@@ -2576,50 +2625,44 @@ export class SandboxService {
    * hourly by the `sandbox-destroy-inactive` cron.
    */
   async destroyInactive(now: Date): Promise<number> {
-    const p = this.providers.cloud();
-    const local = this.providers.forName(LOCAL_PROVIDER) !== undefined;
+    const loaded = this.providers.loaded();
+    const local = this.providers.forDevice(LOCAL_PROVIDER);
     let n = 0;
-    // Gone devices (deleted, or of a deleted org) on every provider that is here, `@local`
-    // too (its destroy calls never need the machine online); rows whose provider is missing wait.
-    const here = (eb: ExpressionBuilder<KernelDatabase, "device_instances">) =>
-      eb.or([
-        ...(p ? [this.cloudRow(eb)] : []),
-        ...(local ? [eb("provider", "=", LOCAL_PROVIDER)] : []),
-      ]);
-    const gone = (eb: ExpressionBuilder<KernelDatabase, "device_instances">) =>
-      eb.and([here(eb), this.deviceGone(eb)]);
-    if (p || local) {
-      await inPool(await this.candidates(gone), SWEEP_CONCURRENCY, async ({ device_id: id }) => {
-        const done = await this.tryLocked(id, async (lease) => {
-          const row = await this.db
-            .selectFrom("device_instances")
-            .selectAll()
-            .where("device_id", "=", id)
-            .where(gone)
-            .executeTakeFirst();
-          const owner = row && this.rowProvider(row);
-          if (!row || !owner) return false;
-          await this.destroyRow(row, owner, lease, "device");
-          return true;
-        });
-        if (done) n++;
-      });
+    // Gone devices (deleted, or of a deleted org), each provider over its own rows: every loaded
+    // one and `@local` (its destroy calls never need the machine online); rows of a provider that
+    // is not loaded wait, untouched.
+    for (const p of local ? [...loaded, local] : loaded) {
+      n += await this.sweepRows(p, (eb) => this.deviceGone(eb), "device");
     }
-    // inactivity destroys cloud instances only: `@local` instances are never swept
-    if (!p) return n;
+    // inactivity destroys instances of loaded extension providers only: `@local` instances are
+    // never swept
     const due = this.instanceDue(now);
-    const idle = (eb: ExpressionBuilder<KernelDatabase, "device_instances">) =>
-      eb.and([this.cloudRow(eb), due(eb)]);
-    await inPool(await this.candidates(idle), SWEEP_CONCURRENCY, async ({ device_id: id }) => {
+    for (const p of loaded) n += await this.sweepRows(p, due, "instance");
+    return n;
+  }
+
+  /**
+   * One destruction sweep over the rows of provider `p` matching `due` (never another provider's
+   * row: the row's provider is part of the condition, read again under the lease).
+   */
+  private async sweepRows(
+    p: DeviceProviderEntry,
+    due: (eb: ExpressionBuilder<KernelDatabase, "device_instances">) => Expression<SqlBool>,
+    mode: "instance" | "device",
+  ): Promise<number> {
+    const mine = (eb: ExpressionBuilder<KernelDatabase, "device_instances">) =>
+      eb.and([eb("provider", "=", p.plugin), due(eb)]);
+    let n = 0;
+    await inPool(await this.candidates(mine), SWEEP_CONCURRENCY, async ({ device_id: id }) => {
       const done = await this.tryLocked(id, async (lease) => {
         const row = await this.db
           .selectFrom("device_instances")
           .selectAll()
           .where("device_id", "=", id)
-          .where(idle)
+          .where(mine)
           .executeTakeFirst();
         if (!row) return false;
-        await this.destroyRow(row, p, lease, "instance");
+        await this.destroyRow(row, p, lease, mode);
         return true;
       });
       if (done) n++;
@@ -2631,19 +2674,22 @@ export class SandboxService {
    * Destroys the device's instance, then its file system, then deletes its instance row
    * (device deletion, offboarding); nothing to do without a row. Waits for the exclusive lease
    * (with intent, so running commands finish and new ones wait) up to 10 minutes. Without the
-   * device's provider it throws and the row stays, marked `sweep_failed_at` (the job is
-   * retried, and the destruction sweep finishes a deleted device once the provider is back).
-   * Files kept by another provider that is not loaded cannot be destroyed: it throws and the row
-   * stays.
+   * provider of its instance row loaded it throws and the row stays, marked `sweep_failed_at` (the
+   * job is retried, and the destruction sweep finishes a deleted device once the provider is
+   * back). The provider only needs to be loaded: a device is deleted while its org has the
+   * provider off too.
    */
   async destroyDevice(deviceId: string): Promise<void> {
     const row = await this.db
       .selectFrom("device_instances")
-      .select("device_id")
+      .select(["device_id", "provider"])
       .where("device_id", "=", deviceId)
       .executeTakeFirst();
     if (!row) return;
-    const p = await this.providerOf(deviceId);
+    const p =
+      row.provider !== null
+        ? this.providers.forDevice(row.provider)
+        : await this.providerOf(deviceId);
     if (!p) {
       await this.db
         .updateTable("device_instances")
@@ -2651,8 +2697,8 @@ export class SandboxService {
         .where("device_id", "=", deviceId)
         .execute();
       throw new Error(
-        `cannot destroy device ${deviceId}: its sandbox provider is not there; ` +
-          "the destruction sweep retries it",
+        `cannot destroy device ${deviceId}: its provider ${row.provider ?? "(none)"} is not ` +
+          "loaded; the destruction sweep retries it",
       );
     }
     const lease = await this.leases.acquireExclusive(
@@ -2667,6 +2713,9 @@ export class SandboxService {
         .selectAll()
         .where("device_id", "=", deviceId)
         .executeTakeFirst();
+      if (current && current.provider !== null && current.provider !== p.plugin) {
+        throw new Error(`cannot destroy device ${deviceId}: its instance row changed provider`);
+      }
       if (current) await this.destroyRow(current, p, lease, "device");
     } finally {
       await lease.release();
@@ -2677,10 +2726,11 @@ export class SandboxService {
    * Starts the device over with empty files (after `device.files_lost`, or on request):
    * under the exclusive lease (waited for like {@link destroyDevice}) destroys any instance and
    * the file system (a `lost` one is only dropped), and records no file system; the next use
-   * creates a new one. Nothing to do without a row. Throws `sandbox.unavailable` without a provider.
+   * creates a new one. Nothing to do without a row. Throws `device.unavailable` while the device's
+   * provider is not loaded, or when its instance row names another provider.
    */
   async resetFileSystem(deviceId: string): Promise<void> {
-    const p = await this.require(deviceId);
+    const p = await this.loadedFor(deviceId);
     const lease = await this.leases.acquireExclusive(
       deviceId,
       AbortSignal.timeout(EXCLUSIVE_WAIT_MS),
@@ -2694,10 +2744,11 @@ export class SandboxService {
         .where("device_id", "=", deviceId)
         .executeTakeFirst();
       if (!row) return;
+      if (row.provider !== null && row.provider !== p.plugin) throw deviceUnavailable(p.plugin);
       const fence = { gen: row.generation };
       const signal = opSignal(lease);
       const prev = await this.destroyInstance(row, p, signal);
-      await this.destroyFiles(row, p, signal, true);
+      await this.destroyFiles(row, p, signal);
       if (!(await lease.renew())) throw new SandboxLockLostError(deviceId);
       await this.fenced(lease, deviceId, fence, {
         fs_handle: null,
@@ -2774,7 +2825,7 @@ export class SandboxService {
     try {
       const device = await this.db
         .selectFrom("devices")
-        .select("org_id")
+        .select(["org_id", "provider"])
         .where("id", "=", deviceId)
         .executeTakeFirst();
       if (!device) return { state: "skipped" };
@@ -2804,6 +2855,7 @@ export class SandboxService {
         !update ||
         p.plugin === LOCAL_PROVIDER ||
         row.provider !== p.plugin ||
+        device.provider !== p.plugin ||
         row.fs_status !== "ready" ||
         (row.status !== "running" && row.status !== "suspended")
       )
@@ -2872,15 +2924,24 @@ export class SandboxService {
   }
 
   /**
-   * The worker's sweep of {@link reconcileLimits} (`sandbox-reconcile-limits`): up to `limit`
-   * live cloud devices of the loaded cloud provider carrying the marker on a live instance, in
-   * id order from a shared keyset cursor that wraps around (no starvation), each tried at most
-   * once per {@link RECONCILE_RETRY_SECONDS} across replicas (a Redis marker).
-   * Nothing without a cloud provider that can `update`. Returns how many it reconciled.
+   * The worker's sweep of {@link reconcileLimits} (`sandbox-reconcile-limits`): for each loaded
+   * provider that can `update`, up to `limit` live cloud devices of its own carrying the marker on
+   * a live instance, in id order from that provider's shared keyset cursor that wraps around (no
+   * starvation), each tried at most once per {@link RECONCILE_RETRY_SECONDS} across replicas (a
+   * Redis marker). Rows of a provider that is not loaded are never touched. Returns how many it
+   * reconciled.
    */
   async reconcileMarked(limit = 10): Promise<number> {
-    const p = this.providers.cloud();
-    if (!p?.impl.update) return 0;
+    let n = 0;
+    for (const p of this.providers.loaded()) {
+      if (p.impl.update) n += await this.reconcileMarkedOf(p, limit);
+    }
+    return n;
+  }
+
+  /** {@link reconcileMarked} for the devices of one provider. */
+  private async reconcileMarkedOf(p: DeviceProviderEntry, limit: number): Promise<number> {
+    const cursorKey = reconcileCursorKey(p.plugin);
     const page = (after: string, n: number) =>
       this.db
         .selectFrom("devices as d")
@@ -2889,6 +2950,7 @@ export class SandboxService {
         .where("d.source", "=", "cloud")
         .where("d.deleted_at", "is", null)
         .where("d.permission_reconcile_required", "=", true)
+        .where("d.provider", "=", p.plugin)
         .where("i.provider", "=", p.plugin)
         .where("i.handle", "is not", null)
         .where("i.status", "in", ["running", "suspended"])
@@ -2899,7 +2961,7 @@ export class SandboxService {
     // a keyset cursor shared by the replicas (the cron runs once per tick): each tick goes on
     // after the last device the previous one visited and wraps around, so devices that stay
     // marked never starve the ones after them
-    const after = (await this.redis.get(RECONCILE_CURSOR_KEY).catch(() => null)) ?? "";
+    const after = (await this.redis.get(cursorKey).catch(() => null)) ?? "";
     const rows = await page(after, limit);
     if (rows.length < limit && after !== "") {
       const seen = new Set(rows.map((r) => r.id));
@@ -2908,7 +2970,7 @@ export class SandboxService {
     }
     const last = rows.at(-1)?.id;
     await this.redis
-      .set(RECONCILE_CURSOR_KEY, last ?? "", "EX", 86_400)
+      .set(cursorKey, last ?? "", "EX", 86_400)
       .catch((err: unknown) => this.log.warn("cannot record the reconcile cursor", { err }));
     let n = 0;
     for (const { id } of rows) {
@@ -3000,7 +3062,7 @@ export class SandboxService {
       live: Row & { handle: SandboxHandle },
     ): Promise<{ cancelled: string[] } | "skip" | { failed: string }> => {
       if (live.status !== "suspended" || !isCloudProvider(o.provider)) return "skip";
-      const impl = this.providers.forName(o.provider)?.impl;
+      const impl = this.providers.forDevice(o.provider)?.impl;
       const background = impl?.background;
       if (!impl || !background) return "skip";
       const members = await this.retirement.membersOf(o.id);
@@ -3093,7 +3155,7 @@ export class SandboxService {
       live: Row & { handle: SandboxHandle },
     ): Promise<boolean> => {
       const provider = live.provider ?? "unknown";
-      const impl = isCloudProvider(provider) ? this.providers.forName(provider)?.impl : undefined;
+      const impl = isCloudProvider(provider) ? this.providers.forDevice(provider)?.impl : undefined;
       if (!impl) {
         await this.retirement.noteFailure(o.id, `provider ${provider} is not loaded`);
         return false;
@@ -3145,7 +3207,7 @@ export class SandboxService {
      */
     const destroyNamed = async (o: { id: string }, row: Row): Promise<boolean> => {
       const provider = row.provider ?? "unknown";
-      const impl = isCloudProvider(provider) ? this.providers.forName(provider)?.impl : undefined;
+      const impl = isCloudProvider(provider) ? this.providers.forDevice(provider)?.impl : undefined;
       if (!impl) {
         await this.retirement.noteFailure(o.id, `provider ${provider} is not loaded`);
         return false;
@@ -3424,7 +3486,7 @@ export class SandboxService {
    */
   private async ensure(
     ctx: SandboxUseContext,
-    p: SandboxProviderEntry,
+    p: DeviceProviderEntry,
     held: SandboxLease,
     signal: AbortSignal,
     gone: Instance | null,
@@ -3478,30 +3540,16 @@ export class SandboxService {
     // Every acquisition first does a fenced increment: an old holder whose lease expired while it
     // kept running (a stalled sweep) then fails its next write.
     await this.fenced(held, id, fence, {});
-    // the retirement gate (8.5), before any use, resume, rebuild, provider switch or bind: an
+    // the retirement gate (8.5), before any use, resume, rebuild or bind: an
     // old incarnation that may run legacy work is destroyed (cloud, confirmed) or refuses
     signal.throwIfAborted();
     const gate = { resumed: false, running: false };
     const row = (await this.retireIncarnations(id, held, read, fence, undefined, gate)) ?? read;
     try {
       if (row.fs_status === "lost") throw deviceFilesLost(p.plugin === LOCAL_PROVIDER);
-      if (
-        row.provider !== null &&
-        row.provider !== p.plugin &&
-        (row.fs_status !== "none" || row.handle !== null)
-      ) {
-        throw otherProvider(row.provider);
-      }
-      if (
-        row.provider !== null &&
-        row.provider !== p.plugin &&
-        row.fs_status === "none" &&
-        row.status === "creating"
-      ) {
-        // a create by the previous provider ended before its file system was recorded: that
-        // provider may have made it by name, and nothing else would ever destroy it
-        await this.dropUnrecordedFiles(id, row.provider, signal);
-      }
+      // a device is bound to its provider for life: an instance row of another provider (never
+      // written by this kernel) is refused as it is, never taken over
+      if (row.provider !== null && row.provider !== p.plugin) throw deviceUnavailable(p.plugin);
       // read under the lease, after the fence moved: a value read before the wait may be stale
       // (another replica may have changed the mode meanwhile)
       const want = await this.wantedLimits(ctx, p, row);
@@ -3632,7 +3680,7 @@ export class SandboxService {
    */
   private async create(
     ctx: SandboxUseContext,
-    p: SandboxProviderEntry,
+    p: DeviceProviderEntry,
     held: SandboxLease,
     row: Row,
     fence: Fence,
@@ -3786,7 +3834,7 @@ export class SandboxService {
    */
   private async applyLimits(
     ctx: SandboxUseContext,
-    p: SandboxProviderEntry,
+    p: DeviceProviderEntry,
     held: SandboxLease,
     row: Row,
     handle: SandboxHandle,
@@ -3863,7 +3911,7 @@ export class SandboxService {
     held: SandboxLease,
     id: string,
     handle: SandboxHandle,
-    p: SandboxProviderEntry,
+    p: DeviceProviderEntry,
     fence: Fence,
     incarnation: RevokedIncarnation,
   ): Promise<void> {
@@ -3907,60 +3955,26 @@ export class SandboxService {
   }
 
   /**
-   * Destroys the file system another provider may have made under the device's name without
-   * the kernel recording it (`destroyFileSystemByName`; not there is success). That provider not
-   * loaded, or a failure, is only warned (the files may leak there) so the device stays
-   * usable; an abort is thrown.
-   */
-  private async dropUnrecordedFiles(
-    id: string,
-    provider: string,
-    signal: AbortSignal,
-  ): Promise<void> {
-    const old = this.providers.forName(provider)?.impl;
-    if (!old) {
-      this.log.warn(
-        "device file system may have been made by a provider that is not loaded; it may leak",
-        { deviceId: id, provider },
-      );
-      return;
-    }
-    try {
-      await old.destroyFileSystemByName(deviceResourceName(id), signal);
-    } catch (err) {
-      if (signal.aborted) throw err;
-      this.log.warn("cannot destroy the file system of the previous sandbox provider", {
-        deviceId: id,
-        provider,
-        err,
-      });
-    }
-  }
-
-  /**
-   * Destroys an instance of another provider with that provider: still loaded and destroyed →
-   * false; otherwise warns and returns true (the record must be kept).
+   * Destroys an instance an earlier kernel recorded in `prev_*` (left by a provider replaced back
+   * then) with that provider: still loaded and destroyed → false; otherwise warns and returns true
+   * (the record must be kept).
    */
   private async retire(
     id: string,
     provider: string,
     handle: SandboxHandle,
     signal: AbortSignal,
-    /** The retired incarnation's generation when known: its confirmed destroy is recorded (M4). */
-    generation?: string,
   ): Promise<boolean> {
-    const old = this.providers.forName(provider)?.impl;
+    const old = this.providers.forDevice(provider)?.impl;
     if (old) {
       try {
         await old.destroy(
           handle,
           AbortSignal.any([signal, AbortSignal.timeout(SWEEP_OP_TIMEOUT_MS)]),
         );
-        if (generation !== undefined && isCloudProvider(provider))
-          await this.retirement.recordDestruction(id, provider, generation);
         return false;
       } catch (err) {
-        this.log.warn("cannot destroy sandbox instance of the previous provider", {
+        this.log.warn("cannot destroy a sandbox instance recorded from a previous provider", {
           deviceId: id,
           provider,
           err,
@@ -3969,37 +3983,32 @@ export class SandboxService {
       }
     }
     this.log.warn(
-      "sandbox was created by another provider that is not loaded; its instance may leak",
+      "a sandbox instance recorded from a previous provider that is not loaded may leak",
       { deviceId: id, provider },
     );
     return true;
   }
 
   /**
-   * Under the lease: destroys the row's instance (and a leaked one of an earlier provider). An
-   * instance without a handle (a create that ended before the handle was recorded) is destroyed by
-   * name. Returns the `prev_*` patch for instances that could not be destroyed.
+   * Under the lease: destroys the row's instance with its own provider `p` (and an instance an
+   * earlier kernel recorded in `prev_*`). An instance without a handle (a create that ended before
+   * the handle was recorded) is destroyed by name. Returns the `prev_*` patch.
    */
   private async destroyInstance(
     row: Row,
-    p: SandboxProviderEntry,
+    p: DeviceProviderEntry,
     signal: AbortSignal,
   ): Promise<Patch> {
     const id = row.device_id;
-    const owner = row.provider ?? p.plugin;
+    assertOwnRow(row, p);
     let prev: Patch = {};
-    if (row.handle && owner === p.plugin) {
+    if (row.handle) {
       await p.impl.destroy(row.handle, signal);
-    } else if (row.handle && row.status !== "destroyed") {
-      if (await this.retire(id, owner, row.handle, signal, String(row.created_at.getTime()))) {
-        prev = { prev_provider: owner, prev_handle: JSON.stringify(row.handle) };
-      }
-    } else if (!row.handle && row.status === "creating") {
+    } else if (row.status === "creating") {
       // the provider may have built it already: only the name finds it
-      const impl = owner === p.plugin ? p.impl : this.providers.forName(owner)?.impl;
-      await impl?.destroyByName(deviceResourceName(id), signal);
+      await p.impl.destroyByName(deviceResourceName(id), signal);
     }
-    if (row.prev_handle && row.prev_provider && !("prev_handle" in prev)) {
+    if (row.prev_handle && row.prev_provider) {
       if (!(await this.retire(id, row.prev_provider, row.prev_handle, signal))) {
         prev = { prev_provider: null, prev_handle: null };
       }
@@ -4008,35 +4017,14 @@ export class SandboxService {
   }
 
   /**
-   * Under the lease: destroys the row's file system with the provider that made it (by name when
-   * no handle was recorded: `createFileSystem` may have finished before the kernel stopped). With
-   * that provider not loaded it throws (the row must stay for a retry), or with `lenient` only
-   * warns (the files leak at that provider).
+   * Under the lease: destroys the row's file system with its own provider `p` (by name when no
+   * handle was recorded: `createFileSystem` may have finished before the kernel stopped).
    */
-  private async destroyFiles(
-    row: Row,
-    p: SandboxProviderEntry,
-    signal: AbortSignal,
-    lenient = false,
-  ): Promise<void> {
+  private async destroyFiles(row: Row, p: DeviceProviderEntry, signal: AbortSignal): Promise<void> {
+    assertOwnRow(row, p);
     const id = row.device_id;
-    const owner = row.provider ?? p.plugin;
-    const impl = owner === p.plugin ? p.impl : this.providers.forName(owner)?.impl;
-    if (!impl) {
-      if (row.fs_handle === null) return;
-      if (!lenient) {
-        throw new Error(
-          `cannot destroy the file system of device ${id}: its sandbox provider ${owner} is not loaded`,
-        );
-      }
-      this.log.warn("device file system of a provider that is not loaded is leaked", {
-        deviceId: id,
-        provider: owner,
-      });
-      return;
-    }
-    if (row.fs_handle !== null) await impl.destroyFileSystem(row.fs_handle, signal);
-    else await impl.destroyFileSystemByName(deviceResourceName(id), signal);
+    if (row.fs_handle !== null) await p.impl.destroyFileSystem(row.fs_handle, signal);
+    else await p.impl.destroyFileSystemByName(deviceResourceName(id), signal);
   }
 
   /**
@@ -4045,7 +4033,7 @@ export class SandboxService {
    */
   private async destroyRow(
     row: Row,
-    p: SandboxProviderEntry,
+    p: DeviceProviderEntry,
     held: SandboxLease,
     mode: "instance" | "device",
   ): Promise<void> {
@@ -4055,9 +4043,8 @@ export class SandboxService {
     const prev = await this.destroyInstance(row, p, signal);
     // the provider's destroy resolved: confirmed destruction of exactly this cloud incarnation
     // (8.5 evidence); a kernel-internal (local) destroy is a no-op and is never recorded
-    const owner = row.provider ?? p.plugin;
-    if (row.handle && owner === p.plugin && isCloudProvider(owner))
-      await this.retirement.recordDestruction(id, owner, String(row.created_at.getTime()));
+    if (row.handle && isCloudProvider(p.plugin))
+      await this.retirement.recordDestruction(id, p.plugin, String(row.created_at.getTime()));
     if (mode === "device") await this.destroyFiles(row, p, signal);
     if (!(await held.renew())) throw new SandboxLockLostError(id);
     if (mode === "instance") {
@@ -4093,17 +4080,9 @@ export class SandboxService {
       ]);
   }
 
-  /** The provider of an instance row: an internal one (`@local`) by name, else the cloud one. */
-  private rowProvider(row: Row): SandboxProviderEntry | undefined {
-    return providerForDevice(this.providers, row.provider);
-  }
-
-  /**
-   * A row the idle sweeps may touch: not on a kernel-internal provider (`@local` instances live on
-   * people's machines and are never suspended or destroyed for inactivity).
-   */
-  private cloudRow(eb: ExpressionBuilder<KernelDatabase, "device_instances">): Expression<SqlBool> {
-    return eb.or([eb("provider", "is", null), eb("provider", "not like", "@%")]);
+  /** The loaded provider of an instance row (its own `provider`); undefined when not loaded. */
+  private rowProvider(row: Row): DeviceProviderEntry | undefined {
+    return this.providers.forDevice(row.provider);
   }
 
   /** The device was deleted, or its org was: the instance and the files go. */

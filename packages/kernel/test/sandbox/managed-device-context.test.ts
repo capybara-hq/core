@@ -53,7 +53,7 @@ import {
   PermissionRuntimeReports,
   readRuntimeReport,
 } from "../../src/sandbox/permission-runtime-reports.js";
-import { SandboxProviders } from "../../src/sandbox/providers.js";
+import { DeviceProviders } from "../../src/sandbox/providers.js";
 import { SandboxService } from "../../src/sandbox/sandbox.service.js";
 import { managedSandboxDeps } from "../../src/tools/builtins/builtin-tools.js";
 import {
@@ -127,7 +127,7 @@ beforeAll(async () => {
       throw new Error("no device operation in these cases");
     },
   } as unknown as DeviceProvider;
-  k.app.get(SandboxProviders).register({ plugin: PROVIDER, version: "test-1", impl: provider });
+  k.app.get(DeviceProviders).register({ plugin: PROVIDER, version: "test-1", impl: provider });
 });
 afterAll(async () => {
   await k?.close();
@@ -719,7 +719,7 @@ describe("cloud installed evidence in the real lifecycle", () => {
   let supportFails = false;
   const register = (version: string, options: Parameters<typeof createFakeSandbox>[1] = {}) => {
     const base = createFakeSandbox(root, options);
-    k.app.get(SandboxProviders).register({
+    k.app.get(DeviceProviders).register({
       plugin: CLOUD,
       version,
       impl: {
@@ -893,7 +893,7 @@ describe("cloud installed evidence in the real lifecycle", () => {
       .select("handle")
       .where("device_id", "=", f.deviceId)
       .executeTakeFirstOrThrow();
-    const provider = k.app.get(SandboxProviders).forName(CLOUD);
+    const provider = k.app.get(DeviceProviders).forDevice(CLOUD);
     if (!provider || !row.handle) throw new Error("expected a provisioned cloud instance");
     await provider.impl.suspend(row.handle, new AbortController().signal);
     await f.db
@@ -1026,7 +1026,7 @@ describe("cloud installed evidence in the real lifecycle", () => {
       .select("handle")
       .where("device_id", "=", f.deviceId)
       .executeTakeFirstOrThrow();
-    const provider = k.app.get(SandboxProviders).forName(CLOUD);
+    const provider = k.app.get(DeviceProviders).forDevice(CLOUD);
     if (!provider || !row.handle) throw new Error("expected a provisioned cloud instance");
     await provider.impl.suspend(row.handle, new AbortController().signal);
     await f.db
@@ -1186,12 +1186,12 @@ describe("cloud installed evidence in the real lifecycle", () => {
 
   it("a request refused as not sent is recorded as a definite not_sent failure, never an unknown outcome", async () => {
     register("v1");
-    const base = k.app.get(SandboxProviders).forName(CLOUD);
+    const base = k.app.get(DeviceProviders).forDevice(CLOUD);
     if (!base) throw new Error("expected the cloud provider");
     const f = await seedCloud();
     await call(f);
     // the device's connection changed before the stat was sent
-    k.app.get(SandboxProviders).register({
+    k.app.get(DeviceProviders).register({
       ...base,
       impl: {
         ...base.impl,

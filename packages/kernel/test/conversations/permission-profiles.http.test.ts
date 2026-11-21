@@ -20,8 +20,9 @@ import { RunControl as RunControlService } from "../../src/runtime/run-control.j
 import { SandboxOperationAuthority } from "../../src/sandbox/operation-authority.js";
 import { PermissionAuthorityLock } from "../../src/sandbox/permission-authority-lock.js";
 import { PermissionCeilingWrites } from "../../src/sandbox/permission-ceiling-writes.js";
-import { SandboxProviders } from "../../src/sandbox/providers.js";
+import { DeviceProviders } from "../../src/sandbox/providers.js";
 import { SandboxService } from "../../src/sandbox/sandbox.service.js";
+import { KERNEL_VERSION } from "../../src/version.js";
 import { truncateTables } from "../helpers/db.js";
 import { asUser, cookieJar } from "../helpers/http.js";
 import { accountsFor, apiTokensFor } from "../helpers/identity.js";
@@ -137,8 +138,8 @@ async function createConv(req: Req, orgId: string, agentId: string): Promise<Con
 }
 
 async function localDevice(orgId: string, name = "Laptop") {
-  const providers = k.app.get(SandboxProviders),
-    local = providers.forName("@local");
+  const providers = k.app.get(DeviceProviders),
+    local = providers.forDevice("@local");
   if (!local) throw new Error("Local provider was not registered");
   const impl = Object.create(local.impl);
   const neverProbe = async () => {
@@ -149,7 +150,7 @@ async function localDevice(orgId: string, name = "Laptop") {
     revokeOperation: neverProbe,
     permissionSupport: neverProbe,
   });
-  providers.register({ plugin: "@permission-test", impl });
+  providers.register({ plugin: "@permission-test", version: KERNEL_VERSION, impl });
   const db = kernelDb(raw);
   const id = randomUUID();
   await db
@@ -269,11 +270,13 @@ describe("Conversation permission profiles", () => {
       agentId = await createAgent(req, orgId),
       deviceId = await localDevice(orgId);
     // a provider without the operation factory (since the paired activation, @local has them)
-    const local = k.app.get(SandboxProviders).forName("@local");
+    const local = k.app.get(DeviceProviders).forDevice("@local");
     if (!local) throw new Error("Local provider was not registered");
     const impl = Object.create(local.impl);
     Object.assign(impl, { operation: undefined, revokeOperation: undefined });
-    k.app.get(SandboxProviders).register({ plugin: "@no-factory-test", impl });
+    k.app
+      .get(DeviceProviders)
+      .register({ plugin: "@no-factory-test", version: KERNEL_VERSION, impl });
     await kernelDb(raw)
       .updateTable("devices")
       .set({ provider: "@no-factory-test" })
@@ -506,8 +509,8 @@ describe("Conversation permission profiles", () => {
       .execute();
     // the restarted instance's installed evidence, which admission proves (B-16): a report needs
     // a provider version to bind to
-    const providers = k.app.get(SandboxProviders);
-    const entry = providers.forName("@permission-test");
+    const providers = k.app.get(DeviceProviders);
+    const entry = providers.forDevice("@permission-test");
     if (!entry) throw new Error("Permission test provider was not registered");
     providers.register({ ...entry, version: "test-1" });
     await seedInstalledEvidence(k, raw, {

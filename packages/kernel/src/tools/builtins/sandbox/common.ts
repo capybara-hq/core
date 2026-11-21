@@ -75,13 +75,14 @@ export interface SandboxToolDeps {
    * `currentInstance` too: a background `Bash` launch records the instance it started in; and
    * `ifRunning`, which `TaskOutput` reads a task through.
    */
-  sandbox: Pick<SandboxService, "cloudAvailable" | "availableFor" | "withSandbox"> &
+  sandbox: Pick<SandboxService, "withSandbox"> &
     Partial<Pick<SandboxService, "pathLease" | "currentInstance" | "ifRunning" | "withOperations">>;
   /**
    * The device a call enters: the root conversation's, checked for its owner every call.
-   * `usableNow` (absent in test stubs: only the cloud provider counts) tells a listing whether a
-   * conversation's device can run without a cloud provider (ruling R8). `workingFacts` (absent
-   * in test stubs: free mode) gives what decides the working root, read as the review reads it.
+   * `usableNow` (absent in test stubs: the device's provider serves the org) tells a listing
+   * whether a conversation's device has its provider on in the org (ruling R8). `workingFacts`
+   * (absent in test stubs: free mode) gives what decides the working root, read as the review
+   * reads it.
    */
   devices: Pick<ConversationDevices, "forTool"> &
     Partial<Pick<ConversationDevices, "usableNow" | "modeLevel" | "workingFacts" | "projectReach">>;
@@ -199,7 +200,7 @@ export const SANDBOX_FILES_RESET_NOTICE = sandboxFilesResetNotice(DEFAULT_SANDBO
 const BUSY_TEXT =
   "The device is busy: all its command slots are taken by commands of this or another conversation sharing it; wait for one to finish and retry.";
 const NO_SANDBOX_TEXT =
-  "No sandbox is configured in this deployment; ask an administrator to install a sandbox plugin, or do the task without the sandbox.";
+  "No device provider is on in this organization; ask an org admin to switch one on, or do the task without the sandbox.";
 /** The message the kernel reports for a sandbox tool call with no provider, minus its final period. */
 export const SANDBOX_UNAVAILABLE_REASON = NO_SANDBOX_TEXT.slice(0, -1);
 
@@ -216,8 +217,9 @@ const ENV_NOT_FOUND_TEXT =
   "This conversation's device was deleted or its owner can no longer use it; ask the user to start a new conversation on another device.";
 const ENV_FORBIDDEN_TEXT =
   "This conversation's owner may no longer use its device; ask the user to start a new conversation on a device they can use.";
-const ENV_UNAVAILABLE_TEXT =
-  "This conversation's device is kept by a sandbox provider that is not active in this deployment; ask the user to start a new conversation on another device, or an administrator to re-enable that provider.";
+/** A device whose provider does not serve its org now (`device.unavailable`): files kept. */
+export const ENV_UNAVAILABLE_TEXT =
+  "This conversation's device runs on a device provider that is off in this organization or not installed; its files are kept. Ask an org admin to switch the provider back on, or start a new conversation on another device.";
 const ENV_FILES_LOST_TEXT =
   "This device's files are gone. Ask the user to reset its files on the devices page, then retry.";
 /**
@@ -1019,18 +1021,17 @@ export async function withPathLease<T>(
 }
 
 /**
- * Whether a sandbox tool call of the conversation tree rooted at `conversationId` can run: a
- * cloud provider is loaded, or (ruling R8) the conversation's device runs on a registered
- * kernel provider (`@local`). Without a conversation only the cloud provider counts.
+ * Whether a sandbox tool call of the conversation tree rooted at `conversationId` can run
+ * (ruling R8): the conversation's device (an unbound one: the device it would bind to) has its
+ * provider on in the org. Without a conversation: some device provider is on in the org
+ * ({@link ConversationDevices.usableNow}).
  */
 export async function sandboxUsable(
-  deps: Pick<SandboxToolDeps, "sandbox" | "devices">,
+  deps: Pick<SandboxToolDeps, "devices">,
   orgId: string,
   conversationId: string | undefined,
 ): Promise<boolean> {
-  if (deps.sandbox.cloudAvailable) return true;
-  if (conversationId === undefined || !deps.devices.usableNow) return false;
-  return deps.devices.usableNow(orgId, conversationId);
+  return deps.devices.usableNow ? deps.devices.usableNow(orgId, conversationId) : true;
 }
 
 /**

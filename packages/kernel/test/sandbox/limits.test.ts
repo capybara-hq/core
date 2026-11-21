@@ -110,7 +110,7 @@ const service = () =>
   sandboxServiceFor({
     db,
     redis,
-    provider: () => ({ plugin: "device-fake", impl: provider }),
+    providers: () => [{ plugin: "device-fake", version: "1.0.0", impl: provider }],
     config: () => config,
     log,
     lockPollMs: 20,

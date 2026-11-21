@@ -91,7 +91,6 @@ describe("Bash run_in_background without the managed route", () => {
     const withSandbox = vi.fn();
     const tool = sandboxBashTool({
       sandbox: {
-        cloudAvailable: true,
         availableFor: async () => true,
         withSandbox,
         currentInstance: async () => ({ provider: "p", createdAt: new Date(1) }),
@@ -242,7 +241,6 @@ function taskTools(task: BackgroundTaskRow, answer: { kind: string; status?: str
   });
   const deps = {
     sandbox: {
-      cloudAvailable: true,
       availableFor: async () => true,
       withSandbox: vi.fn(),
       ifRunning,

@@ -21,6 +21,7 @@ import {
 import {
   DEVICE_PROGRAM_RESTARTED_TOOL_TEXT,
   DEVICE_REQUEST_NOT_SENT_TOOL_TEXT,
+  ENV_UNAVAILABLE_TEXT,
   ESCALATION_GRANT_MISSING_LAUNCH_WHY,
   ESCALATION_GRANT_MISSING_TEXT,
   mapSandboxError,
@@ -67,6 +68,21 @@ describe("sandbox tool errors", () => {
     const text = message(mapSandboxError(err, undefined));
     expect(text).toMatch(/device/);
     expect(text).not.toMatch(/environment/i);
+  });
+
+  it("device.unavailable becomes the actionable provider-off tool text", () => {
+    const mapped = mapSandboxError(
+      new ApiError(
+        "device.unavailable",
+        "This device's provider device-fake is off in this organization or not installed; its files are kept, and the device works again once an org admin switches the provider back on",
+      ),
+      undefined,
+    );
+    expect(mapped).toBeInstanceOf(ToolError);
+    expect(message(mapped)).toBe(ENV_UNAVAILABLE_TEXT);
+    expect(ENV_UNAVAILABLE_TEXT).toBe(
+      "This conversation's device runs on a device provider that is off in this organization or not installed; its files are kept. Ask an org admin to switch the provider back on, or start a new conversation on another device.",
+    );
   });
 
   it("a device whose sandbox limits must be established again says how to recover", () => {
@@ -132,7 +148,7 @@ describe("sandbox tool errors", () => {
     expect(mapped).toBeInstanceOf(ToolError);
     expect(message(mapped)).toMatch(/earlier version/);
     expect(message(mapped)).toMatch(what);
-    expect(message(mapped)).not.toMatch(/not active in this deployment/);
+    expect(message(mapped)).not.toBe(ENV_UNAVAILABLE_TEXT);
     expect(message(mapped)).toBe(text);
   });
 

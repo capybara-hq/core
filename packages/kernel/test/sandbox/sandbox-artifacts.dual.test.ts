@@ -174,7 +174,12 @@ describe("sandbox and artifacts (dual replica, fake sandbox)", () => {
     const org = await at(1, "POST", "/api/v1/orgs", { name: "Acme" });
     expect(org.status, JSON.stringify(org.json)).toBe(201);
     base = `/api/v1/orgs/${(org.json.org as { id: string }).id}`;
-    await enableExtensions(raw, (org.json.org as { id: string }).id, "model-fake");
+    const orgId = (org.json.org as { id: string }).id;
+    await enableExtensions(raw, orgId, "model-fake", "device-fake");
+    // the person's default device is made on the org's default device provider
+    await sql`UPDATE capybara.orgs
+      SET settings = settings || '{"deviceDefaultProvider":"device-fake"}'::jsonb
+      WHERE id = ${orgId}`.execute(raw);
   });
 
   afterAll(async () => {
@@ -448,7 +453,7 @@ describe("sandbox and artifacts (dual replica, fake sandbox)", () => {
     await sandboxServiceFor({
       db,
       redis,
-      provider: () => ({ plugin: "device-fake", impl: createFakeSandbox(root) }),
+      providers: () => [{ plugin: "device-fake", version: "1.0.0", impl: createFakeSandbox(root) }],
       config: () =>
         KernelConfigSchema.parse({
           db: { url: h.dbUrl },

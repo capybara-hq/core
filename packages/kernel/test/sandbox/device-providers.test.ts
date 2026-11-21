@@ -7,14 +7,16 @@ import { sql } from "kysely";
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import { type KernelSchemaDb, kernelDb } from "../../src/db/kernel-schema.js";
 import { createDb } from "../../src/db/pool.js";
+import { DeviceAccess } from "../../src/devices/access.js";
 import { DEVICES_DEFAULT_PROVIDER_SETTING } from "../../src/devices/default-provider-setting.js";
 import { DeviceProviderSelection } from "../../src/devices/device-provider-selection.js";
 import { OrgSettingsService } from "../../src/orgs/settings.service.js";
 import { DeviceProviders, LOCAL_PROVIDER } from "../../src/sandbox/providers.js";
+import { SandboxService } from "../../src/sandbox/sandbox.service.js";
 import { truncateTables } from "../helpers/db.js";
 import { accountsFor } from "../helpers/identity.js";
 import {
-  createOrgWithProviders,
+  createOrg,
   enableExtensions,
   PW,
   runConfig,
@@ -22,6 +24,7 @@ import {
   startKernel,
   type TestKernel,
 } from "../helpers/runs.js";
+import { seedDevice } from "../helpers/sandbox.js";
 
 /**
  * `DeviceProviders` (device-provider spec): which providers serve an org (loaded and switched on in
@@ -83,8 +86,9 @@ beforeEach(async () => {
   ownerId = (await accountsFor(db).createLocal({ login: "owner", password: PW, displayName: "O" }))
     .id;
   const req = await session(k, "owner");
-  orgA = await createOrgWithProviders(k, req, "Alpha");
-  orgB = await createOrgWithProviders(k, req, "Beta");
+  // no provider on yet: each test switches on what it needs
+  orgA = await createOrg(req, "Alpha");
+  orgB = await createOrg(req, "Beta");
 });
 
 const setEnabled = (orgId: string, plugin: string, enabled: boolean) =>
@@ -161,6 +165,58 @@ describe("DeviceProviders and DeviceProviderSelection", () => {
     expect(await selection.defaultFor(orgA)).toBeUndefined();
     await setPlatformDefault("not-installed");
     expect(await selection.defaultFor(orgA)).toBeUndefined();
+  });
+});
+
+describe("a device's use follows its own provider's org switch", () => {
+  /** A cloud device of the org creator in `orgId`, bound to `provider`. */
+  const deviceOn = async (orgId: string, provider: string) => {
+    const id = await seedDevice(raw, orgId, ownerId);
+    await sql`UPDATE capybara.devices SET provider = ${provider} WHERE id = ${id}`.execute(raw);
+    return id;
+  };
+  const codeOf = (p: Promise<unknown>) =>
+    p.then(
+      () => undefined,
+      (e: unknown) => (e as { code?: string }).code,
+    );
+
+  it("provider switched on in one org only: org B's device unavailable, org A's works; a toggle flips it at once", async () => {
+    const access = k.app.get(DeviceAccess);
+    const sandbox = k.app.get(SandboxService);
+    await enableExtensions(raw, orgA, "device-fake-b");
+    const a = await deviceOn(orgA, "device-fake-b");
+    const b = await deviceOn(orgB, "device-fake-b");
+    expect(await access.usable(orgA, ownerId, a)).toEqual({ id: a, provider: "device-fake-b" });
+    expect(await codeOf(access.usable(orgB, ownerId, b))).toBe("device.unavailable");
+    expect(await sandbox.availableFor(a, orgA)).toBe(true);
+    expect(await sandbox.availableFor(b, orgB)).toBe(false);
+    // the other org's answer never leaks: a device is judged in its own org only
+    expect(await sandbox.availableFor(b, orgA)).toBe(false);
+    await enableExtensions(raw, orgB, "device-fake-b");
+    expect(await access.usable(orgB, ownerId, b)).toEqual({ id: b, provider: "device-fake-b" });
+    await setEnabled(orgA, "device-fake-b", false);
+    expect(await codeOf(access.usable(orgA, ownerId, a))).toBe("device.unavailable");
+    expect(await sandbox.availableFor(a, orgA)).toBe(false);
+  });
+
+  it("a device of one provider is never served by another provider that is on", async () => {
+    await enableExtensions(raw, orgA, "device-fake");
+    const b = await deviceOn(orgA, "device-fake-b");
+    expect(await codeOf(k.app.get(DeviceAccess).usable(orgA, ownerId, b))).toBe(
+      "device.unavailable",
+    );
+    expect(await k.app.get(SandboxService).availableFor(b, orgA)).toBe(false);
+  });
+
+  it("isOnInOrg: @local is on in every org while registered (no catalog item, no org switch)", async () => {
+    expect(await names(orgA)).toEqual([]);
+    expect(providers.forDevice(LOCAL_PROVIDER)).toBeDefined();
+    expect(await selection.isOnInOrg(orgA, LOCAL_PROVIDER)).toBe(true);
+    expect(await selection.isOnInOrg(orgB, LOCAL_PROVIDER)).toBe(true);
+    expect(await selection.isOnInOrg(orgA, "@not-registered")).toBe(false);
+    // and still never listed among the org's providers
+    expect(await names(orgA)).toEqual([]);
   });
 });
 

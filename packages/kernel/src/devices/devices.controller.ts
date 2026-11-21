@@ -37,8 +37,8 @@ import {
  * 2026-11-07-environments-design §9; `agents.use`, human users only: a service token gets 403).
  * Phase 1 has personal cloud devices only, each visible to its owner alone: another member
  * gets 404 `device.not_found`.
- * - `GET /` → `{ items, defaultId, lastUsedId, cloudAvailable }` (`cloudAvailable`: there is a
- *   current sandbox provider; ruling R4);
+ * - `GET /` → `{ items, defaultId, lastUsedId, cloudAvailable }` (`cloudAvailable`: some device
+ *   provider is on in the org; ruling R4);
  * - `POST / { name }` → 201 `{ device }`; `GET /:id` → `{ device }`;
  * - `PATCH /:id { name?, network? }` → `{ device }`: renames it and sets a cloud device's sandbox
  *   network (`{ mode: open | allowlist | none | null, hosts? }`, approval-only profiles design,

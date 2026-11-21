@@ -525,13 +525,11 @@ describe("Skill handler", () => {
               } as ConversationEvent as never),
       },
       sandbox: {
-        cloudAvailable: sandboxAvailable,
-        availableFor: async () => sandboxAvailable,
         withSandbox: async () => {
           throw new Error("sandbox must not be used");
         },
       },
-      devices: { forTool: async () => randomUUID() },
+      devices: { forTool: async () => randomUUID(), usableNow: async () => sandboxAvailable },
       attachments: {
         listForConversation: async () => [],
         openForConversation: async () => null,
@@ -628,8 +626,6 @@ describe("Skill handler", () => {
               }) as never,
       },
       sandbox: {
-        cloudAvailable: true,
-        availableFor: async () => true,
         withSandbox: async (_c, fn, sig) =>
           fn({ id: "e1", roots }, p as never, { fresh: false, restarted: false, roots }, sig),
       },

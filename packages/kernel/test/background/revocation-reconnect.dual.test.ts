@@ -32,7 +32,7 @@ import { createLogger } from "../../src/log.js";
 import { SandboxOperationIntents } from "../../src/sandbox/operation-intents.js";
 import { SandboxOperationReconcileJob } from "../../src/sandbox/operation-reconcile.job.js";
 import { PermissionCeilingWrites } from "../../src/sandbox/permission-ceiling-writes.js";
-import { SandboxProviders } from "../../src/sandbox/providers.js";
+import { DeviceProviders } from "../../src/sandbox/providers.js";
 import { SandboxService } from "../../src/sandbox/sandbox.service.js";
 import { runInBackgroundManaged } from "../../src/tools/builtins/sandbox/bash.js";
 import { truncateTables } from "../helpers/db.js";
@@ -374,7 +374,7 @@ async function fixture() {
   });
   for (const k of [a, b])
     k.app
-      .get(SandboxProviders)
+      .get(DeviceProviders)
       .register({ plugin: MANAGED_PROVIDER, version: "test-1", impl: stagedProviderOf(k) });
   const device = await stagedDevice(f.deviceId);
   // the kernel's instance and machine name the device's own roots
@@ -410,7 +410,7 @@ const reconcileJob = (k: TestKernel) =>
   new SandboxOperationReconcileJob(
     k.app.get(SandboxOperationIntents),
     k.app.get(KernelDb),
-    k.app.get(SandboxProviders),
+    k.app.get(DeviceProviders),
     k.app.get(SandboxService),
     k.app.get(BackgroundTaskStore),
     k.app.get(BackgroundTaskStopper),
@@ -736,7 +736,7 @@ describe("a staged request refused as not sent (B-5)", () => {
     const staged = stagedProviderOf(a);
     const start = staged.background?.start.bind(staged.background);
     if (!start) throw new Error("no staged start");
-    a.app.get(SandboxProviders).register({
+    a.app.get(DeviceProviders).register({
       plugin: MANAGED_PROVIDER,
       version: "test-1",
       impl: Object.assign(Object.create(null), staged, {

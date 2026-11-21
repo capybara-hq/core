@@ -31,13 +31,14 @@ import { MachinesService } from "../../src/local-devices/machines.js";
 import { SandboxOperationAuthority } from "../../src/sandbox/operation-authority.js";
 import { PermissionCeilingWrites } from "../../src/sandbox/permission-ceiling-writes.js";
 import { PermissionFacts } from "../../src/sandbox/permission-facts.js";
-import { SandboxProviders } from "../../src/sandbox/providers.js";
+import { DeviceProviders } from "../../src/sandbox/providers.js";
 import { SandboxService } from "../../src/sandbox/sandbox.service.js";
 import { legacyDbFor } from "../helpers/conversations.js";
 import { accountsFor } from "../helpers/identity.js";
 import { testMembers } from "../helpers/members.js";
 import {
   createOrg,
+  enableDeviceProviders,
   PW,
   type Req,
   runConfig,
@@ -124,6 +125,7 @@ beforeAll(async () => {
   ownerId = (await accountsFor(db).createLocal({ login: "owner", password: PW, displayName: "O" }))
     .id;
   orgId = await createOrg(await session(k, "owner"));
+  await enableDeviceProviders(k, orgId);
   url = `ws://127.0.0.1:${k.port}/device/connect`;
 });
 
@@ -755,7 +757,7 @@ describe("device projects", () => {
     };
     // a provider that can list and scan offers projects (the calls go through `browse` above)
     const impl = { list: browse.list, scan: browse.scan } as unknown as DeviceProvider;
-    const real = k.app.get(SandboxProviders);
+    const real = k.app.get(DeviceProviders);
     const service = new DeviceProjectsService(
       k.app.get(KernelDb),
       txHost,
@@ -774,8 +776,11 @@ describe("device projects", () => {
         k.app.get(KernelDb),
         k.app.get(KernelConfigService),
         {
-          cloud: () => ({ plugin: real.cloud()?.plugin as string, impl }),
-          forName: () => ({ plugin: real.cloud()?.plugin as string, impl }),
+          forDevice: () => ({
+            plugin: real.loaded()[0]?.plugin as string,
+            version: real.loaded()[0]?.version as string,
+            impl,
+          }),
         },
         k.app.get(DeviceAccess),
       ),
@@ -790,7 +795,7 @@ describe("device projects", () => {
       .values({
         device_id: id,
         org_id: orgId,
-        provider: real.cloud()?.plugin as string,
+        provider: real.loaded()[0]?.plugin as string,
         fs_handle: JSON.stringify({ id: `fs-${id}` }),
         fs_status: "ready",
         instance_limits: JSON.stringify({

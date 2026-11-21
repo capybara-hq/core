@@ -27,7 +27,7 @@ import {
   permissionConfigFingerprint,
 } from "../../src/sandbox/permission-config-publication.js";
 import { PermissionFacts } from "../../src/sandbox/permission-facts.js";
-import { SandboxProviders } from "../../src/sandbox/providers.js";
+import { DeviceProviders } from "../../src/sandbox/providers.js";
 import { seedCloudInstance } from "../helpers/installed-evidence.js";
 import { startKernel, type TestKernel } from "../helpers/runs.js";
 
@@ -197,7 +197,7 @@ function readers(cfg = config(), env: NodeJS.ProcessEnv = {}) {
   const facts = new PermissionFacts(
     db,
     service,
-    k.app.get(SandboxProviders),
+    k.app.get(DeviceProviders),
     k.app.get(DeviceAccess),
   );
   const publication = new PermissionConfigPublication(
@@ -270,7 +270,7 @@ async function consentFixture() {
       device_id: deviceId,
     })
     .execute();
-  k.app.get(SandboxProviders).register({
+  k.app.get(DeviceProviders).register({
     plugin: "@activation-test",
     version: "test",
     impl: {

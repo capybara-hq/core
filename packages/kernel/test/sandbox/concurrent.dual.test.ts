@@ -58,7 +58,7 @@ const replica = (impl: DeviceProvider, o: { ttlMs?: number } = {}) => {
   const s = sandboxServiceFor({
     db: kernelDb(pool),
     redis,
-    provider: () => ({ plugin: "device-fake", impl }),
+    providers: () => [{ plugin: "device-fake", version: "1.0.0", impl }],
     config: () => config,
     log,
     lockPollMs: 20,
@@ -101,8 +101,8 @@ beforeEach(async () => {
         VALUES (${id}, ${orgId}, ${agentId}, ${accountId})`.execute(raw);
     }
     envId = randomUUID();
-    await sql`INSERT INTO capybara.devices (id, org_id, owner_kind, owner_account_id, source)
-      VALUES (${envId}, ${orgId}, 'personal', ${accountId}, 'cloud')`.execute(raw);
+    await sql`INSERT INTO capybara.devices (id, org_id, owner_kind, owner_account_id, source, provider)
+      VALUES (${envId}, ${orgId}, 'personal', ${accountId}, 'cloud', 'device-fake')`.execute(raw);
   } finally {
     await raw.destroy();
   }

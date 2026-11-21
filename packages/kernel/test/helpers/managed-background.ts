@@ -19,7 +19,7 @@ import { ConversationDevices } from "../../src/devices/conversation-devices.js";
 import { KernelConfigService } from "../../src/infra/config/kernel-config.service.js";
 import type { ExecutionClaim } from "../../src/runtime/run-execution.js";
 import { operationIdFor } from "../../src/sandbox/operation-intents.js";
-import { SandboxProviders } from "../../src/sandbox/providers.js";
+import { DeviceProviders } from "../../src/sandbox/providers.js";
 import { SandboxService } from "../../src/sandbox/sandbox.service.js";
 import { runInBackgroundManaged } from "../../src/tools/builtins/sandbox/bash.js";
 import type { SandboxToolDeps } from "../../src/tools/builtins/sandbox/common.js";
@@ -320,7 +320,7 @@ export async function managedTaskFixture(opts: {
   const provider = opts.provider ?? managedOutputProvider();
   for (const kk of opts.kernels)
     kk.app
-      .get(SandboxProviders)
+      .get(DeviceProviders)
       .register({ plugin: MANAGED_PROVIDER, version: "test-1", impl: provider.impl });
   const deviceId = randomUUID();
   await db

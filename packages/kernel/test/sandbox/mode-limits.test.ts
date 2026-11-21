@@ -120,7 +120,7 @@ const service = (
   sandboxServiceFor({
     db,
     redis,
-    provider: () => ({ plugin: "device-fake", impl: p() }),
+    providers: () => [{ plugin: "device-fake", version: "1.0.0", impl: p() }],
     config: () => config,
     log,
     lockPollMs: 20,
@@ -309,7 +309,7 @@ describe("a changed mode on use", () => {
     const s = sandboxServiceFor({
       db,
       redis,
-      provider: () => ({ plugin: "device-fake", impl: provider }),
+      providers: () => [{ plugin: "device-fake", version: "1.0.0", impl: provider }],
       config: () => config,
       log,
       lockPollMs: 20,
@@ -664,7 +664,7 @@ describe("the lifecycle reconcile sweep (B-12)", () => {
     const s = sandboxServiceFor({
       db,
       redis,
-      provider: () => ({ plugin: "device-fake", impl: provider }),
+      providers: () => [{ plugin: "device-fake", version: "1.0.0", impl: provider }],
       config: () => config,
       log,
       lockPollMs: 20,

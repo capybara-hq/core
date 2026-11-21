@@ -46,7 +46,6 @@ describe("background poll per device provider", () => {
       new Proxy({}, { get: (_t, k) => async () => void finisherCalls.push(String(k)) }) as never,
       { publishChanged: async () => {} },
       {
-        cloudAvailable: false,
         availableFor: async (env: string) => env === "env-device",
         ifRunning: async (env: string) => {
           polled.push(env);

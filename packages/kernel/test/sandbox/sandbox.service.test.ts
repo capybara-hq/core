@@ -74,9 +74,9 @@ const service = (
   sandboxServiceFor({
     db,
     redis,
-    provider: () => {
+    providers: () => {
       const impl = p();
-      return impl ? { plugin, impl } : undefined;
+      return impl ? [{ plugin, version: "1.0.0", impl }] : [];
     },
     config: () => config,
     log,
@@ -196,12 +196,12 @@ const readIn = (s: SandboxService, name: string, env = envId) =>
   );
 
 describe("没有提供方", () => {
-  it("cloudAvailable 为 false；withSandbox 以 sandbox.unavailable（503）失败；扫描什么也不做", async () => {
+  it("the device is not available; withSandbox fails device.unavailable (503); the sweeps do nothing", async () => {
     const s = service(() => undefined);
-    expect(s.cloudAvailable).toBe(false);
+    expect(await s.availableFor(envId, orgId)).toBe(false);
     const err = await use(s).catch((e: unknown) => e);
     expect(err).toBeInstanceOf(ApiError);
-    expect((err as ApiError).code).toBe("sandbox.unavailable");
+    expect((err as ApiError).code).toBe("device.unavailable");
     expect((err as ApiError).status).toBe(503);
     expect(await s.suspendIdle(later(DAY))).toBe(0);
     expect(await s.destroyInactive(later(30 * DAY))).toBe(0);
@@ -267,7 +267,7 @@ describe("组织云网络设置（auto mode spec §4.3）", () => {
 describe("lazy creation", () => {
   it("the first use creates the file system, then the instance on it (name cap-device-<device>, no image by default, limits from config); later uses reuse them", async () => {
     const s = service();
-    expect(s.cloudAvailable).toBe(true);
+    expect(await s.availableFor(envId, orgId)).toBe(true);
     expect(await ops()).toEqual([]);
     const a = await use(s);
     expect(a.info).toEqual({ fresh: true, restarted: false, roots: DEFAULT_SANDBOX_ROOTS });
@@ -515,13 +515,18 @@ describe("the provider reports the instance gone", () => {
     expect(await row()).toMatchObject({ status: "running", handle: b.h, fs_status: "ready" });
   });
 
-  it("files kept by another provider than the current one: device.unavailable, nothing changes", async () => {
+  it("an instance row of another provider than the device's: device.unavailable, nothing changes", async () => {
+    await sql`UPDATE capybara.devices SET provider = 'sandbox-old' WHERE id = ${envId}`.execute(
+      raw,
+    );
     await use(service(() => provider, "sandbox-old"));
+    await sql`UPDATE capybara.devices SET provider = 'device-fake' WHERE id = ${envId}`.execute(
+      raw,
+    );
     const before = await row();
     const err = await use(service()).catch((e: unknown) => e);
     expect(err).toBeInstanceOf(ApiError);
     expect((err as ApiError).code).toBe("device.unavailable");
-    expect((err as ApiError).message).toContain("sandbox-old");
     expect(await row()).toMatchObject({
       provider: "sandbox-old",
       status: "running",
@@ -1214,71 +1219,48 @@ describe("leftovers of interrupted creates and of other providers (fix round 1)"
     expect(await row()).toBeUndefined();
   });
 
-  it("a device of another provider is destroyed with that provider while it is loaded; otherwise the deletion fails and the row stays for a retry", async () => {
+  it("a device is destroyed with its own provider while it is loaded, beside others; otherwise the deletion fails and the row stays for a retry", async () => {
     const oldRoot = await mkdtemp(join(tmpdir(), "cap-sandbox-old-"));
     const old = createFakeSandbox(oldRoot);
+    const bind = (id: string) =>
+      sql`UPDATE capybara.devices SET provider = 'sandbox-old' WHERE id = ${id}`.execute(raw);
+    await bind(envId);
     const a = await use(service(() => old, "sandbox-old"));
-    const s = service(undefined, undefined, {
-      lookup: (n) => (n === "sandbox-old" ? old : undefined),
+    const both = service(undefined, undefined, {
+      providers: () => [
+        { plugin: "device-fake", version: "1.0.0", impl: provider as DeviceProvider },
+        { plugin: "sandbox-old", version: "1.0.0", impl: old },
+      ],
     });
-    await s.destroyDevice(envId);
+    await both.destroyDevice(envId);
     expect(await fakeSandboxState(oldRoot, a.h.id)).toBeNull();
     expect(await fakeFileSystems(oldRoot)).toEqual([]);
+    expect(await ops()).toEqual([]);
     expect(await row()).toBeUndefined();
 
-    // the old provider is gone: its instance is recorded as leaked, the files cannot be deleted
+    // its provider is not loaded: nothing is destroyed, the row stays for a retry
     const e2 = await newDevice();
+    await bind(e2);
     const b = await use(
       service(() => old, "sandbox-old"),
       e2,
     );
-    warned.length = 0;
     await expect(service().destroyDevice(e2)).rejects.toThrow(/sandbox-old/);
     expect(await row(e2)).toMatchObject({ provider: "sandbox-old" });
-    expect(warned.some((w) => /another provider/.test(w))).toBe(true);
     expect(await fakeSandboxState(oldRoot, b.h.id)).toBe("running");
+    expect(await ops()).toEqual([]);
     await rm(oldRoot, { recursive: true, force: true });
   });
 });
 
-describe("provider switch during a create", () => {
-  const tiny: SandboxLimits = {
-    cpu: 1,
-    memoryMb: 1,
-    diskMb: 1,
-    network: { kind: "allowlist", hosts: [] },
-  };
-  const name = () => `cap-device-${envId}`;
-
-  it("a file system the previous provider made by name before it was recorded is destroyed when the current provider takes the device over", async () => {
-    const oldRoot = await mkdtemp(join(tmpdir(), "cap-sandbox-old-"));
-    const old = createFakeSandbox(oldRoot);
-    // the previous provider's create ended after createFileSystem, before the handle was written
-    await old.createFileSystem({
-      name: name(),
-      limits: tiny,
-      signal: signal(),
-    });
+describe("an instance row of another provider", () => {
+  it("is refused as device.unavailable: nothing is taken over, created or destroyed", async () => {
     await sql`INSERT INTO capybara.device_instances (device_id, org_id, provider, status)
       VALUES (${envId}, ${orgId}, 'sandbox-old', 'creating')`.execute(raw);
-    const s = service(undefined, undefined, {
-      lookup: (n) => (n === "sandbox-old" ? old : undefined),
-    });
-    const { info } = await use(s);
-    expect(info.fresh).toBe(true);
-    expect(await fakeFileSystems(oldRoot)).toEqual([]);
-    expect(await fakeFileSystems(root)).toHaveLength(1);
-    expect(await row()).toMatchObject({ provider: "device-fake", fs_status: "ready" });
-    await rm(oldRoot, { recursive: true, force: true });
-  });
-
-  it("with the previous provider not loaded the takeover only warns that its file system may leak", async () => {
-    await sql`INSERT INTO capybara.device_instances (device_id, org_id, provider, status)
-      VALUES (${envId}, ${orgId}, 'sandbox-old', 'creating')`.execute(raw);
-    const { info } = await use(service());
-    expect(info.fresh).toBe(true);
-    expect(warned.some((w) => /may leak/.test(w))).toBe(true);
-    expect(await row()).toMatchObject({ provider: "device-fake", fs_status: "ready" });
+    await expect(use(service())).rejects.toMatchObject({ code: "device.unavailable" });
+    expect(await ops()).toEqual([]);
+    expect(await fakeFileSystems(root)).toEqual([]);
+    expect(await row()).toMatchObject({ provider: "sandbox-old", status: "creating" });
   });
 });
 

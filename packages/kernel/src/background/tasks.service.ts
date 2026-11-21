@@ -325,7 +325,7 @@ export class BackgroundTasks {
         reason: task.status === "running" ? "starting" : "not_started",
       };
     }
-    if (!(await this.sandbox.availableFor(task.deviceId))) {
+    if (!(await this.sandbox.availableFor(task.deviceId, orgId))) {
       return { kind: "unavailable", reason: "unavailable" };
     }
     if (!(await this.deviceUsable(orgId, task.conversationId))) {

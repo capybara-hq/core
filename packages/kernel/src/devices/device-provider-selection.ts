@@ -42,8 +42,14 @@ export class DeviceProviderSelection {
     return out;
   }
 
-  /** Whether the extension `plugin` serves `orgId` now. */
+  /**
+   * Whether the provider `plugin` (a device's `devices.provider`) serves `orgId` now: an extension
+   * that {@link onInOrg} lists; a kernel-internal provider (`@local`) is no catalog item and has
+   * no org switch, so for it "on in the org" means registered in this process (until phase 2 of
+   * the device-provider plan moves local devices into the `device-local` plugin).
+   */
   async isOnInOrg(orgId: string, plugin: string): Promise<boolean> {
+    if (isInternalProvider(plugin)) return this.providers.forDevice(plugin) !== undefined;
     return (await this.onInOrg(orgId)).some((e) => e.plugin === plugin);
   }
 

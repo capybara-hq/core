@@ -8,6 +8,7 @@ import { DeviceAccess } from "./access.js";
 import { DeviceAccessModule } from "./access.module.js";
 import { ConversationDevices } from "./conversation-devices.js";
 import { DeviceProjectsService } from "./device-projects.service.js";
+import { DeviceProviderSelectionModule } from "./device-provider-selection.module.js";
 import { DevicesService } from "./devices.service.js";
 
 /**
@@ -17,13 +18,14 @@ import { DevicesService } from "./devices.service.js";
  * {@link SandboxModule}'s.
  */
 @Module({
-  // ExtensionsModule: the provider display names of demoted defaults; LocalDevicesModule: deleting
+  // ExtensionsModule: the provider display names; LocalDevicesModule: deleting
   // a local device revokes its machine
   imports: [
     SandboxModule,
     ExtensionsModule,
     LocalDevicesModule,
     DeviceAccessModule,
+    DeviceProviderSelectionModule,
     PermissionFactsModule,
   ],
   // SandboxFileReader lives here, not in SandboxModule: it needs ConversationDevices, and this

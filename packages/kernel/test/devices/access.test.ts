@@ -6,11 +6,12 @@ import { fileURLToPath } from "node:url";
 import { startTestPostgres, startTestRedis, type TestContainer } from "@capybara-hq/testing";
 import type { Redis } from "ioredis";
 import { sql } from "kysely";
-import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
+import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import type { KernelSchemaDb } from "../../src/db/kernel-schema.js";
 import { createDb } from "../../src/db/pool.js";
 import { DeviceAccess } from "../../src/devices/access.js";
 import { ConversationDevices } from "../../src/devices/conversation-devices.js";
+import type { DeviceProviderSelection } from "../../src/devices/device-provider-selection.js";
 import { DevicesService, type DeviceView } from "../../src/devices/devices.service.js";
 import type { ApiError } from "../../src/errors.js";
 import { KernelConfigService } from "../../src/infra/config/kernel-config.service.js";
@@ -21,16 +22,16 @@ import { deviceLeaseKey } from "../../src/local-devices/keys.js";
 import { PermissionCeilingWrites } from "../../src/sandbox/permission-ceiling-writes.js";
 import { PermissionFacts } from "../../src/sandbox/permission-facts.js";
 import {
+  type DeviceProviderEntry,
+  DeviceProviders,
   LOCAL_PROVIDER,
-  type SandboxProviderEntry,
-  SandboxProviders,
 } from "../../src/sandbox/providers.js";
 import { createFakeSandbox } from "../fixtures/plugins/device-fake/index.js";
 import { legacyDbFor } from "../helpers/conversations.js";
 import { accountsFor } from "../helpers/identity.js";
 import { testMembers } from "../helpers/members.js";
 import {
-  createOrg,
+  createOrgWithProviders,
   PW,
   type Req,
   runConfig,
@@ -40,8 +41,9 @@ import {
 } from "../helpers/runs.js";
 
 /**
- * Who may use a device ({@link DeviceAccess}) and the default device
- * ({@link DevicesService.ensureDefault}), on a kernel with the fake sandbox.
+ * Who may use a device ({@link DeviceAccess}: the owner, while the device's own provider is on in
+ * its org) and the default device ({@link DevicesService.ensureDefault}: never demoted), on a
+ * kernel with the fake device provider on in the org as its default provider.
  */
 
 const fixture = (name: string) =>
@@ -75,7 +77,7 @@ beforeAll(async () => {
   ownerId = (await accountsFor(db).createLocal({ login: "owner", password: PW, displayName: "O" }))
     .id;
   owner = await session(k, "owner");
-  orgId = await createOrg(owner);
+  orgId = await createOrgWithProviders(k, owner);
 });
 
 afterAll(async () => {
@@ -84,6 +86,34 @@ afterAll(async () => {
   await Promise.all([pgc?.stop(), rd?.stop()]);
   if (root) await rm(root, { recursive: true, force: true });
 });
+
+const setEnabled = (plugin: string, enabled: boolean) =>
+  sql`UPDATE capybara.extension_org_configs SET enabled = ${enabled}
+    WHERE plugin = ${plugin} AND org_id = ${orgId}`.execute(raw);
+
+/** A member of the org with a fresh login. */
+async function newMember(prefix: string): Promise<{ id: string; req: Req }> {
+  const login = `${prefix}-${randomUUID().slice(0, 8)}`;
+  const id = (await accountsFor(db).createLocal({ login, password: PW, displayName: login })).id;
+  await testMembers(db).add(orgId, id, "member", ownerId);
+  return { id, req: await session(k, login) };
+}
+
+/** A DeviceProviderSelection stub: `on` lists the providers on in every org. */
+const selectionOf = (
+  on: string[],
+  defaultProvider?: string,
+): Pick<DeviceProviderSelection, "onInOrg" | "isOnInOrg" | "defaultFor"> => {
+  const entry = (plugin: string) => ({ plugin, version: "1.0.0", impl: {} as never });
+  return {
+    onInOrg: async () => on.filter((p) => p !== LOCAL_PROVIDER).map(entry),
+    isOnInOrg: async (_org, plugin) => on.includes(plugin),
+    defaultFor: async () =>
+      defaultProvider !== undefined && on.includes(defaultProvider)
+        ? entry(defaultProvider)
+        : undefined,
+  };
+};
 
 const codeOf = (p: Promise<unknown>) =>
   p.then(
@@ -132,7 +162,7 @@ describe("device access", () => {
 
   it("usable only by the owner in the device's org", async () => {
     const access = k.app.get(DeviceAccess);
-    const id = await k.app.get(DevicesService).ensureDefault(orgId, ownerId);
+    const id = (await k.app.get(DevicesService).ensureDefault(orgId, ownerId)) as string;
     expect(await access.usable(orgId, ownerId, id)).toEqual({ id, provider: "device-fake" });
     expect(await codeOf(access.usable(orgId, randomUUID(), id))).toBe("device.not_found");
     expect(await codeOf(access.usable(randomUUID(), ownerId, id))).toBe("device.not_found");
@@ -141,381 +171,117 @@ describe("device access", () => {
     expect(await codeOf(access.usable(orgId, ownerId, id))).toBe("device.not_found");
   });
 
-  it("unavailable when the provider changed", async () => {
+  it("a device is bound to its provider: off in the org it is unavailable, files kept, nothing demoted", async () => {
     const access = k.app.get(DeviceAccess);
-    const id = await k.app.get(DevicesService).ensureDefault(orgId, ownerId);
-    // created under another provider, never used: the current provider takes it over
+    const service = k.app.get(DevicesService);
+    const me = await newMember("off");
+    const id = (await service.ensureDefault(orgId, me.id)) as string;
+    await sql`INSERT INTO capybara.device_instances
+        (device_id, org_id, provider, fs_handle, fs_status)
+      VALUES (${id}, ${orgId}, 'device-fake', '{"id":"fs-off"}'::jsonb, 'ready')`.execute(raw);
+    await setEnabled("device-fake", false);
+    try {
+      const err = await access.usable(orgId, me.id, id).catch((e: unknown) => e as ApiError);
+      expect(err).toMatchObject({
+        code: "device.unavailable",
+        status: 503,
+        message:
+          "This device's provider device-fake is off in this organization or not installed; its files are kept, and the device works again once an org admin switches the provider back on",
+      });
+      // the default stays the default (never demoted or replaced), shown unavailable
+      expect(await service.ensureDefault(orgId, me.id)).toBe(id);
+      const res = await me.req({ method: "GET", url: `/api/v1/orgs/${orgId}/devices` });
+      expect(res.statusCode, res.body).toBe(200);
+      const body = res.json() as { items: DeviceView[]; defaultId: string };
+      expect(body.defaultId).toBe(id);
+      expect(body.items).toHaveLength(1);
+      expect(body.items[0]).toMatchObject({
+        id,
+        isDefault: true,
+        provider: "device-fake",
+        available: false,
+        demotedFrom: null,
+      });
+      const reset = await me.req({
+        method: "POST",
+        url: `/api/v1/orgs/${orgId}/devices/${id}/files/reset`,
+      });
+      expect(reset.statusCode).toBe(503);
+      expect((reset.json() as { error: { code: string } }).error.code).toBe("device.unavailable");
+      // its files and instance row are kept as they were
+      const kept = await db
+        .selectFrom("device_instances")
+        .select(["provider", "fs_status"])
+        .where("device_id", "=", id)
+        .executeTakeFirstOrThrow();
+      expect(kept).toEqual({ provider: "device-fake", fs_status: "ready" });
+    } finally {
+      await setEnabled("device-fake", true);
+    }
+    // switched back on: usable again, the same device
+    expect(await access.usable(orgId, me.id, id)).toEqual({ id, provider: "device-fake" });
+  });
+
+  it("a device of a provider that is not installed is unavailable, never taken over by a loaded one", async () => {
+    const access = k.app.get(DeviceAccess);
+    const me = await newMember("gone");
+    const id = (await k.app.get(DevicesService).ensureDefault(orgId, me.id)) as string;
+    // never used: still bound to its own provider, not moved to device-fake
     await sql`UPDATE capybara.devices SET provider = 'sandbox-old' WHERE id = ${id}`.execute(raw);
-    expect(await access.usable(orgId, ownerId, id)).toEqual({ id, provider: "device-fake" });
-    // files kept by the old provider: unusable until it is back
+    const err = await access.usable(orgId, me.id, id).catch((e: unknown) => e as ApiError);
+    expect(err).toMatchObject({ code: "device.unavailable", status: 503 });
+    expect((err as ApiError).message).toContain("sandbox-old");
+    expect((await k.app.get(DevicesService).get(orgId, me.id, id)).available).toBe(false);
+    expect(await k.app.get(DevicesService).ensureDefault(orgId, me.id)).toBe(id);
+  });
+
+  it("an instance row of another provider, or no provider, reads as unavailable", async () => {
+    const access = k.app.get(DeviceAccess);
+    const me = await newMember("odd");
+    const id = (await k.app.get(DevicesService).ensureDefault(orgId, me.id)) as string;
     await sql`INSERT INTO capybara.device_instances
         (device_id, org_id, provider, fs_handle, fs_status)
       VALUES (${id}, ${orgId}, 'sandbox-old', '{"id":"fs-old"}'::jsonb, 'ready')`.execute(raw);
-    const err = await access.usable(orgId, ownerId, id).catch((e: unknown) => e as ApiError);
-    expect(err).toMatchObject({ code: "device.unavailable", status: 503 });
-    expect((err as ApiError).message).toContain("sandbox-old");
-
-    const res = await owner({ method: "GET", url: `/api/v1/orgs/${orgId}/devices/${id}` });
-    expect(res.statusCode).toBe(200);
-    expect((res.json() as { device: DeviceView }).device).toMatchObject({
-      provider: "sandbox-old",
-      available: false,
+    expect(await codeOf(access.usable(orgId, me.id, id))).toBe("device.unavailable");
+    expect((await k.app.get(DevicesService).get(orgId, me.id, id)).available).toBe(false);
+    await sql`DELETE FROM capybara.device_instances WHERE device_id = ${id}`.execute(raw);
+    await sql`UPDATE capybara.devices SET provider = NULL WHERE id = ${id}`.execute(raw);
+    const err = await access.usable(orgId, me.id, id).catch((e: unknown) => e as ApiError);
+    expect(err).toMatchObject({
+      code: "device.unavailable",
+      message: "This device has no provider; delete it and create a new one",
     });
-    const reset = await owner({
-      method: "POST",
-      url: `/api/v1/orgs/${orgId}/devices/${id}/files/reset`,
-    });
-    expect(reset.statusCode).toBe(503);
-    expect((reset.json() as { error: { code: string } }).error.code).toBe("device.unavailable");
   });
 
-  it("a default stranded by a provider switch is demoted and replaced", async () => {
-    const service = k.app.get(DevicesService);
-    const login = `sw-${randomUUID().slice(0, 8)}`;
-    const me = (await accountsFor(db).createLocal({ login, password: PW, displayName: login })).id;
-    await testMembers(db).add(orgId, me, "member", ownerId);
-    const req = await session(k, login);
-    const oldId = await service.ensureDefault(orgId, me);
-    // its files are kept by the old provider; the deployment now runs device-fake
-    await sql`INSERT INTO capybara.device_instances
-        (device_id, org_id, provider, fs_handle, fs_status)
-      VALUES (${oldId}, ${orgId}, 'sandbox-old', '{"id":"fs-old"}'::jsonb, 'ready')`.execute(raw);
-    // a person-made device named like the old generated name is left alone
-    await sql`INSERT INTO capybara.devices
-        (id, org_id, owner_kind, owner_account_id, name, source, provider)
-      VALUES (${randomUUID()}, ${orgId}, 'personal', ${me}, 'Personal (sandbox-old)', 'cloud',
-        'device-fake')`.execute(raw);
-
-    const ids = await Promise.all(
-      Array.from({ length: 8 }, () => service.ensureDefault(orgId, me)),
-    );
-    expect(new Set(ids).size).toBe(1);
-    const freshId = ids[0] as string;
-    expect(freshId).not.toBe(oldId);
-
-    const res = await req({ method: "GET", url: `/api/v1/orgs/${orgId}/devices` });
-    expect(res.statusCode, res.body).toBe(200);
-    const body = res.json() as { items: DeviceView[]; defaultId: string };
-    expect(body.defaultId).toBe(freshId);
-    expect(body.items.find((e) => e.id === freshId)).toMatchObject({
-      isDefault: true,
-      name: null,
-      available: true,
-    });
-    expect(body.items.find((e) => e.id === oldId)).toMatchObject({
-      isDefault: false,
-      name: null,
-      demotedFrom: { provider: "sandbox-old", displayName: null, ordinal: 1 },
-      provider: "sandbox-old",
-      available: false,
-    });
-    expect(body.items.find((e) => e.name === "Personal (sandbox-old)")).toMatchObject({
-      demotedFrom: null,
-    });
-    // a new conversation without a choice gets the fresh default
-    expect(await k.app.get(ConversationDevices).forNew(orgId, me)).toBe(freshId);
-    // the demoted one can still be deleted
-    const del = await req({
-      method: "DELETE",
-      url: `/api/v1/orgs/${orgId}/devices/${oldId}`,
-    });
-    expect(del.statusCode, del.body).toBe(202);
-  });
-
-  it("a default that never got resources is not stranded", async () => {
-    const service = k.app.get(DevicesService);
-    const login = `nr-${randomUUID().slice(0, 8)}`;
-    const me = (await accountsFor(db).createLocal({ login, password: PW, displayName: login })).id;
-    await testMembers(db).add(orgId, me, "member", ownerId);
-    const id = await service.ensureDefault(orgId, me);
-    await sql`UPDATE capybara.devices SET provider = 'sandbox-old' WHERE id = ${id}`.execute(raw);
-    expect(await service.ensureDefault(orgId, me)).toBe(id);
-  });
-
-  it("switching the provider back restores the demoted default instead of making another", async () => {
-    const service = k.app.get(DevicesService);
-    const providers = k.app.get(SandboxProviders);
-    const login = `rs-${randomUUID().slice(0, 8)}`;
-    const me = (await accountsFor(db).createLocal({ login, password: PW, displayName: login })).id;
-    await testMembers(db).add(orgId, me, "member", ownerId);
-    const req = await session(k, login);
-    const realCurrent = providers.cloud.bind(providers);
-    const switchTo = (plugin: string | null) => {
-      vi.restoreAllMocks();
-      if (plugin === null) return;
-      const impl = realCurrent()?.impl;
-      if (!impl) throw new Error("no current provider");
-      vi.spyOn(providers, "cloud").mockReturnValue({ plugin, impl });
-    };
-    const rows = () =>
-      db
-        .selectFrom("devices")
-        .select(["id", "name", "is_default", "demoted_from_provider"])
-        .where("org_id", "=", orgId)
-        .where("owner_account_id", "=", me)
-        .where("deleted_at", "is", null)
-        .orderBy("created_at")
-        .orderBy("id")
-        .execute();
-
-    // P1 (device-fake): the default, whose files the provider keeps
-    const d1 = await service.ensureDefault(orgId, me);
-    await sql`INSERT INTO capybara.device_instances
-        (device_id, org_id, provider, fs_handle, fs_status)
-      VALUES (${d1}, ${orgId}, 'device-fake', '{"id":"fs-d1"}'::jsonb, 'ready')`.execute(raw);
-    // a person-made device named like a demoted default, with files at P1: never restored
-    const named = await service.create(orgId, me, { name: "Personal (device-fake)" });
-    await sql`INSERT INTO capybara.device_instances
-        (device_id, org_id, provider, fs_handle, fs_status)
-      VALUES (${named.id}, ${orgId}, 'device-fake', '{"id":"fs-n"}'::jsonb, 'ready')`.execute(raw);
-
+  it("no default provider on in the org: no default device is made, the list still answers", async () => {
+    const me = await newMember("nodef");
+    await sql`UPDATE capybara.orgs SET settings = settings - 'deviceDefaultProvider'
+      WHERE id = ${orgId}`.execute(raw);
     try {
-      // P1 -> P2: d1 is demoted (marker, no name), a fresh default d2 is made
-      switchTo("sandbox-other");
-      const d2 = await service.ensureDefault(orgId, me);
-      expect(d2).not.toBe(d1);
-      expect(await rows()).toEqual([
-        { id: d1, name: null, is_default: false, demoted_from_provider: "device-fake" },
-        {
-          id: named.id,
-          name: "Personal (device-fake)",
-          is_default: false,
-          demoted_from_provider: null,
-        },
-        { id: d2, name: null, is_default: true, demoted_from_provider: null },
-      ]);
-
-      // P2 -> P1: d1 comes back (same row, same files), d2 is demoted; no new row
-      switchTo(null);
-      const back = await Promise.all(
-        Array.from({ length: 8 }, () => service.ensureDefault(orgId, me)),
-      );
-      expect(new Set(back)).toEqual(new Set([d1]));
-      expect(await rows()).toEqual([
-        { id: d1, name: null, is_default: true, demoted_from_provider: null },
-        {
-          id: named.id,
-          name: "Personal (device-fake)",
-          is_default: false,
-          demoted_from_provider: null,
-        },
-        { id: d2, name: null, is_default: false, demoted_from_provider: "sandbox-other" },
-      ]);
-      const fs = await db
-        .selectFrom("device_instances")
-        .select("fs_handle")
-        .where("device_id", "=", d1)
-        .executeTakeFirstOrThrow();
-      expect(fs.fs_handle).toEqual({ id: "fs-d1" });
-
-      const res = await req({ method: "GET", url: `/api/v1/orgs/${orgId}/devices` });
+      expect(await k.app.get(DevicesService).ensureDefault(orgId, me.id)).toBeNull();
+      const res = await me.req({ method: "GET", url: `/api/v1/orgs/${orgId}/devices` });
       expect(res.statusCode, res.body).toBe(200);
-      const body = res.json() as { items: DeviceView[]; defaultId: string };
-      expect(body.defaultId).toBe(d1);
-      expect(body.items.find((e) => e.id === d1)).toMatchObject({
-        isDefault: true,
-        name: null,
-        demotedFrom: null,
-        available: true,
-      });
-      expect(body.items.find((e) => e.id === d2)).toMatchObject({
-        isDefault: false,
-        name: null,
-        demotedFrom: { provider: "sandbox-other", ordinal: 1 },
-      });
-
-      // and again: back and forth swaps the two rows, never adds one
-      switchTo("sandbox-other");
-      expect(await service.ensureDefault(orgId, me)).toBe(d2);
-      switchTo(null);
-      expect(await service.ensureDefault(orgId, me)).toBe(d1);
-      expect((await rows()).length).toBe(3);
-
-      // renaming a demoted default takes it over: it is no longer restorable
-      await service.rename(orgId, me, d2, "Old E2B box");
-      expect((await rows()).find((r) => r.id === d2)).toMatchObject({
-        name: "Old E2B box",
-        demoted_from_provider: null,
-      });
-      switchTo("sandbox-other");
-      const d3 = await service.ensureDefault(orgId, me);
-      expect([d1, d2, named.id]).not.toContain(d3);
+      expect(res.json()).toMatchObject({ items: [], defaultId: null, cloudAvailable: true });
+      expect(await k.app.get(ConversationDevices).forNew(orgId, me.id)).toBeNull();
     } finally {
-      vi.restoreAllMocks();
+      await sql`UPDATE capybara.orgs
+        SET settings = settings || '{"deviceDefaultProvider":"device-fake"}'::jsonb
+        WHERE id = ${orgId}`.execute(raw);
     }
-  });
-
-  it("a swap committed between the unlocked reads never returns the demoted default", async () => {
-    const service = k.app.get(DevicesService);
-    const providers = k.app.get(SandboxProviders);
-    const login = `sw-${randomUUID().slice(0, 8)}`;
-    const me = (await accountsFor(db).createLocal({ login, password: PW, displayName: login })).id;
-    await testMembers(db).add(orgId, me, "member", ownerId);
-    const realCurrent = providers.cloud.bind(providers);
-    // d1 holds files at device-fake; switching away and back leaves an empty live default d2
-    const d1 = await service.ensureDefault(orgId, me);
-    await sql`INSERT INTO capybara.device_instances
-        (device_id, org_id, provider, fs_handle, fs_status)
-      VALUES (${d1}, ${orgId}, 'device-fake', '{"id":"fs-sw"}'::jsonb, 'ready')`.execute(raw);
-    try {
-      const impl = realCurrent()?.impl;
-      if (!impl) throw new Error("no current provider");
-      vi.spyOn(providers, "cloud").mockReturnValue({ plugin: "sandbox-other", impl });
-      const d2 = await service.ensureDefault(orgId, me);
-      expect(d2).not.toBe(d1);
-      vi.restoreAllMocks();
-
-      // The caller reads the live default (d2), then another caller commits the swap back to d1
-      // before this one reads the former defaults: it must not answer with the demoted d2.
-      const reads = service as unknown as {
-        formerDefaults(o: string, a: string, p: string, lock?: boolean): Promise<unknown>;
-      };
-      const formerDefaults = reads.formerDefaults.bind(service);
-      let raced = false;
-      vi.spyOn(reads, "formerDefaults").mockImplementation(async (o, a, p, lock) => {
-        if (!lock && !raced) {
-          raced = true;
-          expect(await service.ensureDefault(orgId, me)).toBe(d1);
-        }
-        return formerDefaults(o, a, p, lock);
-      });
-      expect(await service.ensureDefault(orgId, me)).toBe(d1);
-      expect(raced).toBe(true);
-    } finally {
-      vi.restoreAllMocks();
-    }
-  });
-
-  describe("which former default replaces the live one", () => {
-    const member = async (prefix: string) => {
-      const login = `${prefix}-${randomUUID().slice(0, 8)}`;
-      const me = (await accountsFor(db).createLocal({ login, password: PW, displayName: login }))
-        .id;
-      await testMembers(db).add(orgId, me, "member", ownerId);
-      return me;
-    };
-    const switcher = () => {
-      const providers = k.app.get(SandboxProviders);
-      const realCurrent = providers.cloud.bind(providers);
-      return (plugin: string | null) => {
-        vi.restoreAllMocks();
-        if (plugin === null) return;
-        const impl = realCurrent()?.impl;
-        if (!impl) throw new Error("no current provider");
-        vi.spyOn(providers, "cloud").mockReturnValue({ plugin, impl });
-      };
-    };
-    /** An instance row; `usedDaysAgo` sets last_used_at. */
-    const instance = async (
-      id: string,
-      provider: string,
-      fs: "none" | "ready" | "lost",
-      opts: { status?: string; usedDaysAgo?: number } = {},
-    ) => {
-      const handle = fs === "none" ? null : JSON.stringify({ id: `fs-${id.slice(0, 8)}` });
-      await sql`INSERT INTO capybara.device_instances
-          (device_id, org_id, provider, fs_handle, fs_status, status, last_used_at)
-        VALUES (${id}, ${orgId}, ${provider}, ${handle}::jsonb, ${fs}, ${opts.status ?? "none"},
-          now() - make_interval(days => ${opts.usedDaysAgo ?? 0}))`.execute(raw);
-    };
-    /** A former default of `me` demoted from `from`. */
-    const former = async (me: string, from: string) => {
-      const id = randomUUID();
-      await sql`INSERT INTO capybara.devices
-          (id, org_id, owner_kind, owner_account_id, name, is_default, source, provider,
-           demoted_from_provider)
-        VALUES (${id}, ${orgId}, 'personal', ${me}, NULL, false, 'cloud', ${from}, ${from})`.execute(
-        raw,
-      );
-      return id;
-    };
-    const liveCount = async (me: string) =>
-      (
-        await db
-          .selectFrom("devices")
-          .select("id")
-          .where("org_id", "=", orgId)
-          .where("owner_account_id", "=", me)
-          .where("deleted_at", "is", null)
-          .execute()
-      ).length;
-
-    it("a former default swapped out while empty and used later belongs to the provider holding its files", async () => {
-      const service = k.app.get(DevicesService);
-      const me = await member("ru");
-      const switchTo = switcher();
-      try {
-        // P (device-fake): L holds files at P
-        const l = await service.ensureDefault(orgId, me);
-        await instance(l, "device-fake", "ready", { usedDaysAgo: 2 });
-        // P -> Q: L demoted (marker P), D made under Q; D gets no files
-        switchTo("sandbox-other");
-        const d = await service.ensureDefault(orgId, me);
-        expect(d).not.toBe(l);
-        // Q -> P: the empty swap restores L and demotes D (marker Q)
-        switchTo(null);
-        expect(await service.ensureDefault(orgId, me)).toBe(l);
-        // a conversation bound to D then makes D's files at P
-        await instance(d, "device-fake", "ready");
-        expect((await service.get(orgId, me, d)).demotedFrom).toMatchObject({
-          provider: "device-fake",
-          ordinal: 1,
-        });
-        // P -> Q: L is stranded; D's files are at P, so it is not Q's former default
-        switchTo("sandbox-other");
-        const e = await service.ensureDefault(orgId, me);
-        expect([l, d]).not.toContain(e);
-        // Q -> P: D (files at P, the most recently used) is restored, nothing is added
-        switchTo(null);
-        expect(await service.ensureDefault(orgId, me)).toBe(d);
-        expect(await liveCount(me)).toBe(3);
-      } finally {
-        vi.restoreAllMocks();
-      }
-    });
-
-    it("never swaps away a live default whose first instance is being created", async () => {
-      const service = k.app.get(DevicesService);
-      const me = await member("rc");
-      const d = await service.ensureDefault(orgId, me);
-      // SandboxService's first use: status creating, no file system, no handle yet
-      await instance(d, "device-fake", "none", { status: "creating" });
-      const l = await former(me, "device-fake");
-      await instance(l, "device-fake", "ready");
-      expect(await service.ensureDefault(orgId, me)).toBe(d);
-    });
-
-    it("lost files count as none when picking the default", async () => {
-      const service = k.app.get(DevicesService);
-      const me = await member("rl");
-      const d = await service.ensureDefault(orgId, me);
-      const lost = await former(me, "device-fake");
-      await instance(lost, "device-fake", "lost");
-      // a lost former default does not win over the healthy empty live default
-      expect(await service.ensureDefault(orgId, me)).toBe(d);
-      // nor over a former default with healthy files, even when used more recently
-      const healthy = await former(me, "device-fake");
-      await instance(healthy, "device-fake", "ready", { usedDaysAgo: 3 });
-      expect(await service.ensureDefault(orgId, me)).toBe(healthy);
-    });
   });
 });
 
 describe("local devices", () => {
   /** A member of the org with a fresh login (their own devices only). */
-  async function member(): Promise<{ id: string; req: Req }> {
-    const login = `dv-${randomUUID().slice(0, 8)}`;
-    const id = (await accountsFor(db).createLocal({ login, password: PW, displayName: login })).id;
-    await testMembers(db).add(orgId, id, "member", ownerId);
-    return { id, req: await session(k, login) };
-  }
-  const deviceEntry = (): SandboxProviderEntry => ({
+  const member = () => newMember("dv");
+  const deviceEntry = (): DeviceProviderEntry => ({
     plugin: LOCAL_PROVIDER,
+    version: "1.0.0",
     impl: createFakeSandbox(join(root, "device")),
   });
   // the kernel serves @local for every test here (LocalDevicesModule does this on init, Task 4)
   beforeAll(() => {
-    k.app.get(SandboxProviders).register(deviceEntry());
+    k.app.get(DeviceProviders).register(deviceEntry());
   });
 
   it("createLocal records source device on @local, counted against maxPersonal", async () => {
@@ -541,19 +307,23 @@ describe("local devices", () => {
     );
   });
 
-  it("usable while @local is registered, whatever the cloud provider; never someone else's", async () => {
+  it("usable while @local is registered, whatever extension providers are on; never someone else's", async () => {
     const service = k.app.get(DevicesService);
     const access = k.app.get(DeviceAccess);
     const me = await member();
     const { id } = await service.createLocal(orgId, me.id, "box");
-    // a kernel that does not serve @local (the cloud provider is still there)
-    const unserved = new DeviceAccess(k.app.get(KernelDb), {
-      cloud: () => k.app.get(SandboxProviders).cloud(),
-      forName: () => undefined,
-    });
+    // a kernel that does not serve @local (device-fake is still on)
+    const unserved = new DeviceAccess(k.app.get(KernelDb), selectionOf(["device-fake"]));
     const err = await unserved.usable(orgId, me.id, id).catch((e: unknown) => e as ApiError);
     expect(err).toMatchObject({ code: "device.unavailable" });
-    expect((err as ApiError).message).toContain("connected machine");
+    expect((err as ApiError).message).toContain("@local");
+    // device-fake switched off in the org changes nothing for it
+    await setEnabled("device-fake", false);
+    try {
+      expect(await access.usable(orgId, me.id, id)).toEqual({ id, provider: "@local" });
+    } finally {
+      await setEnabled("device-fake", true);
+    }
     expect(await access.usable(orgId, me.id, id)).toEqual({ id, provider: "@local" });
     expect(await codeOf(access.usable(orgId, ownerId, id))).toBe("device.not_found");
   });
@@ -613,22 +383,24 @@ describe("local devices", () => {
     expect((await list()).items.find((e) => e.id === id)?.online).toBe(false);
   });
 
-  it("a conversation bound to a local device needs no cloud provider", async () => {
+  it("a conversation bound to a local device needs no extension provider on", async () => {
     const me = await member();
     const { id } = await k.app.get(DevicesService).createLocal(orgId, me.id, "rig");
     const kdb = k.app.get(KernelDb);
-    const noCloud = { cloud: () => undefined };
-    const entry = deviceEntry();
-    const access = new DeviceAccess(kdb, {
-      ...noCloud,
-      forName: (n: string) => (n === LOCAL_PROVIDER ? entry : undefined),
-    });
+    const localOnly = selectionOf([LOCAL_PROVIDER]);
+    const access = new DeviceAccess(kdb, localOnly);
+    const real = k.app.get(DevicesService);
     const conversations = new ConversationDevices(
       kdb,
       k.app.get(TransactionHost),
-      noCloud,
+      localOnly,
       access,
-      k.app.get(DevicesService),
+      // no default provider: no default device can be made
+      {
+        ensureDefault: async () => null,
+        modeLevel: real.modeLevel.bind(real),
+        projectReach: real.projectReach.bind(real),
+      },
       k.app.get(PermissionFacts),
       k.app.get(PermissionCeilingWrites),
     );
@@ -644,7 +416,7 @@ describe("local devices", () => {
     expect(await codeOf(conversations.forTool(orgId, unbound))).toBe("sandbox.unavailable");
     expect(await conversations.forNew(orgId, me.id, { deviceId: id })).toBe(id);
     expect(await conversations.forNew(orgId, me.id)).toBeNull();
-    // an IM default on the local device still applies without a cloud provider
+    // an IM default on the local device still applies without any extension provider
     await sql`INSERT INTO capybara.device_defaults (org_id, account_id, device_id)
       VALUES (${orgId}, ${me.id}, ${id})`.execute(raw);
     expect(await conversations.forNew(orgId, me.id, { im: true })).toBe(id);
@@ -654,23 +426,19 @@ describe("local devices", () => {
     const me = await member();
     const { id } = await k.app.get(DevicesService).createLocal(orgId, me.id, "rig-2");
     const kdb = k.app.get(KernelDb);
-    const entry = deviceEntry();
-    const make = (providers: ConstructorParameters<typeof ConversationDevices>[2]) =>
+    const make = (selection: ReturnType<typeof selectionOf>) =>
       new ConversationDevices(
         kdb,
         k.app.get(TransactionHost),
-        providers,
-        new DeviceAccess(kdb, { cloud: () => undefined, forName: () => entry }),
+        selection,
+        new DeviceAccess(kdb, selection),
         k.app.get(DevicesService),
         k.app.get(PermissionFacts),
         k.app.get(PermissionCeilingWrites),
       );
-    const registered = make({
-      cloud: () => undefined,
-      forName: (n: string) => (n === LOCAL_PROVIDER ? entry : undefined),
-    });
-    const unregistered = make({ cloud: () => undefined, forName: () => undefined });
-    const cloud = make({ cloud: () => entry, forName: () => undefined });
+    const registered = make(selectionOf([LOCAL_PROVIDER]));
+    const unregistered = make(selectionOf([]));
+    const cloud = make(selectionOf([LOCAL_PROVIDER, "device-fake"], "device-fake"));
     const agentId = randomUUID();
     await sql`INSERT INTO capybara.agents (id, org_id, owner_account_id, visibility, current_version)
       VALUES (${agentId}, ${orgId}, ${me.id}, 'org', 1)`.execute(raw);
@@ -697,8 +465,23 @@ describe("local devices", () => {
       VALUES (${orgId}, ${me.id}, ${id})`.execute(raw);
     expect(await registered.usableNow(orgId, imThread)).toBe(true);
     expect(await registered.usableNow(orgId, unbound)).toBe(false);
-    // another org's id reads as nothing; a cloud provider answers at once
+    // another org's id reads as nothing; an unbound conversation with no default device counts
+    // the default provider that would make it
     expect(await registered.usableNow(randomUUID(), bound)).toBe(false);
     expect(await cloud.usableNow(orgId, unbound)).toBe(true);
+    // its existing default device counts, by its own provider
+    const def = randomUUID();
+    await sql`INSERT INTO capybara.devices
+        (id, org_id, owner_kind, owner_account_id, name, is_default, source, provider)
+      VALUES (${def}, ${orgId}, 'personal', ${me.id}, NULL, true, 'cloud', 'device-fake')`.execute(
+      raw,
+    );
+    expect(await cloud.usableNow(orgId, unbound)).toBe(true);
+    expect(await make(selectionOf([LOCAL_PROVIDER], "device-fake")).usableNow(orgId, unbound)).toBe(
+      false,
+    );
+    // without a conversation: any extension provider on in the org
+    expect(await registered.usableNow(orgId)).toBe(false);
+    expect(await cloud.usableNow(orgId)).toBe(true);
   });
 });

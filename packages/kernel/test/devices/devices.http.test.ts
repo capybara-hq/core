@@ -20,6 +20,7 @@ import { accountsFor, apiTokensFor } from "../helpers/identity.js";
 import { testMembers } from "../helpers/members.js";
 import {
   createOrg,
+  enableDeviceProviders,
   PW,
   type Req,
   runConfig,
@@ -72,6 +73,7 @@ beforeAll(async () => {
     .id;
   owner = await session(k, "owner");
   orgId = await createOrg(owner);
+  await enableDeviceProviders(k, orgId);
 });
 
 afterAll(async () => {

@@ -95,9 +95,11 @@ const service = (snapshots?: Pick<CloudPermissionSnapshots, "reconcileHeld">): S
     ...(snapshots !== undefined && { snapshots }),
     db,
     redis,
-    provider: () => ({ plugin: "device-fake", impl: cloud }),
-    lookup: (plugin) => (plugin === "device-fake" || plugin === "old-fake" ? cloud : undefined),
-    internal: [{ plugin: LOCAL_PROVIDER, impl: local }],
+    providers: () => [
+      { plugin: "device-fake", version: "1.0.0", impl: cloud },
+      { plugin: "old-fake", version: "1.0.0", impl: cloud },
+    ],
+    internal: [{ plugin: LOCAL_PROVIDER, version: "1.0.0", impl: local }],
     config: () => config,
     log: {},
     lockPollMs: 20,
@@ -343,12 +345,12 @@ describe("enumeration under the legacy-launch freeze", () => {
     });
   });
 
-  it("a confirmed destroy of a previous provider's incarnation is recorded", async () => {
+  it("a confirmed destroy is recorded under the instance row's own provider", async () => {
     const s = service();
     const dev = await seedDevice(raw, seed.orgId, seed.accountId);
     await use(s, dev);
     const g = (await instance(dev)).created_at;
-    // the instance was made by a provider the deployment has since replaced (still loaded)
+    // an instance row of another loaded provider: the sweep destroys it with that provider only
     await sql`UPDATE capybara.device_instances SET provider = 'old-fake'
       WHERE device_id = ${dev}`.execute(raw);
     await s.destroyInactive(new Date(Date.now() + 365 * DAY));

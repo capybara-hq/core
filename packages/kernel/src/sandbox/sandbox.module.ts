@@ -27,7 +27,7 @@ import { SandboxService } from "./sandbox.service.js";
  */
 @Module({
   imports: [
-    // which providers serve an org (the services of the next tasks consume it)
+    // which providers serve an org: a use needs the device's provider on in its org
     DeviceProviderSelectionModule,
     SandboxProviderRegistryModule,
     PermissionAuthorityModule,

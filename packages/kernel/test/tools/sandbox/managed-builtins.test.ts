@@ -33,7 +33,7 @@ import {
   MANAGED_DEVICE_CONTEXT_STALE_TEXT,
   ManagedDeviceContextRecorder,
 } from "../../../src/sandbox/managed-device-context.js";
-import { SandboxProviders } from "../../../src/sandbox/providers.js";
+import { DeviceProviders } from "../../../src/sandbox/providers.js";
 import { SandboxService } from "../../../src/sandbox/sandbox.service.js";
 import { generateImageTool } from "../../../src/tools/builtins/image/index.js";
 import type { SandboxToolDeps } from "../../../src/tools/builtins/sandbox/common.js";
@@ -171,7 +171,7 @@ beforeAll(async () => {
       },
     },
   };
-  k.app.get(SandboxProviders).register({ plugin: CLOUD, version: "v1", impl });
+  k.app.get(DeviceProviders).register({ plugin: CLOUD, version: "v1", impl });
 });
 afterAll(async () => {
   await k?.close();

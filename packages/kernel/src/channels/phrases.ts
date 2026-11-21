@@ -26,10 +26,10 @@ export const CHANNEL_PHRASES = {
   },
   /** `/device <name>` names an existing device that is unavailable now (`{list}` as in deviceList). */
   deviceUnavailable: {
-    zh: "设备「{name}」当前不可用（它的文件由未启用的沙箱提供方保存）。你的设备：\n{list}",
-    en: "The device \u201c{name}\u201d is unavailable: its files are kept by a sandbox provider that is not active. Your devices:\n{list}",
+    zh: "设备「{name}」当前不可用（它的设备提供方在该组织未启用或未安装，文件仍保留）。你的设备：\n{list}",
+    en: "The device \u201c{name}\u201d is unavailable: its device provider is off in this organization or not installed (its files are kept). Your devices:\n{list}",
   },
-  /** Direct message `/device` when the person has no usable device (no cloud sandbox in the deployment). */
+  /** Direct message `/device` when the person has no usable device (no device provider on in the org). */
   deviceNone: {
     zh: "你目前没有可用的设备。",
     en: "You have no usable devices.",

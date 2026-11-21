@@ -71,7 +71,7 @@ export class BackgroundTaskPollJob {
     @Inject(BackgroundTaskFinisher) private readonly finisher: BackgroundTaskFinisher,
     @Inject(EventLog) private readonly eventLog: Pick<EventLog, "publishChanged">,
     @Inject(SandboxService)
-    private readonly sandbox: Pick<SandboxService, "cloudAvailable" | "availableFor" | "ifRunning">,
+    private readonly sandbox: Pick<SandboxService, "availableFor" | "providerLoaded" | "ifRunning">,
     @Inject(KernelConfigService) readonly config: KernelConfigService,
     @Inject(LockService) readonly lockService: LockService,
     @Inject(KERNEL_LOGGER) readonly log: KernelLogger,
@@ -117,10 +117,10 @@ export class BackgroundTaskPollJob {
     for (const tasks of groups.values()) {
       if (signal.aborted) break;
       try {
-        // the device's provider is not there (no cloud provider, `@local` not served):
-        // its tasks stay as they are until it is
-        const env = tasks[0]?.deviceId ?? null;
-        if (env === null ? !this.sandbox.cloudAvailable : !(await this.sandbox.availableFor(env))) {
+        // the device's provider does not serve its org now (off in the org, not loaded, `@local`
+        // not registered): its tasks stay as they are until it does
+        const first = tasks[0];
+        if (!first?.deviceId || !(await this.sandbox.availableFor(first.deviceId, first.orgId))) {
           continue;
         }
         finished += await this.pollLegacy(tasks, signal);
@@ -169,7 +169,7 @@ export class BackgroundTaskPollJob {
       if (signal.aborted) break;
       const [first] = tasks as [BackgroundTaskRow];
       try {
-        if (!(await this.sandbox.availableFor(first.deviceId as string))) continue;
+        if (!(await this.sandbox.availableFor(first.deviceId as string, first.orgId))) continue;
         n += await this.pollManagedInstance(tasks, signal);
       } catch (err) {
         if (signal.aborted) break;
@@ -186,7 +186,8 @@ export class BackgroundTaskPollJob {
     for (const t of cancels) {
       if (signal.aborted || attempts >= MANAGED_STOPS_PER_TICK) break;
       try {
-        if (!(await this.sandbox.availableFor(t.deviceId as string))) continue;
+        // revocation delivery needs the provider loaded only (not on in the org)
+        if (!(await this.sandbox.providerLoaded(t.deviceId as string))) continue;
         attempts++;
         const after = await this.stopper.stop(t, "revoked", signal);
         if (after.status !== "running") n++;

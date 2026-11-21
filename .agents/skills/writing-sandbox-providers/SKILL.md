@@ -8,7 +8,7 @@ description: 'Use when changing the kernel side of device-provider@1 or anything
 Work happens in **devices** (spec `docs/superpowers/specs/2026-11-07-environments-design.md`): a device is one instance plus a file system, shared by all
 conversations bound to it (and their sub-agents). Instances are disposable, files are not: suspension and destruction act on the instance, and the files stay until the
 device is deleted. The kernel's sandbox tools (`Bash` / `Read` / `Write` / `Edit` / `Glob` / `Grep` / `Deliver`),
-attachment sync and `Skill` all use it through `SandboxService`. `device-provider@1` is a **multi, brokered, org-scoped** extension point: several device providers load side by side (phase 1 of the device-provider plan: the kernel still drives the first one for new cloud devices), and other extensions cannot `requires` it. For the extension host see `.agents/skills/writing-extensions`; for the tools side see `.agents/skills/writing-tools`.
+attachment sync and `Skill` all use it through `SandboxService`. `device-provider@1` is a **multi, brokered, org-scoped** extension point: several device providers load side by side and serve one org at once, each device on its own, and other extensions cannot `requires` it. For the extension host see `.agents/skills/writing-extensions`; for the tools side see `.agents/skills/writing-tools`.
 
 This skill covers what core owns: the contract as the kernel relies on it, `SandboxService` (leases, fencing, suspension, destruction), the builtin sandbox tools (`Bash`, `Read`, `Write`, `Edit`, `Glob`, `Grep`, `Deliver`),
 the socket proxy config and compose sandbox profile, and the kernel tests on the `device-fake` fixture. **Writing a sandbox extension** (its code, README, Docker / E2B
@@ -199,7 +199,7 @@ Every provider must follow these; the kernel's behaviour below assumes them. How
     for each revoked managed start on an incarnation that no longer runs. A historical reservation without a recorded incarnation
     is `unknown`, never the current instance.
   - **Gate.** `SandboxService` enumerates the device itself and checks its obligations in `ensure`, under the exclusive lease,
-    before use, resume, rebuild or provider switch. A device with an unresolved obligation, or with a candidate not yet
+    before use, resume or rebuild. A device with an unresolved obligation, or with a candidate not yet
     enumerated, never takes the shared path. `LocalInstanceBindings.bind` refuses while one is unresolved.
     `RetireLegacyTasksJob` is retryable and bounded; the gate never depends on it.
   - **Retirement.** The current cloud incarnation is destroyed whole by its provider (never resumed or `killAll`ed; files kept),
@@ -426,7 +426,7 @@ The kernel owns it; the extension implements only primitives. **Do not do schedu
   The old `sandboxes` table is no longer used (a later migration drops it).
 - **Leases** (phase C, `packages/kernel/src/sandbox/leases.ts`, spec `docs/superpowers/specs/2026-10-26-subagents-design.md` §10): using a sandbox recorded
   `running` takes a **shared** lease (up to `sandbox.maxConcurrentCommands`, default 6, hot, shared by all sessions of the device):
-  every sandbox tool, attachment sync, `Skill` copies. Every lifecycle change (create instance, first use, rebuild after `gone`, `resume`, provider switch,
+  every sandbox tool, attachment sync, `Skill` copies. Every lifecycle change (create instance, first use, rebuild after `gone`, `resume`,
   `suspend`, `destroy`, the exact revocation after a resume) takes the **exclusive** lease, alone. Keys: `capk:sandbox:<env>` (the lock key: an exclusive token or the literal `shared`), `capk:sandbox-users:<env>` (zset of shared tokens by expiry), `capk:sandbox-intent:<env>`
   (an exclusive waiter's intent: new shared leases wait, writer preference), `capk:sandbox-holders:<env>` (holder records), `capk:sandbox-path:<env>:<sha256>`.
   Every key carries a TTL, never shortened by a holder for a TTL another holder set: the lease keys (`capk:sandbox:<env>`, `capk:sandbox-users:<env>`)
@@ -496,11 +496,15 @@ The kernel owns it; the extension implements only primitives. **Do not do schedu
   (`restarted: true`, processes are gone, files stay) and the tool result carries an English notice. After a file reset each conversation's next use is told the files were
   reset instead (`filesReset: true`, `SANDBOX_FILES_RESET_NOTICE`): the seen key records `<created_at>:<fs_resets>`, a count of resets the kernel keeps itself, because a
   provider may give the new file system the old id (sandbox-docker's volumes are named after the device; the fake does it with `setFakeFileSystemIdsByName`). A file system gone at the provider is never replaced: `fs_status = 'lost'` and `device.files_lost` until reset.
-- **Provider switch**: a device whose files or instance belong to a provider that is not the current one cannot be used (`device.unavailable`, nothing changes; its
-  files are not migrated) until that provider is back. Deleting it destroys the old provider's instance and file system through `SandboxProviders.lookup` while that extension
-  is still loaded; otherwise the deletion fails and the row stays for a retry (an instance that cannot be destroyed is recorded in the `prev_*` columns).
-  A row the old provider left mid-create (`status = 'creating'`, no file system recorded) is taken over by the current one, which first calls the old
-  provider's `destroyFileSystemByName` (it may have made the file system by name); with the old provider not loaded, or on failure, it only warns.
+- **Provider per device**: a device is bound to its provider (`devices.provider`) for life
+  (`DeviceProviders.forDevice`, never another provider in its place). A use needs that provider loaded **and** on in the
+  device's org (`DeviceProviderSelection.isOnInOrg`, read at every use; `@local` is on wherever it is registered);
+  otherwise, and for an instance row naming another provider, the use fails `device.unavailable` (503) and nothing
+  changes: files and instance stay, nothing is demoted, recreated or taken over. Lifecycle work (destroy, reset, the
+  sweeps, revocation delivery) needs the provider loaded only; deleting a device whose provider is not loaded fails and
+  the row stays for a retry. The sweeps (`suspendIdle`, `destroyInactive`, `reconcileMarked`, the last with a cursor per
+  provider `capk:sandbox-reconcile-cursor:<plugin>`) run per loaded provider over its own rows; rows of a provider that is
+  not loaded are never touched.
 - **Live devices only**: the instance row is created only for a live device (`deleted_at IS NULL`) of the caller's org, with the device's own `org_id`, and
   the use path re-checks it under the exclusive lease before creating anything: a use that waited behind `destroyDevice` gets `device.not_found` instead of bringing
   the provider resources back. A row of another org is also reported as `device.not_found`.

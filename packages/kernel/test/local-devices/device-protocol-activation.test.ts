@@ -16,7 +16,7 @@ import { DEVICE_CLOSE } from "../../src/local-devices/local-device-gateway.js";
 import { MachinesService } from "../../src/local-devices/machines.js";
 import { LocalDeviceRelay } from "../../src/local-devices/relay.js";
 import { DeviceTargets } from "../../src/local-devices/targets.js";
-import { LOCAL_PROVIDER, SandboxProviders } from "../../src/sandbox/providers.js";
+import { DeviceProviders, LOCAL_PROVIDER } from "../../src/sandbox/providers.js";
 import { legacyDbFor } from "../helpers/conversations.js";
 import { accountsFor } from "../helpers/identity.js";
 import { testMembers } from "../helpers/members.js";
@@ -414,7 +414,7 @@ describe("every protocol 5 operation makes the round trip over the production ro
           .catch(() => null),
       )
       .not.toBeNull();
-    const provider = k.app.get(SandboxProviders).forName(LOCAL_PROVIDER)?.impl;
+    const provider = k.app.get(DeviceProviders).forDevice(LOCAL_PROVIDER)?.impl;
     if (!provider?.background?.readOutput) throw new Error("no managed output on @local");
     const parts: Buffer[] = [];
     let offset = 0;

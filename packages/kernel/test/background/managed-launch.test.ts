@@ -42,7 +42,7 @@ import { operationIdFor, SandboxOperationIntents } from "../../src/sandbox/opera
 import { SandboxOperationReconcileJob } from "../../src/sandbox/operation-reconcile.job.js";
 import { PermissionCallGrants } from "../../src/sandbox/permission-call-grants.js";
 import { PermissionCeilingWrites } from "../../src/sandbox/permission-ceiling-writes.js";
-import { SandboxProviders } from "../../src/sandbox/providers.js";
+import { DeviceProviders } from "../../src/sandbox/providers.js";
 import { SandboxService } from "../../src/sandbox/sandbox.service.js";
 import { runInBackgroundManaged } from "../../src/tools/builtins/sandbox/bash.js";
 import type { SandboxToolDeps } from "../../src/tools/builtins/sandbox/common.js";
@@ -281,9 +281,7 @@ async function fixture(opts: { project?: string } = {}) {
   const { orgId, agentId, conversationId } = await createOrg();
   const db = kernelDb(raw);
   const provider = managedProvider();
-  k.app
-    .get(SandboxProviders)
-    .register({ plugin: PROVIDER, version: "test-1", impl: provider.impl });
+  k.app.get(DeviceProviders).register({ plugin: PROVIDER, version: "test-1", impl: provider.impl });
   const deviceId = randomUUID();
   await db
     .insertInto("devices")
@@ -511,7 +509,7 @@ const reconcileJob = () =>
   new SandboxOperationReconcileJob(
     k.app.get(SandboxOperationIntents),
     k.app.get(KernelDb),
-    k.app.get(SandboxProviders),
+    k.app.get(DeviceProviders),
     k.app.get(SandboxService),
     k.app.get(BackgroundTaskStore),
     k.app.get(BackgroundTaskStopper),
@@ -660,7 +658,7 @@ describe("managed background launch identity", () => {
     async (_name, bound) => {
       const f = await fixture();
       if (bound)
-        k.app.get(SandboxProviders).register({
+        k.app.get(DeviceProviders).register({
           plugin: PROVIDER,
           version: "test-1",
           impl: f.provider.impl,
@@ -1273,7 +1271,7 @@ describe("managed background launch identity", () => {
     f.provider.hooks.afterEffect = undefined;
     // the same plugin now runs another version: the recorded identity cannot be reconciled there
     k.app
-      .get(SandboxProviders)
+      .get(DeviceProviders)
       .register({ plugin: PROVIDER, version: "test-2", impl: f.provider.impl });
     const delays: number[] = [];
     for (let i = 0; i < 2; i++) {

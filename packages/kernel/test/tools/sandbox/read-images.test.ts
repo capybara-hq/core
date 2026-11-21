@@ -691,7 +691,6 @@ describe("Read: limits and other files", () => {
 
 describe("Read without a device", () => {
   it("listed with an object store; file_id works, file_path gives the no-device text", async () => {
-    vi.spyOn(k.app.get(SandboxService), "cloudAvailable", "get").mockReturnValue(false);
     vi.spyOn(k.app.get(ConversationDevices), "usableNow").mockResolvedValue(false);
     const conv = await createConv(owner, orgId, viewerId);
     expect(await tool().unavailable?.({ orgId, conversationId: conv })).toBeNull();

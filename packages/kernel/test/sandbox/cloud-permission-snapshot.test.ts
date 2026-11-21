@@ -11,7 +11,7 @@ import { runSandboxResetFiles } from "../../src/sandbox/jobs.js";
 import { SandboxOperationAuthority } from "../../src/sandbox/operation-authority.js";
 import { PermissionFacts } from "../../src/sandbox/permission-facts.js";
 import { readRuntimeReport } from "../../src/sandbox/permission-runtime-reports.js";
-import { SandboxProviders } from "../../src/sandbox/providers.js";
+import { DeviceProviders } from "../../src/sandbox/providers.js";
 import { seedCloudEvidence, seedCloudInstance } from "../helpers/installed-evidence.js";
 import { startKernel, type TestKernel } from "../helpers/runs.js";
 
@@ -42,7 +42,7 @@ beforeAll(async () => {
     { env: {}, logger: log },
   );
   db = k.app.get(KernelDb);
-  k.app.get(SandboxProviders).register({
+  k.app.get(DeviceProviders).register({
     plugin: PROVIDER,
     version: "test",
     impl: {
@@ -570,8 +570,8 @@ it("B-12: the recorded limits of a destroyed instance never narrow the authority
   });
   expect(await f.device()).toMatchObject({ owner_full_access: true, outer_network: OPEN });
   // a provider whose limits are fixed at its file system: the record is what the files enforce
-  const providers = k.app.get(SandboxProviders);
-  const entry = providers.forName(PROVIDER);
+  const providers = k.app.get(DeviceProviders);
+  const entry = providers.forDevice(PROVIDER);
   if (!entry) throw new Error("expected the test provider");
   providers.register({
     ...entry,

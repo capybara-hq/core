@@ -31,7 +31,7 @@ import {
   type OrgDeviceSettings,
   orgAllowedDomains,
 } from "../../src/sandbox/modes.js";
-import { LOCAL_PROVIDER, SandboxProviders } from "../../src/sandbox/providers.js";
+import { DeviceProviders, LOCAL_PROVIDER } from "../../src/sandbox/providers.js";
 import type { SandboxService } from "../../src/sandbox/sandbox.service.js";
 import { type Answer, TestHolder } from "./test-holder.js";
 
@@ -368,7 +368,7 @@ describe("LocalDevicesModule", () => {
         { env: {}, logger: createLogger("error", { write: () => {} }) },
       );
       try {
-        const entry = app.get(SandboxProviders, { strict: false }).forName(LOCAL_PROVIDER);
+        const entry = app.get(DeviceProviders, { strict: false }).forDevice(LOCAL_PROVIDER);
         expect(entry?.plugin).toBe(LOCAL_PROVIDER);
         expect(entry?.impl).toBeInstanceOf(LocalDeviceProvider);
       } finally {

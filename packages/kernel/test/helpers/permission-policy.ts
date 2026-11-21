@@ -14,7 +14,7 @@ import { ConversationDevices } from "../../src/devices/conversation-devices.js";
 import { KernelConfigService } from "../../src/infra/config/kernel-config.service.js";
 import { assistantIdemKey } from "../../src/runtime/model-call.js";
 import type { ExecutionClaim } from "../../src/runtime/run-execution.js";
-import { SandboxProviders } from "../../src/sandbox/providers.js";
+import { DeviceProviders } from "../../src/sandbox/providers.js";
 import { SandboxService } from "../../src/sandbox/sandbox.service.js";
 import { inSandboxOperations } from "../../src/tools/builtins/sandbox/common.js";
 import { ToolPipeline, type ToolStepContext } from "../../src/tools/pipeline.js";
@@ -174,7 +174,7 @@ export async function permissionFixture(
     },
   } as unknown as DeviceProvider;
   k.app
-    .get(SandboxProviders)
+    .get(DeviceProviders)
     .register({ plugin: "@permission-policy-test", version: "test-1", impl: provider });
   const spec = {
     name: toolKey,
@@ -206,7 +206,7 @@ export async function permissionFixture(
   });
   const install = (replica: TestKernel) => {
     replica.app
-      .get(SandboxProviders)
+      .get(DeviceProviders)
       .register({ plugin: "@permission-policy-test", version: "test-1", impl: provider });
     Object.assign((replica.app.get(ToolPipeline) as unknown as { deps: object }).deps, {
       permissionOperations: new Set(staged ? [toolKey] : []),

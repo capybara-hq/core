@@ -1,7 +1,6 @@
 import { DEVICE_PROVIDER_EXTENSION_POINT, type DeviceProvider } from "@capybara-hq/plugin-sdk";
 import { Inject, Injectable } from "@nestjs/common";
 import { ExtensionRegistry } from "../extensions/registry.js";
-import { KERNEL_VERSION } from "../version.js";
 import { guardProviderConnection } from "./unreachable.js";
 
 /** The kernel-internal provider of connected machines (local devices). */
@@ -44,12 +43,6 @@ export interface DeviceProviderEntry {
 }
 
 /**
- * The entry as consumers and tests build it: `version` may be left out (a kernel-internal provider
- * reports the kernel version). Until the old sandbox names go (Task 8 of the device-provider plan).
- */
-export type SandboxProviderEntry = Omit<DeviceProviderEntry, "version"> & { version?: string };
-
-/**
  * The device providers of this process (a registry: which of them serve an org is
  * `DeviceProviderSelection`). A cloud provider is a loaded `device-provider@1` extension,
  * read from the {@link ExtensionRegistry} at every call (providers are ready only after the
@@ -70,35 +63,22 @@ export class DeviceProviders {
   ) {}
 
   /** Registers a kernel-internal provider (an `@…` name); a later registration replaces it. */
-  register(entry: SandboxProviderEntry): void {
+  register(entry: DeviceProviderEntry): void {
     if (!isInternalProvider(entry.plugin)) {
       throw new Error(`an internal device provider name starts with @: ${entry.plugin}`);
     }
-    this.internal.set(entry.plugin, { ...entry, version: entry.version ?? KERNEL_VERSION });
-  }
-
-  /** The cloud provider (the loaded `device-provider@1` extension); undefined without one. */
-  cloud(): SandboxProviderEntry | undefined {
-    const e = this.registry
-      .list("device-provider")
-      .find((x) => x.capability === DEVICE_PROVIDER_EXTENSION_POINT);
-    return e ? this.guarded(e) : undefined;
+    this.internal.set(entry.plugin, entry);
   }
 
   /**
-   * A provider by name: a registered internal provider, else a still-loaded `device-provider@1`
-   * extension of that plugin name (to destroy an earlier provider's resources).
+   * The provider of a device, from its `devices.provider` (fixed at creation): a registered
+   * internal one (`@local`), else the loaded `device-provider@1` extension of that plugin name,
+   * on in no org in particular (whether it serves the device's org is
+   * `DeviceProviderSelection.isOnInOrg`). Undefined when neither exists, or for a device without
+   * a provider (`null`). Never another provider in its place.
    */
-  forName(name: string): SandboxProviderEntry | undefined {
-    return this.forDevice(name);
-  }
-
-  /**
-   * The provider of a device, from its `devices.provider`: a registered internal one (`@local`),
-   * else the loaded `device-provider@1` extension of that plugin name, on in no org in particular
-   * (a device keeps its provider while the org switches it off). Undefined when neither exists.
-   */
-  forDevice(provider: string): DeviceProviderEntry | undefined {
+  forDevice(provider: string | null): DeviceProviderEntry | undefined {
+    if (provider === null) return undefined;
     const own = this.internal.get(provider);
     if (own) return own;
     const e = this.registry
@@ -122,22 +102,4 @@ export class DeviceProviders {
       impl: guardProviderConnection(e.impl as DeviceProvider),
     };
   }
-}
-
-/** The old name, until Task 8 of the device-provider plan removes it. */
-export const SandboxProviders = DeviceProviders;
-export type SandboxProviders = DeviceProviders;
-
-/**
- * The provider a device works with, from its `devices.provider`: an internal one
- * (`@local`) by that name only, never falling back to the cloud provider; any other device
- * is a cloud device and uses the current cloud provider (files kept by another provider are
- * refused by the sandbox service, `device.unavailable`).
- */
-export function providerForDevice(
-  providers: Pick<SandboxProviders, "cloud" | "forName">,
-  provider: string | null,
-): SandboxProviderEntry | undefined {
-  if (provider !== null && isInternalProvider(provider)) return providers.forName(provider);
-  return providers.cloud();
 }

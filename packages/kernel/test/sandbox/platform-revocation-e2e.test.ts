@@ -26,7 +26,7 @@ import { HOLDER_REVOKE, SandboxOperationIntents } from "../../src/sandbox/operat
 import { SandboxOperationReconcileJob } from "../../src/sandbox/operation-reconcile.job.js";
 import { PermissionCeilingWrites } from "../../src/sandbox/permission-ceiling-writes.js";
 import { PermissionFacts } from "../../src/sandbox/permission-facts.js";
-import { LOCAL_PROVIDER, SandboxProviders } from "../../src/sandbox/providers.js";
+import { DeviceProviders, LOCAL_PROVIDER } from "../../src/sandbox/providers.js";
 import { SandboxService } from "../../src/sandbox/sandbox.service.js";
 import { runInBackgroundManaged } from "../../src/tools/builtins/sandbox/bash.js";
 import { truncateTables } from "../helpers/db.js";
@@ -616,7 +616,7 @@ async function localDevice() {
     throw new Error(`unexpected device op ${op}`);
   });
   // the production @local registration, over the answering transport
-  k.app.get(SandboxProviders).register(
+  k.app.get(DeviceProviders).register(
     localProviderEntry({
       provider: k.app.get(LocalDeviceProvider),
       relay,
@@ -837,13 +837,13 @@ it("a revoked launch without an exact ref ends its task and frees its maxTasks s
 });
 
 it("a crashed holder's revocation survives a failed inline revoke: the owed job revokes its admitted Bash and the device gets the exact revoke", async () => {
-  const original = k.app.get(SandboxProviders).forName(LOCAL_PROVIDER);
+  const original = k.app.get(DeviceProviders).forDevice(LOCAL_PROVIDER);
   const redis = new Redis(rd.url);
   try {
     await crashedHolderScenario(redis);
   } finally {
     vi.restoreAllMocks();
-    if (original) k.app.get(SandboxProviders).register(original);
+    if (original) k.app.get(DeviceProviders).register(original);
     redis.disconnect();
   }
 });
