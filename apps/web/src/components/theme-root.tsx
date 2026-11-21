@@ -70,7 +70,10 @@ function Themed({ theme, children }: { theme: ThemeRef | null; children: ReactNo
   // CAPYBARA stays beside the pixel capybara (theme brand coverage spec, decision 7)
   const productName = useProductName();
   const brand = useMemo<Brand | null>(
-    () => (markUrl === null && wordmark === null ? null : { markUrl, wordmark, productName }),
+    () =>
+      markUrl === null && wordmark === null
+        ? null
+        : { markUrl, wordmark, illustrationUrl: null, decoration: "dither", productName },
     [markUrl, wordmark, productName],
   );
   return (

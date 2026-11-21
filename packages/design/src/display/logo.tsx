@@ -1,6 +1,7 @@
 import { useBrand } from "../provider";
+import { useBrandMark } from "./brand-art";
 
-// spec §3：14×10 位图，X 实心，O 眼睛镂空。原样复制。
+// spec §3: the 14 × 10 bitmap, X filled, O the eye left open. Copied verbatim.
 export const CAPYBARA_BITMAP: readonly string[] = [
   "..........X...",
   ".........XXX..",
@@ -42,17 +43,20 @@ export function Logo({
   wordmark?: boolean;
 }) {
   const brand = useBrand();
+  const mark = useBrandMark();
   return (
     <span className="cb-logo" data-tone={tone}>
-      {brand?.markUrl ? (
-        // A theme's mark: an image as high as the pixel capybara, its width follows the file.
+      {mark && !mark.failed ? (
+        // A theme's mark: an image as high as the pixel capybara, its width follows the file; if
+        // it fails to load, this mount draws the pixel capybara instead.
         // biome-ignore lint/performance/noImgElement: the mark is a theme asset of any size
         <img
           className="cb-logo-mark"
           data-part="logo-mark"
-          src={brand.markUrl}
+          src={mark.src}
           height={ROWS * scale}
-          alt={brand.productName ?? brand.wordmark ?? "Logo"}
+          alt={brand?.productName ?? brand?.wordmark ?? "Logo"}
+          onError={mark.onError}
         />
       ) : (
         <svg
