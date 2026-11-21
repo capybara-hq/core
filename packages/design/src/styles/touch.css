@@ -301,69 +301,135 @@
   line-height: var(--cb-type-small-line);
 }
 
-/* AccountSheet (§6.55): the person, then rows on the sheet's own surface. The section runs out over
-   the sheet body's space.2 side padding to the sheet's edges (no further: it overflowed by space.2
-   each side and the body scrolled sideways), so every row pads space.4 like a NavRow. One text
-   column for every row: a NavRow's label sits past its icon (`--cb-account-icon`, 20, 22 on touch)
-   and space.3, and the rows without an icon (语言, 外观, 状态, the org switcher, the install hint)
-   reserve that column; the person's avatar starts where the icons do. */
-.cb-account {
-  --cb-account-icon: 20px;
-  --cb-account-text: calc(var(--cb-space-4) + var(--cb-account-icon) + var(--cb-space-3));
+/* The bottom sheet's body parts (§6.59, maintainer decision 2026-11-22): groups on the `hover`
+   ground (a ground, not a box), `touch.sheet-inset` from the sheet's edges and apart; rows
+   `touch.row` high with the icon column (`touch.icon`), separators inset to the text column. */
+.cb-sheet-group {
   display: flex;
   flex-direction: column;
-  margin: 0 calc(-1 * var(--cb-space-2));
+  border-radius: var(--cb-radius-sm);
+  background: var(--cb-hover);
+  overflow: hidden;
 }
-.cb-account-who {
+.cb-sheet-group + .cb-sheet-group,
+.cb-sheet-group + .cb-account-slot,
+.cb-account-slot + .cb-sheet-group {
+  margin-top: var(--cb-touch-sheet-inset);
+}
+.cb-sheet-row {
+  position: relative;
   display: flex;
   align-items: center;
   gap: var(--cb-space-3);
-  padding: var(--cb-space-2) var(--cb-space-4) var(--cb-space-3);
-}
-.cb-account-slot {
-  padding: var(--cb-space-2) var(--cb-space-4) var(--cb-space-2) var(--cb-account-text);
-}
-/* A ghost button in a slot (the org switcher's trigger) reads on the text column: its own side
-   padding and 1px border hang into the reserved icon column. */
-.cb-account-slot > .cb-btn[data-variant="ghost"] {
-  margin-inline-start: calc(-1 * (var(--cb-pad-default-x) + 1px));
-}
-/* A ghost control at a line's end (the language menu's trigger) ends on the rows' end edge, where
-   the theme switch and the status line end. */
-.cb-account-line > .cb-btn[data-variant="ghost"]:last-child {
-  margin-inline-end: calc(-1 * (var(--cb-pad-default-x) + 1px));
-}
-.cb-account-line {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: var(--cb-space-3);
-  min-height: var(--cb-row-default);
-  padding: 0 var(--cb-space-4) 0 var(--cb-account-text);
-}
-/* The label never wraps or yields; the control or value at the end takes what is left. */
-.cb-account-label {
-  flex: none;
+  width: 100%;
+  min-height: var(--cb-touch-row);
+  padding: 0 var(--cb-space-4);
+  border: 0;
+  background: transparent;
   color: var(--cb-ink);
+  font: inherit;
+  text-align: start;
+  text-decoration: none;
+}
+:is(button, a).cb-sheet-row {
+  cursor: pointer;
+}
+:is(button, a).cb-sheet-row:active {
+  background: var(--cb-selected);
+}
+.cb-sheet-row:focus-visible {
+  outline: 1px solid var(--cb-accent);
+  outline-offset: -1px;
+}
+/* the separator: from the text column to the row's end */
+.cb-sheet-row + .cb-sheet-row::before {
+  content: "";
+  position: absolute;
+  top: 0;
+  right: 0;
+  left: calc(var(--cb-space-4) + var(--cb-touch-icon) + var(--cb-space-3));
+  border-top: 1px solid var(--cb-line-soft);
+}
+.cb-sheet-row-icon {
+  display: inline-flex;
+  flex: none;
+  width: var(--cb-touch-icon);
+  color: var(--cb-muted);
+}
+.cb-sheet-row-icon > .cb-icon {
+  width: var(--cb-touch-icon);
+  height: var(--cb-touch-icon);
+}
+.cb-sheet-row[data-lead="true"] {
+  padding-top: var(--cb-space-2);
+  padding-bottom: var(--cb-space-2);
+}
+.cb-sheet-row-text {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  min-width: 0;
+}
+.cb-sheet-row-label {
+  overflow: hidden;
+  text-overflow: ellipsis;
   white-space: nowrap;
 }
-/* The status line (context · version · zone) holds long unbroken mono runs (a path, an id): it
-   wraps anywhere inside its column, end-aligned, rather than squeeze the label or overflow. */
-.cb-account-status {
-  flex: 0 1 auto;
-  min-width: 0;
-  padding: var(--cb-space-2) 0;
+.cb-sheet-row[data-lead="true"] .cb-sheet-row-label {
+  font-size: var(--cb-touch-sheet-title);
+  font-weight: 500;
+}
+.cb-sheet-row-desc,
+.cb-sheet-row-value {
+  overflow: hidden;
   color: var(--cb-muted);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.cb-sheet-row-desc {
   font-size: var(--cb-type-small-size);
   line-height: var(--cb-type-small-line);
+}
+.cb-sheet-row-value {
+  flex: 0 1 auto;
+  min-width: 0;
+}
+.cb-sheet-row > .cb-icon {
+  flex: none;
+  color: var(--cb-faint);
+}
+.cb-sheet-row[data-centered="true"] {
+  justify-content: center;
+}
+.cb-sheet-row[data-centered="true"] > .cb-sheet-row-icon {
+  display: none;
+}
+.cb-sheet-row[data-centered="true"] .cb-sheet-row-text {
+  flex: none;
+  text-align: center;
+}
+.cb-sheet-row[data-danger="true"] {
+  color: var(--cb-fail);
+  font-weight: 500;
+}
+.cb-sheet-footnote {
+  margin: var(--cb-touch-sheet-inset) 0 0;
+  padding: 0 var(--cb-space-4);
+  color: var(--cb-faint);
+  font-family: var(--cb-font-code);
+  font-size: var(--cb-type-micro-size);
+  line-height: var(--cb-type-micro-line);
   overflow-wrap: anywhere;
-  text-align: end;
+  text-align: center;
 }
 
-/* The touch component forms (spec §2.5 "Mobile sizes", maintainer decisions 2026-11-21 and
-   2026-11-22): they follow the width too, so they apply under MOBILE_SIZE_QUERY (a compact window
-   whatever the pointer, or a touch device at any width). What is about the pointer itself (the
-   desktop-only gate below) stays under TOUCH_QUERY. */
+/* AccountSheet (§6.55): the groups in the sheet body's column (`touch.sheet-inset` from the edges). */
+.cb-account {
+  display: flex;
+  flex-direction: column;
+  padding-top: var(--cb-space-1);
+}
+
 @media (max-width: 599px), (pointer: coarse), (any-pointer: coarse) and (not (any-pointer: fine)) {
   /* the chat-first shell's floating row (shell.css) takes the touch size of its buttons */
   .cb-shell {
@@ -371,12 +437,6 @@
   }
   .cb-navdrawer-search {
     min-height: var(--cb-touch-primary);
-  }
-  .cb-account {
-    --cb-account-icon: var(--cb-touch-icon);
-  }
-  .cb-account-line {
-    min-height: var(--cb-touch-row);
   }
   .cb-float-btn {
     width: var(--cb-touch-float);
@@ -413,19 +473,12 @@
   .cb-item-list-row:has(.cb-item-list-meta) {
     min-height: var(--cb-touch-row-roomy);
   }
-  /* The bottom sheet: 20 radius at the top, 52 high option rows, the head without a hairline. */
+  /* The bottom sheet: 20 radius at the top, 52 high option rows (its head is §6.59's everywhere). */
   .cb-bsheet {
     border-radius: var(--cb-radius-md) var(--cb-radius-md) 0 0;
   }
-  .cb-bsheet-head {
-    border-bottom: 0;
-  }
   .cb-sheet-option {
     height: var(--cb-touch-row);
-  }
-  .cb-bsheet-head .cb-icon-btn {
-    min-width: var(--cb-touch-hit);
-    min-height: var(--cb-touch-hit);
   }
 }
 

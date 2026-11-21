@@ -2,7 +2,7 @@ export {
   AccountSheet,
   type AccountSheetData,
   type AccountSheetProps,
-  type AccountSheetSlot,
+  type AccountSheetTheme,
 } from "./account-sheet";
 export { ActionRow, type ActionRowProps, type ButtonSpec } from "./action-row";
 export { AppShell, type AppShellProps } from "./app-shell";

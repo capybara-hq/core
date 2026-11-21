@@ -8,9 +8,10 @@ import { useFocusReturn } from "./focus-return";
 import { FIRST_FOCUSABLE, focusOnOpen } from "./quiet-focus";
 import { useOverlayHistory } from "./use-overlay-history";
 
-// The bottom sheet (spec §6.7 "Follow-finger sheets"; mobile layout spec §7.4): a grab handle over
-// a head with the title and a 40 px close button, then the body, over a scrim. The handle and the
-// head drag it down; the body drags it only while its own scroll is at the top.
+// The bottom sheet (spec §6.59 "Bottom sheet"; mobile layout spec §7.4): a grab handle over a head
+// with the centred title and a round close button, then the body, over a scrim. The handle and the
+// head drag it down; the body drags it only while its own scroll is at the top. The body's parts
+// (SheetGroup, SheetRow, SheetFootnote) are shared by every bottom sheet, so no sheet styles its own.
 
 type InnerProps = {
   /** The title element: a Radix `Title` inside a dialog, a plain heading in a static block. */
@@ -36,7 +37,6 @@ function BottomSheetInner({ title, close, handleLabel, bodyRef, children }: Inne
       </div>
       <header className="cb-bsheet-head" data-part="sheet-head">
         {title}
-        <span className="cb-grow" />
         {close}
       </header>
       <div className="cb-bsheet-body" data-part="bsheet-body" ref={bodyRef}>
@@ -98,6 +98,8 @@ export function BottomSheetFrame({
             <IconButton
               label={closeLabel ?? t("overlay.close")}
               icon={<Icon name="x" size={16} />}
+              className="cb-bsheet-close"
+              part="sheet-close"
             />
           }
           handleLabel={grab}
@@ -170,7 +172,12 @@ export function BottomSheetContent({
           title={<RD.Title className="cb-bsheet-title">{title}</RD.Title>}
           close={
             <RD.Close asChild>
-              <IconButton label={t("overlay.close")} icon={<Icon name="x" size={16} />} />
+              <IconButton
+                label={t("overlay.close")}
+                icon={<Icon name="x" size={16} />}
+                className="cb-bsheet-close"
+                part="sheet-close"
+              />
             </RD.Close>
           }
           handleLabel={handleLabel ?? t("overlay.dragToClose")}

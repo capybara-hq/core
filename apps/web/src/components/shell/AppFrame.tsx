@@ -2,19 +2,16 @@
 
 import {
   AppShell,
-  Button,
   type DesktopOnlyNoticeProps,
   type DrawerNavData,
   initialOf,
   Logo,
-  Menu,
   type MenuItem,
   OverviewPage,
   SetupPage,
   type SidebarBrandVariant,
   type SidebarContext,
   type SidebarConversations,
-  ThemeToggle,
   useToast,
   useTouch,
 } from "@capybara-hq/design";
@@ -91,21 +88,6 @@ import {
   setupRouteOf,
   useSetupSteps,
 } from "./setup";
-
-/** `items` with `after` run once an item's own action has (the account sheet's `done`). */
-function closingAfter(items: MenuItem[], after: () => void): MenuItem[] {
-  return items.map((i) =>
-    i === "separator" || i.onSelect === undefined
-      ? i
-      : {
-          ...i,
-          onSelect: () => {
-            i.onSelect?.();
-            after();
-          },
-        },
-  );
-}
 
 /** The local time zone, e.g. `UTC+8`, `UTC-3:30` (the status bar's right side, spec §4.4). */
 function timeZoneLabel(): string {
@@ -665,33 +647,18 @@ function ShellFrame({
       name: me.account.displayName,
       orgName: currentOrg?.name ?? null,
       avatar: me.account.avatarUrl ? { kind: "image", src: me.account.avatarUrl } : null,
-      // A pick in either menu closes the sheet and the drawer (`done`): an org switch replaces the
-      // page anyway, a language pick re-renders it, and an org dialog opens over the page.
-      ...(currentOrg !== null && multiOrg
-        ? {
-            orgSwitcher: (done: () => void) => (
-              <Menu
-                items={closingAfter(orgItems, done)}
-                label={t("drawer.switchOrg")}
-                trigger={<Button variant="ghost">{t("drawer.switchOrg")}</Button>}
-              />
-            ),
-          }
-        : {}),
-      language: (done: () => void) => (
-        <Menu
-          items={closingAfter(languageMenu.submenu ?? [], done)}
-          label={preferences.language.label}
-          trigger={
-            <Button variant="ghost">
-              {preferences.language.options.find((o) => o.value === preferences.language.value)
-                ?.label ?? preferences.language.value}
-            </Button>
-          }
-        />
-      ),
+      // The sheet closes itself and the drawer after a pick in either menu: an org switch
+      // replaces the page anyway, a language pick re-renders it, and an org dialog opens over it.
+      ...(currentOrg !== null && multiOrg ? { orgMenu: orgItems } : {}),
+      language: {
+        value:
+          preferences.language.options.find((o) => o.value === preferences.language.value)?.label ??
+          preferences.language.value,
+        label: preferences.language.label,
+        items: languageMenu.submenu ?? [],
+      },
       personalSettingsHref: ACCOUNT_HOME,
-      theme: preferences.theme ? <ThemeToggle {...preferences.theme} /> : null,
+      theme: preferences.theme ?? null,
       status: [status.context, version, timeZone].filter((v) => v !== "").join(" · "),
       ...(switchProfile ? { onSwitchProfile: switchProfile } : {}),
       onSignOut: () => void onLogout(),
