@@ -1080,8 +1080,11 @@ export async function sandboxUnusableError(
   orgId: string,
   conversationId: string | undefined,
 ): Promise<ToolError | null> {
-  const text = await sandboxUnusableText(deps, orgId, conversationId);
-  return text === null ? null : new ToolError(text);
+  const reason = await sandboxUnusableReason(deps, orgId, conversationId);
+  if (reason === null) return null;
+  if (reason === "provider-off") return new ToolError(ENV_UNAVAILABLE_TEXT);
+  if (reason === "no-device") return new ToolError(NO_DEVICE_TEXT);
+  return noSandboxError();
 }
 
 /** {@link ConversationDevices.unusableReason}, read from a stub's `usableNow` when it has only that. */
