@@ -13,6 +13,8 @@ import type {
 } from "mdast";
 import { fromMarkdown } from "mdast-util-from-markdown";
 import { gfmFromMarkdown } from "mdast-util-gfm";
+import { cjkFriendlyExtension } from "micromark-extension-cjk-friendly";
+import { gfmStrikethroughCjkFriendly } from "micromark-extension-cjk-friendly-gfm-strikethrough";
 import { gfm } from "micromark-extension-gfm";
 import { Fragment, type JSX, type ReactNode, useMemo, useRef } from "react";
 import { FileChip } from "../conversation/files";
@@ -52,8 +54,16 @@ export function isHttpUrl(url: string): boolean {
   }
 }
 
+/**
+ * CommonMark + GFM with the CJK-friendly emphasis amendment: `**` between a CJK letter and CJK
+ * punctuation opens and closes emphasis, which plain CommonMark's flanking rules refuse. The
+ * strikethrough extension must come after `gfm()`. Display only: the text itself is unchanged.
+ */
+const MD_EXTENSIONS = [gfm(), cjkFriendlyExtension(), gfmStrikethroughCjkFriendly()];
+const MDAST_EXTENSIONS = [gfmFromMarkdown()];
+
 function parse(text: string): Root {
-  return fromMarkdown(text, { extensions: [gfm()], mdastExtensions: [gfmFromMarkdown()] });
+  return fromMarkdown(text, { extensions: MD_EXTENSIONS, mdastExtensions: MDAST_EXTENSIONS });
 }
 
 /** The plain text of a node (alt text, over-deep content). */
