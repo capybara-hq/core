@@ -17,6 +17,9 @@ const { themeIcons } = await import("../src/lib/server/theme");
 const { ThemeLink } = await import("../src/components/theme-link");
 const { brandOf, ThemeRoot } = await import("../src/components/theme-root");
 const { platformThemeQuery } = await import("../src/lib/query/themes");
+const { BRAND_COOKIE, BRAND_COOKIE_MAX_AGE, brandRefOf, decodeBrandCookie } = await import(
+  "../src/lib/brand-cookie"
+);
 
 const NEON_GRID: ThemeRef = {
   id: "t-night",
@@ -264,5 +267,67 @@ describe("themeIcons", () => {
       icons: { icon: favicon, apple: parent.apple },
     });
     expect(themeIcons(NEON_GRID, parent)).toEqual({});
+  });
+});
+
+describe("the brand cookie (theme brand coverage §5)", () => {
+  const UUID = "0f8fad5b-d9cb-469f-a165-70867728950e";
+  const BRANDED: ThemeRef = {
+    ...NEON_GRID,
+    id: UUID,
+    version: "7",
+    logo: {
+      markUrl: `/api/v1/themes/${UUID}/7/assets/logo.svg`,
+      wordmark: "NEON GRID",
+      faviconUrl: null,
+      illustrationUrl: null,
+      appIconUrl: null,
+      appIconMaskableUrl: null,
+    },
+    background: { dark: "#05070D" },
+    cssUrl: themeCssUrl(UUID, "7"),
+  };
+  /** Every `document.cookie` write of the brand cookie. */
+  let writes: string[];
+  beforeEach(() => {
+    writes = [];
+    const proto = Document.prototype;
+    const desc = Object.getOwnPropertyDescriptor(proto, "cookie");
+    vi.spyOn(document, "cookie", "set").mockImplementation((v: string) => {
+      if (v.startsWith(`${BRAND_COOKIE}=`)) writes.push(v);
+      desc?.set?.call(document, v);
+    });
+  });
+  afterEach(() => vi.restoreAllMocks());
+
+  it("ThemeRoot writes cb-brand for a theme and deletes it for the built-in theme", () => {
+    const view = renderFrame(shellOf(ME, { theme: BRANDED }));
+    expect(writes).toHaveLength(1);
+    const value = writes[0]?.split(";")[0]?.slice(BRAND_COOKIE.length + 1);
+    expect(decodeBrandCookie(value)).toEqual(brandRefOf(BRANDED));
+    expect(writes[0]).toContain(`Max-Age=${BRAND_COOKIE_MAX_AGE}`);
+    view.update(shellOf(ME, { theme: null }));
+    expect(writes).toHaveLength(2);
+    expect(writes[1]).toMatch(/^cb-brand=; Max-Age=0/);
+  });
+
+  it("the cookie is rewritten only when the drawn theme changes", () => {
+    const view = renderFrame(shellOf(ME, { theme: BRANDED }));
+    // the same theme again (a refetch with an equal answer, another commit)
+    view.update(shellOf(ME, { theme: { ...BRANDED } }));
+    expect(writes).toHaveLength(1);
+    const next = { ...BRANDED, version: "8", cssUrl: themeCssUrl(UUID, "8") };
+    view.update(shellOf(ME, { theme: next }));
+    expect(writes).toHaveLength(2);
+  });
+
+  it("nothing is written while the theme read has no answer", () => {
+    renderPage(
+      <ThemeRoot orgId={null}>
+        <p>page</p>
+      </ThemeRoot>,
+      { client: testQueryClient() },
+    );
+    expect(writes).toEqual([]);
   });
 });
