@@ -5,6 +5,7 @@ import { Icon } from "../icons/icon";
 import { useDesignT } from "../provider";
 import { type DragState, useDragDismiss } from "./drag";
 import { useFocusReturn } from "./focus-return";
+import { FIRST_FOCUSABLE, focusOnOpen } from "./quiet-focus";
 import { useOverlayHistory } from "./use-overlay-history";
 
 // The bottom sheet (spec §6.7 "Follow-finger sheets"; mobile layout spec §7.4): a grab handle over
@@ -155,7 +156,12 @@ export function BottomSheetContent({
         className="cb-bsheet"
         data-part={part}
         aria-describedby={undefined}
-        onOpenAutoFocus={focusReturn.capture}
+        onOpenAutoFocus={(e) => {
+          focusReturn.capture();
+          // the first control (the close button), ringed only when opened from the keyboard (§2.5)
+          e.preventDefault();
+          focusOnOpen(sheet.current?.querySelector<HTMLElement>(FIRST_FOCUSABLE));
+        }}
         onCloseAutoFocus={focusReturn.restore}
         {...drag.handleProps}
         {...drag.panelProps}

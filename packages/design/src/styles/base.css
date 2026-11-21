@@ -82,6 +82,14 @@ body {
   outline-offset: -1px;
 }
 
+/* The focus an overlay moved on open without a key (data-quiet-focus, overlays/quiet-focus.ts)
+   draws no ring until a key is pressed, whatever the browser's heuristics say (spec §2.5). The
+   root in the selector outranks every component's own focus-visible rule. */
+:root [data-quiet-focus="true"]:focus-visible {
+  outline: none;
+  box-shadow: none;
+}
+
 /* biome-ignore-start lint/complexity/noImportantStyles: 必须压过组件内的动效声明 */
 @media (prefers-reduced-motion: reduce) {
   *,

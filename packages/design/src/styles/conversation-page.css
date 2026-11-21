@@ -711,7 +711,9 @@ span.cb-title-btn {
   align-items: center;
   gap: var(--cb-space-2);
   height: var(--cb-row-roomy);
-  padding: 0 var(--cb-space-1) 0 var(--cb-space-4);
+  /* the title on the body's text column (space.4), the close button's box on its rows' edge
+     (space.2, the body's padding), as the rows' grounds and their checks below it */
+  padding: 0 var(--cb-space-2) 0 var(--cb-space-4);
   border-bottom: 1px solid var(--cb-line-soft);
   touch-action: none;
 }
@@ -782,6 +784,8 @@ span.cb-title-btn {
   min-height: 0;
   overflow-y: auto;
   overscroll-behavior: contain;
+  scrollbar-width: thin;
+  scrollbar-color: var(--cb-scroll-thumb) transparent;
   padding: var(--cb-space-2) var(--cb-space-2) calc(var(--cb-space-4) + var(--cb-inset-bottom));
 }
 /* A Filter sheet's single-choice options (§6.7). */
@@ -929,6 +933,20 @@ span.cb-title-btn {
 .cb-options-note {
   margin: var(--cb-space-1) 0 0;
   padding: 0 var(--cb-space-2);
+}
+/* The sheet's lines (a group's notice, the touch note under the groups): small muted prose on the
+   text column of the group titles and the rows (their space.2 inset), for every pointer: the
+   notice drew unstyled on a fine pointer, at the body's edge. */
+.cb-options-sheet-note {
+  margin: var(--cb-space-3) 0 0;
+  padding: 0 var(--cb-space-2);
+  color: var(--cb-muted);
+  font-size: var(--cb-type-small-size);
+  line-height: var(--cb-type-small-line);
+}
+/* A group's notice, right under its title: the title's own space.1 above it, space.2 to the rows. */
+.cb-options-title + .cb-options-sheet-note {
+  margin: 0 0 var(--cb-space-2);
 }
 @media (max-width: 599px) {
   .cb-agents-chip-label,
@@ -2001,12 +2019,6 @@ button.cb-property-row {
   }
   .cb-composer-bar > .cb-grow {
     display: none;
-  }
-  .cb-options-sheet-note {
-    margin: var(--cb-space-3) 0 0;
-    color: var(--cb-muted);
-    font-size: var(--cb-type-small-size);
-    line-height: var(--cb-type-small-line);
   }
 
   /* The composer floats over the thread's bottom; the thread's padding clears it. The page lifts
