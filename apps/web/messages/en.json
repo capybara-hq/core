@@ -2109,7 +2109,6 @@
       "hint": "Send it to the person you are inviting. It is shown only once; the invitation itself stays on the Members page."
     },
     "person": {
-      "fillOnWeb": "Open the conversation to fill in {n, plural, one {# field} other {# fields}}",
       "leaked": "This value appeared in the conversation, so it counts as leaked. Create a new one at the provider and enter that."
     },
     "title": "Approval required",

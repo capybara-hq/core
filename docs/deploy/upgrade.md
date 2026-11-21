@@ -104,6 +104,35 @@ Notes for upgrades that need more than the steps above. Before 0.1.0 Capybara ke
 compatibility layers for its earlier builds: the kernel reads only the current formats, and the
 migrations rewrite stored data once where they can.
 
+### Profiles govern every approval: upgrade the kernel first, then devices
+
+**Behavior change: tool asks under Approve for me and Auto no longer raise person cards.** A
+conversation's permission profile now decides every approval addressed to the person who owns it
+(platform operations, connector and extension tools, schedule writes), not only device crossings:
+Request approval asks, Approve for me lets the review model decide (and asks when it is unsure or
+unavailable), Auto (renamed from Full access; the identifier `full-access` is unchanged) runs and
+records. Approvals addressed to another role or account, policy denies, fixed denies, ceilings,
+unattended runs and tools that require a person to act (`requiresUserInteraction`) are unchanged.
+
+- **Existing conversations** keep their stored profile, so every conversation on Approve for me or
+  Auto stops showing cards for its tool asks from this release. People who want every card choose
+  Request approval in the composer.
+- **Conversations from chat apps** (IM) have no profile picker and default to Approve for me, so
+  their tool asks now go to the review model. Open the conversation on the web and choose Request
+  approval to see every card.
+- **Secret fields are a separate secure input request** (approval kind `secure_input`, migration
+  `0174`), asked under every profile after the call's own consent; the web is the only place to
+  submit it. The desktop and mobile clients follow in a later release and cannot submit it yet.
+- **Reveal routes changed.** The initial password and the invitation link are read by call:
+  `POST /api/v1/orgs/:orgId/conversations/:conversationId/runs/:runId/calls/:callId/initial-password`
+  and `.../invitation-link` replace the approval-keyed routes (no compatibility routes). Clients that
+  call the old routes must follow.
+- **Upgrade order: kernel first, then devices.** A device on this release reports the new error kind
+  `unsettled`; a kernel that predates it answers a protocol error to that request. Upgrade the
+  kernel and run the migration before upgrading `capybara-device` installs.
+- A device without scoped operations no longer blocks choosing a profile: all three stay selectable
+  and only its device tools refuse, with the cause (an outdated sandbox plugin or runtime).
+
 ### Approval-only profiles (device protocol 4): upgrade kernel, devices and providers together
 
 Permission profiles now only choose who approves a crossing; every command runs in the device's

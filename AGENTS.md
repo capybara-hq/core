@@ -150,7 +150,7 @@ Each line is the rule you must not miss; the skill has the rest.
   an exclusion with a reason (never `later`); change a route's input = change the shared schema (the
   parity test fails on drift); remove a route = its operation and exclusion go with it. Operations
   call the controllers' services, never new logic (`pnpm check:platform-ops`, `platform-parity.test.ts`).
-  A secret an operation needs is a person field entered on the card, never a param
+  A secret an operation needs is a person field entered in a secure input request, never a param
   (`platform-op-secret-param`); "it is an upload" is no reason to exclude a route, a file reaches an
   operation as a file reference (`platform-op-upload`), and an operation that sends the person to
   confirm, review or decide on the web returns a handoff link card or states `noHandoff`
@@ -170,8 +170,9 @@ Each line is the rule you must not miss; the skill has the rest.
 - **Sandboxes:** work happens in devices (one instance + a file system kept until the device is
   deleted); commands run in the device's sandbox under every permission profile (scope: project,
   workspace, tool directories; network: the open public internet or an allowlist; private ranges,
-  metadata and host services closed; minimal environment); a profile only chooses who approves a
-  crossing (person, review model, nobody); running outside the sandbox is a per-call escalation
+  metadata and host services closed; minimal environment); a profile chooses who approves every
+  approval addressed to the person (person, review model, nobody); another role's approval and
+  secure input are never decided by it; running outside the sandbox is a per-call escalation
   bounded by the device's outside-sandbox setting; every command and every write outside the
   workspace passes the command review, a kernel step that fails closed; abort must kill the
   command; locking, suspension and destruction are the kernel's; never publish the socket proxy on

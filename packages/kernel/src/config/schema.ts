@@ -2041,7 +2041,7 @@ export const KernelConfigSchema = z.strictObject({
           meta({
             hot: true,
             description:
-              "Whether a device may be granted running a call outside its sandbox (default allowed): a person, the review model or Full access then approves such an escalation per call, within the organization's and the device owner's settings; off refuses every escalation, and devices only run in their sandbox. An organization may turn it off and follow the platform. Set here, it is read-only in the admin console. Replaces devices.fullAccess (CAPYBARA_DEVICES__FULL_ACCESS) and devices.autoMode, which are refused: rename them (the same values; off also needs devices.network.ceiling: allowlist to keep devices on the allowlist), or convert a config file with capybara config migrate-permissions",
+              "Whether a device may be granted running a call outside its sandbox (default allowed): a person, the review model or Auto then approves such an escalation per call, within the organization's and the device owner's settings; off refuses every escalation, and devices only run in their sandbox. An organization may turn it off and follow the platform. Set here, it is read-only in the admin console. Replaces devices.fullAccess (CAPYBARA_DEVICES__FULL_ACCESS) and devices.autoMode, which are refused: rename them (the same values; off also needs devices.network.ceiling: allowlist to keep devices on the allowlist), or convert a config file with capybara config migrate-permissions",
           }),
         ),
       /**

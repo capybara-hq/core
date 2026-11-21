@@ -49,7 +49,12 @@ see `.agents/skills/writing-web-ui`). Design basis: overall design §6 principle
   `outside-sandbox` / `sensitive`) and the `permission_reviewed` event are display and audit only too: replay uses the
   recorded decision, never today's settings or profile, and needs no `DriftReason`. The review's own
   classifier call fires `model.request` / `model.response` with purpose `review` and writes a `usage` event with
-  the same purpose — neither is model-visible, so neither needs a `DriftReason`.
+  the same purpose — neither is model-visible, so neither needs a `DriftReason`. The same holds for the tool
+  review and its `tool_ask_decided` event (an automatic decision on a tool ask: Auto or the review model):
+  display and audit only, listed beside `permission_reviewed` in `runtime/context/build.ts` and
+  `compaction.ts`; its usage event is keyed `usage_review_tool:<runId>:<callId>` (a `Bash` call reviewed
+  both as a tool ask and as a command keeps both usage rows). A resume reads the recorded event and a
+  replay never reviews.
 - **`tools_changed`** (tool naming spec §9.1): written before a step's request when its resolved tool set differs from the
   previous request's (last `model_call` `tools` + `catalog`, plus later `tools_changed`; a call with `toolsOmitted`, whose model
   has no tool support, is skipped); never before a conversation's first request. `model_call.request.toolsOmitted` is recorded by

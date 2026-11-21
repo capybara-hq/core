@@ -88,7 +88,7 @@ export interface ReviewRecord {
   /** Set only when the command was actually admitted to run outside the OS sandbox. */
   sandbox?: "escalated";
   /**
-   * Who approved the call's crossing: inside the scope (`scope`), the review model, or Full access
+   * Who approved the call's crossing: inside the scope (`scope`), the review model, or Auto
    * by itself (approval-only profiles design). Absent on a denial.
    */
   decisionSource?: "scope" | "review-model" | "full-access";
@@ -905,7 +905,7 @@ const messageBody = (m: MessageInput) => ({
 /**
  * What a new conversation's first message asks for (`POST …/conversations/first-message`): the
  * message, the permission profile chosen in the composer (with the consented scope revision for
- * Full access) and the device and project; no device for a device-less restricted choice.
+ * Auto) and the device and project; no device for a device-less restricted choice.
  */
 export interface FirstMessageRequest {
   agentId: string;
