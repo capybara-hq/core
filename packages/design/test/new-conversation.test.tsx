@@ -9,6 +9,7 @@ import {
   AgentRow,
   type AgentRowItem,
   AgentRowLoading,
+  type Brand,
   ComposerBox,
   ConversationPage,
   DesignProvider,
@@ -592,5 +593,51 @@ describe("AgentRowLoading (spec §6.16.26)", () => {
     expect(container.querySelector('[data-part="real-row"]')).toBeNull();
     expect(container.querySelector('[data-loading="true"][data-part="agent-row"]')).toBeTruthy();
     expect(container.querySelector('[aria-busy="true"]')).toBeTruthy();
+  });
+});
+
+const brandOf = (markUrl: string | null): Brand => ({
+  markUrl,
+  wordmark: null,
+  illustrationUrl: null,
+  decoration: "dither",
+  productName: "Acme",
+});
+
+describe("Greeting with a theme mark (theme brand coverage §3)", () => {
+  const draw = (markUrl: string | null) =>
+    render(
+      <DesignProvider locale="en" brand={brandOf(markUrl)}>
+        <Greeting text="Hello" still />
+      </DesignProvider>,
+    ).container;
+
+  it("draws the theme mark 20 px high instead of the bitmap", () => {
+    const c = draw("/m.svg");
+    const img = c.querySelector('img[data-part="greeting-mark"]');
+    expect(img?.getAttribute("src")).toBe("/m.svg");
+    expect(img?.getAttribute("height")).toBe("20");
+    expect(img?.getAttribute("alt")).toBe("");
+    expect(img?.getAttribute("aria-hidden")).toBe("true");
+    expect(c.querySelector('[data-part="greeting-line"] svg')).toBeNull();
+  });
+
+  it("a failing mark falls back to the bitmap", () => {
+    const c = draw("/m.svg");
+    fireEvent.error(c.querySelector("img") as HTMLImageElement);
+    expect(c.querySelector("img")).toBeNull();
+    expect(c.querySelector('[data-part="greeting-mark"] svg path')).not.toBeNull();
+  });
+
+  it("without a brand, or with an empty mark, the DOM equals today's", () => {
+    const today = render(
+      <DesignProvider locale="en">
+        <Greeting text="Hello" still />
+      </DesignProvider>,
+    ).container.innerHTML;
+    cleanup();
+    expect(draw(null).innerHTML).toBe(today);
+    cleanup();
+    expect(draw("").innerHTML).toBe(today);
   });
 });

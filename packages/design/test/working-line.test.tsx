@@ -1,8 +1,8 @@
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
-import { act, cleanup, render, screen } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { ConversationPage, DesignProvider, WorkingLine } from "../src/index";
+import { type Brand, ConversationPage, DesignProvider, WorkingLine } from "../src/index";
 
 afterEach(() => {
   cleanup();
@@ -153,5 +153,65 @@ describe("ConversationPage working line", () => {
   it("draws no line unless asked", () => {
     const { container } = wrap(<ConversationPage {...base} thread={<div>thread</div>} />);
     expect(container.querySelector('[data-part="working-line"]')).toBeNull();
+  });
+});
+
+const brandOf = (markUrl: string | null): Brand => ({
+  markUrl,
+  wordmark: null,
+  illustrationUrl: null,
+  decoration: "dither",
+  productName: "Acme",
+});
+
+describe("WorkingLine with a theme mark (theme brand coverage §3)", () => {
+  const draw = (ui: React.ReactElement, markUrl: string | null) =>
+    render(
+      <DesignProvider locale="en" brand={brandOf(markUrl)}>
+        {ui}
+      </DesignProvider>,
+    ).container;
+
+  it("draws the theme mark with the pulse attribute and no leg frames", () => {
+    const c = draw(<WorkingLine />, "/m.svg");
+    const img = c.querySelector('img[data-part="working-mark"]');
+    expect(img?.getAttribute("src")).toBe("/m.svg");
+    expect(img?.getAttribute("height")).toBe("20");
+    expect(img?.getAttribute("alt")).toBe("");
+    expect(img?.getAttribute("data-motion")).toBe("pulse");
+    expect(c.querySelector("[data-frame]")).toBeNull();
+    expect(c.querySelector('[data-part="working-line"]')?.getAttribute("aria-hidden")).toBe("true");
+  });
+
+  it("still: no pulse; reduced motion: the pulse runs only under no-preference", () => {
+    const c = draw(<WorkingLine still />, "/m.svg");
+    expect(c.querySelector('img[data-part="working-mark"]')?.hasAttribute("data-motion")).toBe(
+      false,
+    );
+    const pulse = css.indexOf('[data-motion="pulse"]');
+    expect(pulse).toBeGreaterThan(-1);
+    const media = css.lastIndexOf("@media (prefers-reduced-motion: no-preference)", pulse);
+    expect(media).toBeGreaterThan(-1);
+    expect(css.slice(media, pulse)).not.toMatch(/^}/m);
+  });
+
+  it("a failing mark falls back to the walking bitmap", () => {
+    const c = draw(<WorkingLine />, "/m.svg");
+    fireEvent.error(c.querySelector("img") as HTMLImageElement);
+    expect(c.querySelector("img")).toBeNull();
+    expect(c.querySelector('[data-part="working-mark"] svg [data-frame="2"]')).not.toBeNull();
+  });
+
+  it("captions rotate as before", () => {
+    const c = draw(<WorkingLine />, "/m.svg");
+    expect(c.querySelectorAll('[data-part="working-caption"] > span')).toHaveLength(4);
+  });
+
+  it("without a brand, or with an empty mark, the DOM equals today's", () => {
+    const today = wrap(<WorkingLine still />, "en").container.innerHTML;
+    cleanup();
+    expect(draw(<WorkingLine still />, null).innerHTML).toBe(today);
+    cleanup();
+    expect(draw(<WorkingLine still />, "").innerHTML).toBe(today);
   });
 });
