@@ -21,7 +21,7 @@ import {
   stat,
   writeFile,
 } from "node:fs/promises";
-import { dirname, join } from "node:path";
+import { dirname, join, posix } from "node:path";
 import { promisify } from "node:util";
 import {
   DEVICE_PROVIDER_EXTENSION_POINT,
@@ -139,6 +139,15 @@ const Deployment = z.object({
   refusePaths: z.array(z.string()).optional(),
 });
 
+/** Whether `path` is one of `refused` or below one (device paths, compared normalized). */
+function isRefused(refused: string[] | undefined, path: string): boolean {
+  const p = posix.normalize(path);
+  return (refused ?? []).some((r) => {
+    const n = posix.normalize(r).replace(/\/+$/, "");
+    return p === n || p.startsWith(`${n}/`);
+  });
+}
+
 /** What `device-fake` reports as its description. */
 export const DEFAULT_DESCRIPTION = "Test device (a local directory, no isolation)";
 
@@ -154,7 +163,7 @@ export interface FakeSandboxOptions {
   limitsApplyAt?: "instance" | "fileSystem";
   /** Gives the provider a `list` and a `scan` (see the file header). */
   list?: boolean;
-  /** `list` refuses these paths with `ProjectPathRefusedError` ("Refused by the test provider"). */
+  /** `list` refuses these device paths and everything below them (`ProjectPathRefusedError`, "Refused by the test provider"). */
   refusePaths?: string[];
 }
 
@@ -969,7 +978,7 @@ export function createFakeSandbox(
     provider.list = async (h, path, opts) => {
       opts.signal.throwIfAborted();
       await requireRunning(h);
-      if (options.refusePaths?.includes(path)) {
+      if (isRefused(options.refusePaths, path)) {
         throw new ProjectPathRefusedError({
           en: "Refused by the test provider",
           zh: "测试提供方拒绝了这个目录",
