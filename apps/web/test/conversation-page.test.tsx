@@ -348,26 +348,23 @@ describe("the conversation page (ConversationPage)", () => {
     expect(row.querySelector('img[src="/api/v1/accounts/a2/avatar?v=1"]')).not.toBeNull();
   });
 
-  it("the viewer's own bubble shows the session's avatar, not the log read's older one", async () => {
+  it("the viewer's own bubble has no avatar beside it", async () => {
     api({
       [`GET ${BASE}/events`]: () =>
         json(200, {
-          events: [userMsg(1, "hi")],
+          events: [userMsg(1, "mine"), userMsg(2, "theirs", { authorAccountId: "a2" })],
           people: {
-            a1: { id: "a1", name: "Grant", avatarUrl: "/api/v1/accounts/a1/avatar?v=old" },
+            a1: { id: "a1", name: "Grant", avatarUrl: "/api/v1/accounts/a1/avatar?v=1" },
+            a2: { id: "a2", name: "Ada", avatarUrl: "/api/v1/accounts/a2/avatar?v=1" },
           },
         }),
     });
-    await renderChatRoute({
-      me: { ...ME, account: { ...ME.account, avatarUrl: "/api/v1/accounts/a1/avatar?v=new" } },
-    });
-    const row = await vi.waitFor(() => {
-      const r = document.querySelector('[data-part="bubble-row"]');
-      expect(r).not.toBeNull();
-      return r as HTMLElement;
-    });
-    expect(row.querySelector('img[src="/api/v1/accounts/a1/avatar?v=new"]')).not.toBeNull();
-    expect(row.querySelector('img[src="/api/v1/accounts/a1/avatar?v=old"]')).toBeNull();
+    await renderChat();
+    await vi.waitFor(() => expect(document.body.textContent).toContain("theirs"));
+    const rows = [...document.querySelectorAll('[data-part="bubble-row"]')];
+    expect(rows).toHaveLength(1);
+    expect(rows[0]?.textContent).toContain("theirs");
+    expect(document.querySelector('img[src="/api/v1/accounts/a1/avatar?v=1"]')).toBeNull();
   });
 
   it("a bubble whose author left gets the departed avatar (the initial)", async () => {
