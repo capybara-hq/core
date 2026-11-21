@@ -399,7 +399,7 @@ export class AgentsOperations implements OnModuleInit {
       defineOperation({
         id: "agents.update-profile",
         description:
-          'Change how an agent you may edit looks to people: its avatar (one of the preset animals; an image of this conversation as { kind: "file", file: { fileId } }, e.g. a generated image, an attachment or a delivered file, PNG, JPEG or WebP up to 2 MiB, which the person sees on the card; or null for none) and its quick actions (the prompts offered when a conversation starts; the list you send replaces the current one, [] clears it). Send at least one of the two. The current profile is in agents.get. The description is part of the definition: change it with agents.update. A change to your own private agent may be remembered by the person (never one that takes an image); a change to a shared agent is confirmed every time.',
+          'Change how an agent you may edit looks to people: its avatar (a preset: one of the built-in animals by id, or a theme preset by the key that themes.list returns under avatars.presets[].key, offered only while that theme is the default theme of the org; an image of this conversation as { kind: "file", file: { fileId } }, e.g. a generated image, an attachment or a delivered file, PNG, JPEG or WebP up to 2 MiB, which the person sees on the card; or null for none) and its quick actions (the prompts offered when a conversation starts; the list you send replaces the current one, [] clears it). Send at least one of the two. The current profile is in agents.get. The description is part of the definition: change it with agents.update. A change to your own private agent may be remembered by the person (never one that takes an image); a change to a shared agent is confirmed every time.',
         input: z
           .object({
             agentId: AgentId,
@@ -450,6 +450,10 @@ export class AgentsOperations implements OnModuleInit {
             next: "Someone changed the profile while you were waiting: read it again with agents.get, then call again.",
           },
           {
+            code: "agent.avatar_unavailable",
+            next: "Choose one of the presets the picker shows: a built-in animal id, or a key from themes.list avatars.presets[].key of the org's current default theme.",
+          },
+          {
             code: "attachment.too_many_pending",
             next: "Too many avatar images are stored and not used yet; wait a day for them to expire, or save one of them.",
           },
@@ -460,7 +464,10 @@ export class AgentsOperations implements OnModuleInit {
         ],
         precheck: async (i, ctx) => {
           const { agent: _a, ...check } = await this.editCheck(i.agentId, ctx);
-          return check;
+          if (!check.ok || i.avatar?.kind !== "preset") return check;
+          // a theme preset key the org's default theme does not offer: refused before the card
+          const avatar = i.avatar;
+          return precheckBy(() => this.agents.resolveAvatarInput(ctx.orgId, avatar));
         },
         fileRef: (i) =>
           i.avatar?.kind === "file"

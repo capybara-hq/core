@@ -1,4 +1,4 @@
-import { randomUUID } from "node:crypto";
+import { randomInt, randomUUID } from "node:crypto";
 import { parseToolKey } from "@capybara-hq/plugin-sdk";
 import { Inject, Injectable } from "@nestjs/common";
 import { sql } from "kysely";
@@ -19,6 +19,7 @@ import { ProviderRegistry } from "../runtime/providers.js";
 import { SkillChangesService } from "../skills/changes.service.js";
 import { assertDisabledSkills } from "../skills/skills.service.js";
 import { agentSkills } from "../skills/usable.js";
+import { ThemesService } from "../themes/themes.service.js";
 import { ToolRegistry } from "../tools/registry.js";
 import {
   AgentLookup,
@@ -41,7 +42,13 @@ import {
 } from "./definition.js";
 import { type AgentDefinitionInput, deriveInstructions } from "./instruction-files.js";
 import { PendingConnectorRequests } from "./pending-connector-requests.js";
-import { type ProfileInput, randomPreset } from "./profile.js";
+import {
+  type AgentAvatar,
+  type AvatarInput,
+  isBuiltinPresetId,
+  PRESET_IDS,
+  type ProfileInput,
+} from "./profile.js";
 import { loadTemplates, templateTypeOf } from "./templates.js";
 
 export {
@@ -385,7 +392,60 @@ export class AgentsService {
     /** Records `agent.deleted` for the subscribing plugins in the delete's transaction. */
     @Inject(LifecycleHooks)
     private readonly lifecycle: Pick<LifecycleHooks, "recordIn">,
+    /** The avatar presets of the org's effective default theme (theme brand coverage spec §4). */
+    @Inject(ThemesService) private readonly themes: Pick<ThemesService, "avatarPresets">,
   ) {}
+
+  /**
+   * The stored value of an avatar input (theme brand coverage spec §4): a built-in preset id is
+   * always accepted, also while the theme hides it (hidden only means "not offered"); a theme
+   * preset key only while it is a preset of `orgId`'s effective default theme, stored pinned to
+   * that theme version; else 400 `agent.avatar_unavailable`. The key is looked up among the writing
+   * org's presets only, never across themes, so no org can pick another org's theme preset. An
+   * upload passes through (its own checks bind it). A read: call it before the write's
+   * transaction.
+   */
+  async resolveAvatarInput(orgId: string, input: AvatarInput): Promise<NonNullable<AgentAvatar>> {
+    if (input.kind === "upload") return { kind: "upload", uploadId: input.uploadId };
+    if (isBuiltinPresetId(input.id)) return { kind: "preset", id: input.id };
+    const p = (await this.themes.avatarPresets(orgId)).presets.find((x) => x.key === input.id);
+    if (p === undefined) {
+      throw new ApiError(
+        "agent.avatar_unavailable",
+        `Avatar preset ${input.id} is not offered in this organization; choose one of the presets the picker shows`,
+      );
+    }
+    return {
+      kind: "theme",
+      themeId: p.themeId,
+      version: p.version,
+      preset: p.preset,
+      file: p.file,
+    };
+  }
+
+  /**
+   * The avatar of an agent created without one (theme brand coverage spec §4): uniform over the
+   * built-ins the org's effective default theme does not hide plus that theme's presets (pinned);
+   * null (no avatar: the initial) when none is visible. A read, before the create's transaction.
+   */
+  async randomAvatar(orgId: string): Promise<AgentAvatar> {
+    const { hidden, presets } = await this.themes.avatarPresets(orgId);
+    const pool: NonNullable<AgentAvatar>[] = [
+      ...PRESET_IDS.filter((id) => !hidden.includes(id)).map((id) => ({
+        kind: "preset" as const,
+        id,
+      })),
+      ...presets.map((p) => ({
+        kind: "theme" as const,
+        themeId: p.themeId,
+        version: p.version,
+        preset: p.preset,
+        file: p.file,
+      })),
+    ];
+    return pool.length === 0 ? null : (pool[randomInt(pool.length)] ?? null);
+  }
 
   /**
    * Checks the turned-off tools and the policies (tools default-on spec §2): `disabledTools` must
@@ -581,10 +641,16 @@ export class AgentsService {
       throw new ApiError("validation_failed", "memberIds requires visibility 'members'");
     }
     assertProfileWritable(input.profile);
+    // reads before the transaction: a theme key resolves against this org's presets only
+    const avatarInput = input.profile?.avatar;
+    const avatar =
+      avatarInput == null
+        ? await this.randomAvatar(orgId)
+        : await this.resolveAvatarInput(orgId, avatarInput);
     const { agent, role } = await this.createIn(
       orgId,
       actorAccountId,
-      input,
+      { ...input, avatar },
       toolKeys,
       template,
       actorTokenId,
@@ -602,6 +668,8 @@ export class AgentsService {
       visibility: AgentVisibility;
       memberIds?: string[];
       profile?: ProfileInput;
+      /** The stored avatar ({@link resolveAvatarInput} / {@link randomAvatar}). */
+      avatar: AgentAvatar;
       /** `disabledSkills` as given (before canonical form): error paths name the caller's index. */
       givenDisabledSkills?: readonly DisabledSkillRef[];
     },
@@ -644,9 +712,7 @@ export class AgentsService {
         owner_account_id: actorAccountId,
         visibility: input.visibility,
         current_version: 1,
-        profile_avatar: JSON.stringify(
-          input.profile?.avatar ?? { kind: "preset", id: randomPreset() },
-        ),
+        profile_avatar: input.avatar === null ? null : JSON.stringify(input.avatar),
         profile_description: input.definition.description ?? "",
         profile_quick_actions: JSON.stringify(input.profile?.quickActions ?? []),
         ...(template !== null && {

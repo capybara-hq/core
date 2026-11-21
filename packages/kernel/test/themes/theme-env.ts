@@ -93,3 +93,49 @@ export async function clearThemeLevels(env: OrgEnv): Promise<void> {
     .set({ settings: sql`settings - 'theme'` as unknown as string })
     .execute();
 }
+
+/**
+ * Theme `themeId` of plugin `plugin` with agent avatar presets (theme brand coverage spec §4):
+ * `presets` are preset ids, each with its file `./avatars/<id>.svg`; `hidden` the built-ins it
+ * hides. `fill` changes the SVG bytes (a new theme version on update).
+ */
+export const avatarThemePlugin = (
+  plugin: string,
+  themeId: string,
+  o: { presets?: string[]; hidden?: string[]; version?: string; fill?: string } = {},
+) => {
+  const presets = o.presets ?? ["mascot"];
+  const svg = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 10 10"><rect width="10" height="10" fill="${o.fill ?? "#000"}"/></svg>`;
+  return pluginTgz({
+    manifest: { name: plugin, ...(o.version !== undefined && { version: o.version }) },
+    files: {
+      [`themes/${themeId}.json`]: JSON.stringify({
+        name: { en: `${themeId} en`, zh: `${themeId} zh` },
+        schemes: { dark: { radius: { sm: 2 } } },
+        avatars: presets.map((id) => ({ id, name: { en: id }, file: `./avatars/${id}.svg` })),
+        ...(o.hidden !== undefined && { hideAvatarPresets: o.hidden }),
+      }),
+      ...Object.fromEntries(presets.map((id) => [`avatars/${id}.svg`, svg])),
+    },
+  });
+};
+
+/**
+ * Imports {@link avatarThemePlugin} as the super admin, gives the theme its own scope `all` and
+ * returns its `platform_themes` id and the item id.
+ */
+export async function importAvatarTheme(
+  env: OrgEnv,
+  plugin: string,
+  themeId: string,
+  o: { presets?: string[]; hidden?: string[] } = {},
+): Promise<{ id: string; itemId: string }> {
+  const itemId = await importPlugin(env, await avatarThemePlugin(plugin, themeId, o));
+  const t = await env.db
+    .selectFrom("platform_themes")
+    .select("id")
+    .where("catalog_item_id", "=", itemId)
+    .executeTakeFirstOrThrow();
+  await setThemeScope(env, t.id, "all");
+  return { id: t.id, itemId };
+}

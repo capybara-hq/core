@@ -1,26 +1,18 @@
-import { randomInt } from "node:crypto";
 import {
   BUILTIN_AVATAR_PRESET_IDS,
   type BuiltinAvatarPresetId,
-  CATALOG_ITEM_NAME_RE,
   THEME_AVATAR_ID_RE,
 } from "@capybara-hq/plugin-sdk";
 import { z } from "zod";
+import { THEME_PRESET_KEY_RE } from "../themes/avatar-preset-key.js";
 
 /** The ten built-in pixel-animal avatars (drawn by `@capybara-hq/design`). */
 export const PRESET_IDS = BUILTIN_AVATAR_PRESET_IDS;
 export type PresetId = BuiltinAvatarPresetId;
 
-/** A pattern's source without its `^` / `$` anchors. */
-const body = (re: RegExp) => re.source.replace(/^\^/, "").replace(/\$$/, "");
-
-/**
- * A theme avatar preset's key (theme brand coverage spec §4): `<plugin>/<theme file id>/<preset
- * id>`, the plugin and theme ids as catalog item names, the preset id as {@link THEME_AVATAR_ID_RE}.
- */
-export const THEME_PRESET_KEY_RE = new RegExp(
-  `^${body(CATALOG_ITEM_NAME_RE)}/${body(CATALOG_ITEM_NAME_RE)}/${body(THEME_AVATAR_ID_RE)}$`,
-);
+/** Whether `id` is a built-in preset id (else, in an avatar input, a theme preset key). */
+export const isBuiltinPresetId = (id: string): id is PresetId =>
+  (PRESET_IDS as readonly string[]).includes(id);
 
 export const PROFILE_LIMITS = {
   description: 500,
@@ -28,11 +20,6 @@ export const PROFILE_LIMITS = {
   title: 40,
   body: 20_000,
 } as const;
-
-/** A random preset id: the avatar of an agent created without one. */
-export function randomPreset(): PresetId {
-  return PRESET_IDS[randomInt(PRESET_IDS.length)] as PresetId;
-}
 
 export const AgentAvatarSchema = z.discriminatedUnion("kind", [
   z.object({ kind: z.literal("preset"), id: z.enum(PRESET_IDS) }).strict(),
@@ -51,8 +38,18 @@ export const AgentAvatarSchema = z.discriminatedUnion("kind", [
   // only produced by the migration of `definition.avatarUrl`; never accepted from a client
   z.object({ kind: z.literal("external"), url: z.url() }).strict(),
 ]);
-/** `null` only for agents created before profiles existed. */
+/**
+ * A stored avatar; `null`: no avatar (agents created before profiles existed, or a random default
+ * with no preset visible).
+ */
 export type AgentAvatar = z.infer<typeof AgentAvatarSchema> | null;
+/** A theme preset as stored: pinned to the theme version it was chosen from. */
+export type ThemeAvatar = Extract<z.infer<typeof AgentAvatarSchema>, { kind: "theme" }>;
+/** An avatar as the agent API returns it: a `theme` one carries its immutable asset URL. */
+export type AgentAvatarView =
+  | Exclude<z.infer<typeof AgentAvatarSchema>, { kind: "theme" }>
+  | (ThemeAvatar & { url: string })
+  | null;
 
 export const QuickActionSchema = z
   .object({
@@ -65,7 +62,6 @@ export type QuickAction = z.infer<typeof QuickActionSchema>;
 export const DescriptionSchema = z.string().max(PROFILE_LIMITS.description);
 export const QuickActionsSchema = z.array(QuickActionSchema).max(PROFILE_LIMITS.quickActions);
 
-/** What a client may write (`external` is migrated data only, `theme` the kernel's). */
 /**
  * A preset avatar: the only kind the `Platform` tool sets (an upload is the web's). `id` is a
  * built-in preset id or a theme preset key ({@link THEME_PRESET_KEY_RE}; the org's theme listing
@@ -84,6 +80,7 @@ export const PresetAvatarSchema = z
   })
   .strict();
 
+/** What a client may write (`external` is migrated data only, `theme` the kernel's). */
 export const AvatarInputSchema = z.discriminatedUnion("kind", [
   PresetAvatarSchema,
   z.object({ kind: z.literal("upload"), uploadId: z.string().min(1).max(200) }).strict(),
@@ -100,8 +97,10 @@ export type ProfileInput = z.infer<typeof ProfileInputSchema>;
 /** What `PATCH …/profile` writes: the description is saved with the definition (run context §3.5). */
 export type ProfilePatch = Omit<ProfileInput, "description">;
 
+export type AvatarInput = z.infer<typeof AvatarInputSchema>;
+
 export interface AgentProfile {
-  avatar: AgentAvatar;
+  avatar: AgentAvatarView;
   description: string;
   quickActions: QuickAction[];
   updatedAt: string;

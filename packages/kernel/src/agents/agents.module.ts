@@ -7,6 +7,7 @@ import { ModelsModule } from "../models/models.module.js";
 import { OrgLockModule } from "../orgs/org-lock.js";
 import { ProvidersModule } from "../runtime/providers.js";
 import { SkillsModule } from "../skills/skills.module.js";
+import { ThemesModule } from "../themes/themes.module.js";
 import { ToolsModule } from "../tools/tools.module.js";
 import { AdminAgents } from "./admin-agents.js";
 import { AgentLookupModule } from "./agent-lookup.js";
@@ -44,6 +45,8 @@ import { AgentTemplatesService } from "./templates.js";
     ModelsModule,
     // the agent delete records `agent.deleted` deliveries
     LifecycleHooksModule,
+    // the avatar presets of the org's default theme: avatar inputs and the random default
+    ThemesModule,
   ],
   providers: [
     AgentsService,

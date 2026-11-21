@@ -11,7 +11,6 @@ import {
   type ParsedTheme,
   type ThemeScheme,
 } from "@capybara-hq/plugin-sdk";
-import { THEME_PRESET_KEY_RE } from "../agents/profile.js";
 import {
   type ComponentRow,
   componentOn,
@@ -25,6 +24,7 @@ import {
 import type { KernelSchemaDb } from "../db/kernel-schema.js";
 import { ApiError } from "../errors.js";
 import { packagePath } from "../packages/tgz.js";
+import { THEME_PRESET_KEY_RE } from "./avatar-preset-key.js";
 
 /** The schemes in the order they are listed. */
 const SCHEMES: readonly ThemeScheme[] = ["dark", "light"];

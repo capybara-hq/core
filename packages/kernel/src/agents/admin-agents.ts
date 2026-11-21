@@ -13,13 +13,14 @@ import {
   usableSkillVersions,
 } from "../skills/usable.js";
 import { AgentLookup, type AgentVisibility } from "./agent-lookup.js";
+import { avatarView } from "./avatar-view.js";
 import {
   type AgentDefinition,
   type DisabledSkillRef,
   type DisabledToolRef,
   skillDisabled,
 } from "./definition.js";
-import type { AgentAvatar } from "./profile.js";
+import type { AgentAvatar, AgentAvatarView } from "./profile.js";
 
 /** One row of the super admin's cross-org agent list (admin agents spec §3.2). */
 export interface AdminAgentRow {
@@ -28,7 +29,7 @@ export interface AdminAgentRow {
   orgName: string;
   /** The current version's name. */
   name: string;
-  avatar: AgentAvatar;
+  avatar: AgentAvatarView;
   ownerAccountId: string;
   ownerName: string;
   ownerAvatarUrl: string | null;
@@ -310,7 +311,7 @@ function toRow(
     orgId: r.org_id,
     orgName: r.org_name,
     name: r.name,
-    avatar: (r.profile_avatar ?? null) as AgentAvatar,
+    avatar: avatarView((r.profile_avatar ?? null) as AgentAvatar),
     ownerAccountId: r.owner_account_id,
     ownerName: r.owner_name,
     ownerAvatarUrl: personAvatarUrl(r, "owner", r.owner_account_id),
