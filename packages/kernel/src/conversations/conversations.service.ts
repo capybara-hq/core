@@ -1917,6 +1917,17 @@ export class ConversationsService {
     // terminal transaction
     await this.holdTree(conversationId);
     await runs.requestAbort(run.id, accountId);
+    // the suspend handshake (`WaitsService.suspend`): a run that became `waiting` after the read
+    // above may have checked the marker before it was set and ended its job, so nobody hears the
+    // broadcast; check `waiting` again after setting the marker and end it as a waiting run
+    const now = await this.db
+      .selectFrom("runs")
+      .select("status")
+      .where("id", "=", run.id)
+      .executeTakeFirst();
+    if (now?.status === "waiting" && (await runs.abortWaiting(conversationId, run.id, accountId))) {
+      await runs.ensureRunAfterCommit(conversationId);
+    }
     return run.id;
   }
 }
