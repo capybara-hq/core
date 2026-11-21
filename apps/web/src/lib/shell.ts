@@ -354,6 +354,10 @@ export const MOBILE_SHELL_LIMITS = {
   shareTitle: 256,
   shareText: 4000,
   url: 2048,
+  /** `nav@1`: a section or menu label is 1..32 characters. */
+  navLabel: 32,
+  /** `nav@1`: a badge count is an integer 0..9999 (`countMore` says there are more). */
+  navCount: 9999,
 } as const;
 
 /** The menu item id pattern, checked on `menu@1.show` (the shell validates every input). */

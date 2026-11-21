@@ -2503,6 +2503,8 @@ export const MOBILE_SHELL_LIMITS: {
     readonly shareTitle: 256;
     readonly shareText: 4000;
     readonly url: 2048;
+    readonly navLabel: 32;
+    readonly navCount: 9999;
 };
 
 // @public
