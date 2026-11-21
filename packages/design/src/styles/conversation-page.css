@@ -1375,6 +1375,13 @@ button.cb-property-row {
   min-width: var(--cb-layout-panel-min);
   min-height: 0;
 }
+/* The drag filler over the strip a desktop shell's end controls leave above the panel (0 high
+   elsewhere); it starts after the resize handle. */
+.cb-conv-panel > .cb-drag-fill {
+  position: absolute;
+  inset: 0 0 auto var(--cb-space-1);
+  height: var(--cb-shell-row-end, 0px);
+}
 /*
  * Below 1280 an "auto" right area is a sheet, but the server render and hydration cannot know the
  * window (useMediaQuery reads false there) and draw it inline until the first client render. Hide

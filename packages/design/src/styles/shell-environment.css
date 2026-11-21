@@ -285,6 +285,23 @@
   -webkit-app-region: drag;
   app-region: drag;
 }
+/* Below 600: on a chat surface the floating row's gap lies under the title pill, so only a pushed
+   page's gap drags; the controls area reaches to just before the row's first control, so a window
+   with its controls at the end (Windows) keeps a strip at its start edge to drag by. */
+:root[data-shell="desktop"] .cb-shell[data-surface="chat"] .cb-floatbar > .cb-drag-fill {
+  -webkit-app-region: no-drag;
+  app-region: no-drag;
+}
+@media (max-width: 599px) {
+  :root[data-shell="desktop"] .cb-shell-band {
+    width: max(
+      var(--cb-shell-reserve-start),
+      calc(var(--cb-float-start) - var(--cb-space-1)),
+      min(100%, calc(var(--cb-shell-band) * 100000))
+    );
+    height: max(var(--cb-shell-band), var(--cb-shell-row));
+  }
+}
 /* While an overlay is open (a menu, a popover, a tooltip, a toast, a dialog, a sheet, the palette,
    a drawer) no filler drags: an overlay that lands over one (the org switcher's menu, the title
    menu) stays clickable and hoverable everywhere, and the window does not move under a modal. */

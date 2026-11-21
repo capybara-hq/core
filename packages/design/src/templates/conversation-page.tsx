@@ -24,6 +24,7 @@ import { BoxScope } from "../layout/box";
 import { useDragDismiss } from "../overlays/drag";
 import { useFocusReturn } from "../overlays/focus-return";
 import { useDesignT } from "../provider";
+import { DragFill } from "../shell/drag-fill";
 import { useViewportSegments } from "../shell/segments";
 import { useHasShell, useRegisterShellPage } from "../shell/shell-page";
 import { INLINE_RIGHT_AREA_BELOW, useSizeClass } from "../shell/size-class";
@@ -561,6 +562,9 @@ export function ConversationPage({
               onPointerUp={onPointerUp}
               onPointerCancel={onPointerUp}
             />
+            {/* The strip above the panel when end window controls take the top row (none on
+                macOS): a drag filler, as high as that row. */}
+            <DragFill />
             {panelNode}
           </div>
         ) : null}

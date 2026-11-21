@@ -575,7 +575,7 @@ values:
 | `controls` | macOS main window (`titleBarStyle: "hidden"`): the traffic lights' rectangle from the window's top-left corner, as high as the web's top row, the lights vertically centred in it at the app's fixed `trafficLightPosition`: `{ x: 0, y: 0, width: 92, height: 48 }` with the lights (60 wide, 14 high on current macOS) at `{ x: 16, y: 17 }` (48 is design's `layout.title-bar`, the conversation title bar's height; exact values checked on the built window, **designer's call**); `null` in fullscreen, announced with `change`. Later Windows / Linux builds report their title-bar overlay buttons the same way (a `titleBarOverlay` as high as the row, the rectangle at the window's right edge, re-announced when the width changes) |
 | `capabilities` | `notify@1`, `openExternal@1` and `signIn@1` always; `chrome@1` (mobile layout §9.2: window background, title bar and the local pages follow the theme and its color tokens, §6.10); `device@1` when 「连接本机」 is available: macOS or Linux, not turned off by managed configuration, and the deployment's `/api/v1/meta` says `localDevices` with a `device` range the bundled program speaks |
 
-**The top row (amended 2026-11-21; proposal awaiting the maintainer's review).** There is no
+**The top row (maintainer decision 2026-11-21).** There is no
 separate title bar band above the web, as in other desktop chat apps: the sidebar runs to the
 window's top edge and the traffic lights sit in its brand row, centred on it; the content
 column's first row is the same row. The row's height is the controls rectangle's height, so the
@@ -598,8 +598,9 @@ reports it).
   path row likewise, which also fixes a breadcrumb that sat 4 px from the lights). Their end keeps
   clear of end controls: the title bar's right-side toggles (properties, panels, more), a
   title-less head's actions on the path row, the shared file page's download; an open side panel
-  starts below the end controls instead. Every other right-side control of a template (a page
-  head's actions, the tab row's search) is below the top row.
+  starts below the end controls instead, the strip above it a drag filler. Every other
+  right-side control of a template (a page head's actions, the tab row's search) is below the top
+  row.
 - **Overlays** on the controls' side start below the row: the rail's conversations sheet and the
   compact drawer under the lights, the end-edge sheets under end controls, the image viewer under
   either; centred dialogs and the palette need nothing.
@@ -612,9 +613,10 @@ reports it).
   sheet, palette, drawer) no filler drags, so an overlay landing over one stays clickable and
   hoverable and the window does not move under a modal. Double-clicking a filler does what the
   title bar does (macOS: zoom or minimize as System Settings say; Windows: maximize); a
-  right-click on one shows no web menu (Windows may show the window menu). The compact floating
-  row has no filler of its own (the title pill lies over its gap): it drags from the controls
-  area only. A design test checks that drag regions are only the fillers and that every filler is
+  right-click on one shows no web menu (Windows may show the window menu). Below 600 the floating
+  row's gap is a filler on a pushed page; on a chat surface the title pill lies over it, so it does
+  not drag there, and the controls area reaches to just before the row's first control (a window
+  with its controls at the end keeps a strip at its start edge to drag by). A design test checks that drag regions are only the fillers and that every filler is
   empty. The shell adds no drag regions of its own to the web; its local pages carry their own
   (the top band, §6.1: an empty band element, the controls rectangle in it `no-drag`).
 

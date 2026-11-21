@@ -10,6 +10,7 @@ import { cleanup, render } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   AppShell,
+  ConversationPage,
   DesignProvider,
   NewTitleBar,
   PageHeader,
@@ -172,5 +173,55 @@ describe("the fillers the templates draw", () => {
       expect(f.getAttribute("aria-hidden"), f.outerHTML).toBe("true");
       expect(f.hasAttribute("tabindex"), f.outerHTML).toBe(false);
     }
+  });
+});
+
+describe("the narrow window's row and the side panel's strip", () => {
+  it("the compact floating row's gap is a filler, which does not drag on a chat surface", () => {
+    vi.stubGlobal("matchMedia", matchMediaFor(480).matchMedia);
+    const { container } = render(
+      <DesignProvider locale="zh">
+        <AppShell sidebar={sidebar} status={status}>
+          <p>page</p>
+        </AppShell>
+      </DesignProvider>,
+    );
+    const gap = container.querySelector(".cb-floatbar > .cb-drag-fill");
+    expect(gap).not.toBeNull();
+    expect(gap?.childNodes.length).toBe(0);
+    expect(gap?.getAttribute("aria-hidden")).toBe("true");
+    const off = parseCss(css("shell-environment.css")).some(
+      (r) =>
+        /\.cb-shell\[data-surface="chat"\] \.cb-floatbar > \.cb-drag-fill$/.test(r.selector) &&
+        r.decls["app-region"] === "no-drag",
+    );
+    expect(off).toBe(true);
+  });
+
+  it("an open side panel draws a filler for the strip above it", () => {
+    vi.stubGlobal("matchMedia", matchMediaFor(1440).matchMedia);
+    const { container } = render(
+      <DesignProvider locale="zh">
+        <ConversationPage
+          titleBar={{
+            title: "T",
+            untitled: "U",
+            menu: [],
+            properties: { pressed: false, onToggle: noop },
+            panels: [],
+          }}
+          thread={<p>t</p>}
+          composer={<div />}
+          status={{ context: "c", version: "v" }}
+          right="panel"
+          panel={<div>panel</div>}
+          onCloseRight={noop}
+          layout="inline"
+        />
+      </DesignProvider>,
+    );
+    const fill = container.querySelector(".cb-conv-panel > .cb-drag-fill");
+    expect(fill).not.toBeNull();
+    expect(fill?.childNodes.length).toBe(0);
   });
 });
