@@ -1,5 +1,12 @@
 # @capybara-hq/plugin-sdk
 
+## 0.1.0-rc.47
+
+### Minor Changes
+
+- 0756b7b: `MOBILE_SHELL_LIMITS` gains `navLabel` (32) and `navCount` (9999), the bounds a shell validates
+  `nav@1` state against (section and menu labels, badge counts).
+
 ## 0.1.0-rc.46
 
 ### Minor Changes
