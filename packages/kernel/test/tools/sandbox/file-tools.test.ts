@@ -53,7 +53,7 @@ import {
  */
 
 const SANDBOX_FAKE = fileURLToPath(
-  new URL("../../fixtures/plugins/sandbox-fake/index.ts", import.meta.url),
+  new URL("../../fixtures/plugins/device-fake/index.ts", import.meta.url),
 );
 
 let pgc: TestContainer;
@@ -76,7 +76,7 @@ beforeAll(async () => {
       {
         roles: ["api", "worker"],
         extensions: [MODEL_FAKE, SANDBOX_FAKE],
-        extensionConfig: { "sandbox-fake": { root, list: true } },
+        extensionConfig: { "device-fake": { root, list: true } },
       },
     ),
   );

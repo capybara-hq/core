@@ -44,7 +44,7 @@ import { makeZip } from "./zip.js";
 
 const OBJECT_STORE = fakeExtensionEntry("fake-object-store");
 const SANDBOX_FAKE = fileURLToPath(
-  new URL("../fixtures/plugins/sandbox-fake/index.ts", import.meta.url),
+  new URL("../fixtures/plugins/device-fake/index.ts", import.meta.url),
 );
 
 type Json = Record<string, unknown>;
@@ -122,7 +122,7 @@ describe("M5 segment 3 dual-replica acceptance (agent skill registration + skill
           secretAccessKey: s3.secretKey,
           forcePathStyle: true,
         },
-        "sandbox-fake": { root },
+        "device-fake": { root },
       },
       config: { auth: { cookieSecure: false } },
     });

@@ -136,11 +136,16 @@ const Deployment = z.object({
   list: z.boolean().optional(),
 });
 
+/** What `device-fake` reports as its description. */
+export const DEFAULT_DESCRIPTION = "Test device (a local directory, no isolation)";
+
 /** A stand-in for a provider setting in the refusal's message (see the file header). */
 export const FAKE_REFUSAL_SECRET = "fake-secret-0c1d2e";
 
 /** How the fake applies new limits (see the file header). */
 export interface FakeSandboxOptions {
+  /** What `report` describes the device as (default: {@link DEFAULT_DESCRIPTION}). */
+  description?: string;
   /** `update`'s answer (`throw`: it fails with an ordinary error); `none` (default): no `update`. */
   updateMode?: "updated" | "recreate" | "throw" | "none";
   limitsApplyAt?: "instance" | "fileSystem";
@@ -269,7 +274,7 @@ function sessionPids(list) {
   return pids;
 }
 function usage(name) {
-  process.stderr.write(name + ": the sandbox-fake shim supports only " + name + " [-SIGNAL] -s <sid>[,<sid>...]\\n");
+  process.stderr.write(name + ": the device-fake shim supports only " + name + " [-SIGNAL] -s <sid>[,<sid>...]\\n");
   process.exit(2);
 }
 `;
@@ -584,7 +589,7 @@ export function createFakeSandbox(
       )
     ) {
       throw new Error(
-        `Sandbox open public network is refused: the sandbox-fake setting refuseOpenNetwork is true (token ${FAKE_REFUSAL_SECRET})`,
+        `Sandbox open public network is refused: the device-fake setting refuseOpenNetwork is true (token ${FAKE_REFUSAL_SECRET})`,
       );
     }
   };
@@ -698,10 +703,11 @@ export function createFakeSandbox(
   const provider: DeviceProvider = {
     concurrentExec: true as const,
     networkAllowlist: true as const,
-    async report() {
+    async report(device) {
+      const meta = device.handle === null ? null : await fakeSandboxMeta(root, device.handle.id);
       return {
-        revision: "fake-1",
-        description: { en: "Fake sandbox on the local file system" },
+        revision: meta?.fileSystem ?? "none",
+        description: { en: options.description ?? DEFAULT_DESCRIPTION },
         home: null,
         limits: [],
         reset: true,
@@ -1017,27 +1023,36 @@ export function createFakeSandbox(
   return withFaults(root, provider);
 }
 
-/** 测试用 `device-provider@1`：部署配置 `{ root }`，见文件头注释。 */
-export default defineExtension({
-  name: "sandbox-fake",
-  version: "0.1.0",
-  sdk: "^0.1.0-rc.0",
-  provides: [DEVICE_PROVIDER_EXTENSION_POINT],
-  // 只用部署配置与本地文件，不用任何需要声明的平台能力
-  permissions: {},
-  config: { deployment: Deployment },
-  setup(ctx) {
-    const { root, updateMode, limitsApplyAt, list } = ctx.config as z.infer<typeof Deployment>;
-    ctx.provide(
-      DEVICE_PROVIDER_EXTENSION_POINT,
-      createFakeSandbox(root, {
-        ...(updateMode !== undefined && { updateMode }),
-        ...(limitsApplyAt !== undefined && { limitsApplyAt }),
-        ...(list !== undefined && { list }),
-      }),
-    );
-  },
-});
+/**
+ * The extension manifest and setup of a fake device provider named `name` (deployment config
+ * `{ root }`; `device-fake` and `device-fake-b` differ only in name and description).
+ */
+export function defineFakeDevice(name: string, description?: string) {
+  return defineExtension({
+    name,
+    version: "0.1.0",
+    sdk: "^0.1.0-rc.0",
+    provides: [DEVICE_PROVIDER_EXTENSION_POINT],
+    // Uses only its deployment config and local files: no platform capability to declare
+    permissions: {},
+    config: { deployment: Deployment },
+    setup(ctx) {
+      const { root, updateMode, limitsApplyAt, list } = ctx.config as z.infer<typeof Deployment>;
+      ctx.provide(
+        DEVICE_PROVIDER_EXTENSION_POINT,
+        createFakeSandbox(root, {
+          ...(description !== undefined && { description }),
+          ...(updateMode !== undefined && { updateMode }),
+          ...(limitsApplyAt !== undefined && { limitsApplyAt }),
+          ...(list !== undefined && { list }),
+        }),
+      );
+    },
+  });
+}
+
+/** Test `device-provider@1`: deployment config `{ root }`, see the file header. */
+export default defineFakeDevice("device-fake");
 
 /** What the managed surface needs from the raw fake (see {@link createFakeSandbox}). */
 interface FakeInternals {
@@ -1558,7 +1573,7 @@ function managedSurface(
         !scope.filesystem.writeRoots.includes("/")
       )
         throw new SandboxPermissionUnsupportedError(
-          "sandbox-fake's instance boundary runs only the instance scope: / writable",
+          "device-fake's instance boundary runs only the instance scope: / writable",
         );
       const once = <T>(input: unknown, work: () => Promise<T>) =>
         consume(scope.operationId, { scope, ...(input as object) }, work);

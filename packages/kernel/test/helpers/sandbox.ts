@@ -136,7 +136,7 @@ export function sandboxServiceFor(d: SandboxServiceDeps): SandboxService {
 
 /**
  * Inserts a personal device in `orgId`, owned by `accountId` (default: the org's creator);
- * returns its id. A cloud one records no provider; a `device` one records `@local`.
+ * returns its id. A cloud one records `device-fake`; a `device` one records `@local`.
  */
 export async function seedDevice(
   // biome-ignore lint/suspicious/noExplicitAny: test databases have no schema types
@@ -146,7 +146,7 @@ export async function seedDevice(
   source: "cloud" | "local" = "cloud",
 ): Promise<string> {
   const id = randomUUID();
-  const provider = source === "local" ? LOCAL_PROVIDER : null;
+  const provider = source === "local" ? LOCAL_PROVIDER : "device-fake";
   await sql`INSERT INTO capybara.devices
       (id, org_id, owner_kind, owner_account_id, source, provider)
     SELECT ${id}, o.id, 'personal', COALESCE(${accountId ?? null}::text, o.created_by), ${source},

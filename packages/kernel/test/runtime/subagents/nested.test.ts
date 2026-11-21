@@ -43,14 +43,14 @@ import { commitDispatchOwing, finishedDeliveries } from "../../helpers/subagents
 
 /**
  * Agent map Task A3 (spec §4.1, §6): nested sub-agents up to `subagents.maxDepth` on one kernel
- * (`model-script` scripts every level, `sandbox-fake` is the root's shared sandbox): the child's
+ * (`model-script` scripts every level, `device-fake` is the root's shared sandbox): the child's
  * roster, its depth, the depth limit and the org agent gates below depth 1.
  */
 
 const fixture = (name: string) =>
   fileURLToPath(new URL(`../../fixtures/plugins/${name}/index.ts`, import.meta.url));
 const MODEL_SCRIPT = fixture("model-script");
-const SANDBOX_FAKE = fixture("sandbox-fake");
+const SANDBOX_FAKE = fixture("device-fake");
 
 const CHILD = "You are a sub-agent";
 const RESEARCHER = "You are the researcher";
@@ -155,7 +155,7 @@ beforeAll(async () => {
       {
         roles: ["api", "worker"],
         extensions: [MODEL_FAKE, MODEL_SCRIPT, SANDBOX_FAKE],
-        extensionConfig: { "model-script": { rules: RULES }, "sandbox-fake": { root } },
+        extensionConfig: { "model-script": { rules: RULES }, "device-fake": { root } },
         // these tests are about dispatch, not waking (subagents/wake.test.ts): a parent woken by
         // its children's deliveries would race their last-reply and one-run assertions
         runtime: { wakeOnBackgroundTask: false },

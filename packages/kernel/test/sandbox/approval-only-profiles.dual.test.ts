@@ -24,7 +24,7 @@ import {
 } from "../../src/sandbox/permission-auto-grants.js";
 import { REVIEW_SYSTEM_PROMPT } from "../../src/sandbox/review/index.js";
 import { type ScriptRule, scriptRules } from "../fixtures/plugins/model-script/index.js";
-import { setFakeSandboxPermissionSupport } from "../fixtures/plugins/sandbox-fake/index.js";
+import { setFakeSandboxPermissionSupport } from "../fixtures/plugins/device-fake/index.js";
 import { onlyBuiltins } from "../helpers/disabled-tools.js";
 import { accountsFor } from "../helpers/identity.js";
 import { MODEL_FAKE } from "../helpers/model-plugins.js";
@@ -54,7 +54,7 @@ import type { Answer } from "../local-devices/test-holder.js";
  * The crossings run on a local device (a protocol 4 fake machine on a real WebSocket; a cloud
  * device has no outside of its sandbox), whose runtime reports the open network and running
  * outside the sandbox. The review model is the `model-script` extension mapped to the `review`
- * purpose, answering what each test scripts. `sandbox-fake` backs the cloud device of the replay
+ * purpose, answering what each test scripts. `device-fake` backs the cloud device of the replay
  * context case.
  *
  * Covered elsewhere and taken as given here: the service-level auto-grant race on one binding
@@ -64,7 +64,7 @@ import type { Answer } from "../local-devices/test-holder.js";
 
 const fixture = (name: string) =>
   fileURLToPath(new URL(`../fixtures/plugins/${name}/index.ts`, import.meta.url));
-const SANDBOX_FAKE = fixture("sandbox-fake");
+const SANDBOX_FAKE = fixture("device-fake");
 const MODEL_SCRIPT = fixture("model-script");
 
 type Profile = "request-approval" | "approve-for-me" | "full-access";
@@ -118,7 +118,7 @@ beforeAll(async () => {
       {
         roles,
         extensions: [MODEL_FAKE, MODEL_SCRIPT, SANDBOX_FAKE],
-        extensionConfig: { "sandbox-fake": { root: sandboxRoot } },
+        extensionConfig: { "device-fake": { root: sandboxRoot } },
         http: { port: 0, publicUrl: "https://cap.example" },
         auth: { cookieSecure: false },
         devices: { local: { reconnectGraceSeconds: 30, leaseTtlMs: 6000 } },

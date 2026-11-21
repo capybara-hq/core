@@ -13,7 +13,7 @@ import { kernelDb } from "../../src/db/kernel-schema.js";
 import { migrate } from "../../src/db/migrator.js";
 import { createDb } from "../../src/db/pool.js";
 import type { SandboxService } from "../../src/sandbox/sandbox.service.js";
-import { createFakeSandbox, readFakeSandboxOps } from "../fixtures/plugins/sandbox-fake/index.js";
+import { createFakeSandbox, readFakeSandboxOps } from "../fixtures/plugins/device-fake/index.js";
 import { truncateTables } from "../helpers/db.js";
 import { sandboxServiceFor } from "../helpers/sandbox.js";
 
@@ -58,7 +58,7 @@ const replica = (impl: DeviceProvider, o: { ttlMs?: number } = {}) => {
   const s = sandboxServiceFor({
     db: kernelDb(pool),
     redis,
-    provider: () => ({ plugin: "sandbox-fake", impl }),
+    provider: () => ({ plugin: "device-fake", impl }),
     config: () => config,
     log,
     lockPollMs: 20,

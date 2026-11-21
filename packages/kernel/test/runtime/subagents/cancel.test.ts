@@ -22,7 +22,7 @@ import {
   type ScriptRule,
   scriptRules,
 } from "../../fixtures/plugins/model-script/index.js";
-import { setFakeSandboxDelays } from "../../fixtures/plugins/sandbox-fake/index.js";
+import { setFakeSandboxDelays } from "../../fixtures/plugins/device-fake/index.js";
 import { legacyDbFor } from "../../helpers/conversations.js";
 import { truncateTables } from "../../helpers/db.js";
 import { onlyBuiltins } from "../../helpers/disabled-tools.js";
@@ -55,13 +55,13 @@ import {
  * Phase C Task 13 (spec §12) with background sub-agents (agent map spec §5.4, §6): a parent run
  * that ends (stopped by a person, at its deadline, as an orphan) leaves its children running;
  * stopping one child delivers its finish as `aborted`; offboarding stops a removed member's
- * sub-agents. One kernel with model-script, sandbox-fake and hooks-probe.
+ * sub-agents. One kernel with model-script, device-fake and hooks-probe.
  */
 
 const fixture = (name: string) =>
   fileURLToPath(new URL(`../../fixtures/plugins/${name}/index.ts`, import.meta.url));
 const MODEL_SCRIPT = fixture("model-script");
-const SANDBOX_FAKE = fixture("sandbox-fake");
+const SANDBOX_FAKE = fixture("device-fake");
 const HOOKS_PROBE = fixture("hooks-probe");
 
 const CHILD = "You are a sub-agent";
@@ -199,7 +199,7 @@ beforeAll(async () => {
       {
         roles: ["api", "worker"],
         extensions: [MODEL_FAKE, MODEL_SCRIPT, SANDBOX_FAKE, HOOKS_PROBE],
-        extensionConfig: { "model-script": { rules: RULES }, "sandbox-fake": { root } },
+        extensionConfig: { "model-script": { rules: RULES }, "device-fake": { root } },
         // the deadline test's parent runs into it; everything else stops well before
         runtime: { maxRunSeconds: 8 },
       },

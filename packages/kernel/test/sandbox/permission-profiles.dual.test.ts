@@ -16,7 +16,7 @@ import { PERMISSION_UNSUPPORTED_TOOL_TEXT } from "../../src/tools/builtins/sandb
 import {
   readFakeSandboxOps,
   setFakeSandboxPermissionSupport,
-} from "../fixtures/plugins/sandbox-fake/index.js";
+} from "../fixtures/plugins/device-fake/index.js";
 import { onlyBuiltins } from "../helpers/disabled-tools.js";
 import { accountsFor } from "../helpers/identity.js";
 import { MODEL_FAKE } from "../helpers/model-plugins.js";
@@ -43,7 +43,7 @@ import type { Answer } from "../local-devices/test-holder.js";
  * runs the worker and the device gateway; replica B serves the API only, so every profile change
  * and every decision made through B reaches A's runs through the database, never process memory.
  *
- * The provider is `sandbox-fake` (a real /bin/sh over a temporary directory that checks each
+ * The provider is `device-fake` (a real /bin/sh over a temporary directory that checks each
  * operation's scope) for cloud devices, and a protocol 3 fake machine on a real WebSocket for the
  * local device. Races, injected faults and replay are covered by the suites this file's header in
  * the evidence report maps (permission-approvals.dual, platform-revocation-e2e,
@@ -52,7 +52,7 @@ import type { Answer } from "../local-devices/test-holder.js";
  */
 
 const SANDBOX_FAKE = fileURLToPath(
-  new URL("../fixtures/plugins/sandbox-fake/index.ts", import.meta.url),
+  new URL("../fixtures/plugins/device-fake/index.ts", import.meta.url),
 );
 
 type Profile = "request-approval" | "approve-for-me" | "full-access";
@@ -90,7 +90,7 @@ beforeAll(async () => {
       {
         roles,
         extensions: [MODEL_FAKE, SANDBOX_FAKE],
-        extensionConfig: { "sandbox-fake": { root: sandboxRoot } },
+        extensionConfig: { "device-fake": { root: sandboxRoot } },
         http: { port: 0, publicUrl: "https://cap.example" },
         auth: { cookieSecure: false },
         // every case makes its own device
@@ -151,7 +151,7 @@ async function call(conv: string, key: string, input: unknown, n: number): Promi
   return r as ToolResult;
 }
 
-/** A new cloud device of the owner on sandbox-fake, created through the API. */
+/** A new cloud device of the owner on device-fake, created through the API. */
 async function cloudDevice(): Promise<string> {
   const res = await ownerA({
     method: "POST",

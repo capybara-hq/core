@@ -20,12 +20,12 @@ import type { ConversationEvent } from "../../src/conversations/events.js";
 import { type KernelSchemaDb, kernelDb } from "../../src/db/kernel-schema.js";
 import { createDb } from "../../src/db/pool.js";
 import { PLUGIN_UNLOADED_TOOL_ERROR } from "../../src/extensions/inflight.js";
-import { fakeSandboxMeta } from "../fixtures/plugins/sandbox-fake/index.js";
+import { fakeSandboxMeta } from "../fixtures/plugins/device-fake/index.js";
 import { anonymousGuestsFor } from "../helpers/channels.js";
 import { onlyBuiltins } from "../helpers/disabled-tools.js";
 import { accountsFor } from "../helpers/identity.js";
 import { MODEL_FAKE } from "../helpers/model-plugins.js";
-import { bootstrapFixture, packFake, sandboxFakePkg } from "../helpers/plugin-packages.js";
+import { bootstrapFixture, packFake, deviceFakePkg } from "../helpers/plugin-packages.js";
 import { enableExtensions, eventsOf, PW, waitFor, waitForTerminal } from "../helpers/runs.js";
 
 /**
@@ -211,7 +211,7 @@ describe("M6 第二段双副本验收（管理后台与免重启插件生命周�
         await writeFile(srcPath, next);
         await writeFile(join(dir, "migrations", "0002_item_tags.sql"), TAGS_MIGRATION);
       }),
-      sandboxFakePkg(),
+      deviceFakePkg(),
     ]);
     h = await createDualReplicaHarness({
       extensions: [MODEL_FAKE, DEPLOYCFG],
@@ -220,7 +220,7 @@ describe("M6 第二段双副本验收（管理后台与免重启插件生命周�
       redisUrl: rdc.url,
       extensionConfig: {
         "model-fake": { models: [{ id: "fake-1" }, { id: "fake-2" }] },
-        "sandbox-fake": { root: sandboxRoot },
+        "device-fake": { root: sandboxRoot },
         // region 在启动配置（文件）里：后台只读
         deploycfg: { endpoint: "https://file.example", region: "eu" },
       },
@@ -335,16 +335,16 @@ describe("M6 第二段双副本验收（管理后台与免重启插件生命周�
     };
     expect(sb.sha256).toBe(sha(sandboxPkg));
     expect(td.sha256).toBe(sha(toolsUiV1));
-    await ok(1, "POST", "/api/v1/admin/extensions/sandbox-fake/install", { sha256: sb.sha256 });
+    await ok(1, "POST", "/api/v1/admin/extensions/device-fake/install", { sha256: sb.sha256 });
     await ok(1, "POST", "/api/v1/admin/extensions/fake-tools-ui/install", { sha256: td.sha256 });
-    const sbView = await view("sandbox-fake", 1);
+    const sbView = await view("device-fake", 1);
     expect(sbView).toMatchObject({ status: "pending_approval", sensitive: true });
     expect((await view("fake-tools-ui", 1)).status).toBe("pending_approval");
-    await approve(1, "sandbox-fake");
+    await approve(1, "device-fake");
     await approve(1, "fake-tools-ui");
-    await ok(1, "POST", "/api/v1/admin/extensions/sandbox-fake/enable");
+    await ok(1, "POST", "/api/v1/admin/extensions/device-fake/enable");
     await ok(1, "POST", "/api/v1/admin/extensions/fake-tools-ui/enable");
-    await waitFor(() => loadedOnBoth("sandbox-fake", "0.1.0"), 30_000, "sandbox on both", 100);
+    await waitFor(() => loadedOnBoth("device-fake", "0.1.0"), 30_000, "sandbox on both", 100);
     await waitFor(
       () => loadedOnBoth("fake-tools-ui", "0.1.0"),
       30_000,

@@ -944,7 +944,7 @@ it("owed holder and operation revocations carry the device's org", async () => {
 // start with an exact ref stays with its exact stop (and the retirement)
 it("revoked operations of an ended incarnation are acknowledged; unproven ones and refs stay owed", async () => {
   const f = await intentDevice();
-  const provider = "sandbox-fake";
+  const provider = "device-fake";
   // the device now runs a newer incarnation
   await db()
     .insertInto("device_instances")

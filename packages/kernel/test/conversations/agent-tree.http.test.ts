@@ -32,13 +32,13 @@ import { openSse } from "../helpers/sse.js";
 /**
  * Agent map Task A9 (spec §8, §9.2): `GET /conversations/:id/agent-tree` (owner only, roots only)
  * and `subagent_progress` on the topic of every ancestor. One kernel with model-script and
- * sandbox-fake; waking is off so each conversation has exactly the runs the script gives it.
+ * device-fake; waking is off so each conversation has exactly the runs the script gives it.
  */
 
 const fixture = (name: string) =>
   fileURLToPath(new URL(`../fixtures/plugins/${name}/index.ts`, import.meta.url));
 const MODEL_SCRIPT = fixture("model-script");
-const SANDBOX_FAKE = fixture("sandbox-fake");
+const SANDBOX_FAKE = fixture("device-fake");
 
 const CHILD = "You are a sub-agent";
 const SCRIPT = { provider: "model-script", model: "script-1" };
@@ -100,7 +100,7 @@ beforeAll(async () => {
       {
         roles: ["api", "worker"],
         extensions: [MODEL_FAKE, MODEL_SCRIPT, SANDBOX_FAKE],
-        extensionConfig: { "model-script": { rules: RULES }, "sandbox-fake": { root } },
+        extensionConfig: { "model-script": { rules: RULES }, "device-fake": { root } },
         runtime: { wakeOnBackgroundTask: false },
       },
     ),

@@ -458,28 +458,46 @@ function nodeModulesFor(dir: string): string {
   }
 }
 
-const SANDBOX_FAKE_SRC = fileURLToPath(
-  new URL("../fixtures/plugins/sandbox-fake/index.ts", import.meta.url),
+const DEVICE_FAKE_SRC = fileURLToPath(
+  new URL("../fixtures/plugins/device-fake/index.ts", import.meta.url),
+);
+const DEVICE_FAKE_B_SRC = fileURLToPath(
+  new URL("../fixtures/plugins/device-fake-b/index.ts", import.meta.url),
 );
 
 /**
- * Test `device-provider@1` plugin `sandbox-fake`（`test/fixtures/plugins/sandbox-fake`，部署配置 `{ root }`）打成的插件包：
- * entry 是去掉类型标注后的同一份源码（只 import `node:*`、SDK 与 zod），静态清单取自真实模块。
- * Provides `device-provider@1`; the install confirmation page marks it sensitive.
+ * Packs a fake device provider fixture into a plugin package: the entry is the `device-fake`
+ * source with its types stripped (it imports only `node:*`, the SDK and zod; `device-fake-b`
+ * reuses it with its own `defineFakeDevice` call), the static manifest comes from the real module.
  */
-export async function sandboxFakePkg(): Promise<Uint8Array> {
+async function packDeviceFake(manifestSrc: string, entryCall: string): Promise<Uint8Array> {
   const { stripTypeScriptTypes } = await import("node:module");
-  const source = await readFile(SANDBOX_FAKE_SRC, "utf8");
-  const mod = (await import(SANDBOX_FAKE_SRC)) as { default: ExtensionManifest };
+  const source = (await readFile(DEVICE_FAKE_SRC, "utf8")).replace(
+    'export default defineFakeDevice("device-fake");',
+    `export default ${entryCall};`,
+  );
+  const mod = (await import(manifestSrc)) as { default: ExtensionManifest };
   return pluginTgz({
     manifest: { name: mod.default.name, version: mod.default.version },
-    packageName: "@test/plugin-sandbox-fake",
+    packageName: `@test/plugin-${mod.default.name}`,
     extension: {
       manifest: staticManifestOf(mod.default) as unknown as Record<string, unknown>,
       entry: stripTypeScriptTypes(source, { mode: "strip" }),
     },
   });
 }
+
+/**
+ * Test `device-provider@1` plugin `device-fake` (`test/fixtures/plugins/device-fake`, deployment
+ * config `{ root }`) as a plugin package. Provides `device-provider@1`; the install confirmation
+ * page marks it sensitive.
+ */
+export const deviceFakePkg = (): Promise<Uint8Array> =>
+  packDeviceFake(DEVICE_FAKE_SRC, 'defineFakeDevice("device-fake")');
+
+/** The same for `device-fake-b` (`test/fixtures/plugins/device-fake-b`, its own `root`). */
+export const deviceFakeBPkg = (): Promise<Uint8Array> =>
+  packDeviceFake(DEVICE_FAKE_B_SRC, 'defineFakeDevice("device-fake-b", "Second test device")');
 
 /** One package of {@link bootstrapFixture}: bytes, or a plugin directory packed with pack-plugin. */
 export interface BootstrapFixtureEntry {

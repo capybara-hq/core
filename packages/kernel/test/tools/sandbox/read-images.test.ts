@@ -60,7 +60,7 @@ import {
 /**
  * Vision-read design §1.1, §1.2, §1.5: the builtin `Read` on a real kernel. model-fake declares
  * `fake-v` (vision), `fake-1` (no vision), `fake-eye` (vision, the `vision` purpose's model) and an
- * image model; `mem-store` is the object store, `sandbox-fake` the device (real files in a
+ * image model; `mem-store` is the object store, `device-fake` the device (real files in a
  * temporary directory), `hooks-probe` observes `model.request`. Runs are scripted through
  * model-fake (`tool:Read:<json>`); the provider requests are captured for the zero-drift checks,
  * and one case replays a run in full (an eval run).
@@ -69,7 +69,7 @@ import {
 const fixture = (name: string) =>
   fileURLToPath(new URL(`../../fixtures/plugins/${name}/index.ts`, import.meta.url));
 const MEM_STORE = fixture("mem-store");
-const SANDBOX_FAKE = fixture("sandbox-fake");
+const SANDBOX_FAKE = fixture("device-fake");
 const HOOKS_PROBE = fixture("hooks-probe");
 
 const VISION = { provider: "model-fake", model: "fake-v" };
@@ -157,7 +157,7 @@ beforeAll(async () => {
               { id: "fake-image", kind: "image_generation" },
             ],
           },
-          "sandbox-fake": { root },
+          "device-fake": { root },
         },
       },
     ),

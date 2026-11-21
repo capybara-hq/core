@@ -43,7 +43,7 @@ import { makeZip, SKILL_MD } from "../skills/zip.js";
 
 const OBJECT_STORE = fakeExtensionEntry("fake-object-store");
 const SANDBOX_FAKE = fileURLToPath(
-  new URL("../fixtures/plugins/sandbox-fake/index.ts", import.meta.url),
+  new URL("../fixtures/plugins/device-fake/index.ts", import.meta.url),
 );
 const MODEL = { provider: "model-fake", model: "fake-1" };
 
@@ -77,7 +77,7 @@ beforeAll(async () => {
             secretAccessKey: s3.secretKey,
             forcePathStyle: true,
           },
-          "sandbox-fake": { root },
+          "device-fake": { root },
         },
         devices: { maxPersonal: 2 },
       },

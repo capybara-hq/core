@@ -40,7 +40,7 @@ import { scriptRules } from "../fixtures/plugins/model-script/index.js";
 import {
   readFakeSandboxOps,
   setFakeSandboxPermissionSupport,
-} from "../fixtures/plugins/sandbox-fake/index.js";
+} from "../fixtures/plugins/device-fake/index.js";
 import { onlyBuiltins } from "../helpers/disabled-tools.js";
 import { accountsFor } from "../helpers/identity.js";
 import { testMembers } from "../helpers/members.js";
@@ -69,7 +69,7 @@ import {
  */
 
 const SANDBOX_FAKE = fileURLToPath(
-  new URL("../fixtures/plugins/sandbox-fake/index.ts", import.meta.url),
+  new URL("../fixtures/plugins/device-fake/index.ts", import.meta.url),
 );
 const CHAN_MINI = fileURLToPath(new URL("../fixtures/plugins/chan-mini/index.ts", import.meta.url));
 const MODEL_SCRIPT = fileURLToPath(
@@ -107,7 +107,7 @@ beforeAll(async () => {
       {
         roles: ["api", "worker", "gateway"],
         extensions: [MODEL_FAKE, MODEL_SCRIPT, SANDBOX_FAKE, CHAN_MINI, HOOKS_PROBE],
-        extensionConfig: { "sandbox-fake": { root } },
+        extensionConfig: { "device-fake": { root } },
         http: { port: 0, publicUrl: "https://cap.example" },
         auth: { cookieSecure: false },
         channels: { scanIntervalMs: 100, leaseTtlMs: 10_000 },
@@ -1285,7 +1285,7 @@ describe("the permission review order", () => {
  * refuse: a call that needs more reach fails with an actionable text.
  */
 describe("the first managed call of a device", () => {
-  /** A new cloud device of the owner on sandbox-fake, bound to `conv`, never started. */
+  /** A new cloud device of the owner on device-fake, bound to `conv`, never started. */
   const freshDevice = async (conv: string): Promise<string> => {
     const deviceId = randomUUID();
     await db
@@ -1296,7 +1296,7 @@ describe("the first managed call of a device", () => {
         owner_kind: "personal",
         owner_account_id: ownerId,
         source: "cloud",
-        provider: "sandbox-fake",
+        provider: "device-fake",
         name: `Fresh ${deviceId.slice(0, 8)}`,
       })
       .execute();

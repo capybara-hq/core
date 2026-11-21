@@ -15,7 +15,7 @@ import { SandboxService } from "../../src/sandbox/sandbox.service.js";
 import {
   readFakeSandboxOps,
   setFakeSandboxDelays,
-} from "../fixtures/plugins/sandbox-fake/index.js";
+} from "../fixtures/plugins/device-fake/index.js";
 import { startKernel, type TestKernel } from "../helpers/runs.js";
 
 /**
@@ -27,7 +27,7 @@ import { startKernel, type TestKernel } from "../helpers/runs.js";
  */
 
 const SANDBOX_FAKE = fileURLToPath(
-  new URL("../fixtures/plugins/sandbox-fake/index.ts", import.meta.url),
+  new URL("../fixtures/plugins/device-fake/index.ts", import.meta.url),
 );
 
 let pgc: TestContainer;
@@ -45,7 +45,7 @@ const cfg = (plugins: string[], roles: string[] = ["api"]) =>
     http: { port: 0 },
     roles,
     extensions: plugins,
-    extensionConfig: { "sandbox-fake": { root } },
+    extensionConfig: { "device-fake": { root } },
     extensionPermissions: { autoApprove: true },
   });
 

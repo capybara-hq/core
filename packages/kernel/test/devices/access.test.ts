@@ -25,7 +25,7 @@ import {
   type SandboxProviderEntry,
   SandboxProviders,
 } from "../../src/sandbox/providers.js";
-import { createFakeSandbox } from "../fixtures/plugins/sandbox-fake/index.js";
+import { createFakeSandbox } from "../fixtures/plugins/device-fake/index.js";
 import { legacyDbFor } from "../helpers/conversations.js";
 import { accountsFor } from "../helpers/identity.js";
 import { testMembers } from "../helpers/members.js";
@@ -67,8 +67,8 @@ beforeAll(async () => {
       { pg: pgc.url, redis: rd.url },
       {
         roles: ["api"],
-        extensions: [fixture("sandbox-fake")],
-        extensionConfig: { "sandbox-fake": { root } },
+        extensions: [fixture("device-fake")],
+        extensionConfig: { "device-fake": { root } },
       },
     ),
   );
@@ -105,7 +105,7 @@ describe("device access", () => {
       .where("owner_account_id", "=", ownerId)
       .where("is_default", "=", true)
       .execute();
-    expect(rows).toEqual([{ id: ids[0], name: null, provider: "sandbox-fake" }]);
+    expect(rows).toEqual([{ id: ids[0], name: null, provider: "device-fake" }]);
     // a deleted default is replaced by a new one
     await sql`UPDATE capybara.devices SET deleted_at = now() WHERE id = ${ids[0]}`.execute(raw);
     const next = await service.ensureDefault(orgId, ownerId);
@@ -133,7 +133,7 @@ describe("device access", () => {
   it("usable only by the owner in the device's org", async () => {
     const access = k.app.get(DeviceAccess);
     const id = await k.app.get(DevicesService).ensureDefault(orgId, ownerId);
-    expect(await access.usable(orgId, ownerId, id)).toEqual({ id, provider: "sandbox-fake" });
+    expect(await access.usable(orgId, ownerId, id)).toEqual({ id, provider: "device-fake" });
     expect(await codeOf(access.usable(orgId, randomUUID(), id))).toBe("device.not_found");
     expect(await codeOf(access.usable(randomUUID(), ownerId, id))).toBe("device.not_found");
     expect(await codeOf(access.usable(orgId, ownerId, randomUUID()))).toBe("device.not_found");
@@ -146,7 +146,7 @@ describe("device access", () => {
     const id = await k.app.get(DevicesService).ensureDefault(orgId, ownerId);
     // created under another provider, never used: the current provider takes it over
     await sql`UPDATE capybara.devices SET provider = 'sandbox-old' WHERE id = ${id}`.execute(raw);
-    expect(await access.usable(orgId, ownerId, id)).toEqual({ id, provider: "sandbox-fake" });
+    expect(await access.usable(orgId, ownerId, id)).toEqual({ id, provider: "device-fake" });
     // files kept by the old provider: unusable until it is back
     await sql`INSERT INTO capybara.device_instances
         (device_id, org_id, provider, fs_handle, fs_status)
@@ -176,7 +176,7 @@ describe("device access", () => {
     await testMembers(db).add(orgId, me, "member", ownerId);
     const req = await session(k, login);
     const oldId = await service.ensureDefault(orgId, me);
-    // its files are kept by the old provider; the deployment now runs sandbox-fake
+    // its files are kept by the old provider; the deployment now runs device-fake
     await sql`INSERT INTO capybara.device_instances
         (device_id, org_id, provider, fs_handle, fs_status)
       VALUES (${oldId}, ${orgId}, 'sandbox-old', '{"id":"fs-old"}'::jsonb, 'ready')`.execute(raw);
@@ -184,7 +184,7 @@ describe("device access", () => {
     await sql`INSERT INTO capybara.devices
         (id, org_id, owner_kind, owner_account_id, name, source, provider)
       VALUES (${randomUUID()}, ${orgId}, 'personal', ${me}, 'Personal (sandbox-old)', 'cloud',
-        'sandbox-fake')`.execute(raw);
+        'device-fake')`.execute(raw);
 
     const ids = await Promise.all(
       Array.from({ length: 8 }, () => service.ensureDefault(orgId, me)),
@@ -258,16 +258,16 @@ describe("device access", () => {
         .orderBy("id")
         .execute();
 
-    // P1 (sandbox-fake): the default, whose files the provider keeps
+    // P1 (device-fake): the default, whose files the provider keeps
     const d1 = await service.ensureDefault(orgId, me);
     await sql`INSERT INTO capybara.device_instances
         (device_id, org_id, provider, fs_handle, fs_status)
-      VALUES (${d1}, ${orgId}, 'sandbox-fake', '{"id":"fs-d1"}'::jsonb, 'ready')`.execute(raw);
+      VALUES (${d1}, ${orgId}, 'device-fake', '{"id":"fs-d1"}'::jsonb, 'ready')`.execute(raw);
     // a person-made device named like a demoted default, with files at P1: never restored
-    const named = await service.create(orgId, me, { name: "Personal (sandbox-fake)" });
+    const named = await service.create(orgId, me, { name: "Personal (device-fake)" });
     await sql`INSERT INTO capybara.device_instances
         (device_id, org_id, provider, fs_handle, fs_status)
-      VALUES (${named.id}, ${orgId}, 'sandbox-fake', '{"id":"fs-n"}'::jsonb, 'ready')`.execute(raw);
+      VALUES (${named.id}, ${orgId}, 'device-fake', '{"id":"fs-n"}'::jsonb, 'ready')`.execute(raw);
 
     try {
       // P1 -> P2: d1 is demoted (marker, no name), a fresh default d2 is made
@@ -275,10 +275,10 @@ describe("device access", () => {
       const d2 = await service.ensureDefault(orgId, me);
       expect(d2).not.toBe(d1);
       expect(await rows()).toEqual([
-        { id: d1, name: null, is_default: false, demoted_from_provider: "sandbox-fake" },
+        { id: d1, name: null, is_default: false, demoted_from_provider: "device-fake" },
         {
           id: named.id,
-          name: "Personal (sandbox-fake)",
+          name: "Personal (device-fake)",
           is_default: false,
           demoted_from_provider: null,
         },
@@ -295,7 +295,7 @@ describe("device access", () => {
         { id: d1, name: null, is_default: true, demoted_from_provider: null },
         {
           id: named.id,
-          name: "Personal (sandbox-fake)",
+          name: "Personal (device-fake)",
           is_default: false,
           demoted_from_provider: null,
         },
@@ -352,11 +352,11 @@ describe("device access", () => {
     const me = (await accountsFor(db).createLocal({ login, password: PW, displayName: login })).id;
     await testMembers(db).add(orgId, me, "member", ownerId);
     const realCurrent = providers.cloud.bind(providers);
-    // d1 holds files at sandbox-fake; switching away and back leaves an empty live default d2
+    // d1 holds files at device-fake; switching away and back leaves an empty live default d2
     const d1 = await service.ensureDefault(orgId, me);
     await sql`INSERT INTO capybara.device_instances
         (device_id, org_id, provider, fs_handle, fs_status)
-      VALUES (${d1}, ${orgId}, 'sandbox-fake', '{"id":"fs-sw"}'::jsonb, 'ready')`.execute(raw);
+      VALUES (${d1}, ${orgId}, 'device-fake', '{"id":"fs-sw"}'::jsonb, 'ready')`.execute(raw);
     try {
       const impl = realCurrent()?.impl;
       if (!impl) throw new Error("no current provider");
@@ -445,9 +445,9 @@ describe("device access", () => {
       const me = await member("ru");
       const switchTo = switcher();
       try {
-        // P (sandbox-fake): L holds files at P
+        // P (device-fake): L holds files at P
         const l = await service.ensureDefault(orgId, me);
-        await instance(l, "sandbox-fake", "ready", { usedDaysAgo: 2 });
+        await instance(l, "device-fake", "ready", { usedDaysAgo: 2 });
         // P -> Q: L demoted (marker P), D made under Q; D gets no files
         switchTo("sandbox-other");
         const d = await service.ensureDefault(orgId, me);
@@ -456,9 +456,9 @@ describe("device access", () => {
         switchTo(null);
         expect(await service.ensureDefault(orgId, me)).toBe(l);
         // a conversation bound to D then makes D's files at P
-        await instance(d, "sandbox-fake", "ready");
+        await instance(d, "device-fake", "ready");
         expect((await service.get(orgId, me, d)).demotedFrom).toMatchObject({
-          provider: "sandbox-fake",
+          provider: "device-fake",
           ordinal: 1,
         });
         // P -> Q: L is stranded; D's files are at P, so it is not Q's former default
@@ -479,9 +479,9 @@ describe("device access", () => {
       const me = await member("rc");
       const d = await service.ensureDefault(orgId, me);
       // SandboxService's first use: status creating, no file system, no handle yet
-      await instance(d, "sandbox-fake", "none", { status: "creating" });
-      const l = await former(me, "sandbox-fake");
-      await instance(l, "sandbox-fake", "ready");
+      await instance(d, "device-fake", "none", { status: "creating" });
+      const l = await former(me, "device-fake");
+      await instance(l, "device-fake", "ready");
       expect(await service.ensureDefault(orgId, me)).toBe(d);
     });
 
@@ -489,13 +489,13 @@ describe("device access", () => {
       const service = k.app.get(DevicesService);
       const me = await member("rl");
       const d = await service.ensureDefault(orgId, me);
-      const lost = await former(me, "sandbox-fake");
-      await instance(lost, "sandbox-fake", "lost");
+      const lost = await former(me, "device-fake");
+      await instance(lost, "device-fake", "lost");
       // a lost former default does not win over the healthy empty live default
       expect(await service.ensureDefault(orgId, me)).toBe(d);
       // nor over a former default with healthy files, even when used more recently
-      const healthy = await former(me, "sandbox-fake");
-      await instance(healthy, "sandbox-fake", "ready", { usedDaysAgo: 3 });
+      const healthy = await former(me, "device-fake");
+      await instance(healthy, "device-fake", "ready", { usedDaysAgo: 3 });
       expect(await service.ensureDefault(orgId, me)).toBe(healthy);
     });
   });

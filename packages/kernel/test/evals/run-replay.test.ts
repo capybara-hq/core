@@ -37,7 +37,7 @@ import { CommandReviewService } from "../../src/sandbox/review/review.service.js
 import { SandboxService } from "../../src/sandbox/sandbox.service.js";
 import { ApprovalsService } from "../../src/tools/approvals.service.js";
 import { INPUT_SKIPPED_TEXT } from "../../src/tools/pipeline.js";
-import { readFakeSandboxOps } from "../fixtures/plugins/sandbox-fake/index.js";
+import { readFakeSandboxOps } from "../fixtures/plugins/device-fake/index.js";
 import { toolsCountState } from "../fixtures/plugins/tools-count/index.js";
 import { eventLogFor, legacyDbFor } from "../helpers/conversations.js";
 import { onlyBuiltins } from "../helpers/disabled-tools.js";
@@ -68,7 +68,7 @@ const TOOLS_COUNT = fileURLToPath(
   new URL("../fixtures/plugins/tools-count/index.ts", import.meta.url),
 );
 const SANDBOX_FAKE = fileURLToPath(
-  new URL("../fixtures/plugins/sandbox-fake/index.ts", import.meta.url),
+  new URL("../fixtures/plugins/device-fake/index.ts", import.meta.url),
 );
 
 let pgc: TestContainer;
@@ -112,7 +112,7 @@ beforeAll(async () => {
         roles: ["api", "worker"],
         extensions: [MODEL_FAKE, TOOLS_COUNT, SANDBOX_FAKE],
         extensionConfig: {
-          "sandbox-fake": { root },
+          "device-fake": { root },
           "model-fake": { models: [{ id: "fake-1" }, { id: "fake-2" }] },
         },
         evals: { orgConcurrency: 2 },

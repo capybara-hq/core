@@ -15,7 +15,7 @@ import {
   readFakeSandboxLimits,
   readFakeSandboxOps,
   setFakeSandboxPermissionSupport,
-} from "../fixtures/plugins/sandbox-fake/index.js";
+} from "../fixtures/plugins/device-fake/index.js";
 import { onlyBuiltins } from "../helpers/disabled-tools.js";
 import { accountsFor } from "../helpers/identity.js";
 import { MODEL_FAKE } from "../helpers/model-plugins.js";
@@ -53,7 +53,7 @@ import type { Answer } from "../local-devices/test-holder.js";
  */
 
 const SANDBOX_FAKE = fileURLToPath(
-  new URL("../fixtures/plugins/sandbox-fake/index.ts", import.meta.url),
+  new URL("../fixtures/plugins/device-fake/index.ts", import.meta.url),
 );
 
 /** The recorded `gh auth login --web` prompt (gh 2.63, GitHub.com, 2026-11-14). */
@@ -131,7 +131,7 @@ let root: string;
 let binDir: string;
 let owner: Req;
 let ownerId: string;
-/** auto mode allowed (the default): a sandbox-fake device runs unsandboxed. */
+/** auto mode allowed (the default): a device-fake device runs unsandboxed. */
 let orgAuto: string;
 let agentAuto: string;
 /** auto mode off for the org: devices run in sandbox mode (the allowlist network). */
@@ -155,7 +155,7 @@ beforeAll(async () => {
       {
         roles: ["api", "worker", "gateway"],
         extensions: [MODEL_FAKE, SANDBOX_FAKE],
-        extensionConfig: { "sandbox-fake": { root } },
+        extensionConfig: { "device-fake": { root } },
         http: { port: 0, publicUrl: "https://cap.example" },
         auth: { cookieSecure: false },
         // the fake sandbox's exec PATH starts with `<root>/bin`: put the fake `gh` / `git` there

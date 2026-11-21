@@ -22,7 +22,7 @@ import { appliedOf } from "../../src/sandbox/modes.js";
 import type { SandboxOperationIntents } from "../../src/sandbox/operation-intents.js";
 import { LOCAL_PROVIDER } from "../../src/sandbox/providers.js";
 import { RetirementPendingError, type SandboxService } from "../../src/sandbox/sandbox.service.js";
-import { createFakeSandbox } from "../fixtures/plugins/sandbox-fake/index.js";
+import { createFakeSandbox } from "../fixtures/plugins/device-fake/index.js";
 import { truncateTables } from "../helpers/db.js";
 import { handlesFor, retirementFor } from "../helpers/identity.js";
 import { sandboxServiceFor, seedDevice } from "../helpers/sandbox.js";
@@ -95,8 +95,8 @@ const service = (snapshots?: Pick<CloudPermissionSnapshots, "reconcileHeld">): S
     ...(snapshots !== undefined && { snapshots }),
     db,
     redis,
-    provider: () => ({ plugin: "sandbox-fake", impl: cloud }),
-    lookup: (plugin) => (plugin === "sandbox-fake" || plugin === "old-fake" ? cloud : undefined),
+    provider: () => ({ plugin: "device-fake", impl: cloud }),
+    lookup: (plugin) => (plugin === "device-fake" || plugin === "old-fake" ? cloud : undefined),
     internal: [{ plugin: LOCAL_PROVIDER, impl: local }],
     config: () => config,
     log: {},
@@ -268,7 +268,7 @@ describe("enumeration under the legacy-launch freeze", () => {
       (await obligations(dev)).map((o) => [o.provider, o.instance_generation, o.state]).sort(),
     ).toEqual(
       [
-        ["sandbox-fake", String(g.getTime()), "open"],
+        ["device-fake", String(g.getTime()), "open"],
         ["unknown", "unknown", "open"],
       ].sort(),
     );
@@ -287,14 +287,14 @@ describe("enumeration under the legacy-launch freeze", () => {
     await legacyRow(dev, { sid: null, dispatch: "reserved" });
     // admitted by the R1 launcher before the freeze: carries the incarnation it was admitted for
     const admitted = await legacyRow(dev, { sid: null, dispatch: "dispatched" });
-    const at = { provider: "sandbox-fake", generation: "1763370000123" };
+    const at = { provider: "device-fake", generation: "1763370000123" };
     await sql`UPDATE capybara.background_tasks SET legacy_dispatch_provider = ${at.provider},
       legacy_dispatch_generation = ${at.generation} WHERE id = ${admitted}`.execute(raw);
     await retirement.freeze("test");
     await retirement.scanUntilStable();
     // the admitted reservation's obligation is keyed by the incarnation it was admitted for
     expect(await obligations(dev)).toMatchObject([
-      { provider: "sandbox-fake", instance_generation: at.generation },
+      { provider: "device-fake", instance_generation: at.generation },
     ]);
   });
 
@@ -399,7 +399,7 @@ describe("the retirement gate", () => {
       [
         {
           device_id: dev,
-          provider: "sandbox-fake",
+          provider: "device-fake",
           instance_generation: String(before.created_at.getTime()),
         },
       ],
@@ -489,7 +489,7 @@ describe("the retirement gate", () => {
       { state: "quarantined", reason: expect.stringMatching(/replaced/) },
     ]);
     // only a recorded confirmed destruction of exactly the old generation clears it
-    await retirement.recordDestruction(dev, "sandbox-fake", String(g1.getTime()));
+    await retirement.recordDestruction(dev, "device-fake", String(g1.getTime()));
     expect((await use(s, dev)).id).toBe(old.id);
     expect(calls).toEqual([]);
     expect(await obligations(dev)).toMatchObject([{ state: "resolved" }]);
@@ -535,7 +535,7 @@ describe("cloud incarnations the kernel cannot name (R1-I1)", () => {
       { state: "resolved", resolution: "provider-destroyed" },
     ]);
     expect(await db.selectFrom("device_instance_destructions").selectAll().execute()).toMatchObject(
-      [{ device_id: dev, provider: "sandbox-fake", instance_generation: String(g.getTime()) }],
+      [{ device_id: dev, provider: "device-fake", instance_generation: String(g.getTime()) }],
     );
   });
 
@@ -564,7 +564,7 @@ describe("cloud incarnations the kernel cannot name (R1-I1)", () => {
     const dev = await seedDevice(raw, seed.orgId, seed.accountId);
     await use(s, dev);
     // a revoked start with an unreadable generation is enumerated before any freeze
-    await revokedStart(dev, "sandbox-fake", "not-a-generation");
+    await revokedStart(dev, "device-fake", "not-a-generation");
     await retirement.scanUntilStable();
     expect(await obligations(dev)).toMatchObject([{ instance_generation: "unknown" }]);
     await retirement.freeze("test");
@@ -636,7 +636,7 @@ describe("cloud incarnations the kernel cannot name, current row not live (R2-I1
       ]);
       expect(
         await db.selectFrom("device_instance_destructions").selectAll().execute(),
-      ).toMatchObject([{ device_id: dev, provider: "sandbox-fake", instance_generation: g }]);
+      ).toMatchObject([{ device_id: dev, provider: "device-fake", instance_generation: g }]);
     });
   }
 
@@ -748,7 +748,7 @@ describe("obligations of deleted devices whose destroy is still owed (R2-I2)", (
     await sql`UPDATE capybara.devices SET deleted_at = now() WHERE id = ${dev}`.execute(raw);
     await sql`UPDATE capybara.device_retirement_obligations SET state = 'abandoned',
       abandoned_at = now() WHERE device_id = ${dev}`.execute(raw);
-    await retirement.recordDestruction(dev, "sandbox-fake", g);
+    await retirement.recordDestruction(dev, "device-fake", g);
     await jobFor(s).runOnce();
     expect(await obligations(dev)).toMatchObject([
       { state: "resolved", resolution: "provider-destroyed", abandoned_at: null },
@@ -820,8 +820,8 @@ describe("revoked managed starts on an incarnation that no longer runs (8.4 hand
     const dev = await seedDevice(raw, seed.orgId, seed.accountId);
     await use(s, dev);
     const g1 = String((await instance(dev)).created_at.getTime());
-    const stale = await revokedStart(dev, "sandbox-fake", String(Number(g1) - 60_000));
-    const destroyed = await revokedStart(dev, "sandbox-fake", g1);
+    const stale = await revokedStart(dev, "device-fake", String(Number(g1) - 60_000));
+    const destroyed = await revokedStart(dev, "device-fake", g1);
     // the instance it ran on is destroyed by the kernel's own path (confirmed, recorded) and
     // replaced by a new generation
     await s.destroyInactive(new Date(Date.now() + 365 * DAY));
@@ -924,7 +924,7 @@ describe("a suspended cloud instance with a revoked managed start (B-22)", () =>
         provider_version, instance_generation, deadline, retain_until, state, execution_id,
         execution_ref, outcome_unknown)
       VALUES (${operationId}, ${seed.orgId}, ${seed.accountId}, ${deviceId}, 0, 'backgroundStart',
-        'h', 'a', '{}'::jsonb, '{}'::jsonb, '{}'::jsonb, 'sandbox-fake', '1', ${generation},
+        'h', 'a', '{}'::jsonb, '{}'::jsonb, '{}'::jsonb, 'device-fake', '1', ${generation},
         now() + interval '1 hour', now() + interval '1 day', ${state}, ${ref.executionId},
         ${JSON.stringify(ref)}::jsonb, false)`.execute(raw);
     return operationId;

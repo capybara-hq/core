@@ -35,7 +35,7 @@ import {
   setFakeFileSystemIdsByName,
   setFakeSandboxFault,
   setFakeSandboxRefuseOpenEgress,
-} from "../../fixtures/plugins/sandbox-fake/index.js";
+} from "../../fixtures/plugins/device-fake/index.js";
 import { truncateTables } from "../../helpers/db.js";
 import { onlyBuiltins } from "../../helpers/disabled-tools.js";
 import { accountsFor } from "../../helpers/identity.js";
@@ -63,7 +63,7 @@ import {
 
 const OBJECT_STORE = fakeExtensionEntry("fake-object-store");
 const SANDBOX_FAKE = fileURLToPath(
-  new URL("../../fixtures/plugins/sandbox-fake/index.ts", import.meta.url),
+  new URL("../../fixtures/plugins/device-fake/index.ts", import.meta.url),
 );
 
 const SANDBOX_TOOLS = [
@@ -108,7 +108,7 @@ beforeAll(async () => {
             secretAccessKey: s3.secretKey,
             forcePathStyle: true,
           },
-          "sandbox-fake": { root },
+          "device-fake": { root },
         },
         sandbox: { deliverMaxBytes: 1024 },
       },

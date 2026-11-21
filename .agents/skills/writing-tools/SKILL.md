@@ -628,7 +628,7 @@ Key points: only `ToolError` with `kind: "unavailable"` counts toward the connec
 - Extension tool handlers are unit-tested in their plugin (constructing a `ToolCallContext`); see the plugins repository's skill. In core, the extension-tool path through the kernel runs on `fake-tools-ui`.
 - Connector test fixtures (`startFakeMcpServer` / `startFakeOpenApiServer` / `startFakeOAuthServer`) are in `.agents/skills/writing-connectors`; drift detection is in `packages/kernel/test/tools/drift.test.ts`, and `ToolSearch` in `packages/kernel/test/tools/tool-search*.test.ts`.
 - Kernel end-to-end: model-fake's `tool:<key>:<json>` directive makes the model call a given tool (such as `tool:fake-tools-ui__write:{"items":[]}`), see `packages/kernel/test/tools/mcp-e2e.test.ts` and the dual-replica acceptance `packages/kernel/test/tools/m3-segment1.dual.test.ts` (approval across replicas, approval timeout, result unknown after killing the worker, before and after extension enabling).
-- Sandbox and skill tools: the real kernel + model-fake + the fake sandbox extension (`packages/kernel/test/fixtures/plugins/sandbox-fake`) + SeaweedFS,
+- Sandbox and skill tools: the real kernel + model-fake + the fake sandbox extension (`packages/kernel/test/fixtures/plugins/device-fake`) + SeaweedFS,
   see `packages/kernel/test/tools/sandbox/sandbox-tools.test.ts`, `packages/kernel/test/skills/skills-runtime.test.ts`,
   `skill-write.test.ts`; dual-replica acceptance `packages/kernel/test/sandbox/sandbox-artifacts.dual.test.ts` and
   `packages/kernel/test/skills/m5-segment3.dual.test.ts` (skill change approved across replicas, scripts into the sandbox).

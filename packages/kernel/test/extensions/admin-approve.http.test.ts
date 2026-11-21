@@ -37,7 +37,7 @@ const fixture = (n: string) =>
   fileURLToPath(new URL(`../fixtures/plugins/${n}/index.ts`, import.meta.url));
 const PERM_A = fixture("perm-a");
 const PERM_DEP = fixture("perm-dep");
-const SANDBOX_FAKE = fixture("sandbox-fake");
+const SANDBOX_FAKE = fixture("device-fake");
 
 const MAX_BYTES = 4 * 1024 * 1024;
 const sha = (b: Uint8Array) => createHash("sha256").update(b).digest("hex");
@@ -200,7 +200,7 @@ describe("插件列表与网页批准权限", () => {
         "fake-bootstrap-b",
         "perm-a",
         "perm-dep",
-        "sandbox-fake",
+        "device-fake",
       ].sort(),
     );
 
@@ -231,7 +231,7 @@ describe("插件列表与网页批准权限", () => {
     });
     expect((store as View & { warnings: unknown[] }).warnings).toEqual([]);
 
-    const sandbox = all.get("sandbox-fake") as View;
+    const sandbox = all.get("device-fake") as View;
     expect(sandbox).toMatchObject({
       source: "config",
       status: "pending_approval",
@@ -434,7 +434,7 @@ describe("插件列表与网页批准权限", () => {
     const after = await list();
     expect(after.get("perm-a")?.status).toBe("enabled");
     expect(after.get("perm-dep")?.status).toBe("enabled");
-    expect(after.get("sandbox-fake")?.status).toBe("pending_approval");
+    expect(after.get("device-fake")?.status).toBe("pending_approval");
   });
 
   it("安装记录的迁移警告随视图返回（详情页批准前同样高亮）；内置 / 配置声明为空", async () => {

@@ -61,7 +61,7 @@ import { childRunsOf } from "../../helpers/subagents.js";
 const fixture = (name: string) =>
   fileURLToPath(new URL(`../../fixtures/plugins/${name}/index.ts`, import.meta.url));
 const MODEL_SCRIPT = fixture("model-script");
-const SANDBOX_FAKE = fixture("sandbox-fake");
+const SANDBOX_FAKE = fixture("device-fake");
 
 const CHILD = "You are a sub-agent";
 const held = (name: string) => ({ name, count: 99, timeoutMs: 60_000 });
@@ -214,7 +214,7 @@ beforeAll(async () => {
       {
         roles: ["api", "worker"],
         extensions: [MODEL_FAKE, MODEL_SCRIPT, SANDBOX_FAKE],
-        extensionConfig: { "model-script": { rules: RULES }, "sandbox-fake": { root } },
+        extensionConfig: { "model-script": { rules: RULES }, "device-fake": { root } },
         sandbox: { background: { pollSeconds: 3600 } },
       },
     ),

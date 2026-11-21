@@ -61,7 +61,7 @@ import {
 /**
  * Image generation spec §5.3, §5.6, §6, §7: the builtin `GenerateImage` on a real kernel.
  * model-fake's image models answer (`refuse` / `stall` prompts script a refusal and a hang),
- * `mem-store` is the object store, `sandbox-fake` the device (real files in a temporary
+ * `mem-store` is the object store, `device-fake` the device (real files in a temporary
  * directory; its devices run in auto mode, so the command review applies), and `hooks-probe`
  * denies `model.request` per purpose through the real hook registry. A run's model is model-fake
  * (`tool:GenerateImage:<json>` calls the tool); other cases call the builtin directly.
@@ -70,7 +70,7 @@ import {
 const fixture = (name: string) =>
   fileURLToPath(new URL(`../fixtures/plugins/${name}/index.ts`, import.meta.url));
 const MEM_STORE = fixture("mem-store");
-const SANDBOX_FAKE = fixture("sandbox-fake");
+const SANDBOX_FAKE = fixture("device-fake");
 const HOOKS_PROBE = fileURLToPath(
   new URL("../fixtures/plugins/hooks-probe/src/index.ts", import.meta.url),
 );
@@ -123,7 +123,7 @@ beforeAll(async () => {
               },
             ],
           },
-          "sandbox-fake": { root },
+          "device-fake": { root },
         },
         models: { imageTimeoutMs: IMAGE_TIMEOUT_MS, imageMaxPerCall: MAX_PER_CALL },
       },

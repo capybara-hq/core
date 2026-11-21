@@ -21,7 +21,7 @@ import { seedDevice } from "../../helpers/sandbox.js";
  */
 
 const SANDBOX_FAKE = fileURLToPath(
-  new URL("../../fixtures/plugins/sandbox-fake/index.ts", import.meta.url),
+  new URL("../../fixtures/plugins/device-fake/index.ts", import.meta.url),
 );
 const MODIFIED =
   "File has been modified since it was read, either by the user or by another command. Read it again before writing to it.";
@@ -41,7 +41,7 @@ const cfg = () =>
     http: { port: 0 },
     roles: ["api"],
     extensions: [SANDBOX_FAKE],
-    extensionConfig: { "sandbox-fake": { root } },
+    extensionConfig: { "device-fake": { root } },
     extensionPermissions: { autoApprove: true },
   });
 

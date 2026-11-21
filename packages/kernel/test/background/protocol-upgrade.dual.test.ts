@@ -14,7 +14,7 @@ import { migrate } from "../../src/db/migrator.js";
 import { createDb } from "../../src/db/pool.js";
 import type { LegacyRetirementStore } from "../../src/sandbox/legacy-retirement.js";
 import type { SandboxService } from "../../src/sandbox/sandbox.service.js";
-import { createFakeSandbox } from "../fixtures/plugins/sandbox-fake/index.js";
+import { createFakeSandbox } from "../fixtures/plugins/device-fake/index.js";
 import { truncateTables } from "../helpers/db.js";
 import { retirementFor } from "../helpers/identity.js";
 import { sandboxServiceFor, seedDevice } from "../helpers/sandbox.js";
@@ -102,8 +102,8 @@ function replica(): { s: SandboxService; store: LegacyRetirementStore } {
   const s = sandboxServiceFor({
     db: kernelDb(pool),
     redis,
-    provider: () => ({ plugin: "sandbox-fake", impl: provider }),
-    lookup: (plugin) => (plugin === "sandbox-fake" ? provider : undefined),
+    provider: () => ({ plugin: "device-fake", impl: provider }),
+    lookup: (plugin) => (plugin === "device-fake" ? provider : undefined),
     config: () => config,
     log: {},
     lockPollMs: 20,

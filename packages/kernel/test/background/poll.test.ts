@@ -35,7 +35,7 @@ import { SandboxService } from "../../src/sandbox/sandbox.service.js";
 import { ApprovalsService } from "../../src/tools/approvals.service.js";
 import { sandboxBaseTimeoutMs } from "../../src/tools/builtins/sandbox/common.js";
 import type { ScriptRule } from "../fixtures/plugins/model-script/index.js";
-import { removeFakeSandbox } from "../fixtures/plugins/sandbox-fake/index.js";
+import { removeFakeSandbox } from "../fixtures/plugins/device-fake/index.js";
 import {
   fakeExecutionAlive,
   fakeExecutionExited,
@@ -78,7 +78,7 @@ import { seedConversation } from "../helpers/tool-fixtures.js";
 const fixture = (name: string) =>
   fileURLToPath(new URL(`../fixtures/plugins/${name}/index.ts`, import.meta.url));
 const MODEL_SCRIPT = fixture("model-script");
-const SANDBOX_FAKE = fixture("sandbox-fake");
+const SANDBOX_FAKE = fixture("device-fake");
 
 const CHILD = "You are a sub-agent";
 
@@ -161,7 +161,7 @@ beforeAll(async () => {
       {
         roles: ["api", "worker"],
         extensions: [MODEL_FAKE, MODEL_SCRIPT, SANDBOX_FAKE],
-        extensionConfig: { "model-script": { rules: RULES }, "sandbox-fake": { root } },
+        extensionConfig: { "model-script": { rules: RULES }, "device-fake": { root } },
         sandbox: { background: { pollSeconds: 3600 } },
       },
     ),

@@ -65,10 +65,10 @@ beforeAll(async () => {
     values ('ag1', 'o1', 'a1', 'org', 1)`.execute(db);
   await sql`insert into capybara.environments
     (id, org_id, owner_kind, owner_account_id, name, is_default, source, provider)
-    values ('e-cloud', 'o1', 'personal', 'a1', null, true, 'cloud', 'sandbox-fake'),
+    values ('e-cloud', 'o1', 'personal', 'a1', null, true, 'cloud', 'device-fake'),
       ('e-local', 'o1', 'personal', 'a1', 'Laptop', false, 'device', '@device')`.execute(db);
   await sql`insert into capybara.environment_instances (environment_id, org_id, provider, status)
-    values ('e-cloud', 'o1', 'sandbox-fake', 'running')`.execute(db);
+    values ('e-cloud', 'o1', 'device-fake', 'running')`.execute(db);
   await sql`insert into capybara.environment_instances
     (environment_id, org_id, provider, prev_provider, status)
     values ('e-local', 'o1', '@device', '@device', 'none')`.execute(db);
@@ -115,7 +115,7 @@ describe("0105_devices_rename", () => {
     const devices = await sql<{ id: string; source: string; provider: string | null }>`
       select id, source, provider from capybara.devices order by id`.execute(db);
     expect(devices.rows).toEqual([
-      { id: "e-cloud", source: "cloud", provider: "sandbox-fake" },
+      { id: "e-cloud", source: "cloud", provider: "device-fake" },
       { id: "e-local", source: "local", provider: "@local" },
     ]);
     const instances = await sql<{
@@ -125,7 +125,7 @@ describe("0105_devices_rename", () => {
     }>`select device_id, provider, prev_provider from capybara.device_instances
       order by device_id`.execute(db);
     expect(instances.rows).toEqual([
-      { device_id: "e-cloud", provider: "sandbox-fake", prev_provider: null },
+      { device_id: "e-cloud", provider: "device-fake", prev_provider: null },
       { device_id: "e-local", provider: "@local", prev_provider: "@local" },
     ]);
     const defaults = await sql<{ device_id: string }>`

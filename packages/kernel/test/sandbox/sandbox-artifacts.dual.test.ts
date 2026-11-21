@@ -34,7 +34,7 @@ import {
   fakeSandboxState,
   fakeWorkspaceDir,
   readFakeSandboxOps,
-} from "../fixtures/plugins/sandbox-fake/index.js";
+} from "../fixtures/plugins/device-fake/index.js";
 import { onlyBuiltins } from "../helpers/disabled-tools.js";
 import { accountsFor } from "../helpers/identity.js";
 import { MODEL_FAKE } from "../helpers/model-plugins.js";
@@ -44,7 +44,7 @@ import { sandboxServiceFor } from "../helpers/sandbox.js";
 /**
  * Sandbox and artifacts across replicas (dual replica, the kernel side of M5 segment 2): two kernel
  * processes (api / worker) share PG / Redis, with model-fake, the core fake `fake-object-store`
- * (SeaweedFS) and the test sandbox `sandbox-fake` (both replicas share its `root`, i.e. one
+ * (SeaweedFS) and the test sandbox `device-fake` (both replicas share its `root`, i.e. one
  * provider); everything goes through HTTP:
  *
  * 1. a presigned direct upload of an attachment (CSV) -> finalize;
@@ -66,7 +66,7 @@ import { sandboxServiceFor } from "../helpers/sandbox.js";
  */
 
 const SANDBOX_FAKE = fileURLToPath(
-  new URL("../fixtures/plugins/sandbox-fake/index.ts", import.meta.url),
+  new URL("../fixtures/plugins/device-fake/index.ts", import.meta.url),
 );
 const OBJECT_STORE = fakeExtensionEntry("fake-object-store");
 /** The step 4 command's sleep: longer than the lease TTL and the test, so only a kill ends it. */
@@ -156,7 +156,7 @@ describe("sandbox and artifacts (dual replica, fake sandbox)", () => {
           secretAccessKey: s3.secretKey,
           forcePathStyle: true,
         },
-        "sandbox-fake": { root },
+        "device-fake": { root },
       },
       config: {
         auth: { cookieSecure: false },
@@ -448,7 +448,7 @@ describe("sandbox and artifacts (dual replica, fake sandbox)", () => {
     await sandboxServiceFor({
       db,
       redis,
-      provider: () => ({ plugin: "sandbox-fake", impl: createFakeSandbox(root) }),
+      provider: () => ({ plugin: "device-fake", impl: createFakeSandbox(root) }),
       config: () =>
         KernelConfigSchema.parse({
           db: { url: h.dbUrl },

@@ -219,7 +219,7 @@ describe("the sandbox tools in a bound conversation", () => {
       sandbox: {
         cloudAvailable: true,
         availableFor: async () => true,
-        currentInstance: async () => ({ createdAt: new Date(0), provider: "sandbox-fake" }),
+        currentInstance: async () => ({ createdAt: new Date(0), provider: "device-fake" }),
         withSandbox: async (_c, fn, sig) => {
           entered++;
           return fn(

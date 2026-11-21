@@ -55,7 +55,7 @@ import { childRunsOf, commitDispatchOwing, finishedDeliveries } from "../../help
 const fixture = (name: string) =>
   fileURLToPath(new URL(`../../fixtures/plugins/${name}/index.ts`, import.meta.url));
 const MODEL_SCRIPT = fixture("model-script");
-const SANDBOX_FAKE = fixture("sandbox-fake");
+const SANDBOX_FAKE = fixture("device-fake");
 
 const CHILD = "You are a sub-agent";
 const call = (prompt: string) => ({ name: "Agent", input: { description: "Task", prompt } });
@@ -171,7 +171,7 @@ beforeAll(async () => {
       {
         roles: ["api", "worker"],
         extensions: [MODEL_FAKE, MODEL_SCRIPT, SANDBOX_FAKE],
-        extensionConfig: { "model-script": { rules: RULES }, "sandbox-fake": { root } },
+        extensionConfig: { "model-script": { rules: RULES }, "device-fake": { root } },
         // these tests are about dispatch, not waking (subagents/wake.test.ts): a parent woken by
         // its children's deliveries would race their last-reply and one-run assertions
         runtime: { orgConcurrency: 30, workerConcurrency: 20, wakeOnBackgroundTask: false },

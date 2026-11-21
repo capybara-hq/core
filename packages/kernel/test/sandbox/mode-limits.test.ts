@@ -29,7 +29,7 @@ import {
   readFakeSandboxOps,
   setFakeSandboxDelays,
   setFakeSandboxRefuseOpenEgress,
-} from "../fixtures/plugins/sandbox-fake/index.js";
+} from "../fixtures/plugins/device-fake/index.js";
 import { truncateTables } from "../helpers/db.js";
 import {
   type SandboxServiceDeps,
@@ -120,7 +120,7 @@ const service = (
   sandboxServiceFor({
     db,
     redis,
-    provider: () => ({ plugin: "sandbox-fake", impl: p() }),
+    provider: () => ({ plugin: "device-fake", impl: p() }),
     config: () => config,
     log,
     lockPollMs: 20,
@@ -309,7 +309,7 @@ describe("a changed mode on use", () => {
     const s = sandboxServiceFor({
       db,
       redis,
-      provider: () => ({ plugin: "sandbox-fake", impl: provider }),
+      provider: () => ({ plugin: "device-fake", impl: provider }),
       config: () => config,
       log,
       lockPollMs: 20,
@@ -565,7 +565,7 @@ describe("a failed limits change", () => {
     // the next use resumes it; the update fails again: what the pause brought back is revoked
     await use(s).catch(() => undefined);
     expect(await ops("resume")).toHaveLength(1);
-    expect(revoked).toEqual([`sandbox-fake@${generation}`]);
+    expect(revoked).toEqual([`device-fake@${generation}`]);
     expect(await ops("kill-all")).toEqual([]);
     expect(await ops("kill-tagged")).toEqual([]);
     expect(await fakeSandboxState(root, first.h.id)).toBe("suspended");
@@ -664,7 +664,7 @@ describe("the lifecycle reconcile sweep (B-12)", () => {
     const s = sandboxServiceFor({
       db,
       redis,
-      provider: () => ({ plugin: "sandbox-fake", impl: provider }),
+      provider: () => ({ plugin: "device-fake", impl: provider }),
       config: () => config,
       log,
       lockPollMs: 20,
@@ -684,7 +684,7 @@ describe("the lifecycle reconcile sweep (B-12)", () => {
         WHERE id = ${id}`.execute(raw);
       await sql`INSERT INTO capybara.device_instances (device_id, org_id, provider, status, handle,
           fs_status, fs_handle)
-        VALUES (${id}, ${orgId}, 'sandbox-fake', 'running', ${JSON.stringify({ id: `fake-${i}` })}::jsonb,
+        VALUES (${id}, ${orgId}, 'device-fake', 'running', ${JSON.stringify({ id: `fake-${i}` })}::jsonb,
           'ready', ${JSON.stringify({ id: `fs-${i}` })}::jsonb)`.execute(raw);
     }
     await s.reconcileMarked();

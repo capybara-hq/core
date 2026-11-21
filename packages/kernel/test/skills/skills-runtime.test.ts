@@ -23,7 +23,7 @@ import { CLAUDE_CODE_TOOL_MAP } from "../../src/runtime/context/claude-tools.js"
 import { StorageService } from "../../src/storage/storage.service.js";
 import { skillLoadTool } from "../../src/tools/builtins/skill-load.js";
 import { specHash } from "../../src/tools/registry.js";
-import { removeFakeSandbox } from "../fixtures/plugins/sandbox-fake/index.js";
+import { removeFakeSandbox } from "../fixtures/plugins/device-fake/index.js";
 import { truncateTables } from "../helpers/db.js";
 import { onlyBuiltins } from "../helpers/disabled-tools.js";
 import { accountsFor } from "../helpers/identity.js";
@@ -51,7 +51,7 @@ import { MODEL } from "../runtime/context/fixtures.js";
 
 const OBJECT_STORE = fakeExtensionEntry("fake-object-store");
 const SANDBOX_FAKE = fileURLToPath(
-  new URL("../fixtures/plugins/sandbox-fake/index.ts", import.meta.url),
+  new URL("../fixtures/plugins/device-fake/index.ts", import.meta.url),
 );
 
 let pgc: TestContainer;
@@ -83,7 +83,7 @@ beforeAll(async () => {
             secretAccessKey: s3.secretKey,
             forcePathStyle: true,
           },
-          "sandbox-fake": { root },
+          "device-fake": { root },
         },
       },
     ),

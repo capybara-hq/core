@@ -27,7 +27,7 @@ import {
   readFakeSandboxOps,
   removeFakeSandbox,
   setFakeSandboxDelays,
-} from "../fixtures/plugins/sandbox-fake/index.js";
+} from "../fixtures/plugins/device-fake/index.js";
 import { truncateTables } from "../helpers/db.js";
 import { type SandboxServiceDeps, sandboxServiceFor } from "../helpers/sandbox.js";
 
@@ -60,7 +60,7 @@ const service = (
   sandboxServiceFor({
     db,
     redis,
-    provider: () => ({ plugin: "sandbox-fake", impl: p() }),
+    provider: () => ({ plugin: "device-fake", impl: p() }),
     config: () => config,
     log,
     lockPollMs: 20,
@@ -498,7 +498,7 @@ describe("concurrent commands (fake sandbox)", () => {
     const out = await Promise.all([0, 1, 2].map(() => run(s, "echo ok")));
     for (const o of out) expect(o.r.stdout).toBe("ok\n");
     expect(await ops("resume")).toHaveLength(1);
-    expect(incarnations).toEqual([`sandbox-fake@${created}`]);
+    expect(incarnations).toEqual([`device-fake@${created}`]);
     expect(revoked).toEqual([[dead]]);
     expect(await ops("kill-all")).toHaveLength(0);
     expect(await ops("kill-tagged")).toHaveLength(0);

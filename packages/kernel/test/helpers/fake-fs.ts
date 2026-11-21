@@ -3,7 +3,7 @@ import { join } from "node:path";
 import type { KernelSchemaDb } from "../../src/db/kernel-schema.js";
 
 /**
- * Reads a file of a conversation's device from the `sandbox-fake` provider's root: `path` is
+ * Reads a file of a conversation's device from the `device-fake` provider's root: `path` is
  * relative to the file system (`workspace/…`, `skills/…`). Null when the file does not exist.
  */
 export async function fakeEnvFile(

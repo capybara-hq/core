@@ -38,7 +38,7 @@ import {
 
 const CHAN_MINI = fileURLToPath(new URL("../fixtures/plugins/chan-mini/index.ts", import.meta.url));
 const SANDBOX_FAKE = fileURLToPath(
-  new URL("../fixtures/plugins/sandbox-fake/index.ts", import.meta.url),
+  new URL("../fixtures/plugins/device-fake/index.ts", import.meta.url),
 );
 const SOURCE = "chan-mini:t1";
 
@@ -76,7 +76,7 @@ beforeAll(async () => {
       { pg: pgc.url, redis: rd.url },
       {
         extensions: [MODEL_FAKE, CHAN_MINI, SANDBOX_FAKE],
-        extensionConfig: { "sandbox-fake": { root: sandboxRoot } },
+        extensionConfig: { "device-fake": { root: sandboxRoot } },
         http: { port: 0, publicUrl: "https://cap.example" },
         auth: { cookieSecure: false },
         // one replica, no takeover: a lease long enough that a stalled event loop does not

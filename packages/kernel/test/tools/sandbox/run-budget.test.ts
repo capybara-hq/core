@@ -36,7 +36,7 @@ import {
  */
 
 const SANDBOX_FAKE = fileURLToPath(
-  new URL("../../fixtures/plugins/sandbox-fake/index.ts", import.meta.url),
+  new URL("../../fixtures/plugins/device-fake/index.ts", import.meta.url),
 );
 /** 运行时限：截止前留 {@link RUN_DEADLINE_MARGIN_MS}，命令最多约 4 秒。 */
 const MAX_RUN_SECONDS = RUN_DEADLINE_MARGIN_MS / 1000 + 4;
@@ -168,7 +168,7 @@ beforeAll(async () => {
       {
         roles: ["api", "worker"],
         extensions: [MODEL_FAKE, SANDBOX_FAKE],
-        extensionConfig: { "sandbox-fake": { root } },
+        extensionConfig: { "device-fake": { root } },
         runtime: { maxRunSeconds: MAX_RUN_SECONDS },
       },
     ),

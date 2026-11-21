@@ -34,7 +34,7 @@ import {
   removeFakeSandbox,
   setFakeFileSystemIdsByName,
   setFakeSandboxDelays,
-} from "../fixtures/plugins/sandbox-fake/index.js";
+} from "../fixtures/plugins/device-fake/index.js";
 import { truncateTables } from "../helpers/db.js";
 import {
   type SandboxServiceDeps,
@@ -68,7 +68,7 @@ const signal = () => AbortSignal.timeout(30_000);
 
 const service = (
   p: () => DeviceProvider | undefined = () => provider,
-  plugin = "sandbox-fake",
+  plugin = "device-fake",
   extra: Partial<SandboxServiceDeps> = {},
 ) =>
   sandboxServiceFor({
@@ -291,7 +291,7 @@ describe("lazy creation", () => {
     const r = await row();
     expect(r).toMatchObject({
       org_id: orgId,
-      provider: "sandbox-fake",
+      provider: "device-fake",
       status: "running",
       fs_status: "ready",
       fs_handle: { id: meta?.fileSystem },
@@ -1190,7 +1190,7 @@ describe("leftovers of interrupted creates and of other providers (fix round 1)"
     });
     await sql`INSERT INTO capybara.device_instances (device_id, org_id, provider, status,
         fs_handle, fs_status, last_used_at)
-      VALUES (${envId}, ${orgId}, 'sandbox-fake', 'creating', ${JSON.stringify(fs)}::jsonb, 'ready',
+      VALUES (${envId}, ${orgId}, 'device-fake', 'creating', ${JSON.stringify(fs)}::jsonb, 'ready',
         now() - interval '30 days')`.execute(raw);
     expect(await s.destroyInactive(new Date())).toBe(1);
     expect(await fakeSandboxState(root, h.id)).toBeNull();
@@ -1207,7 +1207,7 @@ describe("leftovers of interrupted creates and of other providers (fix round 1)"
       signal: signal(),
     });
     await sql`INSERT INTO capybara.device_instances (device_id, org_id, provider, status)
-      VALUES (${envId}, ${orgId}, 'sandbox-fake', 'creating')`.execute(raw);
+      VALUES (${envId}, ${orgId}, 'device-fake', 'creating')`.execute(raw);
     await s.destroyDevice(envId);
     expect((await ops("destroy-fs-by-name")).map((o) => o[1])).toEqual([name()]);
     expect(await fakeFileSystems(root)).toEqual([]);
@@ -1268,7 +1268,7 @@ describe("provider switch during a create", () => {
     expect(info.fresh).toBe(true);
     expect(await fakeFileSystems(oldRoot)).toEqual([]);
     expect(await fakeFileSystems(root)).toHaveLength(1);
-    expect(await row()).toMatchObject({ provider: "sandbox-fake", fs_status: "ready" });
+    expect(await row()).toMatchObject({ provider: "device-fake", fs_status: "ready" });
     await rm(oldRoot, { recursive: true, force: true });
   });
 
@@ -1278,7 +1278,7 @@ describe("provider switch during a create", () => {
     const { info } = await use(service());
     expect(info.fresh).toBe(true);
     expect(warned.some((w) => /may leak/.test(w))).toBe(true);
-    expect(await row()).toMatchObject({ provider: "sandbox-fake", fs_status: "ready" });
+    expect(await row()).toMatchObject({ provider: "device-fake", fs_status: "ready" });
   });
 });
 
@@ -1591,7 +1591,7 @@ describe("a resume revokes exactly, never killAll (B-1)", () => {
     await use(s);
     expect(await s.suspendIdle(later(DAY))).toBe(1);
     await s.withSandbox(at(), async () => void order.push("fn"), signal());
-    expect(order).toEqual(["incarnation sandbox-fake", "revoke op-1", "ack op-1", "fn"]);
+    expect(order).toEqual(["incarnation device-fake", "revoke op-1", "ack op-1", "fn"]);
     expect(await ops("kill-all")).toHaveLength(0);
     // later uses of the running instance revoke nothing more
     order.length = 0;

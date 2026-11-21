@@ -35,7 +35,7 @@ import {
   removeFakeSandbox,
   setFakeSandboxDelays,
   setFakeSandboxFault,
-} from "../fixtures/plugins/sandbox-fake/index.js";
+} from "../fixtures/plugins/device-fake/index.js";
 import { onlyBuiltins } from "../helpers/disabled-tools.js";
 import { accountsFor } from "../helpers/identity.js";
 import { startClaimedRun } from "../helpers/managed-calls.js";
@@ -65,7 +65,7 @@ import {
  */
 
 const SANDBOX_FAKE = fileURLToPath(
-  new URL("../fixtures/plugins/sandbox-fake/index.ts", import.meta.url),
+  new URL("../fixtures/plugins/device-fake/index.ts", import.meta.url),
 );
 
 type Line = { level: string; msg: string; timedOut?: boolean };
@@ -102,7 +102,7 @@ beforeAll(async () => {
       {
         roles: ["api", "worker"],
         extensions: [MODEL_FAKE, SANDBOX_FAKE],
-        extensionConfig: { "sandbox-fake": { root, list: true } },
+        extensionConfig: { "device-fake": { root, list: true } },
       },
     ),
     {

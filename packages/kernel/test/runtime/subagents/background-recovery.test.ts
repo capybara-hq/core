@@ -81,7 +81,7 @@ import {
 const fixture = (name: string) =>
   fileURLToPath(new URL(`../../fixtures/plugins/${name}/index.ts`, import.meta.url));
 const MODEL_SCRIPT = fixture("model-script");
-const SANDBOX_FAKE = fixture("sandbox-fake");
+const SANDBOX_FAKE = fixture("device-fake");
 
 const CHILD = "You are a sub-agent";
 const agentCall = (prompt: string) => ({
@@ -171,7 +171,7 @@ beforeAll(async () => {
         extensions: [MODEL_FAKE, MODEL_SCRIPT, SANDBOX_FAKE],
         extensionConfig: {
           "model-script": { rules: [...BACKGROUND_RULES, ...RECOVERY_RULES] },
-          "sandbox-fake": { root },
+          "device-fake": { root },
         },
         // these tests are about dispatch and recovery, not waking (subagents/wake.test.ts): a
         // parent woken by its children's deliveries would race their last-reply assertions

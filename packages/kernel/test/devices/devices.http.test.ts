@@ -14,7 +14,7 @@ import { DevicesService } from "../../src/devices/devices.service.js";
 import { ApiError } from "../../src/errors.js";
 import { TransactionHost } from "../../src/infra/database/transaction-host.js";
 import { SandboxService } from "../../src/sandbox/sandbox.service.js";
-import { fakeFileSystems, removeFakeFileSystem } from "../fixtures/plugins/sandbox-fake/index.js";
+import { fakeFileSystems, removeFakeFileSystem } from "../fixtures/plugins/device-fake/index.js";
 import { legacyDbFor } from "../helpers/conversations.js";
 import { accountsFor, apiTokensFor } from "../helpers/identity.js";
 import { testMembers } from "../helpers/members.js";
@@ -61,8 +61,8 @@ beforeAll(async () => {
       { pg: pgc.url, redis: rd.url },
       {
         roles: ["api", "worker"],
-        extensions: [fixture("sandbox-fake")],
-        extensionConfig: { "sandbox-fake": { root } },
+        extensions: [fixture("device-fake")],
+        extensionConfig: { "device-fake": { root } },
         devices: { maxPersonal: MAX },
       },
     ),
@@ -123,7 +123,7 @@ describe("devices API", () => {
       isDefault: false,
       ownerKind: "personal",
       source: "cloud",
-      provider: "sandbox-fake",
+      provider: "device-fake",
       available: true,
       sessionIsolation: false,
       filesLost: false,
@@ -551,7 +551,7 @@ describe("a cloud device's sandbox network (approval-only profiles design)", () 
           input: "{}",
           scope: JSON.stringify(scope),
           epochs: JSON.stringify({ platform: 0, org: 0, device: 0, root: 0 }),
-          provider: "sandbox-fake",
+          provider: "device-fake",
           provider_version: "test",
           instance_generation: "test",
           deadline: new Date(Date.now() + 30_000),

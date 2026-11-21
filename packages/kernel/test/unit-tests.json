@@ -122,7 +122,7 @@
   "sandbox/operation-payloads.test.ts",
   "sandbox/operation-scopes.test.ts",
   "sandbox/sandbox-config.test.ts",
-  "sandbox/sandbox-fake.test.ts",
+  "sandbox/device-fake.test.ts",
   "sandbox/unreachable.test.ts",
   "schedules/calendar.test.ts",
   "schedules/effective-settings.test.ts",

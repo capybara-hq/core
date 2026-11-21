@@ -11,7 +11,7 @@ import { runClaimed } from "./managed-calls.js";
 import type { TestKernel } from "./runs.js";
 
 /**
- * Managed background tasks on the `sandbox-fake` provider (permission activation W4): a task
+ * Managed background tasks on the `device-fake` provider (permission activation W4): a task
  * launched through the real `Bash` path, and the fake's record of its execution
  * (`root/instances/<id>/executions/<sha256(operationId)>`: `pgid`, `exit`, `lost`), which tests
  * read instead of the protocol-2 `.sid` / `.exit` files.

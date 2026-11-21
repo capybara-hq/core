@@ -17,7 +17,7 @@ import {
   createFakeSandbox,
   fakeSandboxState,
   readFakeSandboxOps,
-} from "../fixtures/plugins/sandbox-fake/index.js";
+} from "../fixtures/plugins/device-fake/index.js";
 import { truncateTables } from "../helpers/db.js";
 import { sandboxLeasesFor, sandboxServiceFor, seedDevice } from "../helpers/sandbox.js";
 import { seedConversation } from "../helpers/tool-fixtures.js";
@@ -74,7 +74,7 @@ const service = (): SandboxService =>
   sandboxServiceFor({
     db,
     redis,
-    provider: () => ({ plugin: "sandbox-fake", impl: provider }),
+    provider: () => ({ plugin: "device-fake", impl: provider }),
     config: () => config,
     log: {},
     lockPollMs: 20,
@@ -156,12 +156,12 @@ describe("currentInstance", () => {
     const r = await row();
     expect(await s.currentInstance(env())).toEqual({
       createdAt: r?.created_at,
-      provider: "sandbox-fake",
+      provider: "device-fake",
     });
     expect(await s.suspendIdle(new Date(Date.now() + DAY))).toBe(1);
     expect(await s.currentInstance(env())).toEqual({
       createdAt: r?.created_at,
-      provider: "sandbox-fake",
+      provider: "device-fake",
     });
     await s.destroyInactive(new Date(Date.now() + 30 * DAY));
     expect(await s.currentInstance(env())).toBeNull();

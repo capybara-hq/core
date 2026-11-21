@@ -57,7 +57,7 @@ import type { Answer } from "../local-devices/test-holder.js";
  */
 
 const SANDBOX_FAKE = fileURLToPath(
-  new URL("../fixtures/plugins/sandbox-fake/index.ts", import.meta.url),
+  new URL("../fixtures/plugins/device-fake/index.ts", import.meta.url),
 );
 
 const HOME = "/home/me";
@@ -112,7 +112,7 @@ beforeAll(async () => {
         roles: ["api", "worker", "gateway"],
         extensions: [SANDBOX_FAKE],
         // limits fixed at the file system: a narrowed cloud device can await a files reset
-        extensionConfig: { "sandbox-fake": { root: sandboxRoot, limitsApplyAt: "fileSystem" } },
+        extensionConfig: { "device-fake": { root: sandboxRoot, limitsApplyAt: "fileSystem" } },
         devices: { local: { reconnectGraceSeconds: 2, leaseTtlMs: 6000 } },
       },
     ),

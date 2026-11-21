@@ -73,7 +73,7 @@ const TOOLS_COUNT = fileURLToPath(
   new URL("../fixtures/plugins/tools-count/index.ts", import.meta.url),
 );
 const SANDBOX_FAKE = fileURLToPath(
-  new URL("../fixtures/plugins/sandbox-fake/index.ts", import.meta.url),
+  new URL("../fixtures/plugins/device-fake/index.ts", import.meta.url),
 );
 const COUNT = "plugin__tools-count__count";
 const ASK = "plugin__tools-count__ask";
@@ -162,7 +162,7 @@ beforeAll(async () => {
       {
         roles: ["api", "worker"],
         extensions: [MODEL_FAKE, MODEL_SCRIPT, TOOLS_COUNT, SANDBOX_FAKE],
-        extensionConfig: { "model-script": { rules: RULES }, "sandbox-fake": { root } },
+        extensionConfig: { "model-script": { rules: RULES }, "device-fake": { root } },
         sandbox: { background: { pollSeconds: 3600 } },
       },
     ),

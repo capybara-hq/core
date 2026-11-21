@@ -265,7 +265,7 @@ describe("DevicesService.modeLevel", () => {
         owner_account_id: ownerId,
         name: `Cloud ${id.slice(0, 6)}`,
         source: "cloud",
-        provider: "sandbox-fake",
+        provider: "device-fake",
       })
       .execute();
     expect(await devices.modeLevel(orgId, id)).toMatchObject({

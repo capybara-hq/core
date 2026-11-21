@@ -70,7 +70,7 @@ import {
   createFakeSandbox,
   readFakeSandboxLimits,
   readFakeSandboxOps,
-} from "../fixtures/plugins/sandbox-fake/index.js";
+} from "../fixtures/plugins/device-fake/index.js";
 import { truncateTables } from "../helpers/db.js";
 import { MODEL_PLUGINS_CONFIG } from "../helpers/model-plugins.js";
 import { storedOwnerReport } from "../helpers/owner-report.js";

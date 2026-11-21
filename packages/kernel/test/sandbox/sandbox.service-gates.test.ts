@@ -27,7 +27,7 @@ import {
 } from "../../src/sandbox/providers.js";
 import type { OperationSessionInvocation } from "../../src/sandbox/sandbox.service.js";
 import { SandboxService } from "../../src/sandbox/sandbox.service.js";
-import { readFakeSandboxOps } from "../fixtures/plugins/sandbox-fake/index.js";
+import { readFakeSandboxOps } from "../fixtures/plugins/device-fake/index.js";
 import { truncateTables } from "../helpers/db.js";
 import { startKernel, type TestKernel } from "../helpers/runs.js";
 import { seedDevice } from "../helpers/sandbox.js";
@@ -46,7 +46,7 @@ import { stagedHello } from "../local-devices/fake-machine-v3.js";
  */
 
 const SANDBOX_FAKE = fileURLToPath(
-  new URL("../fixtures/plugins/sandbox-fake/index.ts", import.meta.url),
+  new URL("../fixtures/plugins/device-fake/index.ts", import.meta.url),
 );
 
 let pg: TestContainer, redis: TestContainer, k: TestKernel, raw: ReturnType<typeof createDb>;
@@ -63,7 +63,7 @@ beforeAll(async () => {
       http: { port: 0 },
       roles: ["api"],
       extensions: [SANDBOX_FAKE],
-      extensionConfig: { "sandbox-fake": { root } },
+      extensionConfig: { "device-fake": { root } },
       extensionPermissions: { autoApprove: true },
     }),
     { env: {}, logger: createLogger("error", { write: () => {} }) },

@@ -20,7 +20,7 @@ import {
   SandboxProviders,
 } from "../../src/sandbox/providers.js";
 import type { SandboxService } from "../../src/sandbox/sandbox.service.js";
-import { createFakeSandbox, readFakeSandboxOps } from "../fixtures/plugins/sandbox-fake/index.js";
+import { createFakeSandbox, readFakeSandboxOps } from "../fixtures/plugins/device-fake/index.js";
 import { truncateTables } from "../helpers/db.js";
 import { sandboxServiceFor, seedDevice } from "../helpers/sandbox.js";
 
@@ -51,6 +51,17 @@ const DAY = 24 * 60 * MIN;
 const later = (ms: number) => new Date(Date.now() + ms);
 const signal = () => AbortSignal.timeout(30_000);
 const log = { info() {}, warn() {}, error() {} };
+
+/** Providers over a registry only: the org-bound reads are not used here. */
+const providersOf = (reg: ExtensionRegistry): SandboxProviders =>
+  new SandboxProviders(
+    reg,
+    undefined as never,
+    undefined as never,
+    undefined as never,
+    undefined as never,
+    log,
+  );
 
 /** A service whose cloud provider is `cloudEntry` and whose internal providers are `internal`. */
 const service = (
@@ -158,7 +169,7 @@ describe("SandboxProviders", () => {
   it("cloud() is the loaded extension only; forName finds internal providers first, then extensions", () => {
     const ext = createFakeSandbox(cloudRoot);
     const internal = createFakeSandbox(deviceRoot);
-    const p = new SandboxProviders(registry([{ plugin: "sandbox-docker", impl: ext }]));
+    const p = providersOf(registry([{ plugin: "sandbox-docker", impl: ext }]));
     // an extension is handed out guarded (connection failures become unreachable errors)
     expect(p.cloud()?.plugin).toBe("sandbox-docker");
     expect(p.cloud()?.impl).not.toBe(ext);
@@ -170,7 +181,7 @@ describe("SandboxProviders", () => {
     expect(p.forName("sandbox-docker")?.plugin).toBe("sandbox-docker");
     expect(p.forName("sandbox-e2b")).toBeUndefined();
     // an internal provider is never the cloud provider
-    expect(new SandboxProviders(registry([])).cloud()).toBeUndefined();
+    expect(providersOf(registry([])).cloud()).toBeUndefined();
   });
 });
 

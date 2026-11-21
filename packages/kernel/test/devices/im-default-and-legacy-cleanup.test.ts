@@ -18,7 +18,7 @@ import {
   fakeFileSystems,
   fakeSandboxState,
   readFakeSandboxOps,
-} from "../fixtures/plugins/sandbox-fake/index.js";
+} from "../fixtures/plugins/device-fake/index.js";
 import { legacyDbFor } from "../helpers/conversations.js";
 import { accountsFor } from "../helpers/identity.js";
 import { testMembers } from "../helpers/members.js";
@@ -44,7 +44,7 @@ import {
  */
 
 const SANDBOX_FAKE = fileURLToPath(
-  new URL("../fixtures/plugins/sandbox-fake/index.ts", import.meta.url),
+  new URL("../fixtures/plugins/device-fake/index.ts", import.meta.url),
 );
 
 let pgc: TestContainer;
@@ -69,7 +69,7 @@ beforeAll(async () => {
       {
         roles: ["api", "worker"],
         extensions: [MODEL_FAKE, SANDBOX_FAKE],
-        extensionConfig: { "sandbox-fake": { root } },
+        extensionConfig: { "device-fake": { root } },
       },
     ),
   );
@@ -195,8 +195,8 @@ describe("legacy sandbox cleanup", () => {
   });
 
   it("legacy cleanup destroys old instances and volumes then deletes the rows", async () => {
-    const a = await legacySandbox("sandbox-fake");
-    const b = await legacySandbox("sandbox-fake");
+    const a = await legacySandbox("device-fake");
+    const b = await legacySandbox("device-fake");
     // a row without instance (stopped while creating): destroying by name still runs
     const c = randomUUID();
     await db
@@ -204,7 +204,7 @@ describe("legacy sandbox cleanup", () => {
       .values({
         conversation_id: c,
         org_id: randomUUID(),
-        provider: "sandbox-fake",
+        provider: "device-fake",
         status: "creating",
       })
       .execute();
@@ -230,7 +230,7 @@ describe("legacy sandbox cleanup", () => {
 
   it("rows of an unloaded provider are kept", async () => {
     const gone = await legacySandbox("sandbox-retired");
-    const live = await legacySandbox("sandbox-fake");
+    const live = await legacySandbox("device-fake");
 
     const res = await k.app.get(LegacySandboxCleanupJob).runOnce();
     expect(res).toEqual({ destroyed: 1, kept: 1 });

@@ -36,7 +36,7 @@ import { SandboxFileReader } from "../../src/sandbox/sandbox-file-reader.js";
 import {
   createFakeSandbox,
   setFakeSandboxPermissionSupport,
-} from "../fixtures/plugins/sandbox-fake/index.js";
+} from "../fixtures/plugins/device-fake/index.js";
 import { legacyDbFor } from "../helpers/conversations.js";
 import { truncateTables } from "../helpers/db.js";
 import { accountsFor } from "../helpers/identity.js";

@@ -449,7 +449,7 @@ describe("device authorization", () => {
         owner_account_id: bob.id,
         name: "Cloud",
         source: "cloud",
-        provider: "sandbox-fake",
+        provider: "device-fake",
       })
       .returning("id")
       .executeTakeFirstOrThrow();
