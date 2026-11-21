@@ -3,6 +3,7 @@ import {
   type MouseEvent,
   type ReactElement,
   type ReactNode,
+  useCallback,
   useEffect,
   useId,
   useRef,
@@ -158,7 +159,15 @@ export type SidebarProps = {
    */
   collapsed?: boolean;
   onCollapsedChange?(collapsed: boolean): void;
-  /** Draw the rail of the medium class (no expand button, a Conversations button): the reference set only. */
+  /**
+   * The medium rail's drawer (spec §6.13, maintainer decision 2026-11-21): the full sidebar over
+   * the content from the start edge, opened by the rail's sidebar toggle (or, inside a desktop
+   * shell, the AppShell's toggle in the top band). Controlled with `onDrawerOpenChange`; without
+   * `drawerOpen` the sidebar keeps its own state. The person's collapsed choice is untouched.
+   */
+  drawerOpen?: boolean;
+  onDrawerOpenChange?(open: boolean): void;
+  /** Draw the rail of the medium class (no toggle, a Conversations button): the reference set only. */
   railMedium?: boolean;
   /** The rail item whose tooltip is drawn open (the reference set and the catalog only). */
   railTooltip?: string;
@@ -222,6 +231,21 @@ export function Sidebar(p: SidebarProps) {
   // The medium rail has no expand button; both rails open the conversations as a side sheet.
   const mediumRail = p.railMedium ?? (p.mode === undefined && sizeClass === "medium");
   const [sheetOpen, setSheetOpen] = useState(false);
+  // The medium rail's sidebar toggle opens the full sidebar as a drawer (not the reference set's
+  // rail, which has a fixed mode).
+  const drawerCapable = p.mode === undefined && sizeClass === "medium";
+  const [ownDrawerOpen, setOwnDrawerOpen] = useState(false);
+  const drawerOpen = drawerCapable && (p.drawerOpen ?? ownDrawerOpen);
+  const latestDrawer = useRef(p.onDrawerOpenChange);
+  latestDrawer.current = p.onDrawerOpenChange;
+  const controlledDrawer = p.drawerOpen !== undefined;
+  const setDrawerOpen = useCallback(
+    (open: boolean) => {
+      if (!controlledDrawer) setOwnDrawerOpen(open);
+      latestDrawer.current?.(open);
+    },
+    [controlledDrawer],
+  );
 
   // A route change (another nav item or conversation becomes current) closes the sheet.
   const route = `${p.activeNav}|${p.conversations?.activeId ?? ""}`;
@@ -230,11 +254,16 @@ export function Sidebar(p: SidebarProps) {
     if (lastRoute.current === route) return;
     lastRoute.current = route;
     setSheetOpen(false);
-  }, [route]);
+    setDrawerOpen(false);
+  }, [route, setDrawerOpen]);
   // The sheet belongs to the rail: leaving it (another class, the sidebar expanded) closes it.
   useEffect(() => {
     if (mode !== "rail") setSheetOpen(false);
   }, [mode]);
+  // The drawer belongs to the medium rail: leaving the class closes it.
+  useEffect(() => {
+    if (!drawerCapable && (p.drawerOpen ?? ownDrawerOpen)) setDrawerOpen(false);
+  }, [drawerCapable, p.drawerOpen, ownDrawerOpen, setDrawerOpen]);
 
   const hasSessions = p.context.kind === "work" && p.conversations !== undefined;
   const sessions = hasSessions
@@ -246,6 +275,15 @@ export function Sidebar(p: SidebarProps) {
       <RD.Root open={sheetOpen} onOpenChange={setSheetOpen} modal={false}>
         <RD.Portal>
           <SheetLayer p={p} onClose={() => setSheetOpen(false)} />
+        </RD.Portal>
+      </RD.Root>
+    ) : null;
+
+  const drawer =
+    drawerCapable && mode === "rail" && !responsive ? (
+      <RD.Root open={drawerOpen} onOpenChange={setDrawerOpen}>
+        <RD.Portal>
+          <DrawerLayer p={p} onClose={() => setDrawerOpen(false)} />
         </RD.Portal>
       </RD.Root>
     ) : null;
@@ -263,10 +301,66 @@ export function Sidebar(p: SidebarProps) {
           responsive={responsive}
           mediumRail={mediumRail}
           sessions={sessions}
+          drawer={
+            drawerCapable || responsive
+              ? { open: drawerOpen, onToggle: () => setDrawerOpen(!drawerOpen) }
+              : undefined
+          }
         />
       ) : null}
       {sheet}
+      {drawer}
     </>
+  );
+}
+
+/**
+ * The medium rail's drawer (spec §6.13, maintainer decision 2026-11-21): the full sidebar over the
+ * content from the start edge, over a scrim (the content is not pushed). Inside a desktop shell it
+ * starts below the top band, so the band and the window controls stay uncovered. Focus is trapped
+ * in it; Esc, the scrim, the sidebar toggle (the rail's, the band's, or the drawer's own) and a
+ * choice of a page or a conversation close it.
+ */
+function DrawerLayer({ p, onClose }: { p: SidebarProps; onClose(): void }) {
+  const t = useDesignT();
+  const focusReturn = useFocusReturn();
+  const panel = useRef<HTMLDivElement | null>(null);
+  const drag = useDragDismiss({
+    axis: "x",
+    size: () => panel.current?.offsetWidth ?? 0,
+    onDismiss: onClose,
+    direction: -1,
+  });
+  return (
+    <div className="cb-sidebar-layer" data-drawer="true">
+      <RD.Overlay className="cb-sidebar-scrim" data-part="sidebar-drawer-scrim" />
+      <RD.Content
+        ref={panel}
+        className="cb-sidebar-sheet"
+        data-part="sidebar-drawer"
+        aria-describedby={undefined}
+        {...drag.handleProps}
+        {...drag.panelProps}
+        onOpenAutoFocus={focusReturn.capture}
+        onCloseAutoFocus={focusReturn.restore}
+        onPointerDownOutside={(e) => {
+          // A sidebar toggle outside the drawer (the band's) toggles it itself.
+          const target = e.target as HTMLElement | null;
+          if (target?.closest('[data-part="drawer-toggle"], [data-part="top-row-drawer-toggle"]'))
+            e.preventDefault();
+        }}
+        onEscapeKeyDown={(e) => {
+          const target = e.target as HTMLElement | null;
+          if (target?.closest('[data-part="rename"], [data-part="filter"]')) e.preventDefault();
+        }}
+        onClick={(e: MouseEvent<HTMLElement>) => {
+          if ((e.target as HTMLElement).closest("a[href]")) onClose();
+        }}
+      >
+        <RD.Title className="cb-sr-only">{t("shell.nav")}</RD.Title>
+        <SidebarPanel p={{ ...p, collapsed: false }} variant="full" inDrawer={onClose} />
+      </RD.Content>
+    </div>
   );
 }
 
@@ -330,9 +424,15 @@ function SidebarPanel({
   responsive,
   mediumRail,
   sessions,
+  drawer,
+  inDrawer,
 }: {
   p: SidebarProps;
   variant: Variant;
+  /** The medium rail's sidebar toggle (opens the drawer); before hydration drawn for medium. */
+  drawer?: { open: boolean; onToggle(): void } | undefined;
+  /** The full sidebar drawn in the medium rail's drawer: its toggle closes the drawer. */
+  inDrawer?: () => void;
   /** Drawn before hydration next to the other variant; CSS media queries pick one. */
   responsive?: boolean;
   /** The rail of the medium class: no expand button. */
@@ -371,6 +471,7 @@ function SidebarPanel({
       data-context={ctx.kind}
       data-collapsed={p.collapsed ? "true" : undefined}
       data-responsive={responsive ? "true" : undefined}
+      data-variant={inDrawer ? "drawer" : undefined}
     >
       <div className="cb-sidebar-top" data-part="brand-row" data-cap-part="sidebar.brand">
         {p.brand ? (
@@ -382,7 +483,14 @@ function SidebarPanel({
         {rail ? null : (
           <span className="cb-sidebar-top-tools">
             {ctx.kind === "work" ? <BrandTools p={p} rail={false} /> : null}
-            {variant === "full" && p.onCollapsedChange ? (
+            {inDrawer ? (
+              <IconButton
+                label={t("sidebar.hide")}
+                icon={<Icon name="panel-left" />}
+                part="drawer-close"
+                onClick={inDrawer}
+              />
+            ) : variant === "full" && p.onCollapsedChange ? (
               <IconButton
                 label={t("shell.railCollapse")}
                 title={`${t("shell.railCollapse")} ${COLLAPSE_SHORTCUT}`}
@@ -396,6 +504,21 @@ function SidebarPanel({
       </div>
       {rail ? (
         <div className="cb-sidebar-rail-tools">
+          {drawer && (responsive || mediumRail) ? (
+            // The medium rail's sidebar toggle: opens the full sidebar as a drawer (before
+            // hydration drawn beside the expand button, CSS keeps the one for the width).
+            <Tooltip content={t("sidebar.show")}>
+              <IconButton
+                label={t("sidebar.show")}
+                icon={<Icon name="panel-left" />}
+                part="drawer-toggle"
+                aria-expanded={drawer.open}
+                aria-haspopup="dialog"
+                data-rail-for={responsive ? "medium" : undefined}
+                onClick={drawer.onToggle}
+              />
+            </Tooltip>
+          ) : null}
           {mediumRail && !responsive ? null : (
             <Tooltip content={`${t("sidebar.expand")} ${COLLAPSE_SHORTCUT}`}>
               <IconButton

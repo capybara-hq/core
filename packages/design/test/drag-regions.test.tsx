@@ -6,7 +6,8 @@
 // while an overlay is open.
 import { readdirSync } from "node:fs";
 import { resolve } from "node:path";
-import { cleanup, render } from "@testing-library/react";
+import { act, cleanup, render, within } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   AppShell,
@@ -410,25 +411,38 @@ describe("the rail's top row inside the desktop shell (desktop client spec §7.3
     expect(decl(toggle, "top", BAND_QUERY)).toBe(
       "calc((var(--cb-shell-row) - var(--cb-control-default)) / 2)",
     );
+    // clickable over an open drawer's modal page (it closes the drawer it opened)
+    expect(decl(toggle, "pointer-events", BAND_QUERY)).toBe("auto");
+    // the rail's own expand button and medium sidebar toggle give way to it
     expect(
       decl(
-        ':root[data-shell="desktop"] .cb-shell > .cb-sidebar[data-mode="rail"] [data-part="expand-toggle"]',
+        ':root[data-shell="desktop"] .cb-shell > .cb-sidebar[data-mode="rail"] :is([data-part="expand-toggle"], [data-part="drawer-toggle"])',
         "display",
         BAND_QUERY,
       ),
     ).toBe("none");
-    // the content column's title starts after it
+    // the content column's title starts after it: the collapsed rail, and any hydrated rail (the
+    // medium class's, collapsed or not, whose toggle opens the drawer)
     expect(decl(COLLAPSED_RAIL, "--cb-shell-toggle", BAND_QUERY)).toBe(
       "calc(var(--cb-control-default) + var(--cb-space-1))",
     );
     expect(
+      decl(
+        ':root[data-shell="desktop"] .cb-shell:not([data-banner="true"]):has( > .cb-sidebar[data-mode="rail"]:not([data-responsive="true"]) )',
+        "--cb-shell-toggle",
+        BAND_QUERY,
+      ),
+    ).toBe("calc(var(--cb-control-default) + var(--cb-space-1))");
+    expect(
       decl(':root[data-shell="desktop"] .cb-shell-column', "--cb-shell-column-reserve"),
     ).toContain("var(--cb-shell-toggle, 0px)");
-    // a collapsed rail on medium has no expand button
-    expect(decl(COLLAPSED_RAIL, "--cb-shell-toggle", "(max-width: 840px)")).toBe("0px");
+    // no rule takes the room away on medium any more
+    expect(rules().filter((r) => r.decls["--cb-shell-toggle"] === "0px" && r.at !== null)).toEqual(
+      [],
+    );
   });
 
-  it("the AppShell draws the top-row toggle for the collapsed sidebar on expanded only", () => {
+  it("the AppShell draws the top-row toggle for the collapsed sidebar on expanded, the drawer toggle on medium", () => {
     // a browser: none
     const browser = shell(true, 1280);
     expect(browser.container.querySelector(".cb-shell-rail-toggle")).toBeNull();
@@ -455,15 +469,184 @@ describe("the rail's top row inside the desktop shell (desktop client spec §7.3
     expect(band?.classList.contains("cb-drag-fill")).toBe(false);
     collapsed.unmount();
 
-    // medium: the forced rail cannot expand
-    const medium = shell(true, 720);
-    expect(medium.container.querySelector(".cb-shell-rail-toggle")).toBeNull();
-    expect(medium.container.querySelector("[data-part='expand-toggle']")).toBeNull();
-    medium.unmount();
+    // medium: the forced rail cannot expand; the band holds the sidebar toggle (the drawer)
+    // whatever the collapsed choice
+    for (const choice of [true, false]) {
+      const medium = shell(choice, 720);
+      const mediumBand = medium.container.querySelector(".cb-shell > .cb-shell-rail-toggle");
+      expect(mediumBand?.querySelector("[data-part='top-row-expand-toggle']")).toBeNull();
+      const drawerToggle = mediumBand?.querySelector("[data-part='top-row-drawer-toggle']");
+      expect(drawerToggle?.getAttribute("aria-label")).toBe("显示侧栏");
+      expect(drawerToggle?.getAttribute("aria-expanded")).toBe("false");
+      expect(medium.container.querySelector("[data-part='expand-toggle']")).toBeNull();
+      // the rail keeps its own sidebar toggle for windows whose controls fit; CSS hides it
+      expect(
+        medium.container.querySelector(".cb-sidebar[data-mode='rail'] [data-part='drawer-toggle']"),
+      ).not.toBeNull();
+      medium.unmount();
+    }
 
     // the full sidebar: nothing in the band
     const full = shell(false, 1280);
     expect(full.container.querySelector(".cb-shell-rail-toggle")).toBeNull();
     expect(full.container.querySelector(".cb-sidebar[data-mode='full']")).not.toBeNull();
+  });
+});
+
+describe("the medium rail's drawer (design spec §6.13, maintainer decision 2026-11-21)", () => {
+  const desktop = (on: boolean) => {
+    (window as unknown as { capybaraShell?: unknown }).capybaraShell = on
+      ? {
+          version: 1,
+          kind: "desktop",
+          platform: "macos",
+          insets: { top: 0, right: 0, bottom: 0, left: 0 },
+          controls: { x: 0, y: 0, width: 92, height: 48 },
+          capabilities: {},
+          on: () => () => {},
+        }
+      : undefined;
+  };
+  afterEach(() => desktop(false));
+  const withPage = {
+    ...sidebar,
+    context: {
+      ...sidebar.context,
+      primary: [
+        { id: "agents", label: "Agents", href: "/agents", icon: "agent" as const },
+        { id: "skills", label: "Skills", href: "/skills", icon: "skills" as const },
+      ],
+    },
+  };
+  const shell = (width: number, onCollapsedChange = vi.fn(), activeNav = "agents") => {
+    vi.stubGlobal("matchMedia", matchMediaFor(width).matchMedia);
+    const ui = (nav: string) => (
+      <DesignProvider locale="zh">
+        <AppShell
+          sidebar={{ ...withPage, activeNav: nav }}
+          status={status}
+          collapsed={false}
+          onCollapsedChange={onCollapsedChange}
+        >
+          <p>page</p>
+        </AppShell>
+      </DesignProvider>
+    );
+    const r = render(ui(activeNav));
+    return { ...r, navigate: (nav: string) => r.rerender(ui(nav)) };
+  };
+  const drawerEl = () => document.querySelector("[data-part='sidebar-drawer']");
+  const user = () => userEvent.setup({ pointerEventsCheck: 0 });
+
+  it("the browser's medium rail has the sidebar toggle where the expand button sits; expanded has none", async () => {
+    const wide = shell(1280);
+    expect(wide.container.querySelector("[data-part='drawer-toggle']")).toBeNull();
+    wide.unmount();
+    const onCollapsed = vi.fn();
+    const medium = shell(720, onCollapsed);
+    const tools = medium.container.querySelector(
+      ".cb-sidebar[data-mode='rail'] .cb-sidebar-rail-tools",
+    );
+    const toggle = tools?.firstElementChild?.matches("[data-part='drawer-toggle']")
+      ? (tools.firstElementChild as HTMLElement)
+      : null;
+    expect(toggle?.getAttribute("aria-label")).toBe("显示侧栏");
+    // no band in a browser
+    expect(medium.container.querySelector(".cb-shell-rail-toggle")).toBeNull();
+    await user().click(toggle as HTMLElement);
+    const drawer = drawerEl();
+    expect(drawer?.getAttribute("role")).toBe("dialog");
+    // the full sidebar, with its scrim; the content is not pushed (the drawer is portaled)
+    expect(
+      drawer?.querySelector(".cb-sidebar[data-mode='full'][data-variant='drawer']"),
+    ).not.toBeNull();
+    expect(
+      document.querySelector(".cb-sidebar-layer[data-drawer='true'] > .cb-sidebar-scrim"),
+    ).not.toBeNull();
+    expect(medium.container.contains(drawer)).toBe(false);
+    expect(toggle?.getAttribute("aria-expanded")).toBe("true");
+    // its own toggle closes it
+    await user().click(within(drawer as HTMLElement).getByRole("button", { name: "隐藏侧栏" }));
+    expect(drawerEl()).toBeNull();
+    // the remembered collapsed choice is untouched
+    expect(onCollapsed).not.toHaveBeenCalled();
+  });
+
+  it("inside the desktop shell the band's toggle opens it; Esc, the scrim, the toggle and a pick close it", async () => {
+    desktop(true);
+    const r = shell(720);
+    const toggle = () =>
+      r.container.querySelector<HTMLElement>("[data-part='top-row-drawer-toggle']") as HTMLElement;
+    // Esc
+    await user().click(toggle());
+    expect(drawerEl()).not.toBeNull();
+    expect(toggle().getAttribute("aria-expanded")).toBe("true");
+    await user().keyboard("{Escape}");
+    expect(drawerEl()).toBeNull();
+    // the scrim
+    await user().click(toggle());
+    const scrim = document.querySelector<HTMLElement>("[data-part='sidebar-drawer-scrim']");
+    expect(scrim).not.toBeNull();
+    await user().click(scrim as HTMLElement);
+    expect(drawerEl()).toBeNull();
+    // the band's toggle again
+    await user().click(toggle());
+    expect(drawerEl()).not.toBeNull();
+    await user().click(toggle());
+    expect(drawerEl()).toBeNull();
+    // choosing a page: the link click closes it, and so does the route change it causes
+    await user().click(toggle());
+    const link = within(drawerEl() as HTMLElement).getByRole("link", { name: "Skills" });
+    link.addEventListener("click", (e) => e.preventDefault());
+    await user().click(link);
+    expect(drawerEl()).toBeNull();
+    await user().click(toggle());
+    expect(drawerEl()).not.toBeNull();
+    r.navigate("skills");
+    expect(drawerEl()).toBeNull();
+  });
+
+  it("leaving the medium class closes it", async () => {
+    const mm = matchMediaFor(720);
+    vi.stubGlobal("matchMedia", mm.matchMedia);
+    render(
+      <DesignProvider locale="zh">
+        <AppShell sidebar={withPage} status={status} collapsed={false} onCollapsedChange={noop}>
+          <p>page</p>
+        </AppShell>
+      </DesignProvider>,
+    );
+    await user().click(
+      document.querySelector<HTMLElement>("[data-part='drawer-toggle']") as HTMLElement,
+    );
+    expect(drawerEl()).not.toBeNull();
+    act(() => mm.resize(1280));
+    expect(drawerEl()).toBeNull();
+  });
+
+  it("every drag region is off while it is open, and its roots never drag", () => {
+    const sheetRules = parseCss(css("shell-environment.css"));
+    const off = sheetRules
+      .filter((r) => r.selector.includes(":has(") && r.decls["app-region"] === "no-drag")
+      .map((r) => r.selector)
+      .join(" ");
+    for (const cls of ["cb-sidebar-layer", "cb-sidebar-scrim"]) {
+      expect(off, cls).toMatch(new RegExp(`\\.${cls}(?![\\w-])`));
+      expect(
+        sheetRules.some(
+          (r) =>
+            r.at === null &&
+            !r.selector.includes(":has(") &&
+            new RegExp(`\\.${cls}(?![\\w-])`).test(r.selector) &&
+            r.decls["app-region"] === "no-drag",
+        ),
+        cls,
+      ).toBe(true);
+    }
+    // it starts below the band and the controls' row (the sheet layer's rule)
+    expect(
+      sheetRules.find((r) => r.selector === ':root[data-shell="desktop"] .cb-sidebar-layer')?.decls
+        .top,
+    ).toBe("max(var(--cb-shell-band), var(--cb-shell-row-start))");
   });
 });
