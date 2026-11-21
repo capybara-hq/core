@@ -19,6 +19,8 @@ const NEON: ThemeRef = {
   schemes: ["dark"],
   singleScheme: "dark",
   logo: null,
+  decoration: "dither",
+  background: {},
   cssUrl: themeCssUrl("t-neon", "1"),
 };
 

@@ -62,20 +62,27 @@ function useOnlyThemeSheet(cssUrl: string | null): void {
   }, [cssUrl]);
 }
 
-function Themed({ theme, children }: { theme: ThemeRef | null; children: ReactNode }) {
-  useOnlyThemeSheet(theme?.cssUrl ?? null);
+/**
+ * What the theme replaces of the brand, for the design context (theme brand coverage §3): its mark,
+ * wordmark, empty-state illustration and sign-in decoration; null when it replaces nothing (the
+ * built-in look). The product name (issue #452) is only the theme mark's alt: without a theme
+ * wordmark the built-in CAPYBARA stays beside the pixel capybara (decision 7), so a product name
+ * alone makes no brand.
+ */
+export function brandOf(theme: ThemeRef | null, productName: string | null): Brand | null {
   const markUrl = theme?.logo?.markUrl ?? null;
   const wordmark = theme?.logo?.wordmark ?? null;
-  // the product name (issue #452) is only the mark's alt: without a theme wordmark the built-in
-  // CAPYBARA stays beside the pixel capybara (theme brand coverage spec, decision 7)
+  const illustrationUrl = theme?.logo?.illustrationUrl ?? null;
+  const decoration = theme?.decoration === "none" ? "none" : "dither";
+  if (markUrl === null && wordmark === null && illustrationUrl === null && decoration === "dither")
+    return null;
+  return { markUrl, wordmark, illustrationUrl, decoration, productName };
+}
+
+function Themed({ theme, children }: { theme: ThemeRef | null; children: ReactNode }) {
+  useOnlyThemeSheet(theme?.cssUrl ?? null);
   const productName = useProductName();
-  const brand = useMemo<Brand | null>(
-    () =>
-      markUrl === null && wordmark === null
-        ? null
-        : { markUrl, wordmark, illustrationUrl: null, decoration: "dither", productName },
-    [markUrl, wordmark, productName],
-  );
+  const brand = useMemo(() => brandOf(theme, productName), [theme, productName]);
   return (
     <ThemeContext.Provider value={theme}>
       <ThemeLink theme={theme} />
