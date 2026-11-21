@@ -170,15 +170,15 @@ fails closed.
   `host` (a new host, only while the sandbox network is an allowlist; IP literals and loopback names
   are never proposed) or `outside-sandbox` (the escalation below). `approverForCrossing`
   (`sandbox/review/permission-candidate.ts`) decides: Request approval the person, Approve for me the
-  review model (the person when it is missing, unsure or failing; a model deny stays a deny), Full
-  access nobody. Two exceptions turn `none` into `review-model`: a **sub-agent's** escalation, and
+  review model (the person when it is missing, unsure or failing; a model deny stays a deny), Auto
+  nobody. Two exceptions turn `none` into `review-model`: a **sub-agent's** escalation, and
   an escalation carrying a **credential consent** (`ask.credential-*`, `ask.ssh`, `ask.secret-file`,
-  `isCredentialConsentRule`); the review input says neutrally why it sees a Full access call. The
+  `isCredentialConsentRule`); the review input says neutrally why it sees an Auto call. The
   fixed denies (`deny.*` rules, platform and org denies, protected paths) come first under every
   profile, and a directory proposal at a protected location is `unsupported` before review, naming
   the escalation. A crossing beyond a ceiling is unavailable with a text naming the layer (the host
   rules: `hostGrantRefusal`).
-- **Full access auto-grants are recorded exactly once.** For approver `none`, `decidePermission`
+- **Auto's grants are recorded exactly once.** For approver `none`, `decidePermission`
   allows with `decisionSource: "full-access"` and the call goes on to grant issuance
   (`sandbox/permission-auto-grants.ts`): one fenced transaction under the shared authority lock
   writes the `permission_reviewed` event (outcome allow, the `crossing`), the audit row

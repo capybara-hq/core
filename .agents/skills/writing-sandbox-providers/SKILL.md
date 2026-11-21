@@ -579,7 +579,7 @@ upgraded.
 ## Per-call sandbox escalation
 
 Running one `Bash` call outside the sandbox (`sandbox: "escalated"` with a justification) is the `outside-sandbox`
-crossing: Request approval asks the person, Approve for me the review model, Full access auto-grants it within the
+crossing: Request approval asks the person, Approve for me the review model, Auto auto-grants it within the
 outside-sandbox ceiling, except that a sub-agent's escalation or one carrying a credential consent goes to the review
 model (`approverForCrossing`, writing-tools). It is also the only way to reach private, LAN, loopback, link-local and
 metadata addresses, the Docker and kernel sockets and the protected paths. An admitted escalation gets the escalated
