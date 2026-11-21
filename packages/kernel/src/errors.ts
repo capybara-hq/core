@@ -527,6 +527,8 @@ export const ERROR_CODES = {
   "device.project_path_missing": 422,
   /** The project's path is a file, cannot be read, or the device refused it in its current mode. */
   "device.project_path_unreadable": 422,
+  /** The device provider refused the project's directory (its reason is the message and details). */
+  "device.project_refused": 422,
   /** Device sign-in (RFC 8628 style): the person has not approved the code yet; keep polling. */
   "device_sign_in.authorization_pending": 400,
   /** Device sign-in: the program polls faster than the interval; add 5 seconds and keep polling. */

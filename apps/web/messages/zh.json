@@ -376,6 +376,7 @@
       "project_home_unknown": "项目范围为这台电脑的用户时，项目路径相对于你的主目录，但这台电脑还没有报告主目录。请在电脑上更新 capybara-device 并重新连接。",
       "project_path_missing": "设备上不存在该目录，请检查路径。",
       "project_path_too_broad": "这个目录包含主目录（或其他人的文件），范围太大。请选择项目自己的目录，或主目录及其下的目录。",
+      "project_refused": "设备拒绝了这个目录。",
       "project_path_unreadable": "该路径是文件或在设备上无法读取，请选择一个可读的目录。",
       "project_not_found": "这台设备上没有该名称的项目。",
       "projects_unsupported": "这台设备不支持项目。",

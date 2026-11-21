@@ -376,6 +376,7 @@
       "project_home_unknown": "With the project reach of this computer's user, a project's path is relative to your home directory, which this computer has not reported. Update capybara-device on the computer and reconnect it.",
       "project_path_missing": "This directory does not exist on the device. Check the path.",
       "project_path_too_broad": "This directory holds your home directory (or other people's files), which is too broad. Pick the project's own directory, your home or a directory below it.",
+      "project_refused": "The device refused this directory.",
       "project_path_unreadable": "This path is a file or cannot be read on the device. Choose a readable directory.",
       "project_not_found": "This device has no project with this name.",
       "projects_unsupported": "This device does not support projects.",

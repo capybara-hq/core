@@ -549,6 +549,10 @@ export class DevicesOperations implements OnModuleInit {
             next: "Pass a directory the device can read (not a file).",
           },
           {
+            code: "device.project_refused",
+            next: "The device's provider refused this directory (its reason is in the message): pick another directory.",
+          },
+          {
             code: "device.projects_unsupported",
             next: "This device offers no projects: work without one, or ask the person to update capybara-device.",
           },

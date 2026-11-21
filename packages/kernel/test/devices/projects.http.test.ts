@@ -8,6 +8,7 @@ import {
   type DeviceProvider,
   type KernelReq,
   type LegacyDeviceHello,
+  ProjectPathRefusedError,
   type SandboxBrowseScope,
 } from "@capybara-hq/plugin-sdk";
 import { startTestPostgres, startTestRedis, type TestContainer } from "@capybara-hq/testing";
@@ -619,6 +620,48 @@ describe("device projects", () => {
       `${HOME}/secret`,
       `${HOME}/flaky`,
     ]);
+    expect(await storedOf(d.deviceId)).toEqual([]);
+  });
+
+  it("a provider refusing a path answers 422 device.project_refused with its reason", async () => {
+    const d = await owned();
+    await connect(d);
+    const refused = new ProjectPathRefusedError({
+      en: "Refused by the test provider",
+      zh: "测试提供方拒绝了这个目录",
+    });
+    const list = async () => {
+      throw refused;
+    };
+    // whichever route the activation gate picks, the provider's list refuses
+    const sandbox = k.app.get(SandboxService);
+    vi.spyOn(sandbox, "withBrowse").mockImplementation((async (
+      _ctx: unknown,
+      fn: (b: unknown, s: AbortSignal) => Promise<unknown>,
+      signal: AbortSignal,
+    ) => fn({ list, stat: async () => null, scan: async () => [] }, signal)) as never);
+    vi.spyOn(sandbox, "withSandbox").mockImplementation((async (
+      _ctx: unknown,
+      fn: (h: unknown, p: unknown, info: unknown, s: AbortSignal) => Promise<unknown>,
+      signal: AbortSignal,
+    ) =>
+      fn(
+        {},
+        { list, scan: async () => [], stat: async () => null },
+        { roots: ROOTS },
+        signal,
+      )) as never);
+    const res = await add(d.req, d.deviceId, { path: "refused/dir" });
+    expect(res.statusCode, res.body).toBe(422);
+    expect(res.json()).toMatchObject({
+      error: {
+        code: "device.project_refused",
+        message: "Refused by the test provider",
+        details: [
+          { reason: { en: "Refused by the test provider", zh: "测试提供方拒绝了这个目录" } },
+        ],
+      },
+    });
     expect(await storedOf(d.deviceId)).toEqual([]);
   });
 

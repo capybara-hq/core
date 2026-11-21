@@ -30,6 +30,7 @@ import {
   type ExecResult,
   FileSystemGoneError,
   type FileSystemHandle,
+  ProjectPathRefusedError,
   parseSandboxBrowseScope,
   parseSandboxExecutionRef,
   parseSandboxOperationRef,
@@ -135,6 +136,7 @@ const Deployment = z.object({
   updateMode: z.enum(["updated", "recreate", "throw", "none"]).optional(),
   limitsApplyAt: z.enum(["instance", "fileSystem"]).optional(),
   list: z.boolean().optional(),
+  refusePaths: z.array(z.string()).optional(),
 });
 
 /** What `device-fake` reports as its description. */
@@ -152,6 +154,8 @@ export interface FakeSandboxOptions {
   limitsApplyAt?: "instance" | "fileSystem";
   /** Gives the provider a `list` and a `scan` (see the file header). */
   list?: boolean;
+  /** `list` refuses these paths with `ProjectPathRefusedError` ("Refused by the test provider"). */
+  refusePaths?: string[];
 }
 
 /** One line of `root/limits.log`: the limits an operation got. */
@@ -965,6 +969,12 @@ export function createFakeSandbox(
     provider.list = async (h, path, opts) => {
       opts.signal.throwIfAborted();
       await requireRunning(h);
+      if (options.refusePaths?.includes(path)) {
+        throw new ProjectPathRefusedError({
+          en: "Refused by the test provider",
+          zh: "测试提供方拒绝了这个目录",
+        });
+      }
       const p = await real(h, path);
       const s = await stat(p).catch(() => null);
       if (s === null) return null;
@@ -1038,7 +1048,9 @@ export function defineFakeDevice(name: string, description?: string) {
     permissions: {},
     config: { deployment: Deployment },
     setup(ctx) {
-      const { root, updateMode, limitsApplyAt, list } = ctx.config as z.infer<typeof Deployment>;
+      const { root, updateMode, limitsApplyAt, list, refusePaths } = ctx.config as z.infer<
+        typeof Deployment
+      >;
       ctx.provide(
         DEVICE_PROVIDER_EXTENSION_POINT,
         createFakeSandbox(root, {
@@ -1046,6 +1058,7 @@ export function defineFakeDevice(name: string, description?: string) {
           ...(updateMode !== undefined && { updateMode }),
           ...(limitsApplyAt !== undefined && { limitsApplyAt }),
           ...(list !== undefined && { list }),
+          ...(refusePaths !== undefined && { refusePaths }),
         }),
       );
     },

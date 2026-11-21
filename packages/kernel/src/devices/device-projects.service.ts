@@ -4,6 +4,7 @@ import {
   type DeviceProvider,
   isDeviceProjectName,
   isFileSystemGoneError,
+  isProjectPathRefusedError,
   isSandboxGoneError,
   isSandboxScopeDeniedError,
   MAX_DEVICE_SCAN_RESULTS,
@@ -655,7 +656,8 @@ const pathMissing = (path: string): ApiError =>
 
 /**
  * What a failed `list(path)` becomes. A machine's policy refusal is the device refusing the path
- * in its mode (`device.project_outside_mode`). Any other error alone cannot tell a file or an
+ * in its mode (`device.project_outside_mode`); a provider's `ProjectPathRefusedError` is
+ * `device.project_refused` with its reason. Any other error alone cannot tell a file or an
  * unreadable directory from a failure on the device, so the device is asked `stat(path)`: a file
  * or a directory it cannot list is the path's problem (422 `device.project_path_unreadable`), a
  * missing path `device.project_path_missing`, and a `stat` that fails too means the device could
@@ -671,6 +673,10 @@ async function listFailure(
 ): Promise<unknown> {
   const passed = passThrough(e);
   if (passed !== undefined) return passed;
+  // the provider refusing the directory states its reason (shown to the person, en + zh)
+  if (isProjectPathRefusedError(e)) {
+    return new ApiError("device.project_refused", e.reason.en, [{ reason: e.reason }]);
+  }
   const why = e instanceof ToolError ? ` (${clipped(e.message)})` : "";
   // the owner browse scope refusing the path is the device refusing it (gate on only)
   if (
