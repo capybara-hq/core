@@ -138,7 +138,8 @@
       "network_allowance_invalid": "The internal endpoint is not valid: use a hostname, a *.domain wildcard, an IP address or CIDR, or an origin such as http://host:8080. Link-local, loopback (including localhost) and unspecified addresses are never allowed, nor wildcards over a public suffix.",
       "network_allowance_not_found": "The organization has no such internal endpoint (it may have been removed already).",
       "network_allowance_widen_not_allowed": "Only a super admin in the admin console on the web can allow an internal endpoint, not an API token or the Platform tool.",
-      "external_sharing_not_allowed": "External sharing cannot be turned on: the platform does not allow it, or the change was made with an API token or the Platform tool. An org admin turns it on in the organization settings on the web once a super admin allows it."
+      "external_sharing_not_allowed": "External sharing cannot be turned on: the platform does not allow it, or the change was made with an API token or the Platform tool. An org admin turns it on in the organization settings on the web once a super admin allows it.",
+      "device_provider_not_available": "This device provider is not on in this organization. Switch it on first or choose another."
     },
     "setup": {
       "already_completed": "Setup has already been completed.",
@@ -360,7 +361,7 @@
       "not_found": "The device does not exist or has been deleted.",
       "name_taken": "You already have a device with this name. Choose another name.",
       "limit_reached": "You have reached the limit of devices. Delete one to create another.",
-      "unavailable": "The sandbox provider of this device is not available. Ask the super admin.",
+      "unavailable": "This device's provider is off in this organization or not installed. Its files are kept; ask an org admin to switch the provider back on.",
       "files_lost": "The files of this device were lost. For a cloud device, rebuild its files on the devices page; for a local device, run capybara-device logout, then capybara-device login into the same device on the machine.",
       "forbidden": "You can no longer use this device.",
       "files_on_device": "A local device keeps its files on the machine, so they cannot be rebuilt from the platform. On the machine, run capybara-device logout, then capybara-device login into the same device.",
@@ -389,7 +390,8 @@
       "outside_sandbox_not_allowed": "Running outside the sandbox is not allowed for this device by your platform, your organization, its owner or its provider.",
       "restart_required": "Background work started by an earlier version may still be running on this computer. Restart this computer to finish the upgrade, then try again.",
       "replace_required": "Background work started by an earlier version may still be running on this computer, and it cannot prove a restart. Delete this device and connect the computer again as a new device.",
-      "recreate_required": "Background work started by an earlier version may still be running on an earlier instance of this device, and that instance can no longer be verified as destroyed. Delete this device and create it again."
+      "recreate_required": "Background work started by an earlier version may still be running on an earlier instance of this device, and that instance can no longer be verified as destroyed. Delete this device and create it again.",
+      "provider_required": "Choose a device provider. If none is offered, ask an org admin to switch one on."
     },
     "app_auth": {
       "code_invalid": "This sign-in link is invalid or has expired. Start signing in again from the {product} app.",
