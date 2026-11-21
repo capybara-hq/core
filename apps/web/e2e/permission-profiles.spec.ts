@@ -19,7 +19,7 @@ import { signIn } from "./support/sign-in";
 /**
  * Conversation permission profiles (spec 2026-11-16-conversation-approval-profiles-design, "UI
  * outline"; API in the permission operation contract, "Root state, API, decisions and replay"),
- * through the composer against the real kernel on the `sandbox-fake` cloud provider: the picker's
+ * through the composer against the real kernel on the `device-fake` cloud provider: the picker's
  * three rows and its default, a change on an existing conversation (persisted, read back through
  * `GET …/permissions`), Full access only through its confirmation for a real device, a Request
  * approval write outside the workspace asking with its directory proposal, and a device whose
@@ -47,7 +47,7 @@ async function permissionsOf(page: Page, orgId: string, convId: string): Promise
   return (await r.json()) as Permissions;
 }
 
-/** Creates a personal cloud device (the platform's sandbox provider, `sandbox-fake`). */
+/** Creates a personal cloud device (the platform's sandbox provider, `device-fake`). */
 async function createDevice(page: Page, orgId: string, name: string): Promise<string> {
   const r = await page.request.post(`/api/v1/orgs/${orgId}/devices`, {
     headers: CSRF,
@@ -63,7 +63,7 @@ async function deleteDevice(page: Page, orgId: string, id: string): Promise<void
 }
 
 /**
- * Where the e2e kernel's `sandbox-fake` keeps its root: global-setup configures it as
+ * Where the e2e kernel's `device-fake` keeps its root: global-setup configures it as
  * `<temp dir>/sandboxes` and writes the greeter package into the same temp dir, the only path
  * of that dir it exports.
  */

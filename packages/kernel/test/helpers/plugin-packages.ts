@@ -470,13 +470,18 @@ const DEVICE_FAKE_B_SRC = fileURLToPath(
  * source with its types stripped (it imports only `node:*`, the SDK and zod; `device-fake-b`
  * reuses it with its own `defineFakeDevice` call), the static manifest comes from the real module.
  */
-async function packDeviceFake(manifestSrc: string, entryCall: string): Promise<Uint8Array> {
+async function packDeviceFake(entrySrc: string): Promise<Uint8Array> {
   const { stripTypeScriptTypes } = await import("node:module");
+  const call = /^export default (defineFakeDevice\(.*\));$/m.exec(
+    await readFile(entrySrc, "utf8"),
+  )?.[1];
+  if (call === undefined)
+    throw new Error(`${entrySrc} has no "export default defineFakeDevice(...)"`);
   const source = (await readFile(DEVICE_FAKE_SRC, "utf8")).replace(
-    'export default defineFakeDevice("device-fake");',
-    `export default ${entryCall};`,
+    /^export default defineFakeDevice\(.*\);$/m,
+    `export default ${call};`,
   );
-  const mod = (await import(manifestSrc)) as { default: ExtensionManifest };
+  const mod = (await import(entrySrc)) as { default: ExtensionManifest };
   return pluginTgz({
     manifest: { name: mod.default.name, version: mod.default.version },
     packageName: `@test/plugin-${mod.default.name}`,
@@ -492,12 +497,10 @@ async function packDeviceFake(manifestSrc: string, entryCall: string): Promise<U
  * config `{ root }`) as a plugin package. Provides `device-provider@1`; the install confirmation
  * page marks it sensitive.
  */
-export const deviceFakePkg = (): Promise<Uint8Array> =>
-  packDeviceFake(DEVICE_FAKE_SRC, 'defineFakeDevice("device-fake")');
+export const deviceFakePkg = (): Promise<Uint8Array> => packDeviceFake(DEVICE_FAKE_SRC);
 
 /** The same for `device-fake-b` (`test/fixtures/plugins/device-fake-b`, its own `root`). */
-export const deviceFakeBPkg = (): Promise<Uint8Array> =>
-  packDeviceFake(DEVICE_FAKE_B_SRC, 'defineFakeDevice("device-fake-b", "Second test device")');
+export const deviceFakeBPkg = (): Promise<Uint8Array> => packDeviceFake(DEVICE_FAKE_B_SRC);
 
 /** One package of {@link bootstrapFixture}: bytes, or a plugin directory packed with pack-plugin. */
 export interface BootstrapFixtureEntry {

@@ -93,7 +93,7 @@ beforeAll(async () => {
         owner_kind: "personal",
         owner_account_id: accountId,
         source,
-        provider: source === "cloud" ? "sandbox-fake" : null,
+        provider: source === "cloud" ? "device-fake" : null,
       })
       .execute();
   await db
