@@ -20,6 +20,10 @@ let releasing: { href: string }[] = [];
 let selfPops = 0;
 /** What runs once the traversal of {@link popOverlaysThen} has landed. */
 let afterPop: (() => void) | null = null;
+/** The bound on that traversal (as the floating back's `goBack`): its popstate may never come. */
+let afterPopTimer: ReturnType<typeof setTimeout> | null = null;
+/** How long a pick waits for its pop's popstate before it runs anyway. */
+export const POP_SETTLE_LIMIT_MS = 500;
 let listening = false;
 
 const hrefNow = () => `${window.location.pathname}${window.location.search}`;
@@ -34,16 +38,21 @@ function active(): boolean {
 function onPopState() {
   if (selfPops > 0) {
     selfPops--;
-    if (selfPops === 0 && afterPop !== null) {
-      const run = afterPop;
-      afterPop = null;
-      run();
-    }
+    if (selfPops === 0 && afterPop !== null) runAfterPop();
     return;
   }
   // A back that is not ours leaves the top overlay's entry: that overlay closes.
   const top = entries.pop();
   top?.close();
+}
+
+/** Runs the pending pick once, whether its popstate came or the bound ran out. */
+function runAfterPop() {
+  if (afterPopTimer !== null) clearTimeout(afterPopTimer);
+  afterPopTimer = null;
+  const run = afterPop;
+  afterPop = null;
+  run?.();
 }
 
 function listen() {
@@ -82,6 +91,14 @@ export function popOverlaysThen(then: () => void): boolean {
   releasing = [];
   selfPops++;
   afterPop = then;
+  // A traversal whose popstate never comes (a count past the real stack, a browser quirk) must not
+  // lose the pick, nor leave a self-pop pending that would swallow the next real back.
+  afterPopTimer = setTimeout(() => {
+    afterPopTimer = null;
+    if (afterPop !== then) return;
+    selfPops = Math.max(0, selfPops - 1);
+    runAfterPop();
+  }, POP_SETTLE_LIMIT_MS);
   const n = count + pending;
   if (n === 1) window.history.back();
   else window.history.go(-n);

@@ -347,6 +347,27 @@ describe("useOverlayHistory", () => {
     await settled();
   });
 
+  // T28 review: a traversal whose popstate never comes (a count past the real stack, a browser
+  // quirk) must not lose the pick nor leave a pending self-pop that swallows the next real back.
+  it("a pick still navigates when the pop's popstate never comes, and the next back still closes", async () => {
+    history.replaceState(null, "", "/");
+    const onNavigate = vi.fn();
+    render(<Pick onNavigate={onNavigate} />);
+    const back = vi.spyOn(history, "back").mockImplementation(() => {});
+    await userEvent.click(screen.getByText("go"));
+    expect(back).toHaveBeenCalledTimes(1);
+    await waitFor(() => expect(onNavigate).toHaveBeenCalledWith("/next"));
+    back.mockRestore();
+    cleanup();
+    // a real back after that closes the next overlay (no stale self-pop count swallows it)
+    render(<Overlays />);
+    await userEvent.click(screen.getByText("open-drawer"));
+    act(() => history.back());
+    await waitFor(() => expect(hasDrawer()).toBe(false));
+    await settled();
+    expect(onNavigate).toHaveBeenCalledTimes(1);
+  });
+
   it("the back after an orphaned pick entry still closes the next drawer first", async () => {
     render(<Overlays />);
     await userEvent.click(screen.getByText("open-drawer"));
