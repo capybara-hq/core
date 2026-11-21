@@ -29,6 +29,7 @@ import {
   CommandReviewService,
   isSessionGrantableRule,
   parseReviewAnswer,
+  personMessagesText,
   REVIEW_ASK_REASON,
   REVIEW_MAX_OUTPUT_TOKENS,
   REVIEW_REASONS,
@@ -269,6 +270,17 @@ describe("the classifier's answer parsing", () => {
     // the estimate is ASCII / 4: at most 50 tokens
     expect(bounded.length).toBeLessThanOrEqual(50 * 4 + "second request".length + 2);
     expect(boundMessages(["only"], 0)).toBe("");
+  });
+
+  it("puts person messages read newest first back in conversation order, newest last", () => {
+    const msg = (text: string) => ({ content: [{ type: "text", text }] });
+    // readPersonMessages queries newest first: "enable" is the person's latest message
+    const text = personMessagesText([msg("now enable it"), msg("disable telegram")], 1_000);
+    expect(text).toBe("disable telegram\n\nnow enable it");
+    // a tight budget keeps the newest message, never the oldest
+    const tight = personMessagesText([msg("now enable it"), msg("a".repeat(4_000))], 10);
+    expect(tight.endsWith("now enable it")).toBe(true);
+    expect(tight).not.toContain("a".repeat(100));
   });
 });
 
