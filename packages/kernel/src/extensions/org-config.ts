@@ -652,9 +652,14 @@ export class OrgExtensionConfigs {
     return result;
   }
 
-  /** `REPEATABLE READ` read-only: the config row and the secrets come from one snapshot. */
+  /**
+   * `REPEATABLE READ` read-only: the config row and the secrets come from one snapshot. Inside a
+   * caller's transaction it reads in that transaction instead (`required`): a caller holding a
+   * connection never waits for a second one from the pool (the device provider check runs inside
+   * locked transactions; concurrent runs would starve the pool).
+   */
   @Transactional({
-    propagation: "requires_new",
+    propagation: "required",
     isolationLevel: "repeatable read",
     accessMode: "read only",
   })

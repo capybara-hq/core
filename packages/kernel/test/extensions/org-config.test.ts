@@ -22,7 +22,7 @@ import type { Org, OrgsService } from "../../src/orgs/orgs.service.js";
 import { EmbedTokens } from "../../src/ui/embed-token.js";
 import { truncateTables } from "../helpers/db.js";
 import { orgConfigsFor, testHost } from "../helpers/extensions.js";
-import { accountsFor, orgsFor } from "../helpers/identity.js";
+import { accountsFor, handlesFor, orgsFor } from "../helpers/identity.js";
 import { testMembers } from "../helpers/members.js";
 
 let pg: Awaited<ReturnType<typeof startTestPostgres>>;
@@ -358,6 +358,24 @@ describe("OrgExtensionConfigs", () => {
     expect(await hooked.get(org.id, "orgcfg")).toEqual({ enabled: true, config: full });
     expect(fired).toBe(true);
     expect(await svc.get(org.id, "orgcfg")).toMatchObject({ config: { appId: "app-2" } });
+  });
+
+  it("get inside a caller's transaction reads in it: no second pool connection, its own writes seen", async () => {
+    await svc.put(org.id, "orgcfg", { enabled: true, config: full }, A.id);
+    const { db: kdb, txHost } = handlesFor(raw);
+    const seen = await txHost.run(async () => {
+      // uncommitted in this transaction: only a read on the same connection sees it
+      await kdb.db
+        .updateTable("extension_org_configs")
+        .set({ enabled: false })
+        .where("org_id", "=", org.id)
+        .where("plugin", "=", "orgcfg")
+        .execute();
+      return svc.get(org.id, "orgcfg");
+    });
+    expect(seen).toEqual({ enabled: false, config: null });
+    // the transaction committed: outside one, get reads the committed row
+    expect(await svc.get(org.id, "orgcfg")).toEqual({ enabled: false, config: null });
   });
 
   it("list 同样在一致快照里读配置行与密钥", async () => {
