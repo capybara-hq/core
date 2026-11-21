@@ -35,6 +35,7 @@ import {
   type OperationContext,
   type OperationErrorNext,
   operationDomain,
+  PLATFORM_DOMAINS,
   type PlatformOperation,
   PRECHECK_TIMEOUT_MS,
 } from "../../platform/operation.js";
@@ -453,7 +454,8 @@ export function platformTool(deps: PlatformToolDeps): BuiltinTool {
       'lists every domain; "describe" gives an operation\'s input schema and an example. ' +
       "Writes may need approval, depending on the conversation's permission profile. Use " +
       '"read" for how-to documentation (plugin format, skills, extension points).',
-    inputSchema: platformInputSchema(deps.ops.domains().map((d) => d.id)),
+    // the fixed domain list, the same on every replica and in every org
+    inputSchema: platformInputSchema(PLATFORM_DOMAINS.map((d) => d.id)),
     keyArgs: ["action", "operation", "domain"],
   };
   const facts = (ctx: CallPolicyContext) => deps.actor.facts(ctx);
