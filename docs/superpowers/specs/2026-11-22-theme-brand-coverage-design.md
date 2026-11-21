@@ -374,6 +374,8 @@ Each core PR stays within one area so 2 and 3 can run in parallel after 1.
 
 ## Decisions for the reviewer
 
+**Accepted 2026-11-22 by the maintainer:** every recommendation below.
+
 1. **What the brand cookie holds**: the theme this browser last drew (recommended: an error page
    looks like the page it replaces). Alternative: the platform default only (simpler story, but a
    person in a branded org sees the platform look on every restart).
