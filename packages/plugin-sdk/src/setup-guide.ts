@@ -30,12 +30,14 @@ import {
  * Where a guide is shown. `channel-connection`: "New channel" and the channel detail page;
  * `connector-template`: the pages of a connector template and the connectors made from it;
  * `extension-deployment`: the super admin's page of the extension, whose checks verify the
- * platform deployment config (a push provider's credentials).
+ * platform deployment config (a push provider's credentials); `device-connection`: the guide of a
+ * device provider's connection (how a member connects a machine through it).
  */
 export const SETUP_GUIDE_PLACES = [
   "channel-connection",
   "connector-template",
   "extension-deployment",
+  "device-connection",
 ] as const;
 export type SetupGuidePlace = (typeof SETUP_GUIDE_PLACES)[number];
 
@@ -48,12 +50,23 @@ export type SetupGuideAudience = "admin" | "member";
  */
 export type SetupGuideVariableType = "url" | "text" | "token";
 
-/** What a place defines: its modes, audiences and variables, and whether its targets record acks. */
+/**
+ * An action a guide's `::shell-action` line asks the native shell to run. `connect-this-machine`:
+ * connect the machine the page runs on as a device (the web shows the button only where the shell
+ * declares the capability).
+ */
+export type SetupGuideShellAction = "connect-this-machine";
+
+/**
+ * What a place defines: its modes, audiences and variables, whether its targets record acks, and
+ * the shell actions its guides may use.
+ */
 export interface SetupGuidePlaceInfo {
   modes: readonly string[];
   audiences: readonly SetupGuideAudience[];
   variables: Readonly<Record<string, SetupGuideVariableType>>;
   drift: boolean;
+  shellActions: readonly SetupGuideShellAction[];
 }
 
 const COMMON_VARIABLES = {
@@ -76,6 +89,7 @@ export const SETUP_GUIDE_PLACE_INFO: Readonly<Record<SetupGuidePlace, SetupGuide
       connectionName: "text",
     },
     drift: true,
+    shellActions: [],
   },
   "connector-template": {
     modes: [],
@@ -89,12 +103,21 @@ export const SETUP_GUIDE_PLACE_INFO: Readonly<Record<SetupGuidePlace, SetupGuide
       connectorName: "text",
     },
     drift: true,
+    shellActions: [],
   },
   "extension-deployment": {
     modes: [],
     audiences: ["admin"],
     variables: { ...COMMON_VARIABLES, pluginName: "text" },
     drift: false,
+    shellActions: [],
+  },
+  "device-connection": {
+    modes: [],
+    audiences: ["member"],
+    variables: { publicUrl: "url", orgId: "token", orgName: "text", pluginName: "token" },
+    drift: false,
+    shellActions: ["connect-this-machine"],
   },
 };
 
@@ -108,6 +131,8 @@ export const SETUP_GUIDE_LIMITS = {
   codeBlocks: 24,
   /** Check lines per document. */
   checks: 16,
+  /** Shell action lines per document. */
+  shellActions: 4,
   /** Sections per document. */
   sections: 16,
   /** Characters of the title and of a heading. */
@@ -240,6 +265,13 @@ export function validateSetupGuide(input: {
         );
       }
     }
+    for (const a of parsed.shellActions) {
+      if (info.shellActions.length === 0) {
+        err(a.line, `shell actions are not allowed in place ${input.place}`);
+      } else if (!(info.shellActions as readonly string[]).includes(a.action)) {
+        err(a.line, `unknown shell action "${a.action}" (known: ${info.shellActions.join(", ")})`);
+      }
+    }
     if (input.pluginChecks !== undefined) {
       for (const c of parsed.checks) {
         if (c.source === "plugin" && !input.pluginChecks.includes(c.id)) {
@@ -367,6 +399,14 @@ export function validateSetupGuide(input: {
       out.push({
         level: "error",
         message: `${zhFile}: the checks differ from ${enFile}; both languages need the same check ids in the same sections`,
+      });
+    }
+    const act = (p: ParsedSetupGuide) =>
+      JSON.stringify(p.shellActions.map((a) => [a.section, a.action]));
+    if (act(en) !== act(zh)) {
+      out.push({
+        level: "error",
+        message: `${zhFile}: the shell actions differ from ${enFile}; both languages need the same actions in the same sections`,
       });
     }
     if (en.codeBlocks.length !== zh.codeBlocks.length) {

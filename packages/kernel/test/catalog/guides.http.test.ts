@@ -116,7 +116,8 @@ const guideUrl = (itemId: string, guideId = "demo", query = "") =>
 type Block =
   | { kind: "markdown"; text: string }
   | { kind: "code"; language: string; title: string | null; text: string }
-  | { kind: "check"; id: string; label: string };
+  | { kind: "check"; id: string; label: string }
+  | { kind: "shell-action"; action: string; label: string };
 type Rendered = {
   itemId: string;
   plugin: string;
@@ -563,5 +564,61 @@ describe("setup guides v2: rendering", () => {
     });
     expect(noGuide.json().error.code).toBe("catalog.guide_not_found");
     expect((await env.root({ method: "GET", url: `${url}?audience=member` })).statusCode).toBe(400);
+  });
+});
+
+describe("setup guides v2: device-connection", () => {
+  const DEVICE_DOC = [
+    "# Connect a machine through {{pluginName}}",
+    "",
+    "Org {{orgName}} ({{orgId}}) at {{publicUrl}}.",
+    "",
+    "::shell-action connect-this-machine Connect this machine",
+    "",
+  ].join("\n");
+
+  const devicePlugin = () =>
+    pluginTgz({
+      manifest: { name: "dev-guide", setupGuides: [{ id: "connect", place: "device-connection" }] },
+      files: { "guides/connect.md": DEVICE_DOC },
+      extension: { manifest: {} },
+    });
+
+  it("imports a device-connection guide and renders its variables for an org member", async () => {
+    const itemId = await importPlugin(env, await devicePlugin());
+    // a member needs no audience parameter: the place has only the member audience
+    for (const query of ["", "?audience=member"]) {
+      const g = await render(itemId, query, env.mem, "connect");
+      expect(g).toMatchObject({
+        place: "device-connection",
+        modes: [],
+        mode: null,
+        audience: "member",
+        target: null,
+        unresolved: [],
+        title: "Connect a machine through dev-guide",
+      });
+      expect(g.blocks.map((b) => b.kind)).toEqual(["markdown", "shell-action"]);
+      expect(g.blocks[1]).toEqual({
+        kind: "shell-action",
+        action: "connect-this-machine",
+        label: "Connect this machine",
+      });
+      expect(prose(g)).toContain(`Org Acme (${env.orgId}) at <${PUBLIC_URL}>.`);
+    }
+  });
+
+  it("refuses the admin audience and any target parameter (400 validation_failed)", async () => {
+    const itemId = await importPlugin(env, await devicePlugin());
+    for (const query of [
+      "?audience=admin",
+      `?connectionId=${randomUUID()}`,
+      `?connectorId=${randomUUID()}`,
+      "?name=x",
+    ]) {
+      const r = await env.mem({ method: "GET", url: guideUrl(itemId, "connect", query) });
+      expect(r.statusCode, query).toBe(400);
+      expect(r.json().error.code, query).toBe("validation_failed");
+    }
   });
 });

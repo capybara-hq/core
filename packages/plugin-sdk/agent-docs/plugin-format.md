@@ -63,8 +63,9 @@ Rules that the schema cannot show:
   detail; the extension must provide `channel@1`; one per plugin), `connector-template`
   (`template` names one of the plugin's `connectors/<id>.json`; one per template) or
   `extension-deployment` (the super admin's page of the extension; its checks get the extension's
-  platform deployment config and `orgId: null`, for credentials such as a push provider's key). See
-  "Setup guides" below.
+  platform deployment config and `orgId: null`, for credentials such as a push provider's key) or
+  `device-connection` (how a member connects a machine through a device provider). See "Setup
+  guides" below.
 - `extension` is written by the packer; never write it by hand.
 
 ## Setup guides
@@ -77,7 +78,8 @@ A guide is CommonMark + GFM:
   `orgName`, `pluginName`, `pluginVersion`, `mode`; `channel-connection` adds `webhookUrl`,
   `signInCallbackUrl`, `connectionName`; `connector-template` adds `oauthCallbackUrl`,
   `signInCallbackUrl`, `templateId`, `templateName`, `connectorName`; `extension-deployment` adds
-  none (no modes, admin audience only). In `yaml` / `json` code put a
+  none (no modes, admin audience only); `device-connection` has only `publicUrl`, `orgId`,
+  `orgName`, `pluginName` (no modes, member audience only). In `yaml` / `json` code put a
   variable inside double quotes. Directive lines and fence info strings hold no variables.
 - Sections: a line `::: mode webhook` (modes `long_connection`, `webhook`; channel guides) or
   `::: audience member` (audiences `admin`, `member`; connector template guides) opens one, `:::`
@@ -90,7 +92,10 @@ A guide is CommonMark + GFM:
   `connector-connected`, `oauth-token-endpoint`). The label is plain text, at most 80 characters.
 - Code fences: `<language> title="<text>"`; every block gets a copy button. Indented code blocks are
   refused. Raw HTML shows as text, images are never loaded, and only `https:` links stay links.
-- The zh document has the same sections, the same check ids and byte-equal code blocks.
+- Shell actions (`device-connection` guides only): a line `::shell-action connect-this-machine
+  <label>` in column 0 is a button that asks the native shell to connect the machine the page runs
+  on; at most 4 per document, the label is plain text (at most 80 characters, no variables).
+- The zh document has the same sections, the same check ids, the same shell actions and byte-equal code blocks.
 - Limits: 64 KiB per document, 24 code blocks, 16 checks, 16 sections.
 
 `capybara-plugin pack` and `check` validate the documents; `capybara-plugin guide <id> [--locale zh]

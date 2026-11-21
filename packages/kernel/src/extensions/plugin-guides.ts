@@ -755,7 +755,9 @@ export class PluginGuides {
   /** The audience asked for, after checking `mode` and `audience` against the place. */
   private checkQuery(guide: PluginSetupGuide, q: GuideQuery): SetupGuideAudience {
     const info = SETUP_GUIDE_PLACE_INFO[guide.place];
-    const audience = q.audience ?? "admin";
+    // the place's first audience when it has no admin one (a device-connection guide is for members)
+    const audience =
+      q.audience ?? (info.audiences.includes("admin") ? "admin" : (info.audiences[0] ?? "admin"));
     if (!info.audiences.includes(audience)) {
       throw invalidQuery(
         "audience",
