@@ -204,8 +204,9 @@
 
 /* The collapsed sidebar's expand button sits in that band right after the controls, before the
    content column's title, and leaves the rail (the AppShell draws it inside a desktop shell while
-   the person has collapsed the sidebar on the expanded class; the medium rail cannot expand and
-   has none). Shown only where the rail drops below the band: a style query on the registered
+   the person has collapsed the sidebar on the expanded class). The medium rail's sidebar toggle,
+   which opens the full sidebar as a drawer, sits there the same way (maintainer decision
+   2026-11-21). Shown only where the rail drops below the band: a style query on the registered
    length, so a window without controls, with controls at the end, with a banner or in an engine
    without style queries keeps the rail's own button. The title's room for it follows the
    collapsed rail itself, so it is right from the first paint, before the AppShell draws the
@@ -220,6 +221,8 @@
     z-index: 2;
     top: calc((var(--cb-shell-row) - var(--cb-control-default)) / 2);
     left: var(--cb-shell-reserve-start);
+    /* (clickable over an open drawer's modal page, so it closes the drawer it opened) */
+    pointer-events: auto;
   }
   :root[data-shell="desktop"]
     .cb-shell:not([data-banner="true"]):has(
@@ -227,10 +230,18 @@
     ) {
     --cb-shell-toggle: calc(var(--cb-control-default) + var(--cb-space-1));
   }
+  /* (the medium rail, collapsed or not, has the sidebar toggle there once hydrated: a hydrated
+     rail is the medium class's or the collapsed one's) */
+  :root[data-shell="desktop"]
+  .cb-shell:not([data-banner="true"]):has(
+    > .cb-sidebar[data-mode="rail"]:not([data-responsive="true"])
+  ) {
+    --cb-shell-toggle: calc(var(--cb-control-default) + var(--cb-space-1));
+  }
   :root[data-shell="desktop"]
     .cb-shell
     > .cb-sidebar[data-mode="rail"]
-    [data-part="expand-toggle"] {
+    :is([data-part="expand-toggle"], [data-part="drawer-toggle"]) {
     display: none;
   }
 }
@@ -250,15 +261,6 @@
     height: 1px;
     background: var(--cb-line-soft);
     pointer-events: none;
-  }
-}
-/* (a collapsed rail on medium has no expand button) */
-@media (max-width: 840px) {
-  :root[data-shell="desktop"]
-    .cb-shell:not([data-banner="true"]):has(
-      > .cb-sidebar[data-mode="rail"][data-collapsed="true"]
-    ) {
-    --cb-shell-toggle: 0px;
   }
 }
 
@@ -291,19 +293,49 @@
 }
 
 /* A template's head: its path row is the content column's top row on medium and expanded, as
-   high as the row and centred on the controls; past a rail it starts after the controls, and its
-   end keeps clear of end controls (a title-less head's actions share the row). Below 600 the
-   floating row is the top row instead. */
+   high as the row and centred on the controls, and its end keeps clear of end controls (a
+   title-less head's actions share the row). Below 600 the floating row is the top row instead.
+   With controls the path leaves the centred content frame and follows whatever precedes it in the
+   row (maintainer decision 2026-11-21): the content column's start padding beside the full sidebar
+   (the conversation title bar's), right after the controls and the band's sidebar toggle past a
+   rail. The head is a container so the row reaches back over the frame's centring margin
+   (`100cqw` is the head's content box, the frame's room); without controls (`--cb-shell-row` 0)
+   the path stays in the frame, as in a browser. */
 @media (min-width: 600px) {
   :root[data-shell="desktop"] .cb-shell-main .cb-template-head {
+    container: cb-head / inline-size;
     padding-top: max(0px, calc(var(--cb-space-5) - var(--cb-shell-row) * 100000));
+  }
+  :root[data-shell="desktop"]
+    .cb-shell-main
+    .cb-template-head
+    :is(.cb-pageheader > .cb-pageheader-path, .cb-pageheader-titleless) {
+    margin-left: calc(
+      -1 *
+      min(
+        calc(max(0px, (100cqw - var(--cb-layout-content)) / 2) + var(--cb-content-pad)),
+        calc(var(--cb-shell-row) * 100000)
+      )
+    );
   }
   :root[data-shell="desktop"] .cb-shell-main .cb-pageheader-path {
     min-height: var(--cb-shell-row);
     padding-left: max(
       0px,
-      calc(var(--cb-shell-column-reserve) + var(--cb-space-3) - var(--cb-content-pad))
+      calc(var(--cb-shell-column-reserve) + var(--cb-space-3) - var(--cb-content-pad)),
+      min(
+        calc(var(--cb-shell-row) * 100000),
+        max(var(--cb-space-5), calc(var(--cb-shell-column-reserve) + var(--cb-space-3)))
+      )
     );
+  }
+  /* A path of the org slug alone (no page segment: the error page on the home) is not shown in the
+     top row; the row keeps its height and its filler. */
+  :root[data-shell="desktop"]
+    .cb-shell-main
+    .cb-pageheader-path:not(:has(.cb-pageheader-path-sep))
+    > .cb-pageheader-path-seg {
+    max-width: max(0px, calc(100000px - var(--cb-shell-row) * 100000));
   }
   :root[data-shell="desktop"] .cb-shell-main :is(.cb-pageheader-path, .cb-pageheader-titleless) {
     padding-right: max(
@@ -438,6 +470,7 @@
       .cb-viewer,
       .cb-conv-sheet,
       .cb-sidebar-layer,
+      .cb-sidebar-scrim,
       .cb-drawer
     )
 ) :is(.cb-drag-fill, .cb-shell-band) {
@@ -464,6 +497,7 @@
   .cb-conv-sheet,
   .cb-conv-scrim,
   .cb-sidebar-layer,
+  .cb-sidebar-scrim,
   .cb-drawer,
   .cb-drawer-scrim,
   .cb-conv-pushed

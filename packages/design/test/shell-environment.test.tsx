@@ -6,11 +6,18 @@ import { resolve } from "node:path";
 import { act, cleanup, render } from "@testing-library/react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { AppShell, DesignProvider, readShellEnvironment, ShellReady } from "../src/index";
+import {
+  AppShell,
+  DesignProvider,
+  PageHeader,
+  readShellEnvironment,
+  ShellReady,
+} from "../src/index";
 import {
   SHELL_ENVIRONMENT_SCRIPT,
   ShellEnvironmentScript,
 } from "../src/shell/shell-environment-script";
+import { parseCss } from "./css-rules";
 
 const root = () => document.documentElement;
 const PROPS = [
@@ -550,6 +557,7 @@ describe("desktop drag regions (desktop client spec §7.3)", () => {
     "cb-conv-sheet",
     "cb-conv-scrim",
     "cb-sidebar-layer",
+    "cb-sidebar-scrim",
     "cb-drawer",
     "cb-drawer-scrim",
     "cb-conv-pushed",
@@ -640,5 +648,93 @@ describe("desktop drag regions (desktop client spec §7.3)", () => {
     expect(desktopRule("cb-shell-float", /left: var\(--cb-float-start\)/)).toBe(true);
     expect(desktopRule("cb-shell-band", /width: max\(var\(--cb-shell-reserve-start\)/)).toBe(true);
     expect(desktopRule("cb-pageheader-path", /min-height: var\(--cb-shell-row\)/)).toBe(true);
+  });
+});
+
+describe("the page path in the desktop's top row (desktop client spec §7.3, decision 2026-11-21)", () => {
+  const rules = parseCss(
+    readFileSync(resolve(import.meta.dirname, "../src/styles/shell-environment.css"), "utf8"),
+  );
+  const DESKTOP_HEAD = ':root[data-shell="desktop"] .cb-shell-main';
+  const find = (selector: string, prop: string) =>
+    rules.find((r) => r.at === "(min-width: 600px)" && r.selector === selector && r.decls[prop])
+      ?.decls[prop];
+
+  it("leaves the centred frame only with controls: back over the frame's margin to the column's edge", () => {
+    // the head is the container whose content box is the frame's room
+    expect(find(`${DESKTOP_HEAD} .cb-template-head`, "container")).toBe("cb-head / inline-size");
+    // the shift is the frame's centring margin plus the head's side padding, and 0 without a top
+    // row (no controls: the browser's layout)
+    expect(
+      find(
+        `${DESKTOP_HEAD} .cb-template-head :is(.cb-pageheader > .cb-pageheader-path, .cb-pageheader-titleless)`,
+        "margin-left",
+      ),
+    ).toBe(
+      "calc( -1 * min( calc(max(0px, (100cqw - var(--cb-layout-content)) / 2) + var(--cb-content-pad)), calc(var(--cb-shell-row) * 100000) ) )",
+    );
+  });
+
+  it("starts where the title bar starts: after the full sidebar, or after the controls and the band's toggle", () => {
+    const pad = find(`${DESKTOP_HEAD} .cb-pageheader-path`, "padding-left");
+    // with a top row: the title bar's start padding (space.5 beside the full sidebar; past a rail
+    // the column reserve, which counts the controls and the band's toggle, plus space.3)
+    expect(pad).toContain(
+      "min( calc(var(--cb-shell-row) * 100000), max(var(--cb-space-5), calc(var(--cb-shell-column-reserve) + var(--cb-space-3))) )",
+    );
+    const titleBar = rules.find(
+      (r) => r.selector === ':root[data-shell="desktop"] .cb-title-bar' && r.decls["padding-left"],
+    )?.decls["padding-left"];
+    expect(titleBar).toBe(
+      "max( var(--cb-space-5), calc(var(--cb-shell-column-reserve, var(--cb-shell-reserve-start)) + var(--cb-space-3)) )",
+    );
+    // the band's toggle widens the column reserve on medium as on a collapsed expanded rail
+    expect(
+      rules.find(
+        (r) =>
+          r.selector === ':root[data-shell="desktop"] .cb-shell-column' &&
+          r.decls["--cb-shell-column-reserve"],
+      )?.decls["--cb-shell-column-reserve"],
+    ).toContain("var(--cb-shell-toggle, 0px)");
+  });
+
+  it("hides a path of the org slug alone in the top row, and only with controls", () => {
+    expect(
+      find(
+        `${DESKTOP_HEAD} .cb-pageheader-path:not(:has(.cb-pageheader-path-sep)) > .cb-pageheader-path-seg`,
+        "max-width",
+      ),
+    ).toBe("max(0px, calc(100000px - var(--cb-shell-row) * 100000))");
+    // a slug-only path has no separator (what the rule keys on); a page path has one
+    const slug = renderToStaticMarkup(
+      <DesignProvider locale="zh">
+        <PageHeader path={[{ label: "capybara", href: "/" }]} title="出错了" />
+      </DesignProvider>,
+    );
+    expect(slug).toContain("cb-pageheader-path");
+    expect(slug).not.toContain("cb-pageheader-path-sep");
+    const page = renderToStaticMarkup(
+      <DesignProvider locale="zh">
+        <PageHeader path={[{ label: "capybara", href: "/" }, { label: "inbox" }]} title="收件箱" />
+      </DesignProvider>,
+    );
+    expect(page).toContain("cb-pageheader-path-sep");
+  });
+
+  it("keeps the browser's path row: no rule outside the desktop shell moves or hides it", () => {
+    const all = ["shell.css", "templates.css", "shell-environment.css"].flatMap((f) =>
+      parseCss(readFileSync(resolve(import.meta.dirname, "../src/styles", f), "utf8")),
+    );
+    const moved = all.filter(
+      (r) =>
+        /cb-pageheader-(path|titleless)|cb-template-head/.test(r.selector) &&
+        // (the filler cancelling the row's gap is the browser's layout too)
+        !r.selector.includes("cb-drag-fill") &&
+        !r.selector.includes(':root[data-shell="desktop"]') &&
+        (r.decls["margin-left"] !== undefined ||
+          r.decls.container !== undefined ||
+          (r.decls["max-width"] !== undefined && r.selector.includes("pageheader-path-seg"))),
+    );
+    expect(moved.map((r) => r.selector)).toEqual([]);
   });
 });
