@@ -225,3 +225,18 @@ describe("the narrow window's row and the side panel's strip", () => {
     expect(fill?.childNodes.length).toBe(0);
   });
 });
+
+describe("a filler adds no gap", () => {
+  it("cancels the gap of every row it is drawn in, so a row lays out as before", () => {
+    const rules = STYLES.flatMap((f) => parseCss(css(f)));
+    const gapOf = (row: string) =>
+      rules.find((r) => r.at === null && r.selector === row && r.decls.gap)?.decls.gap;
+    for (const row of [".cb-sidebar-top", ".cb-title-bar", ".cb-pageheader-path"]) {
+      const gap = gapOf(row);
+      expect(gap, row).toBeDefined();
+      const cancel = rules.find((r) => selectors(r.selector).includes(`${row} > .cb-drag-fill`))
+        ?.decls["margin-left"];
+      expect(cancel, row).toBe(`calc(-1 * ${gap})`);
+    }
+  });
+});
