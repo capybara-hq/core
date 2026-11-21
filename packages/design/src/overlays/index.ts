@@ -28,5 +28,6 @@ export {
 export { Menu, type MenuItem, menuActions, menuLone, Popover } from "./menus";
 export { type CommandGroup, type CommandItem, CommandPalette, commandScore } from "./palette";
 export { Sheet, type SheetProps } from "./sheet";
+export { SheetFootnote, SheetGroup, SheetRow } from "./sheet-parts";
 export { type ToastApi, ToastProvider, useToast } from "./toast";
 export { OVERLAY_HISTORY_MARKER, useOverlayHistory } from "./use-overlay-history";

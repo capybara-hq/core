@@ -131,12 +131,13 @@ describe("the drawer from the menu button", () => {
     ).toEqual(["/skills", "/connectors", "/devices"]);
   });
 
-  it("the account row opens the account sheet: 个人设置, appearance, status, sign out", async () => {
+  it("the account row opens the account sheet: the profile row, the org, status, sign out", async () => {
     renderFrame(shellOf(ME, pending));
     await userEvent.click(menuButton() as HTMLElement);
     await userEvent.click(within(drawerEl() as HTMLElement).getByRole("button", { name: /Grant/ }));
     const sheet = document.querySelector('[data-part="account-sheet"]') as HTMLElement;
-    expect(within(sheet).getByRole("link", { name: "个人设置" }).getAttribute("href")).toBe(
+    // the profile row opens Personal settings (maintainer decision 2026-11-22)
+    expect(within(sheet).getByRole("link", { name: /Grant/ }).getAttribute("href")).toBe(
       "/account/profile",
     );
     expect(within(sheet).getByText("Acme")).toBeTruthy();
@@ -152,7 +153,8 @@ describe("the drawer from the menu button", () => {
     await userEvent.click(within(drawerEl() as HTMLElement).getByRole("button", { name: /Grant/ }));
     const sheet = document.querySelector('[data-part="account-sheet"]') as HTMLElement;
     const line = sheet.querySelector('[data-part="account-language"]') as HTMLElement;
-    await userEvent.click(within(line).getByRole("button", { name: /中文/ }));
+    expect(line.textContent).toContain("中文");
+    await userEvent.click(line);
     await userEvent.click(await screen.findByRole("menuitemradio", { name: "English" }));
     await waitFor(() => expect(document.cookie).toContain("NEXT_LOCALE=en"));
     await waitFor(() => expect(document.querySelector('[data-part="account-sheet"]')).toBeNull());
@@ -167,7 +169,7 @@ describe("the drawer from the menu button", () => {
     renderFrame(shellOf(two, pending));
     await userEvent.click(menuButton() as HTMLElement);
     await userEvent.click(within(drawerEl() as HTMLElement).getByRole("button", { name: /Grant/ }));
-    await userEvent.click(screen.getByRole("button", { name: "切换组织" }));
+    await userEvent.click(screen.getByRole("button", { name: /组织/ }));
     await userEvent.click(await screen.findByRole("menuitemradio", { name: "Beta" }));
     await waitFor(() => expect(document.querySelector('[data-part="account-sheet"]')).toBeNull());
     await waitFor(() => expect(drawerEl()).toBeNull());

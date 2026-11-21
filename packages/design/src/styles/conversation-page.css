@@ -738,16 +738,17 @@ span.cb-title-btn {
 .cb-bsheet[data-drag="dragging"] .cb-bsheet-handle {
   background: var(--cb-muted);
 }
+/* The head (§6.59, maintainer decision 2026-11-22): `touch.row` high, no hairline, the title
+   centred over the sheet and the round close on the end, its edge `touch.sheet-inset` from the
+   sheet's, where the body's groups end. */
 .cb-bsheet-head {
   flex: none;
-  display: flex;
+  display: grid;
+  grid-template-columns: var(--cb-touch-sheet-close) minmax(0, 1fr) var(--cb-touch-sheet-close);
   align-items: center;
   gap: var(--cb-space-2);
-  height: var(--cb-row-roomy);
-  /* the title on the body's text column (space.4), the close button's box on its rows' edge
-     (space.2, the body's padding), as the rows' grounds and their checks below it */
-  padding: 0 var(--cb-space-2) 0 var(--cb-space-4);
-  border-bottom: 1px solid var(--cb-line-soft);
+  height: var(--cb-touch-row);
+  padding: 0 var(--cb-touch-sheet-inset);
   touch-action: none;
 }
 /* Dragging follows the finger with no transition; a release travels over motion.expand (§6.7). */
@@ -801,16 +802,52 @@ span.cb-title-btn {
   flex: 1;
   min-width: 0;
 }
-.cb-bsheet-head .cb-icon-btn {
-  min-width: 40px;
-  min-height: 40px;
-}
 .cb-bsheet-title {
+  grid-column: 2;
   margin: 0;
+  overflow: hidden;
   color: var(--cb-ink);
-  font-size: var(--cb-type-body-size);
+  font-size: var(--cb-touch-sheet-title);
   line-height: var(--cb-type-body-line);
+  /* 600 draws the bold face (§2.2: never above 600) */
   font-weight: 600;
+  text-align: center;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+/* The close: a `touch.sheet-close` circle on the `hover` ground with a `touch.sheet-close-icon`
+   glyph; the ground never changes (no hover, press or focus ground, so nothing paints on open),
+   the hit area is `touch.hit` through an invisible ring, the keyboard ring the base one. */
+.cb-bsheet-head .cb-btn.cb-bsheet-close,
+.cb-bsheet-head .cb-btn.cb-bsheet-close:hover:not(:disabled),
+.cb-bsheet-head .cb-btn.cb-bsheet-close:active:not(:disabled) {
+  background: var(--cb-hover);
+}
+.cb-bsheet-head .cb-btn.cb-bsheet-close {
+  position: relative;
+  grid-column: 3;
+  justify-self: end;
+  width: var(--cb-touch-sheet-close);
+  min-width: 0;
+  height: var(--cb-touch-sheet-close);
+  min-height: 0;
+  padding: 0;
+  border: 0;
+  border-radius: var(--cb-radius-pill);
+  color: var(--cb-muted);
+}
+.cb-bsheet-head .cb-btn.cb-bsheet-close:hover:not(:disabled) {
+  color: var(--cb-ink);
+}
+.cb-bsheet-close::after {
+  content: "";
+  position: absolute;
+  inset: calc((var(--cb-touch-sheet-close) - var(--cb-touch-hit)) / 2);
+}
+.cb-bsheet-close > .cb-icon {
+  width: var(--cb-touch-sheet-close-icon);
+  height: var(--cb-touch-sheet-close-icon);
+  stroke-width: 2.2;
 }
 .cb-bsheet-body {
   flex: 1 1 auto;
@@ -819,7 +856,9 @@ span.cb-title-btn {
   overscroll-behavior: contain;
   scrollbar-width: thin;
   scrollbar-color: var(--cb-scroll-thumb) transparent;
-  padding: var(--cb-space-2) var(--cb-space-2) calc(var(--cb-space-4) + var(--cb-inset-bottom));
+  /* the body's content (the groups, the option rows' grounds) `touch.sheet-inset` from the edges */
+  padding: var(--cb-space-2) var(--cb-touch-sheet-inset)
+    calc(var(--cb-space-4) + var(--cb-inset-bottom));
 }
 /* A Filter sheet's single-choice options (§6.7). */
 .cb-sheet-option {

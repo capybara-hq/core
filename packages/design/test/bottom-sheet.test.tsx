@@ -20,16 +20,19 @@ describe("the bottom sheet on touch", () => {
     expect(decls(touch, MOBILE_SIZE_QUERY, ".cb-bsheet")?.["border-radius"]).toBe(radius);
   });
 
-  it("draws option rows touch.row high and a head without a hairline", () => {
+  it("draws option rows touch.row high and a head without a hairline (§6.59)", () => {
     expect(decls(page, null, ".cb-sheet-option")?.height).toBe("40px");
     expect(decls(touch, MOBILE_SIZE_QUERY, ".cb-sheet-option")?.height).toBe("var(--cb-touch-row)");
-    expect(decls(touch, MOBILE_SIZE_QUERY, ".cb-bsheet-head")?.["border-bottom"]).toBe("0");
+    expect(decls(page, null, ".cb-bsheet-head")?.["border-bottom"]).toBeUndefined();
   });
 
-  it("gives the close button the 44 px touch hit size", () => {
-    const d = decls(touch, MOBILE_SIZE_QUERY, ".cb-bsheet-head .cb-icon-btn");
-    expect(d?.["min-width"]).toBe("var(--cb-touch-hit)");
-    expect(d?.["min-height"]).toBe("var(--cb-touch-hit)");
+  it("gives the close button the 44 px hit area through an invisible ring, not a 44 box", () => {
+    expect(decls(page, null, ".cb-bsheet-close::after")?.inset).toBe(
+      "calc((var(--cb-touch-sheet-close) - var(--cb-touch-hit)) / 2)",
+    );
+    expect(decls(page, null, ".cb-bsheet-head .cb-btn.cb-bsheet-close")?.width).toBe(
+      "var(--cb-touch-sheet-close)",
+    );
   });
 
   it("still draws the handle, the head and the body", () => {

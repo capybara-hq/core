@@ -144,6 +144,10 @@ describe("tokens.css touch blocks", () => {
       "--cb-touch-row-roomy": "56px",
       "--cb-touch-icon": "22px",
       "--cb-touch-icon-float": "24px",
+      "--cb-touch-sheet-inset": "14px",
+      "--cb-touch-sheet-close": "30px",
+      "--cb-touch-sheet-close-icon": "14px",
+      "--cb-touch-sheet-title": "15px",
     });
     expect(json.size.touch).toEqual({
       hit: 44,
@@ -155,6 +159,11 @@ describe("tokens.css touch blocks", () => {
       "row-roomy": 56,
       icon: 22,
       "icon-float": 24,
+      // the bottom sheet (spec §6.57, maintainer decision 2026-11-22)
+      "sheet-inset": 14,
+      "sheet-close": 30,
+      "sheet-close-icon": 14,
+      "sheet-title": 15,
     });
   });
 });

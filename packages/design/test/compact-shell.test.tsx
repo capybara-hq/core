@@ -86,7 +86,7 @@ function drawerData(over: Partial<DrawerNavData> = {}): DrawerNavData {
       name: "Grant",
       orgName: "Meta1",
       personalSettingsHref: "/account/profile",
-      theme: <span>主题开关</span>,
+      theme: null,
       status: <span>正常</span>,
       onSignOut: () => {},
     },
@@ -419,21 +419,18 @@ describe("the drawer from the menu button", () => {
     expect(document.querySelector('[data-part="drawer-level"]')).toBeNull();
   });
 
-  it("done() from an account-sheet slot closes the sheet and the drawer (T28 review)", async () => {
+  it("an org pick in the account sheet closes the sheet and the drawer (T28 review)", async () => {
     window.matchMedia = matchMediaFor(390).matchMedia;
     const data = drawerData();
     const account = {
       ...data.account,
-      orgSwitcher: (done: () => void) => (
-        <button type="button" onClick={done}>
-          切到 Beta
-        </button>
-      ),
+      orgMenu: [{ label: "Beta", checked: false, onSelect: () => {} }],
     };
     render(shell({ drawer: { ...data, account } }));
     await userEvent.click(menuButton() as HTMLElement);
     await userEvent.click(within(drawerEl() as HTMLElement).getByRole("button", { name: /Grant/ }));
-    await userEvent.click(screen.getByRole("button", { name: "切到 Beta" }));
+    await userEvent.click(screen.getByRole("button", { name: /组织/ }));
+    await userEvent.click(await screen.findByRole("menuitemradio", { name: "Beta" }));
     await waitFor(() => expect(document.querySelector('[data-part="account-sheet"]')).toBeNull());
     await waitFor(() => expect(drawerEl()).toBeNull());
   });

@@ -141,6 +141,10 @@ export const SIZES = {
     "row-roomy": 56,
     icon: 22,
     "icon-float": 24,
+    "sheet-inset": 14,
+    "sheet-close": 30,
+    "sheet-close-icon": 14,
+    "sheet-title": 15,
   },
 } as const;
 

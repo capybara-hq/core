@@ -70,20 +70,17 @@ describe("no sideways overflow", () => {
     expect(body).toContain("scrollbar-width: thin;");
   });
 
-  it("the account section runs out exactly over the sheet body's side padding", () => {
+  it("the account groups sit in the sheet body's column; the status footnote wraps anywhere", () => {
     expect(topLevel(conv, ".cb-bsheet-body")).toContain(
-      "padding: var(--cb-space-2) var(--cb-space-2)",
+      "padding: var(--cb-space-2) var(--cb-touch-sheet-inset)",
     );
-    expect(topLevel(touch, ".cb-account")).toContain("margin: 0 calc(-1 * var(--cb-space-2));");
-  });
-
-  it("the account sheet's labels never wrap; the status line wraps inside its column", () => {
-    const label = topLevel(touch, ".cb-account-label");
-    expect(label).toContain("flex: none;");
+    expect(topLevel(touch, ".cb-account")).not.toMatch(/margin/);
+    const label = topLevel(touch, ".cb-sheet-row-label");
     expect(label).toContain("white-space: nowrap;");
-    const status = topLevel(touch, ".cb-account-status");
-    expect(status).toContain("min-width: 0;");
-    expect(status).toContain("overflow-wrap: anywhere;");
+    const foot = topLevel(touch, ".cb-sheet-footnote");
+    expect(foot).toContain("overflow-wrap: anywhere;");
+    expect(foot).toContain("text-align: center;");
+    expect(foot).toContain("color: var(--cb-faint);");
   });
 });
 
@@ -91,34 +88,47 @@ describe("one text column", () => {
   const touch = read("touch.css");
   const conv = read("conversation-page.css");
 
-  it("account rows without an icon reserve a NavRow's icon column; the avatar starts at the icons", () => {
-    const account = topLevel(touch, ".cb-account");
-    expect(account).toContain("--cb-account-icon: 20px;");
-    expect(account).toContain(
-      "--cb-account-text: calc(var(--cb-space-4) + var(--cb-account-icon) + var(--cb-space-3));",
+  it("sheet rows: touch.row high, the icon column, separators inset to the text column", () => {
+    const row = topLevel(touch, ".cb-sheet-row");
+    expect(row).toContain("min-height: var(--cb-touch-row);");
+    expect(row).toContain("padding: 0 var(--cb-space-4);");
+    expect(row).toContain("gap: var(--cb-space-3);");
+    expect(topLevel(touch, ".cb-sheet-row-icon")).toContain("width: var(--cb-touch-icon);");
+    expect(topLevel(touch, ".cb-sheet-row + .cb-sheet-row::before")).toContain(
+      "left: calc(var(--cb-space-4) + var(--cb-touch-icon) + var(--cb-space-3));",
     );
-    // a NavRow: space.4 padding, the icon, space.3 to the label
-    expect(topLevel(touch, ".cb-navrow")).toContain("padding: 0 var(--cb-space-4);");
-    expect(topLevel(touch, ".cb-navrow")).toContain("gap: var(--cb-space-3);");
-    expect(topLevel(touch, ".cb-account-line")).toContain(
-      "padding: 0 var(--cb-space-4) 0 var(--cb-account-text);",
+    // a group is a ground, not a box: no border
+    const group = topLevel(touch, ".cb-sheet-group");
+    expect(group).toContain("background: var(--cb-hover);");
+    expect(group).not.toMatch(/border:/);
+    expect(topLevel(touch, ".cb-sheet-group + .cb-sheet-group")).toContain(
+      "margin-top: var(--cb-touch-sheet-inset);",
     );
-    expect(topLevel(touch, ".cb-account-slot")).toContain(
-      "padding: var(--cb-space-2) var(--cb-space-4) var(--cb-space-2) var(--cb-account-text);",
-    );
-    expect(topLevel(touch, ".cb-account-who")).toContain(
-      "padding: var(--cb-space-2) var(--cb-space-4) var(--cb-space-3);",
-    );
-    // the touch icon widens the column with the NavRow's icon
-    expect(touch).toMatch(/\.cb-account \{\s*--cb-account-icon: var\(--cb-touch-icon\);/);
   });
 
-  it("the bottom sheet head: the title on the body's text column, the close button on its rows' edge", () => {
-    expect(topLevel(conv, ".cb-bsheet-head")).toContain(
-      "padding: 0 var(--cb-space-2) 0 var(--cb-space-4);",
+  it("the sheet head (maintainer decision 2026-11-22): touch.row high, no hairline, the title centred, the close a circle at the inset", () => {
+    const head = topLevel(conv, ".cb-bsheet-head");
+    expect(head).toContain("height: var(--cb-touch-row);");
+    expect(head).toContain("padding: 0 var(--cb-touch-sheet-inset);");
+    expect(head).not.toMatch(/border/);
+    expect(head).toContain(
+      "grid-template-columns: var(--cb-touch-sheet-close) minmax(0, 1fr) var(--cb-touch-sheet-close);",
     );
-    // the rows: the body's space.2 padding, then their own space.2 to the text
-    expect(topLevel(conv, ".cb-options-item")).toContain("padding: 0 var(--cb-space-2);");
+    expect(topLevel(conv, ".cb-bsheet-title")).toContain("text-align: center;");
+    const close = topLevel(conv, ".cb-bsheet-head .cb-btn.cb-bsheet-close");
+    expect(close).toContain("width: var(--cb-touch-sheet-close);");
+    expect(close).toContain("border-radius: var(--cb-radius-pill);");
+    expect(close).toContain("justify-self: end;");
+    // one ground at rest, on hover and pressed: nothing paints on open
+    expect(
+      topLevel(conv, ".cb-bsheet-head .cb-btn.cb-bsheet-close:hover:not(:disabled)"),
+    ).toContain("background: var(--cb-hover);");
+    expect(
+      topLevel(conv, ".cb-bsheet-head .cb-btn.cb-bsheet-close:active:not(:disabled)"),
+    ).toContain("background: var(--cb-hover);");
+    expect(topLevel(conv, ".cb-bsheet-close::after")).toContain(
+      "inset: calc((var(--cb-touch-sheet-close) - var(--cb-touch-hit)) / 2);",
+    );
   });
 
   it("the options sheet's notice is styled for every pointer, on the rows' text column", () => {
