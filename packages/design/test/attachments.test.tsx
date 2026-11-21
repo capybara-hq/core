@@ -8,6 +8,7 @@ import {
   FileButton,
   FileDrop,
   formatBytes,
+  Icon,
 } from "../src/index";
 
 afterEach(cleanup);
@@ -250,6 +251,26 @@ describe("FileButton", () => {
     expect(button.getAttribute("data-variant")).toBe("default");
     expect(button.querySelector('[data-icon="plus"]')).not.toBeNull();
     expect(button.textContent).toBe("");
+  });
+
+  it("with showLabel draws a default button with the icon and the words, still opening the picker", async () => {
+    const { container } = wrap(
+      <FileButton
+        label="Upload avatar"
+        onFiles={() => {}}
+        showLabel
+        icon={<Icon name="upload" size={16} />}
+      />,
+    );
+    const button = screen.getByRole("button", { name: "Upload avatar" });
+    expect(button.getAttribute("data-part")).toBe("button");
+    expect(button.getAttribute("data-variant")).toBe("default");
+    expect(button.querySelector('[data-icon="upload"]')).not.toBeNull();
+    expect(button.textContent).toBe("Upload avatar");
+    const input = container.querySelector('input[type="file"]') as HTMLInputElement;
+    const click = vi.spyOn(input, "click");
+    await userEvent.click(button);
+    expect(click).toHaveBeenCalled();
   });
 
   it("disabled 时按钮禁用", () => {

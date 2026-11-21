@@ -178,38 +178,40 @@ function ProfileForm({ account }: { account: Account }) {
         <div role="group" aria-label={t("avatarLabel")}>
           <Stack gap={8}>
             <Text variant="body">{t("avatarLabel")}</Text>
-            <Avatar
-              shape="circle"
-              size={64}
-              name={account.displayName}
-              value={account.avatarUrl ? { kind: "image", src: account.avatarUrl } : null}
-            />
-            <Stack gap={8} direction="row">
-              <FileButton
-                label={hasAvatar ? t("replace") : t("upload")}
-                accept={AVATAR_UPLOAD_ACCEPT}
-                icon={<Icon name="upload" size={16} />}
-                disabled={busy || storageOff}
-                onFiles={([file]) => {
-                  if (file !== undefined) void onUpload(file);
-                }}
+            <Stack direction="row" gap={16} align="center">
+              <Avatar
+                shape="circle"
+                size={64}
+                name={account.displayName}
+                value={account.avatarUrl ? { kind: "image", src: account.avatarUrl } : null}
               />
-              {source?.kind === "upload" ? (
-                <Button disabled={busy} onClick={() => void onRemove()}>
-                  {t("remove")}
-                </Button>
-              ) : null}
+              <Stack gap={8}>
+                <Stack gap={8} direction="row" wrap>
+                  <FileButton
+                    showLabel
+                    label={hasAvatar ? t("replace") : t("upload")}
+                    accept={AVATAR_UPLOAD_ACCEPT}
+                    icon={<Icon name="upload" size={14} />}
+                    disabled={busy || storageOff}
+                    onFiles={([file]) => {
+                      if (file !== undefined) void onUpload(file);
+                    }}
+                  />
+                  {source?.kind === "upload" ? (
+                    <Button disabled={busy} onClick={() => void onRemove()}>
+                      {t("remove")}
+                    </Button>
+                  ) : null}
+                </Stack>
+                <Text variant="prose" tone="muted">
+                  {storageOff
+                    ? t("uploadOff")
+                    : source?.kind === "identity"
+                      ? t("fromSourceHint", { source: sourceLabel(source.source, sources, locale) })
+                      : t("avatarHint")}
+                </Text>
+              </Stack>
             </Stack>
-            {source?.kind === "identity" ? (
-              <Text variant="small" tone="muted">
-                {t("fromSource", { source: sourceLabel(source.source, sources, locale) })}
-              </Text>
-            ) : null}
-            {storageOff ? (
-              <Text variant="small" tone="muted">
-                {t("uploadOff")}
-              </Text>
-            ) : null}
             {avatarError !== null ? <FormError message={avatarError} /> : null}
           </Stack>
         </div>
