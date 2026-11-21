@@ -1,5 +1,20 @@
 # @capybara-hq/plugin-tools
 
+## 0.1.0-rc.19
+
+### Patch Changes
+
+- 151ad3d: `capybara-plugin check` and `pack` cover a theme's illustration, app icons and avatar files.
+- Updated dependencies [9c46c28]
+- Updated dependencies [8ef62d6]
+- Updated dependencies [19d5e1a]
+- Updated dependencies [4f3c400]
+- Updated dependencies [bfb0fc0]
+- Updated dependencies [f32b8a2]
+- Updated dependencies [ada3723]
+  - @capybara-hq/kernel@0.1.0-rc.66
+  - @capybara-hq/plugin-sdk@0.1.0-rc.50
+
 ## 0.1.0-rc.18
 
 ### Minor Changes

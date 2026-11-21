@@ -1,5 +1,18 @@
 # @capybara-hq/plugin-sdk
 
+## 0.1.0-rc.50
+
+### Minor Changes
+
+- ada3723: Theme files gain brand fields (`logo.illustration`, `logo.appIcon`, `logo.appIconMaskable`, `decoration`, `avatars`, `hideAvatarPresets`) with their checks, plus `BUILTIN_AVATAR_PRESET_IDS` and `themeAssetRefs`.
+
+### Patch Changes
+
+- bfb0fc0: An identity source can refuse an account on purpose: the SDK adds `IdentitySourceRefused` and
+  `isIdentitySourceRefused`, and a login refused that way returns to the sign-in page with
+  `sso.account_not_allowed` ("This account is not allowed to sign in on this platform…") instead of a
+  generic provider error. The plugin's message is only logged.
+
 ## 0.1.0-rc.49
 
 ### Minor Changes

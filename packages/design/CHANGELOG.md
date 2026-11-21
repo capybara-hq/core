@@ -1,5 +1,65 @@
 # @capybara-hq/design
 
+## 0.2.0-rc.31
+
+### Minor Changes
+
+- 19d5e1a: The product name people see follows `platform.name` (unset: Capybara) everywhere, not only in the
+  document title and the web app manifest (issue #452).
+  
+  - Kernel: the IM bot's bind and web-hint phrases, the OAuth dynamic client registration name, the
+    session user agent of desktop and mobile sign-ins, the `<name>:` prefix on git gateway messages,
+    the platform overview the model reads, and the attribution defaults
+    (`Co-Authored-By: <name> <noreply@capybarahq.com>`; the pull-request line links the upstream
+    project only under the default name). The official marketplace is now named "Official
+    marketplace", and messages that named the software in passing say "the platform".
+  - Web: every message that named the product takes the platform name from the public meta,
+    including the sign-in, binding, invitation and app consent pages. Pages that cannot
+    read the kernel (the root error page, a starting kernel) say the built-in name. `check:i18n`
+    rejects the literal "Capybara" in web messages (`i18n-product-name`).
+  - Design: `Brand` gains `productName`, the `alt` of a theme's logo mark (else the wordmark, else
+    "Logo"). The built-in `CAPYBARA` wordmark stays beside the pixel capybara whatever the name.
+
+### Patch Changes
+
+- fabb3e7: Markdown is parsed with the CommonMark CJK-friendly emphasis amendment
+  (`micromark-extension-cjk-friendly`): `按**「框架」**来`, `**（注意）**这里` and `~~「旧」~~` render as
+  strong and strikethrough instead of literal asterisks, in conversations, file previews, skill docs and
+  other rendered Markdown.
+- 4bb6105: Compact: the floating back button no longer pauses about half a second before its transition. The
+  back settles as soon as the shell commits the route it landed on (or on the task after its
+  `popstate` when no route changed) instead of waiting for a frame the browser does not render while
+  a view transition's update is pending.
+- 071db76: Compact: the floating back button no longer slides the page in twice. A pop the back button
+  animates with a view transition sets no CSS slide on the shell's main region, so the slide does not
+  run again once the transition ends.
+- 582c029: Controls take the mobile sizes at the compact size class whatever the pointer, and on a touch
+  device at any width (`MOBILE_SIZE_QUERY`, exported beside `TOUCH_QUERY`): a narrowed desktop window
+  gets 44 px buttons, tabs and text fields with 16 px field text, as a phone does, instead of the
+  28 px desktop controls. A control with text pads wider than it is tall (buttons and chips 16 at the
+  sides, tabs 16, segments 16 filling a 44 high group with the selected ground drawn inset, field
+  text 12 from the border); icon buttons stay square. The touch component forms (large list rows,
+  the bottom sheet's touch form, drawer rows, floating buttons) follow the width too. The settings sub-nav on a phone fades at the edge it scrolls past and keeps the current item
+  in view. The system font stays touch only.
+- a6348e1: The compact drawer and the bottom sheets no longer scroll sideways: the drawer's conversation
+  section and the account sheet's rows kept the sidebar's and an older negative margin (8 px too wide
+  each), and the drawer is now a vertical-only scroller with the thin scrollbar. The account sheet's
+  rows share one text column, its labels never wrap and the status line wraps inside its column. A
+  bottom sheet's close button sits on the rows' edge; the options sheet's notice is styled for every
+  pointer on the rows' text column. The focus an overlay moves on open draws no ring unless it was
+  opened from the keyboard.
+- f74b0f9: Compact (below 600) inside the desktop shell with window controls: the floating row is a flat
+  title bar like the rail's band (one row as high as the controls, a hairline under it, ghost
+  desktop-size menu and "…" buttons); the conversation title is plain text that drags the window and
+  the title menu's items move into "…". Everywhere on compact: the floating "…" is the same size as
+  the menu button and the title pill, and the page head draws no path row.
+- 581c6c7: Inside the desktop shell the page path in the top row follows what precedes it (the content column's
+  start padding beside the full sidebar, right after the band's sidebar toggle past a rail) instead of
+  the centred content frame, and a path of the org slug alone is not shown there. The medium rail gets
+  a sidebar toggle (in the desktop band after the window controls, in the browser where the expand
+  button sits) that opens the full sidebar as a drawer over the content; ⌘\\ / Ctrl+\\ opens and
+  closes it on medium.
+
 ## 0.2.0-rc.30
 
 ### Patch Changes
