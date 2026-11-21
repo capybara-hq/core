@@ -285,6 +285,11 @@ function BasicsEdit() {
             ? { kind: "image", src: preview.src }
             : avatarValue(agent, orgId);
 
+  // the agent's stored built-in stays offered and checked even where the theme hides it (a built-in
+  // id is always accepted, so saving it again is valid); the other hidden ones stay unoffered
+  const storedPreset = agent.profile.avatar?.kind === "preset" ? agent.profile.avatar.id : null;
+  const pickerHidden = choices.hidden.filter((id) => id !== storedPreset);
+
   const savedProfile = profilePartOf(agent);
   const savedBasic = agentPartOf(agent);
   const changed = {
@@ -400,7 +405,7 @@ function BasicsEdit() {
               value={pickerValue}
               label={t("page.avatarLabel")}
               disabled={pending || uploading}
-              hidden={choices.hidden}
+              hidden={pickerHidden}
               extra={choices.extra}
               onChange={(v) => {
                 const next = presetChoiceOf(v);

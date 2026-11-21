@@ -442,6 +442,22 @@ describe("the agent page's sections with their own saves (agent profile design Â
     expect(profiles[0]).toMatchObject({ avatar: { kind: "preset", id: mascot.key } });
   });
 
+  it("the basics section keeps a stored hidden built-in shown and checked, other hidden ones unlisted", async () => {
+    const base = agent();
+    const saved = {
+      ...base,
+      profile: { ...base.profile, avatar: { kind: "preset", id: "capybara" } },
+    };
+    const r = routes(saved as unknown as AgentJson, {
+      [`GET ${ORG}/themes`]: ok(orgThemesBody({ hidden: ["capybara", "panda"], presets: [] })),
+    });
+    stubApi(r);
+    await renderEditAgent({ routes: r });
+    const tile = screen.getByRole("radio", { name: /Capybara/i }) as HTMLInputElement;
+    expect(tile.checked).toBe(true);
+    expect(screen.queryByRole("radio", { name: /Panda/i })).toBeNull();
+  });
+
   it("a stored theme avatar no longer offered shows as the image, never written back", async () => {
     const stored = {
       kind: "theme",

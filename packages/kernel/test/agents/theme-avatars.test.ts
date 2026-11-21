@@ -220,6 +220,19 @@ describe("theme avatar presets on the write paths", () => {
     expect(await stored(a.id)).toEqual({ kind: "preset", id: "capybara" });
   });
 
+  it("the stored theme kind is never accepted as input", async () => {
+    const { id } = await brandDefault();
+    const storedKind = pinned(id, "mascot");
+    const c = await createReq(env.mem, env.orgId, storedKind);
+    expect(c.statusCode, c.body).toBe(400);
+    expect(errCode(c)).toBe("validation_failed");
+    const a = await create({ kind: "preset", id: "owl" });
+    const p = await patchReq(a, storedKind);
+    expect(p.statusCode, p.body).toBe(400);
+    expect(errCode(p)).toBe("validation_failed");
+    expect(await stored(a.id)).toEqual({ kind: "preset", id: "owl" });
+  });
+
   it("a pinned avatar is still served after the theme updates to a new version and after it leaves the org", async () => {
     const { id, itemId } = await brandDefault();
     const a = await create({ kind: "preset", id: "brand/brand-grid/mascot" });

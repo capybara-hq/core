@@ -3264,7 +3264,7 @@ An agent's picture (a person's, as a circle, below), everywhere an agent appears
 - **Hidden and theme presets** (a theme's brand, #451): `hidden` lists built-in preset ids the picker does not offer (a stored one still renders as an `Avatar`). `extra` is a list of `{ key, name, src }` theme presets, drawn after the remaining built-ins and before the upload tile: the same 48 px radio tile showing the image at 40 (`Avatar` image rule), named (accessible name) by `name`, which arrives already localized; it is checked when `value` is `{ kind: "theme", key }`, and selecting it calls `onChange({ kind: "theme", key, src })` (`AvatarChoice`). `visibleAvatarChoices(hidden, extra)` returns the choices in that order (for a random default). Without `hidden` and `extra` the picker is unchanged.
 
 <!-- states: avatar -->
-States: `presets`, `sizes`, `initial`, `person`, `title-bar`, `sidebar-row`, `list-row`, `picker`, `picker-upload-off`
+States: `presets`, `sizes`, `initial`, `person`, `title-bar`, `sidebar-row`, `list-row`, `picker`, `picker-theme-presets`, `picker-upload-off`
 
 <!-- size-table: avatar -->
 | Part | State | Property | Value |
