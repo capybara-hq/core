@@ -92,6 +92,10 @@ const GROUPS = [
     ],
   },
   {
+    title: "Theme brand: the fixture brand's graphics",
+    components: ["empty-state"],
+  },
+  {
     title: "Mobile layout: list-detail, sheet drag states",
     components: ["list-detail", "sheet"],
   },

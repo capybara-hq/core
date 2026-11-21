@@ -72,6 +72,7 @@ import {
 } from "@capybara-hq/design/fixtures";
 import { createContext, type ReactNode, useContext } from "react";
 import { BOX_BLOCKS } from "./box-blocks";
+import { BRAND_REFERENCE_BLOCKS } from "./brand-blocks";
 import { CARD_GRID_BLOCKS } from "./card-grid-blocks";
 import { CONFIG_FORM_BLOCKS } from "./config-form-blocks";
 import { CONVERSATION_BLOCKS } from "./conversation-blocks";
@@ -1390,6 +1391,7 @@ export const REFERENCE_BLOCKS = {
   "template-list": templateListBlocks,
   "template-form": templateFormBlocks,
   ...TEMPLATE_LOADING_BLOCKS,
+  ...BRAND_REFERENCE_BLOCKS,
   ...CONVERSATION_BLOCKS,
   ...CONVERSATION_PAGE_BLOCKS,
   "no-access": noAccessBlocks,

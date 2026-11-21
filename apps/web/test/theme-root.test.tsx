@@ -1,12 +1,13 @@
 // Themes spec §8, §10: the layouts' ThemeRoot links the resolved theme's stylesheet, gives its brand
 // to the design context and hides the account row's scheme toggle under a single-scheme theme.
 
+import { AuthPage } from "@capybara-hq/design";
 import { cleanup, screen, within } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import zh from "../messages/zh.json";
 import type { ThemeRef } from "../src/lib/themes";
 import { resetNavigation } from "./support/navigation";
-import { ME } from "./support/render";
+import { ME, renderPage, testQueryClient } from "./support/render";
 import { renderFrame, shellOf } from "./support/shell";
 import { themeCssUrl } from "./support/themes";
 
@@ -14,6 +15,8 @@ vi.mock("../src/i18n/navigation", () => import("./support/navigation"));
 
 const { themeIcons } = await import("../src/lib/server/theme");
 const { ThemeLink } = await import("../src/components/theme-link");
+const { brandOf, ThemeRoot } = await import("../src/components/theme-root");
+const { platformThemeQuery } = await import("../src/lib/query/themes");
 
 const NEON_GRID: ThemeRef = {
   id: "t-night",
@@ -26,7 +29,12 @@ const NEON_GRID: ThemeRef = {
     markUrl: "/api/v1/themes/t-night/1.0.0/assets/logo.svg",
     wordmark: "NEON GRID",
     faviconUrl: null,
+    illustrationUrl: "/api/v1/themes/t-night/1.0.0/assets/art.svg",
+    appIconUrl: null,
+    appIconMaskableUrl: null,
   },
+  decoration: "none",
+  background: { dark: "#05070d" },
   cssUrl: themeCssUrl("t-night", "1.0.0"),
 };
 const PAPER: ThemeRef = {
@@ -37,6 +45,8 @@ const PAPER: ThemeRef = {
   schemes: ["dark", "light"],
   singleScheme: null,
   logo: null,
+  decoration: "dither",
+  background: { dark: "#101010", light: "#fafafa" },
   cssUrl: themeCssUrl("t-paper", "2.0.0"),
 };
 
@@ -66,6 +76,59 @@ beforeEach(() => resetNavigation("/agents"));
 afterEach(() => {
   cleanup();
   vi.unstubAllGlobals();
+});
+
+describe("brandOf (theme brand coverage §3)", () => {
+  it("the brand carries the illustration and the decoration", () => {
+    expect(brandOf(NEON_GRID, "Acme")).toEqual({
+      markUrl: NEON_GRID.logo?.markUrl,
+      wordmark: "NEON GRID",
+      illustrationUrl: NEON_GRID.logo?.illustrationUrl,
+      decoration: "none",
+      productName: "Acme",
+    });
+  });
+
+  it("the built-in theme, or a theme that replaces nothing, gives a null brand", () => {
+    expect(brandOf(null, "Acme")).toBeNull();
+    expect(brandOf(PAPER, "Acme")).toBeNull();
+  });
+
+  it("a theme that only turns the decoration off is a brand", () => {
+    expect(brandOf({ ...PAPER, decoration: "none" }, null)).toMatchObject({
+      markUrl: null,
+      decoration: "none",
+    });
+  });
+
+  it("decoration none reaches AuthPage under the platform theme", () => {
+    const client = testQueryClient();
+    client.setQueryData(platformThemeQuery().queryKey, NEON_GRID);
+    renderPage(
+      <ThemeRoot orgId={null}>
+        <AuthPage title="Sign in">
+          <p>form</p>
+        </AuthPage>
+      </ThemeRoot>,
+      { client },
+    );
+    expect(document.querySelector('[data-template="AuthPage"]')).not.toBeNull();
+    expect(document.querySelector(".cb-dither")).toBeNull();
+  });
+
+  it("a theme that keeps the decoration draws both dither columns", () => {
+    const client = testQueryClient();
+    client.setQueryData(platformThemeQuery().queryKey, PAPER);
+    renderPage(
+      <ThemeRoot orgId={null}>
+        <AuthPage title="Sign in">
+          <p>form</p>
+        </AuthPage>
+      </ThemeRoot>,
+      { client },
+    );
+    expect(document.querySelectorAll(".cb-dither")).toHaveLength(2);
+  });
 });
 
 describe("ThemeLink", () => {
@@ -170,7 +233,14 @@ describe("the scheme toggle under a single-scheme theme (usePreferences)", () =>
 describe("themeIcons", () => {
   it("a theme's favicon is the page icon; none leaves the app's icon", () => {
     const favicon = "/api/v1/themes/t-night/1.0.0/assets/favicon.png";
-    const logo = { markUrl: null, wordmark: null, faviconUrl: favicon };
+    const logo = {
+      markUrl: null,
+      wordmark: null,
+      faviconUrl: favicon,
+      illustrationUrl: null,
+      appIconUrl: null,
+      appIconMaskableUrl: null,
+    };
     expect(themeIcons({ ...NEON_GRID, logo })).toEqual({ icons: { icon: favicon } });
     expect(themeIcons(NEON_GRID)).toEqual({});
     expect(themeIcons(null)).toEqual({});
@@ -178,7 +248,14 @@ describe("themeIcons", () => {
 
   it("a theme's favicon replaces the parent's icon and keeps its apple-touch-icon", () => {
     const favicon = "/api/v1/themes/t-night/1.0.0/assets/favicon.png";
-    const logo = { markUrl: null, wordmark: null, faviconUrl: favicon };
+    const logo = {
+      markUrl: null,
+      wordmark: null,
+      faviconUrl: favicon,
+      illustrationUrl: null,
+      appIconUrl: null,
+      appIconMaskableUrl: null,
+    };
     const parent = {
       icon: [{ url: "/icon.svg", type: "image/svg+xml" }],
       apple: [{ url: "/icon-512.png", sizes: "512x512", type: "image/png" }],

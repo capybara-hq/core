@@ -1,4 +1,5 @@
 import { type JSX, useLayoutEffect, useRef, useState } from "react";
+import { useBrandMark } from "../display/brand-art";
 import { bitmapCells, CAPYBARA_BITMAP } from "../display/logo";
 import { useDesignT } from "../provider";
 
@@ -64,21 +65,39 @@ export function Greeting({ text, sub, still }: GreetingProps): JSX.Element {
   }, [text, length, still]);
   const typing = shown < length;
   const subLine = sub === undefined ? t("greeting.sub") : sub;
+  const mark = useBrandMark();
   return (
     <div className="cb-greeting" data-part="greeting">
       <div className="cb-greeting-line" data-part="greeting-line">
-        <span className="cb-greeting-mark" data-part="greeting-mark" aria-hidden="true">
-          <svg
-            width={14 * UNIT}
+        {mark && !mark.failed ? (
+          // A theme's mark (theme brand coverage §3); a failed load (also before hydration: the
+          // ref) falls back to the bitmap for this mount.
+          // biome-ignore lint/performance/noImgElement: the mark is a theme asset of any size
+          <img
+            key={mark.src}
+            className="cb-greeting-mark-img"
+            data-part="greeting-mark"
+            src={mark.src}
             height={10 * UNIT}
-            viewBox={`0 0 ${14 * UNIT} ${10 * UNIT}`}
-            shapeRendering="crispEdges"
+            alt=""
             aria-hidden="true"
-            focusable="false"
-          >
-            <path d={MARK} />
-          </svg>
-        </span>
+            onError={mark.onError}
+            ref={mark.ref}
+          />
+        ) : (
+          <span className="cb-greeting-mark" data-part="greeting-mark" aria-hidden="true">
+            <svg
+              width={14 * UNIT}
+              height={10 * UNIT}
+              viewBox={`0 0 ${14 * UNIT} ${10 * UNIT}`}
+              shapeRendering="crispEdges"
+              aria-hidden="true"
+              focusable="false"
+            >
+              <path d={MARK} />
+            </svg>
+          </span>
+        )}
         {text ? (
           <h2 className="cb-greeting-text" data-part="greeting-text">
             <span className="cb-sr-only">{text}</span>

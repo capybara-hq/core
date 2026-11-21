@@ -69,6 +69,8 @@ const PAGES = [
   "run-row",
   // the working line: the walking capybara between a send and the first output
   "working-line",
+  // the empty state's theme art: the fixture brand's illustration as a faint mask
+  "empty-state",
   // the new conversation page: the greeting, the agents row and panel, the quick actions
   "greeting",
   "agent-row",

@@ -47,6 +47,8 @@ export const CATALOG_ROUTES = [
   ...OVERLAY_ROUTES,
   ...TEMPLATE_ROUTES,
   "stress",
+  // every graphic a theme's brand replaces, with the fixture brand (theme brand coverage §3)
+  "brand/fixture",
 ] as const;
 
 /**
@@ -125,6 +127,8 @@ export const REFERENCE_COMPONENTS = [
   "file-picker",
   "run-row",
   "working-line",
+  // the empty state's theme-art states (theme brand coverage §3; the built-in art has no list)
+  "empty-state",
   // the new conversation page (agent profile design §4)
   "greeting",
   "agent-row",

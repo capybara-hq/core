@@ -695,6 +695,15 @@ button.cb-tool-line:focus-visible {
 .cb-working-mark [data-frame="2"] {
   visibility: hidden;
 }
+/* A theme's mark (theme brand coverage §3): as high as the bitmap, at most 3 × as wide. */
+.cb-working-mark-img {
+  display: block;
+  flex: none;
+  width: auto;
+  height: var(--cb-space-5);
+  max-width: calc(var(--cb-space-5) * 3);
+  object-fit: contain;
+}
 .cb-working-caption {
   display: inline-grid;
 }
@@ -714,6 +723,10 @@ button.cb-tool-line:focus-visible {
   .cb-working-line:not([data-still="true"]) .cb-working-mark [data-frame="2"] {
     animation-delay: 400ms;
   }
+  /* A theme's mark pulses with the leg frames' 800ms period instead of walking. */
+  .cb-working-line:not([data-still="true"]) .cb-working-mark-img[data-motion="pulse"] {
+    animation: cb-working-pulse 800ms ease-in-out infinite;
+  }
   .cb-working-line:not([data-still="true"]) .cb-working-caption > span {
     animation: cb-working-caption 9.6s step-end infinite;
   }
@@ -725,6 +738,15 @@ button.cb-tool-line:focus-visible {
   }
   .cb-working-line:not([data-still="true"]) .cb-working-caption > span:nth-child(4) {
     animation-delay: 7.2s;
+  }
+}
+@keyframes cb-working-pulse {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.6;
   }
 }
 @keyframes cb-working-legs {
@@ -2076,6 +2098,15 @@ button.cb-file-card:focus-visible {
   gap: var(--cb-space-3);
   height: var(--cb-type-h1-line);
   min-width: 0;
+}
+/* A theme's mark (theme brand coverage §3): as high as the bitmap, at most 3 × as wide. */
+.cb-greeting-mark-img {
+  display: block;
+  flex: none;
+  width: auto;
+  height: var(--cb-space-5);
+  max-width: calc(var(--cb-space-5) * 3);
+  object-fit: contain;
 }
 .cb-greeting-mark {
   display: inline-flex;
