@@ -1,4 +1,10 @@
-import { createHash, randomBytes } from "node:crypto";
+import {
+  createHash,
+  createSign,
+  generateKeyPairSync,
+  type KeyObject,
+  randomBytes,
+} from "node:crypto";
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
 import type { AddressInfo } from "node:net";
 
@@ -33,6 +39,32 @@ export interface FakeOAuthServerOptions {
   dialect?: "oauth" | "slack";
   /** The `token_type` of successful token responses (default: `Bearer`; `user` with dialect slack). */
   tokenType?: string;
+  /**
+   * OIDC mode: the code exchange also answers an RS256 `id_token`, the discovery document gains
+   * `jwks_uri`, and `GET /jwks` serves the public key. `issuer` overrides the `iss` claim and the
+   * `issuer` field of both discovery documents (default: the server's own origin).
+   */
+  oidc?: { issuer?: string };
+  /**
+   * The code exchange returns a refresh token only when the authorize request carried every listed
+   * parameter with that value (e.g. `{ access_type: "offline" }`, like Google).
+   */
+  refreshTokenOnlyWith?: Record<string, string>;
+}
+
+/**
+ * The claims of the next ID token (`oidc` mode). Any claim given here overrides the one the server
+ * sets itself (`iss`, `aud`, `azp`, `nonce`, `iat`, `exp`), including an `issNext` value. `iss`, `aud`, `azp`, `nonce`, `iat`, `exp` are set by the server. */
+export interface FakeOidcClaims {
+  sub: string;
+  email?: string;
+  email_verified?: unknown;
+  hd?: string;
+  name?: string;
+  given_name?: string;
+  family_name?: string;
+  picture?: string;
+  [k: string]: unknown;
 }
 
 /** 令牌端点收到的一次请求（不含任何密钥）。 */
@@ -52,6 +84,8 @@ export interface FakeTokenRequest {
 export interface FakeOAuthServer {
   /** issuer（`http://127.0.0.1:<port>`），也是各端点的基址。 */
   issuer: string;
+  /** `${issuer}/jwks` (served in `oidc` mode only). */
+  jwksUrl: string;
   tokenRequests: FakeTokenRequest[];
   /** DCR 注册请求体。 */
   registrations: Record<string, unknown>[];
@@ -75,6 +109,21 @@ export interface FakeOAuthServer {
   failTokenRequests(n: number, status: number, body?: unknown): void;
   /** 下一次授权回跳的 RFC 9207 `iss` 改为该值（默认回跳带真实 issuer）。 */
   forgeIssNext(iss: string): void;
+  /**
+   * The next code exchange logs in with these claims (queued, one per exchange). Only takes effect
+   * with `oidc`. The claims override any claim the server sets (`iss`, `aud`, `nonce`, ...).
+   */
+  queueLogin(claims: FakeOidcClaims): void;
+  /**
+   * The next ID token carries these claims on top of the regular and queued ones (they win), signed with a
+   * key outside the JWKS (`foreignKey`) and/or a different `kid`.
+   */
+  tamperNextIdToken(
+    claims: Record<string, unknown>,
+    o?: { foreignKey?: boolean; kid?: string },
+  ): void;
+  /** The next ID token's `iss` is this value (a queued or tampered `iss` still wins). Only takes effect with `oidc`. */
+  issNext(iss: string): void;
   stop(): Promise<void>;
 }
 
@@ -101,6 +150,9 @@ interface CodeGrant {
   challenge: string;
   scope: string | undefined;
   resource: string | undefined;
+  nonce: string | undefined;
+  /** Whether the code exchange may return a refresh token (`refreshTokenOnlyWith`). */
+  allowRefresh: boolean;
 }
 
 interface Client {
@@ -144,9 +196,44 @@ export async function startFakeOAuthServer(
   let tokenFailures: { left: number; status: number; body: unknown } | undefined;
   let forgedIss: string | undefined;
   let issuer = "";
+  const oidc = opts.oidc;
+  const signing = oidc ? generateKeyPairSync("rsa", { modulusLength: 2048 }) : undefined;
+  const foreign = oidc ? generateKeyPairSync("rsa", { modulusLength: 2048 }) : undefined;
+  const kid = "fake-oidc-key-1";
+  const logins: FakeOidcClaims[] = [];
+  let tamper: { claims: Record<string, unknown>; foreignKey?: boolean; kid?: string } | undefined;
+  let forgedIdTokenIss: string | undefined;
+  const signJwt = (claims: Record<string, unknown>, key: KeyObject, keyId: string) => {
+    const b64 = (o: unknown) => b64url(Buffer.from(JSON.stringify(o)));
+    const input = `${b64({ alg: "RS256", typ: "JWT", kid: keyId })}.${b64(claims)}`;
+    return `${input}.${createSign("RSA-SHA256").update(input).sign(key).toString("base64url")}`;
+  };
+  // Precedence, lowest to highest: the server's claims (an `issNext` value replaces its `iss`), the
+  // dequeued login's claims, then `tamperNextIdToken`'s claims.
+  const idToken = (clientId: string, nonce: string | undefined): string => {
+    const now = Math.floor(Date.now() / 1000);
+    const claims: Record<string, unknown> = {
+      iss: forgedIdTokenIss ?? oidc?.issuer ?? issuer,
+      aud: clientId,
+      azp: clientId,
+      iat: now,
+      exp: now + 3600,
+      ...(nonce !== undefined && { nonce }),
+      ...(logins.shift() ?? { sub: "fake-sub-1" }),
+    };
+    forgedIdTokenIss = undefined;
+    const t = tamper;
+    tamper = undefined;
+    Object.assign(claims, t?.claims);
+    return signJwt(
+      claims,
+      (t?.foreignKey ? foreign : signing)?.privateKey as KeyObject,
+      t?.kid ?? kid,
+    );
+  };
 
   const metadata = () => ({
-    issuer,
+    issuer: oidc?.issuer ?? issuer,
     authorization_endpoint: `${issuer}/authorize`,
     token_endpoint: `${issuer}/token`,
     ...(dcr && { registration_endpoint: `${issuer}/register` }),
@@ -246,7 +333,13 @@ export async function startFakeOAuthServer(
       if (grant.resource !== undefined && form.get("resource") !== grant.resource) {
         return fail(400, "invalid_target");
       }
-      return json(res, 200, issue(client.clientId, grant.scope, true));
+      const body = issue(client.clientId, grant.scope, grant.allowRefresh);
+      if (oidc) {
+        const jwt = idToken(client.clientId, grant.nonce);
+        secrets.add(jwt);
+        body.id_token = jwt;
+      }
+      return json(res, 200, body);
     }
     if (grantType === "refresh_token") {
       const rt = form.get("refresh_token") ?? "";
@@ -296,6 +389,10 @@ export async function startFakeOAuthServer(
         challenge,
         scope: q.get("scope") ?? undefined,
         resource: q.get("resource") ?? undefined,
+        nonce: q.get("nonce") ?? undefined,
+        allowRefresh: Object.entries(opts.refreshTokenOnlyWith ?? {}).every(
+          ([k, v]) => q.get(k) === v,
+        ),
       });
       back.searchParams.set("code", code);
     }
@@ -339,7 +436,18 @@ export async function startFakeOAuthServer(
     }
     if (req.method === "GET" && path === "/.well-known/openid-configuration") {
       if (opts.metadata !== "openid") return json(res, 404, { error: "not_found" });
-      return json(res, 200, { ...metadata(), subject_types_supported: ["public"] });
+      return json(res, 200, {
+        ...metadata(),
+        subject_types_supported: ["public"],
+        ...(oidc && {
+          jwks_uri: `${issuer}/jwks`,
+          id_token_signing_alg_values_supported: ["RS256"],
+        }),
+      });
+    }
+    if (req.method === "GET" && path === "/jwks" && signing) {
+      const jwk = signing.publicKey.export({ format: "jwk" });
+      return json(res, 200, { keys: [{ ...jwk, kid, alg: "RS256", use: "sig" }] });
     }
     if (req.method === "GET" && path === "/authorize") return authorize(url, res);
     if (req.method === "POST" && path === "/token") return token(req, res);
@@ -361,6 +469,7 @@ export async function startFakeOAuthServer(
   issuer = `http://127.0.0.1:${port}`;
   return {
     issuer,
+    jwksUrl: `${issuer}/jwks`,
     tokenRequests,
     registrations,
     authorizeRequests,
@@ -376,6 +485,15 @@ export async function startFakeOAuthServer(
     },
     forgeIssNext: (iss) => {
       forgedIss = iss;
+    },
+    queueLogin: (claims) => {
+      logins.push(claims);
+    },
+    tamperNextIdToken: (claims, o) => {
+      tamper = { claims, ...o };
+    },
+    issNext: (iss) => {
+      forgedIdTokenIss = iss;
     },
     denyNext: (error, description) => {
       deny = { error, description };
