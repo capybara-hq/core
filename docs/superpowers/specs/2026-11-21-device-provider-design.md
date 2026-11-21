@@ -108,8 +108,13 @@ The existing generic parts of `packages/kernel/src/local-devices` become the mod
 | `device-auth*` (code flow, `/devices/link`, throttling), minus `createLocal` and the `@local` hard-code | hello payload meaning (roots, mode, home, features, owner ceiling, recent ops) |
 | `machines.ts`: issue, authenticate, revoke / revokeActive, activeFor, touch, disconnect | protocol 4 frames and parsers (`device-protocol.ts` leaves the SDK's core exports, §10) |
 | `device-routes.ts` (`GET /device/connect`, bearer before upgrade, protocol header) | `local-device-provider.ts`, `instance-bindings.ts` |
-| gateway holder: lease, claim, ping, takeover, reauth, close codes | `device-policy.service.ts`, `policy-op-jobs.ts`, `policy-summary.ts` (narrowing policy ops) |
+| gateway holder: lease, claim, ping, takeover, reauth, close codes | `policy-summary.ts` (what the machine reports of its own narrowing) |
 | relay request / response lists, cancel, reconnect grace; `keys.ts`; `targets.ts` | `owner-report*` |
+
+The kernel → machine policy ops (`device-policy.service.ts`, `policy-op-jobs.ts`, the `policy`
+request, `POST /orgs/:orgId/devices/:id/policy`) are deleted, not moved: they existed so the web
+could narrow the machine's network, which is now the kernel's device setting (§6.3). A change the
+owner makes on the machine reaches the kernel as a report revision (§6.7).
 
 Contract to providers (SDK, `DialInChannel` on the provider's `ctx`; exact shape the builder's):
 
@@ -326,11 +331,12 @@ Compared with one runner serving all connections:
 **State layout** (`$XDG_CONFIG_HOME/capybara-device`, mode 0700):
 
 ```
-machine.json                 machine-wide: defaultConnection, format version
+machine.json                 machine-wide: { "version": 1 }
+run/<hash16>.sock            each connection's control socket (sha256 of the device id; short path)
 connections/<deviceId>/      mode 0700, one per connection
   credential.json            url, connectUrl, credential, orgId, deviceId, dir, mode, …
   policy.json                the connection's owner ceiling, narrowing, keepAwake, cpu/memoryMb
-  policy-ops.json, policy.json.lock, commands.log, service.log, control.sock, pid
+  policy.json.lock, commands.log, service.log, pid
 ```
 
 Working directories stay `~/capybara-device/<deviceId>` (already per device). Docker mode
