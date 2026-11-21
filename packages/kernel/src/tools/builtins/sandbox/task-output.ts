@@ -35,7 +35,7 @@ import {
   type SandboxToolDeps,
   sandboxBaseTimeoutMs,
   sandboxConversationOf,
-  sandboxUnusableText,
+  sandboxUnusableError,
   unavailableWhenNoSandbox,
 } from "./common.js";
 import { type DeviceCode, parseDeviceCode } from "./device-code.js";
@@ -110,11 +110,11 @@ export interface TaskEnv {
 /**
  * The task tools' dependencies; throws the tool's error when they are missing, or when the
  * conversation's device cannot run (its provider off in the org, or no provider on there: ruling
- * R8, {@link sandboxUnusableText}).
+ * R8, {@link sandboxUnusableError}).
  */
 export async function taskEnv(deps: SandboxToolDeps, ctx: BuiltinCallContext): Promise<TaskEnv> {
-  const unusable = await sandboxUnusableText(deps, ctx.orgId, sandboxConversationOf(ctx));
-  if (unusable !== null) throw new ToolError(unusable);
+  const unusable = await sandboxUnusableError(deps, ctx.orgId, sandboxConversationOf(ctx));
+  if (unusable !== null) throw unusable;
   const { background, tasks } = deps;
   if (!background || !tasks || !deps.sandbox.ifRunning) {
     throw new ToolError(

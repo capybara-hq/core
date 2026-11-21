@@ -1055,6 +1055,20 @@ export async function sandboxUnusableText(
   return reason === "provider-off" ? ENV_UNAVAILABLE_TEXT : NO_SANDBOX_TEXT;
 }
 
+/**
+ * The tool error of a call whose conversation's device cannot run ({@link sandboxUnusableText}),
+ * or null when it can.
+ */
+export async function sandboxUnusableError(
+  deps: Pick<SandboxToolDeps, "devices">,
+  orgId: string,
+  conversationId: string | undefined,
+): Promise<ToolError | null> {
+  const reason = await sandboxUnusableReason(deps, orgId, conversationId);
+  if (reason === null) return null;
+  return reason === "provider-off" ? new ToolError(ENV_UNAVAILABLE_TEXT) : noSandboxError();
+}
+
 /** {@link ConversationDevices.unusableReason}, read from a stub's `usableNow` when it has only that. */
 export async function sandboxUnusableReason(
   deps: Pick<SandboxToolDeps, "devices">,
