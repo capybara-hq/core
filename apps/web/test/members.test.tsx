@@ -19,6 +19,12 @@ const BASE = "/api/v1/orgs/o1";
 /** DataTable 行菜单按钮（设计系统文案 table.rowActions）。 */
 const ROW_ACTIONS = { zh: "行操作", en: "Row actions" } as const;
 
+/** The design CopyCode's button names (its own i18n). */
+const COPY = {
+  zh: { copy: "复制", copied: "已复制" },
+  en: { copy: "Copy", copied: "Copied" },
+} as const;
+
 const asRole = (role: string): Me => ({
   ...ME,
   memberships: [{ orgId: "o1", slug: "acme", name: "Acme", role }],
@@ -357,20 +363,20 @@ describe("成员页（SettingsPage）", () => {
         user,
       );
       await user.click(within(dialog).getByRole("button", { name: m.inviteDialog.create }));
-      const link = (await within(dialog).findByRole("textbox", {
-        name: m.inviteDialog.link,
-      })) as HTMLInputElement;
+      // the link is a CopyField: its label names the code line holding the link
+      const field = await within(dialog).findByRole("group", { name: m.inviteDialog.link });
+      const link = field.querySelector("code")?.textContent;
       expect(bodyOf(calls.find((c) => c.method === "POST"))).toEqual({
         role: "guest",
         expiresInHours: 24,
       });
       // no language in the link: the invitee's own language applies
-      expect(link.value).toBe(`${window.location.origin}/invite/cap_inv_tok`);
-      expect(link.readOnly).toBe(true);
-      await user.click(within(dialog).getByRole("button", { name: m.inviteDialog.copy }));
-      // userEvent.setup() 自带剪贴板替身
-      expect(await navigator.clipboard.readText()).toBe(link.value);
-      expect(await screen.findByText(m.inviteDialog.copied)).toBeTruthy();
+      expect(link).toBe(`${window.location.origin}/invite/cap_inv_tok`);
+      expect(within(dialog).queryByRole("textbox")).toBeNull();
+      await user.click(within(field).getByRole("button", { name: COPY[locale].copy }));
+      // userEvent.setup() brings its own clipboard stand-in
+      expect(await navigator.clipboard.readText()).toBe(link);
+      expect(await within(field).findByRole("button", { name: COPY[locale].copied })).toBeTruthy();
       await user.click(within(dialog).getByRole("button", { name: m.inviteDialog.done }));
       await vi.waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
       const row = (await screen.findByText(new RegExp(`${m.invitations.status.pending}$`))).closest(

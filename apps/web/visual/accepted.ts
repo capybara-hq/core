@@ -193,6 +193,10 @@ export const ACCEPTED: string[] = [
   // side-by-side review wait for the reference-update and visual-update workflows
   "html-frame",
   "copy-field",
+  // CopyCode (spec §6.58, copy line ruling 2026-11-21): blocks and size table in place; the
+  // reference PNGs and the side-by-side review wait for the reference-update and visual-update
+  // workflows
+  "copy-code",
   "shared-file-page",
   // the follow-finger bottom sheet and the app-icon preview (mobile layout spec §7.4, §10.2.1):
   // blocks and size tables in place; the reference PNGs and the side-by-side review wait for the

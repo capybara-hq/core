@@ -170,7 +170,7 @@ const CODE_SELECTORS: [file: string, selector: string][] = [
   ["shell.css", ".cb-pageheader-path"],
   ["shell.css", ".cb-statusbar-right"],
   ["table.css", '.cb-cell-title-desc[data-mono="true"]'],
-  ["templates.css", ".cb-copy-field-value > .cb-input"],
+  ["display.css", ".cb-copy-code-value"],
   ["templates.css", ".cb-error-detail-raw"],
 ];
 
@@ -202,6 +202,12 @@ describe("the code font role", () => {
     '.cb-code[data-framed="false"] > .cb-code-lang': "the language label, UI text",
     '.cb-code[data-framed="false"] > .cb-code-head': "the head of a code block, UI text",
     ".cb-code-pre code": "inherits the code font from .cb-code-pre",
+    ".cb-copy-code": "the wrapper of a copy line; its text is .cb-copy-code-value",
+    ".cb-copy-code-line": "the box of a copy line; its text is .cb-copy-code-value",
+    '.cb-copy-code-line[data-framed="false"]': "the unframed copy line's box",
+    ".cb-copy-code-value code": "inherits the code font from .cb-copy-code-value",
+    ".cb-copy-code-line > .cb-copy-code-copy": "the copy button, UI text",
+    ".cb-copy-code-manual": "the copy-by-hand line, UI text",
     ".cb-sidebar-kbd": "a shortcut hint in the UI skeleton",
     ".cb-palette-item > .cb-kbd": "placement only; the face is .cb-kbd's",
   };

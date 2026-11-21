@@ -99,6 +99,8 @@ export const REFERENCE_COMPONENTS = [
   // file sharing: the HTML document frame, the copy field and the shared file page (T14)
   "html-frame",
   "copy-field",
+  // the one line people copy (spec §6.58), the line CopyField labels
+  "copy-code",
   "shared-file-page",
   "subagent-group",
   "title-bar",

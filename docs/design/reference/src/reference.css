@@ -6726,11 +6726,10 @@ span.r-scal-daynum {
 .r-copy-field {
   display: flex;
   flex-direction: column;
-  gap: var(--cb-space-2);
+  gap: var(--cb-space-1);
 }
 .r-copy-field-label {
   color: var(--cb-ink);
-  font-weight: 600;
 }
 .r-copy-field-manual {
   display: inline-flex;
@@ -6739,6 +6738,46 @@ span.r-scal-daynum {
   color: var(--cb-muted);
   font-size: var(--cb-type-small-size);
   line-height: var(--cb-type-small-line);
+}
+/* CopyCode (spec §6.58): one line to copy, the copy button inside the block at its right. */
+.r-copy-code {
+  display: flex;
+  flex-direction: column;
+  gap: var(--cb-space-1);
+  min-width: 0;
+}
+.r-copy-code-line {
+  display: flex;
+  align-items: center;
+  gap: var(--cb-space-1);
+  min-width: 0;
+  min-height: var(--cb-control-default);
+  padding: 0 2px 0 var(--cb-space-2);
+  border: 1px solid var(--cb-line);
+  background: var(--cb-panel);
+}
+.r-copy-code-line[data-framed="false"] {
+  border: 0;
+  border-radius: var(--cb-radius-sm);
+  background: var(--cb-panel-2);
+}
+.r-copy-code-value {
+  flex: 1 1 auto;
+  min-width: 0;
+  margin: 0;
+  padding: 3px 0;
+  overflow-x: auto;
+  color: var(--cb-ink);
+  font-family: var(--cb-font-code);
+  font-size: var(--cb-type-body-size);
+  line-height: var(--cb-type-body-line);
+  white-space: pre;
+  scrollbar-width: thin;
+}
+.r-copy-code-line > .r-copy-code-copy {
+  flex: none;
+  min-width: var(--cb-control-dense);
+  padding: 0 var(--cb-space-1);
 }
 .r-shared {
   display: flex;

@@ -1122,34 +1122,21 @@ a.cb-object-name:hover {
   line-height: var(--cb-type-small-line);
 }
 
-/* CopyField (spec §6.44): a value copied again and again; no warning line */
+/* CopyField (spec §6.44): a Field's shape (label, value, help) around a CopyCode (§6.58) */
 .cb-copy-field {
   display: flex;
   flex-direction: column;
-  gap: var(--cb-space-2);
+  gap: var(--cb-space-1);
+  min-width: 0;
 }
 .cb-copy-field-label {
   color: var(--cb-ink);
-  font-weight: 600;
+  font-size: var(--cb-type-body-size);
+  line-height: var(--cb-type-body-line);
 }
-.cb-copy-field-row {
-  display: flex;
-  gap: var(--cb-space-2);
-}
-.cb-copy-field-value {
-  display: flex;
-  flex: 1;
-  min-width: 0;
-}
-.cb-copy-field-value > .cb-input {
-  flex: 1;
-  font-family: var(--cb-font-code);
-}
-.cb-copy-field-manual {
-  display: inline-flex;
-  align-items: center;
-  gap: var(--cb-space-1);
+.cb-copy-field-help {
   color: var(--cb-muted);
+  font-family: var(--cb-font-prose);
   font-size: var(--cb-type-small-size);
   line-height: var(--cb-type-small-line);
 }

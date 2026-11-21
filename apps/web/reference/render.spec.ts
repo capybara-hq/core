@@ -52,6 +52,8 @@ const PAGES = [
   // file sharing: the HTML document frame, the copy field and the shared file page (T14)
   "html-frame",
   "copy-field",
+  // the one line people copy (spec §6.58)
+  "copy-code",
   "shared-file-page",
   // the role pass: no-access state, danger zone, secret reveal
   "roles",

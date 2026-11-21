@@ -89,7 +89,7 @@ Three font roles, each with a job:
 - Weights 400 / 500 / 600, never above 600: hierarchy comes from size and color, not weight. The page title (`h1`) and emphasis (the primary button, the current nav or tab item, object names, `strong`) are 600; section, card, dialog and group titles are 500; everything else is 400. Each font ships a 400 and a 700 face: 500 draws with the regular face and 600 with the bold face (CSS font matching), so a 500 title is set apart by its size and `ink` color alone.
 - Delivery: subsetted to woff2 at build time (`packages/design/scripts/subset-font.py`: ASCII, the 3,755 level-1 common Chinese characters, the characters the UI uses and a symbol table), self-hosted under `packages/design/src/fonts` with their licenses, `font-display: swap`, declared only in `styles/fonts.css`.
 - Fallbacks: `'Sarasa Mono SC', ui-monospace, monospace`; `'Inter', 'Source Han Sans SC', system-ui, sans-serif`.
-- **Touch** (maintainer decision 2026-11-21; `touch.ts`, `TOUCH_QUERY`: a coarse primary pointer, or a coarse pointer and no fine one; `useTouch()` is `null` on the server and during hydration): a phone reads the system font, so `--cb-font` and `--cb-font-prose` become `system-ui, -apple-system, 'PingFang SC', 'Noto Sans SC', sans-serif` and the type sizes take the Touch column below. Everything that was Sarasa because it is code, a command, a path, a version or a time says `font-family: var(--cb-font-code)` (the base rules for `code`, `pre`, `kbd` and `samp`, `DateTime`, the version in the status bar, `KeycapCommand`, `CopyField`, a tool row's command and output, the diff block and the path cells), so it stays Sarasa there. No stylesheet but `fonts.css` and the generated `tokens.css` names Sarasa.
+- **Touch** (maintainer decision 2026-11-21; `touch.ts`, `TOUCH_QUERY`: a coarse primary pointer, or a coarse pointer and no fine one; `useTouch()` is `null` on the server and during hydration): a phone reads the system font, so `--cb-font` and `--cb-font-prose` become `system-ui, -apple-system, 'PingFang SC', 'Noto Sans SC', sans-serif` and the type sizes take the Touch column below. Everything that was Sarasa because it is code, a command, a path, a version or a time says `font-family: var(--cb-font-code)` (the base rules for `code`, `pre`, `kbd` and `samp`, `DateTime`, the version in the status bar, `KeycapCommand`, `CopyCode`, a tool row's command and output, the diff block and the path cells), so it stays Sarasa there. No stylesheet but `fonts.css` and the generated `tokens.css` names Sarasa.
 
 | Name | Size / line height | Touch | Weight | Font | Purpose |
 |---|---|---|---|---|---|
@@ -1199,7 +1199,7 @@ Components shared by the conversation stream (modeled on the Claude Code VS Code
 - **ToolCallRow** (superseded by the tool group and tool row of §6.16.8–§6.16.10, together with IoBlock, Timeline and the Inspector-only Checklist; kept until the conversation page moves over, then deleted): by default only one line: tool name (600) + a one-sentence description (`muted`, single line with ellipsis) + a `StatusMark` for non-completed states (running / failed / cancelled) + `▸` on the right. The whole row is an expand button, with a `hover` background on hover. On error the tool name is `fail`; when cancelled it is `muted`. Once expanded, inside a 1px `line` frame come two `IoBlock`s, IN and OUT (no OUT while running); when the output is truncated, the bottom shows small `faint` "Output too long, truncated" + a "View full output" text button (leaving it to the caller to fetch the full text from the archive).
 - **IoBlock**: `panel` background; a 5ch label column on the left (`IN` / `OUT`, 11px 600 `faint`, right line `line`), and monospace raw text on the right (line breaks preserved, long words broken); IN is `ink`, OUT is `muted` (`fail` when the tool errored). Beyond `collapsedLines` (default 12) lines only the first N lines are shown, with an "Expand all (M lines)" / "Collapse" text button below (`aria-expanded`).
 - **Checklist**: each item is `icon + text`. `pending` `square` `faint`; `in_progress` `spinner` accent, the whole row gets an `accent-tint` background + a 2px accent bar on the left + 600, `aria-current="step"`; `completed` `check` `muted` (success is not colored, §2.4), text `faint` and struck through with `<s>`. Each item carries screen-reader status text (To do / In progress / Done). An item with an id carries it as `data-ui-item` (a right panel scrolls to it); an item with an open target (§5.3 linkage) renders its text as a link button that reads as the item's text: start-aligned when it wraps, the item's color and weight (struck through when completed), underlined only on hover and keyboard focus (the focus ring stays).
-- **CodeBlock**: 1px `line` frame, `panel` background; when there is a language, an 11px `faint` language label at the top + a bottom line; body monospace, no wrapping, horizontal scrolling inside the frame; no syntax highlighting. **Inside a box** (a Card body, a form card, a Dialog or Sheet, an inline card, a property section; §1) it draws its borderless form by itself, as a DataTable is unframed there: no line, a `panel-2` tint, radius `sm`, the language label split from the code by spacing alone (no bottom line). An explicit `framed` wins (`framed` forces the frame, which inside a box is a `web-ui-box-in-box` finding). A diff is a CodeBlock (`language="diff"`), so a file diff in a review card follows the same rule. **With a title or a copy button** (`title`, `copyable`; a setup guide's code block, drawn by GuideDocument below; setup guides v2 spec `2026-11-09-setup-guides-v2-design.md` §7.3) the head is one row, min height 28, padded 2 / 4 / 2 / 8: the title in `muted` `small` at the left (one line, ellipsis), the language label in `faint` micro and a dense ghost 复制 button (`copy` icon) at the right; the bottom line as above, none inside a box. Copying writes `text` to the clipboard and the button reads 已复制 (`check` icon, `data-state="copied"` on the block) for two seconds; without a usable clipboard the code is selected and the button reads 「已选中，请按 Ctrl+C（⌘C）复制」.
+- **CodeBlock**: 1px `line` frame, `panel` background; when there is a language, an 11px `faint` language label at the top + a bottom line; body monospace, no wrapping, horizontal scrolling inside the frame; no syntax highlighting. **Inside a box** (a Card body, a form card, a Dialog or Sheet, an inline card, a property section; §1) it draws its borderless form by itself, as a DataTable is unframed there: no line, a `panel-2` tint, radius `sm`, the language label split from the code by spacing alone (no bottom line). An explicit `framed` wins (`framed` forces the frame, which inside a box is a `web-ui-box-in-box` finding). A diff is a CodeBlock (`language="diff"`), so a file diff in a review card follows the same rule. **With a title or a copy button** (`title`, `copyable`; a setup guide's code block, drawn by GuideDocument below; setup guides v2 spec `2026-11-09-setup-guides-v2-design.md` §7.3) the head is one row, min height 28, padded 2 / 4 / 2 / 8: the title in `muted` `small` at the left (one line, ellipsis), the language label in `faint` micro and a dense ghost 复制 button (`copy` icon) at the right; the bottom line as above, none inside a box. Copying writes `text` to the clipboard and the button reads 已复制 (`check` icon, `data-state="copied"` on the block) for two seconds; without a usable clipboard the code is selected and the button reads 「已选中，请按 Ctrl+C（⌘C）复制」. One line people copy (a command, an address, a code) is a CopyCode (§6.58), not a one-line copyable CodeBlock.
 - **InstructionList**: numbered steps a person follows outside the product (a plugin's setup guide, plugin setup guides spec `2026-11-08-plugin-setup-guides-design.md` §5), an `ol` with `space.2` between steps: each step's number in `faint` mono `small`, right-aligned in 2ch, `space.3` before the text in the prose font at `prose-small`. The text is plain: a backtick pair is inline code (the rendered Markdown's inline code, §6.16), nothing else is markup (no HTML, no links). Unlike StepList (§6.12) a step has no done / to-do state.
 - **GuideDocument**: a rendered setup guide (setup guides v2 spec `2026-11-09-setup-guides-v2-design.md` §7.2–§7.3), `GuideDocument({ blocks, renderCheck? })` with the route's blocks (`GuideBlock`: `markdown` / `code` / `check`, declared in the design package, structurally equal to the SDK's): prose is the rendered Markdown (§6.16), code a CodeBlock with its `title` and `copyable` (no language label when the language is empty), a check a CheckRow, all in document order, `space.3` apart. The page composes known pieces and never parses directives. `renderCheck` draws a check (the page's live row); without it a check is a `static` CheckRow (「保存后检查」 / "Checked after saving": no saved target yet, no request carries secrets typed into an unsaved form). It draws no box: it sits in the page's section card, where its code blocks take their borderless form (§1).
 - **CheckRow**: one setup check as a status row, `CheckRow({ label, state, onRecheck?, staticNote? })` with `state { status: ok | failing | unknown | running | not_run | static, reason?, fix?, checkedAt?, cooldownUntil? }`; a `group` named by the label, no box (§1). The head line (min height `control.dense`, gap `space.2`): the status icon (16; `ok` `circle-check` in `ok`, `failing` `circle-x` in `fail`, `unknown` `circle-alert` in `muted`, `not_run` and `static` `circle` in `faint`, `running` the `spinner` in `accent`, named 「检查中」 / "Checking"), the label (500, `ink`), the status word in `small` `muted` (通过 / 未通过 (`fail`) / 无法确定 / 未检查; none while running), the checked-at time 「检查于5分钟前」 / "Checked 5 minutes ago" (`small` `muted`, relative, from `useNow`) for a result, and at the right a dense ghost 重新检查 / Re-check button (`refresh` icon, named 「重新检查 <label>」) when `onRecheck` is given, disabled until `cooldownUntil` and absent while running and on a static row. Under it, as muted prose lines (`prose-small`): the reason for a result, the fix only when failing (both plain text, never Markdown), the static note (`staticNote`, default 「保存后检查」 / "Checked after saving"). `unknown` is never drawn as a failure the person must act on.
@@ -3707,7 +3707,9 @@ States: `ready`
 
 ### 6.44 CopyField
 
-`CopyField({ label, value })` (file sharing design §5): a value people copy and may see again (a share link), unlike SecretReveal (§6.22), which is shown once. The label (600 `ink`), then one row: a read-only `Input` holding the value (selected on focus, mono like every input) and a default "复制" / "Copy" button (`copy` 14; "已复制" / "Copied" with `check` for 2 s after copying). There is no warning line. Without a usable clipboard (an insecure origin, a refused permission) the button selects the field and a `muted` `small` line with `circle-alert` 14 says to copy it by hand ("无法自动复制：已选中，请按 Ctrl+C（⌘C）复制。" / "Couldn't copy automatically: the text is selected, press Ctrl+C (⌘C) to copy."). Used in the share dialog for a new link and for each live share.
+`CopyField({ label, value, help?, state? })` (file sharing design §5; copy line ruling 2026-11-21): a labelled value people copy and may see again (a share link, an invitation link, a webhook address, a command among a dialog's steps), unlike SecretReveal (§6.22), which is shown once. It is a `Field`'s shape around a `CopyCode` (§6.58): the label (`body` `ink`, as a Field's label), the CopyCode, then the help when there is one (`muted` prose `small`, as a Field's help), `space.1` apart. The label names the CopyCode's group (`aria-labelledby`) and the help describes it (`aria-describedby`). There is no warning line. Copying, the two-second 已复制, the manual fallback and the framed / unframed look are the CopyCode's.
+
+- **Ruling (2026-11-21): CopyField stays, as the labelled form of CopyCode.** A value that sits among a form's or a dialog's fields, or needs a visible name and a sentence of help, is a CopyField; a value that already has its heading or sentence above it (a card's body, a step's prose) is a bare CopyCode. Until 2026-11-21 CopyField was a read-only `Input` with a separate 复制 button beside it; that look is gone, and no page draws a read-only input with a copy button of its own.
 
 <!-- states: copy-field -->
 States: `idle`, `copied`, `manual`
@@ -3715,14 +3717,14 @@ States: `idle`, `copied`, `manual`
 <!-- size-table: copy-field -->
 | Part | State | Property | Value |
 |---|---|---|---|
-| copy-field | idle | row-gap | space.2 |
+| copy-field | idle | row-gap | space.1 |
 | copy-field-label | idle | color | color.ink |
-| input | idle | height | control.default |
-| input | idle | border-radius | radius.sm |
-| button | idle | height | control.default |
-| button | copied | height | control.default |
-| copy-field-manual | manual | color | color.muted |
-| copy-field-manual | manual | font-size | type.small |
+| copy-field-label | idle | font-size | type.body |
+| copy-code-line | idle | min-height | control.default |
+| copy-code-button | idle | height | control.dense |
+| copy-code-button | copied | height | control.dense |
+| copy-code-manual | manual | color | color.muted |
+| copy-code-manual | manual | font-size | type.small |
 
 ### 6.47 ListDetail
 
@@ -3926,6 +3928,42 @@ States: `default`, `current`, `badge`
 - **Flagged entries**: the sidebar's, rail's and 更多 flyout's items and the command palette's commands of these pages carry `data-desktop-only` and are hidden under `TOUCH_QUERY`; the compact drawer has none of them.
 - **Held queries**: the web wraps a gated page in react-query's restoring state while the pointer is unknown or touch, so even the hydration commit starts no read. On touch the palette also drops the flagged commands in code (a hardware keyboard opens it).
 - Presentation only: the kernel's answers are unchanged. The server render may ship the gated page's own authorized data to a touch device (wasted bytes, not a leak), and the prefetch is kept so the desktop paints fast.
+
+### 6.58 CopyCode
+
+`CopyCode({ value, label?, labelledBy?, describedBy?, state? })` (copy line ruling 2026-11-21): **one line people copy**, a command (`npm install -g @capybara-hq/device@next`), an address or a one-time code, drawn as a one-line code block with the copy button inside it. It replaces the read-only `Input` with a separate 复制 button that pages assembled by hand.
+
+- **Look**: a row, min height `control.default`, padded `space.2` at the start and 2 px at the end. The value in the code font (`font-code`, `body`, `ink`), preserved whitespace, one line; at the end a dense ghost button holding only the `copy` icon (14), named 复制 / "Copy" (`aria-label`, and the same `title`), from the design i18n (`copy.copy`). The group (`role="group"`) is named by `label`, or by the visible label `labelledBy` points at (CopyField's).
+- **Copied**: the button shows the `check` icon and the text 已复制 / "Copied" (`copy.copied`, now its accessible name) for 2 s, then the icon alone again; `data-state="copied"` on the block. The button is the same element throughout, so keyboard focus stays on it.
+- **Manual** (no `navigator.clipboard`, or `writeText` rejects: an insecure origin, a refused permission): the value is selected, and a `muted` `small` line with `circle-alert` 14 under the block says to copy it by hand (`copy.manual`: 「无法自动复制：已选中，请按 Ctrl+C（⌘C）复制。」 / "Couldn't copy automatically: the text is selected, press Ctrl+C (⌘C) to copy.", `role="status"`, CopyField's copy from before); the button keeps its name for another try. An empty `value` disables the button (a command whose address is not known before hydration).
+- **Long values: scroll, not wrap (ruling 2026-11-21).** The line never wraps; a value wider than the block scrolls sideways inside the value (thin scrollbar), as a CodeBlock does, while the copy button stays at the right edge. A command or a link is pasted, not read in pieces, and a wrapped command reads as two (a break at a space looks like a newline in a terminal; a break inside a token hides where it ends). The block is `min-width: 0` and never wider than its container, so it never overflows a dialog, a card or a compact window.
+- **Framed or not (ruling 2026-11-21, as CodeBlock §6.9).** On the page ground (and in a pane) the block is framed: 1 px `line`, `panel` ground, no radius. **Inside a box** (a Card, a form card, a Dialog or Sheet, an inline card, a property section; §1) it draws its unframed form by itself: no line, a `panel-2` tint, radius `sm`. There is no `framed` prop: a CopyCode can never draw a second frame inside a box (`findNestedBoxes` lists the framed form, `.cb-copy-code-line:not([data-framed="false"])`, as a box).
+- **Touch** (§4.3): under the coarse pointer query the copy button is at least `touch.hit` (44) wide and high; the block grows to hold it.
+- **Not for**: several lines of code (a CodeBlock, `copyable` for a guide's snippet), a secret shown once (SecretReveal §6.22), the device ceiling command drawn as keycaps (KeycapCommand §6.42), a row action that shares or copies an item's link (a Button in the row).
+
+<!-- states: copy-code -->
+States: `idle`, `copied`, `manual`, `in-box`, `long`
+
+<!-- size-table: copy-code -->
+| Part | State | Property | Value |
+|---|---|---|---|
+| copy-code-line | idle | min-height | control.default |
+| copy-code-line | idle | border-top-width | 1 |
+| copy-code-line | idle | border-top-color | color.line |
+| copy-code-line | idle | background-color | color.panel |
+| copy-code-line | idle | padding-left | space.2 |
+| copy-code-value | idle | color | color.ink |
+| copy-code-value | idle | font-size | type.body |
+| copy-code-button | idle | height | control.dense |
+| copy-code-button | idle | width | control.dense |
+| copy-code-button | copied | height | control.dense |
+| copy-code-manual | manual | color | color.muted |
+| copy-code-manual | manual | font-size | type.small |
+| copy-code | manual | row-gap | space.1 |
+| copy-code-line | in-box | border-top-width | 0 |
+| copy-code-line | in-box | background-color | color.panel-2 |
+| copy-code-line | in-box | border-radius | radius.sm |
+| copy-code-line | long | width | 320 |
 
 ## 7. Copy and internationalization
 - All UI text goes through next-intl, in both Chinese and English. Text shown to the model (prompts, tool descriptions) is always English, and the prompt field in a form must say so.

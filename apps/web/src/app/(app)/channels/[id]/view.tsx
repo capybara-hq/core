@@ -3,6 +3,7 @@
 import {
   Button,
   Card,
+  CopyField,
   DangerConfirm,
   DateTime,
   DetailPage,
@@ -420,9 +421,11 @@ function InboundCard({
           </Text>
         )}
         {mode === "webhook" && channel.webhookUrl !== null && (
-          <Field label={t("detail.callbackUrl")} help={t("detail.callbackUrlHint")}>
-            <Input value={channel.webhookUrl} readOnly />
-          </Field>
+          <CopyField
+            label={t("detail.callbackUrl")}
+            value={channel.webhookUrl}
+            help={t("detail.callbackUrlHint")}
+          />
         )}
         {missingSchema !== null && (
           <Stack gap={8}>

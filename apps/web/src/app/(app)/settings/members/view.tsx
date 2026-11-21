@@ -4,12 +4,12 @@ import {
   Badge,
   Button,
   type Column,
+  CopyField,
   DataTable,
   DateTime,
   Dialog,
   Field,
   formatDateTime,
-  Input,
   type MenuItem,
   PersonName,
   Select,
@@ -408,7 +408,6 @@ function Invitations({
 function InviteDialog({ orgId, onClose }: { orgId: string; onClose(): void }) {
   const t = useTranslations("members");
   const tc = useTranslations("common");
-  const toast = useToast();
   const errorMessage = useErrorMessage();
   const { me } = useSession();
   const actor = myRole(me);
@@ -432,15 +431,6 @@ function InviteDialog({ orgId, onClose }: { orgId: string; onClose(): void }) {
       setError(errorMessage(e));
     } finally {
       setBusy(false);
-    }
-  };
-
-  const copy = async (text: string) => {
-    try {
-      await navigator.clipboard.writeText(text);
-      toast.success(t("inviteDialog.copied"));
-    } catch (e) {
-      toast.error(errorMessage(e));
     }
   };
 
@@ -494,14 +484,7 @@ function InviteDialog({ orgId, onClose }: { orgId: string; onClose(): void }) {
           {error !== null && <FormError message={error} />}
         </Stack>
       ) : (
-        <Stack gap={8}>
-          <Field label={t("inviteDialog.link")} help={t("inviteDialog.linkHelp")}>
-            <Input readOnly value={link} onFocus={(e) => e.target.select()} />
-          </Field>
-          <Stack direction="row">
-            <Button onClick={() => void copy(link)}>{t("inviteDialog.copy")}</Button>
-          </Stack>
-        </Stack>
+        <CopyField label={t("inviteDialog.link")} value={link} help={t("inviteDialog.linkHelp")} />
       )}
     </Dialog>
   );

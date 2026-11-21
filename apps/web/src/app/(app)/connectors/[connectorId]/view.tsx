@@ -4,7 +4,7 @@ import {
   Button,
   Callout,
   Card,
-  CodeBlock as CopyBlock,
+  CopyCode,
   DangerConfirm,
   DetailPage,
   EmptyState,
@@ -636,7 +636,7 @@ function CredentialsTab({
                   <Text variant="prose" tone="muted">
                     {t("credential.callbackHint")}
                   </Text>
-                  <CopyBlock text={app.oauthCallbackUrl} copyable />
+                  <CopyCode value={app.oauthCallbackUrl} label={t("credential.callbackTitle")} />
                 </Stack>
               )}
               {auth.client === "manual" ? (
