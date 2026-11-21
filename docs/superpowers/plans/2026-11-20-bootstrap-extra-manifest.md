@@ -133,7 +133,7 @@ become username + token.
 ### Task 4: Config-managed marketplaces and the username column (migration; review alone)
 
 **Files:**
-- Create: `packages/kernel/src/migrations/0169_marketplace_managed_username.sql`
+- Create: `packages/kernel/src/migrations/0174_marketplace_managed_username.sql`
 - Modify: `packages/kernel/src/db/kernel-schema.ts` (`MarketplacesTable` :2363)
 - Modify: `packages/kernel/src/catalog/marketplaces.service.ts` (`add`/`writeAdd` :771-866, `update`/`writeUpdate` :877-1005, `remove` :1012, `token()`, git refresh :1186, `views`)
 - Modify: `packages/kernel/src/catalog/marketplaces.schemas.ts`, `catalog/marketplaces.controller.ts` (body `username`), `catalog/catalog.service.ts` (`importFromMarketplace` passes `username`)
