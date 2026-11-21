@@ -281,9 +281,9 @@ window.__CB_EXTRA__ = ({ F, esc, icon, state, stamp, sidebar }) => {
       return `<div class="r-ucol"><div class="r-bubble">${chip}${esc(S.bubble.arguments)}</div>${details}</div>`;
     }
     if (o.state === "author") {
-      // spec §6.16.6: the name above (showName), the 24 circle after the bubble, top-aligned
+      // spec §6.16.6: the name above (showName), the 40 circle after the bubble (as tall as a one-line bubble), top-aligned
       const A = F.PERSON_FIXTURE;
-      const circle = `<span class="r-avatar" data-part="avatar" data-kind="initial" data-shape="circle" data-size="24" aria-hidden="true">${esc([...A.name][0].toUpperCase())}</span>`;
+      const circle = `<span class="r-avatar" data-part="avatar" data-kind="initial" data-shape="circle" data-size="40" aria-hidden="true">${esc([...A.name][0].toUpperCase())}</span>`;
       return `<div class="r-ucol"><div class="r-bubble-author-name" data-part="bubble-author-name">${esc(A.name)}</div><div class="r-bubble-row" data-part="bubble-row"><div class="r-bubble">${esc(C.user.text)}</div>${circle}</div></div>`;
     }
     if (o.state === "sender") {

@@ -2166,7 +2166,7 @@ textarea {
   text-overflow: ellipsis;
   white-space: nowrap;
 }
-/* A message with an author (spec §6.16.6): the 24 circle after the bubble, top-aligned. */
+/* A message with an author (spec §6.16.6): the 40 circle after the bubble, top-aligned. */
 .r-bubble-row {
   display: flex;
   align-items: flex-start;
@@ -2180,7 +2180,7 @@ textarea {
 }
 .r-bubble-author-name {
   max-width: 75%;
-  margin-inline-end: calc(24px + var(--cb-space-2));
+  margin-inline-end: calc(40px + var(--cb-space-2));
   overflow: hidden;
   color: var(--cb-muted);
   font-size: var(--cb-type-small-size);

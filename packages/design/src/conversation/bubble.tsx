@@ -83,7 +83,7 @@ export function BubbleSkill({ label }: { label: string }): JSX.Element {
   );
 }
 
-/** The bubble, with the author's 24 circle at its end side when it has one (spec §6.16.6). */
+/** The bubble, with the author's 40 circle at its end side when it has one (spec §6.16.6). */
 function BubbleRow({
   author,
   children,
@@ -97,7 +97,7 @@ function BubbleRow({
       {children}
       <Avatar
         shape="circle"
-        size={24}
+        size={40}
         name={author.initialFrom ?? author.name}
         value={author.avatarUrl ? { kind: "image", src: author.avatarUrl } : null}
       />
