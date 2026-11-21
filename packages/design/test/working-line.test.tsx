@@ -207,6 +207,12 @@ describe("WorkingLine with a theme mark (theme brand coverage §3)", () => {
     expect(c.querySelectorAll('[data-part="working-caption"] > span')).toHaveLength(4);
   });
 
+  it("without a brand the DOM equals the markup before theme marks existed", () => {
+    expect(wrap(<WorkingLine still />, "en").container.innerHTML).toMatchInlineSnapshot(
+      `"<div class="cb-sr-only" role="status" data-part="working-status">Planning…</div><div class="cb-tool-line cb-working-line" data-part="working-line" aria-hidden="true" data-still="true"><span class="cb-working-mark" data-part="working-mark" aria-hidden="true"><svg width="28" height="20" viewBox="0 0 28 20" shape-rendering="crispEdges" aria-hidden="true" focusable="false"><path d="M20 0h2v2h-2zM18 2h2v2h-2zM20 2h2v2h-2zM22 2h2v2h-2zM6 4h2v2h-2zM8 4h2v2h-2zM10 4h2v2h-2zM12 4h2v2h-2zM14 4h2v2h-2zM16 4h2v2h-2zM18 4h2v2h-2zM20 4h2v2h-2zM22 4h2v2h-2zM24 4h2v2h-2zM26 4h2v2h-2zM4 6h2v2h-2zM6 6h2v2h-2zM8 6h2v2h-2zM10 6h2v2h-2zM12 6h2v2h-2zM14 6h2v2h-2zM16 6h2v2h-2zM18 6h2v2h-2zM20 6h2v2h-2zM24 6h2v2h-2zM26 6h2v2h-2zM2 8h2v2h-2zM4 8h2v2h-2zM6 8h2v2h-2zM8 8h2v2h-2zM10 8h2v2h-2zM12 8h2v2h-2zM14 8h2v2h-2zM16 8h2v2h-2zM18 8h2v2h-2zM20 8h2v2h-2zM22 8h2v2h-2zM24 8h2v2h-2zM26 8h2v2h-2zM2 10h2v2h-2zM4 10h2v2h-2zM6 10h2v2h-2zM8 10h2v2h-2zM10 10h2v2h-2zM12 10h2v2h-2zM14 10h2v2h-2zM16 10h2v2h-2zM18 10h2v2h-2zM20 10h2v2h-2zM22 10h2v2h-2zM24 10h2v2h-2zM26 10h2v2h-2zM2 12h2v2h-2zM4 12h2v2h-2zM6 12h2v2h-2zM8 12h2v2h-2zM10 12h2v2h-2zM12 12h2v2h-2zM14 12h2v2h-2zM16 12h2v2h-2zM18 12h2v2h-2zM20 12h2v2h-2zM22 12h2v2h-2zM24 12h2v2h-2zM4 14h2v2h-2zM6 14h2v2h-2zM8 14h2v2h-2zM10 14h2v2h-2zM12 14h2v2h-2zM14 14h2v2h-2zM16 14h2v2h-2zM18 14h2v2h-2zM20 14h2v2h-2zM22 14h2v2h-2z"></path><path d="M4 16h2v2h-2zM6 16h2v2h-2zM12 16h2v2h-2zM18 16h2v2h-2zM20 16h2v2h-2zM4 18h2v2h-2zM6 18h2v2h-2zM12 18h2v2h-2zM18 18h2v2h-2zM20 18h2v2h-2z" data-frame="1"></path><path d="M6 16h2v2h-2zM8 16h2v2h-2zM12 16h2v2h-2zM16 16h2v2h-2zM18 16h2v2h-2zM6 18h2v2h-2zM8 18h2v2h-2zM12 18h2v2h-2zM16 18h2v2h-2zM18 18h2v2h-2z" data-frame="2"></path></svg></span><span class="cb-tool-label cb-working-caption" data-part="working-caption" aria-hidden="true"><span>Planning…</span><span>Working…</span><span>Pondering…</span><span>Composing…</span></span></div>"`,
+    );
+  });
+
   it("without a brand, or with an empty mark, the DOM equals today's", () => {
     const today = wrap(<WorkingLine still />, "en").container.innerHTML;
     cleanup();

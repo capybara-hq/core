@@ -560,6 +560,16 @@ describe("EmptyState with a theme brand (theme brand coverage §3)", () => {
     expect(c.querySelector('[data-part="empty-brand-art"]')).toBeNull();
   });
 
+  it("without a brand the DOM equals the markup before theme art existed", () => {
+    expect(draw("page").innerHTML).toMatchInlineSnapshot(
+      `"<div class="cb-empty-state" data-part="empty-state" data-size="page"><span class="cb-empty-state-art" data-part="empty-illustration" aria-hidden="true"><svg class="cb-logo-line" width="85" height="61" viewBox="0 0 85 61" shape-rendering="crispEdges" aria-hidden="true" focusable="false"><path d="M60.5 0.5H66.5M60.5 0.5V6.5M66.5 0.5V6.5M54.5 6.5H60.5M54.5 6.5V12.5M66.5 6.5H72.5M72.5 6.5V12.5M18.5 12.5H24.5M18.5 12.5V18.5M24.5 12.5H30.5M30.5 12.5H36.5M36.5 12.5H42.5M42.5 12.5H48.5M48.5 12.5H54.5M66.5 18.5H72.5M72.5 12.5H78.5M78.5 12.5H84.5M84.5 12.5V18.5M12.5 18.5H18.5M12.5 18.5V24.5M66.5 18.5V24.5M72.5 18.5V24.5M84.5 18.5V24.5M6.5 24.5H12.5M6.5 24.5V30.5M66.5 24.5H72.5M84.5 24.5V30.5M6.5 30.5V36.5M78.5 36.5H84.5M84.5 30.5V36.5M6.5 42.5H12.5M6.5 36.5V42.5M72.5 42.5H78.5M78.5 36.5V42.5M12.5 42.5V48.5M24.5 48.5H30.5M30.5 48.5H36.5M42.5 48.5H48.5M48.5 48.5H54.5M66.5 48.5H72.5M72.5 42.5V48.5M12.5 48.5V54.5M24.5 48.5V54.5M36.5 48.5V54.5M42.5 48.5V54.5M54.5 48.5V54.5M66.5 48.5V54.5M12.5 60.5H18.5M12.5 54.5V60.5M18.5 60.5H24.5M24.5 54.5V60.5M36.5 60.5H42.5M36.5 54.5V60.5M42.5 54.5V60.5M54.5 60.5H60.5M54.5 54.5V60.5M60.5 60.5H66.5M66.5 54.5V60.5"></path></svg></span><span class="cb-empty-state-words"><p class="cb-empty-state-text" data-part="empty-state-text">Nothing yet</p></span></div>"`,
+    );
+    cleanup();
+    expect(draw("panel").innerHTML).toMatchInlineSnapshot(
+      `"<div class="cb-empty-state" data-part="empty-state" data-size="panel"><span class="cb-empty-state-art" data-part="empty-illustration" aria-hidden="true"><svg class="cb-logo-line" width="57" height="41" viewBox="0 0 57 41" shape-rendering="crispEdges" aria-hidden="true" focusable="false"><path d="M40.5 0.5H44.5M40.5 0.5V4.5M44.5 0.5V4.5M36.5 4.5H40.5M36.5 4.5V8.5M44.5 4.5H48.5M48.5 4.5V8.5M12.5 8.5H16.5M12.5 8.5V12.5M16.5 8.5H20.5M20.5 8.5H24.5M24.5 8.5H28.5M28.5 8.5H32.5M32.5 8.5H36.5M44.5 12.5H48.5M48.5 8.5H52.5M52.5 8.5H56.5M56.5 8.5V12.5M8.5 12.5H12.5M8.5 12.5V16.5M44.5 12.5V16.5M48.5 12.5V16.5M56.5 12.5V16.5M4.5 16.5H8.5M4.5 16.5V20.5M44.5 16.5H48.5M56.5 16.5V20.5M4.5 20.5V24.5M52.5 24.5H56.5M56.5 20.5V24.5M4.5 28.5H8.5M4.5 24.5V28.5M48.5 28.5H52.5M52.5 24.5V28.5M8.5 28.5V32.5M16.5 32.5H20.5M20.5 32.5H24.5M28.5 32.5H32.5M32.5 32.5H36.5M44.5 32.5H48.5M48.5 28.5V32.5M8.5 32.5V36.5M16.5 32.5V36.5M24.5 32.5V36.5M28.5 32.5V36.5M36.5 32.5V36.5M44.5 32.5V36.5M8.5 40.5H12.5M8.5 36.5V40.5M12.5 40.5H16.5M16.5 36.5V40.5M24.5 40.5H28.5M24.5 36.5V40.5M28.5 36.5V40.5M36.5 40.5H40.5M36.5 36.5V40.5M40.5 40.5H44.5M44.5 36.5V40.5"></path></svg></span><span class="cb-empty-state-words"><p class="cb-empty-state-text" data-part="empty-state-text">Nothing yet</p></span></div>"`,
+    );
+  });
+
   it.each(["page", "panel"] as const)(
     "%s without a brand, or with both URLs null, equals today's DOM",
     (size) => {
