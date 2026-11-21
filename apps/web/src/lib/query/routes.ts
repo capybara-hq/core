@@ -167,6 +167,12 @@ export interface RouteEntry {
   then?(ctx: RouteCtx, qc: QueryClient): Promise<void>;
   /** Why the entry prefetches nothing. */
   none?: string;
+  /**
+   * A management page that is desktop-only on touch (mobile touch plan Task 29): the shell shows
+   * 「请在电脑上管理」 in its place. Set from {@link DESKTOP_ONLY_PREFIXES}; presentation only, the
+   * kernel still decides access.
+   */
+  desktopOnly?: boolean;
 }
 
 /**
@@ -215,7 +221,7 @@ async function prefetchFirstTemplateGuide(
   });
 }
 
-export const ROUTES: readonly RouteEntry[] = [
+const ROUTE_TABLE: readonly RouteEntry[] = [
   {
     pattern: "/account/connections",
     queries: ({ orgId }) => (orgId === null ? [] : [q(connectorsQuery(orgId))]),
@@ -1345,6 +1351,30 @@ export const ROUTES: readonly RouteEntry[] = [
   // Any other path under (app): its page throws `notFound()` (HTTP 404 inside the App Shell).
   { pattern: "/[...rest]", queries: () => [], none: "unknown route: 404" },
 ];
+
+/**
+ * The route prefixes that are desktop-only on touch: plugins, extensions, channels, organization
+ * settings, evals and runs, and the admin console (mobile layout spec §15, decision 4).
+ */
+export const DESKTOP_ONLY_PREFIXES = [
+  "/plugins",
+  "/extensions",
+  "/channels",
+  "/settings",
+  "/evals",
+  "/trajectories",
+  "/admin",
+] as const;
+
+const underPrefix = (pattern: string, prefix: string) =>
+  pattern === prefix || pattern.startsWith(`${prefix}/`);
+
+/** The route table: every entry, the ones under {@link DESKTOP_ONLY_PREFIXES} flagged. */
+export const ROUTES: readonly RouteEntry[] = ROUTE_TABLE.map((entry) =>
+  DESKTOP_ONLY_PREFIXES.some((p) => underPrefix(entry.pattern, p))
+    ? { ...entry, desktopOnly: true }
+    : entry,
+);
 
 /** The catch-all entry: a path no page serves. */
 export const UNKNOWN_ROUTE = "/[...rest]";

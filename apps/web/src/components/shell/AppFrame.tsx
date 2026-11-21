@@ -3,6 +3,7 @@
 import {
   AppShell,
   Button,
+  type DesktopOnlyNoticeProps,
   type DrawerNavData,
   initialOf,
   Logo,
@@ -42,6 +43,7 @@ import { usePreferences } from "../../lib/preferences";
 import { retryOnMountOf } from "../../lib/query/client";
 import { keys } from "../../lib/query/keys";
 import { useAppMutation } from "../../lib/query/mutation";
+import { matchRoute } from "../../lib/query/routes";
 import { meQuery, readinessQuery } from "../../lib/query/shell";
 import { markSigningOut, resetSession } from "../../lib/query/workspace";
 import { HOME_PATH } from "../../lib/routes";
@@ -163,6 +165,18 @@ function useCapState(): string {
   ]
     .filter((t) => t !== null)
     .join(" ");
+}
+
+/**
+ * The page's full URL for the desktop-only notice: the path in the server render and the first
+ * hydration (the server does not know the origin), `location.href` afterwards.
+ */
+function usePageUrl(pathname: string): string {
+  return useSyncExternalStore(
+    noSubscribe,
+    () => window.location.href,
+    () => pathname,
+  );
 }
 
 /**
@@ -391,6 +405,29 @@ function ShellFrame({
   }
   const timeZone = useTimeZoneLabel();
   useConnectResultToast();
+  // A management page is desktop-only on touch (plan Task 29): the shell shows the notice there.
+  const pageUrl = usePageUrl(pathname);
+  const desktopOnly: DesktopOnlyNoticeProps | undefined =
+    matchRoute(pathname)?.entry.desktopOnly === true
+      ? {
+          title: t("desktopOnly.title"),
+          description: t("desktopOnly.body"),
+          url: pageUrl,
+          copyLabel: t("desktopOnly.copy"),
+          backLabel: t("desktopOnly.back"),
+          backHref: HOME_PATH,
+          onCopy: () => {
+            void (async () => {
+              try {
+                await navigator.clipboard.writeText(pageUrl);
+                toast.success(t("desktopOnly.copied"));
+              } catch (e) {
+                toast.error(errorMessage(e));
+              }
+            })();
+          },
+        }
+      : undefined;
 
   const [switching, setSwitching] = useState(false);
   const [refreshing, startRefresh] = useTransition();
@@ -769,6 +806,7 @@ function ShellFrame({
       capState={capState}
       {...(banner === null ? {} : { banner })}
       singleScheme={singleScheme}
+      {...(desktopOnly === undefined ? {} : { desktopOnly })}
     >
       <SessionContext.Provider value={session}>
         <SetupContext.Provider value={{ active: false, readiness: setupState, recheck: reload }}>

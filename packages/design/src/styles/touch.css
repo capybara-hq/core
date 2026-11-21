@@ -385,4 +385,8 @@
     min-width: var(--cb-touch-hit);
     min-height: var(--cb-touch-hit);
   }
+  /* An entry of a desktop-only page (plan Task 29): not offered on touch. */
+  [data-desktop-only] {
+    display: none;
+  }
 }

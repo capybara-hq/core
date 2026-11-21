@@ -46,6 +46,8 @@ const NAV: readonly {
   icon: IconName;
   section: "primary" | "more";
   drawer?: "section" | "more";
+  /** A management page that is desktop-only on touch: hidden there, never in the drawer. */
+  desktopOnly?: true;
 }[] = [
   {
     id: "agents",
@@ -104,6 +106,7 @@ const NAV: readonly {
     audience: "member",
     icon: "catalog",
     section: "more",
+    desktopOnly: true,
   },
   // Extensions: members see their state (the kernel's org.extensions.read projection), org admins
   // also switch and configure them (org.extensions.manage)
@@ -114,6 +117,7 @@ const NAV: readonly {
     audience: "member",
     icon: "extension",
     section: "more",
+    desktopOnly: true,
   },
   {
     id: "channels",
@@ -122,9 +126,18 @@ const NAV: readonly {
     audience: "admin",
     icon: "channel",
     section: "more",
+    desktopOnly: true,
   },
   // Evals and runs: sets and runs (agent owners reach their runs from the agent page)
-  { id: "evals", key: "evals", href: "/evals", audience: "admin", icon: "evals", section: "more" },
+  {
+    id: "evals",
+    key: "evals",
+    href: "/evals",
+    audience: "admin",
+    icon: "evals",
+    section: "more",
+    desktopOnly: true,
+  },
   // Organization settings (members read General, Members and Sandbox; admins change them);
   // personal settings are the account menu's
   {
@@ -134,6 +147,7 @@ const NAV: readonly {
     audience: "member",
     icon: "settings",
     section: "more",
+    desktopOnly: true,
   },
 ];
 
@@ -384,6 +398,7 @@ export function useNav(
     label: t(`nav.${n.key}`),
     href: n.href,
     icon: n.icon,
+    ...(n.desktopOnly ? { desktopOnly: true } : {}),
   }));
   const inbox = {
     href: "/inbox",
@@ -392,7 +407,9 @@ export function useNav(
   const strip = ({ section: _, ...item }: (typeof items)[number]): SidebarNavItem => item;
   const primary = items.filter((n) => n.section === "primary").map(strip);
   const more = items.filter((n) => n.section === "more").map(strip);
-  const admin = superAdmin ? [{ id: "admin", label: t("nav.admin"), href: "/admin" }] : [];
+  const admin = superAdmin
+    ? [{ id: "admin", label: t("nav.admin"), href: "/admin", desktopOnly: true }]
+    : [];
   const commands: CommandGroup[] = [
     {
       label: t("nav.goto"),
@@ -404,6 +421,7 @@ export function useNav(
       ].map((n) => ({
         id: `goto-${n.id}`,
         label: n.label,
+        ...("desktopOnly" in n && n.desktopOnly ? { desktopOnly: true } : {}),
         onSelect: () => router.push(n.href),
       })),
     },

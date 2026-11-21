@@ -6,6 +6,7 @@ import { Icon } from "../icons/icon";
 import type { NativeNavHandle } from "../native";
 import { type CommandGroup, CommandPalette } from "../overlays/index";
 import { useDesignT } from "../provider";
+import { DesktopOnlyNotice, type DesktopOnlyNoticeProps } from "../templates/desktop-only";
 import { backTarget, FloatingBar, type FloatingLead } from "./floating-bar";
 import { type DrawerNavData, NavDrawer } from "./nav-drawer";
 import { keyboardInset } from "./pointer";
@@ -15,6 +16,7 @@ import { type ShellPage, ShellPageContext } from "./shell-page";
 import { Sidebar, type SidebarProps, useSidebarWidthMode } from "./sidebar";
 import { useShortWindow, useSizeClass } from "./size-class";
 import { StatusBar, type StatusBarProps, StatusBarSetterContext } from "./status-bar";
+import { useTouch } from "./touch";
 import { useHydrated } from "./use-media-query";
 
 export type AppShellProps = {
@@ -65,6 +67,13 @@ export type AppShellProps = {
    */
   ownStatusBar?: boolean;
   /**
+   * The route is a management page that is desktop-only on touch (mobile touch plan Task 29): the
+   * shell draws the notice beside the page, the touch query shows one of them, and after hydration
+   * only the one that applies is mounted (so the page's queries never run on touch). Presentation
+   * only: the kernel decides access.
+   */
+  desktopOnly?: DesktopOnlyNoticeProps;
+  /**
    * The state tokens for plugin CSS (`run=idle`, `motion=full`, `theme=builtin`, space-separated),
    * rendered as `data-cap-state` on the shell element. The shell appends its own `sidebar=rail`
    * or `sidebar=full` after hydration (none below 600: the compact class has no sidebar), then
@@ -108,6 +117,7 @@ export function AppShell({
   capState,
   banner,
   singleScheme,
+  desktopOnly,
   children,
 }: AppShellProps) {
   const t = useDesignT();
@@ -117,6 +127,7 @@ export function AppShell({
   const railRef = reference !== undefined && "rail" in reference;
   const [pageStatus, setPageStatus] = useState<ReactNode>(null);
   const hydrated = useHydrated();
+  const touch = useTouch();
   const sizeClass = useSizeClass();
   const short = useShortWindow();
   // Inside a native shell (mobile layout spec §9.3): its kind, after hydration; null in a browser.
@@ -435,6 +446,17 @@ export function AppShell({
                       />
                     </div>
                   ) : null}
+                </>
+              ) : desktopOnly ? (
+                // The server and the hydrating render draw both (CSS shows one under the touch
+                // query); once the pointer is known only the one that applies is mounted.
+                <>
+                  {touch === false ? null : (
+                    <div className="cb-desktop-only-notice" data-part="desktop-only-gate">
+                      <DesktopOnlyNotice {...desktopOnly} />
+                    </div>
+                  )}
+                  {touch === true ? null : <div className="cb-desktop-only-page">{children}</div>}
                 </>
               ) : (
                 children

@@ -388,6 +388,43 @@
   margin-top: 12px;
 }
 
+/* 「请在电脑上管理」: the notice of a desktop-only page, shown on touch in the page's place */
+.cb-desktop-only-notice {
+  display: none;
+}
+.cb-desktop-only-page {
+  display: contents;
+}
+@media (pointer: coarse), (any-pointer: coarse) and (not (any-pointer: fine)) {
+  .cb-desktop-only-notice {
+    display: block;
+  }
+  .cb-desktop-only-page {
+    display: none;
+  }
+}
+.cb-desktop-only-body {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 16px;
+  max-width: 100%;
+}
+.cb-desktop-only-url {
+  max-width: 100%;
+  font-family: var(--cb-font-code);
+  font-size: var(--cb-type-small-size);
+  color: var(--cb-muted);
+  overflow-wrap: anywhere;
+  user-select: all;
+}
+.cb-desktop-only-actions {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: 8px;
+}
+
 /* Onboarding 清单 */
 .cb-checklist {
   box-sizing: border-box;

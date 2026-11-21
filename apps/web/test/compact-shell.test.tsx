@@ -3,9 +3,13 @@
 // button carrying the inbox count, every other page with back; the menu opens the drawer, whose
 // picks pop its history entry before they navigate, and the system back closes an open drawer or
 // account sheet before it leaves the page.
+
+import { useQuery } from "@tanstack/react-query";
 import { act, cleanup, screen, waitFor, within } from "@testing-library/react";
 import { userEvent } from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { membersQuery } from "../src/lib/query/members";
+import { stubApi } from "./support/api";
 import { pathname as currentPath, resetNavigation, router } from "./support/navigation";
 import { ME } from "./support/render";
 import { renderFrame, shellOf } from "./support/shell";
@@ -13,7 +17,7 @@ import { renderFrame, shellOf } from "./support/shell";
 vi.mock("../src/i18n/navigation", () => import("./support/navigation"));
 
 /** A compact window (390 wide); `coarse` adds the touch query (the overlays' history entries). */
-function phone(coarse: boolean) {
+function phone(coarse: boolean, windowWidth = 390) {
   vi.stubGlobal("matchMedia", (q: string) => {
     const t = q.trim();
     const width = [...t.matchAll(/\((min|max)-width:\s*(\d+)px\)/g)];
@@ -27,7 +31,9 @@ function phone(coarse: boolean) {
     } else {
       matches =
         width.length > 0 &&
-        width.every(([, k, n]) => (k === "min" ? 390 >= Number(n) : 390 <= Number(n)));
+        width.every(([, k, n]) =>
+          k === "min" ? windowWidth >= Number(n) : windowWidth <= Number(n),
+        );
     }
     return { matches, media: q, addEventListener() {}, removeEventListener() {} };
   });
@@ -219,5 +225,91 @@ describe("back closes the overlays first (Decision 25)", () => {
     await settled();
     expect(window.location.pathname).toBe("/");
     expect(currentPath.current).toBe("/");
+  });
+});
+
+describe("management pages on touch (Task 29)", () => {
+  const MANAGEMENT = ["插件", "扩展", "渠道", "评测与运行", "组织设置"];
+  const MembersPage = () => {
+    useQuery(membersQuery("o1"));
+    return <p>成员页</p>;
+  };
+
+  it("the sidebar's management entries carry data-desktop-only", async () => {
+    phone(false, 1440);
+    renderFrame(shellOf(ME, pending));
+    // the admin entry above the account row
+    expect(
+      document.querySelector('[data-part="admin-entry"]')?.hasAttribute("data-desktop-only"),
+    ).toBe(true);
+    // the 更多 flyout: the management items are flagged, skills / connectors / devices are not
+    const toggle = document.querySelector('[data-part="more-toggle"]') as HTMLElement;
+    await userEvent.click(toggle);
+    const menu = document.querySelector('[role="menu"]') as HTMLElement;
+    for (const label of MANAGEMENT) {
+      const item = within(menu).getByRole("menuitem", { name: label });
+      expect(item.hasAttribute("data-desktop-only"), label).toBe(true);
+    }
+    for (const label of ["设备"]) {
+      expect(
+        within(menu).getByRole("menuitem", { name: label }).hasAttribute("data-desktop-only"),
+      ).toBe(false);
+    }
+  });
+
+  it("the command palette flags the management commands only", async () => {
+    phone(false, 1440);
+    renderFrame(shellOf(ME, pending));
+    await userEvent.keyboard("{Control>}k{/Control}");
+    const items = [...document.querySelectorAll('[data-part="palette-item"]')];
+    const flagged = (name: string) =>
+      items.find((i) => i.textContent?.includes(name))?.hasAttribute("data-desktop-only");
+    for (const label of [...MANAGEMENT, "管理后台"]) expect(flagged(label), label).toBe(true);
+    for (const label of ["智能体", "技能", "连接器", "设备", "收件箱"])
+      expect(flagged(label), label).toBe(false);
+  });
+
+  it("the drawer has no data-desktop-only entry", async () => {
+    renderFrame(shellOf(ME, pending));
+    await userEvent.click(menuButton() as HTMLElement);
+    expect((drawerEl() as HTMLElement).querySelector("[data-desktop-only]")).toBeNull();
+  });
+
+  it("on touch at /settings/members the notice replaces the page and no members request is made", async () => {
+    phone(true);
+    resetNavigation("/settings/members");
+    window.history.replaceState(null, "", "/settings/members");
+    const calls = stubApi({});
+    renderFrame(shellOf(ME, pending), <MembersPage />);
+    await act(async () => {});
+    expect(screen.queryByText("成员页")).toBeNull();
+    expect(screen.getAllByRole("heading", { name: "请在电脑上管理" }).length).toBeGreaterThan(0);
+    expect(calls.filter((c) => c.url.includes("/members"))).toEqual([]);
+    expect(within(document.body).getByRole("link", { name: "回到对话" }).getAttribute("href")).toBe(
+      "/",
+    );
+    expect(document.querySelector('[data-part="desktop-only-url"]')?.textContent).toBe(
+      window.location.href,
+    );
+  });
+
+  it("with a fine pointer the page is the page (and does read its data)", async () => {
+    phone(false);
+    resetNavigation("/settings/members");
+    const calls = stubApi({
+      "GET /api/v1/orgs/o1/members": () => new Response("{}", { status: 500 }),
+    });
+    renderFrame(shellOf(ME, pending), <MembersPage />);
+    await act(async () => {});
+    expect(screen.getByText("成员页")).toBeTruthy();
+    expect(screen.queryByRole("heading", { name: "请在电脑上管理" })).toBeNull();
+    expect(calls.some((c) => c.url.includes("/members"))).toBe(true);
+  });
+
+  it("a chat page on touch is never gated", () => {
+    phone(true);
+    resetNavigation("/agents");
+    renderFrame(shellOf(ME, pending));
+    expect(screen.queryByRole("heading", { name: "请在电脑上管理" })).toBeNull();
   });
 });

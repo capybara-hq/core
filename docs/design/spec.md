@@ -3915,6 +3915,14 @@ States: `default`, `current`, `badge`
 - **Trailing**: a page's registered overflow menu as a round floating `more-horizontal` button; none on the home.
 - **Row**: `control.prominent` high on a fine pointer, `touch.float` (48) under `TOUCH_QUERY`; it lets taps through between its controls; not selectable, no long-press callout. A conversation's title pill and overflow (§6.16.1) share the row after the lead.
 
+### 6.57 Desktop-only notice (请在电脑上管理)
+
+`DesktopOnlyNotice({ title, description, url, copyLabel, backLabel, backHref, onCopy })` is the `StatusPage` form (§5, `kind="desktop-only"`) a management page shows on a touch device (mobile touch plan Task 29, layout spec §15 decision 4): the logo, a 16 px `cpu` in `faint` in the code's place, the title 「请在电脑上管理」 / "Manage this on a computer" (`h2`), one sentence in `muted` (「插件、扩展、渠道、组织设置和管理后台这类配置，只在电脑上提供。」), the page's full URL in the code font (`font-code`, `muted`, wrapping anywhere, selectable), then 复制链接 (a `Button`) and 回到对话 (a `LinkButton`, primary, to the conversation home).
+
+- **The gate**: `AppShell`'s `desktopOnly` draws the notice and the page in the server render; the touch query (`TOUCH_QUERY`) shows the notice and hides the page, every other pointer the reverse. After hydration only one is mounted (`useTouch()`): on touch the page's components never mount, so its queries never run. Detection is the pointer media query, never the user agent; a wide window with a fine pointer is unchanged.
+- **Flagged entries**: the sidebar's, rail's and 更多 flyout's items and the command palette's commands of these pages carry `data-desktop-only` and are hidden under `TOUCH_QUERY`; the compact drawer has none of them.
+- Presentation only: the kernel's answers are unchanged.
+
 ## 7. Copy and internationalization
 - All UI text goes through next-intl, in both Chinese and English. Text shown to the model (prompts, tool descriptions) is always English, and the prompt field in a form must say so.
 - Thousands separators for numbers; amounts `¥412.80`; relative time ("2 hours ago") for lists, absolute time (`10-18 14:02:11`) for records and logs.

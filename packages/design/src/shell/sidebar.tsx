@@ -43,6 +43,8 @@ export type SidebarNavItem = {
   /** Shown as a count (`99+` above 99, `n+` with `countMore`); the accessible name includes it. */
   count?: number;
   countMore?: boolean;
+  /** A desktop-only page's entry (plan Task 29): `data-desktop-only`, hidden under the touch query. */
+  desktopOnly?: boolean;
 };
 
 /** The current org in the switcher: `~/<slug> · <role>` under its name; `menu` switches it. */
@@ -635,6 +637,7 @@ function AdminEntry({ href, rail }: { href: string; rail: boolean }) {
       href={href}
       className="cb-sidebar-item"
       data-part="admin-entry"
+      data-desktop-only=""
       {...(rail ? { "aria-label": label } : {})}
     >
       <Icon name="admin" />
@@ -691,7 +694,14 @@ function SidebarNav({
     );
   const item = (
     key: string,
-    n: { label: string; href: string; icon: IconName; count?: number; countMore?: boolean },
+    n: {
+      label: string;
+      href: string;
+      icon: IconName;
+      count?: number;
+      countMore?: boolean;
+      desktopOnly?: boolean;
+    },
     part: "nav-item" | "new-conversation" = "nav-item",
   ) => {
     const count = n.count ? countText(n) : null;
@@ -707,6 +717,7 @@ function SidebarNav({
         data-part={part}
         data-cap-part="sidebar.item"
         data-rove={key}
+        data-desktop-only={n.desktopOnly ? "" : undefined}
         tabIndex={roving.tabIndexOf(key, keys)}
         {...(key === p.activeNav ? { "aria-current": "page" as const } : {})}
         {...(rail ? { "aria-label": name ?? n.label } : name ? { "aria-label": name } : {})}
@@ -732,6 +743,7 @@ function SidebarNav({
     label: n.label,
     href: n.href,
     icon: n.icon,
+    ...(n.desktopOnly ? { desktopOnly: true } : {}),
     ...(n.id === p.activeNav ? { current: true } : {}),
   });
   const moreItems: MenuItem[] = [
