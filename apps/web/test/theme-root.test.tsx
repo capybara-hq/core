@@ -115,6 +115,20 @@ describe("brandOf (theme brand coverage §3)", () => {
     expect(document.querySelector('[data-template="AuthPage"]')).not.toBeNull();
     expect(document.querySelector(".cb-dither")).toBeNull();
   });
+
+  it("a theme that keeps the decoration draws both dither columns", () => {
+    const client = testQueryClient();
+    client.setQueryData(platformThemeQuery().queryKey, PAPER);
+    renderPage(
+      <ThemeRoot orgId={null}>
+        <AuthPage title="Sign in">
+          <p>form</p>
+        </AuthPage>
+      </ThemeRoot>,
+      { client },
+    );
+    expect(document.querySelectorAll(".cb-dither")).toHaveLength(2);
+  });
 });
 
 describe("ThemeLink", () => {
