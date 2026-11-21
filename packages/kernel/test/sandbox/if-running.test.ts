@@ -3,7 +3,7 @@ import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
-import type { SandboxProvider } from "@capybara-hq/plugin-sdk";
+import type { DeviceProvider } from "@capybara-hq/plugin-sdk";
 import { startTestPostgres, startTestRedis, type TestContainer } from "@capybara-hq/testing";
 import { Redis } from "ioredis";
 import { sql } from "kysely";
@@ -44,8 +44,8 @@ const signal = () => AbortSignal.timeout(30_000);
 const DAY = 24 * 3600_000;
 
 /** The fake sandbox with its lifecycle calls and exec commands recorded. */
-function spied(impl: SandboxProvider): SandboxProvider {
-  const w = Object.create(impl) as SandboxProvider;
+function spied(impl: DeviceProvider): DeviceProvider {
+  const w = Object.create(impl) as DeviceProvider;
   w.create = (args) => {
     calls.push("create");
     return impl.create(args);
@@ -69,7 +69,7 @@ function spied(impl: SandboxProvider): SandboxProvider {
   return w;
 }
 
-let provider: SandboxProvider;
+let provider: DeviceProvider;
 const service = (): SandboxService =>
   sandboxServiceFor({
     db,

@@ -968,8 +968,8 @@ const extension = (over: Record<string, unknown> = {}) => ({
     {
       category: "provides",
       sensitive: true,
-      items: ["sandbox@1"],
-      entries: [{ value: "sandbox@1", sensitive: true, reason: "device_provider" }],
+      items: ["device-provider@1"],
+      entries: [{ value: "device-provider@1", sensitive: true, reason: "device_provider" }],
     },
   ],
   added: [],

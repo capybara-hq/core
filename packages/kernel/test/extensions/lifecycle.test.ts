@@ -438,6 +438,13 @@ describe("插件生命周期（单副本，不重启）", () => {
     );
     expect((await view("dev-a")).status).toBe("enabled");
     expect((await view("dev-b")).status).toBe("enabled");
+    expect(
+      k.app
+        .get(ExtensionHost)
+        .list("device-provider")
+        .map((e) => e.plugin)
+        .sort(),
+    ).toEqual(["dev-a", "dev-b"]);
   });
 
   it("审阅：迁移里的破坏性语句列为敏感警告（不拒绝）", async () => {

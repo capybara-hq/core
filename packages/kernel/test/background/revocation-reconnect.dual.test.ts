@@ -6,9 +6,9 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type {
   DeviceHello,
+  DeviceProvider,
   SandboxExecutionRef,
   SandboxPermissionSupport,
-  SandboxProvider,
 } from "@capybara-hq/plugin-sdk";
 import { startTestPostgres, startTestRedis, type TestContainer } from "@capybara-hq/testing";
 import { Redis } from "ioredis";
@@ -349,7 +349,7 @@ async function gatewayFor(
 }
 
 /** The staged provider each replica dispatches through: its own provider, relay and Redis. */
-function stagedProviderOf(k: TestKernel): SandboxProvider {
+function stagedProviderOf(k: TestKernel): DeviceProvider {
   const relay = k.app.get(LocalDeviceRelay);
   const staged = k.app.get(LocalDeviceProvider).stagedOperations({
     call: relay.callV3.bind(relay),
@@ -360,7 +360,7 @@ function stagedProviderOf(k: TestKernel): SandboxProvider {
     permissionSupport: async () => SUPPORT,
     revokeOperation: staged.revokeOperation,
     background: staged.background,
-  }) as SandboxProvider;
+  }) as DeviceProvider;
 }
 
 async function fixture() {
@@ -747,7 +747,7 @@ describe("a staged request refused as not sent (B-5)", () => {
             throw new Error("the answer was lost");
           },
         },
-      }) as SandboxProvider,
+      }) as DeviceProvider,
     });
     await expect(
       runInBackgroundManaged(f.depsOf(a), await f.ctxFor(), {

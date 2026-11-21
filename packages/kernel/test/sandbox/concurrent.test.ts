@@ -5,8 +5,8 @@ import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import {
   DEFAULT_SANDBOX_ROOTS,
+  type DeviceProvider,
   type SandboxHandle,
-  type SandboxProvider,
 } from "@capybara-hq/plugin-sdk";
 import { startTestPostgres, startTestRedis, type TestContainer } from "@capybara-hq/testing";
 import { Redis } from "ioredis";
@@ -47,14 +47,14 @@ let db: KernelSchemaDb;
 let redis: Redis;
 let config: KernelConfig;
 let root: string;
-let provider: SandboxProvider;
+let provider: DeviceProvider;
 const log = { info() {}, warn() {}, error() {} };
 const MIN = 60_000;
 const later = (ms: number) => new Date(Date.now() + ms);
 const signal = () => AbortSignal.timeout(30_000);
 
 const service = (
-  p: () => SandboxProvider = () => provider,
+  p: () => DeviceProvider = () => provider,
   extra: Partial<SandboxServiceDeps> = {},
 ) =>
   sandboxServiceFor({
@@ -165,7 +165,7 @@ const allOverlap = (xs: { start: number; end: number }[]) =>
  * A provider like sandbox-docker: the handle is the instance name (`{ id: name }`, stable across
  * rebuilds), and `create` replaces an instance of the same name.
  */
-function sameNameProvider(inner: SandboxProvider): SandboxProvider {
+function sameNameProvider(inner: DeviceProvider): DeviceProvider {
   const byName = new Map<string, string>();
   const r = (h: SandboxHandle) => ({ id: byName.get(h.id as string) ?? "missing" });
   const killAll = inner.killAll.bind(inner);
@@ -599,7 +599,7 @@ describe("path leases in the sandbox tools", () => {
   it("two Edit calls on one file both apply", async () => {
     withCap(3);
     // a slow read widens the read-modify-write window: without the path lease one edit is lost
-    const slow: SandboxProvider = {
+    const slow: DeviceProvider = {
       ...provider,
       readFile: async (h, path, o) => {
         await new Promise((r) => setTimeout(r, 200));

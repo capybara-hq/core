@@ -467,8 +467,8 @@ it("owner browsing resolves bounded authority without a conversation and denies 
 });
 
 import {
+  type DeviceProvider,
   type SandboxOperationScope,
-  type SandboxProvider,
   SandboxScopeDeniedError,
 } from "@capybara-hq/plugin-sdk";
 import { KernelConfigService } from "../../src/infra/config/kernel-config.service.js";
@@ -496,7 +496,7 @@ function barrier() {
   return { promise, resolve };
 }
 async function operationFixture(
-  impl: Partial<SandboxProvider> = {},
+  impl: Partial<DeviceProvider> = {},
   opts: { evidence?: boolean } = {},
 ) {
   const f = await workingFixture(),
@@ -576,7 +576,7 @@ async function operationFixture(
       };
     },
     ...impl,
-  } as unknown as SandboxProvider;
+  } as unknown as DeviceProvider;
   k.app
     .get(SandboxProviders)
     .register({ plugin: "@permission-test", version: "test-1", impl: provider });
@@ -873,7 +873,7 @@ it("a stale execution claim cannot dispatch and disconnected revocation remains 
       async revokeOperation() {
         throw new Error("offline");
       },
-    } as unknown as SandboxProvider,
+    } as unknown as DeviceProvider,
   });
   await new SandboxOperationReconcileJob(
     intents,

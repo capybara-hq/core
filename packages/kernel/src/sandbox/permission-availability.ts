@@ -1,4 +1,4 @@
-import type { SandboxPermissionSupport, SandboxProvider } from "@capybara-hq/plugin-sdk";
+import type { DeviceProvider, SandboxPermissionSupport } from "@capybara-hq/plugin-sdk";
 /** Read models never provision or probe. Runtime activation will persist provenance-bound reports. */
 export type PermissionAvailability =
   | { state: "supported"; report: SandboxPermissionSupport }
@@ -14,7 +14,7 @@ export const unprobedPermissionAvailability = (): PermissionAvailability => ({
  * Task 6 records provenance-bound runtime reports before user execution can be admitted.
  */
 export function permissionAvailabilityFor(
-  provider: SandboxProvider | undefined,
+  provider: DeviceProvider | undefined,
 ): PermissionAvailability {
   if (
     !provider ||

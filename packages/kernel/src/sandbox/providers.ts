@@ -1,4 +1,4 @@
-import { DEVICE_PROVIDER_EXTENSION_POINT, type SandboxProvider } from "@capybara-hq/plugin-sdk";
+import { DEVICE_PROVIDER_EXTENSION_POINT, type DeviceProvider } from "@capybara-hq/plugin-sdk";
 import { Inject, Injectable } from "@nestjs/common";
 import { ExtensionRegistry } from "../extensions/registry.js";
 import { guardProviderConnection } from "./unreachable.js";
@@ -33,7 +33,7 @@ export interface SandboxInstanceBinder {
 export interface SandboxProviderEntry {
   plugin: string;
   version?: string;
-  impl: SandboxProvider;
+  impl: DeviceProvider;
   /**
    * The staged path's instance binder: the exclusive lifecycle holder binds the generation before
    * it downgrades, and shared use waits for an installed binding. Absent on protocol 2.
@@ -77,7 +77,7 @@ export class SandboxProviders {
       ? {
           plugin: e.plugin,
           version: e.version,
-          impl: guardProviderConnection(e.impl as SandboxProvider),
+          impl: guardProviderConnection(e.impl as DeviceProvider),
         }
       : undefined;
   }
@@ -96,7 +96,7 @@ export class SandboxProviders {
       ? {
           plugin: e.plugin,
           version: e.version,
-          impl: guardProviderConnection(e.impl as SandboxProvider),
+          impl: guardProviderConnection(e.impl as DeviceProvider),
         }
       : undefined;
   }

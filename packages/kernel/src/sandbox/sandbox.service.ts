@@ -61,6 +61,7 @@ const backgroundBinding = (
 
 import { randomUUID } from "node:crypto";
 import {
+  type DeviceProvider,
   type ExecResult,
   type FileSystemHandle,
   isFileSystemGoneError,
@@ -70,7 +71,6 @@ import {
   type SandboxActor,
   type SandboxHandle,
   type SandboxLimits,
-  type SandboxProvider,
   type SandboxRoots,
 } from "@capybara-hq/plugin-sdk";
 import { Inject, Injectable } from "@nestjs/common";
@@ -245,7 +245,7 @@ export type { SandboxProviderEntry } from "./providers.js";
 
 type Row = Selectable<DeviceInstancesTable>;
 type Patch = UpdateObject<KernelDatabase, "device_instances">;
-type ExecArgs = Parameters<SandboxProvider["exec"]>[1];
+type ExecArgs = Parameters<DeviceProvider["exec"]>[1];
 /** The fence read under the lease (incremented by every fenced write). */
 interface Fence {
   gen: number;
@@ -270,7 +270,7 @@ interface Instance {
  * The provider {@link SandboxService.ifRunning} passes to its callback: every `exec` carries the
  * holder's tag; the caller names the actor.
  */
-export type TaggedProvider = Omit<SandboxProvider, "exec"> & {
+export type TaggedProvider = Omit<DeviceProvider, "exec"> & {
   exec(h: SandboxHandle, args: Omit<ExecArgs, "tag">): Promise<ExecResult>;
 };
 
@@ -413,12 +413,12 @@ export const isInstance = (
  * stays recorded).
  */
 function tagged<P>(
-  impl: SandboxProvider,
+  impl: DeviceProvider,
   tag: string,
   actor: SandboxActor | undefined,
   before: () => Promise<void>,
 ): P {
-  const wrapped = Object.create(impl) as SandboxProvider;
+  const wrapped = Object.create(impl) as DeviceProvider;
   Object.defineProperty(wrapped, "exec", {
     value: async (h: SandboxHandle, args: ExecArgs) => {
       await before();
@@ -1133,7 +1133,7 @@ export class SandboxService {
   private async prepareFor<T>(
     ctx: SandboxUseContext,
     h: SandboxHandle,
-    provider: SandboxProvider,
+    provider: DeviceProvider,
     info: SandboxUseInfo,
     purpose: SandboxPreparationScope["purpose"],
     roots: readonly string[],
@@ -1376,7 +1376,7 @@ export class SandboxService {
     invocation?: OperationSessionInvocation,
     trusted?: (
       h: SandboxHandle,
-      p: SandboxProvider,
+      p: DeviceProvider,
       info: SandboxUseInfo,
       signal: AbortSignal,
     ) => Promise<T>,
@@ -1600,7 +1600,7 @@ export class SandboxService {
     invocation?: OperationSessionInvocation,
     trusted?: (
       h: SandboxHandle,
-      p: SandboxProvider,
+      p: DeviceProvider,
       info: SandboxUseInfo,
       signal: AbortSignal,
     ) => Promise<T>,
@@ -2982,7 +2982,7 @@ export class SandboxService {
       r.handle !== null &&
       (r.status === "running" || r.status === "suspended" || r.status === "creating");
     /** The instance this gate resumed for an exact cancel and still runs (B-22). */
-    let resumedHere: { impl: SandboxProvider; handle: SandboxHandle } | null = null;
+    let resumedHere: { impl: DeviceProvider; handle: SandboxHandle } | null = null;
     const bounded = () =>
       AbortSignal.any([
         opSignal(held),
@@ -3312,7 +3312,7 @@ export class SandboxService {
     } catch (err) {
       // a throw after a resume (a lost lease, an abort, a failed write): the row still says
       // suspended, so the instance is suspended again (best effort) before the error goes on
-      const left = resumedHere as { impl: SandboxProvider; handle: SandboxHandle } | null;
+      const left = resumedHere as { impl: DeviceProvider; handle: SandboxHandle } | null;
       if (left !== null)
         await this.bestEffort(id, "suspend the instance again after a failed retirement", (s) =>
           left.impl.suspend(left.handle, s),
@@ -3320,7 +3320,7 @@ export class SandboxService {
       throw err;
     }
     // a use runs on the instance this gate resumed; anything else leaves it as its row says
-    const still = resumedHere as { impl: SandboxProvider; handle: SandboxHandle } | null;
+    const still = resumedHere as { impl: DeviceProvider; handle: SandboxHandle } | null;
     if (still !== null && (pending || resumed === undefined)) {
       await this.bestEffort(id, "suspend the instance again after an exact cancel", (s) =>
         still.impl.suspend(still.handle, s),

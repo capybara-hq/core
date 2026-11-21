@@ -1,11 +1,11 @@
 import { randomUUID } from "node:crypto";
 import {
   DEFAULT_SANDBOX_ROOTS,
+  type DeviceProvider,
   type SandboxBackground,
   type SandboxExecutionRef,
   type SandboxOperationScope,
   type SandboxPermissionSupport,
-  type SandboxProvider,
   SandboxScopeDeniedError,
   ToolError,
 } from "@capybara-hq/plugin-sdk";
@@ -218,7 +218,7 @@ function managedProvider() {
       revoked.push(ref.operationId);
     },
     background,
-  } as unknown as SandboxProvider;
+  } as unknown as DeviceProvider;
   return {
     impl,
     calls,

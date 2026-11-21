@@ -5,13 +5,13 @@ import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import {
   DEFAULT_SANDBOX_ROOTS,
+  type DeviceProvider,
   isSandboxGoneError,
   isSandboxOperationOutcomeUnknownError,
   SandboxGoneError,
   type SandboxHandle,
   type SandboxLimits,
   SandboxOperationOutcomeUnknownError,
-  type SandboxProvider,
 } from "@capybara-hq/plugin-sdk";
 import { startTestPostgres, startTestRedis, type TestContainer } from "@capybara-hq/testing";
 import { Redis } from "ioredis";
@@ -57,7 +57,7 @@ let db: KernelSchemaDb;
 let redis: Redis;
 let config: KernelConfig;
 let root: string;
-let provider: SandboxProvider | undefined;
+let provider: DeviceProvider | undefined;
 const warned: string[] = [];
 const log = { info() {}, warn: (m: string) => void warned.push(m), error() {} };
 
@@ -67,7 +67,7 @@ const later = (ms: number) => new Date(Date.now() + ms);
 const signal = () => AbortSignal.timeout(30_000);
 
 const service = (
-  p: () => SandboxProvider | undefined = () => provider,
+  p: () => DeviceProvider | undefined = () => provider,
   plugin = "sandbox-fake",
   extra: Partial<SandboxServiceDeps> = {},
 ) =>
@@ -370,7 +370,7 @@ describe("lazy creation", () => {
   it("a failed create is thrown to the caller; the next call creates the instance on the file system already made", async () => {
     let fail = true;
     const base = createFakeSandbox(root);
-    const flaky: SandboxProvider = {
+    const flaky: DeviceProvider = {
       ...base,
       create: async (a) => {
         if (fail) throw new Error("docker down");
@@ -990,7 +990,7 @@ describe("restarted is sticky (fix round 1)", () => {
   it("after the instance was destroyed and its rebuild failed, the next use still reports restarted", async () => {
     let fail = false;
     const base = createFakeSandbox(root);
-    const flaky: SandboxProvider = {
+    const flaky: DeviceProvider = {
       ...base,
       create: async (a) => {
         if (fail) throw new Error("docker down");
@@ -1176,7 +1176,7 @@ describe("leftovers of interrupted creates and of other providers (fix round 1)"
   it("a create that crashed before its handle was recorded is destroyed by name; the file system stays", async () => {
     const s = service();
     // the provider built the instance, but the row is still creating (the kernel exited first)
-    const p = provider as SandboxProvider;
+    const p = provider as DeviceProvider;
     const fs = await p.createFileSystem({
       name: name(),
       limits: tiny,
@@ -1200,7 +1200,7 @@ describe("leftovers of interrupted creates and of other providers (fix round 1)"
 
   it("a file system whose handle was never recorded is destroyed by name when the device is deleted", async () => {
     const s = service();
-    const p = provider as SandboxProvider;
+    const p = provider as DeviceProvider;
     await p.createFileSystem({
       name: name(),
       limits: tiny,
@@ -1286,7 +1286,7 @@ describe("扫描失败的排在后面（fix round 1）", () => {
   it("休眠失败记 sweep_failed_at，成功后清空", async () => {
     let fail = true;
     const base = createFakeSandbox(root);
-    const flaky: SandboxProvider = {
+    const flaky: DeviceProvider = {
       ...base,
       suspend: async (h, sig) => {
         if (fail) throw new Error("daemon busy");
@@ -1338,7 +1338,7 @@ describe("锁的防护（fix round 2）", () => {
     await use(s);
     const started = gates();
     const base = createFakeSandbox(root);
-    const slow: SandboxProvider = {
+    const slow: DeviceProvider = {
       ...base,
       suspend: async (h) => {
         started.entered();
@@ -1394,7 +1394,7 @@ describe("锁的防护（fix round 2）", () => {
     const started = gates();
     let seen: AbortSignal | undefined;
     const base = createFakeSandbox(root);
-    const slow: SandboxProvider = {
+    const slow: DeviceProvider = {
       ...base,
       suspend: async (_h, sig) => {
         seen = sig;
@@ -1551,7 +1551,7 @@ describe("taking over from a crashed holder", () => {
 
   it("a failing inline operation revoke is only warned (its job retries); fn still runs", async () => {
     const base = createFakeSandbox(root);
-    const failing: SandboxProvider = {
+    const failing: DeviceProvider = {
       ...base,
       revokeOperation: async () => {
         throw new Error("revoke failed");
@@ -1577,7 +1577,7 @@ describe("a resume revokes exactly, never killAll (B-1)", () => {
   it("resume from suspended revokes the generation and delivers its owed revokes before fn", async () => {
     const order: string[] = [];
     const base = createFakeSandbox(root);
-    const spy: SandboxProvider = {
+    const spy: DeviceProvider = {
       ...base,
       revokeOperation: async (_h, ref) => void order.push(`revoke ${ref.operationId}`),
     };
@@ -1623,7 +1623,7 @@ describe("a resume revokes exactly, never killAll (B-1)", () => {
   it("a suspend that also fails is only warned; the revocation's error is thrown", async () => {
     const base = createFakeSandbox(root);
     let suspends = 0;
-    const flaky: SandboxProvider = {
+    const flaky: DeviceProvider = {
       ...base,
       suspend: async (h, sig) => {
         // the sweep's suspend works, the one after the failed revocation does not

@@ -1,9 +1,9 @@
 import {
+  type DeviceProvider,
   type ExecResult,
   SANDBOX_TAG_RE,
   type SandboxActor,
   type SandboxHandle,
-  type SandboxProvider,
   validateAllowHost,
   validateSandboxPathShape,
 } from "./device-provider.js";
@@ -182,7 +182,7 @@ export function instanceSupported(report: SandboxPermissionSupport): boolean {
 }
 
 /** Actor and tag come only from the immutable operation scope. */
-export type SandboxExecOptions = Omit<Parameters<SandboxProvider["exec"]>[1], "tag" | "actor">;
+export type SandboxExecOptions = Omit<Parameters<DeviceProvider["exec"]>[1], "tag" | "actor">;
 
 /**
  * A lightweight factory result: no worker opens until a method is called. Factory and method

@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import type { SandboxProvider } from "@capybara-hq/plugin-sdk";
+import type { DeviceProvider } from "@capybara-hq/plugin-sdk";
 import { startTestPostgres, startTestRedis, type TestContainer } from "@capybara-hq/testing";
 import pg from "pg";
 import { afterAll, beforeAll, beforeEach, expect, it, vi } from "vitest";
@@ -222,7 +222,7 @@ async function consent() {
         revokeOperation() {
           throw new Error("no provider IO");
         },
-      } as unknown as SandboxProvider,
+      } as unknown as DeviceProvider,
     });
   // a provisioned instance (created under the open default) with its cloud evidence (B-15)
   await seedCloudInstance(a, {

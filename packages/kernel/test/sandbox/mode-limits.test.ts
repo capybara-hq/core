@@ -3,7 +3,7 @@ import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { type SandboxProvider, ToolError } from "@capybara-hq/plugin-sdk";
+import { type DeviceProvider, ToolError } from "@capybara-hq/plugin-sdk";
 import { startTestPostgres, startTestRedis, type TestContainer } from "@capybara-hq/testing";
 import { Redis } from "ioredis";
 import { sql } from "kysely";
@@ -53,7 +53,7 @@ let db: KernelSchemaDb;
 let redis: Redis;
 let config: ReturnType<typeof KernelConfigSchema.parse>;
 let root: string;
-let provider: SandboxProvider;
+let provider: DeviceProvider;
 const warned: string[] = [];
 const log = { info() {}, warn: (m: string) => void warned.push(m), error() {} };
 const signal = () => AbortSignal.timeout(30_000);
@@ -113,7 +113,7 @@ beforeEach(async () => {
 });
 
 const service = (
-  p: () => SandboxProvider = () => provider,
+  p: () => DeviceProvider = () => provider,
   lockTtlMs?: number,
   extra: Partial<SandboxServiceDeps> = {},
 ) =>
@@ -470,7 +470,7 @@ describe("a provider that refuses the open public network", () => {
   it("any other create failure becomes sandbox.create_failed without the provider's message", async () => {
     await setAutoMode("off");
     const failing = fake();
-    const p: SandboxProvider = Object.create(failing);
+    const p: DeviceProvider = Object.create(failing);
     p.create = async () => {
       throw new Error(`no image configured (${FAKE_REFUSAL_SECRET})`);
     };

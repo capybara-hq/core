@@ -4,8 +4,8 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
   DEFAULT_SANDBOX_ROOTS,
+  type DeviceProvider,
   type SandboxExecutionRef,
-  type SandboxProvider,
   SandboxScopeDeniedError,
   ToolError,
 } from "@capybara-hq/plugin-sdk";
@@ -103,7 +103,7 @@ beforeAll(async () => {
   root = await mkdtemp(join(tmpdir(), "managed-builtins-"));
   const base = createFakeSandbox(root);
   const facade = base;
-  const impl: SandboxProvider = {
+  const impl: DeviceProvider = {
     ...facade,
     async permissionSupport() {
       return {
@@ -138,7 +138,7 @@ beforeAll(async () => {
     },
     async prepare(h, scope, signal) {
       await reach("prepare");
-      return (facade.prepare as NonNullable<SandboxProvider["prepare"]>)(h, scope, signal);
+      return (facade.prepare as NonNullable<DeviceProvider["prepare"]>)(h, scope, signal);
     },
     background: {
       async start(h, scope) {

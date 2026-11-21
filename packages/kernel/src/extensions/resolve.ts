@@ -131,8 +131,16 @@ export function resolveExtensions(
   for (const m of manifests) {
     for (const ref of m.provides) {
       const { name, major } = parseExtensionPoint(ref);
-      const majors = EXTENSION_POINTS[name]?.majors;
-      if (majors && !majors.includes(major)) {
+      const majors = Object.hasOwn(EXTENSION_POINTS, name)
+        ? EXTENSION_POINTS[name]?.majors
+        : undefined;
+      if (!majors) {
+        throw new ExtensionResolveError(
+          `Plugin ${m.name} provides ${ref}, which this kernel does not know.`,
+          "extension.unsupported_extension_point",
+        );
+      }
+      if (!majors.includes(major)) {
         throw new ExtensionResolveError(
           `Plugin ${m.name} provides ${ref}, which this kernel no longer supports; upgrade it to a version that provides ${name}@${Math.max(...majors)}.`,
           "extension.unsupported_extension_point",

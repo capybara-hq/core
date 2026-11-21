@@ -3,7 +3,7 @@ import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { DEVICE_PROVIDER_EXTENSION_POINT, type SandboxProvider } from "@capybara-hq/plugin-sdk";
+import { DEVICE_PROVIDER_EXTENSION_POINT, type DeviceProvider } from "@capybara-hq/plugin-sdk";
 import { startTestPostgres, startTestRedis, type TestContainer } from "@capybara-hq/testing";
 import { Redis } from "ioredis";
 import { sql } from "kysely";
@@ -150,7 +150,7 @@ const instanceRow = (id: string) =>
   db.selectFrom("device_instances").selectAll().where("device_id", "=", id).executeTakeFirst();
 
 describe("SandboxProviders", () => {
-  const registry = (entries: { plugin: string; impl: SandboxProvider }[]) =>
+  const registry = (entries: { plugin: string; impl: DeviceProvider }[]) =>
     ({
       list: () => entries.map((e) => ({ ...e, capability: DEVICE_PROVIDER_EXTENSION_POINT })),
     }) as unknown as Pick<ExtensionRegistry, "list">;

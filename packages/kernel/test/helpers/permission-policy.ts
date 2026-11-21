@@ -1,8 +1,8 @@
 import { randomUUID } from "node:crypto";
 import {
   DEFAULT_SANDBOX_ROOTS,
+  type DeviceProvider,
   type SandboxOperationScope,
-  type SandboxProvider,
   SandboxScopeDeniedError,
 } from "@capybara-hq/plugin-sdk";
 import { vi } from "vitest";
@@ -168,7 +168,7 @@ export async function permissionFixture(
         },
       };
     },
-  } as unknown as SandboxProvider;
+  } as unknown as DeviceProvider;
   k.app
     .get(SandboxProviders)
     .register({ plugin: "@permission-policy-test", version: "test-1", impl: provider });

@@ -169,7 +169,7 @@ export function isFileSystemGoneError(e: unknown): e is FileSystemGoneError {
 }
 
 /**
- * A holder tag (`exec` argument `tag`, {@link SandboxProvider.killTagged}): the kernel passes its
+ * A holder tag (`exec` argument `tag`, {@link DeviceProvider.killTagged}): the kernel passes its
  * lease tokens (UUIDs). Providers check tags against it before putting them in a command line or a
  * kill pattern.
  */
@@ -216,7 +216,7 @@ export const SANDBOX_TAG_RE = /^[a-z0-9-]{1,64}$/;
  * methods must be safe to call concurrently. Each `exec` labels its command with its `tag`, and an
  * aborted `exec` kills only its own command.
  */
-export interface SandboxProvider {
+export interface DeviceProvider {
   /** Runtime permission support for this instance; does not grant consent or provision an instance. */
   permissionSupport?(h: SandboxHandle, signal: AbortSignal): Promise<SandboxPermissionSupport>;
   /**
@@ -254,7 +254,7 @@ export interface SandboxProvider {
   /**
    * Where `create`-time limits are fixed: `instance` (absent; Docker: a new instance applies new
    * limits) or `fileSystem` (E2B: the instance is the file system, so only a file reset applies
-   * them without {@link SandboxProvider.update}).
+   * them without {@link DeviceProvider.update}).
    */
   readonly limitsApplyAt?: "instance" | "fileSystem";
   /**
@@ -316,7 +316,7 @@ export interface SandboxProvider {
    * spawned that did not start their own session). The kernel calls it only when no other holder
    * can be running commands (an instance just resumed from `suspended`, or under the exclusive
    * lease), never while another session may be; to clean up after one crashed holder it uses
-   * {@link SandboxProvider.killTagged}. Processes a command put in the background in their own
+   * {@link DeviceProvider.killTagged}. Processes a command put in the background in their own
    * session are not guaranteed to be killed.
    */
   killAll(h: SandboxHandle, signal: AbortSignal): Promise<void>;
@@ -343,7 +343,7 @@ export interface SandboxProvider {
       signal: AbortSignal;
       /**
        * The holder's tag ({@link SANDBOX_TAG_RE}); label the command with it so
-       * {@link SandboxProvider.killTagged} can find it.
+       * {@link DeviceProvider.killTagged} can find it.
        */
       tag: string;
       /** Who runs the command; informational in phase 1 (record it, do not act on it). */
@@ -375,7 +375,7 @@ export interface SandboxProvider {
    * path does not exist and the device could reach it; a path it cannot reach throws (a policy
    * refusal), as does a path that is a file or a directory that cannot be read.
    *
-   * Optional: a provider without it (or without {@link SandboxProvider.scan}) offers no projects,
+   * Optional: a provider without it (or without {@link DeviceProvider.scan}) offers no projects,
    * and its conversations stay in free mode.
    */
   list?(
@@ -384,7 +384,8 @@ export interface SandboxProvider {
     opts: { limit: number; signal: AbortSignal },
   ): Promise<{ entries: { name: string; isDir: boolean }[]; truncated: boolean } | null>;
   /**
-   * Looks for project-like directories, read as for {@link SandboxProvider.list}. Every provider traverses the same way:
+   * Looks for project-like directories, read as for {@link DeviceProvider.list}. Every provider
+   * traverses the same way:
    *
    * - Candidates are `base` itself and the directories at most {@link MAX_DEVICE_SCAN_DEPTH}
    *   levels below it that hold a `.git` entry (directory or file) or an `AGENTS.md` file.
@@ -421,17 +422,17 @@ const CONTROL = /[\u0000-\u001f\u007f]/;
 /** The longest project name, in UTF-16 code units. */
 export const MAX_DEVICE_PROJECT_NAME_LENGTH = 64;
 
-/** The most candidates a `scan` answers ({@link SandboxProvider.scan}). */
+/** The most candidates a `scan` answers ({@link DeviceProvider.scan}). */
 export const MAX_DEVICE_SCAN_RESULTS = 50;
 
 /**
- * Directory names a `scan` never enters, at any depth ({@link SandboxProvider.scan}): dependency
+ * Directory names a `scan` never enters, at any depth ({@link DeviceProvider.scan}): dependency
  * trees, not projects. Every provider skips exactly these.
  */
 export const DEVICE_SCAN_SKIPPED_DIRS: readonly string[] = Object.freeze(["node_modules"]);
 
 /**
- * Directory names a `scan` does not enter directly under its `base` ({@link SandboxProvider.scan}):
+ * Directory names a `scan` does not enter directly under its `base` ({@link DeviceProvider.scan}):
  * the owner's macOS `Library` (app data, huge, partly privacy-protected) is not where projects
  * live. Every provider skips exactly these.
  */
@@ -442,7 +443,7 @@ export const MAX_DEVICE_SCAN_DEPTH = 2;
 
 /**
  * The most directories one `scan` visits (reads the entries of), its `base` included
- * ({@link SandboxProvider.scan}): breadth-first, each level in code-unit order of path.
+ * ({@link DeviceProvider.scan}): breadth-first, each level in code-unit order of path.
  */
 export const MAX_DEVICE_SCAN_DIRS = 500;
 

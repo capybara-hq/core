@@ -2,11 +2,11 @@ import { mkdtemp, readdir, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
+  type DeviceProvider,
   isFileSystemGoneError,
   isSandboxScopeDeniedError,
   type SandboxHandle,
   type SandboxOperationScope,
-  type SandboxProvider,
 } from "@capybara-hq/plugin-sdk";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import {
@@ -42,7 +42,7 @@ const sig = () => AbortSignal.timeout(10_000);
 const actor = { accountId: "acc-1", conversationId: "conv-1" };
 
 /** A file system and an instance attached to it. */
-async function mk(p: SandboxProvider, name: string): Promise<SandboxHandle> {
+async function mk(p: DeviceProvider, name: string): Promise<SandboxHandle> {
   const fileSystem = await p.createFileSystem({ name: `fs-${name}`, limits, signal: sig() });
   return p.create({ name, image: "i", limits, fileSystem, signal: sig() });
 }
@@ -380,7 +380,7 @@ describe("sandbox-fake permission-scoped surface", () => {
     const p = createFakeSandbox(root);
     const h = await mk(p, "cap-scope");
     const op = (id: string, fs = scoped(["/workspace/a"], ["/skills"])) =>
-      (p.operation as NonNullable<SandboxProvider["operation"]>)(h, scopeOf(id, fs), sig());
+      (p.operation as NonNullable<DeviceProvider["operation"]>)(h, scopeOf(id, fs), sig());
     const data = new TextEncoder().encode("x");
     await (await op("op-w1")).writeFile("/workspace/a/f.txt", data, sig());
     await expect((await op("op-w2")).writeFile("/workspace/b.txt", data, sig())).rejects.toSatisfy(
@@ -426,13 +426,13 @@ describe("sandbox-fake permission-scoped surface", () => {
       }),
     ).rejects.toThrow(/outside the instance roots/);
     // an operation whose scope grants the path reaches it (the scope, not the roots, bounds it)
-    const op = await (p.operation as NonNullable<SandboxProvider["operation"]>)(
+    const op = await (p.operation as NonNullable<DeviceProvider["operation"]>)(
       h,
       scopeOf("op-raw-1", scoped(["/home/u/project"])),
       sig(),
     );
     await op.writeFile("/home/u/project/f", data, sig());
-    const read = await (p.operation as NonNullable<SandboxProvider["operation"]>)(
+    const read = await (p.operation as NonNullable<DeviceProvider["operation"]>)(
       h,
       scopeOf("op-raw-2", scoped(["/home/u/project"])),
       sig(),
@@ -469,7 +469,7 @@ describe("sandbox-fake permission-scoped surface", () => {
     const p = createFakeSandbox(root);
     const h = await mk(p, "cap-once");
     const op = () =>
-      (p.operation as NonNullable<SandboxProvider["operation"]>)(
+      (p.operation as NonNullable<DeviceProvider["operation"]>)(
         h,
         scopeOf("op-once", scoped(["/workspace"])),
         sig(),
@@ -484,7 +484,7 @@ describe("sandbox-fake permission-scoped surface", () => {
   it("owns background executions by exact reference: output, status, stop and loss", async () => {
     const p = createFakeSandbox(root);
     const h = await mk(p, "cap-bg");
-    const bg = p.background as NonNullable<SandboxProvider["background"]>;
+    const bg = p.background as NonNullable<DeviceProvider["background"]>;
     const start = (id: string, command: string, outputPath = `/workspace/${id}.out`) =>
       bg.start(h, scopeOf(id, scoped(["/workspace"])), {
         command,

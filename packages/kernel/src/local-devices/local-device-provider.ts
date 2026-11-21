@@ -1,9 +1,9 @@
 import type {
+  DeviceProvider,
   ExecResult,
   FileSystemHandle,
   SandboxHandle,
   SandboxLimits,
-  SandboxProvider,
   SandboxRoots,
 } from "@capybara-hq/plugin-sdk";
 import {
@@ -111,7 +111,7 @@ const bytesOf = (b64: string): Uint8Array => new Uint8Array(Buffer.from(b64, "ba
  * does nothing; the deletion's `stop` comes from `MachinesService.revokeActive` (ruling R24).
  */
 @Injectable()
-export class LocalDeviceProvider implements SandboxProvider {
+export class LocalDeviceProvider implements DeviceProvider {
   readonly concurrentExec = true as const;
   readonly sessionIsolation = false;
 
@@ -147,9 +147,9 @@ export class LocalDeviceProvider implements SandboxProvider {
    * on an incarnation nobody else holds (a resume, a failed limits change, a quarantine), every
    * started-or-unknown intent of that generation; the owed revokes are delivered by operation id.
    */
-  staged(transport: StagedDeviceTransport): SandboxProvider {
+  staged(transport: StagedDeviceTransport): DeviceProvider {
     const ops = this.stagedOperations(transport);
-    const overrides: Partial<SandboxProvider> = {
+    const overrides: Partial<DeviceProvider> = {
       ...ops,
       create: async (args) => {
         const id = args.fileSystem.id;
@@ -166,7 +166,7 @@ export class LocalDeviceProvider implements SandboxProvider {
       },
     };
     // the shared lifecycle methods keep this provider as their receiver (relay, targets, config)
-    return Object.assign(Object.create(this) as SandboxProvider, overrides);
+    return Object.assign(Object.create(this) as DeviceProvider, overrides);
   }
 
   /** Dormant v3 adapter. It is not installed on the active v2 registered provider. */
@@ -174,7 +174,7 @@ export class LocalDeviceProvider implements SandboxProvider {
     transport: StagedDeviceTransport,
   ): Required<
     Pick<
-      SandboxProvider,
+      DeviceProvider,
       "operation" | "prepare" | "browse" | "permissionSupport" | "revokeOperation" | "background"
     >
   > {
@@ -493,10 +493,10 @@ export class LocalDeviceProvider implements SandboxProvider {
   }
 
   // The raw protocol 2 methods: a v3 machine runs work only under an admitted operation scope
-  readonly exec: SandboxProvider["exec"] = refuseRaw("exec");
-  readonly readFile: SandboxProvider["readFile"] = refuseRaw("readFile");
-  readonly writeFile: SandboxProvider["writeFile"] = refuseRaw("writeFile");
-  readonly stat: SandboxProvider["stat"] = refuseRaw("stat");
-  readonly list: NonNullable<SandboxProvider["list"]> = refuseRaw("list");
-  readonly scan: NonNullable<SandboxProvider["scan"]> = refuseRaw("scan");
+  readonly exec: DeviceProvider["exec"] = refuseRaw("exec");
+  readonly readFile: DeviceProvider["readFile"] = refuseRaw("readFile");
+  readonly writeFile: DeviceProvider["writeFile"] = refuseRaw("writeFile");
+  readonly stat: DeviceProvider["stat"] = refuseRaw("stat");
+  readonly list: NonNullable<DeviceProvider["list"]> = refuseRaw("list");
+  readonly scan: NonNullable<DeviceProvider["scan"]> = refuseRaw("scan");
 }

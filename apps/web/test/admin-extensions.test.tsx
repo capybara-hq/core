@@ -564,7 +564,7 @@ describe("/admin/extensions (ListPage + DataTable by capability, details in a Sh
             state: "pending",
             reason: "conflict",
             detail:
-              "extension point device-provider@1 is single-provider but provided by: sandbox-docker, sandbox-e2b",
+              "extension point device-provider@1 is provided by more than one extension: sandbox-docker, sandbox-e2b",
             heartbeatAt: HEARTBEAT,
           },
         ],
@@ -808,7 +808,7 @@ describe("/admin/extensions (ListPage + DataTable by capability, details in a Sh
             state: "pending",
             reason: "conflict",
             detail:
-              "extension point device-provider@1 is single-provider but provided by: sandbox-docker, sandbox-e2b; sandbox-docker is not loaded, so device-provider@1 has no running provider",
+              "extension point device-provider@1 is provided by more than one extension: sandbox-docker, sandbox-e2b; sandbox-docker is not loaded, so device-provider@1 has no running provider",
             heartbeatAt: HEARTBEAT,
           },
         ],

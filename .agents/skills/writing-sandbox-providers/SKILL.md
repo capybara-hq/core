@@ -27,7 +27,7 @@ Implementations:
 changeset) and must keep the official providers working; check them in capybara-hq/plugins.
 
 ```ts
-interface SandboxProvider {
+interface DeviceProvider {
   createFileSystem({ name, limits, signal }): Promise<FileSystemHandle>;  // name = cap-device-<deviceId>
   destroyFileSystem(fs, signal): Promise<void>;          // not being there counts as success
   destroyFileSystemByName(name, signal): Promise<void>;  // no handle: a crash mid-create, the legacy cleanup

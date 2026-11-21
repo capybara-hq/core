@@ -4,10 +4,10 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
   DEFAULT_SANDBOX_ROOTS,
+  type DeviceProvider,
   type SandboxBrowseScope,
   type SandboxOperationScope,
   SandboxPermissionUnsupportedError,
-  type SandboxProvider,
   SandboxScopeDeniedError,
 } from "@capybara-hq/plugin-sdk";
 import { startTestPostgres, startTestRedis, type TestContainer } from "@capybara-hq/testing";
@@ -140,7 +140,7 @@ beforeAll(async () => {
     operationId: scope.operationId,
     readRoots: scope.filesystem.kind === "device" ? ["/"] : scope.filesystem.readRoots,
   });
-  const impl: SandboxProvider = {
+  const impl: DeviceProvider = {
     ...base,
     stat: async (_h, path) => {
       record("raw", "stat", path);

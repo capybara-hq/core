@@ -1,11 +1,11 @@
 import { randomUUID } from "node:crypto";
 import {
   DEFAULT_SANDBOX_ROOTS,
+  type DeviceProvider,
   type SandboxBackground,
   type SandboxExecutionRef,
   type SandboxExecutionStatus,
   type SandboxPermissionSupport,
-  type SandboxProvider,
   SandboxScopeDeniedError,
 } from "@capybara-hq/plugin-sdk";
 import { expect } from "vitest";
@@ -225,7 +225,7 @@ export function managedOutputProvider() {
     resume: forbid("resume"),
     async revokeOperation() {},
     background,
-  } as unknown as SandboxProvider;
+  } as unknown as DeviceProvider;
   /** The single execution this fixture launched. */
   const only = (): OwnedExecution => {
     const [e] = [...executions.values()];

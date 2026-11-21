@@ -3,7 +3,7 @@ import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
-import type { SandboxExecutionRef, SandboxHandle, SandboxProvider } from "@capybara-hq/plugin-sdk";
+import type { DeviceProvider, SandboxExecutionRef, SandboxHandle } from "@capybara-hq/plugin-sdk";
 import { startTestPostgres, startTestRedis, type TestContainer } from "@capybara-hq/testing";
 import { Redis } from "ioredis";
 import { sql } from "kysely";
@@ -55,8 +55,8 @@ const signal = () => AbortSignal.timeout(30_000);
 const DAY = 24 * 3600_000;
 
 /** A fake provider whose lifecycle calls are recorded; `destroy` fails while `destroyFails`. */
-function spied(name: string, impl: SandboxProvider): SandboxProvider {
-  const w = Object.create(impl) as SandboxProvider;
+function spied(name: string, impl: DeviceProvider): DeviceProvider {
+  const w = Object.create(impl) as DeviceProvider;
   w.create = async (args) => {
     const h = await impl.create(args);
     calls.push(`${name} create ${h.id}`);
@@ -87,8 +87,8 @@ function spied(name: string, impl: SandboxProvider): SandboxProvider {
   return w;
 }
 
-let cloud: SandboxProvider;
-let local: SandboxProvider;
+let cloud: DeviceProvider;
+let local: DeviceProvider;
 
 const service = (snapshots?: Pick<CloudPermissionSnapshots, "reconcileHeld">): SandboxService =>
   sandboxServiceFor({
@@ -879,7 +879,7 @@ describe("a suspended cloud instance with a revoked managed start (B-22)", () =>
   /** The cloud provider with exact background supervision: `stop` is recorded. */
   const withBackground = (deviceId: string) => {
     const base = cloud;
-    const w = Object.create(base) as SandboxProvider;
+    const w = Object.create(base) as DeviceProvider;
     w.background = {
       stop: async (h: SandboxHandle, ref: SandboxExecutionRef) => {
         calls.push(`cloud stop ${ref.operationId} ${h.id}`);
@@ -893,7 +893,7 @@ describe("a suspended cloud instance with a revoked managed start (B-22)", () =>
         if (answer === "stopped") running.delete(ref.operationId);
         return { outcome: answer } as { outcome: "stopped" };
       },
-    } as unknown as NonNullable<SandboxProvider["background"]>;
+    } as unknown as NonNullable<DeviceProvider["background"]>;
     w.update = async () => {
       updates++;
       return "updated";

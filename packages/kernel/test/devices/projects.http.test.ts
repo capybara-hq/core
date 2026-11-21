@@ -5,10 +5,10 @@ import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import {
   DEFAULT_SANDBOX_ROOTS,
+  type DeviceProvider,
   type KernelReq,
   type LegacyDeviceHello,
   type SandboxBrowseScope,
-  type SandboxProvider,
 } from "@capybara-hq/plugin-sdk";
 import { startTestPostgres, startTestRedis, type TestContainer } from "@capybara-hq/testing";
 import { Redis } from "ioredis";
@@ -754,7 +754,7 @@ describe("device projects", () => {
       },
     };
     // a provider that can list and scan offers projects (the calls go through `browse` above)
-    const impl = { list: browse.list, scan: browse.scan } as unknown as SandboxProvider;
+    const impl = { list: browse.list, scan: browse.scan } as unknown as DeviceProvider;
     const real = k.app.get(SandboxProviders);
     const service = new DeviceProjectsService(
       k.app.get(KernelDb),

@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import type { Logger, SandboxProvider } from "@capybara-hq/plugin-sdk";
+import type { DeviceProvider, Logger } from "@capybara-hq/plugin-sdk";
 import type { Redis } from "ioredis";
 import { type Kysely, sql } from "kysely";
 import type { KernelConfig } from "../../src/config/schema.js";
@@ -62,7 +62,7 @@ export interface SandboxServiceDeps {
   /** Read at every call; undefined without a provider. */
   provider: () => SandboxProviderEntry | undefined;
   /** A still-loaded provider by plugin name; none when omitted. */
-  lookup?: (plugin: string) => SandboxProvider | undefined;
+  lookup?: (plugin: string) => DeviceProvider | undefined;
   /** Kernel-internal providers (`@local`), found by name before any extension. */
   internal?: SandboxProviderEntry[];
   config: () => Pick<KernelConfig, "sandbox" | "devices">;

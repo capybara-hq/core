@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
   DEFAULT_SANDBOX_ROOTS,
-  type SandboxProvider,
+  type DeviceProvider,
   type SandboxRoots,
   ToolError,
 } from "@capybara-hq/plugin-sdk";
@@ -126,7 +126,7 @@ beforeAll(async () => {
     async operation() {
       throw new Error("no device operation in these cases");
     },
-  } as unknown as SandboxProvider;
+  } as unknown as DeviceProvider;
   k.app.get(SandboxProviders).register({ plugin: PROVIDER, version: "test-1", impl: provider });
 });
 afterAll(async () => {
@@ -732,7 +732,7 @@ describe("cloud installed evidence in the real lifecycle", () => {
         // the trusted preparation runs only once admission admitted its scope
         async prepare(h, scope, signal) {
           order.push("prepare");
-          return (base.prepare as NonNullable<SandboxProvider["prepare"]>)(h, scope, signal);
+          return (base.prepare as NonNullable<DeviceProvider["prepare"]>)(h, scope, signal);
         },
       },
     });

@@ -5,8 +5,8 @@ import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import {
   DEFAULT_SANDBOX_ROOTS,
+  type DeviceProvider,
   type SandboxHandle,
-  type SandboxProvider,
 } from "@capybara-hq/plugin-sdk";
 import { startTestPostgres, startTestRedis, type TestContainer } from "@capybara-hq/testing";
 import { afterAll, beforeAll, beforeEach, expect, it, vi } from "vitest";
@@ -89,7 +89,7 @@ function barrier() {
 }
 
 /** The machine's lifecycle as each replica's staged provider sees it. */
-function fakeLocal(creates: string[]): SandboxProvider {
+function fakeLocal(creates: string[]): DeviceProvider {
   const handle = (name: string): SandboxHandle => ({
     id: name.replace(/^cap-device-/, ""),
     roots: ROOTS,
@@ -124,7 +124,7 @@ function fakeLocal(creates: string[]): SandboxProvider {
     async stat() {
       return null;
     },
-  } as unknown as SandboxProvider;
+  } as unknown as DeviceProvider;
 }
 
 /**

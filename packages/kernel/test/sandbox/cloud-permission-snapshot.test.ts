@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import type { SandboxProvider } from "@capybara-hq/plugin-sdk";
+import type { DeviceProvider } from "@capybara-hq/plugin-sdk";
 import { startTestPostgres, startTestRedis, type TestContainer } from "@capybara-hq/testing";
 import { afterAll, beforeAll, beforeEach, expect, it } from "vitest";
 import { KernelConfigSchema } from "../../src/config/schema.js";
@@ -55,7 +55,7 @@ beforeAll(async () => {
       revokeOperation() {
         throw new Error("provider IO forbidden");
       },
-    } as unknown as SandboxProvider,
+    } as unknown as DeviceProvider,
   });
 });
 beforeEach(async () => {

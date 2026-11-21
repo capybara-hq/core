@@ -5,9 +5,9 @@ import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import {
   DEFAULT_SANDBOX_ROOTS,
+  type DeviceProvider,
   type SandboxBrowseScope,
   type SandboxHandle,
-  type SandboxProvider,
 } from "@capybara-hq/plugin-sdk";
 import { startTestPostgres, startTestRedis, type TestContainer } from "@capybara-hq/testing";
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
@@ -229,7 +229,7 @@ const support = {
 };
 
 /** A connected machine's lifecycle as the staged provider sees it (the handle is the device). */
-function fakeLocal(events: string[]): SandboxProvider {
+function fakeLocal(events: string[]): DeviceProvider {
   const handle = (name: string): SandboxHandle => ({
     id: name.replace(/^cap-device-/, ""),
     roots: ROOTS,
@@ -278,7 +278,7 @@ function fakeLocal(events: string[]): SandboxProvider {
         scan: async () => [],
       };
     },
-  } as unknown as SandboxProvider;
+  } as unknown as DeviceProvider;
 }
 
 async function localDevice(opts: { binder?: boolean } = {}) {

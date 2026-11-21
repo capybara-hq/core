@@ -52,7 +52,7 @@ describe("nested operation boundaries", () => {
   });
 });
 
-import type { SandboxOperationScope, SandboxProvider } from "@capybara-hq/plugin-sdk";
+import type { DeviceProvider, SandboxOperationScope } from "@capybara-hq/plugin-sdk";
 import { createHeldOperations, withKernelGeneration } from "../../src/sandbox/held-operations.js";
 
 const scope = (revision: number): SandboxOperationScope => ({
@@ -101,7 +101,7 @@ it("resolves once per actual native method and exposes no lifecycle or authority
         },
       };
     },
-  } as unknown as SandboxProvider;
+  } as unknown as DeviceProvider;
   const held = createHeldOperations(provider, handle, signal, async (_method, _input, invoke) =>
     invoke(scope(revision), signal),
   );
@@ -138,7 +138,7 @@ it("missing factories and unsupported runtime never fall back to raw exec", asyn
         rawCalls++;
       },
       ...extra,
-    } as unknown as SandboxProvider;
+    } as unknown as DeviceProvider;
     const held = createHeldOperations(
       provider,
       { id: "device" },
@@ -174,7 +174,7 @@ it("an instance report naming why it is unavailable refuses a network-none nativ
           opened++;
           return { readFile: async () => ({ data: new Uint8Array([1]), truncated: false }) };
         },
-      } as unknown as SandboxProvider,
+      } as unknown as DeviceProvider,
       { id: "device" },
       signal,
       async (_method, _input, invoke) => invoke(scope(1), signal),
@@ -239,7 +239,7 @@ describe("withKernelGeneration", () => {
         return { outcome: "stopped" as const };
       },
     };
-    const provider = { concurrentExec: true, background } as unknown as SandboxProvider;
+    const provider = { concurrentExec: true, background } as unknown as DeviceProvider;
     const wrapped = withKernelGeneration(provider, "1700000000000");
     const signal = new AbortController().signal;
     const args = { command: "sleep 1", timeoutMs: 1000, signal } as never;
@@ -261,7 +261,7 @@ describe("withKernelGeneration", () => {
     expect(wrapped.concurrentExec).toBe(true);
   });
   it("a provider without background tasks is returned as it is", () => {
-    const provider = { concurrentExec: true } as unknown as SandboxProvider;
+    const provider = { concurrentExec: true } as unknown as DeviceProvider;
     expect(withKernelGeneration(provider, "1")).toBe(provider);
   });
 });

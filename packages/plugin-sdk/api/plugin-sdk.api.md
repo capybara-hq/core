@@ -1165,6 +1165,78 @@ export class DeviceProtocolError extends Error {
 }
 
 // @public
+export interface DeviceProvider {
+    background?: SandboxBackground;
+    browse?(h: SandboxHandle, scope: SandboxBrowseScope, signal: AbortSignal): Promise<SandboxBrowse>;
+    readonly concurrentExec: true;
+    create(args: {
+        name: string;
+        image?: string;
+        limits: SandboxLimits;
+        fileSystem: FileSystemHandle_2;
+        signal: AbortSignal;
+    }): Promise<SandboxHandle>;
+    createFileSystem(args: {
+        name: string;
+        limits: SandboxLimits;
+        signal: AbortSignal;
+    }): Promise<FileSystemHandle_2>;
+    destroy(h: SandboxHandle, signal: AbortSignal): Promise<void>;
+    destroyByName(name: string, signal: AbortSignal): Promise<void>;
+    destroyFileSystem(fs: FileSystemHandle_2, signal: AbortSignal): Promise<void>;
+    destroyFileSystemByName(name: string, signal: AbortSignal): Promise<void>;
+    exec(h: SandboxHandle, args: {
+        command: string;
+        cwd?: string;
+        env?: Record<string, string>;
+        timeoutMs: number;
+        maxOutputBytes: number;
+        signal: AbortSignal;
+        tag: string;
+        actor: SandboxActor;
+    }): Promise<ExecResult>;
+    killAll(h: SandboxHandle, signal: AbortSignal): Promise<void>;
+    killTagged(h: SandboxHandle, tags: string[], signal: AbortSignal): Promise<void>;
+    readonly limitsApplyAt?: "instance" | "fileSystem";
+    list?(h: SandboxHandle, path: string, opts: {
+        limit: number;
+        signal: AbortSignal;
+    }): Promise<{
+        entries: {
+            name: string;
+            isDir: boolean;
+        }[];
+        truncated: boolean;
+    } | null>;
+    operation?(h: SandboxHandle, scope: SandboxOperationScope, signal: AbortSignal): Promise<SandboxOperation>;
+    permissionSupport?(h: SandboxHandle, signal: AbortSignal): Promise<SandboxPermissionSupport>;
+    prepare?(h: SandboxHandle, scope: SandboxPreparationScope, signal: AbortSignal): Promise<SandboxPreparation>;
+    readFile(h: SandboxHandle, path: string, opts: {
+        maxBytes: number;
+        signal: AbortSignal;
+    }): Promise<{
+        data: Uint8Array;
+        truncated: boolean;
+    } | null>;
+    resume(h: SandboxHandle, signal: AbortSignal): Promise<"resumed" | "gone">;
+    revokeOperation?(h: SandboxHandle, ref: SandboxOperationRef, signal: AbortSignal): Promise<void>;
+    scan?(h: SandboxHandle, base: string, opts: {
+        signal: AbortSignal;
+    }): Promise<{
+        path: string;
+        suggestedName: string;
+    }[]>;
+    readonly sessionIsolation?: boolean;
+    stat(h: SandboxHandle, path: string, signal: AbortSignal): Promise<{
+        size: number;
+        isDir: boolean;
+    } | null>;
+    suspend(h: SandboxHandle, signal: AbortSignal): Promise<void>;
+    update?(h: SandboxHandle, limits: SandboxLimits, signal: AbortSignal): Promise<"updated" | "recreate">;
+    writeFile(h: SandboxHandle, path: string, data: Uint8Array, signal: AbortSignal): Promise<void>;
+}
+
+// @public
 export interface DeviceReadFileArgs {
     maxBytes: number;
     path: string;
@@ -3655,7 +3727,7 @@ export interface SandboxBrowseScope extends SandboxOperationRef {
 }
 
 // @public
-export type SandboxExecOptions = Omit<Parameters<SandboxProvider["exec"]>[1], "tag" | "actor">;
+export type SandboxExecOptions = Omit<Parameters<DeviceProvider["exec"]>[1], "tag" | "actor">;
 
 // @public
 export interface SandboxExecutionRef {
@@ -3823,78 +3895,6 @@ export interface SandboxPreparationScope {
     readonly purpose: "skills" | "attachments";
     readonly tag: string;
     readonly writeRoots: readonly string[];
-}
-
-// @public
-export interface SandboxProvider {
-    background?: SandboxBackground;
-    browse?(h: SandboxHandle, scope: SandboxBrowseScope, signal: AbortSignal): Promise<SandboxBrowse>;
-    readonly concurrentExec: true;
-    create(args: {
-        name: string;
-        image?: string;
-        limits: SandboxLimits;
-        fileSystem: FileSystemHandle_2;
-        signal: AbortSignal;
-    }): Promise<SandboxHandle>;
-    createFileSystem(args: {
-        name: string;
-        limits: SandboxLimits;
-        signal: AbortSignal;
-    }): Promise<FileSystemHandle_2>;
-    destroy(h: SandboxHandle, signal: AbortSignal): Promise<void>;
-    destroyByName(name: string, signal: AbortSignal): Promise<void>;
-    destroyFileSystem(fs: FileSystemHandle_2, signal: AbortSignal): Promise<void>;
-    destroyFileSystemByName(name: string, signal: AbortSignal): Promise<void>;
-    exec(h: SandboxHandle, args: {
-        command: string;
-        cwd?: string;
-        env?: Record<string, string>;
-        timeoutMs: number;
-        maxOutputBytes: number;
-        signal: AbortSignal;
-        tag: string;
-        actor: SandboxActor;
-    }): Promise<ExecResult>;
-    killAll(h: SandboxHandle, signal: AbortSignal): Promise<void>;
-    killTagged(h: SandboxHandle, tags: string[], signal: AbortSignal): Promise<void>;
-    readonly limitsApplyAt?: "instance" | "fileSystem";
-    list?(h: SandboxHandle, path: string, opts: {
-        limit: number;
-        signal: AbortSignal;
-    }): Promise<{
-        entries: {
-            name: string;
-            isDir: boolean;
-        }[];
-        truncated: boolean;
-    } | null>;
-    operation?(h: SandboxHandle, scope: SandboxOperationScope, signal: AbortSignal): Promise<SandboxOperation>;
-    permissionSupport?(h: SandboxHandle, signal: AbortSignal): Promise<SandboxPermissionSupport>;
-    prepare?(h: SandboxHandle, scope: SandboxPreparationScope, signal: AbortSignal): Promise<SandboxPreparation>;
-    readFile(h: SandboxHandle, path: string, opts: {
-        maxBytes: number;
-        signal: AbortSignal;
-    }): Promise<{
-        data: Uint8Array;
-        truncated: boolean;
-    } | null>;
-    resume(h: SandboxHandle, signal: AbortSignal): Promise<"resumed" | "gone">;
-    revokeOperation?(h: SandboxHandle, ref: SandboxOperationRef, signal: AbortSignal): Promise<void>;
-    scan?(h: SandboxHandle, base: string, opts: {
-        signal: AbortSignal;
-    }): Promise<{
-        path: string;
-        suggestedName: string;
-    }[]>;
-    readonly sessionIsolation?: boolean;
-    stat(h: SandboxHandle, path: string, signal: AbortSignal): Promise<{
-        size: number;
-        isDir: boolean;
-    } | null>;
-    suspend(h: SandboxHandle, signal: AbortSignal): Promise<void>;
-    update?(h: SandboxHandle, limits: SandboxLimits, signal: AbortSignal): Promise<"updated" | "recreate">;
-    writeFile(h: SandboxHandle, path: string, data: Uint8Array, signal: AbortSignal): Promise<void>;
 }
 
 // @public

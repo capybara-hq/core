@@ -1,4 +1,5 @@
 import {
+  type DeviceProvider,
   isSandboxPermissionUnsupportedError,
   isSandboxScopeDeniedError,
   parseSandboxExecutionRef,
@@ -6,7 +7,6 @@ import {
   type SandboxExecutionRef,
   SandboxOperationOutcomeUnknownError,
   SandboxPermissionUnsupportedError,
-  type SandboxProvider,
 } from "@capybara-hq/plugin-sdk";
 import { Inject, Injectable, Optional } from "@nestjs/common";
 import { MANAGED_STOP_GRACE_MS, ManagedInstanceMismatchError } from "../background/managed.js";
@@ -117,7 +117,7 @@ export class SandboxOperationReconcileJob {
         claimed.device_id,
         { createdAt: new Date(generation) },
         async (p, h, signal): Promise<{ ref: SandboxExecutionRef; instanceId: string }> => {
-          await checkManagedStart(p as unknown as SandboxProvider, h, scope, input, signal);
+          await checkManagedStart(p as unknown as DeviceProvider, h, scope, input, signal);
           const background = p.background;
           if (!background)
             throw new SandboxPermissionUnsupportedError("Managed background tasks are unavailable");

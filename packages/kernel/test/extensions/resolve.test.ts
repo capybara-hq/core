@@ -97,6 +97,20 @@ describe("resolveExtensions", () => {
     ).toEqual(["dev-a", "dev-b"]);
   });
 
+  it("a plugin providing sandbox@2 is refused: defineExtension rejects it and the resolver does too", () => {
+    expect(() => mk("old", { provides: ["sandbox@2"] })).toThrow(
+      /unregistered extension point "sandbox"/,
+    );
+    // A manifest that did not come through defineExtension (a stored one) is refused by the resolver.
+    const stored = { ...mk("old"), provides: ["sandbox@2"] } as unknown as ExtensionManifest;
+    expect(() => resolveExtensions([stored], "0.1.0")).toThrow(
+      expect.objectContaining({
+        code: "extension.unsupported_extension_point",
+        message: "Plugin old provides sandbox@2, which this kernel does not know.",
+      }),
+    );
+  });
+
   it("多选能力允许多个提供者", () => {
     const a = mk("aa", { provides: ["counter@1"] });
     const b = mk("bb", { provides: ["counter@1"] });

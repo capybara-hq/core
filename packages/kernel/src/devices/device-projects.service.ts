@@ -1,6 +1,7 @@
 import { posix } from "node:path";
 import {
   DeviceProtocolError,
+  type DeviceProvider,
   isDeviceProjectName,
   isFileSystemGoneError,
   isSandboxGoneError,
@@ -8,7 +9,6 @@ import {
   MAX_DEVICE_SCAN_RESULTS,
   type SandboxBrowse,
   type SandboxHandle,
-  type SandboxProvider,
   ToolError,
   validateSandboxPathShape,
 } from "@capybara-hq/plugin-sdk";
@@ -334,7 +334,7 @@ export class DeviceProjectsService {
         if (!isDeviceProjectName(name)) throw nameInvalid(name);
         const list = r.list;
         if (list === undefined) throw projectsUnsupported(false);
-        let answer: Awaited<ReturnType<NonNullable<SandboxProvider["list"]>>>;
+        let answer: Awaited<ReturnType<NonNullable<DeviceProvider["list"]>>>;
         try {
           answer = await list(path, 1, sig);
         } catch (e) {

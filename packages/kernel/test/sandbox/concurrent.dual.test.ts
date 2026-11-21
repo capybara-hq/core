@@ -3,7 +3,7 @@ import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
-import type { SandboxProvider } from "@capybara-hq/plugin-sdk";
+import type { DeviceProvider } from "@capybara-hq/plugin-sdk";
 import { startTestPostgres, startTestRedis, type TestContainer } from "@capybara-hq/testing";
 import { Redis } from "ioredis";
 import { sql } from "kysely";
@@ -50,7 +50,7 @@ afterAll(async () => {
   await Promise.all([pgc?.stop(), rdc?.stop()]);
 });
 
-const replica = (impl: SandboxProvider, o: { ttlMs?: number } = {}) => {
+const replica = (impl: DeviceProvider, o: { ttlMs?: number } = {}) => {
   const pool = createDb(pgc.url, 4);
   const redis = new Redis(rdc.url);
   pools.push(pool);
@@ -146,7 +146,7 @@ describe("concurrent sandbox holders (two replicas)", () => {
   it("a crashed holder in a shared device is taken over without any kill; a live sibling runs on", async () => {
     const fake = createFakeSandbox(root);
     // A dies with its command still running: its provider never kills on abort
-    const deaf: SandboxProvider = {
+    const deaf: DeviceProvider = {
       ...fake,
       exec: (h, a) => fake.exec(h, { ...a, signal: new AbortController().signal }),
     };

@@ -25,6 +25,7 @@ import { dirname, join } from "node:path";
 import { promisify } from "node:util";
 import {
   DEVICE_PROVIDER_EXTENSION_POINT,
+  type DeviceProvider,
   defineExtension,
   type ExecResult,
   FileSystemGoneError,
@@ -46,7 +47,6 @@ import {
   SandboxOperationOutcomeUnknownError,
   type SandboxPermissionSupport,
   SandboxPermissionUnsupportedError,
-  type SandboxProvider,
   SandboxScopeDeniedError,
   type SandboxStopResult,
   validateSandboxPathShape,
@@ -103,7 +103,7 @@ import { z } from "zod";
  *   `update` got is appended to `root/limits.log` ({@link readFakeSandboxLimits}); an `update`
  *   also logs `update <id> <answer>` in `ops.log`.
  * - `list` (deployment config or {@link FakeSandboxOptions}; off by default, so the fake offers no
- *   projects unless a test asks): lists one directory as `SandboxProvider.list` does, with the
+ *   projects unless a test asks): lists one directory as `DeviceProvider.list` does, with the
  *   instance's directories mapped as for `readFile`, and adds a `scan` that suggests nothing.
  * - `root/refuse-open-egress` (optional, {@link setFakeSandboxRefuseOpenEgress}; read at each
  *   call): like sandbox-docker with `refuseOpenNetwork: true`, limits with the open public
@@ -495,7 +495,7 @@ function faultError(f: FakeSandboxFault): Error {
 }
 
 /** `provider` whose every method first throws the fault set in `root/fault.json`, if any. */
-function withFaults(root: string, provider: SandboxProvider): SandboxProvider {
+function withFaults(root: string, provider: DeviceProvider): DeviceProvider {
   const out: Record<string, unknown> = {};
   for (const [key, value] of Object.entries(provider)) {
     out[key] =
@@ -507,7 +507,7 @@ function withFaults(root: string, provider: SandboxProvider): SandboxProvider {
           }
         : value;
   }
-  return out as unknown as SandboxProvider;
+  return out as unknown as DeviceProvider;
 }
 
 /**
@@ -569,7 +569,7 @@ async function sleep(ms: number, signal: AbortSignal): Promise<void> {
 export function createFakeSandbox(
   rootDir: string,
   options: FakeSandboxOptions = {},
-): SandboxProvider {
+): DeviceProvider {
   // 用真实路径（macOS 的临时目录经符号链接），pwd 等输出才能换回沙箱路径
   mkdirSync(rootDir, { recursive: true });
   const root = realpathSync(rootDir);
@@ -695,7 +695,7 @@ export function createFakeSandbox(
     return join(instanceDir(root, h.id), "machine", p.slice(1));
   };
 
-  const provider: SandboxProvider = {
+  const provider: DeviceProvider = {
     concurrentExec: true as const,
     ...(options.limitsApplyAt !== undefined && { limitsApplyAt: options.limitsApplyAt }),
 
@@ -1162,10 +1162,10 @@ const MAX_READ = 65_536;
  *   instance kills its executions, which are then `lost` with their output unavailable.
  */
 function managedSurface(
-  raw: SandboxProvider,
+  raw: DeviceProvider,
   f: FakeInternals,
 ): Pick<
-  SandboxProvider,
+  DeviceProvider,
   "permissionSupport" | "operation" | "prepare" | "browse" | "revokeOperation" | "background"
 > {
   const instanceDir = (h: SandboxHandle) => join(f.root, "instances", h.id);
@@ -1255,7 +1255,7 @@ function managedSurface(
           list: async (path: string, opts: { limit: number; signal: AbortSignal }) => {
             readable(fs, path);
             return once({ method: "list", path, limit: opts.limit }, async () =>
-              (raw.list as NonNullable<SandboxProvider["list"]>)(h, path, {
+              (raw.list as NonNullable<DeviceProvider["list"]>)(h, path, {
                 ...opts,
                 signal: AbortSignal.any([signal, opts.signal]),
               }),
@@ -1264,7 +1264,7 @@ function managedSurface(
           scan: async (base: string, opts: { signal: AbortSignal }) => {
             readable(fs, base);
             return once({ method: "scan", base }, async () =>
-              (raw.scan as NonNullable<SandboxProvider["scan"]>)(h, base, {
+              (raw.scan as NonNullable<DeviceProvider["scan"]>)(h, base, {
                 signal: AbortSignal.any([signal, opts.signal]),
               }),
             );
@@ -1643,6 +1643,6 @@ async function killExecutions(instanceDir: string): Promise<void> {
  * Kept for callers written before the fake carried the permission-scoped surface itself: the
  * provider from {@link createFakeSandbox} is returned as it is.
  */
-export function fakeOperationFacade(_root: string, provider: SandboxProvider): SandboxProvider {
+export function fakeOperationFacade(_root: string, provider: DeviceProvider): DeviceProvider {
   return provider;
 }

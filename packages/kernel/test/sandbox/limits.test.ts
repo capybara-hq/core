@@ -3,7 +3,7 @@ import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
-import type { SandboxLimits, SandboxProvider } from "@capybara-hq/plugin-sdk";
+import type { DeviceProvider, SandboxLimits } from "@capybara-hq/plugin-sdk";
 import { startTestPostgres, startTestRedis, type TestContainer } from "@capybara-hq/testing";
 import { Redis } from "ioredis";
 import { sql } from "kysely";
@@ -62,7 +62,7 @@ let db: KernelSchemaDb;
 let redis: Redis;
 let config: KernelConfig;
 let root: string;
-let provider: SandboxProvider;
+let provider: DeviceProvider;
 const log = { info() {}, warn() {}, error() {} };
 const signal = () => AbortSignal.timeout(30_000);
 

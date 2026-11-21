@@ -1,8 +1,8 @@
 import { randomUUID } from "node:crypto";
 import {
   DEFAULT_SANDBOX_ROOTS,
+  type DeviceProvider,
   type SandboxPermissionSupport,
-  type SandboxProvider,
 } from "@capybara-hq/plugin-sdk";
 import type { Kysely } from "kysely";
 import type { PermissionContextV2 } from "../../src/conversations/events.js";
@@ -128,7 +128,7 @@ export function spyProvider(
   providers.register({
     plugin,
     ...(opts.version !== undefined && { version: opts.version }),
-    impl: impl as unknown as SandboxProvider,
+    impl: impl as unknown as DeviceProvider,
   });
   return {
     calls,

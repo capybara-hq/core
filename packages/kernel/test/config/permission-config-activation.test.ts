@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import type { SandboxProvider } from "@capybara-hq/plugin-sdk";
+import type { DeviceProvider } from "@capybara-hq/plugin-sdk";
 import { startTestPostgres, startTestRedis, type TestContainer } from "@capybara-hq/testing";
 import { sql } from "kysely";
 import pg from "pg";
@@ -283,7 +283,7 @@ async function consentFixture() {
       revokeOperation() {
         throw new Error("provider IO forbidden");
       },
-    } as unknown as SandboxProvider,
+    } as unknown as DeviceProvider,
   });
   // a provisioned instance (created under the open default) with its cloud evidence (B-15)
   await seedCloudInstance(k, {

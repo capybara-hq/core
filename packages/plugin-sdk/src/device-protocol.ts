@@ -321,7 +321,7 @@ export interface LegacyDevicePolicyStatus {
 /**
  * Lists one directory (absolute `path`, {@link validateSandboxPathShape}): at most `limit` entries
  * (at most {@link MAX_DEVICE_LIST_ENTRIES}), read within the operation's scope. See
- * `SandboxProvider.list` for the semantics.
+ * `DeviceProvider.list` for the semantics.
  */
 export interface DeviceListArgs {
   path: string;
@@ -346,7 +346,7 @@ export type DeviceListResult = { entries: DeviceListEntry[]; truncated: boolean 
 /**
  * Looks for project-like directories under `base` (absolute, {@link validateSandboxPathShape}),
  * read within the operation's scope. A `base` that does not exist answers `[]`; a `base` that is a
- * file, unreadable, or outside the request's scope is an error. See `SandboxProvider.scan` for the
+ * file, unreadable, or outside the request's scope is an error. See `DeviceProvider.scan` for the
  * traversal.
  */
 export interface DeviceScanArgs {
@@ -355,7 +355,7 @@ export interface DeviceScanArgs {
 /**
  * `base` itself and the directories at most {@link MAX_DEVICE_SCAN_DEPTH} levels below it that
  * hold a `.git` entry or an `AGENTS.md` file, sorted by `path` in code-unit order and cut to the
- * first {@link MAX_DEVICE_SCAN_RESULTS}. Never file contents. See `SandboxProvider.scan`.
+ * first {@link MAX_DEVICE_SCAN_RESULTS}. Never file contents. See `DeviceProvider.scan`.
  */
 export type DeviceScanResult = DeviceProjectCandidate[];
 
