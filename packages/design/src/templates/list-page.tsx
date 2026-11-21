@@ -12,16 +12,7 @@ import {
   SkeletonGroup,
 } from "../display/index";
 import { useDesignT } from "../provider";
-import {
-  ActionRow,
-  type ActionRowProps,
-  Body,
-  type HeaderAction,
-  ListFab,
-  type PageHeaderProps,
-} from "../shell/index";
-import { useSizeClass } from "../shell/size-class";
-import { useHydrated } from "../shell/use-media-query";
+import { ActionRow, type ActionRowProps, Body, type PageHeaderProps } from "../shell/index";
 import { type Column, DataTable } from "../table/index";
 import { LoadingStats, loadingActionRow, loadingHeader, TemplateHead, WithStats } from "./frame";
 
@@ -76,8 +67,8 @@ export type ListScope = {
  * busy announcement.
  *
  * One primary per screen (spec §5.2): while `empty` is drawn with a primary action, the head's
- * primary is left out and the empty state carries it. Below 600 the head's primary is the
- * floating action button (`ListFab`, responsive system spec §2.5) and the head's copy is hidden.
+ * primary is left out and the empty state carries it. Below 600 the head's primary is restyled as
+ * the floating action button (responsive system spec §2.5; CSS only, the same element).
  */
 export function ListPage({
   header,
@@ -138,24 +129,10 @@ export function ListPage({
           actions: withTabs.actions.filter((a) => !("variant" in a && a.variant === "primary")),
         }
       : withTabs;
-  // Below 600 the head's primary is the floating action button (responsive system spec §2.5).
-  // Before hydration both are drawn and CSS shows one; after it only the class's copy is mounted,
-  // so each control exists once (responsive system spec §5.3).
-  const fab = (onePrimary.actions ?? []).find(
-    (a): a is Extract<HeaderAction, { variant: string }> =>
-      "variant" in a && a.variant === "primary" && !a.loading && !a.disabled,
-  );
-  const sizeClass = useSizeClass();
-  const hydrated = useHydrated();
-  const fabShown = fab !== undefined && (!hydrated || sizeClass === "compact");
-  const headShown =
-    fab !== undefined && hydrated && sizeClass === "compact"
-      ? {
-          ...onePrimary,
-          actions: (onePrimary.actions ?? []).filter((a) => a !== fab),
-        }
-      : onePrimary;
-  const head = callout ? { ...headShown, notice: <Callout {...callout} /> } : headShown;
+  // Below 600 the head's primary is restyled as the floating action button (responsive system
+  // spec §2.5, §5.4): CSS only, keyed on `data-fab`, so nothing differs between renders.
+  const fab = (onePrimary.actions ?? []).some((a) => "variant" in a && a.variant === "primary");
+  const head = callout ? { ...onePrimary, notice: <Callout {...callout} /> } : onePrimary;
   const loadingList =
     variant === "objects" ? (
       <ObjectList label={listLabel ?? header.title} loading={spec.rows ?? true} />
@@ -211,14 +188,6 @@ export function ListPage({
         </WithStats>
       </Body>
       {actionRow ? <ActionRow {...(loading ? loadingActionRow(actionRow) : actionRow)} /> : null}
-      {fab && fabShown ? (
-        <ListFab
-          label={fab.label}
-          {...(fab.icon ? { icon: fab.icon } : {})}
-          {...(fab.href !== undefined ? { href: fab.href } : {})}
-          {...(fab.onSelect ? { onSelect: fab.onSelect } : {})}
-        />
-      ) : null}
     </>
   );
   return (

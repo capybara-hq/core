@@ -22,7 +22,6 @@ export {
   type FloatingLead,
 } from "./floating-bar";
 export { FloatingIconButton, type FloatingIconButtonProps } from "./floating-button";
-export { ListFab, type ListFabProps } from "./list-fab";
 export {
   DRAWER_RECENT_MAX,
   type DrawerNavData,

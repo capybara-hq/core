@@ -10,5 +10,5 @@ a long press or right click opens rename / archive / delete), and the account as
 foot. The conversations page lists conversations by time in day sections (今天 / 昨天 / 本周 /
 更早) with a search and a chip per agent, reads the next page as the end nears (no Load more rows)
 and offers each row's actions in an action sheet; on compact the page's primary is a floating
-action button. New design pieces: `ConversationList`, `ActionSheet` with `useLongPress`,
-`ListFab`, `ScopeChips`, `ListPage.scope`, `formatListTime` / `dayBucket`.
+action button (the head's primary restyled by CSS). New design pieces: `ConversationList`,
+`ActionSheet` with `useLongPress`, `ScopeChips`, `ListPage.scope`, `formatListTime` / `dayBucket`.

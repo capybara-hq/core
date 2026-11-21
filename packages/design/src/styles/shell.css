@@ -974,6 +974,12 @@ a.cb-stat-card:focus-visible {
 
 /* The head's primary sits in a wrapper of no box of its own (a ListPage with a FAB hides it below
    600, templates.css). */
-.cb-pageheader-primary {
+.cb-pageheader-primary,
+.cb-pageheader-primary-icon,
+.cb-pageheader-primary-label {
   display: contents;
+}
+/* the default plus is the floating action button's alone (templates.css) */
+.cb-pageheader-primary-icon[data-implicit="true"] {
+  display: none;
 }

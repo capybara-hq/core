@@ -210,26 +210,12 @@ describe("/conversations", () => {
     expect(document.querySelector(".cb-pageheader-count")?.textContent).toBe("4");
   });
 
-  it("the primary starts a new conversation: the head's button on a wide window", async () => {
-    await renderRouteWithCache("/conversations", ROUTES);
-    const head = document.querySelector('[data-part="page-header"]') as HTMLElement;
-    const primary = within(head).getByRole("link", { name: C.new });
-    expect(primary.getAttribute("href")).toBe("/");
-    expect(document.querySelector('[data-part="list-fab"]')).toBeNull();
-  });
-
-  it("on compact the primary is the floating action button, and the head has no copy", async () => {
-    vi.stubGlobal("matchMedia", (q: string) => ({
-      matches: /max-width:\s*599px/.test(q) && !/min-width/.test(q),
-      media: q,
-      addEventListener() {},
-      removeEventListener() {},
-    }));
+  it("the primary starts a new conversation: the head's button, restyled as the compact FAB", async () => {
     await renderRouteWithCache("/conversations", ROUTES);
     const links = screen.getAllByRole("link", { name: C.new });
     expect(links).toHaveLength(1);
-    expect(links[0]?.getAttribute("data-part")).toBe("list-fab");
     expect(links[0]?.getAttribute("href")).toBe("/");
+    expect(links[0]?.closest('[data-head-primary="true"]')).not.toBeNull();
     expect(document.querySelector('[data-template="ListPage"]')?.getAttribute("data-fab")).toBe(
       "true",
     );

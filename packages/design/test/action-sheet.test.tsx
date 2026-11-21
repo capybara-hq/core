@@ -1,5 +1,8 @@
 // The action sheet and long press (responsive system spec §2.4; plan T0.3, the minimal form of the
 // compact drawer / conversations line), the scope chips, the list FAB and the list's day sections.
+
+import { readFileSync } from "node:fs";
+import { resolve } from "node:path";
 import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { userEvent } from "@testing-library/user-event";
 import { useState } from "react";
@@ -186,36 +189,39 @@ const listPage = () => (
 );
 
 describe("ListPage on compact", () => {
-  it("before hydration draws the head's primary and the FAB (CSS shows one per class)", () => {
+  it("the FAB is the head's own primary: one element in every render, restyled by CSS", () => {
     const html = renderToString(listPage());
-    expect(html).toContain('data-part="list-fab"');
-    expect(html).toContain('data-head-primary="true"');
+    expect(html.match(/新会话/g)).toHaveLength(1);
+    expect(html).toContain('data-fab="true"');
+    for (const width of [390, 1440]) {
+      window.matchMedia = matchMediaFor(width).matchMedia;
+      const { unmount } = render(listPage());
+      const links = screen.getAllByRole("link", { name: "新会话" });
+      expect(links).toHaveLength(1);
+      const link = links[0] as HTMLElement;
+      expect(link.getAttribute("href")).toBe("/");
+      expect(link.closest('[data-head-primary="true"]')).not.toBeNull();
+      // the default plus is there for the compact form, the label stays the accessible name
+      expect(link.querySelector('[data-implicit="true"] [data-icon="plus"]')).not.toBeNull();
+      expect(link.querySelector(".cb-pageheader-primary-label")?.textContent).toBe("新会话");
+      unmount();
+    }
   });
 
-  it("at 390 the primary is the FAB only; at 1440 the head's button only", () => {
-    window.matchMedia = matchMediaFor(390).matchMedia;
-    const { unmount } = render(listPage());
-    expect(screen.getAllByRole("link", { name: "新会话" })).toHaveLength(1);
-    expect(document.querySelector('[data-part="list-fab"]')).not.toBeNull();
-    expect(document.querySelector('[data-head-primary="true"]')).toBeNull();
-    unmount();
-    window.matchMedia = matchMediaFor(1440).matchMedia;
-    render(listPage());
-    expect(screen.getAllByRole("link", { name: "新会话" })).toHaveLength(1);
-    expect(document.querySelector('[data-part="list-fab"]')).toBeNull();
-    expect(document.querySelector('[data-head-primary="true"]')).not.toBeNull();
+  it("the CSS restyles the marked primary below 600 only", () => {
+    const css = readFileSync(resolve(import.meta.dirname, "../src/styles/templates.css"), "utf8");
+    const block = css.slice(css.indexOf("/* The list's floating action button"));
+    expect(block).toContain("@media (max-width: 599px)");
+    expect(block).toContain('.cb-template[data-fab="true"] [data-head-primary="true"] > .cb-btn');
+    expect(block).toContain("position: fixed;");
+    expect(block).toContain("width: var(--cb-touch-prominent);");
   });
 
-  it("the FAB is named by the action and links where it does; the scope draws chips", () => {
-    window.matchMedia = matchMediaFor(390).matchMedia;
+  it("the scope draws chips", () => {
     render(
       <DesignProvider locale="zh">
         <ListPage
-          header={{
-            path: [{ label: "acme" }, { label: "conversations" }],
-            title: "会话",
-            actions: [{ label: "新会话", variant: "primary", href: "/" }],
-          }}
+          header={{ path: [{ label: "acme" }], title: "会话" }}
           scope={{
             label: "按智能体筛选",
             value: "all",
@@ -227,16 +233,13 @@ describe("ListPage on compact", () => {
         </ListPage>
       </DesignProvider>,
     );
-    const page = document.querySelector('[data-template="ListPage"]') as HTMLElement;
-    expect(page.getAttribute("data-fab")).toBe("true");
-    const fab = page.querySelector('[data-part="list-fab"]') as HTMLElement;
-    expect(fab.getAttribute("href")).toBe("/");
-    expect(fab.getAttribute("aria-label")).toBe("新会话");
     expect(screen.getByRole("radiogroup", { name: "按智能体筛选" })).toBeTruthy();
+    expect(
+      document.querySelector('[data-template="ListPage"]')?.getAttribute("data-fab"),
+    ).toBeNull();
   });
 
   it("an empty state with the primary takes it alone: no FAB", () => {
-    window.matchMedia = matchMediaFor(390).matchMedia;
     render(
       <DesignProvider locale="zh">
         <ListPage
@@ -249,7 +252,10 @@ describe("ListPage on compact", () => {
         />
       </DesignProvider>,
     );
-    expect(document.querySelector('[data-part="list-fab"]')).toBeNull();
+    expect(
+      document.querySelector('[data-template="ListPage"]')?.getAttribute("data-fab"),
+    ).toBeNull();
+    expect(document.querySelector('[data-head-primary="true"]')).toBeNull();
   });
 });
 
