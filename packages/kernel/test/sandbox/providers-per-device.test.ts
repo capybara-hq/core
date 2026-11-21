@@ -3,7 +3,7 @@ import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { SANDBOX_EXTENSION_POINT, type SandboxProvider } from "@capybara-hq/plugin-sdk";
+import { DEVICE_PROVIDER_EXTENSION_POINT, type SandboxProvider } from "@capybara-hq/plugin-sdk";
 import { startTestPostgres, startTestRedis, type TestContainer } from "@capybara-hq/testing";
 import { Redis } from "ioredis";
 import { sql } from "kysely";
@@ -26,7 +26,7 @@ import { sandboxServiceFor, seedDevice } from "../helpers/sandbox.js";
 
 /**
  * The sandbox provider is resolved per device (environments spec §6): a local device
- * runs on the kernel-internal `@local` provider, a cloud one on the loaded `sandbox@2` extension.
+ * runs on the kernel-internal `@local` provider, a cloud one on the loaded `device-provider@1` extension.
  * The sweeps only ever touch cloud devices.
  */
 
@@ -152,7 +152,7 @@ const instanceRow = (id: string) =>
 describe("SandboxProviders", () => {
   const registry = (entries: { plugin: string; impl: SandboxProvider }[]) =>
     ({
-      list: () => entries.map((e) => ({ ...e, capability: SANDBOX_EXTENSION_POINT })),
+      list: () => entries.map((e) => ({ ...e, capability: DEVICE_PROVIDER_EXTENSION_POINT })),
     }) as unknown as Pick<ExtensionRegistry, "list">;
 
   it("cloud() is the loaded extension only; forName finds internal providers first, then extensions", () => {

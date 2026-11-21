@@ -276,7 +276,7 @@ describe("planFromFiles: by diff", () => {
       expect(sdkPlan(f).bootstrapNetwork, f).toBe(true);
     }
     for (const f of [
-      "packages/plugin-sdk/src/sandbox.ts",
+      "packages/plugin-sdk/src/device-provider.ts",
       "packages/plugin-sdk/test/sandbox-runtime-source.test.ts",
     ]) {
       expect(sdkPlan(f).bootstrapNetwork, f).toBe(false);

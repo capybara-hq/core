@@ -36,7 +36,7 @@ import type { SandboxService } from "../../src/sandbox/sandbox.service.js";
 import { type Answer, TestHolder } from "./test-holder.js";
 
 /**
- * The kernel-internal `@local` provider (environments spec §13.5): `sandbox@2` over the relay,
+ * The kernel-internal `@local` provider (environments spec §13.5): `device-provider@1` over the relay,
  * handles keyed by the device id (ruling R1), cleanup paths safe while offline (ruling R9),
  * the files never touched (ruling R24), the org's current limits and mode on every exec (ruling
  * R27, auto mode spec §4.2).

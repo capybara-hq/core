@@ -19,7 +19,7 @@ export type SensitiveReason =
   | "channel"
   | "directory"
   | "identity_source"
-  | "sandbox"
+  | "device_provider"
   | "object_store"
   | "push_provider"
   | "context";

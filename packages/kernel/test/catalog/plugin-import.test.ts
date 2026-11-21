@@ -751,11 +751,11 @@ describe("deploying the extension at confirm", () => {
 
   it("a second provider of a single-provider point (sandbox) is installed disabled, and the result says why", async () => {
     const first = await imported(
-      await lifePkg({ name: "sbx-one", version: "1.0.0", provides: ["sandbox@2"] }),
+      await lifePkg({ name: "sbx-one", version: "1.0.0", provides: ["config-source@1"] }),
     );
     expect(first.deploy).toMatchObject({ name: "sbx-one", result: "enabled" });
     const second = await imported(
-      await lifePkg({ name: "sbx-two", version: "1.0.0", provides: ["sandbox@2"] }),
+      await lifePkg({ name: "sbx-two", version: "1.0.0", provides: ["config-source@1"] }),
     );
     expect(second.deploy).toEqual({
       name: "sbx-two",
@@ -765,9 +765,9 @@ describe("deploying the extension at confirm", () => {
       result: "installed",
       code: "extension.single_provider_enabled",
       message:
-        "Only one extension may provide sandbox@2; disable sbx-one first, then enable sbx-two",
+        "Only one extension may provide config-source@1; disable sbx-one first, then enable sbx-two",
       singleProvider: {
-        extensionPoint: "sandbox@2",
+        extensionPoint: "config-source@1",
         enabled: { name: "sbx-one", displayName: null },
       },
     });

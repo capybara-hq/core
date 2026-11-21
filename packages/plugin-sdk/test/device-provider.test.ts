@@ -1,9 +1,9 @@
 import { describe, expect, expectTypeOf, it } from "vitest";
 import {
+  DEVICE_PROVIDER_EXTENSION_POINT,
   EXTENSION_POINTS,
   isFileSystemGoneError,
   isSandboxGoneError,
-  SANDBOX_EXTENSION_POINT,
   SANDBOX_ROOTS,
   SANDBOX_TAG_RE,
   SandboxGoneError,
@@ -13,9 +13,9 @@ import {
   validateSandboxPathShape,
 } from "../src/index.js";
 
-describe("sandbox@2", () => {
-  it("SANDBOX_EXTENSION_POINT is sandbox@2", () => {
-    expect(SANDBOX_EXTENSION_POINT).toBe("sandbox@2");
+describe("device-provider@1", () => {
+  it("DEVICE_PROVIDER_EXTENSION_POINT is device-provider@1", () => {
+    expect(DEVICE_PROVIDER_EXTENSION_POINT).toBe("device-provider@1");
   });
 
   it("isFileSystemGoneError recognises a copy from another SDK instance", () => {
@@ -29,7 +29,7 @@ describe("sandbox@2", () => {
   });
 
   it("constants match the registry", () => {
-    expect(EXTENSION_POINTS.sandbox).toBeDefined();
+    expect(EXTENSION_POINTS["device-provider"]).toBeDefined();
     expect([...SANDBOX_ROOTS]).toEqual(["/workspace", "/skills", "/tmp"]);
   });
 

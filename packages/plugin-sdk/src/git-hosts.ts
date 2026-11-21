@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { validateAllowHost } from "./sandbox.js";
+import { validateAllowHost } from "./device-provider.js";
 
 /**
  * The git source of a connector: the git hosts a connector's credential may be used for, and the

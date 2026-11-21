@@ -47,7 +47,7 @@ const POINTS: Record<string, { capability: Capability; tab: CapabilityTab }> = {
   "web-search": { capability: "webSearch", tab: "web" },
   "web-fetch": { capability: "webFetch", tab: "web" },
   connector: { capability: "connector", tab: "connector" },
-  sandbox: { capability: "sandbox", tab: "sandbox" },
+  "device-provider": { capability: "sandbox", tab: "sandbox" },
   "object-store": { capability: "objectStore", tab: "storage" },
   // Points with no tab of their own: they go to the catch-all with a chip of their own.
   channel: { capability: "channel", tab: "tools" },
@@ -56,7 +56,7 @@ const POINTS: Record<string, { capability: Capability; tab: CapabilityTab }> = {
   "file-preview": { capability: "filePreview", tab: "tools" },
 };
 
-/** The capability of an extension point ref (`sandbox@2` → `sandbox`; an unknown one by its name). */
+/** The capability of an extension point ref (`device-provider@1` → `sandbox`, the capability and tab id the web keeps; an unknown one by its name). */
 export const capabilityOfPoint = (ref: string): Capability => {
   const p = ref.split("@")[0] ?? ref;
   return POINTS[p]?.capability ?? `point:${p}`;

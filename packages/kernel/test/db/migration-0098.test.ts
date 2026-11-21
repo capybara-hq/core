@@ -86,8 +86,8 @@ beforeAll(async () => {
   upTo = copyMigrations((f) => f <= FILE);
   await migrate(pg.url, { schema: "capybara", dir: before });
   // sandbox: sbx-old enabled first by the audit, but the replicas run sbx-run (sorted after it)
-  await seed("sbx-old", ["sandbox@2"], "enabled");
-  await seed("sbx-run", ["sandbox@2"], "enabled");
+  await seed("sbx-old", ["device-provider@1"], "enabled");
+  await seed("sbx-run", ["device-provider@1"], "enabled");
   await enabledAudit("sbx-old", "2026-02-01T00:00:00Z");
   await enabledAudit("sbx-run", "2026-03-01T00:00:00Z");
   // a stale heartbeat of sbx-old loaded, a newer one of sbx-run loaded: the newest wins

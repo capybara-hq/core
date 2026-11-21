@@ -189,7 +189,7 @@ describe("插件列表与网页批准权限", () => {
     expect(res.json().drainSeconds).toBe(30);
   });
 
-  it("list: config declarations / install records / bootstrap installs; providers of sandbox@2 / object-store@1 marked sensitive", async () => {
+  it("list: config declarations / install records / bootstrap installs; providers of device-provider@1 / object-store@1 marked sensitive", async () => {
     const all = await list();
     expect([...all.keys()].sort()).toEqual(
       [
@@ -239,14 +239,14 @@ describe("插件列表与网页批准权限", () => {
       removable: false,
     });
     expect(sandbox.permissions.find((g) => g.category === "provides")?.sensitive).toBe(true);
-    expect(sandbox.added).toContain("provides:sandbox@2");
+    expect(sandbox.added).toContain("provides:device-provider@1");
     // added 逐项带敏感标记与原因码：界面只渲染，不自己判定
     const addedItems = (sandbox as View & { addedItems: unknown[] }).addedItems;
     expect(addedItems).toHaveLength(sandbox.added.length);
     expect(addedItems).toContainEqual({
-      value: "provides:sandbox@2",
+      value: "provides:device-provider@1",
       sensitive: true,
-      reason: "sandbox",
+      reason: "device_provider",
     });
 
     expect(all.get("model-fake")).toMatchObject({

@@ -1,10 +1,10 @@
 /**
- * Sandbox contract `sandbox@2`: a single-select, brokered extension point (extensions may not
- * `requires` it; the kernel's `SandboxService` consumes it). The provider implements only the
+ * Device provider contract `device-provider@1`: a multi, brokered, org-scoped extension point
+ * (extensions may not `requires` it; the kernel's `SandboxService` consumes it). The provider implements only the
  * primitives below; the kernel builds `glob` / `grep` / `edit` from `exec` plus `readFile` /
  * `writeFile`.
  *
- * `@2` separates a device's **file system** from its **instance**: the file system
+ * A device separates its **file system** from its **instance**: the file system
  * (`createFileSystem`) lives until the device is deleted (`destroyFileSystem`); instances
  * (`create`) attach to it and come and go (`destroy` drops the instance and keeps the files).
  */
@@ -19,10 +19,10 @@ import type {
   SandboxPermissionSupport,
   SandboxPreparation,
   SandboxPreparationScope,
-} from "./sandbox-operation.js";
+} from "./device-operation.js";
 
-/** Sandbox extension point ref. */
-export const SANDBOX_EXTENSION_POINT = "sandbox@2";
+/** Device provider extension point ref. */
+export const DEVICE_PROVIDER_EXTENSION_POINT = "device-provider@1";
 
 /** The roots inside the sandbox the model may access. */
 export const SANDBOX_ROOTS = ["/workspace", "/skills", "/tmp"] as const;
@@ -176,7 +176,7 @@ export function isFileSystemGoneError(e: unknown): e is FileSystemGoneError {
 export const SANDBOX_TAG_RE = /^[a-z0-9-]{1,64}$/;
 
 /**
- * The `sandbox@2` implementation (provided by a sandbox plugin such as Docker or E2B).
+ * The `device-provider@1` implementation (provided by a sandbox plugin such as Docker or E2B).
  *
  * **File systems and instances.** `createFileSystem` makes a device's files; they live until
  * `destroyFileSystem` (the device is deleted). `create` makes an instance attached to an

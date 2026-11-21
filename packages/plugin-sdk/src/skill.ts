@@ -23,9 +23,9 @@
  * `/skills/<name>@<digest>/` ({@link skillSandboxDir}, {@link skillDigest}).
  */
 import { createHash } from "node:crypto";
+import { validateSandboxPath } from "./device-provider.js";
 import { readFrontmatter } from "./frontmatter.js";
 import { hasControlChars } from "./model.js";
-import { validateSandboxPath } from "./sandbox.js";
 import { argumentHintText, SKILL_ARGUMENT_NAME_RE } from "./skill-keys.js";
 
 /** Limits of a skill package. */

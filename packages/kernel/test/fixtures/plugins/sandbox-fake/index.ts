@@ -24,6 +24,7 @@ import {
 import { dirname, join } from "node:path";
 import { promisify } from "node:util";
 import {
+  DEVICE_PROVIDER_EXTENSION_POINT,
   defineExtension,
   type ExecResult,
   FileSystemGoneError,
@@ -33,7 +34,6 @@ import {
   parseSandboxOperationRef,
   parseSandboxOperationScope,
   parseSandboxPreparationScope,
-  SANDBOX_EXTENSION_POINT,
   SANDBOX_TAG_RE,
   type SandboxBackground,
   type SandboxExecutionRef,
@@ -54,7 +54,7 @@ import {
 import { z } from "zod";
 
 /**
- * Test `sandbox@2` (for tests only, never for production: it has **no isolation** and runs the
+ * Test `device-provider@1` (for tests only, never for production: it has **no isolation** and runs the
  * commands tests write on the host).
  *
  * The "provider side" lives under the deployment config `root` (like a Docker daemon: kernel
@@ -1007,19 +1007,19 @@ export function createFakeSandbox(
   return withFaults(root, provider);
 }
 
-/** 测试用 `sandbox@2`：部署配置 `{ root }`，见文件头注释。 */
+/** 测试用 `device-provider@1`：部署配置 `{ root }`，见文件头注释。 */
 export default defineExtension({
   name: "sandbox-fake",
   version: "0.1.0",
   sdk: "^0.1.0-rc.0",
-  provides: [SANDBOX_EXTENSION_POINT],
+  provides: [DEVICE_PROVIDER_EXTENSION_POINT],
   // 只用部署配置与本地文件，不用任何需要声明的平台能力
   permissions: {},
   config: { deployment: Deployment },
   setup(ctx) {
     const { root, updateMode, limitsApplyAt, list } = ctx.config as z.infer<typeof Deployment>;
     ctx.provide(
-      SANDBOX_EXTENSION_POINT,
+      DEVICE_PROVIDER_EXTENSION_POINT,
       createFakeSandbox(root, {
         ...(updateMode !== undefined && { updateMode }),
         ...(limitsApplyAt !== undefined && { limitsApplyAt }),
@@ -1141,7 +1141,7 @@ const TAIL_LINES = 20;
 const MAX_READ = 65_536;
 
 /**
- * The permission-scoped operation surface of `sandbox@2` (permission operation contract) over the
+ * The permission-scoped operation surface of `device-provider@1` (permission operation contract) over the
  * raw fake. Every check below is real so tests stay meaningful; what the fake cannot do is isolate
  * a command: a restricted `exec` runs on the host like any other, and only its working directory
  * and the instance roots its text names are checked against the scope (no network filter).

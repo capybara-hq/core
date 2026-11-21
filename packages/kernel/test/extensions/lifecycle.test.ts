@@ -381,7 +381,7 @@ describe("插件生命周期（单副本，不重启）", () => {
   it("single-provider conflict: a second provider left enabled (from before enabling it was refused) is pending / conflict (not dependency) and loads once the first is disabled", async () => {
     await install(
       "sbx-a",
-      await lifePkg({ name: "sbx-a", version: "1.0.0", provides: ["sandbox@2"] }),
+      await lifePkg({ name: "sbx-a", version: "1.0.0", provides: ["config-source@1"] }),
     );
     await approve("sbx-a");
     await setState("sbx-a", "enable");
@@ -389,7 +389,7 @@ describe("插件生命周期（单副本，不重启）", () => {
 
     await install(
       "sbx-b",
-      await lifePkg({ name: "sbx-b", version: "1.0.0", provides: ["sandbox@2"] }),
+      await lifePkg({ name: "sbx-b", version: "1.0.0", provides: ["config-source@1"] }),
     );
     await approve("sbx-b");
     // Enabling it is refused now; a deployment can still hold both enabled from before the rule
@@ -409,7 +409,7 @@ describe("插件生命周期（单副本，不重启）", () => {
     };
     expect(b.replicas[0]).toMatchObject({ state: "pending", reason: "conflict" });
     expect(b.conflict).toEqual({
-      extensionPoint: "sandbox@2",
+      extensionPoint: "config-source@1",
       providers: [{ name: "sbx-a", displayName: null }],
     });
 
@@ -420,6 +420,24 @@ describe("插件生命周期（单副本，不重启）", () => {
     expect(((await view("sbx-b")) as { conflict?: unknown }).conflict).toBeUndefined();
     await setState("sbx-b", "disable");
     await waitFor(async () => loadedVersion("sbx-b") === undefined, 15_000, "sbx-b unloaded");
+  });
+
+  it("two device-provider@1 extensions load and are enabled side by side", async () => {
+    for (const name of ["dev-a", "dev-b"]) {
+      await install(
+        name,
+        await lifePkg({ name, version: "1.0.0", provides: ["device-provider@1"] }),
+      );
+      await approve(name);
+      await setState(name, "enable");
+    }
+    await waitFor(
+      async () => loadedVersion("dev-a") === "1.0.0" && loadedVersion("dev-b") === "1.0.0",
+      15_000,
+      "both device providers loaded",
+    );
+    expect((await view("dev-a")).status).toBe("enabled");
+    expect((await view("dev-b")).status).toBe("enabled");
   });
 
   it("审阅：迁移里的破坏性语句列为敏感警告（不拒绝）", async () => {

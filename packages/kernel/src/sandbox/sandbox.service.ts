@@ -588,7 +588,7 @@ async function inPool<T>(items: T[], limit: number, fn: (x: T) => Promise<void>)
 }
 
 /**
- * The kernel's sandbox service over the `sandbox@2` provider, keyed by **device** (spec
+ * The kernel's sandbox service over the `device-provider@1` provider, keyed by **device** (spec
  * 2026-11-07-environments-design §4.2, §5.1): one file system kept until the device is
  * deleted, plus one instance attached to it that comes and goes; all conversations bound to the
  * device (and their sub-agents) share both.
@@ -638,7 +638,7 @@ async function inPool<T>(items: T[], limit: number, fn: (x: T) => Promise<void>)
  * - **Provider per device** (environments spec §6): each call resolves the provider from
  *   the device's `devices.provider` ({@link providerForDevice}): a `device`
  *   device runs on the kernel-internal `@local` provider (never the cloud one), a cloud
- *   device on the loaded `sandbox@2` extension. A `@local` instance is never suspended or
+ *   device on the loaded `device-provider@1` extension. A `@local` instance is never suspended or
  *   destroyed for inactivity; a deleted `@local` device (or one of a deleted org) is
  *   destroyed by the sweep like any other.
  *
@@ -722,7 +722,7 @@ export class SandboxService {
   }
 
   /**
-   * Whether there is a cloud sandbox provider (a loaded `sandbox@2` extension). For gates that have
+   * Whether there is a cloud sandbox provider (a loaded `device-provider@1` extension). For gates that have
    * no device yet (tool listing, skill files); a call on a device asks
    * {@link availableFor}.
    */
@@ -3139,7 +3139,7 @@ export class SandboxService {
     /**
      * R2-I1: the row is not live (destroyed before 0157 without a record, or a create that left
      * `creating` with no handle). With no `prev_handle`, the row's own cloud provider holds at
-     * most one instance of the device's name (sandbox@2 same-name replacement), so its destroy by
+     * most one instance of the device's name (device-provider@1 same-name replacement), so its destroy by
      * that name confirms every incarnation there; it is recorded as the destruction of the row's
      * incarnation. A provider not loaded or a failed destroy keeps the obligation open.
      */
@@ -3243,7 +3243,7 @@ export class SandboxService {
           // `prev_handle`; so once the device's current incarnation is destroyed with
           // confirmation, nothing earlier is kept (`prev_handle`) and the obligation was recorded
           // under the freeze (no dispatch after it), no instance of the device can run legacy work.
-          // This rests on sandbox@2 same-name replacement: every rebuild on the same provider goes
+          // This rests on device-provider@1 same-name replacement: every rebuild on the same provider goes
           // through `create`, which first removes the old `cap-device-<id>` instance (so a `gone`
           // answer, E2B's token-failure `gone` included, and `applyLimits`' swallowed destroy
           // failure leave nothing behind), and E2B's incarnations are one sandbox (destroying the

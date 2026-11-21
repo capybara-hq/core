@@ -19,7 +19,7 @@ import { SandboxService } from "./sandbox.service.js";
 
 /**
  * Sandboxes: the one {@link SandboxService} (a device's file system and instance over the
- * `sandbox@2` provider, with the shared / exclusive leases of {@link SandboxLeases}), the review
+ * `device-provider@1` provider, with the shared / exclusive leases of {@link SandboxLeases}), the review
  * every command passes in auto mode ({@link CommandReviewService}), and the producer of the
  * one-off `sandbox-destroy-for` jobs (`MaintenanceProcessor` consumes them). The sweeps
  * (`SandboxSweepJobs`) are the worker role's (`WorkerModule`).

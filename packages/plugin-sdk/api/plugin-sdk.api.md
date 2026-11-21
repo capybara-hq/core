@@ -950,6 +950,9 @@ export const DEVICE_DENIED_SECRET_PATHS: readonly string[];
 export const DEVICE_PROTOCOL_VERSION = 4;
 
 // @public
+export const DEVICE_PROVIDER_EXTENSION_POINT = "device-provider@1";
+
+// @public
 export const DEVICE_SCAN_SKIPPED_BASE_DIRS: readonly string[];
 
 // @public
@@ -2973,6 +2976,9 @@ export interface ParsedSetupGuide {
     codeBlocks: SetupGuideCodeBlock[];
     issues: SetupGuideParseIssue[];
     sections: SetupGuideSection[];
+    // Warning: (ae-forgotten-export) The symbol "SetupGuideShellActionLine" needs to be exported by the entry point index.d.ts
+    //
+    shellActions: SetupGuideShellActionLine[];
     title: string | null;
 }
 
@@ -3539,9 +3545,6 @@ export interface RunningOperationView {
 }
 
 // @public
-export const SANDBOX_EXTENSION_POINT = "sandbox@2";
-
-// @public
 export const SANDBOX_FAKE_IP_DNS: {
     readonly fakeIpCidr: string;
     readonly endpoints: readonly string[];
@@ -3972,6 +3975,7 @@ export const SETUP_GUIDE_LIMITS: {
     readonly docBytes: 65536;
     readonly codeBlocks: 24;
     readonly checks: 16;
+    readonly shellActions: 4;
     readonly sections: 16;
     readonly titleChars: 100;
     readonly checkLabelChars: 80;
@@ -3983,7 +3987,7 @@ export const SETUP_GUIDE_LIMITS: {
 export const SETUP_GUIDE_PLACE_INFO: Readonly<Record<SetupGuidePlace, SetupGuidePlaceInfo>>;
 
 // @public
-export const SETUP_GUIDE_PLACES: readonly ["channel-connection", "connector-template", "extension-deployment"];
+export const SETUP_GUIDE_PLACES: readonly ["channel-connection", "connector-template", "extension-deployment", "device-connection"];
 
 // @public
 export interface SetupCheckArgs {
@@ -4050,6 +4054,10 @@ export type SetupGuideBlock = {
     kind: "check";
     id: string;
     label: string;
+} | {
+    kind: "shell-action";
+    action: SetupGuideShellAction;
+    label: string;
 };
 
 // @public
@@ -4105,6 +4113,7 @@ export interface SetupGuidePlaceInfo {
     audiences: readonly SetupGuideAudience[];
     drift: boolean;
     modes: readonly string[];
+    shellActions: readonly SetupGuideShellAction[];
     variables: Readonly<Record<string, SetupGuideVariableType>>;
 }
 
@@ -4115,6 +4124,9 @@ export interface SetupGuideSection {
     type: "mode" | "audience";
     value: string;
 }
+
+// @public
+export type SetupGuideShellAction = "connect-this-machine";
 
 // @public
 export type SetupGuideVariableType = "url" | "text" | "token";

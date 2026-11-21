@@ -61,14 +61,14 @@ describe("resolveExtensions", () => {
   });
 
   it("单选能力多个提供者：列出全部插件名", () => {
-    const a = mk("aa", { provides: ["sandbox@2"] });
-    const b = mk("bb", { provides: ["sandbox@2"] });
+    const a = mk("aa", { provides: ["object-store@1"] });
+    const b = mk("bb", { provides: ["object-store@1"] });
     expect(() => resolveExtensions([a, b], "0.1.0")).toThrow(/aa.*bb/);
   });
 
   it("a single-provider conflict carries extension.provider_conflict and its message parses back", () => {
-    const a = mk("aa", { provides: ["sandbox@2"] });
-    const b = mk("bb", { provides: ["sandbox@2"] });
+    const a = mk("aa", { provides: ["object-store@1"] });
+    const b = mk("bb", { provides: ["object-store@1"] });
     let err: unknown;
     try {
       resolveExtensions([a, b], "0.1.0");
@@ -78,13 +78,23 @@ describe("resolveExtensions", () => {
     expect(err).toBeInstanceOf(ExtensionResolveError);
     expect((err as ExtensionResolveError).code).toBe(PROVIDER_CONFLICT);
     expect(parseProviderConflict((err as Error).message)).toEqual({
-      extensionPoint: "sandbox@2",
+      extensionPoint: "object-store@1",
       providers: ["aa", "bb"],
     });
     expect(parseProviderConflict("plugin aa: required extension point x@1 has no provider")).toBe(
       null,
     );
     expect(parseProviderConflict(null)).toBe(null);
+  });
+
+  it("two device-provider@1 extensions resolve side by side", () => {
+    const a = mk("dev-a", { provides: ["device-provider@1"] });
+    const b = mk("dev-b", { provides: ["device-provider@1"] });
+    expect(
+      resolveExtensions([a, b], "0.1.0")
+        .map((e) => e.name)
+        .sort(),
+    ).toEqual(["dev-a", "dev-b"]);
   });
 
   it("多选能力允许多个提供者", () => {
@@ -113,17 +123,17 @@ describe("resolveExtensions", () => {
     expect(() => resolveExtensions([mk("aa"), mk("aa")], "0.1.0")).toThrow(/aa/);
   });
 
-  it("an extension providing sandbox@1 is refused at resolve", () => {
-    const a = mk("old-sandbox", { provides: ["sandbox@1"] });
+  it("an extension providing an unsupported device-provider major is refused at resolve", () => {
+    const a = mk("old-sandbox", { provides: ["device-provider@0"] });
     expect(() => resolveExtensions([a], "0.1.0")).toThrow(
       expect.objectContaining({
         code: "extension.unsupported_extension_point",
         message:
-          "Plugin old-sandbox provides sandbox@1, which this kernel no longer supports; upgrade it to a version that provides sandbox@2.",
+          "Plugin old-sandbox provides device-provider@0, which this kernel no longer supports; upgrade it to a version that provides device-provider@1.",
       }),
     );
     expect(
-      resolveExtensions([mk("new-sandbox", { provides: ["sandbox@2"] })], "0.1.0"),
+      resolveExtensions([mk("new-sandbox", { provides: ["device-provider@1"] })], "0.1.0"),
     ).toHaveLength(1);
   });
 });

@@ -7,6 +7,15 @@
  * (`LegacyDeviceHello`, `parseLegacyDeviceFrame`, ...); protocol 4 reuses their value guards, and
  * they go with the legacy device surface.
  */
+
+import {
+  parseSandboxBrowseScope,
+  parseSandboxExecutionRef,
+  parseSandboxOperationRef,
+  parseSandboxOperationScope,
+  parseSandboxPreparationScope,
+  type SandboxPermissionSupport,
+} from "./device-operation.js";
 import {
   type ExecResult,
   isDeviceProjectName,
@@ -20,15 +29,7 @@ import {
   type SandboxRoots,
   validateAllowHost,
   validateSandboxPathShape,
-} from "./sandbox.js";
-import {
-  parseSandboxBrowseScope,
-  parseSandboxExecutionRef,
-  parseSandboxOperationRef,
-  parseSandboxOperationScope,
-  parseSandboxPreparationScope,
-  type SandboxPermissionSupport,
-} from "./sandbox-operation.js";
+} from "./device-provider.js";
 
 /** The protocol version carried in `X-Capybara-Device-Protocol` and the hello frame. */
 export const DEVICE_PROTOCOL_VERSION = 4;

@@ -3187,7 +3187,7 @@
         "channel": "receives the organization's IM conversations",
         "directory": "can add people to organizations and create their accounts",
         "identity_source": "decides who can sign in as which account",
-        "sandbox": "runs arbitrary commands in the deployment",
+        "device_provider": "runs arbitrary commands in the deployment",
         "object_store": "holds every attachment and extension package",
         "context": "adds text to the model's context in conversations of organizations that enable it",
         "migration_warnings": "the migration warnings changed (see Migration warnings below); approve again",

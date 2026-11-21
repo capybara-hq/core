@@ -550,13 +550,13 @@ describe("/admin/extensions (ListPage + DataTable by capability, details in a Sh
       const docker = plugin({
         name: "sandbox-docker",
         displayName: { zh: "Docker 沙箱", en: "Docker sandbox" },
-        permissions: [group("provides", ["sandbox@2"])],
+        permissions: [group("provides", ["device-provider@1"])],
       });
       const e2b = plugin({
         name: "sandbox-e2b",
         displayName: { zh: "E2B 沙箱", en: "E2B sandbox" },
         status: "conflict",
-        permissions: [group("provides", ["sandbox@2"])],
+        permissions: [group("provides", ["device-provider@1"])],
         replicas: [
           {
             replicaId: "web-1-111-aaaaaa",
@@ -564,12 +564,12 @@ describe("/admin/extensions (ListPage + DataTable by capability, details in a Sh
             state: "pending",
             reason: "conflict",
             detail:
-              "extension point sandbox@2 is single-provider but provided by: sandbox-docker, sandbox-e2b",
+              "extension point device-provider@1 is single-provider but provided by: sandbox-docker, sandbox-e2b",
             heartbeatAt: HEARTBEAT,
           },
         ],
         conflict: {
-          extensionPoint: "sandbox@2",
+          extensionPoint: "device-provider@1",
           providers: [
             { name: "sandbox-docker", displayName: { zh: "Docker 沙箱", en: "Docker sandbox" } },
           ],
@@ -611,7 +611,7 @@ describe("/admin/extensions (ListPage + DataTable by capability, details in a Sh
       const docker = plugin({
         name: "sandbox-docker",
         displayName: { zh: "Docker 沙箱", en: "Docker sandbox" },
-        permissions: [group("provides", ["sandbox@2"])],
+        permissions: [group("provides", ["device-provider@1"])],
       });
       const e2b = plugin({
         name: "sandbox-e2b",
@@ -619,9 +619,9 @@ describe("/admin/extensions (ListPage + DataTable by capability, details in a Sh
         status: "disabled",
         desired: { version: "1.0.0", sha256: SHA, state: "disabled" },
         replicas: [],
-        permissions: [group("provides", ["sandbox@2"])],
+        permissions: [group("provides", ["device-provider@1"])],
         enableBlocked: {
-          extensionPoint: "sandbox@2",
+          extensionPoint: "device-provider@1",
           enabled: {
             name: "sandbox-docker",
             displayName: { zh: "Docker 沙箱", en: "Docker sandbox" },
@@ -665,7 +665,7 @@ describe("/admin/extensions (ListPage + DataTable by capability, details in a Sh
       status: "disabled",
       desired: { version: "1.0.0", sha256: SHA, state: "disabled" },
       replicas: [],
-      permissions: [group("provides", ["sandbox@2"])],
+      permissions: [group("provides", ["device-provider@1"])],
     });
     detailRoutes(disabled, {
       "POST /api/v1/admin/extensions/demo/enable": () =>
@@ -673,10 +673,10 @@ describe("/admin/extensions (ListPage + DataTable by capability, details in a Sh
           error: {
             code: "extension.single_provider_enabled",
             message:
-              "Only one extension may provide sandbox@2; disable Other sandbox first, then enable demo",
+              "Only one extension may provide device-provider@1; disable Other sandbox first, then enable demo",
             details: [
               {
-                extensionPoint: "sandbox@2",
+                extensionPoint: "device-provider@1",
                 enabled: {
                   name: "other-sbx",
                   displayName: { zh: "别的沙箱", en: "Other sandbox" },
@@ -800,7 +800,7 @@ describe("/admin/extensions (ListPage + DataTable by capability, details in a Sh
         name: "sandbox-e2b",
         displayName: { zh: "E2B 沙箱", en: "E2B sandbox" },
         status: "conflict",
-        permissions: [group("provides", ["sandbox@2"])],
+        permissions: [group("provides", ["device-provider@1"])],
         replicas: [
           {
             replicaId: "web-1-111-aaaaaa",
@@ -808,12 +808,12 @@ describe("/admin/extensions (ListPage + DataTable by capability, details in a Sh
             state: "pending",
             reason: "conflict",
             detail:
-              "extension point sandbox@2 is single-provider but provided by: sandbox-docker, sandbox-e2b; sandbox-docker is not loaded, so sandbox@2 has no running provider",
+              "extension point device-provider@1 is single-provider but provided by: sandbox-docker, sandbox-e2b; sandbox-docker is not loaded, so device-provider@1 has no running provider",
             heartbeatAt: HEARTBEAT,
           },
         ],
         conflict: {
-          extensionPoint: "sandbox@2",
+          extensionPoint: "device-provider@1",
           providers: [
             { name: "sandbox-docker", displayName: { zh: "Docker 沙箱", en: "Docker sandbox" } },
           ],

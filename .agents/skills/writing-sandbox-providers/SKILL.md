@@ -1,15 +1,14 @@
 ---
 name: writing-sandbox-providers
-description: 'Use when changing the kernel side of sandbox@2 or anything that drives a sandbox from the kernel: the contract as the kernel relies on it (devices, file system versus instance lifecycle, gone versus ordinary errors, abort, in-sandbox time limits, killTagged, exec tags, list / scan), permissionSupport v2 (boundary operation / instance), the device sandbox and its network (effectiveDeviceSandbox, open-public and the closed address classes, the fake-IP DNS fallback, no limits.mode, update, limitsApplyAt), protected write chains and the reserved staging prefix, per-call escalation, the SandboxService lifecycle keyed by device id (leases, holder records, path leases, fencing generation, idle suspension, inactivity destruction, rebuild and notices), the socket proxy config and compose sandbox profile core ships, and kernel tests on the sandbox-fake fixture. To write a sandbox extension (sandbox-docker, sandbox-e2b) see writing-sandbox-providers in capybara-hq/plugins.'
+description: 'Use when changing the kernel side of device-provider@1 or anything that drives a sandbox from the kernel: the contract as the kernel relies on it (devices, file system versus instance lifecycle, gone versus ordinary errors, abort, in-sandbox time limits, killTagged, exec tags, list / scan), permissionSupport v2 (boundary operation / instance), the device sandbox and its network (effectiveDeviceSandbox, open-public and the closed address classes, the fake-IP DNS fallback, no limits.mode, update, limitsApplyAt), protected write chains and the reserved staging prefix, per-call escalation, the SandboxService lifecycle keyed by device id (leases, holder records, path leases, fencing generation, idle suspension, inactivity destruction, rebuild and notices), the socket proxy config and compose sandbox profile core ships, and kernel tests on the sandbox-fake fixture. To write a sandbox extension (sandbox-docker, sandbox-e2b) see writing-sandbox-providers in capybara-hq/plugins.'
 ---
 
-# Sandboxes: the kernel side of `sandbox@2`
+# Sandboxes: the kernel side of `device-provider@1`
 
 Work happens in **devices** (spec `docs/superpowers/specs/2026-11-07-environments-design.md`): a device is one instance plus a file system, shared by all
 conversations bound to it (and their sub-agents). Instances are disposable, files are not: suspension and destruction act on the instance, and the files stay until the
 device is deleted. The kernel's sandbox tools (`Bash` / `Read` / `Write` / `Edit` / `Glob` / `Grep` / `Deliver`),
-attachment sync and `Skill` all use it through `SandboxService`. `sandbox@2` is a **single-choice, brokered** extension point: a deployment installs only one sandbox extension,
-and other extensions cannot `requires` it. For the extension host see `.agents/skills/writing-extensions`; for the tools side see `.agents/skills/writing-tools`.
+attachment sync and `Skill` all use it through `SandboxService`. `device-provider@1` is a **multi, brokered, org-scoped** extension point: several device providers load side by side (phase 1 of the device-provider plan: the kernel still drives the first one for new cloud devices), and other extensions cannot `requires` it. For the extension host see `.agents/skills/writing-extensions`; for the tools side see `.agents/skills/writing-tools`.
 
 This skill covers what core owns: the contract as the kernel relies on it, `SandboxService` (leases, fencing, suspension, destruction), the builtin sandbox tools (`Bash`, `Read`, `Write`, `Edit`, `Glob`, `Grep`, `Deliver`),
 the socket proxy config and compose sandbox profile, and the kernel tests on the `sandbox-fake` fixture. **Writing a sandbox extension** (its code, README, Docker / E2B
@@ -22,7 +21,7 @@ Implementations:
   a socket proxy, an egress proxy container per instance) and [`sandbox-e2b`](https://github.com/capybara-hq/plugins/tree/main/plugins/sandbox-e2b) (E2B cloud or self-hosted)
   plugins in capybara-hq/plugins; their READMEs list every platform trade-off.
 
-## Contract: `sandbox@2` (`packages/plugin-sdk/src/sandbox.ts`)
+## Contract: `device-provider@1` (`packages/plugin-sdk/src/device-provider.ts`)
 
 `@2` replaces `@1` with no overlap (no compatibility before 0.1.0): a kernel refuses to load a provider still on `@1`. A change here is an SDK change (API snapshot +
 changeset) and must keep the official providers working; check them in capybara-hq/plugins.
@@ -54,11 +53,11 @@ interface SandboxProvider {
 
 On the activated tree (device protocol 4, `PERMISSION_CONTEXT_ACTIVE`) the kernel never calls the raw `exec` / `readFile` /
 `writeFile` / `stat` / `list` / `scan`, `killAll` or `killTagged` for a tool: every builtin enters a device through the
-permission-scoped surface (`packages/plugin-sdk/src/sandbox-operation.ts`): `permissionSupport(h)`, `operation(h, scope)`
+permission-scoped surface (`packages/plugin-sdk/src/device-operation.ts`): `permissionSupport(h)`, `operation(h, scope)`
 (the admitted `SandboxOperationScope`: filesystem roots, network, actor and tag come only from it), `prepare` (trusted staging
 of skills and attachments), `browse` (owner metadata only), `revokeOperation(h, ref)` and `background` (`start` / `status` /
 `tail` / `readOutput` / `stop` by exact `SandboxExecutionRef`). A provider without that surface makes its devices
-`unsupported`: missing operation support never falls back to the raw methods. The raw methods stay in the `sandbox@2`
+`unsupported`: missing operation support never falls back to the raw methods. The raw methods stay in the `device-provider@1`
 signature for the lifecycle and the conformance suite.
 
 **`permissionSupport` is version 2** (approval-only profiles design, "SDK and protocol"; `parseSandboxPermissionSupport`):
@@ -118,7 +117,7 @@ Every provider must follow these; the kernel's behaviour below assumes them. How
   this limit guarantees it cannot run indefinitely in parallel with the next lock holder's commands.
 - **killAll**: kill every command started through `exec` that is still running (SIGKILL by process group and session); processes moved to the background in a new session are not guaranteed.
   The kernel no longer calls it (permission runtime cutover B-1): a resumed, failed-update or quarantined instance and a crashed holder are cleaned up by exact
-  operation revokes (`revokeOperation`, see "Takeover per holder" below). The method stays in the `sandbox@2` signature. When the exec that kills processes cannot even start (process table exhausted),
+  operation revokes (`revokeOperation`, see "Takeover per holder" below). The method stays in the `device-provider@1` signature. When the exec that kills processes cannot even start (process table exhausted),
   Docker falls back to `restart?t=0` and E2B falls back to pause + a `connect {memory: false}` cold start, which also end live siblings' commands; both log a
   warn and the call returns normally.
 - **Concurrent use (`concurrentExec`, `killTagged`, `tag`; both required)**: all sessions of a device and their sub-agents share one instance, so the kernel calls
@@ -491,7 +490,7 @@ The kernel owns it; the extension implements only primitives. **Do not do schedu
   Rows of a provider that is not loaded are kept (warned on the first tick of each hour); a failed row gets `sweep_failed_at` and is retried after the others. With
   no rows a tick is one `SELECT … LIMIT 1`; nothing else reads that table, and a later migration drops it.
 - **Skill directories accumulate**: `Skill` copies each skill version to its own `/skills/<name>@<digest12>/` in the device's file system, which every
-  conversation of the device shares, and nothing deletes an old one (there is no delete primitive in `sandbox@2`, and another conversation may still use that
+  conversation of the device shares, and nothing deletes an old one (there is no delete primitive in `device-provider@1`, and another conversation may still use that
   version). They are small and stay until the files are reset or the device is deleted.
 - **Transparent recovery**: a suspended instance is `resume`d on next use; on `gone` or after the instance was destroyed, a new instance is created on the kept file system
   (`restarted: true`, processes are gone, files stay) and the tool result carries an English notice. After a file reset each conversation's next use is told the files were

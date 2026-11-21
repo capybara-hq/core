@@ -6,7 +6,7 @@ import {
   type SandboxProvider,
   validateAllowHost,
   validateSandboxPathShape,
-} from "./sandbox.js";
+} from "./device-provider.js";
 
 /** The permission profile selected for a conversation. */
 export type PermissionProfile = "request-approval" | "approve-for-me" | "full-access";

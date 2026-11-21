@@ -142,7 +142,7 @@ describe("permissionGroups", () => {
     expect(plain?.sensitive).toBe(false);
   });
 
-  it("D10 + planned extensions: providing sandbox@2 or object-store@1 makes the provides group sensitive, the CLI marks each item", () => {
+  it("D10 + planned extensions: providing device-provider@1 or object-store@1 makes the provides group sensitive, the CLI marks each item", () => {
     expect([...SENSITIVE_EXTENSION_POINTS].sort()).toEqual(
       [
         "channel@1",
@@ -151,10 +151,10 @@ describe("permissionGroups", () => {
         "identity-source@1",
         "object-store@1",
         "push-provider@1",
-        "sandbox@2",
+        "device-provider@1",
       ].sort(),
     );
-    for (const cap of ["sandbox@2", "object-store@1", "push-provider@1"]) {
+    for (const cap of ["device-provider@1", "object-store@1", "push-provider@1"]) {
       const [g] = permissionGroups({ ...base, provides: [cap] });
       expect(g, cap).toEqual({
         category: "provides",

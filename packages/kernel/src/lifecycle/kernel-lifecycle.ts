@@ -1,4 +1,4 @@
-import { type ExtensionContext, SANDBOX_EXTENSION_POINT } from "@capybara-hq/plugin-sdk";
+import { DEVICE_PROVIDER_EXTENSION_POINT, type ExtensionContext } from "@capybara-hq/plugin-sdk";
 import {
   type BeforeApplicationShutdown,
   Inject,
@@ -313,8 +313,8 @@ export class KernelLifecycle
     });
     this.checkpoint();
     const sandboxEntry = this.host
-      .list("sandbox")
-      .find((x) => x.capability === SANDBOX_EXTENSION_POINT);
+      .list("device-provider")
+      .find((x) => x.capability === DEVICE_PROVIDER_EXTENSION_POINT);
     if (sandboxEntry !== undefined) {
       for (const w of sandboxConfigWarnings(cfg(), sandboxEntry.plugin)) {
         this.log[w.level](w.message);
