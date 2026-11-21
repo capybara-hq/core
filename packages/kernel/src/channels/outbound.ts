@@ -1182,8 +1182,9 @@ class Delivery {
       await this.send({ text: phrase("handleOnWeb", this.locale) }, this.key(seq));
       return this.advance(seq);
     }
-    // secrets are typed on the web only: IM gets a link, never an approval card (no card is
-    // recorded, so `approval_decided` has nothing to update)
+    // secrets are typed on the web only (a secure input request, or a tool ask with person
+    // fields): IM gets a link, never an approval card (no card is recorded, so `approval_decided`
+    // has nothing to update)
     const bind = await personFieldsCard(this.d, approvalId, this.base, this.locale);
     if (bind) {
       await this.send(cardMessage(bind.text, bind), this.key(seq));

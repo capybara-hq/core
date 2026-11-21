@@ -410,10 +410,11 @@ export class Waits implements OnApplicationShutdown {
             }
           : {
               toolKey: a.tool_key,
-              // a tool ask whose card refused a person's value as leaked says so (§4.5)
+              // a tool ask or secure input whose card refused a person's value as leaked says
+              // so (§4.5)
               text: withLeakedOnCard(
                 APPROVAL_CANCELLED_TEXT,
-                a.kind === "tool"
+                a.kind === "tool" || a.kind === "secure_input"
                   ? (a.detail as { leakedFields?: string[] } | null)?.leakedFields
                   : undefined,
               ),

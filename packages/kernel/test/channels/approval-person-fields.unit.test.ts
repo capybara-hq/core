@@ -1,10 +1,11 @@
 import { renderCardAsText } from "@capybara-hq/plugin-sdk";
 import { describe, expect, it } from "vitest";
-import { personFieldsCard } from "../../src/channels/cards.js";
+import { approvalCard, personFieldsCard } from "../../src/channels/cards.js";
 
 /**
- * An approval whose Platform call needs the person to type secrets is web-only: IM gets a `bind`
- * card (or its text fallback) linking to the conversation, never an approval card.
+ * A secure input request, or an approval whose Platform call needs the person to type secrets, is
+ * web-only: IM gets a `bind` card (or its text fallback) linking to the conversation, never an
+ * approval card.
  */
 
 const view = (personFields?: unknown[]) => ({
@@ -45,6 +46,20 @@ describe("personFieldsCard", () => {
     const text = renderCardAsText(card as NonNullable<typeof card>, "zh");
     expect(text).toContain("需要在网页填写 2 项");
     expect(text).toContain("https://cap.example/chat/c1");
+  });
+
+  it("a secure input request: the same bind card", async () => {
+    const v = { ...view([{ key: "apiKey" }]), kind: "secure_input" };
+    expect(await personFieldsCard(deps(v), "a1", "https://cap.example", "zh")).toEqual({
+      kind: "bind",
+      text: "需要在网页填写 1 项",
+      url: "https://cap.example/chat/c1",
+    });
+  });
+
+  it("a secure input request never gets an approval card", async () => {
+    const v = { ...view([{ key: "apiKey" }]), kind: "secure_input" };
+    expect(await approvalCard(deps(v), "a1", "https://cap.example", "en")).toBeUndefined();
   });
 
   it("an ordinary approval or a missing one gets no bind card", async () => {
