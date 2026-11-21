@@ -168,7 +168,7 @@ describe("SandboxFileReader.read", () => {
   it("reads nothing without the serving call's execution claim", async () => {
     const ws = await put("a.txt", "x");
     await expect(reader.read(readInput(`${ws}/a.txt`, 1024))).rejects.toThrow(
-      /permission profile allows/,
+      /outside the scope this conversation has on the device/,
     );
   });
 

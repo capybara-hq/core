@@ -1182,7 +1182,9 @@ describe("the permission review order", () => {
     expect((await decide(ask.id, { decision: "approve", scope: "once" })).statusCode).toBe(200);
     await waitForTerminal(db, conv, 2, 30_000);
     const r = (await results(conv)).at(-1) as ToolResult;
-    expect(r.payload.content).not.toContain("permission profile allows");
+    expect(r.payload.content).not.toContain(
+      "outside the scope this conversation has on the device",
+    );
     expect(r.payload.review).toMatchObject({ decision: "allow", by: "person", rule: "ask.sudo" });
     expect((await eventsOf(db, conv)).filter((e) => e.type === "tool_call_started")).toHaveLength(
       2,
