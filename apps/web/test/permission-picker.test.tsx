@@ -555,6 +555,50 @@ describe("Auto consent", () => {
   });
 });
 
+describe("Auto chosen without a device", () => {
+  it("falls back to the default when a device is then chosen, and asks again for it", async () => {
+    const user = userEvent.setup();
+    const { rerender } = mount({});
+    const menu = await openMenu(user);
+    await user.click(full(menu));
+    await user.click(within(screen.getByRole("dialog")).getByRole("button", { name: "Use Auto" }));
+    expect(selection()).toEqual({ profile: "full-access" });
+    stubApi({ [previewUrl("d1")]: () => json(200, permissionPreview({ deviceId: "d1" })) });
+    rerender({ deviceId: "d1" });
+    await waitFor(() => expect(selection()).toEqual({ profile: "approve-for-me" }));
+  });
+});
+
+describe("the notice on phones", () => {
+  it("the options sheet shows the same cause line as the mode menu", async () => {
+    const user = userEvent.setup();
+    mount(
+      { deviceId: "d1" },
+      {
+        availability: {
+          state: "unsupported",
+          reason: "raw",
+          cause: { kind: "provider-outdated", plugin: "sandbox-docker", version: "0.4.1" },
+        },
+      },
+    );
+    await waitFor(() => expect(screen.getByTestId("selection")).toBeTruthy());
+    await user.click(document.querySelector('[data-part="composer-options"]') as HTMLElement);
+    const sheet = screen.getByRole("dialog");
+    await waitFor(() =>
+      expect(sheet.querySelector('[data-part="options-notice"]')?.textContent).toBe(
+        "This device's sandbox plugin (sandbox-docker 0.4.1) needs an update before device tools can run; a super admin updates it in Plugins.",
+      ),
+    );
+    const group = within(sheet).getByRole("radiogroup", { name: "Permissions" });
+    expect(
+      within(group)
+        .getAllByRole("radio")
+        .map((r) => (r as HTMLInputElement).disabled),
+    ).toEqual([false, false, false]);
+  });
+});
+
 describe("a starting choice that arrives after mount (review M2)", () => {
   it("takes over a recorded profile read later, and a changed one again", async () => {
     const { rerender } = mount({});

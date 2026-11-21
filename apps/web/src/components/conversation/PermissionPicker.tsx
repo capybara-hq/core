@@ -42,7 +42,7 @@ import { useSession } from "../shell/session";
 
 /**
  * The conversation permission profiles (permission profiles spec, "UI outline"): three rows with
- * an icon, an explanation and the checkmark, all in the same neutral colors (Full access has no
+ * an icon, an explanation and the checkmark, all in the same neutral colors (Auto has no
  * accent of its own), in this order; Approve for me is the default.
  */
 export const PERMISSION_PROFILES: readonly PermissionProfile[] = [
@@ -119,7 +119,7 @@ export function pickerNotice(
 }
 
 /**
- * Whether the Full access confirmation names running outside the sandbox: the device may grant
+ * Whether the Auto confirmation names running outside the sandbox: the device may grant
  * it (its outside-sandbox ceiling allows it and its runtime can do it; never a cloud instance).
  */
 export function fullAccessReachesOutside(p: PermissionPreview): boolean {
@@ -189,27 +189,27 @@ type Choice = { profile: PermissionProfile; consent?: Consent; noDevice?: true }
 
 export type PermissionChoiceInput = {
   orgId: string;
-  /** The selected device (undefined: none; no preview is read, Full needs one). */
+  /** The selected device (undefined: none; no preview is read; Auto then asks the device-less question). */
   deviceId: string | undefined;
   /** The selected project on that device (undefined: free mode). */
   project: string | undefined;
   /**
-   * The device's display name, for the Full access confirmation; undefined while it is not known
-   * (Full then waits, as for the device check: the dialog never names a device "—").
+   * The device's display name, for the Auto confirmation; undefined while it is not known
+   * (Auto then waits, as for the device check: the dialog never names a device "—").
    */
   deviceLabel: string | undefined;
   /**
    * An existing conversation's revision on display and whether its picker may be used now: an
-   * open Full access dialog closes for good when either changes (it never comes back by itself).
+   * open Auto dialog closes for good when either changes (it never comes back by itself).
    */
   revision?: number;
   editable?: boolean;
   /** A new conversation's choice governs its first operation; an existing one's new operations. */
   context: "new" | "existing";
   /**
-   * The starting choice (an existing conversation's recorded profile). A recorded Full access is
+   * The starting choice (an existing conversation's recorded profile). A recorded Auto is
    * the current state only: it carries no consent, so it yields no selection until the person
-   * chooses again (Full only through the dialog).
+   * chooses again (Auto only through the dialog).
    */
   initial?: PermissionProfile;
   /**
@@ -218,20 +218,20 @@ export type PermissionChoiceInput = {
    */
   preview?: { data: PermissionPreview | undefined; failed: boolean };
   /**
-   * An existing conversation's edit: each new choice (Full only after its confirmation) goes here
+   * An existing conversation's edit: each new choice (Auto only after its confirmation) goes here
    * instead of into local state; the shown value stays `initial` until the authoritative read.
    */
   onChange?(selection: PermissionSelection): void;
   /**
-   * The Full access consent the kernel holds for this conversation (its device and scope
-   * revision): choosing Full again for that same scope needs no confirmation.
+   * The Auto consent the kernel holds for this conversation (its device and scope
+   * revision): choosing Auto again for that same scope needs no confirmation.
    */
   consentScope?: { deviceId: string; scopeRevision: string } | null;
 };
 
 /**
  * The permission choice of a composer: the picker for the existing generic slot (desktop menu and
- * phone sheet), the Full access confirmation dialog, and the current selection. Full access is
+ * phone sheet), the Auto confirmation dialog, and the current selection. Auto is
  * chosen only through the dialog, for the device and scope revision on display, and is cleared
  * back to Approve for me when the device or its scope changes; any other choice stays.
  * Sending the selection is the caller's.
@@ -240,14 +240,14 @@ export function usePermissionChoice(input: PermissionChoiceInput): {
   picker: PickerProps;
   dialog: ReactNode;
   /**
-   * What a send carries; null for a recorded Full access nobody consented to here (the current
-   * state, unchanged): a Full selection is never synthesized without consent.
+   * What a send carries; null for a recorded Auto nobody consented to here (the current
+   * state, unchanged): an Auto selection is never synthesized without consent.
    */
   selection: PermissionSelection | null;
   /**
-   * Drops a Full access consent back to Approve for me (the kernel refused the displayed scope);
+   * Drops a Auto consent back to Approve for me (the kernel refused the displayed scope);
    * any other choice stays. Consent is only ever given again through the dialog, which the next
-   * Full selection shows again.
+   * Auto selection shows again.
    */
   clearFullAccess(): void;
 } {
@@ -266,7 +266,7 @@ export function usePermissionChoice(input: PermissionChoiceInput): {
   const [choice, setChoice] = useState<Choice>({
     profile: input.initial ?? DEFAULT_PERMISSION_PROFILE,
   });
-  // The last Full access consent given here; the confirmation shows on the first selection for a
+  // The last Auto consent given here; the confirmation shows on the first selection for a
   // device and scope revision, and again once the scope changes (a widened ceiling)
   const [consented, setConsented] = useState<Consent | null>(null);
   // another device drops it: a device switch always asks again
@@ -278,8 +278,8 @@ export function usePermissionChoice(input: PermissionChoiceInput): {
     setInitial(input.initial);
     setChoice({ profile: input.initial ?? DEFAULT_PERMISSION_PROFILE });
   }
-  // Full access consent belongs to one device and scope revision: another device, project or
-  // revision clears it (adjusted during render, so no frame shows a stale Full access).
+  // Auto consent belongs to one device and scope revision: another device, project or
+  // revision clears it (adjusted during render, so no frame shows a stale Auto).
   const c = choice.consent;
   if (
     choice.profile === "full-access" &&
@@ -449,7 +449,7 @@ export function usePermissionChoice(input: PermissionChoiceInput): {
           ? { profile: "full-access" }
           : null;
   const clearFullAccess = () => {
-    // the kernel refused the consent: the next Full asks again
+    // the kernel refused the consent: the next Auto asks again
     setConsented(null);
     setChoice((cur) =>
       cur.profile === "full-access" ? { profile: DEFAULT_PERMISSION_PROFILE } : cur,
@@ -503,7 +503,7 @@ export function useLockedPermissionPicker(
  * - Read: the owner-only authoritative view (`enabled` only for the owner; a viewer reads nothing
  *   and gets no picker). Until it lands, the profile the log recorded is shown, locked.
  * - Edit: only an interactive root (no parent, no scheduled task) whose view is confirmed. A new
- *   choice is a PATCH with the view's `expectedRevision` (Full only after the dialog for the
+ *   choice is a PATCH with the view's `expectedRevision` (Auto only after the dialog for the
  *   view's own device, project and scope revision). The answer's revision raises the root's
  *   watermark inside the mutation, before the views are read again.
  * - Confirmation: below the watermark (a PATCH or a root profile event this view has not read
@@ -518,7 +518,7 @@ export function useConversationPermission(o: {
   conversationId: string;
   row: Conversation | undefined;
   events: readonly ConversationEvent[] | undefined;
-  /** The bound device's display name, for the Full access confirmation (undefined: unknown). */
+  /** The bound device's display name, for the Auto confirmation (undefined: unknown). */
   deviceLabel: string | undefined;
 }): {
   picker: PickerProps | undefined;
@@ -586,7 +586,7 @@ export function useConversationPermission(o: {
         return;
       }
       setFailure(e);
-      // a refused change (a stale consent among them): the next Full asks again
+      // a refused change (a stale consent among them): the next Auto asks again
       clearConsent.current();
       refreshPermissionViews(qc, orgId, conversationId);
     },
@@ -602,7 +602,7 @@ export function useConversationPermission(o: {
     ...(view !== undefined ? { revision: view.revision } : {}),
     editable: interactiveRoot && view !== undefined && confirmed && !patch.isPending,
     ...(view !== undefined ? { initial: view.profile, consentScope: view.consentScope } : {}),
-    // the view is the scope the kernel checks a Full consent against: no preview is read
+    // the view is the scope the kernel checks an Auto consent against: no preview is read
     preview: {
       data:
         view?.deviceId != null && view.scopeRevision !== null

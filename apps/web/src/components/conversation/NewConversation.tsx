@@ -107,7 +107,7 @@ export function orderAgents(
  * (`first-message-attempt.ts`): its id and request bytes are frozen once. No answer leaves its
  * outcome unknown and an unchanged send retries it with the same bytes (the kernel answers the
  * same conversation); a changed send is a new request with a new id, and the earlier one keeps
- * its Retry original. A 409 drops a Full access consent and reads the device's scope again: the
+ * its Retry original. A 409 drops a Auto consent and reads the device's scope again: the
  * person consents again through the dialog, nothing resends on its own.
  *
  * The send is instant (conversation send spec §2.1): the page switches to the conversation layout
@@ -183,7 +183,7 @@ export function useNewConversationPage(
   const chosenDevice = devices?.items.find((e) => e.id === device.deviceId);
   const selection = useSelection(providers, agent, undefined, { newConversation: true });
   const pending = usePendingSends(undefined);
-  // The profile the first message carries; Full access only through its confirmation, for the
+  // The profile the first message carries; Auto only through its confirmation, for the
   // device and scope on display (none without a device: no preview is read).
   const permission = usePermissionChoice({
     orgId,
@@ -275,9 +275,9 @@ export function useNewConversationPage(
   const send = async (m: ComposerMessage): Promise<SendResult> => {
     if (!agent) return { ok: false, error: new Error("no agent") };
     if (inFlight.current) return { ok: false, error: new Error("a first message is on its way") };
-    // never reached here (no recorded profile is passed): a Full choice without consent never sends
+    // never reached here (no recorded profile is passed): an Auto choice without consent never sends
     if (permission.selection === null)
-      return { ok: false, error: new Error("Full access needs its confirmation") };
+      return { ok: false, error: new Error("Auto needs its confirmation") };
     const request: FirstMessageRequest = {
       agentId: agent.id,
       message: {
@@ -457,7 +457,7 @@ export function useNewConversationPage(
           initialDraft={sent ? undefined : restore.draft}
           running={false}
           // one message at a time until the conversation exists (it has no queue yet); with
-          // every local device offline the first send goes without one (Full needs a device)
+          // every local device offline the first send goes without one (Auto needs a device)
           sendDisabled={!agent || sent || sending}
           onBlocked={() => {
             if (sent) setBlocked(true);
