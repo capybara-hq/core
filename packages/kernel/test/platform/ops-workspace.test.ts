@@ -609,6 +609,20 @@ describe("agent profile", () => {
     const c = ctxOf(env.memId, id);
     const good = { agentId: id, avatar: { kind: "preset", id: "brand/brand-grid/mascot" } };
     expect(await precheck("agents.update-profile", good, c)).toEqual({ ok: true });
+    // the card names the theme preset, not its key; an unknown key shows as given
+    expect(await summarize("agents.update-profile", good, c)).toEqual({
+      zh: "修改私有智能体「Mine」的资料：头像设为预设「mascot zh」",
+      en: 'Update the profile of private agent "Mine": set the avatar to preset "mascot en"',
+    });
+    expect(
+      await summarize(
+        "agents.update-profile",
+        { agentId: id, avatar: { kind: "preset", id: "other/other-paper/mascot" } },
+        c,
+      ),
+    ).toMatchObject({
+      en: 'Update the profile of private agent "Mine": set the avatar to preset "other/other-paper/mascot"',
+    });
     const out = (await run("agents.update-profile", good, c)) as { profile: { avatar: unknown } };
     const pin = {
       kind: "theme",

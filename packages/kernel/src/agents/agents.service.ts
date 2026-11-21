@@ -19,6 +19,7 @@ import { ProviderRegistry } from "../runtime/providers.js";
 import { SkillChangesService } from "../skills/changes.service.js";
 import { assertDisabledSkills } from "../skills/skills.service.js";
 import { agentSkills } from "../skills/usable.js";
+import type { OrgAvatarPreset } from "../themes/theme-state.js";
 import { ThemesService } from "../themes/themes.service.js";
 import { ToolRegistry } from "../tools/registry.js";
 import {
@@ -48,6 +49,7 @@ import {
   isBuiltinPresetId,
   PRESET_IDS,
   type ProfileInput,
+  type ThemeAvatar,
 } from "./profile.js";
 import { loadTemplates, templateTypeOf } from "./templates.js";
 
@@ -98,6 +100,15 @@ export function assertProfileWritable(profile: ProfileInput | undefined): void {
 }
 
 const notFound = () => new ApiError("agent.not_found", "Agent not found");
+
+/** The stored value of a theme preset the org offers: pinned to its theme version. */
+const pinnedThemeAvatar = (p: OrgAvatarPreset): ThemeAvatar => ({
+  kind: "theme",
+  themeId: p.themeId,
+  version: p.version,
+  preset: p.preset,
+  file: p.file,
+});
 
 /** A per-operation policy key of the `Platform` tool (Platform tool spec §6.2). */
 const PLATFORM_POLICY_KEY = /^Platform:[a-z][a-z-]*\.[a-z][a-z-]*$/;
@@ -415,13 +426,7 @@ export class AgentsService {
         `Avatar preset ${input.id} is not offered in this organization; choose one of the presets the picker shows`,
       );
     }
-    return {
-      kind: "theme",
-      themeId: p.themeId,
-      version: p.version,
-      preset: p.preset,
-      file: p.file,
-    };
+    return pinnedThemeAvatar(p);
   }
 
   /**
@@ -436,13 +441,7 @@ export class AgentsService {
         kind: "preset" as const,
         id,
       })),
-      ...presets.map((p) => ({
-        kind: "theme" as const,
-        themeId: p.themeId,
-        version: p.version,
-        preset: p.preset,
-        file: p.file,
-      })),
+      ...presets.map(pinnedThemeAvatar),
     ];
     return pool.length === 0 ? null : (pool[randomInt(pool.length)] ?? null);
   }

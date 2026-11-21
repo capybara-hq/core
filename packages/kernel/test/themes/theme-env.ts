@@ -112,7 +112,11 @@ export const avatarThemePlugin = (
       [`themes/${themeId}.json`]: JSON.stringify({
         name: { en: `${themeId} en`, zh: `${themeId} zh` },
         schemes: { dark: { radius: { sm: 2 } } },
-        avatars: presets.map((id) => ({ id, name: { en: id }, file: `./avatars/${id}.svg` })),
+        avatars: presets.map((id) => ({
+          id,
+          name: { en: `${id} en`, zh: `${id} zh` },
+          file: `./avatars/${id}.svg`,
+        })),
         ...(o.hidden !== undefined && { hideAvatarPresets: o.hidden }),
       }),
       ...Object.fromEntries(presets.map((id) => [`avatars/${id}.svg`, svg])),

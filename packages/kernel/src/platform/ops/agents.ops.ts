@@ -19,7 +19,7 @@ import { AgentDefinitionSchema, type ModelRef } from "../../agents/definition.js
 import { AgentsFromTemplate } from "../../agents/from-template.service.js";
 import { OrgAgentTemplates } from "../../agents/org-templates.js";
 import { PendingConnectorsService } from "../../agents/pending-connectors.service.js";
-import { PresetAvatarSchema, type ProfilePatch } from "../../agents/profile.js";
+import { isBuiltinPresetId, PresetAvatarSchema, type ProfilePatch } from "../../agents/profile.js";
 import { ReadinessService } from "../../agents/readiness.service.js";
 import { CatalogRequestsService } from "../../catalog/requests.service.js";
 import {
@@ -30,6 +30,7 @@ import {
 import { KernelDb } from "../../infra/database/kernel-db.js";
 import { roleAtLeast } from "../../orgs/roles.js";
 import { rootConversationOf } from "../../runtime/subagents/child.js";
+import { ThemesService } from "../../themes/themes.service.js";
 import { ConnectorsService } from "../../tools/connectors.service.js";
 import { FileRefSchema } from "../file-ref.js";
 import {
@@ -41,7 +42,7 @@ import {
 import { PlatformOperations } from "../registry.js";
 import { precheckBy, viaAgent } from "./errors.js";
 import { roleOf } from "./role.js";
-import { named, orElse } from "./summary.js";
+import { localized, named, orElse } from "./summary.js";
 
 const AgentId = AgentPathParams.shape.agentId.max(100);
 /** The request's definition (create form): the operations tighten its fields, never redeclare them. */
@@ -94,13 +95,17 @@ const PresetAvatar = PresetAvatarSchema;
  */
 const FileAvatar = z.object({ kind: z.literal("file"), file: FileRefSchema }).strict();
 
-/** One change of `agents.update-profile` as the card says it. */
+/**
+ * One change of `agents.update-profile` as the card says it. `presetName`: a theme preset's name
+ * (the card names it rather than its key); a built-in or unknown preset shows its id.
+ */
 function profileChanges(
   i: {
     avatar?: { kind: "preset"; id: string } | { kind: "file" } | null | undefined;
     quickActions?: { title: string }[] | undefined;
   },
   fileName?: string,
+  presetName?: { zh: string; en: string },
 ): { zh: string[]; en: string[] } {
   const zh: string[] = [];
   const en: string[] = [];
@@ -113,8 +118,8 @@ function profileChanges(
     zh.push(`头像设为图片「${n}」`);
     en.push(`set the avatar to the image "${n}"`);
   } else if (i.avatar !== undefined) {
-    zh.push(`头像设为预设「${i.avatar.id}」`);
-    en.push(`set the avatar to preset "${i.avatar.id}"`);
+    zh.push(`头像设为预设「${presetName?.zh ?? i.avatar.id}」`);
+    en.push(`set the avatar to preset "${presetName?.en ?? i.avatar.id}"`);
   }
   if (i.quickActions !== undefined && i.quickActions.length === 0) {
     zh.push("清空快捷操作");
@@ -158,6 +163,8 @@ export class AgentsOperations implements OnModuleInit {
     @Inject(ReadinessService) private readonly readiness: ReadinessService,
     @Inject(KernelDb) private readonly kdb: KernelDb,
     @Inject(AttachmentsService) private readonly attachments: AttachmentsService,
+    /** The org's theme avatar presets: the card names a theme preset by its name. */
+    @Inject(ThemesService) private readonly themes: Pick<ThemesService, "avatarPresets">,
   ) {}
 
   /**
@@ -485,7 +492,16 @@ export class AgentsOperations implements OnModuleInit {
             null,
           );
           const n = named(a?.definition.name ?? i.agentId);
-          const c = profileChanges(i, ctx.file?.name);
+          let presetName: { zh: string; en: string } | undefined;
+          if (i.avatar?.kind === "preset" && !isBuiltinPresetId(i.avatar.id)) {
+            const key = i.avatar.id;
+            const p = (await this.themes.avatarPresets(ctx.orgId)).presets.find(
+              (x) => x.key === key,
+            );
+            // the name in both languages (a missing zh already reads as en), else the key
+            if (p !== undefined) presetName = localized(p.name, key);
+          }
+          const c = profileChanges(i, ctx.file?.name, presetName);
           return a?.visibility === "private"
             ? {
                 zh: `修改私有智能体「${n}」的资料：${c.zh.join("；")}`,
