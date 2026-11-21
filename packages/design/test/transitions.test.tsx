@@ -1,6 +1,6 @@
 // Push and pop transitions (mobile app spec §7.2, §4.4): the slide is tuned to the platform by
 // tokens, a pop the browser already animated (a back gesture: `hasUAVisualTransition`) swaps at
-// once, and a tab switch never slides.
+// once, and a move between chat surfaces (or a native shell's tab roots) never slides.
 import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { act, cleanup, render } from "@testing-library/react";
@@ -104,13 +104,21 @@ describe("a pop the browser already animated", () => {
   });
 });
 
-describe("tab switches never slide", () => {
-  it("root to root through the web's bottom navigation, also right after a pop", () => {
+describe("moves on one level never slide", () => {
+  const chat = (pathname: string, chatSurface: boolean) => (
+    <DesignProvider locale="zh">
+      <AppShell sidebar={sidebar} status={status} pathname={pathname} chatSurface={chatSurface}>
+        <div>内容</div>
+      </AppShell>
+    </DesignProvider>
+  );
+
+  it("chat surface to chat surface, also right after a pop (the chat-first shell)", () => {
     window.matchMedia = matchMediaFor(390).matchMedia;
-    const { rerender } = render(shell("/agents/new"));
-    rerender(shell("/agents"));
+    const { rerender } = render(chat("/inbox", false));
+    rerender(chat("/chat/c1", true));
     expect(main().getAttribute("data-nav")).toMatch(/^pop-/);
-    rerender(shell("/inbox"));
+    rerender(chat("/", true));
     expect(main().getAttribute("data-nav")).toBeNull();
   });
 

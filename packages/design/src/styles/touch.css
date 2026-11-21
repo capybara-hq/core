@@ -180,7 +180,162 @@
   text-align: center;
 }
 
+/* NavDrawer (§6.53): search, the sections, the recent list, the foot. The rows are NavRows on the
+   drawer's own surface; the search pill and the account row are the only grounds inside it. */
+.cb-navdrawer {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  min-height: 0;
+  padding-top: var(--cb-space-3);
+}
+.cb-navdrawer-search {
+  display: flex;
+  flex: none;
+  align-items: center;
+  gap: var(--cb-space-3);
+  min-height: var(--cb-control-prominent);
+  margin: 0 var(--cb-space-3) var(--cb-space-3);
+  padding: 0 var(--cb-space-4);
+  border: 0;
+  border-radius: var(--cb-radius-pill);
+  background: var(--cb-hover);
+  color: var(--cb-muted);
+  font: inherit;
+  text-align: start;
+  cursor: pointer;
+}
+.cb-navdrawer-search:active {
+  background: var(--cb-selected);
+}
+.cb-navdrawer-search:focus-visible,
+.cb-navdrawer-account:focus-visible,
+.cb-navdrawer-new:focus-visible {
+  outline: 2px solid var(--cb-accent);
+  outline-offset: 2px;
+}
+.cb-navdrawer-sections {
+  display: flex;
+  flex: none;
+  flex-direction: column;
+}
+.cb-navdrawer-recent {
+  display: flex;
+  flex: 1 0 auto;
+  flex-direction: column;
+  margin-top: var(--cb-space-4);
+}
+.cb-navdrawer-foot {
+  position: sticky;
+  bottom: 0;
+  display: flex;
+  flex: none;
+  align-items: center;
+  gap: var(--cb-space-2);
+  padding: var(--cb-space-3);
+  background: var(--cb-panel);
+}
+.cb-navdrawer-account {
+  display: flex;
+  flex: 1;
+  align-items: center;
+  gap: var(--cb-space-3);
+  min-width: 0;
+  min-height: var(--cb-touch-row);
+  padding: 0 var(--cb-space-3) 0 var(--cb-space-1);
+  border: 0;
+  border-radius: var(--cb-radius-pill);
+  background: var(--cb-hover);
+  color: var(--cb-ink);
+  font: inherit;
+  text-align: start;
+  cursor: pointer;
+}
+.cb-navdrawer-account:active {
+  background: var(--cb-selected);
+}
+.cb-navdrawer-new {
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  justify-content: center;
+  width: var(--cb-touch-row);
+  height: var(--cb-touch-row);
+  border-radius: var(--cb-radius-pill);
+  background: var(--cb-accent);
+  color: var(--cb-on-accent);
+}
+.cb-navdrawer-new:active {
+  filter: brightness(0.92);
+}
+.cb-navdrawer-new > .cb-icon {
+  width: 20px;
+  height: 20px;
+}
+.cb-account-names {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+.cb-account-name,
+.cb-account-org {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.cb-account-name {
+  font-weight: 500;
+}
+.cb-account-org {
+  color: var(--cb-muted);
+  font-size: var(--cb-type-small-size);
+  line-height: var(--cb-type-small-line);
+}
+
+/* AccountSheet (§6.54): the person, then rows on the sheet's own surface. */
+.cb-account {
+  display: flex;
+  flex-direction: column;
+  margin: 0 calc(-1 * var(--cb-space-4));
+}
+.cb-account-who {
+  display: flex;
+  align-items: center;
+  gap: var(--cb-space-3);
+  padding: var(--cb-space-2) var(--cb-space-4) var(--cb-space-3);
+}
+.cb-account-slot {
+  padding: var(--cb-space-2) var(--cb-space-4);
+}
+.cb-account-line {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--cb-space-3);
+  min-height: var(--cb-row-default);
+  padding: 0 var(--cb-space-4);
+}
+.cb-account-label {
+  color: var(--cb-ink);
+}
+.cb-account-status {
+  min-width: 0;
+  color: var(--cb-muted);
+  font-size: var(--cb-type-small-size);
+  text-align: end;
+}
+
 @media (pointer: coarse), (any-pointer: coarse) and (not (any-pointer: fine)) {
+  /* the chat-first shell's floating row (shell.css) takes the touch size of its buttons */
+  .cb-shell {
+    --cb-float-size: var(--cb-touch-float);
+  }
+  .cb-navdrawer-search {
+    min-height: var(--cb-touch-primary);
+  }
+  .cb-account-line {
+    min-height: var(--cb-touch-row);
+  }
   .cb-float-btn {
     width: var(--cb-touch-float);
     height: var(--cb-touch-float);

@@ -1,0 +1,458 @@
+// The chat-first compact shell (design spec §4.6, §6.55; mobile app plan Task 27, Decisions 17,
+// 19, 25, 27): no top bar and no bottom navigation; a floating row with the menu button on a chat
+// surface and back on a pushed page; the menu opens the drawer, and the system back closes an open
+// overlay before it navigates.
+import { act, cleanup, render, waitFor, within } from "@testing-library/react";
+import { userEvent } from "@testing-library/user-event";
+import { renderToString } from "react-dom/server";
+import { afterEach, describe, expect, it, vi } from "vitest";
+import {
+  AppShell,
+  DesignProvider,
+  type DrawerNavData,
+  type LinkComponent,
+  PageHeader,
+  useRegisterShellPage,
+} from "../src/index";
+import { css, parseCss } from "./css-rules";
+import { matchMediaFor } from "./width";
+
+const realMatchMedia = window.matchMedia;
+afterEach(() => {
+  cleanup();
+  window.matchMedia = realMatchMedia;
+  vi.unstubAllGlobals();
+  vi.restoreAllMocks();
+  Reflect.deleteProperty(window, "navigation");
+  window.history.replaceState(null, "", "/");
+});
+
+const sidebar = {
+  context: { kind: "work" as const, org: null, primary: [], more: [] },
+  activeNav: "",
+  account: { name: "grant", menu: [] },
+};
+const status = { context: "demo", version: "0.1.0", timeZone: "UTC" };
+
+const conversations = {
+  state: "ready" as const,
+  groups: [
+    {
+      agentId: "a1",
+      agentName: "Claude",
+      conversations: [
+        {
+          id: "c1",
+          title: "沙箱内 pnpm 安装失败",
+          startedAt: new Date("2026-11-20T10:00:00Z"),
+          href: "/chat/c1",
+          activity: null,
+        },
+      ],
+      more: false,
+      onMore() {},
+      onNew() {},
+    },
+  ],
+  moreGroups: false,
+  onMoreGroups() {},
+  onRetry() {},
+  filter: { q: "", state: "all" as const, onChange() {} },
+  archived: { count: 0, open: false, onOpenChange() {} },
+  onRename: async () => {},
+  onArchive: async () => {},
+  onDelete: async () => {},
+};
+
+function drawerData(over: Partial<DrawerNavData> = {}): DrawerNavData {
+  return {
+    sections: [
+      { id: "inbox", label: "收件箱", href: "/inbox", icon: "inbox", badge: { count: 3 } },
+      { id: "agents", label: "智能体", href: "/agents", icon: "agent" },
+      { id: "schedules", label: "定时任务", href: "/schedules", icon: "clock" },
+    ],
+    more: [
+      { id: "skills", label: "技能", href: "/skills", icon: "skills" },
+      { id: "connectors", label: "连接器", href: "/connectors", icon: "connector" },
+      { id: "devices", label: "设备", href: "/devices", icon: "cpu" },
+    ],
+    moreLabel: "技能、连接器、设备…",
+    recent: conversations,
+    allConversations: { label: "全部会话", href: "/conversations" },
+    newConversation: { label: "新会话", href: "/" },
+    onSearch: () => {},
+    account: {
+      name: "Grant",
+      orgName: "Meta1",
+      personalSettingsHref: "/account/profile",
+      theme: <span>主题开关</span>,
+      status: <span>正常</span>,
+      onSignOut: () => {},
+    },
+    menuBadge: { count: 3 },
+    ...over,
+  };
+}
+
+/** A link that records where it went instead of leaving the page (jsdom cannot navigate). */
+function recordingLink(visits: string[]): LinkComponent {
+  return ({ href, children, ...rest }) => (
+    <a
+      href={href}
+      {...rest}
+      onClick={(e) => {
+        e.preventDefault();
+        visits.push(href);
+      }}
+    >
+      {children}
+    </a>
+  );
+}
+
+type Shell = {
+  pathname?: string;
+  chatSurface?: boolean;
+  drawer?: DrawerNavData | undefined;
+  link?: LinkComponent;
+  children?: React.ReactNode;
+};
+const shell = ({ pathname = "/", chatSurface = true, drawer, link, children }: Shell) => (
+  <DesignProvider locale="zh" {...(link ? { link } : {})}>
+    <AppShell
+      sidebar={sidebar}
+      status={status}
+      commands={[]}
+      pathname={pathname}
+      chatSurface={chatSurface}
+      {...(drawer ? { drawer } : {})}
+    >
+      {children ?? <div>内容</div>}
+    </AppShell>
+  </DesignProvider>
+);
+
+const bar = () => document.querySelector('[data-part="floating-bar"]') as HTMLElement;
+const menuButton = () => within(bar()).queryByRole("button", { name: /^打开菜单/ });
+const drawerEl = () => document.querySelector('[data-part="drawer"]') as HTMLElement | null;
+
+/** A compact touch window: the size classes by width and the touch query by `coarse`. */
+function touchWindow(width = 390, coarse = true) {
+  const sized = matchMediaFor(width).matchMedia;
+  vi.stubGlobal("matchMedia", (q: string) => {
+    const t = q.trim();
+    if (/pointer/.test(t)) {
+      const matches = t.includes("not (any-pointer: fine)")
+        ? coarse
+        : t === "(any-pointer: fine)"
+          ? !coarse
+          : coarse;
+      return { matches, media: q, addEventListener() {}, removeEventListener() {} };
+    }
+    return sized(q);
+  });
+}
+
+describe("the compact frame", () => {
+  it("a chat surface: the menu button with the badge, no back, no top bar, no bottom navigation", () => {
+    window.matchMedia = matchMediaFor(390).matchMedia;
+    render(shell({ drawer: drawerData() }));
+    const menu = menuButton() as HTMLElement;
+    expect(menu.getAttribute("aria-label")).toBe("打开菜单，3 项待处理");
+    expect(menu.querySelector('[data-part="float-badge"]')?.textContent).toBe("3");
+    expect(within(bar()).queryByLabelText("返回")).toBeNull();
+    expect(document.querySelector(".cb-shell-bottomnav")).toBeNull();
+    expect(document.querySelector('[data-part="top-bar"]')).toBeNull();
+    expect(document.querySelector(".cb-shell")?.getAttribute("data-surface")).toBe("chat");
+  });
+
+  it("the home renders no trailing floating control (no incognito button, Decision 27)", () => {
+    window.matchMedia = matchMediaFor(390).matchMedia;
+    render(shell({ drawer: drawerData() }));
+    expect(bar().querySelectorAll("button, a")).toHaveLength(1);
+  });
+
+  it("a pushed page: a back button and no menu button", () => {
+    window.matchMedia = matchMediaFor(390).matchMedia;
+    render(shell({ pathname: "/inbox", chatSurface: false, drawer: drawerData() }));
+    expect(menuButton()).toBeNull();
+    expect(within(bar()).getByRole("link", { name: "返回" }).getAttribute("href")).toBe("/");
+    expect(document.querySelector(".cb-shell")?.getAttribute("data-surface")).toBe("pushed");
+  });
+
+  it("the row is in the server markup and CSS shows it below 600 only; a pushed page starts under it", () => {
+    const html = renderToString(shell({ drawer: drawerData() }));
+    expect(html).toContain('data-part="floating-bar"');
+    const rules = parseCss(css("shell.css"));
+    expect(
+      rules.find((r) => r.selector === ".cb-shell-float" && r.at === null)?.decls.display,
+    ).toBe("none");
+    const compact = (sel: string) =>
+      rules.find((r) => r.selector === sel && r.at === "(max-width: 599px)")?.decls;
+    expect(compact(".cb-shell-float")?.display).toBe("block");
+    expect(compact('.cb-shell[data-surface="pushed"] .cb-shell-main')?.["padding-top"]).toBe(
+      "var(--cb-float-row)",
+    );
+  });
+
+  it("the floating row's size is touch.float on touch (one shell for every pointer)", () => {
+    const touch = parseCss(css("touch.css")).find(
+      (r) => r.selector === ".cb-shell" && r.at?.includes("pointer: coarse"),
+    );
+    expect(touch?.decls["--cb-float-size"]).toBe("var(--cb-touch-float)");
+  });
+});
+
+/**
+ * A fake Navigation API (jsdom has none): the current entry's index, moved by push / replace /
+ * traverse like the browser's, firing `currententrychange`.
+ */
+function fakeNavigation(start = 0) {
+  const listeners = new Set<() => void>();
+  const nav = {
+    currentEntry: { index: start },
+    addEventListener: (_: string, fn: () => void) => listeners.add(fn),
+    removeEventListener: (_: string, fn: () => void) => listeners.delete(fn),
+  };
+  Object.defineProperty(window, "navigation", { value: nav, configurable: true });
+  const move = (index: number, url: string) => {
+    window.history.replaceState(null, "", url);
+    nav.currentEntry = { index };
+    for (const fn of listeners) fn();
+  };
+  return {
+    push: (url: string) => move(nav.currentEntry.index + 1, url),
+    replace: (url: string) => move(nav.currentEntry.index, url),
+    traverse: (delta: number, url: string) => {
+      move(nav.currentEntry.index + delta, url);
+      window.dispatchEvent(new PopStateEvent("popstate"));
+    },
+  };
+}
+
+describe("back (Decision 19): history, else the last linked path segment, else /", () => {
+  const page = (pathname: string, path?: { label: string; href?: string }[]) =>
+    shell({
+      pathname,
+      chatSurface: false,
+      children: (
+        <PageHeader
+          path={
+            path ?? [
+              { label: "demo", href: "/" },
+              { label: "智能体", href: "/agents" },
+              { label: "新建" },
+            ]
+          }
+          title="新建"
+        />
+      ),
+    });
+  const back = () => bar().querySelector('[data-part="float-btn"]') as HTMLElement;
+
+  it("with history: a button that goes back one entry", async () => {
+    window.matchMedia = matchMediaFor(390).matchMedia;
+    window.history.replaceState(null, "", "/agents/new");
+    const nav = fakeNavigation();
+    const { rerender } = render(page("/agents/new"));
+    nav.push("/agents/new/step");
+    rerender(page("/agents/new/step"));
+    expect(back().tagName).toBe("BUTTON");
+    const spy = vi.spyOn(window.history, "back").mockImplementation(() => {});
+    await userEvent.click(back());
+    expect(spy).toHaveBeenCalledTimes(1);
+  });
+
+  it("without history: the last linked segment above the page", () => {
+    window.matchMedia = matchMediaFor(390).matchMedia;
+    render(page("/agents/new"));
+    expect(back().tagName).toBe("A");
+    expect(back().getAttribute("href")).toBe("/agents");
+  });
+
+  it("with no linked segment: the home", () => {
+    window.matchMedia = matchMediaFor(390).matchMedia;
+    render(page("/x", [{ label: "x" }, { label: "y" }]));
+    expect(back().getAttribute("href")).toBe("/");
+  });
+
+  it("a deep link, one push, a pop: the second back goes up the path, not out through the history", () => {
+    window.matchMedia = matchMediaFor(390).matchMedia;
+    window.history.replaceState(null, "", "/agents/new");
+    const nav = fakeNavigation(3);
+    const { rerender } = render(page("/agents/new"));
+    expect(back().getAttribute("href")).toBe("/agents");
+    nav.push("/agents/new/step");
+    rerender(page("/agents/new/step"));
+    expect(back().tagName).toBe("BUTTON");
+    nav.traverse(-1, "/agents/new");
+    rerender(page("/agents/new"));
+    expect(back().tagName).toBe("A");
+  });
+
+  it("a replace is no entry behind; without the Navigation API back goes up the path", () => {
+    window.matchMedia = matchMediaFor(390).matchMedia;
+    window.history.replaceState(null, "", "/agents/new");
+    const nav = fakeNavigation();
+    const { rerender } = render(page("/agents/new"));
+    nav.replace("/agents/new/step");
+    rerender(page("/agents/new/step"));
+    expect(back().tagName).toBe("A");
+    Reflect.deleteProperty(window, "navigation");
+    cleanup();
+    const second = render(page("/agents/new"));
+    window.history.pushState(null, "", "/agents/new/step");
+    second.rerender(page("/agents/new/step"));
+    expect(back().tagName).toBe("A");
+  });
+
+  it("a page's own back (an open list-detail item) wins over the path", async () => {
+    window.matchMedia = matchMediaFor(390).matchMedia;
+    const onBack = vi.fn();
+    function Item() {
+      useRegisterShellPage({ onBack });
+      return null;
+    }
+    render(shell({ pathname: "/inbox", chatSurface: false, children: <Item /> }));
+    await userEvent.click(within(bar()).getByRole("button", { name: "返回" }));
+    expect(onBack).toHaveBeenCalledTimes(1);
+  });
+
+  it("on a chat surface a pushed right area's back replaces the menu button", () => {
+    window.matchMedia = matchMediaFor(390).matchMedia;
+    function Pushed() {
+      useRegisterShellPage({ onBack: () => {} });
+      return null;
+    }
+    render(shell({ drawer: drawerData(), children: <Pushed /> }));
+    expect(menuButton()).toBeNull();
+    expect(within(bar()).getByRole("button", { name: "返回" })).toBeTruthy();
+  });
+});
+
+describe("transitions (re-keyed on chat surfaces)", () => {
+  const main = () => document.querySelector("main") as HTMLElement;
+
+  it("chat surface to chat surface never slides", () => {
+    window.matchMedia = matchMediaFor(390).matchMedia;
+    const { rerender } = render(shell({ pathname: "/" }));
+    rerender(shell({ pathname: "/chat/c1" }));
+    expect(main().getAttribute("data-nav")).toBeNull();
+    rerender(shell({ pathname: "/chat/c2" }));
+    expect(main().getAttribute("data-nav")).toBeNull();
+  });
+
+  it("chat surface to a pushed page slides in; back to a chat surface slides back", () => {
+    window.matchMedia = matchMediaFor(390).matchMedia;
+    const { rerender } = render(shell({ pathname: "/chat/c1" }));
+    rerender(shell({ pathname: "/inbox", chatSurface: false }));
+    expect(main().getAttribute("data-nav")).toMatch(/^push-/);
+    const first = main().getAttribute("data-nav");
+    rerender(shell({ pathname: "/inbox/x", chatSurface: false }));
+    expect(main().getAttribute("data-nav")).toMatch(/^push-/);
+    expect(main().getAttribute("data-nav")).not.toBe(first);
+    rerender(shell({ pathname: "/chat/c1" }));
+    expect(main().getAttribute("data-nav")).toMatch(/^pop-/);
+  });
+});
+
+describe("the drawer from the menu button", () => {
+  it("sections in order with the inbox badge, the more level, the recent list, the foot", async () => {
+    window.matchMedia = matchMediaFor(390).matchMedia;
+    render(shell({ drawer: drawerData() }));
+    await userEvent.click(menuButton() as HTMLElement);
+    const panel = drawerEl() as HTMLElement;
+    const sections = [...panel.querySelectorAll("[data-nav-section]")];
+    expect(sections.map((s) => s.getAttribute("data-nav-section"))).toEqual([
+      "inbox",
+      "agents",
+      "schedules",
+    ]);
+    expect(sections[0]?.querySelector('[data-part="navrow-badge"]')?.textContent).toBe("3");
+    expect(within(panel).getByRole("link", { name: "沙箱内 pnpm 安装失败" })).toBeTruthy();
+    expect(within(panel).getByRole("link", { name: "全部会话" }).getAttribute("href")).toBe(
+      "/conversations",
+    );
+    expect(within(panel).getByRole("button", { name: /Grant/ })).toBeTruthy();
+    expect(within(panel).getByRole("link", { name: "新会话" }).getAttribute("href")).toBe("/");
+    // the more row opens its level inside the same drawer
+    await userEvent.click(within(panel).getByRole("button", { name: "技能、连接器、设备…" }));
+    const level = document.querySelector('[data-part="drawer-level"]') as HTMLElement;
+    expect(
+      within(level)
+        .getAllByRole("link")
+        .map((a) => a.textContent),
+    ).toEqual(["技能", "连接器", "设备"]);
+    await userEvent.click(within(level).getByRole("button", { name: "返回菜单" }));
+    expect(document.querySelector('[data-part="drawer-level"]')).toBeNull();
+  });
+
+  it("a guest's data without schedules renders two sections", async () => {
+    window.matchMedia = matchMediaFor(390).matchMedia;
+    const data = drawerData();
+    render(shell({ drawer: { ...data, sections: data.sections.slice(0, 2) } }));
+    await userEvent.click(menuButton() as HTMLElement);
+    expect(drawerEl()?.querySelectorAll("[data-nav-section]")).toHaveLength(2);
+  });
+
+  it("a pick closes the drawer and navigates; a recent conversation is a pick too", async () => {
+    window.matchMedia = matchMediaFor(390).matchMedia;
+    const visits: string[] = [];
+    render(shell({ drawer: drawerData(), link: recordingLink(visits) }));
+    await userEvent.click(menuButton() as HTMLElement);
+    await userEvent.click(within(drawerEl() as HTMLElement).getByRole("link", { name: /收件箱/ }));
+    await waitFor(() => expect(drawerEl()).toBeNull());
+    expect(visits).toEqual(["/inbox"]);
+    await userEvent.click(menuButton() as HTMLElement);
+    await userEvent.click(
+      within(drawerEl() as HTMLElement).getByRole("link", { name: "沙箱内 pnpm 安装失败" }),
+    );
+    await waitFor(() => expect(drawerEl()).toBeNull());
+    expect(visits).toEqual(["/inbox", "/chat/c1"]);
+  });
+
+  it("search closes the drawer and opens the command palette", async () => {
+    window.matchMedia = matchMediaFor(390).matchMedia;
+    render(shell({ drawer: drawerData() }));
+    await userEvent.click(menuButton() as HTMLElement);
+    await userEvent.click(within(drawerEl() as HTMLElement).getByRole("button", { name: "搜索" }));
+    await waitFor(() => expect(drawerEl()).toBeNull());
+    expect(document.querySelector(".cb-palette, [cmdk-root]")).not.toBeNull();
+  });
+});
+
+describe("back closes overlays first (Decision 25)", () => {
+  const settled = () => new Promise<void>((r) => setTimeout(r, 0));
+
+  it("with the drawer open, a popstate closes it and the route stays", async () => {
+    touchWindow();
+    window.history.replaceState(null, "", "/");
+    render(shell({ drawer: drawerData() }));
+    await userEvent.click(menuButton() as HTMLElement);
+    expect(drawerEl()).not.toBeNull();
+    act(() => window.history.back());
+    await waitFor(() => expect(drawerEl()).toBeNull());
+    await settled();
+    expect(window.location.pathname).toBe("/");
+  });
+
+  it("the account sheet over the drawer: back closes the sheet, then the drawer, then navigates", async () => {
+    touchWindow();
+    window.history.replaceState(null, "", "/agents");
+    window.history.pushState(null, "", "/");
+    render(shell({ drawer: drawerData() }));
+    await userEvent.click(menuButton() as HTMLElement);
+    await userEvent.click(within(drawerEl() as HTMLElement).getByRole("button", { name: /Grant/ }));
+    const sheet = () => document.querySelector('[data-part="account-sheet"]');
+    expect(sheet()).not.toBeNull();
+    act(() => window.history.back());
+    await waitFor(() => expect(sheet()).toBeNull());
+    expect(drawerEl()).not.toBeNull();
+    expect(window.location.pathname).toBe("/");
+    act(() => window.history.back());
+    await waitFor(() => expect(drawerEl()).toBeNull());
+    expect(window.location.pathname).toBe("/");
+    act(() => window.history.back());
+    await waitFor(() => expect(window.location.pathname).toBe("/agents"));
+  });
+});

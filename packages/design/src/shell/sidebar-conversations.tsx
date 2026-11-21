@@ -518,6 +518,8 @@ function Group({
             icon={<Icon name="plus" size={14} />}
             data-rove={`n:${g.agentId}`}
             tabIndex={tab(`n:${g.agentId}`)}
+            // starts a conversation: inside the compact drawer it is a pick (closes it, §6.52)
+            data-drawer-pick="true"
             onClick={g.onNew}
           />
         )}

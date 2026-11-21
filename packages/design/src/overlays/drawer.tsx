@@ -53,7 +53,8 @@ export function Drawer({ open, onOpenChange, label, children }: DrawerProps) {
           }}
           onCloseAutoFocus={focusReturn.restore}
           onClick={(e: MouseEvent<HTMLElement>) => {
-            if ((e.target as HTMLElement).closest("[data-drawer-pick]")) {
+            // a link anywhere in the panel (a recent conversation) is a pick too
+            if ((e.target as HTMLElement).closest("[data-drawer-pick], a[href]")) {
               history.leaveEntry();
               onOpenChange(false);
             }

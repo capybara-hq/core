@@ -2,7 +2,10 @@ import { IconButton } from "../controls/index";
 import { ConvMenu, type ConvMenuEntry } from "../conversation/menu";
 import { Icon } from "../icons/icon";
 import { useDesignLink, useDesignT } from "../provider";
+import { backTarget, goBack } from "./floating-bar";
 import { withViewTransition } from "./view-transition";
+
+export { backTarget };
 
 export type TopBarProps = {
   /** The page's name (its h1 text): one line with an ellipsis, the full text in `title`. */
@@ -26,38 +29,6 @@ export type TopBarProps = {
 };
 
 /**
- * Where back goes (design spec §4.6): the previous in-app history entry when there is one, else
- * the last linked segment of the page's `path` above the page itself (the path's last segment is
- * the current page, whatever its link; every page head has a path), else the home, so a deep link
- * opened from outside still has a way up.
- */
-export function backTarget(
-  path: readonly { href?: string | undefined }[],
-  hasInAppHistory: boolean,
-): "history" | string {
-  if (hasInAppHistory) return "history";
-  for (let i = path.length - 2; i >= 0; i--) {
-    const href = path[i]?.href;
-    if (href) return href;
-  }
-  return "/";
-}
-
-/**
- * Goes back one entry and settles once the page has changed (the next `popstate` and the frame
- * after it), so a view transition captures the new page; a bounded wait covers a `popstate` that
- * never comes.
- */
-function goBack(): Promise<void> {
-  return new Promise((resolve) => {
-    const settle = () => requestAnimationFrame(() => resolve());
-    window.addEventListener("popstate", settle, { once: true });
-    window.setTimeout(resolve, SETTLE_LIMIT_MS);
-    window.history.back();
-  });
-}
-
-/**
  * The overflow entries with a destructive (`fail`) last item set apart by a separator (design spec
  * §6.46), unless the page already put one there.
  */
@@ -68,9 +39,6 @@ function withDangerSeparator(menu: ConvMenuEntry[]): ConvMenuEntry[] {
   if (before?.kind === "separator") return menu;
   return [...menu.slice(0, -1), { kind: "separator" }, last];
 }
-
-/** The longest a view transition waits for the page behind a back to arrive. */
-const SETTLE_LIMIT_MS = 500;
 
 /**
  * The compact class's one row (design spec §6.46), drawn by `AppShell` above every page in the

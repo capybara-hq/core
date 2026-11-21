@@ -262,6 +262,24 @@ export function ConversationPage({
     },
     [follow],
   );
+  // The composer's height as `--cb-composer-h` on the center column: on touch the composer floats
+  // over the thread's bottom, and the thread's bottom padding clears it even with a grown
+  // (up to 8-line) textarea, so the newest lines are never hidden under it.
+  const composerObserver = useRef<ResizeObserver | null>(null);
+  const composerBox = useCallback((el: HTMLDivElement | null) => {
+    composerObserver.current?.disconnect();
+    composerObserver.current = null;
+    const center = el?.parentElement ?? null;
+    if (el === null || center === null || typeof ResizeObserver === "undefined") return;
+    const write = () => {
+      const h = Math.ceil(el.getBoundingClientRect().height);
+      center.style.setProperty("--cb-composer-h", `${h}px`);
+    };
+    write();
+    const ro = new ResizeObserver(write);
+    ro.observe(el);
+    composerObserver.current = ro;
+  }, []);
   // One tap on the latest button: to the bottom (a reversed column's origin, scrollTop 0, is the
   // bottom); the scroll event lets the hook resume following and hide the button.
   const toLatest = () => {
@@ -382,7 +400,7 @@ export function ConversationPage({
           )}
         </div>
       </div>
-      <div className="cb-conv-composer">
+      <div ref={composerBox} className="cb-conv-composer">
         {unseen ? (
           <div className="cb-conv-latest" data-part="latest">
             <IconButton

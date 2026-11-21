@@ -1354,10 +1354,6 @@ a.cb-object-name:hover {
   .cb-actionrow .cb-actionrow-primary {
     display: flex;
   }
-  /* On a tab root the bottom navigation below the page already pads the bottom inset. */
-  .cb-shell-main:has(~ .cb-shell-bottomnav) .cb-actionrow {
-    padding-bottom: calc(var(--cb-space-2) + var(--cb-keyboard-inset, 0px));
-  }
 }
 
 /* ListDetail (spec §6.47): two panes while the region (`.cb-ld`, a container) fits list + detail,

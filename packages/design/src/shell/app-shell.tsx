@@ -1,9 +1,14 @@
 import { type ReactNode, useCallback, useEffect, useId, useMemo, useRef, useState } from "react";
+import { IconButton } from "../controls/index";
 import type { ConvMenuEntry } from "../conversation/menu";
+import { ConvMenu } from "../conversation/menu";
+import { Icon } from "../icons/icon";
 import { type NativeNavHandle, type NativeTabId, useHaptics } from "../native";
 import { type CommandGroup, CommandPalette } from "../overlays/index";
 import { useDesignT } from "../provider";
-import { BottomNav, type BottomNavItem, bottomNavCurrent, isTabRoot } from "./bottom-nav";
+import { type BottomNavItem, bottomNavCurrent, isTabRoot } from "./bottom-nav";
+import { backTarget, FloatingBar, type FloatingLead } from "./floating-bar";
+import { type DrawerNavData, NavDrawer } from "./nav-drawer";
 import { keyboardInset } from "./pointer";
 import { SetupSteps } from "./setup-steps";
 import { useShellEnvironment } from "./shell-environment";
@@ -11,22 +16,27 @@ import { type ShellPage, ShellPageContext } from "./shell-page";
 import { Sidebar, type SidebarProps, useSidebarWidthMode } from "./sidebar";
 import { useShortWindow, useSizeClass } from "./size-class";
 import { StatusBar, type StatusBarProps, StatusBarSetterContext } from "./status-bar";
-import { backTarget, TopBar } from "./top-bar";
 import { useHydrated } from "./use-media-query";
 
 export type AppShellProps = {
   sidebar: Omit<SidebarProps, "onOpenCommands" | "mode" | "collapsed" | "onCollapsedChange">;
   /**
-   * The compact class's four navigation items (design spec §6.45), from the same `useNav` data the
-   * sidebar takes; drawn on tab roots only. Without them the compact shell has no bottom
-   * navigation (the setup frame, the catalog).
+   * Accepted and no longer drawn (the chat-first shell has no bottom navigation, design spec
+   * §4.6): until the `nav@1` strip rework it only feeds `nativeNav`'s items. Task 28 removes it.
    */
   bottomNav?: BottomNavItem[];
   /**
-   * The route (`usePathname()`, without the locale): a route that is the target of a bottom
-   * navigation item is a tab root, every other route is pushed (design spec §4.6); the item
-   * whose root or pushed pages hold it is current.
+   * The chat-first compact shell's drawer (design spec §4.6, §6.53): with it a chat surface shows
+   * the floating menu button (the badge is `menuBadge`), which opens the drawer.
    */
+  drawer?: DrawerNavData;
+  /**
+   * The page is a chat surface (the home's new conversation, a conversation): on compact its
+   * leading floating control is the menu button; every other page is pushed and shows back
+   * (design spec §4.6). A move between two chat surfaces never slides.
+   */
+  chatSurface?: boolean;
+  /** The route (`usePathname()`, without the locale): the drawer's current row, the slide key. */
   pathname?: string;
   /**
    * A native shell's tab bar (`nav@1`, mobile app spec §6.1), in place of the web's bottom
@@ -41,7 +51,7 @@ export type AppShellProps = {
   /** Client navigation for the native tab bar (apps/web: the router's push). */
   onNavigate?(href: string): void;
   /**
-   * The compact top bar's overflow menu for pages that do not register their own
+   * The compact floating row's trailing overflow menu for pages that do not register their own
    * ({@link useRegisterShellPage}); empty or absent: no button.
    */
   menu?: ConvMenuEntry[];
@@ -58,8 +68,8 @@ export type AppShellProps = {
   commands?: CommandGroup[];
   status: Pick<StatusBarProps, "context" | "version" | "timeZone" | "system">;
   /**
-   * The compact top bar's title for a page that has not registered its name yet (the PageHeader
-   * registers the h1 text); a tab root shows its item's label first.
+   * The page's name for a page that has not registered one (the PageHeader registers the h1
+   * text). The chat-first compact shell draws no title row of its own: the page's head carries it.
    */
   title?: string;
   /** Draw the shell as the rail of the medium class whatever the window width (reference set only). */
@@ -91,13 +101,16 @@ export type AppShellProps = {
 };
 
 /**
- * The App Shell (spec §4): Sidebar | content column. The content column holds, top to bottom,
- * the top bar (compact only), the page (a template, with its ActionRow at its bottom), the
- * StatusBar and the bottom navigation (compact tab roots only). ⌘K opens the command palette.
+ * The App Shell (spec §4): Sidebar | content column. The content column holds the page (a
+ * template, with its ActionRow at its bottom) and the StatusBar; on compact the floating row
+ * (menu or back, §4.6) lies over the page's top and the drawer opens from the menu button. ⌘K
+ * opens the command palette.
  */
 export function AppShell({
   sidebar,
   bottomNav,
+  drawer,
+  chatSurface,
   pathname,
   nativeNav,
   onNavigate,
@@ -106,7 +119,6 @@ export function AppShell({
   onCollapsedChange,
   commands,
   status,
-  title,
   reference,
   ownStatusBar,
   capState,
@@ -117,6 +129,7 @@ export function AppShell({
   const t = useDesignT();
   const mainId = `cb-main-${useId().replace(/[^\w-]/g, "")}`;
   const [paletteOpen, setPaletteOpen] = useState(false);
+  const [drawerOpen, setDrawerOpen] = useState(false);
   const railRef = reference !== undefined && "rail" in reference;
   const [pageStatus, setPageStatus] = useState<ReactNode>(null);
   const hydrated = useHydrated();
@@ -201,13 +214,18 @@ export function AppShell({
       window.removeEventListener("popstate", read);
     };
   }, [inSetup, pathname]);
-  // The route: a tab root shows the bottom navigation, every other route is pushed (spec §4.6).
-  // Back goes to the previous in-app entry while one lies behind, else up the path.
+  // The route (spec §4.6): a chat surface shows the menu button, every other page is pushed and
+  // shows back, which goes to the previous in-app entry while one lies behind, else up the path.
+  // An open list-detail item or right area is a pushed page too, keyed by its URL state (§6.47).
+  const surface = chatSurface === true;
+  const pushedPage = !surface || page.onBack !== undefined;
+  // The native tab bar's items (until the `nav@1` strip rework): a tab root is an item's target.
   const items = bottomNav ?? [];
   const tabRoot = pathname === undefined || items.length === 0 || isTabRoot(items, pathname);
-  // An open list-detail item is a pushed page too, keyed by its URL state (spec §4.6, §6.47).
   const pushed = !tabRoot || page.onBack !== undefined || (setup !== null && stepsOpen);
   const currentTab = pathname === undefined ? null : bottomNavCurrent(items, pathname);
+  // What the slide compares: chat surfaces, and the native tab roots, are one level.
+  const root = surface || (items.length > 0 && tabRoot);
   // How many in-app history entries lie behind this one: the Navigation API's current index minus
   // the index when the shell mounted, so a replace (router.replace at the start) adds none and a
   // forward is no pop. Without the API there is no count: a counter cannot tell a push from a
@@ -224,7 +242,7 @@ export function AppShell({
   // The slide of the last route change: its direction and a parity that restarts the animation
   // when two pushes follow each other (the CSS animations are named by both).
   const [slide, setSlide] = useState<{ direction: "push" | "pop"; n: number } | null>(null);
-  const lastRoute = useRef({ pathname, tabRoot });
+  const lastRoute = useRef({ pathname, root });
   // A history move the browser animated itself (a back swipe: `hasUAVisualTransition`, mobile app
   // spec §4.4), keyed by the URL it landed on: the route change it causes swaps at once, so the
   // page never animates twice. A later navigation changes the URL, so a gesture that changed no
@@ -242,18 +260,17 @@ export function AppShell({
   useEffect(() => {
     const last = lastRoute.current;
     if (last.pathname === pathname) return;
-    lastRoute.current = { pathname, tabRoot };
+    lastRoute.current = { pathname, root };
     const animated = uaTransition.current === window.location.href;
     uaTransition.current = null;
-    // A pushed page slides in from the end edge and the way back to a root slides back; a move
-    // between tab roots (the web's or the native tab bar) and a move the browser animated do not.
+    // A pushed page slides in from the end edge and the way back to a chat surface slides back; a
+    // move between chat surfaces (or native tab roots) and a move the browser animated do not.
     setSlide((prev) =>
-      animated || (tabRoot && last.tabRoot)
+      animated || (root && last.root)
         ? null
-        : { direction: tabRoot ? "pop" : "push", n: ((prev?.n ?? 0) + 1) % 2 },
+        : { direction: root ? "pop" : "push", n: ((prev?.n ?? 0) + 1) % 2 },
     );
-  }, [pathname, tabRoot]);
-  const tabLabel = items.find((i) => i.id === currentTab && tabRoot)?.label;
+  }, [pathname, root]);
 
   // The native tab bar (mobile app spec §6.1): visible exactly when the web would show its own
   // bar (the slot below, and the CSS that shows it on compact while no keyboard is open).
@@ -425,6 +442,23 @@ export function AppShell({
     };
   }, [reference]);
 
+  // The floating row's leading control (spec §4.6): the setup frame's steps (back while they are
+  // open), back on a pushed page, else the menu button where there is a drawer.
+  const back =
+    setup !== null && stepsOpen
+      ? closeSteps
+      : (page.onBack ??
+        (pushedPage && setup === null ? backTarget(page.path ?? [], depth > 0) : undefined));
+  const lead: FloatingLead | undefined =
+    back !== undefined
+      ? { kind: "back", target: back }
+      : setup !== null
+        ? { kind: "steps", onOpen: openSteps }
+        : drawer
+          ? { kind: "menu", onOpen: () => setDrawerOpen(true), badge: drawer.menuBadge }
+          : undefined;
+  const overflow = page.menu ?? menu ?? [];
+
   return (
     <ShellPageContext.Provider value={registerPage}>
       <StatusBarSetterContext.Provider value={setPageStatus}>
@@ -436,6 +470,7 @@ export function AppShell({
           data-banner={banner ? "true" : undefined}
           data-short={short ? "true" : undefined}
           data-native-nav={nativeNav ? "" : undefined}
+          data-surface={surface ? "chat" : "pushed"}
         >
           {/* The native shell's top band (spec mobile layout §9.3): a window drag region on the
               desktop, drawn only under `<html data-shell>` by CSS. */}
@@ -458,17 +493,27 @@ export function AppShell({
           />
           <div className="cb-shell-column" data-part="shell-content">
             {/* Drawn always, shown below 600 by CSS: the server render is right at every width. */}
-            <div className="cb-shell-topbar" data-part="top-bar-slot">
-              <TopBar
-                title={page.title ?? tabLabel ?? title}
-                back={
-                  setup !== null && stepsOpen
-                    ? closeSteps
-                    : (page.onBack ?? (pushed ? backTarget(page.path ?? [], depth > 0) : undefined))
+            <div className="cb-shell-float" data-part="floating-bar-slot">
+              <FloatingBar
+                lead={lead}
+                trailing={
+                  overflow.length > 0 ? (
+                    <ConvMenu
+                      label={t("shell.moreActions")}
+                      align="end"
+                      size="touch"
+                      sideOffset={2}
+                      entries={overflow}
+                      trigger={
+                        <IconButton
+                          part="more"
+                          label={t("shell.moreActions")}
+                          icon={<Icon name="more-horizontal" />}
+                        />
+                      }
+                    />
+                  ) : null
                 }
-                onSearch={searchable ? () => setPaletteOpen(true) : undefined}
-                menu={page.menu ?? menu}
-                onSteps={setup !== null ? openSteps : undefined}
               />
             </div>
             <main
@@ -498,13 +543,17 @@ export function AppShell({
               )}
             </main>
             {ownStatusBar ? null : <StatusBar {...status} pageStatus={pageStatus} />}
-            {items.length > 0 && !pushed ? (
-              <div className="cb-shell-bottomnav" data-part="bottom-nav-slot">
-                <BottomNav items={items} current={currentTab} />
-              </div>
-            ) : null}
           </div>
         </div>
+        {drawer ? (
+          <NavDrawer
+            open={drawerOpen}
+            onOpenChange={setDrawerOpen}
+            pathname={pathname}
+            // The shell's own palette when it has one; the drawer closes first.
+            data={searchable ? { ...drawer, onSearch: () => setPaletteOpen(true) } : drawer}
+          />
+        ) : null}
         {commands ? (
           <CommandPalette open={paletteOpen} onOpenChange={setPaletteOpen} groups={commands} />
         ) : null}

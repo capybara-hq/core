@@ -2,14 +2,7 @@ import { cleanup, render, screen, within } from "@testing-library/react";
 import { userEvent } from "@testing-library/user-event";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { TOP_BAR_FIXTURE } from "../src/fixtures/index";
-import {
-  AppShell,
-  backTarget,
-  DesignProvider,
-  PageHeader,
-  TopBar,
-  withViewTransition,
-} from "../src/index";
+import { backTarget, DesignProvider, TopBar, withViewTransition } from "../src/index";
 import { css, parseCss } from "./css-rules";
 import { matchMediaFor } from "./width";
 
@@ -25,7 +18,7 @@ const zh = (ui: React.ReactElement) => render(<DesignProvider locale="zh">{ui}</
  * A fake Navigation API (jsdom has none): the current entry's index, moved by push / replace /
  * traverse like the browser's, firing `currententrychange`.
  */
-function fakeNavigation(start = 0) {
+function _fakeNavigation(start = 0) {
   const listeners = new Set<() => void>();
   const nav = {
     currentEntry: { index: start },
@@ -176,52 +169,6 @@ describe("TopBar", () => {
   });
 });
 
-describe("the top bar in the shell", () => {
-  const sidebar = {
-    context: {
-      kind: "work" as const,
-      org: null,
-      primary: [],
-      more: [],
-    },
-    activeNav: "",
-    account: { name: "grant", menu: [] },
-  };
-  const status = { context: "demo", version: "0.1.0", timeZone: "UTC" };
-
-  it("shows the page's name (the PageHeader's h1) and goes up the page's path", () => {
-    window.matchMedia = matchMediaFor(390).matchMedia;
-    zh(
-      <AppShell
-        sidebar={sidebar}
-        status={status}
-        commands={[]}
-        bottomNav={[
-          { id: "chats", label: "会话", href: "/conversations", icon: "chats" },
-          { id: "agents", label: "智能体", href: "/agents", icon: "agent" },
-          { id: "inbox", label: "收件箱", href: "/inbox", icon: "inbox" },
-          { id: "me", label: "我", href: "/me", icon: "user" },
-        ]}
-        pathname="/agents/new"
-      >
-        <PageHeader
-          path={[
-            { label: "demo", href: "/" },
-            { label: "智能体", href: "/agents" },
-            { label: "新建" },
-          ]}
-          title="新建智能体"
-        />
-      </AppShell>,
-    );
-    const bar = document.querySelector('[data-part="top-bar"]') as HTMLElement;
-    expect(bar.querySelector('[data-part="title"]')?.textContent).toBe("新建智能体");
-    expect(within(bar).getByRole("link", { name: "返回" }).getAttribute("href")).toBe("/agents");
-    // the PageHeader's h1 is the page's heading
-    expect(screen.getAllByRole("heading", { level: 1 })).toHaveLength(1);
-  });
-});
-
 describe("withViewTransition", () => {
   const doc = document as unknown as { startViewTransition?: unknown };
   afterEach(() => {
@@ -266,157 +213,5 @@ describe("withViewTransition", () => {
     withViewTransition(update, "pop");
     expect(start).not.toHaveBeenCalled();
     expect(update).toHaveBeenCalledTimes(1);
-  });
-});
-
-describe("push and pop in the shell", () => {
-  const sidebar = {
-    context: { kind: "work" as const, org: null, primary: [], more: [] },
-    activeNav: "",
-    account: { name: "grant", menu: [] },
-  };
-  const status = { context: "demo", version: "0.1.0", timeZone: "UTC" };
-  const nav = [
-    { id: "chats" as const, label: "会话", href: "/conversations", icon: "chats" as const },
-    { id: "agents" as const, label: "智能体", href: "/agents", icon: "agent" as const },
-    { id: "inbox" as const, label: "收件箱", href: "/inbox", icon: "inbox" as const },
-    { id: "me" as const, label: "我", href: "/me", icon: "user" as const },
-  ];
-  const shell = (pathname: string) => (
-    <DesignProvider locale="zh">
-      <AppShell sidebar={sidebar} status={status} bottomNav={nav} pathname={pathname}>
-        <div>内容</div>
-      </AppShell>
-    </DesignProvider>
-  );
-  const main = () => document.querySelector("main") as HTMLElement;
-
-  it("a push slides in, a pop slides back, a move between tab roots does not slide", () => {
-    window.matchMedia = matchMediaFor(390).matchMedia;
-    const nav = fakeNavigation();
-    const { rerender } = render(shell("/agents"));
-    expect(main().getAttribute("data-nav")).toBeNull();
-    nav.push("/agents/new");
-    rerender(shell("/agents/new"));
-    expect(main().getAttribute("data-nav")).toMatch(/^push-/);
-    // once the shell has seen a navigation, back goes through the history
-    expect(
-      document.querySelector('[data-part="top-bar"] button[aria-label="返回"]'),
-    ).not.toBeNull();
-    rerender(shell("/agents"));
-    expect(main().getAttribute("data-nav")).toMatch(/^pop-/);
-    rerender(shell("/inbox"));
-    expect(main().getAttribute("data-nav")).toBeNull();
-  });
-
-  it("two pushes in a row restart the animation (the name alternates)", () => {
-    window.matchMedia = matchMediaFor(390).matchMedia;
-    const { rerender } = render(shell("/agents"));
-    rerender(shell("/agents/new"));
-    const first = main().getAttribute("data-nav");
-    rerender(shell("/agents/new/step"));
-    expect(main().getAttribute("data-nav")).not.toBe(first);
-    expect(main().getAttribute("data-nav")).toMatch(/^push-/);
-  });
-});
-
-describe("back never leaves the app", () => {
-  const sidebar = {
-    context: { kind: "work" as const, org: null, primary: [], more: [] },
-    activeNav: "",
-    account: { name: "grant", menu: [] },
-  };
-  const status = { context: "demo", version: "0.1.0", timeZone: "UTC" };
-  const nav = [
-    { id: "chats" as const, label: "会话", href: "/conversations", icon: "chats" as const },
-    { id: "agents" as const, label: "智能体", href: "/agents", icon: "agent" as const },
-    { id: "inbox" as const, label: "收件箱", href: "/inbox", icon: "inbox" as const },
-    { id: "me" as const, label: "我", href: "/me", icon: "user" as const },
-  ];
-  const shell = (pathname: string) => (
-    <DesignProvider locale="zh">
-      <AppShell sidebar={sidebar} status={status} bottomNav={nav} pathname={pathname}>
-        <PageHeader
-          path={[
-            { label: "demo", href: "/" },
-            { label: "智能体", href: "/agents" },
-            { label: "新建" },
-          ]}
-          title="新建"
-        />
-      </AppShell>
-    </DesignProvider>
-  );
-  const back = () =>
-    document.querySelector('[data-part="top-bar"] [data-part="back"]') as HTMLElement;
-
-  it("a deep link, one push, a pop: the second back goes up the path, not out through the history", () => {
-    window.matchMedia = matchMediaFor(390).matchMedia;
-    window.history.replaceState(null, "", "/agents/new");
-    const nav = fakeNavigation(3);
-    const { rerender } = render(shell("/agents/new"));
-    // deep link: nothing behind it in the app (the entries before the shell mounted are not ours)
-    expect(back().tagName).toBe("A");
-    expect(back().getAttribute("href")).toBe("/agents");
-    nav.push("/agents/new/step");
-    rerender(shell("/agents/new/step"));
-    expect(back().tagName).toBe("BUTTON"); // one in-app entry behind: history back
-    nav.traverse(-1, "/agents/new");
-    rerender(shell("/agents/new"));
-    expect(back().tagName).toBe("A"); // back at the deep link: up the path
-    expect(back().getAttribute("href")).toBe("/agents");
-  });
-
-  it("a replace (router.replace at the start) is no entry behind: back goes up the path", () => {
-    window.matchMedia = matchMediaFor(390).matchMedia;
-    window.history.replaceState(null, "", "/agents/new");
-    const nav = fakeNavigation();
-    const { rerender } = render(shell("/agents/new"));
-    nav.replace("/agents/new/step");
-    rerender(shell("/agents/new/step"));
-    expect(back().tagName).toBe("A");
-    expect(back().getAttribute("href")).toBe("/agents");
-  });
-
-  it("a forward after a pop is not a pop: back goes through the history again", () => {
-    window.matchMedia = matchMediaFor(390).matchMedia;
-    window.history.replaceState(null, "", "/agents/new");
-    const nav = fakeNavigation();
-    const { rerender } = render(shell("/agents/new"));
-    nav.push("/agents/new/step");
-    rerender(shell("/agents/new/step"));
-    nav.traverse(-1, "/agents/new");
-    rerender(shell("/agents/new"));
-    nav.traverse(1, "/agents/new/step");
-    rerender(shell("/agents/new/step"));
-    expect(back().tagName).toBe("BUTTON");
-  });
-
-  it("without the Navigation API back always goes up the path (a counter cannot tell a push from a replace)", () => {
-    window.matchMedia = matchMediaFor(390).matchMedia;
-    window.history.replaceState(null, "", "/agents/new");
-    const { rerender } = render(shell("/agents/new"));
-    window.history.pushState(null, "", "/agents/new/step");
-    rerender(shell("/agents/new/step"));
-    expect(back().tagName).toBe("A");
-    expect(back().getAttribute("href")).toBe("/agents");
-  });
-
-  it("a hash-only step (an item opened and closed) leaves no entry behind", () => {
-    window.matchMedia = matchMediaFor(390).matchMedia;
-    window.history.replaceState(null, "", "/agents/new");
-    const nav = fakeNavigation();
-    const { rerender } = render(shell("/agents/new"));
-    // open an item (a hash push) and close it (a traverse back): the path never changes
-    nav.push("/agents/new#item");
-    nav.traverse(-1, "/agents/new");
-    // a real push after it
-    nav.push("/agents/new/step");
-    rerender(shell("/agents/new/step"));
-    expect(back().tagName).toBe("BUTTON");
-    // and its pop
-    nav.traverse(-1, "/agents/new");
-    rerender(shell("/agents/new"));
-    expect(back().tagName).toBe("A");
   });
 });

@@ -96,45 +96,66 @@
   min-height: 0;
 }
 
-/* Compact chrome (spec §4, §4.6, §4.7): the top bar above the page and the bottom navigation
-   under it, both drawn always and shown below 600 by these rules, so the server render is right at
-   every width. The OS insets (`--cb-inset-*`, §4.7) pad them; the bars keep their token heights. */
-.cb-shell-topbar,
-.cb-shell-bottomnav {
+/* The chat-first compact shell (spec §4.6, §4.7, §6.55): below 600 the floating row lies over the
+   page's top, under the OS top inset: the menu button on a chat surface, back on a pushed page.
+   It is drawn always and shown below 600 by these rules, so the server render is right at every
+   width. A pushed page starts under the row (its head's title sits below it); a chat surface
+   clears it itself (the conversation's title pill shares the row). One shell for every pointer
+   (plan Decision 17): the row's controls are control.prominent on a fine pointer and touch.float
+   on touch (touch.css). */
+.cb-shell-float {
   display: none;
-  flex: none;
-}
-/* A native shell's tab bar replaces the bottom navigation (mobile app spec §6.1): `<html>` from the
-   no-flash script, the shell element from the AppShell. */
-[data-native-nav] .cb-shell-bottomnav {
-  display: none;
-}
-/* Chrome is not text to select: no selection, no iOS callout on a long press (§7.1). */
-.cb-shell-topbar,
-.cb-bottomnav {
   -webkit-touch-callout: none;
   -webkit-user-select: none;
   user-select: none;
 }
 @media (max-width: 599px) {
-  .cb-shell-topbar {
+  .cb-shell {
+    --cb-float-size: var(--cb-control-prominent);
+    --cb-float-top: calc(var(--cb-inset-top) + var(--cb-space-2));
+    --cb-float-row: calc(var(--cb-float-top) + var(--cb-float-size) + var(--cb-space-2));
+  }
+  .cb-shell-column {
+    position: relative;
+  }
+  .cb-shell-float {
     display: block;
-    padding-top: var(--cb-inset-top);
-    background: var(--cb-bg);
+    position: absolute;
+    z-index: calc(var(--cb-z-sheet) - 10);
+    top: var(--cb-float-top);
+    inset-inline: calc(var(--cb-space-4) + var(--cb-inset-left))
+      calc(var(--cb-space-4) + var(--cb-inset-right));
+    /* the row lets taps through to the page between its controls */
+    pointer-events: none;
   }
-  .cb-shell-bottomnav {
-    display: block;
-    padding-bottom: var(--cb-inset-bottom);
-    background: var(--cb-sidebar);
+  .cb-floatbar > * {
+    pointer-events: auto;
   }
-  /* The keyboard hides the bottom navigation (spec §4.3). */
-  .cb-shell[data-keyboard="open"] .cb-shell-bottomnav {
-    display: none;
+  .cb-shell[data-surface="pushed"] .cb-shell-main {
+    padding-top: var(--cb-float-row);
   }
-  /* The compact class has no StatusBar: its system status is on the Me page (spec §4). */
+  /* The compact class has no StatusBar: the account sheet carries the system status (spec §4). */
   .cb-shell-column > .cb-statusbar {
     display: none;
   }
+}
+.cb-floatbar {
+  display: flex;
+  align-items: center;
+  gap: var(--cb-space-2);
+  min-height: var(--cb-float-size, var(--cb-control-prominent));
+}
+.cb-floatbar-gap {
+  flex: 1;
+}
+/* A page's own overflow menu in the row: a round floating button like the leading one. */
+.cb-floatbar .cb-icon-btn {
+  width: var(--cb-float-size, var(--cb-control-prominent));
+  height: var(--cb-float-size, var(--cb-control-prominent));
+  border: 1px solid var(--cb-float-line);
+  border-radius: var(--cb-radius-pill);
+  background: var(--cb-float-ground);
+  box-shadow: var(--cb-shadow-float-touch);
 }
 
 /* A push slides in from the end edge and a pop slides back (spec §4.6), over motion.push with

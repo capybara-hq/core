@@ -1,3 +1,8 @@
+export {
+  AccountSheet,
+  type AccountSheetData,
+  type AccountSheetProps,
+} from "./account-sheet";
 export { ActionRow, type ActionRowProps, type ButtonSpec } from "./action-row";
 export { AppShell, type AppShellProps } from "./app-shell";
 export { Body, type BodyProps } from "./body";
@@ -10,8 +15,19 @@ export {
 } from "./bottom-nav";
 export { ClassSwap } from "./class-swap";
 export { DecorationLayer } from "./decoration-layer";
+export {
+  FloatingBar,
+  type FloatingBarProps,
+  type FloatingLead,
+} from "./floating-bar";
 export { FloatingIconButton, type FloatingIconButtonProps } from "./floating-button";
 export { MePanel, type MePanelProps, type MeRow } from "./me-panel";
+export {
+  type DrawerNavData,
+  type DrawerSectionId,
+  NavDrawer,
+  type NavDrawerProps,
+} from "./nav-drawer";
 export {
   assertHeader,
   type HeaderAction,

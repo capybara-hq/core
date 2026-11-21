@@ -138,6 +138,71 @@ span.cb-title-btn {
   margin: 0 var(--cb-space-1);
   background: var(--cb-line);
 }
+/* The compact form's one overflow button (below): drawn always, shown only there. */
+.cb-title-overflow {
+  display: none;
+}
+/* Inside the chat-first compact shell (§6.16.1, spec §4.6): the title bar joins the floating row
+   after the shell's menu button: the title is the centre pill (no path) and every icon folds into
+   the trailing overflow; the new conversation's bar is not drawn (the home's centre and trailing
+   slots stay empty, plan Decision 27). The thread and the new conversation clear the row. */
+@media (max-width: 599px) {
+  .cb-shell .cb-title-bar {
+    position: absolute;
+    z-index: calc(var(--cb-z-sheet) - 10);
+    top: var(--cb-float-top);
+    inset-inline: calc(
+        var(--cb-space-4) +
+        var(--cb-inset-left) +
+        var(--cb-float-size) +
+        var(--cb-space-2)
+      )
+      calc(var(--cb-space-4) + var(--cb-inset-right));
+    gap: var(--cb-space-2);
+    height: var(--cb-float-size);
+    padding: 0;
+    pointer-events: none;
+  }
+  .cb-shell .cb-title-bar > * {
+    pointer-events: auto;
+  }
+  .cb-shell .cb-title-bar[data-new="true"],
+  .cb-shell .cb-title-bar > .cb-title-path,
+  .cb-shell .cb-title-bar > .cb-icon-btn,
+  .cb-shell .cb-title-bar > .cb-title-sep {
+    display: none;
+  }
+  .cb-shell .cb-title-bar > .cb-title-btn {
+    flex: 1 1 auto;
+    height: var(--cb-float-size);
+    margin: 0;
+    padding: 0 var(--cb-space-4);
+    border: 1px solid var(--cb-float-line);
+    border-radius: var(--cb-radius-pill);
+    background: var(--cb-float-ground);
+    box-shadow: var(--cb-shadow-float-touch);
+    font-weight: 500;
+  }
+  .cb-shell .cb-title-overflow {
+    display: contents;
+  }
+  .cb-shell .cb-title-overflow > .cb-icon-btn {
+    flex: none;
+    width: var(--cb-float-size);
+    height: var(--cb-float-size);
+    border: 1px solid var(--cb-float-line);
+    border-radius: var(--cb-radius-pill);
+    background: var(--cb-float-ground);
+    box-shadow: var(--cb-shadow-float-touch);
+  }
+  .cb-shell .cb-conv-scroll:not([data-center="true"]),
+  .cb-shell .cb-conv-pushed[data-shell="true"] {
+    padding-top: var(--cb-float-row);
+  }
+  .cb-shell .cb-conv-new {
+    padding-top: var(--cb-float-row);
+  }
+}
 
 /* ── Conversation menus (title, More, pickers, panel switcher; §6.7, §6.16.3) ── */
 
@@ -1390,8 +1455,7 @@ button.cb-property-row {
     /* pinned at the window's bottom on a pushed page: above the home indicator (spec §4.7) */
     padding-bottom: calc(var(--cb-space-3) + var(--cb-inset-bottom));
   }
-  /* A tab root's bottom navigation pads the inset already; an open keyboard covers it. */
-  .cb-shell-main:has(~ .cb-shell-bottomnav) .cb-conv-composer,
+  /* An open keyboard covers the home indicator's inset. */
   .cb-shell[data-keyboard="open"] .cb-conv-composer {
     padding-bottom: var(--cb-space-3);
   }
@@ -1939,12 +2003,20 @@ button.cb-property-row {
   .cb-shell[data-keyboard="open"] .cb-conv-composer {
     padding-bottom: var(--cb-space-3);
   }
+  /* the composer's measured height (`--cb-composer-h`, a ResizeObserver in the page) clears a
+     grown textarea; before the first measure, a one-line pill with its chip row */
   .cb-conv-scroll {
     padding-bottom: calc(
-      var(--cb-touch-composer) +
-      var(--cb-touch-hit) +
-      var(--cb-space-6) +
-      var(--cb-inset-bottom)
+      var(
+        --cb-composer-h,
+        calc(
+          var(--cb-touch-composer) +
+          var(--cb-touch-hit) +
+          var(--cb-space-3) +
+          var(--cb-inset-bottom)
+        )
+      ) +
+      var(--cb-space-3)
     );
   }
   .cb-conv-latest {

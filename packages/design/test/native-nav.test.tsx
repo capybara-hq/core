@@ -12,7 +12,7 @@ import {
   type NativeNavHandle,
   type NativeTabId,
 } from "../src/index";
-import { css, parseCss } from "./css-rules";
+import { css } from "./css-rules";
 import { matchMediaFor } from "./width";
 
 const realMatchMedia = window.matchMedia;
@@ -88,12 +88,8 @@ const FOUR = [
 const shellEl = () => document.querySelector(".cb-shell") as HTMLElement;
 
 describe("the native tab bar (nav@1)", () => {
-  it("CSS drops the web's bottom navigation under data-native-nav, at every width", () => {
-    const rules = parseCss(css("shell.css"));
-    const rule = rules.find(
-      (r) => r.selector === "[data-native-nav] .cb-shell-bottomnav" && r.at === null,
-    );
-    expect(rule?.decls.display).toBe("none");
+  it("the web draws no bottom navigation of its own beside the native bar (chat-first shell)", () => {
+    expect(css("shell.css")).not.toContain(".cb-shell-bottomnav");
   });
 
   it("on a compact tab root: marks the shell and sets the four items once, visible", () => {

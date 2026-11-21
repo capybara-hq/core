@@ -5,6 +5,7 @@ import { Badge } from "../display/basic";
 import { Segmented } from "../display/tabs";
 import { Icon } from "../icons/icon";
 import { BottomSheetContent } from "../overlays/bottom-sheet";
+import { useOverlayHistory } from "../overlays/use-overlay-history";
 import { useDesignT } from "../provider";
 import { useTouch } from "../shell/touch";
 import type { PickerProps } from "./composer";
@@ -53,6 +54,8 @@ export function ComposerOptions({
 }: ComposerOptionsProps): JSX.Element {
   const t = useDesignT();
   const [open, setOpen] = useState(false);
+  // Back closes the open sheet first on a compact touch window (mobile app plan Decision 25).
+  const history = useOverlayHistory(open, () => setOpen(false));
   const touch = useTouch() === true;
   const full = [
     model.value,
@@ -80,10 +83,13 @@ export function ComposerOptions({
           title={g.title}
           picker={g.picker}
           onInspect={() => {
+            // inspecting may navigate: leave the entry rather than race the router's push
+            history.leaveEntry();
             setOpen(false);
             g.picker.locked?.warning?.onInspect();
           }}
           onAction={(action) => {
+            if (action !== undefined) history.leaveEntry();
             setOpen(false);
             action?.onSelect();
           }}
