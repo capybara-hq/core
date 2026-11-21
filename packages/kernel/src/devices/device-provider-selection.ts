@@ -23,7 +23,7 @@ export class DeviceProviderSelection {
   constructor(
     @Inject(DeviceProviders) private readonly providers: Pick<DeviceProviders, "forDevice">,
     @Inject(ExtensionPointDefaults)
-    private readonly points: Pick<ExtensionPointDefaults, "providersFor">,
+    private readonly points: Pick<ExtensionPointDefaults, "providersFor" | "serves">,
     @Inject(OrgSettingsService) private readonly orgSettings: Pick<OrgSettingsService, "get">,
     @Inject(KernelConfigService)
     private readonly config: Pick<KernelConfigService, "get" | "fieldSource">,
@@ -46,11 +46,13 @@ export class DeviceProviderSelection {
    * Whether the provider `plugin` (a device's `devices.provider`) serves `orgId` now: an extension
    * that {@link onInOrg} lists; a kernel-internal provider (`@local`) is no catalog item and has
    * no org switch, so for it "on in the org" means registered in this process (until phase 2 of
-   * the device-provider plan moves local devices into the `device-local` plugin).
+   * the device-provider plan moves local devices into the `device-local` plugin). Evaluates only
+   * that provider ({@link ExtensionPointDefaults.serves}, the criteria {@link onInOrg} applies).
    */
   async isOnInOrg(orgId: string, plugin: string): Promise<boolean> {
     if (isInternalProvider(plugin)) return this.providers.forDevice(plugin) !== undefined;
-    return (await this.onInOrg(orgId)).some((e) => e.plugin === plugin);
+    if (this.providers.forDevice(plugin) === undefined) return false;
+    return this.points.serves(orgId, "device-provider", plugin);
   }
 
   /**

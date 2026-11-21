@@ -51,7 +51,11 @@ import {
   PermissionCeilingWrites,
 } from "../sandbox/permission-ceiling-writes.js";
 import { cloudOwnNetwork, networkOfSandbox, PermissionFacts } from "../sandbox/permission-facts.js";
-import { type DeviceProviderEntry, LOCAL_PROVIDER } from "../sandbox/providers.js";
+import {
+  type DeviceProviderEntry,
+  isInternalProvider,
+  LOCAL_PROVIDER,
+} from "../sandbox/providers.js";
 import { deviceNotFound, SandboxService } from "../sandbox/sandbox.service.js";
 import { DeviceAccess } from "./access.js";
 import { DeviceProviderSelection } from "./device-provider-selection.js";
@@ -1236,11 +1240,21 @@ export class DevicesService {
       orgId,
       rows.map((r) => r.id),
     );
-    // whether each provider serves the org now, asked once per provider
+    // whether each provider serves the org now: the org's providers are evaluated once per
+    // request; a kernel-internal provider (`@local`) is on while registered (`isOnInOrg`)
     const providerNames = [...new Set(rows.flatMap((r) => (r.provider ? [r.provider] : [])))];
+    const served = providerNames.some((p) => !isInternalProvider(p))
+      ? new Set((await this.selection.onInOrg(orgId)).map((e) => e.plugin))
+      : new Set<string>();
     const on = new Map(
       await Promise.all(
-        providerNames.map(async (p) => [p, await this.selection.isOnInOrg(orgId, p)] as const),
+        providerNames.map(
+          async (p) =>
+            [
+              p,
+              isInternalProvider(p) ? await this.selection.isOnInOrg(orgId, p) : served.has(p),
+            ] as const,
+        ),
       ),
     );
     // each device's sandbox, limits and its instance's pending change

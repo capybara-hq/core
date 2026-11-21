@@ -224,60 +224,89 @@ export class ExtensionPointDefaults {
     const out: Candidate[] = [];
     const failed = new Set<string>();
     for (const [extension, impl] of providers) {
-      let cfg: { enabled: boolean; config: unknown } | undefined;
+      const c = await this.evaluate(orgId, point, extension, impl, failed);
+      if (c) out.push(c);
+    }
+    out.sort((a, b) => (a.extension < b.extension ? -1 : a.extension > b.extension ? 1 : 0));
+    return { candidates: out, failed };
+  }
+
+  /**
+   * Whether the one provider `extension` of `point` evaluates as a candidate in `orgId`. The
+   * provider must be loaded on this replica and provide `point`; the org must have it enabled; its
+   * org config and effective config must be valid; and its `configured()` must not return false.
+   * These are exactly the criteria of {@link providersFor} / {@link resolve}, with only that one
+   * provider evaluated. A provider whose status cannot be read counts as not serving (logged).
+   */
+  async serves(orgId: string, point: string, extension: string): Promise<boolean> {
+    const entry = this.registry.list(point).find((e) => e.plugin === extension);
+    if (!entry || !(await isExtensionEnabled(this.kdb.db, orgId, extension))) return false;
+    return (await this.evaluate(orgId, point, extension, entry.impl, new Set())) !== undefined;
+  }
+
+  /**
+   * One enabled provider's candidacy: valid org config, valid effective config and `configured()`
+   * not false. Undefined when it is off; a provider whose status could not be read is also added
+   * to `failed`.
+   */
+  private async evaluate(
+    orgId: string,
+    point: string,
+    extension: string,
+    impl: unknown,
+    failed: Set<string>,
+  ): Promise<Candidate | undefined> {
+    let cfg: { enabled: boolean; config: unknown } | undefined;
+    try {
+      cfg = await this.orgConfigs.get(orgId, extension);
+    } catch (err) {
+      // a stored org config that no longer validates is a known state: the provider is off
+      // (as for an invalid effective config below); only a read that failed is `failed`
+      const invalid = err instanceof OrgConfigInvalidError;
+      this.log.warn(
+        invalid
+          ? "extension point provider excluded, its stored org config is invalid"
+          : "extension point provider excluded, cannot read its org config",
+        { orgId, point, extension, err },
+      );
+      if (!invalid) failed.add(extension);
+      return undefined;
+    }
+    if (!cfg?.enabled) return undefined;
+    // spec A §6: an org whose effective config is not valid gets no call from this extension
+    let effective: Awaited<ReturnType<EffectiveConfigs["get"]>>;
+    try {
+      effective = await this.effective.get(orgId, extension);
+    } catch (err) {
+      this.log.warn("extension point provider excluded, cannot read its effective config", {
+        orgId,
+        point,
+        extension,
+        err,
+      });
+      failed.add(extension);
+      return undefined;
+    }
+    if (!effective.ok) return undefined;
+    const configured = (impl as { configured?: (orgConfig: unknown, config: unknown) => boolean })
+      .configured;
+    if (typeof configured === "function") {
+      let ok: boolean;
       try {
-        cfg = await this.orgConfigs.get(orgId, extension);
+        ok = configured.call(impl, cfg.config, effective.config) !== false;
       } catch (err) {
-        // a stored org config that no longer validates is a known state: the provider is off
-        // (as for an invalid effective config below); only a read that failed is `failed`
-        const invalid = err instanceof OrgConfigInvalidError;
-        this.log.warn(
-          invalid
-            ? "extension point provider excluded, its stored org config is invalid"
-            : "extension point provider excluded, cannot read its org config",
-          { orgId, point, extension, err },
-        );
-        if (!invalid) failed.add(extension);
-        continue;
-      }
-      if (!cfg?.enabled) continue;
-      // spec A §6: an org whose effective config is not valid gets no call from this extension
-      let effective: Awaited<ReturnType<EffectiveConfigs["get"]>>;
-      try {
-        effective = await this.effective.get(orgId, extension);
-      } catch (err) {
-        this.log.warn("extension point provider excluded, cannot read its effective config", {
+        this.log.warn("extension point provider excluded, configured() threw", {
           orgId,
           point,
           extension,
           err,
         });
         failed.add(extension);
-        continue;
+        return undefined;
       }
-      if (!effective.ok) continue;
-      const configured = (impl as { configured?: (orgConfig: unknown, config: unknown) => boolean })
-        .configured;
-      if (typeof configured === "function") {
-        let ok: boolean;
-        try {
-          ok = configured.call(impl, cfg.config, effective.config) !== false;
-        } catch (err) {
-          this.log.warn("extension point provider excluded, configured() threw", {
-            orgId,
-            point,
-            extension,
-            err,
-          });
-          failed.add(extension);
-          continue;
-        }
-        if (!ok) continue;
-      }
-      out.push({ extension, impl, orgConfig: cfg.config, config: effective.config });
+      if (!ok) return undefined;
     }
-    out.sort((a, b) => (a.extension < b.extension ? -1 : a.extension > b.extension ? 1 : 0));
-    return { candidates: out, failed };
+    return { extension, impl, orgConfig: cfg.config, config: effective.config };
   }
 
   private async choose(
