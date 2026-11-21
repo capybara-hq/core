@@ -1,5 +1,17 @@
 # @capybara-hq/capybara
 
+## 0.1.0-rc.76
+
+### Minor Changes
+
+- 946c9eb: `capybara secrets rewrap` also rewraps sealed push tokens and prints their count.
+
+### Patch Changes
+
+- Updated dependencies [33074e1]
+- Updated dependencies [12a6582]
+  - @capybara-hq/kernel@0.1.0-rc.61
+
 ## 0.1.0-rc.75
 
 No changes in this release.

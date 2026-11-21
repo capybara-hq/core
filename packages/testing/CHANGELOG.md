@@ -1,5 +1,27 @@
 # @capybara-hq/testing
 
+## 0.1.0-rc.30
+
+### Minor Changes
+
+- 12a6582: Add the setup guide place `extension-deployment`: a plugin's guide on the super admin's extension
+  page whose checks get the extension's platform deployment config (`SetupCheckTarget` kind
+  `extension-deployment`; `SetupCheckArgs.orgId` is now `string | null`, null for this place). The
+  `fake-push` fixture ships such a guide with the check `fake-push-key`. The kernel serves these guides
+  and runs their checks on super admin routes (`/api/v1/admin/extensions/:name/guides…`) and the
+  `extensions.platform-guides`, `extensions.platform-check-status` and `extensions.platform-check`
+  Platform operations; the web shows them with live check rows on the extension's config tab.
+- c2cf4bb: Add the `fake-push` fixture extension (`push-provider@1`, scripted by the token prefix) and `describePushProviderConformance`, the conformance suite for push providers.
+
+### Patch Changes
+
+- Updated dependencies [a007fee]
+- Updated dependencies [33074e1]
+- Updated dependencies [12a6582]
+  - @capybara-hq/plugin-sdk@0.1.0-rc.46
+  - @capybara-hq/kernel@0.1.0-rc.61
+  - @capybara-hq/plugin-tools@0.1.0-rc.17
+
 ## 0.1.0-rc.29
 
 ### Patch Changes
