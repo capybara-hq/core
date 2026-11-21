@@ -818,6 +818,9 @@ Depends on PR 1, PR 2 and #452. Changesets: `@capybara-hq/design` (theme-color h
 
 ## Open questions
 
+**Resolved 2026-11-22 by the maintainer:** both recommendations accepted (the #452 line was told to
+drop the wordmark fallback).
+
 1. **#452 sets the platform name as the fallback wordmark** (its uncommitted
    `theme-root.tsx`: `wordmark = theme?.logo?.wordmark ?? product`), which contradicts accepted
    decision 7 (the built-in wordmark `CAPYBARA` stays beside the pixel capybara). Recommendation:
