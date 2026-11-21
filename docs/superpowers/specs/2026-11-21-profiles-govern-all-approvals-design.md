@@ -1,7 +1,7 @@
 # Permission profiles govern every approval; secure input; Auto
 
-Status: design amendment for review. The four decisions under "Decisions" are the maintainer's
-(2026-11-21, in acceptance). Everything else is the author's technical design. It amends the
+Status: approved by the maintainer on 2026-11-21 (the four decisions, the invariants and the two
+resolved questions). The rest is the author's technical design. It amends the
 [approval-only profiles design](2026-11-19-approval-only-profiles-design.md) ("Profiles", "UI",
 "Kernel: decision, admission and records") and the person fields of the
 [platform web parity design](2026-11-19-platform-web-parity-design.md) (§4).
@@ -65,7 +65,7 @@ setting for every approval in a conversation. The code implements something narr
 | Result shown once to the person (an initial password, an invitation link) | Runs after approval; the result card shows it | Review model, then the result card | Runs; the result card shows it |
 | Policy deny, fixed deny, beyond a ceiling | Deny / unavailable | Same | Same |
 
-These are kept from the 2026-11-19 design and flagged for the maintainer:
+These are kept from the 2026-11-19 design (maintainer, 2026-11-21):
 
 - Under Auto, an outside-sandbox crossing carrying a credential consent, and a sub-agent's
   outside-sandbox escalation, still go to the review model.
@@ -157,12 +157,12 @@ that the tool reads, and the card is web-only, never in IM. What changes:
 - The behavior change for existing conversations is the point of the change: tool asks under
   Approve for me and Full access stop raising person cards. Release notes say so.
 
-## Open questions for the maintainer
+## Resolved questions (maintainer, 2026-11-21)
 
-1. Keep the two Auto exceptions that go to the review model: credential escalation, and a
-   sub-agent running outside the sandbox. The author recommends keeping them.
-2. Should Approve for me's tool review see the whole recent conversation, or only the last person
-   message? The author recommends the last few person messages, bounded.
+1. Auto keeps its two review-model exceptions: an outside-sandbox crossing carrying a credential
+   consent, and a sub-agent's outside-sandbox escalation.
+2. Approve for me's tool review sees the last few person messages of the conversation, bounded in
+   count and size, not the whole conversation.
 
 ## AGENTS.md rules touched
 
