@@ -7471,8 +7471,9 @@ span.r-scal-daynum {
   mask-position: center;
   mask-repeat: no-repeat;
 }
-.r-auth-logo:has(.r-auth-brand-mark) {
-  display: flex;
+/* An inline box in the logo block, like the Logo itself (its line box sets the block's height). */
+.r-auth-brand {
+  display: inline-flex;
   align-items: center;
   gap: var(--cb-space-2);
 }
