@@ -273,8 +273,15 @@ describe("the Platform tool definition", () => {
     expect(tool.defaultPolicy).toBe("allow");
     expect(tool.spec.keyArgs).toEqual(["action", "operation", "domain"]);
     expect(tool.spec.description).toBe(
-      'Discover and use the platform\'s own operations (agents, skills, templates, plugins, connectors, extensions, conversations, devices, models, evals, channels, requests, approvals and the inbox, org settings, and for admins accounts, orgs and the admin console) and its documentation, as the person you are working for. Start with action "browse", which lists every domain; "describe" gives an operation\'s input schema and an example. Writes ask the person to confirm. Use "read" for how-to documentation (plugin format, skills, extension points).',
+      'Discover and use the platform\'s own operations (agents, skills, templates, plugins, connectors, extensions, conversations, devices, models, evals, channels, requests, approvals and the inbox, org settings, and for admins accounts, orgs and the admin console) and its documentation, as the person you are working for. Start with action "browse", which lists every domain; "describe" gives an operation\'s input schema and an example. Writes may need approval, depending on the conversation\'s permission profile. Use "read" for how-to documentation (plugin format, skills, extension points).',
     );
+  });
+
+  it("offers the registered domain ids as the enum of domain", () => {
+    const props = tool.spec.inputSchema.properties as Record<string, { enum?: string[] }>;
+    expect(props.domain?.enum).toEqual(new PlatformOperations().domains().map((d) => d.id));
+    expect(props.domain?.enum).toContain("marketplaces");
+    expect(props.domain?.enum).not.toContain("marketplace");
   });
 
   it("is unavailable when the org turned it off", async () => {
