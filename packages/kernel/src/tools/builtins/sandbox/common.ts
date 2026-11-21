@@ -550,7 +550,7 @@ function retirementToolText(code: string): string {
  * the refusal's own message (a provider may write it).
  */
 export const SCOPE_DENIED_TOOL_TEXT =
-  "This operation reaches outside what this conversation's permission profile allows on the device (a path outside the directories it may read or write, or a host it may not reach), so it did not run. Keep the call inside the working directory and the directories already granted, or ask the user to grant the directory or choose a broader permission profile, then retry.";
+  "This operation reaches outside the scope this conversation has on the device (a path outside the directories it may read or write, or a host it may not reach), so it did not run. Keep the call inside the working directory and the directories already granted, or ask the user to grant the directory, then retry.";
 /** An approved sandbox escalation whose grant no longer matches at admission (nothing ran). */
 export const ESCALATION_GRANT_MISSING_TEXT =
   'This Bash call was approved to run outside the sandbox, but the approval no longer matches: the device, its outside-sandbox setting or this conversation\'s permission scope changed since it was approved, so it did not run. Call Bash again with sandbox: "escalated" and a justification to ask again, or call it without sandbox to run it inside the sandbox.';

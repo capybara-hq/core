@@ -375,7 +375,7 @@ export async function runInBackgroundManaged(
   // since running the command without run_in_background is refused the same way
   if (!started && launch.kind === "refused" && launch.text)
     throw new ToolError(
-      `The background task was not started; do not call Bash without run_in_background instead, it is refused the same way. ${launch.text}`,
+      `The background task was not started. Calling Bash without run_in_background is refused the same way, so do not retry it that way. ${launch.text}`,
     );
   if (!started && (launch.kind === "refused" || task.launchState === "terminal")) {
     // the recorded reason may hold a provider's words: the model gets kernel text only
@@ -539,7 +539,7 @@ export function sandboxDenialHint(
  * for the tool design check (a unit test keeps the two copies equal).
  */
 export const SCOPE_DENIED_ESCALATION_TEXT =
-  "This operation reaches outside what this conversation's permission profile allows on the device (a path outside the directories it may read or write, or a host it may not reach), so it did not run. Keep the call inside the working directory and the directories already granted, or ask the user to grant the directory or choose a broader permission profile, then retry. If this command must reach outside the sandbox, retry the same Bash call with sandbox: \"escalated\" and justification: one sentence saying why; this conversation's permission profile decides whether it may run outside the sandbox for this call only (the user, the review model, or Full access within this device's limits).";
+  "This operation reaches outside the scope this conversation has on the device (a path outside the directories it may read or write, or a host it may not reach), so it did not run. Keep the call inside the working directory and the directories already granted, or ask the user to grant the directory, then retry. If this command must reach outside the sandbox, retry the same Bash call with sandbox: \"escalated\" and justification: one sentence saying why; this conversation's permission profile decides whether it may run outside the sandbox for this call only (the user, the review model, or Full access within this device's limits).";
 /**
  * A restricted call the scope refused ({@link SCOPE_DENIED_TOOL_TEXT}) where running outside the
  * sandbox is allowed: the refusal also says the call may be retried escalated.

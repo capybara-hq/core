@@ -1088,7 +1088,7 @@ describe("a device whose runtime cannot enforce its sandbox", () => {
       );
       expect(background.payload.isError).toBe(true);
       expect(background.payload.content).toBe(
-        `The background task was not started; do not call Bash without run_in_background instead, it is refused the same way. ${RUNTIME_TEXT}`,
+        `The background task was not started. Calling Bash without run_in_background is refused the same way, so do not retry it that way. ${RUNTIME_TEXT}`,
       );
       // the same refusal for Request approval
       await setProfile(conv, "request-approval");
