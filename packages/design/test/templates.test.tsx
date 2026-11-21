@@ -127,6 +127,57 @@ describe("页面模板根节点与页头", () => {
     expect(document.querySelector(".cb-pageheader")).toBeNull();
   });
 
+  describe("decoration (theme brand coverage §3)", () => {
+    const brand = (decoration: "dither" | "none"): design.Brand => ({
+      markUrl: null,
+      wordmark: null,
+      illustrationUrl: null,
+      decoration,
+      productName: null,
+    });
+    const auth = (decoration?: "dither" | "none") =>
+      render(
+        <DesignProvider locale="en" {...(decoration ? { brand: brand(decoration) } : {})}>
+          <AuthPage
+            title="Sign in"
+            preferences={{
+              language: { label: "Language", value: "en", options: [], onChange: () => {} },
+            }}
+          >
+            <input aria-label="Email" />
+          </AuthPage>
+        </DesignProvider>,
+      ).container;
+
+    it("decoration none draws no dither columns; the card and its width are unchanged", () => {
+      const c = auth("none");
+      expect(c.querySelector(".cb-dither")).toBeNull();
+      // the side columns stay as empty spacers: the card keeps its place and its 400 width
+      expect(c.querySelectorAll(".cb-auth-side")).toHaveLength(2);
+      expect(c.querySelector('[data-part="auth-card"]')?.className).toBe("cb-auth-card");
+      expect(c.querySelector('[data-template="AuthPage"]')?.getAttribute("data-decoration")).toBe(
+        "none",
+      );
+    });
+
+    it("PreferenceBar keeps its corner without the columns", () => {
+      const c = auth("none");
+      const prefs = c.querySelector(".cb-auth-prefs");
+      expect(prefs).not.toBeNull();
+      expect(prefs?.parentElement?.getAttribute("data-template")).toBe("AuthPage");
+    });
+
+    it("default draws both columns, and without a brand the DOM equals the dither brand's", () => {
+      // useId values differ per render; the rest must be identical
+      const html = (c: HTMLElement) => c.innerHTML.replace(/_r_[0-9a-z]+_/g, "ID");
+      const plain = html(auth());
+      cleanup();
+      const dithered = auth("dither");
+      expect(dithered.querySelectorAll(".cb-dither")).toHaveLength(2);
+      expect(html(dithered)).toBe(plain);
+    });
+  });
+
   it("其他模板不含 Dither", () => {
     zh(<OverviewPage header={header}>x</OverviewPage>);
     expect(document.querySelector(".cb-dither")).toBeNull();
