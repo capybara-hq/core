@@ -9,16 +9,17 @@ import {
   ComposerBox,
   type ComposerBoxProps,
   DesignProvider,
+  MOBILE_SIZE_QUERY,
   type NativeHandlers,
   type PickerProps,
-  TOUCH_QUERY,
 } from "../src/index";
 import { css, parseCss } from "./css-rules";
 
 // The conversation on touch (spec §6.16.2, §6.16.6, §6.16.8, §6.16.11; mobile touch plan Task 26):
 // the floating composer pill (attach, input, send; no voice button), the settings chip and sheet,
-// the user bubble at the end edge, the approval card's two 48 px buttons. Touch rules sit only
-// under TOUCH_QUERY; the same components outside it keep their order and look.
+// the user bubble at the end edge, the approval card's two 48 px buttons. These rules sit only
+// under MOBILE_SIZE_QUERY (compact or touch, maintainer decision 2026-11-22); the same components
+// outside it keep their order and look.
 
 const realMatchMedia = window.matchMedia;
 afterEach(() => {
@@ -41,7 +42,7 @@ const rules = [...parseCss(css("conversation.css")), ...parseCss(css("conversati
 function touch(selector: string): Record<string, string> {
   const hits = rules.filter(
     (r) =>
-      r.at === TOUCH_QUERY &&
+      r.at === MOBILE_SIZE_QUERY &&
       r.selector
         .split(",")
         .map((s) => s.trim())
@@ -186,7 +187,8 @@ describe("outside touch the composer and thread keep their base rules", () => {
   });
   it("no touch rule sits outside the one touch block, and every ::before / grid rule is inside it", () => {
     const grid = rules.filter(
-      (r) => r.at !== TOUCH_QUERY && r.selector.startsWith(".cb-composer") && r.decls["grid-row"],
+      (r) =>
+        r.at !== MOBILE_SIZE_QUERY && r.selector.startsWith(".cb-composer") && r.decls["grid-row"],
     );
     expect(grid).toEqual([]);
   });

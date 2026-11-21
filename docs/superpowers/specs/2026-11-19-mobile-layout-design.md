@@ -334,9 +334,11 @@ set (the control, row, radius and type steps above, the floating buttons' 48) ap
 touch device at any width (an iPad at medium or expanded keeps the touch sizes). `pnpm
 gen:tokens` writes the size overrides into their own `@media MOBILE_SIZE_QUERY` block, and the
 touch components' forms (the large list rows, the bottom sheet's touch form, the drawer's rows,
-the floating buttons) follow the same query; only what is about the pointer itself stays under
-`@media TOUCH_QUERY`: the system font (a narrow desktop window keeps Sarasa) and the
-desktop-only gate (§4.6) (maintainer rulings on the follow-up questions, 2026-11-22). Under the mobile sizes every control is a 44 tap target with its
+the floating buttons, the floating composer pill with its settings chip, the larger message
+layout) follow the same query (`useMobileSizes()` where JS picks the form); only what is about
+the pointer itself stays under `@media TOUCH_QUERY` / `useTouch()`: the system font (a narrow
+desktop window keeps Sarasa), hover-less affordances, a tap that never focuses the composer, and
+the desktop-only gate (§4.6) (maintainer rulings on the follow-up questions, 2026-11-22). Under the mobile sizes every control is a 44 tap target with its
 visible box (no invisible ring), and **a control with text pads wider than it is tall**
 ("左右大于上下"): buttons and chips 16 at the sides (20 at `prominent`), tabs 16, segments 16 filling a
 44 high group (the selected ground drawn inset), text fields their text 12 from the border, at least 16 px; icon-only buttons stay

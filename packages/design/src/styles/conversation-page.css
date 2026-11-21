@@ -1713,10 +1713,6 @@ button.cb-property-row {
   .cb-panel-tab {
     min-height: var(--cb-touch-hit);
   }
-  /* the composer's options chip pads wider than it is tall (spec §2.5): space.3 beside its text */
-  .cb-composer-bar > .cb-composer-options.cb-btn {
-    padding: 0 var(--cb-space-3);
-  }
 }
 
 .cb-rpanel-body[data-pad][data-state="failed"] {
@@ -1916,16 +1912,18 @@ button.cb-property-row {
 }
 
 /*
- * Touch (spec §6.16.2, §6.16.6, §6.16.8, §6.16.11; mobile layout spec touch amendments). Only
- * under the touch query: the composer is a floating pill (attach, input, send) with the settings
- * chip above it, the thread runs under it, the user's bubble sits at the end edge and the
- * approval card's buttons are 48 high. Desktop and mouse layouts above are untouched.
+ * The touch form (spec §6.16.2, §6.16.6, §6.16.8, §6.16.11; mobile layout spec touch amendments),
+ * under MOBILE_SIZE_QUERY: a compact window whatever the pointer, or a touch device at any width
+ * (maintainer decision 2026-11-22: mobile sizes and styles follow the width, same components).
+ * The composer is a floating pill (attach, input, send) with the settings chip above it, the
+ * thread runs under it, the user's bubble sits at the end edge and the approval card's buttons
+ * are 48 high. Medium and expanded with a fine pointer keep the layouts above.
  *
  * The frame turns into a grid of three columns; the pill itself is the frame's ::before in row 4,
  * and the controls sit on it. Rows: 1 token warning, 2 attachments, 3 chip and agent picker,
  * 4 the pill, 5 quick actions, 6 the agents chip.
  */
-@media (pointer: coarse), (any-pointer: coarse) and (not (any-pointer: fine)) {
+@media (max-width: 599px), (pointer: coarse), (any-pointer: coarse) and (not (any-pointer: fine)) {
   .cb-composer {
     display: grid;
     grid-template-columns: auto minmax(0, 1fr) auto;

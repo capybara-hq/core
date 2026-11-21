@@ -10,10 +10,10 @@ import {
   ConversationPage,
   type ConversationPageProps,
   DesignProvider,
+  MOBILE_SIZE_QUERY,
   type PickerProps,
   TitleBar,
   type TitleBarProps,
-  TOUCH_QUERY,
 } from "../src/index";
 import { css, parseCss } from "./css-rules";
 import { matchMediaFor } from "./width";
@@ -202,7 +202,7 @@ describe("the thread's bottom reserve follows the floating composer", () => {
 
   it("the touch padding uses the measured height (a one-line fallback before it)", () => {
     const pad = rules
-      .filter((r) => r.at === TOUCH_QUERY && r.selector === ".cb-conv-scroll")
+      .filter((r) => r.at === MOBILE_SIZE_QUERY && r.selector === ".cb-conv-scroll")
       .map((r) => r.decls["padding-bottom"])
       .join(" ")
       .replace(/\s+/g, "");

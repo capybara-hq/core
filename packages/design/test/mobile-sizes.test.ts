@@ -1,8 +1,10 @@
 import { readdirSync } from "node:fs";
 import { resolve } from "node:path";
-import { describe, expect, it } from "vitest";
-import { MOBILE_SIZE_QUERY, TOUCH_QUERY } from "../src/index";
+import { renderHook } from "@testing-library/react";
+import { afterEach, describe, expect, it } from "vitest";
+import { MOBILE_SIZE_QUERY, TOUCH_QUERY, useMobileSizes } from "../src/index";
 import { css, parseCss } from "./css-rules";
+import { matchMediaFor } from "./width";
 
 // The mobile sizes of the controls (spec §2.5, maintainer decision 2026-11-22): under
 // MOBILE_SIZE_QUERY (compact whatever the pointer, or touch) the controls take the mobile control
@@ -95,5 +97,29 @@ describe("mobile size rules", () => {
         }
       }
     }
+  });
+});
+
+describe("useMobileSizes", () => {
+  const real = window.matchMedia;
+  afterEach(() => {
+    window.matchMedia = real;
+  });
+
+  it("is true at compact with a fine pointer, false at 1440 with one", () => {
+    window.matchMedia = matchMediaFor(480).matchMedia;
+    expect(renderHook(() => useMobileSizes()).result.current).toBe(true);
+    window.matchMedia = matchMediaFor(1440).matchMedia;
+    expect(renderHook(() => useMobileSizes()).result.current).toBe(false);
+  });
+
+  it("is true on a touch device at any width", () => {
+    window.matchMedia = ((q: string) => ({
+      matches: q === "(pointer: coarse)",
+      media: q,
+      addEventListener: () => {},
+      removeEventListener: () => {},
+    })) as unknown as typeof window.matchMedia;
+    expect(renderHook(() => useMobileSizes()).result.current).toBe(true);
   });
 });

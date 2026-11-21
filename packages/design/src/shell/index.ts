@@ -73,5 +73,5 @@ export {
   useSizeClass,
 } from "./size-class";
 export { StatusBar, type StatusBarProps, useStatusBar } from "./status-bar";
-export { COMPACT_QUERY, MOBILE_SIZE_QUERY, TOUCH_QUERY, useTouch } from "./touch";
+export { COMPACT_QUERY, MOBILE_SIZE_QUERY, TOUCH_QUERY, useMobileSizes, useTouch } from "./touch";
 export { withViewTransition } from "./view-transition";

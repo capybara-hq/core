@@ -7,7 +7,7 @@ import { Icon } from "../icons/icon";
 import { BottomSheetContent } from "../overlays/bottom-sheet";
 import { useOverlayHistory } from "../overlays/use-overlay-history";
 import { useDesignT } from "../provider";
-import { useTouch } from "../shell/touch";
+import { useMobileSizes } from "../shell/touch";
 import type { PickerProps } from "./composer";
 
 // The composer's options button (spec §6.16.2, phones): below 600 the device, permission, model
@@ -56,7 +56,8 @@ export function ComposerOptions({
   const [open, setOpen] = useState(false);
   // Back closes the open sheet first on a compact touch window (mobile app plan Decision 25).
   const history = useOverlayHistory(open, () => setOpen(false));
-  const touch = useTouch() === true;
+  // the mobile form of the sheet (a Segmented for the effort, the note) follows the mobile sizes
+  const touch = useMobileSizes() === true;
   const full = [
     model.value,
     effort?.value,
