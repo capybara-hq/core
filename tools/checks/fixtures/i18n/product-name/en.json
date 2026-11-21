@@ -1,0 +1,10 @@
+{
+  "bind": {
+    "goHome": "Go to {product}",
+    "ok": "Go to {product}",
+    "program": "Run capybara-device login",
+    "manifest": "Read .capybara-plugin/plugin.json",
+    "select": "{kind, select, app {the {product} app} other {other}}"
+  },
+  "catalog": { "admin": { "detail": { "format": { "capybara": "Capybara" } } } }
+}

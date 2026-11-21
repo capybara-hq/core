@@ -2,6 +2,7 @@ import { createHash, randomBytes, timingSafeEqual } from "node:crypto";
 import { Inject, Injectable } from "@nestjs/common";
 import type { Redis } from "ioredis";
 import { sql } from "kysely";
+import { productName } from "../config/product-name.js";
 import { ApiError } from "../errors.js";
 import { KernelConfigService } from "../infra/config/kernel-config.service.js";
 import { KernelDb } from "../infra/database/kernel-db.js";
@@ -57,17 +58,17 @@ export function isAllowedRedirect(uri: string, allowed: readonly string[]): bool
   return allowed.includes(uri);
 }
 
-const CLIENT_PRODUCT: Record<AppClient, string> = {
-  desktop: "Capybara Desktop",
-  mobile: "Capybara Mobile",
-};
+const CLIENT_KIND: Record<AppClient, string> = { desktop: "Desktop", mobile: "Mobile" };
 
 /**
- * The session user agent of an app session: `Capybara Desktop/<appVersion> (<name>)` or
- * `Capybara Mobile/<appVersion> (<name>)`.
+ * The session user agent of an app session, named by the platform name `product`
+ * (`platform.name`): `<product> Desktop/<appVersion> (<name>)` or
+ * `<product> Mobile/<appVersion> (<name>)`.
  */
-export const appUserAgent = (g: Pick<CodeGrant, "client" | "appVersion" | "name">): string =>
-  `${CLIENT_PRODUCT[g.client]}/${g.appVersion} (${g.name})`;
+export const appUserAgent = (
+  g: Pick<CodeGrant, "client" | "appVersion" | "name">,
+  product: string,
+): string => `${product} ${CLIENT_KIND[g.client]}/${g.appVersion} (${g.name})`;
 
 const codeInvalid = () =>
   new ApiError(
@@ -192,7 +193,7 @@ export class AppAuthService {
     const account = await this.accounts.get(grant.accountId);
     if (!account) throw codeInvalid();
     const session = await this.sessions.create(grant.accountId, {
-      userAgent: appUserAgent(grant),
+      userAgent: appUserAgent(grant, productName(this.config.get())),
       ip,
     });
     await audit(this.db.db, {

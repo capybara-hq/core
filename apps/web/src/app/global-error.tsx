@@ -8,6 +8,7 @@ import en from "../../messages/en.json";
 import zh from "../../messages/zh.json";
 import { DesignRoot } from "../components/design-root";
 import { ErrorFrame } from "../components/ErrorFrame";
+import { withProductName } from "../i18n/product";
 import {
   type AppLocale,
   isAppLocale,
@@ -36,7 +37,8 @@ const clientTheme = () => parseTheme(cookie(THEME_COOKIE));
 
 /**
  * The root layout itself failed (web-SSR spec §5): this replaces it, so it brings its own document,
- * styles, language, theme and providers, then the same error page as the route groups.
+ * styles, language, theme and providers, then the same error page as the route groups. It cannot
+ * read the platform meta, so a `{product}` in its messages says the built-in name.
  */
 export default function GlobalError({
   reset,
@@ -49,7 +51,10 @@ export default function GlobalError({
   return (
     <html lang={locale} data-theme={theme}>
       <body>
-        <NextIntlClientProvider locale={locale} messages={locale === "zh" ? zh : en}>
+        <NextIntlClientProvider
+          locale={locale}
+          messages={withProductName(locale === "zh" ? zh : en, null)}
+        >
           <DesignRoot locale={locale}>
             <ErrorFrame reset={reset} />
           </DesignRoot>

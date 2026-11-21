@@ -6,15 +6,19 @@
 import { act, cleanup, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import en from "../messages/en.json";
+import enCatalog from "../messages/en.json";
 import SetupPage from "../src/app/(auth)/setup/page";
 import { ServerSetupStatusProvider } from "../src/app/(auth)/setup/status";
+import { withProductName } from "../src/i18n/product";
 import { authSourcesQuery } from "../src/lib/query/auth";
 import { json, noContent, stubApi } from "./support/api";
 import { resetNavigation, router } from "./support/navigation";
 import { renderAuthRouteWithCache, renderRouteEmptyCache } from "./support/query";
 import { ME, testQueryClient } from "./support/render";
 import { expectNoFirstPaintFetch, type Routes, renderServer } from "./support/server";
+
+// the request config fills {product} with the platform name; unset here: the built-in one
+const en = withProductName(enCatalog, null);
 
 vi.mock("../src/i18n/navigation", () => import("./support/navigation"));
 vi.mock("next/navigation", () => ({

@@ -12,6 +12,7 @@ import { vi } from "vitest";
 import en from "../../messages/en.json";
 import zh from "../../messages/zh.json";
 import { type Session, SessionContext } from "../../src/components/shell/session";
+import { withProductName } from "../../src/i18n/product";
 import { makeQueryClient } from "../../src/lib/query/client";
 import type { Me } from "../../src/lib/session";
 import { Link } from "./navigation";
@@ -83,7 +84,10 @@ export function pageElement(
   };
   return (
     <QueryClientProvider client={client ?? pageClient}>
-      <NextIntlClientProvider locale={locale} messages={locale === "zh" ? zh : en}>
+      <NextIntlClientProvider
+        locale={locale}
+        messages={withProductName(locale === "zh" ? zh : en, null)}
+      >
         <DesignProvider
           locale={locale}
           link={Link as LinkComponent}

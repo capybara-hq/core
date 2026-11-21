@@ -3,6 +3,7 @@
 import type { Brand } from "@capybara-hq/design";
 import { useQuery } from "@tanstack/react-query";
 import { createContext, type ReactNode, useContext, useLayoutEffect, useMemo } from "react";
+import { useProductName } from "../lib/product-name";
 import { retryOnMountOf } from "../lib/query/client";
 import { orgThemesQuery, platformThemeQuery } from "../lib/query/themes";
 import type { ThemeRef } from "../lib/themes";
@@ -65,9 +66,12 @@ function Themed({ theme, children }: { theme: ThemeRef | null; children: ReactNo
   useOnlyThemeSheet(theme?.cssUrl ?? null);
   const markUrl = theme?.logo?.markUrl ?? null;
   const wordmark = theme?.logo?.wordmark ?? null;
+  // the product name (issue #452) is only the mark's alt: without a theme wordmark the built-in
+  // CAPYBARA stays beside the pixel capybara (theme brand coverage spec, decision 7)
+  const productName = useProductName();
   const brand = useMemo<Brand | null>(
-    () => (markUrl === null && wordmark === null ? null : { markUrl, wordmark }),
-    [markUrl, wordmark],
+    () => (markUrl === null && wordmark === null ? null : { markUrl, wordmark, productName }),
+    [markUrl, wordmark, productName],
   );
   return (
     <ThemeContext.Provider value={theme}>

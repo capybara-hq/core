@@ -954,7 +954,7 @@ export function translateClaudePlugin(
 
   if (imported.length === 0 && mcp.files.size === 0 && agents.agents.length === 0) {
     invalidManifest(
-      "the Claude Code plugin has no skill Capybara can import, no agent and no remote MCP server (see the translation report)",
+      "the Claude Code plugin has no skill this platform can import, no agent and no remote MCP server (see the translation report)",
     );
   }
 

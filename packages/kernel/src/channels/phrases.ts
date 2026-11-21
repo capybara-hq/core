@@ -5,6 +5,7 @@ export type ChannelLocale = "zh" | "en";
  * 机器人在 IM 里说的固定话术（全部集中在这里，zh / en 同步）. Chosen per recipient (run context spec
  * §3.4): the sender's platform language, else their latest web language, else the org's.
  * 模型回复不经过这里，原样转换为 IM 富文本、不翻译。
+ * `{product}` is the platform name (`platform.name`): {@link phrase} requires it for those phrases.
  */
 export const CHANNEL_PHRASES = {
   /** 私聊 `/new` 之后。 */
@@ -38,13 +39,13 @@ export const CHANNEL_PHRASES = {
   deviceCurrent: { zh: "（当前）", en: " (current)" },
   /** 未绑定的人在私聊里发消息：附绑定卡片。 */
   bindPrompt: {
-    zh: "请先绑定你的 Capybara 账号，再与我对话。",
-    en: "Please link your Capybara account before chatting with me.",
+    zh: "请先绑定你的 {product} 账号，再与我对话。",
+    en: "Please link your {product} account before chatting with me.",
   },
   /** 未绑定的人在群里 @ 机器人：绑定链接只在私聊里发（群里谁都能点）。 */
   bindInDm: {
-    zh: "请先私聊我，绑定你的 Capybara 账号。",
-    en: "Please send me a direct message to link your Capybara account first.",
+    zh: "请先私聊我，绑定你的 {product} 账号。",
+    en: "Please send me a direct message to link your {product} account first.",
   },
   /** 无法生成绑定链接（部署未配置 http.publicUrl）。 */
   bindUnavailable: {
@@ -189,8 +190,8 @@ export const CHANNEL_PHRASES = {
   },
   /** 部署未配置 http.publicUrl，无法给出网页链接与卡片时的退回文本。 */
   handleOnWeb: {
-    zh: "有一条请求需要你到 Capybara 网页上处理。",
-    en: "A request is waiting for you in Capybara on the web.",
+    zh: "有一条请求需要你到 {product} 网页上处理。",
+    en: "A request is waiting for you in {product} on the web.",
   },
   /**
    * Phase D: `/name args` named an invocable skill, but the kernel refused to render it
@@ -240,8 +241,8 @@ export const CHANNEL_PHRASES = {
   },
   /** The same without a web link (no public base URL configured). */
   fileOnWebNoLink: {
-    zh: "{name}（{size}）已交付，请在网页上打开 Capybara 中的这个会话获取。",
-    en: "{name} ({size}) was delivered; open the conversation in Capybara on the web to get it.",
+    zh: "{name}（{size}）已交付，请在网页上打开 {product} 中的这个会话获取。",
+    en: "{name} ({size}) was delivered; open the conversation in {product} on the web to get it.",
   },
   /**
    * The root message of a native file delivery (a scheduled group run's first post); `{name}` is
@@ -260,7 +261,24 @@ export const CHANNEL_PHRASES = {
 
 export type ChannelPhrase = keyof typeof CHANNEL_PHRASES;
 
-/** 取一条话术。 */
-export function phrase(key: ChannelPhrase, locale: ChannelLocale): string {
-  return CHANNEL_PHRASES[key][locale];
+/** The phrases that name the platform (`{product}`): {@link phrase} takes the name for them. */
+export type ProductPhrase = {
+  [K in ChannelPhrase]: (typeof CHANNEL_PHRASES)[K]["en"] extends `${string}{product}${string}`
+    ? K
+    : never;
+}[ChannelPhrase];
+
+/**
+ * One phrase in `locale`. A phrase that names the platform takes its name (`productName(config)`,
+ * read at each use: `platform.name` is hot), which replaces `{product}`.
+ */
+export function phrase<K extends ChannelPhrase>(
+  key: K,
+  locale: ChannelLocale,
+  ...product: K extends ProductPhrase ? [product: string] : []
+): string {
+  const text: string = CHANNEL_PHRASES[key][locale];
+  const name = product[0];
+  // a function replacement: `$&` in a name is text, not a pattern
+  return name === undefined ? text : text.replaceAll("{product}", () => name);
 }

@@ -4,9 +4,10 @@ import userEvent from "@testing-library/user-event";
 import { hydrateRoot, type Root } from "react-dom/client";
 import { renderToString } from "react-dom/server";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import en from "../messages/en.json";
-import zh from "../messages/zh.json";
+import enCatalog from "../messages/en.json";
+import zhCatalog from "../messages/zh.json";
 import BindView from "../src/app/(auth)/bind/[token]/view";
+import { withProductName } from "../src/i18n/product";
 import { identitiesQuery } from "../src/lib/query/account";
 import { pendingBindingQuery } from "../src/lib/query/auth";
 import { meQuery } from "../src/lib/query/shell";
@@ -14,6 +15,10 @@ import { json, lastStubRoutes, stubApi } from "./support/api";
 import { resetNavigation, router } from "./support/navigation";
 import { renderAuthRouteWithCache } from "./support/query";
 import { ME, pageElement, testQueryClient } from "./support/render";
+
+// the request config fills {product} with the platform name; unset here: the built-in one
+const en = withProductName(enCatalog, null);
+const zh = withProductName(zhCatalog, null);
 
 vi.mock("../src/i18n/navigation", () => import("./support/navigation"));
 const navigateBrowser = vi.hoisted(() => vi.fn());

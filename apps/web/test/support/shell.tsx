@@ -13,6 +13,7 @@ import en from "../../messages/en.json";
 import zh from "../../messages/zh.json";
 import { AppFrame } from "../../src/components/shell/AppFrame";
 import { ThemeRoot } from "../../src/components/theme-root";
+import { withProductName } from "../../src/i18n/product";
 import type { OrgReadiness } from "../../src/lib/agents";
 import { makeQueryClient, reviveDehydrated } from "../../src/lib/query/client";
 import {
@@ -158,6 +159,7 @@ export function frameElement(
     newSignIn = false,
     sidebarCollapsed = false,
     wrap = (frame) => frame,
+    productName = null,
   }: {
     locale?: "zh" | "en";
     version?: string;
@@ -167,12 +169,17 @@ export function frameElement(
     sidebarCollapsed?: boolean;
     /** What the layout puts around the frame (the client host), when a test needs it. */
     wrap?: (frame: ReactNode) => ReactNode;
+    /** The deployment's `platform.name` the request config fills `{product}` with (null: unset). */
+    productName?: string | null;
   } = {},
   client: QueryClient = shellClient(initial),
 ) {
   return (
     <QueryClientProvider client={client}>
-      <NextIntlClientProvider locale={locale} messages={locale === "zh" ? zh : en}>
+      <NextIntlClientProvider
+        locale={locale}
+        messages={withProductName(locale === "zh" ? zh : en, productName)}
+      >
         <DesignProvider locale={locale} link={Link as LinkComponent}>
           <ToastProvider>
             <ThemeRoot orgId={initial.org?.orgId ?? null}>

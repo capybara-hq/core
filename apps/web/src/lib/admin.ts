@@ -7,6 +7,7 @@ import type {
   DevicesNetworkView,
   DevicesOutsideSandboxView,
 } from "./org-settings";
+import { DEFAULT_PLATFORM_NAME } from "./platform-icons";
 import type { UiArrangementEntry } from "./ui";
 
 /**
@@ -393,13 +394,23 @@ export interface AttributionPatch {
   sessionUrl?: boolean | null;
 }
 
-/** What an unset field falls back to (the kernel's defaults). */
-export const ATTRIBUTION_DEFAULTS: Readonly<Omit<PlatformAttributionView, "sources">> =
-  Object.freeze({
-    commit: "Co-Authored-By: Capybara <noreply@capybarahq.com>",
-    pr: "🤖 Generated with [Capybara](https://github.com/capybara-hq/core)",
+/**
+ * What an unset field falls back to for the platform name `product` (the kernel's
+ * `attributionDefaults`): the trailer names the platform, and the pull-request line links the
+ * upstream project only under its own name.
+ */
+export function attributionDefaults(
+  product: string,
+): Readonly<Omit<PlatformAttributionView, "sources">> {
+  return Object.freeze({
+    commit: `Co-Authored-By: ${product} <noreply@capybarahq.com>`,
+    pr:
+      product === DEFAULT_PLATFORM_NAME
+        ? `🤖 Generated with [${DEFAULT_PLATFORM_NAME}](https://github.com/capybara-hq/core)`
+        : `🤖 Generated with ${product}`,
     sessionUrl: false,
   });
+}
 
 /** A change of the platform's outside-sandbox ceiling: `permission` replaced, null clears it. */
 export interface DevicesOutsideSandboxPatch {
