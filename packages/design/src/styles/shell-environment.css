@@ -234,6 +234,22 @@
     display: none;
   }
 }
+/* Where the rail drops below the band, a hairline under the band across the whole window closes
+   it: the band reads as the window's title bar and the rail's divider meets it in a T (the
+   sidebar's own line colour), instead of the rail's surface stopping short below an open band. */
+@container not style(--cb-shell-rail-drop: 0px) {
+  :root[data-shell="desktop"] .cb-shell:not([data-banner="true"])::after {
+    content: "";
+    position: absolute;
+    z-index: 1;
+    top: calc(var(--cb-shell-band) + var(--cb-shell-rail-drop) - 1px);
+    left: 0;
+    right: 0;
+    height: 1px;
+    background: var(--cb-line-soft);
+    pointer-events: none;
+  }
+}
 /* (a collapsed rail on medium has no expand button) */
 @media (max-width: 840px) {
   :root[data-shell="desktop"]
