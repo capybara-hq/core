@@ -46,7 +46,8 @@ export type BrandMark = {
 
 /**
  * The theme's mark for a component that draws it (`Logo`, `Greeting`, `WorkingLine`), null
- * without a brand or without a mark (an empty URL is none). Wire `onError` and `ref` to the img;
+ * without a brand or without a mark (an empty URL is none). Wire `onError` and `ref` to the img and
+ * key the img by `src` (a new src gets a fresh element, so a stale `complete` never reads as broken);
  * once `failed`, the component draws its built-in graphic. Failure is remembered per `src` for the
  * rest of this mount: a new `src` starts unfailed, and a `src` that already failed stays failed
  * when it comes back (A, B, back to A). A new mount tries every `src` again.
@@ -67,8 +68,8 @@ export function useBrandMark(): BrandMark | null {
       img.decode().then(
         () => {},
         () => {
-          // only if the img still shows this src (a src change re-runs this ref)
-          if (img.getAttribute("src") === src) onError();
+          // only if the img still shows this src and is still broken (a src change re-runs this ref)
+          if (img.getAttribute("src") === src && img.complete && img.naturalWidth === 0) onError();
         },
       );
     },

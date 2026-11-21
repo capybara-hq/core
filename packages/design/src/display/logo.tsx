@@ -51,6 +51,7 @@ export function Logo({
         // it fails to load (also before hydration: the ref), this mount draws the pixel capybara.
         // biome-ignore lint/performance/noImgElement: the mark is a theme asset of any size
         <img
+          key={mark.src}
           className="cb-logo-mark"
           data-part="logo-mark"
           src={mark.src}
