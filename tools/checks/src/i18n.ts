@@ -216,6 +216,31 @@ function zhBannedWords(file: string, text: string, json: unknown): Finding[] {
   });
 }
 
+/**
+ * Messages that may write the literal "Capybara" (issue #452): every other message names the
+ * platform with `{product}`, which the web fills with `platform.name`. Program, package and format
+ * names are lowercase (`capybara-device`, `.capybara-plugin`) and never match.
+ */
+export const PRODUCT_NAME_ALLOWED: Readonly<Record<string, string>> = {
+  "catalog.admin.detail.format.capybara": "the label of the capybara plugin source format",
+};
+
+/** "Capybara" (the product name) in the text of a message outside {@link PRODUCT_NAME_ALLOWED}. */
+function productNames(file: string, text: string, json: unknown): Finding[] {
+  return stringLeaves(json).flatMap(([key, message]) =>
+    key in PRODUCT_NAME_ALLOWED || !/\bCapybara\b/.test(visibleText(message))
+      ? []
+      : [
+          {
+            file,
+            line: lineOf(text, key),
+            rule: "i18n-product-name",
+            message: `「${key}」(${JSON.stringify(message)}): name the platform with {product} (platform.name), never the literal Capybara; program, package and format names stay lowercase`,
+          },
+        ],
+  );
+}
+
 /** One entry of the design system's zh object: `"key": "string literal",` on one line. */
 const DESIGN_ENTRY = /^\s*"([^"\\]+)":\s*("(?:[^"\\]|\\.)*"),?\s*$/;
 
@@ -353,7 +378,8 @@ function load(file: string): Loaded {
  * title / label / button message ending with a period -> `i18n-label-period`; "..." in a message ->
  * `i18n-ellipsis`; a half-width ? ! : ; right after a CJK character in zh -> `i18n-cjk-halfwidth`;
  * 企业 in the text of a zh message -> `i18n-zh-enterprise`; the Latin word agent (or agents) in
- * the text of a zh message, placeholders excluded -> `i18n-zh-agent`.
+ * the text of a zh message, placeholders excluded -> `i18n-zh-agent`; the literal "Capybara" in
+ * the text of either file, outside {@link PRODUCT_NAME_ALLOWED} -> `i18n-product-name`.
  */
 export function checkI18n(messagesDir: string): Finding[] {
   const base = load(join(messagesDir, BASE));
@@ -371,6 +397,8 @@ export function checkI18n(messagesDir: string): Finding[] {
     ...ellipses(target.file, target.text, target.json),
     ...cjkHalfwidth(base.file, base.text, base.json),
     ...zhBannedWords(base.file, base.text, base.json),
+    ...productNames(base.file, base.text, base.json),
+    ...productNames(target.file, target.text, target.json),
   ];
   for (const key of base.keys) {
     if (target.keys.has(key)) continue;

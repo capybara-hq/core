@@ -52,7 +52,7 @@ export function Logo({
           data-part="logo-mark"
           src={brand.markUrl}
           height={ROWS * scale}
-          alt={brand.wordmark ?? "Logo"}
+          alt={brand.productName ?? brand.wordmark ?? "Logo"}
         />
       ) : (
         <svg

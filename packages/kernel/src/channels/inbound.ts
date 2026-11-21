@@ -8,6 +8,7 @@ import type {
 } from "@capybara-hq/plugin-sdk";
 import { Inject, Injectable } from "@nestjs/common";
 import type { Redis } from "ioredis";
+import { productName } from "../config/product-name.js";
 import { ConversationsService } from "../conversations/conversations.service.js";
 import type { ConversationEvent } from "../conversations/events.js";
 import {
@@ -21,6 +22,7 @@ import { DEFAULT_DEVICE_ALIASES, deviceLabel } from "../devices/label.js";
 import { ApiError } from "../errors.js";
 import { IdentityBinding } from "../identity/binding.js";
 import { ExternalIdentities } from "../identity/external.js";
+import { KernelConfigService } from "../infra/config/kernel-config.service.js";
 import { KernelDb } from "../infra/database/kernel-db.js";
 import { LockService } from "../infra/lock/lock.service.js";
 import { KERNEL_LOGGER, REDIS } from "../infra/tokens.js";
@@ -134,6 +136,8 @@ export class ChannelInbound {
     @Inject(AnonymousGuests) private readonly guests: Pick<AnonymousGuests, "ensure">,
     @Inject(DevicesService)
     private readonly devices: Pick<DevicesService, "list" | "imDefault" | "setImDefault">,
+    /** `platform.name`, which the bind phrases name (read at each reply: the field is hot). */
+    @Inject(KernelConfigService) private readonly config: Pick<KernelConfigService, "get">,
     @Inject(KERNEL_LOGGER) private readonly log: Pick<Logger, "warn" | "info">,
   ) {
     this.actions = new ChannelCardActions({
@@ -254,7 +258,7 @@ export class ChannelInbound {
       );
     };
     const reply = (key: ChannelPhrase, cards?: ChannelCard[]) =>
-      replyText(phrase(key, locale), cards);
+      replyText(phrase(key, locale, productName(this.config.get())), cards);
 
     const speaker = await this.resolveSpeaker(connectionId, row, e.sender, isGroup, locale, reply);
     if (speaker === undefined) return;
@@ -502,7 +506,8 @@ export class ChannelInbound {
       await reply("bindUnavailable");
       return undefined;
     }
-    await reply("bindPrompt", [{ kind: "bind", url, text: phrase("bindPrompt", locale) }]);
+    const bindText = phrase("bindPrompt", locale, productName(this.config.get()));
+    await reply("bindPrompt", [{ kind: "bind", url, text: bindText }]);
     return undefined;
   }
 

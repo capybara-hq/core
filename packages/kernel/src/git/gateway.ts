@@ -3,6 +3,8 @@ import { pipeline } from "node:stream/promises";
 import { Inject, Injectable, Optional } from "@nestjs/common";
 import type { FastifyReply, FastifyRequest } from "fastify";
 import type { Redis } from "ioredis";
+import { productName } from "../config/product-name.js";
+import type { KernelConfig } from "../config/schema.js";
 import { audit } from "../identity/audit.js";
 import { KernelConfigService } from "../infra/config/kernel-config.service.js";
 import { KernelDb } from "../infra/database/kernel-db.js";
@@ -165,21 +167,23 @@ const CONCURRENCY_TTL_SECONDS = 15 * 60;
 /** Bytes counted locally before they are added to the Redis counter. */
 const BYTES_FLUSH = 256 * 1024;
 
-/** Texts git prints (`remote: …`). */
+/**
+ * Texts git prints (`remote: …`); every answer prefixes them with the platform name
+ * (`<platform.name>: …`, read per request: the field is hot).
+ */
 const TICKET_REFUSED =
-  "Capybara: the git ticket is not valid (expired, revoked, or the task has ended). Run the command again from the agent's task.";
-const TOO_MANY =
-  "Capybara: too many git transfers are running in this organization; try again shortly.";
-const BYTES_EXCEEDED =
-  "Capybara: this task reached its git transfer limit (tools.git.maxBytesPerRun).";
+  "the git ticket is not valid (expired, revoked, or the task has ended). Run the command again from the agent's task.";
+const TOO_MANY = "too many git transfers are running in this organization; try again shortly.";
+const BYTES_EXCEEDED = "this task reached its git transfer limit (tools.git.maxBytesPerRun).";
+const NOT_AN_ENDPOINT = "not a git smart-HTTP endpoint.";
 const reconnect = (host: string) =>
-  `Capybara: ${host} refused the connection's credential. Reconnect it under Settings → Connectors, then run the command again.`;
-const repoRefused = (repo: string) => `Capybara: this task may not use the repository ${repo}.`;
+  `${host} refused the connection's credential. Reconnect it under Settings → Connectors, then run the command again.`;
+const repoRefused = (repo: string) => `this task may not use the repository ${repo}.`;
 const upstreamFailed = (host: string, detail: string) =>
-  `Capybara: the request to ${host} failed (${detail}).`;
-const BAD_PUSH = (why: string) => `Capybara: the push could not be read (${why}).`;
+  `the request to ${host} failed (${detail}).`;
+const BAD_PUSH = (why: string) => `the push could not be read (${why}).`;
 const notConnected = (host: string) =>
-  `Capybara: you have no connection that can reach ${host}. Connect one under Settings → Connectors, then run the command again.`;
+  `you have no connection that can reach ${host}. Connect one under Settings → Connectors, then run the command again.`;
 
 /** The bytes of one request, added to the run's Redis counter in batches. */
 class ByteMeter {
@@ -326,6 +330,11 @@ export class GitGateway {
     @Optional() @Inject(GIT_UPSTREAM_ORIGIN) private readonly upstreamOrigin?: GitUpstreamOrigin,
   ) {}
 
+  /** `message` as git prints it from this gateway: with the platform name before it. */
+  says(message: string): string {
+    return gitSays(this.config.get())(message);
+  }
+
   /** Handles one gateway request (the raw route's handler). */
   async handle(req: FastifyRequest, reply: FastifyReply): Promise<void> {
     const started = performance.now();
@@ -333,6 +342,7 @@ export class GitGateway {
     const body = req.body instanceof Readable ? req.body : undefined;
     // a refusal closes the connection and stops reading the body: nothing unauthenticated or
     // refused is read further, and nothing it sends is left unbounded
+    const said = gitSays(this.config.get());
     const text = (status: number, message: string) => {
       fields.status = status;
       if (body !== undefined) reply.raw.once("finish", () => body.destroy());
@@ -341,7 +351,7 @@ export class GitGateway {
         .header("content-type", "text/plain; charset=utf-8")
         .header("cache-control", "no-cache")
         .header("connection", "close")
-        .send(`${message}\n`);
+        .send(`${said(message)}\n`);
     };
 
     const target = parseGitGatewayPath(req.method, req.url);
@@ -350,7 +360,7 @@ export class GitGateway {
         ? contentTypeOf(req) !== `application/x-${target?.service}-request`
         : body !== undefined;
     if (target === null || wrongBody) {
-      return text(404, "Capybara: not a git smart-HTTP endpoint.");
+      return text(404, NOT_AN_ENDPOINT);
     }
     fields.host = target.host;
     fields.repo = target.repo;
@@ -362,7 +372,7 @@ export class GitGateway {
     // 403, not 401: on a 401 git asks for a username and never prints the message
     if (binding === null) return this.done(text(403, TICKET_REFUSED), fields, started);
     if (!binding.hosts.map((h) => h.toLowerCase()).includes(target.host)) {
-      return this.done(text(404, "Capybara: not a git smart-HTTP endpoint."), fields, started);
+      return this.done(text(404, NOT_AN_ENDPOINT), fields, started);
     }
     if (!repoAllowed(binding.repos, target.repo)) {
       return this.done(text(403, repoRefused(target.repo)), fields, started);
@@ -374,7 +384,7 @@ export class GitGateway {
     if (source === undefined) {
       const message =
         target.service === "git-receive-pack"
-          ? `Capybara: ${gitNotConnectedNote(target.host)}`
+          ? gitNotConnectedNote(target.host)
           : notConnected(target.host);
       return this.done(text(403, message), fields, started);
     }
@@ -418,6 +428,7 @@ export class GitGateway {
         body: metered,
         fields,
         text,
+        said,
         transfer,
         push,
       });
@@ -542,11 +553,13 @@ export class GitGateway {
       body: Readable | undefined;
       fields: LogFields;
       text: (status: number, message: string) => FastifyReply;
+      /** A message git prints, with the platform name before it. */
+      said: (message: string) => string;
       transfer: Transfer;
       push: PushAudit;
     },
   ): Promise<void> {
-    const { target, binding, source, fields, text, transfer, push } = c;
+    const { target, binding, source, fields, text, said, transfer, push } = c;
     /** Sets the audit result of a push that was read (a no-op for any other request). */
     const pushResult = (r: string) => {
       if (push.result !== undefined) push.result = r;
@@ -567,7 +580,7 @@ export class GitGateway {
             .code(200)
             .header("content-type", "application/x-git-receive-pack-advertisement")
             .header("cache-control", "no-cache")
-            .send(advertisementError(`Capybara: ${refusalNote(target.repo, [], decision)}`));
+            .send(advertisementError(said(refusalNote(target.repo, [], decision))));
           return;
         }
       } else {
@@ -618,7 +631,7 @@ export class GitGateway {
                 receivePackRefusal(
                   parsed.capabilities,
                   refs,
-                  `Capybara: ${note}`,
+                  said(note),
                   decision.decision === "ask" ? "needs approval" : "not allowed",
                 ),
               );
@@ -754,7 +767,7 @@ export class GitGateway {
     if (res.status !== 200) {
       await res.body?.cancel().catch(() => {});
       if (res.status === 404 || res.status === 403) {
-        text(res.status, `Capybara: ${target.host} answered ${res.status} for ${target.repo}.`);
+        text(res.status, `${target.host} answered ${res.status} for ${target.repo}.`);
       } else {
         text(502, upstreamFailed(target.host, `status ${res.status}`));
       }
@@ -854,6 +867,15 @@ const contentTypeOf = (req: FastifyRequest): string =>
     .toLowerCase() ?? "";
 
 /** The note a refused push carries (the model reads it in the command's output). */
+/**
+ * How the gateway prefixes what git prints (`remote: <platform.name>: …`), so a person reading the
+ * output of git knows which side refused.
+ */
+export function gitSays(config: Pick<KernelConfig, "platform">): (message: string) => string {
+  const name = productName(config);
+  return (message) => `${name}: ${message}`;
+}
+
 function refusalNote(repo: string, refs: string[], d: GitPushDecision): string {
   if (d.decision === "ask") return gitAskedNote(repo);
   if (d.reason === "unattended") return gitUnattendedNote(repo, refs);

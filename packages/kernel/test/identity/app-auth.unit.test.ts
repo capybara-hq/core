@@ -97,12 +97,15 @@ describe("AppAuthorizeBodySchema client", () => {
 });
 
 describe("appUserAgent", () => {
-  it("names the client, its version and the machine", () => {
-    expect(appUserAgent({ client: "desktop", appVersion: "0.1.0", name: "Ada's MacBook" })).toBe(
-      "Capybara Desktop/0.1.0 (Ada's MacBook)",
-    );
-    expect(appUserAgent({ client: "mobile", appVersion: "1.0.0", name: "iPhone" })).toBe(
-      "Capybara Mobile/1.0.0 (iPhone)",
-    );
+  it("names the platform (platform.name), the client, its version and the machine", () => {
+    expect(
+      appUserAgent({ client: "desktop", appVersion: "0.1.0", name: "Ada's MacBook" }, "Capybara"),
+    ).toBe("Capybara Desktop/0.1.0 (Ada's MacBook)");
+    expect(
+      appUserAgent({ client: "mobile", appVersion: "1.0.0", name: "iPhone" }, "Capybara"),
+    ).toBe("Capybara Mobile/1.0.0 (iPhone)");
+    expect(
+      appUserAgent({ client: "desktop", appVersion: "2.0.0", name: "Lab" }, "Acme Agents"),
+    ).toBe("Acme Agents Desktop/2.0.0 (Lab)");
   });
 });

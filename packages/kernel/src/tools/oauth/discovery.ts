@@ -362,6 +362,8 @@ export async function registerClient(
   meta: McpAuthMetadata,
   redirectUri: string,
   http: OAuthHttpOptions,
+  /** The client name the authorization server shows on its consent screen (`platform.name`). */
+  clientName: string,
   /** 管理员指定的客户端认证方式（`tokenAuthMethod`）；不给则按授权服务器声明选择。 */
   preferred?: TokenAuthMethod,
 ): Promise<OAuthClientRecord> {
@@ -381,7 +383,7 @@ export async function registerClient(
         method: "POST",
         headers: { "content-type": "application/json", accept: "application/json" },
         body: JSON.stringify({
-          client_name: "Capybara",
+          client_name: clientName,
           redirect_uris: [redirectUri],
           grant_types: ["authorization_code", "refresh_token"],
           response_types: ["code"],

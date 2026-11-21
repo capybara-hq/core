@@ -37,7 +37,7 @@ export class PlatformIconsOperations implements OnModuleInit {
       defineOperation({
         id: "admin.icons",
         description:
-          "List the platform icons the super admin uploaded: the app icon (app), its maskable variant (maskable) and the SVG favicon (favicon), each with its public URL, SHA-256 and when it was set. The installed web app, the browser tab and the native clients use them; a purpose not listed uses the built-in Capybara icon.",
+          "List the platform icons the super admin uploaded: the app icon (app), its maskable variant (maskable) and the SVG favicon (favicon), each with its public URL, SHA-256 and when it was set. The installed web app, the browser tab and the native clients use them; a purpose not listed uses the built-in icon.",
         input: z.object({}).strict(),
         example: {},
         authz: { superAdmin: true },
@@ -97,7 +97,7 @@ export class PlatformIconsOperations implements OnModuleInit {
       defineOperation<z.infer<typeof ClearIconInput>>({
         id: "admin.clear-icon",
         description:
-          "Restore the built-in Capybara icon for one platform icon purpose (super admin): app, maskable or favicon. The uploaded file is deleted. The platform audit log records it.",
+          "Restore the built-in icon for one platform icon purpose (super admin): app, maskable or favicon. The uploaded file is deleted. The platform audit log records it.",
         input: ClearIconInput,
         example: { purpose: "maskable" },
         authz: { superAdmin: true },
@@ -106,8 +106,8 @@ export class PlatformIconsOperations implements OnModuleInit {
         summary: async (i) => {
           const n = NAMES[i.purpose];
           return {
-            zh: `把平台的${n.zh}恢复为内置的 Capybara 图标`,
-            en: `Restore the built-in Capybara ${n.en} for the platform`,
+            zh: `把平台的${n.zh}恢复为内置图标`,
+            en: `Restore the built-in ${n.en} for the platform`,
           };
         },
         run: async (i, ctx) => {

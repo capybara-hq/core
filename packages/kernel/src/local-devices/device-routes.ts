@@ -114,7 +114,7 @@ export async function registerDeviceConnectRoute(
             // a newer program than this deployment: the deployment is the one to upgrade
             const fix =
               number !== null && number > DEVICE_PROTOCOL_VERSION
-                ? "This deployment is older than the program; ask the platform's super admin to upgrade Capybara, or install the capybara-device release that matches this deployment."
+                ? "This deployment is older than the program; ask the platform's super admin to upgrade it, or install the capybara-device release that matches this deployment."
                 : "Update capybara-device on the machine (npm install -g @capybara-hq/device@next), then start it again.";
             return reply
               .code(426)

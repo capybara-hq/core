@@ -73,7 +73,7 @@ export interface CreateHttpAppOptions {
    * The git gateway (`/git/v1/*`, a raw route outside Nest), registered only when given: the
    * kernel passes it when `roles` includes `api`.
    */
-  git?: Pick<GitGateway, "handle">;
+  git?: Pick<GitGateway, "handle" | "says">;
   /** 副本标识（`http.replicaId`）：设置时每个响应带 `x-capybara-replica` 头。 */
   replicaId?: string | undefined;
   /**
