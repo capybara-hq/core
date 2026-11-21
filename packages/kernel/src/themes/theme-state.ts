@@ -41,8 +41,25 @@ export interface ThemeRef {
   schemes: ThemeScheme[];
   /** The only scheme of a single-scheme theme, else null. */
   singleScheme: ThemeScheme | null;
-  /** null: the theme has no logo (the built-in mark and wordmark). */
-  logo: { markUrl: string | null; wordmark: string | null; faviconUrl: string | null } | null;
+  /**
+   * null: the theme has no logo (the built-in mark and wordmark). Each URL is the asset's delivery
+   * URL ({@link themeUrl}), null when the theme does not name that file.
+   */
+  logo: {
+    markUrl: string | null;
+    wordmark: string | null;
+    faviconUrl: string | null;
+    illustrationUrl: string | null;
+    appIconUrl: string | null;
+    appIconMaskableUrl: string | null;
+  } | null;
+  /** The background decoration of the sign-in pages (the theme file's `decoration`, default `dither`). */
+  decoration: "dither" | "none";
+  /**
+   * The merged `color.bg` of each scheme the theme defines (the theme's override, else the built-in
+   * value; canonical `#RRGGBB` / `rgba()`), computed at read from the stored definition.
+   */
+  background: Partial<Record<ThemeScheme, string>>;
   /** `/api/v1/themes/<id>/<version>/r<THEME_CSS_REVISION>/theme.css`. */
   cssUrl: string;
 }
@@ -107,9 +124,25 @@ export function themeRefOf(
             markUrl: url(def.logo.mark),
             wordmark: def.logo.wordmark ?? null,
             faviconUrl: url(def.logo.favicon),
+            illustrationUrl: url(def.logo.illustration),
+            appIconUrl: url(def.logo.appIcon),
+            appIconMaskableUrl: url(def.logo.appIconMaskable),
           },
+    decoration: def.decoration === "none" ? "none" : "dither",
+    background: themeBackground(def),
     cssUrl: themeUrl(id, version),
   };
+}
+
+/** The merged `color.bg` of each scheme the theme defines ({@link ThemeRef.background}). */
+function themeBackground(def: ParsedTheme): Partial<Record<ThemeScheme, string>> {
+  const out: Partial<Record<ThemeScheme, string>> = {};
+  const merged = mergeThemeSchemes(def);
+  for (const s of SCHEMES) {
+    const bg = merged[s]?.color.bg;
+    if (def.schemes[s] !== undefined && bg !== undefined) out[s] = bg;
+  }
+  return out;
 }
 
 /**

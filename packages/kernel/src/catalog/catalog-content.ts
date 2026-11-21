@@ -14,6 +14,7 @@ import {
   parseAgentTemplate,
   parseConnectorTemplateFile,
   parseThemeFile,
+  themeAssetRefs,
   themeIdOf,
   validateThemeAssets,
 } from "@capybara-hq/plugin-sdk";
@@ -619,22 +620,23 @@ export interface CatalogTheme {
   /** Relative to the plugin root. */
   path: string;
   theme: ParsedTheme;
-  /** The theme's fonts and logo files (paths relative to the plugin root), sanitized. */
+  /** The theme's fonts, logo and avatar files (paths relative to the plugin root), sanitized. */
   assets: SkillPackageFile[];
   /** {@link themeAssetsDigest} of the version's records of those files. */
   assetsDigest: string;
 }
 
-/** The asset paths a parsed theme references (fonts, logo mark and favicon), without `./`. */
+/**
+ * The asset paths a parsed theme references ({@link themeAssetRefs}: fonts, logo files, avatar
+ * files), without `./`.
+ */
 export function themeAssetPaths(theme: ParsedTheme): string[] {
-  const refs = (theme.fonts ?? []).map((f) => f.file);
-  for (const ref of [theme.logo?.mark, theme.logo?.favicon]) if (ref !== undefined) refs.push(ref);
-  return [...new Set(refs.map((r) => packagePath(r)))];
+  return [...new Set(themeAssetRefs(theme).map((r) => packagePath(r.ref)))];
 }
 
 /**
  * The digest of a theme's assets as recorded on a catalog version (`files`): equal digests = the
- * same fonts and logo. With the canonical definition it decides whether a theme changed.
+ * same fonts, logo and avatar files. With the canonical definition it decides whether a theme changed.
  */
 export function themeAssetsDigest(
   files: { path: string; sha256: string }[],
