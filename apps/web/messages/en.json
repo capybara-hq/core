@@ -6629,6 +6629,7 @@
     },
     "default": "Default",
     "custom": "Uploaded",
+    "fromTheme": "From theme {name}",
     "upload": "Upload",
     "uploadLabel": "Upload {name}",
     "restore": "Restore default",

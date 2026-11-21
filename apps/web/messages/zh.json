@@ -6617,6 +6617,7 @@
     },
     "default": "默认",
     "custom": "已上传",
+    "fromTheme": "来自主题 {name}",
     "upload": "上传",
     "uploadLabel": "上传{name}",
     "restore": "恢复默认",

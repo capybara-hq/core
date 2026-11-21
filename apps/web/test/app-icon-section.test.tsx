@@ -34,10 +34,35 @@ const base64Of = async (f: File) => Buffer.from(await f.arrayBuffer()).toString(
 
 let icons: (typeof APP_ICON)[];
 let calls: Call[];
+/** The platform default theme (null: the built-in theme). */
+let platformTheme: unknown;
+const TID = "0f8fad5b-d9cb-469f-a165-70867728950e";
+const THEME_APP = `/api/v1/themes/${TID}/2/assets/app.png`;
+const THEME_MASKABLE = `/api/v1/themes/${TID}/2/assets/app-maskable.png`;
+const THEME = {
+  id: TID,
+  key: "acme/acme",
+  version: "2",
+  name: { en: "Acme", zh: "极点" },
+  schemes: ["dark"],
+  singleScheme: "dark",
+  logo: {
+    markUrl: null,
+    wordmark: null,
+    faviconUrl: null,
+    illustrationUrl: null,
+    appIconUrl: THEME_APP,
+    appIconMaskableUrl: THEME_MASKABLE,
+  },
+  decoration: "dither",
+  background: {},
+  cssUrl: `/api/v1/themes/${TID}/2/r2/theme.css`,
+};
 
 const routes = (put?: (c: Call) => Response) => {
   calls = stubApi({
     "GET /api/v1/admin/platform/icons": () => json(200, { icons }),
+    "GET /api/v1/platform/theme": () => json(200, platformTheme),
     "PUT /api/v1/admin/platform/icons/app": (c) => {
       if (put) return put(c);
       icons = [APP_ICON];
@@ -55,6 +80,7 @@ const rowOf = async (title: string) =>
 
 beforeEach(() => {
   icons = [];
+  platformTheme = null;
 });
 afterEach(() => {
   cleanup();
@@ -141,6 +167,7 @@ describe("AppIconSection", () => {
   it("a failed icons read shows the failure with a retry, never 默认 rows or actions", async () => {
     let fail = true;
     calls = stubApi({
+      "GET /api/v1/platform/theme": () => json(200, null),
       "GET /api/v1/admin/platform/icons": () =>
         fail
           ? json(403, { error: { code: "forbidden", message: "no" } })
@@ -153,6 +180,46 @@ describe("AppIconSection", () => {
     fail = false;
     await userEvent.setup().click(screen.getByRole("button", { name: en.common.retry }));
     expect(await rowOf(T.app.title)).toBeTruthy();
+  });
+
+  it("without an upload, a theme app icon is previewed and labelled with the theme name", async () => {
+    platformTheme = THEME;
+    routes();
+    renderPage(<AppIconSection />);
+    const fromTheme = T.fromTheme.replace("{name}", "Acme");
+    const app = await rowOf(T.app.title);
+    await waitFor(() => expect(app.querySelector("img")?.getAttribute("src")).toBe(THEME_APP));
+    expect(within(app).getByText(new RegExp(fromTheme))).toBeTruthy();
+    const maskable = await rowOf(T.maskable.title);
+    expect(maskable.querySelector("img")?.getAttribute("src")).toBe(THEME_MASKABLE);
+    // the favicon follows the page's theme, never a default the theme sets here
+    const favicon = await rowOf(T.favicon.title);
+    expect(favicon.querySelector("img")?.getAttribute("src")).toBe("/icon.svg");
+    expect(within(favicon).getByText(new RegExp(T.default))).toBeTruthy();
+  });
+
+  it("an upload wins and restore-default returns to the theme's", async () => {
+    platformTheme = THEME;
+    icons = [APP_ICON];
+    routes();
+    renderPage(<AppIconSection />);
+    const row = await rowOf(T.app.title);
+    await waitFor(() => expect(row.querySelector("img")?.getAttribute("src")).toBe(APP_ICON.url));
+    expect(within(row).getByText(new RegExp(T.custom))).toBeTruthy();
+    await userEvent.setup().click(within(row).getByRole("button", { name: T.restore }));
+    await waitFor(() => expect(row.querySelector("img")?.getAttribute("src")).toBe(THEME_APP));
+    expect(within(row).getByText(new RegExp(T.fromTheme.replace("{name}", "Acme")))).toBeTruthy();
+  });
+
+  it("without either, the built-in PNGs as today (also when the theme read fails)", async () => {
+    calls = stubApi({
+      "GET /api/v1/admin/platform/icons": () => json(200, { icons: [] }),
+      "GET /api/v1/platform/theme": () => json(503, { error: { code: "x", message: "x" } }),
+    });
+    renderPage(<AppIconSection />);
+    const row = await rowOf(T.app.title);
+    expect(row.querySelector("img")?.getAttribute("src")).toBe("/icon-512.png");
+    expect(within(row).getByText(new RegExp(T.default))).toBeTruthy();
   });
 
   it("the favicon row takes an SVG", async () => {
