@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -25,6 +26,12 @@ export interface BootstrapCheckOptions {
    * sandbox-docker plugin's test copy at `marketplace.commit` must equal it (`bootstrap-haproxy`).
    */
   haproxyFile?: string;
+  /**
+   * The SDK runtime files the sandbox-docker image stages (`SANDBOX_RUNTIME_SOURCE.files`); with
+   * `network`, the image's `SHA256SUMS` at `marketplace.commit` must list each with the sha256 of
+   * its `source` (`bootstrap-sandbox-runtime`).
+   */
+  sandboxRuntime?: readonly { name: string; source: string }[];
 }
 
 /** Core's compose files (repo-relative) whose sandbox images build from the plugins repository. */
@@ -63,7 +70,9 @@ function lineOf(text: string, name: string): number {
  * With `composeFiles`, every git build context of the plugins repository in them must be pinned to
  * `marketplace.commit` (`bootstrap-compose-ref`, offline); with `network` as well, its Dockerfile
  * must exist at that commit, and with `haproxyFile` the plugin's test copy of the socket proxy
- * config there must equal core's file (`bootstrap-haproxy`).
+ * config there must equal core's file (`bootstrap-haproxy`). With `sandboxRuntime` and `network`,
+ * the sandbox-docker image's `SHA256SUMS` at that commit must list each SDK runtime file with the
+ * digest of core's source (`bootstrap-sandbox-runtime`).
  */
 export async function checkBootstrap(
   manifestFile: string,
@@ -170,6 +179,12 @@ export async function checkBootstrap(
           file: opts.haproxyFile,
           bytes: new Uint8Array(await readFile(opts.haproxyFile)),
         },
+      }),
+      ...(opts.sandboxRuntime !== undefined && {
+        sandboxRuntime: opts.sandboxRuntime.map((f) => ({
+          name: f.name,
+          sha256: createHash("sha256").update(f.source, "utf8").digest("hex"),
+        })),
       }),
     });
     for (const p of problems) {
