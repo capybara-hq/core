@@ -1329,7 +1329,13 @@ export class ToolPipeline {
         if (sent !== null) keys = keys.filter((k) => isAlwaysLoaded(k) || sent.has(k));
       }
       keys.sort();
-      return fail(unknownToolText(call.name, keys, keys.includes(TOOL_SEARCH)));
+      // In ToolSearch mode a name the model has not loaded (a catalog tool, or one it misspelled) is
+      // the protocol asking it to search, not a failure: the row reads neutral like `not_loaded`.
+      return fail(
+        unknownToolText(call.name, keys, keys.includes(TOOL_SEARCH)),
+        call.name,
+        resolved.toolSearch === true ? { kind: "not_loaded" } : undefined,
+      );
     }
     const outKey = tool.key;
     // ToolSearch 模式下，模型只能调用请求里带了完整定义的工具：目录里有、但发出本次调用的请求没加载 →
