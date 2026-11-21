@@ -5,7 +5,7 @@ import type {
   KernelReq,
   SandboxLimits,
 } from "@capybara-hq/plugin-sdk";
-import { SandboxPermissionUnsupportedError } from "@capybara-hq/plugin-sdk";
+import { parseDeviceReport, SandboxPermissionUnsupportedError } from "@capybara-hq/plugin-sdk";
 import { startTestPostgres, startTestRedis, type TestContainer } from "@capybara-hq/testing";
 import { Redis } from "ioredis";
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
@@ -69,6 +69,7 @@ const DEPLOYMENT: DeploymentDevicePolicy = {
 let deployment: DeploymentDevicePolicy;
 let orgSettings: OrgDeviceSettings;
 let machineRoots: typeof ROOTS | null;
+let machineHome: string | null;
 let orgOfEnv: string | null;
 let maxFrameBytes: number;
 /** What the admitted call grants answer. */
@@ -77,6 +78,7 @@ beforeEach(() => {
   deployment = structuredClone(DEPLOYMENT);
   orgSettings = {};
   machineRoots = ROOTS;
+  machineHome = "/home/me";
   orgOfEnv = "org-1";
   maxFrameBytes = 16 * 1024 * 1024;
   admittedGrants = undefined;
@@ -151,6 +153,7 @@ beforeAll(async () => {
     {
       orgOf: async () => orgOfEnv,
       machineRoots: async () => machineRoots,
+      machineHome: async () => machineHome,
     },
     {
       devicePolicy: async () => effectiveDevicePolicy(deployment, orgSettings, null),
@@ -245,6 +248,25 @@ describe("LocalDeviceProvider", () => {
     await h.connect();
     expect(await provider.resume(handle, signal())).toBe("resumed");
     await h.disconnect();
+  });
+
+  it("@local reports the fixed description, the machine's home and no reset", async () => {
+    const device = { deviceId: "dev-1", orgId: "org-1", handle: null };
+    const report = await provider.report(device, signal());
+    expect(report).toEqual({
+      revision: "local-1",
+      description: {
+        en: "Runs on a computer connected with capybara-device; the computer's owner limits it there.",
+        zh: "运行在用 capybara-device 连接的电脑上，电脑的主人在本机限制它。",
+      },
+      home: "/home/me",
+      limits: [],
+      reset: false,
+    });
+    expect(parseDeviceReport(report)).toEqual(report);
+    machineHome = null;
+    expect((await provider.report(device, signal())).home).toBeNull();
+    expect(provider.networkAllowlist).toBe(true);
   });
 
   it("resume reports gone when the machine now reports other roots (ruling R23)", async () => {

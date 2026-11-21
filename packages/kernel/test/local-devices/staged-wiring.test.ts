@@ -113,7 +113,7 @@ async function fixture() {
   });
   const provider = new LocalDeviceProvider(
     relay,
-    { orgOf: forbidden, machineRoots: forbidden },
+    { orgOf: forbidden, machineRoots: forbidden, machineHome: forbidden },
     { devicePolicy: forbidden, deviceLimits: forbidden, hostGrantCeiling: forbidden },
     config,
   );

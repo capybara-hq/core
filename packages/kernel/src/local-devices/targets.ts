@@ -134,6 +134,17 @@ export class DeviceTargets {
     return r as SandboxRoots;
   }
 
+  /** The owner's home directory the active machine reported in its hello, or null. */
+  async machineHome(deviceId: string): Promise<string | null> {
+    const row = await this.db
+      .selectFrom("device_machines")
+      .select("home")
+      .where("device_id", "=", deviceId)
+      .where("revoked_at", "is", null)
+      .executeTakeFirst();
+    return row?.home ?? null;
+  }
+
   /**
    * The features the device's active machine announced in its last hello (known ones only);
    * empty without an active machine.

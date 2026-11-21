@@ -175,6 +175,135 @@ export function isFileSystemGoneError(e: unknown): e is FileSystemGoneError {
  */
 export const SANDBOX_TAG_RE = /^[a-z0-9-]{1,64}$/;
 
+/** Text in English with an optional Chinese translation (what a person reads). */
+export interface DeviceText {
+  en: string;
+  zh?: string;
+}
+
+/** The device a provider answers about: the kernel's device id, its org and the instance, if any. */
+export interface DeviceRef {
+  deviceId: string;
+  orgId: string;
+  /** The current instance, or null when the device has none. */
+  handle: SandboxHandle | null;
+}
+
+/** One limit line of a {@link DeviceReport} (shown as is; the provider enforces it). */
+export interface DeviceReportLimit {
+  label: DeviceText;
+  value: string;
+}
+
+/**
+ * What a provider tells about a device ({@link DeviceProvider.report}): shown to people, never
+ * used for enforcement. `revision` changes whenever the rest changes; `home` is the owner's home
+ * directory (absolute) or null; `reset` says whether the provider can reset the device's files.
+ */
+export interface DeviceReport {
+  revision: string;
+  description: DeviceText;
+  home: string | null;
+  limits: DeviceReportLimit[];
+  reset: boolean;
+}
+
+/** Size limits {@link parseDeviceReport} enforces. */
+export const DEVICE_REPORT_LIMITS = Object.freeze({
+  revisionChars: 128,
+  descriptionChars: 300,
+  limits: 8,
+  limitLabelChars: 60,
+  limitValueChars: 60,
+  homeChars: 4096,
+});
+
+const isRecord = (v: unknown): v is Record<string, unknown> =>
+  typeof v === "object" && v !== null && !Array.isArray(v);
+
+function exactKeys(v: Record<string, unknown>, keys: readonly string[], what: string): void {
+  for (const k of Object.keys(v)) {
+    if (!keys.includes(k)) throw new TypeError(`${what}: unknown key ${k}`);
+  }
+}
+
+function parseText(v: unknown, max: number, what: string): DeviceText {
+  if (!isRecord(v)) throw new TypeError(`${what} must be an object`);
+  exactKeys(v, ["en", "zh"], what);
+  const { en, zh } = v;
+  if (typeof en !== "string" || en === "" || en.length > max) {
+    throw new TypeError(`${what}.en must be a non-empty string of at most ${max} characters`);
+  }
+  if (zh === undefined) return { en };
+  if (typeof zh !== "string" || zh === "" || zh.length > max) {
+    throw new TypeError(`${what}.zh must be a non-empty string of at most ${max} characters`);
+  }
+  return { en, zh };
+}
+
+/** Checks a provider's report; throws `TypeError` on any other shape, returns a clean copy. */
+export function parseDeviceReport(value: unknown): DeviceReport {
+  const L = DEVICE_REPORT_LIMITS;
+  if (!isRecord(value)) throw new TypeError("device report must be an object");
+  exactKeys(value, ["revision", "description", "home", "limits", "reset"], "device report");
+  const { revision, home, limits, reset } = value;
+  if (typeof revision !== "string" || revision === "" || revision.length > L.revisionChars) {
+    throw new TypeError(
+      `device report revision must be a non-empty string of at most ${L.revisionChars} characters`,
+    );
+  }
+  const description = parseText(value.description, L.descriptionChars, "device report description");
+  if (home !== null) {
+    if (typeof home !== "string" || home.length > L.homeChars) {
+      throw new TypeError("device report home must be an absolute path or null");
+    }
+    const errors = validateSandboxPathShape(home);
+    if (errors.length > 0) throw new TypeError(`device report home: ${errors.join("; ")}`);
+  }
+  if (!Array.isArray(limits) || limits.length > L.limits) {
+    throw new TypeError(`device report limits must be an array of at most ${L.limits} entries`);
+  }
+  const parsedLimits = limits.map((raw, i): DeviceReportLimit => {
+    const what = `device report limits[${i}]`;
+    if (!isRecord(raw)) throw new TypeError(`${what} must be an object`);
+    exactKeys(raw, ["label", "value"], what);
+    if (typeof raw.value !== "string" || raw.value === "" || raw.value.length > L.limitValueChars) {
+      throw new TypeError(
+        `${what}.value must be a non-empty string of at most ${L.limitValueChars} characters`,
+      );
+    }
+    return { label: parseText(raw.label, L.limitLabelChars, `${what}.label`), value: raw.value };
+  });
+  if (typeof reset !== "boolean") throw new TypeError("device report reset must be a boolean");
+  return { revision, description, home, limits: parsedLimits, reset };
+}
+
+/**
+ * The provider refuses a project directory (`projects` operations: it lies where the provider
+ * will not serve, for example another connection's directory). `reason` is shown to the person.
+ * The kernel answers it as `device.project_refused` (422).
+ */
+export class ProjectPathRefusedError extends Error {
+  readonly projectPathRefused = true as const;
+  readonly reason: DeviceText;
+
+  constructor(reason: DeviceText, opts?: { cause?: unknown }) {
+    super(reason.en, opts && "cause" in opts ? { cause: opts.cause } : undefined);
+    this.name = "ProjectPathRefusedError";
+    this.reason = reason;
+  }
+}
+
+/** Duck-typed check (not instanceof), so a plugin bundling another plugin-sdk copy still matches. */
+export function isProjectPathRefusedError(e: unknown): e is ProjectPathRefusedError {
+  return (
+    e instanceof Error &&
+    e.name === "ProjectPathRefusedError" &&
+    (e as { projectPathRefused?: unknown }).projectPathRefused === true &&
+    isRecord((e as { reason?: unknown }).reason)
+  );
+}
+
 /**
  * The `device-provider@1` implementation (provided by a sandbox plugin such as Docker or E2B).
  *
@@ -246,6 +375,17 @@ export interface DeviceProvider {
   background?: SandboxBackground;
   /** `exec` / `readFile` / `writeFile` / `stat` may run concurrently on one instance (required). */
   readonly concurrentExec: true;
+  /**
+   * Declares that the provider enforces `limits.network` allowlists (required, always `true`):
+   * a provider that cannot restrict outbound hosts does not implement `device-provider@1`.
+   */
+  readonly networkAllowlist: true;
+  /**
+   * What the provider tells about the device: a description, the owner's home, limits and whether
+   * files can be reset ({@link DeviceReport}). Shown to people only; the answer passes
+   * {@link parseDeviceReport}. Must respond to `signal`.
+   */
+  report(device: DeviceRef, signal: AbortSignal): Promise<DeviceReport>;
   /**
    * Whether the provider isolates the sessions of one device from each other inside the
    * instance (a declared capability; absent means false).

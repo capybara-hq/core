@@ -953,6 +953,16 @@ export const DEVICE_PROTOCOL_VERSION = 4;
 export const DEVICE_PROVIDER_EXTENSION_POINT = "device-provider@1";
 
 // @public
+export const DEVICE_REPORT_LIMITS: Readonly<{
+    revisionChars: 128;
+    descriptionChars: 300;
+    limits: 8;
+    limitLabelChars: 60;
+    limitValueChars: 60;
+    homeChars: 4096;
+}>;
+
+// @public
 export const DEVICE_SCAN_SKIPPED_BASE_DIRS: readonly string[];
 
 // @public
@@ -1208,6 +1218,7 @@ export interface DeviceProvider {
         }[];
         truncated: boolean;
     } | null>;
+    readonly networkAllowlist: true;
     operation?(h: SandboxHandle, scope: SandboxOperationScope, signal: AbortSignal): Promise<SandboxOperation>;
     permissionSupport?(h: SandboxHandle, signal: AbortSignal): Promise<SandboxPermissionSupport>;
     prepare?(h: SandboxHandle, scope: SandboxPreparationScope, signal: AbortSignal): Promise<SandboxPreparation>;
@@ -1218,6 +1229,7 @@ export interface DeviceProvider {
         data: Uint8Array;
         truncated: boolean;
     } | null>;
+    report(device: DeviceRef, signal: AbortSignal): Promise<DeviceReport>;
     resume(h: SandboxHandle, signal: AbortSignal): Promise<"resumed" | "gone">;
     revokeOperation?(h: SandboxHandle, ref: SandboxOperationRef, signal: AbortSignal): Promise<void>;
     scan?(h: SandboxHandle, base: string, opts: {
@@ -1247,6 +1259,28 @@ export type DeviceReadFileResult = {
     dataB64: string;
     truncated: boolean;
 } | null;
+
+// @public
+export interface DeviceRef {
+    deviceId: string;
+    handle: SandboxHandle | null;
+    orgId: string;
+}
+
+// @public
+export interface DeviceReport {
+    description: DeviceText;
+    home: string | null;
+    limits: DeviceReportLimit[];
+    reset: boolean;
+    revision: string;
+}
+
+// @public
+export interface DeviceReportLimit {
+    label: DeviceText;
+    value: string;
+}
 
 // @public
 export type DeviceRes = {
@@ -1307,6 +1341,12 @@ export type DeviceStatResult = {
 // @public
 export interface DeviceStopArgs {
     reason: "revoked" | "deleted";
+}
+
+// @public
+export interface DeviceText {
+    en: string;
+    zh?: string;
 }
 
 // @public
@@ -2265,6 +2305,9 @@ export function isPermissionProfile(value: unknown): value is PermissionProfile;
 export function isPolicyOpId(v: unknown): v is string;
 
 // @public
+export function isProjectPathRefusedError(e: unknown): e is ProjectPathRefusedError;
+
+// @public
 export function isPublicHostname(host: string): boolean;
 
 // @public
@@ -3043,6 +3086,9 @@ export function parseConnectorTemplateFile(json: unknown): ConnectorTemplateFile
 export function parseDeviceFrame(raw: string, from: "device" | "kernel", maxFrameBytes?: number): DeviceFrame;
 
 // @public
+export function parseDeviceReport(value: unknown): DeviceReport;
+
+// @public
 export interface ParsedSetupGuide {
     checks: SetupGuideCheckLine[];
     codeBlocks: SetupGuideCodeBlock[];
@@ -3348,6 +3394,15 @@ export function previewerAccepts(p: Pick<FilePreviewer, "accepts" | "maxBytes">,
 // @public
 export interface ProfilesCapabilityV1 {
     show(): Promise<void>;
+}
+
+// @public
+export class ProjectPathRefusedError extends Error {
+    constructor(reason: DeviceText, opts?: {
+        cause?: unknown;
+    });
+    readonly projectPathRefused: true;
+    readonly reason: DeviceText;
 }
 
 // @public

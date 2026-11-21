@@ -39,6 +39,7 @@
   "conversations/event-people.test.ts",
   "conversations/events.test.ts",
   "conversations/prompt-suggestion-request.test.ts",
+  "ctx/device-provider-check.test.ts",
   "devices/label.test.ts",
   "devices/sandbox-state.test.ts",
   "evals/diff.test.ts",

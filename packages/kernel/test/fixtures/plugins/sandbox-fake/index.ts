@@ -697,6 +697,16 @@ export function createFakeSandbox(
 
   const provider: DeviceProvider = {
     concurrentExec: true as const,
+    networkAllowlist: true as const,
+    async report() {
+      return {
+        revision: "fake-1",
+        description: { en: "Fake sandbox on the local file system" },
+        home: null,
+        limits: [],
+        reset: true,
+      };
+    },
     ...(options.limitsApplyAt !== undefined && { limitsApplyAt: options.limitsApplyAt }),
 
     async createFileSystem({ name, limits, signal }): Promise<FileSystemHandle> {

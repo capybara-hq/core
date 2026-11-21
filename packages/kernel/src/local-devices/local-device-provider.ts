@@ -1,5 +1,7 @@
 import type {
   DeviceProvider,
+  DeviceRef,
+  DeviceReport,
   ExecResult,
   FileSystemHandle,
   SandboxHandle,
@@ -113,12 +115,27 @@ const bytesOf = (b64: string): Uint8Array => new Uint8Array(Buffer.from(b64, "ba
 @Injectable()
 export class LocalDeviceProvider implements DeviceProvider {
   readonly concurrentExec = true as const;
+  readonly networkAllowlist = true as const;
   readonly sessionIsolation = false;
+
+  /** What the kernel tells about a local device: fixed text, the machine's home, nothing to reset. */
+  async report(device: DeviceRef, _signal: AbortSignal): Promise<DeviceReport> {
+    return {
+      revision: "local-1",
+      description: {
+        en: "Runs on a computer connected with capybara-device; the computer's owner limits it there.",
+        zh: "运行在用 capybara-device 连接的电脑上，电脑的主人在本机限制它。",
+      },
+      home: await this.targets.machineHome(device.deviceId),
+      limits: [],
+      reset: false,
+    };
+  }
 
   constructor(
     @Inject(LocalDeviceRelay) private readonly relay: LocalDeviceRelay,
     @Inject(DeviceTargets)
-    private readonly targets: Pick<DeviceTargets, "orgOf" | "machineRoots">,
+    private readonly targets: Pick<DeviceTargets, "orgOf" | "machineRoots" | "machineHome">,
     @Inject(SandboxService)
     private readonly sandbox: Pick<
       SandboxService,

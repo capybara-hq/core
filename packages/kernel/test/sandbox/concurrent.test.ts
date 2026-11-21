@@ -172,6 +172,8 @@ function sameNameProvider(inner: DeviceProvider): DeviceProvider {
   const killTagged = inner.killTagged.bind(inner);
   return {
     concurrentExec: true,
+    networkAllowlist: true,
+    report: (d, sig) => inner.report(d, sig),
     createFileSystem: (a) => inner.createFileSystem(a),
     destroyFileSystem: (fs, sig) => inner.destroyFileSystem(fs, sig),
     destroyFileSystemByName: (n, sig) => inner.destroyFileSystemByName(n, sig),
