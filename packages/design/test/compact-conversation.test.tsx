@@ -10,10 +10,10 @@ import {
   ConversationPage,
   type ConversationPageProps,
   DesignProvider,
+  MOBILE_SIZE_QUERY,
   type PickerProps,
   TitleBar,
   type TitleBarProps,
-  TOUCH_QUERY,
 } from "../src/index";
 import { css, parseCss } from "./css-rules";
 import { matchMediaFor } from "./width";
@@ -128,12 +128,12 @@ describe("the floating row's round buttons are one size (maintainer decision 202
       expect(more[prop], prop).toBe("var(--cb-float-size)");
     }
     expect(pill.height).toBe("var(--cb-float-size)");
-    // the 40 px floor of the title bar's buttons on a phone loses to the row's own size: the
-    // overflow's rule is more specific than `.cb-title-bar .cb-icon-btn`
+    // the touch.hit floor of the title bar's buttons on a phone (the mobile sizes) loses to the
+    // row's own size: the overflow's rule is more specific than `.cb-title-bar .cb-icon-btn`
     const floor = rules.find(
       (r) => r.at === "(max-width: 599px)" && r.selector === ".cb-title-bar .cb-icon-btn",
     );
-    expect(floor?.decls["min-width"]).toBe("40px");
+    expect(floor?.decls["min-width"]).toBe("var(--cb-touch-hit)");
     // the leading button and the page's overflow follow the same size property (shell.css)
     const shell = parseCss(css("shell.css"));
     expect(shell.find((r) => r.selector === ".cb-floatbar .cb-icon-btn")?.decls.width).toBe(
@@ -202,7 +202,7 @@ describe("the thread's bottom reserve follows the floating composer", () => {
 
   it("the touch padding uses the measured height (a one-line fallback before it)", () => {
     const pad = rules
-      .filter((r) => r.at === TOUCH_QUERY && r.selector === ".cb-conv-scroll")
+      .filter((r) => r.at === MOBILE_SIZE_QUERY && r.selector === ".cb-conv-scroll")
       .map((r) => r.decls["padding-bottom"])
       .join(" ")
       .replace(/\s+/g, "");

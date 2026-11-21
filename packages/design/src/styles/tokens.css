@@ -261,6 +261,11 @@
   :root {
     --cb-font: system-ui, -apple-system, 'PingFang SC', 'Noto Sans SC', sans-serif;
     --cb-font-prose: system-ui, -apple-system, 'PingFang SC', 'Noto Sans SC', sans-serif;
+  }
+}
+
+@media (max-width: 599px), (pointer: coarse), (any-pointer: coarse) and (not (any-pointer: fine)) {
+  :root {
     --cb-type-body-size: 17px;
     --cb-type-body-line: 24px;
     --cb-type-small-size: 15px;

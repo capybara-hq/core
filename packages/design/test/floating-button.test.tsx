@@ -2,7 +2,7 @@ import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { cleanup, fireEvent, render, screen } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { badgeText, DesignProvider, FloatingIconButton, TOUCH_QUERY } from "../src/index";
+import { badgeText, DesignProvider, FloatingIconButton, MOBILE_SIZE_QUERY } from "../src/index";
 import { findNestedBoxes } from "../src/reference/index";
 import { css, parseCss } from "./css-rules";
 
@@ -57,11 +57,11 @@ describe("the floating button's CSS", () => {
   const rule = (at: string | null) =>
     rules.find((r) => r.at === at && r.selector === ".cb-float-btn");
 
-  it("sizes from control.prominent, and from touch.float under the touch query", () => {
+  it("sizes from control.prominent, and from touch.float under the mobile sizes (compact or touch)", () => {
     expect(rule(null)?.decls.width).toBe("var(--cb-control-prominent)");
     expect(rule(null)?.decls.height).toBe("var(--cb-control-prominent)");
-    expect(rule(TOUCH_QUERY)?.decls.width).toBe("var(--cb-touch-float)");
-    expect(rule(TOUCH_QUERY)?.decls.height).toBe("var(--cb-touch-float)");
+    expect(rule(MOBILE_SIZE_QUERY)?.decls.width).toBe("var(--cb-touch-float)");
+    expect(rule(MOBILE_SIZE_QUERY)?.decls.height).toBe("var(--cb-touch-float)");
   });
 
   it("draws the float ground, hairline and shadow tokens", () => {

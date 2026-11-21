@@ -1522,11 +1522,11 @@ button.cb-property-row {
     padding-right: calc(var(--cb-space-1) + var(--cb-inset-right));
   }
   .cb-title-bar .cb-icon-btn {
-    min-width: 40px;
-    min-height: 40px;
+    min-width: var(--cb-touch-hit);
+    min-height: var(--cb-touch-hit);
   }
   .cb-title-btn {
-    height: 40px;
+    height: var(--cb-touch-hit);
   }
   /* The new conversation (§5.4, maintainer decision 2026-11-09): the greeting and the agents row
      at the top, the quick actions listed under them, the composer pinned at the bottom. */
@@ -1707,6 +1707,12 @@ button.cb-property-row {
 .cb-panel-tab:focus-visible {
   outline: 1px solid var(--cb-accent);
   outline-offset: -1px;
+}
+/* Mobile sizes (spec §2.5; MOBILE_SIZE_QUERY): a panel tab is a touch.hit (44) high target. */
+@media (max-width: 599px), (pointer: coarse), (any-pointer: coarse) and (not (any-pointer: fine)) {
+  .cb-panel-tab {
+    min-height: var(--cb-touch-hit);
+  }
 }
 
 .cb-rpanel-body[data-pad][data-state="failed"] {
@@ -1906,16 +1912,18 @@ button.cb-property-row {
 }
 
 /*
- * Touch (spec §6.16.2, §6.16.6, §6.16.8, §6.16.11; mobile layout spec touch amendments). Only
- * under the touch query: the composer is a floating pill (attach, input, send) with the settings
- * chip above it, the thread runs under it, the user's bubble sits at the end edge and the
- * approval card's buttons are 48 high. Desktop and mouse layouts above are untouched.
+ * The touch form (spec §6.16.2, §6.16.6, §6.16.8, §6.16.11; mobile layout spec touch amendments),
+ * under MOBILE_SIZE_QUERY: a compact window whatever the pointer, or a touch device at any width
+ * (maintainer decision 2026-11-22: mobile sizes and styles follow the width, same components).
+ * The composer is a floating pill (attach, input, send) with the settings chip above it, the
+ * thread runs under it, the user's bubble sits at the end edge and the approval card's buttons
+ * are 48 high. Medium and expanded with a fine pointer keep the layouts above.
  *
  * The frame turns into a grid of three columns; the pill itself is the frame's ::before in row 4,
  * and the controls sit on it. Rows: 1 token warning, 2 attachments, 3 chip and agent picker,
  * 4 the pill, 5 quick actions, 6 the agents chip.
  */
-@media (pointer: coarse), (any-pointer: coarse) and (not (any-pointer: fine)) {
+@media (max-width: 599px), (pointer: coarse), (any-pointer: coarse) and (not (any-pointer: fine)) {
   .cb-composer {
     display: grid;
     grid-template-columns: auto minmax(0, 1fr) auto;

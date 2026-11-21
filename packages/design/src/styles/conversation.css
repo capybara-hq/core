@@ -1825,6 +1825,16 @@ button.cb-file-card:focus-visible {
 .cb-rpanel-head > .cb-btn .cb-btn-body {
   min-width: 0;
 }
+/* Mobile sizes (spec §2.5; MOBILE_SIZE_QUERY): the 44 high title switch pads space.3 at the sides,
+   wider than the space above and below its text; the head gives back the extra start space. */
+@media (max-width: 599px), (pointer: coarse), (any-pointer: coarse) and (not (any-pointer: fine)) {
+  .cb-rpanel-head:has(> .cb-btn[data-variant="ghost"]:not(.cb-icon-btn):first-child) {
+    padding-left: var(--cb-space-2);
+  }
+  .cb-rpanel-head > .cb-btn[data-variant="ghost"]:not(.cb-icon-btn) {
+    padding: 0 var(--cb-space-3);
+  }
+}
 .cb-rpanel-title-text {
   min-width: 0;
   overflow: hidden;

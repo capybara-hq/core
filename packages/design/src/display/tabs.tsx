@@ -51,14 +51,14 @@ export type TabsProps = {
 };
 
 /** Which edges of a sideways-scrolling row hide tabs (none until measured, and in a server render). */
-type ScrollEdges = { start: boolean; end: boolean };
+export type ScrollEdges = { start: boolean; end: boolean };
 
 /**
  * Follows a tab row's horizontal overflow (spec §6.4): which edges have tabs scrolled out of view,
  * so the row fades there (the scroll hint on a phone, where the tabs do not fit). Updated on
  * scroll and on a resize of the row or its tabs.
  */
-function useScrollEdges(ref: RefObject<HTMLElement | null>, deps: unknown): ScrollEdges {
+export function useScrollEdges(ref: RefObject<HTMLElement | null>, deps: unknown): ScrollEdges {
   const [edges, setEdges] = useState<ScrollEdges>({ start: false, end: false });
   // biome-ignore lint/correctness/useExhaustiveDependencies: `deps` re-measures after the tabs change
   useEffect(() => {
@@ -82,7 +82,7 @@ function useScrollEdges(ref: RefObject<HTMLElement | null>, deps: unknown): Scro
   return edges;
 }
 
-const edgeAttrs = (e: ScrollEdges) => ({
+export const edgeAttrs = (e: ScrollEdges) => ({
   "data-fade-start": e.start ? "true" : undefined,
   "data-fade-end": e.end ? "true" : undefined,
 });

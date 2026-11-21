@@ -463,10 +463,6 @@
   .cb-table .cb-table-el tbody .cb-table-row[data-state~="active"] {
     box-shadow: inset 2px 0 0 var(--cb-accent);
   }
-  .cb-table-menu .cb-btn {
-    min-width: 40px;
-    min-height: 40px;
-  }
   .cb-table .cb-table-el tbody .cb-table-expand,
   .cb-table .cb-table-el tbody .cb-table-expand > td {
     display: block;

@@ -103,11 +103,13 @@ body {
 }
 /* biome-ignore-end lint/complexity/noImportantStyles: 必须压过组件内的动效声明 */
 
-/* Touch screens (spec §4.3): text you type into is at least 16px. iOS Safari zooms the page into
-   any focused field set smaller and leaves it zoomed; the viewport keeps pinch zoom, so the fix is
-   the size, not `maximum-scale`. It must beat every component's own font-size. */
+/* Mobile sizes (spec §2.5, §4.3; MOBILE_SIZE_QUERY: a compact window or a touch device): text you
+   type into is at least 16px. iOS Safari zooms the page into any focused field set smaller and
+   leaves it zoomed; the viewport keeps pinch zoom, so the fix is the size, not `maximum-scale`.
+   A narrow desktop window takes the same size (one set of mobile sizes, maintainer decision
+   2026-11-22). It must beat every component's own font-size. */
 /* biome-ignore-start lint/complexity/noImportantStyles: must beat the components' field sizes */
-@media (pointer: coarse) {
+@media (max-width: 599px), (pointer: coarse), (any-pointer: coarse) and (not (any-pointer: fine)) {
   textarea,
   select,
   [contenteditable]:not([contenteditable="false"]),

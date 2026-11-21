@@ -1,61 +1,30 @@
 import { expect, type Page, test } from "@playwright/test";
 import { TEMPLATE_ROUTES } from "../src/dev/catalog/routes";
+import { findSmallTargets, findTallPadding } from "./mobile-sizes";
 
 /**
  * The geometric half of the compact rule set (mobile layout spec §11.3): every template's catalog
- * page at the two phone widths (382: the iPhone Duo outer display, 390), with JavaScript on and
- * off (the first paint), on a coarse pointer:
+ * page at the two phone widths (382: the iPhone Duo outer display, 390) on a coarse pointer, and at
+ * 480 with a fine pointer (a narrowed desktop window: the mobile sizes follow the width too, design
+ * spec §2.5, maintainer decision 2026-11-22), with JavaScript on and off (the first paint):
  *
  * - no horizontal page scroll;
- * - every control the design spec guarantees a 40 x 40 hit box has one (the others are counted);
+ * - every control the mobile sizes cover (buttons, chips, tabs, segments, text fields, selects, the
+ *   floating and title bar buttons) has a 44 x 44 hit box (`touch.hit`); the others are counted;
+ * - every one of those controls with text pads wider than it is tall from its text;
  * - the primary action is reachable (inside the window) after a vertical scroll;
- * - the last item is not under the bottom navigation at the end of a scroll;
  * - text fields are at least 16 px (a smaller one makes iOS zoom the page on focus).
  *
- * The structural half is `findCompactViolations` in packages/design (jsdom). No screenshots: this
- * spec writes no baselines.
+ * The measurements are `mobile-sizes.ts` (proven red in `mobile-sizes.interaction.spec.ts`); the
+ * structural half is `findCompactViolations` in packages/design (jsdom). No screenshots: this spec
+ * writes no baselines.
  */
-const WIDTHS = [382, 390] as const;
+const MODES = [
+  { width: 382, touch: true },
+  { width: 390, touch: true },
+  { width: 480, touch: false },
+] as const;
 const HEIGHT = 844;
-
-/** Interactive elements a hit box applies to. */
-const INTERACTIVE =
-  "button, a[href], input:not([type=hidden]), select, textarea, summary, [role=button], [role=link], [role=tab], [role=menuitem], [role=switch], [role=checkbox], [role=radio]";
-
-/**
- * Hit boxes the spec does not measure, each with its reason. A link inside running text is exempt
- * (its target is the text); a native control hidden under a larger styled label is measured
- * through its label instead.
- */
-const HIT_EXEMPT: { selector: string; why: string }[] = [
-  { selector: "p a, li a, dd a, td a", why: "an inline link in running text" },
-  { selector: ".cb-skip-link", why: "visually hidden until it has focus" },
-  { selector: ".cb-visually-hidden, .cb-sr-only, [data-visually-hidden]", why: "not on screen" },
-];
-
-/**
- * The controls design spec §4.3 guarantees a 40 x 40 tap target on a phone (40 high, or an
- * invisible ring around a compact-looking control). These fail the spec when they do not reach it;
- * every other interactive element is only counted (a `hit-census` annotation), because the design
- * spec states no hit area for form fields, selects, steppers, switches, checkboxes and the like.
- */
-const GUARANTEED = [
-  ".cb-float-btn",
-  '[data-part="page-header-tabs"] [role="tab"]',
-  '[data-part="page-tabs"] [role="tab"]',
-  ".cb-pageheader-actions .cb-btn",
-  ".cb-object-row .cb-btn",
-  ".cb-table-menu .cb-btn",
-  '[data-part="title-bar-button"]',
-];
-
-/**
- * The 40 x 40 square around a control's center: the edge midpoints, and the corners pulled in by
- * 5 px (a rounded button's corner is not a hit). Rings are drawn from the padding box, so the
- * top bar's ring is `inset: -7px` around a 28 px button with a 1 px border.
- */
-const PROBE_EDGE = 19;
-const PROBE_CORNER = 15;
 
 async function openCompact(page: Page, route: string) {
   await page.context().addCookies([
@@ -82,12 +51,13 @@ async function scrollToEnd(page: Page) {
 }
 
 for (const javaScriptEnabled of [true, false]) {
-  for (const width of WIDTHS) {
-    test.describe(`compact ${width} ${javaScriptEnabled ? "js on" : "js off"}`, () => {
+  for (const { width, touch } of MODES) {
+    const pointer = touch ? "touch" : "fine pointer";
+    test.describe(`compact ${width} ${pointer} ${javaScriptEnabled ? "js on" : "js off"}`, () => {
       test.use({
         viewport: { width, height: HEIGHT },
-        isMobile: true,
-        hasTouch: true,
+        isMobile: touch,
+        hasTouch: touch,
         javaScriptEnabled,
       });
 
@@ -102,75 +72,20 @@ for (const javaScriptEnabled of [true, false]) {
           }));
           expect(overflow.scroll, "scrollWidth <= innerWidth").toBeLessThanOrEqual(overflow.inner);
 
-          // every guaranteed control has a 40 x 40 hit box. A small control reaches it through an
-          // invisible ring (spec §4.3), which getBoundingClientRect does not see, so the box is
-          // probed: the edges and corners of the 40 x 40 square around the element's center must hit
-          // the element (or something inside it, or the label of a native control).
-          const small = await page.evaluate(
-            ({ interactive, exempt, guaranteed, edge, corner }) => {
-              const out: string[] = [];
-              const census: string[] = [];
-              const hits = (el: Element, x: number, y: number) => {
-                const at = document.elementFromPoint(x, y);
-                if (!at) return false;
-                if (el.contains(at)) return true;
-                const label = at.closest("label");
-                return (
-                  el instanceof HTMLInputElement &&
-                  !!el.labels &&
-                  Array.from(el.labels).includes(label as HTMLLabelElement)
-                );
-              };
-              for (const el of Array.from(document.querySelectorAll(interactive))) {
-                if (exempt.some((s) => el.matches(s))) continue;
-                if (el.closest("[hidden], [aria-hidden='true'], [inert]")) continue;
-                const cs = getComputedStyle(el);
-                if (cs.display === "none" || cs.visibility === "hidden") continue;
-                if (el.getBoundingClientRect().width === 0) continue;
-                el.scrollIntoView({ block: "center", inline: "center" });
-                const r = el.getBoundingClientRect();
-                const cx = r.left + r.width / 2;
-                const cy = r.top + r.height / 2;
-                const corners = [
-                  [cx - edge, cy],
-                  [cx + edge, cy],
-                  [cx, cy - edge],
-                  [cx, cy + edge],
-                  [cx - corner, cy - corner],
-                  [cx + corner, cy - corner],
-                  [cx - corner, cy + corner],
-                  [cx + corner, cy + corner],
-                ] as const;
-                if (!corners.every(([x, y]) => hits(el, x, y))) {
-                  const text = (el.getAttribute("aria-label") ?? el.textContent ?? "")
-                    .replace(/\s+/g, " ")
-                    .trim()
-                    .slice(0, 30);
-                  (el.matches(guaranteed) ? out : census).push(
-                    `<${el.tagName.toLowerCase()} ${el.getAttribute("data-part") ?? el.className}> ${text} ${Math.round(r.width)}x${Math.round(r.height)}`,
-                  );
-                }
-              }
-              window.scrollTo(0, 0);
-              return { out, census };
-            },
-            {
-              interactive: INTERACTIVE,
-              exempt: HIT_EXEMPT.map((e) => e.selector),
-              guaranteed: GUARANTEED.join(", "),
-              edge: PROBE_EDGE,
-              corner: PROBE_CORNER,
-            },
-          );
+          // every control the mobile sizes cover has a 44 x 44 hit box
+          const small = await findSmallTargets(page);
           if (small.census.length > 0) {
             test.info().annotations.push({
               type: "hit-census",
               description: `${small.census.length} controls without a stated tap target: ${small.census.join("; ")}`,
             });
           }
-          expect(small.out, "interactive elements without a 40 x 40 hit box").toEqual([]);
+          expect(small.out, "controls without a 44 x 44 hit box").toEqual([]);
 
-          // text fields are at least 16 px on a coarse pointer
+          // a control with text pads wider than it is tall
+          expect(await findTallPadding(page), "text controls padded taller than wide").toEqual([]);
+
+          // text fields are at least 16 px under the mobile sizes
           const fonts = await page.evaluate(() =>
             Array.from(
               document.querySelectorAll(
