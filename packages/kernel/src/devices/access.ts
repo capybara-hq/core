@@ -17,6 +17,16 @@ export const deviceUnavailable = (provider: string | null): ApiError =>
   );
 
 /**
+ * The device's instance row names another provider than the device's own (503): never written by
+ * this kernel (a device is bound to its provider for life), so nothing is taken over.
+ */
+export const deviceInstanceForeign = (provider: string, instanceProvider: string): ApiError =>
+  new ApiError(
+    "device.unavailable",
+    `This device's provider is ${provider}, but its instance was made by ${instanceProvider}; it cannot be used as it is: delete it and create a new one`,
+  );
+
+/**
  * Who may use a device (spec §4.2 item 12): in phase 1 only the owner of a personal
  * device. Anyone else gets `device.not_found`, never `forbidden`, so ids cannot be
  * probed. Read live on every call (PG, no cache); phase 3 adds project membership.
@@ -57,7 +67,7 @@ export class DeviceAccess {
     const provider = row.provider;
     if (provider === null) throw deviceUnavailable(null);
     if (row.instance_provider !== null && row.instance_provider !== provider) {
-      throw deviceUnavailable(provider);
+      throw deviceInstanceForeign(provider, row.instance_provider);
     }
     if (!(await this.selection.isOnInOrg(orgId, provider))) throw deviceUnavailable(provider);
     return { id: row.id, provider };

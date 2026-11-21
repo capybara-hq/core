@@ -706,7 +706,7 @@ const MEDIA_EXTENSIONS: Record<ImageMediaType, readonly string[]> = {
 
 /**
  * Whether the conversation tree has a device to write to: a provider it can run on, and a device
- * its owner has (an anonymous IM sender or a deployment without a cloud provider has none).
+ * its owner has (an anonymous IM sender, or a device whose provider is off in the org, has none).
  */
 async function hasDevice(sb: SandboxToolDeps, orgId: string, conv: string): Promise<boolean> {
   if (!(await sandboxUsable(sb, orgId, conv))) return false;

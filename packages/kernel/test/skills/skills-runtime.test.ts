@@ -560,7 +560,7 @@ describe("Skill handler", () => {
     const text = (r.content[0] as { text: string }).text;
     expect(text).toContain("Echo body.");
     expect(text).toContain("run.py");
-    expect(text).toMatch(/no sandbox/i);
+    expect(text).toMatch(/No device provider is on in this organization/);
     expect(text).toMatch(/scripts?.*(not available|unavailable|cannot)/i);
   });
 

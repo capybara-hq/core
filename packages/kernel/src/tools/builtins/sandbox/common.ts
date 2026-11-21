@@ -85,7 +85,12 @@ export interface SandboxToolDeps {
    * reads it.
    */
   devices: Pick<ConversationDevices, "forTool"> &
-    Partial<Pick<ConversationDevices, "usableNow" | "modeLevel" | "workingFacts" | "projectReach">>;
+    Partial<
+      Pick<
+        ConversationDevices,
+        "usableNow" | "unusableReason" | "modeLevel" | "workingFacts" | "projectReach"
+      >
+    >;
   /** Background `Bash` tasks; absent in test stubs, where `run_in_background` is refused. */
   background?: Pick<
     BackgroundTaskStore,
@@ -204,7 +209,7 @@ const NO_SANDBOX_TEXT =
 /** The message the kernel reports for a sandbox tool call with no provider, minus its final period. */
 export const SANDBOX_UNAVAILABLE_REASON = NO_SANDBOX_TEXT.slice(0, -1);
 
-/** The error of a sandbox call in a deployment without a sandbox provider. */
+/** The error of a sandbox call with no device provider on in the org. */
 export function noSandboxError(): ToolError {
   return new ToolError(NO_SANDBOX_TEXT);
 }
@@ -1035,8 +1040,34 @@ export async function sandboxUsable(
 }
 
 /**
+ * Why a sandbox tool call of the tree rooted at `conversationId` cannot run, as model-facing text,
+ * or null when it can ({@link ConversationDevices.unusableReason}): the conversation's device has
+ * its provider off ({@link ENV_UNAVAILABLE_TEXT}), or no device provider is on in the org
+ * ({@link NO_SANDBOX_TEXT}). A stub with only `usableNow` reads a false answer as the latter.
+ */
+export async function sandboxUnusableText(
+  deps: Pick<SandboxToolDeps, "devices">,
+  orgId: string,
+  conversationId: string | undefined,
+): Promise<string | null> {
+  const reason = await sandboxUnusableReason(deps, orgId, conversationId);
+  if (reason === null) return null;
+  return reason === "provider-off" ? ENV_UNAVAILABLE_TEXT : NO_SANDBOX_TEXT;
+}
+
+/** {@link ConversationDevices.unusableReason}, read from a stub's `usableNow` when it has only that. */
+export async function sandboxUnusableReason(
+  deps: Pick<SandboxToolDeps, "devices">,
+  orgId: string,
+  conversationId: string | undefined,
+): Promise<"provider-off" | "none" | null> {
+  if (deps.devices.unusableReason) return deps.devices.unusableReason(orgId, conversationId);
+  return (await sandboxUsable(deps, orgId, conversationId)) ? null : "none";
+}
+
+/**
  * The reason the registry reports the sandbox tools unavailable with, or null when they can run
- * ({@link sandboxUsable}; the listing passes the root conversation of the run). An eval replay
+ * ({@link sandboxUnusableText}; the listing passes the root conversation of the run). An eval replay
  * lists them as available (`replay`: its calls are never executed). `memo` (one per listing)
  * makes every sandbox tool of a listing share one answer.
  */
@@ -1045,12 +1076,14 @@ export const unavailableWhenNoSandbox =
   async (ctx: ToolListingScope): Promise<string | null> => {
     if (ctx.replay === true) return null;
     const key = "sandboxUsable";
-    let usable = ctx.memo?.get(key) as Promise<boolean> | undefined;
-    if (usable === undefined) {
-      usable = sandboxUsable(deps, ctx.orgId, ctx.conversationId);
-      ctx.memo?.set(key, usable);
+    let text = ctx.memo?.get(key) as Promise<string | null> | undefined;
+    if (text === undefined) {
+      text = sandboxUnusableText(deps, ctx.orgId, ctx.conversationId);
+      ctx.memo?.set(key, text);
     }
-    return (await usable) ? null : SANDBOX_UNAVAILABLE_REASON;
+    const t = await text;
+    // the listing's reason has no final period
+    return t === null ? null : t.slice(0, -1);
   };
 
 /** 读出的字节是否像二进制（开头 8 KB 里有 NUL）。 */

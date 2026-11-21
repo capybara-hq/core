@@ -86,7 +86,7 @@ import {
 import { MANAGED_STOP_GRACE_MS } from "../background/managed.js";
 import type { KernelConfig } from "../config/schema.js";
 import type { DeviceInstancesTable, KernelDatabase } from "../db/kernel-schema.js";
-import { deviceUnavailable } from "../devices/access.js";
+import { deviceInstanceForeign, deviceUnavailable } from "../devices/access.js";
 import { DeviceProviderSelection } from "../devices/device-provider-selection.js";
 import { deviceNotFound } from "../devices/errors.js";
 import { ApiError } from "../errors.js";
@@ -2744,7 +2744,9 @@ export class SandboxService {
         .where("device_id", "=", deviceId)
         .executeTakeFirst();
       if (!row) return;
-      if (row.provider !== null && row.provider !== p.plugin) throw deviceUnavailable(p.plugin);
+      if (row.provider !== null && row.provider !== p.plugin) {
+        throw deviceInstanceForeign(p.plugin, row.provider);
+      }
       const fence = { gen: row.generation };
       const signal = opSignal(lease);
       const prev = await this.destroyInstance(row, p, signal);
@@ -3549,7 +3551,9 @@ export class SandboxService {
       if (row.fs_status === "lost") throw deviceFilesLost(p.plugin === LOCAL_PROVIDER);
       // a device is bound to its provider for life: an instance row of another provider (never
       // written by this kernel) is refused as it is, never taken over
-      if (row.provider !== null && row.provider !== p.plugin) throw deviceUnavailable(p.plugin);
+      if (row.provider !== null && row.provider !== p.plugin) {
+        throw deviceInstanceForeign(p.plugin, row.provider);
+      }
       // read under the lease, after the fence moved: a value read before the wait may be stale
       // (another replica may have changed the mode meanwhile)
       const want = await this.wantedLimits(ctx, p, row);

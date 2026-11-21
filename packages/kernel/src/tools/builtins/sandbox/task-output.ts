@@ -31,12 +31,11 @@ import {
   clip,
   display,
   mapSandboxError,
-  noSandboxError,
   runTimeLeftMs,
   type SandboxToolDeps,
   sandboxBaseTimeoutMs,
   sandboxConversationOf,
-  sandboxUsable,
+  sandboxUnusableText,
   unavailableWhenNoSandbox,
 } from "./common.js";
 import { type DeviceCode, parseDeviceCode } from "./device-code.js";
@@ -110,11 +109,12 @@ export interface TaskEnv {
 
 /**
  * The task tools' dependencies; throws the tool's error when they are missing, or when the
- * conversation's device cannot run (no cloud provider, and not a registered `@local` one:
- * ruling R8).
+ * conversation's device cannot run (its provider off in the org, or no provider on there: ruling
+ * R8, {@link sandboxUnusableText}).
  */
 export async function taskEnv(deps: SandboxToolDeps, ctx: BuiltinCallContext): Promise<TaskEnv> {
-  if (!(await sandboxUsable(deps, ctx.orgId, sandboxConversationOf(ctx)))) throw noSandboxError();
+  const unusable = await sandboxUnusableText(deps, ctx.orgId, sandboxConversationOf(ctx));
+  if (unusable !== null) throw new ToolError(unusable);
   const { background, tasks } = deps;
   if (!background || !tasks || !deps.sandbox.ifRunning) {
     throw new ToolError(

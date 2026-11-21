@@ -697,7 +697,8 @@ export class ConversationsService {
    * checks the owner and the device's current mode (refused with `device.not_found`,
    * `device.projects_unsupported`, `device.project_not_found` or `device.project_outside_mode`).
    * Called inside the transaction that writes the conversation. A conversation without a device
-   * (no cloud provider, an anonymous IM sender) cannot have one. Undefined name: free mode.
+   * (no default device provider on in the org, an anonymous IM sender) cannot have one. Undefined
+   * name: free mode.
    */
   private async bindingFor(
     orgId: string,

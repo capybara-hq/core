@@ -245,23 +245,39 @@ export class ConversationDevices {
 
   /**
    * Whether a sandbox tool call of the tree rooted at `rootConversationId` has a provider to run
-   * on, for tool listings (ruling R8; no binding, no access check): the device the conversation
-   * is bound to has its provider on in the org ({@link DeviceProviderSelection.isOnInOrg}). An
-   * unbound conversation counts the device it would bind to: an IM thread its owner's IM
-   * default when that one's provider is on, else (any unbound one) the owner's default device,
-   * or a default provider on in the org to make it. Without a conversation: any provider is on
-   * in the org. A forbidden or gone device still counts: the call then says why.
+   * on, for tool listings (ruling R8; no binding, no access check): {@link unusableReason} is
+   * null.
    */
   async usableNow(orgId: string, rootConversationId?: string): Promise<boolean> {
-    if (rootConversationId === undefined) return (await this.selection.onInOrg(orgId)).length > 0;
+    return (await this.unusableReason(orgId, rootConversationId)) === null;
+  }
+
+  /**
+   * Why a sandbox tool call of the tree rooted at `rootConversationId` cannot run now, or null when
+   * it can (no binding, no access check): `provider-off` when the device the conversation is bound
+   * to (an unbound IM thread: its owner's IM default; any unbound one: its owner's default device)
+   * has its provider off in the org or not installed (its files are kept); `none` when there is no
+   * device and no default provider on in the org to make one, or (without a conversation) no
+   * provider is on in the org at all. A forbidden or gone device still counts as usable: the call
+   * then says why.
+   */
+  async unusableReason(
+    orgId: string,
+    rootConversationId?: string,
+  ): Promise<"provider-off" | "none" | null> {
+    if (rootConversationId === undefined) {
+      return (await this.selection.onInOrg(orgId)).length > 0 ? null : "none";
+    }
     const conv = await this.db
       .selectFrom("conversations")
       .select(["account_id", "device_id"])
       .where("id", "=", rootConversationId)
       .where("org_id", "=", orgId)
       .executeTakeFirst();
-    if (!conv) return false;
-    if (conv.device_id !== null) return this.providerOn(orgId, conv.device_id);
+    if (!conv) return "none";
+    const onOrOff = async (deviceId: string) =>
+      (await this.providerOn(orgId, deviceId)) ? null : "provider-off";
+    if (conv.device_id !== null) return onOrOff(conv.device_id);
     if (await this.isImThread(rootConversationId)) {
       const row = await this.db
         .selectFrom("device_defaults")
@@ -269,7 +285,7 @@ export class ConversationDevices {
         .where("org_id", "=", orgId)
         .where("account_id", "=", conv.account_id)
         .executeTakeFirst();
-      if (row && (await this.providerOn(orgId, row.device_id))) return true;
+      if (row && (await this.providerOn(orgId, row.device_id))) return null;
     }
     const own = await this.db
       .selectFrom("devices")
@@ -280,8 +296,8 @@ export class ConversationDevices {
       .where("is_default", "=", true)
       .where("deleted_at", "is", null)
       .executeTakeFirst();
-    if (own) return this.providerOn(orgId, own.id);
-    return (await this.selection.defaultFor(orgId)) !== undefined;
+    if (own) return onOrOff(own.id);
+    return (await this.selection.defaultFor(orgId)) !== undefined ? null : "none";
   }
 
   /** The device of `orgId` has its provider on in the org now. */

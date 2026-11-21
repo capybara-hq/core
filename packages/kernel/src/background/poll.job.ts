@@ -118,9 +118,10 @@ export class BackgroundTaskPollJob {
       if (signal.aborted) break;
       try {
         // the device's provider does not serve its org now (off in the org, not loaded, `@local`
-        // not registered): its tasks stay as they are until it does
+        // not registered): its tasks stay as they are until it does. A task without a device
+        // needs no provider: pollLegacy finishes it as gone.
         const first = tasks[0];
-        if (!first?.deviceId || !(await this.sandbox.availableFor(first.deviceId, first.orgId))) {
+        if (first?.deviceId && !(await this.sandbox.availableFor(first.deviceId, first.orgId))) {
           continue;
         }
         finished += await this.pollLegacy(tasks, signal);

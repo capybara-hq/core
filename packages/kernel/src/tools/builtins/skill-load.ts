@@ -44,7 +44,7 @@ import {
   type SandboxToolDeps,
   sandboxBaseTimeoutMs,
   sandboxConversationOf,
-  sandboxUsable,
+  sandboxUnusableReason,
   withNotices,
   withPathLease,
 } from "./sandbox/common.js";
@@ -789,13 +789,19 @@ export function skillLoadTool(deps: SkillLoadDeps): BuiltinTool {
       const others = manifest.files.filter((f) => f.path !== SKILL_ENTRY_FILE);
       let notices: string[] = [];
       let filesText: string;
+      const unusable =
+        others.length === 0
+          ? null
+          : await sandboxUnusableReason(deps, ctx.orgId, sandboxConversationOf(ctx));
       if (others.length === 0) {
         filesText = "This skill has no files besides its instructions.";
-      } else if (!(await sandboxUsable(deps, ctx.orgId, sandboxConversationOf(ctx)))) {
+      } else if (unusable !== null) {
         filesText =
           `Skill files (for reference):\n${fileList(manifest.files)}\n` +
-          "This deployment has no sandbox, so the skill's scripts and other files are not available; " +
-          "follow the instructions without running them.";
+          (unusable === "provider-off"
+            ? "This conversation's device runs on a device provider that is off in this organization or not installed"
+            : "No device provider is on in this organization") +
+          ", so the skill's scripts and other files are not available; follow the instructions without running them.";
       } else if (!hasSandboxTools(ctx)) {
         // 模型跑不了脚本：不为它创建沙箱、不复制
         filesText =
