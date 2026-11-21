@@ -1,5 +1,24 @@
 # @capybara-hq/design
 
+## 0.2.0-rc.26
+
+### Patch Changes
+
+- 072362d: Desktop onboarding: `GET /api/v1/meta` lists `appRedirectUris` (`auth.appRedirectUris` while app
+  sign-in is available, else empty), so the desktop app can say before opening the browser that the
+  platform does not allow it; the app token exchange answers `auth.account_disabled` (403) for an
+  account that is not active instead of `app_auth.code_invalid`. `chrome@1.setAppearance` also
+  carries the page's seven main color tokens (only when all are plain colors) and `singleScheme`
+  under a single-scheme UI theme; the SDK gains `ChromeCapabilityV1`, `ShellChromeTokens` and
+  `SHELL_CAPABILITY_KEYS.chrome`.
+- 4ae3971: The Platform tool takes conversation files where the web takes an upload: an agent avatar from a
+  generated image, skill and plugin packages, extension packages and skill versions, passed as
+  `file: { fileId }` (a device file is delivered with Deliver first). The card shows the file's name,
+  size, sha256 prefix and a thumbnail, and the bytes that run are the bytes the person confirmed.
+  Imports, uploads and anything else a person reviews on a web page pop up a link card to that page.
+  Two new platform-ops rules keep it that way: an exclusion may not cite an upload, and an operation
+  that sends the person to a web page links it or says why not (`noHandoff`).
+
 ## 0.2.0-rc.25
 
 ### Patch Changes

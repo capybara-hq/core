@@ -1,12 +1,24 @@
-import { type JSX, type KeyboardEvent, type ReactNode, useId, useRef, useState } from "react";
+import {
+  Fragment,
+  type JSX,
+  type KeyboardEvent,
+  type ReactNode,
+  useId,
+  useRef,
+  useState,
+} from "react";
 import { Button } from "../controls/button";
 import { Input } from "../controls/inputs";
 import { Checkbox, Switch } from "../controls/toggles";
+import { formatBytes } from "../display/attachments";
 import { Callout, type CalloutAction } from "../display/callout";
 import { CodeBlock } from "../display/chat";
 import { initialOf } from "../display/initial";
+import { type PersonLike, PersonName } from "../display/person-name";
 import { Icon } from "../icons/icon";
+import { useHaptics } from "../native";
 import { useDesignT } from "../provider";
+import { useTouch } from "../shell/touch";
 import { PersonFieldRow } from "./person-field";
 import { registrableDomain } from "./registrable";
 import { fillCopy } from "./tool-copy";
@@ -14,6 +26,42 @@ import { fillCopy } from "./tool-copy";
 // Human-in-the-loop blocks (spec §6.16.11–§6.16.13): the pending approval (the only accent card),
 // questions (AskUserQuestion and connector elicitation) and connect requests, and their one-line forms
 // once handled.
+
+/** A `who`: plain text stays text, a person is a 16 PersonName (spec §6.16.11, §6.16.12). */
+function whoNode(who: string | PersonLike): ReactNode {
+  return typeof who === "string" ? (
+    who
+  ) : (
+    <PersonName name={who.name} avatarUrl={who.avatarUrl} initialFrom={who.initialFrom} size={16} />
+  );
+}
+
+/** Fills `{who}` with a node and the other placeholders with text. */
+function fillWho(tpl: string, who: string | PersonLike, vars: Record<string, string>): ReactNode {
+  const parts = tpl.split(/(\{\w+\})/);
+  return parts.map((part, i) => {
+    const m = part.match(/^\{(\w+)\}$/);
+    // biome-ignore lint/suspicious/noArrayIndexKey: the template's parts keep their order
+    if (!m) return <Fragment key={i}>{part}</Fragment>;
+    const k = m[1] as string;
+    // biome-ignore lint/suspicious/noArrayIndexKey: the template's parts keep their order
+    if (k === "who") return <Fragment key={i}>{whoNode(who)}</Fragment>;
+    // biome-ignore lint/suspicious/noArrayIndexKey: the template's parts keep their order
+    return <Fragment key={i}>{vars[k] ?? part}</Fragment>;
+  });
+}
+
+/** Text parts and a person's node joined by " · ", the empty ones left out. */
+function joinDots(items: (string | ReactNode | undefined | "")[]): ReactNode {
+  const shown = items.filter((x) => x !== undefined && x !== "" && x !== null && x !== false);
+  return shown.map((x, i) => (
+    // biome-ignore lint/suspicious/noArrayIndexKey: the parts keep their order
+    <Fragment key={i}>
+      {i > 0 ? " · " : null}
+      {x}
+    </Fragment>
+  ));
+}
 
 // ── Approval ────────────────────────────────────────────────────────────────
 
@@ -25,7 +73,8 @@ export type ApprovalState =
       kind: "decided";
       /** `skipped`: the person sent a message instead of answering (network asks only). */
       decision: "approved" | "denied" | "expired" | "cancelled" | "skipped";
-      who: string;
+      /** A string stays plain text (such as "you" or "system"); a person is drawn as a PersonName. */
+      who: string | PersonLike;
       when: string;
       scope?: ApprovalScope;
       reason?: string;
@@ -119,6 +168,11 @@ export type ApprovalBlockProps = {
   }[];
   /** What the entered values are saved to (shown above the fields). */
   personTarget?: string;
+  /**
+   * The file the call takes in place of an upload (name, size, the sha256 the approval binds, an
+   * image's WebP data URL): a row above the actions so the person sees what they approve.
+   */
+  file?: { name: string; size: number; sha256: string; thumbnail?: string | undefined };
   /** Approve stays disabled (Deny does not): person fields not all filled yet. */
   approveDisabled?: boolean;
   /** `hosts`: a network ask's checked hosts (every host when it has one). */
@@ -126,7 +180,131 @@ export type ApprovalBlockProps = {
   onDeny?(reason?: string): void;
   /** Start in the deny form with this reason (a restored draft). */
   defaultDeny?: { reason: string };
+  /**
+   * The requester's own words for the call, the pending card's leading statement (plain text,
+   * never clipped); `label` attributes them (default: the design i18n's "Agent's reason").
+   */
+  reason?: { text: string; label?: string };
+  /** Where the call runs: one small line above the command (middle-truncated, full on hover). */
+  workingRoot?: string;
+  /** Facts about what approving grants, as a compact list above the input; values never clipped. */
+  facts?: ApprovalFact[];
+  /** Further small notes under the actions (each one line of plain text). */
+  notes?: string[];
+  /** A short phrase of what was crossed, added to the decided line after the word. */
+  decidedNote?: string;
 };
+
+/** One fact of a pending approval: a label and its values (one per line). */
+export type ApprovalFact = { label: string; values: string[] };
+
+/** Paths longer than this are middle-truncated in the working-root line. */
+export const WORKING_ROOT_MAX = 64;
+
+/** Keeps the start and the end of a long path: "/Users/grant/Proj…/packages/importer". */
+export function middleClip(text: string, max: number = WORKING_ROOT_MAX): string {
+  const chars = [...text];
+  if (chars.length <= max) return text;
+  const keep = Math.max(2, max - 1);
+  const head = Math.floor(keep * 0.4);
+  const tail = keep - head;
+  return `${chars.slice(0, head).join("")}…${chars.slice(chars.length - tail).join("")}`;
+}
+
+/** The requester's reason: a small attribution over the words in the prose font. */
+function ApprovalReason({ reason }: { reason: { text: string; label?: string } }): JSX.Element {
+  const t = useDesignT();
+  return (
+    <figure className="cb-hcard-reason" data-part="reason">
+      <figcaption className="cb-muted cb-small" data-part="reason-label">
+        {reason.label ?? t("hitl.reasonLabel")}
+      </figcaption>
+      <blockquote className="cb-hcard-reason-text" data-part="reason-text">
+        {reason.text}
+      </blockquote>
+    </figure>
+  );
+}
+
+/** The facts list: label and values as a compact grid, every value on its own line. */
+function ApprovalFacts({ facts }: { facts: ApprovalFact[] }): JSX.Element | null {
+  const shown = facts.filter((f) => f.values.length > 0);
+  if (shown.length === 0) return null;
+  return (
+    <dl className="cb-hcard-facts" data-part="facts">
+      {shown.map((f, i) => (
+        // biome-ignore lint/suspicious/noArrayIndexKey: the facts are fixed per render
+        <div key={i} className="cb-hcard-fact" data-part="fact">
+          <dt className="cb-hcard-fact-label" data-part="fact-label">
+            {f.label}
+          </dt>
+          {f.values.map((v, j) => (
+            // biome-ignore lint/suspicious/noArrayIndexKey: an exact list may repeat a value
+            <dd key={j} className="cb-hcard-fact-value" data-part="fact-value">
+              {v}
+            </dd>
+          ))}
+        </div>
+      ))}
+    </dl>
+  );
+}
+
+/** "Runs in <path>": the path mono and middle-truncated, the full path as its title. */
+function WorkingRoot({ path }: { path: string }): JSX.Element {
+  const t = useDesignT();
+  const [before, after = ""] = t("hitl.workingRoot").split("{path}");
+  return (
+    <div className="cb-muted cb-small cb-hcard-root" data-part="working-root">
+      {before}
+      <code className="cb-hcard-root-path" data-part="working-root-path" title={path}>
+        {middleClip(path)}
+      </code>
+      {after}
+    </div>
+  );
+}
+
+/**
+ * The scope hints of a tool or command approval: small lines under the whole action row, so the
+ * buttons stay adjacent. With more than one hinted scope each line names its button.
+ */
+function ScopeHintLines({
+  scopes,
+  hints,
+  label,
+}: {
+  scopes: ApprovalScope[];
+  hints: Partial<Record<ApprovalScope, string>> | undefined;
+  label(scope: ApprovalScope): string;
+}): JSX.Element | null {
+  const shown = scopes.filter((scope) => (hints?.[scope] ?? "") !== "");
+  if (shown.length === 0) return null;
+  return (
+    <>
+      {shown.map((scope) => (
+        <div key={scope} className="cb-muted cb-small" data-part="scope-hint">
+          {shown.length > 1 ? `${label(scope)} · ${hints?.[scope]}` : hints?.[scope]}
+        </div>
+      ))}
+    </>
+  );
+}
+
+/** The notes under the actions. */
+function ApprovalNotes({ notes }: { notes: string[] | undefined }): JSX.Element | null {
+  if (notes === undefined || notes.length === 0) return null;
+  return (
+    <>
+      {notes.map((n, i) => (
+        // biome-ignore lint/suspicious/noArrayIndexKey: the notes are fixed per render
+        <div key={i} className="cb-muted cb-small" data-part="card-hint">
+          {n}
+        </div>
+      ))}
+    </>
+  );
+}
 
 const valueText = (v: unknown): string => {
   if (typeof v === "string") return v;
@@ -158,6 +336,17 @@ const fullInput = (input: Record<string, unknown>): string => {
   }
 };
 
+/**
+ * Orders a pending approval's buttons for the form factor: the approvals then the deny button, and
+ * on touch (spec §6.16.11) the short deny button first, the wider grants next and the primary approval
+ * (the first scope) last, at the thumb's end of the row.
+ */
+function useActionOrder() {
+  const touch = useTouch() === true;
+  return (approve: ReactNode[], deny: ReactNode, touchDeny: ReactNode): ReactNode[] =>
+    touch ? [touchDeny, ...approve.slice(1), ...approve.slice(0, 1)] : [...approve, deny];
+}
+
 const SCOPE_LABEL = {
   once: "hitl.approve",
   session: "hitl.approveSession",
@@ -167,6 +356,7 @@ const SCOPE_LABEL = {
 /** An approval request (§6.16.11). */
 export function ApprovalBlock(p: ApprovalBlockProps): JSX.Element {
   const t = useDesignT();
+  const actionOrder = useActionOrder();
   const [denying, setDenying] = useState(p.defaultDeny !== undefined);
   const [reason, setReason] = useState(p.defaultDeny?.reason ?? "");
   const [showInput, setShowInput] = useState(false);
@@ -188,9 +378,9 @@ export function ApprovalBlock(p: ApprovalBlockProps): JSX.Element {
         <div className="cb-tool-line" data-part="tool-line" data-decision="approved">
           <Icon name="check" size={12} />
           <span className="cb-tool-label">
-            {fillCopy(t("hitl.approvedBy"), { who: s.who, tool: p.tool })}{" "}
+            {fillWho(t("hitl.approvedBy"), s.who, { tool: p.tool })}{" "}
             <span className="cb-faint" data-part="tool-key">
-              {[p.toolKey, scope, s.when].filter(Boolean).join(" · ")}
+              {[p.toolKey, p.decidedNote, scope, s.when].filter(Boolean).join(" · ")}
             </span>
           </span>
         </div>
@@ -198,7 +388,7 @@ export function ApprovalBlock(p: ApprovalBlockProps): JSX.Element {
     }
     const lead =
       s.decision === "denied"
-        ? fillCopy(t("hitl.deniedBy"), { who: s.who, tool: p.tool })
+        ? fillWho(t("hitl.deniedBy"), s.who, { tool: p.tool })
         : fillCopy(
             t(
               s.decision === "expired"
@@ -269,23 +459,25 @@ export function ApprovalBlock(p: ApprovalBlockProps): JSX.Element {
     );
   } else {
     actions = (
-      <div
-        className="cb-hcard-actions"
-        data-hints={p.scopeHints && Object.keys(p.scopeHints).length > 0 ? "true" : undefined}
-      >
-        {p.scopes.map((scope, i) => (
-          <ScopeChoice
-            key={scope}
-            primary={i === 0}
-            disabled={busy || p.approveDisabled === true}
-            label={p.scopeLabels?.[scope] ?? t(SCOPE_LABEL[scope])}
-            hint={p.scopeHints?.[scope]}
-            onClick={() => p.onApprove?.(scope)}
-          />
-        ))}
-        <Button disabled={busy} onClick={() => setDenying(true)}>
-          {t("hitl.denyEllipsis")}
-        </Button>
+      <div className="cb-hcard-actions">
+        {actionOrder(
+          p.scopes.map((scope, i) => (
+            <ScopeChoice
+              key={scope}
+              primary={i === 0}
+              disabled={busy || p.approveDisabled === true}
+              label={p.scopeLabels?.[scope] ?? t(SCOPE_LABEL[scope])}
+              hint={undefined}
+              onClick={() => p.onApprove?.(scope)}
+            />
+          )),
+          <Button key="deny" disabled={busy} onClick={() => setDenying(true)}>
+            {t("hitl.denyEllipsis")}
+          </Button>,
+          <Button key="deny" disabled={busy} onClick={() => setDenying(true)}>
+            {t("hitl.deny")}
+          </Button>,
+        )}
         {p.policy ? (
           <span className="cb-hcard-note" data-part="card-note">
             {p.policy}
@@ -311,11 +503,14 @@ export function ApprovalBlock(p: ApprovalBlockProps): JSX.Element {
           {p.toolKey}
         </span>
       </div>
+      {p.reason ? <ApprovalReason reason={p.reason} /> : null}
       {p.summary ? (
         <div className="cb-small" data-part="summary">
           {p.summary}
         </div>
       ) : null}
+      {p.facts ? <ApprovalFacts facts={p.facts} /> : null}
+      {p.workingRoot !== undefined ? <WorkingRoot path={p.workingRoot} /> : null}
       {args.length === 0 ? (
         <div className="cb-muted cb-small">{t("hitl.noArgs")}</div>
       ) : (
@@ -348,6 +543,7 @@ export function ApprovalBlock(p: ApprovalBlockProps): JSX.Element {
           ) : null}
         </div>
       )}
+      {p.file ? <ApprovalFileRow file={p.file} /> : null}
       {p.personFields && p.personFields.length > 0 ? (
         <div className="cb-hcard-person" data-part="person-fields">
           <span className="cb-muted cb-small" data-part="person-note">
@@ -370,11 +566,60 @@ export function ApprovalBlock(p: ApprovalBlockProps): JSX.Element {
         </div>
       ) : null}
       {actions}
+      {denying ? null : (
+        <ScopeHintLines
+          scopes={p.scopes}
+          hints={p.scopeHints}
+          label={(scope) => p.scopeLabels?.[scope] ?? t(SCOPE_LABEL[scope])}
+        />
+      )}
+      {denying ? null : <ApprovalNotes notes={p.notes} />}
     </div>
   );
 }
 
-/** One approve button; with a hint, the hint is a small line under it. */
+/** Only a WebP data URL is shown as the thumbnail (the kernel makes nothing else). */
+const THUMBNAIL_URL = /^data:image\/webp;base64,[A-Za-z0-9+/=]+$/;
+
+/** What {@link ApprovalFileRow} shows of the file an approval takes. */
+export type ApprovalFile = NonNullable<ApprovalBlockProps["file"]>;
+
+/**
+ * The file an approval takes: its thumbnail (an image), name, size and the sha256's first 12 hex.
+ * The approval block draws it; the inbox's approval detail shows the same row.
+ */
+export function ApprovalFileRow({ file }: { file: ApprovalFile }): JSX.Element {
+  const t = useDesignT();
+  const thumb = file.thumbnail !== undefined && THUMBNAIL_URL.test(file.thumbnail);
+  return (
+    <div className="cb-hcard-file" data-part="file">
+      {thumb ? (
+        <img
+          className="cb-hcard-file-thumb"
+          data-part="file-thumbnail"
+          src={file.thumbnail}
+          alt=""
+        />
+      ) : null}
+      <span className="cb-hcard-file-text">
+        <span className="cb-hcard-file-name" data-part="file-name" title={file.name}>
+          {file.name}
+        </span>
+        <span className="cb-muted cb-small" data-part="file-meta">
+          {fillCopy(t("hitl.fileMeta"), {
+            size: formatBytes(file.size),
+            sha: file.sha256.slice(0, 12),
+          })}
+        </span>
+      </span>
+    </div>
+  );
+}
+
+/**
+ * One approve button (every approval card's); with a hint, the hint is a small line under it. A
+ * grant plays the `success` haptic.
+ */
 function ScopeChoice({
   primary,
   disabled,
@@ -388,8 +633,16 @@ function ScopeChoice({
   hint: ReactNode | undefined;
   onClick(): void;
 }) {
+  const haptics = useHaptics();
   const button = (
-    <Button variant={primary ? "primary" : "default"} disabled={disabled} onClick={onClick}>
+    <Button
+      variant={primary ? "primary" : "default"}
+      disabled={disabled}
+      onClick={() => {
+        haptics("success");
+        onClick();
+      }}
+    >
       {label}
     </Button>
   );
@@ -455,6 +708,7 @@ const NETWORK_DECIDED = {
 
 /** The network variant of {@link ApprovalBlock} (network ask spec §6.5). */
 function NetworkApproval(p: ApprovalBlockProps & { network: NetworkAsk }): JSX.Element {
+  const actionOrder = useActionOrder();
   const t = useDesignT();
   const hosts = p.network.hosts;
   const [checked, setChecked] = useState<string[]>(hosts);
@@ -469,7 +723,7 @@ function NetworkApproval(p: ApprovalBlockProps & { network: NetworkAsk }): JSX.E
     const approved = d === "approved";
     const word = d === "approved" ? t("hitl.network.allowedOnce") : t(NETWORK_DECIDED[d]);
     // who decided: an approval, a denial, a skip (the person who wrote); expiry and cancel name no one
-    const who = s.decision === "expired" || s.decision === "cancelled" ? "" : s.who;
+    const who = s.decision === "expired" || s.decision === "cancelled" ? "" : whoNode(s.who);
     return (
       <div
         className="cb-tool-line"
@@ -481,7 +735,7 @@ function NetworkApproval(p: ApprovalBlockProps & { network: NetworkAsk }): JSX.E
         <span className="cb-tool-label">
           {word}{" "}
           <span className="cb-faint" data-part="tool-key">
-            {[shown.join(", "), who].filter(Boolean).join(" · ")}
+            {joinDots([shown.join(", "), who])}
           </span>
           {s.reason ? (
             <span className="cb-muted">
@@ -548,19 +802,24 @@ function NetworkApproval(p: ApprovalBlockProps & { network: NetworkAsk }): JSX.E
   } else {
     actions = (
       <div className="cb-hcard-actions" data-hints="true">
-        {scopes.map((scope, i) => (
-          <ScopeChoice
-            key={scope}
-            primary={i === 0}
-            disabled={busy || none}
-            label={label(scope)}
-            hint={hint(scope)}
-            onClick={() => p.onApprove?.(scope, picked)}
-          />
-        ))}
-        <Button disabled={busy} onClick={() => setDenying(true)}>
-          {t("hitl.network.deny")}
-        </Button>
+        {actionOrder(
+          scopes.map((scope, i) => (
+            <ScopeChoice
+              key={scope}
+              primary={i === 0}
+              disabled={busy || none}
+              label={label(scope)}
+              hint={hint(scope)}
+              onClick={() => p.onApprove?.(scope, picked)}
+            />
+          )),
+          <Button key="deny" disabled={busy} onClick={() => setDenying(true)}>
+            {t("hitl.network.deny")}
+          </Button>,
+          <Button key="deny" disabled={busy} onClick={() => setDenying(true)}>
+            {t("hitl.deny")}
+          </Button>,
+        )}
       </div>
     );
   }
@@ -638,6 +897,7 @@ const COMMAND_DECIDED = {
 /** The command review variant of {@link ApprovalBlock} (auto mode spec §5.4). */
 function CommandApproval(p: ApprovalBlockProps & { command: CommandAsk }): JSX.Element {
   const t = useDesignT();
+  const actionOrder = useActionOrder();
   const [denying, setDenying] = useState(p.defaultDeny !== undefined);
   const [reason, setReason] = useState(p.defaultDeny?.reason ?? "");
   const inputId = useId();
@@ -661,7 +921,7 @@ function CommandApproval(p: ApprovalBlockProps & { command: CommandAsk }): JSX.E
     const who =
       s.decision === "expired" || s.decision === "cancelled" || s.decision === "skipped"
         ? ""
-        : s.who;
+        : whoNode(s.who);
     return (
       <div
         className="cb-tool-line"
@@ -673,7 +933,7 @@ function CommandApproval(p: ApprovalBlockProps & { command: CommandAsk }): JSX.E
         <span className="cb-tool-label">
           {word}{" "}
           <span className="cb-faint" data-part="tool-key">
-            {[p.toolKey, who].filter(Boolean).join(" · ")}
+            {joinDots([p.toolKey, p.decidedNote, who])}
           </span>
           {s.reason ? (
             <span className="cb-muted">
@@ -738,19 +998,24 @@ function CommandApproval(p: ApprovalBlockProps & { command: CommandAsk }): JSX.E
   } else {
     actions = (
       <div className="cb-hcard-actions">
-        {p.scopes.map((scope, i) => (
-          <ScopeChoice
-            key={scope}
-            primary={i === 0}
-            disabled={busy}
-            label={label(scope)}
-            hint={p.scopeHints?.[scope]}
-            onClick={() => p.onApprove?.(scope)}
-          />
-        ))}
-        <Button disabled={busy} onClick={() => setDenying(true)}>
-          {t("hitl.command.deny")}
-        </Button>
+        {actionOrder(
+          p.scopes.map((scope, i) => (
+            <ScopeChoice
+              key={scope}
+              primary={i === 0}
+              disabled={busy}
+              label={label(scope)}
+              hint={undefined}
+              onClick={() => p.onApprove?.(scope)}
+            />
+          )),
+          <Button key="deny" disabled={busy} onClick={() => setDenying(true)}>
+            {t("hitl.command.deny")}
+          </Button>,
+          <Button key="deny" disabled={busy} onClick={() => setDenying(true)}>
+            {t("hitl.deny")}
+          </Button>,
+        )}
       </div>
     );
   }
@@ -773,6 +1038,7 @@ function CommandApproval(p: ApprovalBlockProps & { command: CommandAsk }): JSX.E
           {p.toolKey}
         </span>
       </div>
+      {p.reason ? <ApprovalReason reason={p.reason} /> : null}
       <div className="cb-small" data-part="command-reason">
         {p.command.lead ?? p.command.reason}
       </div>
@@ -781,12 +1047,18 @@ function CommandApproval(p: ApprovalBlockProps & { command: CommandAsk }): JSX.E
           {p.command.detail}
         </div>
       ) : null}
-      <CodeBlock
-        text={clipCommand(shown)}
-        framed={false}
-        {...(file ? { title: t("hitl.command.path") } : {})}
-      />
+      {p.facts ? <ApprovalFacts facts={p.facts} /> : null}
+      {p.workingRoot !== undefined ? <WorkingRoot path={p.workingRoot} /> : null}
+      <div className="cb-hcard-command" data-part="command-text">
+        <CodeBlock
+          text={clipCommand(shown)}
+          framed={false}
+          {...(file ? { title: t("hitl.command.path") } : {})}
+        />
+      </div>
       {actions}
+      {denying ? null : <ScopeHintLines scopes={p.scopes} hints={p.scopeHints} label={label} />}
+      {denying ? null : <ApprovalNotes notes={p.notes} />}
     </div>
   );
 }
@@ -871,9 +1143,9 @@ export type QuestionAnswer = Record<string, string | number | boolean | string[]
 
 export type QuestionState =
   | { kind: "pending"; busy?: boolean }
-  | { kind: "answered"; pairs: [string, string][]; who?: string }
+  | { kind: "answered"; pairs: [string, string][]; who?: string | PersonLike }
   /** The run's starter sent a message instead of answering. */
-  | { kind: "skipped"; who?: string }
+  | { kind: "skipped"; who?: string | PersonLike }
   /** The run ended (stopped, failed) before an answer. */
   | { kind: "cancelled" }
   | { kind: "expired" };
@@ -1186,7 +1458,12 @@ export function QuestionBlock(p: QuestionBlockProps): JSX.Element {
 
   if (s.kind !== "pending") {
     const by = s.kind === "answered" || s.kind === "skipped" ? s.who : undefined;
-    const who = by ? <span className="cb-faint">{` · ${by}`}</span> : null;
+    const who = by ? (
+      <span className="cb-faint">
+        {" · "}
+        {whoNode(by)}
+      </span>
+    ) : null;
     let answer: ReactNode;
     if (s.kind === "answered") {
       const single = s.pairs.length === 1;

@@ -488,6 +488,7 @@ export function checkWoff2(bytes: Uint8Array): string | undefined;
 
 // @public
 export interface ChromeCapabilityV1 {
+    ready?(): Promise<void>;
     setAppearance(input: {
         scheme: "light" | "dark";
         background: string;
@@ -1803,6 +1804,14 @@ export interface GitSource {
 export const GitSourceSchema: z.ZodType<GitSource>;
 
 // @public
+export type HapticKind = "selection" | "light" | "success" | "warning";
+
+// @public
+export interface HapticsCapabilityV1 {
+    impact(kind: HapticKind): Promise<void>;
+}
+
+// @public
 export function hasControlChars(s: string): boolean;
 
 // @public
@@ -2239,6 +2248,7 @@ export interface LegacyDeviceHello {
     mode: "os" | "docker";
     os: "darwin" | "linux";
     policy?: DeviceLocalPolicySummary;
+    programRunId?: string;
     programVersion: string;
     protocol: number;
     recentOps?: DevicePolicyOpReport[];
@@ -2448,6 +2458,34 @@ type MediaSource_2 = {
 export { MediaSource_2 as MediaSource }
 
 // @public
+export const MENU_ITEM_ID: RegExp;
+
+// @public
+export interface MenuCapabilityV1 {
+    show(input: MenuInputV1): Promise<string | null>;
+}
+
+// @public
+export interface MenuInputV1 {
+    anchor?: {
+        x: number;
+        y: number;
+        width: number;
+        height: number;
+    };
+    items: MenuItemV1[];
+    title?: string;
+}
+
+// @public
+export interface MenuItemV1 {
+    destructive?: boolean;
+    disabled?: boolean;
+    id: string;
+    label: string;
+}
+
+// @public
 export type MergedScheme = {
     color: Record<string, string>;
     shadow: Record<string, string>;
@@ -2459,6 +2497,16 @@ export function mergeThemeSchemes(theme: Pick<ThemeFile, "schemes">): Partial<Re
 
 // @public
 export function missingInboundModeFields(schema: JsonSchema, mode: ChannelInboundMode, has: (field: string) => boolean): string[];
+
+// @public
+export const MOBILE_SHELL_LIMITS: {
+    readonly menuItems: 12;
+    readonly menuLabel: 64;
+    readonly menuTitle: 128;
+    readonly shareTitle: 256;
+    readonly shareText: 4000;
+    readonly url: 2048;
+};
 
 // @public
 export const MODEL_PROVIDER_EXTENSION_POINT_V2 = "model-provider@2";
@@ -2641,6 +2689,43 @@ export interface ModelUsage {
     inputTokens: number;
     outputImages?: number;
     outputTokens: number;
+}
+
+// @public
+export const NAV_SECTION_ORDER: readonly NavSectionId[];
+
+// @public
+export interface NavBadgeV1 {
+    count?: number;
+    countMore?: boolean;
+}
+
+// @public
+export interface NavCapabilityV1 {
+    onMenu(listener: () => void): () => void;
+    onSelect(listener: (id: NavSectionId) => void): () => void;
+    set(state: NavStateV1): Promise<void>;
+}
+
+// @public
+export interface NavItemV1 extends NavBadgeV1 {
+    id: NavSectionId;
+    label: string;
+}
+
+// @public
+export interface NavMenuV1 extends NavBadgeV1 {
+    label: string;
+}
+
+// @public
+export type NavSectionId = "chats" | "inbox" | "agents" | "schedules";
+
+// @public
+export interface NavStateV1 {
+    current: NavSectionId | null;
+    items: NavItemV1[];
+    menu: NavMenuV1 | null;
 }
 
 // @public
@@ -3120,6 +3205,11 @@ export function previewerAccepts(p: Pick<FilePreviewer, "accepts" | "maxBytes">,
     contentType: string;
     size: number;
 }): boolean;
+
+// @public
+export interface ProfilesCapabilityV1 {
+    show(): Promise<void>;
+}
 
 // @public
 export interface PromptInfo {
@@ -3792,7 +3882,7 @@ export function sanitizeThemeSvg(bytes: Uint8Array): {
 };
 
 // @public
-export const SDK_VERSION = "0.1.0-rc.43";
+export const SDK_VERSION = "0.1.0-rc.45";
 
 // @public
 export function secret<T extends z.ZodTypeAny>(schema: T): T;
@@ -3972,6 +4062,11 @@ export type SetupGuideVariableType = "url" | "text" | "token";
 export const SHA512_INTEGRITY_RE: RegExp;
 
 // @public
+export interface ShareCapabilityV1 {
+    share(input: ShareInputV1): Promise<void>;
+}
+
+// @public
 export interface ShareEmbedClaims extends EmbedClaimsBase {
     accountId?: undefined;
     agentId?: undefined;
@@ -3982,6 +4077,13 @@ export interface ShareEmbedClaims extends EmbedClaimsBase {
     role?: undefined;
     scope: "share";
     shareId: string;
+}
+
+// @public
+export interface ShareInputV1 {
+    text?: string;
+    title?: string;
+    url?: string;
 }
 
 // @public
@@ -3997,6 +4099,11 @@ export const SHELL_CAPABILITY_KEYS: {
     readonly notify: "notify@1";
     readonly openExternal: "openExternal@1";
     readonly signIn: "signIn@1";
+    readonly haptics: "haptics@1";
+    readonly share: "share@1";
+    readonly menu: "menu@1";
+    readonly nav: "nav@1";
+    readonly profiles: "profiles@1";
     readonly push: "push@1";
 };
 
@@ -4137,8 +4244,8 @@ export const THEME_LIMITS: {
 
 // @public
 export const THEME_OVERRIDABLE: {
-    readonly color: readonly ["bg", "panel", "panel-2", "sidebar", "sidebar-active", "raised", "selected", "hover", "line-soft", "line", "line-strong", "line-card", "scroll-thumb", "ink", "muted", "faint", "disabled", "accent", "accent-hover", "accent-press", "on-accent", "focus-ring", "ok", "fail", "warn", "scrim", "lightbox", "diff-add", "diff-del"];
-    readonly shadow: readonly ["shadow-1", "shadow-2", "shadow-sheet", "shadow-float"];
+    readonly color: readonly ["bg", "panel", "panel-2", "sidebar", "sidebar-active", "raised", "selected", "hover", "line-soft", "line", "line-strong", "line-card", "scroll-thumb", "ink", "muted", "faint", "disabled", "accent", "accent-hover", "accent-press", "on-accent", "focus-ring", "ok", "fail", "warn", "scrim", "lightbox", "float-ground", "float-line", "diff-add", "diff-del"];
+    readonly shadow: readonly ["shadow-1", "shadow-2", "shadow-sheet", "shadow-float", "shadow-float-touch"];
     readonly radius: readonly ["sm", "md", "bubble"];
 };
 
@@ -4267,6 +4374,14 @@ export const THEME_TOKENS: {
         readonly lightbox: {
             readonly dark: "rgba(0,0,0,.88)";
             readonly light: "rgba(10,10,10,.80)";
+        };
+        readonly "float-ground": {
+            readonly dark: "rgba(28,28,26,0.85)";
+            readonly light: "rgba(255,255,255,0.85)";
+        };
+        readonly "float-line": {
+            readonly dark: "rgba(255,255,255,0.08)";
+            readonly light: "rgba(26,26,24,0.08)";
         };
         readonly "diff-add": {
             readonly dark: "rgba(63,212,131,.08)";
@@ -4409,6 +4524,10 @@ export const THEME_TOKENS: {
         readonly "shadow-float": {
             readonly dark: "0 8px 24px rgba(0,0,0,.45)";
             readonly light: "0 8px 24px rgba(26,26,24,.08)";
+        };
+        readonly "shadow-float-touch": {
+            readonly dark: "0 6px 20px rgba(0,0,0,.35)";
+            readonly light: "0 6px 20px rgba(26,26,24,.10)";
         };
     };
     readonly radius: {

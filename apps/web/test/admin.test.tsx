@@ -11,6 +11,7 @@ import { adminUsageQuery } from "../src/lib/query/admin";
 import type { Me } from "../src/lib/session";
 import { bodyOf, json, lastStubRoutes, noContent, stubApi } from "./support/api";
 import { resetNavigation } from "./support/navigation";
+import { personAvatarSrc, personInitial } from "./support/person";
 import { renderRouteWithCache } from "./support/query";
 import { ME, renderPage } from "./support/render";
 
@@ -1375,6 +1376,7 @@ const ACCOUNTS = [
     id: "a1",
     displayName: "Grant",
     email: null,
+    avatarUrl: "/api/v1/accounts/a1/avatar?v=abc123",
     status: "active",
     isSuperAdmin: true,
     createdAt: "2026-10-01T00:00:00Z",
@@ -1383,6 +1385,7 @@ const ACCOUNTS = [
     id: "a2",
     displayName: "Alice",
     email: "alice@example.com",
+    avatarUrl: null,
     status: "active",
     isSuperAdmin: false,
     createdAt: "2026-10-02T00:00:00Z",
@@ -1415,6 +1418,17 @@ describe("/admin/accounts（ListPage）", () => {
     await vi.waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
     // A role is plain text, not an accent badge.
     expect(within(alice).getByText(a.superAdmin).closest(".cb-badge")).toBeNull();
+  });
+
+  it("each account row leads with the avatar image, or the initial without one", async () => {
+    stubApi({ "GET /api/v1/admin/accounts": () => json(200, { accounts: ACCOUNTS, next: null }) });
+    await renderRouteWithCache("/admin/accounts", lastStubRoutes(), { locale: "en" });
+    const table = await screen.findByRole("table", { name: en.admin.accounts.title });
+    const grant = within(table).getByText("Grant").closest("tr") as HTMLElement;
+    const alice = within(table).getByText("Alice").closest("tr") as HTMLElement;
+    expect(personAvatarSrc(grant)).toBe("/api/v1/accounts/a1/avatar?v=abc123");
+    expect(personAvatarSrc(alice)).toBeNull();
+    expect(personInitial(alice)).toBe("A");
   });
 
   it("取消确认：不发请求", async () => {

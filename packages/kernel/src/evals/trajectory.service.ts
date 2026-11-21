@@ -2,9 +2,11 @@ import { Inject, Injectable } from "@nestjs/common";
 import { sql } from "kysely";
 import { isAgentVisibleTo } from "../agents/agent-lookup.js";
 import { EventLog } from "../conversations/event-log.js";
+import { peopleOfEvents } from "../conversations/event-people.js";
 import type { ConversationEvent } from "../conversations/events.js";
 import type { ConversationKind } from "../db/kernel-schema.js";
 import { ApiError } from "../errors.js";
+import type { PersonRef } from "../identity/account-avatar.js";
 import { audit } from "../identity/audit.js";
 import { SettingsService } from "../identity/settings.js";
 import { KernelDb } from "../infra/database/kernel-db.js";
@@ -38,6 +40,8 @@ export interface TrajectoryDetail {
     parent?: { conversationId: string; runId: string; callId: string };
   };
   runs: TrajectoryRun[];
+  /** Every account the events name (and the conversation's owner), by id; read time. */
+  people: Record<string, PersonRef>;
   /** 成本的币种（部署设置 `priceCurrency`）。 */
   currency: string;
   /**
@@ -312,6 +316,7 @@ export class TrajectoryService {
         ...(parent !== undefined && { parent }),
       },
       runs: buildTrajectory(events, table),
+      people: await peopleOfEvents(this.db.db, events, [conv.account_id]),
       currency: settings.priceCurrency,
       ...(next !== undefined && { next }),
     };

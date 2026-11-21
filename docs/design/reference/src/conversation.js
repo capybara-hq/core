@@ -265,6 +265,10 @@ window.__CB_EXTRA__ = ({ F, esc, icon, state, stamp, sidebar }) => {
     return `<span class="r-achip">${typeBadge(a.type)}<span class="r-ellipsis">${esc(midTrunc(a.name, 22))}</span><span class="r-muted">${esc(a.size)}</span></span>`;
   }
 
+  /** A person in a line (spec §6.50, size 16): the circle with the initial, then the name. */
+  const personName = (name) =>
+    `<span class="r-person-name" data-part="person-name" data-size="16"><span class="r-avatar" data-part="avatar" data-kind="initial" data-shape="circle" data-size="16" aria-hidden="true">${esc([...name][0].toUpperCase())}</span><span class="r-person-name-text" data-part="person-name-text" title="${esc(name)}">${esc(name)}</span></span>`;
+
   function userBubble(o) {
     const withAtts = o.state === "attachments";
     const atts = withAtts
@@ -275,6 +279,12 @@ window.__CB_EXTRA__ = ({ F, esc, icon, state, stamp, sidebar }) => {
       const chip = `<span class="r-bubble-skill">${esc(S.chip.label)}</span>`;
       const details = `<div class="r-bubble-details"><div class="r-tline" role="button" aria-expanded="false"><span class="r-tlabel">${esc(S.bubble.details)}</span>${chev(false)}</div></div>`;
       return `<div class="r-ucol"><div class="r-bubble">${chip}${esc(S.bubble.arguments)}</div>${details}</div>`;
+    }
+    if (o.state === "author") {
+      // spec §6.16.6: the name above (showName), the 24 circle after the bubble, top-aligned
+      const A = F.PERSON_FIXTURE;
+      const circle = `<span class="r-avatar" data-part="avatar" data-kind="initial" data-shape="circle" data-size="24" aria-hidden="true">${esc([...A.name][0].toUpperCase())}</span>`;
+      return `<div class="r-ucol"><div class="r-bubble-author-name" data-part="bubble-author-name">${esc(A.name)}</div><div class="r-bubble-row" data-part="bubble-row"><div class="r-bubble">${esc(C.user.text)}</div>${circle}</div></div>`;
     }
     if (o.state === "sender") {
       const AD = F.AGENT_MAP_FIXTURE.detail;
@@ -318,14 +328,56 @@ window.__CB_EXTRA__ = ({ F, esc, icon, state, stamp, sidebar }) => {
   // The model-visible tool key after the title: the title is unreviewed text, the key is not.
   const toolKey = (k) => `<span class="r-faint r-small r-tkey">${esc(k)}</span>`;
 
+  // The command ask with its in-card details (spec §6.16.11, "Details inside the card"): the
+  // reason first, the lead, the facts or the working root above the command, the short hint under
+  // the allow button and the notes under the actions; decided, one line with the crossing phrase.
+  const midClip = (s, max = 64) => {
+    const chars = [...s];
+    if (chars.length <= max) return s;
+    const keep = max - 1;
+    const head = Math.floor(keep * 0.4);
+    return `${chars.slice(0, head).join("")}…${chars.slice(chars.length - (keep - head)).join("")}`;
+  };
+  function commandApproval(o) {
+    const X = H.command;
+    if (o.state === "command-allowed")
+      return `<div class="r-tline">${icon("check", 12)}<span class="r-tlabel">已允许（一次） <span class="r-faint">Bash · ${esc(X.decidedNote)} · ${esc(H.decided.who)}</span><span class="r-faint"> · ${esc(X.at)}</span></span></div>`;
+    const scope = o.state === "command-scope";
+    const head = `<div class="r-card-head"><span class="r-dot" aria-hidden="true"></span><strong class="r-strong">智能体想运行这条命令，允许吗？</strong><span class="r-muted r-small">Bash</span>${toolKey("Bash")}</div>`;
+    const reason = scope
+      ? ""
+      : `<figure class="r-reason" data-part="reason"><figcaption class="r-muted r-small" data-part="reason-label">智能体的理由</figcaption><blockquote class="r-reason-text" data-part="reason-text">${esc(X.reason)}</blockquote></figure>`;
+    const lead = `<div class="r-small" data-part="command-reason">${esc(scope ? X.scopeLead : X.lead)}</div>`;
+    const facts = scope
+      ? `<dl class="r-facts" data-part="facts">${X.facts
+          .map(
+            (f) =>
+              `<div class="r-fact"><dt class="r-fact-k" data-part="fact-label">${esc(f.label)}</dt>${f.values.map((v) => `<dd class="r-fact-v" data-part="fact-value">${esc(v)}</dd>`).join("")}</div>`,
+          )
+          .join("")}</dl>`
+      : "";
+    const root = scope
+      ? ""
+      : `<div class="r-muted r-small r-root" data-part="working-root">在 <code class="r-root-path" title="${esc(X.workingRoot)}">${esc(midClip(X.workingRoot))}</code> 运行</div>`;
+    const cmd = `<figure class="r-codeblock" data-framed="false" data-part="code-block"><pre>${esc(scope ? X.scopeCommand : X.command)}</pre></figure>`;
+    // the buttons stay adjacent; the hint is its own line under the whole action row
+    const actions = `<div class="r-card-actions">${btn("允许一次", "primary")}${btn("拒绝", "default")}</div>`;
+    const hint = `<div class="r-muted r-small" data-part="scope-hint">${esc(scope ? X.scopeHint : X.hint)}</div>`;
+    const notes = scope ? "" : `<div class="r-muted r-small" data-part="card-hint">${esc(X.note)}</div>`;
+    return `<div class="r-card" data-pending role="group" aria-label="智能体想运行这条命令，允许吗？">${head}${reason}${lead}${facts}${root}${cmd}${actions}${hint}${notes}</div>`;
+  }
+
   function approval(o) {
     if (String(o.state).startsWith("network")) return networkApproval(o);
+    if (String(o.state).startsWith("command")) return commandApproval(o);
     const A = H.approval;
     const W = H.decided;
     if (o.state === "approved")
       return `<div class="r-tline">${icon("check", 12)}<span class="r-tlabel">${esc(W.who)} 批准了 ${esc(W.approved.tool)} <span class="r-faint">${esc(W.approved.toolKey)} · ${esc(W.approved.scope)} · ${esc(W.approved.at)}</span></span></div>`;
     if (o.state === "denied")
       return `<div class="r-tline">${icon("x", 12)}<span class="r-tlabel">${esc(W.who)} 拒绝了 ${esc(W.denied.tool)} <span class="r-faint">${esc(W.denied.toolKey)}</span><span class="r-muted"> · 「${esc(W.denied.reason)}」</span><span class="r-faint"> · ${esc(W.denied.at)}</span></span></div>`;
+    if (o.state === "person")
+      return `<div class="r-tline">${icon("check", 12)}<span class="r-tlabel">${personName(F.PERSON_FIXTURE.name)} 批准了 ${esc(W.approved.tool)} <span class="r-faint">${esc(W.approved.toolKey)} · ${esc(W.approved.scope)} · ${esc(W.approved.at)}</span></span></div>`;
     const scopes = o.state === "pending-once" ? ["once"] : A.scopes;
     const head = `<div class="r-card-head"><span class="r-dot" aria-hidden="true"></span><strong>需要你批准</strong><span class="r-muted r-small">${esc(A.tool)}</span>${toolKey(A.toolKey)}</div>`;
     const summary =
@@ -396,6 +448,8 @@ window.__CB_EXTRA__ = ({ F, esc, icon, state, stamp, sidebar }) => {
     const Q = H.question;
     if (o.state === "answered")
       return `<div class="r-qa"><div class="r-tline"><span class="r-tlabel">${esc(Q.question)}</span></div><div class="r-tline">${icon("corner-down-right", 12)}<span class="r-tlabel"><span class="r-em">${esc(H.decided.answered.answer)}</span><span class="r-faint"> · ${esc(H.decided.who)}</span></span></div></div>`;
+    if (o.state === "person")
+      return `<div class="r-qa"><div class="r-tline"><span class="r-tlabel">${esc(Q.question)}</span></div><div class="r-tline">${icon("corner-down-right", 12)}<span class="r-tlabel"><span class="r-em">${esc(H.decided.answered.answer)}</span><span class="r-faint"> · ${personName(F.PERSON_FIXTURE.name)}</span></span></div></div>`;
     if (o.state === "skipped")
       return `<div class="r-qa"><div class="r-tline"><span class="r-tlabel">${esc(Q.question)}</span></div><div class="r-tline">${icon("corner-down-right", 12)}<span class="r-tlabel">已跳过<span class="r-faint"> · ${esc(H.decided.who)}</span></span></div></div>`;
     if (o.state === "url") {

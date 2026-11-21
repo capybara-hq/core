@@ -54,4 +54,40 @@ describe("tokens.css", () => {
       expect(css).toContain(v);
     }
   });
+
+  it("the push motion tokens: the iOS navigation default, Material emphasized on Android", () => {
+    const t = json as unknown as {
+      motion: Record<string, string>;
+      ease: Record<string, string>;
+      platform: { android: { motion: Record<string, string>; ease: Record<string, string> } };
+    };
+    expect(t.motion.push).toBe("350ms");
+    expect(t.ease.push).toBe("cubic-bezier(0.2, 0.9, 0.3, 1)");
+    expect(t.platform.android.motion.push).toBe("300ms");
+    expect(t.platform.android.ease.push).toBe("cubic-bezier(0.2, 0, 0, 1)");
+    expect(css).toContain("--cb-motion-push: 350ms;");
+    expect(css).toContain("--cb-ease-push: cubic-bezier(0.2, 0.9, 0.3, 1);");
+    const android = css.match(/:root\[data-shell-platform="android"\]\s*\{([^}]*)\}/)?.[1];
+    expect(android).toContain("--cb-motion-push: 300ms;");
+    expect(android).toContain("--cb-ease-push: cubic-bezier(0.2, 0, 0, 1);");
+  });
+});
+
+describe("the touch tokens", () => {
+  it("are theme-independent variables beside the others", () => {
+    for (const v of [
+      "--cb-font-code:",
+      "--cb-radius-pill: 999px",
+      "--cb-layout-drawer: 320px",
+      "--cb-touch-hit: 44px",
+    ]) {
+      expect(css).toContain(v);
+    }
+  });
+
+  it("the float colors and shadow are themed, so TOKEN_NAMES lists them", () => {
+    for (const name of ["float-ground", "float-line", "shadow-float-touch"]) {
+      expect(TOKEN_NAMES).toContain(name);
+    }
+  });
 });

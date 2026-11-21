@@ -151,6 +151,11 @@
   font-size: var(--cb-type-small-size);
   line-height: var(--cb-type-small-line);
 }
+.cb-object-card-meta-person {
+  display: inline-flex;
+  max-width: 100%;
+  vertical-align: middle;
+}
 .cb-object-card-meta-part[data-tone="warn"] {
   color: var(--cb-warn);
 }

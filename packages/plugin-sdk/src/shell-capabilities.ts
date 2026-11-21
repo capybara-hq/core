@@ -14,6 +14,11 @@ export const SHELL_CAPABILITY_KEYS = {
   notify: "notify@1",
   openExternal: "openExternal@1",
   signIn: "signIn@1",
+  haptics: "haptics@1",
+  share: "share@1",
+  menu: "menu@1",
+  nav: "nav@1",
+  profiles: "profiles@1",
   push: "push@1",
 } as const;
 
@@ -116,6 +121,98 @@ export interface ChromeCapabilityV1 {
     tokens?: ShellChromeTokens;
     singleScheme?: boolean;
   }): Promise<void>;
+  /** The web's first paint is done (mobile app spec §5.2); a shell may leave it out. */
+  ready?(): Promise<void>;
+}
+
+export type HapticKind = "selection" | "light" | "success" | "warning";
+
+/** `haptics@1`: a haptic impact (mobile app spec §5.2). */
+export interface HapticsCapabilityV1 {
+  impact(kind: HapticKind): Promise<void>;
+}
+
+export interface ShareInputV1 {
+  title?: string;
+  text?: string;
+  url?: string;
+}
+
+/** `share@1`: the system share sheet; resolves whether shared or dismissed. */
+export interface ShareCapabilityV1 {
+  share(input: ShareInputV1): Promise<void>;
+}
+
+export interface MenuItemV1 {
+  id: string;
+  label: string;
+  destructive?: boolean;
+  disabled?: boolean;
+}
+
+export interface MenuInputV1 {
+  title?: string;
+  items: MenuItemV1[];
+  /** A rect in CSS px from the web view's top-left corner. */
+  anchor?: { x: number; y: number; width: number; height: number };
+}
+
+/** `menu@1`: a native menu; resolves the chosen item id, or null when dismissed. */
+export interface MenuCapabilityV1 {
+  show(input: MenuInputV1): Promise<string | null>;
+}
+
+/** The shell validates every input against these (and the web keeps within them). */
+export const MOBILE_SHELL_LIMITS = {
+  menuItems: 12,
+  menuLabel: 64,
+  menuTitle: 128,
+  shareTitle: 256,
+  shareText: 4000,
+  url: 2048,
+} as const;
+
+/** The menu item id pattern, checked on `menu@1.show` (the shell validates every input). */
+export const MENU_ITEM_ID = /^[A-Za-z0-9_.-]{1,64}$/;
+
+export type NavSectionId = "chats" | "inbox" | "agents" | "schedules";
+
+/** The strip's sections in display order. */
+export const NAV_SECTION_ORDER: readonly NavSectionId[] = ["chats", "inbox", "agents", "schedules"];
+
+export interface NavBadgeV1 {
+  count?: number;
+  countMore?: boolean;
+}
+
+export interface NavItemV1 extends NavBadgeV1 {
+  id: NavSectionId;
+  label: string;
+}
+
+export interface NavMenuV1 extends NavBadgeV1 {
+  label: string;
+}
+
+export interface NavStateV1 {
+  /** The sections the person sees, in NAV_SECTION_ORDER (a guest has no `schedules`). */
+  items: NavItemV1[];
+  current: NavSectionId | null;
+  /** The strip's menu button, or null for none (non-null while the web's class is compact). */
+  menu: NavMenuV1 | null;
+}
+
+/** `nav@1`: offered only while the window has a strip (mobile app spec §6.1): presence is visibility. */
+export interface NavCapabilityV1 {
+  set(state: NavStateV1): Promise<void>;
+  onSelect(listener: (id: NavSectionId) => void): () => void;
+  onMenu(listener: () => void): () => void;
+}
+
+/** `profiles@1`: the native profile switcher. */
+export interface ProfilesCapabilityV1 {
+  /** Opens the native profile switcher; resolves when it closes, with nothing. */
+  show(): Promise<void>;
 }
 
 export type PushPermission = "granted" | "denied" | "prompt";

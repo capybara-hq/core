@@ -24,6 +24,7 @@ import {
   MarkdownPreview,
   NetworkBlockedFacts,
   NoPreview,
+  PersonName,
   Prose,
   QuestionBlock,
   QueuedMessage,
@@ -53,6 +54,7 @@ import {
   LONG_MESSAGE_FIXTURE,
   NEW_CONVERSATION_FIXTURE,
   PANEL_FIXTURE,
+  PERSON_FIXTURE,
   PROSE_FIXTURE,
   QUEUE_FIXTURE,
   SKILL_FIXTURE,
@@ -171,6 +173,10 @@ function userBubbleBlocks(): ReactNode {
           sender={AGENT_MAP_FIXTURE.detail.spawnedBy.label}
         />
       </Block>
+      {/* spec §6.16.6: the author's 24 circle after the bubble, the name above (showName) */}
+      <Block id="user-bubble-author">
+        <UserBubble text={CONV_FIXTURE.user.text} author={{ ...PERSON_FIXTURE, showName: true }} />
+      </Block>
       {/* AC4: clamped at layout.bubble-clamp with 展开 under it, and opened with 收起 */}
       <Block id="user-bubble-long">
         <UserBubble text={LONG_MESSAGE_FIXTURE.text} referenceLong />
@@ -239,6 +245,19 @@ function runRowBlocks(): ReactNode {
           status="stopped"
           parts={RUN_PARTS}
           statusText="已停止 · 你 14:03"
+          facts={RUN_FACTS}
+          links={[RUN_TRAJECTORY]}
+        />
+      </Block>
+      <Block id="run-row-stopped-person">
+        <RunRow
+          status="stopped"
+          parts={RUN_PARTS}
+          statusText={
+            <>
+              已停止 · <PersonName name="Lin" avatarUrl={null} size={16} /> 14:03
+            </>
+          }
           facts={RUN_FACTS}
           links={[RUN_TRAJECTORY]}
         />
@@ -667,7 +686,86 @@ function approvalBlocks(): ReactNode {
           }}
         />
       </Block>
+      {/* spec §6.16.11: the decider as a person (a string `who` stays text) */}
+      <Block id="approval-block-person">
+        <ApprovalBlock
+          tool={W.approved.tool}
+          toolKey={W.approved.toolKey}
+          input={{}}
+          scopes={A.scopes}
+          state={{
+            kind: "decided",
+            decision: "approved",
+            who: PERSON_FIXTURE,
+            when: W.approved.at,
+            scope: "once",
+          }}
+        />
+      </Block>
       {networkApprovalBlocks()}
+      {commandApprovalBlocks()}
+    </>
+  );
+}
+
+/** Command asks with their details inside the card (spec §6.16.11, "Details inside the card"). */
+function commandApprovalBlocks(): ReactNode {
+  const X = H.command;
+  const ask = (command: string, lead: string) => ({
+    kind: "command" as const,
+    command,
+    reason: lead,
+    lead,
+  });
+  return (
+    <>
+      <Block id="approval-block-command-escalation">
+        <ApprovalBlock
+          tool="Bash"
+          toolKey="Bash"
+          input={{}}
+          scopes={["once"]}
+          command={ask(X.command, X.lead)}
+          reason={{ text: X.reason }}
+          workingRoot={X.workingRoot}
+          scopeHints={{ once: X.hint }}
+          notes={[X.note]}
+          state={{ kind: "pending" }}
+          onApprove={noop}
+          onDeny={noop}
+        />
+      </Block>
+      <Block id="approval-block-command-scope">
+        <ApprovalBlock
+          tool="Bash"
+          toolKey="Bash"
+          input={{}}
+          scopes={["once"]}
+          command={ask(X.scopeCommand, X.scopeLead)}
+          facts={X.facts}
+          scopeHints={{ once: X.scopeHint }}
+          state={{ kind: "pending" }}
+          onApprove={noop}
+          onDeny={noop}
+        />
+      </Block>
+      <Block id="approval-block-command-allowed">
+        <ApprovalBlock
+          tool="Bash"
+          toolKey="Bash"
+          input={{}}
+          scopes={["once"]}
+          command={ask(X.command, X.lead)}
+          decidedNote={X.decidedNote}
+          state={{
+            kind: "decided",
+            decision: "approved",
+            scope: "once",
+            who: H.decided.who,
+            when: X.at,
+          }}
+        />
+      </Block>
     </>
   );
 }
@@ -803,6 +901,17 @@ function questionBlocks(): ReactNode {
             kind: "answered",
             pairs: [[Q.question, H.decided.answered.answer]],
             who: H.decided.who,
+          }}
+        />
+      </Block>
+      <Block id="question-block-person">
+        <QuestionBlock
+          title={Q.question}
+          fields={[field]}
+          state={{
+            kind: "answered",
+            pairs: [[Q.question, H.decided.answered.answer]],
+            who: PERSON_FIXTURE,
           }}
         />
       </Block>

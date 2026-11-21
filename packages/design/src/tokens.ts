@@ -32,6 +32,8 @@ export const TOKEN_NAMES = [
   "preview-light",
   "preview-dark",
   "lightbox",
+  "float-ground",
+  "float-line",
   "diff-add",
   "diff-del",
   "avatar-black",
@@ -67,6 +69,7 @@ export const TOKEN_NAMES = [
   "shadow-2",
   "shadow-sheet",
   "shadow-float",
+  "shadow-float-touch",
 ] as const;
 
 export type TokenName = (typeof TOKEN_NAMES)[number];
@@ -80,7 +83,7 @@ export const SIZES = {
   row: { dense: 28, default: 32, roomy: 44 },
   space: { "1": 4, "2": 8, "3": 12, "4": 16, "5": 20, "6": 24, "7": 32, "8": 40 },
   pad: { dense: [4, 8], default: [6, 12] },
-  radius: { sm: 4, md: 8, bubble: 10 },
+  radius: { sm: 4, md: 8, bubble: 10, pill: 999 },
   type: {
     micro: [11, 14],
     small: [12, 16],
@@ -126,6 +129,18 @@ export const SIZES = {
     "content-min": 552,
     "bottom-nav": 56,
     "top-bar": 44,
+    drawer: 320,
+  },
+  touch: {
+    hit: 44,
+    float: 48,
+    primary: 48,
+    prominent: 52,
+    composer: 60,
+    row: 52,
+    "row-roomy": 56,
+    icon: 22,
+    "icon-float": 24,
   },
 } as const;
 

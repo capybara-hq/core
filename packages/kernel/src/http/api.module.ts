@@ -67,6 +67,7 @@ import { FilePreviewersController } from "../files/previewers.controller.js";
 import { GitModule } from "../git/git.module.js";
 import { HtmlModule } from "../html/html.module.js";
 import { HtmlDocumentController } from "../html/html-document.controller.js";
+import { AccountAvatarController } from "../identity/account-avatar.controller.js";
 import { AppAuthController } from "../identity/app-auth.controller.js";
 import { AuthController } from "../identity/auth.controller.js";
 import { AuthGuard } from "../identity/auth.guard.js";
@@ -142,6 +143,7 @@ const CONTROLLERS: Type[] = [
   AppAuthController,
   MetaController,
   MeController,
+  AccountAvatarController,
   PushController,
   InitialPasswordsController,
   // the invitation link an org admin's agent created, read once by its approver (web parity §7.2)

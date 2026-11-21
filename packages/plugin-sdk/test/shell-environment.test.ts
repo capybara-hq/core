@@ -6,13 +6,18 @@ describe("shell environment", () => {
     expectTypeOf<CapybaraShell["version"]>().toEqualTypeOf<1>();
   });
 
-  it("the capability registry lists the six known keys", () => {
+  it("the capability registry lists the eleven known keys", () => {
     expect(SHELL_CAPABILITIES.map((c) => c.key)).toEqual([
       "device@1",
       "notify@1",
       "openExternal@1",
       "signIn@1",
       "chrome@1",
+      "haptics@1",
+      "share@1",
+      "menu@1",
+      "nav@1",
+      "profiles@1",
       "push@1",
     ]);
     for (const c of SHELL_CAPABILITIES) expect(c.owner.length).toBeGreaterThan(0);

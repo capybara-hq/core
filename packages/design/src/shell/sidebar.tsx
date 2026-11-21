@@ -9,6 +9,7 @@ import {
   useState,
 } from "react";
 import { IconButton } from "../controls/index";
+import { Avatar } from "../display/avatar";
 import { initialOf } from "../display/initial";
 import { Logo } from "../display/logo";
 import { Tooltip } from "../display/tooltip";
@@ -133,7 +134,7 @@ export type SidebarProps = {
   /** The work context's conversation section (unused in the admin and setup contexts). */
   conversations?: SidebarConversations;
   /** The account row: the avatar and name open the account menu. */
-  account: { name: string; menu: MenuItem[] };
+  account: { name: string; avatarUrl?: string | null; menu: MenuItem[] };
   /**
    * The theme switch, drawn after the account (the full sidebar); the rail has no room,
    * so there it is the account menu's first item. The language is the caller's account submenu.
@@ -985,9 +986,12 @@ function Account({
   const text = account.name;
   const content = (
     <>
-      <span className="cb-sidebar-avatar" data-part="avatar" aria-hidden="true">
-        {initialOf(account.name)}
-      </span>
+      <Avatar
+        shape="circle"
+        size={24}
+        name={account.name}
+        value={account.avatarUrl ? { kind: "image", src: account.avatarUrl } : null}
+      />
       {rail ? null : <span className="cb-sidebar-label">{text}</span>}
     </>
   );

@@ -232,6 +232,7 @@ describe("role modules", () => {
     workerSchedules = schedulesOf(a);
     const { jobHosts, processors } = scan(a);
     expect(jobHosts).toEqual([
+      "AccountAvatarCleanupJob",
       "AttachmentCleanupJob",
       "BackgroundTaskPollJob",
       "CatalogJobs",

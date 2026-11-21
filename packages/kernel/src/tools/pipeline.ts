@@ -1377,9 +1377,16 @@ export class ToolPipeline {
         ...((personFields !== undefined || (callPolicy !== null && !callPolicy.remember)) && {
           scopes: ["once"],
         }),
-        // the specs of the asked fields, never a value (the card draws its inputs from them)
-        ...(personFields !== undefined && {
-          detail: { personFields: personFields.fields, target: personFields.target },
+        // the specs of the asked fields, never a value (the card draws its inputs from them), and
+        // the referenced file the approval binds by its sha256
+        ...((personFields !== undefined || callPolicy?.file !== undefined) && {
+          detail: {
+            ...(personFields !== undefined && {
+              personFields: personFields.fields,
+              target: personFields.target,
+            }),
+            ...(callPolicy?.file !== undefined && { file: callPolicy.file }),
+          },
         }),
       });
     }

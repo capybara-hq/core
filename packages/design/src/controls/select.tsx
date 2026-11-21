@@ -1,9 +1,34 @@
 import { type JSX, type KeyboardEvent, useId, useLayoutEffect, useRef, useState } from "react";
 import { ConvMenu, type ConvMenuEntry } from "../conversation/menu";
+import { Avatar } from "../display/avatar";
 import { Icon } from "../icons/icon";
+import { useHaptics } from "../native";
 import { type Density, useDensity } from "./density";
 
-export type SelectOption = { value: string; label: string; disabled?: boolean };
+export type SelectOption = {
+  value: string;
+  label: string;
+  disabled?: boolean;
+  /**
+   * A person (spec §6.2 "Options with a person"): a 16 circle `Avatar` before the label in the
+   * trigger and the menu; `null` draws the initial of the label.
+   */
+  person?: { avatarUrl: string | null };
+};
+
+/** The 16 circle avatar of an option's person. */
+function optionAvatar(o: SelectOption) {
+  if (!o.person) return undefined;
+  const { avatarUrl } = o.person;
+  return (
+    <Avatar
+      shape="circle"
+      size={16}
+      name={o.label}
+      value={avatarUrl ? { kind: "image", src: avatarUrl } : null}
+    />
+  );
+}
 
 /** What `onChange` receives: the part of a native select's change event callers read. */
 export type SelectChangeEvent = {
@@ -89,9 +114,12 @@ export function Select({
     setListName(label.id ? { labelledBy: label.id } : { label: label.textContent ?? "" });
   }, [ariaLabel, ariaLabelledBy]);
 
+  const haptics = useHaptics();
   const pick = (v: string) => {
     if (value === undefined) setOwn(v);
     if (v === current) return;
+    // a change plays the `selection` haptic (a native shell's)
+    haptics("selection");
     const target = { value: v, name: name ?? "" };
     onChange?.({ target, currentTarget: target });
   };
@@ -138,9 +166,17 @@ export function Select({
             className="cb-select-label"
             data-part="select-label"
             data-current={o === chosen ? "true" : undefined}
+            data-person={o.person ? "true" : undefined}
             aria-hidden={o === chosen ? undefined : "true"}
           >
-            {o.label}
+            {o.person ? (
+              <>
+                {optionAvatar(o)}
+                <span className="cb-select-label-text">{o.label}</span>
+              </>
+            ) : (
+              o.label
+            )}
           </span>
         ))}
         {placeholder !== undefined ? (
@@ -165,6 +201,7 @@ export function Select({
     kind: "item",
     id: o.value,
     label: o.label,
+    ...(o.person ? { icon: optionAvatar(o) } : {}),
     checked: o === chosen,
     ...(o.disabled ? { disabled: true } : {}),
     onSelect: () => pick(o.value),

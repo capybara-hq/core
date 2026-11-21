@@ -34,6 +34,7 @@ import {
   ObjectList,
   ObjectRow,
   PageHeader,
+  PersonName,
   SecretReveal,
   Segmented,
   Select,
@@ -62,7 +63,9 @@ import {
   LIST_PAGE_FIXTURE,
   LONG_MODELS_FIXTURE,
   PAGE_HEADER_FIXTURE,
+  PERSON_AVATAR_FIXTURE,
   SELECT_FIXTURE,
+  SELECT_PERSON_FIXTURE,
   STATUS_FIXTURE,
   TABLE_HOVER_ROW,
   TABLE_SELECTED_ROW,
@@ -86,6 +89,7 @@ import { type SidebarFixture, sidebarProps, statusFixture } from "./shell-fixtur
 import { listLoadingBlocks, TEMPLATE_LOADING_BLOCKS } from "./template-loading-blocks";
 import { listDetailBlocks } from "./templates/inbox";
 import { THEME_SWATCH_BLOCKS } from "./theme-swatch-blocks";
+import { TOUCH_BLOCKS } from "./touch-blocks";
 import { TREND_CHART_BLOCKS } from "./trend-chart-blocks";
 
 // The /dev/ui side of the reference set (docs/design/reference/src): one RefBlock per state, with
@@ -238,19 +242,37 @@ const LONG_OPTIONS = LONG_MODELS_FIXTURE.groups.flatMap((g) =>
 function SelectField({
   state,
 }: {
-  state: "default" | "placeholder" | "open" | "long" | "disabled" | "error";
+  state: "default" | "placeholder" | "open" | "long" | "disabled" | "error" | "person";
 }) {
   const S = SELECT_FIXTURE;
   const long = state === "long";
+  const person = state === "person";
   return (
-    <Field label={long ? S.longLabel : S.label} {...(state === "error" ? { error: S.error } : {})}>
+    <Field
+      label={person ? SELECT_PERSON_FIXTURE.label : long ? S.longLabel : S.label}
+      {...(state === "error" ? { error: S.error } : {})}
+    >
       <Select
-        options={long ? LONG_OPTIONS : S.options}
-        value={long ? LONG_MODELS_FIXTURE.selected : state === "placeholder" ? "" : S.value}
+        options={
+          long
+            ? LONG_OPTIONS
+            : person
+              ? SELECT_PERSON_FIXTURE.options.map((o) => ({ ...o, person: { avatarUrl: null } }))
+              : S.options
+        }
+        value={
+          long
+            ? LONG_MODELS_FIXTURE.selected
+            : person
+              ? SELECT_PERSON_FIXTURE.value
+              : state === "placeholder"
+                ? ""
+                : S.value
+        }
         placeholder={S.placeholder}
         onChange={noop}
         disabled={state === "disabled"}
-        referenceOpen={state === "open" || long}
+        referenceOpen={state === "open" || long || person}
       />
     </Field>
   );
@@ -268,6 +290,10 @@ function selectBlocks(): ReactNode {
       {/* the list drawn open under the field: three options, the selected one checked */}
       <RefBlock id="select-open" width={720} height={220} pad itemWidth={320}>
         <SelectField state="open" />
+      </RefBlock>
+      {/* options with a person (spec §6.2): the 16 circle before each label, in the field and the list */}
+      <RefBlock id="select-person" width={720} height={220} pad itemWidth={320}>
+        <SelectField state="person" />
       </RefBlock>
       {/* 100 models: the filter, the list capped at layout.menu-max-height, scrolled to the
           selected one */}
@@ -1211,6 +1237,61 @@ function sidebarWithAvatars(): ReturnType<typeof sidebarProps> {
   };
 }
 
+/** Object rows whose meta names a person (spec §6.17, state `person`): the requester's 16 circle. */
+function objectListBlocks(): ReactNode {
+  const row = (mark: string, name: string, description: string, person: string, at: string) => (
+    <ObjectRow
+      mark={{ text: mark }}
+      name={name}
+      href="#"
+      description={description}
+      meta={[{ person: { name: person, avatarUrl: null } }, `申请于 ${at}`]}
+      state={{ label: "待审批", tone: "muted" }}
+      action={{ label: "查看", onSelect: noop }}
+    />
+  );
+  return (
+    <RefBlock id="object-list-person" width={1080} pad>
+      <ObjectList label="待审批的插件">
+        {row("T", "todo", "待办清单：智能体记下要做的事，逐项完成并汇报。", "Mia", "11-20 14:03")}
+        {row("G", "github", "读取仓库、议题和拉取请求，按需评论。", "Lin", "11-19 09:12")}
+      </ObjectList>
+    </RefBlock>
+  );
+}
+
+function personNameBlocks(): ReactNode {
+  return (
+    <>
+      <RefBlock id="person-name-sizes" width={640} pad>
+        <Stack direction="row" gap={12} align="center">
+          <PersonName name="Grant" avatarUrl={null} size={24} />
+          <PersonName name="Grant" avatarUrl={null} size={16} />
+        </Stack>
+      </RefBlock>
+      <RefBlock id="person-name-image" width={640} pad>
+        <Stack direction="row" gap={12} align="center">
+          <PersonName name="Grant" avatarUrl={PERSON_AVATAR_FIXTURE} size={24} />
+          <PersonName name="Grant" avatarUrl={PERSON_AVATAR_FIXTURE} size={16} />
+        </Stack>
+      </RefBlock>
+      <RefBlock id="person-name-ellipsis" width={200} pad>
+        <PersonName
+          name="A member with a very long display name indeed"
+          avatarUrl={null}
+          size={24}
+        />
+      </RefBlock>
+      <RefBlock id="person-name-secondary" width={640} pad>
+        <Stack direction="row" gap={12} align="center">
+          <PersonName name="Grant" avatarUrl={null} size={24} secondary="grant@example.com" />
+          <PersonName name="Grant" avatarUrl={null} size={16} secondary="owner" />
+        </Stack>
+      </RefBlock>
+    </>
+  );
+}
+
 function avatarBlocks(): ReactNode {
   return (
     <>
@@ -1263,6 +1344,20 @@ function avatarBlocks(): ReactNode {
           <ObjectRow mark={{ avatar: null }} name="周报助手" description="每周五生成周报" />
         </ObjectList>
       </RefBlock>
+      {/* A person's circle (spec §6.30): the initial at 24, 40 and 64, then an image at 24. */}
+      <RefBlock id="avatar-person" width={640} pad>
+        <Stack direction="row" gap={12} align="end">
+          {([24, 40, 64] as const).map((size) => (
+            <Avatar key={size} shape="circle" value={null} name="Grant" size={size} />
+          ))}
+          <Avatar
+            shape="circle"
+            value={{ kind: "image", src: PERSON_AVATAR_FIXTURE }}
+            name="Grant"
+            size={24}
+          />
+        </Stack>
+      </RefBlock>
       <RefBlock id="avatar-picker" width={640} pad>
         <AvatarPicker value={{ kind: "preset", id: "capybara" }} onChange={noop} onUpload={noop} />
       </RefBlock>
@@ -1305,6 +1400,8 @@ export const REFERENCE_BLOCKS = {
   "error-detail": errorDetailBlocks,
   "file-picker": filePickerBlocks,
   avatar: avatarBlocks,
+  "person-name": personNameBlocks,
+  "object-list": objectListBlocks,
   ...CONFIG_FORM_BLOCKS,
   ...BOX_BLOCKS,
   ...CARD_GRID_BLOCKS,
@@ -1314,6 +1411,7 @@ export const REFERENCE_BLOCKS = {
   ...THEME_SWATCH_BLOCKS,
   ...DEVICE_BLOCKS,
   ...COMPACT_SHELL_BLOCKS,
+  ...TOUCH_BLOCKS,
   ...SHEET_BLOCKS,
   ...SHARE_BLOCKS,
   "list-detail": listDetailBlocks,

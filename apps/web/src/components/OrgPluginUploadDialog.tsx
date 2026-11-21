@@ -14,7 +14,7 @@ import {
 } from "@capybara-hq/design";
 import { useQuery } from "@tanstack/react-query";
 import { useTranslations } from "next-intl";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useRouter } from "../i18n/navigation";
 import { ApiClientError, issueLines } from "../lib/api";
 import {
@@ -23,7 +23,7 @@ import {
   ownedBy,
   uploadOrgPluginPackage,
 } from "../lib/catalog";
-import { orgCatalogQuery, pluginChangeKeys } from "../lib/query/catalog";
+import { orgCatalogQuery, orgUploadQuery, pluginChangeKeys } from "../lib/query/catalog";
 import { retryOnMountOf } from "../lib/query/client";
 import { keys } from "../lib/query/keys";
 import { useAppMutation } from "../lib/query/mutation";
@@ -51,10 +51,13 @@ const isZip = (f: File) => /\.zip$/i.test(f.name);
 export function OrgPluginUploadDialog({
   orgId,
   me,
+  stagingId,
   onClose,
 }: {
   orgId: string;
   me: Me;
+  /** An upload already staged (the link card of the Platform tool): its review opens at once. */
+  stagingId?: string;
   onClose(): void;
 }) {
   const t = useTranslations("plugins.upload");
@@ -68,6 +71,16 @@ export function OrgPluginUploadDialog({
   const [shareable, setShareable] = useState(false);
   const [error, setError] = useState<{ message: string; extra: string[] }>();
   const orgThemeName = useOrgThemeName(orgId);
+  // Opened from a link: read the staged review once (an expired one is the dialog's own error)
+  const linked = useQuery({
+    ...orgUploadQuery(orgId, stagingId ?? ""),
+    enabled: stagingId !== undefined,
+    retry: false,
+  });
+  const linkedReview = linked.data;
+  useEffect(() => {
+    if (linkedReview !== undefined) setStaged((s) => s ?? linkedReview);
+  }, [linkedReview]);
   const cq = orgCatalogQuery(orgId);
   const items = useQuery({ ...cq, retryOnMount: retryOnMountOf(cq.queryKey) }).data?.items;
   // Preparing only stages the upload: nothing cached changes until it is confirmed
@@ -117,6 +130,8 @@ export function OrgPluginUploadDialog({
     }
   };
 
+  // A linked upload that cannot be read (expired, confirmed) is the dialog's own problem
+  const shownError = error ?? (linked.error !== null ? problem(linked.error) : undefined);
   const review = staged?.review ?? null;
   // A new version of a plugin the org already has keeps its 可共享 (the kernel sets it only on a
   // new item)
@@ -244,7 +259,9 @@ export function OrgPluginUploadDialog({
             </>
           )
         )}
-        {error !== undefined && <FormError message={error.message} extra={error.extra} />}
+        {shownError !== undefined && (
+          <FormError message={shownError.message} extra={shownError.extra} />
+        )}
       </Stack>
     </Dialog>
   );

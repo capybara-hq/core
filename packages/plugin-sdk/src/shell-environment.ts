@@ -50,5 +50,10 @@ export const SHELL_CAPABILITIES: readonly { key: string; owner: string }[] = [
   { key: "openExternal@1", owner: "desktop client spec (2026-11-07-desktop-client-design.md)" },
   { key: "signIn@1", owner: "desktop client spec (2026-11-07-desktop-client-design.md), §6.5" },
   { key: "chrome@1", owner: "mobile layout spec (2026-11-19-mobile-layout-design.md)" },
+  { key: "haptics@1", owner: "mobile app spec (2026-11-20-mobile-app-design.md), §5.2" },
+  { key: "share@1", owner: "mobile app spec (2026-11-20-mobile-app-design.md), §5.2" },
+  { key: "menu@1", owner: "mobile app spec (2026-11-20-mobile-app-design.md), §5.2" },
+  { key: "nav@1", owner: "mobile app spec (2026-11-20-mobile-app-design.md), §5.2" },
+  { key: "profiles@1", owner: "mobile app spec (2026-11-20-mobile-app-design.md), §5.2" },
   { key: "push@1", owner: "mobile app spec (2026-11-20-mobile-app-design.md), §5.2 and §9" },
 ];

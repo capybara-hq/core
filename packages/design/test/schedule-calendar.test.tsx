@@ -684,3 +684,31 @@ describe("ScheduleCalendar states", () => {
     for (const text of [src, css]) expect(text).not.toMatch(/#[0-9a-fA-F]{3,8}\b|rgba?\(|hsla?\(/);
   });
 });
+
+describe("ScheduleCalendar creator (§6.40)", () => {
+  it("draws the creator's 16 circle in the block and puts the name in its title", () => {
+    const first = F.week.items[0] as ScheduleCalendarItem;
+    const items: ScheduleCalendarItem[] = [
+      { ...first, person: { name: "Ada", avatarUrl: null } },
+      ...F.week.items.slice(1),
+    ];
+    const { container } = render(
+      <DesignProvider locale="zh">
+        <ScheduleCalendar {...props({ items })} />
+      </DesignProvider>,
+    );
+    const blocks = container.querySelectorAll('[data-part="schedule-calendar-block"]');
+    const withPerson = Array.from(blocks).find((b) => b.getAttribute("aria-label") === first.label);
+    const avatar = withPerson?.querySelector(
+      '[data-part="schedule-calendar-person"] [data-part="avatar"]',
+    ) as HTMLElement;
+    expect(avatar.getAttribute("data-shape")).toBe("circle");
+    expect(avatar.getAttribute("data-size")).toBe("16");
+    expect(withPerson?.getAttribute("title")).toBe(`${first.label} · Ada`);
+    expect(withPerson?.textContent).not.toContain("Ada");
+    const other = Array.from(blocks).find((b) => b.getAttribute("aria-label") !== first.label);
+    expect(other?.querySelector('[data-part="schedule-calendar-person"]')).toBeNull();
+    expect(other?.getAttribute("title")).toBe(other?.getAttribute("aria-label"));
+    expect(findNestedBoxes(document.body).map(describeNestedBox)).toEqual([]);
+  });
+});

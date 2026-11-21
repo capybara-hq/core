@@ -1,5 +1,86 @@
 # @capybara-hq/web
 
+## 0.1.0-rc.75
+
+### Patch Changes
+
+- c0d3d2f: The profile page puts the avatar beside its actions: a labelled 上传头像 / 更换头像 button, 移除, and
+  one hint line (the accepted formats, the SSO picture in use, or why uploading is off).
+
+## 0.1.0-rc.74
+
+### Minor Changes
+
+- 7bb3837: Design native handles for the mobile app: `DesignProvider` takes `native` handlers (menu, share,
+  haptics) and `AppShell` a `nativeNav` tab bar handle with `onNavigate`. Inside a shell with
+  `nav@1` the web's bottom navigation is dropped before the first paint (`data-native-nav`) and the
+  native bar is told the items, the current tab and when it belongs on screen. Plain menus open as
+  the platform's action sheet on phones, sends, approvals, destructive confirmations and selection
+  changes play haptics, and `ShellReady` tells `chrome@1` the page has drawn.
+- dbd5022: Touch conversation layout: a floating composer pill with a settings chip and sheet, a bubble at the end edge, 48 px approval buttons.
+- 60af950: Touch components in the design system: `FloatingIconButton` (the chat-first shell's round menu and
+  back button with a count badge), `Drawer` and `DrawerLevel` (a panel from the start edge, drag to
+  close, a deeper level), `NavRow`, large list rows without dividers or a card border on touch, and the
+  bottom sheet's touch form. Opening a drawer or a bottom sheet on a compact touch window holds one
+  history entry, so the system back closes it first (`useOverlayHistory`).
+- 614d852: Touch tokens and the code font role. One `@media` block in the generated tokens carries the touch
+  overrides (system font, larger type, 44 px controls and rows, rounder corners) for a coarse
+  pointer; `--cb-font-code` keeps Sarasa on code, commands, paths, versions and times. New tokens:
+  `float-ground`, `float-line`, `shadow-float-touch`, `radius-pill`, `layout-drawer` and the
+  `touch-*` sizes. The new colors and the shadow join the SDK's overridable theme tokens.
+- 664d58b: Mobile shell capabilities in the web adapter: inside the mobile app `menu@1`, `share@1` and
+  `haptics@1` reach the design as native handlers, and `chrome@1.ready` is called once the page has
+  drawn. Sharing a file link or a conversation link uses the system share sheet (or Web Share), else
+  copies it.
+
+### Patch Changes
+
+- ced9476: Push and pop slides use the platform's navigation timing (350ms iOS curve; 300ms Material
+  emphasized under `data-shell-platform="android"`), with the page underneath parallaxed and dimmed
+  on the way back. A back gesture the browser already animated (`hasUAVisualTransition`) swaps at
+  once, and tab switches (including the native tab bar's) never slide. A lost Space keyup on a
+  native menu trigger no longer swallows the next tap, and a native tab bar whose handle goes away
+  while the shell stays is hidden.
+- 6c7aed3: Touch behaviour pass: controls draw no tap highlight and take no double-tap zoom delay, interactive
+  rows and buttons have a pressed state, chrome (top bar, bottom nav, sidebar, buttons) is not
+  selectable and has no long-press callout, and the page no longer rubber bands. Pinch zoom stays.
+- 7dc0ecd: Warm routes on touch: a link reads its route's first-paint queries on `pointerdown`, and a sidebar
+  conversation row does it when it scrolls into view, so the page is often cached when the tap lands.
+
+## 0.1.0-rc.73
+
+No changes in this release.
+
+## 0.1.0-rc.72
+
+### Patch Changes
+
+- a767452: New 个人资料 page for one's name and avatar; every place that shows a person shows their avatar.
+- 072362d: Desktop onboarding: `GET /api/v1/meta` lists `appRedirectUris` (`auth.appRedirectUris` while app
+  sign-in is available, else empty), so the desktop app can say before opening the browser that the
+  platform does not allow it; the app token exchange answers `auth.account_disabled` (403) for an
+  account that is not active instead of `app_auth.code_invalid`. `chrome@1.setAppearance` also
+  carries the page's seven main color tokens (only when all are plain colors) and `singleScheme`
+  under a single-scheme UI theme; the SDK gains `ChromeCapabilityV1`, `ShellChromeTokens` and
+  `SHELL_CAPABILITY_KEYS.chrome`.
+- 10c0ee8: Native-app sign-in accepts the mobile app: `POST /api/v1/app-auth/authorize` takes
+  `client: "mobile"` next to `"desktop"`, and its session's user agent reads
+  `Capybara Mobile/<version> (<device>)`. The consent page `/apps/authorize` names the app that asked
+  (desktop or mobile) in its title, hints and errors, and treats an unknown `client` as an invalid
+  link. The redirect allow-list (`auth.appRedirectUris`) is unchanged.
+- e21de78: Shell capability types for the mobile app: `haptics@1`, `share@1`, `menu@1`, `chrome@1`
+  (with an optional `ready`), the `MOBILE_SHELL_LIMITS` and `MENU_ITEM_ID`.
+- 4ae3971: The Platform tool takes conversation files where the web takes an upload: an agent avatar from a
+  generated image, skill and plugin packages, extension packages and skill versions, passed as
+  `file: { fileId }` (a device file is delivered with Deliver first). The card shows the file's name,
+  size, sha256 prefix and a thumbnail, and the bytes that run are the bytes the person confirmed.
+  Imports, uploads and anything else a person reviews on a web page pop up a link card to that page.
+  Two new platform-ops rules keep it that way: an exclusion may not cite an upload, and an operation
+  that sends the person to a web page links it or says why not (`noHandoff`).
+- Updated dependencies [072362d]
+- Updated dependencies [4ae3971]
+  - @capybara-hq/design@0.2.0-rc.26
+
 ## 0.1.0-rc.71
 
 ### Patch Changes

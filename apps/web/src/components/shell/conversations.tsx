@@ -23,6 +23,7 @@ import {
   moreConversationsQuery,
   moreGroupsQuery,
 } from "../../lib/query/shell";
+import { useWarm } from "../../lib/query/warm";
 import { HOME_PATH, newConversationPath } from "../../lib/routes";
 
 /** The conversation id of a `/chat/<id>` route. */
@@ -182,6 +183,10 @@ export function useConversationGroups(
 ): SidebarConversations {
   const router = useRouter();
   const qc = useQueryClient();
+  const warm = useWarm(router);
+  const warmOnTouch = (href: string) => {
+    if (window.matchMedia("(pointer: coarse)").matches) warm(href);
+  };
   const [viewState, setViewState] = useState(DEFAULT_VIEW);
   // Rows and groups paged in past the first page, for one view.
   const [paged, setPaged] = useState<Loaded | null>(null);
@@ -368,6 +373,9 @@ export function useConversationGroups(
     startedAt: new Date(c.createdAt),
     href: `/chat/${encodeURIComponent(c.id)}`,
     activity: c.activity,
+    // a touch device's row warms its conversation when it first scrolls into view (mobile spec
+    // §7.3); a pointer device warms on hover and press only, so a desktop reload reads nothing
+    onVisible: warmOnTouch,
   });
   // The group titles' avatars come with the groups (the sidebar reads no agents list); an agent
   // without an avatar shows the initial of its name.

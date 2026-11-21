@@ -4,6 +4,7 @@ import type { z } from "zod";
 import { ApiError } from "../errors.js";
 import { ExtensionDisplayNames } from "../extensions/display-name.js";
 import { PluginIcons } from "../extensions/plugin-icons.js";
+import { type AccountView, withAvatarUrl, withAvatarUrls } from "../identity/account-avatar.js";
 import { type Account, AccountsService } from "../identity/accounts.js";
 import {
   CurrentPrincipal,
@@ -15,6 +16,7 @@ import {
 import { SessionService } from "../identity/sessions.js";
 import { type DeploymentSettingsView, SettingsService } from "../identity/settings.js";
 import { KernelConfigService } from "../infra/config/kernel-config.service.js";
+import { KernelDb } from "../infra/database/kernel-db.js";
 import { KERNEL_LOGGER } from "../infra/tokens.js";
 import { createZodDto } from "../infra/validation/create-zod-dto.js";
 import { ZBody, ZParam, ZQuery } from "../infra/validation/zod-params.js";
@@ -87,7 +89,13 @@ export class AdminController {
     @Inject(KernelConfigService) private readonly config: KernelConfigService,
     @Inject(PluginIcons) private readonly icons: PluginIcons,
     @Inject(MembersService) private readonly members: MembersService,
+    @Inject(KernelDb) private readonly db: KernelDb,
   ) {}
+
+  /** One account with its avatar URL and source. */
+  private async view(account: Account): Promise<AccountView> {
+    return withAvatarUrl(this.db.db, account);
+  }
 
   /**
    * 全部账号，按 id 升序分页：`next` 为下一页的游标（作为 `after` 传回），没有更多时为 null。
@@ -96,14 +104,14 @@ export class AdminController {
   @Get("accounts")
   async listAccounts(
     @ZQuery(AccountListQueryDto) q: z.infer<typeof AccountListQuery>,
-  ): Promise<{ accounts: Account[]; next: string | null }> {
+  ): Promise<{ accounts: AccountView[]; next: string | null }> {
     const rows = await this.accounts.list({
       limit: q.limit + 1,
       ...(q.after !== undefined && { after: q.after }),
     });
-    const accounts = rows.slice(0, q.limit);
-    const next = rows.length > q.limit ? (accounts.at(-1)?.id ?? null) : null;
-    return { accounts, next };
+    const page = rows.slice(0, q.limit);
+    const next = rows.length > q.limit ? (page.at(-1)?.id ?? null) : null;
+    return { accounts: await withAvatarUrls(this.db.db, page), next };
   }
 
   @Post("accounts")
@@ -111,7 +119,7 @@ export class AdminController {
   async createAccount(
     @CurrentPrincipal() principal: Principal,
     @ZBody(CreateAccountBodyDto) body: z.infer<typeof CreateAccountBody>,
-  ): Promise<{ account: Account }> {
+  ): Promise<{ account: AccountView }> {
     const actor = requireUser(principal);
     const account = await this.accounts.createByAdmin(
       {
@@ -124,7 +132,7 @@ export class AdminController {
       actor.account.id,
       patTokenId(actor),
     );
-    return { account };
+    return { account: await this.view(account) };
   }
 
   /** 改显示名 / 状态 / 超级管理员；停用时同时吊销该账号的全部会话与个人令牌。 */
@@ -133,7 +141,7 @@ export class AdminController {
     @CurrentPrincipal() principal: Principal,
     @ZParam(AccountParamsDto) { accountId }: z.infer<typeof AccountParams>,
     @ZBody(UpdateAccountBodyDto) body: z.infer<typeof UpdateAccountBody>,
-  ): Promise<{ account: Account }> {
+  ): Promise<{ account: AccountView }> {
     const actor = requireUser(principal);
     const patch: Parameters<AccountsService["update"]>[1] = {
       ...(body.displayName !== undefined && { displayName: body.displayName }),
@@ -156,7 +164,7 @@ export class AdminController {
         err,
       });
     }
-    return { account };
+    return { account: await this.view(account) };
   }
 
   /**

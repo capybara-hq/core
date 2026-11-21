@@ -561,6 +561,7 @@ a.cb-item-list-title:hover {
   font-weight: 500;
 }
 .cb-item-list-code {
+  font-family: var(--cb-font-code);
   flex: none;
   color: var(--cb-muted);
   font-size: var(--cb-type-small-size);
@@ -628,6 +629,10 @@ a.cb-item-list-title:hover {
   color: var(--cb-ink);
   font-weight: 600;
 }
+/* A skeleton row's mark place: the placeholder inside draws the ground (one bar look, §6.29). */
+.cb-object-mark[data-skeleton="true"] {
+  background: transparent;
+}
 /* An agent's row: its 28 px avatar centred in the mark's 36 px place, on no ground of its own. */
 .cb-object-mark[data-kind="avatar"] {
   background: transparent;
@@ -676,6 +681,11 @@ a.cb-object-name:hover {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+.cb-object-meta-person {
+  display: inline-flex;
+  max-width: 100%;
+  vertical-align: middle;
 }
 .cb-object-meta-part[data-tone="warn"] {
   color: var(--cb-warn);
@@ -1092,6 +1102,7 @@ a.cb-object-name:hover {
 }
 .cb-copy-field-value > .cb-input {
   flex: 1;
+  font-family: var(--cb-font-code);
 }
 .cb-copy-field-manual {
   display: inline-flex;
@@ -1235,7 +1246,7 @@ a.cb-object-name:hover {
   padding-left: var(--cb-space-2);
   border-left: 1px solid var(--cb-line);
   color: var(--cb-muted);
-  font-family: var(--cb-font);
+  font-family: var(--cb-font-code);
   font-size: var(--cb-type-small-size);
   line-height: var(--cb-type-small-line);
   white-space: pre-wrap;

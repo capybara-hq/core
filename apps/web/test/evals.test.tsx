@@ -526,8 +526,7 @@ describe("the eval case's starter", () => {
       ...NO_MEMBERS,
       ...lastStubRoutes(),
     });
-    const name = await screen.findByText("Grace");
-    expect(name.getAttribute("title")).toBe("a1");
+    expect(await screen.findByText("Grace")).toBeTruthy();
   });
 });
 

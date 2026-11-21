@@ -20,6 +20,7 @@ import {
 import { keys } from "../src/lib/query/keys";
 import { bodyOf, json, stubApi } from "./support/api";
 import { resetNavigation, router } from "./support/navigation";
+import { personAvatarSrc, personInitial } from "./support/person";
 import { renderRouteEmptyCache, renderRouteWithCache } from "./support/query";
 import { ME } from "./support/render";
 import { optionLabels, pickOption } from "./support/select";
@@ -58,6 +59,7 @@ const row = (over: Record<string, unknown> = {}) => ({
   avatar: { kind: "preset", id: "capybara" },
   ownerAccountId: "u1",
   ownerName: "Grant",
+  ownerAvatarUrl: "/api/v1/accounts/u1/avatar?v=abc123",
   needsReassignment: true,
   visibility: "private",
   createdFrom: { templateId: "t1", name: "research-kit" },
@@ -75,6 +77,7 @@ const ROWS = [
     avatar: { kind: "upload", uploadId: "up1" },
     ownerAccountId: "u2",
     ownerName: "Lin",
+    ownerAvatarUrl: null,
     needsReassignment: false,
     visibility: "members",
     createdFrom: null,
@@ -112,19 +115,24 @@ const DETAIL = {
 const MEMBERS = {
   members: [
     {
-      account: { id: "u1", displayName: "Grant", email: null },
+      account: {
+        id: "u1",
+        displayName: "Grant",
+        email: null,
+        avatarUrl: "/api/v1/accounts/u1/avatar?v=abc123",
+      },
       role: "owner",
       joinedAt: T,
       anonymous: false,
     },
     {
-      account: { id: "u3", displayName: "Mia", email: "mia@acme.test" },
+      account: { id: "u3", displayName: "Mia", email: "mia@acme.test", avatarUrl: null },
       role: "member",
       joinedAt: T,
       anonymous: false,
     },
     {
-      account: { id: "g1", displayName: "Anonymous guest", email: null },
+      account: { id: "g1", displayName: "Anonymous guest", email: null, avatarUrl: null },
       role: "guest",
       joinedAt: T,
       anonymous: true,
@@ -167,6 +175,10 @@ describe("/admin/agents", () => {
     const first = within(table).getByText("Researcher").closest("tr") as HTMLElement;
     expect(within(first).getByText("Acme")).toBeTruthy();
     expect(within(first).getByText("Grant")).toBeTruthy();
+    expect(personAvatarSrc(first)).toBe("/api/v1/accounts/u1/avatar?v=abc123");
+    const lin = within(table).getByText("Writer").closest("tr") as HTMLElement;
+    expect(personAvatarSrc(lin)).toBeNull();
+    expect(personInitial(lin)).toBe("L");
     expect(within(first).getByText(A.needsReassignment)).toBeTruthy();
     expect(within(first).getByText(A.visibility.private)).toBeTruthy();
     expect(within(first).getByText("research-kit")).toBeTruthy();
@@ -357,7 +369,8 @@ describe("/admin/agents/[id]", () => {
     await user.click(await screen.findByRole("button", { name: A.actions.transfer }));
     const dialog = await screen.findByRole("dialog", { name: A.transfer.title });
     const select = await within(dialog).findByRole("combobox", { name: A.transfer.owner });
-    expect(await optionLabels(select, user)).toEqual(["Grant", "Mia · mia@acme.test"]);
+    // each option leads with the member's circle: an image (no text) or the initial
+    expect(await optionLabels(select, user)).toEqual(["Grant", "MMia · mia@acme.test"]);
     await pickOption(select, "u3", user);
     await user.click(within(dialog).getByRole("button", { name: A.transfer.submit }));
     await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());

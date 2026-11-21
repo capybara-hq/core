@@ -11,6 +11,7 @@ import { deletePushRegistrationsForSessions } from "../push/registration-cleanup
 import { PermissionCeilingWritesModule } from "../sandbox/permission-authority.module.js";
 import { PermissionCeilingWrites } from "../sandbox/permission-ceiling-writes.js";
 import { assertThemeOnForAccount } from "../themes/theme-state.js";
+import { type AccountAvatar, type AccountView, withAvatarUrl } from "./account-avatar.js";
 import { audit } from "./audit.js";
 import { MAX_PASSWORD_LENGTH, normalizeLogin, validatePassword } from "./login.js";
 import { DUMMY_PASSWORD_HASH, hashPassword, verifyPassword } from "./passwords.js";
@@ -36,6 +37,28 @@ export type AccountPatch = {
   status?: "active" | "disabled";
   isSuperAdmin?: boolean;
 };
+
+/** The longest display name a profile change may set, in code points (account profile §5.1). */
+export const DISPLAY_NAME_MAX_CHARS = 64;
+
+/**
+ * The name rule of the two profile PATCH routes: the name is trimmed, and when it differs from
+ * the stored (trimmed) one it must have at most {@link DISPLAY_NAME_MAX_CHARS} code points; an
+ * unchanged name passes even when an older one is longer. Returns the trimmed name.
+ */
+export function checkDisplayNameChange(stored: string, next: string): string {
+  const name = next.trim();
+  if (name !== stored.trim() && [...name].length > DISPLAY_NAME_MAX_CHARS) {
+    throw new ApiError(
+      "account.display_name_too_long",
+      `The name has ${[...name].length} characters; at most ${DISPLAY_NAME_MAX_CHARS} are allowed`,
+    );
+  }
+  return name;
+}
+
+/** What a person may change on their own profile (`PATCH /me/profile`). */
+export type ProfilePatch = { displayName?: string; avatar?: AccountAvatar | null };
 
 /** 构造 `Account` 所需的 accounts 列（供跨表查询 select 使用）。 */
 export const ACCOUNT_COLUMNS = [
@@ -438,6 +461,60 @@ export class AccountsService {
   }
 
   /**
+   * A person changes their own profile (account profile spec §5.3), in one transaction: the
+   * account row is locked, a changed name passes {@link checkDisplayNameChange}, `bindAvatar`
+   * binds the new upload (or none for `avatar: null`; the caller's `AccountAvatarsService.bind`,
+   * which needs the object store this module does not import), the row is written and
+   * `account.profile_updated` audited (actor = the account; `detail` = the new name and
+   * `avatar: "upload" | "removed"`, never the image). An empty patch writes nothing. The upload
+   * must already be prepared (outside any transaction). Missing account → `account.not_found`.
+   */
+  @Transactional()
+  async updateProfile(
+    accountId: string,
+    patch: ProfilePatch,
+    actorTokenId?: string,
+    opts: { bindAvatar?: (uploadId: string | null) => Promise<void> } = {},
+  ): Promise<AccountView> {
+    const before = await this.db
+      .selectFrom("accounts")
+      .selectAll()
+      .where("id", "=", accountId)
+      .forUpdate()
+      .executeTakeFirst();
+    if (!before) throw new ApiError("account.not_found", "Account not found");
+    if (patch.displayName === undefined && patch.avatar === undefined) {
+      return withAvatarUrl(this.db.db, toAccount(before));
+    }
+    const values: Updateable<AccountsTable> = { updated_at: new Date() };
+    const detail: Record<string, unknown> = {};
+    if (patch.displayName !== undefined) {
+      values.display_name = checkDisplayNameChange(before.display_name, patch.displayName);
+      detail.displayName = values.display_name;
+    }
+    if (patch.avatar !== undefined) {
+      if (!opts.bindAvatar) throw new Error("updateProfile: an avatar change needs bindAvatar");
+      await opts.bindAvatar(patch.avatar?.uploadId ?? null);
+      values.avatar = patch.avatar === null ? null : JSON.stringify(patch.avatar);
+      detail.avatar = patch.avatar === null ? "removed" : "upload";
+    }
+    const row = await this.db
+      .updateTable("accounts")
+      .set(values)
+      .where("id", "=", accountId)
+      .returningAll()
+      .executeTakeFirstOrThrow();
+    await audit(this.db.db, {
+      actorAccountId: accountId,
+      ...(actorTokenId !== undefined && { actorTokenId }),
+      action: "account.profile_updated",
+      target: accountId,
+      detail,
+    });
+    return withAvatarUrl(this.db.db, toAccount(row));
+  }
+
+  /**
    * A super admin changes an account. Disabling (`status: "disabled"`) revokes the
    * account's sessions (`sessions.revoked_at`) and personal tokens in **the same PG transaction**,
    * all or nothing; returns the revoked session ids, whose Redis markers the caller writes after
@@ -655,7 +732,9 @@ export class AccountsService {
   ): Promise<{ account: Account; revokedSessionIds: string[] }> {
     const id = before.id;
     const values: Updateable<AccountsTable> = { updated_at: new Date() };
-    if (patch.displayName !== undefined) values.display_name = patch.displayName;
+    if (patch.displayName !== undefined) {
+      values.display_name = checkDisplayNameChange(before.display_name, patch.displayName);
+    }
     if (patch.status !== undefined && patch.status !== before.status) {
       await this.ceilings.lock({}, "platform");
       await this.ceilings.publishLocked(

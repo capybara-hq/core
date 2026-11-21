@@ -31,7 +31,7 @@ export interface ScheduleAttention {
   /** `failed`: its latest run failed (`error`); `missing_grants`: tools refused; else paused. */
   reason: SchedulePauseReason | "missing_grants" | "failed";
   /** Who paused it (an admin's pause names the admin); else null. */
-  pausedBy: { id: string; name: string } | null;
+  pausedBy: { id: string; name: string; avatarUrl: string | null } | null;
   /**
    * `missing_grants`: the refused tool keys, `connection:<slug>` (connect that connector), or
    * `network:<host>` (a domain the run was refused).

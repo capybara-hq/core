@@ -65,6 +65,8 @@ A **theme** (a plugin's contribution, spec `docs/superpowers/specs/2026-11-08-th
 | `warn` | `#F2C14B` | `#8F6500` | Needs a person: pending approval, unsaved, needs authorization |
 | `scrim` | `rgba(0,0,0,.60)` | `rgba(10,10,10,.25)` | Behind dialogs and sheets |
 | `lightbox` | `rgba(0,0,0,.88)` | `rgba(10,10,10,.80)` | Behind the image viewer (§6.16.20): a heavier dim than `scrim`, the image is the page |
+| `float-ground` | `rgba(28,28,26,0.85)` | `rgba(255,255,255,0.85)` | Touch floating controls: a translucent ground over the page (`ink` and `muted` on it pass 4.5:1 composited over `bg`, both schemes) |
+| `float-line` | `rgba(255,255,255,0.08)` | `rgba(26,26,24,0.08)` | The hairline around a touch floating control |
 | `diff-add` | `rgba(63,212,131,.08)` | `rgba(22,128,63,.10)` | Added lines in a diff (ground only; the text stays `ink`) |
 | `diff-del` | `rgba(255,92,82,.08)` | `rgba(207,34,46,.08)` | Removed lines in a diff (ground only) |
 
@@ -76,34 +78,38 @@ The light accent is `#CC4609`: white text on it has a contrast of 4.72:1 (WCAG A
 
 ### 2.2 Fonts and type
 
-Two fonts, each with a job:
+Three font roles, each with a job:
 
 | Font | Token | Used for |
 |---|---|---|
-| **Sarasa Mono SC** (OFL-1.1) | `--cb-font` | The UI skeleton: navigation, labels, buttons, tables, tool rows, key names, paths, numbers, the status bar |
+| **Sarasa Mono SC** (OFL-1.1) | `--cb-font` | The UI skeleton: navigation, labels, buttons, tables, tool rows, key names, the status bar. On touch it is the system font (below) |
+| **Sarasa Mono SC** (OFL-1.1) | `--cb-font-code` | Code, commands, paths, versions, dates and times, ids: what a person copies or compares. The same stack as `--cb-font` on a pointer device, and Sarasa on touch too |
 | **Inter + Source Han Sans SC** (both OFL-1.1) | `--cb-font-prose` | Prose: running text a person reads as sentences: descriptions (page headers, form sections, object rows, plugin and extension descriptions), field help, dialog bodies, callouts, empty-state text, conversation prose, rendered Markdown, table description lines |
 
 - Weights 400 / 500 / 600, never above 600: hierarchy comes from size and color, not weight. The page title (`h1`) and emphasis (the primary button, the current nav or tab item, object names, `strong`) are 600; section, card, dialog and group titles are 500; everything else is 400. Each font ships a 400 and a 700 face: 500 draws with the regular face and 600 with the bold face (CSS font matching), so a 500 title is set apart by its size and `ink` color alone.
 - Delivery: subsetted to woff2 at build time (`packages/design/scripts/subset-font.py`: ASCII, the 3,755 level-1 common Chinese characters, the characters the UI uses and a symbol table), self-hosted under `packages/design/src/fonts` with their licenses, `font-display: swap`, declared only in `styles/fonts.css`.
 - Fallbacks: `'Sarasa Mono SC', ui-monospace, monospace`; `'Inter', 'Source Han Sans SC', system-ui, sans-serif`.
+- **Touch** (maintainer decision 2026-11-21; `touch.ts`, `TOUCH_QUERY`: a coarse primary pointer, or a coarse pointer and no fine one; `useTouch()` is `null` on the server and during hydration): a phone reads the system font, so `--cb-font` and `--cb-font-prose` become `system-ui, -apple-system, 'PingFang SC', 'Noto Sans SC', sans-serif` and the type sizes take the Touch column below. Everything that was Sarasa because it is code, a command, a path, a version or a time says `font-family: var(--cb-font-code)` (the base rules for `code`, `pre`, `kbd` and `samp`, `DateTime`, the version in the status bar, `KeycapCommand`, `CopyField`, a tool row's command and output, the diff block and the path cells), so it stays Sarasa there. No stylesheet but `fonts.css` and the generated `tokens.css` names Sarasa.
 
-| Name | Size / line height | Weight | Font | Purpose |
-|---|---|---|---|---|
-| `h1` | 20 / 28 | 600 | mono | PageHeader title |
-| `h2` | 16 / 24 | 500 | mono | Section title, card title, Dialog title |
-| `body` | 13 / 20 | 400 | mono | Default text, tables, controls, nav items |
-| `small` | 12 / 16 | 400 | mono | Table header, error messages, group labels, stat labels (field help is the same size in the prose font) |
-| `micro` | 11 / 14 | 400 | mono | Status bar, nav counts |
-| `metric` | 18 / 24 | 400 | mono | Stat card values |
-| `prose` | 15 / 26 | 400 | prose | Conversation prose, rendered Markdown |
-| `prose-small` | 13 / 20 | 400 | prose | Page-header and form-section descriptions, hints and dialog bodies (`Text variant="prose"`) |
+| Name | Size / line height | Touch | Weight | Font | Purpose |
+|---|---|---|---|---|---|
+| `h1` | 20 / 28 | 28 / 34 | 600 | mono | PageHeader title |
+| `h2` | 16 / 24 | 22 / 28 | 500 | mono | Section title, card title, Dialog title |
+| `body` | 13 / 20 | 17 / 24 | 400 | mono | Default text, tables, controls, nav items |
+| `small` | 12 / 16 | 15 / 20 | 400 | mono | Table header, error messages, group labels, stat labels (field help is the same size in the prose font) |
+| `micro` | 11 / 14 | 13 / 18 | 400 | mono | Status bar, nav counts |
+| `metric` | 18 / 24 | 22 / 28 | 400 | mono | Stat card values |
+| `prose` | 15 / 26 | 17 / 26 | 400 | prose | Conversation prose, rendered Markdown |
+| `prose-small` | 13 / 20 | 15 / 22 | 400 | prose | Page-header and form-section descriptions, hints and dialog bodies (`Text variant="prose"`) |
+
+A touch type size is never below 13 (`check:tokens`, `tokens-touch-type`); `micro` (11) stays the smallest size only off touch.
 
 - Numbers always use `font-variant-numeric: tabular-nums`.
 - **Mono is for things a person copies or compares**: ids, paths, numbers, versions, dates and the UI skeleton. A sentence is never mono: a page writes running text as `Text variant="prose"` (or in a component's own prose part).
 - **Dates**: one helper (`formatDateTime`, the `DateTime` component), local time, mono with tabular figures. Two forms only: `full` `YYYY-MM-DD HH:mm` in tables, meta lines and detail fields, with the relative age ("5 分钟前") as the tooltip (`DateTime` draws a `<time>` whose `title` is the age); `compact` `MM-DD HH:mm` in dense lists (the sidebar's untitled conversations "未命名会话 · 11-02 23:42"). Activity lines may say only the relative age ("Grant · 4 分钟前"); no other format (`2026/11/2`, `2026年11月1日`) is used.
 - **Versions** are always mono with one leading `v` ("v0.1.0-rc.0"; `versionLabel`), in titles, tables, meta and sentences alike; request bodies keep the bare version.
 - No italics and no letter-spacing adjustment.
-- `micro` (11) is the smallest size anywhere, at every window width (mono meta lines included); no stylesheet sets a smaller one.
+- `micro` (11) is the smallest size anywhere off touch, at every window width (mono meta lines included); no stylesheet sets a smaller one. On touch the smallest is 13 (the Touch column).
 
 ### 2.3 The five roles of the accent color (only these five)
 
@@ -143,10 +149,11 @@ Every size a component uses is a step of one of these scales, stored in `tokens.
 |---|---|---|---|
 | Control height | `dense` / `default` / `prominent` | 24 / 28 / 32 | `--cb-control-<step>` |
 | Row height (lists, tables, sidebar, menus) | `dense` / `default` / `roomy` (rows with a thumbnail or two lines) | 28 / 32 / 44 | `--cb-row-<step>` |
+| Touch sizes (§4.3 touch column) | `hit` / `float` / `primary` / `prominent` / `composer` / `row` / `row-roomy` / `icon` / `icon-float` | 44 (the hit target) / 48 (a floating button) / 48 (the primary action) / 52 (the one prominent action) / 60 (the composer) / 52 (a list row) / 56 (a row with two lines) / 22 (an icon) / 24 (a floating button's icon) | `--cb-touch-<step>` |
 | Spacing | `1`–`8` | 4, 8, 12, 16, 20, 24, 32, 40 | `--cb-space-<n>` |
 | Inner padding (inside a component, vertical / horizontal) | `dense` / `default` | 4/8 · 6/12 | `--cb-pad-<step>-y`, `--cb-pad-<step>-x` |
 | Type | §2.2 | | `--cb-type-<name>-size`, `--cb-type-<name>-line` |
-| Radius | `sm` / `md` / `bubble` | 4 / 8 / 10 | `--cb-radius-<step>` |
+| Radius | `sm` / `md` / `bubble` / `pill` | 4 / 8 / 10 / 999 (a full round: the floating button, a count badge) | `--cb-radius-<step>` |
 | Layout | `sidebar` / `sidebar-rail` / `content` / `content-pad` / `chat` / `status-bar` / `action-row` / `gutter` | 256 / 48 / 1120 / 32 / 720 / 24 / 40 / 20 | `--cb-layout-<name>` |
 | Layout, cards (§6.34) | `card-min` | 280 (a CardGrid's narrowest card: three columns at the content width, one on a phone) | `--cb-layout-<name>` |
 | Layout, tool policies (§6.36) | `policy-select` | 160 (a ToolPolicyList row's policy select: fits 需审批 / Ask for approval at `dense`) | `--cb-layout-<name>` |
@@ -155,6 +162,8 @@ Every size a component uses is a step of one of these scales, stored in `tokens.
 | Layout, page head (§4.2 "Head rhythm") | `head-path` / `head-description` / `head-tabs` / `head-tabs-content` / `head-content` | 12 / 4 / 16 / 16 / 24 | `--cb-layout-<name>` |
 | Layout, shell (§4) | `content-min` / `bottom-nav` / `top-bar` | 552 (a content area's least width: the narrowest medium window, 600, less the 48 rail) / 56 (the bottom navigation, §6.45) / 44 (the compact top bar, §6.46: `row.roomy`) | `--cb-layout-<name>` |
 | Layout, conversation page | `title-bar` / `properties` / `panel-min` / `panel` / `chat-min` / `tool-output` / `file-card` / `thumb` / `inline-image` / `menu-max-height` / `bubble-clamp` | 48 / 300 / 520 / 560 / 480 / 120 / 240 / 56 / 360 / 328 (ten `row.default` items and the menu's padding) / 208 (eight `type.prose.line` lines: a long user message's clamp, §6.16.6) | `--cb-layout-<name>` |
+
+**Touch column** (maintainer decision 2026-11-21; the same `TOUCH_QUERY` as §2.2, one `@media` block at the end of `tokens.css` after the scheme blocks): the scales above step up on a touch device and every component follows with no rule of its own. `control` `dense` / `default` / `prominent` become 44 / 44 / 52; `row` `dense` / `default` / `roomy` 44 / 44 / 56; `radius` `sm` / `md` / `bubble` 12 / 20 / 20; the type sizes are §2.2's Touch column. Spacing, padding, layout widths and colors do not change. The `touch.*` sizes above are for the touch components only (§6): the floating button is `touch.float` high with `radius.pill`, `touch.icon-float` icon inside, on `float-ground` with a `float-line` hairline and `shadow-float-touch`; the touch composer is `touch.composer` high; the touch drawer is `layout.drawer` (320) wide. `tokens.json` holds the overrides under `touch` (a name must exist at its base: `check:tokens`).
 
 **Density steps.** Controls and rows come in three steps, chosen by context, never by taste:
 
@@ -185,14 +194,16 @@ Every size a component uses is a step of one of these scales, stored in `tokens.
 | `shadow-2` | `0 16px 48px rgba(0,0,0,.50)` | `0 8px 24px rgba(10,10,10,.12)` | Dialog, command palette |
 | `shadow-sheet` | `-16px 0 40px rgba(0,0,0,.40)` | `-4px 0 16px rgba(10,10,10,.08)` | Sheet |
 | `shadow-float` | `0 8px 24px rgba(0,0,0,.45)` | `0 8px 24px rgba(26,26,24,.08)` | The composer |
+| `shadow-float-touch` | `0 6px 20px rgba(0,0,0,.35)` | `0 6px 20px rgba(26,26,24,.10)` | Touch floating controls (on `float-ground`) |
 
 - Layering: Sheet 40 · Dialog 50 · Popover/Menu 60 · Toast 70 · Decoration 80 (`--cb-z-*`; the decoration layer of §4.5 sits above everything).
 - Motion: hover background transitions `motion.hover` (120ms); expand / collapse height transitions `motion.expand` (160ms); overlays fade in with a 4px offset over `motion.overlay` (120ms), `ease-out`, no bounce; the spinner turns once per `motion.spin` (800ms), the streaming cursor blinks every `motion.cursor` (1000ms), a running agent's dot in the agent map pulses every `motion.pulse` (1600ms, §6.16.28), the generating image placeholder's colour field drifts once per `motion.flow` (6000ms, `ease-in-out`, alternate; transform only, §6.16.20). `prefers-reduced-motion: reduce` makes all of them instant, the spinner static, the cursor steady and the placeholder still (§6.11).
+- Push motion: a push and a pop (§4.6) run over `motion.push` (350ms) with `ease.push` (`cubic-bezier(0.2, 0.9, 0.3, 1)`, the iOS navigation default); under `:root[data-shell-platform="android"]` (a native shell on Android) they are 300ms and `cubic-bezier(0.2, 0, 0, 1)` (Material emphasized). `tokens.json` holds the curves under `ease` (`--cb-ease-<name>`) and the platform values under `platform.<ios|android>`; reduced motion makes them instant.
 - Focus: inputs, selects and textareas get an `accent` border plus a 3px `focus-ring` halo (`box-shadow: 0 0 0 3px focus-ring`); other controls use `outline: 2px solid accent; outline-offset: 2px`; table rows, list items, nav items and conversation rows use `outline: 1px solid accent; outline-offset: -1px`. `:focus-visible` only. A ring never follows a mouse click: a text field (input, textarea, stepper, the composer) keeps its halo while it has focus, since it is being typed in, but every other control, the Select's button included, draws it under `:focus-visible` (the Select also while its list is open); a tab a pointer focused carries `data-pointer-focus` and draws no ring whatever the browser's heuristics say, until a key press (a modifier alone does not count) or a blur (acceptance issue Y); the mark is set only when focus arrives from that press (or at once when the pressed tab already has focus, since Chrome keeps that focus's keyboard origin), so a press that gives no focus (WebKit and Firefox on macOS do not focus a clicked button) never hides a later keyboard ring. `packages/design/test/focus-rings.test.ts` checks the stylesheets.
 
 ### 2.6 Icons
 
-- One line-icon set site-wide: Lucide (ISC, vendored as paths in `packages/design/src/icons/paths.ts` by `pnpm --filter @capybara-hq/design gen:icons`, license next to it), 24 grid, stroke 1.5, sizes 16 / 14 / 12. The component is `Icon({ name, size, label? })` (§6.12).
+- One line-icon set site-wide: Lucide (ISC, vendored as paths in `packages/design/src/icons/paths.ts` by `pnpm --filter @capybara-hq/design gen:icons`, license next to it), 24 grid, stroke 1.5, sizes 16 / 14 / 12; on touch 22 (`touch.icon`) and 24 inside a floating button (`touch.icon-float`). The component is `Icon({ name, size, label? })` (§6.12).
 - **Characters are not icons**: no `▾ ✓ ◐ › ● ⠿ ▤` and siblings. `apps/web` never imports an icon library (`web-ui-import`); it uses `Icon` from the design package.
 - Icons are decorative (`aria-hidden`) unless they carry a `label`; an icon-only button always has an `aria-label`.
 
@@ -375,6 +386,7 @@ States: `list`, `list-tabs`, `detail`, `form`, `settings`, `settings-avatar`, `o
   - tab rows scroll instead of wrapping (§6.4), and the page head's search takes its own line (§4.2);
   - every DataTable is stacked rows (§6.6) and StatCards are two columns (§6.14);
   - a `Grid columns="list-detail"` (a 220 px list beside a flexible detail, top-aligned: the agent page's prompt files and the open file's editor) is a `ListDetail` (§6.47): the list is the page, and choosing an item pushes the detail full screen;
+  - on a touch device (§2.5 Touch column) every hit target is 44 (`touch.hit`: controls and rows are 44 by their scales, `control.prominent` 52, the primary action `touch.primary` 48), whatever the width; the 40 px rules below are the floor for a narrow window with a pointer;
   - tap targets are at least 40 px: the page head's tabs, the DataTable row menu, the bottom navigation's items (§6.45) and the conversation title bar's buttons (§6.16.1) are 40 high; the top bar's icon buttons (§6.46), the page head's actions (§4.2) and an ObjectRow's action and menu (§6.17) keep their compact look (`default` / `dense`) and reach 40 × 40 through an invisible ring around the button; menus opened from the top bar have 40 high items (§6.46);
   - object lists are compact (§6.17, maintainer decision 2026-11-09): the row menu sits on the name line at the right, the state closes the meta line in its tone, and the row action sits at the right of the meta line, or under it when both do not fit;
   - the page head stacks (§4.2): title and description across the width (the description wraps), the actions under them;
@@ -446,7 +458,7 @@ Built-in elements carry `data-cap-part="<name>"` (the public hooks of plugin CSS
 
 - **Tab roots and pushed pages.** A route is a *tab root* when it is the target of a bottom navigation item (§6.45); every other route is *pushed*. The shell knows the items, so no page declares its depth. A tab root shows the bottom navigation and no back button; a pushed page hides the bottom navigation and shows a **back button** in the top bar (§6.46). A `ListDetail` in its detail form (§6.47) and a conversation's right area (§5.4) are pushed pages too, keyed by their URL state.
 - **Back** goes to the previous in-app history entry when there is one, else to the last linked segment of the page's `path` (every page head has a path), so a deep link opened from outside still has a way up. The left screen edge is left to the browser's own swipe-back: the web adds no edge gesture.
-- **Transitions.** A push slides in from the end edge over `motion.expand`, `ease-out`, and a pop slides back (CSS view transitions where the browser has them, an instant swap otherwise; nothing under `prefers-reduced-motion`). The sheets' follow-finger drag is §6.7, not a push.
+- **Transitions.** A push slides in from the end edge over `motion.push` with `ease.push` (§2.5), and a pop slides back, bringing the page underneath in from `translateX(-30%)` and `brightness(0.9)` while the top page leaves (CSS view transitions where the browser has them, an instant swap otherwise; nothing under `prefers-reduced-motion`). A pop the browser already animated (`PopStateEvent.hasUAVisualTransition`, a back gesture) swaps at once, so it never animates twice; a move between tab roots (the bottom navigation or a native tab bar) never slides (mobile app spec §7.2). The sheets' follow-finger drag is §6.7, not a push.
 - **The keyboard hides the bottom navigation** (`data-keyboard="open"`, §4.3).
 
 ### 4.7 Short windows and safe areas
@@ -911,8 +923,10 @@ States: `default`, `focus`, `error`, `disabled`, `action`
 | field-control | action | column-gap | space.2 |
 | input | action | height | control.default |
 
+- **Options with a person** (state `person`): an option may carry `person: { avatarUrl }`, a 16 circle `Avatar` (§6.30; `null` draws the initial of the label) before the label, in the field (after the field's `space.2` padding, `space.1` before the label) and in the list (before the label, the menu item's own `space.2` gap). The label keeps its ellipsis and the avatar its size; an option without `person` is drawn as before. The first letter of the label is the initial.
+
 <!-- states: select -->
-States: `default`, `placeholder`, `open`, `long`, `disabled`, `error`
+States: `default`, `placeholder`, `open`, `person`, `long`, `disabled`, `error`
 
 <!-- size-table: select -->
 | Part | State | Property | Value |
@@ -931,6 +945,13 @@ States: `default`, `placeholder`, `open`, `long`, `disabled`, `error`
 | menu-item | open | height | row.default |
 | menu-item | open | padding-left | pad.default.x |
 | menu-item[aria-selected=true] | open | background-color | color.selected |
+| select-label | person | column-gap | space.1 |
+| select avatar[data-size=16] | person | width | 16 |
+| select avatar[data-size=16] | person | height | 16 |
+| select avatar[data-shape=circle] | person | border-top-left-radius | 50% |
+| menu-item avatar[data-size=16] | person | width | 16 |
+| menu-item avatar[data-size=16] | person | height | 16 |
+| menu-item | person | height | row.default |
 | menu | long | max-height | layout.menu-max-height |
 | menu-filter | long | height | control.dense |
 | menu-filter | long | font-size | type.small |
@@ -1077,6 +1098,7 @@ Selection rules: the user needs to decide → Dialog; view / edit one object wit
   - **Dragging**: the sheet follows the finger along its axis with no transition (a bottom sheet down, a right side sheet to the right, the rail's conversation sheet to the left; never past its rest position); where the sheet has a scrim (a bottom sheet does; the side sheets have none by default) it fades by the share of the sheet's size dragged (opacity `1 − share`).
   - **Settling**: on release the sheet travels to its dismissed or its rest position over `motion.expand`, `ease-out`. A release past **40%** of the sheet's size, or above a velocity threshold, dismisses; otherwise it springs back. Under `prefers-reduced-motion: reduce` the sheet still drags and then snaps without animation.
   - Esc, the scrim and the close button still close it and focus returns as for any overlay (§6.11); full-page transitions are reserved for pushes (§4.6).
+  - **Touch form** (`TOUCH_QUERY`, §2.5; maintainer decisions 2026-11-21): the sheet's top corners are `radius.md` (20 on touch), its option rows `touch.row` (52) high, its head has no hairline under it; the handle, the head, the body and the drag behaviour are unchanged. A `BottomSheet` also holds one history entry while open on a compact touch window (§6.52 "System back").
 
 <!-- states: sheet -->
 States: `dragging`, `settling`
@@ -1178,7 +1200,7 @@ Components shared by the conversation stream (modeled on the Claude Code VS Code
 - **ImageBlock**: an image in a plugin view; block-level, width not exceeding the container, scaled proportionally, 1px `line` border; `loading="lazy"`, `referrerpolicy="no-referrer"`. It takes only an address and alt; it renders only absolute http(s) addresses, and anything else (`javascript:`, `data:`, relative paths) renders nothing.
 - **AttachmentChip** (its looks are superseded by the attachment strip of §6.16.21; the behavior below stays): an uploaded file waiting to be sent in the input box. A line with a 1px `line` border and `panel` background: file name (single line with ellipsis, at most 24ch) + size (small `muted`, `B` / `KB` / `MB`) + a remove button on the right (an `x` icon button, `aria-label` "Remove <file name>"). Three states (`data-status`): `uploading` shows a 4px segmented progress bar under the name (`role="progressbar"`, `aria-valuenow` 0–100, completed segments accent, the rest `line-strong`, consistent with the Toast progress); `ready` has no progress bar; `error` has a `fail` border and small `fail` error text under the name (`role="alert"`), and can still be removed; when the caller supplies a retry, an extra `refresh` icon button appears to the left of the remove button ("Retry <file name>").
 - **FileDrop**: a drag-and-drop / paste area wrapping the input area. When content carrying files is dragged in (only `Files` is recognized; dragging text does not respond) an overlay covers the area: `accent-tint` background + 1px dashed `accent` border, with one centered line of hint text (passed in by the caller); dropping hands the files to `onFiles`. Pasting a clipboard containing files inside the area also hands them to `onFiles`; when the clipboard has no text, the default paste is prevented, while if it also has text (such as copied from a document) the text is pasted as usual; a paste without files is unaffected. The overlay is always dismissed on drop and dragend. When `disabled` neither responds. `dragging` can force the overlay to show (for the catalog page and screenshots).
-- **FileButton**: a file-picking button. It looks like `IconButton` (default `+`, `aria-label` passed in by the caller); clicking opens the system file picker (a hidden `input type=file`, with `accept` / `multiple` settable), and after selection the files are handed to `onFiles` and the input is cleared so the same file can be chosen again.
+- **FileButton**: a file-picking button. It looks like `IconButton` (default `+`, `aria-label` passed in by the caller); clicking opens the system file picker (a hidden `input type=file`, with `accept` / `multiple` settable), and after selection the files are handed to `onFiles` and the input is cleared so the same file can be chosen again. With `showLabel` it is a default `Button` holding the icon and the label instead (a file control that stands alone, such as the profile page's 上传头像, where an icon alone does not say what it does).
 - **AttachmentPreview**: an attachment in a message. `kind="image"` is a thumbnail: at most 240×160, cropped proportionally to fill (`object-fit: cover`), 1px `line` border, `loading="lazy"`, `referrerpolicy="no-referrer"`; `kind="file"` is a file card: 1px `line` border, `panel` background, `file` `muted` on the left, file name (single line with ellipsis) + small `muted` description below (such as the type). Both are links that open in a new tab (`target="_blank"`, `rel="noopener noreferrer"`), with a `line-strong` border on hover. Addresses accept only absolute http(s) addresses and same-origin absolute paths: a raw string containing any ASCII control character, whitespace or `\` is rejected outright (browsers strip tabs / newlines, so `/\t/evil` would become `//evil`), and one starting with `/` is resolved against a placeholder origin whose origin must stay unchanged; anything else (`javascript:`, `data:`, protocol-relative addresses, relative paths) renders no link and no image, and shows only the file name. When an image fails to load, `onImageError` is called; when `retry` is greater than 0 the image address gets the cache parameter `retry=<n>` and reloads (the link is unchanged); when `onOpen` is given, an unmodified left click is handed to the caller to open.
 - **Card `tone="accent"`**: superseded on the conversation page by §6.16.11–§6.16.13, where only the pending approval keeps the `accent` outline (the question and connect cards use `line`).
 - **Card** (§2.5): the `panel` ground, a 1px `line-card` hairline, radius `md`, a head band (`space.2` `space.4`, 500, a `line-soft` rule) over a `space.4` body. It is a box, so it stands on the page ground (or in a pane) and **never inside another box** (§1): a group inside a box is a `Subsection` (§6.32), a list of things is `ItemList` rows (§6.33); a plugin view's blocks inside an inline card or a property section are drawn without frames of their own.
@@ -1240,7 +1262,7 @@ The left sidebar replaces the TopBar on every page (UI refresh spec §4.4). Side
   4. **更多** (`more-toggle`, `more-horizontal` + label + a `chevron-right` 12, `muted`): a button opening a **flyout menu to the right of the sidebar** (the design `Menu` with `side="right"`, anchored to the row, `space.3` past the sidebar's edge): 插件, 扩展, 渠道, 评测与运行, 组织设置 (插件, 扩展 and 组织设置 for members up, 渠道 and 评测与运行 for org admins only; hiding is cosmetic, the kernel decides; the row is drawn only when it has something to list, so a guest without extension pages has none), then, after a separator, the org's extension pages; every item is led by its nav icon, as in the main nav. The row takes the `sidebar-active` ground and `ink` (`data-active`) while the current page is one of its items, and that item is marked current inside the flyout (`aria-current="page"`, `selected` ground). Enter, Space and → open it; Escape closes it and returns focus to the row. Nothing is remembered and it never opens by itself. **On compact** there is no flyout: the Me page's 管理 group lists them in place (§6.48).
   5. **Conversations** (`section` labelled "会话"): take the rest of the height and scroll on their own, after a `line-soft` divider (inset by the sidebar's padding, like the account row's) and `space.2`. The scroll box runs out over the sidebar's `space.2` side padding to its edges and pads its content back by `space.2`, so the rows keep their place and the scrollbar sits flush on the right border, never over the rows' ends. See below.
   6. **管理后台** (`admin-entry`, super admins only, `context.adminHref`): `admin` icon (a shield), the label and an outward `arrow-up-right` 14, `muted`, directly above the account row; it enters the admin context.
-  7. **Account row** (`account`): a `line-soft` divider with `space.2` above (the block gap) and below; a 24 round initial avatar on `selected` (the name's first grapheme) + the name (no org: the switcher shows it), opening the account menu (语言 ▸, 个人设置, sign out; no org entry, the switcher owns it); its accessible name is "账户: {name}". After it, in the same row, `ThemeToggle` (light / dark icon radio, the chosen one on `selected`). The rail has no room for it, so there the theme leads the account menu ("Theme: Light"). Menu items may open a submenu (`submenu`: a `chevron-right` mark, opens on hover, click or the right arrow). The auth pages (`AuthPage`) show `PreferenceBar` (a dense language `Select` and the `ThemeToggle`) in the bottom-right corner, `space.4` (16) inside the right dither column (16 from the edge below 600, where the columns are hidden), each control at its own width. The language is a cookie (`NEXT_LOCALE`), never part of the URL.
+  7. **Account row** (`account`): a `line-soft` divider with `space.2` above (the block gap) and below; a person's circle `Avatar` at 24 (§6.30: the account's image, else the name's first grapheme muted on `selected`) + the name (no org: the switcher shows it), opening the account menu (语言 ▸, 个人设置, sign out; no org entry, the switcher owns it); its accessible name is "账户: {name}". After it, in the same row, `ThemeToggle` (light / dark icon radio, the chosen one on `selected`). The rail has no room for it, so there the theme leads the account menu ("Theme: Light"). Menu items may open a submenu (`submenu`: a `chevron-right` mark, opens on hover, click or the right arrow). The auth pages (`AuthPage`) show `PreferenceBar` (a dense language `Select` and the `ThemeToggle`) in the bottom-right corner, `space.4` (16) inside the right dither column (16 from the edge below 600, where the columns are hidden), each control at its own width. The language is a cookie (`NEXT_LOCALE`), never part of the URL.
 - **Admin context**, top to bottom: the brand row; the **context block** (`context-block`): the switcher's size and light style but static (no chevrons): a shield in the accent tint (`accent-tint` ground, `accent` icon), "管理后台" and `整个部署 · /admin` in mono; below it a link "← 回到工作区 ~/<slug>" (`back`, `row.dense`, `small` `muted`, `arrow-left` 14); the items 概览, 账号, 组织, 插件 (its count: what waits in its 待确认 tab), 扩展, 模型, 部署设置; no conversations, no 新会话, no search or inbox buttons (⌘K still opens the palette); the account row.
 
 - **Setup context** (`kind: "setup"`, web-SSR spec §4), top to bottom: the brand row without the search and inbox buttons (the collapse toggle stays); the org switcher (`context.org`, as in the workspace); the navigation (`nav` "Main navigation"): **开始之前** (`nav-item`, `diamond`, the setup home `context.home`, current when `activeNav` is `home`), then the required steps, then the label **可以稍后再做** (`step-group-label`, mono `micro` `faint`, letter-spacing 0.06em, `row.dense` high with the text at its bottom; the optional steps form a `group` it names), then the optional steps; the fill; the admin entry (`context.adminHref`); the account row. No conversations, no 新会话, no command palette. A **step item** (`step-item`, `SetupStep { id, label, state, href?, reason?, optional? }`) has the nav item's box and a state mark (`step-mark`, an `Icon` 16, never a character): `done` a `check` in `ok` (still a link), `todo` a `circle` in `muted` (a link), `waiting` a `clock` in `muted`: not a link (`role="link"`, `aria-disabled="true"`, the label `muted`, no hover ground, still a roving stop so its reason can be read) with `reason` as its second line (`step-reason`, `micro` `muted`, one line with an ellipsis), which makes the item 48 high. The current step takes the nav item's current style. Its accessible name is "{label}，{state}" (已完成 / 未完成, or the reason of a waiting step; en "{label}, {state}"). In the rail the steps are their marks alone (`row.default` squares) with the accessible name in the Tooltip to the right; the group label becomes a `line-soft` divider (`step-divider`, 24 × 1). On compact the steps are a pushed list reached from the setup home, the tab root (§5.5).
@@ -1500,6 +1522,7 @@ States: `default`, `untitled`, `rename-menu`, `panel-active`, `overflow`, `long-
 #### 6.16.2 Composer
 
 - `raised` ground, 1px `line` border, radius `md`, `shadow-float`, padding `space.2` `space.2` `space.2` `space.3`. While its textarea has focus: an `accent` border plus the 3px `focus-ring` halo (the input focus rule of §2.5) over the same shadow.
+- **Touch** (`TOUCH_QUERY`, §4.3; maintainer decision 2026-11-21, reference block from the 首页, 会话中 and 对话设置 boards): the frame draws no box of its own; the **pill** is a floating bar `touch.composer` (60) high, radius `radius.pill`, on `float-ground` with a 1px `float-line` border and `shadow-float-touch` (an `accent` border and the focus halo while the textarea has focus; no blur: §6, frosted glass stays out). It holds exactly the ＋ (`touch.hit` square, `muted`), the textarea and send, a `touch.float` round `accent` button (stop while a run goes); there is **no voice or microphone button** (Decision 24). Above the pill, at the start side, the **settings chip** (`ComposerOptions`, `touch.hit` high, pill radius, `<model> · <effort> · <device>`) opens the settings sheet at every width: model, thinking as a `Segmented` (低 / 中 / 高; a change plays the `selection` haptic), where to run, permissions, and the note 「设置只对这次会话生效。」 / "Settings apply to this conversation only." The device and mode pickers, quick actions and the agents chip stay below or beside the pill (rows 5 and 6 of the frame's grid). On a conversation the composer floats over the thread's bottom (`position: absolute`, `space.3` plus `--cb-inset-bottom` from the screen's edge; the open keyboard drops the inset and the page lifts the column by `--cb-keyboard-inset`), and the thread's bottom padding clears it.
 - Top to bottom: the attachment strip (§6.16.21) when there are attachments; the textarea (no border or ground, `prose` 15 / 26 `ink`, placeholder `faint`, one line high when empty, growing with its content up to 8 lines and then scrolling, `space.2` below it); the control row.
 - **Control row**, gap `space.1`, pulled left by `space.2` so the ＋ lines up with the text: ＋ (ghost `IconButton`, `plus`, "添加附件" / "Attach files") · agent picker · device picker · model picker · effort picker · quick actions · agents chip · flexible space · send. The agent picker is optional (`pickers.agent`) and neither page passes it: the new conversation page's agents row chooses the agent (§5.4), and on a conversation the title bar's path names it (§6.16.1; maintainer decision U, 2026-11-07), so the control row repeats no agent label. The quick actions (`quickActions`, §6.16.27) are a ghost `zap` icon button, given only when the agent has some. The agents chip (`agents`, §6.16.29) is the agent map's entry, given once the conversation has a sub-agent (never on the new conversation page).
   - Pickers are ghost `default`-step buttons in `muted`: label + `chevron-down` 12, padding 0 `space.2`, opening a picker menu (§6.16.3) anchored to them (below, or above when the room below is short). When the row is short a picker's label gives way with an ellipsis, the whole value in its tooltip; a value of at most three characters (an effort, 「高」; `data-short`) never gives way, so one glyph is never cut in half (acceptance 2026-11-09); the icon buttons and the agents chip keep their size (AC3 fix round 1).
@@ -1712,6 +1735,7 @@ States: `collapsed`, `expanded`, `live`
 #### 6.16.6 User bubble
 
 - Right-aligned, at most 75% of the thread width: `selected` ground, radius `bubble`, padding `pad.default`, a 1px transparent border (the queued form draws it dashed), prose font `prose` 15 / 26 `ink`, line breaks kept.
+- **Touch**: the user's bubble sits at the end edge (`margin-inline-start: auto`, at most 85% wide); sizes follow the touch type scale (§2.2).
 - **Long** (states `long`, `expanded`; acceptance item AC4, 2026-11-07, Claude's "Show more"): the bubble's text (`bubble-body`, the skill chip and the text) is clamped at `layout.bubble-clamp` (208, eight prose lines) and its last line fades out (a mask from opaque to transparent over the last `type.prose.line`, like the text output's fade, §6.16.20). Only when the clamp hides something (measured, and again on resize; the server render and hydration, which cannot measure, guess from the text: more than eight lines, counting the hard lines and each line's wrapping at about 34 CJK or 68 other characters, so a long message is folded from the first paint and the measurement then corrects it) a link button "展开" / "Show more" (`small`, the §6.16 link button: `muted`, underlined in `line-strong`) sits under the bubble, right-aligned, `space.2` below it and before the details; it has `aria-expanded` and `aria-controls` the text, opens it in full and becomes "收起" / "Show less". The attachments above, the skill chip on the first line and the details below always show. The open state is the bubble's own, local to the view and never kept (a reload or another conversation starts folded). A pending bubble (the queued form) and the transcript's bubbles behave the same.
 - **Pending** (the queued form, `queued`): a message on its way, or an interjection the run has not taken in yet, or a leftover queued message (§6.11 "No queue"): the dashed bubble of §6.16.14 at opacity .6, and for an interjection or a leftover "待处理" / "Pending" under it in `small` `faint`; no actions.
 - Attachments sit above the bubble, right-aligned, `space.2` apart: images as `layout.thumb` square thumbnails (radius `sm`, cropped to fill), then files as attachment chips (§6.16.21, without the remove button). A thumbnail opens the image; a file chip opens the file in the right panel (§6.16.22) like a delivered file, and a dense `download` icon button ("下载" / "Download") after the chip downloads it (a resource mention has none). A thumbnail that fails to load is reported to the caller, which may refresh the session and reload it once (as AttachmentPreview's `retry`).
@@ -1719,8 +1743,10 @@ States: `collapsed`, `expanded`, `live`
 
 - **Sender** (state `sender`, agent map spec §9.4): a message another agent sent (a parent's message in a sub-agent's transcript) has, above the bubble and right-aligned, "来自 <sender>" / "From <sender>" (`small`, `muted`, one line with an ellipsis, at most 75% wide, `space.2` above the bubble). A person's own message has none.
 
+- **Author** (state `author`, account profile design): `author` `{ name, avatarUrl, showName? }` is the person who wrote the message, drawn as a 24 circle `Avatar` (§6.30, `shape="circle"`: the picture, or the initial of `name` when `avatarUrl` is `null` or fails) at the bubble's end side: the bubble and the circle sit in one row, `space.2` apart, top-aligned, the row as wide as the thread, the bubble still at most 75%. With `showName` the name is above the message (above the attachments too), right-aligned and pulled in by the circle's width and the gap so it ends on the bubble's edge: `small`, `muted`, one line with an ellipsis, at most 75% wide, `space.2` above what follows (the trajectory's form, where the writer is not the viewer). Without `author` nothing is drawn and the bubble is as before; a message with no bubble (attachments only) shows the name line but no circle.
+
 <!-- states: user-bubble -->
-States: `default`, `attachments`, `skill`, `sender`, `long`, `expanded`
+States: `default`, `attachments`, `skill`, `sender`, `author`, `long`, `expanded`
 
 <!-- size-table: user-bubble -->
 | Part | State | Property | Value |
@@ -1748,6 +1774,13 @@ States: `default`, `attachments`, `skill`, `sender`, `long`, `expanded`
 | bubble-sender | sender | font-size | type.small |
 | bubble-sender | sender | color | color.muted |
 | bubble | sender | background-color | color.selected |
+| bubble-author-name | author | font-size | type.small |
+| bubble-author-name | author | color | color.muted |
+| bubble-row | author | column-gap | space.2 |
+| bubble-row avatar[data-size=24] | author | width | 24 |
+| bubble-row avatar[data-size=24] | author | height | 24 |
+| bubble-row avatar[data-shape=circle] | author | border-top-left-radius | 50% |
+| bubble | author | background-color | color.selected |
 | bubble-body | long | max-height | layout.bubble-clamp |
 | bubble-body | long | height | layout.bubble-clamp |
 | bubble-more | long | font-size | type.small |
@@ -1788,6 +1821,7 @@ States: `stopped`, `failed`, `compacted`, `compacted-open`, `fallback`, `hook-de
 #### 6.16.8 Tool group
 
 - **One call** is a tool line: the row label (§6.16.9) and a chevron when it has detail; opening it shows the detail (or the diff) in a tool box below.
+- **Touch**: a group's summary line stays one line (the label ellipsizes), `touch.hit` high and full width, with the chevron at the end.
 - **Two or more consecutive calls** form a group: a header tool line (the summary) and, when open, the **tool box**: `panel` ground, radius `md`, `small` type, overflow hidden, one row per call, rows divided by `line-soft`. A finished group is collapsed by default; a running group is open and its header has no chevron.
 - **Summary** (copy in §7): counts by kind with each kind's verb, joined by "，" / ", " in a fixed order (commands, background task reads, tools, reads, edits, as reference set B draws it); failures add "（N 个失败）" / " (N failed)" in `fail` (only rows in the failed state: a non-zero exit, a guard refusal and a not-loaded notice are not failures, §6.16.9); guard refusals add "（N 个已拦下）" / " (N blocked)" in the header's own color; edits add " · +a −b" in `faint`; a group whose rows all read, or all edit, one path names it in `ink` ("已读取 示例表.xlsx"). Running: a `spinner` (16), the running verb of the running row's kind and " · 已完成 N 个" / " · N done" in `faint`; when every live call waits for a person (§6.16.9), no spinner and the waiting word in `accent` instead of the verb ("等待你回答 · 已完成 N 个").
 - **One call with a link** (§6.16.9): the tool line holds its toggle (the label and the chevron) and, after it, the link; the two are separate buttons.
@@ -1912,15 +1946,22 @@ States: `default`, `truncated`
 #### 6.16.11 Approval block
 
 - **Pending**: a floating card with an `accent` border, gap `space.3`, `role="group"`. Head: an `accent` dot, "需要你批准" / "Approval needed" (600), the tool (`small` `muted`: "<connector>: <title>", or the source and the localized name when the tool has no title) and then **always** the model-visible tool key (`small` `faint`, e.g. `acme_tickets__send_message`; it wraps rather than truncates). The key stays even without a title, because two sources can share a display name. Then **every** input argument as a key / value grid: the tool's `keyArgs` first, in their order, then the other properties in input order; values that are not strings as compact JSON; each value wraps and is capped at 3 lines; under the grid a `small` `muted` link "查看完整输入" / "Show full input" opens the whole input JSON read-only in place ("无参数" / "No arguments" when the input is empty). Then the actions (`default` step, gap `space.2`): "批准" / "Approve" (primary), "本会话内都批准" / "Approve for this conversation", "总是批准" / "Always approve" (default) — each only when the request allows `once` / `session` / `always` — and "拒绝…" / "Deny…" (default); at the right end a `small` `muted` note naming the rule that asked (the agent's tool policy, the connector's policy, a rule that always asks, the org's sandbox setting, the tool's default, or role escalation).
+- **Touch**: the card's buttons share one row (flex-basis 0, a long label wraps inside its button) at least `touch.primary` (48) high, in the order 拒绝, the wider grants (本会话内都批准, 总是批准), then 批准 (the `accent` primary) last; the touch 拒绝 is the generic word, the variants' own wording (「拒绝…」 and the network / command forms) is the desktop's; a network ask's hints keep their wrapped layout. The command or path is set in the code font role (`font-code`, `cb-hcard-command`).
 - **Summary**: a call that carries a kernel-rendered summary (a Platform operation: what it does, in the UI language, from the operation and its params) shows it as one `small` line between the head and the argument grid; the key and every argument stay on screen below it. The summary is a convenience, never a substitute for the arguments.
+- **File**: a call that takes a file of the conversation in place of an upload (a Platform operation, platform web parity spec §5) shows the file the person confirms after the argument grid and before the person fields (part `file`): the thumbnail of an image (only a WebP data URL the kernel made, part `file-thumbnail`), the name (part `file-name`, one line with the ellipsis) and "<size> · sha256 <first 12 hex>" in `small` `muted` (part `file-meta`). The inbox's approval detail shows the same row (`ApprovalFileRow`) above the input.
 - **Why the key and every argument**: a tool's title (and its `keyArgs`) come from extension or connector code and a connector's title can change without drift review (it is display only). The person approving must see what the model actually calls: the reviewed key and the full input, so a misleading title can at most mislabel a call whose key and arguments are on screen.
 - **Deny with a reason**: "拒绝…" swaps the actions for a reason input ("拒绝原因（选填，会告诉模型）" / "Reason (optional, the model sees it)"), "拒绝" / "Deny" (danger), "取消" / "Cancel" (ghost) and the note "原因会写入会话，模型能看到" / "The reason goes into the conversation; the model sees it".
 - **Decided**: collapses to a tool line that names the key too: approved — `check` 12, "<who> 批准了 <tool>" and " <key> · <scope> · <time>" in `faint`; denied — `x` 12, "<who> 拒绝了 <tool>", " <key>" in `faint`, " · 「<reason>」" in `muted` and the time in `faint`. A request the person answered with a message reads "批准请求已跳过：<tool>" / "Approval request skipped: <tool>" (network asks only, below).
 - **Network ask** (network ask spec §6.5): a command on a device was refused network hosts by the device's own policy, and the device owner is asked. Same accent card, no tool, key or argument grid. Head: the `accent` dot and the title (600): one host "智能体想访问 `files.slack.com`，允许吗？" / "The agent wants to reach `files.slack.com`. Allow?", the host as inline code; n hosts "智能体想访问 n 个域名，允许吗？" / "The agent wants to reach n domains. Allow?". Body: "这条命令被这台设备的网络规则拦下了：<description>" / "This command was blocked by this device's network rules: <description>" (without a description the sentence ends there). The command read-only in code style (the full-input box of a tool approval), clipped to 300 characters with an ellipsis. Then the hosts, one per line: the registrable domain (600; e.g. **evil.io** in `files.slack.com.evil.io`, the last two labels, three under a known multi-label suffix such as `co.uk`, `com.cn`: a display aid, never a security decision) and the full host as inline code; with more than one host each line is a checkbox, all checked, and the decision covers the checked ones (none checked disables both allow buttons, Deny stays). Actions: "这次允许" / "Allow this time" (primary, the first and focused one) with a `small` `muted` hint under it, "到智能体这次回复结束为止有效" / "Until the agent finishes this reply", and "拒绝" / "Deny" (default), which opens the same reason form as a tool approval. There is no "always": the deployment never widens a device (device protocol 4, approval-only profiles design), so under the actions one `small` `muted` line (`network-on-machine`) names the owner's command on the machine: "要让这台设备一直允许，请在设备上运行 `capybara-device policy add allowedDomains <host>`" / "To always allow it on this device, run `capybara-device policy add allowedDomains <host>` on the device" (the host when there is one, `<host>` for several). Host, command and description are model-controlled: always plain text or code, never markup.
 - **Network ask decided**: a tool line with `check` 12 (allowed) or `x` 12 and the word: "已允许（这次）" / "Allowed (this time)", "已拒绝" / "Denied", "已过期" / "Expired", "已跳过" / "Skipped" (the person sent a message instead of answering), "已取消" / "Cancelled"; then the hosts it covers (the granted ones when allowed) and who in `faint` (expired and cancelled name no one); a denial's reason and the time as for tool approvals.
+- **Command ask** (auto mode spec §5.4, approval profiles design): the command review holds a shell command, or a file read or write outside the scope, until the person allows it. Same accent card, no argument grid. Head: the `accent` dot, the question (600: "智能体想运行这条命令，允许吗？" / "The agent wants to run this command. Allow?", or the read / write question), the tool and its key as for a tool approval. Then the lead (`small`, `command-reason`: what is asked, worded by the page from the ask's facts), the review's own reason under it in `faint` when it adds what the lead cannot, and the command read-only in code style (unframed, clipped to 300 characters; a read or write shows its path under the title "路径" / "Path"). Actions: "允许一次" / "Allow once" (primary), "本会话允许同类" / "Allow this kind for this conversation" when offered, "拒绝" / "Deny" (the same reason form).
+- **Details inside the card** (maintainer decision 2026-11-21; any pending approval but a network ask may carry them, all optional, all plain text the page passes, nothing boxed inside the card): **reason**: the requester's own words as the card's leading statement, right under the head: a `small` `muted` attribution ("智能体的理由" / "Agent's reason") over the words in the prose font (`prose`), quoted by a 2px `line-strong` rule on the left, wrapping, never clipped, never a link. **Facts**: a compact list above the input (the command, or the argument grid): one row per fact, its label `small` `faint`, its values `small` mono `ink`, one per line, wrapping, never clipped or summarized (a permission crossing's read-write directories, read-only directories, hosts and target file). **Working root**: one `small` `muted` line right above the command, "在 <path> 运行" / "Runs in <path>", the path mono and middle-truncated past 64 characters with the full path as its title. **Hints**: the consequence of approving is a short `small` `muted` `scope-hint` line under the whole action row, never under its button, so the buttons stay adjacent with the normal gap (the page's `scopeHints`, e.g. "仅这一次调用；下次仍在沙箱内运行" / "This call only; the next one runs in the sandbox again"; with more than one hinted scope each line starts with its button's label and " · "); further notes (a background process that keeps running) are `small` `muted` lines under it (`card-hint`). Hints and notes hide while the deny form is open. (The network ask keeps its one hint under "这次允许", above.) The details belong to the pending card only: decided or superseded, the card is its one line, with an optional short phrase of what was crossed after the word ("已允许（一次） Bash · 在沙箱外运行 · <who> · <time>"); the conversation log keeps the rest.
+- **Command ask decided**: a tool line with `check` 12 (allowed) or `x` 12 and the word: "已允许（一次）" / "Allowed (once)", "已允许（本会话同类）" / "Allowed (this kind for this conversation)", "已拒绝" / "Denied", "已过期" / "Expired", "已取消" / "Cancelled"; then in `faint` the key, the crossing phrase when given and who (expired and cancelled name no one); a denial's reason in `muted` and the time in `faint`.
+
+- **Decider as a person** (state `person`): `who` is `string | { name, avatarUrl }`. A string stays plain text ("你", "系统"); a person is a `PersonName` (§6.50) at size 16 in the same place, inline in the line ("<PersonName> 批准了 <tool>", and the same for the denied, network and command lines, where it stands after the key joined by " · "). It keeps its own `ink`; the line's `muted` stays on the words around it.
 
 <!-- states: approval-block -->
-States: `pending`, `pending-once`, `pending-summary`, `deny-reason`, `approved`, `denied`, `network`, `network-hosts`, `network-once`, `network-allowed`, `network-denied`, `network-skipped`
+States: `pending`, `pending-once`, `pending-summary`, `deny-reason`, `approved`, `person`, `denied`, `network`, `network-hosts`, `network-once`, `network-allowed`, `network-denied`, `network-skipped`, `command-escalation`, `command-scope`, `command-allowed`
 
 <!-- size-table: approval-block -->
 | Part | State | Property | Value |
@@ -1943,6 +1984,11 @@ States: `pending`, `pending-once`, `pending-summary`, `deny-reason`, `approved`,
 | tool-line | approved | height | row.dense |
 | tool-line | approved | color | color.muted |
 | tool-key | approved | color | color.faint |
+| tool-line | person | height | row.dense |
+| tool-line person-name[data-size=16] avatar[data-size=16] | person | width | 16 |
+| tool-line person-name[data-size=16] avatar[data-size=16] | person | height | 16 |
+| tool-line person-name[data-size=16] avatar[data-shape=circle] | person | border-top-left-radius | 50% |
+| tool-line person-name[data-size=16] person-name-text | person | font-size | type.small |
 | tool-line | denied | color | color.muted |
 | tool-key | denied | color | color.faint |
 | approval-block | network | border-top-color | color.accent |
@@ -1953,6 +1999,27 @@ States: `pending`, `pending-once`, `pending-summary`, `deny-reason`, `approved`,
 | tool-line | network-allowed | height | row.dense |
 | tool-key | network-allowed | color | color.faint |
 | tool-line | network-skipped | color | color.muted |
+| approval-block | command-escalation | border-top-color | color.accent |
+| reason-label | command-escalation | font-size | type.small |
+| reason-label | command-escalation | color | color.muted |
+| reason-text | command-escalation | font-size | type.prose |
+| reason-text | command-escalation | color | color.ink |
+| reason | command-escalation | border-left-color | color.line-strong |
+| reason | command-escalation | padding-left | space.3 |
+| working-root | command-escalation | font-size | type.small |
+| working-root | command-escalation | color | color.muted |
+| scope-hint | command-escalation | font-size | type.small |
+| scope-hint | command-escalation | color | color.muted |
+| card-hint | command-escalation | font-size | type.small |
+| card-hint | command-escalation | color | color.muted |
+| fact-label | command-scope | font-size | type.small |
+| fact-label | command-scope | color | color.faint |
+| fact-value | command-scope | font-size | type.small |
+| fact-value | command-scope | color | color.ink |
+| button[data-variant=primary] | command-scope | height | control.default |
+| tool-line | command-allowed | height | row.dense |
+| tool-line | command-allowed | color | color.muted |
+| tool-key | command-allowed | color | color.faint |
 
 #### 6.16.11a Network facts
 
@@ -1975,8 +2042,10 @@ States: `org`, `address`
 - **URL mode** (the form has a `url`): the full address as a link (`small` `ink`, underlined in `line-strong`, breaking anywhere, `external-link` 14 `muted` before it), "打开链接" / "Open link" (primary, with the icon), Skip, and the note "完成后回到这里继续" / "Come back here when you're done".
 - **Answered**: collapses to the question as a tool line and a second one with `corner-down-right` 12, the answer in `ink` and " · <who>" in `faint`. The other closed states use the same two lines with their word in place of the answer: **skipped** (the run's starter sent a message instead of answering) says "已跳过：直接回复了消息" / "Skipped: replied with a message" with " · <who>"; **cancelled** (the run ended first) says "已取消" / "Cancelled"; **expired** says "已过期" / "Expired". Cancelled and expired name no one.
 
+- **Answerer as a person** (state `person`): the `who` of an answered or skipped question is `string | { name, avatarUrl }` as in §6.16.11: the " · " stays `faint` and the person is a `PersonName` at size 16 after it.
+
 <!-- states: question-block -->
-States: `pending`, `url`, `answered`, `skipped`, `cancelled`, `expired`
+States: `pending`, `url`, `answered`, `person`, `skipped`, `cancelled`, `expired`
 
 <!-- size-table: question-block -->
 | Part | State | Property | Value |
@@ -1993,6 +2062,10 @@ States: `pending`, `url`, `answered`, `skipped`, `cancelled`, `expired`
 | question-url | url | font-size | type.small |
 | question-url | url | color | color.ink |
 | tool-line | answered | height | row.dense |
+| tool-line | person | height | row.dense |
+| tool-line person-name[data-size=16] avatar[data-size=16] | person | width | 16 |
+| tool-line person-name[data-size=16] avatar[data-size=16] | person | height | 16 |
+| tool-line person-name[data-size=16] avatar[data-shape=circle] | person | border-top-left-radius | 50% |
 | tool-line | skipped | color | color.muted |
 | tool-line | cancelled | color | color.muted |
 
@@ -2323,14 +2396,15 @@ States: `image`, `text`, `markdown`, `csv`, `none`, `failed`, `unshared`, `share
 
 #### 6.16.23 Run row
 
-`RunRow({ status, parts, statusText?, defaultOpen?, error?, facts?, onRetry?, retryLabel?, links? })` closes every run that ended (§5.4): what ran, how long, what it cost, and how it ended, without colour unless it failed.
+`RunRow({ status, parts, statusText?: ReactNode, defaultOpen?, error?, facts?, onRetry?, retryLabel?, links? })` closes every run that ended (§5.4): what ran, how long, what it cost, and how it ended, without colour unless it failed.
 
 - **Line**: a tool line (§6.16, `row.dense` high, mono `small` `muted`, gap `space.2`): "运行" / "Run" and the `parts` the page fills (the model, the duration such as "3.7 秒" / `3.7s` (`formatDuration`, §7), the tokens such as `1,234 tokens`; unknown ones are left out) joined by " · " with an ellipsis, then the **status**: the mark (12) and the status word, `space.1` apart: `ok` a `check` in `ok` and "完成" / "Done" in `muted` (the one coloured mark of a quiet row, an exception to §2.4's uncoloured success: a run is a unit a person checks for its outcome); `failed` a `circle-x` and "失败" / "Failed" (or the page's words such as "失败 · 已重试") both in `fail`; `stopped` a `ban` and the page's words "已停止 · <who> <time>" in `muted`. Then a `chevron-right` / `chevron-down` 12 when there is a detail. The duration is the run's working time: from its start to its end without the time it waited for a person (an approval or a question, until answered), the same derivation as the status bar's "已用" (§5.4), so the two agree.
+- **Status text as a node** (state `stopped-person`): `statusText` is a `ReactNode`, so the words after the mark may hold a person: a `PersonName` (§6.50) at size 16 inside them ("已停止 · <PersonName> 14:03"; the viewer is drawn the same way, "你" with their avatar); a string is drawn as before ("已停止 · 系统 14:03"). The mark and the gap are unchanged; the person keeps its own `ink`, the words around it stay `muted`.
 - **Disclosure**: with a detail the line is a `button` with `aria-expanded` and `aria-controls`; the detail is a `region` named "运行详情" / "Run details". A failed row starts open (`defaultOpen` overrides), the others closed. Without any detail the line is plain text.
 - **Detail**: `space.1` below the line, `space.2` between its parts, under a 1px `line` guide on the left, indented `space.3` (the thinking body's guide): the failure as an `ErrorDetail` (§6.24: the localized sentence, the raw text behind its toggle); `facts`, plain mono `small` `muted` lines (the token split, the start time); then the actions, a row `space.2` apart of `dense` buttons: Retry ("重试" / "Retry", default) and the `links` as `LinkButton`s (default): "查看轨迹" / "View trajectory", "去配置模型服务" / "Configure model services". The page decides which actions a role gets; the row never draws one the reader cannot use.
 
 <!-- states: run-row -->
-States: `ok`, `ok-open`, `failed`, `stopped`, `warning`
+States: `ok`, `ok-open`, `failed`, `stopped`, `stopped-person`, `warning`
 
 <!-- size-table: run-row -->
 | Part | State | Property | Value |
@@ -2838,7 +2912,7 @@ States: `default`, `running`, `waiting`, `hover`, `narrow`
 
 - A 36 px mark (radius `md`, `selected` ground; an agent's row draws its `Avatar` 28 centred in that place on no ground, `mark.avatar`, §6.30): the one avatar-tile rule, the upper-cased first grapheme of the display name in 600 (mono like the whole UI; `initialOf`, as the org switcher and the account row), for extensions and plugins too; an icon only for rows that are steps, not objects (the setup page); `tone="warn"` tints it with `warn` at 15% when the object needs attention.
 - **A plugin's icon as the mark** (maintainer decision 2026-11-08): a thing a plugin brings (a channel connection, an extension, a model provider) may take the icon its plugin declares (`plugin.json` `icon`, served only by the kernel's catalog icon routes) as its mark: `mark.image` here, `avatar: { image }` on an `ObjectCard` (§6.34), `image` on a `CellTitle` (§6.6), `mark` on an `ItemList` row (§6.33) and a `Sheet` head (§6.7), and `ObjectMark` (24 / 28 / 40) on its own (a page head's `avatar`). The icon is an `<img alt="">` (decorative: the name is written beside it), contained on the same `selected` tile (24 in the 36 and 40 tiles, 20 in the 28 tile, 16 in the 24 tile), never cropped, never inlined. Without an icon, or when it fails to load, the tile draws the initial as above: objects without one keep the initial. Never an icon of our own for an object (the rule above stands); the plugin's own picture is not one.
-- Text column: line 1 the name (600; a link when `href`; `mono` for package names) and chips (`small`, 1px `line` border, radius `sm`; `tone="warn"` draws the warn tint without a border). A chip is a scope or an attention mark (组织共享, 敏感); plain facts such as a version or 必需 are meta text, never a chip; line 2 the description in `muted` prose, one line with an ellipsis; line 3 the meta in `faint`, `small`, one line.
+- Text column: line 1 the name (600; a link when `href`; `mono` for package names) and chips (`small`, 1px `line` border, radius `sm`; `tone="warn"` draws the warn tint without a border). A chip is a scope or an attention mark (组织共享, 敏感); plain facts such as a version or 必需 are meta text, never a chip; line 2 the description in `muted` prose, one line with an ellipsis; line 3 the meta in `faint`, `small`, one line; a meta list part `{ person }` (a requester) is a `PersonName` 16 (§6.50) inline in that line, joined with 「 · 」, vertically centred (state `person`).
 - At the right: a state label (`state`: `ok` / `warn` / `fail` colored, `muted` in `faint`), a short `trailing` text in `faint`, one row action (`action`: a `default` dense button or link, never `primary`: the page head holds the one primary of the screen, and a row that needs attention says so in its `state`) and the `more-horizontal` overflow menu (`menu`). Below 600 (phones, maintainer decision 2026-11-09) the row is compact, so a plugin takes the lines it needs and no more:
   - line 1 is the mark, the name and its chips, and the `more-horizontal` menu at the right (the mark overhangs the line into the indent of the lines below, as the text column sits beside it above 600);
   - the description and the meta line follow under the name; the **state closes the meta line** (`1 个扩展 · 平台 · 组织自选 · 已启用`) in its tone (`ok` / `warn` / `fail`; `muted` in `faint`), with no line of its own; a row with a state and no meta draws a meta line for it on phones only; a long meta line takes the ellipsis, never the state;
@@ -2847,6 +2921,28 @@ States: `default`, `running`, `waiting`, `hover`, `narrow`
   - the DOM keeps the order name link, action, menu (the tab order); the state is read from the meta's `data-state` / `data-state-tone` (generated content), so the label stays one node, and the row's own state label is hidden on phones. The skeleton rows keep their shape.
 - **Pending**: while an action of the row runs (a switch, a preview call), the row's buttons are disabled until it settles; the running one shows the Button's loading state (`action.loading`: the `spinner` before its label, `aria-busy`), or, when the running action came from the menu (`busy`), the menu button draws the `spinner` in place of `more-horizontal` (`aria-busy`; a lone menu item drawn as a button carries the loading state itself). Never a click that seems to do nothing.
 - **Loading** (`ObjectList.loading`, `true` for 3 rows or a row count; `ListPage.loading` on a list page): the panel draws skeleton rows in the row's shape instead of its rows (the same `.cb-object-row` box, 64 px at least, with its divider and first-row rule): a `mark` box (36 × 36, radius `md`, §6.29) and a name line and a description line in the text column, `body` bars 30% and 55% wide in the one bar look (§6.29), and the list is `aria-busy` with a hidden "正在加载 / Loading" (none of its own inside a skeleton group, which announces once). It wins over `empty`, so no empty state flashes before the first answer; a `records` ListPage draws the DataTable's loading state in the caller's table shape, else a Skeleton (§6.29), instead.
+
+- **Touch** (`TOUCH_QUERY`, §2.5): a row is `touch.row` (52) high, `touch.row.roomy` (56) when it has a second line (description or meta), with no `line-soft` divider; the list draws no `line-card` border, radius or ground (the rows sit straight on the page: one box is enough, §1). Outside the touch query the rules above stand.
+
+<!-- states: object-list -->
+States: `person`
+
+<!-- size-table: object-list -->
+| Part | State | Property | Value |
+|---|---|---|---|
+| object-row | person | min-height | 64 |
+| object-row | person | padding-top | space.3 |
+| object-row | person | padding-left | space.4 |
+| object-row | person | column-gap | space.3 |
+| object-row-mark | person | width | 36 |
+| object-row-mark | person | height | 36 |
+| object-row-mark | person | border-top-left-radius | radius.md |
+| object-row-mark | person | background-color | color.selected |
+| object-row-person avatar[data-size=16] | person | width | 16 |
+| object-row-person avatar[data-size=16] | person | height | 16 |
+| object-row-person avatar[data-shape=circle] | person | border-top-left-radius | 50% |
+| object-row-person person-name[data-size=16] | person | column-gap | space.1 |
+| object-row-person person-name-text | person | font-size | type.small |
 
 ### 6.18 EmptyState
 
@@ -3112,17 +3208,18 @@ States: `text`, `box`, `group`
 
 ### 6.30 Avatar and AvatarPicker
 
-An agent's picture, everywhere an agent appears (the new conversation page, the agent picker, the agent list rows, the agent page head, the conversation title bar, the sidebar group titles; agent profile design §2.3).
+An agent's picture (a person's, as a circle, below), everywhere an agent appears (the new conversation page, the agent picker, the agent list rows, the agent page head, the conversation title bar, the sidebar group titles; agent profile design §2.3).
 
 - `Avatar({ value, name, size })`, `size` 16, 24, 28, 40 or 64, a square of that size. `value` is one of:
   - `{ kind: "preset", id }`: one of the ten pixel animals (`AVATAR_PRESETS`): 水豚 / Capybara, 黑熊 / Black bear, 熊猫 / Panda, 大象 / Elephant, 狐狸 / Fox, 猫头鹰 / Owl, 企鹅 / Penguin, 兔子 / Rabbit, 乌龟 / Turtle, 鲸 / Whale (ids `capybara`, `black-bear`, `panda`, `elephant`, `fox`, `owl`, `penguin`, `rabbit`, `turtle`, `whale`). Each is a 12×12 bitmap drawn like the Logo (§3: solid squares, `shape-rendering: crispEdges`, no outline, no anti-aliasing), one SVG path per palette color, on its ground color. The palette values and the ground are token names (`avatar-*`, and `accent` for the capybara, §2.1), so no color literal is involved. The pixel unit is the whole number nearest to `size / 12` (16: 1, 24: 2, 28: 2, 40: 3, 64: 5), the drawing centred in the square; every size holds the whole drawing, nothing is clipped.
   - `{ kind: "image", src }`: the uploaded image, covering the square; when it fails to load, the initial.
   - `null`: the initial square, the avatar tile rule of §6.17: the first grapheme of `name` (`initialOf`), 600, `ink` on `selected`; `micro` at 16, `small` at 24 and 28, the h2 size at 40, the h1 size at 64.
-  - Radius `sm`, `md` at 64. The avatar is decorative (`aria-hidden`): the name is always written next to it.
+  - **A person** (`shape="circle"`, default `"square"`; `data-shape` on the avatar): a circle (radius 50%) for an account, everywhere a person appears (§6.50 PersonName, the sidebar's account row at 24, the Me page's at 40, the profile page at 64). It takes no preset (a preset value draws the initial instead); an image covers the circle, and `null` or a failed image draws the initial, `muted` on `selected` (an agent's initial stays `ink`), at the same sizes. Agents stay square, people round, so a row mixing both reads at once.
+  - Radius `sm`, `md` at 64 (a circle: 50% at every size). The avatar is decorative (`aria-hidden`): the name is always written next to it.
 - `AvatarPicker({ value, onChange, onUpload?, uploadOffReason?, label?, disabled? })` (`disabled`: every tile disabled while the owner saves, the value still shown): the ten presets as one radio group (named `label`, default "头像" / "Avatar"; each radio named by its preset's name), 48 px tiles (a 40 avatar, 3 px padding, a 1 px border, radius `md`) `space.2` apart and wrapping, then an upload tile (`upload` icon, "上传图片" / "Upload image"; `line` dashed border) that opens a file dialog for png, jpg or webp and passes the file to `onUpload` (cropping and the 2 MB limit are the caller's). A checked tile is neutral (§2.3): `selected` ground and a `line-strong` border; hover is the `hover` ground; keyboard focus the accent ring. When `value` is an image, the upload tile shows it and is the checked one; if that image fails to load, the tile shows the `upload` icon again. Without `onUpload` the upload tile is disabled (`disabled` icon color) and `uploadOffReason` (default "这里不能上传图片。" / "Uploading is not available here.") is written under the tiles in `small` `muted`, and describes the tile; presets still work.
 
 <!-- states: avatar -->
-States: `presets`, `sizes`, `initial`, `title-bar`, `sidebar-row`, `list-row`, `picker`, `picker-upload-off`
+States: `presets`, `sizes`, `initial`, `person`, `title-bar`, `sidebar-row`, `list-row`, `picker`, `picker-upload-off`
 
 <!-- size-table: avatar -->
 | Part | State | Property | Value |
@@ -3153,6 +3250,14 @@ States: `presets`, `sizes`, `initial`, `title-bar`, `sidebar-row`, `list-row`, `
 | avatar[data-size=24] | initial | font-size | type.small |
 | avatar[data-size=28] | initial | font-size | type.small |
 | avatar[data-size=40] | initial | font-size | type.h2 |
+| avatar[data-shape=circle] | person | width | 24 |
+| avatar[data-shape=circle] | person | border-top-left-radius | 50% |
+| avatar[data-shape=circle] | person | background-color | color.selected |
+| avatar[data-shape=circle] | person | color | color.muted |
+| avatar[data-shape=circle][data-size=40] | person | width | 40 |
+| avatar[data-shape=circle][data-size=40] | person | font-size | type.h2 |
+| avatar[data-shape=circle][data-size=64] | person | width | 64 |
+| avatar[data-shape=circle][data-size=64] | person | border-top-left-radius | 50% |
 | avatar | title-bar | width | 16 |
 | avatar | title-bar | height | 16 |
 | group-label avatar | sidebar-row | width | 16 |
@@ -3238,6 +3343,8 @@ States: `guide`, `flush`, `divided`
 - **Inset**: `card` (default) inside a padded box (a Card body, a form card that holds other fields, a Sheet): the rows reach the box's padding (no padding of their own at the sides; item rows `space.3` above and below, the first and last `space.2` so they meet the box's padding). `flush`: the list alone in a flush box (a `flush` FormSection): plain rows padded `space.2` `space.4`, item rows `space.4` on every side, so the hairlines run to the card's edges, as a SwitchList's do (§6.3).
 - **A review row** (PermissionReview): one item row per category, the category as the title, the 「敏感」 `Badge` as a mark, its reasons as meta lines, its entries as `small` `muted` lines in the body; a danger block (destructive migration statements) is a row whose meta is a `warn` line with the `circle-alert` icon (`Text variant="small" tone="warn" icon="circle-alert"`) and whose body is the code (a CodeBlock, borderless inside the box).
 
+- **Touch** (`TOUCH_QUERY`, §2.5): a row is `touch.row` (52) high, `touch.row.roomy` (56) with a meta line, with no `line-soft` divider. Outside the touch query the rules above stand.
+
 <!-- states: item-list -->
 States: `rows`, `fields`, `review`
 
@@ -3267,6 +3374,7 @@ States: `rows`, `fields`, `review`
 `ObjectCard({ avatar?, title, href?, description?, meta?, state?, primary?, menu?, oneButton?, id? })`, or `{ loading: true }`, is one `li` and the one box (§1): the `panel` ground, a 1px `line-card` border, radius `md`, padding `space.4`, its parts `space.3` apart in a column. Nothing inside it is boxed.
 
 - **Head** (40 high, gap `space.3`): the avatar, an agent's `Avatar` at 40 (§6.30; `null` or none draws the initial square of the title), `{ icon }` for an object without a picture (its 16 px icon on a 40 px `selected` tile, radius `sm`), or `{ image }` for a thing a plugin brings (a channel connection: its plugin's icon, 24 and contained, on that tile; the title's initial in the h2 size without one or when it fails to load, §6.17), decorative (`aria-hidden`); then the name, `body` 600 `ink`, one line with an ellipsis; when it is cut off, the full text is its `title` (measured after layout and on resize: a name that fits has no tooltip); then, optionally, the object's `state` at the head's right (a mono `small` label: `ok` / `warn` / `fail` in their colour, `muted` in `faint`, as ObjectRow's, §6.17; it sits beside the link, never inside it: the channels page's 运行中 / 出错 / 已停用).
+- **Person in the meta** (state `person`; maintainer review of the account profile plan, 2026-11-20): a meta list part `{ person: { name, avatarUrl } }` is a `PersonName` 16 (§6.50) inline in the meta line, joined with 「 · 」 like the text parts, vertically centred; an agent's owner is drawn this way (the viewer's own card reads "Me" with their avatar). The line keeps its single line and ellipsis.
 - **Description** (optional): prose, `prose-small`, `muted`, clamped to two lines (`-webkit-line-clamp: 2`); when it is cut off, the full text is its `title`. A card without one draws no line and no gap; the grid stretches the cards of a row to one height and the foot keeps to the bottom.
 - **Foot** (at least `control.dense`, at the card's bottom, gap `space.2`): the meta, one mono `small` `muted` line with an ellipsis (a list joins its parts with 「 · 」, a `warn` part in `warn`, a `fail` part in `fail` (a danger mark, §2.4: a state that removes a protection); an agent: owner · 可见范围, a template: source · version, ruling P4-15); then the primary (`primary`, a `dense` `default` button or link: never the solid `primary` variant, which would put an accent button on every card, while the screen's one primary stays in the page head, §5.1); then the `more-horizontal` menu (`menu`, a dense icon button, §6.7: no menu of one, a lone safe item is a second button, none draws nothing); a card list that shows one button per card passes `oneButton`: beside a primary a lone safe item then stays in the ⋯ menu, a menu of one, so the card never shows two buttons; without a primary it is still the card's one button: the `/connectors` and `/account/connections` cards, maintainer decision 2026-11-09). A card may carry an `id` on its `li`, a page anchor that scrolls to it (`/account/connections#connector-<id>`). While the primary runs (`primary.loading`) it draws the Button's loading state and the card's other buttons are disabled. The primary, a lone item and the menu button keep their own names (开始会话, 更多操作) and are described by the card's name (`aria-describedby` on the name), so a screen reader hears which card they act on.
 - **One link, the whole card**: the name is the card's only link (`href`; left out for a viewer who may not open the detail, a read-only list: the name is plain text in the same look, the card has no hover and opens nothing, and has no tab stop unless it has buttons); its `::after` is stretched over the card, so a click anywhere opens the detail and the card keeps a link's behaviour (a new tab, the URL on hover, the pending mark along the card's bottom while the router navigates, §6.13). The primary, the menu and the description sit above it (`z-index`), beside the link in the markup and never inside it (valid HTML, no nested interactive elements), so pressing them never navigates. The description passes a click on to the link, so its tooltip shows and the card still opens: a plain click navigates as the link does, Ctrl / Cmd / Shift or the middle button open the detail in a new tab, and a click that ends a text selection inside the description stays a selection (a selection elsewhere on the page does not count).
@@ -3278,7 +3386,7 @@ States: `rows`, `fields`, `review`
 - **Empty** (`CardGrid.empty`): the `page` EmptyState (§6.18) instead of the grid; on a list page the template's `empty` draws it (§5.1).
 
 <!-- states: card-grid -->
-States: `default`, `long-text`, `no-description`, `loading`, `empty`, `narrow`
+States: `default`, `long-text`, `no-description`, `person`, `loading`, `empty`, `narrow`
 
 <!-- size-table: card-grid -->
 | Part | State | Property | Value |
@@ -3307,6 +3415,10 @@ States: `default`, `long-text`, `no-description`, `loading`, `empty`, `narrow`
 | object-card-head | no-description | height | 40 |
 | object-card-avatar[data-kind=icon] | no-description | background-color | color.selected |
 | object-card-avatar[data-kind=icon] | no-description | border-top-left-radius | radius.sm |
+| object-card-meta object-card-person avatar[data-size=16] | person | width | 16 |
+| object-card-meta object-card-person avatar[data-size=16] | person | height | 16 |
+| object-card-meta object-card-person avatar[data-shape=circle] | person | border-top-left-radius | 50% |
+| object-card-meta object-card-person person-name-text | person | font-size | type.small |
 | object-card | loading | padding-top | space.4 |
 | skeleton-box[data-box=block] | loading | width | 40 |
 | skeleton-box[data-box=block] | loading | height | 40 |
@@ -3455,7 +3567,7 @@ States: `default`, `group`
 
 ### 6.40 ScheduleCalendar
 
-`ScheduleCalendar({ range, days, today, now, timeZone, items, collapsed, selectedId?, onSelect, onNavigate, onRange, rangeLabel, scope?, footnote?, loading?, refreshing?, empty?, error?, notLoadedFrom?, onDay?, day? })`, `items` `{ id, day, minute, time, title, meta?, state, mark?, label }[]`, `collapsed` `{ id, day, title, summary, failed?, state, label }[]`, `state` `upcoming | running | completed | failed | skipped` (scheduled tasks calendar design §4, §6, §7, §8): the scheduled task runs of a week or a month, recorded runs and planned occurrences on one time grid. Named for its one use: no durations, all-day events or editing. Plain props: the page places every item in the viewer's zone (`day` YYYY-MM-DD, `minute` 0..1439) and writes every label; the component reads no clock and no zone of its own (§2.2): `now` (epoch ms, the page's `useNow`) and `timeZone` only place the now line.
+`ScheduleCalendar({ range, days, today, now, timeZone, items, collapsed, selectedId?, onSelect, onNavigate, onRange, rangeLabel, scope?, footnote?, loading?, refreshing?, empty?, error?, notLoadedFrom?, onDay?, day? })`, `items` `{ id, day, minute, time, title, meta?, state, mark?, label, person?: { name, avatarUrl } }[]`, `collapsed` `{ id, day, title, summary, failed?, state, label }[]`, `state` `upcoming | running | completed | failed | skipped` (scheduled tasks calendar design §4, §6, §7, §8): the scheduled task runs of a week or a month, recorded runs and planned occurrences on one time grid. Named for its one use: no durations, all-day events or editing. Plain props: the page places every item in the viewer's zone (`day` YYYY-MM-DD, `minute` 0..1439) and writes every label; the component reads no clock and no zone of its own (§2.2): `now` (epoch ms, the page's `useNow`) and `timeZone` only place the now line.
 
 - **Toolbar** (a row of `default` controls on the page ground): 今天, the `chevron-left` / `chevron-right` icon buttons (上一周 / 下一周, 上个月 / 下个月), the range label (`rangeLabel`, mono; with `refreshing` a 14 px `spinner` in `accent` beside it while the previous range stays drawn), then at the right end a `Segmented` 周 / 月 (`onRange`) and, for org admins (`scope`), a `Segmented` 只看我的 / 全组织. Under the box a `small` `muted` footnote (`footnote`: the zone, the horizon).
 - **The box**: the grid on the `panel` ground with the `line-card` hairline, radius `md`; it is the one box (§1), nothing inside it is boxed.
@@ -3467,8 +3579,10 @@ States: `default`, `group`
 - **States**: `loading` draws the toolbar for real and the grid frame with skeleton blocks (§6.29) in one busy region (`aria-busy`); `empty` (`{ text, hint?, action? }`) draws a `panel` EmptyState (§6.18) on the `panel` ground centered over the grid body, the grid still under it; `error` (`{ retry, code? }`) draws the load-failed line at the top of the box (「加载失败」 with `circle-x` in `fail`, the code `muted`, a `dense` 重试), the grid kept; days at or after `notLoadedFrom` draw no items and a `muted` 未加载 in their header (the kernel cut the range).
 - `forced-colors`: borders `CanvasText`, the failed marker, the now line and the agenda dot `Highlight`. Reduced motion: the spinner is static (§6.11).
 
+- **Creator** (state `person`): an item's `person` is its creator, an avatar-only chip at the end of the block, line, row or pop-over item: a 16 circle `Avatar` (§6.30), `flex: none`, pushed to the end by `margin-left: auto` (after the mark). The name is never drawn in the block; it goes into the block's `title` tooltip after the label ("每日简报，研究助手，11月12日 周四 09:00，已完成 · Ada Lovelace"), while `aria-label` stays the caller's `label`. A block without `person` is drawn as before.
+
 <!-- states: schedule-calendar -->
-States: `week`, `week-dense`, `month`, `agenda`, `loading`, `empty`, `failed`, `selected`
+States: `week`, `week-dense`, `month`, `agenda`, `loading`, `empty`, `failed`, `selected`, `person`
 
 <!-- size-table: schedule-calendar -->
 | Part | State | Property | Value |
@@ -3518,6 +3632,10 @@ States: `week`, `week-dense`, `month`, `agenda`, `loading`, `empty`, `failed`, `
 | schedule-calendar-error-text | failed | color | color.fail |
 | schedule-calendar-error-text | failed | font-size | type.small |
 | schedule-calendar-block[data-selected=true] | selected | border-top-color | color.line-strong |
+| schedule-calendar-block schedule-calendar-person avatar[data-size=16] | person | width | 16 |
+| schedule-calendar-block schedule-calendar-person avatar[data-size=16] | person | height | 16 |
+| schedule-calendar-block schedule-calendar-person avatar[data-shape=circle] | person | border-top-left-radius | 50% |
+| schedule-calendar-block | person | height | 24 |
 
 ### 6.41 DeviceNameplate
 
@@ -3716,7 +3834,7 @@ States: `compact-list`, `compact-detail`, `two-pane`
 `MePanel` is the body of the **Me** tab, `/me` (mobile layout spec §4.2), the compact class's home for what the sidebar holds. The shell draws it from the sidebar's data (`useNav`, the org switcher, the account); the page is the `OverviewPage` template (T1, §5.6) with the MePanel as its one body and no stat cards, the title 我 / Me (mobile layout spec §4.2). It is a page, not an overlay.
 
 - **Top to bottom**, on the page ground with 16 px gutters, groups `space.4` apart, in **no box** (§1: headings, hairlines and space):
-  1. **Account**: the initial avatar (24, round, `selected`) and the name (600), `row.roomy` high; and the **org switcher** (the sidebar's, §6.13: a 40 high block, `radius.md`, the org's initial, name over `~/<slug> · <role>`, `chevrons-up-down`), which opens the org list in a bottom sheet (§6.7). In the admin context the sidebar's **context block** (`context-block`: the `admin` shield on the accent initial, 管理后台 over 整个部署 · /admin, not a button) takes the switcher's place.
+  1. **Account**: the person's circle `Avatar` (40, §6.30: the account's image, else the initial) and the name (600), `row.roomy` high; and the **org switcher** (the sidebar's, §6.13: a 40 high block, `radius.md`, the org's initial, name over `~/<slug> · <role>`, `chevrons-up-down`), which opens the org list in a bottom sheet (§6.7). In the admin context the sidebar's **context block** (`context-block`: the `admin` shield on the accent initial, 管理后台 over 整个部署 · /admin, not a button) takes the switcher's place.
   2. **工作区 / Workspace**: the label (`group-label`: `micro` `faint`, letter-spacing 0.06em, `row.dense` high, text at its bottom) over the rows 技能, 连接器, 定时任务, 设备 (the sidebar's primary items the bottom navigation has no room for, and 设备 from its 更多), then the org's extension pages after them.
   3. **管理 / Manage** (members up, by the sidebar's 更多 audience; super admins for its last row): the same label over the rows 插件, 扩展, 渠道, 评测与运行, 组织设置, then 管理后台 (`admin`, with an outward `arrow-up-right` 14 at the end instead of the chevron, entering the admin context). This group **is the compact admin navigation** (maintainer decision 2026-11-20), with no separate admin overview page of its own. In the admin context (after 管理后台, as the sidebar's admin context, §6.13; on compact `/admin` is a **pushed** page: the top bar shows back, and the back row below leaves the context) the shell draws the same MePanel from the admin context's nav data: the 管理 group lists the admin console's pages and its extension pages in the sidebar's order, and its last row, the admin context's back row (`back-row`: 回到工作区, `arrow-left`, no trailing icon, as the sidebar's `back`), leaves it; 工作区 is not drawn there, while the 账户 group and the system status line stay (the same MePanel).
   4. **账户 / Account**: 个人设置, 语言 (the current language at the end; opens a bottom sheet), 主题 (the theme toggle at the end) and 退出登录.
@@ -3742,6 +3860,8 @@ States: `member`, `admin`, `super-admin`, `admin-context`
 | Part | State | Property | Value |
 |---|---|---|---|
 | account | member | height | row.roomy |
+| account avatar | member | width | 40 |
+| account avatar | member | border-top-left-radius | 50% |
 | org-switcher | member | height | 40 |
 | org-switcher | member | border-radius | radius.md |
 | group-label | member | height | row.dense |
@@ -3791,6 +3911,108 @@ States: `default`, `labelled`
 | icon-preview-tile[data-ground=dark] | labelled | background-color | color.preview-dark |
 | icon-preview-label | labelled | color | color.muted |
 | icon-preview-label | labelled | font-size | type.micro |
+
+### 6.50 PersonName
+
+`PersonName({ name, avatarUrl, size, secondary?, initialFrom? })` is a person (an account) in a line, a table cell, a select option or a row that leads with the person: the member lists, owners, authors, the account row's neighbours. It is one inline run that never wraps and draws no box.
+
+- **Avatar**: the circle `Avatar` (§6.30, `shape="circle"`) at `size` 16 or 24, `value` = the image of `avatarUrl` or, when it is `null` or fails to load, the initial of `name` (`muted` on `selected`). 16 in lines, cells and options; 24 in rows that lead with the person (a member row); the sidebar row, the Me page and the profile page use `Avatar` itself at 24, 40 and 64.
+- **Name**: one span, `ink`, `type.small` at 16 and `type.body` at 24, on one line with an ellipsis, the full name in `title`; the avatar and the secondary text keep their size and the name takes the cut. `space.1` (4) between the avatar and the name at 16, `space.2` (8) at 24.
+- **Secondary** (optional, `secondary`): after the name, `type.small` `muted`, never cut; the same gap as before the name. The email, the role or "you" belong here, never in the name.
+- **The viewer** (optional, `initialFrom`): where the viewer is named by a replacement word ("你" / "You", "我" / "Me") instead of their name, `name` is that word and `initialFrom` their own display name: the initial comes from `initialFrom`, so the viewer keeps their own initial (the image, when there is one, is theirs as always). Every person part that takes `{ name, avatarUrl }` (bubble author, card and row meta, HITL `who`, calendar chips) takes `initialFrom` too.
+- The run is `inline-flex` with `min-width: 0` and `max-width: 100%` so a table cell or a flex row can shrink it. No hover, focus or selected state: it is not interactive; a link or button around it owns those.
+
+<!-- states: person-name -->
+States: `sizes`, `image`, `ellipsis`, `secondary`
+
+<!-- size-table: person-name -->
+| Part | State | Property | Value |
+|---|---|---|---|
+| person-name[data-size=24] avatar[data-size=24] | sizes | width | 24 |
+| person-name[data-size=24] avatar[data-size=24] | sizes | height | 24 |
+| person-name[data-size=24] avatar[data-shape=circle] | sizes | border-top-left-radius | 50% |
+| person-name[data-size=24] avatar[data-shape=circle] | sizes | background-color | color.selected |
+| person-name[data-size=24] avatar[data-shape=circle] | sizes | color | color.muted |
+| person-name[data-size=24] person-name-text | sizes | font-size | type.body |
+| person-name[data-size=24] | sizes | column-gap | 8 |
+| person-name[data-size=16] avatar[data-size=16] | sizes | width | 16 |
+| person-name[data-size=16] avatar[data-size=16] | sizes | height | 16 |
+| person-name[data-size=16] person-name-text | sizes | font-size | type.small |
+| person-name[data-size=16] | sizes | column-gap | 4 |
+| person-name[data-size=24] avatar[data-size=24] | image | width | 24 |
+| person-name[data-size=24] avatar[data-kind=image] | image | border-top-left-radius | 50% |
+| person-name-text | ellipsis | height | 20 |
+| person-name[data-size=24] person-name-secondary | secondary | font-size | type.small |
+| person-name[data-size=24] person-name-secondary | secondary | color | color.muted |
+
+### 6.51 FloatingIconButton
+
+`FloatingIconButton({ icon, label, badge?, onClick?, href? })` is a round button that floats over the page: the chat-first compact shell's menu button (top left, the badge is the pending inbox count) and the back button of a pushed page (mobile layout spec §4.1; touch canvas boards 首页, 会话中, 收件箱).
+
+- **Size**: `control.prominent` (32) round on a fine pointer, `touch.float` (48) under `TOUCH_QUERY` (§2.5); the icon 20, `touch.icon.float` (24) on touch, `ink`, one stroke weight.
+- **Surface**: the `float-ground` translucent ground (no frosted glass, §1), a 1px `float-line` hairline, `shadow-float-touch`, `radius.pill`. It is the only box (§1): nothing is drawn inside it but the icon and the badge.
+- **Badge** (optional `badge`): `badgeText` of the count: nothing for 0, `99+` above 99, `n+` when truncated. Drawn on the top-right corner (the corner offset -2), 18 high, at least 18 wide, `micro`, `ink` on `selected` with a 2px ring in `bg`. The badge is decoration: the count belongs in `label` ("Menu, 3 pending").
+- **Link**: with `href` it is a link (the design `link`), drawn the same.
+- **States**: `default`; `badge`; press takes the `hover` ground; keyboard focus is a 2px `accent` outline 2px off the edge.
+
+<!-- states: floating-button -->
+States: `default`, `badge`
+
+<!-- size-table: floating-button -->
+| Part | State | Property | Value |
+|---|---|---|---|
+| float-btn | default | width | control.prominent |
+| float-btn | default | height | control.prominent |
+| float-btn | default | border-top-left-radius | radius.pill |
+| float-btn | badge | width | control.prominent |
+| float-badge | badge | min-width | 18 |
+| float-badge | badge | height | 18 |
+
+### 6.52 Drawer
+
+`Drawer({ open, onOpenChange, label, children })` and `DrawerLevel({ title, backLabel, onBack, children })` are the chat-first compact shell's menu (mobile layout spec §4.2; touch canvas board 抽屉): a panel from the start edge over a scrim, holding search, the section entries, the recent conversations and the account (the shell composes them from `NavRow`, §6.53).
+
+- **Panel**: `layout.drawer` (320, at most 86% of the window) wide, full height (the safe-area insets pad it), on the `panel` ground with a 1px `line-strong` end line and `shadow-float-touch`; it scrolls vertically inside. A `role="dialog"` with `aria-modal="true"` and `aria-label` = `label`.
+- **Scrim**: the `scrim` ground over the page, as the bottom sheet's (§6.7).
+- **Opening**: the menu button (§6.51) is the only way in: while closed the drawer draws nothing and no element on the screen edge listens for a swipe (the edge belongs to the system back gesture). The panel enters over `motion.overlay`, none under reduced motion. Focus moves to the first row.
+- **Closing**: Escape, the scrim, a pick (a link, or a `NavRow` that goes somewhere; a row with a chevron that opens a level is not a pick) and a drag along x toward the start edge past 40% of the panel's width (or above the velocity threshold; the helper of §6.7), anywhere on the panel; a short drag springs back; under `prefers-reduced-motion: reduce` the drag then snaps. Focus returns to the menu button.
+- **System back** (mobile app plan Decision 25): on a compact touch window opening pushes one history entry carrying a marker in `history.state`, a `popstate` to an entry without the marker closes it, and every other close pops the entry with `history.back()` once. A bottom sheet opened over the drawer holds its own entry: back closes the sheet, then the drawer. Medium, expanded and fine-pointer windows push nothing.
+- **Levels** (plan Decision 18): `DrawerLevel` replaces the list inside the same panel (技能、连接器、设备…): a back row (the arrow `arrow-left` and the level's `title`, accessible name `backLabel`) as a `NavRow`-sized row on top, then the level's rows. The drawer stays open; back returns to the list and focus lands on the back row on entry.
+
+<!-- states: drawer -->
+States: `open`, `level`
+
+<!-- size-table: drawer -->
+| Part | State | Property | Value |
+|---|---|---|---|
+| drawer | open | width | layout.drawer |
+| drawer | open | background-color | color.panel |
+| nav-row | open | min-height | row.default |
+| drawer | level | width | layout.drawer |
+| drawer-back | level | min-height | row.default |
+
+### 6.53 NavRow
+
+`NavRow({ icon?, label, href?, onSelect?, badge?, current?, trailing? })` is a large navigation row: the drawer's entries (搜索, 收件箱, 智能体, 定时任务, 技能、连接器、设备…, an inbox row's count) and the level rows (touch canvas boards 抽屉, 收件箱).
+
+- **Row**: a link (with `href`, drawn through the design `link`) or a button; the icon (20, `touch.icon` 22 on touch, `muted`), `space.3` apart from the label (`ink`, one line, ellipsis), then the optional count and an optional `chevron-right` (`trailing="chevron"`). `row.default` high (44) on a fine pointer, `touch.row` (52) under `TOUCH_QUERY` (§2.5); padded `space.4` at the sides. No divider and no box: rows sit on the drawer's own surface (§1).
+- **Count** (`badge`): `badgeText`, `micro`, `ink` on `selected`, `radius.pill`, at least 20 wide; the row's neighbours do not move.
+- **Current** (`current`): `aria-current="page"`, the `selected` ground and weight 500.
+- **States**: `default`; `current`; `badge`; press and hover take the `hover` ground; focus is the 1px `accent` inset outline of a nav item (§2.5).
+- **Pick**: a link or button row that goes somewhere carries `data-drawer-pick`, which closes the drawer (§6.52); a button row with a chevron opens a level and carries none.
+
+<!-- states: nav-row -->
+States: `default`, `current`, `badge`
+
+<!-- size-table: nav-row -->
+| Part | State | Property | Value |
+|---|---|---|---|
+| nav-row | default | min-height | row.default |
+| nav-row | default | color | color.ink |
+| nav-row[aria-current=page] | current | background-color | color.selected |
+| nav-row[aria-current=page] | current | font-weight | 500 |
+| navrow-badge | badge | min-width | 20 |
+| navrow-badge | badge | font-size | type.micro |
 
 ## 7. Copy and internationalization
 - All UI text goes through next-intl, in both Chinese and English. Text shown to the model (prompts, tool descriptions) is always English, and the prompt field in a form must say so.
@@ -3863,7 +4085,7 @@ States: `state-a`, `state-b`
 - **Part** is a `data-part` value inside the block, optionally narrowed by attribute selectors (`button[data-variant=primary]`, `segment[aria-checked=true]`) and optionally a descendant of another part (`row[aria-current=true] cell`); `root` means the block element itself. The first matching element in document order is measured. Design components carry these `data-part` attributes.
 - **State** names the block `<component>-<state>`; it must be in the component's state list.
 - **Property** is a CSS property; `width` and `height` are measured from the element's box, everything else from its computed style.
-- **Value** is a `tokens.json` path or a literal number in px. Paths: sizes without the `size.` prefix (`row.default`, `control.dense`, `space.3`, `radius.sm`, `layout.sidebar`, `pad.default.x` / `pad.default.y`); `type.<name>` is the size and `type.<name>.line` the line height; colors are `color.<token>` and are resolved for each theme.
+- **Value** is a `tokens.json` path or a literal number in px (or a percentage such as `50%`, a circle's radius, measured as its number). Paths: sizes without the `size.` prefix (`row.default`, `control.dense`, `space.3`, `radius.sm`, `layout.sidebar`, `pad.default.x` / `pad.default.y`); `type.<name>` is the size and `type.<name>.line` the line height; colors are `color.<token>` and are resolved for each theme.
 - In `/dev/ui` a block is a `ReferenceBlock` (design package; `apps/web` wraps it as `RefBlock`) with the reference block's id and box, on the route `/dev/ui/reference/<component>`. A compact-class block that the reference draws as a whole phone screen (the reference's `r-screen`: the top bar, the body, the bottom navigation or a sticky row) puts its component in a `ReferenceScreen` (`top`, `bottom`, `pad`) inside the block; it stands in for the shell (a `ListDetail` inside draws no back bar of its own) and is for the development catalog only, never a page.
 - Pseudo-states in `/dev/ui` blocks (`*-hover`, `*-focus`) are forced by the test with the browser's DevTools protocol on the elements the block names; forced elements get `data-ref-forced="true"`, which size-table parts can select.
 

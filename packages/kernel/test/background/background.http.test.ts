@@ -217,6 +217,7 @@ interface View {
   id: string;
   conversationId: string;
   subagentId: string | null;
+  trigger: { id: string; name: string; avatarUrl: string | null } | null;
   status: string;
   stopping: boolean;
   description: string;
@@ -254,6 +255,8 @@ describe("background task routes", () => {
       finishedAt: null,
     });
     expect(tasks[1]?.subagentId).toBeNull();
+    // the person whose run started it, next to nothing the log keeps
+    expect(tasks[0]?.trigger).toEqual({ id: ownerId, name: "O", avatarUrl: null });
     expect(new Date(tasks[0]?.startedAt as string).getTime()).toBe(sub.startedAt.getTime());
     // the child's own page lists its task as its own
     const own2 = await listOf(kid);

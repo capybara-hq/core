@@ -37,6 +37,8 @@ export const AdminExtensionConfigBody = z.object({
 });
 
 export const ADMIN_EXTENSION_ROUTES: readonly RouteSchemas[] = [
+  // the extension package is the raw body (no schema)
+  { route: "POST /api/v1/admin/extensions/packages/file" },
   { route: "GET /api/v1/admin/extensions" },
   { route: "GET /api/v1/admin/extensions/:name", params: AdminExtensionNamePathParams },
   { route: "POST /api/v1/admin/extensions/:name/enable", params: AdminExtensionNamePathParams },

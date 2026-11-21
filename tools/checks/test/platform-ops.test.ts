@@ -54,6 +54,12 @@ describe("checkPlatformOps", () => {
         "platform-op-orphan",
         "platform-op-session-only",
         "platform-op-session-only",
+        "platform-op-upload",
+        "platform-op-upload",
+        "platform-op-upload",
+        "platform-op-upload",
+        "platform-op-upload",
+        ...Array<string>(12).fill("platform-op-handoff"),
       ].sort(),
     );
     const has = (rule: string, file: string, line: number, text: string) =>
@@ -108,6 +114,35 @@ describe("checkPlatformOps", () => {
       "POST /api/v1/orgs/:orgId/sessions/mirrored",
     );
     has("platform-op-session-only", exc, lineOf(exc, "sessions/internal"), "human-only or secret");
+    // "upload" is no reason; the attachment routes are internal and name a person's file
+    has("platform-op-upload", exc, lineOf(exc, "multipart bytes"), "skills/d");
+    has("platform-op-upload", exc, lineOf(exc, 'category: "upload"'), "skills/e");
+    has(
+      "platform-op-upload",
+      exc,
+      lineOf(exc, "presigned upload"),
+      "a person's file into a conversation",
+    );
+    has("platform-op-upload", exc, lineOf(exc, 'skills/g"') - 1, "skills/g");
+    has("platform-op-upload", exc, lineOf(exc, 'skills/uploads"') - 1, "skills/uploads");
+    has("platform-op-handoff", ops, lineOf(ops, 'id: "skills.inbox"'), "handoff");
+    has("platform-op-handoff", ops, lineOf(ops, 'id: "skills.blank"'), "non-empty");
+    has("platform-op-handoff", ops, lineOf(ops, 'id: "skills.stale"'), "stale");
+    // a person confirming on the web needs the link card
+    has("platform-op-handoff", ops, lineOf(ops, 'id: "skills.import"'), "handoff");
+    // the card named loosely, then a web place; the wider web places and decision words
+    for (const id of [
+      "skills.card-then-web",
+      "skills.admin-ui",
+      "skills.web-ui",
+      "skills.browser",
+      "skills.screen",
+      "skills.path",
+      "skills.accept",
+      "skills.sign-off",
+    ]) {
+      has("platform-op-handoff", ops, lineOf(ops, `id: "${id}"`), "handoff");
+    }
   });
 
   it("holds on the real kernel tree", () => {

@@ -17,7 +17,16 @@ export {
   type DragState,
   useDragDismiss,
 } from "./drag";
+export {
+  Drawer,
+  DrawerFrame,
+  type DrawerFrameProps,
+  DrawerLevel,
+  type DrawerLevelProps,
+  type DrawerProps,
+} from "./drawer";
 export { Menu, type MenuItem, menuActions, menuLone, Popover } from "./menus";
 export { type CommandGroup, type CommandItem, CommandPalette, commandScore } from "./palette";
 export { Sheet, type SheetProps } from "./sheet";
 export { type ToastApi, ToastProvider, useToast } from "./toast";
+export { OVERLAY_HISTORY_MARKER, useOverlayHistory } from "./use-overlay-history";

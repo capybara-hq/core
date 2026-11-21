@@ -415,7 +415,7 @@ function AgentLevel({
   const child = useConversation(orgId, id);
   const keys = useMemo(() => toolKeysOf(child.events), [child.events]);
   const info = useToolInfo(orgId, id, keys);
-  const whoWaits = useWhoWaits(orgId, child.events);
+  const whoWaits = useWhoWaits(child.people);
   const base = useMemo(
     () =>
       buildEventTimeline(child.events, info, locale, {
@@ -552,6 +552,7 @@ function AgentLevel({
             conversationId={id}
             entries={entries}
             info={info}
+            people={child.people}
             reasoningOf={reasoningOf}
             onOpenAgent={(sub, toTranscript) =>
               onNavigate({ kind: "agents", id: sub, ...(toTranscript ? { transcript: true } : {}) })

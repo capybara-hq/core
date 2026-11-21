@@ -18,6 +18,7 @@ import { Callout } from "../display/callout";
 import { Icon } from "../icons/icon";
 import type { IconName } from "../icons/paths";
 import { BoxScope } from "../layout/box";
+import { useHaptics } from "../native";
 import { useDesignT } from "../provider";
 import { isTouchPointer } from "../shell/pointer";
 import { ComposerOptions } from "./composer-options";
@@ -522,6 +523,8 @@ export function ComposerBox({
     // a tap on a touch device never pops the keyboard
     if (!isTouchPointer()) inner.current?.focus();
   };
+  // a send plays the `light` haptic (a native shell's)
+  const haptics = useHaptics();
   const sendAnyway = onSend ?? (send.mode === "send" ? send.onClick : undefined);
   const kinds = TOKEN_KINDS.filter((k) => spans.some((s) => s.kind === k));
   const tokenWarning = warning ? (
@@ -541,8 +544,10 @@ export function ComposerBox({
             label: t("composer.tokenWarning.sendAnyway"),
             onSelect: () => {
               setWarn(false);
-              if (sendAnyway) sendAnyway();
-              else refocusText();
+              if (sendAnyway) {
+                haptics("light");
+                sendAnyway();
+              } else refocusText();
             },
           },
         ]}
@@ -664,7 +669,9 @@ export function ComposerBox({
             disabled={send.disabled || send.busy}
             aria-busy={send.busy ? true : undefined}
             onClick={() => {
-              if (gate()) send.onClick();
+              if (!gate()) return;
+              haptics("light");
+              send.onClick();
             }}
           />
         )}

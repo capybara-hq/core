@@ -1,5 +1,39 @@
 # @capybara-hq/plugin-sdk
 
+## 0.1.0-rc.45
+
+### Minor Changes
+
+- dfea642: Add the `nav@1` shell capability (the native strip's sections, current section and menu button:
+  `NavCapabilityV1`, `NavStateV1`, `NAV_SECTION_ORDER`) and `profiles@1` (`ProfilesCapabilityV1`,
+  the native profile switcher).
+- 614d852: Touch tokens and the code font role. One `@media` block in the generated tokens carries the touch
+  overrides (system font, larger type, 44 px controls and rows, rounder corners) for a coarse
+  pointer; `--cb-font-code` keeps Sarasa on code, commands, paths, versions and times. New tokens:
+  `float-ground`, `float-line`, `shadow-float-touch`, `radius-pill`, `layout-drawer` and the
+  `touch-*` sizes. The new colors and the shadow join the SDK's overridable theme tokens.
+
+## 0.1.0-rc.44
+
+### Minor Changes
+
+- e21de78: Shell capability types for the mobile app: `haptics@1`, `share@1`, `menu@1`, `chrome@1`
+  (with an optional `ready`), the `MOBILE_SHELL_LIMITS` and `MENU_ITEM_ID`.
+
+### Patch Changes
+
+- 072362d: Desktop onboarding: `GET /api/v1/meta` lists `appRedirectUris` (`auth.appRedirectUris` while app
+  sign-in is available, else empty), so the desktop app can say before opening the browser that the
+  platform does not allow it; the app token exchange answers `auth.account_disabled` (403) for an
+  account that is not active instead of `app_auth.code_invalid`. `chrome@1.setAppearance` also
+  carries the page's seven main color tokens (only when all are plain colors) and `singleScheme`
+  under a single-scheme UI theme; the SDK gains `ChromeCapabilityV1`, `ShellChromeTokens` and
+  `SHELL_CAPABILITY_KEYS.chrome`.
+- 8f684ad: A local device's hello names its program run (`programRunId`, random per process). When the machine
+  reconnects as a new run before answering a request, the kernel ends that request's wait at once with
+  a tool error saying capybara-device restarted and the result is lost, instead of waiting out the
+  command's whole timeout plus the reconnect grace.
+
 ## 0.1.0-rc.43
 
 ### Patch Changes

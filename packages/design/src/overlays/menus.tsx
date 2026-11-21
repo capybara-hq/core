@@ -1,10 +1,12 @@
 import * as RM from "@radix-ui/react-dropdown-menu";
 import * as RP from "@radix-ui/react-popover";
-import { cloneElement, type ReactElement, type ReactNode } from "react";
+import { cloneElement, type ReactElement, type ReactNode, useState } from "react";
 import { Icon } from "../icons/icon";
 import type { IconName } from "../icons/paths";
 import { BoxScope } from "../layout/box";
+import { isPlainMenu, useNative, useNativeMenuTrigger } from "../native";
 import { useDesignLink } from "../provider";
+import { useSizeClass } from "../shell/size-class";
 
 export type MenuItem =
   | ({
@@ -121,13 +123,42 @@ export function Menu({
   /** Default true; false leaves the page usable while it is open (drawn open in the catalog). */
   modal?: boolean;
 }) {
+  const [own, setOwn] = useState(false);
+  const isOpen = open ?? own;
+  const setOpen = (o: boolean) => {
+    if (open === undefined) setOwn(o);
+    onOpenChange?.(o);
+  };
+  // On the compact class inside a shell with `menu@1`, a plain menu is the platform's action
+  // sheet (mobile app spec §6.3), anchored to the trigger; a failure opens this one instead.
+  const native = useNative();
+  const compact = useSizeClass() === "compact";
+  const nativeMenu = native?.menu && compact && isPlainMenu(items) ? native.menu : undefined;
+  const nativeTrigger = useNativeMenuTrigger(
+    nativeMenu,
+    () => ({
+      title: label,
+      actions: menuOrder(items).flatMap((item, i) =>
+        item === "separator"
+          ? []
+          : [
+              {
+                id: `item-${i}`,
+                label: item.label,
+                ...(item.danger ? { destructive: true } : {}),
+                ...(item.disabled ? { disabled: true } : {}),
+                run: () => item.onSelect?.(),
+              },
+            ],
+      ),
+    }),
+    () => setOpen(true),
+  );
   return (
-    <RM.Root
-      {...(modal !== undefined ? { modal } : {})}
-      {...(open !== undefined ? { open } : {})}
-      {...(onOpenChange ? { onOpenChange } : {})}
-    >
-      <RM.Trigger asChild>{cloneElement(trigger, { "data-cb-trigger": "menu" })}</RM.Trigger>
+    <RM.Root {...(modal !== undefined ? { modal } : {})} open={isOpen} onOpenChange={setOpen}>
+      <RM.Trigger asChild {...nativeTrigger}>
+        {cloneElement(trigger, { "data-cb-trigger": "menu" })}
+      </RM.Trigger>
       <RM.Portal>
         <RM.Content
           className="cb-menu"

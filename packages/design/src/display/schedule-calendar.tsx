@@ -14,7 +14,9 @@ import type { IconName } from "../icons/paths";
 import { Menu, type MenuItem, Popover } from "../overlays/menus";
 import { useDesignT } from "../provider";
 import { SIZES } from "../tokens";
+import { Avatar } from "./avatar";
 import { EmptyState } from "./empty-state";
+import type { PersonLike } from "./person-name";
 import { SkeletonBox, SkeletonGroup, SkeletonText } from "./skeleton";
 import { Segmented } from "./tabs";
 
@@ -39,6 +41,11 @@ export type ScheduleCalendarItem = {
   mark?: string;
   /** The full accessible name (「每日简报，研究助手，11月12日 周四 09:00，已完成」). */
   label: string;
+  /**
+   * The task's creator (spec §6.40): a 16 circle avatar at the end of the block, the name only in
+   * the block's tooltip.
+   */
+  person?: PersonLike;
 };
 
 /** A dense task's day, one chip instead of its blocks (scheduled tasks calendar design §5.4). */
@@ -584,7 +591,7 @@ function WeekGrid(props: ScheduleCalendarProps) {
         data-selected={it.id === selectedId ? "true" : undefined}
         aria-current={it.id === selectedId ? "true" : undefined}
         aria-label={it.label}
-        title={it.label}
+        title={itemTitle(it)}
         style={pos}
         onClick={() => onSelect(it.id)}
         {...roving.stop(`i:${it.id}`)}
@@ -769,6 +776,10 @@ function EmptyOver({
   );
 }
 
+/** The tooltip of an item's block: its label, then the creator's name when it has a person. */
+const itemTitle = (it: ScheduleCalendarItem) =>
+  it.person ? `${it.label} · ${it.person.name}` : it.label;
+
 function ItemLine({ item }: { item: ScheduleCalendarItem }) {
   return (
     <>
@@ -780,6 +791,16 @@ function ItemLine({ item }: { item: ScheduleCalendarItem }) {
         {item.title}
       </span>
       {item.mark ? <span className="cb-scal-mark">{item.mark}</span> : null}
+      {item.person ? (
+        <span className="cb-scal-person" data-part="schedule-calendar-person">
+          <Avatar
+            shape="circle"
+            size={16}
+            name={item.person.initialFrom ?? item.person.name}
+            value={item.person.avatarUrl ? { kind: "image", src: item.person.avatarUrl } : null}
+          />
+        </span>
+      ) : null}
     </>
   );
 }
@@ -864,6 +885,7 @@ function MorePopover({
             data-selected={it.id === selectedId ? "true" : undefined}
             aria-current={it.id === selectedId ? "true" : undefined}
             aria-label={it.label}
+            {...(it.person ? { title: itemTitle(it) } : {})}
             onClick={() => choose(it.id)}
           >
             <ItemLine item={it} />
@@ -1011,6 +1033,7 @@ function MonthGrid(props: ScheduleCalendarProps) {
                   const id = l.kind === "chip" ? l.chip.id : l.item.id;
                   const state = l.kind === "chip" ? l.chip.state : l.item.state;
                   const lineLabel = l.kind === "chip" ? l.chip.label : l.item.label;
+                  const lineTitle = l.kind === "chip" ? l.chip.label : itemTitle(l.item);
                   return (
                     <button
                       key={id}
@@ -1021,7 +1044,7 @@ function MonthGrid(props: ScheduleCalendarProps) {
                       data-selected={id === selectedId ? "true" : undefined}
                       aria-current={id === selectedId ? "true" : undefined}
                       aria-label={lineLabel}
-                      title={lineLabel}
+                      title={lineTitle}
                       onClick={() => onSelect(id)}
                       {...roving.stop(`${l.kind === "chip" ? "c" : "i"}:${id}`)}
                     >
@@ -1137,6 +1160,7 @@ function Agenda(props: ScheduleCalendarProps) {
             data-selected={it.id === selectedId ? "true" : undefined}
             aria-current={it.id === selectedId ? "true" : undefined}
             aria-label={it.label}
+            {...(it.person ? { title: itemTitle(it) } : {})}
             onClick={() => onSelect(it.id)}
           >
             <ItemLine item={it} />

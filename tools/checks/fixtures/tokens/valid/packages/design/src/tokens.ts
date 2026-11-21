@@ -26,6 +26,7 @@ export const SIZES = {
   radius: { sm: 4 },
   type: { body: [13, 20] },
   layout: { sidebar: 256 },
+  touch: { hit: 44 },
 } as const;
 
 /** The page background (`bg`) per theme, for what cannot read `--cb-bg` (the PWA manifest). */

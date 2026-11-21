@@ -5,6 +5,7 @@ import { type Selectable, sql } from "kysely";
 import { EventLog } from "../conversations/event-log.js";
 import type { QuestionsTable } from "../db/kernel-schema.js";
 import { ApiError } from "../errors.js";
+import { loadPeople, type PersonRef } from "../identity/account-avatar.js";
 import { KernelConfigService } from "../infra/config/kernel-config.service.js";
 import { KernelDb } from "../infra/database/kernel-db.js";
 import { TransactionHost } from "../infra/database/transaction-host.js";
@@ -64,9 +65,10 @@ const notInitiator = () =>
   new ApiError("forbidden", "Only the user who started the run can answer this question");
 
 /** 网页读取输入请求的视图（不含插件 state：那是工具内部的续跑数据）。 */
-export type QuestionView = Omit<QuestionRecord, "state">;
-
-const toView = ({ state: _state, ...rest }: QuestionRecord): QuestionView => rest;
+export type QuestionView = Omit<QuestionRecord, "state"> & {
+  /** Who answered (next to `answeredBy`); null while open or when the account is gone. */
+  answeredByPerson: PersonRef | null;
+};
 const iso = (v: Date | string): string => new Date(v).toISOString();
 
 function toRecord(r: Selectable<QuestionsTable>): QuestionRecord {
@@ -193,7 +195,16 @@ export class QuestionsService {
       .executeTakeFirst();
     if (!row) throw notFound();
     if (row.trigger_account_id !== accountId) throw notInitiator();
-    return toView(toRecord(row));
+    return this.view(toRecord(row));
+  }
+
+  /** The web's view of a question: no plugin state, plus the answerer as a person. */
+  async view({ state: _state, ...rest }: QuestionRecord): Promise<QuestionView> {
+    const answeredByPerson =
+      rest.answeredBy === null
+        ? null
+        : ((await loadPeople(this.db.db, [rest.answeredBy])).get(rest.answeredBy) ?? null);
+    return { ...rest, answeredByPerson };
   }
 
   /** 某个调用的全部输入请求（按轮次升序）。 */

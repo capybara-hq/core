@@ -35,6 +35,8 @@ import { useAppMutation } from "../../lib/query/mutation";
 import { scheduleQuery } from "../../lib/query/schedules";
 import { useWhoWaits } from "../../lib/query/who-waits";
 import { runParts } from "../../lib/run-row";
+import { browserShare, shareOrCopy } from "../../lib/share";
+import { useShareCapability } from "../../lib/shell";
 import {
   type AgentsSummary,
   dispatchedAny,
@@ -190,6 +192,7 @@ export function useConversationPage(
   const locale = useLocale() === "zh" ? "zh" : "en";
   const session = useSession();
   const toast = useToast();
+  const shareCap = useShareCapability();
   const errorMessage = useErrorMessage();
   const signature = useStatusSignature(`/chat/${conversationId.slice(0, 8)}`);
   const conv = useConversation(orgId, conversationId);
@@ -296,7 +299,7 @@ export function useConversationPage(
     () => (subagents.views ? new Map(subagents.views.map((v) => [v.id, v])) : undefined),
     [subagents.views],
   );
-  const whoWaits = useWhoWaits(orgId, conv.events);
+  const whoWaits = useWhoWaits(conv.people);
   // the tree is a root's (a sub-agent's page, or one still loading, reads none)
   const isRoot = conv.conversation !== undefined && !conv.conversation.parentConversationId;
   const tree = useTreeLookup(orgId, conversationId, conv.events, isRoot);
@@ -434,8 +437,17 @@ export function useConversationPage(
       label: t("copyLink"),
       icon: "link",
       onSelect: () =>
-        navigator.clipboard?.writeText(window.location.href).then(
-          () => toast.success(t("copied")),
+        void shareOrCopy(
+          { url: window.location.href },
+          {
+            share: shareCap,
+            webShare: browserShare(),
+            copy: (text) => navigator.clipboard.writeText(text),
+          },
+        ).then(
+          (done) => {
+            if (done === "copied") toast.success(t("copied"));
+          },
           () => {},
         ),
     },
@@ -533,6 +545,7 @@ export function useConversationPage(
           info={info}
           reasoningOf={selection.reasoningOf}
           compaction={conv.compaction}
+          people={conv.people}
           runLinks={{
             agentOwnerId: agent?.ownerAccountId,
             // a sub-agent conversation's trajectory is gated on the parent's agent: no link

@@ -13,6 +13,7 @@ import { activeNavOf } from "../src/components/shell/nav";
 import { navigateBrowser } from "../src/lib/browser";
 import type { Me } from "../src/lib/session";
 import { resetNavigation, router } from "./support/navigation";
+import { personAvatarSrc } from "./support/person";
 import { renderRouteWithCache } from "./support/query";
 import { ME, renderPage } from "./support/render";
 import { fieldOptionLabels } from "./support/select";
@@ -85,7 +86,12 @@ describe("(app) 页面模板", () => {
       json(200, {
         members: [
           {
-            account: { id: "someone-else", displayName: "Lin", email: null },
+            account: {
+              id: "someone-else",
+              displayName: "Lin",
+              email: null,
+              avatarUrl: "/api/v1/accounts/someone-else/avatar?v=abc123",
+            },
             role: "member",
             joinedAt: "2026-10-01T00:00:00Z",
             anonymous: false,
@@ -118,7 +124,9 @@ describe("(app) 页面模板", () => {
     expect(within(card).getByText("Says it back.")).toBeTruthy();
     // owner · visibility is plain metadata, never a chip
     expect(card.querySelector(".cb-object-chip")).toBeNull();
-    expect(within(card).getByText(`Lin · ${zh.agents.scope.org}`)).toBeTruthy();
+    const meta = card.querySelector('[data-part="object-card-meta"]') as HTMLElement;
+    expect(meta.textContent).toBe(`Lin · ${zh.agents.scope.org}`);
+    expect(personAvatarSrc(meta)).toBe("/api/v1/accounts/someone-else/avatar?v=abc123");
     // 开始会话: a new conversation with the agent picked; nothing is created before the first send
     expect(within(card).getByRole("link", { name: zh.agents.chat }).getAttribute("href")).toBe(
       "/?agent=ag1",
@@ -143,8 +151,11 @@ describe("(app) 页面模板", () => {
     await screen.findByText("Alpha");
     expect(screen.getByRole("tab", { name: /Agents/ }).textContent).toContain("3");
     expect(screen.getByRole("tab", { name: /Templates/ }).textContent).toContain("0");
-    // the owner is "Me" on one's own agents
-    expect(screen.getByText(`${en.agents.ownerMe} · ${en.agents.scope.private}`)).toBeTruthy();
+    // the owner is "Me" on one's own agents, with the viewer's own initial (Grant)
+    const mine = screen.getByText("Beta").closest("li") as HTMLElement;
+    expect(mine.querySelector('[data-part="object-card-meta"]')?.textContent).toBe(
+      `G${en.agents.ownerMe} · ${en.agents.scope.private}`,
+    );
     const filter = screen.getByRole("radiogroup", { name: en.agents.filter });
     await user.click(within(filter).getByRole("radio", { name: en.agents.tabs.mine }));
     expect(screen.queryByText("Alpha")).toBeNull();
