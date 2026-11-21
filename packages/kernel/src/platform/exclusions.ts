@@ -426,16 +426,18 @@ export const PLATFORM_EXCLUSIONS: readonly {
   },
   // identity
   {
-    route: "POST /api/v1/orgs/:orgId/approvals/:approvalId/initial-password",
+    route:
+      "POST /api/v1/orgs/:orgId/conversations/:conversationId/runs/:runId/calls/:callId/initial-password",
     category: "secret",
     reason:
-      "Returns a generated initial password once, on the web, to the person who approved the account creation",
+      "Returns a generated initial password once, on the web, to the person the account creation call was made for",
   },
   {
-    route: "POST /api/v1/orgs/:orgId/approvals/:approvalId/invitation-link",
+    route:
+      "POST /api/v1/orgs/:orgId/conversations/:conversationId/runs/:runId/calls/:callId/invitation-link",
     category: "secret",
     reason:
-      "Returns an invitation link once, on the web, to the person who approved the orgs.invite call",
+      "Returns an invitation link once, on the web, to the person the orgs.invite call was made for",
   },
   { route: "POST /api/v1/auth/login", category: "human-only", reason: "Password login" },
   { route: "POST /api/v1/auth/refresh", category: "human-only", reason: "Rotates a refresh token" },

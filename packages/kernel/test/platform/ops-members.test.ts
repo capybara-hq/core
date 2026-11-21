@@ -108,11 +108,23 @@ const ofType = <T extends ConversationEvent["type"]>(evs: ConversationEvent[], t
 const call = (operation: string, params: Record<string, unknown>) =>
   `tool:Platform:${JSON.stringify({ action: "call", operation, params })}`;
 
-const reveal = (who: OrgEnv["root"], approvalId: string) =>
-  who({
-    method: "POST",
-    url: `/api/v1/orgs/${env.orgId}/approvals/${approvalId}/invitation-link`,
-  });
+/** The tool call whose invitation link is read (plan ruling R6: read by call). */
+interface CallRef {
+  conversationId: string;
+  runId: string;
+  callId: string;
+}
+
+const linkUrl = (c: CallRef) =>
+  `/api/v1/orgs/${env.orgId}/conversations/${c.conversationId}/runs/${c.runId}/calls/${c.callId}/invitation-link`;
+
+const reveal = (who: OrgEnv["root"], c: CallRef) => who({ method: "POST", url: linkUrl(c) });
+
+const refOf = (asked: Ev<"approval_requested">): CallRef => ({
+  conversationId: asked.conversationId,
+  runId: asked.runId ?? "",
+  callId: asked.payload.callId,
+});
 
 const errCode = (res: { json(): unknown }) =>
   (res.json() as { error: { code: string } }).error.code;
@@ -134,6 +146,7 @@ describe("registration", () => {
 
 describe("orgs.invite through an admin's private agent", () => {
   let approvalId: string;
+  let ref: CallRef;
   let token: string;
   let invitationId: string;
 
@@ -147,8 +160,9 @@ describe("orgs.invite through an admin's private agent", () => {
     );
     expect(asked.payload.toolKey).toBe("Platform:orgs.invite");
     approvalId = asked.payload.approvalId;
-    // nothing to show before the approval
-    expect((await reveal(env.boss, approvalId)).statusCode).toBe(404);
+    ref = refOf(asked);
+    // nothing to show before the call ran
+    expect((await reveal(env.boss, ref)).statusCode).toBe(404);
     const ok = await env.boss({
       method: "POST",
       url: `/api/v1/orgs/${env.orgId}/approvals/${approvalId}/decision`,
@@ -168,12 +182,12 @@ describe("orgs.invite through an admin's private agent", () => {
     expect(result?.content).not.toContain("cap_inv_");
     invitationId = out.invitation.id;
 
-    // the owner, who did not approve the call, gets nothing
-    const other = await reveal(env.root, approvalId);
+    // the owner, for whom the call was not made, gets nothing
+    const other = await reveal(env.root, ref);
     expect(other.statusCode).toBe(404);
     expect(errCode(other)).toBe("invitation.link_unavailable");
 
-    const shown = await reveal(env.boss, approvalId);
+    const shown = await reveal(env.boss, ref);
     expect(shown.statusCode, shown.body).toBe(200);
     const { url } = shown.json() as { url: string };
     expect(url).toMatch(/^https:\/\/capybara\.example\.com\/invite\/cap_inv_/);
@@ -184,7 +198,7 @@ describe("orgs.invite through an admin's private agent", () => {
     expect(preview.json()).toMatchObject({ role: "member" });
 
     // read once
-    const again = await reveal(env.boss, approvalId);
+    const again = await reveal(env.boss, ref);
     expect(again.statusCode).toBe(404);
     expect(errCode(again)).toBe("invitation.link_unavailable");
 
@@ -258,7 +272,7 @@ describe("orgs.invite through an admin's private agent", () => {
     const pat = await env.k.app.get(ApiTokenService).createPersonal(env.bossId, { name: "cli" });
     const res = await env.k.http.inject({
       method: "POST",
-      url: `/api/v1/orgs/${env.orgId}/approvals/${approvalId}/invitation-link`,
+      url: linkUrl(ref),
       headers: { authorization: `Bearer ${pat.token}`, "x-capybara-csrf": "1" },
     });
     expect(res.statusCode, res.body).toBe(403);
@@ -302,7 +316,7 @@ describe("orgs.invite through an admin's private agent", () => {
     const id = (JSON.parse(result?.content ?? "{}") as { invitation: { id: string } }).invitation
       .id;
     await run("orgs.revoke-invitation", { invitationId: id }, ctxOf(env.bossId));
-    const res = await reveal(env.boss, asked.payload.approvalId);
+    const res = await reveal(env.boss, refOf(asked));
     expect(res.statusCode).toBe(404);
     expect(errCode(res)).toBe("invitation.link_unavailable");
     await env.db.deleteFrom("platform_sealed_reveals").where("id", "=", id).execute();

@@ -12,15 +12,22 @@ import {
   SuperAdmin,
 } from "./principal.js";
 
-const ApprovalParams = z.object({ approvalId: z.string().min(1).max(100) });
-class ApprovalParamsDto extends createZodDto(ApprovalParams, "InitialPasswordParams") {}
+/** The tool call a once-shown value was made by. */
+export const RevealCallParams = z.object({
+  conversationId: z.string().min(1).max(100),
+  runId: z.string().min(1).max(100),
+  callId: z.string().min(1).max(200),
+});
+class RevealCallParamsDto extends createZodDto(RevealCallParams, "InitialPasswordParams") {}
 
 /**
  * The generated initial password of an account the super admin's agent created (Platform tool
- * spec §14.5 item 2): shown once, on the web, to the person who approved the `accounts.create`
- * call. A POST because reading consumes it.
+ * spec §14.5 item 2): shown once, on the web, to the person the `accounts.create` call was made
+ * for, keyed by the call (plan ruling R6). A POST because reading consumes it.
  */
-@Controller("api/v1/orgs/:orgId/approvals/:approvalId/initial-password")
+@Controller(
+  "api/v1/orgs/:orgId/conversations/:conversationId/runs/:runId/calls/:callId/initial-password",
+)
 export class InitialPasswordsController {
   constructor(@Inject(InitialPasswords) private readonly passwords: InitialPasswords) {}
 
@@ -32,9 +39,10 @@ export class InitialPasswordsController {
   async reveal(
     @CurrentPrincipal() principal: Principal,
     @CurrentOrg() org: OrgContext,
-    @ZParam(ApprovalParamsDto) params: z.infer<typeof ApprovalParams>,
+    @ZParam(RevealCallParamsDto) params: z.infer<typeof RevealCallParams>,
   ): Promise<{ accountId: string; login: string | null; password: string }> {
     const p = requireUser(principal);
-    return this.passwords.reveal(org.orgId, params.approvalId, p.account.id);
+    const { conversationId, runId, callId } = params;
+    return this.passwords.reveal(org.orgId, { conversationId, runId, callId }, p.account.id);
   }
 }

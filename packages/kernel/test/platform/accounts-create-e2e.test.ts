@@ -135,8 +135,18 @@ const ofType = <T extends ConversationEvent["type"]>(evs: ConversationEvent[], t
 const call = (operation: string, params: Record<string, unknown>) =>
   `tool:Platform:${JSON.stringify({ action: "call", operation, params })}`;
 
-const reveal = (who: Req, approvalId: string) =>
-  who({ method: "POST", url: `/api/v1/orgs/${orgId}/approvals/${approvalId}/initial-password` });
+/** The tool call whose initial password is read (plan ruling R6: read by call). */
+interface CallRef {
+  conversationId: string;
+  runId: string;
+  callId: string;
+}
+
+const reveal = (who: Req, c: CallRef) =>
+  who({
+    method: "POST",
+    url: `/api/v1/orgs/${orgId}/conversations/${c.conversationId}/runs/${c.runId}/calls/${c.callId}/initial-password`,
+  });
 
 /** Signs in with a login and password, returning the request function and the response. */
 async function signIn(login: string, password: string) {
@@ -165,9 +175,14 @@ describe("accounts.create through the super admin's private agent", () => {
     );
     expect(asked.payload.toolKey).toBe("Platform:accounts.create");
     const approvalId = asked.payload.approvalId;
+    const ref: CallRef = {
+      conversationId: convId,
+      runId: asked.runId ?? "",
+      callId: asked.payload.callId,
+    };
 
-    // nothing to show before the approval
-    const early = await reveal(root, approvalId);
+    // nothing to show before the call ran
+    const early = await reveal(root, ref);
     expect(early.statusCode, early.body).toBe(404);
     const ok = await root({
       method: "POST",
@@ -187,10 +202,10 @@ describe("accounts.create through the super admin's private agent", () => {
     expect(out.account).toMatchObject({ login: "alice", mustChangePassword: true });
     expect(out.initialPassword).toBe(INITIAL_PASSWORD_NOTE);
 
-    // another super admin, who did not approve the call, gets nothing
-    expect((await reveal(other, approvalId)).statusCode).toBe(404);
+    // another super admin, for whom the call was not made, gets nothing
+    expect((await reveal(other, ref)).statusCode).toBe(404);
 
-    const shown = await reveal(root, approvalId);
+    const shown = await reveal(root, ref);
     expect(shown.statusCode, shown.body).toBe(200);
     const { password, login, accountId } = shown.json() as {
       password: string;
@@ -201,7 +216,7 @@ describe("accounts.create through the super admin's private agent", () => {
     expect(accountId).toBe(out.account.id);
     expect(password).toMatch(/^[A-Za-z0-9]{20}$/);
     // read once
-    const again = await reveal(root, approvalId);
+    const again = await reveal(root, ref);
     expect(again.statusCode).toBe(404);
     expect(again.json()).toMatchObject({
       error: { code: "account.initial_password_unavailable" },
@@ -274,19 +289,13 @@ describe("accounts.create through the super admin's private agent", () => {
     expect(result?.content).toContain("account.login_taken");
   });
 
-  it("two creates with the same call id in one conversation but different runs each reach their own approval", async () => {
+  it("two creates with the same call id in one conversation but different runs each reach their own row", async () => {
     const convId = await createConv(root, orgId, agentId);
     const passwords = k.app.get(InitialPasswords);
     const ids: string[] = [];
     for (const [i, runId] of ["run-a", "run-b"].entries()) {
       await sql`INSERT INTO capybara.runs (id, conversation_id, status, agent_version, trigger_account_id)
         VALUES (${runId}, ${convId}, 'completed', 1, ${rootId})`.execute(db);
-      await sql`INSERT INTO capybara.approvals (id, org_id, conversation_id, run_id, call_id, tool_key,
-          requested_for, status, scope, decided_by, decided_at, expires_at, spec_hash)
-        VALUES (${`ap-${runId}`}, ${orgId}, ${convId}, ${runId}, 'call_1', 'Platform:accounts.create',
-          ${rootId}, 'approved', 'once', ${rootId}, now(), now() + interval '1 hour', 'h')`.execute(
-        db,
-      );
       const a = await passwords.createAccount(
         { login: `twin${i}`, displayName: `Twin ${i}` },
         rootId,
@@ -294,12 +303,13 @@ describe("accounts.create through the super admin's private agent", () => {
       );
       ids.push(a.id);
     }
-    const b = await reveal(root, "ap-run-b");
+    const at = (runId: string): CallRef => ({ conversationId: convId, runId, callId: "call_1" });
+    const b = await reveal(root, at("run-b"));
     expect(b.statusCode, b.body).toBe(200);
     expect(b.json()).toMatchObject({ accountId: ids[1], login: "twin1" });
-    const a = await reveal(root, "ap-run-a");
+    const a = await reveal(root, at("run-a"));
     expect(a.json()).toMatchObject({ accountId: ids[0], login: "twin0" });
-    expect((await reveal(root, "ap-run-b")).statusCode).toBe(404);
+    expect((await reveal(root, at("run-b"))).statusCode).toBe(404);
   });
 
   it("the cleanup job's delete removes only expired sealed passwords", async () => {
