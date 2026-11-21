@@ -385,6 +385,21 @@ describe("the rail's top row inside the desktop shell (desktop client spec §7.3
     ).toEqual([]);
   });
 
+  it("a hairline under the band closes it where the rail drops, and nowhere else", () => {
+    const line = ':root[data-shell="desktop"] .cb-shell:not([data-banner="true"])::after';
+    expect(decl(line, "top", BAND_QUERY)).toBe(
+      "calc(var(--cb-shell-band) + var(--cb-shell-rail-drop) - 1px)",
+    );
+    expect(decl(line, "left", BAND_QUERY)).toBe("0");
+    expect(decl(line, "right", BAND_QUERY)).toBe("0");
+    expect(decl(line, "height", BAND_QUERY)).toBe("1px");
+    // the sidebar's own divider colour, so the rail's divider meets it in a T
+    expect(decl(line, "background", BAND_QUERY)).toBe("var(--cb-line-soft)");
+    expect(decl(line, "pointer-events", BAND_QUERY)).toBe("none");
+    // drawn only inside the style query: no rail drop (browser, full sidebar, banner), no line
+    expect(decl(line, "content")).toBeUndefined();
+  });
+
   it("the expand button sits in the band right after the controls, and leaves the rail", () => {
     const toggle =
       ':root[data-shell="desktop"] .cb-shell:not([data-banner="true"]) > .cb-shell-rail-toggle';
