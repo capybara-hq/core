@@ -9,6 +9,12 @@ import { KernelConfigService } from "../../infra/config/kernel-config.service.js
 import { KernelDb } from "../../infra/database/kernel-db.js";
 import { can, type OrgAction } from "../../orgs/roles.js";
 import { OrgSettingsService } from "../../orgs/settings.service.js";
+import { PushPreferencesService } from "../../push/preferences.service.js";
+import {
+  PUSH_CATEGORIES,
+  type PushCategory,
+  PushPreferencesPatchSchema,
+} from "../../push/push.schemas.js";
 import { effectiveDevicePolicy, readDeploymentDevicePolicy } from "../../sandbox/modes.js";
 import { resolveEffectiveSkills } from "../../skills/catalog.js";
 import { ThemesService } from "../../themes/themes.service.js";
@@ -38,9 +44,17 @@ const FAMILIES = [
 
 const EMPTY = z.object({}).strict();
 
+/** The push categories as the notification settings name them (UI copy, zh and en). */
+const PUSH_CATEGORY_NAMES: Record<PushCategory, { zh: string; en: string }> = {
+  waiting: { zh: "等你处理", en: "Waiting for you" },
+  replies: { zh: "智能体回复", en: "Agent replies" },
+  tasks: { zh: "任务状态", en: "Task status" },
+  schedules: { zh: "定时任务", en: "Scheduled tasks" },
+};
+
 /**
  * The `platform` domain: orientation and what this agent is (spec §7, synthetic), and the
- * person's own preferences (`/me/preferences`).
+ * person's own preferences (`/me/preferences`, `/me/push-preferences`).
  */
 @Injectable()
 export class PlatformOperationsProvider implements OnModuleInit {
@@ -54,6 +68,7 @@ export class PlatformOperationsProvider implements OnModuleInit {
     @Inject(ThemesService) private readonly themes: ThemesService,
     @Inject(KernelDb) private readonly db: KernelDb,
     @Inject(KernelConfigService) private readonly config: KernelConfigService,
+    @Inject(PushPreferencesService) private readonly push: PushPreferencesService,
   ) {}
 
   /**
@@ -257,6 +272,47 @@ export class PlatformOperationsProvider implements OnModuleInit {
             timeZone: input.timeZone,
             theme: input.theme,
           }),
+      }),
+      defineOperation({
+        id: "platform.push-preferences",
+        description:
+          "Read your own push notification switches for your mobile app: waiting (approvals, questions and connect requests waiting for you), replies (an agent's run in your conversation finished or failed), tasks (background tasks and sub-agents finished) and schedules (your scheduled task ran or failed). Each is true unless you switched it off; they apply in every org.",
+        input: EMPTY,
+        example: {},
+        // any signed-in person may call the route; every run's actor is a member of this org
+        authz: { orgAction: "agents.use" },
+        mirrors: ["GET /api/v1/me/push-preferences"],
+        confirm: "read",
+        run: async (_input, ctx) => this.push.get(ctx.actorAccountId),
+      }),
+      defineOperation({
+        id: "platform.set-push-preferences",
+        description:
+          "Switch your own push notification categories on or off; give only the ones to change (waiting, replies, tasks, schedules: true or false), the others keep their values. They apply to every device of yours that receives push, in every org.",
+        input: PushPreferencesPatchSchema,
+        example: { replies: false },
+        authz: { orgAction: "agents.use" },
+        mirrors: ["PUT /api/v1/me/push-preferences"],
+        confirm: "personal",
+        errors: [
+          {
+            code: "validation_failed",
+            next: "Give at least one of waiting, replies, tasks, schedules, each true or false.",
+          },
+        ],
+        summary: async (input) => {
+          const zh: string[] = [];
+          const en: string[] = [];
+          for (const category of PUSH_CATEGORIES) {
+            const on = input[category];
+            if (on === undefined) continue;
+            const name = PUSH_CATEGORY_NAMES[category];
+            zh.push(`${on ? "开启" : "关闭"}「${name.zh}」通知`);
+            en.push(`Turn ${on ? "on" : "off"} "${name.en}" notifications`);
+          }
+          return { zh: zh.join("；"), en: en.join("; ") };
+        },
+        run: async (input, ctx) => this.push.set(ctx.actorAccountId, input),
       }),
     ]);
   }

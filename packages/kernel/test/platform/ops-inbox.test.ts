@@ -384,6 +384,7 @@ describe("the platform inbox and pending permissions (super admin)", () => {
       "org_upload_pending",
       "ownership_transferred",
       "permission_confirmation",
+      "push_auth_failed",
       "scope_sync_failed",
     ]);
     expect(byType.ownership_transferred).toBeGreaterThanOrEqual(1);
@@ -421,6 +422,7 @@ describe("the platform inbox and pending permissions (super admin)", () => {
         scope_sync_failed: 0,
         extension_disabled: 0,
         ownership_transferred: PLATFORM_INBOX_MAX_ITEMS + 30,
+        push_auth_failed: 0,
       },
     });
     try {

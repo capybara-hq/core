@@ -385,6 +385,37 @@ export const OUTBOX_JOBS = {
       removeOnFail: 1000,
     },
   },
+  // `push/jobs.ts` PUSH_FANOUT_JOB: one per trigger event, owed in the event's transaction by
+  // `PushOwed` under `pushFanoutJobId` (`push-fanout-<eventId>`, mobile app spec §9.4)
+  "push-fanout": {
+    queue: "cap-push-deliver",
+    idempotent: "Owes delivery jobs under deterministic ids; a repeat owes nothing new",
+    processedIn: "packages/kernel/src/push/push-processor.ts",
+    // 5 attempts, 5 s doubling (PG briefly unavailable); finished and failed jobs kept a day, so
+    // an add of the same id within it is swallowed
+    opts: {
+      attempts: 5,
+      backoff: { type: "exponential", delay: 5_000 },
+      removeOnComplete: { age: 86_400 },
+      removeOnFail: { age: 86_400 },
+    },
+  },
+  // `push/jobs.ts` PUSH_DELIVER_JOB: one per event and registration, owed by the push fanout
+  // under `pushDeliverJobId` (`push-<eventId>-<registrationId>`, mobile app spec §9.4)
+  "push-deliver": {
+    queue: "cap-push-deliver",
+    idempotent:
+      "Completed jobs are kept a day under the deterministic id, so a repeated add is swallowed; a missing registration ends the job",
+    processedIn: "packages/kernel/src/push/push-processor.ts",
+    // 5 attempts, 10 s doubling (transient and rate_limited answers, timeouts); finished and
+    // failed jobs kept a day, so an add of the same id within it is swallowed
+    opts: {
+      attempts: 5,
+      backoff: { type: "exponential", delay: 10_000 },
+      removeOnComplete: { age: 86_400 },
+      removeOnFail: { age: 86_400 },
+    },
+  },
   // `extensions/lifecycle-hooks.ts` LIFECYCLE_JOB: owed by the transaction that removes a member,
   // deletes an agent or deletes an org, once per subscribing plugin, under `lifecycleJobId`
   // (memory plugin spec §6.3)

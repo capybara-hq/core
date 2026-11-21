@@ -22,6 +22,7 @@ import { PermissionAuthorityLock } from "../../src/sandbox/permission-authority-
 import { PermissionCeilingWrites } from "../../src/sandbox/permission-ceiling-writes.js";
 import { permissionScopeHash } from "../../src/sandbox/permission-facts.js";
 import { PermissionTransitions } from "../../src/sandbox/permission-transitions.js";
+import { NO_PUSH } from "../helpers/identity.js";
 
 let pg: TestContainer;
 function barrier() {
@@ -99,7 +100,7 @@ function replica(pool: ReturnType<typeof createDb>) {
     db,
     host,
     lock,
-    new EventLog(db, { publish: async () => {} }, log, outbox, host),
+    new EventLog(db, { publish: async () => {} }, log, outbox, host, NO_PUSH),
     outbox,
   );
   return {

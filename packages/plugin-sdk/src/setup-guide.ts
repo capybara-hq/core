@@ -28,9 +28,15 @@ import {
 
 /**
  * Where a guide is shown. `channel-connection`: "New channel" and the channel detail page;
- * `connector-template`: the pages of a connector template and the connectors made from it.
+ * `connector-template`: the pages of a connector template and the connectors made from it;
+ * `extension-deployment`: the super admin's page of the extension, whose checks verify the
+ * platform deployment config (a push provider's credentials).
  */
-export const SETUP_GUIDE_PLACES = ["channel-connection", "connector-template"] as const;
+export const SETUP_GUIDE_PLACES = [
+  "channel-connection",
+  "connector-template",
+  "extension-deployment",
+] as const;
 export type SetupGuidePlace = (typeof SETUP_GUIDE_PLACES)[number];
 
 /** Who the rendered text is for: `admin` sets the integration up, `member` uses it. */
@@ -83,6 +89,12 @@ export const SETUP_GUIDE_PLACE_INFO: Readonly<Record<SetupGuidePlace, SetupGuide
       connectorName: "text",
     },
     drift: true,
+  },
+  "extension-deployment": {
+    modes: [],
+    audiences: ["admin"],
+    variables: { ...COMMON_VARIABLES, pluginName: "text" },
+    drift: false,
   },
 };
 

@@ -111,9 +111,11 @@ live check rows. v2 replaced v1's steps and files directly (pre-0.1.0, no compat
   template? }`. `id` `^[a-z0-9][a-z0-9-]{0,63}$`; the documents sit at the fixed paths
   `guides/<id>.md` (English, required) and `guides/<id>.zh.md` (optional; `setupGuideDocPath`).
   `place` is one of `SETUP_GUIDE_PLACES`: `channel-connection` (the extension must provide
-  `channel@1`; at most one per plugin) or `connector-template` (`template` required: one of the
-  plugin's own `connectors/<template>.json`, at most one guide per template). The title is the
-  document's `#` heading; there is no title, steps or files field.
+  `channel@1`; at most one per plugin), `connector-template` (`template` required: one of the
+  plugin's own `connectors/<template>.json`, at most one guide per template) or
+  `extension-deployment` (platform deployment config of the plugin's own extension, e.g. a push
+  channel's credentials; at most one per plugin; the platform's super admin sees it). The title is
+  the document's `#` heading; there is no title, steps or files field.
 - **The document** (§4.2): CommonMark + GFM with exactly one leading `# Title` (no further `#`),
   `{{name}}` variables, sections (a column-0 line `::: mode <mode>` or `::: audience <audience>`
   opens one, `:::` closes it; one `mode` section may nest inside an `audience` section, nothing

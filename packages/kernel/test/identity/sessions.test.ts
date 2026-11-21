@@ -274,6 +274,44 @@ describe("SessionService 其他", () => {
     expect(await svc.revokeAllForAccount(acc)).toBe(1);
   });
 
+  it("revoke and revokeAllForAccount delete the push registrations of the revoked sessions only", async () => {
+    const acc = await account();
+    const svc = replica();
+    const [a, b, c] = await Promise.all([
+      svc.create(acc, {}),
+      svc.create(acc, {}),
+      svc.create(acc, {}),
+    ]);
+    const regOf = (sessionId: string) =>
+      db
+        .insertInto("push_registrations")
+        .values({
+          id: `reg-${sessionId}`,
+          account_id: acc,
+          session_id: sessionId,
+          platform: "ios",
+          app_id: "com.example.app",
+          provider: "fake-push",
+          token_hash: sessionId,
+          master_key_id: "k",
+          token_ciphertext: Buffer.from("sealed"),
+          locale: "en",
+          device_name: "Phone",
+        })
+        .execute();
+    await Promise.all([regOf(a.sessionId), regOf(b.sessionId), regOf(c.sessionId)]);
+    const left = async () =>
+      (await db.selectFrom("push_registrations").select("session_id").execute())
+        .map((r) => r.session_id)
+        .sort();
+    await svc.revoke(a.sessionId);
+    expect(await left()).toEqual([b.sessionId, c.sessionId].sort());
+    expect(await svc.revokeAllForAccount(acc, b.sessionId)).toBe(1);
+    expect(await left()).toEqual([b.sessionId]);
+    await svc.revokeAllForAccount(acc);
+    expect(await left()).toEqual([]);
+  });
+
   it("setCurrentOrg 写入并可清空", async () => {
     const acc = await account();
     const orgId = randomUUID();

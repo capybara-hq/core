@@ -36,7 +36,44 @@ export const SetupCheckRunBody = z
   .object({ ...GuideSelection, force: z.boolean().optional() })
   .strict();
 
+/** `:name` / `:guideId` of the deployment guide routes (`extension-deployment`, super admins). */
+export const DeploymentGuidePathParams = z.object({
+  name: z.string().min(1).max(64),
+  guideId: z.string().min(1).max(64),
+});
+
+/** `:name` / `:guideId` / `:checkId` of the deployment check run route. */
+export const DeploymentCheckPathParams = DeploymentGuidePathParams.extend({
+  checkId: z.string().min(1).max(64),
+});
+
+/** `:name` of `GET /admin/extensions/:name/guides`. */
+export const DeploymentGuidesPathParams = DeploymentGuidePathParams.pick({ name: true });
+
+/** `GET /admin/extensions/:name/guides`: the language to render in (zh falls back to en). */
+export const DeploymentGuidesQuery = z.object({ locale: z.enum(["en", "zh"]).optional() }).strict();
+
+/**
+ * `POST /admin/extensions/:name/guides/:guideId/checks/:checkId/run`: runs the check unless a fresh
+ * cached result exists; `force` reruns it (at most once per 10 seconds per check).
+ */
+export const DeploymentCheckRunBody = z.object({ force: z.boolean().optional() }).strict();
+
 export const SETUP_CHECK_ROUTES: readonly RouteSchemas[] = [
+  {
+    route: "GET /api/v1/admin/extensions/:name/guides",
+    params: DeploymentGuidesPathParams,
+    query: DeploymentGuidesQuery,
+  },
+  {
+    route: "GET /api/v1/admin/extensions/:name/guides/:guideId/checks",
+    params: DeploymentGuidePathParams,
+  },
+  {
+    route: "POST /api/v1/admin/extensions/:name/guides/:guideId/checks/:checkId/run",
+    params: DeploymentCheckPathParams,
+    body: DeploymentCheckRunBody,
+  },
   {
     route: "GET /api/v1/orgs/:orgId/catalog/:itemId/guides/:guideId/checks",
     params: SetupGuidePathParams,

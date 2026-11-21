@@ -7,6 +7,7 @@ import { ApiError } from "../errors.js";
 import { KernelDb } from "../infra/database/kernel-db.js";
 import { TransactionHost, withOrderedLocks } from "../infra/database/transaction-host.js";
 import { Transactional } from "../infra/database/transactional.decorator.js";
+import { deletePushRegistrationsForSessions } from "../push/registration-cleanup.js";
 import { PermissionCeilingWritesModule } from "../sandbox/permission-authority.module.js";
 import { PermissionCeilingWrites } from "../sandbox/permission-ceiling-writes.js";
 import { assertThemeOnForAccount } from "../themes/theme-state.js";
@@ -435,6 +436,11 @@ export class AccountsService {
       .where("id", "!=", exceptSessionId)
       .returning("id")
       .execute();
+    // the other devices stop receiving push; the current session's registrations stay
+    await deletePushRegistrationsForSessions(
+      this.db.db,
+      sessions.map((r) => r.id),
+    );
     await this.db
       .updateTable("api_tokens")
       .set({ revoked_at: sql<Date>`now()` })
@@ -786,6 +792,8 @@ export class AccountsService {
         .where("revoked_at", "is", null)
         .execute();
       revokedSessionIds = sessions.map((r) => r.id);
+      // a registration follows its session (push plan decision 3): a disabled account loses all
+      await deletePushRegistrationsForSessions(this.db.db, revokedSessionIds);
     }
     return { account: toAccount(row), revokedSessionIds };
   }

@@ -14,6 +14,7 @@ import { IdentityModule } from "../identity/identity.module.js";
 import { InboxModule } from "../inbox/inbox.module.js";
 import { ModelsModule } from "../models/models.module.js";
 import { OrgsModule } from "../orgs/orgs.module.js";
+import { PushModule } from "../push/push.module.js";
 import { ProvidersModule } from "../runtime/providers.js";
 import { SchedulesModule } from "../schedules/schedules.module.js";
 import { SetupModule } from "../setup/setup.module.js";
@@ -144,6 +145,7 @@ export const PLATFORM_OPERATION_PROVIDERS = [
     SetupModule,
     SchedulesModule,
     SharesModule,
+    PushModule,
   ],
   providers: [...PLATFORM_OPERATION_PROVIDERS],
 })
