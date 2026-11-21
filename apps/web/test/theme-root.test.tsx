@@ -321,6 +321,12 @@ describe("the brand cookie (theme brand coverage §5)", () => {
     expect(writes).toHaveLength(2);
   });
 
+  it("a theme the cookie cannot hold (outside the delivery grammar) deletes it", () => {
+    renderFrame(shellOf(ME, { theme: NEON_GRID }));
+    expect(writes).toHaveLength(1);
+    expect(writes[0]).toMatch(/^cb-brand=; Max-Age=0/);
+  });
+
   it("nothing is written while the theme read has no answer", () => {
     renderPage(
       <ThemeRoot orgId={null}>
