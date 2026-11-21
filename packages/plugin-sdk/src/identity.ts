@@ -53,3 +53,26 @@ export interface IdentitySource {
     codeVerifier?: string;
   }): Promise<ExternalIdentity>;
 }
+
+/**
+ * Thrown by an identity source's `callback` when it refuses the account on purpose (a hosted domain
+ * or tenant the platform does not allow, a consumer account where only organization accounts are
+ * allowed): the login page then says the account is not allowed (`sso.account_not_allowed`) instead
+ * of a provider error. The message is logged by the kernel and never shown to the person. Throw it
+ * only after the response itself was verified (ID token, nonce, PKCE); every other failure stays a
+ * plain error.
+ */
+export class IdentitySourceRefused extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "IdentitySourceRefused";
+  }
+}
+
+/**
+ * Whether `err` is an {@link IdentitySourceRefused}: any `Error` whose `name` is
+ * `"IdentitySourceRefused"`, so a plugin that bundles another copy of the SDK still matches.
+ */
+export function isIdentitySourceRefused(err: unknown): boolean {
+  return err instanceof Error && err.name === "IdentitySourceRefused";
+}

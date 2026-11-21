@@ -122,6 +122,7 @@ export function settingsFor(
       ({
         devices: { outsideSandbox: undefined },
         attribution: {},
+        platform: {},
         sharing: {},
       }) as unknown as KernelConfig,
     fieldSource: () => undefined,

@@ -208,9 +208,9 @@ export type DeviceChoice = {
   project: string | undefined;
   /**
    * Without a cloud sandbox, when none of the local devices can be used now (their
-   * machines are offline): the first send goes without a device (a restricted permission profile;
-   * Full access needs one), and this says why. Never set while the platform has a cloud sandbox
-   * (the kernel then makes or uses the personal device).
+   * machines are offline): the first send goes without a device (any permission profile), and
+   * this says why. Never set while the platform has a cloud sandbox (the kernel then makes or
+   * uses the personal device).
    */
   unavailable?: string;
   /**

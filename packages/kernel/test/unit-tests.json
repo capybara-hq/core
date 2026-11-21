@@ -155,6 +155,7 @@
   "tools/sandbox/working-root.test.ts",
   "tools/skill-project.unit.test.ts",
   "tools/snapshot.test.ts",
+  "tools/tool-review.unit.test.ts",
   "tools/tool-search.test.ts",
   "tools/view.test.ts",
   "tools/web-url.test.ts",

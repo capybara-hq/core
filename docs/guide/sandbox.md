@@ -39,34 +39,51 @@ setting of the device, not of the conversation:
   network, and is the only way to reach private addresses, local services, the sockets and the
   protected paths. Whether any call may do this is the device's **outside-sandbox** setting.
 
-A **permission profile** (picked per conversation in the composer) only chooses who approves a
-**crossing** of that sandbox:
+A **permission profile** (picked per conversation in the composer) chooses who approves every
+approval addressed to you: you, the review model or nobody. Its people-facing names are Request
+approval, Approve for me and Auto.
 
-| Request | Request approval | Approve for me (default) | Full access |
+| Request | Request approval | Approve for me (default) | Auto |
 |---|---|---|---|
-| Work inside the scope and the network | Runs | Runs | Runs |
-| A directory outside the scope | Asks you | Review model | Approved automatically, recorded |
-| A new host while the network is an allowlist | Asks you | Review model | Approved automatically within the network ceiling, recorded |
-| Running one call outside the sandbox | Asks you | Review model | Approved automatically within the outside-sandbox setting, recorded; the review model when the command touches credentials, or when a sub-agent asks |
-| A sensitive command (`sudo`, credential reads, force pushes, …) | Asks you | Review model | Runs, recorded |
-| A fixed deny (deny rules, platform and org denies, protected paths) | Denied | Denied | Denied |
+| Device work inside the scope and the network | Runs | Runs | Runs |
+| A directory outside the scope, a new host while the network is an allowlist, running one call outside the sandbox, a sensitive command (`sudo`, credential reads, force pushes, ...) | Asks you | Review model | Approved automatically within the device's ceilings, recorded; the review model when the command touches credentials, or when a sub-agent asks |
+| A tool call that asks (a platform operation, a connector or extension tool) and is addressed to you | Asks you | Review model | Runs, recorded |
+| An approval addressed to another role or account (an org admin, a super admin) | That role or account | Same | Same |
+| Secure input (secret fields only you can enter) | Secure input request | Same | Same |
+| A result shown once to you (an initial password, an invitation link) | Runs after approval; the result shows it | Review model, then the result shows it | Runs; the result shows it |
+| A fixed deny (deny rules, platform and org denies, protected paths), beyond a ceiling | Denied | Denied | Denied |
 
-Full access never removes the sandbox. Every automatic approval writes a grant, a
-`permission_reviewed` event in the conversation and an audit entry
-(`permission.crossing_auto_granted`). An unsure or unavailable review model asks you. Choosing
-Full access takes a short confirmation bound to the device and its ceilings: switching device or
-widening a ceiling returns the conversation to Approve for me until you confirm again (a narrowing
-keeps it). Scheduled tasks run as Request approval with every ask refused, and never escalate.
+Auto never removes the sandbox. Existing grants ("this session", "always") still apply first under
+every profile. Every automatic decision on a device crossing writes a grant, a `permission_reviewed`
+event and an audit entry (`permission.crossing_auto_granted`); every automatic decision on a tool
+call writes a `tool_ask_decided` event and an audit entry (`tool.ask_auto_decided`), and the tool row
+says it was approved automatically or by the review model. An unsure or unavailable review model asks
+you. Tools that themselves require a person to act still ask under every profile. Choosing Auto takes
+a short confirmation bound to the device and its ceilings (without a device, a shorter one):
+switching device or widening a ceiling returns the conversation to Approve for me until you confirm
+again (a narrowing keeps it). Scheduled tasks run as Request approval with every ask refused, and
+never escalate. Conversations opened from a chat app (Slack, Lark, Telegram) have no picker: they
+start as Approve for me, so their tool asks go to the review model; open the conversation on the web
+and choose Request approval to see every card.
 
-A profile change applies to the next crossing only: it never revokes work already started or a
-call already running outside the sandbox (an escalation granted under Full access keeps running
-after you switch to Request approval). To stop such work, cancel the run or stop the command; a
-narrowed device setting (the network, running outside the sandbox) does revoke the started work it
-no longer allows.
+**Secure input.** When a tool needs a secret (an API key, a password), the agent asks for it in a
+secure input request on the web instead of in the chat: you type the values and submit (or cancel),
+and the agent only learns that it was submitted. It is asked under every profile, never decided by
+the review model, and never shown in chat apps (they link to the web).
+
+A device whose sandbox plugin or runtime cannot enforce scoped operations stays selectable under
+every profile; only its device tools refuse, and the composer says why (a super admin updates the
+sandbox plugin, or the device's owner updates `capybara-device`).
+
+A profile change applies to the next approval only: it never revokes work already started or a
+call already running outside the sandbox (an escalation granted under Auto keeps running after you
+switch to Request approval). To stop such work, cancel the run or stop the command; a narrowed
+device setting (the network, running outside the sandbox) does revoke the started work it no longer
+allows.
 
 **Cloud devices**: the container or microVM is the sandbox. Its whole file system is the scope and
 its network, which the sandbox extension enforces, is the sandbox network. There are no directory
-crossings and nothing runs outside it; the profiles differ only in sensitive-command consent. A new
+crossings and nothing runs outside it; the profiles differ only in who approves. A new
 host cannot be granted per call there: an org admin adds it to the org's list (a device's own list
 only narrows the org's).
 

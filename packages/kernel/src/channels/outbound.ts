@@ -10,6 +10,7 @@ import {
 import { Inject, Injectable } from "@nestjs/common";
 import { DelayedError, type Job, UnrecoverableError, type Worker } from "bullmq";
 import { sql } from "kysely";
+import { productName } from "../config/product-name.js";
 import {
   type ConversationBusMessage,
   conversationTopic,
@@ -709,6 +710,11 @@ class Delivery {
   }
 
   /** 普通消息的幂等键（Ruling A15）：`<会话>-<seq>[后缀]` 的稳定哈希。 */
+  /** The platform name the web hints name (`platform.name`, read at each use: the field is hot). */
+  private product(): string {
+    return productName(this.d.config.get());
+  }
+
   private key(seq: number, suffix = ""): string {
     return idempotencyKey(`${this.conversationId}-${seq}${suffix}`);
   }
@@ -833,7 +839,10 @@ class Delivery {
       this.d.log.warn("cannot close channel draft before skipping", { err: errMsg(err) });
     }
     try {
-      await this.send({ text: phrase("handleOnWeb", this.locale) }, this.key(seq, "-skipped"));
+      await this.send(
+        { text: phrase("handleOnWeb", this.locale, this.product()) },
+        this.key(seq, "-skipped"),
+      );
     } catch (err) {
       this.d.log.warn("cannot send channel skip notice", { err: errMsg(err) });
     }
@@ -1087,7 +1096,7 @@ class Delivery {
         const text = phrase("connectTitle", this.locale);
         await this.send(
           this.base === undefined
-            ? { text: phrase("handleOnWeb", this.locale) }
+            ? { text: phrase("handleOnWeb", this.locale, this.product()) }
             : cardMessage(text, {
                 kind: "connect",
                 appName: e.payload.appName,
@@ -1104,7 +1113,7 @@ class Delivery {
         if (v?.kind !== "handoff") return;
         await this.send(
           this.base === undefined
-            ? { text: phrase("handleOnWeb", this.locale) }
+            ? { text: phrase("handleOnWeb", this.locale, this.product()) }
             : cardMessage(v.title[this.locale], {
                 kind: "bind",
                 text: v.title[this.locale],
@@ -1179,11 +1188,12 @@ class Delivery {
   /** Sends the approval card of `approvalId` for the event at `seq` (or the web hint). */
   private async approvalCardAt(seq: number, approvalId: string): Promise<void> {
     if (this.base === undefined) {
-      await this.send({ text: phrase("handleOnWeb", this.locale) }, this.key(seq));
+      await this.send({ text: phrase("handleOnWeb", this.locale, this.product()) }, this.key(seq));
       return this.advance(seq);
     }
-    // secrets are typed on the web only: IM gets a link, never an approval card (no card is
-    // recorded, so `approval_decided` has nothing to update)
+    // secrets are typed on the web only (a secure input request, or a tool ask with person
+    // fields): IM gets a link, never an approval card (no card is recorded, so `approval_decided`
+    // has nothing to update)
     const bind = await personFieldsCard(this.d, approvalId, this.base, this.locale);
     if (bind) {
       await this.send(cardMessage(bind.text, bind), this.key(seq));
@@ -1325,6 +1335,7 @@ class Delivery {
       conversationId: this.conversationId,
       base: this.base,
       locale: this.locale,
+      product: this.product(),
     });
     await this.send({ text }, this.key(seq, "-link"));
     return this.advance(seq);
@@ -1342,7 +1353,7 @@ class Delivery {
     child?: string,
   ): Promise<void> {
     if (this.base === undefined) {
-      await this.send({ text: phrase("handleOnWeb", this.locale) }, this.key(seq));
+      await this.send({ text: phrase("handleOnWeb", this.locale, this.product()) }, this.key(seq));
       return this.advance(seq);
     }
     // the person can skip the conversation's own question by replying; a sub-agent's question

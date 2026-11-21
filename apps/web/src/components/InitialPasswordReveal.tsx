@@ -4,24 +4,18 @@ import { Button, SecretReveal, Stack, Text } from "@capybara-hq/design";
 import { useTranslations } from "next-intl";
 import { useState } from "react";
 import { ApiClientError } from "../lib/api";
-import { revealInitialPassword } from "../lib/approvals";
+import { type RevealCall, revealInitialPassword } from "../lib/approvals";
 import { useAppMutation } from "../lib/query/mutation";
 import { useErrorMessage } from "../lib/use-error-message";
 import { FormError } from "./form-error";
 
 /**
- * Under an approved `accounts.create` card, for the person who approved it: a button that reads
+ * Under an `accounts.create` tool row, for the run's person: a button that reads
  * the account's generated initial password once (the kernel deletes it as it answers) and shows it
  * in a secret field. The password lives only in this component's state: never in the query cache,
  * the conversation or the tool result (Platform tool spec §14.5 item 2).
  */
-export function InitialPasswordReveal({
-  orgId,
-  approvalId,
-}: {
-  orgId: string;
-  approvalId: string;
-}) {
+export function InitialPasswordReveal({ orgId, call }: { orgId: string; call: RevealCall }) {
   const t = useTranslations("approval.initialPassword");
   const errorMessage = useErrorMessage();
   const [shown, setShown] = useState<{ login: string | null; password: string } | null>(null);
@@ -30,7 +24,7 @@ export function InitialPasswordReveal({
   const [gone, setGone] = useState(false);
   // nothing cached reads the password: there is nothing to invalidate
   const { mutateAsync, isPending } = useAppMutation({
-    fn: () => revealInitialPassword(orgId, approvalId),
+    fn: () => revealInitialPassword(orgId, call),
     invalidates: () => [],
   });
 

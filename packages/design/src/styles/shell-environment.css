@@ -5,6 +5,14 @@
  * platform: the geometry comes from the properties alone.
  */
 
+/* How far the rail starts below the window's top edge inside the desktop shell (below): a
+   registered length, so its computed value is a plain length that a style query can compare. */
+@property --cb-shell-rail-drop {
+  syntax: "<length>";
+  inherits: true;
+  initial-value: 0px;
+}
+
 /* The top band the shell's chrome covers. A mobile shell: its top inset, or further down to the
    controls rectangle's bottom edge when the controls reach below it. Sides need no rule: the band
    runs across the whole window. The desktop's band is its top inset alone: window controls that
@@ -66,6 +74,19 @@
   );
   --cb-shell-row-start: min(var(--cb-shell-row), calc(var(--cb-shell-reserve-start) * 100000));
   --cb-shell-row-end: min(var(--cb-shell-row), calc(var(--cb-shell-reserve-end) * 100000));
+  /* Start controls that reach past the rail (the traffic lights, 92 wide, beside the 48 rail):
+     the top row is one band across the whole window in the rail's form, and the rail starts below
+     it. 0 when the controls fit within the rail, sit at the end, or are absent. */
+  --cb-shell-rail-drop: min(
+    var(--cb-shell-row-start),
+    max(
+      0px,
+      calc(
+        (var(--cb-shell-reserve-start) - var(--cb-inset-left) - var(--cb-layout-sidebar-rail)) *
+        100000
+      )
+    )
+  );
 }
 
 /* The whole shell starts below the band (the banner, the sidebar, the content column and the
@@ -87,6 +108,7 @@
   padding-top: max(var(--cb-shell-band), var(--cb-shell-row));
 }
 :root[data-shell="desktop"] .cb-shell[data-banner="true"] > * {
+  --cb-shell-rail-drop: 0px;
   --cb-shell-row: 0px;
   --cb-shell-row-start: 0px;
   --cb-shell-row-end: 0px;
@@ -119,13 +141,19 @@
 :root[data-shell="desktop"] .cb-shell-column {
   --cb-shell-column-reserve: max(
     0px,
-    calc(var(--cb-shell-reserve-start) - var(--cb-inset-left) - var(--cb-shell-lead))
+    calc(
+      var(--cb-shell-reserve-start) +
+      var(--cb-shell-toggle, 0px) -
+      var(--cb-inset-left) -
+      var(--cb-shell-lead)
+    )
   );
 }
 
 /* The sidebar runs to the window's top edge: its brand row is the top row, centred on the
    controls, and keeps clear of them at its start. The rail is narrower than the traffic lights:
-   its brand row starts below the top row instead, which the lights take over the whole rail. */
+   the top row is then one band across the whole window on the page ground (no rail surface and no
+   divider in it), and the rail, its surface and its divider start below the band. */
 :root[data-shell="desktop"] .cb-shell > .cb-sidebar {
   padding-top: max(0px, calc(var(--cb-space-3) - var(--cb-shell-row) * 100000));
 }
@@ -161,14 +189,79 @@
   overflow: hidden;
 }
 :root[data-shell="desktop"] .cb-shell > .cb-sidebar[data-mode="rail"] {
+  height: auto;
+  margin-top: var(--cb-shell-rail-drop);
   padding-top: max(
     0px,
     calc(var(--cb-space-3) - var(--cb-shell-row) * 100000),
-    var(--cb-shell-row-start)
+    calc(var(--cb-shell-row-start) - var(--cb-shell-rail-drop)),
+    min(var(--cb-space-3), calc(var(--cb-shell-rail-drop) * 100000))
   );
 }
 :root[data-shell="desktop"] .cb-shell > .cb-sidebar[data-mode="rail"] .cb-sidebar-top {
   height: max(var(--cb-row-default), calc(var(--cb-shell-row) - var(--cb-shell-row-start)));
+}
+
+/* The collapsed sidebar's expand button sits in that band right after the controls, before the
+   content column's title, and leaves the rail (the AppShell draws it inside a desktop shell while
+   the person has collapsed the sidebar on the expanded class). The medium rail's sidebar toggle,
+   which opens the full sidebar as a drawer, sits there the same way (maintainer decision
+   2026-11-21). Shown only where the rail drops below the band: a style query on the registered
+   length, so a window without controls, with controls at the end, with a banner or in an engine
+   without style queries keeps the rail's own button. The title's room for it follows the
+   collapsed rail itself, so it is right from the first paint, before the AppShell draws the
+   button. */
+.cb-shell-rail-toggle {
+  display: none;
+}
+@container not style(--cb-shell-rail-drop: 0px) {
+  :root[data-shell="desktop"] .cb-shell:not([data-banner="true"]) > .cb-shell-rail-toggle {
+    display: flex;
+    position: absolute;
+    z-index: 2;
+    top: calc((var(--cb-shell-row) - var(--cb-control-default)) / 2);
+    left: var(--cb-shell-reserve-start);
+    /* (clickable over an open drawer's modal page, so it closes the drawer it opened) */
+    pointer-events: auto;
+  }
+  :root[data-shell="desktop"]
+    .cb-shell:not([data-banner="true"]):has(
+      > .cb-sidebar[data-mode="rail"][data-collapsed="true"]
+    ) {
+    --cb-shell-toggle: calc(var(--cb-control-default) + var(--cb-space-1));
+  }
+  /* (the medium rail, collapsed or not, has the sidebar toggle there once hydrated: a hydrated
+     rail is the medium class's or the collapsed one's) */
+  :root[data-shell="desktop"]
+  .cb-shell:not([data-banner="true"]):has(
+    > .cb-sidebar[data-mode="rail"]:not([data-responsive="true"])
+  ) {
+    --cb-shell-toggle: calc(var(--cb-control-default) + var(--cb-space-1));
+  }
+  :root[data-shell="desktop"]
+    .cb-shell
+    > .cb-sidebar[data-mode="rail"]
+    :is([data-part="expand-toggle"], [data-part="drawer-toggle"]) {
+    display: none;
+  }
+}
+/* Where the rail drops below the band (only while the rail is shown: the drop length follows the
+   controls alone, so the full sidebar and compact need the rail selector), a hairline under the band across the whole window closes
+   it: the band reads as the window's title bar and the rail's divider meets it in a T (the
+   sidebar's own line colour), instead of the rail's surface stopping short below an open band. */
+@container not style(--cb-shell-rail-drop: 0px) {
+  :root[data-shell="desktop"]
+    .cb-shell:not([data-banner="true"]):has(> .cb-sidebar[data-mode="rail"])::after {
+    content: "";
+    position: absolute;
+    z-index: 1;
+    top: calc(var(--cb-shell-band) + var(--cb-shell-rail-drop) - 1px);
+    left: 0;
+    right: 0;
+    height: 1px;
+    background: var(--cb-line-soft);
+    pointer-events: none;
+  }
 }
 
 /* The content column's top row: the conversation title bar (and the shared file page's bar,
@@ -200,19 +293,49 @@
 }
 
 /* A template's head: its path row is the content column's top row on medium and expanded, as
-   high as the row and centred on the controls; past a rail it starts after the controls, and its
-   end keeps clear of end controls (a title-less head's actions share the row). Below 600 the
-   floating row is the top row instead. */
+   high as the row and centred on the controls, and its end keeps clear of end controls (a
+   title-less head's actions share the row). Below 600 the floating row is the top row instead.
+   With controls the path leaves the centred content frame and follows whatever precedes it in the
+   row (maintainer decision 2026-11-21): the content column's start padding beside the full sidebar
+   (the conversation title bar's), right after the controls and the band's sidebar toggle past a
+   rail. The head is a container so the row reaches back over the frame's centring margin
+   (`100cqw` is the head's content box, the frame's room); without controls (`--cb-shell-row` 0)
+   the path stays in the frame, as in a browser. */
 @media (min-width: 600px) {
   :root[data-shell="desktop"] .cb-shell-main .cb-template-head {
+    container: cb-head / inline-size;
     padding-top: max(0px, calc(var(--cb-space-5) - var(--cb-shell-row) * 100000));
+  }
+  :root[data-shell="desktop"]
+    .cb-shell-main
+    .cb-template-head
+    :is(.cb-pageheader > .cb-pageheader-path, .cb-pageheader-titleless) {
+    margin-left: calc(
+      -1 *
+      min(
+        calc(max(0px, (100cqw - var(--cb-layout-content)) / 2) + var(--cb-content-pad)),
+        calc(var(--cb-shell-row) * 100000)
+      )
+    );
   }
   :root[data-shell="desktop"] .cb-shell-main .cb-pageheader-path {
     min-height: var(--cb-shell-row);
     padding-left: max(
       0px,
-      calc(var(--cb-shell-column-reserve) + var(--cb-space-3) - var(--cb-content-pad))
+      calc(var(--cb-shell-column-reserve) + var(--cb-space-3) - var(--cb-content-pad)),
+      min(
+        calc(var(--cb-shell-row) * 100000),
+        max(var(--cb-space-5), calc(var(--cb-shell-column-reserve) + var(--cb-space-3)))
+      )
     );
+  }
+  /* A path of the org slug alone (no page segment: the error page on the home) is not shown in the
+     top row; the row keeps its height and its filler. */
+  :root[data-shell="desktop"]
+    .cb-shell-main
+    .cb-pageheader-path:not(:has(.cb-pageheader-path-sep))
+    > .cb-pageheader-path-seg {
+    max-width: max(0px, calc(100000px - var(--cb-shell-row) * 100000));
   }
   :root[data-shell="desktop"] .cb-shell-main :is(.cb-pageheader-path, .cb-pageheader-titleless) {
     padding-right: max(
@@ -285,12 +408,39 @@
   -webkit-app-region: drag;
   app-region: drag;
 }
-/* Below 600: on a chat surface the floating row's gap lies under the title pill, so only a pushed
-   page's gap drags; the controls area reaches to just before the row's first control, so a window
-   with its controls at the end (Windows) keeps a strip at its start edge to drag by. */
-:root[data-shell="desktop"] .cb-shell[data-surface="chat"] .cb-floatbar > .cb-drag-fill {
+/* Below 600 the floating row's gap (the room between its leading control and the page's trailing
+   ones) is a filler as high as the top row wherever the shell reports window controls, so the
+   window drags from the row's empty space. On a chat surface it is 0 high without controls (the
+   row keeps letting taps through to the page, as in a browser), and it does not drag while a
+   conversation's title pill lies over it. The controls area reaches to just before the row's
+   first control, so a window with its controls at the end (Windows) keeps a strip at its start
+   edge to drag by. */
+:root[data-shell="desktop"]
+  .cb-shell[data-surface="chat"]:has(.cb-title-bar:not([data-new]))
+  .cb-floatbar
+  > .cb-drag-fill {
   -webkit-app-region: no-drag;
   app-region: no-drag;
+}
+/* With controls it reaches from the window's top edge down the top row (above the floating row by
+   `--cb-float-gap-top`), and its margins keep the row's own height, so the controls stay where
+   they are. */
+@media (max-width: 599px) {
+  :root[data-shell="desktop"] .cb-floatbar > .cb-drag-fill {
+    --cb-float-gap-top: min(var(--cb-float-top), calc(var(--cb-shell-row) * 100000));
+    --cb-float-gap-height: max(var(--cb-float-size), var(--cb-shell-row));
+    align-self: flex-start;
+    height: var(--cb-float-gap-height);
+    margin-top: calc(-1 * var(--cb-float-gap-top));
+    margin-bottom: calc(
+      var(--cb-float-size) -
+      var(--cb-float-gap-height) +
+      var(--cb-float-gap-top)
+    );
+  }
+  :root[data-shell="desktop"] .cb-shell[data-surface="chat"] .cb-floatbar > .cb-drag-fill {
+    --cb-float-gap-height: var(--cb-shell-row);
+  }
 }
 @media (max-width: 599px) {
   :root[data-shell="desktop"] .cb-shell-band {
@@ -320,6 +470,7 @@
       .cb-viewer,
       .cb-conv-sheet,
       .cb-sidebar-layer,
+      .cb-sidebar-scrim,
       .cb-drawer
     )
 ) :is(.cb-drag-fill, .cb-shell-band) {
@@ -346,6 +497,7 @@
   .cb-conv-sheet,
   .cb-conv-scrim,
   .cb-sidebar-layer,
+  .cb-sidebar-scrim,
   .cb-drawer,
   .cb-drawer-scrim,
   .cb-conv-pushed

@@ -43,36 +43,6 @@ describe("PersonFieldRow", () => {
   });
 });
 
-describe("ApprovalBlock person fields", () => {
-  it("renders one row per field inside the card without nested boxes", () => {
-    wrap(
-      <ApprovalBlock
-        tool="Platform: set config"
-        toolKey="platform__set"
-        input={{ target: "x" }}
-        scopes={["once"]}
-        state={{ kind: "pending" }}
-        personTarget="Acme"
-        personFields={[
-          { path: "apiKey", label: "API key", multiline: false, value: "", onChange: () => {} },
-          {
-            path: "cert",
-            label: "Certificate",
-            multiline: true,
-            value: "",
-            onChange: () => {},
-            error: "Bad",
-          },
-        ]}
-      />,
-    );
-    expect(screen.getByLabelText("API key")).toBeTruthy();
-    expect(screen.getByLabelText("Certificate")).toBeTruthy();
-    expect(document.querySelectorAll('[data-part="person-field"]').length).toBe(2);
-    expect(findNestedBoxes(document.body)).toEqual([]);
-  });
-});
-
 describe("person field safety properties", () => {
   const field = {
     path: "apiKey",
@@ -88,7 +58,7 @@ describe("person field safety properties", () => {
       input={{}}
       scopes={["once"]}
       state={state}
-      personFields={[field]}
+      secureInput={{ target: "t", fields: [field], onSubmit: () => {}, onCancel: () => {} }}
     />
   );
 
@@ -127,5 +97,89 @@ describe("person field safety properties", () => {
   it.each(["approved", "expired"] as const)("renders no inputs once %s", (decision) => {
     wrap(card({ kind: "decided", decision, who: "me", when: "now" }));
     expect(document.querySelectorAll("input, textarea").length).toBe(0);
+  });
+});
+
+describe("ApprovalBlock secure input", () => {
+  const field = (over: Partial<{ path: string; label: string; value: string }> = {}) => ({
+    path: "apiKey",
+    label: "API key",
+    multiline: false,
+    value: "",
+    onChange: () => {},
+    ...over,
+  });
+  const card = (
+    over: Partial<NonNullable<React.ComponentProps<typeof ApprovalBlock>["secureInput"]>> = {},
+    state: React.ComponentProps<typeof ApprovalBlock>["state"] = { kind: "pending" },
+  ) => (
+    <ApprovalBlock
+      tool="Platform: set config"
+      toolKey="platform__set"
+      input={{ target: "x" }}
+      scopes={["once"]}
+      state={state}
+      secureInput={{
+        target: "Anthropic: deployment config",
+        fields: [field()],
+        onSubmit: () => {},
+        onCancel: () => {},
+        ...over,
+      }}
+    />
+  );
+
+  it("shows the target, the fields, Submit and Cancel, and no scope buttons or arguments", () => {
+    wrap(card());
+    expect(screen.getByText("Secure input: Anthropic: deployment config")).toBeTruthy();
+    expect(
+      screen.getByText("The values are saved directly; the agent never sees them."),
+    ).toBeTruthy();
+    expect(screen.getByLabelText("API key")).toBeTruthy();
+    expect(screen.getByRole("button", { name: "Submit" })).toBeTruthy();
+    expect(screen.getByRole("button", { name: "Cancel" })).toBeTruthy();
+    expect(screen.queryByRole("button", { name: /Approve|Deny/ })).toBeNull();
+    expect(document.querySelector('[data-part="kv"]')).toBeNull();
+    expect(findNestedBoxes(document.body)).toEqual([]);
+  });
+
+  it("disables Submit while a field is empty or submitDisabled, not Cancel", () => {
+    wrap(card());
+    expect((screen.getByRole("button", { name: "Submit" }) as HTMLButtonElement).disabled).toBe(
+      true,
+    );
+    expect((screen.getByRole("button", { name: "Cancel" }) as HTMLButtonElement).disabled).toBe(
+      false,
+    );
+    cleanup();
+    wrap(card({ fields: [field({ value: "k" })] }));
+    expect((screen.getByRole("button", { name: "Submit" }) as HTMLButtonElement).disabled).toBe(
+      false,
+    );
+    cleanup();
+    wrap(card({ fields: [field({ value: "k" })], submitDisabled: true }));
+    expect((screen.getByRole("button", { name: "Submit" }) as HTMLButtonElement).disabled).toBe(
+      true,
+    );
+  });
+
+  it("calls onSubmit and onCancel", async () => {
+    const onSubmit = vi.fn();
+    const onCancel = vi.fn();
+    wrap(card({ fields: [field({ value: "k" })], onSubmit, onCancel }));
+    await userEvent.click(screen.getByRole("button", { name: "Submit" }));
+    expect(onSubmit).toHaveBeenCalledTimes(1);
+    await userEvent.click(screen.getByRole("button", { name: "Cancel" }));
+    expect(onCancel).toHaveBeenCalledTimes(1);
+  });
+
+  it("reads Submitted / Cancelled once decided, without inputs", () => {
+    wrap(card({}, { kind: "decided", decision: "approved", who: "me", when: "now" }));
+    expect(screen.getByText(/Submitted/)).toBeTruthy();
+    expect(document.querySelectorAll("input, textarea").length).toBe(0);
+    cleanup();
+    wrap(card({}, { kind: "decided", decision: "denied", who: "me", when: "now" }));
+    expect(screen.getByText(/Cancelled/)).toBeTruthy();
+    expect(screen.queryByText(/Denied/)).toBeNull();
   });
 });

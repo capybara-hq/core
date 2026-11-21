@@ -13,6 +13,7 @@ import {
   readStoredPlatformAttribution,
   resolvePlatformAttribution,
 } from "../attribution/platform-attribution.js";
+import { productName } from "../config/product-name.js";
 import type { KernelSchemaDb } from "../db/kernel-schema.js";
 import {
   DEVICES_DEFAULT_PROVIDER_PATCH,
@@ -706,14 +707,17 @@ export class SettingsService {
   }
 
   private attributionView(stored: PlatformAttributionStored): PlatformAttributionView {
-    const config = this.config.get().attribution;
+    const current = this.config.get();
     const sources = Object.fromEntries(
       PLATFORM_ATTRIBUTION_FIELDS.map((f): [string, PlatformAttributionSource] => [
         f,
         this.config.fieldSource(`attribution.${f}`) ?? (stored[f] !== undefined ? "db" : "default"),
       ]),
     ) as PlatformAttributionView["sources"];
-    return { ...resolvePlatformAttribution(config, stored), sources };
+    return {
+      ...resolvePlatformAttribution(current.attribution, stored, productName(current)),
+      sources,
+    };
   }
 
   /** The cloud devices following the platform's network default (their org sets none). */

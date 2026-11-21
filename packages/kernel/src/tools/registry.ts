@@ -141,9 +141,19 @@ export interface BuiltinCallContext extends ToolCallContext {
   /**
    * The approval the call runs under: set only when an approved approval of this call, matching
    * its definition and input, let it through (absent for a grant or a policy allow). A `Platform`
-   * call with person fields reads the person's sealed values by it.
+   * call that takes a file binds the bytes to the file its card showed.
    */
   approvalId?: string;
+  /**
+   * The submitted secure input request of this call (profiles govern every approval, R4): a
+   * `Platform` call with person fields reads the person's sealed values by it.
+   */
+  secureInputId?: string;
+  /**
+   * The automatic decision the call runs under (`tool_ask_decided`, R2): Auto or the review model,
+   * and the file bytes it was bound to (R7). Absent for an approval, a grant or a policy allow.
+   */
+  decision?: { source: "review-model" | "full-access"; fileSha256?: string };
 }
 
 /** One image the builtin `Read` stored for a call (`tool_result.media`, vision-read design §1.2). */
@@ -260,17 +270,20 @@ export interface CallPolicy {
   /** With `policy: "deny"`: the actionable English reason returned as the tool error. */
   denyReason?: string;
   /**
-   * The secret fields the person enters on the approval card for this call (platform web parity
-   * spec §4.2): only the asked ones, specs without values. The pipeline always asks for such a
-   * call (never a grant or an `allow`; ruling R6), refuses it in an unattended run and when the ask
-   * would go to a role instead of the person, and stores the fields in the approval's `detail`.
+   * The secret fields the person enters for this call (platform web parity spec §4.2): only the
+   * asked ones, specs without values. They do not decide the consent (profiles govern every
+   * approval, R5): once the call's own policy, grant, approval or profile lets it through, the
+   * pipeline raises a secure input request for them (R4) under every profile, and runs the call
+   * with its id. It refuses such a call in an unattended run and when the ask would go to a role
+   * instead of the person.
    */
   personFields?: { target: { zh: string; en: string }; fields: PersonFieldSpec[] };
   /**
-   * Only the person the run works for can confirm this call, on the card, because its result is
-   * shown once to whoever approves it (an invitation link, a generated initial password). Like a
-   * call with person fields (ruling R6): it always asks, never a grant or an `allow`; it is
-   * refused in an unattended run and when the ask would go to a role instead of the person.
+   * Only the person the run works for can consent to this call, because its result is shown once
+   * to them (an invitation link, a generated initial password; read by call, R6). It always asks,
+   * never a grant or an `allow` (ruling R6 of the parity plan), and the conversation's profile
+   * decides that ask (profiles govern every approval, R5); it is refused in an unattended run and
+   * when the ask would go to a role instead of the person.
    */
   personOnly?: true;
   /**

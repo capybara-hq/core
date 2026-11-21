@@ -5,12 +5,14 @@ import {
   SandboxPermissionUnsupportedError,
   SandboxScopeDeniedError,
   SandboxScopeValidationError,
+  SandboxWorkUnsettledError,
   ToolError,
 } from "@capybara-hq/plugin-sdk";
 import { describe, expect, it } from "vitest";
 import { ApiError } from "../../../src/errors.js";
 import { InstanceBindingError } from "../../../src/local-devices/instance-bindings.js";
 import { DeviceRequestNotSentError } from "../../../src/local-devices/relay.js";
+import type { PermissionAvailabilityCause } from "../../../src/sandbox/permission-availability.js";
 import { DeviceProgramRestartedError } from "../../../src/sandbox/request-not-sent.js";
 import {
   recreateRequired,
@@ -19,6 +21,7 @@ import {
   retirementPending,
 } from "../../../src/sandbox/sandbox.service.js";
 import {
+  admissionUnavailableText,
   DEVICE_PROGRAM_RESTARTED_TOOL_TEXT,
   DEVICE_REQUEST_NOT_SENT_TOOL_TEXT,
   ENV_UNAVAILABLE_TEXT,
@@ -29,6 +32,7 @@ import {
   OUTCOME_UNKNOWN_TOOL_TEXT,
   OUTSIDE_SANDBOX_CEILING_TOOL_TEXT,
   PERMISSION_UNSUPPORTED_TOOL_TEXT,
+  PermissionAdmissionUnavailable,
   PLATFORM_OUTSIDE_SANDBOX_OFF_TOOL_TEXT,
   RETIREMENT_PENDING_TOOL_TEXT,
   RETIREMENT_RECREATE_TOOL_TEXT,
@@ -36,6 +40,7 @@ import {
   RETIREMENT_RESTART_TOOL_TEXT,
   SCOPE_DENIED_TOOL_TEXT,
   SCOPE_INVALID_TOOL_TEXT,
+  WORK_UNSETTLED_TOOL_TEXT,
 } from "../../../src/tools/builtins/sandbox/common.js";
 
 /** The model-visible tool errors of a device (spec 2026-11-07-environments-design §15). */
@@ -173,6 +178,11 @@ describe("sandbox tool errors", () => {
       PERMISSION_UNSUPPORTED_TOOL_TEXT,
     ],
     [
+      "earlier work unsettled",
+      new SandboxWorkUnsettledError("provider secret busy"),
+      WORK_UNSETTLED_TOOL_TEXT,
+    ],
+    [
       "outcome unknown",
       new SandboxOperationOutcomeUnknownError("provider secret state"),
       OUTCOME_UNKNOWN_TOOL_TEXT,
@@ -200,6 +210,45 @@ describe("sandbox tool errors", () => {
     expect(mapped).toBeInstanceOf(ToolError);
     expect(message(mapped)).toBe(text);
     expect(message(mapped)).not.toContain("provider secret");
+  });
+
+  // admission's own refusal on a device without scoped operations: the kernel renders the text
+  // from the cause, never from a provider-written reason (ruling R9)
+  it("an admission refusal names its cause: an outdated sandbox plugin", () => {
+    const cause = {
+      kind: "provider-outdated",
+      plugin: "sandbox-docker",
+      version: "0.1.0-rc.16",
+    } as const satisfies PermissionAvailabilityCause;
+    const mapped = mapSandboxError(
+      new PermissionAdmissionUnavailable(cause, "provider secret reason"),
+      undefined,
+    );
+    expect(mapped).toBeInstanceOf(ToolError);
+    expect(message(mapped)).toBe(
+      "This device's sandbox plugin (sandbox-docker 0.1.0-rc.16) cannot run device tools under a permission profile, so nothing ran. A super admin updates the plugin on the Plugins page; until then, continue without the device, or ask the user to start a new conversation on another device.",
+    );
+    expect(message(mapped)).toBe(admissionUnavailableText(cause));
+  });
+
+  it("an admission refusal names its cause: a runtime that cannot enforce its sandbox", () => {
+    const mapped = mapSandboxError(
+      new PermissionAdmissionUnavailable({ kind: "runtime" }, "provider secret reason"),
+      undefined,
+    );
+    expect(mapped).toBeInstanceOf(ToolError);
+    expect(message(mapped)).toBe(
+      "This device's runtime cannot enforce its sandbox, so nothing ran. Ask the device's owner to update capybara-device on that machine (for a cloud device, a super admin updates its sandbox plugin), or continue without the device.",
+    );
+  });
+
+  it("a device's own unsupported refusal no longer blames the permission profile", () => {
+    const mapped = mapSandboxError(new SandboxPermissionUnsupportedError("x"), undefined);
+    expect(message(mapped)).toBe(
+      "This device refused to run the operation because it cannot enforce its sandbox limits, so nothing ran. Ask the device's owner to update capybara-device (or a super admin to update the device's sandbox plugin), or continue without the device.",
+    );
+    expect(message(mapped)).not.toContain("permission profile");
+    expect(message(mapped)).toBe(PERMISSION_UNSUPPORTED_TOOL_TEXT);
   });
 
   it("an instance binding that cannot complete is an actionable device error", () => {

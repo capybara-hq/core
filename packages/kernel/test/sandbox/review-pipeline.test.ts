@@ -27,6 +27,7 @@ import { createDb } from "../../src/db/pool.js";
 import { ConversationDevices } from "../../src/devices/conversation-devices.js";
 import { RunQueue } from "../../src/runtime/run-queue.js";
 import { Waits } from "../../src/runtime/waits.js";
+import { SandboxOperationAuthority } from "../../src/sandbox/operation-authority.js";
 import { PermissionFacts } from "../../src/sandbox/permission-facts.js";
 import { REVIEW_SYSTEM_PROMPT } from "../../src/sandbox/review/index.js";
 import { ESCALATION_NO_OUTSIDE_WHY } from "../../src/sandbox/review/permission-candidate.js";
@@ -34,7 +35,10 @@ import { ScheduledTaskFirer } from "../../src/schedules/fire.js";
 import { SCHED_SCAN_JOB } from "../../src/schedules/job-ids.js";
 import { type ScheduledTaskInsert, ScheduledTaskStore } from "../../src/schedules/store.js";
 import type { TaskRun } from "../../src/schedules/types.js";
-import { DEVICE_OF_ANOTHER_ACCOUNT_TEXT } from "../../src/tools/builtins/sandbox/common.js";
+import {
+  admissionUnavailableText,
+  DEVICE_OF_ANOTHER_ACCOUNT_TEXT,
+} from "../../src/tools/builtins/sandbox/common.js";
 import { PERMISSION_SUPPORT_UNVERIFIED_TEXT, ToolPipeline } from "../../src/tools/pipeline.js";
 import {
   readFakeSandboxOps,
@@ -1178,7 +1182,9 @@ describe("the permission review order", () => {
     expect((await decide(ask.id, { decision: "approve", scope: "once" })).statusCode).toBe(200);
     await waitForTerminal(db, conv, 2, 30_000);
     const r = (await results(conv)).at(-1) as ToolResult;
-    expect(r.payload.content).not.toContain("permission profile allows");
+    expect(r.payload.content).not.toContain(
+      "outside the scope this conversation has on the device",
+    );
     expect(r.payload.review).toMatchObject({ decision: "allow", by: "person", rule: "ask.sudo" });
     expect((await eventsOf(db, conv)).filter((e) => e.type === "tool_call_started")).toHaveLength(
       2,
@@ -1363,6 +1369,31 @@ describe("the first managed call of a device", () => {
       expect(await asksOf(conv)).toEqual([]);
     } finally {
       await setFakeSandboxPermissionSupport(root, null);
+    }
+  });
+
+  it("a device that cannot run scoped work refuses an outside Write with its cause, no ask", async () => {
+    const cause = { kind: "provider-outdated" as const, plugin: "device-fake", version: "0.0.1" };
+    const authority = k.app.get(SandboxOperationAuthority);
+    const real = authority.previewCall.bind(authority);
+    const preview = vi.spyOn(authority, "previewCall").mockImplementation(async (...args) => ({
+      ...(await real(...args)),
+      availability: { state: "unsupported", reason: "outdated", cause },
+    }));
+    try {
+      const conv = await createConv(owner, orgId, agentId);
+      await freshDevice(conv);
+      const r = await call(
+        conv,
+        "Write",
+        { file_path: "/etc/capybara-outdated/note.txt", content: "x" },
+        1,
+      );
+      expect(r.payload.isError).toBe(true);
+      expect(r.payload.content).toBe(admissionUnavailableText(cause));
+      expect(await asksOf(conv)).toEqual([]);
+    } finally {
+      preview.mockRestore();
     }
   });
 });

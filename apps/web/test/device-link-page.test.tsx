@@ -110,17 +110,17 @@ describe("/devices/link", () => {
     },
   );
 
-  it("confirming grants no Full access: the body carries no ceiling, the page says so", async () => {
+  it("confirming grants no Auto: the body carries no ceiling, the page says so", async () => {
     const calls = stubApi({
       ...ROUTES,
       "POST /api/v1/device/confirm": () => json(200, { deviceId: "d9" }),
     });
     await renderAuthRouteWithCache(PAGE, lastStubRoutes());
     const note = await screen.findByRole("note");
-    expect(note.textContent).toContain("Confirming does not allow Full access");
+    expect(note.textContent).toContain("Confirming does not allow Auto");
     // no control on this page widens the machine
     for (const role of ["checkbox", "radio", "switch", "button"] as const) {
-      expect(screen.queryByRole(role, { name: /Full access/ })).toBeNull();
+      expect(screen.queryByRole(role, { name: /Auto/ })).toBeNull();
     }
     await userEvent.setup().click(screen.getByRole("button", { name: D.confirm }));
     expect(await screen.findByText(D.doneTitle)).toBeTruthy();

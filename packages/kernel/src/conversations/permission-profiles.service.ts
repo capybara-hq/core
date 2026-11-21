@@ -33,7 +33,11 @@ export class PermissionProfilesService {
     return this.facts.preview(orgId, accountId, deviceId, project);
   }
   async get(orgId: string, id: string, accountId: string) {
-    return this.facts.view(orgId, accountId, await this.store.readOwnedRoot(orgId, id, accountId));
+    return this.facts.peopleView(
+      orgId,
+      accountId,
+      await this.store.readOwnedRoot(orgId, id, accountId),
+    );
   }
   /** Reserve the root ID and authority before resolving its project or inserting first-send state. */
   @Transactional({ propagation: "mandatory" })
@@ -91,21 +95,19 @@ export class PermissionProfilesService {
   ) {
     if (deviceId) await this.devices.usable(orgId, accountId, deviceId);
     if (selection.profile !== "full-access") return null;
-    if (!deviceId || !selection.consentScopeRevision)
-      throw new ApiError(
-        "conflict",
-        "Full access requires an explicitly selected device and displayed scope consent",
-      );
+    // Auto without a device has no scope to consent to: accepted with no consent row (R8); a
+    // device bound later needs a confirmation of Auto for that device (`consentHolds`)
+    if (!deviceId) return null;
+    if (!selection.consentScopeRevision)
+      throw new ApiError("conflict", "Auto on a device requires its displayed scope consent");
     const preview = await this.facts.scope(orgId, deviceId, projectPath, project);
-    // Full access is available wherever any profile is: the sandbox stays, and the consent binds
-    // the device and the crossing ceilings it auto-approves within (`scopeRevision`)
-    if (
-      preview.availability.state === "unsupported" ||
-      preview.scopeRevision !== selection.consentScopeRevision
-    )
+    // Auto is available on every device, whatever it supports (device tools refuse at admission):
+    // the sandbox stays, and the consent binds the device and the crossing ceilings it
+    // auto-approves within (`scopeRevision`)
+    if (preview.scopeRevision !== selection.consentScopeRevision)
       throw new ApiError(
         "conflict",
-        "Device authority changed; refresh the permission preview and confirm Full access again",
+        "Device authority changed; refresh the permission preview and confirm Auto again",
       );
     // what the consent covers: a later narrowing keeps it, a widening needs a new one
     return {

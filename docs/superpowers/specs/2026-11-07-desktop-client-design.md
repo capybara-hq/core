@@ -589,34 +589,62 @@ reports it).
 - **Brand and lights.** The full sidebar's brand row is lights, the brand mark, a drag filler and
   the tools (search, inbox, collapse): the wordmark gives way while the lights are there (with it
   the tools ran past the 256 sidebar) and returns in fullscreen; a theme's own brand shrinks
-  before the tools do. The rail (medium, or collapsed) is narrower than the lights: its top row is
-  the lights' row and its mark moves to the row below. Below 600 the floating row is the top row
-  and starts after the lights.
+  before the tools do. The full sidebar is unchanged by the rail rule below.
+- **The rail's top row (maintainer decision 2026-11-21, #532).** The rail (medium, or
+  collapsed on expanded; 48) is narrower than the lights (92): where the reported controls reach
+  past the rail, the top row is one continuous band across the whole window on the page ground
+  (the content surface), with no vertical divider in it; the lights and the page or conversation
+  title sit in it, and the rail's surface, its divider and its mark start below the band. A
+  hairline (`line-soft`, the sidebar's divider colour) runs under the band across the whole window,
+  so the band reads as the title bar and the rail's divider meets it in a T (maintainer decision
+  2026-11-21). On expanded the collapsed rail's expand button moves into the band right after the controls and
+  before the title (the title starts after it) and leaves the rail. The medium rail cannot expand;
+  its sidebar toggle (maintainer decision 2026-11-21, design spec §6.13) sits in the same place in
+  the band and opens the full sidebar as a drawer over the content, starting below the band so the
+  band and the lights stay uncovered; ⌘\ / Ctrl+\ opens and closes it, and its tooltip shows the
+  shortcut (maintainer decision 2026-11-22). Geometry comes from the reported rectangle alone (`--cb-shell-rail-drop`, a
+  registered length that is 0 without controls, with controls at the end or no wider than the
+  rail; the button's placement is a style query on it); without reported controls (a browser,
+  Windows / Linux with their system title bar, mobile) nothing changes. Below 600 the floating row
+  is the top row and starts after the lights.
 - **The content column's top row** is the conversation title bar (48) or a template head's path
   row (as high as the row, centred on it; the title row follows `layout.head-path` below). Past a
   rail both start after the controls (the title bar at the rectangle's edge plus `space.3`, the
-  path row likewise, which also fixes a breadcrumb that sat 4 px from the lights). Their end keeps
+  path row likewise, which also fixes a breadcrumb that sat 4 px from the lights). The path follows
+  whatever precedes it in the row, never the centred content frame (maintainer decision
+  2026-11-21): beside the full sidebar it starts at the title bar's start padding (`space.5` from
+  the content column's edge), past a rail right after the controls and the band's sidebar toggle
+  (collapsed on expanded, and medium). A path that is the org slug alone (no page segment, such as
+  the error page on the home) is not shown in the top row; the row keeps its height and filler.
+  Without reported controls the path row is the browser's, in the content frame. Their end keeps
   clear of end controls: the title bar's right-side toggles (properties, panels, more), a
   title-less head's actions on the path row, the shared file page's download; an open side panel
   starts below the end controls instead, the strip above it a drag filler. Every other
   right-side control of a template (a page head's actions, the tab row's search) is below the top
   row.
-- **Overlays** on the controls' side start below the row: the rail's conversations sheet and the
-  compact drawer under the lights, the end-edge sheets under end controls, the image viewer under
+- **Overlays** on the controls' side start below the row: the rail's conversations sheet, the
+  medium rail's sidebar drawer (and its scrim) and the compact drawer under the lights, the end-edge sheets under end controls, the image viewer under
   either; centred dialogs and the palette need nothing.
 - **Drag regions.** A drag region swallows every mouse event over it, whatever is stacked above,
   and a control inside one cannot be used: so only dedicated empty fillers drag, never a container
   holding controls. The templates draw a `DragFill` (an empty flex spacer, `aria-hidden`) between
   a top row's controls: the brand row, the title bar, the page head's path row, the shared file
   page's bar; the AppShell draws one over the controls rectangle (`.cb-shell-band`), which every
-  row there keeps empty. While any overlay is open (a menu, popover, tooltip, toast, dialog,
+  row there keeps empty. The rail's band (above) adds no drag region of its own: the controls area
+  and the content column's row fillers cover it, and the expand button or sidebar toggle in it is
+  a control, never a drag region. While any overlay is open (a menu, popover, tooltip, toast, dialog,
   sheet, palette, drawer) no filler drags, so an overlay landing over one stays clickable and
   hoverable and the window does not move under a modal. Double-clicking a filler does what the
   title bar does (macOS: zoom or minimize as System Settings say; Windows: maximize); a
   right-click on one shows no web menu (Windows may show the window menu). Below 600 the floating
-  row's gap is a filler on a pushed page; on a chat surface the title pill lies over it, so it does
-  not drag there, and the controls area reaches to just before the row's first control (a window
-  with its controls at the end keeps a strip at its start edge to drag by). A design test checks that drag regions are only the fillers and that every filler is
+  row's gap (the room between the menu or back button and the page's trailing controls) is a
+  filler wherever the shell reports window controls, as high as the top row from the window's top
+  edge, on a pushed page and on a chat surface alike (amended 2026-11-21: the home's row after the
+  menu button had nothing to drag by); only while a conversation's title pill lies over it does it
+  not drag. Without reported controls a chat surface's gap has no height, so the row keeps letting
+  taps through to the page; the band is only the row's height, never the page below it. The
+  controls area reaches to just before the row's first control (a window with its controls at the
+  end keeps a strip at its start edge to drag by). A design test checks that drag regions are only the fillers and that every filler is
   empty. The shell adds no drag regions of its own to the web; its local pages carry their own
   (the top band, §6.1: an empty band element, the controls rectangle in it `no-drag`).
 

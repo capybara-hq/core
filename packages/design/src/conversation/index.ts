@@ -107,6 +107,7 @@ export {
   type QuestionBlockProps,
   type QuestionField,
   type QuestionState,
+  type SecureInputField,
   safeHttpUrl,
   WORKING_ROOT_MAX,
 } from "./hitl";

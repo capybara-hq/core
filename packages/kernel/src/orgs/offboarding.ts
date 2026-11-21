@@ -546,5 +546,13 @@ export class Offboarding {
     }
     if (await ctl.abortIfOrphaned(data.conversationId, data.runId, null)) return;
     await ctl.requestAbort(data.runId, null);
+    // the suspend handshake (`WaitsService.suspend`): a run that became `waiting` after the read
+    // above may have checked the marker before it was set; check `waiting` again after setting it
+    const now = await this.db
+      .selectFrom("runs")
+      .select("status")
+      .where("id", "=", data.runId)
+      .executeTakeFirst();
+    if (now?.status === "waiting") await ctl.abortWaiting(data.conversationId, data.runId, null);
   }
 }

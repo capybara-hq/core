@@ -110,6 +110,8 @@ export type PickerProps = {
   groups: { label?: string; items: PickerItem[] }[];
   /** The note that closes the menu ("从下一条消息起生效"). */
   note?: string;
+  /** One muted line at the top of the mode menu (why something does not work now), not a choice. */
+  notice?: string;
   /**
    * One plain action after the items, not a choice ("Set the review model" for an org admin): a menu item
    * that closes the menu, a ghost button in the phone sheet.

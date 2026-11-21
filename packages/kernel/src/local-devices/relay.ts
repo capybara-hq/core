@@ -19,6 +19,7 @@ import {
   SandboxPermissionUnsupportedError,
   SandboxScopeDeniedError,
   SandboxScopeValidationError,
+  SandboxWorkUnsettledError,
   ToolError,
 } from "@capybara-hq/plugin-sdk";
 import { Inject, Injectable } from "@nestjs/common";
@@ -669,6 +670,8 @@ export class LocalDeviceRelay {
         throw new SandboxScopeDeniedError(message);
       case "unsupported":
         throw new SandboxPermissionUnsupportedError(message);
+      case "unsettled":
+        throw new SandboxWorkUnsettledError(message);
       case "unknown":
         throw new SandboxOperationOutcomeUnknownError(message);
       case "invalid":

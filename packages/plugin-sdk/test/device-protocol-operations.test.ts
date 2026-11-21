@@ -26,7 +26,15 @@ const frame = (op: string, args: unknown) =>
   JSON.stringify({ type: "req", id: "request", op, args, deadlineMs: 1000 });
 describe("protocol 5 operations", () => {
   it("carries every typed operation failure, an invalid scope included", () => {
-    for (const kind of ["denied", "unsupported", "unknown", "invalid", "gone", "fs_gone"]) {
+    for (const kind of [
+      "denied",
+      "unsupported",
+      "unsettled",
+      "unknown",
+      "invalid",
+      "gone",
+      "fs_gone",
+    ]) {
       const res = { type: "res", id: "request", ok: false, error: { kind, message: "m" } };
       expect(parseDeviceFrame(JSON.stringify(res), "device")).toEqual(res);
     }

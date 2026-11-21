@@ -9,6 +9,7 @@ import {
   type SandboxOperationScope,
   SandboxPermissionUnsupportedError,
   SandboxScopeDeniedError,
+  SandboxWorkUnsettledError,
 } from "@capybara-hq/plugin-sdk";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import WebSocket, { WebSocketServer } from "ws";
@@ -325,7 +326,9 @@ describe("device binding", () => {
     // live foreground work in this process is never dropped by a bind
     const running = f.startExec(b, "exec-1");
     await vi.waitFor(() => expect(b.current()?.backend.lifecycle.ownership().workers).toBe(2));
-    await expect(b.bind(request(G2, B2, G1), signal())).rejects.toThrow("not settled");
+    const refusal = await b.bind(request(G2, B2, G1), signal()).catch((e: unknown) => e);
+    expect(refusal).toBeInstanceOf(SandboxWorkUnsettledError);
+    expect((refusal as Error).message).toContain("not settled");
     for (const finish of f.finishers) finish();
     await running;
   });

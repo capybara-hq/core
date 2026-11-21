@@ -101,13 +101,13 @@ export function permissionAvailability(
         background: true,
       },
     };
-  return {
-    state,
-    reason:
-      state === "unprobed"
-        ? "Checked when this device starts"
-        : "Provider does not support permission-scoped operations",
-  };
+  if (state === "unsupported")
+    return {
+      state,
+      reason: "Provider does not support permission-scoped operations",
+      cause: { kind: "provider-outdated", plugin: "sandbox-docker", version: "0.4.1" },
+    };
+  return { state, reason: "Checked when this device starts" };
 }
 
 /** A side-effect-free device preview, separate from a conversation's effective profile. */
@@ -130,7 +130,11 @@ export const permissionsView = (
   deviceId: null,
   consentScope: null,
   scopeRevision: null,
-  availability: { state: "unsupported", reason: "Choose a device to run device operations" },
+  availability: {
+    state: "unsupported",
+    reason: "Choose a device to run device operations",
+    cause: { kind: "runtime" },
+  },
   outsideSandboxCeiling: false,
   startingWorkNotice:
     "Changes apply to new operations. Work already started keeps its starting permissions.",

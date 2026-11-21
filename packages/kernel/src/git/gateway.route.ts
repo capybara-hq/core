@@ -24,7 +24,7 @@ const GIT_REQUEST_TYPES = [
  */
 export async function registerGitGatewayRoute(
   fastify: FastifyInstance,
-  gateway: Pick<GitGateway, "handle">,
+  gateway: Pick<GitGateway, "handle" | "says">,
   log: Pick<Logger, "error">,
 ): Promise<void> {
   await fastify.register(async (scope) => {
@@ -38,9 +38,9 @@ export async function registerGitGatewayRoute(
         .code(status >= 400 && status < 500 ? 404 : 500)
         .header("content-type", "text/plain; charset=utf-8")
         .send(
-          status >= 400 && status < 500
-            ? "Capybara: not a git smart-HTTP endpoint.\n"
-            : "Capybara: internal error.\n",
+          `${gateway.says(
+            status >= 400 && status < 500 ? "not a git smart-HTTP endpoint." : "internal error.",
+          )}\n`,
         );
     });
     scope.route({

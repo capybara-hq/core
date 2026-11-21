@@ -441,6 +441,7 @@ export function toRow(
     ...(o.blockedBy ? { blockedBy: o.blockedBy } : t.error ? { error: t.error } : {}),
     ...(t.outsideSandbox ? { outsideSandbox: true } : {}),
     ...(t.autoGranted ? { autoGranted: t.autoGranted } : {}),
+    ...(t.approvedBy ? { approvedBy: t.approvedBy } : {}),
     ...(Object.keys(detail).length > 0 ? { detail } : {}),
   };
 }
@@ -560,6 +561,8 @@ function toolRowBlocks(): ReactNode {
       <RowBlock id="tool-row-waiting" row={toRow(pick(T.waiting, 0))} />
       <RowBlock id="tool-row-linked" row={BACKGROUND_ROW} />
       <RowBlock id="tool-row-auto-granted" row={toRow(pick(T.autoGranted, 0))} />
+      <RowBlock id="tool-row-auto-approved" row={toRow(pick(T.autoApproved, 0))} />
+      <RowBlock id="tool-row-review-approved" row={toRow(pick(T.reviewApproved, 0))} />
     </>
   );
 }
@@ -620,42 +623,13 @@ function ApprovalPending({
 function approvalBlocks(): ReactNode {
   const W = H.decided;
   const A = H.approval;
+  const SI = H.secureInput;
   return (
     <>
       <ApprovalPending id="approval-block-pending" scopes={A.scopes} />
       <ApprovalPending id="approval-block-pending-once" scopes={["once"]} />
       <ApprovalPending id="approval-block-pending-summary" scopes={A.scopes} summary />
       <ApprovalPending id="approval-block-deny-reason" scopes={A.scopes} deny />
-      <Block id="approval-block-person-fields">
-        <ApprovalBlock
-          tool={A.tool}
-          toolKey={A.toolKey}
-          input={Object.fromEntries(A.args)}
-          scopes={["once"]}
-          state={{ kind: "pending" }}
-          personTarget="Acme"
-          personFields={[
-            {
-              path: "apiKey",
-              label: "API key",
-              description: "From the vendor console.",
-              multiline: false,
-              value: "",
-              onChange: noop,
-            },
-            {
-              path: "privateKey",
-              label: "Private key",
-              multiline: true,
-              value: "",
-              error: "Enter a value.",
-              onChange: noop,
-            },
-          ]}
-          onApprove={noop}
-          onDeny={noop}
-        />
-      </Block>
       <Block id="approval-block-approved">
         <ApprovalBlock
           tool={W.approved.tool}
@@ -686,22 +660,42 @@ function approvalBlocks(): ReactNode {
           }}
         />
       </Block>
-      {/* spec §6.16.11: the decider as a person (a string `who` stays text) */}
-      <Block id="approval-block-person">
+      {/* spec §6.16.11: the secure input request, pending and decided */}
+      <Block id="approval-block-secure-input">
         <ApprovalBlock
-          tool={W.approved.tool}
-          toolKey={W.approved.toolKey}
+          tool={A.tool}
+          toolKey={A.toolKey}
           input={{}}
-          scopes={A.scopes}
-          state={{
-            kind: "decided",
-            decision: "approved",
-            who: PERSON_FIXTURE,
-            when: W.approved.at,
-            scope: "once",
+          scopes={["once"]}
+          state={{ kind: "pending" }}
+          secureInput={{
+            target: SI.target,
+            fields: SI.fields.map((f) => ({ ...f, value: "", onChange: noop })),
+            onSubmit: noop,
+            onCancel: noop,
           }}
         />
       </Block>
+      {(["approved", "denied"] as const).map((decision) => (
+        <Block
+          key={decision}
+          id={`approval-block-secure-input-${decision === "approved" ? "submitted" : "cancelled"}`}
+        >
+          <ApprovalBlock
+            tool={A.tool}
+            toolKey={A.toolKey}
+            input={{}}
+            scopes={["once"]}
+            state={{ kind: "decided", decision, who: W.who, when: SI.at }}
+            secureInput={{
+              target: SI.target,
+              fields: [],
+              onSubmit: noop,
+              onCancel: noop,
+            }}
+          />
+        </Block>
+      ))}
       {networkApprovalBlocks()}
       {commandApprovalBlocks()}
     </>

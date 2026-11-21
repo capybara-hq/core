@@ -102,11 +102,13 @@ export function fileLinkText(input: {
   conversationId: string;
   base: string | undefined;
   locale: ChannelLocale;
+  /** The platform name (`platform.name`) the line without a link names. */
+  product: string;
 }): string {
   const name = asCode(input.name);
   const size = formatFileSize(input.size);
   if (input.base === undefined) {
-    return fill(phrase("fileOnWebNoLink", input.locale), { name, size, url: "" });
+    return fill(phrase("fileOnWebNoLink", input.locale, input.product), { name, size, url: "" });
   }
   const url = `${conversationUrl(input.base, input.conversationId)}#file=${input.artifactId}`;
   return fill(phrase("fileOnWeb", input.locale), { name, size, url });

@@ -175,6 +175,17 @@ describe("checkI18n", () => {
     expect(f[1]?.message).toContain("智能体");
   });
 
+  it("the literal Capybara in a message -> i18n-product-name; {product}, program and format names, and the allowlist pass", () => {
+    const f = checkI18n(fixture("product-name"));
+    expect(f.map((x) => x.rule)).toEqual(["i18n-product-name", "i18n-product-name"]);
+    expect(f.every((x) => x.file.endsWith("zh.json"))).toBe(true);
+    expect(f.map((x) => x.message.match(/「([^」]+)」/)?.[1])).toEqual([
+      "bind.goHome",
+      "bind.select",
+    ]);
+    expect(f[0]?.message).toContain("{product}");
+  });
+
   it("JSON 解析失败 -> i18n-invalid-json", () => {
     const d = dirWith({ "zh.json": '{"a":"x"}', "en.json": "{" });
     expect(checkI18n(d).map((x) => x.rule)).toEqual(["i18n-invalid-json"]);

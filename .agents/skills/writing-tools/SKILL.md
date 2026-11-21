@@ -140,23 +140,45 @@ fails closed.
   `ask.secret-file`, `ask.credential-link`, `ask.dynamic-arg` and `ask.sudo`
   (`isSessionGrantableRule`). Grants allow a line only when every ask hit is granted and nothing is
   unsure (`applySessionGrants`), and only in attended runs.
-- **Permission profiles choose only the approver** (approval-only profiles design, 2026-11-19).
+- **Permission profiles choose who approves every approval addressed to the person** (approval-only
+  profiles design, 2026-11-19; amended by profiles-govern-all-approvals, 2026-11-21).
+  - **The profile step** (`ToolPipeline.profileStep`, after `decide` returns an `ask`, before
+    `approvals.request`) runs only for an ask addressed to the root conversation's owner
+    (`approverRole` null, `requestedFor` the owner), in an attended run of an interactive chat (not
+    scheduled, not a trial, not `wait` mode), for a tool that does not declare
+    `annotations.requiresUserInteraction`. The rule that raised the ask does not matter (`default`,
+    `connector`, `member`, `agent`, `org`, `fixed`, `personOnly`). Grants apply first under every
+    profile; policy denies, fixed denies and ceilings hold under every profile. An ask for another
+    role or account is never decided by a profile. Request approval asks; Approve for me runs the
+    **tool review** (`tools/tool-review.ts`: purpose `review`, same fail-closed rules as the
+    command review, its usage event keyed `usage_review_tool:<runId>:<callId>`; an unsure or failing
+    review creates the person's approval with `reviewUnsure`, a deny returns `toolReviewDeniedText`);
+    Auto runs and records.
+  - **Every automatic decision is one `tool_ask_decided` event** (idempotency key
+    `tool_ask_decided:<runId>:<callId>:<bindingHash>`) plus one `tool.ask_auto_decided` audit row,
+    written in one transaction. A resumed call reads the recorded event before the profile and never
+    reviews again; a pending or decided approval keeps governing the call when the profile changes.
+    The event is display and audit only (not model-visible, no `DriftReason`). A file reference runs
+    under an automatic decision only against the `fileSha256` recorded in that event.
+  - **Secure input** is its own approval kind (`secure_input`), raised after the call's own consent
+    is settled and asked under every profile (Submit approves with the sealed inputs, Cancel
+    denies; web only). See "Person fields" below.
   The sandbox is a device setting, the same under every profile (writing-device-providers); a
   call inside the scope and the sandbox network runs under every profile. Candidate building
-  (`buildPermissionCandidate`) runs for every profile, Full access included, and a candidate is one
+  (`buildPermissionCandidate`) runs for every profile, Auto (identifier `full-access`) included, and a candidate is one
   **crossing** (`crossingOfCandidate`, `PermissionCrossingKind`): `directory` (outside the scope),
   `host` (a new host, only while the sandbox network is an allowlist; IP literals and loopback names
   are never proposed) or `outside-sandbox` (the escalation below). `approverForCrossing`
   (`sandbox/review/permission-candidate.ts`) decides: Request approval the person, Approve for me the
-  review model (the person when it is missing, unsure or failing; a model deny stays a deny), Full
-  access nobody. Two exceptions turn `none` into `review-model`: a **sub-agent's** escalation, and
+  review model (the person when it is missing, unsure or failing; a model deny stays a deny), Auto
+  nobody. Two exceptions turn `none` into `review-model`: a **sub-agent's** escalation, and
   an escalation carrying a **credential consent** (`ask.credential-*`, `ask.ssh`, `ask.secret-file`,
-  `isCredentialConsentRule`); the review input says neutrally why it sees a Full access call. The
+  `isCredentialConsentRule`); the review input says neutrally why it sees an Auto call. The
   fixed denies (`deny.*` rules, platform and org denies, protected paths) come first under every
   profile, and a directory proposal at a protected location is `unsupported` before review, naming
   the escalation. A crossing beyond a ceiling is unavailable with a text naming the layer (the host
   rules: `hostGrantRefusal`).
-- **Full access auto-grants are recorded exactly once.** For approver `none`, `decidePermission`
+- **Auto's grants are recorded exactly once.** For approver `none`, `decidePermission`
   allows with `decisionSource: "full-access"` and the call goes on to grant issuance
   (`sandbox/permission-auto-grants.ts`): one fenced transaction under the shared authority lock
   writes the `permission_reviewed` event (outcome allow, the `crossing`), the audit row
@@ -564,14 +586,16 @@ section of `.agents/skills/writing-kernel-api`; this section is about how the pi
   approval stores it with the exact input and runs only with that input (approvals bound to input: a re-call
   with other params asks again). A write whose params hold a `{"$output": id}` reference is denied (the card
   would show the reference, not the content): `CallPolicyContext.rawInput` carries the unresolved input.
-- **Person fields** (platform web parity spec §4): an operation with `personFields` names the
-  target's secret fields; the model lists the ones to enter in `askPerson` (and `clearSecrets`), never
-  their values. `callPolicy` plans them (`planPersonFields`: a secret in `values` is refused as leaked,
-  a required unset secret is asked anyway) and returns `CallPolicy.personFields`, which the pipeline
-  honours before `decide`: the call always asks, once (never a grant, a session grant or an `allow`
-  override), an unattended run is refused, and an ask that would go to a role instead of the person is
-  denied. The card is web only: the `requested_for` person approves in a web session with the values
-  (IM cards show a link). The decision seals them (`SealedInputs`, 15 minutes, read once); the resumed
+- **Person fields** (platform web parity spec §4, profiles-govern-all-approvals): an operation with
+  `personFields` names the target's secret fields; the model lists the ones to enter in `askPerson`
+  (and `clearSecrets`), never their values. `callPolicy` plans them (`planPersonFields`: a secret in
+  `values` is refused as leaked, a required unset secret is asked anyway) and returns
+  `CallPolicy.personFields`. They no longer force the call's consent: the consent follows the call's
+  own policy, grants and the profile. The pipeline then always raises a **secure input** request
+  (approval kind `secure_input`, once per call, never a grant or a profile decision); an unattended
+  run is refused, and an ask that would go to a role instead of the person is denied. The request is
+  web only: the `requested_for` person submits in a web session with the values (IM cards show a
+  link); Cancel returns `secureInputCancelledText`. The decision seals them (`SealedInputs`, 15 minutes, read once); the resumed
   call hands them to `run` only as `ctx.personInputs.apply(fn)`, and the result appends one line per
   entered path (`` `apiKey`: entered by the person ``), never a value. Values that expired return the
   "expired" text and nothing is applied.

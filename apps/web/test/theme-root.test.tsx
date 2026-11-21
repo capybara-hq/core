@@ -82,6 +82,17 @@ describe("ThemeRoot in the workspace frame", () => {
     expect(schemeToggle()).not.toBeNull();
   });
 
+  it("a deployment named by platform.name keeps the built-in CAPYBARA wordmark; the theme mark's alt is the name", () => {
+    renderFrame(shellOf(ME), undefined, { productName: "Acme Agents" });
+    expect(within(brandRow()).getByText("CAPYBARA")).toBeTruthy();
+    expect(within(brandRow()).queryByText("Acme Agents")).toBeNull();
+    cleanup();
+    renderFrame(shellOf(ME, { theme: NEON_GRID }), undefined, { productName: "Acme Agents" });
+    expect(within(brandRow()).getByText("NEON GRID")).toBeTruthy();
+    const mark = brandRow().querySelector('[data-part="logo-mark"]');
+    expect(mark?.getAttribute("alt")).toBe("Acme Agents");
+  });
+
   it("a two-scheme theme: its stylesheet in the theme precedence, the scheme toggle stays", () => {
     renderFrame(shellOf(ME, { theme: PAPER }));
     expect(themeLinks()).toEqual([PAPER.cssUrl]);

@@ -104,8 +104,8 @@ export const DEVICE_FIXTURE = {
 
 /**
  * The composer's permission picker (spec §6.16.3 state `permission`): three described rows with an
- * icon each, in the same neutral colors; no device chosen yet, so Full access says why it waits;
- * the review note and an org admin's settings action.
+ * icon each, in the same neutral colors, all choosable (the Auto profile needs no device, its tag is the transient check); the
+ * review note and an org admin's settings action.
  */
 export const PERMISSION_FIXTURE = {
   label: "权限",
@@ -115,21 +115,21 @@ export const PERMISSION_FIXTURE = {
       id: "request-approval",
       label: "请求批准",
       icon: "hand",
-      description: "在沙箱内直接工作；超出沙箱或执行敏感命令前先问你。",
+      description: "每个审批都先问你。",
     },
     {
       id: "approve-for-me",
       label: "帮我批准",
       icon: "shield-check",
-      description: "同样的沙箱；超出范围的请求交给审查模型，拿不准时问你。",
+      description: "审查模型替你判断，拿不准时问你。",
     },
     {
       id: "full-access",
-      label: "完全访问",
+      label: "自动模式",
       icon: "lock-open",
-      description: "同样的沙箱；在此设备允许的范围内自动批准，不再询问。",
-      tag: "请先选择设备",
-      disabled: true,
+      description: "不再询问，智能体可以自由操作；需要别人批准的、需要你输入密钥的仍会出现。",
+      // the device's check is still running: a transient tag, the profile stays choosable
+      tag: "检查中",
     },
   ],
   note: "设备启动时检查。",
@@ -137,7 +137,7 @@ export const PERMISSION_FIXTURE = {
 } as const;
 
 /**
- * The composer's mode menu (§6.16.3a): the profiles of {@link PERMISSION_FIXTURE} (Full access
+ * The composer's mode menu (§6.16.3a): the profiles of {@link PERMISSION_FIXTURE} (Auto
  * choosable here), the Shift+Tab hint, the effort segments and a locked reason.
  */
 export const MODE_MENU_FIXTURE = {
@@ -147,6 +147,8 @@ export const MODE_MENU_FIXTURE = {
   /** The effort label; the efforts and the chosen one are the selected model's (`CONV_FIXTURE`). */
   effortLabel: "思考档位",
   locked: "跟随主对话的权限",
+  /** The standing line after the head (the `notice` state): a device that cannot enforce its sandbox. */
+  notice: "此设备的运行环境无法执行沙箱限制，设备工具暂时无法运行。",
 } as const;
 
 /** Composer, title bar and panel copy of the reference pages (zh; product copy goes through i18n). */
@@ -243,10 +245,12 @@ export type FixtureTool = {
   diff?: FixtureDiffLine[];
   added?: number;
   removed?: number;
-  /** A crossing Full access granted by itself (§6.16.9 "approved automatically"). */
+  /** A crossing Auto granted by itself (§6.16.9 "approved automatically"). */
   autoGranted?: "directory" | "host" | "outside-sandbox" | "sensitive";
   /** A command the review admitted to run outside the OS sandbox (§6.16.9). */
   outsideSandbox?: boolean;
+  /** Who approved the call without asking the person (§6.16.9 "approved automatically"). */
+  approvedBy?: "auto" | "review-model";
 };
 
 const cmd = (
@@ -273,7 +277,9 @@ export const TOOL_FIXTURES: Record<
   | "largeOutput"
   | "hookDenied"
   | "waiting"
-  | "autoGranted",
+  | "autoGranted"
+  | "autoApproved"
+  | "reviewApproved",
   FixtureTool[]
 > = {
   // Two separate single calls (each one line, no box).
@@ -509,7 +515,7 @@ export const TOOL_FIXTURES: Record<
       waiting: "input",
     },
   ],
-  // A long command Full access let run outside the sandbox: the status words are the row's meta,
+  // A long command Auto let run outside the sandbox: the status words are the row's meta,
   // so the description yields with the ellipsis and the words stay whole.
   autoGranted: [
     {
@@ -522,6 +528,30 @@ export const TOOL_FIXTURES: Record<
       extra: "退出码 0",
       outsideSandbox: true,
       autoGranted: "outside-sandbox",
+    },
+  ],
+  // A platform call the Auto profile ran without asking: the neutral approved-automatically words.
+  autoApproved: [
+    {
+      id: "t_auto_approved",
+      kind: "connector",
+      name: "Acme 工单",
+      tool: "send_message",
+      keyArg: "#示例-支持",
+      status: "done",
+      approvedBy: "auto",
+    },
+  ],
+  // The same call the review model approved (Approve for me).
+  reviewApproved: [
+    {
+      id: "t_review_approved",
+      kind: "connector",
+      name: "Acme 工单",
+      tool: "send_message",
+      keyArg: "#示例-支持",
+      status: "done",
+      approvedBy: "review-model",
     },
   ],
 };
@@ -573,6 +603,12 @@ export const HITL_FIXTURE: {
     denyReason: string;
     /** The kernel-rendered one-sentence summary of a call (the `pending-summary` state). */
     summary: string;
+  };
+  /** A secure input request (§6.16.11): what the values are saved to and the secret fields. */
+  secureInput: {
+    target: string;
+    fields: { path: string; label: string; description?: string; multiline: boolean }[];
+    at: string;
   };
   question: { question: string; options: string[]; selected: number; other: string };
   questionUrl: { question: string; url: string };
@@ -626,6 +662,18 @@ export const HITL_FIXTURE: {
     policy: "策略：发消息需审批",
     denyReason: "先别发，等财务确认",
     summary: "添加市场源 https://plugins.acme.example",
+  },
+  secureInput: {
+    target: "Anthropic: deployment config",
+    fields: [
+      {
+        path: "apiKey",
+        label: "API 密钥",
+        description: "在服务商控制台创建。",
+        multiline: false,
+      },
+    ],
+    at: "10:32",
   },
   question: {
     question: "示例表里同一收款人有两行映射，流程应该保留哪一个类别？",

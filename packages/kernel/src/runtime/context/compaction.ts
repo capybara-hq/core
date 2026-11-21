@@ -385,6 +385,8 @@ function transcriptLine(e: ConversationEvent): string | null {
     case "permission_context":
     case "permission_profile_changed":
     case "permission_reviewed":
+    // an automatic decision of a person's ask is display and audit only
+    case "tool_ask_decided":
       return null;
     default: {
       const unrendered: never = e;

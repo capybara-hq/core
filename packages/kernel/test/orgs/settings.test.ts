@@ -53,6 +53,7 @@ const settingsWith = (
     sandbox: { limits: { ...LIMITS, ...limits } },
     devices: { outsideSandbox: opts.outsideSandbox, network: { ceiling: opts.networkCeiling } },
     attribution: {},
+    platform: {},
     http: { publicUrl: undefined },
   };
   return orgSettingsFor(db, () => cfg);

@@ -60,7 +60,7 @@ export const CatalogMarketplaceRequestBody = z
 /**
  * One connector template's input at install (C30): name, slug, endpoint, credential or OAuth
  * client. The credential and the client secret are secrets (`secret()` meta, ruling R2): a Platform
- * operation never takes them as params; the person enters them on the confirmation card.
+ * operation never takes them as params; the person enters them in a secure input request.
  */
 export const CatalogConnectorInput = z
   .object({

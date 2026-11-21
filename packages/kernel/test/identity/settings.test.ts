@@ -399,6 +399,7 @@ describe("SettingsService devicesOutsideSandbox and devicesNetwork", () => {
           ({
             devices: { outsideSandbox: devices.outsideSandbox, network: { ...devices.network } },
             attribution: {},
+            platform: {},
             sharing: {},
           }) as never,
         fieldSource: (path: string) => (valueAt(path) === undefined ? undefined : source),

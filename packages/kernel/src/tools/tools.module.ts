@@ -1,6 +1,7 @@
 import { Module } from "@nestjs/common";
 import { BackgroundModule } from "../background/background.module.js";
 import { ConversationAccessModule } from "../conversations/access.js";
+import { ConversationApprovalProfileModule } from "../conversations/approval-profile.js";
 import { AttachmentsModule } from "../conversations/attachments.module.js";
 import { EventLogModule } from "../conversations/event-log.js";
 import { ConversationLeakCheckModule } from "../conversations/leak-check.js";
@@ -45,6 +46,7 @@ import { PermissionApprovalJobs } from "./permission-approval-jobs.js";
 import { ToolPipeline } from "./pipeline.js";
 import { QuestionsService } from "./questions.service.js";
 import { ToolRegistry } from "./registry.js";
+import { ToolAskReview } from "./tool-review.js";
 
 /**
  * Tools and connectors: credentials, output archives, the builtin tools and the registry,
@@ -60,6 +62,8 @@ import { ToolRegistry } from "./registry.js";
     PermissionAuthorityModule,
     OperationAuthorityModule,
     EventLogModule,
+    // the profile that decides an ask addressed to the conversation's person (the profile step)
+    ConversationApprovalProfileModule,
     // the approval decision's leak check of a person's card values
     ConversationLeakCheckModule,
     AttachmentsModule,
@@ -113,6 +117,8 @@ import { ToolRegistry } from "./registry.js";
     Breaker,
     ConnectorContent,
     ToolPipeline,
+    // the review model's judgment of a tool ask under Approve for me (the `review` purpose)
+    ToolAskReview,
     ConnectorsService,
     AdminConnectors,
     ConnectorAccountPolicies,

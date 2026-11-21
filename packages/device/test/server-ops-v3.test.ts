@@ -7,6 +7,7 @@ import {
   SandboxPermissionUnsupportedError,
   SandboxScopeDeniedError,
   SandboxScopeValidationError,
+  SandboxWorkUnsettledError,
 } from "@capybara-hq/plugin-sdk";
 import { describe, expect, it, vi } from "vitest";
 import type { MacOperationBackend } from "../src/exec/mac-operation-backend.js";
@@ -93,6 +94,7 @@ describe("dormant v3 dispatch", () => {
     for (const [error, kind] of [
       [new SandboxScopeDeniedError("denied"), "denied"],
       [new SandboxPermissionUnsupportedError("unsupported"), "unsupported"],
+      [new SandboxWorkUnsettledError("unsettled"), "unsettled"],
       [new SandboxOperationOutcomeUnknownError("unknown"), "unknown"],
       [new SandboxScopeValidationError("invalid"), "invalid"],
     ] as const) {

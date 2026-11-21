@@ -17,6 +17,9 @@ import { createDb } from "../../src/db/pool.js";
 import { defineOperation, type PlatformOperation } from "../../src/platform/operation.js";
 import { personFieldParams, secretFieldsOf } from "../../src/platform/person-fields.js";
 import { PlatformOperations } from "../../src/platform/registry.js";
+import { ApprovalsService } from "../../src/tools/approvals.service.js";
+import { TOOL_PIPELINE_HOOKS } from "../../src/tools/pipeline.js";
+import { createDecidePolicy } from "../../src/tools/policy.js";
 import { builtinsOff } from "../helpers/disabled-tools.js";
 import { accountsFor } from "../helpers/identity.js";
 import { MODEL_FAKE } from "../helpers/model-plugins.js";
@@ -34,9 +37,11 @@ import {
 } from "../helpers/runs.js";
 
 /**
- * A Platform call whose target has secret fields is web-only: a channel-bound conversation gets a
- * `bind` card (the count and the conversation link), never an approval card; an ordinary approval
- * still gets its card (platform web parity spec, Task 6). A Platform result's handoff card is a
+ * A Platform call whose target has secret fields is web-only: its secure input request gets a
+ * `bind` card in a channel-bound conversation (the count and the conversation link), never an
+ * approval card; an ordinary approval still gets its card (platform web parity spec, Task 6;
+ * profiles govern every approval, R4). The probe's consent is allowed by the decision seam: it is
+ * an ordinary approval, which this file does not test. A Platform result's handoff card is a
  * `bind` card too: a `link` card with the page's absolute URL, a `connect` card linking the
  * conversation, whose web card starts the OAuth flow (spec §6, Task 13).
  */
@@ -144,6 +149,19 @@ beforeAll(async () => {
         channels: { scanIntervalMs: 100, leaseTtlMs: 10_000 },
       },
     ),
+    {
+      overrides: [
+        {
+          provide: TOOL_PIPELINE_HOOKS,
+          useValue: {
+            decidePolicy: async (tool, def, c) =>
+              c.callPolicy?.key === `Platform:${OP}`
+                ? "allow"
+                : createDecidePolicy(db)(tool, def, c),
+          },
+        },
+      ],
+    },
   );
   k.app.get(PlatformOperations).register([probe, linkProbe, connectProbe]);
   raw = createDb(pgc.url, 3);
@@ -252,14 +270,14 @@ describe("approvals in IM: person fields", () => {
     expect(cardOf(sent)).toMatchObject({ kind: "approval", state: "pending" });
   });
 
-  it("the person-field approval stays pending and records no approval card (nothing to update on a decision)", async () => {
+  it("the secure input stays pending and records no approval card (nothing to update on a decision)", async () => {
     const rows = await db
       .selectFrom("approvals")
-      .select(["id", "status"])
+      .select(["id", "status", "kind"])
       .where("tool_key", "=", `Platform:${OP}`)
       .execute();
     expect(rows).toHaveLength(1);
-    expect(rows[0]?.status).toBe("pending");
+    expect(rows[0]).toMatchObject({ status: "pending", kind: "secure_input" });
     const cards = await sql<{ n: string }>`SELECT count(*) AS n FROM capybara.channel_card_messages
       WHERE card_kind = 'approval' AND card_id = ${rows[0]?.id as string}`.execute(raw);
     expect(Number(cards.rows[0]?.n)).toBe(0);
@@ -277,13 +295,62 @@ describe("approvals in IM: person fields", () => {
     expect(Number(cards.rows[0]?.n)).toBe(1);
   });
 
-  it("the bind card counts the fields the approval stores", async () => {
+  it("the bind card counts the fields the secure input stores", async () => {
     const row = await db
       .selectFrom("approvals")
       .select("detail")
       .where("tool_key", "=", `Platform:${OP}`)
       .executeTakeFirstOrThrow();
     expect((row.detail as { personFields: unknown[] }).personFields).toHaveLength(2);
+  });
+});
+
+describe("secure input requests in IM", () => {
+  it("a secure input request gets the web-only bind card, never an approval card", async () => {
+    // the conversation the echo call runs in (after /new); its run waits on the echo approval
+    const conv = await convOf("dm-u-owner");
+    const run = await db
+      .selectFrom("runs")
+      .select(["id", "trigger_account_id"])
+      .where("conversation_id", "=", conv)
+      .orderBy("created_at", "desc")
+      .executeTakeFirstOrThrow();
+    const orgId = (
+      await db
+        .selectFrom("conversations")
+        .select("org_id")
+        .where("id", "=", conv)
+        .executeTakeFirstOrThrow()
+    ).org_id;
+    const binds = () => sentTo("dm-u-owner").filter((s) => cardOf(s)?.kind === "bind").length;
+    const before = binds();
+    const asked = await k.app.get(ApprovalsService).requestSecureInput({
+      attempt: 1,
+      orgId,
+      conversationId: conv,
+      runId: run.id,
+      step: 1,
+      callId: "c-secure-input",
+      toolKey: `Platform:${OP}`,
+      specHash: "hash-1",
+      connectorId: null,
+      input: { action: "call", operation: OP, params: { askPerson: ["apiKey"] } },
+      requestedFor: run.trigger_account_id,
+      target: { zh: "探针配置", en: "Probe config" },
+      personFields: secretFieldsOf(TARGET_SCHEMA, new Set()).fields.slice(0, 1),
+    });
+    await waitFor(async () => binds() > before, 10_000, "bind card");
+    const sent = sentTo("dm-u-owner")
+      .filter((s) => cardOf(s)?.kind === "bind")
+      .at(-1);
+    expect(cardOf(sent as FakeChannelSent)).toEqual({
+      kind: "bind",
+      text: "1 field to fill in on the web",
+      url: `https://cap.example/chat/${conv}`,
+    });
+    const cards = await sql<{ n: string }>`SELECT count(*) AS n FROM capybara.channel_card_messages
+      WHERE card_kind = 'approval' AND card_id = ${asked.id}`.execute(raw);
+    expect(Number(cards.rows[0]?.n)).toBe(0);
   });
 });
 

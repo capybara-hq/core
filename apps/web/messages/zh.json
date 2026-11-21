@@ -1,10 +1,9 @@
 {
   "metadata": {
-    "title": "Capybara",
     "description": "面向组织的智能体平台"
   },
   "common": {
-    "appName": "Capybara",
+    "appName": "{product}",
     "loading": "加载中…",
     "logout": "退出登录",
     "localeName": {
@@ -36,6 +35,7 @@
         "session_mismatch": "登录是在另一个浏览器里发起的，请在这里重新开始。",
         "access_denied": "登录已取消或授权被拒绝。",
         "provider_error": "身份提供方返回错误，请稍后再试。",
+        "account_not_allowed": "这个账号不允许登录本平台。请使用允许的组织的账号，或联系管理员。",
         "identity_not_verified": "这个账号是通过 IM 绑定链接关联的，还不能直接用它登录。请先用其他方式登录，再在登录状态下用它登录一次完成验证。"
       },
       "auth": {
@@ -319,7 +319,7 @@
       "guide_changed": "接入指南在你查看后又变了，请先看新的指南再确认。"
     },
     "identity": {
-      "taken": "这个 IM 账号已绑定到另一个 Capybara 账号。",
+      "taken": "这个 IM 账号已绑定到另一个 {product} 账号。",
       "not_found": "该身份不存在或已解绑。",
       "last_login_method": "这是你唯一的登录方式，请先设置密码再解绑。"
     },
@@ -364,7 +364,7 @@
       "files_lost": "该设备的文件已丢失。云端设备请在设备页面重建文件；本地设备请在机器上先运行 capybara-device logout，再运行 capybara-device login 连接到同一个设备。",
       "forbidden": "你已无法使用该设备。",
       "files_on_device": "本地设备的文件保存在机器上，不能在平台上重建。请在机器上先运行 capybara-device logout，再运行 capybara-device login 连接到同一个设备。",
-      "offline": "这台电脑当前未连接，请在电脑上启动 Capybara 设备程序后重试。",
+      "offline": "这台电脑当前未连接，请在电脑上启动 capybara-device 后重试。",
       "program_outdated": "这台电脑上的设备程序版本过旧，请更新后重新连接。",
       "credential_invalid": "这台电脑的连接凭据已失效，请在电脑上重新连接。",
       "policy_refused": "这台设备不接受平台的这次修改，请在机器上修改。",
@@ -392,8 +392,8 @@
       "recreate_required": "旧版本启动的后台任务可能仍在这台设备之前的实例上运行，且已无法确认该实例已被销毁。请删除这台设备后重新创建。"
     },
     "app_auth": {
-      "code_invalid": "登录链接已失效，请在 Capybara 应用中重新登录。",
-      "redirect_uri_invalid": "这次登录请求来自平台不接受的应用地址，未发送。请回到 Capybara 应用重新发起登录。",
+      "code_invalid": "登录链接已失效，请在 {product} 应用中重新登录。",
+      "redirect_uri_invalid": "这次登录请求来自平台不接受的应用地址，未发送。请回到 {product} 应用重新发起登录。",
       "unavailable": "平台暂时无法为应用登录：尚未设置公开地址。请联系超级管理员。"
     },
     "device_sign_in": {
@@ -484,7 +484,7 @@
       "undeclared": "该插件包含扩展未声明的客户端代码（permissions.client）。请用 capybara-plugin pack 重新打包后再导入。",
       "integrity_mismatch": "该插件的某个客户端文件与清单记录的完整性校验值不符，插件包可能已损坏或被改动。请重新获取后再导入。",
       "invalid": "该插件的客户端代码不合法：有文件缺失、未列出或过大，或某个样式表不被允许。请用 capybara-plugin pack 重新打包后再导入。",
-      "api_unsupported": "该插件的客户端代码针对更新的客户端 API 版本构建，本部署不支持。请升级 Capybara，或针对当前版本重新构建插件。",
+      "api_unsupported": "该插件的客户端代码针对更新的客户端 API 版本构建，本部署不支持。请升级 {product}，或针对当前版本重新构建插件。",
       "not_found": "该插件界面代码不可用：插件可能已停用、已升级或界面代码已被停用。请重新加载页面。"
     },
     "invitation": {
@@ -1639,18 +1639,20 @@
       "profile": {
         "requestApproval": "请求批准",
         "approveForMe": "帮我批准",
-        "fullAccess": "完全访问"
+        "fullAccess": "自动模式"
       },
       "description": {
-        "requestApproval": "在沙箱内直接工作；超出沙箱或执行敏感命令前先问你。",
-        "approveForMe": "同样的沙箱；超出范围的请求交给审查模型，拿不准时问你。",
-        "fullAccess": "同样的沙箱；在此设备允许的范围内自动批准，不再询问。在沙箱外读取凭据和子智能体在沙箱外运行的请求仍交给审查模型。"
+        "requestApproval": "每个审批都先问你。",
+        "approveForMe": "审查模型替你判断，拿不准时问你。",
+        "fullAccess": "不再询问，智能体可以自由操作；需要别人批准的、需要你输入密钥的仍会出现。"
       },
       "reason": {
-        "noDevice": "请先选择设备",
         "checking": "正在检查此设备…",
-        "checkFailed": "无法检查此设备",
-        "unsupported": "此设备不支持"
+        "checkFailed": "无法检查此设备"
+      },
+      "notice": {
+        "providerOutdated": "此设备的沙箱插件（{plugin} {version}）需要更新后才能运行设备工具，请超级管理员在「插件」中更新。",
+        "runtime": "此设备的运行环境无法执行沙箱限制，设备工具暂时无法运行。"
       },
       "configureReview": "设置审查模型",
       "locked": {
@@ -1658,11 +1660,13 @@
         "scheduled": "定时任务沿用自身的无人值守审批规则"
       },
       "full": {
-        "title": "在 {device} 上使用完全访问？",
-        "body": "命令仍在沙箱中运行；智能体超出沙箱的请求{outside}会自动批准并记录。",
+        "title": "在 {device} 上使用自动模式？",
+        "titleNoDevice": "使用自动模式？",
+        "body": "命令仍在沙箱中运行；智能体超出沙箱的请求{outside}会自动批准并记录。平台和连接器操作也不再询问，直接执行并记录。",
+        "bodyNoDevice": "平台和连接器操作不再询问，直接执行并记录。",
         "outside": "（包括在沙箱外运行命令）",
-        "limits": "受保护的路径、平台和组织的禁止项仍然有效。在沙箱外读取凭据和子智能体在沙箱外运行的请求仍交给审查模型。",
-        "confirm": "使用完全访问",
+        "limits": "受保护的路径、平台和组织的禁止项仍然有效。在沙箱外读取凭据和子智能体在沙箱外运行的请求仍交给审查模型。需要别人批准的、需要你输入密钥的仍会出现。",
+        "confirm": "使用自动模式",
         "cancel": "取消"
       },
       "unconfirmed": "这是上次确认的权限，确认最新状态之前不能再次更改。",
@@ -2086,6 +2090,10 @@
     }
   },
   "approval": {
+    "reviewUnsure": "审查模型拿不准，交给你决定。",
+    "secureInput": {
+      "webOnly": "需要在网页填写 {count} 项"
+    },
     "initialPassword": {
       "show": "显示初始密码",
       "label": "{login} 的初始密码",
@@ -2097,7 +2105,6 @@
       "hint": "把它发给你要邀请的人。它只显示这一次；邀请本身仍可在成员页面查看。"
     },
     "person": {
-      "fillOnWeb": "打开对话填写 {n} 项",
       "leaked": "这个值在对话里出现过，视为已泄露。请到服务商那里新建一个再填写。"
     },
     "title": "需要审批",
@@ -2783,7 +2790,7 @@
     },
     "outsideSandbox": {
       "title": "在沙箱外运行",
-      "description": "设备上的单次调用能否获准在沙箱外运行：请求批准和帮我批准下要先经过你或审查模型，完全访问下在设备允许的范围内自动批准并记录。设备的所有者仍要在自己的设备上允许；云设备没有沙箱外。",
+      "description": "设备上的单次调用能否获准在沙箱外运行：请求批准和帮我批准下要先经过你或审查模型，自动模式下在设备允许的范围内自动批准并记录。设备的所有者仍要在自己的设备上允许；云设备没有沙箱外。",
       "allowed": "允许",
       "allowedHint": "调用可以获准在沙箱外运行，设备的所有者仍要在自己的设备上允许。",
       "off": "关闭",
@@ -2965,7 +2972,7 @@
       "anonymous": "匿名访客"
     },
     "policyHint": {
-      "bind": "未绑定 Capybara 账号的人会在私聊里收到绑定提示（推荐）。",
+      "bind": "未绑定 {product} 账号的人会在私聊里收到绑定提示（推荐）。",
       "anonymous": "未绑定的人以匿名访客身份对话：只能使用全组织可见的智能体，且不能取用个人凭据。"
     },
     "form": {
@@ -3028,7 +3035,7 @@
       "dangerTitle": "危险操作",
       "delete": "删除渠道",
       "deleteTitle": "删除 {name}？",
-      "deleteHint": "机器人会断开并不再回复。已在 IM 里进行的对话仍保留在 Capybara 中。",
+      "deleteHint": "机器人会断开并不再回复。已在 IM 里进行的对话仍保留在 {product} 中。",
       "inboundTitle": "接收方式",
       "inboundHint": "机器人如何接收消息。长连接在内网即可使用；Webhook 需要平台能经公网地址访问本部署。",
       "inboundLabel": "接收方式",
@@ -3301,9 +3308,9 @@
   },
   "identities": {
     "title": "IM 身份",
-    "hint": "绑定到你的 Capybara 账号的 IM 与第三方登录账号。已绑定的 IM 账号发来的消息以你的身份处理。",
+    "hint": "绑定到你的 {product} 账号的 IM 与第三方登录账号。已绑定的 IM 账号发来的消息以你的身份处理。",
     "empty": "还没有绑定任何身份。",
-    "emptyHint": "在 IM 里给 Capybara 机器人发消息并按链接绑定，或使用第三方账号登录。",
+    "emptyHint": "在 IM 里给 {product} 机器人发消息并按链接绑定，或使用第三方账号登录。",
     "columns": {
       "name": "名称",
       "source": "来源",
@@ -3320,37 +3327,37 @@
   },
   "bind": {
     "title": "绑定 IM 账号",
-    "subtitle": "一个 IM 账号请求绑定到你的 Capybara 账号。",
+    "subtitle": "一个 IM 账号请求绑定到你的 {product} 账号。",
     "source": "来源",
     "tenant": "租户",
     "externalId": "账号 ID",
     "email": "邮箱",
-    "warning": "只有当你刚刚亲自在 IM 中发起时才确认：这会把该 IM 账号绑定到你的 Capybara 账号，它发来的消息将以你的身份处理。",
+    "warning": "只有当你刚刚亲自在 IM 中发起时才确认：这会把该 IM 账号绑定到你的 {product} 账号，它发来的消息将以你的身份处理。",
     "confirm": "确认绑定",
     "cancel": "取消",
     "doneTitle": "绑定成功",
     "doneHint": "回到 IM 继续对话吧。",
     "invalidTitle": "链接已失效",
     "invalidHint": "在 IM 里给机器人重新发一条消息，获取新的绑定链接。",
-    "goHome": "进入 Capybara"
+    "goHome": "进入 {product}"
   },
   "appAuth": {
     "clients": {
       "desktop": {
         "title": "在桌面端登录 {platform}？",
-        "subtitle": "只有在你刚从 Capybara 桌面端发起登录时才继续。",
+        "subtitle": "只有在你刚从 {product} 桌面端发起登录时才继续。",
         "machine": "机器",
-        "invalidHint": "这个链接不完整。请回到 Capybara 桌面端重新发起登录。",
-        "redirectUriInvalid": "这次登录请求来自平台不接受的应用地址，未发送。请回到 Capybara 桌面端重新发起登录。",
-        "codeInvalid": "登录链接已失效，请在 Capybara 桌面端重新登录。"
+        "invalidHint": "这个链接不完整。请回到 {product} 桌面端重新发起登录。",
+        "redirectUriInvalid": "这次登录请求来自平台不接受的应用地址，未发送。请回到 {product} 桌面端重新发起登录。",
+        "codeInvalid": "登录链接已失效，请在 {product} 桌面端重新登录。"
       },
       "mobile": {
         "title": "在移动端登录 {platform}？",
-        "subtitle": "只有在你刚从 Capybara 移动端发起登录时才继续。",
+        "subtitle": "只有在你刚从 {product} 移动端发起登录时才继续。",
         "machine": "设备",
-        "invalidHint": "这个链接不完整。请回到 Capybara 移动端重新发起登录。",
-        "redirectUriInvalid": "这次登录请求来自平台不接受的应用地址，未发送。请回到 Capybara 移动端重新发起登录。",
-        "codeInvalid": "登录链接已失效，请在 Capybara 移动端重新登录。"
+        "invalidHint": "这个链接不完整。请回到 {product} 移动端重新发起登录。",
+        "redirectUriInvalid": "这次登录请求来自平台不接受的应用地址，未发送。请回到 {product} 移动端重新发起登录。",
+        "codeInvalid": "登录链接已失效，请在 {product} 移动端重新登录。"
       }
     },
     "account": "账号",
@@ -3358,9 +3365,9 @@
     "confirm": "登录",
     "cancel": "取消",
     "invalidTitle": "无法登录",
-    "invalidHint": "这个链接不完整。请回到 Capybara 应用重新发起登录。",
+    "invalidHint": "这个链接不完整。请回到 {product} 应用重新发起登录。",
     "doneTitle": "已完成",
-    "doneHint": "已返回 Capybara，可以关闭此页"
+    "doneHint": "已返回 {product}，可以关闭此页"
   },
   "deviceLink": {
     "title": "连接这台机器",
@@ -3378,7 +3385,7 @@
     "newDevice": "新建设备",
     "name": "新设备名称",
     "noOrg": "你还没有加入任何组织，无法连接机器。",
-    "disclosure": "确认后，你和你的智能体可以在这台机器上运行命令。命令输出和智能体读到的文件内容会进入对话并发送给模型。随时可以在设备页断开，或在这台机器上运行 capybara-device stop。确认不会开启完全访问：只有机器的所有者能在机器上开启（capybara-device ceiling set）。",
+    "disclosure": "确认后，你和你的智能体可以在这台机器上运行命令。命令输出和智能体读到的文件内容会进入对话并发送给模型。随时可以在设备页断开，或在这台机器上运行 capybara-device stop。确认不会开启自动模式：只有机器的所有者能在机器上开启（capybara-device ceiling set）。",
     "confirm": "确认连接",
     "deny": "拒绝",
     "doneTitle": "已连接",
@@ -3388,7 +3395,7 @@
     "deniedHint": "这台机器不会连接。",
     "invalidTitle": "连接码已失效",
     "invalidHint": "在机器上重新运行 capybara-device login，获取新的连接码。",
-    "goHome": "前往 Capybara"
+    "goHome": "前往 {product}"
   },
   "trajectories": {
     "title": "评测与运行",
@@ -4410,7 +4417,8 @@
         "deviceRenamed": "重命名了设备",
         "deviceOwnerCeilingChanged": "修改了设备的权限上限",
         "conversationPermissionProfileChanged": "修改了对话的权限",
-        "permissionCrossingAutoGranted": "完全访问自动为智能体批准了一次沙箱越界",
+        "permissionCrossingAutoGranted": "自动模式为智能体批准了一次沙箱越界",
+        "toolAskAutoDecided": "自动决定了一次工具审批（自动模式或审查模型）",
         "evalCaseAdded": "添加了评测用例",
         "evalCaseRemoved": "移除了评测用例",
         "evalResultLabeled": "标注了评测结果",
@@ -4627,7 +4635,7 @@
       },
       "outsideSandbox": {
         "title": "在沙箱外运行",
-        "description": "平台上的设备能否获准让单次调用在沙箱外运行：组织和设备的所有者也允许时，请求批准和帮我批准下由你或审查模型批准，完全访问下自动批准并记录。云设备没有沙箱外。",
+        "description": "平台上的设备能否获准让单次调用在沙箱外运行：组织和设备的所有者也允许时，请求批准和帮我批准下由你或审查模型批准，自动模式下自动批准并记录。云设备没有沙箱外。",
         "label": "在沙箱外运行",
         "allowed": "允许",
         "allowedHint": "组织可以允许，设备的所有者仍要在自己的设备上允许。",
@@ -5045,7 +5053,7 @@
     "backToSignIn": "已有账号？登录",
     "invalidTitle": "邀请链接已失效",
     "invalidHint": "请联系邀请你的组织管理员重新发送邀请。",
-    "goHome": "进入 Capybara"
+    "goHome": "进入 {product}"
   },
   "catalog": {
     "scope": {
@@ -5255,9 +5263,9 @@
         "translation": {
           "title": "Claude Code 翻译报告",
           "formatClaude": "Claude Code 插件",
-          "summary": "按 Claude Code 插件读取：只接收 Capybara 支持的部分，其余每一项都列出原因。",
+          "summary": "按 Claude Code 插件读取：只接收 {product} 支持的部分，其余每一项都列出原因。",
           "noManifest": "插件没有 .claude-plugin/plugin.json，按目录结构读取。",
-          "claudeManifestIgnored": "插件同时有 .capybara-plugin/plugin.json 和 .claude-plugin/plugin.json：读取的是 Capybara 清单，Claude Code 的清单被忽略。",
+          "claudeManifestIgnored": "插件同时有 .capybara-plugin/plugin.json 和 .claude-plugin/plugin.json：读取的是 .capybara-plugin 清单，Claude Code 的清单被忽略。",
           "groupTitle": "{group}（{n}）",
           "groups": {
             "imported": "已导入",
@@ -5295,10 +5303,10 @@
             "skill_manual_only": "只能由人从 / 菜单调用（disable-model-invocation），模型看不到它",
             "skill_forked": "由人调用时作为子智能体（{agent}）运行（context: fork）",
             "command_invalid": "未导入：该命令无法转成技能",
-            "skill_shell_injection": "在 Claude Code 里调用时会先运行 shell 命令；Capybara 把这些命令作为文本交给模型",
+            "skill_shell_injection": "在 Claude Code 里调用时会先运行 shell 命令；{product} 把这些命令作为文本交给模型",
             "skill_agent_unknown": "子智能体类型 {agent} 既不是内置类型，也不是本插件的智能体：除非智能体有这个类型，否则按 general-purpose 运行",
-            "skill_invocation_key_ignored": "调用相关的键 {keys} 未采用：Capybara 无法按原样读取",
-            "skill_file_reference": "用 @ 引用了文件（{files}），Claude Code 会读入这些文件；Capybara 把原文交给模型",
+            "skill_invocation_key_ignored": "调用相关的键 {keys} 未采用：{product} 无法按原样读取",
+            "skill_file_reference": "用 @ 引用了文件（{files}），Claude Code 会读入这些文件；{product} 把原文交给模型",
             "agent_imported": "已作为智能体模板 {type} 导入（模型档位 {model}）",
             "mcp_template": "转为连接器模板 {template}（认证方式 {auth}）",
             "skill_root_relocated": "根目录的 SKILL.md 移到 {to}",
@@ -5323,17 +5331,17 @@
             "mcp_unsupported_transport": "不支持 {transport} 传输（只支持远程 http 服务）",
             "mcp_invalid": "MCP 服务声明无效",
             "skill_invalid": "未导入：技能无效",
-            "not_applicable": "在 Capybara 里不适用",
+            "not_applicable": "在 {product} 里不适用",
             "unknown_field": "未知或格式不对，已忽略",
             "other_harness": "其他工具的文件，已忽略",
             "skill_ignored_restrictions": "frontmatter 里的 {keys} 被忽略",
             "skill_claude_variables": "用到 Claude Code 变量（{variables}），不会被替换",
-            "session_start_pin_hint": "这个插件在 Claude Code 里会在会话开始时注入技能；Capybara 不运行钩子",
-            "session_start_hook": "在 Claude Code 里，这个插件会运行 SessionStart 钩子，它通常在每次会话开始时加入说明（常是插件的某个技能）。Capybara 不运行钩子。插件的技能在每个智能体的技能目录里；如果某个智能体必须始终遵循钩子加入的内容，请把要点写进该智能体的说明。",
+            "session_start_pin_hint": "这个插件在 Claude Code 里会在会话开始时注入技能；{product} 不运行钩子",
+            "session_start_hook": "在 Claude Code 里，这个插件会运行 SessionStart 钩子，它通常在每次会话开始时加入说明（常是插件的某个技能）。{product} 不运行钩子。插件的技能在每个智能体的技能目录里；如果某个智能体必须始终遵循钩子加入的内容，请把要点写进该智能体的说明。",
             "mcp_auth_none": "没有声明认证，按无认证处理（Claude Code 会在服务要求时发起 OAuth）",
             "mcp_type_assumed": "没有声明类型，按 http 处理",
             "connector_not_loaded": "{connector} 连接器没有在本副本加载：模板只做了静态检查",
-            "agent_tools_unmapped": "在 Capybara 中没有对应的工具已去掉：{tools}",
+            "agent_tools_unmapped": "在 {product} 中没有对应的工具已去掉：{tools}",
             "agent_tools_narrowed": "disallowedTools 中的模式会禁用整个工具：{tools}",
             "agent_skills_truncated": "去掉的预加载技能（最多 3 个本插件的技能名）：{skills}"
           },
@@ -6597,7 +6605,7 @@
   },
   "appIcon": {
     "title": "应用图标",
-    "description": "整个平台的已安装应用图标和浏览器标签页图标。未上传时使用 Capybara 图标。",
+    "description": "整个平台的已安装应用图标和浏览器标签页图标。未上传时使用内置图标。",
     "app": {
       "title": "标准图标",
       "hint": "PNG，必须为 512 × 512"

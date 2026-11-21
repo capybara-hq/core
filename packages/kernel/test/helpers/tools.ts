@@ -149,7 +149,9 @@ export interface PipelineTestDeps {
     | "requestNetwork"
     | "commandForCall"
     | "requestCommand"
-  >;
+  > &
+    /** Absent: the call never has a secure input (a request then fails the test). */
+    Partial<Pick<ApprovalsService, "requestSecureInput" | "secureInputForCall">>;
   questions: Pick<QuestionsService, "ask" | "forCall">;
   config: () => unknown;
   log: Logger;
@@ -167,6 +169,22 @@ export interface PipelineTestDeps {
   onToolsChanged?: (orgId: string, connectorId: string) => void;
 }
 
+/** Approvals for a pipeline: a double without secure inputs gets "none" and a failing request. */
+function withSecureInputs(
+  a: PipelineTestDeps["approvals"],
+): Pick<ApprovalsService, "requestSecureInput" | "secureInputForCall"> & typeof a {
+  if (a.requestSecureInput !== undefined && a.secureInputForCall !== undefined) {
+    return a as Pick<ApprovalsService, "requestSecureInput" | "secureInputForCall"> & typeof a;
+  }
+  // the prototype chain keeps a service instance's own methods
+  return Object.assign(Object.create(a) as typeof a, {
+    secureInputForCall: async () => null,
+    requestSecureInput: async (): Promise<never> => {
+      throw new Error("this test pipeline has no secure input requests");
+    },
+  });
+}
+
 /** A tool pipeline over test doubles (no extension host: inline cards are dropped). */
 export function pipelineFor(d: PipelineTestDeps): ToolPipeline {
   const h = handlesFor(d.db);
@@ -182,7 +200,7 @@ export function pipelineFor(d: PipelineTestDeps): ToolPipeline {
     d.credentials,
     d.breaker,
     d.outputs,
-    d.approvals,
+    withSecureInputs(d.approvals),
     d.questions,
     configFrom(d.config),
     d.log,

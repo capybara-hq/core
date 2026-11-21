@@ -23,10 +23,9 @@ import { ApiClientError } from "../lib/api";
 import {
   type Approval,
   type ApprovalScope,
-  CREATE_ACCOUNT_OPERATION,
   decideApproval,
   formatInput,
-  INVITE_OPERATION,
+  type PersonField,
   scopesFor,
 } from "../lib/approvals";
 import type { PermissionScope, SandboxEscalation, ToolInfo } from "../lib/conversations";
@@ -42,8 +41,6 @@ import { shortTime } from "../lib/time";
 import type { ApprovalDecision, ApprovalItem } from "../lib/timeline";
 import { lang, PLATFORM_PREFIX, toolLabel, toolLabelOfKey, toolLabelText } from "../lib/tool-label";
 import { useErrorMessage } from "../lib/use-error-message";
-import { InitialPasswordReveal } from "./InitialPasswordReveal";
-import { InvitationLinkReveal } from "./InvitationLinkReveal";
 import { Person } from "./Person";
 import { useSession } from "./shell/session";
 
@@ -116,7 +113,7 @@ export function ScopePicker({
 }
 
 /**
- * The per-field problems of a refused person-field approval: `approval.input_leaked` names paths,
+ * The per-field problems of a refused secure input request: `approval.input_leaked` names paths,
  * `approval.inputs_invalid` names `{ path, problem }`. Null for any other error. The kernel never
  * echoes a value, so nothing here can show one.
  */
@@ -257,7 +254,7 @@ export function ApprovalCard({
   const { me } = useSession();
   const [local, setLocal] = useState<(Outcome & { at: string }) | null>(null);
   const { decide, pending } = useDecide(orgId);
-  // What the person types lives only here: sent once with the approve, cleared after, never cached.
+  // What the person types lives only here: sent once with the submit, cleared after, never cached.
   const [values, setValues] = useState<Record<string, string>>({});
   const [fieldErrors, setFieldErrors] = useState<Record<string, string>>({});
   const decided = item.decided;
@@ -304,20 +301,40 @@ export function ApprovalCard({
     return p ? { name: p.name, avatarUrl: p.avatarUrl } : { name: tp("departed"), avatarUrl: null };
   };
 
+  // A secure input request (the person types a call's secret fields): known from the log's
+  // event before the approval is read, from the approval itself once it is.
+  const secure = view?.kind === "secure_input" || item.secureInput !== undefined;
+  // The fields shown and the fields submitted are this one list: the approval's (labels,
+  // descriptions) once read, the log's paths until then.
+  const secureFields: readonly PersonField[] = secure
+    ? (view?.personFields ??
+      (item.secureInput?.fields ?? []).map(
+        (path): PersonField => ({
+          path,
+          label: { zh: path, en: path },
+          multiline: false,
+          required: true,
+          isSet: false,
+        }),
+      ))
+    : [];
+
   async function onDecide(
     decision: "approve" | "deny",
     scope: ApprovalScope,
     reason?: string,
     hosts?: string[],
   ) {
-    const person = view?.personFields;
+    // values are submitted only once the approval is read (Submit is disabled until then)
+    if (secure && decision === "approve" && !view) return;
+    const person = secureFields;
     const r = await decide(
       item.approvalId,
       decision,
       scope,
       reason,
       hosts,
-      decision === "approve" && person && person.length > 0
+      decision === "approve" && person.length > 0
         ? {
             inputs: Object.fromEntries(person.map((f) => [f.path, values[f.path] ?? ""])),
             onFieldErrors: (errors, leaked) => {
@@ -358,15 +375,6 @@ export function ApprovalCard({
       : view && typeof view.input === "object" && view.input !== null
         ? (view.input as Record<string, unknown>)
         : {};
-  // an approved Platform call of `operation`, decided by me (what it made is shown to me once)
-  const approvedByMe = (operation: string) =>
-    outcome?.decision === "approved" &&
-    outcome.byAccountId === me.account.id &&
-    ((platformKey ?? item.toolKey) === `${PLATFORM_PREFIX}${operation}` ||
-      (item.toolKey === "Platform" && input.operation === operation));
-  // accounts.create: its generated password; orgs.invite: the invitation's link
-  const revealsPassword = approvedByMe(CREATE_ACCOUNT_OPERATION);
-  const revealsInvitation = approvedByMe(INVITE_OPERATION);
   const network = networkAskOf(item, view);
   const asked = commandAskOf(item, view);
   const lead = asked === undefined ? undefined : commandLeadOf(item, view);
@@ -388,14 +396,9 @@ export function ApprovalCard({
   const details = useCardDetails(scope, escalation, command?.path);
   const detail = view?.kind === "network" ? (view.detail ?? null) : null;
   // a network ask is granted for this run only: an "always" is never offered (device protocol 4)
-  const personFields = view?.personFields ?? [];
-  // values are typed once for one call: a person-field approval is never remembered
-  const scopes =
-    personFields.length > 0
-      ? (["once"] as const)
-      : view
-        ? scopesFor(view).filter((s) => network === undefined || s !== "always")
-        : (["once"] as const);
+  const scopes = view
+    ? scopesFor(view).filter((s) => network === undefined || s !== "always")
+    : (["once"] as const);
   // A permission change replaced the ask before anyone decided it: a final line, never actions.
   if (outcome?.decision === "superseded") {
     return (
@@ -426,6 +429,37 @@ export function ApprovalCard({
       </div>
     );
   }
+  // The secure input variant ({@link secureFields}); a refused value's error stays until a new one
+  // is typed.
+  const secureTarget = view?.personTarget ?? item.secureInput?.target;
+  const secureInput: ApprovalBlockProps["secureInput"] | undefined =
+    secure && secureTarget !== undefined
+      ? {
+          target: secureTarget[lang(locale)],
+          fields: secureFields.map((f) => {
+            const error =
+              fieldErrors[f.path] ??
+              ((values[f.path] ?? "") === "" && view?.leakedFields?.includes(f.path)
+                ? t("person.leaked")
+                : undefined);
+            return {
+              path: f.path,
+              label: f.label[lang(locale)],
+              ...(f.description !== undefined ? { description: f.description[lang(locale)] } : {}),
+              multiline: f.multiline,
+              value: values[f.path] ?? "",
+              ...(error !== undefined ? { error } : {}),
+              onChange: (v: string) => {
+                setValues((o) => ({ ...o, [f.path]: v }));
+                setFieldErrors(({ [f.path]: _drop, ...rest }) => rest);
+              },
+            };
+          }),
+          onSubmit: () => void onDecide("approve", "once"),
+          onCancel: () => void onDecide("deny", "once"),
+          ...(!view ? { submitDisabled: true } : {}),
+        }
+      : undefined;
   let state: ApprovalState;
   if (outcome !== null) {
     const granted = outcome.decision === "approved" ? detail?.grantedHosts : undefined;
@@ -506,34 +540,14 @@ export function ApprovalCard({
               },
             }
           : {})}
-        {...(personFields.length > 0 && view?.personTarget
-          ? {
-              personTarget: view.personTarget[lang(locale)],
-              approveDisabled: personFields.some((f) => (values[f.path] ?? "") === ""),
-              personFields: personFields.map((f) => ({
-                path: f.path,
-                label: f.label[lang(locale)],
-                ...(f.description !== undefined
-                  ? { description: f.description[lang(locale)] }
-                  : {}),
-                multiline: f.multiline,
-                value: values[f.path] ?? "",
-                ...(fieldErrors[f.path] !== undefined ? { error: fieldErrors[f.path] } : {}),
-                onChange: (v: string) => {
-                  setValues((o) => ({ ...o, [f.path]: v }));
-                  setFieldErrors(({ [f.path]: _drop, ...rest }) => rest);
-                },
-              })),
-            }
-          : {})}
+        {...(secureInput !== undefined ? { secureInput } : {})}
         onApprove={(scope, hosts) =>
           void onDecide("approve", scope, undefined, network !== undefined ? hosts : undefined)
         }
         onDeny={(reason) => void onDecide("deny", "once", reason)}
         {...details}
+        {...(view?.reviewUnsure ? { notes: [...(details.notes ?? []), t("reviewUnsure")] } : {})}
       />
-      {revealsPassword && <InitialPasswordReveal orgId={orgId} approvalId={item.approvalId} />}
-      {revealsInvitation && <InvitationLinkReveal orgId={orgId} approvalId={item.approvalId} />}
     </div>
   );
 }

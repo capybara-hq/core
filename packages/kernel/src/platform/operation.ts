@@ -36,8 +36,8 @@ export interface OperationContext {
    */
   errorRole?: ErrorRole;
   /**
-   * The values the person typed on the approval card for this call's secret fields (platform web
-   * parity spec §4.3): present only when the approved call asked for person fields. `paths` are the
+   * The values the person typed in the secure input request for this call's secret fields
+   * (platform web parity spec §4.3): present only when the call asked for person fields. `paths` are the
    * asked fields; `apply` consumes the sealed values once and runs `fn` with them in the same
    * transaction (a throw puts them back), so the handler passes them to the route's service method
    * inside `fn`. The values never go into the result: the tool appends a line per entered path.
@@ -148,12 +148,14 @@ export interface PlatformOperation<I = unknown> {
    */
   rememberable?: false;
   /**
-   * `true`: the write's result is shown once, on the web, to the person who approves the call (an
-   * invitation link, a generated initial password), so only the person the run works for may
-   * confirm it: the call always asks them (never a grant, an `allow`, a role escalation) and is
-   * refused in an unattended run (`CallPolicy.personOnly`, like person fields, ruling R6).
+   * The write's result is shown once, on the web, to the person the call is made for (an
+   * invitation link, a generated initial password), read by the call (profiles govern every
+   * approval, R6); the value names which, and the tool result carries the reveal view. Only the
+   * person the run works for may consent to it: the call always asks them (never a grant, an
+   * `allow`, a role escalation; the conversation's profile decides the ask) and is refused in an
+   * unattended run (`CallPolicy.personOnly`).
    */
-  revealsToApprover?: true;
+  revealsOnce?: "initial_password" | "invitation_link";
   /**
    * The class of one call when it depends on the target (read at confirmation time): e.g.
    * `agents.update` is `personal` only on a private agent the actor owns and `org` otherwise, so a
@@ -276,7 +278,7 @@ export const PLATFORM_DOMAINS: readonly { id: string; description: string }[] = 
   {
     id: "extensions",
     description:
-      "Extensions in the org (state, tool switches, extension point defaults, file previewers, the org config and the org's copy of platform config) and, for the super admin, on the platform (state, deployment config, pending permission confirmations, enable, disable, uninstall). Secrets are entered by the person on the confirmation card.",
+      "Extensions in the org (state, tool switches, extension point defaults, file previewers, the org config and the org's copy of platform config) and, for the super admin, on the platform (state, deployment config, pending permission confirmations, enable, disable, uninstall). Secrets are entered by the person in a secure input request.",
   },
   {
     id: "conversations",

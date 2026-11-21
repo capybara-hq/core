@@ -38,7 +38,12 @@ const DefaultLink: LinkComponent = ({ href, children, ...rest }) => (
  * What a theme replaces of the brand (spec §3): the logo mark as an image URL and the wordmark
  * text; a null part keeps the built-in pixel capybara or `CAPYBARA`.
  */
-export type Brand = { markUrl: string | null; wordmark: string | null };
+export type Brand = {
+  markUrl: string | null;
+  wordmark: string | null;
+  /** The product name (the deployment's `platform.name`, else the built-in one): the mark's `alt`. */
+  productName: string | null;
+};
 
 const BrandContext = createContext<Brand | null>(null);
 

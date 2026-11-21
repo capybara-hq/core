@@ -12,6 +12,7 @@ import { IconButton } from "../controls/index";
 import type { ConvMenuEntry } from "../conversation/menu";
 import { ConvMenu } from "../conversation/menu";
 import type { NavBadge } from "../display/nav-badge";
+import { Tooltip } from "../display/tooltip";
 import { Icon } from "../icons/icon";
 import {
   NATIVE_NAV_LIMITS,
@@ -29,14 +30,22 @@ import { keyboardInset } from "./pointer";
 import { SetupSteps } from "./setup-steps";
 import { useShellEnvironment } from "./shell-environment";
 import { type ShellPage, ShellPageContext } from "./shell-page";
-import { Sidebar, type SidebarProps, useSidebarWidthMode } from "./sidebar";
+import { COLLAPSE_SHORTCUT, Sidebar, type SidebarProps, useSidebarWidthMode } from "./sidebar";
 import { useShortWindow, useSizeClass } from "./size-class";
 import { StatusBar, type StatusBarProps, StatusBarSetterContext } from "./status-bar";
 import { useTouch } from "./touch";
 import { useHydrated } from "./use-media-query";
 
 export type AppShellProps = {
-  sidebar: Omit<SidebarProps, "onOpenCommands" | "mode" | "collapsed" | "onCollapsedChange">;
+  sidebar: Omit<
+    SidebarProps,
+    | "onOpenCommands"
+    | "mode"
+    | "collapsed"
+    | "onCollapsedChange"
+    | "drawerOpen"
+    | "onDrawerOpenChange"
+  >;
   /**
    * The chat-first compact shell's drawer (design spec §4.6, §6.53): with it a chat surface shows
    * the floating menu button (the badge is `menuBadge`), which opens the drawer.
@@ -153,6 +162,9 @@ export function AppShell({
   const short = useShortWindow();
   // Inside a native shell (mobile layout spec §9.3): its kind, after hydration; null in a browser.
   const shellKind = useShellEnvironment(singleScheme === true);
+  // The medium rail's drawer (the full sidebar over the content): its toggle sits in the rail, or
+  // in the desktop's top band (below); it never changes the collapsed choice.
+  const [sidebarDrawerOpen, setSidebarDrawerOpen] = useState(false);
   const [ownCollapsed, setOwnCollapsed] = useState(false);
   const collapsed = collapsedProp ?? ownCollapsed;
   const setCollapsed = (next: boolean) => {
@@ -407,11 +419,18 @@ export function AppShell({
   }, []);
 
   const searchable = commands !== undefined;
-  // ⌘K opens the palette; ⌘\ / Ctrl+\ collapses or expands the sidebar (the expanded class only:
-  // medium has the rail alone, compact no sidebar). A ref keeps one listener for the latest state.
+  // ⌘K opens the palette; ⌘\ / Ctrl+\ collapses or expands the sidebar on the expanded class and
+  // opens or closes the medium rail's drawer (maintainer decision 2026-11-22; the collapsed choice
+  // stays); compact has no sidebar. A ref keeps one listener for the latest state.
   const collapseKey = useRef<(() => void) | null>(null);
   collapseKey.current =
-    sizeClass === "expanded" && reference === undefined ? () => setCollapsed(!collapsed) : null;
+    reference !== undefined
+      ? null
+      : sizeClass === "expanded"
+        ? () => setCollapsed(!collapsed)
+        : sizeClass === "medium"
+          ? () => setSidebarDrawerOpen((open) => !open)
+          : null;
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       if (!(e.metaKey || e.ctrlKey)) return;
@@ -495,6 +514,17 @@ export function AppShell({
           ? { kind: "menu", onOpen: () => setDrawerOpen(true), badge: drawer.menuBadge }
           : undefined;
   const overflow = page.menu ?? menu ?? [];
+  // The collapsed sidebar's expand button in the desktop's top row (desktop client spec §7.3):
+  // drawn inside a desktop shell while the person has collapsed the sidebar on the expanded class
+  // (the medium rail cannot expand); CSS shows it only where the window controls reach past the
+  // rail, and hides the rail's own expand button then.
+  const topRowToggle =
+    shellKind === "desktop" && collapsed && reference === undefined && sizeClass === "expanded";
+  // The medium rail's sidebar toggle in the same place (maintainer decision 2026-11-21): it opens
+  // the full sidebar as a drawer below the band; CSS shows it where the rail drops below the band,
+  // and hides the rail's own toggle then.
+  const topRowDrawerToggle =
+    shellKind === "desktop" && reference === undefined && sizeClass === "medium";
 
   return (
     <ShellPageContext.Provider value={registerPage}>
@@ -516,6 +546,31 @@ export function AppShell({
           <a className="cb-skip-link" href={`#${mainId}`}>
             {t("shell.skipToContent")}
           </a>
+          {topRowToggle ? (
+            <div className="cb-shell-rail-toggle">
+              <Tooltip content={`${t("sidebar.expand")} ${COLLAPSE_SHORTCUT}`}>
+                <IconButton
+                  label={t("sidebar.expand")}
+                  icon={<Icon name="panel-left" />}
+                  part="top-row-expand-toggle"
+                  onClick={() => setCollapsed(false)}
+                />
+              </Tooltip>
+            </div>
+          ) : topRowDrawerToggle ? (
+            <div className="cb-shell-rail-toggle">
+              <Tooltip content={`${t("sidebar.show")} ${COLLAPSE_SHORTCUT}`}>
+                <IconButton
+                  label={t("sidebar.show")}
+                  icon={<Icon name="panel-left" />}
+                  part="top-row-drawer-toggle"
+                  aria-expanded={sidebarDrawerOpen}
+                  aria-haspopup="dialog"
+                  onClick={() => setSidebarDrawerOpen((open) => !open)}
+                />
+              </Tooltip>
+            </div>
+          ) : null}
           {banner ? (
             <div className="cb-shell-banner" data-part="shell-banner">
               {banner}
@@ -526,6 +581,8 @@ export function AppShell({
             {...(nativeNav ? { nativeNav: true } : {})}
             collapsed={collapsed}
             onCollapsedChange={setCollapsed}
+            drawerOpen={sidebarDrawerOpen}
+            onDrawerOpenChange={setSidebarDrawerOpen}
             onOpenCommands={() => setPaletteOpen(true)}
             {...(railRef ? { mode: "rail" as const } : {})}
           />

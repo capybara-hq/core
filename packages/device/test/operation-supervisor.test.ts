@@ -1,6 +1,7 @@
 import { mkdtemp, readdir, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { SandboxWorkUnsettledError } from "@capybara-hq/plugin-sdk";
 import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 import {
   LEGACY_MARGIN_MS,
@@ -1514,6 +1515,12 @@ describe("orphans a lost device process left behind", () => {
     const kept = byId(JSON.parse(await readFile(stubborn.file, "utf8")).entries, "live");
     expect(kept).toMatchObject({ state: "unknown", identity: { pid: 64001, launchedAtMs } });
     expect(kept.stop).toBeUndefined();
+    // while it still owns work, close refuses with the unsettled kind
+    const owned = vi
+      .spyOn(blocked, "ownership")
+      .mockReturnValue({ workers: 1, cancellations: 0, collectors: 0, persistence: 0 });
+    expect(() => blocked.close()).toThrow(SandboxWorkUnsettledError);
+    owned.mockRestore();
     blocked.close();
     expect(open(stubborn.stateDir).retirementObligations("next")).toBe(1);
 

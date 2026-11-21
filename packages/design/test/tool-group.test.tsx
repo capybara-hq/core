@@ -522,6 +522,49 @@ describe("ToolGroup (§6.16.8)", () => {
     expect(running.container.querySelector('[data-part="auto-granted-word"]')).toBeNull();
   });
 
+  it("approvedBy adds the neutral words on done and failed rows only", () => {
+    const auto = wrap(
+      <ToolRow row={builtin("Bash", { kind: "command", keyArg: "ls", approvedBy: "auto" })} />,
+    );
+    const word = auto.container.querySelector('[data-part="approved-by-word"]');
+    expect(word?.textContent).toBe(" · 已自动批准");
+    expect(word?.className).toBe("cb-muted");
+    expect(word?.closest('[data-part="tool-meta"]')).not.toBeNull();
+    cleanup();
+    const review = wrap(
+      <ToolRow
+        row={builtin("Bash", {
+          kind: "command",
+          keyArg: "ls",
+          status: "failed",
+          error: "x",
+          approvedBy: "review-model",
+        })}
+      />,
+      "en",
+    );
+    expect(review.container.querySelector('[data-part="approved-by-word"]')?.textContent).toBe(
+      " · Approved by the review model",
+    );
+    cleanup();
+    const en = wrap(
+      <ToolRow row={builtin("Bash", { kind: "command", keyArg: "ls", approvedBy: "auto" })} />,
+      "en",
+    );
+    expect(en.container.querySelector('[data-part="approved-by-word"]')?.textContent).toBe(
+      " · Approved automatically",
+    );
+    for (const status of ["running", "pending", "cancelled"] as const) {
+      cleanup();
+      const r = wrap(
+        <ToolRow
+          row={builtin("Bash", { kind: "command", keyArg: "ls", status, approvedBy: "auto" })}
+        />,
+      );
+      expect(r.container.querySelector('[data-part="approved-by-word"]')).toBeNull();
+    }
+  });
+
   // R3 Mac acceptance (03c-auto-granted-row-2): a long command's ellipsis cut the marker off
   it("the status words are the row's meta: outside the truncated label, never shrunk or wrapped", () => {
     const long = `curl -sS -m 5 -o /dev/null -w "HTTP %{http_code}" ${"http://192.168.3.1/".repeat(8)}`;

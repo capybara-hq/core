@@ -12,6 +12,7 @@ import { z } from "zod";
 import type { ModelRef } from "../../agents/definition.js";
 import type { AppendEvent, EventLog } from "../../conversations/event-log.js";
 import type { KernelConfigService } from "../../infra/config/kernel-config.service.js";
+import type { KernelDb } from "../../infra/database/kernel-db.js";
 import { type ModelPurposesService, PurposeAttemptError } from "../../models/purposes.js";
 import { estimateTokens } from "../../runtime/context/tokens.js";
 import type { ConversationKindForHooks, HookRunner } from "../../runtime/hook-calls.js";
@@ -292,14 +293,34 @@ export function fitReviewInput(
   system: string,
   limits: { contextWindow: number; maxOutputTokens: number },
 ): ReviewClassifierInput {
+  const fitted = fitReviewText(
+    (text, personMessages) => classifierMessage({ ...input, text, personMessages }),
+    { text: input.text, personMessages: input.personMessages },
+    system,
+    limits,
+    REVIEW_TRUNCATED_MARKER,
+  );
+  if (fitted.text === input.text && fitted.personMessages === input.personMessages) return input;
+  return { ...input, ...fitted };
+}
+
+/**
+ * Fits one review message to the review model's context: `build` renders the message from its one
+ * unbounded part (`text`) and the person's messages; everything else in it is always kept. When
+ * the whole does not fit, `text` keeps its beginning and ends with `marker`; the person's messages
+ * are cut (newest end kept) only if they alone overflow the model. Shared by the command review
+ * and the tool review.
+ */
+export function fitReviewText(
+  build: (text: string, personMessages: string) => string,
+  parts: { text: string; personMessages: string },
+  system: string,
+  limits: { contextWindow: number; maxOutputTokens: number },
+  marker: string,
+): { text: string; personMessages: string } {
   const estimate = (text: string, personMessages: string): number =>
     estimateTokens(
-      [
-        {
-          role: "user",
-          content: [{ type: "text", text: classifierMessage({ ...input, text, personMessages }) }],
-        },
-      ],
+      [{ role: "user", content: [{ type: "text", text: build(text, personMessages) }] }],
       [{ text: system, cache: false }],
       [],
     );
@@ -307,25 +328,84 @@ export function fitReviewInput(
     limits.contextWindow -
     Math.min(REVIEW_MAX_OUTPUT_TOKENS, limits.maxOutputTokens) -
     headroomTokens(limits.contextWindow);
-  if (estimate(input.text, input.personMessages) <= budget) return input;
-  // the fixed part of the message and the person's messages; the command gets the rest
-  let personMessages = input.personMessages;
+  if (estimate(parts.text, parts.personMessages) <= budget) return parts;
+  // the fixed part of the message and the person's messages; the unbounded text gets the rest
+  let personMessages = parts.personMessages;
   let available = budget - estimate("", personMessages);
   if (available < 0) {
     // a misconfigured message budget alone overflows the model: keep the newest end, half the room
     const fixed = estimate("", "");
     personMessages = tailToTokens(
-      input.personMessages,
+      parts.personMessages,
       Math.max(0, Math.floor((budget - fixed) / 2)),
     );
     available = budget - estimate("", personMessages);
   }
-  const commandRoom = Math.max(0, available - cost(REVIEW_TRUNCATED_MARKER));
-  const text =
-    cost(input.text) > commandRoom
-      ? `${headToTokens(input.text, commandRoom)}${REVIEW_TRUNCATED_MARKER}`
-      : input.text;
-  return { ...input, text, personMessages };
+  const room = Math.max(0, available - cost(marker));
+  const text = cost(parts.text) > room ? `${headToTokens(parts.text, room)}${marker}` : parts.text;
+  return { text, personMessages };
+}
+
+/* ---------------------------------------------------------------------------------------------- *
+ * Reading the person's messages
+ * ---------------------------------------------------------------------------------------------- */
+
+/** How many of the root conversation's latest person messages are read before bounding the text. */
+export const PERSON_MESSAGES_READ = 20;
+
+/** The text blocks of a `user_message` payload (its images, documents and attachments are skipped). */
+function textOfUserMessage(payload: unknown): string {
+  const content = (payload as { content?: unknown } | null)?.content;
+  if (!Array.isArray(content)) return "";
+  return content
+    .flatMap((b) => {
+      if (b === null || typeof b !== "object") return [];
+      const block = b as { type?: unknown; text?: unknown };
+      return block.type === "text" && typeof block.text === "string" ? [block.text] : [];
+    })
+    .join("\n")
+    .trim();
+}
+
+/**
+ * The bounded text of the root conversation's last person messages: the `user_message` text blocks
+ * only, never an assistant message or a tool result, newest {@link PERSON_MESSAGES_READ} read and
+ * bounded to `budget` estimated tokens (`sandbox.review.messageTokens`). The command review and the
+ * tool review read the same messages.
+ */
+export async function readPersonMessages(
+  db: KernelDb["db"],
+  rootConversationId: string,
+  budget: number,
+): Promise<string> {
+  const rows = await db
+    .selectFrom("conversation_events")
+    .select("payload")
+    .where("conversation_id", "=", rootConversationId)
+    .where("type", "=", "user_message")
+    .orderBy("seq", "desc")
+    .limit(PERSON_MESSAGES_READ)
+    .execute();
+  return personMessagesText(
+    rows.map((r) => r.payload),
+    budget,
+  );
+}
+
+/**
+ * The bounded text of person messages read newest first (as {@link readPersonMessages} queries
+ * them): put back in conversation order, oldest first, before {@link boundMessages}, which keeps
+ * the newest within the budget and which the review prompts present as "oldest first".
+ */
+export function personMessagesText(
+  payloadsNewestFirst: readonly unknown[],
+  budget: number,
+): string {
+  const texts = payloadsNewestFirst
+    .map((p) => textOfUserMessage(p))
+    .filter((t) => t !== "")
+    .reverse();
+  return boundMessages(texts, budget);
 }
 
 /* ---------------------------------------------------------------------------------------------- *
@@ -367,7 +447,8 @@ export interface ReviewClassifierDeps {
   hooks?: HookRunner | undefined;
 }
 
-export interface RunClassifierArgs {
+/** Who, where and how one review model call runs (the command review's and the tool review's). */
+export interface ReviewModelCallArgs {
   orgId: string;
   /** The root conversation: where the person's messages are read and the usage event is written. */
   conversationId: string;
@@ -380,9 +461,46 @@ export interface RunClassifierArgs {
   /** The budget window of the run tree (agent map spec §6), when known. */
   budgetRunId?: string | undefined;
   hookFacts: ReviewHookFacts;
-  input: ReviewClassifierInput;
   /** Called with the resolved target and final request just before it is sent (a test seam). */
   beforeSend?: ((target: ModelRef, request: ModelRequest) => Promise<void>) | undefined;
+}
+
+export interface RunClassifierArgs extends ReviewModelCallArgs {
+  input: ReviewClassifierInput;
+}
+
+/** The texts of the outcomes one review subject (command, tool) reports when it cannot decide. */
+export interface ReviewOutcomeTexts {
+  /** Names the review in log lines. */
+  label: string;
+  /** The reason of an ask after a timeout, an error or an unparseable answer. */
+  ask: string;
+  /** The reason of an allow turned into an ask because the model read a cut input. */
+  truncatedAsk: string;
+  /** Prefixes a `model.request` policy hook's reason. */
+  unavailablePrefix: string;
+}
+
+/** The command review's outcome texts. */
+const COMMAND_REVIEW_OUTCOMES: ReviewOutcomeTexts = {
+  label: "command review classifier",
+  ask: REVIEW_ASK_REASON,
+  truncatedAsk: REVIEW_TRUNCATED_ASK_REASON,
+  unavailablePrefix: REVIEW_UNAVAILABLE_PREFIX,
+};
+
+/** One prepared review model call: its prompt and message, already fitted to the model. */
+export interface ReviewModelCall {
+  system: string;
+  message: string;
+  /** The message carries a cut input: an `allow` cannot cover what the model never read. */
+  truncated: boolean;
+  /** The idempotency key of the call's `usage` event. */
+  usageIdemKey: string;
+  /** The idempotency key of a `hook_denied` event (default `hook_denied_review:<run>:<call>`). */
+  hookDeniedIdemKey?: string | undefined;
+  /** The outcome texts (default the command review's). */
+  outcomes?: ReviewOutcomeTexts | undefined;
 }
 
 const textOf = (content: readonly ContentBlock[]): string =>
@@ -401,22 +519,55 @@ export async function runClassifier(
   deps: ReviewClassifierDeps,
   args: RunClassifierArgs,
 ): Promise<ClassifierAnswer> {
-  const { input } = args;
+  const { input, ...callArgs } = args;
   const system = reviewSystemPrompt(input.tag);
   // fit the command and messages to the model the call will use (as `chat` resolves it)
-  let limits: { contextWindow: number; maxOutputTokens: number };
+  const limits = await reviewModelLimits(deps, args, COMMAND_REVIEW_OUTCOMES.label);
+  if (limits === null) return { decision: "ask", reason: REVIEW_ASK_REASON };
+  const fitted = fitReviewInput(input, system, limits);
+  return callReviewModel(deps, callArgs, {
+    system,
+    message: classifierMessage(fitted),
+    truncated: fitted.text !== input.text,
+    usageIdemKey: `usage_review:${args.runId}:${args.callId}`,
+  });
+}
+
+/**
+ * The limits of the model the `review` purpose resolves to in the org, or null when it has no
+ * usable model (logged; the caller asks without sending anything).
+ */
+export async function reviewModelLimits(
+  deps: Pick<ReviewClassifierDeps, "purposes" | "log">,
+  args: Pick<ReviewModelCallArgs, "orgId" | "conversationId" | "callId">,
+  label: string,
+): Promise<{ contextWindow: number; maxOutputTokens: number } | null> {
   try {
-    limits = await deps.purposes.chatLimits(args.orgId, REVIEW_PURPOSE);
+    return await deps.purposes.chatLimits(args.orgId, REVIEW_PURPOSE);
   } catch (err) {
     // no usable purpose model: fail closed without sending anything
-    deps.log.warn("command review classifier has no usable model", {
+    deps.log.warn(`${label} has no usable model`, {
       conversationId: args.conversationId,
       callId: args.callId,
       err,
     });
-    return { decision: "ask", reason: REVIEW_ASK_REASON };
+    return null;
   }
-  const fitted = fitReviewInput(input, system, limits);
+}
+
+/**
+ * Sends one prepared review call on the `review` purpose: the `model.request` policy hook, the
+ * call bounded by `sandbox.review.timeoutMs` and the run's signal, `model.response`, the `usage`
+ * event (a sent call that failed billed at its estimate), and the strict parse of the answer.
+ * Never throws: a hook denial, a timeout, an error or an unparseable answer is `ask`, and so is an
+ * `allow` on a truncated message.
+ */
+export async function callReviewModel(
+  deps: ReviewClassifierDeps,
+  args: ReviewModelCallArgs,
+  call: ReviewModelCall,
+): Promise<ClassifierAnswer> {
+  const outcomes = call.outcomes ?? COMMAND_REVIEW_OUTCOMES;
   const scope = hookScope(deps.hooks, {
     ...(args.hookFacts.conversationKind !== undefined && {
       conversationKind: args.hookFacts.conversationKind,
@@ -450,8 +601,8 @@ export async function runClassifier(
       args.orgId,
       REVIEW_PURPOSE,
       {
-        system: [{ text: system, cache: false }],
-        messages: [{ role: "user", content: [{ type: "text", text: classifierMessage(fitted) }] }],
+        system: [{ text: call.system, cache: false }],
+        messages: [{ role: "user", content: [{ type: "text", text: call.message }] }],
         tools: [],
         toolChoice: "none",
         maxOutputTokens: REVIEW_MAX_OUTPUT_TOKENS,
@@ -467,7 +618,7 @@ export async function runClassifier(
               signal,
             );
             if (!verdict.allowed) {
-              await recordDenial(deps, args, verdict);
+              await recordDenial(deps, args, call, outcomes, verdict);
               throw new ReviewDenied(verdict.reason);
             }
           }
@@ -478,14 +629,14 @@ export async function runClassifier(
     );
   } catch (err) {
     observe(deps, hookBase, sent, null, err, args.signal);
-    deps.log.warn("command review classifier call failed", {
+    deps.log.warn(`${outcomes.label} call failed`, {
       conversationId: args.conversationId,
       callId: args.callId,
       err,
     });
     // a sent call is billed: its estimated usage is logged like a successful one's
     if (err instanceof PurposeAttemptError) {
-      await logUsage(deps, args, {
+      await logUsage(deps, args, call.usageIdemKey, {
         provider: err.provider,
         model: err.model,
         usage: {
@@ -497,19 +648,19 @@ export async function runClassifier(
       });
     }
     const reason =
-      err instanceof ReviewDenied ? `${REVIEW_UNAVAILABLE_PREFIX}${err.reason}` : REVIEW_ASK_REASON;
+      err instanceof ReviewDenied ? `${outcomes.unavailablePrefix}${err.reason}` : outcomes.ask;
     return { decision: "ask", reason };
   }
   observe(deps, hookBase, sent, out, null, args.signal);
-  await logUsage(deps, args, out);
+  await logUsage(deps, args, call.usageIdemKey, out);
   const answer = parseReviewAnswer(textOf(out.content)) ?? {
     decision: "ask",
-    reason: REVIEW_ASK_REASON,
+    reason: outcomes.ask,
   };
-  // the model saw only the beginning of the command: its allow cannot cover the part it never read
+  // the model saw only the beginning of the input: its allow cannot cover the part it never read
   // (hardening spec R8); its deny or ask stands
-  if (answer.decision === "allow" && fitted.text !== input.text) {
-    return { decision: "ask", reason: REVIEW_TRUNCATED_ASK_REASON };
+  if (answer.decision === "allow" && call.truncated) {
+    return { decision: "ask", reason: outcomes.truncatedAsk };
   }
   return answer;
 }
@@ -522,13 +673,14 @@ export async function runClassifier(
  */
 async function logUsage(
   deps: ReviewClassifierDeps,
-  args: RunClassifierArgs,
+  args: ReviewModelCallArgs,
+  idemKey: string,
   u: { provider: string; model: string; usage: ModelUsage },
 ): Promise<void> {
   const event: AppendEvent = {
     type: "usage",
     ...(args.runId !== "" && { runId: args.runId }),
-    idemKey: `usage_review:${args.runId}:${args.callId}`,
+    idemKey,
     payload: {
       step: args.step,
       provider: u.provider,
@@ -558,7 +710,9 @@ async function logUsage(
  */
 async function recordDenial(
   deps: ReviewClassifierDeps,
-  args: RunClassifierArgs,
+  args: ReviewModelCallArgs,
+  call: ReviewModelCall,
+  outcomes: ReviewOutcomeTexts,
   verdict: Extract<Awaited<ReturnType<HookRunner["run"]>>, { allowed: false }>,
 ): Promise<void> {
   const site = {
@@ -567,7 +721,7 @@ async function recordDenial(
     runId: args.runId,
     accountId: args.hookFacts.accountId,
     ...(args.hookFacts.agentId !== undefined && { agentId: args.hookFacts.agentId }),
-    idemKey: `hook_denied_review:${args.runId}:${args.callId}`,
+    idemKey: call.hookDeniedIdemKey ?? `hook_denied_review:${args.runId}:${args.callId}`,
   };
   const event = hookDeniedEvent(site, "model.request", verdict, {
     step: args.step,
@@ -576,7 +730,7 @@ async function recordDenial(
   });
   const entry = hookDeniedAudit(site, event.payload, verdict);
   entry.detail = { ...entry.detail, purpose: REVIEW_PURPOSE };
-  deps.log.warn("command review blocked by a policy hook", {
+  deps.log.warn(`${outcomes.label} blocked by a policy hook`, {
     conversationId: args.conversationId,
     callId: args.callId,
     plugin: verdict.plugin,

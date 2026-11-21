@@ -4,18 +4,18 @@ import { Button, SecretReveal, Stack, Text } from "@capybara-hq/design";
 import { useTranslations } from "next-intl";
 import { useState } from "react";
 import { ApiClientError } from "../lib/api";
-import { revealInvitationLink } from "../lib/approvals";
+import { type RevealCall, revealInvitationLink } from "../lib/approvals";
 import { useAppMutation } from "../lib/query/mutation";
 import { useErrorMessage } from "../lib/use-error-message";
 import { FormError } from "./form-error";
 
 /**
- * Under an approved `orgs.invite` card, for the person who approved it: a button that reads the
+ * Under an `orgs.invite` tool row, for the run's person: a button that reads the
  * invitation's link once (the kernel deletes it as it answers) and shows it in a secret field to
  * copy. The link lives only in this component's state: never in the query cache, the conversation
  * or the tool result (platform web parity spec §7.2).
  */
-export function InvitationLinkReveal({ orgId, approvalId }: { orgId: string; approvalId: string }) {
+export function InvitationLinkReveal({ orgId, call }: { orgId: string; call: RevealCall }) {
   const t = useTranslations("approval.invitationLink");
   const errorMessage = useErrorMessage();
   const [url, setUrl] = useState<string | null>(null);
@@ -24,7 +24,7 @@ export function InvitationLinkReveal({ orgId, approvalId }: { orgId: string; app
   const [gone, setGone] = useState(false);
   // nothing cached reads the link: there is nothing to invalidate
   const { mutateAsync, isPending } = useAppMutation({
-    fn: () => revealInvitationLink(orgId, approvalId),
+    fn: () => revealInvitationLink(orgId, call),
     invalidates: () => [],
   });
 

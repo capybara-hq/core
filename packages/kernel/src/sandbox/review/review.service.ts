@@ -17,10 +17,10 @@ import { StepLog } from "../../runtime/step-log.js";
 import { generateImagePaths } from "../../tools/builtins/image/paths.js";
 import type { PermissionCandidate, PermissionCrossingKind } from "../permission-call-types.js";
 import {
-  boundMessages,
   newReviewTag,
   REVIEW_ASK_REASON,
   REVIEW_PURPOSE,
+  readPersonMessages,
   runClassifier,
 } from "./classifier.js";
 import {
@@ -189,9 +189,6 @@ const WRITE_TOOLS: ReadonlySet<string> = new Set(["Write", "Edit", "GenerateImag
 
 /** How many of a conversation tree's latest assistant messages the review reads for its writes. */
 const WRITTEN_EVENTS_READ = 200;
-
-/** How many of the root conversation's latest person messages are read before bounding the text. */
-const PERSON_MESSAGES_READ = 20;
 
 const allow = (reason: string, rule: string | null): ReviewVerdict => ({
   decision: "allow",
@@ -703,21 +700,13 @@ export class CommandReviewService implements CommandReview {
     return [...written];
   }
 
-  /**
-   * The bounded text of the root conversation's last person messages: the `user_message` text blocks
-   * only, never an assistant message or a tool result. `sandbox.review.messageTokens` caps it.
-   */
-  private async personMessages(conversationId: string): Promise<string> {
-    const rows = await this.db
-      .selectFrom("conversation_events")
-      .select("payload")
-      .where("conversation_id", "=", conversationId)
-      .where("type", "=", "user_message")
-      .orderBy("seq", "desc")
-      .limit(PERSON_MESSAGES_READ)
-      .execute();
-    const texts = rows.map((r) => textOfUserMessage(r.payload)).filter((t) => t !== "");
-    return boundMessages(texts, this.config.get().sandbox.review.messageTokens);
+  /** The bounded text of the root conversation's last person messages ({@link readPersonMessages}). */
+  private personMessages(conversationId: string): Promise<string> {
+    return readPersonMessages(
+      this.db,
+      conversationId,
+      this.config.get().sandbox.review.messageTokens,
+    );
   }
 }
 
@@ -732,20 +721,6 @@ function toolCallsOf(payload: unknown): { name: string; input: unknown; command?
     const input = (block.input ?? {}) as { file_path?: unknown; command?: unknown };
     return [{ name: block.name, input: block.input, command: input.command }];
   });
-}
-
-/** The text blocks of a `user_message` payload (its images, documents and attachments are skipped). */
-function textOfUserMessage(payload: unknown): string {
-  const content = (payload as { content?: unknown } | null)?.content;
-  if (!Array.isArray(content)) return "";
-  return content
-    .flatMap((b) => {
-      if (b === null || typeof b !== "object") return [];
-      const block = b as { type?: unknown; text?: unknown };
-      return block.type === "text" && typeof block.text === "string" ? [block.text] : [];
-    })
-    .join("\n")
-    .trim();
 }
 
 /** The command of a validated `Bash` input, or null when it has none (the tool will refuse it). */

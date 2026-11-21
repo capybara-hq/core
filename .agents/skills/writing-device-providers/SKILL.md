@@ -88,9 +88,19 @@ unavailableReason? }`. A report of any other shape reads unprobed and admits not
 - **`boundary: "instance"`** (`sandbox-docker`, `sandbox-e2b`): the container or microVM is the sandbox. `restricted: null`
   is supported here: the scope is the whole instance, the provider's outer network is the sandbox network,
   `perOperationHosts` and `outsideSandbox` are `false` (a cloud device has no outside and no per-call host grants; the reply
-  says to add the host to the device's list). All three profiles are offered; they differ only in sensitive-command consent.
+  says to add the host to the device's list). All three profiles are offered; they differ only in who approves.
+- **Availability never gates the profile.** A device whose provider cannot enforce scoped operations
+  is `unsupported`, with a `cause` on the HTTP views (`provider-outdated` with plugin and version, or
+  `runtime`); the recorded `permission_context` keeps only `{ state, reason }`. All three profiles stay
+  selectable (Auto too, with no consent row on a conversation without a device). Admission refuses
+  only the device tools, with a kernel-rendered text from the cause (`admissionUnavailableText`),
+  never provider-written text.
+- **Device error kind `unsettled`** (`SandboxWorkUnsettledError`, a subclass of
+  `SandboxPermissionUnsupportedError`, so every definite-refusal check still applies): the device
+  reports that earlier work blocks a new instance or a supervisor close. The kernel relay maps it to
+  the class and `mapSandboxError` to `WORK_UNSETTLED_TOOL_TEXT`. Upgrade the kernel before devices.
 - The profile in a scope is for audit only: providers never derive enforcement from it. Every profile's ordinary call is
-  scoped (Full access included); only an escalated call carries `device` + `environment`, and only within the device's
+  scoped (Auto included); only an escalated call carries `device` + `environment`, and only within the device's
   outside-sandbox ceiling.
 
 Instance name: `cap-device-<deviceId>` for both the file system and the instance. Old per-conversation instances (`cap-<conversationId>`) are removed by the one-off
@@ -599,7 +609,7 @@ refused until phase 4 gives the device its own read rule.
 ## Per-call sandbox escalation
 
 Running one `Bash` call outside the sandbox (`sandbox: "escalated"` with a justification) is the `outside-sandbox`
-crossing: Request approval asks the person, Approve for me the review model, Full access auto-grants it within the
+crossing: Request approval asks the person, Approve for me the review model, Auto auto-grants it within the
 outside-sandbox ceiling, except that a sub-agent's escalation or one carrying a credential consent goes to the review
 model (`approverForCrossing`, writing-tools). It is also the only way to reach private, LAN, loopback, link-local and
 metadata addresses, the Docker and kernel sockets and the protected paths. An admitted escalation gets the escalated

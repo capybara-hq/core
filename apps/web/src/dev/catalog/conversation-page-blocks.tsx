@@ -768,7 +768,7 @@ function pickerMenuBlocks(): ReactNode {
 }
 
 /** The mode menu's props (§6.16.3a) from the fixtures: open in place unless `closed`. */
-function modeProps(state: "closed" | "open" | "no-effort" | "locked"): ModeMenuProps {
+function modeProps(state: "closed" | "open" | "no-effort" | "locked" | "notice"): ModeMenuProps {
   const M = MODE_MENU_FIXTURE;
   return {
     label: M.label,
@@ -781,6 +781,7 @@ function modeProps(state: "closed" | "open" | "no-effort" | "locked"): ModeMenuP
       checked: i.id === M.selected,
     })),
     onPickMode: noop,
+    ...(state === "notice" ? { notice: M.notice } : {}),
     // a locked profile offers no action (the page passes none)
     ...(state === "locked"
       ? { locked: M.locked }
@@ -805,7 +806,7 @@ function modeProps(state: "closed" | "open" | "no-effort" | "locked"): ModeMenuP
 function modeMenuBlocks(): ReactNode {
   return (
     <>
-      {(["closed", "open", "no-effort", "locked"] as const).map((m) => {
+      {(["closed", "open", "no-effort", "locked", "notice"] as const).map((m) => {
         // an ongoing conversation's row: the device, the model · effort chip, the mode button
         const base = composerProps(m === "no-effort" ? "no-effort" : "idle");
         const device = pickers("device").device;

@@ -121,6 +121,17 @@ export type CommandAsk = {
   detail?: string;
 };
 
+/** One secret field of a secure input request; `path` identifies it, label and description come from the target's schema. */
+export type SecureInputField = {
+  path: string;
+  label: string;
+  description?: string | undefined;
+  multiline: boolean;
+  error?: string | undefined;
+  value: string;
+  onChange(v: string): void;
+};
+
 export type ApprovalBlockProps = {
   /** The tool as people read it: "<connector>: <title>", or the source and localized name. */
   tool: string;
@@ -154,27 +165,25 @@ export type ApprovalBlockProps = {
   command?: CommandAsk;
   state: ApprovalState;
   /**
-   * Secret fields the person types into the card (an API key): the agent never sees the values.
-   * `path` identifies the field; label and description come from the target's schema.
+   * A secure input request instead of a tool call (§6.16.11): the person types secret fields (an
+   * API key) and the agent never sees the values. The head names the `target`; the body is the
+   * note and the fields; the actions are Submit and Cancel. `tool`, `toolKey` and `input` are not
+   * shown. Decided, it reads "Submitted" / "Cancelled" (`decision` approved / denied).
    */
-  personFields?: {
-    path: string;
-    label: string;
-    description?: string | undefined;
-    multiline: boolean;
-    error?: string | undefined;
-    value: string;
-    onChange(v: string): void;
-  }[];
-  /** What the entered values are saved to (shown above the fields). */
-  personTarget?: string;
+  secureInput?: {
+    /** What the entered values are saved to ("Anthropic: deployment config"). */
+    target: string;
+    fields: SecureInputField[];
+    onSubmit(): void;
+    onCancel(): void;
+    /** Submit stays disabled besides while a field is empty (a value over its limit). */
+    submitDisabled?: boolean;
+  };
   /**
    * The file the call takes in place of an upload (name, size, the sha256 the approval binds, an
    * image's WebP data URL): a row above the actions so the person sees what they approve.
    */
   file?: { name: string; size: number; sha256: string; thumbnail?: string | undefined };
-  /** Approve stays disabled (Deny does not): person fields not all filled yet. */
-  approveDisabled?: boolean;
   /** `hosts`: a network ask's checked hosts (every host when it has one). */
   onApprove?(scope: ApprovalScope, hosts?: string[]): void;
   onDeny?(reason?: string): void;
@@ -353,6 +362,89 @@ const SCOPE_LABEL = {
   always: "hitl.approveAlways",
 } as const;
 
+/**
+ * A secure input request (§6.16.11): the head names the target, the note says the values never
+ * reach the agent, then the fields, Submit (primary) and Cancel. Decided: one line, "Submitted" or
+ * "Cancelled" and the target.
+ */
+function SecureInputApproval({
+  state,
+  secureInput: si,
+}: {
+  state: ApprovalState;
+  secureInput: NonNullable<ApprovalBlockProps["secureInput"]>;
+}): JSX.Element {
+  const t = useDesignT();
+  if (state.kind === "decided") {
+    const submitted = state.decision === "approved";
+    const word =
+      state.decision === "approved"
+        ? t("hitl.secureInput.submitted")
+        : state.decision === "denied" || state.decision === "cancelled"
+          ? t("hitl.secureInput.cancelled")
+          : fillCopy(t("hitl.expired"), { tool: si.target });
+    return (
+      <div className="cb-tool-line" data-part="tool-line" data-decision={state.decision}>
+        <Icon name={submitted ? "check" : "x"} size={12} />
+        <span className="cb-tool-label">
+          {word}{" "}
+          <span className="cb-faint" data-part="tool-key">
+            {[si.target, state.when].filter(Boolean).join(" · ")}
+          </span>
+        </span>
+      </div>
+    );
+  }
+  const busy = state.busy === true;
+  const title = fillCopy(t("hitl.secureInput.head"), { target: si.target });
+  const incomplete = si.fields.some((f) => f.value === "");
+  return (
+    // biome-ignore lint/a11y/useSemanticElements: a fieldset brings its own border and legend layout
+    <div
+      className="cb-hcard"
+      data-part="approval-block"
+      data-pending="true"
+      data-secure-input="true"
+      role="group"
+      aria-label={title}
+    >
+      <div className="cb-hcard-head">
+        <span className="cb-hcard-dot" aria-hidden="true" />
+        <strong className="cb-hcard-strong">{title}</strong>
+      </div>
+      <div className="cb-hcard-person" data-part="person-fields">
+        <span className="cb-muted cb-small" data-part="person-note">
+          {t("hitl.secureInput.note")}
+        </span>
+        {si.fields.map((f) => (
+          <PersonFieldRow
+            key={f.path}
+            label={f.label}
+            description={f.description}
+            multiline={f.multiline}
+            value={f.value}
+            error={f.error}
+            disabled={busy}
+            onChange={f.onChange}
+          />
+        ))}
+      </div>
+      <div className="cb-hcard-actions">
+        <Button
+          variant="primary"
+          disabled={busy || incomplete || si.submitDisabled === true}
+          onClick={si.onSubmit}
+        >
+          {t("hitl.secureInput.submit")}
+        </Button>
+        <Button disabled={busy} onClick={si.onCancel}>
+          {t("hitl.secureInput.cancel")}
+        </Button>
+      </div>
+    </div>
+  );
+}
+
 /** An approval request (§6.16.11). */
 export function ApprovalBlock(p: ApprovalBlockProps): JSX.Element {
   const t = useDesignT();
@@ -369,6 +461,10 @@ export function ApprovalBlock(p: ApprovalBlockProps): JSX.Element {
 
   if (p.command) {
     return <CommandApproval {...p} command={p.command} />;
+  }
+
+  if (p.secureInput) {
+    return <SecureInputApproval state={s} secureInput={p.secureInput} />;
   }
 
   if (s.kind === "decided") {
@@ -465,7 +561,7 @@ export function ApprovalBlock(p: ApprovalBlockProps): JSX.Element {
             <ScopeChoice
               key={scope}
               primary={i === 0}
-              disabled={busy || p.approveDisabled === true}
+              disabled={busy}
               label={p.scopeLabels?.[scope] ?? t(SCOPE_LABEL[scope])}
               hint={undefined}
               onClick={() => p.onApprove?.(scope)}
@@ -544,27 +640,6 @@ export function ApprovalBlock(p: ApprovalBlockProps): JSX.Element {
         </div>
       )}
       {p.file ? <ApprovalFileRow file={p.file} /> : null}
-      {p.personFields && p.personFields.length > 0 ? (
-        <div className="cb-hcard-person" data-part="person-fields">
-          <span className="cb-muted cb-small" data-part="person-note">
-            {p.personTarget
-              ? fillCopy(t("hitl.personTarget"), { target: p.personTarget })
-              : t("hitl.personNote")}
-          </span>
-          {p.personFields.map((f) => (
-            <PersonFieldRow
-              key={f.path}
-              label={f.label}
-              description={f.description}
-              multiline={f.multiline}
-              value={f.value}
-              error={f.error}
-              disabled={busy}
-              onChange={f.onChange}
-            />
-          ))}
-        </div>
-      ) : null}
       {actions}
       {denying ? null : (
         <ScopeHintLines

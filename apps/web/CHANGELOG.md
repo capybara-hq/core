@@ -1,5 +1,32 @@
 # @capybara-hq/web
 
+## 0.1.0-rc.82
+
+### Patch Changes
+
+- Updated dependencies [8f70749]
+  - @capybara-hq/design@0.2.0-rc.30
+
+## 0.1.0-rc.81
+
+### Minor Changes
+
+- 4697ec6: The permission picker says Auto (自动模式) for Full access, keeps every profile selectable on a device
+  that cannot enforce its sandbox and says why, and shows secure input requests, tool rows approved
+  automatically or by the review model, and the initial password and invitation link read by call.
+
+### Patch Changes
+
+- 7a5468b: Desktop shell: where the window controls reach past the sidebar rail, the top row is one band across
+  the whole window on the page ground and the rail (its surface and divider) starts below it; the
+  collapsed rail's expand button moves into the band right after the controls. Below 600 the floating
+  row's empty room drags the window wherever the shell reports controls, the home included.
+- Updated dependencies [7a5468b]
+- Updated dependencies [04172b9]
+- Updated dependencies [4697ec6]
+- Updated dependencies [3ede700]
+  - @capybara-hq/design@0.2.0-rc.29
+
 ## 0.1.0-rc.80
 
 ### Patch Changes

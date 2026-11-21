@@ -96,8 +96,9 @@ export function FloatingBar({ lead, trailing }: FloatingBarProps) {
   return (
     <div className="cb-floatbar" data-part="floating-bar" data-lead={lead?.kind}>
       {leading}
-      {/* The room between the row's controls: a drag filler on a pushed page (on a chat surface the
-          title pill lies over it, so it does not drag there). */}
+      {/* The room between the row's controls: a drag filler as high as the desktop's top row (on a
+          chat surface only where the shell reports window controls, and not while a conversation's
+          title pill lies over it). */}
       <span className="cb-floatbar-gap cb-drag-fill" aria-hidden="true" />
       {trailing}
     </div>

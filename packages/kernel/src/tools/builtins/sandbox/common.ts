@@ -6,6 +6,7 @@ import {
   isSandboxPermissionUnsupportedError,
   isSandboxScopeDeniedError,
   isSandboxScopeValidationError,
+  isSandboxWorkUnsettledError,
   type Logger,
   type SandboxHandle,
   type SandboxPreparation,
@@ -53,6 +54,10 @@ import {
 } from "../../../sandbox/managed-device-context.js";
 import type { SandboxMode } from "../../../sandbox/modes.js";
 import { isEscalationGrantMissing } from "../../../sandbox/operation-authority-types.js";
+import {
+  PermissionAdmissionUnavailable,
+  type PermissionAvailabilityCause,
+} from "../../../sandbox/permission-availability.js";
 import type { HeldDeviceContextEvidence } from "../../../sandbox/permission-context-types.js";
 import { isDeviceProgramRestarted } from "../../../sandbox/request-not-sent.js";
 import {
@@ -560,7 +565,7 @@ function retirementToolText(code: string): string {
  * the refusal's own message (a provider may write it).
  */
 export const SCOPE_DENIED_TOOL_TEXT =
-  "This operation reaches outside what this conversation's permission profile allows on the device (a path outside the directories it may read or write, or a host it may not reach), so it did not run. Keep the call inside the working directory and the directories already granted, or ask the user to grant the directory or choose a broader permission profile, then retry.";
+  "This operation reaches outside the scope this conversation has on the device (a path outside the directories it may read or write, or a host it may not reach), so it did not run. Keep the call inside the working directory and the directories already granted, or ask the user to grant the directory, then retry.";
 /** An approved sandbox escalation whose grant no longer matches at admission (nothing ran). */
 export const ESCALATION_GRANT_MISSING_TEXT =
   'This Bash call was approved to run outside the sandbox, but the approval no longer matches: the device, its outside-sandbox setting or this conversation\'s permission scope changed since it was approved, so it did not run. Call Bash again with sandbox: "escalated" and a justification to ask again, or call it without sandbox to run it inside the sandbox.';
@@ -570,16 +575,29 @@ export const ESCALATION_GRANT_MISSING_LAUNCH_WHY =
 /** A staged request the machine never got: it reconnected before the request was sent. */
 export const DEVICE_REQUEST_NOT_SENT_TOOL_TEXT =
   "The device's machine reconnected before this operation was sent, so nothing ran. Retry the tool call.";
-/** The device cannot enforce the conversation's profile (`SandboxPermissionUnsupportedError`). */
+/** The device itself refused: it cannot enforce its sandbox (`SandboxPermissionUnsupportedError`). */
 export const PERMISSION_UNSUPPORTED_TOOL_TEXT =
-  "This device cannot enforce this conversation's permission profile, so nothing ran. Ask the user to choose another permission profile for the conversation, or to start a new conversation on a device that supports it.";
+  "This device refused to run the operation because it cannot enforce its sandbox limits, so nothing ran. Ask the device's owner to update capybara-device (or a super admin to update the device's sandbox plugin), or continue without the device.";
+/** Earlier work on the device blocks a new operation (`SandboxWorkUnsettledError`). */
+export const WORK_UNSETTLED_TOOL_TEXT =
+  "Earlier work on this device has not settled yet, so nothing ran. Retry in a moment; if it keeps happening, ask the device's owner to stop the device's background tasks or restart capybara-device on that machine.";
+export { PermissionAdmissionUnavailable };
+/**
+ * Admission's refusal on a device without permission-scoped operations
+ * ({@link PermissionAdmissionUnavailable}): rendered from the cause, never from a provider's text.
+ */
+export function admissionUnavailableText(cause: PermissionAvailabilityCause): string {
+  if (cause.kind === "provider-outdated")
+    return `This device's sandbox plugin (${cause.plugin} ${cause.version}) cannot run device tools under a permission profile, so nothing ran. A super admin updates the plugin on the Plugins page; until then, continue without the device, or ask the user to start a new conversation on another device.`;
+  return "This device's runtime cannot enforce its sandbox, so nothing ran. Ask the device's owner to update capybara-device on that machine (for a cloud device, a super admin updates its sandbox plugin), or continue without the device.";
+}
 /**
  * A device refused an operation scope as invalid (`SandboxScopeValidationError`): the kernel only
  * sends scopes it validated, so this is a kernel invariant break (or a skewed device), never the
  * model's doing; whether anything ran is not proven.
  */
 export const SCOPE_INVALID_TOOL_TEXT =
-  "The device refused this operation as malformed, which points to a problem in Capybara itself, not in the request. Tell the user the device rejected the operation and that it should be reported; do not retry it unchanged.";
+  "The device refused this operation as malformed, which points to a problem in the platform itself, not in the request. Tell the user the device rejected the operation and that it should be reported; do not retry it unchanged.";
 /**
  * A device request whose machine came back as a new run of capybara-device before answering
  * (`DeviceProgramRestartedError`, also as the cause of an unknown outcome): its result is lost.
@@ -658,8 +676,19 @@ export function mapSandboxError(e: unknown, log: Pick<Logger, "warn"> | undefine
     log?.warn("sandbox operation outside its scope", { err: e });
     return new ToolError(SCOPE_DENIED_TOOL_TEXT);
   }
+  // admission's own refusal and the unsettled refusal before the device's refusal they extend
+  if (e instanceof PermissionAdmissionUnavailable) {
+    log?.warn("device work refused: the device cannot run permission-scoped operations", {
+      err: e,
+    });
+    return new ToolError(admissionUnavailableText(e.cause));
+  }
+  if (isSandboxWorkUnsettledError(e)) {
+    log?.warn("device refused: earlier work is not settled", { err: e });
+    return new ToolError(WORK_UNSETTLED_TOOL_TEXT);
+  }
   if (isSandboxPermissionUnsupportedError(e)) {
-    log?.warn("sandbox permission profile unsupported", { err: e });
+    log?.warn("device refused: it cannot enforce its sandbox", { err: e });
     return new ToolError(PERMISSION_UNSUPPORTED_TOOL_TEXT);
   }
   if (e instanceof SandboxProviderUnreachableError) {

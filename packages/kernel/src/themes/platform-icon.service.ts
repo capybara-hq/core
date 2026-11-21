@@ -338,7 +338,7 @@ export class PlatformIconService {
       new ApiError(
         "platform_icon.not_found",
         v === undefined || row === undefined
-          ? `No ${purpose} icon is uploaded; the built-in Capybara icon applies`
+          ? `No ${purpose} icon is uploaded; the built-in icon applies`
           : `The ${purpose} icon was replaced; read the current URL from the platform icon settings`,
       );
     if (!row || (v !== undefined && v !== row.sha256)) throw notFound();

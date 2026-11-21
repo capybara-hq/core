@@ -32,8 +32,8 @@ export interface SealedInputsRow {
 }
 
 /**
- * Values a person typed on an approval card for a Platform call's secret fields (platform web
- * parity spec §4.3). They are sealed with the master keyring in the decision's transaction and
+ * Values a person typed in a secure input request for a Platform call's secret fields (platform
+ * web parity spec §4.3). They are sealed with the master keyring in the decision's transaction and
  * consumed once by the resumed call, in the transaction that applies the write. They never reach
  * the event log, a tool result, the approval row, the audit or a log line.
  */

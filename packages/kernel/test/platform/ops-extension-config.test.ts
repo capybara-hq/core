@@ -21,6 +21,7 @@ import { importPlugin, type OrgEnv, startOrgEnv } from "../catalog/org-env.js";
 import { builtinsOff } from "../helpers/disabled-tools.js";
 import { pluginTgz } from "../helpers/plugin-packages.js";
 import { createConv, eventsOf, postMessage, waitFor, waitForTerminal } from "../helpers/runs.js";
+import { consentAndSubmit } from "../helpers/secure-input.js";
 
 /**
  * Extension config through the `Platform` tool (platform web parity spec §4, §7.2, Task 9): the
@@ -358,26 +359,12 @@ describe("extensions.set-org-config through the Platform tool (acceptance 1 and 
       },
     };
     await postMessage(env.root, env.orgId, convId, `tool:Platform:${JSON.stringify(call)}`);
-    const asked = await waitFor(
-      async () => ofType(await eventsOf(env.db, convId), "approval_requested")[0],
-      20_000,
-      "approval_requested",
-    );
-    const row = await env.db
-      .selectFrom("approvals")
-      .selectAll()
-      .where("id", "=", asked.payload.approvalId)
-      .executeTakeFirstOrThrow();
-    const detail = row.detail as { personFields: { path: string }[] };
-    expect(detail.personFields.map((f) => f.path)).toEqual(["apiKey"]);
-
-    // the person types the key on the card: the decision seals it for the resumed call
-    const ok = await env.root({
-      method: "POST",
-      url: `/api/v1/orgs/${env.orgId}/approvals/${row.id}/decision`,
-      payload: { decision: "approve", scope: "once", inputs: { apiKey: ORG_KEY } },
+    // the person approves the call, then types the key in the secure input request: the decision
+    // seals it for the resumed call
+    const { paths } = await consentAndSubmit(env.db, env.root, env.orgId, convId, {
+      apiKey: ORG_KEY,
     });
-    expect(ok.statusCode, ok.body).toBe(200);
+    expect(paths).toEqual(["apiKey"]);
     await waitForTerminal(env.db, convId, 1, 30_000);
     const result = ofType(await eventsOf(env.db, convId), "tool_result").at(-1)?.payload;
     expect(result?.isError, result?.content).toBe(false);
@@ -540,18 +527,8 @@ describe("extensions.platform-set-config through the Platform tool", () => {
         params: { name: NAME, values: { region: "ap" }, askPerson: ["token"] },
       };
       await postMessage(env.root, env.orgId, convId, `tool:Platform:${JSON.stringify(call)}`);
-      const asked = await waitFor(
-        async () => ofType(await eventsOf(env.db, convId), "approval_requested")[0],
-        20_000,
-        "approval_requested",
-      );
       armed = true;
-      const ok = await env.root({
-        method: "POST",
-        url: `/api/v1/orgs/${env.orgId}/approvals/${asked.payload.approvalId}/decision`,
-        payload: { decision: "approve", scope: "once", inputs: { token: PLATFORM_TOKEN } },
-      });
-      expect(ok.statusCode, ok.body).toBe(200);
+      await consentAndSubmit(env.db, env.root, env.orgId, convId, { token: PLATFORM_TOKEN });
       await waitForTerminal(env.db, convId, 1, 30_000);
       const result = ofType(await eventsOf(env.db, convId), "tool_result").at(-1)?.payload;
       expect(result?.isError, result?.content).toBe(false);
@@ -567,5 +544,62 @@ describe("extensions.platform-set-config through the Platform tool", () => {
     } finally {
       bus.publish = original;
     }
+  });
+
+  it("under Auto asks no consent: the secure input at once, and Submit applies the token", async () => {
+    const AUTO_TOKEN = "tok-auto-Lw38Pe60";
+    const res = await env.root({
+      method: "POST",
+      url: `/api/v1/orgs/${env.orgId}/agents`,
+      payload: {
+        definition: {
+          name: "Auto configurer",
+          instructions: "Be helpful.",
+          model: { provider: "model-fake", model: "fake-1" },
+          disabledTools: builtinsOff("Platform"),
+        },
+        visibility: "private",
+      },
+    });
+    expect(res.statusCode, res.body).toBe(201);
+    const agentId = (res.json() as { agent: { id: string } }).agent.id;
+    const convId = await createConv(env.root, env.orgId, agentId);
+    await env.db
+      .updateTable("conversations")
+      .set({ permission_profile: "full-access", permission_revision: 1 })
+      .where("id", "=", convId)
+      .execute();
+    const call = {
+      action: "call",
+      operation: "extensions.platform-set-config",
+      params: { name: NAME, values: { region: "eu" }, askPerson: ["token"] },
+    };
+    await postMessage(env.root, env.orgId, convId, `tool:Platform:${JSON.stringify(call)}`);
+    const { secureInputId } = await consentAndSubmit(env.db, env.root, env.orgId, convId, {
+      token: AUTO_TOKEN,
+    });
+    await waitForTerminal(env.db, convId, 1, 30_000);
+    const kinds = await env.db
+      .selectFrom("approvals")
+      .select("kind")
+      .where("conversation_id", "=", convId)
+      .execute();
+    expect(kinds.map((r) => r.kind)).toEqual(["secure_input"]);
+    const result = ofType(await eventsOf(env.db, convId), "tool_result").at(-1)?.payload;
+    expect(result?.isError, result?.content).toBe(false);
+    expect(result?.content).toContain(
+      `Secure input ${secureInputId}: submitted.\n\`token\`: entered by the person`,
+    );
+    const view = (await run("extensions.platform-config", { name: NAME }, ctxOf(env.rootId))) as {
+      fields: Field[];
+    };
+    expect(view.fields.find((f) => f.path === "token")).toMatchObject({ set: true });
+    expect(view.fields.find((f) => f.path === "region")).toMatchObject({ value: "eu" });
+    const events = await sql<{ payload: unknown }>`
+      SELECT payload FROM capybara.conversation_events WHERE conversation_id = ${convId}`.execute(
+      env.db,
+    );
+    expect(JSON.stringify(events.rows)).not.toContain(AUTO_TOKEN);
+    expect(lines.join("\n")).not.toContain(AUTO_TOKEN);
   });
 });

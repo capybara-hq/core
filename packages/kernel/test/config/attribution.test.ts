@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   type AgentAttribution,
   ATTRIBUTION_DEFAULTS,
+  attributionDefaults,
   conversationLink,
   effectiveAttribution,
   type PlatformAttribution,
@@ -16,7 +17,9 @@ const DEFAULT_LINK = "https://capybara.example.com/chat/c1";
 describe("platform attribution defaults", () => {
   it("the startup config has no defaults, so the admin console's choice applies; the effective default is Capybara's", () => {
     expect(config.attribution).toEqual({});
-    expect(resolvePlatformAttribution(config.attribution, {})).toEqual(ATTRIBUTION_DEFAULTS);
+    expect(resolvePlatformAttribution(config.attribution, {}, "Capybara")).toEqual(
+      ATTRIBUTION_DEFAULTS,
+    );
   });
 
   it("the startup config overrides each field; an empty string turns a line off", () => {
@@ -30,7 +33,9 @@ describe("platform attribution defaults", () => {
         },
       },
     );
-    expect(resolvePlatformAttribution(parsed.attribution, { commit: "from the db" })).toEqual({
+    expect(
+      resolvePlatformAttribution(parsed.attribution, { commit: "from the db" }, "Acme"),
+    ).toEqual({
       commit: "Signed-off-by: Acme <dev@acme.example>",
       pr: "",
       sessionUrl: true,
@@ -38,11 +43,27 @@ describe("platform attribution defaults", () => {
   });
 
   it("the stored choice fills the fields the startup config leaves out", () => {
-    expect(resolvePlatformAttribution(config.attribution, { pr: "PR: Acme" })).toEqual({
+    expect(resolvePlatformAttribution(config.attribution, { pr: "PR: Acme" }, "Capybara")).toEqual({
       commit: ATTRIBUTION_DEFAULTS.commit,
       pr: "PR: Acme",
       sessionUrl: false,
     });
+  });
+
+  it("the built-in defaults follow platform.name; only the default name links the upstream project", () => {
+    expect(ATTRIBUTION_DEFAULTS).toEqual({
+      commit: "Co-Authored-By: Capybara <noreply@capybarahq.com>",
+      pr: "🤖 Generated with [Capybara](https://github.com/capybara-hq/core)",
+      sessionUrl: false,
+    });
+    expect(resolvePlatformAttribution(config.attribution, {}, "Acme Agents")).toEqual({
+      commit: "Co-Authored-By: Acme Agents <noreply@capybarahq.com>",
+      pr: "🤖 Generated with Acme Agents",
+      sessionUrl: false,
+    });
+    expect(attributionDefaults("Acme Agents")).toEqual(
+      resolvePlatformAttribution(config.attribution, {}, "Acme Agents"),
+    );
   });
 
   it("an invalid stored choice reads as the defaults (a visible line, never a security change)", () => {

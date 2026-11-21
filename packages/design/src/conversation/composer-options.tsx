@@ -184,6 +184,11 @@ function OptionsGroup({
       <h3 className="cb-options-title" id={titleId}>
         {title}
       </h3>
+      {picker.notice ? (
+        <p className="cb-options-sheet-note" data-part="options-notice">
+          {picker.notice}
+        </p>
+      ) : null}
       {picker.locked ? (
         <p className="cb-options-locked" data-part="options-locked" data-locked="true">
           <span className="cb-options-locked-value">{picker.value}</span>

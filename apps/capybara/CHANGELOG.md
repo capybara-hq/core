@@ -1,5 +1,24 @@
 # @capybara-hq/capybara
 
+## 0.1.0-rc.82
+
+### Patch Changes
+
+- 8f70749: Every unsupported permission availability carries its cause (a runtime report and a missing preview had none, which crashed the new conversation's mode menu into a 503 page); the desktop band's hairline is drawn only while the rail is shown.
+- Updated dependencies [8f70749]
+- Updated dependencies [10923f5]
+  - @capybara-hq/kernel@0.1.0-rc.65
+
+## 0.1.0-rc.81
+
+### Patch Changes
+
+- 5481127: An image generation call measures its latency once: the `model.response` hook payload and the
+  returned result report the same `latencyMs` (they could differ by a millisecond).
+- Updated dependencies [5481127]
+- Updated dependencies [4697ec6]
+  - @capybara-hq/kernel@0.1.0-rc.64
+
 ## 0.1.0-rc.80
 
 ### Minor Changes

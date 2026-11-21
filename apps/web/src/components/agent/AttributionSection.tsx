@@ -11,7 +11,9 @@ import {
   Text,
 } from "@capybara-hq/design";
 import { useTranslations } from "next-intl";
+import { attributionDefaults } from "../../lib/admin";
 import type { Agent, AgentAttribution, AgentDefinitionInput } from "../../lib/agents";
+import { useProductName } from "../../lib/product-name";
 import { usePageQuery } from "../../lib/query/page-query";
 import { orgSettingsQuery } from "../../lib/query/settings";
 import { ErrorFrame } from "../ErrorFrame";
@@ -95,15 +97,12 @@ function withAttribution(agent: Agent, d: Draft): Omit<AgentDefinitionInput, "in
  */
 export function AttributionSection() {
   const { orgId, editable } = useAgentPage();
+  const product = useProductName();
   const read = usePageQuery(orgSettingsQuery(orgId));
   if (read.kind === "loading") return <AgentSectionFrame loading />;
   if (read.kind === "error") return <ErrorFrame reset={read.retry} />;
   const deployment = read.kind === "ready" ? read.data.deployment : undefined;
-  const platform: Platform = deployment?.attribution ?? {
-    commit: "Co-Authored-By: Capybara <noreply@capybarahq.com>",
-    pr: "🤖 Generated with [Capybara](https://github.com/capybara-hq/core)",
-    sessionUrl: false,
-  };
+  const platform: Platform = deployment?.attribution ?? attributionDefaults(product);
   return editable ? (
     <AttributionEdit platform={platform} />
   ) : (

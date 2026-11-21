@@ -13,7 +13,7 @@ import { KERNEL_CONFIG_INPUT, KERNEL_LOGGER } from "../tokens.js";
  * takes effect" cannot happen.
  */
 const HOT_APPLIERS: Record<string, (k: { log: KernelLogger }, value: unknown) => void> = {
-  // GET /api/v1/meta reads the platform name on every request.
+  // The platform name is read at every use (productName(): meta, IM phrases, git gateway, …).
   "platform.name": () => {},
   "log.level": (k, v) => k.log.setLevel(String(v)),
   // The runtime reads the concurrency cap through the config service on every quota request.

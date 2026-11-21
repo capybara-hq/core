@@ -186,7 +186,7 @@ describe("Platform tool end to end, phase 2", () => {
     });
   });
 
-  it("(b) the super admin creates a user: no password in the result, the approver reads it once", async () => {
+  it("(b) the super admin creates a user: no password in the result, the person reads it once", async () => {
     const conv = await conversation(env.root, privateAgent);
     const asked = await conv.ask(call("accounts.create", { login: "dana", displayName: "Dana" }));
     const approvalId = asked.payload.approvalId;
@@ -201,7 +201,7 @@ describe("Platform tool end to end, phase 2", () => {
     const reveal = () =>
       env.root({
         method: "POST",
-        url: `/api/v1/orgs/${env.orgId}/approvals/${approvalId}/initial-password`,
+        url: `/api/v1/orgs/${env.orgId}/conversations/${conv.id}/runs/${asked.runId}/calls/${asked.payload.callId}/initial-password`,
       });
     const shown = await reveal();
     expect(shown.statusCode, shown.body).toBe(200);

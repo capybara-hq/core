@@ -374,7 +374,7 @@ imports no domain module). `defineOperation({...})` fields:
   credential fields or secret config.
 
 **Person fields** (platform web parity spec §4, `platform/person-fields.ts`). A write whose target
-holds secrets never takes them as params: the person types them on the approval card.
+holds secrets never takes them as params: the person types them in a **secure input request** (approval kind `secure_input`, asked after the call's own consent under every profile).
 
 - The input adds `personFieldParams` (`askPerson`, `clearSecrets`: dot paths, as the config routes'
   `values`), the route's secret fields go into `omits`, and `personFields(input, ctx)` returns the
@@ -383,9 +383,10 @@ holds secrets never takes them as params: the person types them on the approval 
   `recordOnly`: web only, `platform.secret_record_web_only`).
 - The tool plans the call before the card (`planPersonFields`): a secret in `values` is refused as
   leaked without echoing it, a path that is no secret field is refused, a required secret without a
-  stored value is asked anyway. A call with person fields always asks, once, and only its
-  `requested_for` person approves it in a web session with the values (`inputs` on the decision;
-  never from IM, never unattended, never remembered).
+  stored value is asked anyway. A call with person fields always raises one secure input request, and only its
+  `requested_for` person submits it in a web session with the values (decision `approve` with
+  `inputs`; Cancel is `deny`; never from IM, never unattended, never remembered). The call's own
+  consent is separate and follows the profile.
 - The decision seals the values (`SealedInputs`, AES-GCM, 15 minutes, read once). `run` gets them
   only through `ctx.personInputs.apply(fn)`: the whole service write happens inside `fn`, in the
   transaction that consumes the row (`withPersonInputs` in `platform/ops/person-inputs.ts`; without
@@ -401,6 +402,13 @@ holds secrets never takes them as params: the person types them on the approval 
   the parity rule `platform-op-secret-param` then requires it in `omits` and the operation to define
   `personFields`, or to say in `withoutSecrets` why it takes none (a preview without the credential). Dynamic records (`values`, `config`) cannot carry the marker; the runtime plan
   covers them.
+
+**Results shown once** (initial password, invitation link; operations flagged `revealsOnce`). The
+result is sealed, never in the tool result. The Platform tool result carries a tool view
+`{ kind: "reveal", reveal: "initial_password" | "invitation_link" }`; the web reads it by call with
+`POST /api/v1/orgs/:orgId/conversations/:conversationId/runs/:runId/calls/:callId/initial-password`
+or `.../invitation-link` (no approval is involved: the conversation must be the account's and the
+sealed row's `recipient_account_id` the account; read once).
 
 **Results.** A list returns compact rows: `id`, `name`, `state`, `reason?`, `next?` and at most 3
 domain fields; details come from the domain's `get`. Lists page by 50 with `pageOf(rows,

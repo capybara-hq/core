@@ -12,7 +12,7 @@ import { createDb } from "../../src/db/pool.js";
 import { DevicesService } from "../../src/devices/devices.service.js";
 import { TransactionHost } from "../../src/infra/database/transaction-host.js";
 import { MachinesService } from "../../src/local-devices/machines.js";
-import { PERMISSION_UNSUPPORTED_TOOL_TEXT } from "../../src/tools/builtins/sandbox/common.js";
+import { admissionUnavailableText } from "../../src/tools/builtins/sandbox/common.js";
 import {
   readFakeSandboxOps,
   setFakeSandboxPermissionSupport,
@@ -1036,7 +1036,8 @@ describe("a local device's project outside its fixed workspace", () => {
 });
 
 describe("a device whose runtime cannot enforce its sandbox", () => {
-  it("every profile refuses truthfully before any effect, Full access included", async () => {
+  const RUNTIME_TEXT = admissionUnavailableText({ kind: "runtime" });
+  it("every profile stays selected and refuses device tools before any effect, naming the runtime", async () => {
     await setFakeSandboxPermissionSupport(sandboxRoot, {
       version: 2,
       restricted: null,
@@ -1052,7 +1053,7 @@ describe("a device whose runtime cannot enforce its sandbox", () => {
       const execsBefore = (await readFakeSandboxOps(sandboxRoot)).filter(
         (o) => o[0] === "exec",
       ).length;
-      // the default Approve for me is restricted: refused with the actionable text, nothing ran
+      // the default Approve for me: refused with the kernel's runtime text, nothing ran
       const refused = await call(
         conv,
         "Bash",
@@ -1060,7 +1061,7 @@ describe("a device whose runtime cannot enforce its sandbox", () => {
         1,
       );
       expect(refused.payload.isError).toBe(true);
-      expect(refused.payload.content).toBe(PERMISSION_UNSUPPORTED_TOOL_TEXT);
+      expect(refused.payload.content).toBe(RUNTIME_TEXT);
       expect((await intentsOf(conv)).filter((i) => i.method === "exec")).toEqual([]);
       expect(
         (await readFakeSandboxOps(sandboxRoot)).filter(
@@ -1074,17 +1075,50 @@ describe("a device whose runtime cannot enforce its sandbox", () => {
       const view = await permissions(conv);
       expect(view.profile).toBe("approve-for-me");
       expect(view.availability.report?.restricted ?? null).toBeNull();
+      // the view names the verdict admission refuses with: unsupported, the runtime's cause
+      expect(view.availability).toMatchObject({
+        state: "unsupported",
+        cause: { kind: "runtime" },
+      });
+      // a background start is refused by admission the same way, with the same cause
+      const background = await call(
+        conv,
+        "Bash",
+        { command: "echo must-not-run-bg", description: "Try", run_in_background: true },
+        2,
+      );
+      expect(background.payload.isError).toBe(true);
+      expect(background.payload.content).toBe(
+        `The background task was not started. Calling Bash without run_in_background is refused the same way, so do not retry it that way. ${RUNTIME_TEXT}`,
+      );
       // the same refusal for Request approval
       await setProfile(conv, "request-approval");
-      const again = await call(conv, "Read", { file_path: "/workspace/x.txt" }, 2);
-      expect(again.payload.content).toBe(PERMISSION_UNSUPPORTED_TOOL_TEXT);
-      // Full access keeps the sandbox: on a runtime that only runs outside it, a call under Full
-      // access runs nothing either
+      const again = await call(conv, "Read", { file_path: "/workspace/x.txt" }, 3);
+      expect(again.payload.content).toBe(RUNTIME_TEXT);
+      // Auto stays selectable and keeps the sandbox: on a runtime that only runs outside it, a
+      // call under Auto runs nothing either
       await setProfile(conv, "full-access");
-      const full = await call(conv, "Bash", { command: "echo full-ok", description: "Run" }, 3);
+      expect((await permissions(conv)).profile).toBe("full-access");
+      const full = await call(conv, "Bash", { command: "echo full-ok", description: "Run" }, 4);
       expect(full.payload.isError).toBe(true);
-      expect(full.payload.content).toBe(PERMISSION_UNSUPPORTED_TOOL_TEXT);
-      expect((await intentsOf(conv)).filter((i) => i.method === "exec")).toEqual([]);
+      expect(full.payload.content).toBe(RUNTIME_TEXT);
+      // admission refused every call: no operation intent was ever dispatched
+      expect(await intentsOf(conv)).toEqual([]);
+      // the recorded context keeps only the state and the reason, never the people's cause (R9)
+      const contexts = await db
+        .selectFrom("conversation_events")
+        .select("payload")
+        .where("conversation_id", "=", conv)
+        .where("type", "=", "permission_context")
+        .execute();
+      const recorded = contexts.map(
+        ({ payload }) => (payload as { availability: Record<string, unknown> }).availability,
+      );
+      expect(recorded.some((a) => a.state === "unsupported")).toBe(true);
+      for (const availability of recorded.filter((a) => a.state === "unsupported")) {
+        expect(Object.keys(availability).sort()).toEqual(["reason", "state"]);
+        expect(availability).not.toHaveProperty("cause");
+      }
     } finally {
       await setFakeSandboxPermissionSupport(sandboxRoot, null);
     }

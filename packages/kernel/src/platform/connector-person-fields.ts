@@ -150,7 +150,7 @@ export function templateConnectorInput(
  */
 export function headersWebOnly(auth: ConnectorAuth, where: string): string | null {
   return auth.type === "headers"
-    ? `${where} authenticates with custom headers, whose values the confirmation card cannot ask for; the person enters them on the web.`
+    ? `${where} authenticates with custom headers, whose values a secure input request cannot ask for; the person enters them on the web.`
     : null;
 }
 
@@ -167,7 +167,7 @@ export function clientProblem(
   const needs =
     auth.type === "oauth_client" || (auth.type === "oauth_code" && auth.client === "manual");
   if (needs && client === undefined) {
-    return `${where} uses an OAuth client: pass its id in client (the person enters the client secret on the confirmation card)`;
+    return `${where} uses an OAuth client: pass its id in client (the person enters the client secret in a secure input request)`;
   }
   if (!needs && client !== undefined) {
     return `${where} takes no OAuth client (auth ${auth.type}${auth.type === "oauth_code" ? " with a registered client" : ""}); leave client out`;

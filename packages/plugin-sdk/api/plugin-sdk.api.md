@@ -1306,7 +1306,7 @@ export type DeviceResponse = Exclude<DeviceRes, {
     id: string;
     ok: false;
     error: {
-        kind: "gone" | "fs_gone" | "policy" | "error" | "denied" | "unsupported" | "unknown" | "invalid";
+        kind: "gone" | "fs_gone" | "policy" | "error" | "denied" | "unsupported" | "unsettled" | "unknown" | "invalid";
         message: string;
     };
 };
@@ -2122,6 +2122,11 @@ export interface IdentitySource {
 }
 
 // @public
+export class IdentitySourceRefused extends Error {
+    constructor(message: string);
+}
+
+// @public
 export const IMAGE_ASPECT_RATIOS: readonly ["1:1", "4:3", "3:4", "3:2", "2:3", "16:9", "9:16"];
 
 // @public
@@ -2293,6 +2298,9 @@ export function isDisallowedSkillRef(v: unknown): v is string;
 export function isFileSystemGoneError(e: unknown): e is FileSystemGoneError;
 
 // @public
+export function isIdentitySourceRefused(err: unknown): boolean;
+
+// @public
 export function isModelError(e: unknown): e is ModelError;
 
 // @public
@@ -2336,6 +2344,9 @@ export function isSandboxScopeDeniedError(e: unknown): e is SandboxScopeDeniedEr
 
 // @public
 export function isSandboxScopeValidationError(e: unknown): e is SandboxScopeValidationError;
+
+// @public
+export function isSandboxWorkUnsettledError(e: unknown): e is SandboxWorkUnsettledError;
 
 // @public
 export function isSandboxWriteDenied(path: string): boolean;
@@ -3988,6 +3999,12 @@ export type SandboxStopResult = {
 };
 
 // @public
+export class SandboxWorkUnsettledError extends SandboxPermissionUnsupportedError {
+    constructor(message: string, opts?: ErrorOptions);
+    readonly sandboxWorkUnsettled: true;
+}
+
+// @public
 export function sanitizeParams(decl: ModelParameter[], params: Record<string, unknown>): {
     value: Record<string, ParamValue>;
     dropped: string[];
@@ -4001,7 +4018,7 @@ export function sanitizeThemeSvg(bytes: Uint8Array): {
 };
 
 // @public
-export const SDK_VERSION = "0.1.0-rc.48";
+export const SDK_VERSION = "0.1.0-rc.49";
 
 // @public
 export function secret<T extends z.ZodTypeAny>(schema: T): T;

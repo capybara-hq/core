@@ -2406,6 +2406,22 @@ textarea {
   align-items: center;
   gap: var(--cb-space-2);
 }
+/* The secure input request (spec §6.16.11): the note and the secret fields inside the card. */
+.r-person {
+  display: flex;
+  flex-direction: column;
+  gap: var(--cb-space-2);
+  min-width: 0;
+}
+.r-person-field {
+  display: flex;
+  flex-direction: column;
+  gap: var(--cb-space-1);
+  min-width: 0;
+}
+.r-person-field-label {
+  font-weight: 600;
+}
 /* The network ask (spec §6.16.11): hints under the allow buttons, the hosts, the command. */
 .r-card-actions[data-hints] {
   align-items: flex-start;

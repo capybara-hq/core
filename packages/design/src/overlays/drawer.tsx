@@ -3,6 +3,7 @@ import { type MouseEvent, type ReactNode, useEffect, useRef, useState } from "re
 import { Icon } from "../icons/icon";
 import { useDragDismiss } from "./drag";
 import { useFocusReturn } from "./focus-return";
+import { FIRST_FOCUSABLE, focusOnOpen } from "./quiet-focus";
 import { popOverlaysThen, useOverlayHistory } from "./use-overlay-history";
 
 export type DrawerProps = {
@@ -51,7 +52,7 @@ function inAppHref(e: MouseEvent<HTMLElement>): string | null {
   return `${url.pathname}${url.search}${url.hash}`;
 }
 
-const FIRST_ROW = "a[href], button:not([disabled]), [tabindex]:not([tabindex='-1'])";
+const FIRST_ROW = FIRST_FOCUSABLE;
 
 /**
  * The chat-first shell's drawer (design spec §6.52): a panel from the start edge over a scrim,
@@ -87,7 +88,8 @@ export function Drawer({ open, onOpenChange, label, onNavigate, children }: Draw
           onOpenAutoFocus={(e) => {
             focusReturn.capture();
             e.preventDefault();
-            panel.current?.querySelector<HTMLElement>(FIRST_ROW)?.focus();
+            // a ring only when opened from the keyboard (spec §2.5)
+            focusOnOpen(panel.current?.querySelector<HTMLElement>(FIRST_ROW));
           }}
           onCloseAutoFocus={focusReturn.restore}
           onClickCapture={(e: MouseEvent<HTMLElement>) => {
@@ -140,7 +142,7 @@ export function DrawerLevel({ title, backLabel, onBack, children }: DrawerLevelP
   useEffect(() => {
     const button = back.current;
     const panel = button?.closest<HTMLElement>('[data-part="drawer"]') ?? null;
-    button?.focus();
+    focusOnOpen(button);
     return () => {
       queueMicrotask(() => {
         if (panel === null || !panel.isConnected) return;

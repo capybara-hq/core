@@ -21,9 +21,9 @@ import { signIn } from "./support/sign-in";
  * outline"; API in the permission operation contract, "Root state, API, decisions and replay"),
  * through the composer against the real kernel on the `device-fake` cloud provider: the picker's
  * three rows and its default, a change on an existing conversation (persisted, read back through
- * `GET …/permissions`), Full access only through its confirmation for a real device, a Request
+ * `GET …/permissions`), Auto only through its confirmation for a real device, a Request
  * approval write outside the workspace asking with its directory proposal, and a device whose
- * runtime cannot restrict execution: the restricted rows say so and nothing falls back to Full.
+ * runtime cannot restrict execution: the mode menu says so once and nothing falls back to Auto.
  */
 
 const p = zh.chat.permission;
@@ -36,7 +36,8 @@ type Permissions = {
   consentScope: { deviceId: string; scopeRevision: string } | null;
   availability:
     | { state: "supported"; report: { restricted: unknown; outsideSandbox: boolean } }
-    | { state: "unsupported" | "unprobed"; reason: string };
+    | { state: "unsupported"; reason: string; cause: { kind: string } }
+    | { state: "unprobed"; reason: string };
   outsideSandboxCeiling: boolean;
 };
 
@@ -121,7 +122,7 @@ test.describe("permission profiles", () => {
     for (const d of devices.splice(0)) await deleteDevice(page, d.orgId, d.id);
   });
 
-  test("the picker: three neutral rows, 帮我批准 by default; a change persists; Full access needs its confirmation", async ({
+  test("the picker: three neutral rows, 帮我批准 by default; a change persists; Auto needs its confirmation", async ({
     page,
   }) => {
     await signIn(page);
@@ -149,7 +150,7 @@ test.describe("permission profiles", () => {
       await expect(rows.nth(i)).toHaveAttribute("aria-checked", String(checked));
       await expect(rows.nth(i).locator('[data-icon="check"]')).toHaveCount(checked ? 1 : 0);
       await expect(rows.nth(i)).toBeEnabled();
-      // no row has a tone of its own (Full access has no accent)
+      // no row has a tone of its own (Auto has no accent)
       await expect(rows.nth(i)).not.toHaveAttribute("data-tone", /.+/);
     }
     const colors = await rows.evaluateAll((els) =>
@@ -164,7 +165,7 @@ test.describe("permission profiles", () => {
     );
     expect(new Set(colors).size, colors.join(", ")).toBe(1);
 
-    // 2. Full access only through its confirmation, naming the device and what it is not;
+    // 2. Auto only through its confirmation, naming the device and what it is not;
     // canceling keeps Approve for me.
     const fullTitle = new RegExp(`^${p.full.title.replace("{device}", deviceName)}$`);
     await row(page, PROFILE.fullAccess).click();
@@ -180,7 +181,7 @@ test.describe("permission profiles", () => {
     await expect(dialog).toBeHidden();
     await expect(permissionButton(page, PROFILE.approveForMe)).toBeVisible();
 
-    // Shift+Tab in the composer moves to the next profile: Full access, through its confirmation
+    // Shift+Tab in the composer moves to the next profile: Auto, through its confirmation
     await composer(page).focus();
     await page.keyboard.press("Shift+Tab");
     dialog = page.getByRole("dialog", { name: fullTitle });
@@ -276,7 +277,7 @@ test.describe("permission profiles", () => {
     );
   });
 
-  test("a device that cannot restrict execution: every profile says why, nothing falls back to 完全访问", async ({
+  test("a device that cannot restrict execution: the mode menu says why once, nothing falls back to 自动模式", async ({
     page,
   }) => {
     await signIn(page);
@@ -284,7 +285,7 @@ test.describe("permission profiles", () => {
     const agentId = await createAgent(page, orgId, "Unrestricted agent");
     const deviceName = "Unrestricted device";
     try {
-      // The provider reports Full access and background ownership but no restricted runtime; a
+      // The provider reports Auto and background ownership but no restricted runtime; a
       // new device records it when its instance first starts.
       await setPermissionSupport({
         version: 2,
@@ -298,17 +299,18 @@ test.describe("permission profiles", () => {
       const deviceId = await createDevice(page, orgId, deviceName);
       devices.push({ orgId, id: deviceId });
 
-      // Not started yet: unprobed, so the restricted rows are offered (no note in the menu).
+      // Not started yet: unprobed, so every profile is offered and the menu carries no notice.
       await newChat(page, agentId);
       await pickDevice(page, deviceName);
       await permissionButton(page, PROFILE.approveForMe).click();
       await expect(row(page, PROFILE.requestApproval)).toBeEnabled();
       await expect(page.getByText("Checked when this device starts")).toHaveCount(0);
+      await expect(page.getByText(p.notice.runtime)).toHaveCount(0);
       await row(page, PROFILE.requestApproval).click();
       await expect(permissionButton(page, PROFILE.requestApproval)).toBeVisible();
 
       // The first device operation starts the instance; the runtime cannot enforce the
-      // restricted profile, so nothing runs (never under Full access instead).
+      // restricted profile, so nothing runs (never under Auto instead).
       await send(
         page,
         `tool:Bash:${JSON.stringify({ command: "echo ran", description: "Try the device" })}`,
@@ -319,41 +321,46 @@ test.describe("permission profiles", () => {
       await expect(toolGroup(page, "Bash")).toHaveAttribute("data-tool-status", "failed");
       await expect(replies(page).last()).toHaveText(/^Tool result: /);
       await expect(replies(page).last()).toContainText(
-        "This device cannot enforce this conversation's permission profile, so nothing ran.",
+        "This device's runtime cannot enforce its sandbox, so nothing ran.",
       );
       // `echo ran` printed nothing: the output would end the reply
       await expect(replies(page).last()).not.toHaveText(/\bran\s*$/);
 
+      // The people-facing view applies admission's rule: the recorded report cannot enforce the
+      // sandbox, so device work reads unsupported with the runtime cause (no report).
       const view = await permissionsOf(page, orgId, convId);
       expect(view.profile).toBe("request-approval");
       expect(view.availability).toMatchObject({
-        state: "supported",
-        report: { restricted: null, outsideSandbox: true },
+        state: "unsupported",
+        reason: expect.any(String),
+        cause: { kind: "runtime" },
       });
+      expect(view.availability).not.toHaveProperty("report");
 
-      // The existing conversation's mode menu: every profile unavailable with the same reason (a
-      // profile only chooses who approves; the sandbox is the device's), Request approval still
-      // the selected profile, Full access never chosen.
+      // The existing conversation's mode menu: the runtime notice once at the top, every profile
+      // still selectable (a profile chooses who approves; only the device's own tools refuse),
+      // Request approval still the selected profile, Auto never chosen.
       await page.reload();
       await expect(page.locator('[data-template="ConversationPage"]')).toBeVisible();
       await permissionButton(page, PROFILE.requestApproval).click();
+      await expect(page.getByText(p.notice.runtime)).toHaveCount(1);
+      await expect(page.getByText(p.notice.runtime)).toBeVisible();
       for (const profile of [PROFILE.requestApproval, PROFILE.approveForMe, PROFILE.fullAccess]) {
-        await expect(row(page, profile)).toBeDisabled();
-        await expect(row(page, profile)).toHaveAccessibleName(`${profile} ${p.reason.unsupported}`);
+        await expect(row(page, profile)).toBeEnabled();
       }
       await expect(row(page, PROFILE.requestApproval)).toHaveAttribute("aria-checked", "true");
       await expect(row(page, PROFILE.fullAccess)).toHaveAttribute("aria-checked", "false");
       await page.keyboard.press("Escape");
       await expect(permissionButton(page, PROFILE.requestApproval)).toBeVisible();
 
-      // A new conversation on that device shows the same reasons; the default stays Approve for me
-      // (shown unavailable), never switched to Full access.
+      // A new conversation on that device shows the same notice and keeps every profile
+      // selectable; the default stays Approve for me (selected), never switched to Auto.
       await newChat(page, agentId);
       await pickDevice(page, deviceName);
       await permissionButton(page, PROFILE.approveForMe).click();
+      await expect(page.getByText(p.notice.runtime)).toHaveCount(1);
       for (const profile of [PROFILE.requestApproval, PROFILE.approveForMe, PROFILE.fullAccess]) {
-        await expect(row(page, profile)).toBeDisabled();
-        await expect(row(page, profile)).toHaveAccessibleName(`${profile} ${p.reason.unsupported}`);
+        await expect(row(page, profile)).toBeEnabled();
       }
       await expect(row(page, PROFILE.approveForMe)).toHaveAttribute("aria-checked", "true");
       await expect(row(page, PROFILE.fullAccess)).toHaveAttribute("aria-checked", "false");

@@ -579,11 +579,15 @@ function AnchoredContent({
   const [side, setSide] = useState<"top" | "bottom">(inline ? inlineSide : "bottom");
   const filterable = itemCount(entries) > MENU_FILTER_THRESHOLD;
   const shown = filterable ? filterMenuEntries(entries, query) : entries;
-  // notes and segments (the mode menu's effort) stay in view under the scrolling list
-  const body = shown.filter((e) => e.kind !== "note" && e.kind !== "segments");
+  // notes and segments (the mode menu's effort) stay in view under the scrolling list; a note
+  // before the first item (the mode menu's notice) leads the list instead
+  const firstEntryItem = entries.findIndex((e) => e.kind === "item");
+  const leading = (e: ConvMenuEntry) =>
+    e.kind === "note" && firstEntryItem >= 0 && entries.indexOf(e) < firstEntryItem;
+  const body = shown.filter((e) => leading(e) || (e.kind !== "note" && e.kind !== "segments"));
   const footer = entries
     .map((e, i) => [e, i] as const)
-    .filter(([e]) => e.kind === "note" || e.kind === "segments");
+    .filter(([e]) => (e.kind === "note" && !leading(e)) || e.kind === "segments");
   const matches = body.filter(
     (e): e is Extract<ConvMenuEntry, { kind: "item" }> => e.kind === "item",
   );
@@ -734,7 +738,14 @@ function AnchoredContent({
       ) : null}
       <div ref={listRef} id={listId} className="cb-cmenu-list" data-part="menu-list">
         {body.map((e, i) => (
-          <Entry key={entryKey(e, i)} e={e} i={i} noteId={noteId} title listbox={listbox} />
+          <Entry
+            key={entryKey(e, i)}
+            e={e}
+            i={e.kind === "note" ? entries.indexOf(e) : i}
+            noteId={noteId}
+            title
+            listbox={listbox}
+          />
         ))}
         {matches.length === 0 ? (
           <div className="cb-cmenu-empty" data-part="menu-empty">

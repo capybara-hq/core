@@ -840,9 +840,11 @@ export interface ApprovalsTable {
   >;
   /**
    * 0114: what is asked: a tool call ('tool') or a refused network domain ('network'); 0126: a
-   * git push the gateway held ('git'); 0130: a command review ask ('command').
+   * git push the gateway held ('git'); 0130: a command review ask ('command'); a secure input
+   * request for a call's secret fields ('secure_input'; profiles govern every approval, R4; the
+   * migration widening the CHECK comes with the approvals service change).
    */
-  kind: Generated<"tool" | "network" | "git" | "command">;
+  kind: Generated<"tool" | "network" | "git" | "command" | "secure_input">;
   /** 0114: a network or git ask's facts, kept result and outcome; 0130: a command ask's facts. */
   detail: ColumnType<unknown | null, string | null | undefined, string | null>;
 }
@@ -1304,11 +1306,11 @@ export interface DevicesTable {
   /** 0165: a cloud device's allowlist hosts (a JSON array), used while the mode is `allowlist`. */
   network_hosts: ColumnType<string[], string | undefined, string>;
   /**
-   * 0175: what the device's provider last reported (a `DeviceReport` as JSON; read back through
+   * 0176: what the device's provider last reported (a `DeviceReport` as JSON; read back through
    * `parseDeviceReport`, see `DeviceReports`); null until the first create or resume stores one.
    */
   report: ColumnType<unknown, string | null | undefined, string | null>;
-  /** 0175: when {@link report} was stored. */
+  /** 0176: when {@link report} was stored. */
   report_at: TsNullable;
   created_at: Ts;
   updated_at: Ts;

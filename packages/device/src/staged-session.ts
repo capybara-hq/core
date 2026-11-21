@@ -199,9 +199,11 @@ async function serveMachineControl(
       error: {
         kind: sdk.isFileSystemGoneError(error)
           ? "fs_gone"
-          : sdk.isSandboxPermissionUnsupportedError(error)
-            ? "unsupported"
-            : "error",
+          : sdk.isSandboxWorkUnsettledError(error)
+            ? "unsettled"
+            : sdk.isSandboxPermissionUnsupportedError(error)
+              ? "unsupported"
+              : "error",
         message: error instanceof Error ? error.message : String(error),
       },
     };

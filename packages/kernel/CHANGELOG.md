@@ -1,5 +1,44 @@
 # @capybara-hq/kernel
 
+## 0.1.0-rc.65
+
+### Patch Changes
+
+- 8f70749: Every unsupported permission availability carries its cause (a runtime report and a missing preview had none, which crashed the new conversation's mode menu into a 503 page); the desktop band's hairline is drawn only while the rail is shown.
+- 10923f5: In ToolSearch mode, a call to a tool name the model has not loaded, such as a miscased catalog
+  key, shows as the neutral "load the tool first" notice instead of a failure. The model still gets
+  the same error text.
+
+## 0.1.0-rc.64
+
+### Minor Changes
+
+- 4697ec6: Behavior change: tool asks addressed to a conversation's owner no longer raise a person card under
+  Approve for me or Auto; the permission profile now decides every such approval (Request approval
+  asks, Approve for me lets the review model decide and asks when it is unsure, Auto, renamed from
+  Full access with the identifier `full-access` unchanged, runs and records). Each automatic decision
+  is one `tool_ask_decided` event and one `tool.ask_auto_decided` audit row. Approvals for another role
+  or account, policy denies, ceilings, unattended runs and tools that require a person to act are
+  unchanged.
+  
+  - Conversations from chat apps default to Approve for me, so their tool asks go to the review model.
+  - Secret fields are a separate secure input request (approval kind `secure_input`, migration 0175),
+    asked under every profile after the call's own consent; the web submits it.
+  - The initial password and the invitation link are read by call:
+    `POST /api/v1/orgs/:orgId/conversations/:conversationId/runs/:runId/calls/:callId/initial-password`
+    and `.../invitation-link` replace the approval-keyed routes.
+  - A device without scoped operations keeps every profile selectable; only its device tools refuse,
+    with the cause (`provider-outdated` or `runtime`) on the permission views.
+  - Upgrade the kernel first, then devices (the device protocol gains the error kind `unsettled`).
+  - The desktop and mobile clients follow in a later release for secure input and the reveal routes.
+
+### Patch Changes
+
+- 5481127: An image generation call measures its latency once: the `model.response` hook payload and the
+  returned result report the same `latencyMs` (they could differ by a millisecond).
+- Updated dependencies [05eba7f]
+  - @capybara-hq/plugin-sdk@0.1.0-rc.49
+
 ## 0.1.0-rc.63
 
 ### Minor Changes

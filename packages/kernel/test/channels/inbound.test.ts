@@ -79,6 +79,8 @@ beforeAll(async () => {
         extensionConfig: { "device-fake": { root: sandboxRoot } },
         http: { port: 0, publicUrl: "https://cap.example" },
         auth: { cookieSecure: false },
+        // the phrases name the platform by platform.name
+        platform: { name: "Acme Agents" },
         // one replica, no takeover: a lease long enough that a stalled event loop does not
         // lose it and drop the long connection (2 s did under load)
         channels: { scanIntervalMs: 100, leaseTtlMs: 10_000 },
@@ -201,7 +203,7 @@ describe("渠道入站", () => {
     const card = s?.message.cards?.[0];
     expect(card?.kind).toBe("bind");
     expect(card && "url" in card && card.url).toMatch(/^https:\/\/cap\.example\/bind\/cap_bind_/);
-    expect(s?.message.text).toMatch(/link your Capybara account/);
+    expect(s?.message.text).toMatch(/link your Acme Agents account/);
     // Ruling A22：组织语言随发送交给插件
     expect(s?.locale).toBe("en");
     // 入站回复带幂等键（任务重试不重复回复）：由 "<连接>-<消息 id>-reply" 哈希而来
@@ -803,7 +805,7 @@ describe("kernel IM text in the person's language (run context spec §3.4)", () 
     const n = im.sent.length;
     im.push(connId, dm("loc-6", "nobody-zh", "hi", "t1", { locale: "zh-CN" }));
     const s = await sentAfter(n, "dm-nobody-zh");
-    expect(s.message.text).toBe("请先绑定你的 Capybara 账号，再与我对话。");
+    expect(s.message.text).toBe("请先绑定你的 Acme Agents 账号，再与我对话。");
     expect(s.locale).toBe("zh");
   });
 });

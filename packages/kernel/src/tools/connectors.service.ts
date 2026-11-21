@@ -14,6 +14,7 @@ import { sql } from "kysely";
 import { z } from "zod";
 import { connectorTemplateState } from "../catalog/component-state.js";
 import { assertItemInstallable } from "../catalog/request-rules.js";
+import { productName } from "../config/product-name.js";
 import type { KernelSchemaDb } from "../db/kernel-schema.js";
 import { ApiError } from "../errors.js";
 import {
@@ -617,6 +618,7 @@ export class ConnectorsService {
         { ...meta, ...(scopes && { scopes }) },
         callbackUrl(publicUrl),
         http,
+        productName(this.config.get()),
         auth.tokenAuthMethod,
       );
       return { client };
