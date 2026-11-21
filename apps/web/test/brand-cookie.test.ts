@@ -105,12 +105,32 @@ describe("the brand cookie codec", () => {
     ['decoration "stars"', { decoration: "stars" }],
     ["wrong version", { v: 2 }],
     ["an unknown field", { extra: 1 }],
+    ["a __proto__ field", JSON.parse('{"__proto__": {"x": 1}}')],
+    ["a __proto__ scheme", { background: JSON.parse('{"__proto__": "#000000"}') }],
+    ["a constructor field", { constructor: "x" }],
+    ["a lower-case %2f", { markUrl: `/api/v1/themes/${ID}/3/assets/a%2fb.svg` }],
+    ["a double-encoded %252F", { markUrl: `/api/v1/themes/${ID}/3/assets/a%252Fb.svg` }],
+    ["an empty asset part", { markUrl: `/api/v1/themes/${ID}/3/assets/a%2F%2Fb.svg` }],
+    ["an upper-case uuid", { cssUrl: themeCssUrl(ID.toUpperCase(), "3") }],
+    ["a trailing newline after the URL", { cssUrl: `${themeCssUrl(ID, "3")}\n` }],
+    ["a non-canonical rgba", { background: { dark: "rgba(001,0,0,0.5000)" } }],
+    ["a lower-case hex", { background: { dark: "#0b0d10" } }],
   ];
   for (const [name, patch] of red) {
     it(`discards the whole cookie: ${name}`, () => {
       expect(decodeBrandCookie(withField(patch))).toBeNull();
     });
   }
+
+  it("discards the whole cookie: a missing field (not null)", () => {
+    const { markUrl: _, ...rest } = FULL;
+    expect(decodeBrandCookie(rawCookie({ v: 1, ...rest }))).toBeNull();
+  });
+
+  it("discards the whole cookie: invalid UTF-8", () => {
+    const bad = btoa(`{"v":1,"wordmark":"\xff"}`).replace(/=+$/, "");
+    expect(decodeBrandCookie(bad)).toBeNull();
+  });
 
   it("discards the whole cookie: not base64url", () => {
     expect(decodeBrandCookie(`${encodeBrandCookie(FULL)}=`)).toBeNull();

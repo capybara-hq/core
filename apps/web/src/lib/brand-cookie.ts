@@ -87,7 +87,9 @@ function isColor(v: unknown): v is string {
   if (typeof v !== "string") return false;
   if (HEX_RE.test(v)) return true;
   const m = RGBA_RE.exec(v);
-  return m !== null && [m[1], m[2], m[3]].every((c) => Number(c) <= 255);
+  if (m === null || ![m[1], m[2], m[3]].every((c) => Number(c) <= 255)) return false;
+  // canonical only: no leading zeros, no trailing zeros in the alpha
+  return v === `rgba(${Number(m[1])},${Number(m[2])},${Number(m[3])},${String(Number(m[4]))})`;
 }
 
 const SCHEMES: readonly ThemeScheme[] = ["dark", "light"];
