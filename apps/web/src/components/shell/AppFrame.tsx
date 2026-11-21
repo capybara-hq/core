@@ -581,8 +581,6 @@ function ShellFrame({
   const drawer: DrawerNavData = {
     ...drawerNav,
     recent: conversations,
-    // the shell opens its own command palette in place of this one
-    onSearch: () => {},
     account: {
       name: me.account.displayName,
       orgName: currentOrg?.name ?? null,

@@ -220,7 +220,7 @@ span.cb-title-btn {
 .cb-cmenu[data-size="narrow"] {
   min-width: 160px;
 }
-/* The compact top bar's overflow menu: 40 high items (tap targets), their icons 16 and `muted`. */
+/* The compact floating row's overflow menu: 40 high items (tap targets), their icons 16 and `muted`. */
 .cb-cmenu[data-size="touch"] .cb-cmenu-item {
   height: 40px;
 }
@@ -1791,7 +1791,7 @@ button.cb-property-row {
   padding-bottom: var(--cb-inset-bottom);
   background: var(--cb-panel-2);
 }
-/* Inside an AppShell the shell's top bar is the back: the page sits in the content area. */
+/* Inside an AppShell the shell's floating row is the back: the page sits in the content area. */
 .cb-conv-pushed[data-shell="true"] {
   position: static;
   flex: 1;

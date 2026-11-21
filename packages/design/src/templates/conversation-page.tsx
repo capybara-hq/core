@@ -454,14 +454,13 @@ export function ConversationPage({
   const open = rightNode != null && right !== "none";
   const full = rightFull === true && right === "panel" && open;
   // On a phone (auto layout) the open right area is a page pushed over the conversation, full
-  // screen, kept by the URL hash the page owns: back closes it. Inside an AppShell it also hides
-  // the bottom navigation.
+  // screen, kept by the URL hash the page owns: back closes it.
   const pushed = layout === "auto" && compact && open;
   const sheet = sheetLayout && !pushed;
   const closeRight = useRef(onCloseRight);
   closeRight.current = onCloseRight;
   const pushedBack = useCallback(() => closeRight.current(), []);
-  // Inside an AppShell the shell's top bar is the one back (and shows the title) and the right
+  // Inside an AppShell the shell's floating row is the one back and the right
   // area sits in normal flow under it; without one the page draws its own cover and back bar.
   const inShell = useHasShell();
   useRegisterShellPage(

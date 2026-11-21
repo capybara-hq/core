@@ -1,7 +1,7 @@
 /**
  * The structural half of the compact rule set (mobile layout spec §11.3), next to
  * `findNestedBoxes`: rules on the rendered DOM that need no layout engine. The geometric half
- * (hit boxes, horizontal scroll, the bottom navigation covering the last item, 16 px fields) lives
+ * (hit boxes, horizontal scroll, the floating composer covering the last item, 16 px fields) lives
  * in `apps/web/visual/compact.interaction.spec.ts`.
  */
 export type CompactRule = "hover-only" | "unnamed-control" | "list-detail-back";

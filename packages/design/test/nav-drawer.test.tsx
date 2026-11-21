@@ -71,6 +71,16 @@ describe("NavDrawer", () => {
     expect(within(panel()).queryByRole("button", { name: data.moreLabel })).toBeNull();
   });
 
+  it("without onSearch there is no search row (the shell gives its palette's)", () => {
+    const { onSearch: _, ...rest } = data;
+    render(
+      <DesignProvider locale="zh">
+        <NavDrawer open onOpenChange={() => {}} data={rest} />
+      </DesignProvider>,
+    );
+    expect(panel().querySelector('[data-part="drawer-search"]')).toBeNull();
+  });
+
   it("the account row opens the account sheet over the drawer", async () => {
     open();
     await userEvent.click(within(panel()).getByRole("button", { name: /Grant/ }));

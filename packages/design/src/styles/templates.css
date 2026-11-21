@@ -1464,7 +1464,7 @@ a.cb-object-name:hover {
 }
 /* Two viewport segments (mobile layout spec §8): the media features are the authority for first
    paint (`data-segments="2"` only mirrors `useViewportSegments()` for script). The `env()` values
-   are viewport-relative while the region sits right of the sidebar and below the top bar, so the
+   are viewport-relative while the region sits right of the sidebar and below the floating row, so the
    second segment's track is anchored from the trailing edge (its size is the segment's own) and
    the first takes the rest; the hinge is the gap between them. `--cb-segment-trail` is a frame's
    inline-end inset and `--cb-segment-trail-block` its bottom inset (the vertical form); both
@@ -1551,7 +1551,7 @@ a.cb-object-name:hover {
     padding-inline: var(--cb-space-4);
   }
 }
-/* Inside the shell on compact the top bar is the one back (the open item is a pushed page); the
+/* Inside the shell on compact the floating row is the one back (the open item is a pushed page); the
    reference set's compact frame stands in for the shell. */
 @media (max-width: 599px) {
   .cb-shell .cb-listdetail[data-fit] > .cb-listdetail-detail > .cb-listdetail-bar,

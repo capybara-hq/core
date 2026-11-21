@@ -716,7 +716,7 @@
   background: var(--cb-hover);
 }
 /* The nav badge (spec §6.13 "Nav badge"): 14 wide at least, `type.micro.line` high, one look on
-   the rail and the bottom navigation. The full sidebar's brand-row inbox keeps the inset form
+   the rail and the drawer rows. The full sidebar's brand-row inbox keeps the inset form
    (2px inside its box's top right). The selected ground is translucent in light, so it is drawn
    over an opaque sidebar layer; the background color stays `selected` (spec §6.13 measures it)
    under both. */

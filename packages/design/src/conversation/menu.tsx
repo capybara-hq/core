@@ -81,7 +81,7 @@ export type ConvMenuProps = {
   /** Gap between the trigger and the menu (default 4, `space.1`). */
   sideOffset?: number;
   align?: "start" | "end";
-  /** `touch`: 40 high items, the compact top bar's overflow menu (design spec §6.46). */
+  /** `touch`: 40 high items, the compact floating row's overflow menu (design spec §6.16.1). */
   size?: "narrow" | "default" | "wide" | "touch";
   /**
    * A composer toolbar menu (§6.16.3): anchored to its trigger, below it unless the space below

@@ -916,8 +916,8 @@ a.cb-stat-card:focus-visible {
 }
 
 /* A short window (height below 480, spec §4.7; the shell's `data-short`): the StatusBar is hidden
-   whatever the width; the PageHeader drops its path row on compact only, where the top bar carries
-   back (medium and expanded have no top bar: the path row is their way up). The query is the first
+   whatever the width; the PageHeader drops its path row on compact only, where the floating row carries
+   back (medium and expanded have no floating row: the path row is their way up). The query is the first
    paint's; the attribute follows it after hydration for plugin CSS. */
 @media (max-height: 479px) {
   .cb-statusbar {

@@ -30,8 +30,11 @@ export interface DrawerNavData {
   recent: SidebarConversations;
   allConversations: { label: string; href: string };
   newConversation: { label: string; href: string };
-  /** Opens the command palette. */
-  onSearch(): void;
+  /**
+   * Opens the command palette; absent: no search row. The AppShell supplies its own palette's
+   * whenever it has commands, so an app passes none.
+   */
+  onSearch?: () => void;
   account: AccountSheetData;
   /** The pending inbox count on the menu button. */
   menuBadge?: NavBadge;
@@ -73,7 +76,7 @@ export function NavDrawer({ open, onOpenChange, data, pathname, onNavigate }: Na
   }, [open]);
   const search = () => {
     onOpenChange(false);
-    data.onSearch();
+    data.onSearch?.();
   };
   return (
     <Drawer
@@ -100,15 +103,17 @@ export function NavDrawer({ open, onOpenChange, data, pathname, onNavigate }: Na
         </DrawerLevel>
       ) : (
         <div className="cb-navdrawer" data-part="nav-drawer">
-          <button
-            type="button"
-            className="cb-navdrawer-search"
-            data-part="drawer-search"
-            onClick={search}
-          >
-            <Icon name="search" size={16} />
-            <span>{t("drawer.search")}</span>
-          </button>
+          {data.onSearch ? (
+            <button
+              type="button"
+              className="cb-navdrawer-search"
+              data-part="drawer-search"
+              onClick={search}
+            >
+              <Icon name="search" size={16} />
+              <span>{t("drawer.search")}</span>
+            </button>
+          ) : null}
           <nav className="cb-navdrawer-sections" aria-label={t("shell.nav")}>
             {data.sections.map((s) => (
               <NavRow
