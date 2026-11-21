@@ -1,4 +1,4 @@
-// `/conversations` (全部会话, maintainer decision 2026-11-22): my conversations by time from the query
+// `/conversations` (All conversations, maintainer decision 2026-11-22): my conversations by time from the query
 // cache the layout prefetched (web query cache spec §3), sectioned by day, a chip per agent, the
 // next page read as the list's end nears (no Load more row), the new conversation as the head's
 // primary and the compact FAB, and a row's actions in an action sheet on a long press / right click.

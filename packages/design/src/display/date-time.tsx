@@ -79,7 +79,7 @@ export function dayBucket(iso: string | Date, now: number, timeZone?: string): D
 
 /**
  * The time of a list row sectioned by day (the conversation lists, design spec §6.60): `HH:mm`
- * today, 昨天 / Yesterday, the weekday within the last week, else `MM-DD` (`YYYY-MM-DD` in another
+ * today, Yesterday, the weekday within the last week, else `MM-DD` (`YYYY-MM-DD` in another
  * year). `now` and `timeZone` come from `useNow()` / `useTimeZone()`, as for `formatRelative`.
  */
 export function formatListTime(

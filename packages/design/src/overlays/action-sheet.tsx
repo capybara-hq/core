@@ -4,7 +4,7 @@ import type { MenuItem } from "./menus";
 import { SheetGroup, SheetRow } from "./sheet-parts";
 /** An object's actions, one model for every class (responsive system spec §2.4). */
 export type ObjectActions = {
-  /** The object's main action (开始会话, 用它创建, 查看). */
+  /** The object's main action (Start conversation, Create from it, View). */
   primary?: { label: string; href?: string; onSelect?(): void; loading?: boolean };
   /** The rest, in order; `danger` marks destructive items. */
   items?: MenuItem[];

@@ -31,7 +31,7 @@ export type ConversationListItem = {
 
 /** What a row's long press, right click or ⋯ offers; absent: the rows only open. */
 export type ConversationListActions = {
-  /** The list shows archived conversations: 取消归档 instead of 重命名 and 归档. */
+  /** The list shows archived conversations: Unarchive instead of Rename and Archive. */
   archived?: boolean;
   /** Resolves once renamed; a rejection keeps the dialog open. */
   onRename(id: string, title: string): Promise<void>;
@@ -44,11 +44,11 @@ export type ConversationListProps = {
   /** The list's accessible name. */
   label: string;
   items: ConversationListItem[];
-  /** Section the rows by time (今天 / 昨天 / 本周 / 更早), each section one card. */
+  /** Section the rows by time (Today / Yesterday / This week / Earlier), each section one card. */
   sections?: boolean;
   /** The open conversation's row is current. */
   activeId?: string | undefined;
-  /** `loading`: skeleton rows in the card; `error`: the failure with 重试 (`onRetry`). */
+  /** `loading`: skeleton rows in the card; `error`: the failure with Retry (`onRetry`). */
   state?: "loading" | "ready" | "error";
   onRetry?(): void;
   /** Drawn instead of the card when there are no rows (and the list is ready). */
@@ -56,7 +56,7 @@ export type ConversationListProps = {
   actions?: ConversationListActions;
   /**
    * More pages after the last row: the next one is read when the list's end comes near
-   * (`onMore`), never by a button; a failure shows its message and 重试 at the end.
+   * (`onMore`), never by a button; a failure shows its message and Retry at the end.
    */
   end?: { more: boolean; loading: boolean; error?: string | null; onMore(): void };
 };
@@ -79,7 +79,7 @@ const END_MARGIN = "600px";
  * A conversation list sectioned by time (design spec §6.60): the drawer's recent conversations and
  * the conversations page. Rows lie in one grouped card per section (no card in a card: the card is
  * the list's only box): the agent's avatar, the title (500, one line) over the agent name and its
- * state, the time at the end (mono, `faint`). A row is a link; its actions (重命名, 归档, 删除) open
+ * state, the time at the end (mono, `faint`). A row is a link; its actions (Rename, Archive, Delete) open
  * in an action sheet on a long press or a right click, and on a wide window also from the row's ⋯
  * (hidden below 600, where rows carry no buttons). The next page is read as the end nears.
  */
@@ -314,7 +314,7 @@ function Row({
   );
 }
 
-/** The list's end: it asks for the next page as it comes near; a failure offers 重试. */
+/** The list's end: it asks for the next page as it comes near; a failure offers Retry. */
 function End({ end }: { end: NonNullable<ConversationListProps["end"]> }) {
   const t = useDesignT();
   const ref = useRef<HTMLDivElement>(null);

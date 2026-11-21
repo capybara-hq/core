@@ -28,8 +28,8 @@ const QUERY_SETTLE_MS = 200;
 const ALL = "all";
 
 /**
- * `/conversations` (全部会话, maintainer decision 2026-11-22): my conversations by time, newest
- * first, sectioned 今天 / 昨天 / 本周 / 更早 (design spec §6.60), with a title search and a chip per
+ * `/conversations` (All conversations, maintainer decision 2026-11-22): my conversations by time, newest
+ * first, sectioned Today / Yesterday / This week / Earlier (design spec §6.60), with a title search and a chip per
  * agent (the agents of the sidebar's groups). The first page comes from the query cache (the
  * drawer reads the same one); the next is read as the list's end comes near (no Load more row).
  * The primary starts a new conversation (the floating action button below 600); a row's long

@@ -48,7 +48,7 @@ export interface DrawerNavData {
   moreLabel: string;
   /** The recent conversations, by time (not grouped by agent). */
   recent: DrawerRecent;
-  /** The conversations page: the recent section's 全部 link goes there. */
+  /** The conversations page: the recent section's All link goes there. */
   allConversations: { label: string; href: string };
   newConversation: { label: string; href: string };
   /**
@@ -79,9 +79,9 @@ const under = (pathname: string, href: string) =>
 
 /**
  * The chat-first compact shell's drawer (design spec §6.54): at the top the search field and the
- * 新会话 button, then the navigation as one grouped card (收件箱 with the pending count, 智能体,
- * 定时任务, and 更多, which opens the "Skills, connectors, devices…" level, Decision 18), the recent
- * conversations by time under 最近会话 with 全部 (the conversations page), and at the foot the
+ * New conversation button, then the navigation as one grouped card (Inbox with the pending count,
+ * Agents, Scheduled tasks, and More, which opens the "Skills, connectors, devices…" level, Decision 18), the recent
+ * conversations by time under Recent with All (the conversations page), and at the foot the
  * account row, which opens the account sheet (§6.55). A pick closes the drawer; the system back
  * closes the account sheet first, then the drawer (Decision 25).
  */
