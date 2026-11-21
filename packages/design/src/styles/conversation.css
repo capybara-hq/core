@@ -383,7 +383,7 @@ button.cb-tool-line:focus-visible {
 }
 .cb-bubble-author-name {
   max-width: 75%;
-  margin-inline-end: calc(24px + var(--cb-space-2));
+  margin-inline-end: calc(40px + var(--cb-space-2));
   overflow: hidden;
   color: var(--cb-muted);
   font-size: var(--cb-type-small-size);

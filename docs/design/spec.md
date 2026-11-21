@@ -1743,7 +1743,7 @@ States: `collapsed`, `expanded`, `live`
 
 - **Sender** (state `sender`, agent map spec §9.4): a message another agent sent (a parent's message in a sub-agent's transcript) has, above the bubble and right-aligned, "来自 <sender>" / "From <sender>" (`small`, `muted`, one line with an ellipsis, at most 75% wide, `space.2` above the bubble). A person's own message has none.
 
-- **Author** (state `author`, account profile design): `author` `{ name, avatarUrl, showName? }` is the person who wrote the message, drawn as a 24 circle `Avatar` (§6.30, `shape="circle"`: the picture, or the initial of `name` when `avatarUrl` is `null` or fails) at the bubble's end side: the bubble and the circle sit in one row, `space.2` apart, top-aligned, the row as wide as the thread, the bubble still at most 75%. With `showName` the name is above the message (above the attachments too), right-aligned and pulled in by the circle's width and the gap so it ends on the bubble's edge: `small`, `muted`, one line with an ellipsis, at most 75% wide, `space.2` above what follows (the trajectory's form, where the writer is not the viewer). Without `author` nothing is drawn and the bubble is as before; a message with no bubble (attachments only) shows the name line but no circle.
+- **Author** (state `author`, account profile design): `author` `{ name, avatarUrl, showName? }` is the person who wrote the message, drawn as a 40 circle `Avatar` (as tall as a one-line bubble) (§6.30, `shape="circle"`: the picture, or the initial of `name` when `avatarUrl` is `null` or fails) at the bubble's end side: the bubble and the circle sit in one row, `space.2` apart, top-aligned, the row as wide as the thread, the bubble still at most 75%. With `showName` the name is above the message (above the attachments too), right-aligned and pulled in by the circle's width and the gap so it ends on the bubble's edge: `small`, `muted`, one line with an ellipsis, at most 75% wide, `space.2` above what follows (the trajectory's form, where the writer is not the viewer). Without `author` nothing is drawn and the bubble is as before; a message with no bubble (attachments only) shows the name line but no circle.
 
 <!-- states: user-bubble -->
 States: `default`, `attachments`, `skill`, `sender`, `author`, `long`, `expanded`
@@ -1777,8 +1777,8 @@ States: `default`, `attachments`, `skill`, `sender`, `author`, `long`, `expanded
 | bubble-author-name | author | font-size | type.small |
 | bubble-author-name | author | color | color.muted |
 | bubble-row | author | column-gap | space.2 |
-| bubble-row avatar[data-size=24] | author | width | 24 |
-| bubble-row avatar[data-size=24] | author | height | 24 |
+| bubble-row avatar[data-size=40] | author | width | 40 |
+| bubble-row avatar[data-size=40] | author | height | 40 |
 | bubble-row avatar[data-shape=circle] | author | border-top-left-radius | 50% |
 | bubble | author | background-color | color.selected |
 | bubble-body | long | max-height | layout.bubble-clamp |
