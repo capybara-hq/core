@@ -57,7 +57,9 @@ describe("no sideways overflow", () => {
     expect(topLevel(list, ".cb-convlist-card")).toContain("overflow: hidden;");
     expect(topLevel(list, ".cb-convlist-title")).toContain("text-overflow: ellipsis;");
     // the foot runs out exactly over the drawer content's space.3 side padding
-    expect(topLevel(touch, ".cb-navdrawer")).toContain("padding: var(--cb-space-3) var(--cb-space-3) 0;");
+    expect(topLevel(touch, ".cb-navdrawer")).toContain(
+      "padding: var(--cb-space-3) var(--cb-space-3) 0;",
+    );
     expect(topLevel(touch, ".cb-navdrawer-foot")).toContain(
       "margin: 0 calc(-1 * var(--cb-space-3));",
     );
