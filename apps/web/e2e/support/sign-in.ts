@@ -27,6 +27,25 @@ export async function enableModelFake(request: APIRequestContext, orgId: string)
 }
 
 /**
+ * Switches the e2e device provider `device-fake` on in the org when it is not on there; returns
+ * whether it changed anything. The e2e kernel loads it from its config and names it the platform's
+ * default device provider, but a device provider serves only the orgs that switched it on: without
+ * it nobody gets a default device and the device tools are unavailable.
+ */
+async function enableDeviceFake(page: Page, orgId: string): Promise<boolean> {
+  const list = await page.request.get(`/api/v1/orgs/${orgId}/devices`);
+  expect(list.ok(), await list.text()).toBe(true);
+  const providers = ((await list.json()) as { providers: { plugin: string }[] }).providers;
+  if (providers.some((p) => p.plugin === "device-fake")) return false;
+  const r = await page.request.put(`/api/v1/orgs/${orgId}/extensions/device-fake`, {
+    headers: CSRF,
+    data: { enabled: true },
+  });
+  expect(r.status(), await r.text()).toBe(200);
+  return true;
+}
+
+/**
  * Makes sure the current org has an agent, so the workspace renders the shell instead of the
  * setup layout (web-order spec §3.8): creates a private model-fake agent "E2E agent" when the
  * readiness endpoint counts none. {@link signIn} has switched model-fake on in the org.
@@ -74,8 +93,8 @@ async function enableFakeConnectors(page: Page, orgId: string): Promise<boolean>
  * Idempotent sign-in: the setup wizard when not set up yet (it creates the org Acme), else the login
  * page. A new session starts in the org last chosen (or the only one); when the org chooser covers
  * the app instead, open Acme there. With `org` (the default) it then waits until `/me` names the
- * current org, switches on model-fake ({@link enableModelFake}) and the fake connector extensions
- * ({@link enableFakeConnectors}) and, with
+ * current org, switches on model-fake ({@link enableModelFake}), the fake connector extensions
+ * ({@link enableFakeConnectors}) and the device provider ({@link enableDeviceFake}) and, with
  * `agent` (the default), makes sure an agent exists ({@link ensureAgent}) and that the shell (not the setup layout) is on screen. It returns once the page is hydrated
  * ({@link hydrated}). Normally the `setup` project
  * (`setup.spec.ts`) has already set up; a spec run alone sets up itself.
@@ -126,8 +145,10 @@ export async function signIn(
     })
     .not.toBeNull();
   await enableModelFake(page.request, orgId as unknown as string);
-  // the page already read the org's connector kinds: a change reloads it below
-  const changed = await enableFakeConnectors(page, orgId as unknown as string);
+  // the page already read the org's connector kinds and devices: a change reloads it below
+  const connectorsChanged = await enableFakeConnectors(page, orgId as unknown as string);
+  const devicesChanged = await enableDeviceFake(page, orgId as unknown as string);
+  const changed = connectorsChanged || devicesChanged;
   if (!agent) {
     if (changed) await page.reload();
     return hydrated(page);
