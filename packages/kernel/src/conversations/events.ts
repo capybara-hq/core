@@ -642,8 +642,9 @@ const HANDOFF_PATH = /^\/(?![/\\])[^\\\s]*$/;
  * `guard`: `Edit` / `Write` refused by the read-before-write check (`not_read`: the file was never
  * read in the conversation, `modified`: it changed since). The result stays `isError: true` for
  * the model; the web shows the refusal as a neutral outcome, not a failure.
- * `not_loaded`: a call to a tool the catalog holds but the step's request did not carry
- * (ToolSearch mode, spec 5.5): expected behaviour, the model is told to load it first. The result
+ * `not_loaded`: a call to a tool the catalog holds but the step's request did not carry, or to a
+ * name no tool has (ToolSearch mode, spec 5.5): expected behaviour, the model is told to load it
+ * (or search for it) first. The result
  * stays `isError: true` for the model; the web shows it as a neutral outcome too.
  * `handoff`: a `Platform` operation whose decision stays with a person on a web page (platform web
  * parity spec §4.4, §6): the card's title and either a relative web path (`link`, also in the

@@ -1634,6 +1634,20 @@ describe("ToolSearch 模式", () => {
     expect(startedOf(evs)).toEqual([]);
   });
 
+  it("an unknown name in ToolSearch mode (e.g. a miscased catalog key) reads neutral, still an error for the model", async () => {
+    await modelCall(["ToolSearch"], true);
+    const evs = await runCalls([{ id: "c1", name: "Plugin__probe__echo", input: { text: "x" } }]);
+    expect(resultsOf(evs)).toEqual([
+      expect.objectContaining({
+        toolKey: "Plugin__probe__echo",
+        isError: true,
+        content: expect.stringContaining('Unknown tool "Plugin__probe__echo"'),
+        view: { kind: "not_loaded" },
+      }),
+    ]);
+    expect(handlerCalls.echo).toBeUndefined();
+  });
+
   it("按最后一次尝试的 model_call 判断：已加载（在请求的 tools 里）→ 照常执行", async () => {
     await modelCall(["ToolSearch"], true, 1);
     await modelCall(["ToolSearch", "plugin__probe__echo"], true, 2);
