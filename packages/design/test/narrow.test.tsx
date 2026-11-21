@@ -3,6 +3,7 @@ import { resolve } from "node:path";
 import { cleanup, render } from "@testing-library/react";
 import { afterEach, describe, expect, it } from "vitest";
 import { type Column, DataTable, DesignProvider } from "../src/index";
+import { parseCss } from "./css-rules";
 
 /**
  * Phone widths (spec §4.3 "Narrow windows"): jsdom cannot lay anything out, so these tests read
@@ -184,12 +185,30 @@ describe("size-class widths in the stylesheets", () => {
     expect(decls(hidden, ".cb-statusbar")).toContain("display: none;");
   });
 
-  it("a short window drops the path row on compact only (its top bar carries back; R26)", () => {
-    // medium and expanded (844 × 390 is expanded) have no top bar: the path row is their way up
-    const any = media(css("shell.css"), "(max-height: 479px)");
-    expect(decls(any, ".cb-pageheader-path")).not.toContain("display: none;");
-    const compact = media(css("shell.css"), "(max-width: 599px) and (max-height: 479px)");
-    expect(decls(compact, ".cb-pageheader-path")).toContain("display: none;");
+  it("compact draws no path row at any height; medium and expanded keep it (decision 2026-11-22)", () => {
+    // the floating row's back and the h1 are enough on compact; medium and expanded (844 × 390 is
+    // expanded) have no floating row: the path row is their way up
+    const shell = css("shell.css");
+    expect(decls(media(shell, "(max-height: 479px)"), ".cb-pageheader-path")).not.toContain(
+      "display: none;",
+    );
+    expect(shell).not.toContain("(max-width: 599px) and (max-height: 479px)");
+    const hiding = parseCss(shell).filter(
+      (r) => r.selector === ".cb-pageheader-path" && r.decls.display === "none",
+    );
+    expect(hiding.map((r) => r.at)).toEqual(["(max-width: 599px)"]);
+    // no rule hides it from 600 (a desktop shell's top row included)
+    const all = ["shell.css", "templates.css", "shell-environment.css"].flatMap((f) =>
+      parseCss(css(f)),
+    );
+    expect(
+      all.filter(
+        (r) =>
+          /cb-pageheader-path(?![\w-])/.test(r.selector) &&
+          r.decls.display === "none" &&
+          r.at !== "(max-width: 599px)",
+      ),
+    ).toEqual([]);
   });
 });
 

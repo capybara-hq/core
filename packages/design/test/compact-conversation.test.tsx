@@ -90,14 +90,65 @@ describe("the compact title bar (inside the shell)", () => {
     ]) {
       expect(compact(hidden).display, hidden).toBe("none");
     }
-    expect(compact(".cb-shell .cb-title-overflow").display).toBe("contents");
+    expect(compact('.cb-shell .cb-title-overflow[data-form="float"]').display).toBe("contents");
+    // the flat title bar's plain title and overflow are drawn only inside the desktop shell
+    expect(compact('.cb-shell .cb-title-overflow[data-form="flat"]').display).toBeUndefined();
+    expect(
+      rules.find(
+        (r) =>
+          r.selector
+            .split(",")
+            .map((x) => x.trim())
+            .includes(".cb-title-plain") &&
+          r.at === null &&
+          r.decls.display,
+      )?.decls.display,
+    ).toBe("none");
     // outside the shell, and above 600, the overflow is not drawn
     expect(
-      rules.find((r) => r.selector === ".cb-title-overflow" && r.at === null)?.decls.display,
+      rules.find(
+        (r) =>
+          r.selector
+            .split(",")
+            .map((x) => x.trim())
+            .includes(".cb-title-overflow") && r.at === null,
+      )?.decls.display,
     ).toBe("none");
     expect(compact('.cb-shell .cb-conv-scroll:not([data-center="true"])')["padding-top"]).toBe(
       "var(--cb-float-row)",
     );
+  });
+});
+
+describe("the floating row's round buttons are one size (maintainer decision 2026-11-22)", () => {
+  it("the trailing overflow is the row's float size, as the menu button and the pill", () => {
+    const more = compact(".cb-shell .cb-title-overflow > .cb-icon-btn");
+    const pill = compact(".cb-shell .cb-title-bar > .cb-title-btn");
+    for (const prop of ["width", "height", "min-width", "min-height"]) {
+      expect(more[prop], prop).toBe("var(--cb-float-size)");
+    }
+    expect(pill.height).toBe("var(--cb-float-size)");
+    // the 40 px floor of the title bar's buttons on a phone loses to the row's own size: the
+    // overflow's rule is more specific than `.cb-title-bar .cb-icon-btn`
+    const floor = rules.find(
+      (r) => r.at === "(max-width: 599px)" && r.selector === ".cb-title-bar .cb-icon-btn",
+    );
+    expect(floor?.decls["min-width"]).toBe("40px");
+    // the leading button and the page's overflow follow the same size property (shell.css)
+    const shell = parseCss(css("shell.css"));
+    expect(shell.find((r) => r.selector === ".cb-floatbar .cb-icon-btn")?.decls.width).toBe(
+      "var(--cb-float-size, var(--cb-control-prominent))",
+    );
+    const touch = parseCss(css("touch.css"));
+    expect(
+      touch.find((r) => r.at?.includes("pointer: coarse") && r.selector === ".cb-shell")?.decls[
+        "--cb-float-size"
+      ],
+    ).toBe("var(--cb-touch-float)");
+    expect(
+      touch.find((r) => r.at?.includes("pointer: coarse") && r.selector === ".cb-float-btn")?.decls
+        .width,
+    ).toBe("var(--cb-touch-float)");
   });
 });
 
