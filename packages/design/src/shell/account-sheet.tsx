@@ -21,8 +21,8 @@ export interface AccountSheetData {
   /** The person's avatar (a circle: an image or the initial). */
   avatar?: AvatarValue;
   /**
-   * The org switcher's items (the orgs, creating one); absent with one org: the 组织 row is the
-   * org's name, not a control. A pick closes the sheet and the drawer under it.
+   * The org switcher's items (the orgs, creating one); absent with one org: the Organization row
+   * is the org's name, not a control. A pick closes the sheet and the drawer under it.
    */
   orgMenu?: MenuItem[];
   /** The language choice (on a phone the only way to switch it): the current one's name, the items. */
@@ -64,9 +64,9 @@ function closingAfter(items: MenuItem[], after: () => void): MenuItem[] {
 
 /**
  * The account sheet (design spec §6.55, maintainer decision 2026-11-22): grouped rows on the
- * bottom sheet (§6.59). The profile row (avatar, name, 个人资料与偏好设置) opens Personal settings;
- * 组织 (the current org; a menu of the orgs when there are several) and Switch platform (a native
- * shell only); 语言 and 外观; sign out alone in its group; the status line as the footnote. It holds
+ * bottom sheet (§6.59). The profile row (avatar, name, "Profile and preferences") opens Personal
+ * settings; Organization (the current org; a menu of the orgs when there are several) and Switch
+ * platform (a native shell only); Language and Appearance; sign out alone in its group; the status line as the footnote. It holds
  * its own history entry on a compact touch window, so the system back closes it before the drawer
  * under it (Decision 25); a row that goes somewhere leaves the entry (the navigation is pending)
  * and also closes the drawer.

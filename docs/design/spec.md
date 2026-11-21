@@ -1123,11 +1123,14 @@ States: `dragging`, `settling`
 | sheet-handle | dragging | width | space.7 |
 | sheet-handle | dragging | height | space.1 |
 | sheet-handle | dragging | background-color | color.muted |
-| sheet-head | dragging | height | row.roomy |
+| sheet-head | dragging | height | touch.row |
+| sheet-close | dragging | width | touch.sheet-close |
+| sheet-close | dragging | height | touch.sheet-close |
+| sheet-close | dragging | background-color | color.hover |
 | option | dragging | height | 40 |
 | sheet | settling | background-color | color.panel |
 | sheet-handle | settling | background-color | color.line-strong |
-| sheet-head | settling | height | row.roomy |
+| sheet-head | settling | height | touch.row |
 
 - **Inside an overlay** (§1 "One box is enough"): a Dialog or a Sheet is the box. Its body groups with `ContentSection` headings (§6.31), `Subsection`s (§6.32) and hairline-divided `ItemList` rows (§6.33), never Cards or FormSections; a confirmation that previews a change's consequences draws them with `ImpactPreview` (§6.35); tables, code blocks and repeaters inside draw their unboxed forms by themselves. Choosing between sources in a dialog is a card `RadioGroup` straight in the body (no Card around it), and its one `FilePicker` drop zone is allowed (§6.25).
 - **Links**: the design package is framework-agnostic; links in the sidebar navigation, the PageHeader path, Tabs, Sheet, TextLink and LinkCard are rendered through the `link` component of `DesignProvider` (default `<a>`); `apps/web` passes next-intl's `Link` to get client-side navigation and the locale prefix. Pages should not build `<a href>` themselves for in-site navigation.
