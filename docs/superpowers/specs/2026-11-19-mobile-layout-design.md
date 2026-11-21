@@ -324,7 +324,7 @@ Colors are unchanged: the palette of design spec §2.1, dark `#0A0A0A` / accent 
   17, a tool group collapsed to one line ("运行了 2 条命令"), the approval card with 拒绝 / 批准
   side by side at 48 high (批准 the accent) and its command in mono.
 
-§7's interaction rules are unchanged; §11.3's 40 × 40 compact rule becomes 44 × 44 on touch.
+§7's interaction rules are unchanged; §11.3's 40 × 40 compact rule becomes 44 × 44, on touch and (2026-11-22) at compact with a fine pointer too.
 
 **Mobile sizes follow the width too (maintainer decision 2026-11-22).** There is no separate
 mobile component set: the same components switch by media query, and the size half of the touch
@@ -332,13 +332,14 @@ set (the control, row, radius and type steps above, the floating buttons' 48) ap
 `MOBILE_SIZE_QUERY`, `(max-width: 599px), <TOUCH_QUERY>`, exported once beside `TOUCH_QUERY` in
 `touch.ts`: at the compact class whatever the pointer (a narrowed desktop window too) or on a
 touch device at any width (an iPad at medium or expanded keeps the touch sizes). `pnpm
-gen:tokens` writes the size overrides into their own `@media MOBILE_SIZE_QUERY` block; the font
-overrides (the system font) stay under `@media TOUCH_QUERY`, as do the touch components' own
-forms (the large list rows, the bottom sheet's touch form, the drawer's rows) and the
-desktop-only gate (§4.6). Under the mobile sizes every control is a 44 tap target with its
+gen:tokens` writes the size overrides into their own `@media MOBILE_SIZE_QUERY` block, and the
+touch components' forms (the large list rows, the bottom sheet's touch form, the drawer's rows,
+the floating buttons) follow the same query; only what is about the pointer itself stays under
+`@media TOUCH_QUERY`: the system font (a narrow desktop window keeps Sarasa) and the
+desktop-only gate (§4.6) (maintainer rulings on the follow-up questions, 2026-11-22). Under the mobile sizes every control is a 44 tap target with its
 visible box (no invisible ring), and **a control with text pads wider than it is tall**
-("左右大于上下"): buttons and chips 16 at the sides (20 at `prominent`), tabs 16, segments 16 in a
-52 high group, text fields their text 12 from the border, at least 16 px; icon-only buttons stay
+("左右大于上下"): buttons and chips 16 at the sides (20 at `prominent`), tabs 16, segments 16 filling a
+44 high group (the selected ground drawn inset), text fields their text 12 from the border, at least 16 px; icon-only buttons stay
 square (design spec §2.5 "Mobile sizes of the controls"). The compact tab rows (the page head's
 tabs, the settings sub-nav) scroll sideways with the edge fade and keep the current item in view.
 

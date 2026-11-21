@@ -1,7 +1,7 @@
 import { readdirSync } from "node:fs";
 import { resolve } from "node:path";
 import { describe, expect, it } from "vitest";
-import { MOBILE_SIZE_QUERY } from "../src/index";
+import { MOBILE_SIZE_QUERY, TOUCH_QUERY } from "../src/index";
 import { css, parseCss } from "./css-rules";
 
 // The mobile sizes of the controls (spec §2.5, maintainer decision 2026-11-22): under
@@ -37,21 +37,48 @@ describe("mobile size rules", () => {
     });
   });
 
-  it("tabs are touch.hit high padded space.4; a segmented group is control.prominent high", () => {
+  it("tabs are touch.hit high padded space.4", () => {
     expect(under("display.css", ".cb-tab")).toEqual({
       height: "var(--cb-touch-hit)",
       padding: "0 var(--cb-space-4)",
     });
+  });
+
+  it("a segmented group is control.default high, its segments fill it and draw the ground inset", () => {
     expect(
       under(
         "display.css",
         '.cb-segmented, .cb-segmented[data-density="dense"], .cb-segmented[data-density="prominent"]',
       ),
-    ).toEqual({ height: "var(--cb-control-prominent)" });
-    expect(under("display.css", ".cb-seg")).toEqual({
+    ).toEqual({ height: "var(--cb-control-default)", padding: "0", gap: "0" });
+    expect(under("display.css", ".cb-seg")).toMatchObject({
       "min-width": "var(--cb-touch-hit)",
+      // over the group's 1 px border: the segment's box is the group's full height
+      margin: "-1px 0",
       padding: "0 var(--cb-space-4)",
     });
+    expect(under("display.css", ".cb-seg::before")).toMatchObject({
+      position: "absolute",
+      inset: "3px",
+    });
+    expect(under("display.css", '.cb-seg[data-state="selected"]::before')).toEqual({
+      background: "var(--cb-selected)",
+    });
+    expect(
+      under(
+        "display.css",
+        '.cb-seg:hover:not([data-state="selected"]), .cb-seg[data-state="selected"]',
+      ),
+    ).toEqual({ background: "transparent" });
+  });
+
+  it("the touch component forms follow the width; the desktop-only gate stays on the pointer", () => {
+    const touch = parseCss(css("touch.css"));
+    const at = (selector: string) => touch.filter((r) => r.selector === selector).map((r) => r.at);
+    expect(at(".cb-object-row")).toContain(MOBILE_SIZE_QUERY);
+    expect(at(".cb-bsheet")).toContain(MOBILE_SIZE_QUERY);
+    expect(at(".cb-navrow")).toContain(MOBILE_SIZE_QUERY);
+    expect(at("[data-desktop-only]")).toEqual([TOUCH_QUERY]);
   });
 
   it("text fields are at least 16 px under the mobile sizes", () => {

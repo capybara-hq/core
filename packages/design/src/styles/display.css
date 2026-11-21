@@ -169,10 +169,13 @@
   flex: 1 1 0;
 }
 
-/* Mobile sizes (spec §2.5 "Mobile sizes", §6.4; MOBILE_SIZE_QUERY): a tab is a touch.hit (44) target
-   padded 16 at the sides; the segmented group is control.prominent (52) high, so each segment
-   inside its 2 px inset and border is at least 44, padded 16 at the sides (more than the 13
-   above and below its line), and never narrower than it is tall. */
+/* Mobile sizes (spec §2.5 "Mobile sizes", §6.4; MOBILE_SIZE_QUERY; maintainer decision 2026-11-22):
+   a tab is a touch.hit (44) target padded 16 at the sides. The segmented group is control.default
+   high (44 here), level with the fields and buttons of its row: the group drops its inset, each
+   segment fills the whole group (over the group's 1 px border too, so its hit area is the full
+   44), padded 16 at the sides and never narrower than it is tall, and the selected (or hovered)
+   ground is drawn inset by the old 2 px gap plus the border, on a ::before, instead of shrinking
+   the segment. */
 @media (max-width: 599px), (pointer: coarse), (any-pointer: coarse) and (not (any-pointer: fine)) {
   .cb-tab {
     height: var(--cb-touch-hit);
@@ -181,11 +184,33 @@
   .cb-segmented,
   .cb-segmented[data-density="dense"],
   .cb-segmented[data-density="prominent"] {
-    height: var(--cb-control-prominent);
+    height: var(--cb-control-default);
+    padding: 0;
+    gap: 0;
   }
   .cb-seg {
+    position: relative;
+    isolation: isolate;
     min-width: var(--cb-touch-hit);
+    margin: -1px 0;
     padding: 0 var(--cb-space-4);
+  }
+  .cb-seg:hover:not([data-state="selected"]),
+  .cb-seg[data-state="selected"] {
+    background: transparent;
+  }
+  .cb-seg::before {
+    content: "";
+    position: absolute;
+    z-index: -1;
+    inset: 3px;
+    border-radius: calc(var(--cb-radius-sm) - 3px);
+  }
+  .cb-seg:hover:not([data-state="selected"])::before {
+    background: var(--cb-hover);
+  }
+  .cb-seg[data-state="selected"]::before {
+    background: var(--cb-selected);
   }
 }
 
@@ -1082,8 +1107,9 @@
   font-size: var(--cb-type-small-size);
   line-height: var(--cb-type-small-line);
 }
-/* Touch (spec §4.3): the copy button is a 44px target; the block grows to hold it. */
-@media (pointer: coarse), (any-pointer: coarse) and (not (any-pointer: fine)) {
+/* Mobile sizes (spec §2.5, §4.3; MOBILE_SIZE_QUERY): the copy button is a 44px target; the block
+   grows to hold it. */
+@media (max-width: 599px), (pointer: coarse), (any-pointer: coarse) and (not (any-pointer: fine)) {
   .cb-copy-code-line > .cb-copy-code-copy {
     min-width: var(--cb-touch-hit);
     min-height: var(--cb-touch-hit);

@@ -448,7 +448,7 @@ waves 3–5 ("templates follow"). Phases 1–3 are one PR each.
   list example with scope), `docs/design/reference/src/card-grid.html` (narrow block redrawn) and
   new reference sources, `apps/web/visual/size-matrix.ts` consumers: a `responsive.spec.ts` with
   one page per template at 390 (touch emulation), 768, 1440, light and dark, plus the touch
-  hit-size assertion (≥ 44 at 390 touch, ≥ 40 at 390 fine).
+  hit-size assertion (≥ 44 at 390 touch and ≥ 44 at 390 fine: maintainer decision 2026-11-22).
 - Create: `.changeset/responsive-system-phase0.md` (`@capybara-hq/design` minor, `@capybara-hq/capybara` patch)
 
 - [ ] **Step 1:** run `pnpm exec vitest run apps/web/test/box-in-box.test.tsx` and the design
@@ -524,7 +524,7 @@ desktop-only notice), so tests use a fine pointer at 390.
 - [ ] Implement, run, commit `feat(web): admin view choices are scopes (#568)`.
 
 ### Task T3.2: Sizing audit
-**Files:** `apps/web/visual/responsive.spec.ts` (one admin list, detail, form page at 390 fine pointer: hit targets ≥ 40, no horizontal page scroll).
+**Files:** `apps/web/visual/responsive.spec.ts` (one admin list, detail, form page at 390 fine pointer: hit targets ≥ 44 (maintainer decision 2026-11-22), no horizontal page scroll).
 - [ ] Add the assertions; `pnpm verify`; commit `test(web): super admin pages at 390 (#568)`.
   No row mappings (D8): admin tables keep the stacked fallback.
 
