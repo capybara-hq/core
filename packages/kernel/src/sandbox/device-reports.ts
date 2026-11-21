@@ -112,7 +112,7 @@ export class DeviceReports {
       .where("org_id", "=", ref.orgId)
       .where("provider", "=", plugin)
       .where("deleted_at", "is", null)
-      .forUpdate()
+      .forNoKeyUpdate()
       .executeTakeFirst();
     // deleted, or bound to another provider than the one that answered: nothing is written
     if (!row) return false;

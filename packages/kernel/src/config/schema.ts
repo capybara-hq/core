@@ -2088,7 +2088,7 @@ export const KernelConfigSchema = z.strictObject({
           meta({
             hot: true,
             description:
-              "The name of the device provider extension that makes a person's default device when several device providers are on (default none: with no usable default, creating a device needs an explicit provider). An empty string means none. An organization may choose another provider that is on in it. Set here, it is read-only in the admin console",
+              "The name of the device provider extension that makes a person's default device, needed with a single device provider too (default none: nobody gets a default device, and creating a device needs an explicit provider). An empty string means none. An organization may choose another provider that is on in it. Set here, it is read-only in the admin console",
           }),
         ),
       /**
