@@ -106,3 +106,40 @@ describe("reveal views", () => {
     expect(build([...START, result()]).some((e) => e.kind === "reveal")).toBe(false);
   });
 });
+
+describe("a consent approval then a secure input request on one call", () => {
+  const requested = (seq: number, approvalId: string, extra: Record<string, unknown> = {}) =>
+    ev(seq, "approval_requested", {
+      step: 0,
+      callId: "k1",
+      approvalId,
+      toolKey: "Platform:config.set",
+      expiresAt: "2026-11-21T12:00:00.000Z",
+      requestedFor: "a1",
+      ...extra,
+    });
+
+  it("makes two distinct approval entries, only the second a secure input", () => {
+    const entries = build([
+      ...START,
+      requested(4, "ap1"),
+      ev(5, "approval_decided", {
+        approvalId: "ap1",
+        callId: "k1",
+        decision: "approved",
+        scope: "once",
+        byAccountId: "a1",
+      }),
+      requested(6, "ap2", {
+        secureInput: { target: { zh: "配置", en: "Config" }, fields: ["apiKey"] },
+      }),
+    ]);
+    const approvals = entries.flatMap((e) => (e.kind === "approval" ? [e] : []));
+    expect(approvals.map((a) => a.item.approvalId)).toEqual(["ap1", "ap2"]);
+    expect(new Set(approvals.map((a) => a.key)).size).toBe(2);
+    expect(approvals[0]?.item.decided?.decision).toBe("approved");
+    expect(approvals[0]?.item.secureInput).toBeUndefined();
+    expect(approvals[1]?.item.decided).toBeNull();
+    expect(approvals[1]?.item.secureInput?.fields).toEqual(["apiKey"]);
+  });
+});

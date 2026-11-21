@@ -918,7 +918,7 @@ function EntryNode({ e, c }: { e: TimelineEntry; c: EntryContext }): ReactNode {
  * What a call's result shows its run's person once (the initial password, the invitation link),
  * read by call. Anyone else sees nothing: the kernel refuses them anyway.
  */
-function RevealEntry({
+export function RevealEntry({
   orgId,
   conversationId,
   entry,
@@ -928,7 +928,7 @@ function RevealEntry({
   entry: Extract<TimelineEntry, { kind: "reveal" }>;
 }): ReactNode {
   const { me } = useSession();
-  if (entry.starterAccountId !== undefined && entry.starterAccountId !== me.account.id) return null;
+  if (entry.starterAccountId !== me.account.id) return null;
   const call = { conversationId, runId: entry.runId, callId: entry.callId };
   return entry.reveal === "initial_password" ? (
     <InitialPasswordReveal orgId={orgId} call={call} />

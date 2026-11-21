@@ -254,4 +254,41 @@ describe("ApprovalCard: secure input", () => {
     ).toBeTruthy();
     expect(screen.getByRole("button", { name: "Approve" })).toBeTruthy();
   });
+
+  it("a decided consent approval and a pending secure input on one call both render", async () => {
+    const consent = APPROVAL({
+      id: "ap0",
+      kind: "tool",
+      input: {},
+      status: "approved",
+      scope: "once",
+      decidedBy: "a1",
+      decidedAt: EXPIRES,
+    });
+    stubApi({
+      "GET /api/v1/orgs/o1/approvals/ap0": () =>
+        json(200, { approval: { ...consent, personFields: undefined, personTarget: undefined } }),
+      "GET /api/v1/orgs/o1/approvals/ap1": () => json(200, { approval: APPROVAL() }),
+    });
+    const consentItem: ApprovalItem = {
+      ...omitSecure(item),
+      approvalId: "ap0",
+      input: {},
+      decided: { approvalId: "ap0", callId: "call_1", decision: "approved", byAccountId: "a1" },
+      decidedAt: EXPIRES,
+    };
+    renderPage(
+      <>
+        <ApprovalCard orgId="o1" item={consentItem} />
+        <ApprovalCard orgId="o1" item={item} />
+      </>,
+      { locale: "en" },
+    );
+    expect(await field()).toBeTruthy();
+    expect(screen.getByRole("button", { name: "Submit" })).toBeTruthy();
+    expect(
+      document.querySelector('[data-approval-id="ap0"] [data-decision="approved"]'),
+    ).toBeTruthy();
+    expect(document.querySelectorAll('[data-secure-input="true"]')).toHaveLength(1);
+  });
 });
