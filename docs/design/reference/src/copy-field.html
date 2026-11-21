@@ -10,25 +10,25 @@
 <body>
 <main class="r-page">
 <h1>CopyField</h1>
-<p>A value people copy and may see again (spec §6.44): the label, a read-only field and Copy, which reads 已复制 for two seconds. Without a usable clipboard the field is selected and a muted line says to copy it by hand. No "shown once" warning (that is SecretReveal).</p>
+<p>A labelled value people copy and may see again (spec §6.44): a Field's label over a CopyCode (§6.58), whose copy button reads 已复制 for two seconds. Without a usable clipboard the value is selected and a muted line says to copy it by hand. No "shown once" warning (that is SecretReveal).</p>
 <div class="r-blocks">
 <section data-ref-block="copy-field-idle" style="width:480px" data-pad>
   <div class="r-copy-field">
-    <label class="r-label r-copy-field-label" for="c-idle">链接</label>
-    <div class="r-secret-row"><input class="r-input" id="c-idle" readonly value="https://capybara.example.com/s/k3Rf9TqW2a"><button class="r-btn" data-variant="default"><i data-icon="copy" data-size="14"></i>复制</button></div>
+    <span class="r-copy-field-label">链接</span>
+    <div class="r-copy-code"><div class="r-copy-code-line"><pre class="r-copy-code-value">https://capybara.example.com/s/k3Rf9TqW2a</pre><button class="r-btn r-copy-code-copy" data-variant="ghost" data-step="dense" aria-label="复制"><i data-icon="copy" data-size="14"></i></button></div></div>
   </div>
 </section>
 <section data-ref-block="copy-field-copied" style="width:480px" data-pad>
   <div class="r-copy-field">
-    <label class="r-label r-copy-field-label" for="c-copied">链接</label>
-    <div class="r-secret-row"><input class="r-input" id="c-copied" readonly value="https://capybara.example.com/s/k3Rf9TqW2a"><button class="r-btn" data-variant="default"><i data-icon="check" data-size="14"></i>已复制</button></div>
+    <span class="r-copy-field-label">链接</span>
+    <div class="r-copy-code"><div class="r-copy-code-line"><pre class="r-copy-code-value">https://capybara.example.com/s/k3Rf9TqW2a</pre><button class="r-btn r-copy-code-copy" data-variant="ghost" data-step="dense"><i data-icon="check" data-size="14"></i>已复制</button></div></div>
   </div>
 </section>
 <section data-ref-block="copy-field-manual" style="width:480px" data-pad>
   <div class="r-copy-field">
-    <label class="r-label r-copy-field-label" for="c-manual">链接</label>
-    <div class="r-secret-row"><input class="r-input" id="c-manual" readonly value="https://capybara.example.com/s/k3Rf9TqW2a"><button class="r-btn" data-variant="default"><i data-icon="copy" data-size="14"></i>复制</button></div>
-    <span class="r-copy-field-manual"><i data-icon="circle-alert" data-size="14"></i>无法自动复制：已选中，请按 Ctrl+C（⌘C）复制。</span>
+    <span class="r-copy-field-label">链接</span>
+    <div class="r-copy-code"><div class="r-copy-code-line"><pre class="r-copy-code-value">https://capybara.example.com/s/k3Rf9TqW2a</pre><button class="r-btn r-copy-code-copy" data-variant="ghost" data-step="dense" aria-label="复制"><i data-icon="copy" data-size="14"></i></button></div>
+    <span class="r-copy-field-manual"><i data-icon="circle-alert" data-size="14"></i>无法自动复制：已选中，请按 Ctrl+C（⌘C）复制。</span></div>
   </div>
 </section>
 </div>

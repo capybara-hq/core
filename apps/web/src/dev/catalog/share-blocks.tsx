@@ -1,14 +1,22 @@
 "use client";
 
-import { CopyField, CsvPreview, HtmlDocumentFrame, SharedFilePage } from "@capybara-hq/design";
-import { FILE_FIXTURE, SHARE_FIXTURE } from "@capybara-hq/design/fixtures";
+import {
+  Card,
+  CopyCode,
+  CopyField,
+  CsvPreview,
+  HtmlDocumentFrame,
+  SharedFilePage,
+} from "@capybara-hq/design";
+import { COPY_CODE_FIXTURE, FILE_FIXTURE, SHARE_FIXTURE } from "@capybara-hq/design/fixtures";
 import type { ReactNode } from "react";
 import { csvText } from "./conversation-blocks";
 import { RefBlock } from "./ref-block";
 
 // File sharing (file sharing design §4–§6): HtmlDocumentFrame (spec §6.43), CopyField (§6.44) and
-// the shared file page (T14, §5.12). The blocks have the same ids and boxes as
-// docs/design/reference/src/{html-frame,copy-field,shared-file-page}.html.
+// the shared file page (T14, §5.12), with CopyCode (§6.58), the line CopyField labels. The blocks
+// have the same ids and boxes as
+// docs/design/reference/src/{html-frame,copy-field,copy-code,shared-file-page}.html.
 
 const noop = () => {};
 
@@ -34,6 +42,31 @@ function copyFieldBlocks(): ReactNode {
       </RefBlock>
       <RefBlock id="copy-field-manual" width={480} pad>
         <CopyField label={SHARE_FIXTURE.linkLabel} value={SHARE_FIXTURE.link} state="manual" />
+      </RefBlock>
+    </>
+  );
+}
+
+function copyCodeBlocks(): ReactNode {
+  const { label, command, cardTitle, long } = COPY_CODE_FIXTURE;
+  return (
+    <>
+      <RefBlock id="copy-code-idle" width={480} pad>
+        <CopyCode value={command} label={label} />
+      </RefBlock>
+      <RefBlock id="copy-code-copied" width={480} pad>
+        <CopyCode value={command} label={label} state="copied" />
+      </RefBlock>
+      <RefBlock id="copy-code-manual" width={480} pad>
+        <CopyCode value={command} label={label} state="manual" />
+      </RefBlock>
+      <RefBlock id="copy-code-in-box" width={480} pad>
+        <Card title={cardTitle}>
+          <CopyCode value={command} label={label} />
+        </Card>
+      </RefBlock>
+      <RefBlock id="copy-code-long" width={320}>
+        <CopyCode value={long} label={label} />
       </RefBlock>
     </>
   );
@@ -75,5 +108,6 @@ function sharedFilePageBlocks(): ReactNode {
 export const SHARE_BLOCKS = {
   "html-frame": htmlFrameBlocks,
   "copy-field": copyFieldBlocks,
+  "copy-code": copyCodeBlocks,
   "shared-file-page": sharedFilePageBlocks,
 } as const;

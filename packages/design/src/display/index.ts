@@ -60,6 +60,7 @@ export {
 } from "./chat";
 export { CheckRow, type CheckRowProps, type CheckRowState } from "./check-row";
 export { ContentSection, type ContentSectionProps } from "./content-section";
+export { CopyCode, type CopyCodeProps, type CopyCodeState } from "./copy-code";
 export { CopyField, type CopyFieldProps } from "./copy-field";
 export { DangerZone, DangerZoneItem, type DangerZoneItemProps } from "./danger-zone";
 export { DateTime, formatDateTime, formatRelative, versionLabel } from "./date-time";

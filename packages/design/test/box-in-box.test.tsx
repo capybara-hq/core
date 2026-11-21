@@ -8,6 +8,8 @@ import {
   Card,
   CodeBlock,
   type Column,
+  CopyCode,
+  CopyField,
   DangerZone,
   DataTable,
   DesignProvider,
@@ -76,6 +78,8 @@ const adaptive = (
   <>
     <Callout tone="warn">没有可用模型。</Callout>
     <CodeBlock language="sql" text="DROP TABLE x;" />
+    <CopyCode value="capybara-device start" label="启动" />
+    <CopyField label="链接" value="https://capybara.example.com/s/k3Rf9TqW2a" />
     <EmbedFrame src="https://example.com" title="看板" onMessage={noop} />
     {table}
     {repeater}
@@ -183,10 +187,13 @@ describe("findNestedBoxes (the guard itself, red first)", () => {
 
 describe("boxed pieces draw their unboxed form inside a box", () => {
   it.each(CONTAINERS)(
-    "inside a %s: Callout, CodeBlock, EmbedFrame, DataTable and Repeater",
+    "inside a %s: Callout, CodeBlock, CopyCode, EmbedFrame, DataTable and Repeater",
     (_, wrap) => {
       zh(wrap(adaptive));
       expect(nested()).toEqual([]);
+      for (const line of document.querySelectorAll(".cb-copy-code-line")) {
+        expect(line.getAttribute("data-framed")).toBe("false");
+      }
       // the Callout is the warn line with its icon (spec §6.19), no tint of its own
       expect(document.querySelector(".cb-callout")?.getAttribute("data-framed")).toBe("false");
       expect(document.querySelector(".cb-code")?.getAttribute("data-framed")).toBe("false");
@@ -200,6 +207,7 @@ describe("boxed pieces draw their unboxed form inside a box", () => {
     zh(adaptive);
     expect(document.querySelector(".cb-callout")?.hasAttribute("data-framed")).toBe(false);
     expect(document.querySelector(".cb-code")?.getAttribute("data-framed")).toBe("true");
+    expect(document.querySelector(".cb-copy-code-line")?.getAttribute("data-framed")).toBe("true");
     expect(document.querySelector(".cb-embed")?.getAttribute("data-framed")).toBe("true");
     expect(document.querySelector(".cb-table")?.getAttribute("data-framed")).toBe("true");
     expect(document.querySelector(".cb-repeater")?.getAttribute("data-variant")).toBe("cards");
