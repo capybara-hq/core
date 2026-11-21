@@ -103,6 +103,7 @@ import {
   CloudPermissionSnapshots,
   type CloudSnapshotOutcome,
 } from "./cloud-permission-snapshot.js";
+import { DeviceReports } from "./device-reports.js";
 import type { DeviceSandbox, HostGrantCeiling } from "./device-sandbox.js";
 import {
   isKernelReadMethod,
@@ -723,6 +724,8 @@ export class SandboxService {
     /** The cloud snapshot writer's reconcile, for the lifecycle reconcile of marked devices (B-12). */
     @Inject(CloudPermissionSnapshots)
     private readonly snapshots: Pick<CloudPermissionSnapshots, "reconcileHeld">,
+    /** The stored device report, refreshed after a create or a resume (never fails the use). */
+    @Inject(DeviceReports) private readonly reports: Pick<DeviceReports, "refresh">,
   ) {}
 
   /** Poll interval while waiting for a lease (the leases' own). */
@@ -2340,6 +2343,12 @@ export class SandboxService {
       // B-15: a resumed cloud instance reads its permission support again; any other instance
       // whose recorded evidence is stale (a limits change, a provider version change) too
       await this.refreshCloudSupport(ctx, p, s, sig, s.resumed === true);
+      // a new or resumed instance: the provider's report is stored again, still under the exclusive
+      // lease and outside any transaction; a failure keeps the stored one and never fails the use
+      if (s.info.fresh || s.resumed === true)
+        await runOutsideTransaction(() =>
+          this.reports.refresh(p, { deviceId: env, orgId: ctx.orgId, handle: s.handle }, sig),
+        );
       // staged path (B-8): create → commit → legacy gate (ensure) → cleanup → bind → installed →
       // downgrade. The cleanup a resume or create owes runs first: a retry after a failed bind
       // finds the instance running and would not owe it again. The binder sends the committed

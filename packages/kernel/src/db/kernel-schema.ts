@@ -1303,6 +1303,13 @@ export interface DevicesTable {
   >;
   /** 0165: a cloud device's allowlist hosts (a JSON array), used while the mode is `allowlist`. */
   network_hosts: ColumnType<string[], string | undefined, string>;
+  /**
+   * 0175: what the device's provider last reported (a `DeviceReport` as JSON; read back through
+   * `parseDeviceReport`, see `DeviceReports`); null until the first create or resume stores one.
+   */
+  report: ColumnType<unknown, string | null | undefined, string | null>;
+  /** 0175: when {@link report} was stored. */
+  report_at: TsNullable;
   created_at: Ts;
   updated_at: Ts;
   deleted_at: TsNullable;

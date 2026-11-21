@@ -8,6 +8,7 @@ import { ModelsModule } from "../models/models.module.js";
 import { MAINTENANCE_QUEUE_NAME } from "../runtime/maintenance-queue.js";
 import { StepLogModule } from "../runtime/step-log.js";
 import { CloudPermissionSnapshotsModule } from "./cloud-permission-snapshot.module.js";
+import { DeviceReports } from "./device-reports.js";
 import { SandboxJobs } from "./jobs.js";
 import { LegacyRetirementModule } from "./legacy-retirement.module.js";
 import { OperationAuthorityModule } from "./operation-authority.module.js";
@@ -44,7 +45,7 @@ import { SandboxService } from "./sandbox.service.js";
     StepLogModule,
     QueueModule.registerQueue(MAINTENANCE_QUEUE_NAME),
   ],
-  providers: [SandboxService, SandboxJobs, CommandReviewService],
+  providers: [SandboxService, SandboxJobs, CommandReviewService, DeviceReports],
   exports: [
     SandboxProviderRegistryModule,
     LegacyRetirementModule,
@@ -55,6 +56,7 @@ import { SandboxService } from "./sandbox.service.js";
     SandboxJobs,
     CommandReviewService,
     CloudPermissionSnapshotsModule,
+    DeviceReports,
   ],
 })
 export class SandboxModule {}
