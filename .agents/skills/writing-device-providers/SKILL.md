@@ -528,8 +528,8 @@ The kernel owns it; the extension implements only primitives. **Do not do schedu
   not loaded are never touched.
 - **Which provider a new device gets**: device creation (`POST /devices`) takes a provider name, one that is on in the org
   (`GET /devices` lists them); absent, the org's default (`DeviceProviderSelection.defaultFor`): the org setting
-  `deviceDefaultProvider`, else the platform setting `devices.defaultProvider` (deployment config or the admin console), else the first provider
-  that is on. A default that is not on in the org is ignored. `DeviceProviders` is a pure registry (`register`, `forDevice`,
+  `deviceDefaultProvider`, else the platform setting `devices.defaultProvider` (deployment config or the admin console). Without a usable default (none set, or
+  the named provider is not on in the org) `defaultFor` returns none, and the caller must name a provider (`device.provider_required`, 400). `DeviceProviders` is a pure registry (`register`, `forDevice`,
   `loaded`); which providers serve an org is `DeviceProviderSelection` (`onInOrg`, `isOnInOrg`, `defaultFor`).
 - **Live devices only**: the instance row is created only for a live device (`deleted_at IS NULL`) of the caller's org, with the device's own `org_id`, and
   the use path re-checks it under the exclusive lease before creating anything: a use that waited behind `destroyDevice` gets `device.not_found` instead of bringing
