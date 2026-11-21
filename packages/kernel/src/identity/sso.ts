@@ -2,6 +2,7 @@ import { createHash, randomBytes, timingSafeEqual } from "node:crypto";
 import {
   IDENTITY_SOURCE_EXTENSION_POINT,
   type IdentitySource,
+  isIdentitySourceRefused,
   type Logger,
 } from "@capybara-hq/plugin-sdk";
 import { Inject, Injectable } from "@nestjs/common";
@@ -34,6 +35,7 @@ export type SsoLoginError =
   | "sso.session_mismatch"
   | "sso.access_denied"
   | "sso.provider_error"
+  | "sso.account_not_allowed"
   | "sso.identity_not_verified"
   | "auth.account_disabled";
 
@@ -184,12 +186,18 @@ export class SsoFlow {
   }
 
   /**
-   * 处理身份源的回跳。state 先取后删（无论成败都不能再用）；state 属于别的插件 → `sso.state_invalid`；
-   * 绑定 Cookie 不符 → `sso.session_mismatch`；身份源报错只映射为原因码；插件交回的身份源键必须由内核推导得出
-   * （`${插件名}:${identity.tenantId}`，Ruling A19），否则按 `sso.provider_error` 拒绝。
-   * 身份行经 IM 绑定建立、且发起与回调时不是同一个已登录的本人账号 → `sso.identity_not_verified`
-   * （Ruling A18）。成功则解析到账号（不判断账号状态，由调用方处理）。
-   * `sessionAccountId`：回调请求已带着的 Web 会话的账号（未登录时省略）。
+   * Handles the identity source's redirect back. The state is read and deleted in one step (it can
+   * never be used again, whatever the outcome); a state that belongs to another plugin →
+   * `sso.state_invalid`; a browser binding cookie that does not match → `sso.session_mismatch`.
+   * Errors from the identity source map only to reason codes: a deliberate refusal
+   * (`IdentitySourceRefused`) → `sso.account_not_allowed`, any other error → `sso.provider_error`.
+   * The source key the plugin returns must be the one the kernel derives
+   * (`${plugin}:${identity.tenantId}`, Ruling A19), otherwise it is refused as `sso.provider_error`.
+   * An identity row created through an IM binding link, when the start and the callback were not
+   * made by the same signed-in account → `sso.identity_not_verified` (Ruling A18). On success it
+   * resolves to an account (without checking the account's status; the caller handles that).
+   * `sessionAccountId`: the account of the web session the callback request already carries
+   * (omitted when signed out).
    */
   async callback(
     plugin: string,
@@ -226,6 +234,14 @@ export class SsoFlow {
         codeVerifier: rec.codeVerifier,
       });
     } catch (err) {
+      // A deliberate refusal gets its own code; its message goes to the log only, never the URL
+      if (isIdentitySourceRefused(err)) {
+        this.log.warn("identity source refused the account", {
+          plugin,
+          reason: (err as Error).message,
+        });
+        return { ok: false, error: "sso.account_not_allowed" };
+      }
       this.log.warn("identity source callback failed", { plugin, err });
       return { ok: false, error: "sso.provider_error" };
     }

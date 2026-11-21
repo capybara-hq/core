@@ -20,6 +20,7 @@ export const LOGIN_ERROR_CODES = [
   "sso.session_mismatch",
   "sso.access_denied",
   "sso.provider_error",
+  "sso.account_not_allowed",
   "sso.identity_not_verified",
   "auth.account_disabled",
   // a native sign-in POST (lib/form-post.ts) that failed
