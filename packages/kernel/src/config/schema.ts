@@ -2,6 +2,7 @@ import { isIP } from "node:net";
 import {
   CATALOG_ITEM_NAME_RE,
   DOCUMENT_MEDIA_TYPES,
+  EXTENSION_NAME_RE,
   IMAGE_MEDIA_TYPES,
   validateAllowHost,
 } from "@capybara-hq/plugin-sdk";
@@ -2072,6 +2073,22 @@ export const KernelConfigSchema = z.strictObject({
             hot: true,
             description:
               "Whether a device may be granted running a call outside its sandbox (default allowed): a person, the review model or Full access then approves such an escalation per call, within the organization's and the device owner's settings; off refuses every escalation, and devices only run in their sandbox. An organization may turn it off and follow the platform. Set here, it is read-only in the admin console. Replaces devices.fullAccess (CAPYBARA_DEVICES__FULL_ACCESS) and devices.autoMode, which are refused: rename them (the same values; off also needs devices.network.ceiling: allowlist to keep devices on the allowlist), or convert a config file with capybara config migrate-permissions",
+          }),
+        ),
+      /**
+       * The device provider that makes a person's default device (several `device-provider@1`
+       * extensions may coexist). Also a deployment setting the super admin changes in the admin
+       * console (`devicesDefaultProvider`); the startup config wins over it, so this field is
+       * optional with no schema default. An empty string means none. An org may override it.
+       */
+      defaultProvider: z
+        .union([z.literal(""), z.string().regex(EXTENSION_NAME_RE)])
+        .optional()
+        .meta(
+          meta({
+            hot: true,
+            description:
+              "The name of the device provider extension that makes a person's default device when several device providers are on (default none: the first available one). An empty string means none. An organization may choose another provider that is on in it. Set here, it is read-only in the admin console",
           }),
         ),
       /**

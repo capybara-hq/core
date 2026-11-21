@@ -195,3 +195,18 @@ describe("devices.outsideSandbox and devices.network (approval-only profiles)", 
     expect(svc.get().devices.outsideSandbox).toBe("off");
   });
 });
+
+describe("devices.defaultProvider", () => {
+  it("has no schema default; env wins over the file; empty reads as none", () => {
+    expect(KernelConfigSchema.parse(base).devices.defaultProvider).toBeUndefined();
+    expect(devices({ devices: { defaultProvider: "device-a" } }).defaultProvider).toBe("device-a");
+    expect(
+      devices(
+        { devices: { defaultProvider: "device-a" } },
+        { CAPYBARA_DEVICES__DEFAULT_PROVIDER: "device-b" },
+      ).defaultProvider,
+    ).toBe("device-b");
+    expect(devices({ devices: { defaultProvider: "" } }).defaultProvider).toBe("");
+    expect(() => devices({ devices: { defaultProvider: "Not A Name" } })).toThrow(ConfigError);
+  });
+});

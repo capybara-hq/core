@@ -1,12 +1,15 @@
 import type { SandboxLimits } from "@capybara-hq/plugin-sdk";
 import { Inject, Injectable, Module, Optional } from "@nestjs/common";
+import { ModuleRef } from "@nestjs/core";
 import { z } from "zod";
 import {
   type PlatformAttribution,
   readPlatformAttribution,
 } from "../attribution/platform-attribution.js";
 import type { KernelSchemaDb } from "../db/kernel-schema.js";
+import { DeviceProviderName } from "../devices/default-provider-setting.js";
 import { ApiError } from "../errors.js";
+import type { ExtensionPointDefaults } from "../extensions/point-defaults.js";
 import { audit } from "../identity/audit.js";
 import {
   COMPACTION_SETTINGS_PARTIAL,
@@ -94,6 +97,10 @@ import { OrgLock, OrgLockModule } from "./org-lock.js";
  *   a default or ceiling above the platform's ceiling is refused.
  *   Old keys are read and kept in step until the permission configuration publication converts
  *   them ({@link orgDeviceSandboxOf}).
+ * - `deviceDefaultProvider`: the org's override of the platform's default device provider (the
+ *   `device-provider@1` extension that makes a member's default device); absent follows the
+ *   platform, an invalid stored value reads as absent. Only a provider that is on in the org may
+ *   be set (400 `org.device_provider_not_available`).
  * - `platformTool`: the `Platform` builtin for the whole org (Platform tool spec §3): `on`,
  *   `read-only` (writes listed as unavailable) or `off` (default `on`).
  * - `timeZone`: the org's default time zone (IANA; absent = UTC) for senders without one of their
@@ -230,6 +237,8 @@ export const OrgSettingsSchema = z.object({
   outsideSandbox: OutsideSandboxSetting.optional().catch("off"),
   /** The org's device sandbox network; absent follows the platform. */
   deviceNetwork: DeviceNetworkSettingSchema.optional().catch(invalidDeviceNetwork),
+  /** The org's default device provider; absent follows the platform. */
+  deviceDefaultProvider: DeviceProviderName.optional().catch(undefined),
   /** Overrides `runtime.wakeOnBackgroundTask`; absent follows the deployment. */
   wakeOnBackgroundTask: z.boolean().optional().catch(undefined),
   /** The org's default time zone (run context spec §3.3); absent = UTC. */
@@ -289,6 +298,11 @@ export const OrgSettingsPatchSchema = z
     locale: z.enum(["zh", "en"]).optional(),
     sandboxToolPolicy: z.enum(["allow", "ask"]).optional(),
     platformTool: z.enum(["on", "read-only", "off"]).optional(),
+    /**
+     * The org's default device provider; null clears it (follow the platform). A provider that is
+     * not on in the org -> 400 `org.device_provider_not_available`.
+     */
+    deviceDefaultProvider: DeviceProviderName.nullable().optional(),
     /** null clears (follow the deployment again). */
     wakeOnBackgroundTask: z.boolean().nullable().optional(),
     /**
@@ -610,6 +624,19 @@ export class OrgSettingsService {
     private readonly config: Pick<KernelConfigService, "get" | "fieldSource">,
     @Inject(PermissionCeilingWrites) private readonly ceilings: PermissionCeilingWrites,
     @Optional() @Inject(KERNEL_LOGGER) private readonly log?: KernelLogger,
+    /**
+     * Finds {@link ExtensionPointDefaults} (`deviceDefaultProvider` is checked against the
+     * providers on in the org) at the time of use: the extensions module cannot be imported here
+     * without a module cycle.
+     */
+    @Optional()
+    @Inject(ModuleRef)
+    private readonly modules?: {
+      get(
+        token: typeof ExtensionPointDefaults,
+        opts: { strict: false },
+      ): Pick<ExtensionPointDefaults, "providersFor">;
+    },
   ) {}
 
   /** Parses stored settings, warning when an invalid `outsideSandbox` narrows to `off`, an
@@ -801,12 +828,31 @@ export class OrgSettingsService {
     opts?: { onlyNarrows?: boolean },
   ): Promise<OrgSettingsView> {
     await this.check(patch);
+    await this.assertDeviceProviderOn(orgId, patch);
     // the org row, then (for a device sandbox change) the org's permission authority lock:
     // the ordered prelude, so inside a run's fence (the Platform tool's `org-settings.update`) they
     // precede the conversation rows; the patch decides the lock, so nothing can change it
     return withOrderedLocks(
       () => this.lockFor(orgId, patch, actorAccountId),
       () => this.updateIn(orgId, patch, actorAccountId, actorTokenId, auditDetail, opts),
+    );
+  }
+
+  /** Refuses a `deviceDefaultProvider` that is not a `device-provider@1` extension on in the org. */
+  private async assertDeviceProviderOn(orgId: string, patch: OrgSettingsPatch): Promise<void> {
+    const name = patch.deviceDefaultProvider;
+    if (name === undefined || name === null) return;
+    // loaded here, not at the top: the extension host imports this file's settings readers
+    const { ExtensionPointDefaults } = await import("../extensions/point-defaults.js");
+    const points = this.modules?.get(ExtensionPointDefaults, { strict: false });
+    const { providers } = (await points?.providersFor(orgId, "device-provider")) ?? {
+      providers: [],
+    };
+    if (providers.some((p) => p.extension === name)) return;
+    throw new ApiError(
+      "org.device_provider_not_available",
+      `The device provider ${name} is not on in this organization; switch it on first or choose another`,
+      [{ path: "deviceDefaultProvider", providers: providers.map((p) => p.extension) }],
     );
   }
 
@@ -935,6 +981,7 @@ export class OrgSettingsService {
     // the old keys are carried in step below.
     if (after.outsideSandbox === undefined) delete after.outsideSandbox;
     if (after.deviceNetwork === undefined) delete after.deviceNetwork;
+    if (after.deviceDefaultProvider === undefined) delete after.deviceDefaultProvider;
     if (after.wakeOnBackgroundTask === undefined) delete after.wakeOnBackgroundTask;
     if (after.timeZone === undefined) delete after.timeZone;
     if (after.theme === undefined) delete after.theme;
@@ -965,6 +1012,7 @@ export class OrgSettingsService {
       cloudNetwork: _legacyNetwork,
       outsideSandbox: _oldOutside,
       deviceNetwork: _oldNetwork,
+      deviceDefaultProvider: _oldDeviceProvider,
       wakeOnBackgroundTask: _oldWake,
       timeZone: _oldZone,
       theme: _oldTheme,

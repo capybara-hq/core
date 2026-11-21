@@ -55,6 +55,8 @@ export const ERROR_CODES = {
    * through an API token or the Platform tool.
    */
   "org.network_not_allowed": 400,
+  /** The org's default device provider names an extension that is not a `device-provider@1` provider on in the org. */
+  "org.device_provider_not_available": 400,
   /** An org network allowance entry that is malformed, names a link-local address, or is over the cap. */
   "org.network_allowance_invalid": 400,
   "org.network_allowance_not_found": 404,

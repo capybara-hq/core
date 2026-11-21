@@ -52,6 +52,8 @@ const HOT_APPLIERS: Record<string, (k: { log: KernelLogger }, value: unknown) =>
   "devices.outsideSandbox": () => {},
   "devices.network.default": () => {},
   "devices.network.ceiling": () => {},
+  // The default device provider is read live at every default device creation and settings read.
+  "devices.defaultProvider": () => {},
   // The devices service reads the personal limit at every create.
   "devices.maxPersonal": () => {},
   // The local device relay reads the reconnect grace at every disconnect and token response.

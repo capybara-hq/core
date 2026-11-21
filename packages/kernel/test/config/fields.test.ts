@@ -52,6 +52,7 @@ describe("configFields", () => {
       "sandbox.review.timeoutMs",
       "sandbox.review.messageTokens",
       "devices.outsideSandbox",
+      "devices.defaultProvider",
       "devices.network.default",
       "devices.network.ceiling",
       "devices.maxPersonal",

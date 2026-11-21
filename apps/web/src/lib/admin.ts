@@ -4,6 +4,7 @@ import type { LocalizedName } from "./catalog";
 import type { CompactionSettings, CompactionSettingsPatch } from "./compaction";
 import type {
   DeviceNetworkMode,
+  DeviceSandboxSource,
   DevicesNetworkView,
   DevicesOutsideSandboxView,
 } from "./org-settings";
@@ -320,6 +321,11 @@ export interface DeploymentSettings {
   devicesOutsideSandbox?: DevicesOutsideSandboxView;
   devicesNetwork?: DevicesNetworkView;
   /**
+   * The device provider that makes a person's default device (kernel `DevicesDefaultProviderView`;
+   * null: none) with where it comes from.
+   */
+  devicesDefaultProvider?: DevicesDefaultProviderView;
+  /**
    * The platform's attribution defaults for agent-created git commits and pull requests (spec
    * 2026-11-14-agent-attribution), with where each comes from (`env` / `file` / `nacos` are the
    * startup config, read-only here; `db` the admin console's choice; `default`). Absent from a
@@ -401,6 +407,17 @@ export const ATTRIBUTION_DEFAULTS: Readonly<Omit<PlatformAttributionView, "sourc
     sessionUrl: false,
   });
 
+/** The platform's default device provider in effect. */
+export interface DevicesDefaultProviderView {
+  provider: string | null;
+  source: DeviceSandboxSource;
+}
+
+/** A change of the platform's default device provider: `provider` replaced, null clears it. */
+export interface DevicesDefaultProviderPatch {
+  provider: string | null;
+}
+
 /** A change of the platform's outside-sandbox ceiling: `permission` replaced, null clears it. */
 export interface DevicesOutsideSandboxPatch {
   permission: "allowed" | "off" | null;
@@ -431,6 +448,7 @@ export type DeploymentSettingsPatch = Partial<
     | "clientExtensions"
     | "devicesOutsideSandbox"
     | "devicesNetwork"
+    | "devicesDefaultProvider"
     | "attribution"
     | "compaction"
     | "externalSharing"
@@ -455,6 +473,8 @@ export type DeploymentSettingsPatch = Partial<
   devicesOutsideSandbox?: DevicesOutsideSandboxPatch;
   /** The platform's device network: each given field replaced, null clears it (the default). */
   devicesNetwork?: DevicesNetworkPatch;
+  /** The platform's default device provider: `provider` replaced, null clears it (none). */
+  devicesDefaultProvider?: DevicesDefaultProviderPatch;
   /** Each given field replaces the stored one; fields left out keep their value. */
   compaction?: CompactionSettingsPatch;
   /** `on` / `off`; null clears the stored choice (back to on). */
