@@ -274,6 +274,7 @@ describe("a network ask card (network ask-to-allow spec §6.4, §6.5)", () => {
       ],
       command: `curl -H 'X-Token: s3cr3t' https://files.slack.com/${"x".repeat(400)}`,
       description: "Download the file",
+      appliesAt: "next-command" as const,
     },
     toolKey: "Bash",
     toolName: "Bash",
@@ -317,15 +318,15 @@ describe("a network ask card (network ask-to-allow spec §6.4, §6.5)", () => {
     expect(networkCardText(one, "en").inputPreview).toBe("files.slack.com\n\ncurl x");
   });
 
-  it("the card: Bash, the hosts, the clipped redacted command, the all-hosts line and only the once scope", async () => {
+  it("the card: Bash, the hosts, the clipped redacted command, the all-hosts line, both scopes and when the list applies", async () => {
     const zh = await approvalCard(deps(view), "na1", "https://cap.example", "zh", redact);
     expect(zh).toMatchObject({
       kind: "approval",
       title: "智能体想访问 2 个域名，允许吗？",
       toolName: "Bash",
-      // an ask made before run grants still lists always: the card offers only once
-      scopes: ["once"],
-      scopeLabels: { once: "这次允许" },
+      // a per-operation device whose own list takes the hosts offers both
+      scopes: ["once", "always"],
+      scopeLabels: { once: "这次允许", always: "加入此设备的列表" },
       state: "pending",
       webUrl: "https://cap.example/chat/c1",
     });
@@ -337,14 +338,41 @@ describe("a network ask card (network ask-to-allow spec §6.4, §6.5)", () => {
     expect(command.endsWith("…")).toBe(true);
     expect(command).toContain("X-Token: ***");
     expect(zh?.inputPreview).not.toContain("s3cr3t");
-    expect(lines.at(-1)).toBe("这个决定对以上所有域名生效");
+    expect(lines.at(-3)).toBe("这个决定对以上所有域名生效");
+    // when "add to this device's list" takes effect, under the rest
+    expect(lines.at(-1)).toBe("加入此设备的列表：从下一条命令起生效");
     // the description stays on the web
     expect(zh?.inputPreview).not.toContain("Download the file");
     const en = await approvalCard(deps(view), "na1", "https://cap.example", "en", redact);
-    expect(en?.scopeLabels).toEqual({ once: "Allow this time" });
-    expect(en?.inputPreview.split("\n").at(-1)).toBe(
+    expect(en?.scopeLabels).toEqual({
+      once: "Allow this time",
+      always: "Add to this device's list",
+    });
+    expect(en?.inputPreview.split("\n").slice(-3)).toEqual([
       "This decision applies to all the domains above",
+      "",
+      "Add to this device's list: Applies from the next command",
+    ]);
+  });
+
+  it("a network card labels always as add to this device's list, with the applies line", async () => {
+    const listOnlyAsk = {
+      ...view,
+      scopes: ["always"],
+      detail: { ...view.detail, appliesAt: "files-reset" },
+    };
+    const card = await approvalCard(deps(listOnlyAsk), listOnlyAsk.id, "https://cap.example", "zh");
+    expect(card?.scopes).toEqual(["always"]);
+    expect(card?.scopeLabels?.always).toBe("加入此设备的列表");
+    expect(card?.scopeLabels).not.toHaveProperty("once");
+    expect(card?.inputPreview.split("\n").at(-1)).toBe("加入此设备的列表：重建文件后生效");
+    const en = await approvalCard(deps(listOnlyAsk), listOnlyAsk.id, "https://cap.example", "en");
+    expect(en?.inputPreview.split("\n").at(-1)).toBe(
+      "Add to this device's list: Applies after the files are rebuilt",
     );
+    const nextUse = { ...listOnlyAsk, detail: { ...view.detail, appliesAt: "next-use" } };
+    const zh = await approvalCard(deps(nextUse), "na1", "https://cap.example", "zh");
+    expect(zh?.inputPreview.split("\n").at(-1)).toBe("加入此设备的列表：下次使用这台设备时生效");
   });
 
   it("an ask the device takes only once labels only once; skipped is a state", async () => {
@@ -356,6 +384,8 @@ describe("a network ask card (network ask-to-allow spec §6.4, §6.5)", () => {
     );
     expect(card).toMatchObject({ scopes: ["once"], state: "skipped" });
     expect(card?.scopeLabels).toEqual({ once: "Allow this time" });
+    // nothing to add to the device's list: no applies line
+    expect(card?.inputPreview).not.toContain("Applies");
   });
 
   it("the text fallback carries the title, the hosts and the scope labels", async () => {
@@ -365,10 +395,12 @@ describe("a network ask card (network ask-to-allow spec §6.4, §6.5)", () => {
     expect(text).toContain("files.slack.com");
     expect(text).toContain("This decision applies to all the domains above");
     expect(text).toContain("Allow this time");
+    expect(text).toContain("Add to this device's list");
     expect(text).not.toContain("Always allow");
     const zh = await approvalCard(deps(view), "na1", "https://cap.example", "zh", redact);
     const zhText = renderCardAsText(zh as NonNullable<typeof zh>, "zh");
     expect(zhText).toContain("这次允许");
+    expect(zhText).toContain("加入此设备的列表");
     expect(zhText).not.toContain("一直允许");
   });
 });

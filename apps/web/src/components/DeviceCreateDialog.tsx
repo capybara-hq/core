@@ -2,12 +2,10 @@
 
 import {
   Button,
-  CopyField,
   Dialog,
   Field,
   Input,
   RadioGroup,
-  Select,
   Stack,
   Text,
   useToast,
@@ -17,11 +15,12 @@ import { useLocale, useTranslations } from "next-intl";
 import { useEffect, useRef, useState } from "react";
 import { useRouter } from "../i18n/navigation";
 import {
-  DEVICE_INSTALL_COMMAND,
-  DEVICE_START_COMMAND,
-  deviceLoginCommand,
-} from "../lib/device-sign-in";
-import { createDevice, type Device, type DeviceProviderOption, isDeviceName } from "../lib/devices";
+  createDevice,
+  type Device,
+  type DeviceProviderOption,
+  deviceText,
+  isDeviceName,
+} from "../lib/devices";
 import { extensionLabel, labelLocale } from "../lib/extension-label";
 import { devicesQuery } from "../lib/query/devices";
 import { keys } from "../lib/query/keys";
@@ -29,26 +28,25 @@ import { useAppMutation } from "../lib/query/mutation";
 import { useErrorMessage } from "../lib/use-error-message";
 import { useConnectThisMachine } from "../lib/use-this-machine";
 import { FormError } from "./form-error";
+import { SetupGuideSection } from "./SetupGuideSection";
 
 /** How often the dialog reads the devices while it waits for a machine to connect. */
 const WAIT_POLL_MS = 3000;
 
-type Kind = "cloud" | "local";
-
 /**
- * 新建设备 on the 设备 page: two choices, 云端设备 and 本地设备 (only 本地设备, without the choice,
- * when no device provider is on in the org).
+ * New device on the Devices page: a card per device provider on in the org (the org's default
+ * preselected when it is one, else the first) and, under the cards, the chosen provider's
+ * connection guide.
  *
- * - Cloud device: a name (1-64 characters) and, with two or more providers on, a provider select (the
- *   default preselected; the request names it); the primary is disabled until it is valid. A created
- *   device is ready at once (its files and instance are made on first use): the dialog
- *   invalidates the list and opens the detail page. A kernel refusal (name taken, limit reached,
- *   no provider) keeps the dialog open with its copy.
- * - Local device: in the desktop shell (`device@2`) a primary "connect this machine" button first
- *   (the shell asks the person natively and adds a connection into this org); the commands to run
- *   on the machine (install, `capybara-device login` with this deployment's address), each a
- *   CopyField (the code line with its copy button); the dialog then reads the devices until a
- *   local device it had not seen appears, and opens its page.
+ * - A provider that creates devices itself: a name (1-64 characters) and Create (primary, disabled
+ *   until the name is valid). A created device is ready at once: the dialog invalidates the list
+ *   and opens its page. A kernel refusal (name taken, limit reached) keeps the dialog open with its
+ *   copy.
+ * - A dial-in provider (a machine signs in): no name; the guide says how (a provider without one
+ *   gets a line to ask an org admin), and the dialog reads the devices until one of that provider
+ *   it had not seen appears, and opens its page.
+ * - In the desktop shell the guide's shell-action block is a primary Connect this machine button;
+ *   in a browser it draws nothing.
  */
 export function DeviceCreateDialog({
   orgId,
@@ -58,29 +56,29 @@ export function DeviceCreateDialog({
 }: {
   orgId: string;
   providers: DeviceProviderOption[];
-  defaultProvider: string | null;
+  defaultProvider?: string | null;
   onClose(): void;
 }) {
   const t = useTranslations("devices.create");
   const toast = useToast();
   const router = useRouter();
   const errorMessage = useErrorMessage();
-  const lang = labelLocale(useLocale());
-  const cloudAvailable = providers.length > 0;
-  const [kind, setKind] = useState<Kind>(cloudAvailable ? "cloud" : "local");
-  const [provider, setProvider] = useState(
+  const locale = labelLocale(useLocale());
+  const [plugin, setPlugin] = useState(
     providers.find((p) => p.plugin === defaultProvider)?.plugin ?? providers[0]?.plugin ?? "",
   );
+  const chosen = providers.find((p) => p.plugin === plugin);
+  const dialIn = chosen?.dialIn === true;
   const [name, setName] = useState("");
   const [error, setError] = useState<string>();
   const create = useAppMutation({
-    fn: () => createDevice(orgId, name, provider === "" ? undefined : provider),
+    fn: () => createDevice(orgId, { name, provider: plugin }),
     invalidates: (_, r) => [keys.org(orgId).devices(), keys.org(orgId).device(r.device.id)],
   });
   const valid = isDeviceName(name);
 
   const submit = async () => {
-    if (!valid || create.isPending) return;
+    if (!valid || create.isPending || dialIn) return;
     setError(undefined);
     try {
       const r = await create.mutateAsync(undefined);
@@ -98,9 +96,9 @@ export function DeviceCreateDialog({
     router.push(`/devices/${encodeURIComponent(e.id)}`);
   };
 
-  // The wait lives here, not in the steps: the dialog body remounts when the window crosses 600,
-  // and the snapshot of known devices is taken once per dialog open.
-  useWatchNewDevice(orgId, kind === "local", connected);
+  // The wait lives here, not in the guide: the dialog body remounts when the window crosses 600,
+  // and the snapshot of known devices is taken once per wait.
+  useWatchNewDevice(orgId, dialIn ? plugin : null, connected);
 
   return (
     <Dialog
@@ -110,7 +108,11 @@ export function DeviceCreateDialog({
       }}
       title={t("title")}
       footer={
-        kind === "cloud" ? (
+        dialIn ? (
+          <Button variant="ghost" onClick={onClose}>
+            {t("close")}
+          </Button>
+        ) : (
           <>
             <Button variant="ghost" onClick={onClose} disabled={create.isPending}>
               {t("cancel")}
@@ -124,27 +126,40 @@ export function DeviceCreateDialog({
               {t("submit")}
             </Button>
           </>
-        ) : (
-          <Button variant="ghost" onClick={onClose}>
-            {t("close")}
-          </Button>
         )
       }
     >
       <Stack gap={16}>
-        {cloudAvailable && (
-          <RadioGroup
-            variant="card"
-            label={t("kindLabel")}
-            value={kind}
-            onChange={(v) => setKind(v as Kind)}
-            options={[
-              { value: "cloud", label: t("cloud"), description: t("cloudHint") },
-              { value: "local", label: t("local"), description: t("localHint") },
-            ]}
+        <RadioGroup
+          variant="card"
+          label={t("providerLabel")}
+          value={plugin}
+          onChange={(v) => {
+            setPlugin(v);
+            setError(undefined);
+          }}
+          options={providers.map((p) => ({
+            value: p.plugin,
+            label: extensionLabel({ name: p.plugin, displayName: p.displayName }, locale),
+            ...(p.description !== null && { description: deviceText(p.description, locale) }),
+          }))}
+        />
+        {chosen?.guide != null && (
+          <SetupGuideSection
+            // a provider's guide is its own: switching starts over
+            key={chosen.plugin}
+            orgId={orgId}
+            guide={chosen.guide}
+            query={{ audience: "member" }}
+            renderShellAction={(_, label) => <ConnectThisMachine orgId={orgId} label={label} />}
           />
         )}
-        {kind === "cloud" ? (
+        {dialIn && chosen?.guide == null && (
+          <Text variant="prose" tone="muted">
+            {t("noGuide")}
+          </Text>
+        )}
+        {!dialIn && (
           <Stack gap={12}>
             <Field label={t("name")} required help={t("nameHelp")}>
               <Input
@@ -156,22 +171,8 @@ export function DeviceCreateDialog({
                 }}
               />
             </Field>
-            {providers.length > 1 && (
-              <Field label={t("provider")} help={t("providerHelp")}>
-                <Select
-                  value={provider}
-                  onChange={(e) => setProvider(e.target.value)}
-                  options={providers.map((p) => ({
-                    value: p.plugin,
-                    label: extensionLabel({ name: p.plugin, displayName: p.displayName }, lang),
-                  }))}
-                />
-              </Field>
-            )}
             {error !== undefined && <FormError message={error} />}
           </Stack>
-        ) : (
-          <LocalSteps orgId={orgId} />
         )}
       </Stack>
     </Dialog>
@@ -180,32 +181,38 @@ export function DeviceCreateDialog({
 
 /**
  * The wait for a machine to connect, owned by the dialog (one per open): while `enabled` the devices
- * are read every few seconds, and the first local device that was not there when the wait began, or
+ * are read every few seconds, and the first device of `provider` that was not there when the wait began, or
  * whose machine changed since (a login again into an existing device replaces its machine), is the
  * newly connected machine.
  */
-function useWatchNewDevice(orgId: string, enabled: boolean, onConnected: (e: Device) => void) {
+function useWatchNewDevice(
+  orgId: string,
+  provider: string | null,
+  onConnected: (e: Device) => void,
+) {
+  const enabled = provider !== null;
   const list = useQuery({
     ...devicesQuery(orgId),
     enabled,
     refetchInterval: WAIT_POLL_MS,
   });
-  // local device id -> its machine id when the wait began (null: none connected)
+  // device id of the provider -> its machine id when the wait began (null: none connected)
   const known = useRef<Map<string, string | null> | null>(null);
   const done = useRef(false);
-  // A wait that begins again (local, cloud, local) snapshots afresh, from a read made after it
+  // A wait that begins again (another provider, then back) snapshots afresh, from a read made after it
   // began; the first wait may snapshot what the page already holds.
   const since = useRef(0);
   const waited = useRef(false);
+  // biome-ignore lint/correctness/useExhaustiveDependencies: a wait restarts when its provider changes
   useEffect(() => {
     if (known.current !== null) waited.current = true;
     known.current = null;
     since.current = enabled && waited.current ? Date.now() : 0;
-  }, [enabled]);
+  }, [provider]);
   useEffect(() => {
     if (!enabled || list.data === undefined || done.current) return;
     if (list.dataUpdatedAt < since.current) return;
-    const locals = list.data.items.filter((e) => e.dialIn);
+    const locals = list.data.items.filter((e) => e.provider === provider);
     if (known.current === null) {
       known.current = new Map(locals.map((e) => [e.id, e.machine?.id ?? null]));
       return;
@@ -218,34 +225,27 @@ function useWatchNewDevice(orgId: string, enabled: boolean, onConnected: (e: Dev
       done.current = true;
       onConnected(fresh);
     }
-  }, [enabled, list.data, list.dataUpdatedAt, onConnected]);
+  }, [enabled, provider, list.data, list.dataUpdatedAt, onConnected]);
 }
 
-/** The commands that connect a machine, shown while the dialog waits (`useWatchNewDevice`). */
-function LocalSteps({ orgId }: { orgId: string }) {
+/**
+ * The guide's shell-action block: the primary Connect this machine button, only in a shell that
+ * offers `device@2` (a browser draws nothing). The shell's `connect` adds a connection into this
+ * org and runs inside the click-driven mutation (`useConnectThisMachine`), so the shell sees the
+ * person's activation; a cancel shows nothing.
+ */
+function ConnectThisMachine({ orgId, label }: { orgId: string; label: string }) {
   const t = useTranslations("devices.create");
   const { offered, pending, failed, connect } = useConnectThisMachine(orgId);
-  // The deployment's address, read after mount (a server render has no window).
-  const [origin, setOrigin] = useState("");
-  useEffect(() => setOrigin(window.location.origin), []);
+  if (!offered) return null;
   return (
-    <Stack gap={16}>
-      {offered && (
-        <Stack gap={8}>
-          <Stack direction="row">
-            <Button variant="primary" loading={pending} disabled={pending} onClick={connect}>
-              {t("connectMachine")}
-            </Button>
-          </Stack>
-          {failed && <FormError message={t("connectFailed")} />}
-        </Stack>
-      )}
-      <CopyField label={t("installStep")} value={DEVICE_INSTALL_COMMAND} />
-      <CopyField label={t("loginStep")} value={origin === "" ? "" : deviceLoginCommand(origin)} />
-      <CopyField label={t("startStep")} value={DEVICE_START_COMMAND} />
-      <Text variant="prose" tone="muted" icon="spinner">
-        {t("waiting")}
-      </Text>
+    <Stack gap={8}>
+      <Stack direction="row">
+        <Button variant="primary" loading={pending} disabled={pending} onClick={connect}>
+          {label}
+        </Button>
+      </Stack>
+      {failed && <FormError message={t("connectFailed")} />}
     </Stack>
   );
 }

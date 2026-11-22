@@ -11,7 +11,7 @@ import { afterEach, describe, expect, it } from "vitest";
 import type { ConversationEvent } from "../../src/conversations/events.js";
 import { kernelDb } from "../../src/db/kernel-schema.js";
 import { createDb } from "../../src/db/pool.js";
-import { allowedOnceNote, unavailableHostNote } from "../../src/tools/network-asks.js";
+import { addedToDeviceNote, allowedOnceNote } from "../../src/tools/network-asks.js";
 import { onlyBuiltins } from "../helpers/disabled-tools.js";
 import { accountsFor } from "../helpers/identity.js";
 import { MODEL_FAKE } from "../helpers/model-plugins.js";
@@ -323,6 +323,12 @@ describe("network ask (dual replica)", () => {
       };
     });
 
+    // the device's own host list: a blocked host the org allows may join it
+    const own = await call(0, "PATCH", `/api/v1/orgs/${orgId}/devices/${deviceId}`, {
+      network: { mode: "allowlist", hosts: ["api.example.com"] },
+    });
+    expect(own.status, JSON.stringify(own.json)).toBe(200);
+
     const agent = await call(0, "POST", `/api/v1/orgs/${orgId}/agents`, {
       definition: {
         name: "Coder",
@@ -350,6 +356,33 @@ describe("network ask (dual replica)", () => {
     );
     expect(posted.status).toBe(202);
 
+    // no per-call grant on this device: the ask offers only "add to this device's list", applying
+    // the next time the device is used (device-provider spec §6.3)
+    const ask = await waitFor(
+      async () =>
+        (await db
+          .selectFrom("approvals")
+          .select(["id", "scopes", "detail"])
+          .where("conversation_id", "=", conversationId)
+          .where("kind", "=", "network")
+          .where("status", "=", "pending")
+          .executeTakeFirst()) ?? null,
+      60_000,
+      "a pending network ask",
+    );
+    expect(ask.scopes).toEqual(["always"]);
+    expect(ask.detail).toMatchObject({ appliesAt: "next-use" });
+    // decided on the other replica
+    const once = await call(1, "POST", `/api/v1/orgs/${orgId}/approvals/${ask.id}/decision`, {
+      decision: "approve",
+      scope: "once",
+    });
+    expect(once.status).toBe(409);
+    const decided = await call(1, "POST", `/api/v1/orgs/${orgId}/approvals/${ask.id}/decision`, {
+      decision: "approve",
+      scope: "always",
+    });
+    expect(decided.status, JSON.stringify(decided.json)).toBe(200);
     const evs = await waitFor(
       async () => {
         const e = await eventsOf(db, conversationId);
@@ -358,24 +391,16 @@ describe("network ask (dual replica)", () => {
       60_000,
       "run finished",
     );
-    // the host is not asked about: a per-call grant cannot reach it on this device, so the model
-    // is told to have it added to the device's network list
+    const device = await call(0, "GET", `/api/v1/orgs/${orgId}/devices/${deviceId}`);
     expect(
-      await db
-        .selectFrom("approvals")
-        .select("id")
-        .where("conversation_id", "=", conversationId)
-        .where("kind", "=", "network")
-        .execute(),
-    ).toEqual([]);
+      (device.json.device as { sandbox: { allowedDomains: string[] } }).sandbox.allowedDomains,
+    ).toEqual(["api.example.com", "files.example.com"]);
     const result = evs.find((e) => e.type === "tool_result");
     expect(result?.type === "tool_result" && result.payload.content).toContain(
-      unavailableHostNote(
-        "files.example.com",
-        "a host cannot be granted per call on this device; add files.example.com to the device's network list",
-      ),
+      addedToDeviceNote(["files.example.com"], "next-use"),
     );
     expect(evs.filter((e) => e.type === "network_blocked")).toHaveLength(1);
+    // the command that asked is not run again
     expect(execs).toHaveLength(1);
   });
 });

@@ -386,7 +386,8 @@
       "outside_sandbox_not_allowed": "平台、你的组织、设备所有者或该设备的提供方不允许此设备在沙箱外运行。",
       "recreate_required": "旧版本启动的后台任务可能仍在这台设备之前的实例上运行，且已无法确认该实例已被销毁。请删除这台设备后重新创建。",
       "provider_unavailable": "这台设备的提供方在本组织未开启、未安装，或不接受机器连接。请联系组织管理员开启。",
-      "provider_required": "请选择一个设备提供方；如果没有可选的，请联系组织管理员开启一个。"
+      "provider_required": "请选择一个设备提供方；如果没有可选的，请联系组织管理员开启一个。",
+      "provider_dial_in": "这种设备由那台电脑登录时创建：请按 新建设备 里的指南操作。"
     },
     "app_auth": {
       "code_invalid": "登录链接已失效，请在 {product} 应用中重新登录。",
@@ -1733,10 +1734,6 @@
     "personal": "个人设备",
     "new": "新建设备",
     "none": "无",
-    "source": {
-      "cloud": "云端设备",
-      "local": "本地设备"
-    },
     "state": {
       "running": "运行中",
       "suspended": "已暂停",
@@ -1746,15 +1743,11 @@
       "online": "在线",
       "offline": "离线"
     },
-    "networkKind": {
-      "open-public": "开放（挡内网）",
-      "allowlist": "白名单"
-    },
     "empty": "你还没有设备。",
-    "noCloud": {
-      "text": "本组织没有开启设备提供方。",
-      "hint": "请联系组织管理员开启。",
-      "notice": "本组织没有开启设备提供方，下列云端设备不可用，但仍可删除。请联系组织管理员开启。"
+    "noProviders": {
+      "text": "这个组织还没有可用的设备类型",
+      "hint": "请组织管理员在 扩展 中启用一个设备插件",
+      "notice": "这个组织没有可用的设备类型，下列设备不可用，但仍可删除。请组织管理员在 扩展 中启用一个设备插件。"
     },
     "create": {
       "title": "新建设备",
@@ -1763,28 +1756,16 @@
       "cancel": "取消",
       "submit": "创建",
       "created": "已创建设备 {name}。",
-      "provider": "提供方",
-      "providerHelp": "设备运行的位置，创建后不能更改。",
-      "kindLabel": "设备类型",
-      "cloud": "云端",
-      "cloudHint": "在平台的沙箱里运行，创建后即可使用。",
-      "local": "本地",
-      "localHint": "在你自己的电脑或服务器上运行命令。",
-      "installStep": "1. 在这台机器上安装连接程序",
-      "loginStep": "2. 登录并在打开的网页上确认",
-      "waiting": "正在等待机器登录…确认后它会出现在设备列表里，运行第 3 步后变为在线。",
+      "providerLabel": "设备类型",
       "connected": "已连接 {name}。",
       "close": "关闭",
-      "startStep": "3. 启动连接，保持设备在线（开机自动连接：capybara-device service install）",
-      "connectMachine": "连接本机",
-      "connectFailed": "无法连接本机，请重试。"
+      "connectFailed": "无法连接本机，请重试。",
+      "noGuide": "这个设备类型没有提供连接指南，请联系组织管理员。"
     },
     "detail": {
-      "providerOffNote": "此设备的提供方已在本组织关闭或未安装，文件仍保留。",
-      "about": "说明",
+      "providerOffNote": "这台设备的设备类型（{provider}）在这个组织里没有启用，文件保留着。",
       "filesLostNote": "该设备的文件已在提供方丢失。重建文件后才能再次使用。",
       "reconcileNote": "该设备的沙箱限制需要重新确立，确立之前不会运行任何命令。重建文件即可应用它们，工作区会被清空。",
-      "localFilesLostNote": "这个本地设备在机器上的文件目录已丢失。在这台机器上先运行 capybara-device logout，再运行 capybara-device login 并连接到这个设备，即可重建目录后继续使用。",
       "rename": "重命名",
       "renameTitle": "重命名设备",
       "renameSubmit": "保存",
@@ -1799,19 +1780,14 @@
       "resetHint": "工作区会被清空，下次使用时从空文件开始。",
       "resetSubmit": "重建文件",
       "resetScheduled": "已安排重建 {name} 的文件，完成后此页会更新。",
-      "localFilesNote": "文件保存在这台机器上，不会上传到平台。",
-      "deleteLocalHint": "删除 {name} 会断开它的机器，且无法恢复。机器上的文件会保留。输入设备名称以确认。",
-      "provider": "提供方",
-      "resources": "资源",
-      "resourcesValue": "{cpu} CPU · 内存 {memory} · 磁盘 {disk}",
-      "network": "网络",
       "filesAndSuspendNote": "文件保留到设备被删除。暂停会结束正在运行的进程。",
       "tabsLabel": "设备视图",
       "tabOverview": "概览",
-      "tabSettings": "设置",
       "deleteDanger": "删除 {name} 会同时删除它的文件并结束其中的进程，且无法恢复。",
       "deleteDangerDefault": "删除 {name} 会同时删除它的文件并结束其中的进程，且无法恢复。下次需要时会新建一个空的设备。",
-      "deleteDangerLocal": "删除 {name} 会断开它的机器，且无法恢复。机器上的文件会保留。"
+      "filesLostNoReset": "这台设备的文件已在它的设备类型那里丢失，这里无法重建。",
+      "tabNetwork": "网络",
+      "tabProjects": "项目"
     },
     "thisMachine": {
       "title": "本机",
@@ -1839,138 +1815,57 @@
       "widened": "已在这台电脑上更改。"
     },
     "sandbox": {
-      "title": "沙箱",
-      "sectionLocal": "智能体的命令在这台电脑上的运行范围，三种权限下都一样。只有电脑的所有者能在电脑上放宽，这里只能收窄。",
-      "sectionCloud": "智能体的命令在这台云端设备上的运行范围，三种权限下都一样。它的实例就是沙箱。",
-      "network": "网络",
-      "networkValue": {
-        "open": "开放互联网（内网除外）",
-        "allowlist": "白名单",
-        "none": "关闭（不联网）"
-      },
-      "followOrg": "跟随组织",
-      "followOrgNow": "当前：{value}",
-      "outside": "在沙箱外运行",
-      "outsideValue": {
-        "allowed": "允许",
-        "off": "关闭"
-      },
-      "reach": "项目范围",
-      "reachValue": {
-        "workspace": "仅设备的工作区",
-        "os-user": "这台电脑的用户能读取的位置"
-      },
-      "reported": "报告时间",
-      "notice": {
-        "noMachine": "还没有连接电脑。请在电脑上运行 capybara-device login 连接它。",
-        "blocked": "这台电脑发来的权限报告已过期，新的工作已暂停。请在电脑上重新运行 capybara-device login。",
-        "missing": "这台电脑还没有报告它的沙箱设置。请在电脑上更新 capybara-device 并重新连接。",
-        "stale": "这是电脑最近一次报告的设置：它已离线，或报告不是最新的。"
-      },
-      "unknown": "电脑报告设置之前未知",
       "mark": {
         "outside": "可在沙箱外运行",
         "sandbox": "仅沙箱"
-      },
-      "limited": {
-        "network": {
-          "platform": "平台已限定为白名单（超级管理员设置）",
-          "org": "组织已限定为白名单（组织管理员设置）",
-          "device": "只有电脑的所有者能在电脑上放宽",
-          "provider": "设备的提供方已限定为白名单"
-        },
-        "closed": {
-          "platform": "平台已关闭网络（超级管理员设置）",
-          "org": "组织已关闭网络（组织管理员设置）",
-          "device": "只有电脑的所有者能在电脑上开放",
-          "provider": "设备的提供方已关闭网络"
-        },
-        "outside": {
-          "platform": "平台已关闭（超级管理员设置）",
-          "org": "组织已关闭（组织管理员设置）",
-          "device": "只有电脑的所有者能在电脑上允许",
-          "provider": "云端设备的实例就是它的沙箱"
-        }
-      },
-      "hosts": "允许的主机",
-      "hostsEmpty": "没有允许的主机。",
-      "remove": "移除",
-      "removeLabel": "移除 {host}",
-      "removed": "已移除 {host}。",
-      "localHostsHelp": "这里只能移除主机；添加只能由电脑的所有者在电脑上进行。",
-      "widenLocal": "只有电脑的所有者能在电脑上放宽：",
-      "widenHere": "在这台电脑上放宽，随后由电脑弹出确认：",
-      "widen": {
-        "network": "开放网络",
-        "outside": "允许在沙箱外运行",
-        "reach": "放宽项目范围"
-      },
-      "command": {
-        "network": "开放网络：",
-        "outside": "允许在沙箱外运行：",
-        "host": "把主机加入白名单：",
-        "reach": "放宽项目范围："
-      },
-      "networkNarrowed": "网络已限定为白名单。",
-      "outsideOff": "此设备已关闭在沙箱外运行。",
-      "limitReach": "仅限工作区",
-      "reachLimited": "项目范围已限制为工作区。",
-      "cannotNarrow": {
-        "offline": "这台电脑已离线，无法在这里收窄。请在电脑上运行下面的命令。",
-        "upgrade": "这台电脑上的 capybara-device 不能接收平台的修改。请更新它，或在电脑上运行下面的命令。"
-      },
-      "pendingNextUse": "下次使用时生效，文件保留。",
-      "pendingFilesReset": "重建文件后生效。",
-      "cloudHosts": "主机",
-      "cloudHostsHelp": "每行一个主机。不在组织清单里的主机会被拒绝；留空则使用组织的主机。",
-      "invalidHost": "{host} 不是有效的主机：请使用小写名称，例如 files.example.com 或 *.example.com。",
-      "save": "保存网络",
-      "saved": "设备的网络已保存。"
+      }
     },
     "recent": {
       "title": "最近的修改",
-      "add": "添加 {hosts}",
-      "remove": "移除 {hosts}",
       "change": "{setting}：{from} → {to}",
-      "set": "{setting}：{to}",
       "withHosts": "{value}（{hosts}）",
-      "none": "没有改动",
       "unknownBy": "未知账号",
       "via": {
         "web": "网页",
         "im": "IM",
-        "device": "本机",
         "agent": "智能体",
         "token": "API 令牌"
-      },
-      "outcome": {
-        "unknown": "机器未确认",
-        "failed": "未生效"
       }
-    },
-    "machine": {
-      "title": "机器",
-      "os": "系统",
-      "none": "没有连接的机器。在机器上运行 capybara-device login 连接。",
-      "revoke": "断开这台机器",
-      "revokeTitle": "断开 {name}？",
-      "revokeHint": "这台机器的连接凭据会被撤销，正在运行的命令会结束。机器上的文件会保留。要再次连接，在机器上运行 capybara-device login。",
-      "revokeSubmit": "断开",
-      "revoked": "已断开 {name}。",
-      "description": "断开后这台机器的连接凭据会被撤销，正在运行的命令会结束；机器上的文件会保留。"
     },
     "network": {
       "title": "网络",
-      "domains": "允许的主机",
-      "domainsEmpty": "没有允许的主机。",
-      "overviewNote": "沙箱里的命令只能访问这些主机。",
-      "cloudHint": {
-        "org": "这台设备跟随组织的网络，组织在设置里修改。",
-        "device": "这台设备自己的网络，限于组织的主机。"
-      }
+      "description": "智能体在这台设备上的命令能连接到哪里。所有权限下、所有设备类型都一样，限于组织和平台的上限。",
+      "follow": "跟随组织",
+      "followNow": "当前：{value}",
+      "open": "开放互联网（内网除外）",
+      "allowlist": "仅白名单",
+      "none": "关闭（不联网）",
+      "limited": {
+        "platform": "平台已限定为白名单（超级管理员设置）",
+        "org": "组织已限定为白名单（组织管理员设置）",
+        "provider": "设备类型已限定为白名单"
+      },
+      "closed": {
+        "platform": "平台已关闭网络（超级管理员设置）",
+        "org": "组织已关闭网络（组织管理员设置）",
+        "provider": "设备类型已关闭网络"
+      },
+      "hosts": "这台设备的主机",
+      "hostsHelp": "设备自己的清单只能收窄组织的清单：不在组织清单里的主机会被拒绝。没有自己的主机时，使用组织的主机。",
+      "hostsEmpty": "没有自己的主机：使用组织的主机。",
+      "hostInput": "要添加的主机",
+      "addHost": "添加主机",
+      "remove": "移除",
+      "removeHost": "移除 {host}",
+      "invalidHost": "{host} 不是有效的主机：请使用小写名称，例如 files.example.com 或 *.example.com。",
+      "save": "保存网络",
+      "saved": "设备的网络已保存。",
+      "pendingNextUse": "下次使用时生效，文件保留。",
+      "pendingFilesReset": "重建文件后生效。"
     },
     "overview": {
-      "editNetwork": "去设置修改"
+      "about": "说明",
+      "noReport": "设备的提供方没有回应。"
     },
     "files": {
       "title": "文件"
@@ -1981,18 +1876,10 @@
     "projects": {
       "title": "项目",
       "description": "这台设备上可供会话绑定的目录。新会话可以选择其中一个项目，智能体随后会读取它的 {file} 和技能。",
-      "overviewEmpty": "还没有项目",
       "empty": "还没有项目",
-      "manage": "管理项目",
-      "hidden": "另有 {count} 个项目超出该设备的项目范围，已隐藏。它们仍然保留，所有者在电脑上放宽范围后会再次显示。",
-      "unsupportedLocal": "这台机器上的 capybara-device 不支持项目。请在机器上更新 capybara-device 并重新连接，然后再添加。",
-      "unsupportedCloud": "这台云端设备的沙箱提供方不支持项目。它的会话照常工作，只是不绑定项目。",
-      "homeUnknown": "项目范围为这台电脑的用户时，项目路径相对于你的主目录，但这台电脑还没有报告主目录。请在电脑上更新 capybara-device 并重新连接。",
       "add": "添加项目",
       "addTitle": "添加项目",
       "pathLabel": "目录",
-      "pathHelpWorkspace": "相对于设备的工作区。留空表示工作区本身。",
-      "pathHelpHome": "相对于你的主目录。留空表示主目录本身。",
       "pathInvalid": "请输入相对于 {prefix} 的路径，不含控制字符或反斜杠。",
       "pathAbsolute": "请输入相对于 {prefix} 的路径，不要填绝对路径。",
       "nameLabel": "名称",
@@ -2014,7 +1901,10 @@
       "removeSubmit": "移除",
       "removed": "已移除项目 {name}",
       "loadFailed": "无法读取项目。",
-      "retry": "重试"
+      "retry": "重试",
+      "unsupported": "这台设备的设备类型不支持项目。它的会话照常工作，只是不绑定项目。",
+      "baseUnknown": "这台设备还没有报告项目所在的位置，暂时无法添加项目。",
+      "pathHelp": "相对于 {base}。留空表示 {base} 本身。"
     }
   },
   "nav": {

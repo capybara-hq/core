@@ -386,7 +386,8 @@
       "outside_sandbox_not_allowed": "Running outside the sandbox is not allowed for this device by your platform, your organization, its owner or its provider.",
       "recreate_required": "Background work started by an earlier version may still be running on an earlier instance of this device, and that instance can no longer be verified as destroyed. Delete this device and create it again.",
       "provider_unavailable": "This device's provider is off in this organization, not installed, or takes no machines. Ask an org admin to switch it on.",
-      "provider_required": "Choose a device provider. If none is offered, ask an org admin to switch one on."
+      "provider_required": "Choose a device provider. If none is offered, ask an org admin to switch one on.",
+      "provider_dial_in": "Devices of this type are created when the computer signs in: follow the guide in New device."
     },
     "app_auth": {
       "code_invalid": "This sign-in link is invalid or has expired. Start signing in again from the {product} app.",
@@ -1745,10 +1746,6 @@
     "personal": "Personal",
     "new": "New device",
     "none": "None",
-    "source": {
-      "cloud": "Cloud device",
-      "local": "Local device"
-    },
     "state": {
       "running": "Running",
       "suspended": "Suspended",
@@ -1758,15 +1755,11 @@
       "online": "Online",
       "offline": "Offline"
     },
-    "networkKind": {
-      "open-public": "Open (private networks blocked)",
-      "allowlist": "Allowlist"
-    },
     "empty": "You have no devices yet.",
-    "noCloud": {
-      "text": "No device provider is on in this organization.",
-      "hint": "Ask an org admin to switch one on.",
-      "notice": "No device provider is on in this organization, so these cloud devices are unavailable. You can still delete them. Ask an org admin to switch one on."
+    "noProviders": {
+      "text": "This organization has no device type yet",
+      "hint": "Ask an org admin to switch on a device plugin under Extensions",
+      "notice": "This organization has no device type on, so these devices are unavailable. You can still delete them. Ask an org admin to switch on a device plugin under Extensions."
     },
     "create": {
       "title": "New device",
@@ -1775,28 +1768,16 @@
       "cancel": "Cancel",
       "submit": "Create",
       "created": "Device {name} created.",
-      "provider": "Provider",
-      "providerHelp": "Where the device runs. It cannot be changed later.",
-      "kindLabel": "Device type",
-      "cloud": "Cloud",
-      "cloudHint": "Runs in the platform's sandbox, ready as soon as it is created.",
-      "local": "Local",
-      "localHint": "Runs commands on your own computer or server.",
-      "installStep": "1. Install the connector program on the machine",
-      "loginStep": "2. Sign in and confirm on the page it opens",
-      "waiting": "Waiting for the machine to log in… It appears in the device list once confirmed, and comes online after step 3.",
+      "providerLabel": "Device type",
       "connected": "{name} connected.",
       "close": "Close",
-      "startStep": "3. Start the connection to keep the device online (to connect at login: capybara-device service install)",
-      "connectMachine": "Connect this machine",
-      "connectFailed": "Could not connect this machine. Try again."
+      "connectFailed": "Could not connect this machine. Try again.",
+      "noGuide": "This device type has no connection guide; ask an org admin."
     },
     "detail": {
-      "providerOffNote": "The provider of this device is switched off or not installed in this organization. Its files are kept.",
-      "about": "About",
+      "providerOffNote": "This device's provider ({provider}) is not on in this organization; its files are kept.",
       "filesLostNote": "The files of this device are gone at the provider. Rebuild the files to use it again.",
       "reconcileNote": "This device's sandbox limits must be established again before it runs anything. Rebuild its files to apply them; the workspace is wiped.",
-      "localFilesLostNote": "The files directory of this local device is gone from the machine. On the machine, run capybara-device logout, then capybara-device login into this device to recreate the directory.",
       "rename": "Rename",
       "renameTitle": "Rename device",
       "renameSubmit": "Save",
@@ -1811,19 +1792,14 @@
       "resetHint": "The workspace is wiped and the next use starts with empty files.",
       "resetSubmit": "Rebuild files",
       "resetScheduled": "File reset scheduled for {name}; this page updates when it is done.",
-      "localFilesNote": "Files stay on the machine and are not uploaded to the platform.",
-      "deleteLocalHint": "Deleting {name} disconnects its machine. This cannot be undone. The files on the machine stay. Type its name to confirm.",
-      "provider": "Provider",
-      "resources": "Resources",
-      "resourcesValue": "{cpu} CPU · {memory} memory · {disk} disk",
-      "network": "Network",
       "filesAndSuspendNote": "Files are kept until the device is deleted. Suspending ends the processes that are running.",
       "tabsLabel": "Device views",
       "tabOverview": "Overview",
-      "tabSettings": "Settings",
       "deleteDanger": "Deleting {name} also deletes its files and ends its processes, with no way back.",
       "deleteDangerDefault": "Deleting {name} also deletes its files and ends its processes, with no way back. A new empty device is created the next time one is needed.",
-      "deleteDangerLocal": "Deleting {name} disconnects its machine, with no way back. The files on the machine stay."
+      "filesLostNoReset": "The files of this device are gone at its provider, which offers no rebuild from here.",
+      "tabNetwork": "Network",
+      "tabProjects": "Projects"
     },
     "thisMachine": {
       "title": "This machine",
@@ -1851,138 +1827,57 @@
       "widened": "Changed on this computer."
     },
     "sandbox": {
-      "title": "Sandbox",
-      "sectionLocal": "Where an agent's commands run on this computer, the same under every permission profile. Only the computer's owner widens it, on the computer; here it can only be narrowed.",
-      "sectionCloud": "Where an agent's commands run on this cloud device, the same under every permission profile. Its instance is the sandbox.",
-      "network": "Network",
-      "networkValue": {
-        "open": "Open internet (private networks blocked)",
-        "allowlist": "Allowlist",
-        "none": "Closed (no network)"
-      },
-      "followOrg": "Follow the organization",
-      "followOrgNow": "Now: {value}",
-      "outside": "Run outside the sandbox",
-      "outsideValue": {
-        "allowed": "Allowed",
-        "off": "Off"
-      },
-      "reach": "Project reach",
-      "reachValue": {
-        "workspace": "The device's workspace only",
-        "os-user": "Whatever this computer's user can read"
-      },
-      "reported": "Reported",
-      "notice": {
-        "noMachine": "No computer is connected. Run capybara-device login on the computer to connect it.",
-        "blocked": "This computer sent an outdated permission report, so new work is paused. Run capybara-device login again on the computer.",
-        "missing": "This computer has not reported its sandbox settings. Update capybara-device on the computer and reconnect it.",
-        "stale": "These are the settings the computer last reported: it is offline or its report is not current."
-      },
-      "unknown": "Unknown until the computer reports its settings",
       "mark": {
         "outside": "Can run outside the sandbox",
         "sandbox": "Sandbox only"
-      },
-      "limited": {
-        "network": {
-          "platform": "Limited to the allowlist by the platform (super admin)",
-          "org": "Limited to the allowlist by the organization (organization admin)",
-          "device": "Widened only on the computer, by its owner",
-          "provider": "Limited to the allowlist by the device's provider"
-        },
-        "closed": {
-          "platform": "Closed by the platform (super admin)",
-          "org": "Closed by the organization (organization admin)",
-          "device": "Opened only on the computer, by its owner",
-          "provider": "Closed by the device's provider"
-        },
-        "outside": {
-          "platform": "Turned off by the platform (super admin)",
-          "org": "Turned off by the organization (organization admin)",
-          "device": "Allowed only on the computer, by its owner",
-          "provider": "A cloud device's instance is its sandbox"
-        }
-      },
-      "hosts": "Allowed hosts",
-      "hostsEmpty": "No host is allowed.",
-      "remove": "Remove",
-      "removeLabel": "Remove {host}",
-      "removed": "{host} removed.",
-      "localHostsHelp": "Hosts can be removed here; only the computer's owner adds one, on the computer.",
-      "widenLocal": "Only the computer's owner widens these, on the computer:",
-      "widenHere": "Widen these on this computer; a confirmation from the computer follows:",
-      "widen": {
-        "network": "Open the network",
-        "outside": "Allow running outside the sandbox",
-        "reach": "Widen the project reach"
-      },
-      "command": {
-        "network": "Open the network:",
-        "outside": "Allow running outside the sandbox:",
-        "host": "Add a host to the allowlist:",
-        "reach": "Widen the project reach:"
-      },
-      "networkNarrowed": "The network is limited to the allowlist.",
-      "outsideOff": "Running outside the sandbox is off on this device.",
-      "limitReach": "Limit to the workspace",
-      "reachLimited": "Project reach is limited to the workspace.",
-      "cannotNarrow": {
-        "offline": "This computer is offline, so it can't be narrowed from here. Run the commands below on the computer.",
-        "upgrade": "The capybara-device on this computer can't take changes from the platform. Update it, or run the commands below on the computer."
-      },
-      "pendingNextUse": "Takes effect at the next use; files are kept.",
-      "pendingFilesReset": "Takes effect after the files are reset.",
-      "cloudHosts": "Hosts",
-      "cloudHostsHelp": "One host per line. A host outside the organization's list is refused; leave it empty to use the organization's hosts.",
-      "invalidHost": "{host} is not a valid host: use a lowercase name such as files.example.com or *.example.com.",
-      "save": "Save network",
-      "saved": "The device's network is saved."
+      }
     },
     "recent": {
       "title": "Recent changes",
-      "add": "Added {hosts}",
-      "remove": "Removed {hosts}",
       "change": "{setting}: {from} → {to}",
-      "set": "{setting}: {to}",
       "withHosts": "{value} ({hosts})",
-      "none": "No change",
       "unknownBy": "Unknown account",
       "via": {
         "web": "web",
         "im": "IM",
-        "device": "on the machine",
         "agent": "by an agent",
         "token": "API token"
-      },
-      "outcome": {
-        "unknown": "Not confirmed by the machine",
-        "failed": "Did not take effect"
       }
-    },
-    "machine": {
-      "title": "Machine",
-      "os": "System",
-      "none": "No machine is connected. Run capybara-device login on the machine to connect it.",
-      "revoke": "Disconnect this machine",
-      "revokeTitle": "Disconnect {name}?",
-      "revokeHint": "The machine's credential is revoked and the commands it is running end. The files on the machine stay. To connect again, run capybara-device login on the machine.",
-      "revokeSubmit": "Disconnect",
-      "revoked": "{name} disconnected.",
-      "description": "Disconnecting revokes this machine's credential and ends the commands it is running; the files on the machine stay."
     },
     "network": {
       "title": "Network",
-      "domains": "Allowed hosts",
-      "domainsEmpty": "No host is allowed.",
-      "overviewNote": "Commands in the sandbox reach these hosts only.",
-      "cloudHint": {
-        "org": "This device follows the organization's network, set in its settings.",
-        "device": "This device's own network, within the organization's hosts."
-      }
+      "description": "Where an agent's commands on this device may connect, the same under every permission profile and for every kind of device, within the organization's and the platform's limits.",
+      "follow": "Follow the organization",
+      "followNow": "Now: {value}",
+      "open": "Open internet (private networks blocked)",
+      "allowlist": "Allowlist",
+      "none": "Closed (no network)",
+      "limited": {
+        "platform": "Limited to the allowlist by the platform (super admin)",
+        "org": "Limited to the allowlist by the organization (organization admin)",
+        "provider": "Limited to the allowlist by the device's provider"
+      },
+      "closed": {
+        "platform": "Closed by the platform (super admin)",
+        "org": "Closed by the organization (organization admin)",
+        "provider": "Closed by the device's provider"
+      },
+      "hosts": "This device's hosts",
+      "hostsHelp": "Its own list only narrows the organization's: a host outside the organization's list is refused. With none of its own, the organization's hosts apply.",
+      "hostsEmpty": "None of its own: the organization's hosts apply.",
+      "hostInput": "Host to add",
+      "addHost": "Add host",
+      "remove": "Remove",
+      "removeHost": "Remove {host}",
+      "invalidHost": "{host} is not a valid host: use a lowercase name such as files.example.com or *.example.com.",
+      "save": "Save network",
+      "saved": "The device's network is saved.",
+      "pendingNextUse": "Takes effect at the next use; files are kept.",
+      "pendingFilesReset": "Takes effect after the files are rebuilt."
     },
     "overview": {
-      "editNetwork": "Change in settings"
+      "about": "About",
+      "noReport": "The device's provider did not answer."
     },
     "files": {
       "title": "Files"
@@ -1993,18 +1888,10 @@
     "projects": {
       "title": "Projects",
       "description": "Directories on this device a conversation can bind. A new conversation may pick one; the agent then reads its {file} and its skills.",
-      "overviewEmpty": "No projects yet",
       "empty": "No projects yet",
-      "manage": "Manage projects",
-      "hidden": "{count, plural, one {# more project is} other {# more projects are}} outside this device's project reach, so hidden. They are kept and show again if the owner widens the reach on the computer.",
-      "unsupportedLocal": "This machine's capybara-device does not support projects. Update capybara-device on the machine and reconnect it to add one.",
-      "unsupportedCloud": "This cloud device's sandbox provider does not support projects. Its conversations work as usual, without one.",
-      "homeUnknown": "With the project reach of this computer's user, a project's path is relative to your home directory, which this computer has not reported. Update capybara-device on the computer and reconnect it.",
       "add": "Add project",
       "addTitle": "Add project",
       "pathLabel": "Directory",
-      "pathHelpWorkspace": "Relative to the device's workspace. Leave it empty for the workspace itself.",
-      "pathHelpHome": "Relative to your home directory. Leave it empty for the home directory itself.",
       "pathInvalid": "Enter a path relative to {prefix}, without control characters or backslashes.",
       "pathAbsolute": "Enter a path relative to {prefix}, not an absolute path.",
       "nameLabel": "Name",
@@ -2026,7 +1913,10 @@
       "removeSubmit": "Remove",
       "removed": "Project {name} removed",
       "loadFailed": "The projects could not be read.",
-      "retry": "Retry"
+      "retry": "Retry",
+      "unsupported": "This device's provider does not support projects. Its conversations work as usual, without one.",
+      "baseUnknown": "This device has not reported where its projects live, so none can be added now.",
+      "pathHelp": "Relative to {base}. Leave it empty for {base} itself."
     }
   },
   "nav": {

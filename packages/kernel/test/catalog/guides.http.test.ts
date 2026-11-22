@@ -24,6 +24,7 @@ import { mcpTemplate, templateFiles } from "./packages.js";
 const DOCS = new URL("../fixtures/plugins/guide-demo/guides/", import.meta.url);
 const EN = readFileSync(new URL("demo.md", DOCS), "utf8");
 const ZH = readFileSync(new URL("demo.zh.md", DOCS), "utf8");
+const DIAL_IN_DOCS = new URL("../fixtures/plugins/fake-dial-in/guides/", import.meta.url);
 const PUBLIC_URL = "https://capybara.example.com";
 
 let env: OrgEnv;
@@ -636,5 +637,34 @@ describe("setup guides v2: device-connection", () => {
       expect(r.statusCode, query).toBe(400);
       expect(r.json().error.code, query).toBe("validation_failed");
     }
+  });
+
+  it("deviceGuides maps a provider plugin to its guide ref and skips unknown plugins", async () => {
+    const itemId = await importPlugin(
+      env,
+      await pluginTgz({
+        manifest: {
+          name: "fake-dial-in",
+          setupGuides: [{ id: "connect", place: "device-connection" }],
+        },
+        files: {
+          "guides/connect.md": readFileSync(new URL("connect.md", DIAL_IN_DOCS), "utf8"),
+          "guides/connect.zh.md": readFileSync(new URL("connect.zh.md", DIAL_IN_DOCS), "utf8"),
+        },
+        extension: { manifest: {} },
+      }),
+    );
+    const org = { orgId: env.orgId, role: "member" as const };
+    const m = await env.k.app.get(PluginGuides).deviceGuides(["fake-dial-in", "nope"], org);
+    expect(m.get("fake-dial-in")).toMatchObject({ itemId, guideId: "connect" });
+    expect(m.has("nope")).toBe(false);
+    const g = await render(itemId, "", env.mem, "connect");
+    expect(g.blocks).toContainEqual({
+      kind: "shell-action",
+      action: "connect-this-machine",
+      label: "Connect this machine",
+    });
+    expect(JSON.stringify(g.blocks)).toContain(PUBLIC_URL);
+    expect(g.unresolved).toEqual([]);
   });
 });

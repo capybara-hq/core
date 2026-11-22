@@ -441,8 +441,8 @@ describe("ApprovalCard: a network ask (network ask spec §6.5)", () => {
     });
     const once = await screen.findByRole("button", { name: "这次允许" });
     expect(once.getAttribute("data-variant")).toBe("primary");
-    // device protocol 4: a network ask is granted for this run only, never "always"
-    expect(screen.queryByRole("button", { name: "这台设备一直允许" })).toBeNull();
+    // the ask offers only "once" here: no "add to this device's list" button
+    expect(screen.queryByRole("button", { name: /加入此设备的列表/ })).toBeNull();
     expect(
       screen.getByText("这条命令被这台设备的网络规则拦下了：Install the dependencies"),
     ).toBeTruthy();
@@ -464,19 +464,32 @@ describe("ApprovalCard: a network ask (network ask spec §6.5)", () => {
     expect(await screen.findByText(/已允许（这次）/)).toBeTruthy();
   });
 
-  it("offers only this time with the device command, even if a scope list still names always", async () => {
-    stubApi({
+  it("a list-only network ask offers add to this device's list and posts scope always", async () => {
+    const calls = stubApi({
       "GET /api/v1/orgs/o1/approvals/ap1": () =>
-        json(200, { approval: { ...NET, scopes: ["once", "always"] } }),
+        json(200, {
+          approval: {
+            ...NET,
+            scopes: ["always"],
+            detail: { ...NET.detail, appliesAt: "next-use" },
+          },
+        }),
+      "POST /api/v1/orgs/o1/approvals/ap1/decision": () =>
+        json(200, { approval: { ...NET, status: "approved", scope: "always" } }),
     });
     const { container } = renderPage(<ApprovalCard orgId="o1" item={netItem()} />, {
       locale: "en",
     });
-    await screen.findByRole("button", { name: "Allow this time" });
-    expect(screen.queryByRole("button", { name: "Always allow on this device" })).toBeNull();
-    expect(container.querySelector('[data-part="network-on-machine"]')?.textContent).toContain(
-      "capybara-device policy add allowedDomains",
-    );
+    const add = await screen.findByRole("button", { name: "Add to this device's list" });
+    expect(screen.queryByRole("button", { name: "Allow this time" })).toBeNull();
+    expect(container.querySelector('[data-part="network-on-machine"]')).toBeNull();
+    const user = userEvent.setup();
+    await user.click(add);
+    expect(bodyOf(calls.find((c) => c.method === "POST"))).toEqual({
+      decision: "approve",
+      scope: "always",
+      hosts: ["registry.npmjs.org", "files.slack.com.evil.io"],
+    });
   });
 
   it("decided from the log, it reads the approval for the granted hosts (this time)", async () => {

@@ -26,7 +26,7 @@ export const deviceQuery = (orgId: string, id: string) =>
     freshness: "live",
   });
 
-/** A device's projects in its current mode (owner only; project root §4.1). */
+/** A device's projects (owner only; project root §4.1). */
 export const deviceProjectsQuery = (orgId: string, id: string) =>
   defineQuery({
     key: keys.org(orgId).deviceProjects(id),

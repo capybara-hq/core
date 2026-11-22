@@ -24,6 +24,7 @@ import {
   canonicalHostCeiling,
   type DeviceSandbox,
   type DeviceSandboxDeviceLayer,
+  deviceListAddRefusal,
   effectiveDeviceSandbox,
   type HostGrantCeiling,
   hostGrantCeiling,
@@ -159,7 +160,7 @@ export class PermissionFacts {
       readOrgSettings(this.db.db, orgId),
       this.db
         .selectFrom("devices")
-        .select(["network_mode", "network_hosts", "report"])
+        .select(["network_mode", "network_hosts", "report", "provider"])
         .where("id", "=", deviceId)
         .where("org_id", "=", orgId)
         .executeTakeFirst(),
@@ -192,10 +193,19 @@ export class PermissionFacts {
       /** The org's effective hosts: what a device's own host list may narrow, never add to. */
       orgHosts: orgHostsOf(platform, orgLayer),
       refusal: (host: string) => hostGrantRefusal(host, box, platform, orgLayer),
+      /** Why a host cannot be added to the device's own network list ({@link deviceListAddRefusal}). */
+      listAddRefusal: (host: string) => deviceListAddRefusal(host, box, platform, orgLayer),
       description: storedReport(row?.report)?.description.en ?? null,
-      /** Its provider enforces a sandbox allowlist (its support): a blocked host may be asked about. */
-      allowlist:
-        support !== null && support.unavailableReason === undefined && support.network.allowlist,
+      /**
+       * The device's network is an allowlist with a host list of its own: only then can a host
+       * join that list (`DevicesService.addNetworkHostsIn`); a device following its org's hosts
+       * already allows every host its list could name.
+       */
+      ownList: device.networkMode === "allowlist" && device.networkHosts.length > 0,
+      /** The device's own host list (empty unless its network is an allowlist of its own). */
+      ownHosts: device.networkMode === "allowlist" ? [...device.networkHosts] : [],
+      /** Where its provider applies new limits (`limitsApplyAt`; absent: at its instance). */
+      limitsApplyAt: row ? this.providers.forDevice(row.provider)?.impl.limitsApplyAt : undefined,
       reach: {
         outsideSandbox: box.outsideSandbox,
         networkCeiling: box.networkCeiling,

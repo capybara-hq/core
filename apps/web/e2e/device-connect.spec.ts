@@ -95,7 +95,8 @@ test("connect a machine: authorize → confirm on /devices/link → token → th
     await expect(page.locator('[data-template="DetailPage"]')).toBeVisible();
     // Opening the device loads a new document; its server-rendered tabs are not interactive yet.
     await hydrated(page);
-    await expect(page.getByText(zh.devices.source.local)).toBeVisible();
+    // the nameplate names the device's provider
+    await expect(page.locator('[data-part="device-nameplate-origin"]')).not.toBeEmpty();
     await expect(
       page.locator('[data-part="device-nameplate-status"]').getByText(zh.devices.state.offline),
     ).toBeVisible();
@@ -104,8 +105,7 @@ test("connect a machine: authorize → confirm on /devices/link → token → th
       page.locator('[data-template="DetailPage"]').getByText(machine).first(),
     ).toBeVisible();
 
-    // clean up: delete the device (设置 → danger zone, typing its name)
-    await page.getByRole("tab", { name: zh.devices.detail.tabSettings }).click();
+    // clean up: delete the device (the Overview tab's danger zone, typing its name)
     await page.getByRole("button", { name: zh.devices.detail.delete }).click();
     const dialog = page.getByRole("dialog");
     await dialog.getByRole("textbox").fill(machine);

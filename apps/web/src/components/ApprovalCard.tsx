@@ -232,10 +232,10 @@ export function useDecide(orgId: string) {
  * nothing is drawn until the read answers, so a decided approval never paints as pending first.
  *
  * A network ask (network ask spec §6.5, `kind: "network"`) draws the block's network variant: the
- * hosts, the refused command, "allow this time" / "deny" and the checked hosts in the decision. An
- * ask never adds a host to the device's own network list (only its owner's network setting does),
- * so it offers no "always". Decided, it still reads the approval: the granted hosts are only
- * there.
+ * hosts, the refused command, "allow this time" / "add to this device's list" / "deny" and the
+ * checked hosts in the decision. The scopes are the view's own; "always" adds the hosts to the
+ * device's list and `appliesAt` says when that takes effect. Decided, it still reads the approval:
+ * the granted hosts are only there.
  */
 export function ApprovalCard({
   orgId,
@@ -395,11 +395,9 @@ export function ApprovalCard({
   // decision 2026-11-21); decided or superseded, only its one line remains.
   const details = useCardDetails(scope, escalation, command?.path);
   const detail = view?.kind === "network" ? (view.detail ?? null) : null;
-  // a network ask is granted for this run only: an "always" is never offered (an ask never adds a
-  // host to the device's own network list; only its owner's network setting does)
-  const scopes = view
-    ? scopesFor(view).filter((s) => network === undefined || s !== "always")
-    : (["once"] as const);
+  // the scopes exactly as the view lists them: a network ask may offer "always" (add the hosts to
+  // the device's own list)
+  const scopes = view ? scopesFor(view) : (["once"] as const);
   // A permission change replaced the ask before anyone decided it: a final line, never actions.
   if (outcome?.decision === "superseded") {
     return (
@@ -646,6 +644,7 @@ export function networkAskOf(
       hosts: detail.hosts.map((h) => h.host),
       command: detail.command,
       ...(detail.description ? { description: detail.description } : {}),
+      ...(detail.appliesAt ? { appliesAt: detail.appliesAt } : {}),
     };
   }
   if (item.network === undefined) return undefined;

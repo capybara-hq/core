@@ -369,7 +369,9 @@ describe("a changed mode on use", () => {
     expect(await ops("create")).toHaveLength(2);
   });
 
-  it("a widened host list, cpu or memory alone never touches the running instance", async () => {
+  // device-provider spec §6.3: a host added to a list reaches the existing instance at its next
+  // use, once (the record then covers it); resources alone still wait for a new instance
+  it("a widened host list reaches the running instance once at its next use; cpu or memory alone never", async () => {
     provider = fake({ updateMode: "updated" });
     const s = service();
     await setAutoMode("off");
@@ -378,16 +380,71 @@ describe("a changed mode on use", () => {
       outsideSandbox: "off",
       deviceNetwork: { ceiling: "allowlist", extraHosts: ["example.com"] },
     });
+    expect(await s.limitsState({ orgId, deviceId })).toMatchObject({
+      pendingNextUse: true,
+      pendingFilesReset: false,
+    });
+    const again = await use(s);
+    expect(again.h).toEqual(first.h);
+    expect(await ops("update")).toEqual([["update", first.h.id, "updated"]]);
+    const network = (await record())?.network as { hosts?: string[] } | undefined;
+    expect(network?.hosts).toContain("example.com");
+    expect((await s.limitsState({ orgId, deviceId })).pendingNextUse).toBe(false);
+    // applied once: no loop
+    await use(s);
+    expect(await ops("update")).toHaveLength(1);
     await sql`INSERT INTO capybara.deployment_settings (key, value)
       VALUES ('sandboxLimitOverrides', ${JSON.stringify({ [orgId]: { cpu: 4 } })}::jsonb)
       ON CONFLICT (key) DO UPDATE SET value = EXCLUDED.value`.execute(raw);
-    const again = await use(s);
-    expect(again.h).toEqual(first.h);
-    expect(await ops("update")).toEqual([]);
+    await use(s);
+    expect(await ops("update")).toHaveLength(1);
     expect(await ops("create")).toHaveLength(1);
     await sql`DELETE FROM capybara.deployment_settings WHERE key = 'sandboxLimitOverrides'`.execute(
       raw,
     );
+  });
+
+  it("a widened host list without update recreates the instance on its kept files at its next use", async () => {
+    const s = service();
+    await setAutoMode("off");
+    const first = await use(s);
+    const fs = (await fakeSandboxMeta(root, first.h.id))?.fileSystem;
+    await setOrgSettings({
+      outsideSandbox: "off",
+      deviceNetwork: { ceiling: "allowlist", extraHosts: ["example.com"] },
+    });
+    const again = await use(s);
+    expect(again.info).toMatchObject({ fresh: true, restarted: true });
+    expect((await fakeSandboxMeta(root, again.h.id))?.fileSystem).toBe(fs);
+    expect(
+      ((await fakeSandboxMeta(root, again.h.id))?.limits as { network?: { hosts?: string[] } })
+        ?.network?.hosts,
+    ).toContain("example.com");
+    await use(s);
+    expect(await ops("create")).toHaveLength(2);
+  });
+
+  it("limits fixed at the file system: a widened host list waits for a file reset", async () => {
+    provider = fake({ limitsApplyAt: "fileSystem" });
+    const s = service();
+    await setAutoMode("off");
+    const first = await use(s);
+    await setOrgSettings({
+      outsideSandbox: "off",
+      deviceNetwork: { ceiling: "allowlist", extraHosts: ["example.com"] },
+    });
+    expect(await s.limitsState({ orgId, deviceId })).toMatchObject({
+      pendingNextUse: false,
+      pendingFilesReset: true,
+    });
+    const again = await use(s);
+    expect(again.h).toEqual(first.h);
+    expect(await ops("create")).toHaveLength(1);
+    await s.resetFileSystem(deviceId);
+    await use(s);
+    const network = (await record())?.network as { hosts?: string[] } | undefined;
+    expect(network?.hosts).toContain("example.com");
+    expect((await s.limitsState({ orgId, deviceId })).pendingFilesReset).toBe(false);
   });
 
   it("a host-only narrowing reaches the running instance on its next use (spec §124)", async () => {
@@ -399,12 +456,33 @@ describe("a changed mode on use", () => {
       outsideSandbox: "off",
       deviceNetwork: { ceiling: "allowlist", excludedHosts: ["pypi.org"] },
     });
+    // the device page says so before the use applies it
+    expect(await s.limitsState({ orgId, deviceId })).toMatchObject({
+      pendingNextUse: true,
+      pendingFilesReset: false,
+    });
     const again = await use(s);
     expect(again.h).toEqual(first.h);
     expect(await ops("update")).toHaveLength(1);
+    expect((await s.limitsState({ orgId, deviceId })).pendingNextUse).toBe(false);
     const network = (await record())?.network as { hosts?: string[] } | undefined;
     expect(network?.hosts).toContain("github.com");
     expect(network?.hosts).not.toContain("pypi.org");
+  });
+
+  it("limits fixed at the file system, no update: a host-only narrowing is pending a file reset", async () => {
+    provider = fake({ limitsApplyAt: "fileSystem" });
+    const s = service();
+    await setAutoMode("off");
+    await use(s);
+    await setOrgSettings({
+      outsideSandbox: "off",
+      deviceNetwork: { ceiling: "allowlist", excludedHosts: ["pypi.org"] },
+    });
+    expect(await s.limitsState({ orgId, deviceId })).toMatchObject({
+      pendingNextUse: false,
+      pendingFilesReset: true,
+    });
   });
 });
 

@@ -106,7 +106,7 @@ describe("planNetworkAsk with task grants", () => {
         { host: "other.example.com", port: 443, layer: "device" },
       ],
       run(["files.example.com"]),
-      { allowlist: true, unattended },
+      { offer: () => ({ scopes: ["once"], appliesAt: "next-command" }), unattended },
     );
     expect(plan.ask).toEqual([]);
     expect(plan.missingGrants).toEqual(["network:other.example.com"]);

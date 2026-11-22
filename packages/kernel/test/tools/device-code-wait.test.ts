@@ -133,15 +133,18 @@ function pipeline(): ToolPipeline {
         pending: false,
       }),
     },
-    // a provider that enforces an allowlist: a device-layer host is asked about
+    // a device with per-operation hosts: a device-layer host is asked about (once)
     sandbox: {
       ensureRunning: async () => {},
       hostRefusal: async () => ({
         refusal: () => null,
-        box: { networkMode: "allowlist" } as Awaited<
+        listAddRefusal: () => null,
+        box: { networkMode: "allowlist", perCallHosts: true } as Awaited<
           ReturnType<SandboxService["hostRefusal"]>
         >["box"],
-        allowlist: true,
+        ownList: false,
+        ownHosts: [],
+        limitsApplyAt: undefined,
       }),
     },
   });
