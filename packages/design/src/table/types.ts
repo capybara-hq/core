@@ -25,6 +25,14 @@ export type Column<T> = {
    * (`onOpen`), so the control works without opening the row's Sheet.
    */
   interactive?: boolean;
+  /**
+   * The column's role in the grouped rows below 600 (responsive spec §4.2, design spec §6.6).
+   * `title`: the first line (the first column when none declares it); `subtitle` / `meta`: the
+   * muted and faint lines (several are joined with 「 · 」); `trailing`: at most one, at the end
+   * of the row; `hidden`: not drawn. A table where any column declares a role draws the grouped
+   * rows, and a column without a role is not drawn there; no declaration keeps the stacked rows.
+   */
+  compact?: "title" | "subtitle" | "meta" | "trailing" | "hidden";
 };
 
 export type SortDir = "asc" | "desc";
@@ -49,6 +57,8 @@ export type DataTableProps<T> = {
   expand?(row: T): ReactNode | null;
   isDisabled?(row: T): boolean;
   rowLabel?(row: T): string;
+  /** The grouped rows' lead (an avatar or a mark, about 40 px) when a column declares `compact`. */
+  compactLead?(row: T): ReactNode;
   sort?: { key: string; dir: SortDir; onChange(key: string, dir: SortDir): void };
   pagination?: PaginationProps;
   /** Row height step (spec §6.6): dense 28, default 32, roomy 44 (two lines or a thumbnail). */
