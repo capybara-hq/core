@@ -476,7 +476,7 @@
  * Grouped rows (design spec §6.6 "Row mapping"): the compact form of a table whose columns declare
  * a `compact` role. Only drawn below 600 (ClassForms), so no media query. A lead row is the 40 px
  * lead and `space.3` above and below (64); without a lead the touch row (52). Hairlines are inset
- * to the text column.
+ * to the text column. The values are CardGrid's on phones (`--cb-grouped-*`, base.css).
  */
 .cb-table-compact-head {
   position: absolute;
@@ -493,6 +493,11 @@
   border-radius: var(--cb-radius-md);
   background: var(--cb-table-ground);
 }
+/* Framed (on the page ground or in a pane), the box has the grouped list's line; inside a box it
+   has none (one box is enough). */
+.cb-table:not([data-framed="false"]) .cb-table-compact {
+  border: var(--cb-grouped-line);
+}
 /* A declaring table has no bulk bar below 600; before hydration it would flash. */
 @media not all and (min-width: 600px) {
   .cb-table[data-compact-map="true"] .cb-table-bulk {
@@ -507,12 +512,12 @@
   gap: var(--cb-space-3);
   min-width: 0;
   min-height: var(--cb-touch-row);
-  padding: var(--cb-space-2) var(--cb-space-3);
+  padding: var(--cb-grouped-pad);
   -webkit-touch-callout: none;
   -webkit-tap-highlight-color: transparent;
 }
 .cb-table-compact-row[data-lead="true"] {
-  min-height: calc(var(--cb-touch-row-roomy) + var(--cb-space-2));
+  min-height: var(--cb-grouped-row-lead);
 }
 .cb-table-compact-row[data-open="true"] {
   cursor: pointer;
@@ -534,20 +539,20 @@
   position: absolute;
   top: 0;
   right: 0;
-  left: var(--cb-space-3);
+  left: var(--cb-grouped-inset);
   border-top: 1px solid var(--cb-line-soft);
   content: "";
 }
 .cb-table-compact-row[data-lead="true"]::before {
-  left: calc(var(--cb-space-3) + var(--cb-touch-row-roomy) - var(--cb-space-4) + var(--cb-space-3));
+  left: var(--cb-grouped-inset-lead);
 }
 .cb-table-compact-lead {
   display: inline-flex;
   flex: none;
   align-items: center;
   justify-content: center;
-  width: calc(var(--cb-touch-row-roomy) - var(--cb-space-4));
-  height: calc(var(--cb-touch-row-roomy) - var(--cb-space-4));
+  width: var(--cb-grouped-lead);
+  height: var(--cb-grouped-lead);
 }
 .cb-table-compact-text {
   display: flex;

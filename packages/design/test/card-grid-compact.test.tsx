@@ -1,4 +1,5 @@
 import { act, cleanup, fireEvent, screen, within } from "@testing-library/react";
+import { useEffect } from "react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { CardGrid, ObjectCard, type ObjectCardProps } from "../src/index";
 import { css, parseCss } from "./css-rules";
@@ -7,6 +8,22 @@ import { renderAtClass } from "./width";
 // CardGrid on compact (design spec §6.34 "Phones", responsive system spec §0 item 4, §2.3, §2.4):
 // one rounded card of grouped rows, no buttons in a row, the card's primary and menu in an
 // ActionSheet on long press or context menu.
+
+/** The ActionSheets mounted right now (the real sheet, counted). */
+const sheets = vi.hoisted(() => ({ live: 0 }));
+vi.mock("../src/overlays/action-sheet", async (importOriginal) => {
+  const real = await importOriginal<typeof import("../src/overlays/action-sheet")>();
+  function Counted(props: Parameters<typeof real.ActionSheet>[0]) {
+    useEffect(() => {
+      sheets.live += 1;
+      return () => {
+        sheets.live -= 1;
+      };
+    }, []);
+    return real.ActionSheet(props);
+  }
+  return { ...real, ActionSheet: Counted };
+});
 
 const real = window.matchMedia;
 afterEach(() => {
@@ -140,15 +157,14 @@ describe("CardGrid at 390", () => {
     expect(sheet()).toBeNull();
   });
 
-  it("while the primary runs, every sheet item waits", () => {
-    // Button rows: ActionSheet draws a link row without its disabled state (an overlays matter).
+  it("while the primary runs, every sheet item waits, a link item as a disabled row", () => {
     renderAtClass(
       390,
       grid([
         card({
           primary: { label: "开始会话", onSelect: () => {}, loading: true },
           menu: [
-            { label: "复制", onSelect: () => {} },
+            { label: "设置", href: "/agents/a/settings" },
             { label: "删除", danger: true, onSelect: () => {} },
           ],
         }),
@@ -158,7 +174,8 @@ describe("CardGrid at 390", () => {
     const rows = [
       ...document.querySelectorAll<HTMLButtonElement>('[data-part="action-sheet-item"]'),
     ];
-    expect(rows.map((r) => r.textContent?.trim())).toEqual(["开始会话", "复制", "删除"]);
+    expect(rows.map((r) => r.textContent?.trim())).toEqual(["开始会话", "设置", "删除"]);
+    expect(within(sheet() as HTMLElement).queryByRole("link")).toBeNull();
     for (const r of rows) expect(r.disabled).toBe(true);
   });
 
@@ -263,7 +280,7 @@ describe("compact CSS (below 600)", () => {
     const g = at(".cb-card-grid");
     expect(g["grid-template-columns"]).toBe("1fr");
     expect(g.gap).toBe("0");
-    expect(g.border).toBe("1px solid var(--cb-line-soft)");
+    expect(g.border).toBe("var(--cb-grouped-line)");
     expect(g["border-radius"]).toBe("var(--cb-radius-md)");
     expect(g.background).toBe("var(--cb-panel)");
     expect(g.overflow).toBe("hidden");
@@ -271,8 +288,8 @@ describe("compact CSS (below 600)", () => {
 
   it("a row is at least 64 (the 40 avatar and space.3 twice), padded space.3 space.4, no box", () => {
     const r = at(".cb-object-card");
-    expect(r["min-height"]).toBe("calc(40px + 2 * var(--cb-space-3))");
-    expect(r.padding).toBe("var(--cb-space-3) var(--cb-space-4)");
+    expect(r["min-height"]).toBe("var(--cb-grouped-row-lead)");
+    expect(r.padding).toBe("var(--cb-grouped-pad)");
     expect(r.border).toBe("0");
     expect(r["border-radius"]).toBe("0");
     expect(r["-webkit-touch-callout"]).toBe("none");
@@ -303,5 +320,89 @@ describe("compact CSS (below 600)", () => {
     expect(at(".cb-object-card-chevron", null).display).toBe("none");
     expect(at(".cb-object-card-chevron").display).toBe("block");
     expect(at(".cb-object-card-foot > .cb-skeleton-box").display).toBe("none");
+  });
+});
+
+describe("CardGrid's one action sheet", () => {
+  it("a compact grid mounts one sheet for all its cards", () => {
+    renderAtClass(390, three());
+    expect(sheets.live).toBe(1);
+  });
+
+  it("the sheet shows the chosen card, then another card's after a close", () => {
+    renderAtClass(390, three());
+    prevented(row("周报助手"), "contextmenu");
+    expect(within(sheet() as HTMLElement).getByRole("heading").textContent).toBe("周报助手");
+    act(() => {
+      fireEvent.keyDown(document.activeElement ?? document.body, { key: "Escape" });
+    });
+    prevented(row("客服助手"), "contextmenu");
+    expect(within(sheet() as HTMLElement).getByRole("heading").textContent).toBe("客服助手");
+    expect(sheets.live).toBe(1);
+  });
+
+  it("an open sheet stays mounted when the window leaves compact", () => {
+    const { resize } = renderAtClass(390, three());
+    prevented(row("研究助手"), "contextmenu");
+    expect(sheetItems()).toEqual(["开始会话", "设置", "运行记录"]);
+    resize(1440);
+    expect(sheetItems()).toEqual(["开始会话", "设置", "运行记录"]);
+  });
+
+  it("a wide grid mounts no sheet", () => {
+    renderAtClass(1440, three());
+    expect(sheets.live).toBe(0);
+  });
+});
+
+describe("one grouped list look (CardGrid on phones, DataTable's grouped rows)", () => {
+  const root = Object.assign(
+    {},
+    ...parseCss(css("base.css"))
+      .filter((r) => r.at === null && r.selector === ":root")
+      .map((r) => r.decls),
+  );
+  const table = parseCss(css("table.css"));
+  const tableRule = (selector: string) =>
+    Object.assign({}, ...table.filter((r) => r.selector === selector).map((r) => r.decls));
+
+  it("the shared values: line-soft frame, space.4 sides, hairline inset space.4 + 40 + space.3", () => {
+    expect(root["--cb-grouped-line"]).toBe("1px solid var(--cb-line-soft)");
+    expect(root["--cb-grouped-pad"]).toBe("var(--cb-space-3) var(--cb-space-4)");
+    expect(root["--cb-grouped-lead"]).toBe("40px");
+    expect(root["--cb-grouped-row-lead"]).toBe(
+      "calc(var(--cb-grouped-lead) + 2 * var(--cb-space-3))",
+    );
+    expect(root["--cb-grouped-inset"]).toBe("var(--cb-space-4)");
+    expect(root["--cb-grouped-inset-lead"]).toBe(
+      "calc(var(--cb-space-4) + var(--cb-grouped-lead) + var(--cb-space-3))",
+    );
+  });
+
+  it("DataTable's grouped rows take the same values", () => {
+    expect(tableRule('.cb-table:not([data-framed="false"]) .cb-table-compact').border).toBe(
+      "var(--cb-grouped-line)",
+    );
+    expect(tableRule(".cb-table-compact-row").padding).toBe("var(--cb-grouped-pad)");
+    expect(tableRule('.cb-table-compact-row[data-lead="true"]')["min-height"]).toBe(
+      "var(--cb-grouped-row-lead)",
+    );
+    expect(tableRule(".cb-table-compact-row + .cb-table-compact-row::before").left).toBe(
+      "var(--cb-grouped-inset)",
+    );
+    expect(tableRule('.cb-table-compact-row[data-lead="true"]::before').left).toBe(
+      "var(--cb-grouped-inset-lead)",
+    );
+    expect(tableRule(".cb-table-compact-lead").width).toBe("var(--cb-grouped-lead)");
+  });
+
+  it("CardGrid's hairline uses the shared inset", () => {
+    const sep = Object.assign(
+      {},
+      ...parseCss(css("card-grid.css"))
+        .filter((r) => r.selector === ".cb-object-card + .cb-object-card")
+        .map((r) => r.decls),
+    );
+    expect(sep.background).toContain("calc(100% - var(--cb-grouped-inset-lead)) 1px");
   });
 });

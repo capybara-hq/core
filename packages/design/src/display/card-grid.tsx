@@ -99,6 +99,29 @@ type Slot = {
   onLeaveWithFocus(): void;
 };
 const SlotContext = createContext<Slot | null>(null);
+
+/** What the grid's one action sheet shows for the chosen card. */
+type SheetContent = { title: string; items: MenuItem[] };
+/**
+ * The grid's one action sheet (spec §6.34 "Phones"): a card chooses it with its content and keeps
+ * it current while chosen; the grid draws one sheet for all its cards.
+ */
+type SheetHost = {
+  chosen: string | null;
+  choose(key: string, content: SheetContent): void;
+  /** The chosen card's content changed (a primary started or stopped running). */
+  update(key: string, content: SheetContent): void;
+  /** The card went away: a sheet it chose closes. */
+  release(key: string): void;
+};
+const SheetHostContext = createContext<SheetHost | null>(null);
+
+/** What a sheet's content draws, to tell a real change from a re-render. */
+const sheetSignature = ({ title, items }: SheetContent) =>
+  JSON.stringify([
+    title,
+    items.map((i) => (i === "separator" ? i : [i.label, i.href, i.disabled, i.danger])),
+  ]);
 /** The card's key in its grid, written on its `li` so the grid can find its link. */
 const CardKey = createContext<string | null>(null);
 
@@ -203,6 +226,8 @@ export function CardGrid({
   const t = useDesignT();
   const announces = useSkeletonAnnounces();
   const [stop, setStop] = useState<string | null>(null);
+  const [sheet, setSheet] = useState<({ key: string } & SheetContent) | null>(null);
+  const form = useClassForm();
   const listRef = useRef<HTMLUListElement>(null);
   /** The holder's position at the last render: where its neighbour will be if it goes. */
   const lastIndex = useRef(0);
@@ -252,33 +277,58 @@ export function CardGrid({
     e.preventDefault();
     items[to]?.querySelector<HTMLElement>(LINK)?.focus();
   };
+  const host: SheetHost = {
+    chosen: sheet?.key ?? null,
+    choose: (key, content) => setSheet({ key, ...content }),
+    update: (key, content) =>
+      setSheet((cur) =>
+        cur?.key === key && sheetSignature(cur) !== sheetSignature(content)
+          ? { key, ...content }
+          : cur,
+      ),
+    release: (key) => setSheet((cur) => (cur?.key === key ? null : cur)),
+  };
   return (
-    <ul
-      ref={listRef}
-      className="cb-card-grid"
-      data-part="card-grid"
-      aria-label={label}
-      onKeyDown={onKeyDown}
-    >
-      {entries.map((entry) => (
-        <SlotContext.Provider
-          // Keyed by the child's own key, so a card keeps its state (and the stop) when the list
-          // is filtered or reordered.
-          key={entry.key}
-          value={{
-            holder: entry.key === holder,
-            onFocusCard: () => {
-              if (entry.holdable) setStop(entry.key);
-            },
-            onLeaveWithFocus: () => {
-              lostFocus.current = true;
-            },
+    <SheetHostContext.Provider value={host}>
+      <ul
+        ref={listRef}
+        className="cb-card-grid"
+        data-part="card-grid"
+        aria-label={label}
+        onKeyDown={onKeyDown}
+      >
+        {entries.map((entry) => (
+          <SlotContext.Provider
+            // Keyed by the child's own key, so a card keeps its state (and the stop) when the list
+            // is filtered or reordered.
+            key={entry.key}
+            value={{
+              holder: entry.key === holder,
+              onFocusCard: () => {
+                if (entry.holdable) setStop(entry.key);
+              },
+              onLeaveWithFocus: () => {
+                lostFocus.current = true;
+              },
+            }}
+          >
+            <CardKey.Provider value={entry.key}>{entry.node}</CardKey.Provider>
+          </SlotContext.Provider>
+        ))}
+      </ul>
+      {form === "compact" || sheet !== null ? (
+        // One sheet for the grid, beside the list: mounted while a card is chosen, so leaving
+        // compact with the sheet up does not drop it.
+        <ActionSheet
+          open={sheet !== null}
+          onOpenChange={(o) => {
+            if (!o) setSheet(null);
           }}
-        >
-          <CardKey.Provider value={entry.key}>{entry.node}</CardKey.Provider>
-        </SlotContext.Provider>
-      ))}
-    </ul>
+          title={sheet?.title ?? t("overlay.actions")}
+          items={sheet?.items ?? []}
+        />
+      ) : null}
+    </SheetHostContext.Provider>
   );
 }
 
@@ -440,7 +490,9 @@ function LoadedCard({
     });
   }
   const form = useClassForm();
-  const [sheetOpen, setSheetOpen] = useState(false);
+  const host = useContext(SheetHostContext);
+  // Outside a grid the card keeps its own sheet; in a grid it uses the grid's one sheet.
+  const [ownSheetOpen, setOwnSheetOpen] = useState(false);
   // Compact (spec §6.34 "Phones", responsive system spec §2.3): a linked card draws no button and
   // offers its primary and menu in the sheet; a card without a link keeps its one button (the
   // primary, else the lone item) and offers the rest of its menu there. A running primary makes
@@ -455,7 +507,42 @@ function LoadedCard({
     ? listed.map((i) => (i === "separator" ? i : { ...i, disabled: true }))
     : listed;
   const pressable = form === "compact" && sheetItems.length > 0;
-  const press = useLongPress(() => setSheetOpen(true), { enabled: pressable });
+  // The grid's sheet runs the card's latest actions, whatever render chose it.
+  const latestItems = useRef(sheetItems);
+  latestItems.current = sheetItems;
+  const hosted = (): SheetContent => ({
+    title,
+    items: sheetItems.map((i, n) =>
+      i === "separator" || !i.onSelect
+        ? i
+        : {
+            ...i,
+            onSelect: () => {
+              const now = latestItems.current[n];
+              if (now !== undefined && now !== "separator") now.onSelect?.();
+            },
+          },
+    ),
+  });
+  const chosen = host !== null && cardKey !== null && host.chosen === cardKey;
+  const signature = sheetSignature({ title, items: sheetItems });
+  // biome-ignore lint/correctness/useExhaustiveDependencies: the signature stands for the content
+  useLayoutEffect(() => {
+    if (chosen && cardKey !== null) host?.update(cardKey, hosted());
+  }, [chosen, signature]);
+  const hostRef = useRef(host);
+  hostRef.current = host;
+  useLayoutEffect(
+    () => () => {
+      if (cardKey !== null) hostRef.current?.release(cardKey);
+    },
+    [cardKey],
+  );
+  const openSheet = () => {
+    if (host !== null && cardKey !== null) host.choose(cardKey, hosted());
+    else setOwnSheetOpen(true);
+  };
+  const press = useLongPress(openSheet, { enabled: pressable });
   /** The card's link, from an element inside the card. */
   const linkOf = (el: Element) => el.closest(CARD)?.querySelector<HTMLAnchorElement>(LINK) ?? null;
   // The description sits over the stretched link (so its tooltip shows) and passes a click on to
@@ -645,11 +732,11 @@ function LoadedCard({
           </span>
         )}
       </li>
-      {pressable || sheetOpen ? (
+      {host === null && (pressable || ownSheetOpen) ? (
         // Beside the row, not inside it: the sheet's own presses never reach the row's long press.
         <ActionSheet
-          open={sheetOpen}
-          onOpenChange={setSheetOpen}
+          open={ownSheetOpen}
+          onOpenChange={setOwnSheetOpen}
           title={title}
           items={sheetItems}
         />
