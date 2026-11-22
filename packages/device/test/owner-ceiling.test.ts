@@ -314,35 +314,35 @@ describe("owner report sequence sidecar", () => {
     expect({ ...edited, revision: first.revision, sequence: 0 }).toEqual(first);
   });
 
-  it("reports owner fields exactly in the protocol 4 report", async () => {
+  it("reports owner fields exactly in the protocol report", async () => {
     writePolicy(state, {
       ...FULL_POLICY,
       allowedDomains: ["*.example.com"],
-      ownerCeiling: {
-        outsideSandbox: false,
-        network: "allowlist",
-        projectReach: "machine",
-      },
+      ownerCeiling: { outsideSandbox: false, network: "allowlist", projectReach: "machine" },
     });
-    expect(report()).toMatchObject({
+    const machine = report();
+    expect(machine).toEqual({
       version: 3,
+      revision: machine.revision,
+      sequence: machine.sequence,
       outsideSandbox: false,
       network: "allowlist",
-      projectReach: "machine",
       allowedDomains: ["*.example.com"],
+      projectReach: "machine",
     });
+    expect(parseOwnerCeilingReport(machine)).toEqual(machine);
     writePolicy(state, {
       ...FULL_POLICY,
       allowedDomains: ["a.test"],
-      ownerCeiling: { outsideSandbox: true, network: "open", projectReach: "workspace" },
+      ownerCeiling: { outsideSandbox: true, network: "open", projectReach: "paths" },
+      projectPaths: ["/src/a", "/src/b"],
     });
-    expect(report()).toMatchObject({
-      version: 3,
-      outsideSandbox: true,
-      network: "open",
-      projectReach: "workspace",
-      allowedDomains: ["a.test"],
-    });
+    const paths = report();
+    expect(paths).toMatchObject({ outsideSandbox: true, network: "open", projectReach: "paths" });
+    expect(Object.keys(paths).sort()).toEqual(Object.keys(machine).sort());
+    expect(paths).not.toHaveProperty("projectPaths");
+    expect(paths).not.toHaveProperty("restrictedProjectReach");
+    expect(parseOwnerCeilingReport(paths)).toEqual(paths);
   });
 
   it("blocks on a corrupt sidecar instead of restarting at zero", async () => {

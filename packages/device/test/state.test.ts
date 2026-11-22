@@ -155,7 +155,12 @@ describe("state", () => {
       keepAwake: "connected",
       projectPaths: ["/src/a", "/src/b"],
     } as const;
-    writePolicy(dir, { ...policy, allowedDomains: ["a.test"], projectPaths: ["/src/a", "/src/b"] });
+    writePolicy(dir, {
+      ...policy,
+      allowCredentials: [],
+      allowedDomains: ["a.test"],
+      projectPaths: ["/src/a", "/src/b"],
+    });
     expect(readPolicy(dir)).toEqual(policy);
     expect(JSON.parse(readFileSync(join(dir, "policy.json"), "utf8")).version).toBe(4);
   });
