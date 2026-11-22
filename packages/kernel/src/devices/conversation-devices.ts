@@ -10,10 +10,10 @@ import type { DeviceModeLevel } from "../runtime/context/device-paths.js";
 import type { SandboxMode } from "../sandbox/modes.js";
 import { PermissionCeilingWrites } from "../sandbox/permission-ceiling-writes.js";
 import { PermissionFacts, type WorkingFacts } from "../sandbox/permission-facts.js";
-import { isInternalProvider, SandboxProviders } from "../sandbox/providers.js";
 import { homeOf } from "../sandbox/review/rules.js";
 import { deviceNotFound, sandboxUnavailable } from "../sandbox/sandbox.service.js";
 import { DeviceAccess } from "./access.js";
+import { DeviceProviderSelection } from "./device-provider-selection.js";
 import { DevicesService } from "./devices.service.js";
 import { type WorkingProject, workingRootOf } from "./working-root.js";
 
@@ -29,6 +29,27 @@ export const anonymousNoDevice = (): ApiError =>
     "Anonymous IM senders have no device, so the sandbox is not available",
     [{ reason: ANONYMOUS_NO_DEVICE }],
   );
+
+/** `details[0].reason` of the error a conversation with no device gets while providers are on. */
+export const NO_DEVICE = "no_device";
+
+/**
+ * No device to bind although device providers are on in the org (503 `sandbox.unavailable`): the
+ * person has no default device and the org has no default device provider to make one.
+ */
+export const noDeviceToBind = (): ApiError =>
+  new ApiError(
+    "sandbox.unavailable",
+    "This conversation has no device: its owner has no default device and the organization has no default device provider to make one",
+    [{ reason: NO_DEVICE }],
+  );
+
+/**
+ * Why a sandbox tool call cannot run ({@link ConversationDevices.unusableReason}): the bound
+ * device's provider is off (`provider-off`), no device to bind while providers are on
+ * (`no-device`), or no device provider on in the org (`none`).
+ */
+export type DeviceUnusableReason = "provider-off" | "no-device" | "none";
 
 /** How a new conversation picks its device. */
 export interface NewConversationDevice {
@@ -85,9 +106,11 @@ export class ConversationDevices {
   constructor(
     @Inject(KernelDb) private readonly db: KernelDb,
     @Inject(TransactionHost) readonly txHost: TransactionHost,
-    @Inject(SandboxProviders)
-    private readonly providers: Pick<SandboxProviders, "cloud"> &
-      Partial<Pick<SandboxProviders, "forName">>,
+    @Inject(DeviceProviderSelection)
+    private readonly selection: Pick<
+      DeviceProviderSelection,
+      "onInOrg" | "isOnInOrg" | "defaultFor"
+    >,
     @Inject(DeviceAccess) private readonly access: Pick<DeviceAccess, "usable">,
     @Inject(DevicesService)
     private readonly devices: Pick<DevicesService, "ensureDefault" | "modeLevel" | "projectReach">,
@@ -195,8 +218,8 @@ export class ConversationDevices {
    * The device a new conversation of `accountId` is bound to: the chosen one when it is
    * usable by the person (else `device.not_found` / `device.unavailable`, and nothing
    * is created); without a choice the IM default (IM only) or the person's default device.
-   * Null (unbound) for anonymous IM senders, and without a cloud sandbox provider when no usable
-   * IM default (a connected machine's device, say) applies.
+   * Null (unbound) for anonymous IM senders, and when no usable IM default applies and the person
+   * has no default device and none can be made (no default provider on in the org).
    */
   async forNew(
     orgId: string,
@@ -206,7 +229,6 @@ export class ConversationDevices {
     if (pick.deviceId !== undefined) {
       return (await this.access.usable(orgId, accountId, pick.deviceId)).id;
     }
-    if (pick.im !== true && this.providers.cloud() === undefined) return null;
     if (await this.isAnonymous(orgId, accountId)) return null;
     return this.defaultFor(orgId, accountId, pick.im === true);
   }
@@ -216,10 +238,9 @@ export class ConversationDevices {
    * enters, checked for its owner now. A conversation still unbound (created before
    * devices, or while no provider existed) is bound first, to the owner's IM default when it
    * is an IM thread, else to the owner's default device; a racing call binds it once.
-   * Throws `sandbox.unavailable` for a cloud device (or none to bind) without a cloud
-   * provider and for an anonymous IM conversation, and `device.not_found` /
-   * `device.unavailable` when the owner may not use it now. A conversation bound to a
-   * connected machine's device (`@local`) does not need a cloud provider.
+   * Throws `sandbox.unavailable` when there is no device to bind (`details[0].reason`
+   * {@link NO_DEVICE} while providers are on in the org) and for an anonymous IM conversation, and `device.not_found` / `device.unavailable` when the owner may not use it
+   * now ({@link DeviceAccess.usable}: the device's own provider must be on in the org).
    */
   async forTool(orgId: string, rootConversationId: string): Promise<string> {
     const conv = await this.db
@@ -234,64 +255,94 @@ export class ConversationDevices {
     if (deviceId === null) {
       const im = await this.isImThread(rootConversationId);
       const chosen = await this.defaultFor(orgId, conv.account_id, im);
-      if (chosen === null) throw sandboxUnavailable();
+      if (chosen === null) {
+        throw (await this.selection.onInOrg(orgId)).length > 0
+          ? noDeviceToBind()
+          : sandboxUnavailable();
+      }
       deviceId = await withTransactionFencePrelude(
         () => this.ceilings.lock({ orgId, deviceId: chosen, rootConversationId }, "root"),
         () => this.bind(orgId, rootConversationId, chosen),
       );
-    }
-    if (this.providers.cloud() === undefined && !(await this.isInternal(deviceId))) {
-      throw sandboxUnavailable();
     }
     return (await this.access.usable(orgId, conv.account_id, deviceId)).id;
   }
 
   /**
    * Whether a sandbox tool call of the tree rooted at `rootConversationId` has a provider to run
-   * on, for tool listings (ruling R8; no binding, no access check, never throws): a cloud
-   * provider is loaded, or the device the conversation is bound to (an unbound IM thread:
-   * its owner's IM default) runs on a registered kernel provider (`@local`). A forbidden or gone
-   * device still counts: the call then says why.
+   * on, for tool listings (ruling R8; no binding, no access check): {@link unusableReason} is
+   * null.
    */
-  async usableNow(orgId: string, rootConversationId: string): Promise<boolean> {
-    if (this.providers.cloud() !== undefined) return true;
+  async usableNow(orgId: string, rootConversationId?: string): Promise<boolean> {
+    return (await this.unusableReason(orgId, rootConversationId)) === null;
+  }
+
+  /**
+   * Why a sandbox tool call of the tree rooted at `rootConversationId` cannot run now, or null when
+   * it can (no binding, no access check): `provider-off` when the device the conversation is bound
+   * to (an unbound IM thread: its owner's IM default; any unbound one: its owner's default device)
+   * has its provider off in the org or not installed (its files are kept); `no-device` when there
+   * is no device and no default provider to make one while device providers are on in the org;
+   * `none` when no device provider is on in the org at all. A forbidden or gone device still counts as usable: the call
+   * then says why.
+   */
+  async unusableReason(
+    orgId: string,
+    rootConversationId?: string,
+  ): Promise<DeviceUnusableReason | null> {
+    if (rootConversationId === undefined) {
+      return (await this.selection.onInOrg(orgId)).length > 0 ? null : "none";
+    }
     const conv = await this.db
       .selectFrom("conversations")
       .select(["account_id", "device_id"])
       .where("id", "=", rootConversationId)
       .where("org_id", "=", orgId)
       .executeTakeFirst();
-    if (!conv) return false;
-    let deviceId = conv.device_id;
-    if (deviceId === null) {
-      if (!(await this.isImThread(rootConversationId))) return false;
+    if (!conv) return "none";
+    const onOrOff = async (deviceId: string) =>
+      (await this.providerOn(orgId, deviceId)) ? null : "provider-off";
+    if (conv.device_id !== null) return onOrOff(conv.device_id);
+    if (await this.isImThread(rootConversationId)) {
       const row = await this.db
         .selectFrom("device_defaults")
         .select("device_id")
         .where("org_id", "=", orgId)
         .where("account_id", "=", conv.account_id)
         .executeTakeFirst();
-      if (!row) return false;
-      deviceId = row.device_id;
+      if (row && (await this.providerOn(orgId, row.device_id))) return null;
     }
-    const env = await this.db
+    const own = await this.db
+      .selectFrom("devices")
+      .select("id")
+      .where("org_id", "=", orgId)
+      .where("owner_kind", "=", "personal")
+      .where("owner_account_id", "=", conv.account_id)
+      .where("is_default", "=", true)
+      .where("deleted_at", "is", null)
+      .executeTakeFirst();
+    if (own) return onOrOff(own.id);
+    if ((await this.selection.defaultFor(orgId)) !== undefined) return null;
+    return (await this.selection.onInOrg(orgId)).length > 0 ? "no-device" : "none";
+  }
+
+  /** The device of `orgId` has its provider on in the org now. */
+  private async providerOn(orgId: string, deviceId: string): Promise<boolean> {
+    const row = await this.db
       .selectFrom("devices")
       .select("provider")
       .where("id", "=", deviceId)
+      .where("org_id", "=", orgId)
       .executeTakeFirst();
-    const provider = env?.provider ?? null;
-    return (
-      provider !== null &&
-      isInternalProvider(provider) &&
-      this.providers.forName?.(provider) !== undefined
-    );
+    const provider = row?.provider ?? null;
+    return provider !== null && (await this.selection.isOnInOrg(orgId, provider));
   }
 
   /**
    * The person's IM default when `im` and it is still theirs, live, in this org and usable (the
    * table has no such guard), else their default device (created when missing); null when
-   * that is needed and there is no cloud provider to make or use it. The owner having left the org
-   * reads as `device.not_found`.
+   * that is needed and there is none and no default provider on in the org to make it. The owner
+   * having left the org reads as `device.not_found`.
    */
   private async defaultFor(orgId: string, accountId: string, im: boolean): Promise<string | null> {
     if (im) {
@@ -309,7 +360,6 @@ export class ConversationDevices {
         }
       }
     }
-    if (this.providers.cloud() === undefined) return null;
     try {
       return await this.devices.ensureDefault(orgId, accountId);
     } catch (e) {
@@ -342,17 +392,6 @@ export class ConversationDevices {
       .where("id", "=", conversationId)
       .executeTakeFirstOrThrow();
     return row.device_id ?? deviceId;
-  }
-
-  /** The device runs on a kernel-internal provider (`@local`). */
-  private async isInternal(deviceId: string): Promise<boolean> {
-    const row = await this.db
-      .selectFrom("devices")
-      .select("provider")
-      .where("id", "=", deviceId)
-      .executeTakeFirst();
-    const provider = row?.provider ?? null;
-    return provider !== null && isInternalProvider(provider);
   }
 
   /** The account is the org's anonymous IM guest (no person behind it). */

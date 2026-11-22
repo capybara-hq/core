@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import type { SandboxProvider } from "@capybara-hq/plugin-sdk";
+import type { DeviceProvider } from "@capybara-hq/plugin-sdk";
 import { startTestPostgres, startTestRedis, type TestContainer } from "@capybara-hq/testing";
 import { sql } from "kysely";
 import pg from "pg";
@@ -27,7 +27,7 @@ import {
   permissionConfigFingerprint,
 } from "../../src/sandbox/permission-config-publication.js";
 import { PermissionFacts } from "../../src/sandbox/permission-facts.js";
-import { SandboxProviders } from "../../src/sandbox/providers.js";
+import { DeviceProviders } from "../../src/sandbox/providers.js";
 import { seedCloudInstance } from "../helpers/installed-evidence.js";
 import { startKernel, type TestKernel } from "../helpers/runs.js";
 
@@ -197,7 +197,7 @@ function readers(cfg = config(), env: NodeJS.ProcessEnv = {}) {
   const facts = new PermissionFacts(
     db,
     service,
-    k.app.get(SandboxProviders),
+    k.app.get(DeviceProviders),
     k.app.get(DeviceAccess),
   );
   const publication = new PermissionConfigPublication(
@@ -270,7 +270,7 @@ async function consentFixture() {
       device_id: deviceId,
     })
     .execute();
-  k.app.get(SandboxProviders).register({
+  k.app.get(DeviceProviders).register({
     plugin: "@activation-test",
     version: "test",
     impl: {
@@ -283,7 +283,7 @@ async function consentFixture() {
       revokeOperation() {
         throw new Error("provider IO forbidden");
       },
-    } as unknown as SandboxProvider,
+    } as unknown as DeviceProvider,
   });
   // a provisioned instance (created under the open default) with its cloud evidence (B-15)
   await seedCloudInstance(k, {

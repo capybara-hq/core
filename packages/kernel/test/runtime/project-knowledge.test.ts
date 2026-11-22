@@ -35,7 +35,7 @@ import {
   removeFakeSandbox,
   setFakeSandboxDelays,
   setFakeSandboxFault,
-} from "../fixtures/plugins/sandbox-fake/index.js";
+} from "../fixtures/plugins/device-fake/index.js";
 import { onlyBuiltins } from "../helpers/disabled-tools.js";
 import { accountsFor } from "../helpers/identity.js";
 import { startClaimedRun } from "../helpers/managed-calls.js";
@@ -65,7 +65,7 @@ import {
  */
 
 const SANDBOX_FAKE = fileURLToPath(
-  new URL("../fixtures/plugins/sandbox-fake/index.ts", import.meta.url),
+  new URL("../fixtures/plugins/device-fake/index.ts", import.meta.url),
 );
 
 type Line = { level: string; msg: string; timedOut?: boolean };
@@ -102,7 +102,9 @@ beforeAll(async () => {
       {
         roles: ["api", "worker"],
         extensions: [MODEL_FAKE, SANDBOX_FAKE],
-        extensionConfig: { "sandbox-fake": { root, list: true } },
+        extensionConfig: {
+          "device-fake": { root, list: true, refusePaths: ["/workspace/refused"] },
+        },
       },
     ),
     {
@@ -362,6 +364,27 @@ describe("project knowledge at run start", () => {
     expect(roots).toHaveLength(1);
     expect(roots[0]?.payload.unavailable?.reason).toBe("outside_mode");
     expect(roots[0]?.payload.unavailable?.message).toMatch(/outside what the device can read/);
+  });
+
+  it("a provider refusing a project path answers 422 device.project_refused with its reason", async () => {
+    const url = `/api/v1/orgs/${orgId}/devices/${ownerDevice}/projects`;
+    // the refused directory, a path below it, and a spelling that resolves into it
+    for (const path of ["refused", "refused/sub", "app/../refused"]) {
+      const res = await owner({ method: "POST", url, payload: { path } });
+      expect(res.statusCode, `${path}: ${res.body}`).toBe(422);
+      expect(res.json()).toMatchObject({
+        error: {
+          code: "device.project_refused",
+          message: "Refused by the test provider",
+          details: [
+            { reason: { en: "Refused by the test provider", zh: "测试提供方拒绝了这个目录" } },
+          ],
+        },
+      });
+    }
+    // a sibling is not caught by the prefix match: it does not exist, the usual refusal
+    const other = await owner({ method: "POST", url, payload: { path: "refused-not" } });
+    expect(other.json()).toMatchObject({ error: { code: "device.project_path_missing" } });
   });
 
   it("records a project removed from the device as removed, and usable again once re-added", async () => {

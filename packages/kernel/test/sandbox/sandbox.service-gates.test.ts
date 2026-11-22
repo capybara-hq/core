@@ -5,9 +5,9 @@ import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import {
   DEFAULT_SANDBOX_ROOTS,
+  type DeviceProvider,
   type SandboxBrowseScope,
   type SandboxHandle,
-  type SandboxProvider,
 } from "@capybara-hq/plugin-sdk";
 import { startTestPostgres, startTestRedis, type TestContainer } from "@capybara-hq/testing";
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
@@ -21,13 +21,14 @@ import { SandboxLeases } from "../../src/sandbox/leases.js";
 import { SandboxOperationAuthority } from "../../src/sandbox/operation-authority.js";
 import { SandboxOperationIntents } from "../../src/sandbox/operation-intents.js";
 import {
+  type DeviceProviderEntry,
+  DeviceProviders,
   LOCAL_PROVIDER,
-  type SandboxProviderEntry,
-  SandboxProviders,
 } from "../../src/sandbox/providers.js";
 import type { OperationSessionInvocation } from "../../src/sandbox/sandbox.service.js";
 import { SandboxService } from "../../src/sandbox/sandbox.service.js";
-import { readFakeSandboxOps } from "../fixtures/plugins/sandbox-fake/index.js";
+import { KERNEL_VERSION } from "../../src/version.js";
+import { readFakeSandboxOps } from "../fixtures/plugins/device-fake/index.js";
 import { truncateTables } from "../helpers/db.js";
 import { startKernel, type TestKernel } from "../helpers/runs.js";
 import { seedDevice } from "../helpers/sandbox.js";
@@ -46,7 +47,7 @@ import { stagedHello } from "../local-devices/fake-machine-v3.js";
  */
 
 const SANDBOX_FAKE = fileURLToPath(
-  new URL("../fixtures/plugins/sandbox-fake/index.ts", import.meta.url),
+  new URL("../fixtures/plugins/device-fake/index.ts", import.meta.url),
 );
 
 let pg: TestContainer, redis: TestContainer, k: TestKernel, raw: ReturnType<typeof createDb>;
@@ -63,7 +64,7 @@ beforeAll(async () => {
       http: { port: 0 },
       roles: ["api"],
       extensions: [SANDBOX_FAKE],
-      extensionConfig: { "sandbox-fake": { root } },
+      extensionConfig: { "device-fake": { root } },
       extensionPermissions: { autoApprove: true },
     }),
     { env: {}, logger: createLogger("error", { write: () => {} }) },
@@ -77,17 +78,17 @@ afterAll(async () => {
   if (root) await rm(root, { recursive: true, force: true });
 });
 
-let original: SandboxProviderEntry | undefined;
+let original: DeviceProviderEntry | undefined;
 beforeEach(async () => {
   vi.restoreAllMocks();
-  original = k.app.get(SandboxProviders).forName(LOCAL_PROVIDER);
+  original = k.app.get(DeviceProviders).forDevice(LOCAL_PROVIDER);
   await truncateTables(
     raw,
     "capybara.accounts, capybara.orgs, capybara.devices, capybara.device_instances, capybara.outbox, capybara.device_generation_high_water, capybara.device_instance_bindings, capybara.device_permission_reports, capybara.device_retirement_members, capybara.device_retirement_obligations",
   );
 });
 afterEach(() => {
-  if (original) k.app.get(SandboxProviders).register(original);
+  if (original) k.app.get(DeviceProviders).register(original);
 });
 
 const db = () => kernelDb(raw);
@@ -229,7 +230,7 @@ const support = {
 };
 
 /** A connected machine's lifecycle as the staged provider sees it (the handle is the device). */
-function fakeLocal(events: string[]): SandboxProvider {
+function fakeLocal(events: string[]): DeviceProvider {
   const handle = (name: string): SandboxHandle => ({
     id: name.replace(/^cap-device-/, ""),
     roots: ROOTS,
@@ -278,7 +279,7 @@ function fakeLocal(events: string[]): SandboxProvider {
         scan: async () => [],
       };
     },
-  } as unknown as SandboxProvider;
+  } as unknown as DeviceProvider;
 }
 
 async function localDevice(opts: { binder?: boolean } = {}) {
@@ -311,8 +312,9 @@ async function localDevice(opts: { binder?: boolean } = {}) {
     })
     .execute();
   const events: string[] = [];
-  k.app.get(SandboxProviders).register({
+  k.app.get(DeviceProviders).register({
     plugin: LOCAL_PROVIDER,
+    version: KERNEL_VERSION,
     impl: fakeLocal(events),
     ...(opts.binder !== false && { binder: k.app.get(LocalInstanceBindings) }),
   });

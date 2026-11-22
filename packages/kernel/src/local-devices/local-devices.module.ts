@@ -1,12 +1,9 @@
 import { Inject, Module, type OnModuleInit } from "@nestjs/common";
 import { PermissionCallGrantsModule } from "../sandbox/permission-call-grants.module.js";
-import {
-  LOCAL_PROVIDER,
-  type SandboxProviderEntry,
-  SandboxProviders,
-} from "../sandbox/providers.js";
+import { type DeviceProviderEntry, DeviceProviders, LOCAL_PROVIDER } from "../sandbox/providers.js";
 import { SandboxProviderRegistryModule } from "../sandbox/providers.module.js";
 import { SandboxModule } from "../sandbox/sandbox.module.js";
+import { KERNEL_VERSION } from "../version.js";
 import { DevicePolicyService } from "./device-policy.service.js";
 import { LocalInstanceBindings } from "./instance-bindings.js";
 import { LocalDeviceProvider } from "./local-device-provider.js";
@@ -19,7 +16,7 @@ import { DeviceTargets } from "./targets.js";
 
 /**
  * Connected machines (environments spec §6, §13): the caller side of the device relay and the
- * kernel-internal `@local` sandbox provider, registered with {@link SandboxProviders} on init, and
+ * kernel-internal `@local` sandbox provider, registered with {@link DeviceProviders} on init, and
  * the machines and their credentials ({@link MachinesService}), changes to a device's network
  * policy ({@link DevicePolicyService}) and the run grants sent with each exec ({@link NetworkGrants}).
  * Imported on every role: any replica may run a sandbox operation on a local device
@@ -53,7 +50,7 @@ import { DeviceTargets } from "./targets.js";
 })
 export class LocalDevicesModule implements OnModuleInit {
   constructor(
-    @Inject(SandboxProviders) private readonly providers: SandboxProviders,
+    @Inject(DeviceProviders) private readonly providers: DeviceProviders,
     @Inject(LocalDeviceProvider) private readonly provider: LocalDeviceProvider,
     @Inject(LocalDeviceRelay) private readonly relay: LocalDeviceRelay,
     @Inject(LocalInstanceBindings) private readonly bindings: LocalInstanceBindings,
@@ -79,9 +76,10 @@ export function localProviderEntry(deps: {
   provider: LocalDeviceProvider;
   relay: LocalDeviceRelay;
   bindings: LocalInstanceBindings;
-}): SandboxProviderEntry {
+}): DeviceProviderEntry {
   return {
     plugin: LOCAL_PROVIDER,
+    version: KERNEL_VERSION,
     impl: deps.provider.staged({
       call: deps.relay.callV3.bind(deps.relay),
       permissionSupport: (deviceId) => deps.bindings.permissionSupport(deviceId),

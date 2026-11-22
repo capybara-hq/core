@@ -225,7 +225,8 @@
             "enum": [
               "channel-connection",
               "connector-template",
-              "extension-deployment"
+              "extension-deployment",
+              "device-connection"
             ]
           },
           "template": {

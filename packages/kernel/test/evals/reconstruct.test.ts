@@ -92,7 +92,7 @@ const HOOKS_PROBE = fileURLToPath(
   new URL("../fixtures/plugins/hooks-probe/index.ts", import.meta.url),
 );
 const SANDBOX_FAKE = fileURLToPath(
-  new URL("../fixtures/plugins/sandbox-fake/index.ts", import.meta.url),
+  new URL("../fixtures/plugins/device-fake/index.ts", import.meta.url),
 );
 
 /** 1×1 透明 PNG。 */
@@ -159,7 +159,7 @@ beforeAll(async () => {
             secretAccessKey: s3.secretKey,
             forcePathStyle: true,
           },
-          "sandbox-fake": { root: sandboxRoot },
+          "device-fake": { root: sandboxRoot },
         },
       },
     ),
@@ -192,7 +192,7 @@ afterAll(async () => {
 });
 
 /**
- * A new cloud device of the owner on sandbox-fake (which reports permission support), bound to
+ * A new cloud device of the owner on device-fake (which reports permission support), bound to
  * `conv`: not yet provisioned, so its first context is unprobed.
  */
 async function bindFreshCloudDevice(conv: string): Promise<string> {
@@ -205,7 +205,7 @@ async function bindFreshCloudDevice(conv: string): Promise<string> {
       owner_kind: "personal",
       owner_account_id: ownerId,
       source: "cloud",
-      provider: "sandbox-fake",
+      provider: "device-fake",
       name: `Fresh cloud ${deviceId.slice(0, 8)}`,
     })
     .execute();

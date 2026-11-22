@@ -1,4 +1,5 @@
 import {
+  type DeviceProvider,
   isSandboxPermissionUnsupportedError,
   isSandboxScopeDeniedError,
   parseSandboxExecutionRef,
@@ -6,7 +7,6 @@ import {
   type SandboxExecutionRef,
   SandboxOperationOutcomeUnknownError,
   SandboxPermissionUnsupportedError,
-  type SandboxProvider,
 } from "@capybara-hq/plugin-sdk";
 import { Inject, Injectable, Optional } from "@nestjs/common";
 import { MANAGED_STOP_GRACE_MS, ManagedInstanceMismatchError } from "../background/managed.js";
@@ -19,7 +19,7 @@ import { isDeviceRequestNotSent } from "../local-devices/relay.js";
 import type { KernelLogger } from "../log.js";
 import { checkManagedStart, type ManagedStartArgs } from "./held-operations.js";
 import { type OperationIntent, SandboxOperationIntents } from "./operation-intents.js";
-import { SandboxProviders } from "./providers.js";
+import { DeviceProviders } from "./providers.js";
 import { SandboxService } from "./sandbox.service.js";
 
 /**
@@ -34,7 +34,7 @@ export class SandboxOperationReconcileJob {
   constructor(
     @Inject(SandboxOperationIntents) private readonly intents: SandboxOperationIntents,
     @Inject(KernelDb) private readonly db: KernelDb,
-    @Inject(SandboxProviders) private readonly providers: SandboxProviders,
+    @Inject(DeviceProviders) private readonly providers: Pick<DeviceProviders, "forDevice">,
     @Inject(SandboxService) private readonly sandbox: Pick<SandboxService, "ifRunning">,
     @Inject(BackgroundTaskStore)
     private readonly tasks: Pick<BackgroundTaskStore, "byOperation" | "settleOwedCancel">,
@@ -103,12 +103,12 @@ export class SandboxOperationReconcileJob {
         .select("provider")
         .where("device_id", "=", claimed.device_id)
         .executeTakeFirst();
-      const entry = this.providers.forName(claimed.provider);
+      const entry = this.providers.forDevice(claimed.provider);
       if (
         !Number.isSafeInteger(generation) ||
         instance?.provider !== claimed.provider ||
         !entry ||
-        (entry.version ?? "internal-v2") !== claimed.provider_version
+        entry.version !== claimed.provider_version
       )
         throw new SandboxOperationOutcomeUnknownError(
           "The recorded provider or instance is not current; the start outcome remains unknown",
@@ -117,7 +117,7 @@ export class SandboxOperationReconcileJob {
         claimed.device_id,
         { createdAt: new Date(generation) },
         async (p, h, signal): Promise<{ ref: SandboxExecutionRef; instanceId: string }> => {
-          await checkManagedStart(p as unknown as SandboxProvider, h, scope, input, signal);
+          await checkManagedStart(p as unknown as DeviceProvider, h, scope, input, signal);
           const background = p.background;
           if (!background)
             throw new SandboxPermissionUnsupportedError("Managed background tasks are unavailable");
@@ -212,7 +212,7 @@ export class SandboxOperationReconcileJob {
         "The revoked operation's instance must be reconciled before cleanup is acknowledged",
       );
     }
-    const provider = this.providers.forName(row.provider)?.impl;
+    const provider = this.providers.forDevice(row.provider)?.impl;
     if (!provider?.revokeOperation)
       throw new SandboxOperationOutcomeUnknownError(
         "The operation's provider is unavailable; revocation remains owed",

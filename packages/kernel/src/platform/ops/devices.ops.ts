@@ -3,6 +3,7 @@ import { z } from "zod";
 import { DeviceProjectsService } from "../../devices/device-projects.service.js";
 import { DevicesService, type DeviceView } from "../../devices/devices.service.js";
 import {
+  DeviceCreateBody,
   DeviceNameBody,
   DeviceNetworkBody,
   DeviceParams,
@@ -18,21 +19,18 @@ import { precheckBy, viaAgent } from "./errors.js";
 import { named, orElse } from "./summary.js";
 
 const DeviceId = z.object({ deviceId: DeviceParams.shape.id }).strict();
-const Name = z.object({ name: DeviceNameBody.shape.name }).strict();
 
-/**
- * Model-facing names are English: the default is "Personal", a default demoted by a provider
- * switch "Personal (Docker sandbox)" (the web shows 「个人设备」 / 「个人设备（Docker 沙箱）」).
- */
-const labelOf = (e: Pick<DeviceView, "name" | "demotedFrom">): string => deviceLabel(e, "en");
+/** Model-facing names are English: the default is "Personal" (the web shows its localized label). */
+const labelOf = (e: Pick<DeviceView, "name">): string => deviceLabel(e, "en");
 
 /** A row's state: why it cannot be used now, else whether its instance runs. */
 function stateOf(e: DeviceView): { state: string; reason?: string; next?: string } {
   if (!e.available) {
     return {
       state: "unavailable",
-      reason: "Its sandbox provider is no longer the deployment's current one.",
-      next: "Ask an org admin; use another device meanwhile.",
+      reason:
+        "Its device provider is off in this org or not installed; its files are kept until it is back.",
+      next: "Ask an org admin to switch its provider back on; use another device meanwhile.",
     };
   }
   if (e.filesLost && e.source === "local") {
@@ -136,7 +134,7 @@ export class DevicesOperations implements OnModuleInit {
       defineOperation({
         id: "devices.list",
         description:
-          "List your own devices in this org: one compact row each (name, state, whether it is the default, source: cloud or local, provider, whether a local one is online and its machine, last use), plus the default and last used ids and whether new cloud devices can be made. The default device is shown as Personal; a former default left behind by a sandbox provider switch is shown as Personal (<provider>) and becomes the default again when that provider is back.",
+          "List your own devices in this org: one compact row each (name, state, whether it is the default, source: cloud or local, provider, whether a local one is online and its machine, last use), plus the default and last used ids, the device providers on in this org (a new device may name one) and the default provider (null: a new device must name one). The default device is shown as Personal. A device stays on the provider it was created on; while that provider is off it is unavailable.",
         input: z.object({}).strict(),
         example: {},
         authz: { orgAction: "agents.use" },
@@ -148,7 +146,8 @@ export class DevicesOperations implements OnModuleInit {
             items: l.items.map(row),
             defaultId: l.defaultId,
             lastUsedId: l.lastUsedId,
-            cloudAvailable: l.cloudAvailable,
+            providers: l.providers,
+            defaultProvider: l.defaultProvider,
           };
         },
       }),
@@ -181,8 +180,8 @@ export class DevicesOperations implements OnModuleInit {
       defineOperation({
         id: "devices.create",
         description:
-          "Create a personal cloud device with a name (1-64 characters, unique among yours, case-insensitive). It is ready at once; its instance and files are made on first use. It needs a sandbox provider and is limited per person.",
-        input: Name,
+          "Create a personal cloud device with a name (1-64 characters, unique among yours, case-insensitive) on a device provider: provider is one of the providers devices.list returns; omit it for the org's default provider. The device stays on that provider for life. It is ready at once; its instance and files are made on first use. Devices are limited per person.",
+        input: DeviceCreateBody,
         example: { name: "Data analysis" },
         authz: { orgAction: "agents.use" },
         mirrors: ["POST /api/v1/orgs/:orgId/devices"],
@@ -201,26 +200,34 @@ export class DevicesOperations implements OnModuleInit {
             next: "This conversation works in it: ask the person to wipe it on the web, or wipe a different one.",
           },
           {
-            code: "device.unavailable",
+            code: "device.provider_required",
             next: {
               superAdmin:
-                "No sandbox provider is current: set one up in the admin console under extensions, then call again.",
-              orgAdmin: "No sandbox provider is set up; ask the super admin.",
-              member: "No sandbox provider is set up in this deployment; ask an org admin.",
+                "Call again naming one of the providers in the message as provider, or set a default device provider in the admin console; with none on, install and switch one on under extensions.",
+              orgAdmin:
+                "Call again naming one of the providers in the message as provider, or choose the org's default device provider in the org settings.",
+              member:
+                "Call again naming one of the providers in the message as provider; with none listed, ask an org admin to switch one on.",
             },
+          },
+          {
+            code: "validation_failed",
+            next: "Name a provider devices.list returns under providers, or omit provider for the default one.",
           },
         ],
         precheck: (i, ctx) =>
-          precheckBy(() => this.devices.checkCreate(ctx.orgId, ctx.actorAccountId, i.name)),
+          precheckBy(() =>
+            this.devices.checkCreate(ctx.orgId, ctx.actorAccountId, i.name, i.provider),
+          ),
         summary: (i) => ({
-          zh: `新建个人云端设备「${named(i.name)}」`,
-          en: `Create personal cloud device "${named(i.name)}"`,
+          zh: `新建个人云端设备「${named(i.name)}」${i.provider === undefined ? "" : `（${i.provider}）`}`,
+          en: `Create personal cloud device "${named(i.name)}"${i.provider === undefined ? "" : ` on ${i.provider}`}`,
         }),
         run: async (input, ctx) => {
           const e = await this.devices.create(
             ctx.orgId,
             ctx.actorAccountId,
-            { name: input.name },
+            { name: input.name, ...(input.provider !== undefined && { provider: input.provider }) },
             undefined,
             viaAgent("devices.create", ctx),
           );
@@ -547,6 +554,10 @@ export class DevicesOperations implements OnModuleInit {
           {
             code: "device.project_path_unreadable",
             next: "Pass a directory the device can read (not a file).",
+          },
+          {
+            code: "device.project_refused",
+            next: "The device's provider refused this directory (its reason is in the message): pick another directory.",
           },
           {
             code: "device.projects_unsupported",

@@ -31,8 +31,8 @@ import { SUBAGENT_PREAMBLE } from "../../src/runtime/subagents/preamble.js";
 import { REVIEW_SYSTEM_PROMPT } from "../../src/sandbox/review/classifier.js";
 import { sentToIdleText } from "../../src/tools/builtins/send-message.js";
 import { loadFixtureAsStrings } from "../catalog/claude-fixtures.js";
+import { fakeWorkspaceDir } from "../fixtures/plugins/device-fake/index.js";
 import type { ScriptRule } from "../fixtures/plugins/model-script/index.js";
-import { fakeWorkspaceDir } from "../fixtures/plugins/sandbox-fake/index.js";
 import { agentTemplatesFor } from "../helpers/conversations.js";
 import { onlyBuiltins } from "../helpers/disabled-tools.js";
 import { accountsFor } from "../helpers/identity.js";
@@ -62,7 +62,7 @@ import { subagentFinishes } from "../helpers/subagents.js";
  * `subagent-driven-development` runs a two-task plan in Capybara. The superpowers fixture (7.0.1,
  * with the SDD, requesting-code-review and dispatching-parallel-agents skills) is imported from a
  * fake git marketplace and installed; `model-script` plays the controller and every sub-agent from
- * `sdd-script.json`; `sandbox-fake` runs the skill's real bash scripts and git in the shared
+ * `sdd-script.json`; `device-fake` runs the skill's real bash scripts and git in the shared
  * workspace. The controller loads the skill, runs `scripts/task-brief`, dispatches an implementer
  * (`fast`), runs `scripts/review-package`, dispatches a task reviewer that finds one issue, sends
  * the finished implementer the fix with `SendMessage` (it starts again with its earlier context),
@@ -83,7 +83,7 @@ import { subagentFinishes } from "../helpers/subagents.js";
 const fixture = (name: string) =>
   fileURLToPath(new URL(`../fixtures/plugins/${name}/index.ts`, import.meta.url));
 const MODEL_SCRIPT = fixture("model-script");
-const SANDBOX_FAKE = fixture("sandbox-fake");
+const SANDBOX_FAKE = fixture("device-fake");
 const OBJECT_STORE = fakeExtensionEntry("fake-object-store");
 
 const SCRIPT = { provider: "model-script", model: "script-1" };
@@ -144,7 +144,7 @@ beforeAll(async () => {
         runtime: { wakeOnBackgroundTask: false },
         extensionConfig: {
           "model-script": { rules: [REVIEW_RULE, ...SDD.rules] },
-          "sandbox-fake": { root: sandboxRoot },
+          "device-fake": { root: sandboxRoot },
           "fake-object-store": {
             endpoint: s3.endpoint,
             region: s3.region,

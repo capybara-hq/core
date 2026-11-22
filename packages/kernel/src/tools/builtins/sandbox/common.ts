@@ -27,6 +27,8 @@ import type { EventLog } from "../../../conversations/event-log.js";
 import {
   ANONYMOUS_NO_DEVICE,
   type ConversationDevices,
+  type DeviceUnusableReason,
+  NO_DEVICE,
   type WorkingFacts,
 } from "../../../devices/conversation-devices.js";
 import { canonicalRoot, workingRootOf } from "../../../devices/working-root.js";
@@ -80,16 +82,22 @@ export interface SandboxToolDeps {
    * `currentInstance` too: a background `Bash` launch records the instance it started in; and
    * `ifRunning`, which `TaskOutput` reads a task through.
    */
-  sandbox: Pick<SandboxService, "cloudAvailable" | "availableFor" | "withSandbox"> &
+  sandbox: Pick<SandboxService, "withSandbox"> &
     Partial<Pick<SandboxService, "pathLease" | "currentInstance" | "ifRunning" | "withOperations">>;
   /**
    * The device a call enters: the root conversation's, checked for its owner every call.
-   * `usableNow` (absent in test stubs: only the cloud provider counts) tells a listing whether a
-   * conversation's device can run without a cloud provider (ruling R8). `workingFacts` (absent
-   * in test stubs: free mode) gives what decides the working root, read as the review reads it.
+   * `usableNow` (absent in test stubs: the device's provider serves the org) tells a listing
+   * whether a conversation's device has its provider on in the org (ruling R8). `workingFacts`
+   * (absent in test stubs: free mode) gives what decides the working root, read as the review
+   * reads it.
    */
   devices: Pick<ConversationDevices, "forTool"> &
-    Partial<Pick<ConversationDevices, "usableNow" | "modeLevel" | "workingFacts" | "projectReach">>;
+    Partial<
+      Pick<
+        ConversationDevices,
+        "usableNow" | "unusableReason" | "modeLevel" | "workingFacts" | "projectReach"
+      >
+    >;
   /** Background `Bash` tasks; absent in test stubs, where `run_in_background` is refused. */
   background?: Pick<
     BackgroundTaskStore,
@@ -204,11 +212,17 @@ export const SANDBOX_FILES_RESET_NOTICE = sandboxFilesResetNotice(DEFAULT_SANDBO
 const BUSY_TEXT =
   "The device is busy: all its command slots are taken by commands of this or another conversation sharing it; wait for one to finish and retry.";
 const NO_SANDBOX_TEXT =
-  "No sandbox is configured in this deployment; ask an administrator to install a sandbox plugin, or do the task without the sandbox.";
+  "No device provider is on in this organization; ask an org admin to switch one on, or do the task without the sandbox.";
+/**
+ * A conversation with no device while device providers are on in the org: its owner has no default
+ * device and the org has no default device provider to make one.
+ */
+export const NO_DEVICE_TEXT =
+  "This conversation has no device: its owner has no default device and the organization has no default device provider to make one. Ask the user to create a device on the devices page and start a new conversation on it, or ask an org admin to choose a default device provider; or do the task without the sandbox.";
 /** The message the kernel reports for a sandbox tool call with no provider, minus its final period. */
 export const SANDBOX_UNAVAILABLE_REASON = NO_SANDBOX_TEXT.slice(0, -1);
 
-/** The error of a sandbox call in a deployment without a sandbox provider. */
+/** The error of a sandbox call with no device provider on in the org. */
 export function noSandboxError(): ToolError {
   return new ToolError(NO_SANDBOX_TEXT);
 }
@@ -221,8 +235,9 @@ const ENV_NOT_FOUND_TEXT =
   "This conversation's device was deleted or its owner can no longer use it; ask the user to start a new conversation on another device.";
 const ENV_FORBIDDEN_TEXT =
   "This conversation's owner may no longer use its device; ask the user to start a new conversation on a device they can use.";
-const ENV_UNAVAILABLE_TEXT =
-  "This conversation's device is kept by a sandbox provider that is not active in this deployment; ask the user to start a new conversation on another device, or an administrator to re-enable that provider.";
+/** A device whose provider does not serve its org now (`device.unavailable`): files kept. */
+export const ENV_UNAVAILABLE_TEXT =
+  "This conversation's device runs on a device provider that is off in this organization or not installed; its files are kept. Ask an org admin to switch the provider back on, or start a new conversation on another device.";
 const ENV_FILES_LOST_TEXT =
   "This device's files are gone. Ask the user to reset its files on the devices page, then retry.";
 /**
@@ -691,6 +706,7 @@ export function mapSandboxError(e: unknown, log: Pick<Logger, "warn"> | undefine
     if (e.code === "sandbox.unavailable") {
       const reason = (e.details?.[0] as { reason?: unknown } | undefined)?.reason;
       if (reason === ANONYMOUS_NO_DEVICE) return new ToolError(ANONYMOUS_TEXT);
+      if (reason === NO_DEVICE) return new ToolError(NO_DEVICE_TEXT);
       return new ToolError(NO_SANDBOX_TEXT);
     }
     const detail = e.details?.[0] as { reason?: unknown; source?: unknown } | undefined;
@@ -1048,23 +1064,71 @@ export async function withPathLease<T>(
 }
 
 /**
- * Whether a sandbox tool call of the conversation tree rooted at `conversationId` can run: a
- * cloud provider is loaded, or (ruling R8) the conversation's device runs on a registered
- * kernel provider (`@local`). Without a conversation only the cloud provider counts.
+ * Whether a sandbox tool call of the conversation tree rooted at `conversationId` can run
+ * (ruling R8): the conversation's device (an unbound one: the device it would bind to) has its
+ * provider on in the org. Without a conversation: some device provider is on in the org
+ * ({@link ConversationDevices.usableNow}).
  */
 export async function sandboxUsable(
-  deps: Pick<SandboxToolDeps, "sandbox" | "devices">,
+  deps: Pick<SandboxToolDeps, "devices">,
   orgId: string,
   conversationId: string | undefined,
 ): Promise<boolean> {
-  if (deps.sandbox.cloudAvailable) return true;
-  if (conversationId === undefined || !deps.devices.usableNow) return false;
-  return deps.devices.usableNow(orgId, conversationId);
+  return deps.devices.usableNow ? deps.devices.usableNow(orgId, conversationId) : true;
+}
+
+/** The model-facing text of each {@link DeviceUnusableReason}. */
+const UNUSABLE_TEXT: Record<DeviceUnusableReason, string> = {
+  "provider-off": ENV_UNAVAILABLE_TEXT,
+  "no-device": NO_DEVICE_TEXT,
+  none: NO_SANDBOX_TEXT,
+};
+
+/**
+ * Why a sandbox tool call of the tree rooted at `conversationId` cannot run, as model-facing text,
+ * or null when it can ({@link ConversationDevices.unusableReason}): the conversation's device has
+ * its provider off ({@link ENV_UNAVAILABLE_TEXT}), it has no device while providers are on
+ * ({@link NO_DEVICE_TEXT}), or no device provider is on in the org ({@link NO_SANDBOX_TEXT}). A
+ * stub with only `usableNow` reads a false answer as the last.
+ */
+export async function sandboxUnusableText(
+  deps: Pick<SandboxToolDeps, "devices">,
+  orgId: string,
+  conversationId: string | undefined,
+): Promise<string | null> {
+  const reason = await sandboxUnusableReason(deps, orgId, conversationId);
+  return reason === null ? null : UNUSABLE_TEXT[reason];
+}
+
+/**
+ * The tool error of a call whose conversation's device cannot run ({@link sandboxUnusableText}),
+ * or null when it can.
+ */
+export async function sandboxUnusableError(
+  deps: Pick<SandboxToolDeps, "devices">,
+  orgId: string,
+  conversationId: string | undefined,
+): Promise<ToolError | null> {
+  const reason = await sandboxUnusableReason(deps, orgId, conversationId);
+  if (reason === null) return null;
+  if (reason === "provider-off") return new ToolError(ENV_UNAVAILABLE_TEXT);
+  if (reason === "no-device") return new ToolError(NO_DEVICE_TEXT);
+  return noSandboxError();
+}
+
+/** {@link ConversationDevices.unusableReason}, read from a stub's `usableNow` when it has only that. */
+export async function sandboxUnusableReason(
+  deps: Pick<SandboxToolDeps, "devices">,
+  orgId: string,
+  conversationId: string | undefined,
+): Promise<DeviceUnusableReason | null> {
+  if (deps.devices.unusableReason) return deps.devices.unusableReason(orgId, conversationId);
+  return (await sandboxUsable(deps, orgId, conversationId)) ? null : "none";
 }
 
 /**
  * The reason the registry reports the sandbox tools unavailable with, or null when they can run
- * ({@link sandboxUsable}; the listing passes the root conversation of the run). An eval replay
+ * ({@link sandboxUnusableText}; the listing passes the root conversation of the run). An eval replay
  * lists them as available (`replay`: its calls are never executed). `memo` (one per listing)
  * makes every sandbox tool of a listing share one answer.
  */
@@ -1073,12 +1137,14 @@ export const unavailableWhenNoSandbox =
   async (ctx: ToolListingScope): Promise<string | null> => {
     if (ctx.replay === true) return null;
     const key = "sandboxUsable";
-    let usable = ctx.memo?.get(key) as Promise<boolean> | undefined;
-    if (usable === undefined) {
-      usable = sandboxUsable(deps, ctx.orgId, ctx.conversationId);
-      ctx.memo?.set(key, usable);
+    let text = ctx.memo?.get(key) as Promise<string | null> | undefined;
+    if (text === undefined) {
+      text = sandboxUnusableText(deps, ctx.orgId, ctx.conversationId);
+      ctx.memo?.set(key, text);
     }
-    return (await usable) ? null : SANDBOX_UNAVAILABLE_REASON;
+    const t = await text;
+    // the listing's reason has no final period
+    return t === null ? null : t.slice(0, -1);
   };
 
 /** 读出的字节是否像二进制（开头 8 KB 里有 NUL）。 */

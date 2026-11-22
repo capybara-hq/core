@@ -29,7 +29,7 @@ import {
   type SandboxToolDeps,
   sandboxBaseTimeoutMs,
   sandboxConversationOf,
-  sandboxUsable,
+  sandboxUnusableText,
   unavailableWhenNoSandbox,
   withNotices,
 } from "./common.js";
@@ -113,9 +113,12 @@ const pastEnd = (offset: number, total: number) =>
 /** Neither or both of `file_path` and `file_id` (spec §1.1). */
 export const READ_ONE_SOURCE_TEXT =
   "Pass exactly one of file_path (a path on the device) and file_id (an attachment or artifact id).";
-/** A `file_path` read without a usable device (spec §1.1; verbatim). */
-export const READ_NO_DEVICE_TEXT =
-  "This agent has no device; pass file_id to read an attachment or artifact.";
+/**
+ * A `file_path` read without a usable device: why the device cannot be used
+ * ({@link sandboxUnusableText}), then the `file_id` way in.
+ */
+export const readNoDeviceText = (unusable: string): string =>
+  `${unusable} To read an attachment or artifact of this conversation, pass file_id instead.`;
 /** A `file_id` that is no file of this conversation or its root. */
 export const unknownFileIdText = (id: string): string =>
   `file_id ${clip(id, 100)} is not an attachment or artifact of this conversation; pass the id of one.`;
@@ -253,9 +256,8 @@ export function sandboxReadTool(deps: SandboxToolDeps): BuiltinTool {
       if (input.file_id !== undefined) return readById(deps, ctx, input, input.file_id);
       const filePath = input.file_path as string;
       checkFilePathShape(filePath);
-      if (!(await sandboxUsable(deps, ctx.orgId, sandboxConversationOf(ctx)))) {
-        throw new ToolError(READ_NO_DEVICE_TEXT);
-      }
+      const unusable = await sandboxUnusableText(deps, ctx.orgId, sandboxConversationOf(ctx));
+      if (unusable !== null) throw new ToolError(readNoDeviceText(unusable));
       let path = "";
       const { value, notices } = await inToolSandbox(deps, ctx, async (s) => {
         const { h, p, signal } = s;

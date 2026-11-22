@@ -9,7 +9,7 @@ Agents run commands and produce files in a **device**: a sandbox with its own fi
 - **IM conversations** (Slack, Lark) use the person's IM default device: `/device` in a direct message to the bot lists the devices, `/device <name>` picks the one for the next new conversation (after `/new`). Without a choice it is their default device. Anonymous IM guests have no device, so sandbox tools are unavailable to them.
 - **Paths in a shared file system**: attachments are placed in the workspace's `attachments/<conversation>/` (the first 12 hex digits of the root conversation's id), and skill files in `skills/<name>@<digest>/`, so conversations and skill versions don't overwrite each other. A local device reports its three roots in its hello; every kernel tool builds paths from them.
 
-The API is `/api/v1/orgs/:orgId/devices` (list, create, rename, delete, reset files; `agents.use`, human users only) and `POST /api/v1/orgs/:orgId/conversations` takes a `deviceId`. A deployment has one sandbox extension (`sandbox@2`): Docker, E2B, or the kernel's own provider for local devices. Each device records its provider; after the super admin switches provider, the old provider's devices show as unavailable until it is back (their files are not migrated).
+The API is `/api/v1/orgs/:orgId/devices` (list, create, rename, delete, reset files; `agents.use`, human users only) and `POST /api/v1/orgs/:orgId/conversations` takes a `deviceId`. Device providers (`device-provider@1`, several side by side): Docker, E2B, or the kernel's own provider for local devices. Each device records its provider; after the super admin switches provider, the old provider's devices show as unavailable until it is back (their files are not migrated).
 
 A local device connects to `<http.publicUrl>/device/connect`, which a replica with the `gateway` role serves (the web app forwards the WebSocket upgrade there when roles are split, `CAPYBARA_WEB_GATEWAY_URL`). See [Connected devices](../deploy/README.md#connected-devices) for the route, the proxy and the certificate.
 
@@ -273,7 +273,7 @@ can read may flow out. For orgs that handle sensitive data, admins should set
 `ask` in org settings (write, execute and deliver need approval).
 Delivered files appear in the "Artifacts" tab on the right of the conversation page. For the
 lifetime and resource settings see `sandbox.*` and `devices.*` in `docs/config.md`; to write sandbox
-extensions, see [.agents/skills/writing-sandbox-providers](../../.agents/skills/writing-sandbox-providers/SKILL.md).
+extensions, see [.agents/skills/writing-device-providers](../../.agents/skills/writing-device-providers/SKILL.md).
 
 ## Docker
 

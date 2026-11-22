@@ -685,9 +685,10 @@ export async function runSandboxPermissionConformance(
     options.checks === undefined ? part(CHECK_PART[check]) : options.checks.includes(check);
   const at = (base: string, name: string) => posix.join(base, name);
   const secret = `sibling-secret-${randomUUID()}`;
+  // the project is the fixture's root; what a sandboxed operation reads is the provider's rule
   const scoped = (writeRoots: string[]): SandboxFileScope => ({
     kind: "scoped",
-    readRoots: [],
+    projectRoot: root,
     writeRoots,
   });
   const restricted = (

@@ -1,8 +1,8 @@
 import { Module } from "@nestjs/common";
-import { SandboxProviderRegistryModule } from "../sandbox/providers.module.js";
 import { DeviceAccess } from "./access.js";
+import { DeviceProviderSelectionModule } from "./device-provider-selection.module.js";
 @Module({
-  imports: [SandboxProviderRegistryModule],
+  imports: [DeviceProviderSelectionModule],
   providers: [DeviceAccess],
   exports: [DeviceAccess],
 })

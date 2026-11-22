@@ -37,7 +37,7 @@ import { AGENT, MODEL } from "../runtime/context/fixtures.js";
  */
 
 const SANDBOX_FAKE = fileURLToPath(
-  new URL("../fixtures/plugins/sandbox-fake/index.ts", import.meta.url),
+  new URL("../fixtures/plugins/device-fake/index.ts", import.meta.url),
 );
 
 /** Recorded `gh auth login --web` prompt (gh 2.63, GitHub.com, 2026-11-14), printed by the command. */
@@ -72,7 +72,7 @@ beforeAll(async () => {
       {
         roles: ["api", "worker", "gateway"],
         extensions: [MODEL_FAKE, SANDBOX_FAKE],
-        extensionConfig: { "sandbox-fake": { root } },
+        extensionConfig: { "device-fake": { root } },
       },
     ),
   );

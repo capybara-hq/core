@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import type { SandboxProvider } from "@capybara-hq/plugin-sdk";
+import type { DeviceProvider } from "@capybara-hq/plugin-sdk";
 import { startTestPostgres, startTestRedis, type TestContainer } from "@capybara-hq/testing";
 import pg from "pg";
 import { afterAll, beforeAll, beforeEach, expect, it, vi } from "vitest";
@@ -18,7 +18,7 @@ import {
   permissionConfigProjection,
 } from "../../src/sandbox/permission-config-publication.js";
 import { PermissionFacts } from "../../src/sandbox/permission-facts.js";
-import { SandboxProviders } from "../../src/sandbox/providers.js";
+import { DeviceProviders } from "../../src/sandbox/providers.js";
 import { seedCloudInstance } from "../helpers/installed-evidence.js";
 import { startKernel, type TestKernel } from "../helpers/runs.js";
 
@@ -209,7 +209,7 @@ async function consent() {
     })
     .execute();
   for (const replica of [a, b])
-    replica.app.get(SandboxProviders).register({
+    replica.app.get(DeviceProviders).register({
       plugin: "@activation-dual",
       version: "test",
       impl: {
@@ -222,7 +222,7 @@ async function consent() {
         revokeOperation() {
           throw new Error("no provider IO");
         },
-      } as unknown as SandboxProvider,
+      } as unknown as DeviceProvider,
     });
   // a provisioned instance (created under the open default) with its cloud evidence (B-15)
   await seedCloudInstance(a, {
@@ -426,9 +426,9 @@ it("mixed-hot-restart-payload-keeps-effective-network", async () => {
   // carries the frozen startup (H1,N1) and stays fenced until explicit activation.
   const matching = await startKernel(effective, { env: {}, logger: log });
   try {
-    const provider = a.app.get(SandboxProviders).forName("@activation-dual");
+    const provider = a.app.get(DeviceProviders).forDevice("@activation-dual");
     if (!provider) throw new Error("Missing test provider");
-    matching.app.get(SandboxProviders).register(provider);
+    matching.app.get(DeviceProviders).register(provider);
     expect((await f.admit(matching)).profile).toBe("full-access");
   } finally {
     await matching.close();

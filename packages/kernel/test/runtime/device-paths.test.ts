@@ -94,8 +94,6 @@ function memTools(initial: SandboxRoots | undefined, initialLevel?: DeviceModeLe
       ...(level !== undefined && { modeLevel: async () => level ?? null }),
     },
     sandbox: {
-      cloudAvailable: true,
-      availableFor: async () => true,
       withSandbox: async (_c, fn, sig) =>
         fn(
           { id: "env-1", ...(roots !== undefined && { roots }) },

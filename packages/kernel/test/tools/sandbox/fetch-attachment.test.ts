@@ -50,8 +50,7 @@ function rig(
     open?: (id: string) => Opened | null;
     /** A path whose write fails, e.g. a full disk. */
     failWrite?: string;
-    cloudAvailable?: boolean;
-    /** Whether the conversation's device can run without a cloud provider (ruling R8). */
+    /** Whether the conversation's device has its provider on in the org (ruling R8). */
     usableNow?: boolean;
   } = {},
 ) {
@@ -76,8 +75,6 @@ function rig(
       ...(o.usableNow !== undefined && { usableNow: async () => o.usableNow }),
     },
     sandbox: {
-      cloudAvailable: o.cloudAvailable ?? true,
-      availableFor: async () => true,
       withSandbox: async (
         _c: unknown,
         fn: (h: unknown, p: unknown, info: unknown, s: AbortSignal) => Promise<unknown>,
@@ -233,10 +230,10 @@ describe("FetchAttachment", () => {
   });
 
   it("is not offered without a usable sandbox", async () => {
-    const r = rig({ cloudAvailable: false, usableNow: false });
+    const r = rig({ usableNow: false });
     const reason = await r.tool.unavailable?.({ orgId: "o", conversationId: CONV });
-    expect(reason).toMatch(/^No sandbox is configured in this deployment/);
-    const usable = rig({ cloudAvailable: false, usableNow: true });
+    expect(reason).toMatch(/^No device provider is on in this organization/);
+    const usable = rig({ usableNow: true });
     expect(await usable.tool.unavailable?.({ orgId: "o", conversationId: CONV })).toBeNull();
   });
 

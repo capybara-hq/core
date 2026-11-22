@@ -273,7 +273,9 @@ export class OrgExtensionConfigs {
   /**
    * The state of every loaded extension the org sees, in load order (no row: `enabled` false,
    * `config` null), then the installed extensions not loaded right now (disabled on the deployment
-   * and the like) as `available: false`, sorted by name.
+   * and the like) as `available: false`, sorted by name. The rows and secrets are read in a
+   * `requires_new` snapshot on a second pool connection: never call it inside a transaction that
+   * holds a pool connection (unlike {@link get}, it does not join one).
    */
   async list(orgId: string): Promise<OrgExtensionView[]> {
     const installed = (await this.installs.list()).map((r) => ({
@@ -322,7 +324,12 @@ export class OrgExtensionConfigs {
     return views;
   }
 
-  /** `REPEATABLE READ` read-only: the config rows and the secrets come from one snapshot. */
+  /**
+   * `REPEATABLE READ` read-only: the config rows and the secrets come from one snapshot. It is
+   * `requires_new`: it always takes a second pool connection, so never call `list` inside a
+   * transaction that holds one (a locked transaction waiting on the pool can starve it; `get`
+   * joins the caller's transaction instead).
+   */
   @Transactional({
     propagation: "requires_new",
     isolationLevel: "repeatable read",
@@ -635,7 +642,10 @@ export class OrgExtensionConfigs {
    * An always-on extension (a required bootstrap plugin, or its plugin is builtin: `enabled.ts`) is
    * enabled without a row (its stored config, or `{}`, is validated).
    * 无记录 → undefined；插件无 `config.org` 或已停用（`enabled=false`，不校验、不读密钥）时 `config` 为 null。
-   * 配置行与密钥在同一个 `REPEATABLE READ` 只读事务里读取。
+   * Inside a caller's transaction it joins that transaction (its connection and isolation, and it
+   * sees the caller's uncommitted writes): the config row and its secrets are consistent there when
+   * the caller holds the org row, as every writer of org configs and their secrets locks it first.
+   * On its own it reads them in one `REPEATABLE READ` read-only snapshot.
    * A stored config that no longer matches the schema (e.g. after a plugin upgrade) throws
    * {@link OrgConfigInvalidError} (plugin, org ID and the failing paths, no values); other errors are
    * read errors.
@@ -646,15 +656,22 @@ export class OrgExtensionConfigs {
   ): Promise<{ enabled: boolean; config: unknown } | undefined> {
     const manifest = this.manifest(plugin);
     const result = await this.getSnapshot(orgId, plugin, manifest);
-    // 只读快照已结束；config 非 null 意味着插件有 org schema 且已解密
+    // the read is done (its own snapshot has ended, or it ran in the caller's transaction); a
+    // non-null config means the plugin has an org schema and the config was decrypted
     const schema = manifest.config?.org;
     if (schema && result?.config != null) this.reportSecrets({ schema, config: result.config });
     return result;
   }
 
-  /** `REPEATABLE READ` read-only: the config row and the secrets come from one snapshot. */
+  /**
+   * On its own, `REPEATABLE READ` read-only: the config row and the secrets come from one snapshot.
+   * Inside a caller's transaction it reads in that transaction instead (`required`; consistent when
+   * the caller holds the org row, see {@link get}): a caller holding a
+   * connection never waits for a second one from the pool (the device provider check runs inside
+   * locked transactions; concurrent runs would starve the pool).
+   */
   @Transactional({
-    propagation: "requires_new",
+    propagation: "required",
     isolationLevel: "repeatable read",
     accessMode: "read only",
   })

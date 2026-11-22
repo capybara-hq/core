@@ -312,6 +312,7 @@ export class OrgsOperations implements OnModuleInit {
           "clientExtensions",
           "devicesOutsideSandbox",
           "devicesNetwork",
+          "devicesDefaultProvider",
           "attribution",
           "compaction",
           "externalSharing",

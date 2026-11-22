@@ -55,8 +55,8 @@ on the web. Agents can file requests but never decide them.
 ## Devices
 
 Agents run commands and keep files on a **device**: one instance plus a file system that is kept
-until the device is deleted. A device is a cloud sandbox (from the deployment's sandbox provider)
-or a machine connected with `capybara-device`, and the conversations that use it share its files.
+until the device is deleted. A device comes from a device provider (a cloud sandbox such as Docker or E2B)
+or is a machine connected with `capybara-device`, and the conversations that use it share its files.
 A device runs in one of two modes: auto (the environment's own capability) or sandbox (an OS
 sandbox with an allowlist network). Skill files are read-only in the device's skills directory;
 each conversation is told the device's directories, mode and network. Sandbox limits and the

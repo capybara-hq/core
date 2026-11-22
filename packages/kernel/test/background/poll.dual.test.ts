@@ -32,7 +32,7 @@ import { seedConversation } from "../helpers/tool-fixtures.js";
  */
 
 const SANDBOX_FAKE = fileURLToPath(
-  new URL("../fixtures/plugins/sandbox-fake/index.ts", import.meta.url),
+  new URL("../fixtures/plugins/device-fake/index.ts", import.meta.url),
 );
 const OBSERVE_MS = 30_000;
 
@@ -53,7 +53,7 @@ describe("background task poll (dual replica)", () => {
       extensions: [MODEL_FAKE, SANDBOX_FAKE],
       pgUrl: pgc.url,
       redisUrl: rdc.url,
-      extensionConfig: { "sandbox-fake": { root } },
+      extensionConfig: { "device-fake": { root } },
       config: { sandbox: { background: { pollSeconds: 1 } } },
     });
     raw = createDb(h.dbUrl, 3);
@@ -64,7 +64,7 @@ describe("background task poll (dual replica)", () => {
         {
           roles: ["api"],
           extensions: [MODEL_FAKE, SANDBOX_FAKE],
-          extensionConfig: { "sandbox-fake": { root } },
+          extensionConfig: { "device-fake": { root } },
         },
       ),
     );

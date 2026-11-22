@@ -361,9 +361,8 @@ export class ChannelInbound {
   /**
    * Direct-message `/device` (environments spec §4.2 item 8): lists the person's usable devices,
    * or with a name sets the IM default their next new conversation is bound to. The name matches
-   * case-insensitively against each label (`deviceLabel`: a former default demoted by a
-   * provider switch answers to e.g. "Personal (Docker sandbox)"); the default device also
-   * answers to 个人设备 / Personal.
+   * case-insensitively against each label (`deviceLabel`); the default device also answers to
+   * its zh or en "Personal" label (`PERSONAL` in devices/label.ts).
    */
   private async deviceCommand(
     orgId: string,

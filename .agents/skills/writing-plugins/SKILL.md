@@ -115,7 +115,12 @@ live check rows. v2 replaced v1's steps and files directly (pre-0.1.0, no compat
   `channel@1`; at most one per plugin), `connector-template` (`template` required: one of the
   plugin's own `connectors/<template>.json`, at most one guide per template) or
   `extension-deployment` (platform deployment config of the plugin's own extension, e.g. a push
-  channel's credentials; at most one per plugin; the platform's super admin sees it). The title is
+  channel's credentials; at most one per plugin; the platform's super admin sees it) or
+  `device-connection` (a device provider's guide for connecting a machine: member audience only,
+  variables `publicUrl`, `orgId`, `orgName`, `pluginName`; the only place that allows a
+  `::shell-action connect-this-machine <label>` line, at most 4 per document, rendered as a
+  `shell-action` block; the zh document carries the same actions in the same sections; served to
+  members with `agents.use`). The title is
   the document's `#` heading; there is no title, steps or files field.
 - **The document** (§4.2): CommonMark + GFM with exactly one leading `# Title` (no further `#`),
   `{{name}}` variables, sections (a column-0 line `::: mode <mode>` or `::: audience <audience>`

@@ -398,10 +398,10 @@ export const KC_EXCEPTIONS: readonly KcException[] = [
   {
     rule: "kc-cache",
     path: "packages/kernel/src/sandbox/sandbox.service.ts",
-    within: "reconcileMarked",
+    within: "reconcileMarkedOf",
     reason:
-      "the reconcile sweep's keyset cursor (the last device id visited), read and moved once " +
-      "per tick of a once-per-tick cron; sweep progress, not a read-through cache",
+      "the reconcile sweep's keyset cursor per provider (the last device id visited), read and " +
+      "moved once per tick of a once-per-tick cron; sweep progress, not a read-through cache",
   },
   {
     rule: "kc-cache",

@@ -77,6 +77,9 @@ const DEFAULT_NETWORK = {
   sources: { default: "default", ceiling: "default" },
 };
 
+/** The platform's default device provider when neither the startup config nor the console sets it. */
+const DEFAULT_DEVICE_PROVIDER = { provider: null, source: "default" };
+
 /** The platform's attribution defaults when neither the startup config nor the admin console sets them. */
 const DEFAULT_ATTRIBUTION = {
   commit: "Co-Authored-By: Capybara <noreply@capybarahq.com>",
@@ -562,6 +565,7 @@ describe("超级管理员端点", () => {
       clientExtensions: { enabled: true, disabled: [] },
       devicesOutsideSandbox: DEFAULT_OUTSIDE,
       devicesNetwork: DEFAULT_NETWORK,
+      devicesDefaultProvider: DEFAULT_DEVICE_PROVIDER,
       attribution: DEFAULT_ATTRIBUTION,
       compaction: DEFAULT_COMPACTION,
       ...DEFAULT_SHARING,
@@ -586,6 +590,7 @@ describe("超级管理员端点", () => {
       clientExtensions: { enabled: true, disabled: [] },
       devicesOutsideSandbox: DEFAULT_OUTSIDE,
       devicesNetwork: DEFAULT_NETWORK,
+      devicesDefaultProvider: DEFAULT_DEVICE_PROVIDER,
       attribution: DEFAULT_ATTRIBUTION,
       compaction: DEFAULT_COMPACTION,
       ...DEFAULT_SHARING,
@@ -630,6 +635,7 @@ describe("超级管理员端点", () => {
       clientExtensions: { enabled: true, disabled: [] },
       devicesOutsideSandbox: DEFAULT_OUTSIDE,
       devicesNetwork: DEFAULT_NETWORK,
+      devicesDefaultProvider: DEFAULT_DEVICE_PROVIDER,
       attribution: DEFAULT_ATTRIBUTION,
       compaction: DEFAULT_COMPACTION,
       ...DEFAULT_SHARING,
@@ -662,6 +668,7 @@ describe("超级管理员端点", () => {
       clientExtensions: { enabled: true, disabled: [] },
       devicesOutsideSandbox: DEFAULT_OUTSIDE,
       devicesNetwork: DEFAULT_NETWORK,
+      devicesDefaultProvider: DEFAULT_DEVICE_PROVIDER,
       attribution: DEFAULT_ATTRIBUTION,
       compaction: DEFAULT_COMPACTION,
       ...DEFAULT_SHARING,
@@ -695,6 +702,7 @@ describe("超级管理员端点", () => {
       clientExtensions: { enabled: true, disabled: [] },
       devicesOutsideSandbox: DEFAULT_OUTSIDE,
       devicesNetwork: DEFAULT_NETWORK,
+      devicesDefaultProvider: DEFAULT_DEVICE_PROVIDER,
       attribution: DEFAULT_ATTRIBUTION,
       compaction: DEFAULT_COMPACTION,
       ...DEFAULT_SHARING,

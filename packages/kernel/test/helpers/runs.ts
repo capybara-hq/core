@@ -239,9 +239,9 @@ export async function createOrg(req: Req, name = "Acme"): Promise<string> {
 }
 
 /**
- * {@link createOrg}, then every model provider `k` loaded switched on there
- * ({@link enableModelProviders}): a model provider is on only in the orgs that enabled it, and a
- * test that saves or runs an agent needs its provider.
+ * {@link createOrg}, then every model provider and device provider `k` loaded switched on there
+ * ({@link enableModelProviders}, {@link enableDeviceProviders}): a provider is on only in the orgs
+ * that enabled it, and a test that saves or runs an agent needs its provider (and its device's).
  */
 export async function createOrgWithProviders(
   k: Pick<TestKernel, "app">,
@@ -250,7 +250,37 @@ export async function createOrgWithProviders(
 ): Promise<string> {
   const orgId = await createOrg(req, name);
   await enableModelProviders(k, orgId);
+  await enableDeviceProviders(k, orgId);
   return orgId;
+}
+
+/**
+ * Switches on in `orgId` every `device-provider` extension this kernel has loaded (a device can
+ * be used only while its provider is on in its org): for orgs a test creates without
+ * {@link createOrgWithProviders}. With exactly one loaded, it also becomes the org's default
+ * device provider (`deviceDefaultProvider`), so a person's default device can be made; with
+ * several the test chooses.
+ */
+export async function enableDeviceProviders(
+  k: Pick<TestKernel, "app">,
+  orgId: string,
+): Promise<void> {
+  const pool = k.app.get(KernelDb).pool;
+  const plugins = [
+    ...new Set(
+      k.app
+        .get(ExtensionHost)
+        .list("device-provider")
+        .map((e) => e.plugin),
+    ),
+  ];
+  await enableExtensions(pool, orgId, ...plugins);
+  if (plugins.length === 1) {
+    await sql`UPDATE capybara.orgs
+      SET settings = COALESCE(settings, '{}'::jsonb)
+        || jsonb_build_object('deviceDefaultProvider', ${plugins[0]}::text)
+      WHERE id = ${orgId}`.execute(pool);
+  }
 }
 
 /** Switches the named extensions on in `orgId` (a row of the org's own switch). */

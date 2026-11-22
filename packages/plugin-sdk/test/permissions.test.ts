@@ -9,7 +9,13 @@ import {
 
 describe("EXTENSION_POINTS", () => {
   it("marks brokered / orgScoped per ruling", () => {
-    for (const n of ["model-provider", "connector", "sandbox", "secret-store", "object-store"]) {
+    for (const n of [
+      "model-provider",
+      "connector",
+      "device-provider",
+      "secret-store",
+      "object-store",
+    ]) {
       expect(EXTENSION_POINTS[n]?.brokered).toBe(true);
     }
     for (const n of ["channel", "identity-source", "directory", "counter", "config-source"]) {
@@ -21,7 +27,7 @@ describe("EXTENSION_POINTS", () => {
     expect(EXTENSION_POINTS["object-store"]?.cardinality).toBe("single");
   });
   it("derives EXTENSION_POINT_CARDINALITY", () => {
-    expect(EXTENSION_POINT_CARDINALITY.sandbox).toBe("single");
+    expect(EXTENSION_POINT_CARDINALITY["device-provider"]).toBe("multi");
     expect(EXTENSION_POINT_CARDINALITY.channel).toBe("multi");
   });
 });

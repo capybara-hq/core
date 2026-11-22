@@ -31,7 +31,7 @@ const PERM_DEP = kernelFixture("perm-dep");
 const UI_A = kernelFixture("ui-a");
 const UI_A_VIEW = kernelFixture("ui-a-view");
 const UI_A_EMBED = kernelFixture("ui-a-embed");
-const SANDBOX_FAKE = kernelFixture("sandbox-fake");
+const SANDBOX_FAKE = kernelFixture("device-fake");
 /** An object store declared in the config list: reviewed like any config-declared extension. */
 const OBJECT_STORE = fakeExtensionEntry("fake-object-store");
 
@@ -202,14 +202,14 @@ describe("capybara extensions review / approve", () => {
     expect(approveView.stdout).toMatch(/no new permissions/i);
   }, 120_000);
 
-  it("provides sandbox@2 / object-store@1 are marked (sensitive); a config-declared object store awaits approval like any other", async () => {
+  it("provides device-provider@1 / object-store@1 are marked (sensitive); a config-declared object store awaits approval like any other", async () => {
     const plugins = [SANDBOX_FAKE, OBJECT_STORE];
     const review = await run(["extensions", "review"], "", plugins);
     expect(review.code, review.stderr).toBe(0);
     const lines = review.stdout.split("\n");
-    expect(lines).toContain("  + provides:sandbox@2  (sensitive)");
+    expect(lines).toContain("  + provides:device-provider@1  (sensitive)");
     expect(lines).toContain("  + provides:object-store@1  (sensitive)");
-    expect(review.stdout).toContain("sandbox-fake 0.1.0");
+    expect(review.stdout).toContain("device-fake 0.1.0");
     expect(review.stdout).toContain("fake-object-store 0.1.0");
     const approve = await run(["extensions", "approve", "fake-object-store", "--yes"], "", plugins);
     expect(approve.code, approve.stderr).toBe(0);

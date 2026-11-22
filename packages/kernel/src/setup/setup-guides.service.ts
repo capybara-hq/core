@@ -110,12 +110,16 @@ function fenceFor(text: string): string {
   return "`".repeat(Math.max(3, longest + 1));
 }
 
-/** The blocks of a rendered guide as one Markdown document (checks as `- [check <id>]` lines). */
+/**
+ * The blocks of a rendered guide as one Markdown document (checks as `- [check <id>]` lines, shell
+ * actions as `- [shell action <action>]` lines).
+ */
 export function guideMarkdown(title: string, blocks: readonly SetupGuideBlock[]): string {
   const parts = [`# ${title}`];
   for (const b of blocks) {
     if (b.kind === "markdown") parts.push(b.text.trimEnd());
     else if (b.kind === "check") parts.push(`- [check ${b.id}] ${b.label}`);
+    else if (b.kind === "shell-action") parts.push(`- [shell action ${b.action}] ${b.label}`);
     else {
       const fence = fenceFor(b.text);
       const code = `${fence}${b.language}\n${b.text.replace(/\n$/, "")}\n${fence}`;

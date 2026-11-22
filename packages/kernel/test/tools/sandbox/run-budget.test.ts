@@ -36,7 +36,7 @@ import {
  */
 
 const SANDBOX_FAKE = fileURLToPath(
-  new URL("../../fixtures/plugins/sandbox-fake/index.ts", import.meta.url),
+  new URL("../../fixtures/plugins/device-fake/index.ts", import.meta.url),
 );
 /** 运行时限：截止前留 {@link RUN_DEADLINE_MARGIN_MS}，命令最多约 4 秒。 */
 const MAX_RUN_SECONDS = RUN_DEADLINE_MARGIN_MS / 1000 + 4;
@@ -112,7 +112,7 @@ describe("运行时限与命令超时（纯函数）", () => {
     for (const outsideSandbox of [undefined, "allowed", "off"] as const) {
       // the whole config, whatever its devices.outsideSandbox says
       const whole = { ...refusing, devices: { ...refusing.devices, outsideSandbox } };
-      const [w, ...rest] = sandboxConfigWarnings(whole, "sandbox-docker");
+      const [w, ...rest] = sandboxConfigWarnings(whole, ["sandbox-docker"]);
       expect(rest).toEqual([]);
       expect(w?.level).toBe("warn");
       expect(w?.message).toContain('extensionConfig."sandbox-docker".refuseOpenNetwork');
@@ -126,7 +126,7 @@ describe("运行时限与命令超时（纯函数）", () => {
           ...refusing,
           sandbox: { ...refusing.sandbox, limits: { ...refusing.sandbox.limits, egress: "none" } },
         },
-        "sandbox-docker",
+        ["sandbox-docker"],
       ),
     ).toEqual([]);
     // the provider does not refuse, or no provider
@@ -134,7 +134,7 @@ describe("运行时限与命令超时（纯函数）", () => {
       expect(
         sandboxConfigWarnings(
           { ...long, extensionConfig: { "sandbox-docker": { refuseOpenNetwork } } },
-          "sandbox-docker",
+          ["sandbox-docker"],
         ),
       ).toEqual([]);
     }
@@ -142,10 +142,26 @@ describe("运行时限与命令超时（纯函数）", () => {
     expect(
       sandboxConfigWarnings(
         { ...long, extensionConfig: { "sandbox-docker": { openEgress: "off" } } },
-        "sandbox-docker",
+        ["sandbox-docker"],
       ),
     ).toEqual([]);
     expect(sandboxConfigWarnings(refusing)).toEqual([]);
+    // one line per loaded provider that refuses, none for one that does not
+    const two = sandboxConfigWarnings(
+      {
+        ...long,
+        extensionConfig: {
+          "device-a": { refuseOpenNetwork: true },
+          "device-b": {},
+          "device-c": { refuseOpenNetwork: true },
+        },
+      },
+      ["device-a", "device-b", "device-c"],
+    );
+    expect(two.map((w) => w.message.slice(0, 30))).toEqual([
+      'extensionConfig."device-a".ref',
+      'extensionConfig."device-c".ref',
+    ]);
   });
 });
 
@@ -168,7 +184,7 @@ beforeAll(async () => {
       {
         roles: ["api", "worker"],
         extensions: [MODEL_FAKE, SANDBOX_FAKE],
-        extensionConfig: { "sandbox-fake": { root } },
+        extensionConfig: { "device-fake": { root } },
         runtime: { maxRunSeconds: MAX_RUN_SECONDS },
       },
     ),

@@ -20,7 +20,7 @@ import type { KernelLogger } from "../log.js";
  * protocol that lets several holders (every conversation bound to the device, and their
  * sub-agents) use one device's running instance concurrently (shared leases: commands, file
  * reads and writes) while lifecycle changes (create, resume, rebuild, suspend, destroy, reset) stay
- * alone (exclusive leases). Every `sandbox@2` provider runs commands concurrently and kills by tag,
+ * alone (exclusive leases). Every `device-provider@1` provider runs commands concurrently and kills by tag,
  * so there is no single-holder mode. Keys, env = the device id:
  *
  * - `capk:sandbox:<env>`: the lock key: an exclusive holder's token, or `shared` while shared

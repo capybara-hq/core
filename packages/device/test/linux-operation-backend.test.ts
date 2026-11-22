@@ -61,7 +61,7 @@ describe.skipIf(unavailable !== null)("Linux host operation backend", () => {
   const restricted = (root: string) =>
     scopeFor(backend.deviceId, {
       profile: "approve-for-me",
-      filesystem: { kind: "scoped", readRoots: [], writeRoots: [root] },
+      filesystem: { kind: "scoped", projectRoot: root, writeRoots: [root] },
       network: { kind: "none" },
     });
   const full = () =>
@@ -399,7 +399,7 @@ describe.skipIf(unavailable !== null)("Linux host operation backend", () => {
     const scope = (writeRoots: string[]) =>
       scopeFor(denying.deviceId, {
         profile: "approve-for-me",
-        filesystem: { kind: "scoped", readRoots: [], writeRoots },
+        filesystem: { kind: "scoped", projectRoot: writeRoots[0] ?? null, writeRoots },
         network: { kind: "none" },
       });
     const signal = new AbortController().signal;
@@ -444,7 +444,7 @@ describe.skipIf(unavailable !== null)("Linux host operation backend", () => {
     const scope = () =>
       scopeFor(backend.deviceId, {
         profile: "approve-for-me",
-        filesystem: { kind: "scoped", readRoots: [agents], writeRoots: [] },
+        filesystem: { kind: "scoped", projectRoot: agents, writeRoots: [] },
         network: { kind: "none" },
       });
     const signal = new AbortController().signal;
@@ -473,7 +473,7 @@ describe.skipIf(unavailable !== null)("Linux host operation backend", () => {
     const run = async (command: string) => {
       const scope = scopeFor(withHome.deviceId, {
         profile: "approve-for-me",
-        filesystem: { kind: "scoped", readRoots: [], writeRoots: [root] },
+        filesystem: { kind: "scoped", projectRoot: root, writeRoots: [root] },
         network: { kind: "none" },
       });
       return withHome.operation(scope, authorityFor(scope.operationId)).exec({
@@ -544,7 +544,7 @@ print(get(80), ask(("CONNECT NAME:18080 HTTP/1.1" + CRLF + auth + CRLF + CRLF).e
     const ask = async (target: HostBackend) => {
       const scope = scopeFor(target.deviceId, {
         profile: "approve-for-me",
-        filesystem: { kind: "scoped", readRoots: [], writeRoots: [root] },
+        filesystem: { kind: "scoped", projectRoot: root, writeRoots: [root] },
         network: { kind: "allowlist", hosts: [NAMES.granted] },
       });
       return target.operation(scope, authorityFor(scope.operationId)).exec({
@@ -610,7 +610,7 @@ print(get(80), ask(("CONNECT NAME:18080 HTTP/1.1" + CRLF + auth + CRLF + CRLF).e
     const root = project("off");
     const r = scopeFor(disabled.deviceId, {
       profile: "approve-for-me",
-      filesystem: { kind: "scoped", readRoots: [], writeRoots: [root] },
+      filesystem: { kind: "scoped", projectRoot: root, writeRoots: [root] },
       network: { kind: "none" },
     });
     await expect(
@@ -869,7 +869,7 @@ describe.skipIf(unavailable !== null)("Linux host operation backend: open networ
   ) => {
     const scope = scopeFor(backend.deviceId, {
       profile: "approve-for-me",
-      filesystem: { kind: "scoped", readRoots: [], writeRoots: [root] },
+      filesystem: { kind: "scoped", projectRoot: root, writeRoots: [root] },
       network,
     });
     return backend.operation(scope, openAuthorityFor(scope.operationId)).exec({
@@ -894,7 +894,7 @@ describe.skipIf(unavailable !== null)("Linux host operation backend: open networ
           }
         : {
             profile: "approve-for-me",
-            filesystem: { kind: "scoped", readRoots: [], writeRoots: [root] },
+            filesystem: { kind: "scoped", projectRoot: root, writeRoots: [root] },
             network: { kind: "none" },
           },
     );
@@ -1249,7 +1249,7 @@ print(json.dumps(out))
     ].join("; ");
     const scope = scopeFor(backend.deviceId, {
       profile: "approve-for-me",
-      filesystem: { kind: "scoped", readRoots: [], writeRoots: [root, "/var/spool"] },
+      filesystem: { kind: "scoped", projectRoot: root, writeRoots: [root, "/var/spool"] },
       network: { kind: "none" },
     });
     const result = await backend.operation(scope, openAuthorityFor(scope.operationId)).exec({
@@ -1503,7 +1503,7 @@ print(seen[0])
     const root = project("fault");
     const scope = scopeFor(failing.deviceId, {
       profile: "approve-for-me",
-      filesystem: { kind: "scoped", readRoots: [], writeRoots: [root] },
+      filesystem: { kind: "scoped", projectRoot: root, writeRoots: [root] },
       network: { kind: "none" },
     });
     await expect(
@@ -1546,7 +1546,7 @@ print(seen[0])
     const run = (root: string, command: string) => {
       const scope = scopeFor(pausing.deviceId, {
         profile: "approve-for-me",
-        filesystem: { kind: "scoped", readRoots: [], writeRoots: [root] },
+        filesystem: { kind: "scoped", projectRoot: root, writeRoots: [root] },
         network: { kind: "none" },
       });
       return pausing.operation(scope, openAuthorityFor(scope.operationId)).exec({
@@ -1561,7 +1561,7 @@ print(seen[0])
     const nativeWrite = (root: string, path: string) => {
       const scope = scopeFor(pausing.deviceId, {
         profile: "approve-for-me",
-        filesystem: { kind: "scoped", readRoots: [], writeRoots: [root] },
+        filesystem: { kind: "scoped", projectRoot: root, writeRoots: [root] },
         network: { kind: "none" },
       });
       return pausing
@@ -1692,7 +1692,7 @@ print(json.dumps(result))
     // a grant that would make it readable is refused before anything runs
     const scope = scopeFor(backend.deviceId, {
       profile: "approve-for-me",
-      filesystem: { kind: "scoped", readRoots: ["/home/sandbox/state"], writeRoots: [root] },
+      filesystem: { kind: "scoped", projectRoot: "/home/sandbox/state", writeRoots: [root] },
       network: { kind: "none" },
     });
     await expect(

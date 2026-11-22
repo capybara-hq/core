@@ -40,10 +40,11 @@ const info = (
 
 /** The registered extension points. */
 export const EXTENSION_POINTS: Record<string, ExtensionPointInfo> = {
-  sandbox: info(
-    [2],
-    "Runs a device's instance and keeps its files for agents' commands (Docker, E2B).",
-    "single",
+  "device-provider": info(
+    [1],
+    "Provides devices (an instance plus kept files) agents run commands in: containers, microVMs, connected machines.",
+    "multi",
+    true,
     true,
   ),
   "config-source": info(

@@ -113,7 +113,7 @@ async function fixture() {
   });
   const provider = new LocalDeviceProvider(
     relay,
-    { orgOf: forbidden, machineRoots: forbidden },
+    { orgOf: forbidden, machineRoots: forbidden, machineHome: forbidden },
     { devicePolicy: forbidden, deviceLimits: forbidden, hostGrantCeiling: forbidden },
     config,
   );
@@ -146,7 +146,7 @@ async function fixture() {
   let answer: (r: Received) => Promise<unknown> | unknown = () => ({ ok: true, result: null });
   const hello: DeviceHello = {
     type: "hello",
-    protocol: 4,
+    protocol: 5,
     programVersion: "fixture",
     os: "darwin",
     arch: "arm64",
@@ -223,7 +223,7 @@ it("B-25: records a staged hello and policy frame through the v3 writers with th
     string,
   ];
   expect(machineId).toBe("machine");
-  expect(hello).toMatchObject({ protocol: 4, ownerCeiling: OWNER });
+  expect(hello).toMatchObject({ protocol: 5, ownerCeiling: OWNER });
   expect(helloConnection).toBe(connectionId);
   // a policy frame after the hello: the authenticated owner report with the same connection
   const changed = { ...OWNER, sequence: 2, revision: "r2", outsideSandbox: false };

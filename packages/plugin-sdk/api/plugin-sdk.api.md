@@ -953,7 +953,20 @@ export const DEVICE_DEFAULT_STATE_PATH = "~/.config/capybara-device";
 export const DEVICE_DENIED_SECRET_PATHS: readonly string[];
 
 // @public
-export const DEVICE_PROTOCOL_VERSION = 4;
+export const DEVICE_PROTOCOL_VERSION = 5;
+
+// @public
+export const DEVICE_PROVIDER_EXTENSION_POINT = "device-provider@1";
+
+// @public
+export const DEVICE_REPORT_LIMITS: Readonly<{
+    revisionChars: 128;
+    descriptionChars: 300;
+    limits: 8;
+    limitLabelChars: 60;
+    limitValueChars: 60;
+    homeChars: 4096;
+}>;
 
 // @public
 export const DEVICE_SCAN_SKIPPED_BASE_DIRS: readonly string[];
@@ -1037,7 +1050,7 @@ export interface DeviceHello extends LegacyDeviceHello {
     instanceGeneration: string | null;
     ownerCeiling: DeviceOwnerCeiling;
     permissionSupport: SandboxPermissionSupport;
-    protocol: 4;
+    protocol: typeof DEVICE_PROTOCOL_VERSION;
     runtimeIdentity?: DeviceRuntimeIdentity;
     transport: {
         maxFrameBytes: number;
@@ -1168,6 +1181,80 @@ export class DeviceProtocolError extends Error {
 }
 
 // @public
+export interface DeviceProvider {
+    background?: SandboxBackground;
+    browse?(h: SandboxHandle, scope: SandboxBrowseScope, signal: AbortSignal): Promise<SandboxBrowse>;
+    readonly concurrentExec: true;
+    create(args: {
+        name: string;
+        image?: string;
+        limits: SandboxLimits;
+        fileSystem: FileSystemHandle_2;
+        signal: AbortSignal;
+    }): Promise<SandboxHandle>;
+    createFileSystem(args: {
+        name: string;
+        limits: SandboxLimits;
+        signal: AbortSignal;
+    }): Promise<FileSystemHandle_2>;
+    destroy(h: SandboxHandle, signal: AbortSignal): Promise<void>;
+    destroyByName(name: string, signal: AbortSignal): Promise<void>;
+    destroyFileSystem(fs: FileSystemHandle_2, signal: AbortSignal): Promise<void>;
+    destroyFileSystemByName(name: string, signal: AbortSignal): Promise<void>;
+    exec(h: SandboxHandle, args: {
+        command: string;
+        cwd?: string;
+        env?: Record<string, string>;
+        timeoutMs: number;
+        maxOutputBytes: number;
+        signal: AbortSignal;
+        tag: string;
+        actor: SandboxActor;
+    }): Promise<ExecResult>;
+    killAll(h: SandboxHandle, signal: AbortSignal): Promise<void>;
+    killTagged(h: SandboxHandle, tags: string[], signal: AbortSignal): Promise<void>;
+    readonly limitsApplyAt?: "instance" | "fileSystem";
+    list?(h: SandboxHandle, path: string, opts: {
+        limit: number;
+        signal: AbortSignal;
+    }): Promise<{
+        entries: {
+            name: string;
+            isDir: boolean;
+        }[];
+        truncated: boolean;
+    } | null>;
+    readonly networkAllowlist: true;
+    operation?(h: SandboxHandle, scope: SandboxOperationScope, signal: AbortSignal): Promise<SandboxOperation>;
+    permissionSupport?(h: SandboxHandle, signal: AbortSignal): Promise<SandboxPermissionSupport>;
+    prepare?(h: SandboxHandle, scope: SandboxPreparationScope, signal: AbortSignal): Promise<SandboxPreparation>;
+    readFile(h: SandboxHandle, path: string, opts: {
+        maxBytes: number;
+        signal: AbortSignal;
+    }): Promise<{
+        data: Uint8Array;
+        truncated: boolean;
+    } | null>;
+    report(device: DeviceRef, signal: AbortSignal): Promise<DeviceReport>;
+    resume(h: SandboxHandle, signal: AbortSignal): Promise<"resumed" | "gone">;
+    revokeOperation?(h: SandboxHandle, ref: SandboxOperationRef, signal: AbortSignal): Promise<void>;
+    scan?(h: SandboxHandle, base: string, opts: {
+        signal: AbortSignal;
+    }): Promise<{
+        path: string;
+        suggestedName: string;
+    }[]>;
+    readonly sessionIsolation?: boolean;
+    stat(h: SandboxHandle, path: string, signal: AbortSignal): Promise<{
+        size: number;
+        isDir: boolean;
+    } | null>;
+    suspend(h: SandboxHandle, signal: AbortSignal): Promise<void>;
+    update?(h: SandboxHandle, limits: SandboxLimits, signal: AbortSignal): Promise<"updated" | "recreate">;
+    writeFile(h: SandboxHandle, path: string, data: Uint8Array, signal: AbortSignal): Promise<void>;
+}
+
+// @public
 export interface DeviceReadFileArgs {
     maxBytes: number;
     path: string;
@@ -1178,6 +1265,28 @@ export type DeviceReadFileResult = {
     dataB64: string;
     truncated: boolean;
 } | null;
+
+// @public
+export interface DeviceRef {
+    deviceId: string;
+    handle: SandboxHandle | null;
+    orgId: string;
+}
+
+// @public
+export interface DeviceReport {
+    description: DeviceText;
+    home: string | null;
+    limits: DeviceReportLimit[];
+    reset: boolean;
+    revision: string;
+}
+
+// @public
+export interface DeviceReportLimit {
+    label: DeviceText;
+    value: string;
+}
 
 // @public
 export type DeviceRes = {
@@ -1238,6 +1347,12 @@ export type DeviceStatResult = {
 // @public
 export interface DeviceStopArgs {
     reason: "revoked" | "deleted";
+}
+
+// @public
+export interface DeviceText {
+    en: string;
+    zh?: string;
 }
 
 // @public
@@ -2204,6 +2319,9 @@ export function isPermissionProfile(value: unknown): value is PermissionProfile;
 export function isPolicyOpId(v: unknown): v is string;
 
 // @public
+export function isProjectPathRefusedError(e: unknown): e is ProjectPathRefusedError;
+
+// @public
 export function isPublicHostname(host: string): boolean;
 
 // @public
@@ -2303,7 +2421,7 @@ export interface Lease {
 }
 
 // @public
-export const LEGACY_DEVICE_PROTOCOL_VERSION = 3;
+export const LEGACY_DEVICE_PROTOCOL_VERSION = 4;
 
 // @public
 export type LegacyDeviceFrame = LegacyDeviceHello | DeviceRes | LegacyDevicePolicyChanged | KernelReq | KernelCancel;
@@ -2985,11 +3103,17 @@ export function parseConnectorTemplateFile(json: unknown): ConnectorTemplateFile
 export function parseDeviceFrame(raw: string, from: "device" | "kernel", maxFrameBytes?: number): DeviceFrame;
 
 // @public
+export function parseDeviceReport(value: unknown): DeviceReport;
+
+// @public
 export interface ParsedSetupGuide {
     checks: SetupGuideCheckLine[];
     codeBlocks: SetupGuideCodeBlock[];
     issues: SetupGuideParseIssue[];
     sections: SetupGuideSection[];
+    // Warning: (ae-forgotten-export) The symbol "SetupGuideShellActionLine" needs to be exported by the entry point index.d.ts
+    //
+    shellActions: SetupGuideShellActionLine[];
     title: string | null;
 }
 
@@ -3290,6 +3414,15 @@ export interface ProfilesCapabilityV1 {
 }
 
 // @public
+export class ProjectPathRefusedError extends Error {
+    constructor(reason: DeviceText, opts?: {
+        cause?: unknown;
+    });
+    readonly projectPathRefused: true;
+    readonly reason: DeviceText;
+}
+
+// @public
 export interface PromptInfo {
     arguments: {
         name: string;
@@ -3556,9 +3689,6 @@ export interface RunningOperationView {
 }
 
 // @public
-export const SANDBOX_EXTENSION_POINT = "sandbox@2";
-
-// @public
 export const SANDBOX_FAKE_IP_DNS: {
     readonly fakeIpCidr: string;
     readonly endpoints: readonly string[];
@@ -3669,7 +3799,7 @@ export interface SandboxBrowseScope extends SandboxOperationRef {
 }
 
 // @public
-export type SandboxExecOptions = Omit<Parameters<SandboxProvider["exec"]>[1], "tag" | "actor">;
+export type SandboxExecOptions = Omit<Parameters<DeviceProvider["exec"]>[1], "tag" | "actor">;
 
 // @public
 export interface SandboxExecutionRef {
@@ -3693,7 +3823,7 @@ export type SandboxExecutionStatus = {
 // @public
 export type SandboxFileScope = {
     readonly kind: "scoped";
-    readonly readRoots: readonly string[];
+    readonly projectRoot: string | null;
     readonly writeRoots: readonly string[];
 } | {
     readonly kind: "device";
@@ -3840,78 +3970,6 @@ export interface SandboxPreparationScope {
 }
 
 // @public
-export interface SandboxProvider {
-    background?: SandboxBackground;
-    browse?(h: SandboxHandle, scope: SandboxBrowseScope, signal: AbortSignal): Promise<SandboxBrowse>;
-    readonly concurrentExec: true;
-    create(args: {
-        name: string;
-        image?: string;
-        limits: SandboxLimits;
-        fileSystem: FileSystemHandle_2;
-        signal: AbortSignal;
-    }): Promise<SandboxHandle>;
-    createFileSystem(args: {
-        name: string;
-        limits: SandboxLimits;
-        signal: AbortSignal;
-    }): Promise<FileSystemHandle_2>;
-    destroy(h: SandboxHandle, signal: AbortSignal): Promise<void>;
-    destroyByName(name: string, signal: AbortSignal): Promise<void>;
-    destroyFileSystem(fs: FileSystemHandle_2, signal: AbortSignal): Promise<void>;
-    destroyFileSystemByName(name: string, signal: AbortSignal): Promise<void>;
-    exec(h: SandboxHandle, args: {
-        command: string;
-        cwd?: string;
-        env?: Record<string, string>;
-        timeoutMs: number;
-        maxOutputBytes: number;
-        signal: AbortSignal;
-        tag: string;
-        actor: SandboxActor;
-    }): Promise<ExecResult>;
-    killAll(h: SandboxHandle, signal: AbortSignal): Promise<void>;
-    killTagged(h: SandboxHandle, tags: string[], signal: AbortSignal): Promise<void>;
-    readonly limitsApplyAt?: "instance" | "fileSystem";
-    list?(h: SandboxHandle, path: string, opts: {
-        limit: number;
-        signal: AbortSignal;
-    }): Promise<{
-        entries: {
-            name: string;
-            isDir: boolean;
-        }[];
-        truncated: boolean;
-    } | null>;
-    operation?(h: SandboxHandle, scope: SandboxOperationScope, signal: AbortSignal): Promise<SandboxOperation>;
-    permissionSupport?(h: SandboxHandle, signal: AbortSignal): Promise<SandboxPermissionSupport>;
-    prepare?(h: SandboxHandle, scope: SandboxPreparationScope, signal: AbortSignal): Promise<SandboxPreparation>;
-    readFile(h: SandboxHandle, path: string, opts: {
-        maxBytes: number;
-        signal: AbortSignal;
-    }): Promise<{
-        data: Uint8Array;
-        truncated: boolean;
-    } | null>;
-    resume(h: SandboxHandle, signal: AbortSignal): Promise<"resumed" | "gone">;
-    revokeOperation?(h: SandboxHandle, ref: SandboxOperationRef, signal: AbortSignal): Promise<void>;
-    scan?(h: SandboxHandle, base: string, opts: {
-        signal: AbortSignal;
-    }): Promise<{
-        path: string;
-        suggestedName: string;
-    }[]>;
-    readonly sessionIsolation?: boolean;
-    stat(h: SandboxHandle, path: string, signal: AbortSignal): Promise<{
-        size: number;
-        isDir: boolean;
-    } | null>;
-    suspend(h: SandboxHandle, signal: AbortSignal): Promise<void>;
-    update?(h: SandboxHandle, limits: SandboxLimits, signal: AbortSignal): Promise<"updated" | "recreate">;
-    writeFile(h: SandboxHandle, path: string, data: Uint8Array, signal: AbortSignal): Promise<void>;
-}
-
-// @public
 export interface SandboxRoots {
     skills: string;
     tmp: string;
@@ -3995,6 +4053,7 @@ export const SETUP_GUIDE_LIMITS: {
     readonly docBytes: 65536;
     readonly codeBlocks: 24;
     readonly checks: 16;
+    readonly shellActions: 4;
     readonly sections: 16;
     readonly titleChars: 100;
     readonly checkLabelChars: 80;
@@ -4006,7 +4065,7 @@ export const SETUP_GUIDE_LIMITS: {
 export const SETUP_GUIDE_PLACE_INFO: Readonly<Record<SetupGuidePlace, SetupGuidePlaceInfo>>;
 
 // @public
-export const SETUP_GUIDE_PLACES: readonly ["channel-connection", "connector-template", "extension-deployment"];
+export const SETUP_GUIDE_PLACES: readonly ["channel-connection", "connector-template", "extension-deployment", "device-connection"];
 
 // @public
 export interface SetupCheckArgs {
@@ -4073,6 +4132,10 @@ export type SetupGuideBlock = {
     kind: "check";
     id: string;
     label: string;
+} | {
+    kind: "shell-action";
+    action: SetupGuideShellAction;
+    label: string;
 };
 
 // @public
@@ -4128,6 +4191,7 @@ export interface SetupGuidePlaceInfo {
     audiences: readonly SetupGuideAudience[];
     drift: boolean;
     modes: readonly string[];
+    shellActions: readonly SetupGuideShellAction[];
     variables: Readonly<Record<string, SetupGuideVariableType>>;
 }
 
@@ -4138,6 +4202,9 @@ export interface SetupGuideSection {
     type: "mode" | "audience";
     value: string;
 }
+
+// @public
+export type SetupGuideShellAction = "connect-this-machine";
 
 // @public
 export type SetupGuideVariableType = "url" | "text" | "token";

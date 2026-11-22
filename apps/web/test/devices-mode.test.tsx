@@ -95,11 +95,11 @@ const cloud = (over: Record<string, unknown> = {}) => ({
   id: "e1",
   name: "Build box",
   isDefault: true,
-  demotedFrom: null,
   ownerKind: "personal",
   source: "cloud",
   provider: "sandbox-docker",
   available: true,
+  report: null,
   online: null,
   machine: null,
   network: null,
@@ -117,11 +117,11 @@ const local = (over: Record<string, unknown> = {}, sandboxOver: Record<string, u
   id: "e1",
   name: "Laptop",
   isDefault: true,
-  demotedFrom: null,
   ownerKind: "personal",
   source: "local",
   provider: "@local",
   available: true,
+  report: null,
   online: true,
   machine: MACHINE,
   network: {
@@ -142,7 +142,8 @@ const list = (items: unknown[]) => ({
   items,
   defaultId: "e1",
   lastUsedId: null,
-  cloudAvailable: true,
+  providers: [{ plugin: "sandbox-docker", displayName: null }],
+  defaultProvider: "sandbox-docker",
 });
 
 const detail = (device: unknown) => ({

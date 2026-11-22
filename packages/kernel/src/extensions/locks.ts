@@ -56,7 +56,7 @@ export class PluginDeploymentConfigLock {
 }
 
 /**
- * Serializes the enables of the providers of one single-provider extension point (`sandbox@2`, …):
+ * Serializes the enables of the providers of one single-provider extension point (`object-store@1`, …):
  * two concurrent enables of different providers cannot both see the point free. Joins the
  * caller's transaction (`mandatory`); taken after the install lock of the extension's name, the
  * points in sorted order.

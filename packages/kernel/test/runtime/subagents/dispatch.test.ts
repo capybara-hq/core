@@ -59,13 +59,13 @@ import { commitDispatchOwing } from "../../helpers/subagents.js";
 
 /**
  * Phase C Task 8: dispatching sub-agents as child runs on one kernel (`model-script` scripts the
- * parent and the children, `sandbox-fake` is the shared sandbox, `hooks-probe` the policy hook).
+ * parent and the children, `device-fake` is the shared sandbox, `hooks-probe` the policy hook).
  */
 
 const fixture = (name: string) =>
   fileURLToPath(new URL(`../../fixtures/plugins/${name}/index.ts`, import.meta.url));
 const MODEL_SCRIPT = fixture("model-script");
-const SANDBOX_FAKE = fixture("sandbox-fake");
+const SANDBOX_FAKE = fixture("device-fake");
 const HOOKS_PROBE = fixture("hooks-probe");
 
 const CHILD = "You are a sub-agent";
@@ -166,7 +166,7 @@ beforeAll(async () => {
       {
         roles: ["api", "worker"],
         extensions: [MODEL_FAKE, MODEL_SCRIPT, SANDBOX_FAKE, HOOKS_PROBE],
-        extensionConfig: { "model-script": { rules: RULES }, "sandbox-fake": { root } },
+        extensionConfig: { "model-script": { rules: RULES }, "device-fake": { root } },
         // these tests are about dispatch, not waking (subagents/wake.test.ts): a parent woken by
         // its children's deliveries would race their last-reply and one-run assertions
         runtime: { wakeOnBackgroundTask: false },

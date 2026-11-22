@@ -87,14 +87,6 @@
       "required": false
     },
     {
-      "name": "sandbox-docker",
-      "source": "npm",
-      "npm": "@capybara-hq/plugin-sandbox-docker",
-      "version": "0.1.0-rc.21",
-      "integrity": "sha512-os0kmtDtTPUyBEJUNQdxfuYCwet6X7lZrIq6Dyo2hXLCV0ZkPPfONY8ctRh6+qzD52PjHC1YWKAZQesYW5I6ww==",
-      "required": false
-    },
-    {
       "name": "todo",
       "source": "npm",
       "npm": "@capybara-hq/plugin-todo",

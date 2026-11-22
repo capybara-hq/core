@@ -18,7 +18,7 @@ import { createLogger } from "../../src/log.js";
 import { SandboxOperationIntents } from "../../src/sandbox/operation-intents.js";
 import { SandboxOperationReconcileJob } from "../../src/sandbox/operation-reconcile.job.js";
 import { PermissionCeilingWrites } from "../../src/sandbox/permission-ceiling-writes.js";
-import { SandboxProviders } from "../../src/sandbox/providers.js";
+import { DeviceProviders } from "../../src/sandbox/providers.js";
 import { SandboxService } from "../../src/sandbox/sandbox.service.js";
 import { runInBackgroundManaged } from "../../src/tools/builtins/sandbox/bash.js";
 import { truncateTables } from "../helpers/db.js";
@@ -221,7 +221,7 @@ describe("managed background tasks across two replicas", () => {
     const recovery = new SandboxOperationReconcileJob(
       b.app.get(SandboxOperationIntents),
       b.app.get(KernelDb),
-      b.app.get(SandboxProviders),
+      b.app.get(DeviceProviders),
       b.app.get(SandboxService),
       b.app.get(BackgroundTaskStore),
       b.app.get(BackgroundTaskStopper),

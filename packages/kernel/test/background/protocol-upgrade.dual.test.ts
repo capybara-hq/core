@@ -3,7 +3,7 @@ import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
-import type { SandboxProvider } from "@capybara-hq/plugin-sdk";
+import type { DeviceProvider } from "@capybara-hq/plugin-sdk";
 import { startTestPostgres, startTestRedis, type TestContainer } from "@capybara-hq/testing";
 import { Redis } from "ioredis";
 import { sql } from "kysely";
@@ -14,7 +14,7 @@ import { migrate } from "../../src/db/migrator.js";
 import { createDb } from "../../src/db/pool.js";
 import type { LegacyRetirementStore } from "../../src/sandbox/legacy-retirement.js";
 import type { SandboxService } from "../../src/sandbox/sandbox.service.js";
-import { createFakeSandbox } from "../fixtures/plugins/sandbox-fake/index.js";
+import { createFakeSandbox } from "../fixtures/plugins/device-fake/index.js";
 import { truncateTables } from "../helpers/db.js";
 import { retirementFor } from "../helpers/identity.js";
 import { sandboxServiceFor, seedDevice } from "../helpers/sandbox.js";
@@ -38,7 +38,7 @@ let raw: ReturnType<typeof createDb>;
 let seed: Awaited<ReturnType<typeof seedConversation>>;
 let calls: string[];
 let destroyFails: boolean;
-let provider: SandboxProvider;
+let provider: DeviceProvider;
 const pools: ReturnType<typeof createDb>[] = [];
 const clients: Redis[] = [];
 
@@ -72,7 +72,7 @@ beforeEach(async () => {
   calls = [];
   destroyFails = false;
   const impl = createFakeSandbox(root);
-  provider = Object.create(impl) as SandboxProvider;
+  provider = Object.create(impl) as DeviceProvider;
   provider.destroy = async (h, s) => {
     calls.push(`destroy ${h.id}`);
     if (destroyFails) throw new Error("provider refused the destroy");
@@ -102,8 +102,7 @@ function replica(): { s: SandboxService; store: LegacyRetirementStore } {
   const s = sandboxServiceFor({
     db: kernelDb(pool),
     redis,
-    provider: () => ({ plugin: "sandbox-fake", impl: provider }),
-    lookup: (plugin) => (plugin === "sandbox-fake" ? provider : undefined),
+    providers: () => [{ plugin: "device-fake", version: "1.0.0", impl: provider }],
     config: () => config,
     log: {},
     lockPollMs: 20,

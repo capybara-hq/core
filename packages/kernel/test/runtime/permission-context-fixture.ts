@@ -1,8 +1,8 @@
 import { randomUUID } from "node:crypto";
 import {
   DEFAULT_SANDBOX_ROOTS,
+  type DeviceProvider,
   type SandboxPermissionSupport,
-  type SandboxProvider,
 } from "@capybara-hq/plugin-sdk";
 import type { Kysely } from "kysely";
 import type { PermissionContextV2 } from "../../src/conversations/events.js";
@@ -14,7 +14,8 @@ import type { AppliedLimits } from "../../src/sandbox/modes.js";
 import { PermissionAuthorityLock } from "../../src/sandbox/permission-authority-lock.js";
 import { PermissionFacts } from "../../src/sandbox/permission-facts.js";
 import { PermissionRuntimeReports } from "../../src/sandbox/permission-runtime-reports.js";
-import { SandboxProviders } from "../../src/sandbox/providers.js";
+import { DeviceProviders } from "../../src/sandbox/providers.js";
+import { KERNEL_VERSION } from "../../src/version.js";
 import { storedOwnerReport } from "../helpers/owner-report.js";
 import type { TestKernel } from "../helpers/runs.js";
 import { seedConversation } from "../helpers/tool-fixtures.js";
@@ -110,8 +111,8 @@ export function spyProvider(
   opts: { contract?: boolean; plugin?: string; version?: string } = {},
 ) {
   const plugin = opts.plugin ?? "@local";
-  const providers = k.app.get(SandboxProviders);
-  const previous = providers.forName(plugin);
+  const providers = k.app.get(DeviceProviders);
+  const previous = providers.forDevice(plugin);
   const calls: string[] = [];
   const impl: Record<string, unknown> = {};
   for (const name of PROVIDER_METHODS) {
@@ -127,8 +128,8 @@ export function spyProvider(
   }
   providers.register({
     plugin,
-    ...(opts.version !== undefined && { version: opts.version }),
-    impl: impl as unknown as SandboxProvider,
+    version: opts.version ?? KERNEL_VERSION,
+    impl: impl as unknown as DeviceProvider,
   });
   return {
     calls,

@@ -16,6 +16,7 @@ import { SETUP_CHECK_ID_RE } from "./setup-check.js";
 const LIMITS = {
   codeBlocks: 24,
   checks: 16,
+  shellActions: 4,
   sections: 16,
   titleChars: 100,
   checkLabelChars: 80,
@@ -35,6 +36,7 @@ const FENCE_OPEN_RE = /^( {0,3})(`{3,}|~{3,})(.*)$/;
 const FENCE_CLOSE_RE = /^ {0,3}(`{3,}|~{3,})[ \t]*$/;
 const SECTION_RE = /^(mode|audience)[ \t]+(\S+)$/;
 const CHECK_LINE_RE = /^::check[ \t]+(\S+)(?:[ \t]+(.*?))?[ \t]*$/;
+const SHELL_ACTION_LINE_RE = /^::shell-action[ \t]+(\S+)(?:[ \t]+(.*?))?[ \t]*$/;
 const FENCE_TITLE_RE = /^title="([^"]*)"$/;
 
 /** Variable sentinel: `<n>`, n indexing the occurrences. */
@@ -42,6 +44,8 @@ export const SENTINEL_RE = /(\d+)/g;
 /** The same sentinel percent-encoded, as micromark leaves it in a link destination. */
 export const ENCODED_SENTINEL_RE = /%EE%80%80(\d+)%EE%80%81/gi;
 const CHECK_MARKER_RE = /^(\d+)$/;
+// a shell action line is a marker heading of its own: a different private-use pair than a check's
+const SHELL_ACTION_MARKER_RE = /^(\d+)$/;
 
 /** One issue of a document, with the 1-based source line when it has one. */
 export interface SetupGuideParseIssue {
@@ -70,6 +74,15 @@ export interface SetupGuideCheckLine {
   section: number | null;
 }
 
+/** A `::shell-action` line of a document. */
+export interface SetupGuideShellActionLine {
+  action: string;
+  label: string;
+  line: number;
+  /** Index of the innermost enclosing section, or null. */
+  section: number | null;
+}
+
 /** A fenced code block of a document. */
 export interface SetupGuideCodeBlock {
   /** The info string's first word; empty when missing. */
@@ -87,12 +100,13 @@ export interface ParsedSetupGuide {
   title: string | null;
   sections: SetupGuideSection[];
   checks: SetupGuideCheckLine[];
+  shellActions: SetupGuideShellActionLine[];
   codeBlocks: SetupGuideCodeBlock[];
   /** Structural problems (place independent: modes, audiences and variables are not judged). */
   issues: SetupGuideParseIssue[];
 }
 
-type LineKind = "text" | "fence" | "section-open" | "section-close" | "check";
+type LineKind = "text" | "fence" | "section-open" | "section-close" | "check" | "shell-action";
 
 /** @internal The scanner's result. */
 export interface GuideScan {
@@ -102,8 +116,11 @@ export interface GuideScan {
   stacks: number[][];
   /** Check index of each check line. */
   checkAt: Map<number, number>;
+  /** Shell action index of each shell action line. */
+  shellActionAt: Map<number, number>;
   sections: SetupGuideSection[];
   checks: SetupGuideCheckLine[];
+  shellActions: SetupGuideShellActionLine[];
   issues: SetupGuideParseIssue[];
 }
 
@@ -118,8 +135,10 @@ export function scanGuide(source: string): GuideScan {
   const kinds: LineKind[] = [];
   const stacks: number[][] = [];
   const checkAt = new Map<number, number>();
+  const shellActionAt = new Map<number, number>();
   const sections: SetupGuideSection[] = [];
   const checks: SetupGuideCheckLine[] = [];
+  const shellActions: SetupGuideShellActionLine[] = [];
   const issues: SetupGuideParseIssue[] = [];
   const err = (line: number, message: string) => issues.push({ level: "error", line, message });
   const stack: number[] = [];
@@ -216,13 +235,37 @@ export function scanGuide(source: string): GuideScan {
       kinds.push("check");
       return;
     }
+    if (/^::shell-action(?:\s|$)/.test(text)) {
+      const m = SHELL_ACTION_LINE_RE.exec(text);
+      if (m === null) {
+        err(line, "a shell action line is `::shell-action <action> <label>`");
+        kinds.push("text");
+        return;
+      }
+      const action = m[1] as string;
+      const label = (m[2] ?? "").trim();
+      if (label === "") {
+        err(line, `shell action ${action} needs a label: \`::shell-action ${action} <label>\``);
+      } else if ([...label].length > LIMITS.checkLabelChars) {
+        err(
+          line,
+          `the label of shell action ${action} is longer than ${LIMITS.checkLabelChars} characters`,
+        );
+      }
+      if (text.includes("{{"))
+        err(line, "directive lines hold no variables (shell action labels are plain text)");
+      shellActions.push({ action, label, line, section: stack.at(-1) ?? null });
+      shellActionAt.set(i, shellActions.length - 1);
+      kinds.push("shell-action");
+      return;
+    }
     kinds.push("text");
   });
   for (const open of stack) {
     const s = sections[open] as SetupGuideSection;
     err(s.line, `the section "::: ${s.type} ${s.value}" opened at line ${s.line} is not closed`);
   }
-  return { lines, kinds, stacks, checkAt, sections, checks, issues };
+  return { lines, kinds, stacks, checkAt, shellActionAt, sections, checks, shellActions, issues };
 }
 
 /** @internal Whether line `i` is in the sections of `mode` and `audience`. */
@@ -254,6 +297,7 @@ export function preparedGuideText(
       const kind = scan.kinds[i];
       if (kind === "section-open" || kind === "section-close") return "";
       if (kind === "check") return `###### ${scan.checkAt.get(i)}`;
+      if (kind === "shell-action") return `###### ${scan.shellActionAt.get(i)}`;
       return subst(text, i);
     })
     .join("\n");
@@ -270,6 +314,15 @@ export function checkMarkerIndex(node: Nodes): number | undefined {
   const t = node.children[0];
   if (t?.type !== "text") return undefined;
   const m = CHECK_MARKER_RE.exec(t.value);
+  return m === null ? undefined : Number(m[1]);
+}
+
+/** @internal The shell action index of a marker heading, or undefined. */
+export function shellActionMarkerIndex(node: Nodes): number | undefined {
+  if (node.type !== "heading" || node.depth !== 6 || node.children.length !== 1) return undefined;
+  const t = node.children[0];
+  if (t?.type !== "text") return undefined;
+  const m = SHELL_ACTION_MARKER_RE.exec(t.value);
   return m === null ? undefined : Number(m[1]);
 }
 
@@ -392,6 +445,7 @@ export function analyzeSetupGuide(source: string): GuideAnalysis {
     const line = lineOf(node);
     if (node.type === "heading") {
       if (checkMarkerIndex(node) !== undefined) return;
+      if (shellActionMarkerIndex(node) !== undefined) return;
       if (node === first && title !== null) return;
       if (node.depth === 1) {
         err(line, "only the title may be a level-1 heading; use ## to #### for the structure");
@@ -448,6 +502,19 @@ export function analyzeSetupGuide(source: string): GuideAnalysis {
       );
     }
   });
+  const placedActions = new Set<number>();
+  for (const n of tree.children) {
+    const a = shellActionMarkerIndex(n);
+    if (a !== undefined) placedActions.add(a);
+  }
+  scan.shellActions.forEach((a, i) => {
+    if (!placedActions.has(i)) {
+      err(
+        a.line,
+        `shell action ${a.action} is inside raw HTML and would not show; end the HTML with a blank line before the line`,
+      );
+    }
+  });
   if (deepest > LIMITS.depth) err(deepLine, `content is nested deeper than ${LIMITS.depth} levels`);
   if (codeBlocks.length > LIMITS.codeBlocks) {
     err(
@@ -458,12 +525,25 @@ export function analyzeSetupGuide(source: string): GuideAnalysis {
   if (scan.checks.length > LIMITS.checks) {
     err(undefined, `the document has ${scan.checks.length} check lines; at most ${LIMITS.checks}`);
   }
+  if (scan.shellActions.length > LIMITS.shellActions) {
+    err(
+      undefined,
+      `the document has ${scan.shellActions.length} shell action lines; at most ${LIMITS.shellActions}`,
+    );
+  }
   if (scan.sections.length > LIMITS.sections) {
     err(undefined, `the document has ${scan.sections.length} sections; at most ${LIMITS.sections}`);
   }
   issues.sort((a, b) => (a.line ?? 0) - (b.line ?? 0));
   return {
-    parsed: { title, sections: scan.sections, checks: scan.checks, codeBlocks, issues },
+    parsed: {
+      title,
+      sections: scan.sections,
+      checks: scan.checks,
+      shellActions: scan.shellActions,
+      codeBlocks,
+      issues,
+    },
     scan,
     tree,
     uses,

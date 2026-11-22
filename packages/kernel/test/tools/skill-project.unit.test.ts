@@ -83,8 +83,6 @@ function setup(s: Setup) {
       }) as never,
     },
     sandbox: {
-      cloudAvailable: true,
-      availableFor: async () => true,
       withSandbox: async (_c, fn, sig) =>
         fn(
           { id: "e1", roots: ROOTS } as never,

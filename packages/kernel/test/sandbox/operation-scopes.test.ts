@@ -52,8 +52,66 @@ describe("nested operation boundaries", () => {
   });
 });
 
-import type { SandboxOperationScope, SandboxProvider } from "@capybara-hq/plugin-sdk";
+import type { DeviceProvider, SandboxOperationScope } from "@capybara-hq/plugin-sdk";
 import { createHeldOperations, withKernelGeneration } from "../../src/sandbox/held-operations.js";
+import { intersectPermissionScope } from "../../src/sandbox/operation-authority.js";
+
+describe("the filesystem of an operation scope", () => {
+  const facts = {
+    deviceId: "device",
+    rootConversationId: "root",
+    profileRevision: 1,
+    ceilingRevision: "epoch",
+    operationId: "operation",
+    admitBeforeMs: 1000,
+    profile: "approve-for-me" as const,
+    actor: { accountId: "owner", conversationId: "root" },
+    tag: "operation",
+    workingRoot: "/u/repo",
+    projectRoot: "/u/repo" as string | null,
+    writeRoots: ["/u/repo", "/tmp/out", "/u/repo"],
+    allowedHosts: [],
+    network: "none" as const,
+    boundary: "operation" as const,
+    outsideSandboxCeiling: false,
+  };
+  it("a scoped operation carries projectRoot and writeRoots and no read roots", () => {
+    const fs = intersectPermissionScope(facts).filesystem;
+    expect(fs).toEqual({
+      kind: "scoped",
+      projectRoot: "/u/repo",
+      writeRoots: ["/tmp/out", "/u/repo"],
+    });
+    expect(Object.keys(fs).sort()).toEqual(["kind", "projectRoot", "writeRoots"]);
+  });
+  it("an operation scope names the project root and the write roots; free mode has projectRoot null", () => {
+    expect(intersectPermissionScope({ ...facts, writeRoots: ["/u/repo"] }).filesystem).toEqual({
+      kind: "scoped",
+      projectRoot: "/u/repo",
+      writeRoots: ["/u/repo"],
+    });
+    expect(
+      intersectPermissionScope({
+        ...facts,
+        workingRoot: "/u/.capybara/workspace",
+        projectRoot: null,
+        writeRoots: ["/u/.capybara/workspace"],
+      }).filesystem,
+    ).toEqual({ kind: "scoped", projectRoot: null, writeRoots: ["/u/.capybara/workspace"] });
+  });
+  it("an instance-boundary scope keeps writeRoots [/, workingRoot]", () => {
+    for (const projectRoot of ["/workspace/app", null])
+      expect(
+        intersectPermissionScope({
+          ...facts,
+          boundary: "instance",
+          workingRoot: "/workspace/app",
+          projectRoot,
+          writeRoots: ["/workspace/app"],
+        }).filesystem,
+      ).toEqual({ kind: "scoped", projectRoot, writeRoots: ["/", "/workspace/app"] });
+  });
+});
 
 const scope = (revision: number): SandboxOperationScope => ({
   operationId: `op-${revision}`,
@@ -67,7 +125,7 @@ const scope = (revision: number): SandboxOperationScope => ({
   tag: `op-${revision}`,
   filesystem: {
     kind: "scoped",
-    readRoots: [`/root-${revision}`],
+    projectRoot: `/root-${revision}`,
     writeRoots: [`/root-${revision}`],
   },
   network: { kind: "none" },
@@ -101,7 +159,7 @@ it("resolves once per actual native method and exposes no lifecycle or authority
         },
       };
     },
-  } as unknown as SandboxProvider;
+  } as unknown as DeviceProvider;
   const held = createHeldOperations(provider, handle, signal, async (_method, _input, invoke) =>
     invoke(scope(revision), signal),
   );
@@ -138,7 +196,7 @@ it("missing factories and unsupported runtime never fall back to raw exec", asyn
         rawCalls++;
       },
       ...extra,
-    } as unknown as SandboxProvider;
+    } as unknown as DeviceProvider;
     const held = createHeldOperations(
       provider,
       { id: "device" },
@@ -174,7 +232,7 @@ it("an instance report naming why it is unavailable refuses a network-none nativ
           opened++;
           return { readFile: async () => ({ data: new Uint8Array([1]), truncated: false }) };
         },
-      } as unknown as SandboxProvider,
+      } as unknown as DeviceProvider,
       { id: "device" },
       signal,
       async (_method, _input, invoke) => invoke(scope(1), signal),
@@ -239,7 +297,7 @@ describe("withKernelGeneration", () => {
         return { outcome: "stopped" as const };
       },
     };
-    const provider = { concurrentExec: true, background } as unknown as SandboxProvider;
+    const provider = { concurrentExec: true, background } as unknown as DeviceProvider;
     const wrapped = withKernelGeneration(provider, "1700000000000");
     const signal = new AbortController().signal;
     const args = { command: "sleep 1", timeoutMs: 1000, signal } as never;
@@ -261,7 +319,7 @@ describe("withKernelGeneration", () => {
     expect(wrapped.concurrentExec).toBe(true);
   });
   it("a provider without background tasks is returned as it is", () => {
-    const provider = { concurrentExec: true } as unknown as SandboxProvider;
+    const provider = { concurrentExec: true } as unknown as DeviceProvider;
     expect(withKernelGeneration(provider, "1")).toBe(provider);
   });
 });

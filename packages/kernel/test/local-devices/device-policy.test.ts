@@ -26,7 +26,7 @@ import { LocalDeviceProvider } from "../../src/local-devices/local-device-provid
 import { localProviderEntry } from "../../src/local-devices/local-devices.module.js";
 import { MachinesService } from "../../src/local-devices/machines.js";
 import { LocalDeviceRelay } from "../../src/local-devices/relay.js";
-import { LOCAL_PROVIDER, SandboxProviders } from "../../src/sandbox/providers.js";
+import { DeviceProviders, LOCAL_PROVIDER } from "../../src/sandbox/providers.js";
 import { legacyDbFor } from "../helpers/conversations.js";
 import { accountsFor } from "../helpers/identity.js";
 import { testMembers } from "../helpers/members.js";
@@ -587,7 +587,7 @@ async function stagedMachine(
   });
   const hello: DeviceHello = {
     ...HELLO,
-    protocol: 4,
+    protocol: 5,
     features: ["networkReport", "policyOp", "policyOpId"],
     policy: { allowedDomains: [] },
     transport: { maxFrameBytes: 69632 },
@@ -790,7 +790,7 @@ describe("staged (protocol 4) machines", () => {
     expect(staged.binder).toBe(k.app.get(LocalInstanceBindings));
     expect(staged.impl).not.toBe(deps.provider);
     expect(typeof staged.impl.revokeOperation).toBe("function");
-    const active = k.app.get(SandboxProviders).forName(LOCAL_PROVIDER);
+    const active = k.app.get(DeviceProviders).forDevice(LOCAL_PROVIDER);
     expect(active?.binder).toBe(k.app.get(LocalInstanceBindings));
     expect(active?.impl).not.toBe(deps.provider);
     expect(typeof active?.impl.revokeOperation).toBe("function");

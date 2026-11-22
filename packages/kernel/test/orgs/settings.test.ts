@@ -210,6 +210,42 @@ describe("org outsideSandbox", () => {
   });
 });
 
+describe("org deviceDefaultProvider", () => {
+  const withProviders = (...names: string[]) =>
+    orgSettingsFor(
+      db,
+      () => ({
+        sandbox: { limits: LIMITS },
+        devices: {},
+        attribution: {},
+        http: { publicUrl: undefined },
+      }),
+      names,
+    );
+
+  it("deviceDefaultProvider: accepted only for a provider on in the org; null clears", async () => {
+    const s = withProviders("device-fake-a");
+    expect((await s.get(orgId)).deviceDefaultProvider).toBeUndefined();
+    await expect(
+      s.update(orgId, { deviceDefaultProvider: "device-fake-b" }, accountId),
+    ).rejects.toMatchObject({ code: "org.device_provider_not_available" });
+    expect(
+      await s.update(orgId, { deviceDefaultProvider: "device-fake-a" }, accountId),
+    ).toMatchObject({ deviceDefaultProvider: "device-fake-a" });
+    expect((await s.get(orgId)).deviceDefaultProvider).toBe("device-fake-a");
+    expect(await s.update(orgId, { deviceDefaultProvider: null }, accountId)).not.toHaveProperty(
+      "deviceDefaultProvider",
+    );
+  });
+
+  it("an invalid stored value reads absent; the shape is validated", async () => {
+    expect(parseOrgSettings({ deviceDefaultProvider: 5 }).deviceDefaultProvider).toBeUndefined();
+    expect(OrgSettingsPatchSchema.safeParse({ deviceDefaultProvider: "Bad Name" }).success).toBe(
+      false,
+    );
+  });
+});
+
 describe("org deviceNetwork", () => {
   const tokenUpdateOf =
     (s: OrgSettingsService) => (patch: { deviceNetwork: DeviceNetworkSetting | null }) =>

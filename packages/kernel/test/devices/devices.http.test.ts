@@ -9,17 +9,18 @@ import { sql } from "kysely";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import type { KernelSchemaDb } from "../../src/db/kernel-schema.js";
 import { createDb } from "../../src/db/pool.js";
-import type { DeviceView } from "../../src/devices/devices.service.js";
+import type { DeviceList, DeviceView } from "../../src/devices/devices.service.js";
 import { DevicesService } from "../../src/devices/devices.service.js";
 import { ApiError } from "../../src/errors.js";
 import { TransactionHost } from "../../src/infra/database/transaction-host.js";
 import { SandboxService } from "../../src/sandbox/sandbox.service.js";
-import { fakeFileSystems, removeFakeFileSystem } from "../fixtures/plugins/sandbox-fake/index.js";
+import { fakeFileSystems, removeFakeFileSystem } from "../fixtures/plugins/device-fake/index.js";
 import { legacyDbFor } from "../helpers/conversations.js";
 import { accountsFor, apiTokensFor } from "../helpers/identity.js";
 import { testMembers } from "../helpers/members.js";
 import {
   createOrg,
+  enableDeviceProviders,
   PW,
   type Req,
   runConfig,
@@ -46,6 +47,8 @@ let raw: ReturnType<typeof createDb>;
 let db: KernelSchemaDb;
 let k: TestKernel;
 let root: string;
+/** `device-fake-b`'s directory. */
+let rootB: string;
 let sandbox: SandboxService;
 let ownerId: string;
 let owner: Req;
@@ -56,13 +59,14 @@ beforeAll(async () => {
   raw = createDb(pgc.url, 3);
   db = legacyDbFor(raw);
   root = await mkdtemp(join(tmpdir(), "cap-device-http-"));
+  rootB = await mkdtemp(join(tmpdir(), "cap-device-http-b-"));
   k = await startKernel(
     runConfig(
       { pg: pgc.url, redis: rd.url },
       {
         roles: ["api", "worker"],
-        extensions: [fixture("sandbox-fake")],
-        extensionConfig: { "sandbox-fake": { root } },
+        extensions: [fixture("device-fake"), fixture("device-fake-b")],
+        extensionConfig: { "device-fake": { root }, "device-fake-b": { root: rootB } },
         devices: { maxPersonal: MAX },
       },
     ),
@@ -72,14 +76,32 @@ beforeAll(async () => {
     .id;
   owner = await session(k, "owner");
   orgId = await createOrg(owner);
+  // both providers on in the org, device-fake its default
+  await enableDeviceProviders(k, orgId);
+  await setDefaultProvider("device-fake");
 });
 
 afterAll(async () => {
   await k?.close();
   await raw?.destroy();
   await Promise.all([pgc?.stop(), rd?.stop()]);
-  if (root) await rm(root, { recursive: true, force: true });
+  for (const r of [root, rootB]) if (r) await rm(r, { recursive: true, force: true });
 });
+
+/** Sets (or with null clears) the org's default device provider. */
+const setDefaultProvider = (plugin: string | null) =>
+  plugin === null
+    ? sql`UPDATE capybara.orgs SET settings = settings - 'deviceDefaultProvider'
+        WHERE id = ${orgId}`.execute(raw)
+    : sql`UPDATE capybara.orgs
+        SET settings = COALESCE(settings, '{}'::jsonb)
+          || jsonb_build_object('deviceDefaultProvider', ${plugin}::text)
+        WHERE id = ${orgId}`.execute(raw);
+
+/** Switches `plugin` on or off in the org (its row of the org's own switch). */
+const setEnabled = (plugin: string, enabled: boolean) =>
+  sql`UPDATE capybara.extension_org_configs SET enabled = ${enabled}
+    WHERE plugin = ${plugin} AND org_id = ${orgId}`.execute(raw);
 
 const base = () => `/api/v1/orgs/${orgId}/devices`;
 const errCode = (res: { json(): unknown }) =>
@@ -93,12 +115,7 @@ async function member(): Promise<{ id: string; req: Req }> {
   return { id, req: await session(k, login) };
 }
 
-type List = {
-  items: DeviceView[];
-  defaultId: string | null;
-  lastUsedId: string | null;
-  cloudAvailable: boolean;
-};
+type List = DeviceList;
 
 async function list(req: Req): Promise<List> {
   const res = await req({ method: "GET", url: base() });
@@ -106,10 +123,26 @@ async function list(req: Req): Promise<List> {
   return res.json() as List;
 }
 
-async function create(req: Req, name: string): Promise<DeviceView> {
-  const res = await req({ method: "POST", url: base(), payload: { name } });
+async function create(req: Req, name: string, provider?: string): Promise<DeviceView> {
+  const res = await req({
+    method: "POST",
+    url: base(),
+    payload: { name, ...(provider !== undefined && { provider }) },
+  });
   expect(res.statusCode, res.body).toBe(201);
   return (res.json() as { device: DeviceView }).device;
+}
+
+/** The person's live devices in the org, counted in PG. */
+async function countDevices(accountId: string): Promise<number> {
+  const { n } = await db
+    .selectFrom("devices")
+    .select((eb) => eb.fn.countAll<string>().as("n"))
+    .where("org_id", "=", orgId)
+    .where("owner_account_id", "=", accountId)
+    .where("deleted_at", "is", null)
+    .executeTakeFirstOrThrow();
+  return Number(n);
 }
 
 const ctl = () => AbortSignal.timeout(30_000);
@@ -123,7 +156,7 @@ describe("devices API", () => {
       isDefault: false,
       ownerKind: "personal",
       source: "cloud",
-      provider: "sandbox-fake",
+      provider: "device-fake",
       available: true,
       sessionIsolation: false,
       filesLost: false,
@@ -148,7 +181,6 @@ describe("devices API", () => {
     expect(typeof env.createdAt).toBe("string");
 
     const l = await list(m.req);
-    expect(l.cloudAvailable).toBe(true);
     // the default is made on first need and listed first
     expect(l.items.map((e) => [e.name, e.isDefault])).toEqual([
       [null, true],
@@ -469,6 +501,175 @@ describe("devices API", () => {
   });
 });
 
+describe("device providers (device-provider spec §6.1)", () => {
+  it("POST /devices with provider binds the device to it for life", async () => {
+    const m = await member();
+    const before = new Set(await fakeFileSystems(root));
+    const onB = await create(m.req, "On B", "device-fake-b");
+    expect(onB).toMatchObject({ provider: "device-fake-b", available: true, source: "cloud" });
+    const created = await db
+      .selectFrom("audit_events")
+      .select("detail")
+      .where("target", "=", onB.id)
+      .where("action", "=", "device.created")
+      .executeTakeFirstOrThrow();
+    expect(created.detail).toMatchObject({ name: "On B", provider: "device-fake-b" });
+    // its files are made at its own provider, never at the org's default one
+    const conversationId = randomUUID();
+    await sandbox.withSandbox(
+      {
+        orgId,
+        deviceId: onB.id,
+        holderConversationId: conversationId,
+        actor: { accountId: m.id, conversationId },
+      },
+      (h, p, _i, sig) => p.writeFile(h, "/workspace/b.txt", new TextEncoder().encode("b"), sig),
+      ctl(),
+    );
+    expect(await fakeFileSystems(rootB)).toHaveLength(1);
+    expect(new Set(await fakeFileSystems(root))).toEqual(before);
+    // a later change of the org's default leaves it where it is
+    await setDefaultProvider("device-fake-b");
+    try {
+      const onA = await create(m.req, "On A", "device-fake");
+      const got = await m.req({ method: "GET", url: `${base()}/${onA.id}` });
+      expect((got.json() as { device: DeviceView }).device.provider).toBe("device-fake");
+    } finally {
+      await setDefaultProvider("device-fake");
+    }
+    const again = await m.req({ method: "GET", url: `${base()}/${onB.id}` });
+    expect((again.json() as { device: DeviceView }).device.provider).toBe("device-fake-b");
+  });
+
+  it("POST /devices without provider uses the org default; with none answers device.provider_required", async () => {
+    const m = await member();
+    expect((await create(m.req, "Default one")).provider).toBe("device-fake");
+    const created = await db
+      .selectFrom("audit_events")
+      .select("detail")
+      .where("actor_account_id", "=", m.id)
+      .where("action", "=", "device.created")
+      .executeTakeFirstOrThrow();
+    expect(created.detail).toMatchObject({ provider: "device-fake" });
+    const service = k.app.get(DevicesService);
+    for (const stale of [null, "nope"]) {
+      // no default, or one naming no provider on in the org: never bound to another provider
+      await setDefaultProvider(stale);
+      try {
+        const count = await countDevices(m.id);
+        const res = await m.req({ method: "POST", url: base(), payload: { name: "No default" } });
+        expect(res.statusCode, res.body).toBe(400);
+        expect(res.json()).toMatchObject({
+          error: {
+            code: "device.provider_required",
+            message: "Choose a device provider: device-fake, device-fake-b",
+          },
+        });
+        expect(await countDevices(m.id)).toBe(count);
+        // the precheck answers the same, and naming one still works
+        expect(
+          await service.checkCreate(orgId, m.id, "No default").catch((e: ApiError) => e.code),
+        ).toBe("device.provider_required");
+        expect((await create(m.req, `Named ${stale}`, "device-fake-b")).provider).toBe(
+          "device-fake-b",
+        );
+      } finally {
+        await setDefaultProvider("device-fake");
+      }
+    }
+  });
+
+  it("POST /devices naming a provider off in the org, @local or an unknown name is refused and creates nothing", async () => {
+    const m = await member();
+    await list(m.req); // makes the default
+    const before = await countDevices(m.id);
+    const service = k.app.get(DevicesService);
+    await setEnabled("device-fake-b", false);
+    try {
+      for (const provider of ["device-fake-b", "@local", "nope", "Device-Fake", "a".repeat(60)]) {
+        const res = await m.req({ method: "POST", url: base(), payload: { name: "x", provider } });
+        expect(res.statusCode, provider).toBe(400);
+        const error = (res.json() as { error: { code: string; details?: { path: string }[] } })
+          .error;
+        expect(error.code, provider).toBe("validation_failed");
+        expect(error.details?.map((d) => d.path)).toEqual(["provider"]);
+        expect(
+          await service.checkCreate(orgId, m.id, "x", provider).catch((e: ApiError) => e.code),
+        ).toBe("validation_failed");
+      }
+      expect(await countDevices(m.id)).toBe(before);
+    } finally {
+      await setEnabled("device-fake-b", true);
+    }
+    expect((await create(m.req, "x", "device-fake-b")).provider).toBe("device-fake-b");
+  });
+
+  it("GET /devices lists the providers on in the org and the default provider; no cloudAvailable", async () => {
+    const m = await member();
+    const l = await list(m.req);
+    expect(l).not.toHaveProperty("cloudAvailable");
+    expect(l.providers.map((p) => p.plugin)).toEqual(["device-fake", "device-fake-b"]);
+    for (const p of l.providers) expect(p).toHaveProperty("displayName");
+    expect(l.defaultProvider).toBe("device-fake");
+    await setEnabled("device-fake", false);
+    try {
+      // the default switched off reads as none, never as another provider
+      const off = await list(m.req);
+      expect(off.providers.map((p) => p.plugin)).toEqual(["device-fake-b"]);
+      expect(off.defaultProvider).toBeNull();
+    } finally {
+      await setEnabled("device-fake", true);
+    }
+    // another org of the person's sees its own providers only (none switched on there)
+    const otherOrg = await createOrg(owner, `Providers ${randomUUID().slice(0, 6)}`);
+    const there = await owner({ method: "GET", url: `/api/v1/orgs/${otherOrg}/devices` });
+    expect(there.statusCode, there.body).toBe(200);
+    expect(there.json()).toMatchObject({ providers: [], defaultProvider: null, defaultId: null });
+  });
+
+  it("a device whose provider is switched off lists as available false with its stored report", async () => {
+    const m = await member();
+    const onB = await create(m.req, "Report", "device-fake-b");
+    const conversationId = randomUUID();
+    await sandbox.withSandbox(
+      {
+        orgId,
+        deviceId: onB.id,
+        holderConversationId: conversationId,
+        actor: { accountId: m.id, conversationId },
+      },
+      async () => "ran",
+      ctl(),
+    );
+    const stored = await waitFor(
+      async () => {
+        const res = await m.req({ method: "GET", url: `${base()}/${onB.id}` });
+        return (res.json() as { device: DeviceView }).device.report;
+      },
+      15_000,
+      "the device report to be stored",
+    );
+    expect(stored).toMatchObject({ description: { en: "Second test device" }, reset: true });
+    await setEnabled("device-fake-b", false);
+    try {
+      const l = await list(m.req);
+      expect(l.items.find((e) => e.id === onB.id)).toMatchObject({
+        provider: "device-fake-b",
+        available: false,
+        report: stored,
+      });
+      expect(l.items.find((e) => e.id === onB.id)).not.toHaveProperty("demotedFrom");
+      // the person's default on device-fake is untouched
+      expect(l.items.find((e) => e.isDefault)).toMatchObject({
+        provider: "device-fake",
+        available: true,
+      });
+    } finally {
+      await setEnabled("device-fake-b", true);
+    }
+  });
+});
+
 describe("a cloud device's sandbox network (approval-only profiles design)", () => {
   const patch = (req: Req, id: string, payload: Record<string, unknown>) =>
     req({ method: "PATCH", url: `${base()}/${id}`, payload });
@@ -530,7 +731,7 @@ describe("a cloud device's sandbox network (approval-only profiles design)", () 
         profile: "full-access",
         actor: { accountId, conversationId },
         tag: "test",
-        filesystem: { kind: "scoped", readRoots: ["/w"], writeRoots: ["/w"] },
+        filesystem: { kind: "scoped", projectRoot: "/w", writeRoots: ["/w"] },
         network,
       };
       await db
@@ -551,7 +752,7 @@ describe("a cloud device's sandbox network (approval-only profiles design)", () 
           input: "{}",
           scope: JSON.stringify(scope),
           epochs: JSON.stringify({ platform: 0, org: 0, device: 0, root: 0 }),
-          provider: "sandbox-fake",
+          provider: "device-fake",
           provider_version: "test",
           instance_generation: "test",
           deadline: new Date(Date.now() + 30_000),

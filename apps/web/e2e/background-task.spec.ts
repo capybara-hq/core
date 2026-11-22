@@ -17,7 +17,7 @@ import { signIn } from "./support/sign-in";
 /**
  * Background Bash on the conversation page (spec 2026-11-05-background-bash-design §2, §3, §5):
  * model-fake calls `Bash` with `run_in_background` and answers with the launch result; the task
- * runs in sandbox-fake, the properties panel lists it while it runs, its output panel shows the
+ * runs in device-fake, the properties panel lists it while it runs, its output panel shows the
  * output once it finished, the thread shows the finished notice, and the finish wakes the idle
  * conversation: a second reply arrives without a person's message.
  */

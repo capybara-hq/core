@@ -5,7 +5,7 @@ import {
   MAX_DEVICE_SCAN_DEPTH,
   MAX_DEVICE_SCAN_DIRS,
   MAX_DEVICE_SCAN_RESULTS,
-} from "./sandbox.js";
+} from "./device-provider.js";
 import { SANDBOX_WRITE_POLICY_PYTHON } from "./sandbox-write-denies.js";
 
 /**

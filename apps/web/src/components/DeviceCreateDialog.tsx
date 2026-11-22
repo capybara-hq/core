@@ -7,12 +7,13 @@ import {
   Field,
   Input,
   RadioGroup,
+  Select,
   Stack,
   Text,
   useToast,
 } from "@capybara-hq/design";
 import { useQuery } from "@tanstack/react-query";
-import { useTranslations } from "next-intl";
+import { useLocale, useTranslations } from "next-intl";
 import { useEffect, useRef, useState } from "react";
 import { useRouter } from "../i18n/navigation";
 import {
@@ -20,7 +21,8 @@ import {
   DEVICE_START_COMMAND,
   deviceLoginCommand,
 } from "../lib/device-sign-in";
-import { createDevice, type Device, isDeviceName } from "../lib/devices";
+import { createDevice, type Device, type DeviceProviderOption, isDeviceName } from "../lib/devices";
+import { extensionLabel, labelLocale } from "../lib/extension-label";
 import { devicesQuery } from "../lib/query/devices";
 import { keys } from "../lib/query/keys";
 import { useAppMutation } from "../lib/query/mutation";
@@ -35,9 +37,10 @@ type Kind = "cloud" | "local";
 
 /**
  * 新建设备 on the 设备 page: two choices, 云端设备 and 本地设备 (only 本地设备, without the choice,
- * when the platform has no cloud sandbox).
+ * when no device provider is on in the org).
  *
- * - 云端设备: one field, 名称 (1-64 characters); the primary is disabled until it is valid. A created
+ * - Cloud device: a name (1-64 characters) and, with two or more providers on, a provider select (the
+ *   default preselected; the request names it); the primary is disabled until it is valid. A created
  *   device is ready at once (its files and instance are made on first use): the dialog
  *   invalidates the list and opens the detail page. A kernel refusal (name taken, limit reached,
  *   no provider) keeps the dialog open with its copy.
@@ -48,22 +51,29 @@ type Kind = "cloud" | "local";
  */
 export function DeviceCreateDialog({
   orgId,
-  cloudAvailable,
+  providers,
+  defaultProvider,
   onClose,
 }: {
   orgId: string;
-  cloudAvailable: boolean;
+  providers: DeviceProviderOption[];
+  defaultProvider: string | null;
   onClose(): void;
 }) {
   const t = useTranslations("devices.create");
   const toast = useToast();
   const router = useRouter();
   const errorMessage = useErrorMessage();
+  const lang = labelLocale(useLocale());
+  const cloudAvailable = providers.length > 0;
   const [kind, setKind] = useState<Kind>(cloudAvailable ? "cloud" : "local");
+  const [provider, setProvider] = useState(
+    providers.find((p) => p.plugin === defaultProvider)?.plugin ?? providers[0]?.plugin ?? "",
+  );
   const [name, setName] = useState("");
   const [error, setError] = useState<string>();
   const create = useAppMutation({
-    fn: () => createDevice(orgId, name),
+    fn: () => createDevice(orgId, name, provider === "" ? undefined : provider),
     invalidates: (_, r) => [keys.org(orgId).devices(), keys.org(orgId).device(r.device.id)],
   });
   const valid = isDeviceName(name);
@@ -141,6 +151,18 @@ export function DeviceCreateDialog({
                 }}
               />
             </Field>
+            {providers.length > 1 && (
+              <Field label={t("provider")} help={t("providerHelp")}>
+                <Select
+                  value={provider}
+                  onChange={(e) => setProvider(e.target.value)}
+                  options={providers.map((p) => ({
+                    value: p.plugin,
+                    label: extensionLabel({ name: p.plugin, displayName: p.displayName }, lang),
+                  }))}
+                />
+              </Field>
+            )}
             {error !== undefined && <FormError message={error} />}
           </Stack>
         ) : (

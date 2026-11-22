@@ -1,4 +1,5 @@
 import {
+  EXTENSION_NAME_RE,
   isDeviceProjectName,
   MAX_DEVICE_PROJECT_NAME_LENGTH,
   validateAllowHost,
@@ -10,6 +11,20 @@ import { createZodDto } from "../infra/validation/create-zod-dto.js";
 export const DeviceName = z.string().trim().min(1).max(64);
 
 export const DeviceNameBody = z.object({ name: DeviceName }).strict();
+
+/**
+ * `POST /devices`: a name and the device provider (a plugin name) it is bound to for life, one on
+ * in the org (`GET /devices` lists them); absent, the org's default provider.
+ */
+export const DeviceCreateBody = z
+  .object({
+    name: DeviceName,
+    provider: z
+      .string()
+      .regex(EXTENSION_NAME_RE, "must be a device provider's plugin name")
+      .optional(),
+  })
+  .strict();
 export const DeviceParams = z.object({ id: z.string().min(1).max(100) });
 
 /** One host of a device's network allowlist (`validateAllowHost`: lowercase, `*.` allowed). */
@@ -126,7 +141,7 @@ export const DeviceProjectAddBody = z
 /** `DELETE /devices/:id/projects/:name`. */
 export const DeviceProjectParams = DeviceParams.extend({ name: DeviceProjectName });
 
-export class DeviceCreateBodyDto extends createZodDto(DeviceNameBody, "DeviceCreateBody") {}
+export class DeviceCreateBodyDto extends createZodDto(DeviceCreateBody, "DeviceCreateBody") {}
 export class DevicePatchBodyDto extends createZodDto(DevicePatchBody, "DevicePatchBody") {}
 export class DeviceParamsDto extends createZodDto(DeviceParams, "DeviceParams") {}
 export class DevicePolicyBodyDto extends createZodDto(DevicePolicyBody, "DevicePolicyBody") {}

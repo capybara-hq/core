@@ -51,7 +51,6 @@ const env = (id: string, name: string | null, over: Record<string, unknown> = {}
   id,
   name,
   isDefault: name === null,
-  demotedFrom: null,
   ownerKind: "personal",
   source: "cloud",
   provider: "sandbox-docker",
@@ -60,6 +59,7 @@ const env = (id: string, name: string | null, over: Record<string, unknown> = {}
   filesLost: false,
   instance: null,
   limits: LIMITS,
+  report: null,
   sandbox: SANDBOX,
   createdAt: T,
   ...over,
@@ -68,7 +68,8 @@ const list = (items: unknown[], over: Record<string, unknown> = {}) => ({
   items,
   defaultId: "e1",
   lastUsedId: null,
-  cloudAvailable: true,
+  providers: [{ plugin: "sandbox-docker", displayName: null }],
+  defaultProvider: "sandbox-docker",
   ...over,
 });
 
@@ -129,67 +130,6 @@ describe("devices list", () => {
     );
   });
 
-  it("a former default is 个人设备（<provider display name>）, the id without one, numbered after the first", async () => {
-    const docker = { zh: "Docker 沙箱", en: "Docker sandbox" };
-    const former = (id: string, displayName: typeof docker | null, ordinal = 1) =>
-      env(id, null, {
-        isDefault: false,
-        available: false,
-        demotedFrom: { provider: "sandbox-docker", displayName, ordinal },
-      });
-    const items = [
-      env("e1", null),
-      former("e2", docker),
-      former("e3", docker, 2),
-      {
-        ...former("e4", null),
-        demotedFrom: { provider: "sandbox-e2b", displayName: null, ordinal: 1 },
-      },
-    ];
-    stubApi({ [`GET ${BASE}`]: () => json(200, list(items)) });
-    await renderList({ locale: "zh" });
-    let cards = await screen.findAllByRole("listitem");
-    expect(cards.map((c) => c.querySelector("a")?.textContent)).toEqual([
-      "个人设备",
-      "个人设备（Docker 沙箱）",
-      "个人设备（Docker 沙箱） 2",
-      "个人设备（sandbox-e2b）",
-    ]);
-    cleanup();
-    stubApi({ [`GET ${BASE}`]: () => json(200, list(items)) });
-    await renderList({ locale: "en" });
-    cards = await screen.findAllByRole("listitem");
-    expect(cards.map((c) => c.querySelector("a")?.textContent)).toEqual([
-      "Personal",
-      "Personal (Docker sandbox)",
-      "Personal (Docker sandbox) 2",
-      "Personal (sandbox-e2b)",
-    ]);
-  });
-
-  it("a former default's page says it comes back with its provider", async () => {
-    stubApi({
-      ...NO_PROJECTS,
-      [`GET ${BASE}/e1`]: () =>
-        json(200, {
-          device: env("e1", null, {
-            isDefault: false,
-            available: false,
-            demotedFrom: {
-              provider: "sandbox-docker",
-              displayName: { zh: "Docker 沙箱", en: "Docker sandbox" },
-              ordinal: 1,
-            },
-          }),
-        }),
-    });
-    await renderDetail();
-    expect(await screen.findByRole("heading", { name: "Personal (Docker sandbox)" })).toBeTruthy();
-    expect(
-      screen.getByText(E.detail.demotedNote.replace("{provider}", "Docker sandbox")),
-    ).toBeTruthy();
-  });
-
   it("devices list first render from hydrated cache makes no browser read", async () => {
     const browser = expectNoFirstPaintFetch();
     stubApi(routes);
@@ -220,7 +160,8 @@ describe("devices list", () => {
 
   it("no provider shows the empty state (新建设备 still connects a device)", async () => {
     stubApi({
-      [`GET ${BASE}`]: () => json(200, list([], { cloudAvailable: false, defaultId: null })),
+      [`GET ${BASE}`]: () =>
+        json(200, list([], { providers: [], defaultProvider: null, defaultId: null })),
     });
     await renderList();
     expect(await screen.findByText(E.noCloud.text)).toBeTruthy();
@@ -234,7 +175,8 @@ describe("devices list", () => {
         json(
           200,
           list([env("e1", "Old box", { available: false, provider: "sandbox-gone" })], {
-            cloudAvailable: false,
+            providers: [],
+            defaultProvider: null,
             defaultId: null,
           }),
         ),
@@ -270,12 +212,61 @@ describe("devices list", () => {
     await user.click(submit);
     await vi.waitFor(() => expect(router.push).toHaveBeenCalledWith("/devices/e3"));
     const post = calls.find((c) => c.method === "POST");
-    expect(bodyOf(post)).toEqual({ name: "Scratch" });
+    expect(bodyOf(post)).toEqual({ name: "Scratch", provider: "sandbox-docker" });
     // the list is read again after the POST (it was invalidated while on screen)
     await vi.waitFor(() => {
       const after = calls.slice(calls.indexOf(post as never)).map((c) => `${c.method} ${c.url}`);
       expect(after).toContain(`GET ${BASE}`);
     });
+  });
+
+  it("新建设备 with two providers offers a provider choice and posts the chosen one", async () => {
+    const calls = stubApi({
+      [`GET ${BASE}`]: () =>
+        json(
+          200,
+          list([env("e1", null)], {
+            providers: [
+              {
+                plugin: "sandbox-docker",
+                displayName: { zh: "Docker 沙箱", en: "Docker sandbox" },
+              },
+              { plugin: "sandbox-e2b", displayName: null },
+            ],
+            defaultProvider: "sandbox-docker",
+          }),
+        ),
+      [`POST ${BASE}`]: () => json(201, { device: env("e3", "Scratch") }),
+    });
+    await renderList();
+    const user = userEvent.setup();
+    await user.click(await screen.findByRole("button", { name: E.new }));
+    const dialog = await screen.findByRole("dialog");
+    const select = within(dialog).getByRole("combobox", { name: E.create.provider });
+    // the default is preselected, by its display name
+    expect(within(select).getByText("Docker sandbox")).toBeTruthy();
+    await user.click(select);
+    await user.click(await screen.findByRole("option", { name: "sandbox-e2b" }));
+    await user.type(within(dialog).getByRole("textbox"), "Scratch");
+    await user.click(within(dialog).getByRole("button", { name: E.create.submit }));
+    await vi.waitFor(() => expect(router.push).toHaveBeenCalledWith("/devices/e3"));
+    expect(bodyOf(calls.find((c) => c.method === "POST"))).toEqual({
+      name: "Scratch",
+      provider: "sandbox-e2b",
+    });
+  });
+
+  it("with no provider on in the org the cloud option is absent and the local steps remain", async () => {
+    stubApi({
+      [`GET ${BASE}`]: () => json(200, list([], { providers: [], defaultProvider: null })),
+    });
+    await renderList();
+    const user = userEvent.setup();
+    await user.click(await screen.findByRole("button", { name: E.new }));
+    const dialog = await screen.findByRole("dialog");
+    expect(within(dialog).queryByRole("radio")).toBeNull();
+    expect(within(dialog).queryByRole("textbox")).toBeNull();
+    expect(within(dialog).getByText(E.create.installStep)).toBeTruthy();
   });
 
   it("a refused create keeps the dialog open with the error copy", async () => {
@@ -311,6 +302,38 @@ describe("device detail", () => {
     expect(screen.getByText(E.source.cloud)).toBeTruthy();
     await settle();
     expect(browser).toEqual([]);
+  });
+
+  it("an unavailable device says its provider is off in this organization", async () => {
+    stubApi({
+      ...NO_PROJECTS,
+      [`GET ${BASE}/e1`]: () =>
+        json(200, { device: env("e1", "Old box", { available: false, provider: "sandbox-gone" }) }),
+    });
+    await renderDetail({ locale: "zh" });
+    expect(
+      await screen.findByText("此设备的提供方已在本组织关闭或未安装，文件仍保留。"),
+    ).toBeTruthy();
+  });
+
+  it("the overview shows what the provider reports about the device", async () => {
+    stubApi({
+      ...NO_PROJECTS,
+      [`GET ${BASE}/e1`]: () =>
+        json(200, {
+          device: env("e1", "Build box", {
+            report: {
+              revision: "r1",
+              description: { en: "A Docker container", zh: "一个 Docker 容器" },
+              home: null,
+              limits: [],
+              reset: true,
+            },
+          }),
+        }),
+    });
+    await renderDetail();
+    expect(await screen.findByText("A Docker container")).toBeTruthy();
   });
 
   it("device detail: empty cache shows template loading, then the data", async () => {
@@ -561,7 +584,8 @@ describe("local devices (environments spec §6, §9)", () => {
 
   it("without a cloud sandbox 新建设备 still connects a device", async () => {
     stubApi({
-      [`GET ${BASE}`]: () => json(200, list([], { cloudAvailable: false, defaultId: null })),
+      [`GET ${BASE}`]: () =>
+        json(200, list([], { providers: [], defaultProvider: null, defaultId: null })),
     });
     await renderList();
     const user = userEvent.setup();

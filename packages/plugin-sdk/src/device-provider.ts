@@ -1,10 +1,10 @@
 /**
- * Sandbox contract `sandbox@2`: a single-select, brokered extension point (extensions may not
- * `requires` it; the kernel's `SandboxService` consumes it). The provider implements only the
+ * Device provider contract `device-provider@1`: a multi, brokered, org-scoped extension point
+ * (extensions may not `requires` it; the kernel's `SandboxService` consumes it). The provider implements only the
  * primitives below; the kernel builds `glob` / `grep` / `edit` from `exec` plus `readFile` /
  * `writeFile`.
  *
- * `@2` separates a device's **file system** from its **instance**: the file system
+ * A device separates its **file system** from its **instance**: the file system
  * (`createFileSystem`) lives until the device is deleted (`destroyFileSystem`); instances
  * (`create`) attach to it and come and go (`destroy` drops the instance and keeps the files).
  */
@@ -19,10 +19,10 @@ import type {
   SandboxPermissionSupport,
   SandboxPreparation,
   SandboxPreparationScope,
-} from "./sandbox-operation.js";
+} from "./device-operation.js";
 
-/** Sandbox extension point ref. */
-export const SANDBOX_EXTENSION_POINT = "sandbox@2";
+/** Device provider extension point ref. */
+export const DEVICE_PROVIDER_EXTENSION_POINT = "device-provider@1";
 
 /** The roots inside the sandbox the model may access. */
 export const SANDBOX_ROOTS = ["/workspace", "/skills", "/tmp"] as const;
@@ -169,14 +169,143 @@ export function isFileSystemGoneError(e: unknown): e is FileSystemGoneError {
 }
 
 /**
- * A holder tag (`exec` argument `tag`, {@link SandboxProvider.killTagged}): the kernel passes its
+ * A holder tag (`exec` argument `tag`, {@link DeviceProvider.killTagged}): the kernel passes its
  * lease tokens (UUIDs). Providers check tags against it before putting them in a command line or a
  * kill pattern.
  */
 export const SANDBOX_TAG_RE = /^[a-z0-9-]{1,64}$/;
 
+/** Text in English with an optional Chinese translation (what a person reads). */
+export interface DeviceText {
+  en: string;
+  zh?: string;
+}
+
+/** The device a provider answers about: the kernel's device id, its org and the instance, if any. */
+export interface DeviceRef {
+  deviceId: string;
+  orgId: string;
+  /** The current instance, or null when the device has none. */
+  handle: SandboxHandle | null;
+}
+
+/** One limit line of a {@link DeviceReport} (shown as is; the provider enforces it). */
+export interface DeviceReportLimit {
+  label: DeviceText;
+  value: string;
+}
+
 /**
- * The `sandbox@2` implementation (provided by a sandbox plugin such as Docker or E2B).
+ * What a provider tells about a device ({@link DeviceProvider.report}): shown to people, never
+ * used for enforcement. `revision` changes whenever the rest changes; `home` is the owner's home
+ * directory (absolute) or null; `reset` says whether the provider can reset the device's files.
+ */
+export interface DeviceReport {
+  revision: string;
+  description: DeviceText;
+  home: string | null;
+  limits: DeviceReportLimit[];
+  reset: boolean;
+}
+
+/** Size limits {@link parseDeviceReport} enforces. */
+export const DEVICE_REPORT_LIMITS = Object.freeze({
+  revisionChars: 128,
+  descriptionChars: 300,
+  limits: 8,
+  limitLabelChars: 60,
+  limitValueChars: 60,
+  homeChars: 4096,
+});
+
+const isRecord = (v: unknown): v is Record<string, unknown> =>
+  typeof v === "object" && v !== null && !Array.isArray(v);
+
+function exactKeys(v: Record<string, unknown>, keys: readonly string[], what: string): void {
+  for (const k of Object.keys(v)) {
+    if (!keys.includes(k)) throw new TypeError(`${what}: unknown key ${k}`);
+  }
+}
+
+function parseText(v: unknown, max: number, what: string): DeviceText {
+  if (!isRecord(v)) throw new TypeError(`${what} must be an object`);
+  exactKeys(v, ["en", "zh"], what);
+  const { en, zh } = v;
+  if (typeof en !== "string" || en === "" || en.length > max) {
+    throw new TypeError(`${what}.en must be a non-empty string of at most ${max} characters`);
+  }
+  if (zh === undefined) return { en };
+  if (typeof zh !== "string" || zh === "" || zh.length > max) {
+    throw new TypeError(`${what}.zh must be a non-empty string of at most ${max} characters`);
+  }
+  return { en, zh };
+}
+
+/** Checks a provider's report; throws `TypeError` on any other shape, returns a clean copy. */
+export function parseDeviceReport(value: unknown): DeviceReport {
+  const L = DEVICE_REPORT_LIMITS;
+  if (!isRecord(value)) throw new TypeError("device report must be an object");
+  exactKeys(value, ["revision", "description", "home", "limits", "reset"], "device report");
+  const { revision, home, limits, reset } = value;
+  if (typeof revision !== "string" || revision === "" || revision.length > L.revisionChars) {
+    throw new TypeError(
+      `device report revision must be a non-empty string of at most ${L.revisionChars} characters`,
+    );
+  }
+  const description = parseText(value.description, L.descriptionChars, "device report description");
+  if (home !== null) {
+    if (typeof home !== "string" || home.length > L.homeChars) {
+      throw new TypeError("device report home must be an absolute path or null");
+    }
+    const errors = validateSandboxPathShape(home);
+    if (errors.length > 0) throw new TypeError(`device report home: ${errors.join("; ")}`);
+  }
+  if (!Array.isArray(limits) || limits.length > L.limits) {
+    throw new TypeError(`device report limits must be an array of at most ${L.limits} entries`);
+  }
+  const parsedLimits = limits.map((raw, i): DeviceReportLimit => {
+    const what = `device report limits[${i}]`;
+    if (!isRecord(raw)) throw new TypeError(`${what} must be an object`);
+    exactKeys(raw, ["label", "value"], what);
+    if (typeof raw.value !== "string" || raw.value === "" || raw.value.length > L.limitValueChars) {
+      throw new TypeError(
+        `${what}.value must be a non-empty string of at most ${L.limitValueChars} characters`,
+      );
+    }
+    return { label: parseText(raw.label, L.limitLabelChars, `${what}.label`), value: raw.value };
+  });
+  if (typeof reset !== "boolean") throw new TypeError("device report reset must be a boolean");
+  return { revision, description, home, limits: parsedLimits, reset };
+}
+
+/**
+ * The provider refuses a project directory (`projects` operations: it lies where the provider
+ * will not serve, for example another connection's directory). `reason` is shown to the person.
+ * The kernel answers it as `device.project_refused` (422).
+ */
+export class ProjectPathRefusedError extends Error {
+  readonly projectPathRefused = true as const;
+  readonly reason: DeviceText;
+
+  constructor(reason: DeviceText, opts?: { cause?: unknown }) {
+    super(reason.en, opts && "cause" in opts ? { cause: opts.cause } : undefined);
+    this.name = "ProjectPathRefusedError";
+    this.reason = reason;
+  }
+}
+
+/** Duck-typed check (not instanceof), so a plugin bundling another plugin-sdk copy still matches. */
+export function isProjectPathRefusedError(e: unknown): e is ProjectPathRefusedError {
+  return (
+    e instanceof Error &&
+    e.name === "ProjectPathRefusedError" &&
+    (e as { projectPathRefused?: unknown }).projectPathRefused === true &&
+    isRecord((e as { reason?: unknown }).reason)
+  );
+}
+
+/**
+ * The `device-provider@1` implementation (provided by a sandbox plugin such as Docker or E2B).
  *
  * **File systems and instances.** `createFileSystem` makes a device's files; they live until
  * `destroyFileSystem` (the device is deleted). `create` makes an instance attached to an
@@ -216,7 +345,7 @@ export const SANDBOX_TAG_RE = /^[a-z0-9-]{1,64}$/;
  * methods must be safe to call concurrently. Each `exec` labels its command with its `tag`, and an
  * aborted `exec` kills only its own command.
  */
-export interface SandboxProvider {
+export interface DeviceProvider {
   /** Runtime permission support for this instance; does not grant consent or provision an instance. */
   permissionSupport?(h: SandboxHandle, signal: AbortSignal): Promise<SandboxPermissionSupport>;
   /**
@@ -247,6 +376,17 @@ export interface SandboxProvider {
   /** `exec` / `readFile` / `writeFile` / `stat` may run concurrently on one instance (required). */
   readonly concurrentExec: true;
   /**
+   * Declares that the provider enforces `limits.network` allowlists (required, always `true`):
+   * a provider that cannot restrict outbound hosts does not implement `device-provider@1`.
+   */
+  readonly networkAllowlist: true;
+  /**
+   * What the provider tells about the device: a description, the owner's home, limits and whether
+   * files can be reset ({@link DeviceReport}). Shown to people only; the answer passes
+   * {@link parseDeviceReport}. Must respond to `signal`.
+   */
+  report(device: DeviceRef, signal: AbortSignal): Promise<DeviceReport>;
+  /**
    * Whether the provider isolates the sessions of one device from each other inside the
    * instance (a declared capability; absent means false).
    */
@@ -254,7 +394,7 @@ export interface SandboxProvider {
   /**
    * Where `create`-time limits are fixed: `instance` (absent; Docker: a new instance applies new
    * limits) or `fileSystem` (E2B: the instance is the file system, so only a file reset applies
-   * them without {@link SandboxProvider.update}).
+   * them without {@link DeviceProvider.update}).
    */
   readonly limitsApplyAt?: "instance" | "fileSystem";
   /**
@@ -316,7 +456,7 @@ export interface SandboxProvider {
    * spawned that did not start their own session). The kernel calls it only when no other holder
    * can be running commands (an instance just resumed from `suspended`, or under the exclusive
    * lease), never while another session may be; to clean up after one crashed holder it uses
-   * {@link SandboxProvider.killTagged}. Processes a command put in the background in their own
+   * {@link DeviceProvider.killTagged}. Processes a command put in the background in their own
    * session are not guaranteed to be killed.
    */
   killAll(h: SandboxHandle, signal: AbortSignal): Promise<void>;
@@ -343,7 +483,7 @@ export interface SandboxProvider {
       signal: AbortSignal;
       /**
        * The holder's tag ({@link SANDBOX_TAG_RE}); label the command with it so
-       * {@link SandboxProvider.killTagged} can find it.
+       * {@link DeviceProvider.killTagged} can find it.
        */
       tag: string;
       /** Who runs the command; informational in phase 1 (record it, do not act on it). */
@@ -375,7 +515,7 @@ export interface SandboxProvider {
    * path does not exist and the device could reach it; a path it cannot reach throws (a policy
    * refusal), as does a path that is a file or a directory that cannot be read.
    *
-   * Optional: a provider without it (or without {@link SandboxProvider.scan}) offers no projects,
+   * Optional: a provider without it (or without {@link DeviceProvider.scan}) offers no projects,
    * and its conversations stay in free mode.
    */
   list?(
@@ -384,7 +524,8 @@ export interface SandboxProvider {
     opts: { limit: number; signal: AbortSignal },
   ): Promise<{ entries: { name: string; isDir: boolean }[]; truncated: boolean } | null>;
   /**
-   * Looks for project-like directories, read as for {@link SandboxProvider.list}. Every provider traverses the same way:
+   * Looks for project-like directories, read as for {@link DeviceProvider.list}. Every provider
+   * traverses the same way:
    *
    * - Candidates are `base` itself and the directories at most {@link MAX_DEVICE_SCAN_DEPTH}
    *   levels below it that hold a `.git` entry (directory or file) or an `AGENTS.md` file.
@@ -421,17 +562,17 @@ const CONTROL = /[\u0000-\u001f\u007f]/;
 /** The longest project name, in UTF-16 code units. */
 export const MAX_DEVICE_PROJECT_NAME_LENGTH = 64;
 
-/** The most candidates a `scan` answers ({@link SandboxProvider.scan}). */
+/** The most candidates a `scan` answers ({@link DeviceProvider.scan}). */
 export const MAX_DEVICE_SCAN_RESULTS = 50;
 
 /**
- * Directory names a `scan` never enters, at any depth ({@link SandboxProvider.scan}): dependency
+ * Directory names a `scan` never enters, at any depth ({@link DeviceProvider.scan}): dependency
  * trees, not projects. Every provider skips exactly these.
  */
 export const DEVICE_SCAN_SKIPPED_DIRS: readonly string[] = Object.freeze(["node_modules"]);
 
 /**
- * Directory names a `scan` does not enter directly under its `base` ({@link SandboxProvider.scan}):
+ * Directory names a `scan` does not enter directly under its `base` ({@link DeviceProvider.scan}):
  * the owner's macOS `Library` (app data, huge, partly privacy-protected) is not where projects
  * live. Every provider skips exactly these.
  */
@@ -442,7 +583,7 @@ export const MAX_DEVICE_SCAN_DEPTH = 2;
 
 /**
  * The most directories one `scan` visits (reads the entries of), its `base` included
- * ({@link SandboxProvider.scan}): breadth-first, each level in code-unit order of path.
+ * ({@link DeviceProvider.scan}): breadth-first, each level in code-unit order of path.
  */
 export const MAX_DEVICE_SCAN_DIRS = 500;
 

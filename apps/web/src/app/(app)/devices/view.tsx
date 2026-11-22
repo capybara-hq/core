@@ -55,11 +55,11 @@ function Devices({ orgId }: { orgId: string }) {
   const empty =
     items.length > 0
       ? undefined
-      : !list.data.cloudAvailable
+      : list.data.providers.length === 0
         ? { text: t("noCloud.text"), hint: t("noCloud.hint") }
         : { text: t("empty") };
   const callout =
-    items.length > 0 && !list.data.cloudAvailable
+    items.length > 0 && list.data.providers.length === 0
       ? { tone: "warn" as const, children: t("noCloud.notice") }
       : undefined;
   return (
@@ -77,7 +77,8 @@ function Devices({ orgId }: { orgId: string }) {
       {creating && (
         <DeviceCreateDialog
           orgId={orgId}
-          cloudAvailable={list.data.cloudAvailable}
+          providers={list.data.providers}
+          defaultProvider={list.data.defaultProvider}
           onClose={() => setCreating(false)}
         />
       )}

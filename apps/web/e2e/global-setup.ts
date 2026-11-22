@@ -20,9 +20,11 @@
  * sha512 by `capybara bootstrap` (as the compose init does; the only network access of this setup,
  * `CAPYBARA_PACKAGES__NPM_REGISTRY` names a mirror, and a matching tgz in the repository's
  * `./bootstrap` is used instead), before `capybara start`, which then finds the step done.
- * `model-fake`'s fake-1 declares image and document support. The sandbox is the kernel test
- * fixture `sandbox-fake` (a real /bin/sh, instance directories under a temp dir, for tests only),
- * for the artifact case (Write -> Deliver -> the artifacts tab).
+ * `model-fake`'s fake-1 declares image and document support. The device provider is the kernel
+ * test fixture `device-fake` (a real /bin/sh, instance directories under a temp dir, for tests
+ * only; no bootstrap plugin provides devices), the platform's default device provider
+ * (`devices.defaultProvider`); like every provider it serves only the orgs that switch it on,
+ * which `signIn` does.
  * The web URL goes into `CAPYBARA_E2E_BASE_URL` (inherited by the worker processes as Playwright's
  * baseURL), the fake MCP endpoint into `CAPYBARA_E2E_MCP_URL`, the pets API's document URL and
  * API key into `CAPYBARA_E2E_OPENAPI_SPEC_URL` / `CAPYBARA_E2E_OPENAPI_KEY`. An extension package
@@ -110,7 +112,7 @@ const fakeGitModule = join(repoRoot, "packages/testing/src/fake-git-server.ts");
 /** The fixture packer of the test kit (`packFixture`), for the declarative fixture plugins. */
 const testingFixturesModule = join(repoRoot, "packages/testing/src/fixtures.ts");
 /** 假沙箱插件（内核测试夹具，sandbox@1；没有任何隔离，只用于测试）。 */
-const sandboxFake = join(repoRoot, "packages/kernel/test/fixtures/plugins/sandbox-fake/index.ts");
+const deviceFake = join(repoRoot, "packages/kernel/test/fixtures/plugins/device-fake/index.ts");
 /**
  * Kernel test fixture `hooks-probe` (policy hooks on model.request / tool.preExecute, configured
  * per org through its own route), for the hook-denial case of conversation-capabilities.spec.ts;
@@ -607,7 +609,7 @@ export default async function globalSetup(): Promise<Cleanup> {
         fakeWeb,
         fakeWeb2,
         fakeConfigForm,
-        sandboxFake,
+        deviceFake,
         hooksProbe,
       ],
       extensionConfig: {
@@ -624,7 +626,7 @@ export default async function globalSetup(): Promise<Cleanup> {
           secretAccessKey: s3.secretKey,
           forcePathStyle: true,
         },
-        "sandbox-fake": { root: join(dir, "sandboxes") },
+        "device-fake": { root: join(dir, "sandboxes") },
         "fake-connector": { kind: "mcp" },
         "fake-im": {
           platformUrl: "http://127.0.0.1:9",
@@ -632,6 +634,9 @@ export default async function globalSetup(): Promise<Cleanup> {
           clientSecret: "e2e-login-secret",
         },
       },
+      // The platform's default device provider: a person's default device (and a new device that
+      // names no provider) is made on device-fake once an org switches it on (signIn does)
+      devices: { defaultProvider: "device-fake" },
       // Extensions' ctx.net.fetch may reach the fake servers on loopback http
       net: { allowInsecureLoopback: true },
       // The official marketplace points at the fake one; extension packages and plugins download

@@ -36,13 +36,13 @@ import { childRunsOf, finishedDeliveries } from "../helpers/subagents.js";
  * Phase C Task 14 (spec §14.2, §14.3): `GET /conversations/:id/subagents`, child conversations
  * through the unchanged routes (view, events, device, outputs), `listMine` without
  * children, the parent's SSE receiving `subagent_progress`, and conversation usage that sums the
- * children. One kernel with model-script and sandbox-fake.
+ * children. One kernel with model-script and device-fake.
  */
 
 const fixture = (name: string) =>
   fileURLToPath(new URL(`../fixtures/plugins/${name}/index.ts`, import.meta.url));
 const MODEL_SCRIPT = fixture("model-script");
-const SANDBOX_FAKE = fixture("sandbox-fake");
+const SANDBOX_FAKE = fixture("device-fake");
 
 const CHILD = "You are a sub-agent";
 const agentCall = (description: string, prompt: string) => ({
@@ -102,7 +102,7 @@ beforeAll(async () => {
       {
         roles: ["api", "worker"],
         extensions: [MODEL_FAKE, MODEL_SCRIPT, SANDBOX_FAKE],
-        extensionConfig: { "model-script": { rules: RULES }, "sandbox-fake": { root } },
+        extensionConfig: { "model-script": { rules: RULES }, "device-fake": { root } },
       },
     ),
   );

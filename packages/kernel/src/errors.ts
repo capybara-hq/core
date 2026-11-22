@@ -55,6 +55,8 @@ export const ERROR_CODES = {
    * through an API token or the Platform tool.
    */
   "org.network_not_allowed": 400,
+  /** The org's default device provider names an extension that is not a `device-provider@1` provider on in the org. */
+  "org.device_provider_not_available": 400,
   /** An org network allowance entry that is malformed, names a link-local address, or is over the cap. */
   "org.network_allowance_invalid": 400,
   "org.network_allowance_not_found": 404,
@@ -446,8 +448,13 @@ export const ERROR_CODES = {
   "device.files_lost": 409,
   /** The caller may see the device but not use it (shared devices, later phases). */
   "device.forbidden": 403,
-  /** The device's provider is not the deployment's current one, or there is none. */
+  /** The device's provider is off in its org or not loaded, or it has none. */
   "device.unavailable": 503,
+  /**
+   * A new device names no provider and its org has no default device provider serving it; the
+   * message lists the providers on in the org.
+   */
+  "device.provider_required": 400,
   /** The person already has a live device with this name (case-insensitive). */
   "device.name_taken": 409,
   /** The person already has `devices.maxPersonal` live personal devices. */
@@ -530,6 +537,8 @@ export const ERROR_CODES = {
   "device.project_path_missing": 422,
   /** The project's path is a file, cannot be read, or the device refused it in its current mode. */
   "device.project_path_unreadable": 422,
+  /** The device provider refused the project's directory (its reason is the message and details). */
+  "device.project_refused": 422,
   /** Device sign-in (RFC 8628 style): the person has not approved the code yet; keep polling. */
   "device_sign_in.authorization_pending": 400,
   /** Device sign-in: the program polls faster than the interval; add 5 seconds and keep polling. */

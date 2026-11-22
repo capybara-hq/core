@@ -16,7 +16,7 @@ import { admissionUnavailableText } from "../../src/tools/builtins/sandbox/commo
 import {
   readFakeSandboxOps,
   setFakeSandboxPermissionSupport,
-} from "../fixtures/plugins/sandbox-fake/index.js";
+} from "../fixtures/plugins/device-fake/index.js";
 import { onlyBuiltins } from "../helpers/disabled-tools.js";
 import { accountsFor } from "../helpers/identity.js";
 import { MODEL_FAKE } from "../helpers/model-plugins.js";
@@ -43,7 +43,7 @@ import type { Answer } from "../local-devices/test-holder.js";
  * runs the worker and the device gateway; replica B serves the API only, so every profile change
  * and every decision made through B reaches A's runs through the database, never process memory.
  *
- * The provider is `sandbox-fake` (a real /bin/sh over a temporary directory that checks each
+ * The provider is `device-fake` (a real /bin/sh over a temporary directory that checks each
  * operation's scope) for cloud devices, and a protocol 3 fake machine on a real WebSocket for the
  * local device. Races, injected faults and replay are covered by the suites this file's header in
  * the evidence report maps (permission-approvals.dual, platform-revocation-e2e,
@@ -52,14 +52,16 @@ import type { Answer } from "../local-devices/test-holder.js";
  */
 
 const SANDBOX_FAKE = fileURLToPath(
-  new URL("../fixtures/plugins/sandbox-fake/index.ts", import.meta.url),
+  new URL("../fixtures/plugins/device-fake/index.ts", import.meta.url),
 );
 
 type Profile = "request-approval" | "approve-for-me" | "full-access";
 type ToolResult = Extract<ConversationEvent, { type: "tool_result" }>;
 type Scope = {
   profile: Profile;
-  filesystem: { kind: "device" } | { kind: "scoped"; readRoots: string[]; writeRoots: string[] };
+  filesystem:
+    | { kind: "device" }
+    | { kind: "scoped"; projectRoot: string | null; writeRoots: string[] };
   network: { kind: string };
 };
 
@@ -88,7 +90,7 @@ beforeAll(async () => {
       {
         roles,
         extensions: [MODEL_FAKE, SANDBOX_FAKE],
-        extensionConfig: { "sandbox-fake": { root: sandboxRoot } },
+        extensionConfig: { "device-fake": { root: sandboxRoot } },
         http: { port: 0, publicUrl: "https://cap.example" },
         auth: { cookieSecure: false },
         // every case makes its own device
@@ -149,7 +151,7 @@ async function call(conv: string, key: string, input: unknown, n: number): Promi
   return r as ToolResult;
 }
 
-/** A new cloud device of the owner on sandbox-fake, created through the API. */
+/** A new cloud device of the owner on device-fake, created through the API. */
 async function cloudDevice(): Promise<string> {
   const res = await ownerA({
     method: "POST",
@@ -273,17 +275,12 @@ async function approveThrough(askId: string): Promise<void> {
   expect(res.statusCode, res.body).toBe(200);
 }
 
-/** A restricted scope that can read `root` (a native read may get no write roots at all). */
+/** A restricted scope whose project is `root` (a native read may get no write roots at all). */
 const readsWithin = (root: string) =>
-  expect.objectContaining({ kind: "scoped", readRoots: expect.arrayContaining([root]) });
+  expect.objectContaining({ kind: "scoped", projectRoot: root });
 
 /** The restricted scope the provider gets for a conversation working in `root`. */
-const scopedTo = (root: string) =>
-  expect.objectContaining({
-    kind: "scoped",
-    writeRoots: [root],
-    readRoots: expect.arrayContaining([root]),
-  });
+const scopedTo = (root: string) => expect.objectContaining({ kind: "scoped", writeRoots: [root] });
 
 /**
  * One profile through the matrix: in-project Bash, Read, Write, Edit and a background start and
@@ -817,9 +814,13 @@ describe("a local device's project outside its fixed workspace", () => {
     expect(outsideRead.payload.content).toContain("buy milk");
     const readReq = native("readFile", `${NOTES}/todo.txt`).at(-1);
     expect(readReq).toBeDefined();
-    expect(((readReq as KernelReq).args as { scope: Scope }).scope.filesystem).toEqual(
-      readsWithin(NOTES),
-    );
+    // an approved read outside the project is not conveyed: a scope names no read roots (what
+    // the machine reads is its own rule; a real machine refuses it until it reads the whole
+    // machine minus its denies, an accepted interim narrowing)
+    const readScope = ((readReq as KernelReq).args as { scope: Scope }).scope.filesystem;
+    expect(readScope).not.toHaveProperty("readRoots");
+    expect(readScope).toEqual(expect.objectContaining({ kind: "scoped" }));
+    expect(readScope.kind === "scoped" && readScope.writeRoots).not.toContain(NOTES);
     await crossing(
       "Edit",
       { file_path: `${NOTES}/todo.txt`, old_string: "milk", new_string: "tea" },

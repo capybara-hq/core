@@ -5,7 +5,7 @@ import type {
   KernelReq,
   SandboxLimits,
 } from "@capybara-hq/plugin-sdk";
-import { SandboxPermissionUnsupportedError } from "@capybara-hq/plugin-sdk";
+import { parseDeviceReport, SandboxPermissionUnsupportedError } from "@capybara-hq/plugin-sdk";
 import { startTestPostgres, startTestRedis, type TestContainer } from "@capybara-hq/testing";
 import { Redis } from "ioredis";
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
@@ -31,12 +31,12 @@ import {
   type OrgDeviceSettings,
   orgAllowedDomains,
 } from "../../src/sandbox/modes.js";
-import { LOCAL_PROVIDER, SandboxProviders } from "../../src/sandbox/providers.js";
+import { DeviceProviders, LOCAL_PROVIDER } from "../../src/sandbox/providers.js";
 import type { SandboxService } from "../../src/sandbox/sandbox.service.js";
 import { type Answer, TestHolder } from "./test-holder.js";
 
 /**
- * The kernel-internal `@local` provider (environments spec §13.5): `sandbox@2` over the relay,
+ * The kernel-internal `@local` provider (environments spec §13.5): `device-provider@1` over the relay,
  * handles keyed by the device id (ruling R1), cleanup paths safe while offline (ruling R9),
  * the files never touched (ruling R24), the org's current limits and mode on every exec (ruling
  * R27, auto mode spec §4.2).
@@ -69,6 +69,7 @@ const DEPLOYMENT: DeploymentDevicePolicy = {
 let deployment: DeploymentDevicePolicy;
 let orgSettings: OrgDeviceSettings;
 let machineRoots: typeof ROOTS | null;
+let machineHome: string | null;
 let orgOfEnv: string | null;
 let maxFrameBytes: number;
 /** What the admitted call grants answer. */
@@ -77,6 +78,7 @@ beforeEach(() => {
   deployment = structuredClone(DEPLOYMENT);
   orgSettings = {};
   machineRoots = ROOTS;
+  machineHome = "/home/me";
   orgOfEnv = "org-1";
   maxFrameBytes = 16 * 1024 * 1024;
   admittedGrants = undefined;
@@ -151,6 +153,7 @@ beforeAll(async () => {
     {
       orgOf: async () => orgOfEnv,
       machineRoots: async () => machineRoots,
+      machineHome: async () => machineHome,
     },
     {
       devicePolicy: async () => effectiveDevicePolicy(deployment, orgSettings, null),
@@ -245,6 +248,25 @@ describe("LocalDeviceProvider", () => {
     await h.connect();
     expect(await provider.resume(handle, signal())).toBe("resumed");
     await h.disconnect();
+  });
+
+  it("@local reports the fixed description, the machine's home and no reset", async () => {
+    const device = { deviceId: "dev-1", orgId: "org-1", handle: null };
+    const report = await provider.report(device, signal());
+    expect(report).toEqual({
+      revision: "local-1",
+      description: {
+        en: "Runs on a computer connected with capybara-device; the computer's owner limits it there.",
+        zh: "运行在用 capybara-device 连接的电脑上，电脑的主人在本机限制它。",
+      },
+      home: "/home/me",
+      limits: [],
+      reset: false,
+    });
+    expect(parseDeviceReport(report)).toEqual(report);
+    machineHome = null;
+    expect((await provider.report(device, signal())).home).toBeNull();
+    expect(provider.networkAllowlist).toBe(true);
   });
 
   it("resume reports gone when the machine now reports other roots (ruling R23)", async () => {
@@ -346,7 +368,7 @@ describe("LocalDevicesModule", () => {
         { env: {}, logger: createLogger("error", { write: () => {} }) },
       );
       try {
-        const entry = app.get(SandboxProviders, { strict: false }).forName(LOCAL_PROVIDER);
+        const entry = app.get(DeviceProviders, { strict: false }).forDevice(LOCAL_PROVIDER);
         expect(entry?.plugin).toBe(LOCAL_PROVIDER);
         expect(entry?.impl).toBeInstanceOf(LocalDeviceProvider);
       } finally {
@@ -386,7 +408,7 @@ it("a staged readFile asks for no more than fits in one frame (ruling R26)", asy
       profile: "approve-for-me",
       actor: { accountId: "owner", conversationId: "root" },
       tag: "operation",
-      filesystem: { kind: "scoped", readRoots: ["/work"], writeRoots: ["/work"] },
+      filesystem: { kind: "scoped", projectRoot: "/work", writeRoots: ["/work"] },
       network: { kind: "allowlist", hosts: [] },
     },
     signal,
@@ -436,7 +458,7 @@ it.each(["exec", "backgroundStart"] as const)(
       profile: "approve-for-me" as const,
       actor: { accountId: "owner", conversationId: "root", runId: "run" },
       tag: "operation",
-      filesystem: { kind: "scoped" as const, readRoots: ["/work"], writeRoots: ["/work"] },
+      filesystem: { kind: "scoped" as const, projectRoot: "/work", writeRoots: ["/work"] },
       network: { kind: "allowlist" as const, hosts: ["example.com"] },
     };
     const operation = await staged.operation({ id: "device" }, scope, signal);
@@ -508,7 +530,7 @@ it("staged exec re-layers the machine's refused hosts against the limits it carr
     profile: "approve-for-me" as const,
     actor: { accountId: "owner", conversationId: "root", runId: "run" },
     tag: "operation",
-    filesystem: { kind: "scoped" as const, readRoots: ["/work"], writeRoots: ["/work"] },
+    filesystem: { kind: "scoped" as const, projectRoot: "/work", writeRoots: ["/work"] },
     network: { kind: "none" as const },
   };
   admittedGrants = undefined;
@@ -547,7 +569,7 @@ it("staged exec: a wildcard the machine calls its own is an address, a bad name 
     profile: "approve-for-me" as const,
     actor: { accountId: "owner", conversationId: "root", runId: "run" },
     tag: "operation",
-    filesystem: { kind: "scoped" as const, readRoots: ["/work"], writeRoots: ["/work"] },
+    filesystem: { kind: "scoped" as const, projectRoot: "/work", writeRoots: ["/work"] },
     network: { kind: "none" as const },
   };
   admittedGrants = undefined;

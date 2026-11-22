@@ -3,7 +3,7 @@ import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { type SandboxProvider, ToolError } from "@capybara-hq/plugin-sdk";
+import { type DeviceProvider, ToolError } from "@capybara-hq/plugin-sdk";
 import { startTestPostgres, startTestRedis, type TestContainer } from "@capybara-hq/testing";
 import { Redis } from "ioredis";
 import { sql } from "kysely";
@@ -29,7 +29,7 @@ import {
   readFakeSandboxOps,
   setFakeSandboxDelays,
   setFakeSandboxRefuseOpenEgress,
-} from "../fixtures/plugins/sandbox-fake/index.js";
+} from "../fixtures/plugins/device-fake/index.js";
 import { truncateTables } from "../helpers/db.js";
 import {
   type SandboxServiceDeps,
@@ -53,7 +53,7 @@ let db: KernelSchemaDb;
 let redis: Redis;
 let config: ReturnType<typeof KernelConfigSchema.parse>;
 let root: string;
-let provider: SandboxProvider;
+let provider: DeviceProvider;
 const warned: string[] = [];
 const log = { info() {}, warn: (m: string) => void warned.push(m), error() {} };
 const signal = () => AbortSignal.timeout(30_000);
@@ -113,14 +113,14 @@ beforeEach(async () => {
 });
 
 const service = (
-  p: () => SandboxProvider = () => provider,
+  p: () => DeviceProvider = () => provider,
   lockTtlMs?: number,
   extra: Partial<SandboxServiceDeps> = {},
 ) =>
   sandboxServiceFor({
     db,
     redis,
-    provider: () => ({ plugin: "sandbox-fake", impl: p() }),
+    providers: () => [{ plugin: "device-fake", version: "1.0.0", impl: p() }],
     config: () => config,
     log,
     lockPollMs: 20,
@@ -309,7 +309,7 @@ describe("a changed mode on use", () => {
     const s = sandboxServiceFor({
       db,
       redis,
-      provider: () => ({ plugin: "sandbox-fake", impl: provider }),
+      providers: () => [{ plugin: "device-fake", version: "1.0.0", impl: provider }],
       config: () => config,
       log,
       lockPollMs: 20,
@@ -470,7 +470,7 @@ describe("a provider that refuses the open public network", () => {
   it("any other create failure becomes sandbox.create_failed without the provider's message", async () => {
     await setAutoMode("off");
     const failing = fake();
-    const p: SandboxProvider = Object.create(failing);
+    const p: DeviceProvider = Object.create(failing);
     p.create = async () => {
       throw new Error(`no image configured (${FAKE_REFUSAL_SECRET})`);
     };
@@ -565,7 +565,7 @@ describe("a failed limits change", () => {
     // the next use resumes it; the update fails again: what the pause brought back is revoked
     await use(s).catch(() => undefined);
     expect(await ops("resume")).toHaveLength(1);
-    expect(revoked).toEqual([`sandbox-fake@${generation}`]);
+    expect(revoked).toEqual([`device-fake@${generation}`]);
     expect(await ops("kill-all")).toEqual([]);
     expect(await ops("kill-tagged")).toEqual([]);
     expect(await fakeSandboxState(root, first.h.id)).toBe("suspended");
@@ -664,7 +664,7 @@ describe("the lifecycle reconcile sweep (B-12)", () => {
     const s = sandboxServiceFor({
       db,
       redis,
-      provider: () => ({ plugin: "sandbox-fake", impl: provider }),
+      providers: () => [{ plugin: "device-fake", version: "1.0.0", impl: provider }],
       config: () => config,
       log,
       lockPollMs: 20,
@@ -684,7 +684,7 @@ describe("the lifecycle reconcile sweep (B-12)", () => {
         WHERE id = ${id}`.execute(raw);
       await sql`INSERT INTO capybara.device_instances (device_id, org_id, provider, status, handle,
           fs_status, fs_handle)
-        VALUES (${id}, ${orgId}, 'sandbox-fake', 'running', ${JSON.stringify({ id: `fake-${i}` })}::jsonb,
+        VALUES (${id}, ${orgId}, 'device-fake', 'running', ${JSON.stringify({ id: `fake-${i}` })}::jsonb,
           'ready', ${JSON.stringify({ id: `fs-${i}` })}::jsonb)`.execute(raw);
     }
     await s.reconcileMarked();

@@ -35,7 +35,8 @@ export type UnresolvedReason =
 /**
  * The org action each audience of a place needs besides `catalog.read` (spec §9.1).
  * `extension-deployment` has none: its guides are the super admin's (the admin extension routes),
- * so an org route refuses them (`forbidden`).
+ * so an org route refuses them (`forbidden`). `device-connection` is for members: the action of
+ * the devices routes (`agents.use`).
  */
 export const PLACE_ACTIONS: Readonly<
   Record<SetupGuidePlace, Readonly<Partial<Record<SetupGuideAudience, OrgAction>>>>
@@ -43,6 +44,7 @@ export const PLACE_ACTIONS: Readonly<
   "channel-connection": { admin: "channels.manage" },
   "connector-template": { admin: "connectors.manage", member: "connectors.use" },
   "extension-deployment": {},
+  "device-connection": { member: "agents.use" },
 };
 
 /** The object a guide is rendered for. */
@@ -93,6 +95,7 @@ const TARGET_PARAMS: Record<SetupGuidePlace, readonly (keyof GuideTargetQuery)[]
   "channel-connection": ["connectionId", "name"],
   "connector-template": ["connectorId"],
   "extension-deployment": [],
+  "device-connection": [],
 };
 
 /**
@@ -112,6 +115,7 @@ export async function resolvePlace(ctx: PlaceContext): Promise<PlaceResolution> 
   const values: Record<string, string | null> = {
     publicUrl,
     orgName: ctx.org?.name ?? null,
+    orgId: ctx.org?.orgId ?? null,
     pluginName: ctx.item.name,
     pluginVersion: ctx.item.version,
   };
@@ -154,11 +158,13 @@ export async function resolvePlace(ctx: PlaceContext): Promise<PlaceResolution> 
     reasons.connectorName = "no_connector";
     if (connector !== undefined) target = { kind: "connector", id: connector.id };
   }
-  // `extension-deployment`: the common variables only, no org and no target (the deployment)
+  // `extension-deployment`: the common variables only, no org and no target (the deployment);
+  // `device-connection`: the common ones and `orgId`; the new device's target comes with phase 3
   reasons.publicUrl = "public_url";
   reasons.signInCallbackUrl = "public_url";
   reasons.oauthCallbackUrl = "public_url";
   reasons.orgName = "no_org";
+  reasons.orgId = "no_org";
   // keep only the reasons of variables that are the place's and have no value
   const known = SETUP_GUIDE_PLACE_INFO[place].variables;
   for (const name of Object.keys(reasons)) {

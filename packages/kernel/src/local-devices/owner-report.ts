@@ -191,7 +191,8 @@ export function outsideMachineRoots(
 ): boolean {
   if (machineRoots === undefined || !("profile" in scope) || scope.filesystem.kind !== "scoped")
     return false;
-  return [...scope.filesystem.readRoots, ...scope.filesystem.writeRoots].some(
+  const { projectRoot, writeRoots } = scope.filesystem;
+  return [...(projectRoot === null ? [] : [projectRoot]), ...writeRoots].some(
     (r) => !machineRoots.some((m) => within(r, m)),
   );
 }

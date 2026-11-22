@@ -63,7 +63,7 @@ import {
   readRuntimeReport,
   sameRuntimeIdentity,
 } from "./permission-runtime-reports.js";
-import { providerForDevice, SandboxProviders } from "./providers.js";
+import { DeviceProviders } from "./providers.js";
 import { homeOf } from "./review/rules.js";
 
 type Scope = DeviceProjectScope;
@@ -104,8 +104,8 @@ export class PermissionFacts {
     @Inject(KernelDb) private readonly db: KernelDb,
     @Inject(KernelConfigService)
     private readonly config: Pick<KernelConfigService, "get" | "fieldSource">,
-    @Inject(SandboxProviders)
-    private readonly providers: Pick<SandboxProviders, "cloud" | "forName">,
+    @Inject(DeviceProviders)
+    private readonly providers: Pick<DeviceProviders, "forDevice">,
     @Inject(DeviceAccess) private readonly devices: Pick<DeviceAccess, "usable">,
   ) {}
   /**
@@ -395,7 +395,7 @@ export class PermissionFacts {
       .where("id", "=", deviceId)
       .where("org_id", "=", orgId)
       .executeTakeFirst();
-    const provider = device ? providerForDevice(this.providers, device.provider) : undefined;
+    const provider = device ? this.providers.forDevice(device.provider) : undefined;
     let availability = permissionAvailabilityFor(provider);
     if (availability.state === "unprobed" && provider) {
       const machine =
@@ -561,7 +561,7 @@ export class PermissionFacts {
         supported: deviceFeaturesOf(row.features).includes("projects"),
       };
     }
-    const impl = providerForDevice(this.providers, row.provider)?.impl;
+    const impl = this.providers.forDevice(row.provider)?.impl;
     const handle = row.handle as SandboxHandle | null;
     return {
       source: "cloud",
@@ -909,7 +909,7 @@ export class PermissionFacts {
       .select("provider")
       .where("id", "=", input.deviceId)
       .executeTakeFirst();
-    const entry = providerForDevice(this.providers, device?.provider ?? null);
+    const entry = this.providers.forDevice(device?.provider ?? null);
     if (!entry || entry.plugin !== instance.provider) return null;
     const evidence = await readCurrentReport(
       this.db.db,

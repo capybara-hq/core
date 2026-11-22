@@ -96,7 +96,7 @@ it("a staged fake machine's hello is recorded with the connection id of its read
     typeof HELLO_V3,
     string,
   ];
-  expect(hello).toMatchObject({ protocol: 4, ownerCeiling: HELLO_V3.ownerCeiling });
+  expect(hello).toMatchObject({ protocol: 5, ownerCeiling: HELLO_V3.ownerCeiling });
   expect(connectionId).toBe(ready.connectionId);
   expect(f.machines.recordHello).not.toHaveBeenCalled();
 });
@@ -197,12 +197,12 @@ it("a scripted answer reaches the relay and the frames are recorded", async () =
 });
 
 it("fakeMachineFor picks the machine and hello of a protocol", () => {
-  expect(fakeMachineFor(4).Machine).toBe(FakeMachineV3);
-  expect(fakeMachineFor(4).protocolHeader).toBe("4");
+  expect(fakeMachineFor(5).Machine).toBe(FakeMachineV3);
+  expect(fakeMachineFor(5).protocolHeader).toBe("5");
   expect(fakeMachineFor(2).protocolHeader).toBe("2");
   expect(fakeMachineFor(2).HELLO.protocol).toBe(2);
-  expect(fakeMachineFor(4).helloWith({ bootId: "b1" })).toMatchObject({
-    protocol: 4,
+  expect(fakeMachineFor(5).helloWith({ bootId: "b1" })).toMatchObject({
+    protocol: 5,
     bootId: "b1",
   });
 });

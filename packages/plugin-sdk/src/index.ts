@@ -13,7 +13,9 @@ export * from "./context.js";
 export * from "./ctx.js";
 export * from "./define-extension.js";
 export { DEVICE_DEFAULT_STATE_PATH, DEVICE_DENIED_SECRET_PATHS } from "./device-denied-paths.js";
+export * from "./device-operation.js";
 export * from "./device-protocol.js";
+export * from "./device-provider.js";
 export * from "./directory.js";
 export * from "./extension-point.js";
 export * from "./file-preview.js";
@@ -31,8 +33,6 @@ export * from "./permissions.js";
 export * from "./plugin-manifest.js";
 export * from "./plugin-package.js";
 export * from "./push.js";
-export * from "./sandbox.js";
-export * from "./sandbox-operation.js";
 export { SANDBOX_RUNTIME_SOURCE } from "./sandbox-runtime-source.js";
 export {
   isSandboxHomeWriteDenied,

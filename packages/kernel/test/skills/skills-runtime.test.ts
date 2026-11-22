@@ -23,7 +23,7 @@ import { CLAUDE_CODE_TOOL_MAP } from "../../src/runtime/context/claude-tools.js"
 import { StorageService } from "../../src/storage/storage.service.js";
 import { skillLoadTool } from "../../src/tools/builtins/skill-load.js";
 import { specHash } from "../../src/tools/registry.js";
-import { removeFakeSandbox } from "../fixtures/plugins/sandbox-fake/index.js";
+import { removeFakeSandbox } from "../fixtures/plugins/device-fake/index.js";
 import { truncateTables } from "../helpers/db.js";
 import { onlyBuiltins } from "../helpers/disabled-tools.js";
 import { accountsFor } from "../helpers/identity.js";
@@ -51,7 +51,7 @@ import { MODEL } from "../runtime/context/fixtures.js";
 
 const OBJECT_STORE = fakeExtensionEntry("fake-object-store");
 const SANDBOX_FAKE = fileURLToPath(
-  new URL("../fixtures/plugins/sandbox-fake/index.ts", import.meta.url),
+  new URL("../fixtures/plugins/device-fake/index.ts", import.meta.url),
 );
 
 let pgc: TestContainer;
@@ -83,7 +83,7 @@ beforeAll(async () => {
             secretAccessKey: s3.secretKey,
             forcePathStyle: true,
           },
-          "sandbox-fake": { root },
+          "device-fake": { root },
         },
       },
     ),
@@ -504,7 +504,8 @@ describe("skills at runtime", () => {
 describe("Skill handler", () => {
   type Snapshot = EventPayload<"skills_catalog">;
 
-  function tool(snapshot: Snapshot | null, sandboxAvailable: boolean) {
+  // false: no device provider on in the org; "no-device": providers on but nothing to bind
+  function tool(snapshot: Snapshot | null, sandboxAvailable: boolean | "no-device") {
     return skillLoadTool({
       db,
       storage: k.app.get(StorageService),
@@ -525,13 +526,16 @@ describe("Skill handler", () => {
               } as ConversationEvent as never),
       },
       sandbox: {
-        cloudAvailable: sandboxAvailable,
-        availableFor: async () => sandboxAvailable,
         withSandbox: async () => {
           throw new Error("sandbox must not be used");
         },
       },
-      devices: { forTool: async () => randomUUID() },
+      devices: {
+        forTool: async () => randomUUID(),
+        usableNow: async () => sandboxAvailable === true,
+        unusableReason: async () =>
+          sandboxAvailable === true ? null : sandboxAvailable === false ? "none" : "no-device",
+      },
       attachments: {
         listForConversation: async () => [],
         openForConversation: async () => null,
@@ -562,8 +566,24 @@ describe("Skill handler", () => {
     const text = (r.content[0] as { text: string }).text;
     expect(text).toContain("Echo body.");
     expect(text).toContain("run.py");
-    expect(text).toMatch(/no sandbox/i);
+    expect(text).toMatch(/No device provider is on in this organization/);
     expect(text).toMatch(/scripts?.*(not available|unavailable|cannot)/i);
+  });
+
+  it("providers on but no device: says the conversation has no device, not that no provider is on", async () => {
+    const s = await seedSkill({
+      name: "nodev",
+      files: { "SKILL.md": skillMd("nodev", "Nodev body."), "run.py": "print(1)" },
+    });
+    const t = tool(
+      { skills: [{ id: s.id, name: "nodev", description: "d", version: 1, source: s.prefix }] },
+      "no-device",
+    );
+    const r = (await t.run({ skill: "nodev" }, ctx())) as ToolResult;
+    const text = (r.content[0] as { text: string }).text;
+    expect(text).toContain("Nodev body.");
+    expect(text).toMatch(/This conversation has no device/);
+    expect(text).not.toMatch(/No device provider is on/);
   });
 
   it("agent without sandbox tools: no sandbox is created, body only", async () => {
@@ -628,8 +648,6 @@ describe("Skill handler", () => {
               }) as never,
       },
       sandbox: {
-        cloudAvailable: true,
-        availableFor: async () => true,
         withSandbox: async (_c, fn, sig) =>
           fn({ id: "e1", roots }, p as never, { fresh: false, restarted: false, roots }, sig),
       },

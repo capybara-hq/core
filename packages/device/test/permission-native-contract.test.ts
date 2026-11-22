@@ -75,7 +75,7 @@ it.runIf(process.platform === "darwin")(
         tag: "owned",
         filesystem: full
           ? { kind: "device" }
-          : { kind: "scoped", readRoots: [roots.workspace], writeRoots: [roots.workspace] },
+          : { kind: "scoped", projectRoot: roots.workspace, writeRoots: [roots.workspace] },
         network: { kind: full ? "environment" : "none" },
       });
       const signal = new AbortController().signal;

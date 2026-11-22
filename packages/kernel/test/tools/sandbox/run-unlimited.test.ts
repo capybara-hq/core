@@ -30,7 +30,7 @@ import {
  */
 
 const SANDBOX_FAKE = fileURLToPath(
-  new URL("../../fixtures/plugins/sandbox-fake/index.ts", import.meta.url),
+  new URL("../../fixtures/plugins/device-fake/index.ts", import.meta.url),
 );
 
 let pgc: TestContainer;
@@ -52,7 +52,7 @@ beforeAll(async () => {
       {
         roles: ["api", "worker"],
         extensions: [MODEL_FAKE, SANDBOX_FAKE],
-        extensionConfig: { "sandbox-fake": { root } },
+        extensionConfig: { "device-fake": { root } },
         // the run limits stay at their defaults (none); commands may run 2 seconds at most
         sandbox: { limits: { maxCommandSeconds: 2 } },
       },

@@ -13,6 +13,7 @@ import {
   type TestContainer,
   type TestS3,
 } from "@capybara-hq/testing";
+import { sql } from "kysely";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import type { AgentDefinition } from "../../src/agents/definition.js";
 import type { ConversationEvent } from "../../src/conversations/events.js";
@@ -44,7 +45,7 @@ import { makeZip } from "./zip.js";
 
 const OBJECT_STORE = fakeExtensionEntry("fake-object-store");
 const SANDBOX_FAKE = fileURLToPath(
-  new URL("../fixtures/plugins/sandbox-fake/index.ts", import.meta.url),
+  new URL("../fixtures/plugins/device-fake/index.ts", import.meta.url),
 );
 
 type Json = Record<string, unknown>;
@@ -122,7 +123,7 @@ describe("M5 segment 3 dual-replica acceptance (agent skill registration + skill
           secretAccessKey: s3.secretKey,
           forcePathStyle: true,
         },
-        "sandbox-fake": { root },
+        "device-fake": { root },
       },
       config: { auth: { cookieSecure: false } },
     });
@@ -147,7 +148,11 @@ describe("M5 segment 3 dual-replica acceptance (agent skill registration + skill
     const org = await at("owner", 1, "POST", "/api/v1/orgs", { name: "Acme" });
     expect(org.status, JSON.stringify(org.json)).toBe(201);
     const orgId = (org.json.org as { id: string }).id;
-    await enableExtensions(raw, orgId, "model-fake");
+    await enableExtensions(raw, orgId, "model-fake", "device-fake");
+    // the conversations' default devices are made on the org's default device provider
+    await sql`UPDATE capybara.orgs
+      SET settings = settings || '{"deviceDefaultProvider":"device-fake"}'::jsonb
+      WHERE id = ${orgId}`.execute(raw);
     base = `/api/v1/orgs/${orgId}`;
     await testMembers(db).add(orgId, memberId, "member", ownerId);
     await testMembers(db).add(orgId, otherId, "member", ownerId);

@@ -156,7 +156,7 @@ describe("Bash time limit", () => {
     const bash = sandboxTools({
       devices,
       // biome-ignore lint/suspicious/noExplicitAny: 只用到配置
-      sandbox: { cloudAvailable: true } as any,
+      sandbox: {} as any,
       // biome-ignore lint/suspicious/noExplicitAny: 不会被调用
       attachments: {} as any,
       // biome-ignore lint/suspicious/noExplicitAny: 不会被调用
@@ -221,8 +221,6 @@ describe("glob / grep command timeout (fix wave S2 minor 2)", () => {
       const tool = sandboxTools({
         devices,
         sandbox: {
-          cloudAvailable: true,
-          availableFor: async () => true,
           // 等锁用掉了 lockWaitSeconds + 25 秒
           withSandbox: async (_c, fn, sig) => {
             now += cfg.sandbox.lockWaitSeconds * 1000 + 25_000;
@@ -280,9 +278,9 @@ describe("registry without a sandbox provider", () => {
       expect(BUILTIN_TOOL_NAMES as readonly string[]).toContain(t);
     }
     const tools = sandboxTools({
-      devices,
-      // biome-ignore lint/suspicious/noExplicitAny: 只用到 cloudAvailable
-      sandbox: { cloudAvailable: false } as any,
+      devices: { ...devices, usableNow: async () => false },
+      // biome-ignore lint/suspicious/noExplicitAny: never called
+      sandbox: {} as any,
       // biome-ignore lint/suspicious/noExplicitAny: 不会被调用
       attachments: {} as any,
       // biome-ignore lint/suspicious/noExplicitAny: 不会被调用
@@ -314,7 +312,7 @@ describe("registry without a sandbox provider", () => {
     expect(got.hidden).toHaveLength(1);
     expect(got.hidden?.[0]?.ref).toBe("Bash");
     expect(got.hidden?.[0]?.reason).toMatch(/sandbox/i);
-    expect(got.hidden?.[0]?.reason).toMatch(/administrator/);
+    expect(got.hidden?.[0]?.reason).toMatch(/org admin/);
   });
 });
 
@@ -338,8 +336,6 @@ describe("no automatic attachment copy", () => {
       },
     };
     const sandbox = {
-      cloudAvailable: true,
-      availableFor: async () => true,
       withSandbox: async (
         _ctx: unknown,
         fn: (h: unknown, p: unknown, info: unknown, s: AbortSignal) => Promise<unknown>,
@@ -452,8 +448,6 @@ describe("fix round 2: deliver failures, grep exit 2", () => {
     const tools = sandboxTools({
       devices,
       sandbox: {
-        cloudAvailable: true,
-        availableFor: async () => true,
         withSandbox: async (
           _ctx: unknown,
           fn: (h: unknown, p: unknown, info: unknown, s: AbortSignal) => Promise<unknown>,
@@ -583,8 +577,6 @@ describe("read before write over Read's byte limit", () => {
     // the log: the latest view.file of each path, as the conversation's tool_results record it
     const recorded = new Map<string, { size: number; sha256: string }>();
     const sandbox = {
-      cloudAvailable: true,
-      availableFor: async () => true,
       withSandbox: async (
         _ctx: unknown,
         fn: (h: unknown, p: unknown, info: unknown, s: AbortSignal) => Promise<unknown>,
@@ -698,9 +690,7 @@ describe("custom roots (environments phase 2, spec §13.1)", () => {
         // biome-ignore lint/suspicious/noExplicitAny: test stub
       } as any,
       sandbox: {
-        cloudAvailable: true,
-        availableFor: async () => true,
-        currentInstance: async () => ({ createdAt: new Date(0), provider: "sandbox-fake" }),
+        currentInstance: async () => ({ createdAt: new Date(0), provider: "device-fake" }),
         withSandbox: async (_c, fn, sig) => {
           entered++;
           return fn(
@@ -755,8 +745,6 @@ describe("custom roots (environments phase 2, spec §13.1)", () => {
     const tools = sandboxTools({
       devices,
       sandbox: {
-        cloudAvailable: true,
-        availableFor: async () => true,
         withSandbox: async (_c, fn, sig) =>
           fn(
             { id: "x" },
@@ -856,12 +844,10 @@ describe("sandbox tools listed by the conversation's device (ruling R8)", () => 
     redis: { url: "redis://x" },
     masterKey: Buffer.alloc(32, 7).toString("base64"),
   });
-  const bash = (usable: (orgId: string, conversationId: string) => Promise<boolean>) =>
+  const bash = (usable: (orgId: string, conversationId?: string) => Promise<boolean>) =>
     sandboxTools({
       devices: { forTool: async () => "env-1", usableNow: usable },
       sandbox: {
-        cloudAvailable: false,
-        availableFor: async () => true,
         withSandbox: async () => {
           throw new Error("not used");
         },
@@ -875,18 +861,18 @@ describe("sandbox tools listed by the conversation's device (ruling R8)", () => 
       config: { get: () => cfg },
     }).find((t) => t.spec.name === "Bash") as BuiltinTool;
 
-  it("a conversation on a local device gets the tools without a cloud provider", async () => {
-    const seen: string[] = [];
+  it("a conversation gets the tools while its device's provider is on in the org", async () => {
+    const seen: (string | undefined)[] = [];
     const tool = bash(async (_o, c) => {
       seen.push(c);
       return c === "device-conv";
     });
     expect(await tool.unavailable?.({ orgId: "o", conversationId: "device-conv" })).toBeNull();
     expect(await tool.unavailable?.({ orgId: "o", conversationId: "other" })).toMatch(
-      /^No sandbox is configured/,
+      /^No device provider is on in this organization/,
     );
-    // a listing without a conversation (the Platform tool's view) asks the cloud provider only
-    expect(await tool.unavailable?.({ orgId: "o" })).toMatch(/^No sandbox is configured/);
-    expect(seen).toEqual(["device-conv", "other"]);
+    // a listing without a conversation (the Platform tool's view) asks whether any provider is on
+    expect(await tool.unavailable?.({ orgId: "o" })).toMatch(/^No device provider is on/);
+    expect(seen).toEqual(["device-conv", "other", undefined]);
   });
 });

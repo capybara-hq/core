@@ -4,8 +4,8 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
   DEFAULT_SANDBOX_ROOTS,
+  type DeviceProvider,
   type SandboxExecutionRef,
-  type SandboxProvider,
   SandboxScopeDeniedError,
   ToolError,
 } from "@capybara-hq/plugin-sdk";
@@ -33,14 +33,14 @@ import {
   MANAGED_DEVICE_CONTEXT_STALE_TEXT,
   ManagedDeviceContextRecorder,
 } from "../../../src/sandbox/managed-device-context.js";
-import { SandboxProviders } from "../../../src/sandbox/providers.js";
+import { DeviceProviders } from "../../../src/sandbox/providers.js";
 import { SandboxService } from "../../../src/sandbox/sandbox.service.js";
 import { generateImageTool } from "../../../src/tools/builtins/image/index.js";
 import type { SandboxToolDeps } from "../../../src/tools/builtins/sandbox/common.js";
 import { sandboxTools } from "../../../src/tools/builtins/sandbox/index.js";
 import { type SkillLoadDeps, skillLoadTool } from "../../../src/tools/builtins/skill-load.js";
 import type { BuiltinCallContext, BuiltinTool } from "../../../src/tools/registry.js";
-import { createFakeSandbox } from "../../fixtures/plugins/sandbox-fake/index.js";
+import { createFakeSandbox } from "../../fixtures/plugins/device-fake/index.js";
 import { truncateTables } from "../../helpers/db.js";
 import { MODEL_PLUGINS_CONFIG } from "../../helpers/model-plugins.js";
 import { startKernel, type TestKernel } from "../../helpers/runs.js";
@@ -103,7 +103,7 @@ beforeAll(async () => {
   root = await mkdtemp(join(tmpdir(), "managed-builtins-"));
   const base = createFakeSandbox(root);
   const facade = base;
-  const impl: SandboxProvider = {
+  const impl: DeviceProvider = {
     ...facade,
     async permissionSupport() {
       return {
@@ -138,7 +138,7 @@ beforeAll(async () => {
     },
     async prepare(h, scope, signal) {
       await reach("prepare");
-      return (facade.prepare as NonNullable<SandboxProvider["prepare"]>)(h, scope, signal);
+      return (facade.prepare as NonNullable<DeviceProvider["prepare"]>)(h, scope, signal);
     },
     background: {
       async start(h, scope) {
@@ -171,7 +171,7 @@ beforeAll(async () => {
       },
     },
   };
-  k.app.get(SandboxProviders).register({ plugin: CLOUD, version: "v1", impl });
+  k.app.get(DeviceProviders).register({ plugin: CLOUD, version: "v1", impl });
 });
 afterAll(async () => {
   await k?.close();

@@ -13,8 +13,9 @@ import {
   readFakeSandboxLimits,
   readFakeSandboxOps,
   setFakeSandboxDelays,
-} from "../fixtures/plugins/sandbox-fake/index.js";
+} from "../fixtures/plugins/device-fake/index.js";
 import { startKernel, type TestKernel } from "../helpers/runs.js";
+import { enableFakeProvider } from "../helpers/sandbox.js";
 
 /**
  * Two kernel replicas (two kernels in one process sharing PG, Redis and the fake provider's root)
@@ -24,7 +25,7 @@ import { startKernel, type TestKernel } from "../helpers/runs.js";
  */
 
 const SANDBOX_FAKE = fileURLToPath(
-  new URL("../fixtures/plugins/sandbox-fake/index.ts", import.meta.url),
+  new URL("../fixtures/plugins/device-fake/index.ts", import.meta.url),
 );
 
 let pgc: TestContainer;
@@ -42,7 +43,7 @@ const cfg = () =>
     http: { port: 0 },
     roles: ["api"],
     extensions: [SANDBOX_FAKE],
-    extensionConfig: { "sandbox-fake": { root, updateMode: "updated" } },
+    extensionConfig: { "device-fake": { root, updateMode: "updated" } },
     extensionPermissions: { autoApprove: true },
   });
 
@@ -68,8 +69,9 @@ async function seed() {
   );
   await sql`INSERT INTO capybara.orgs (id, slug, name, created_by)
     VALUES (${orgId}, ${`o-${orgId.slice(0, 8)}`}, 'O', ${accountId})`.execute(raw);
-  await sql`INSERT INTO capybara.devices (id, org_id, owner_kind, owner_account_id, source)
-    VALUES (${deviceId}, ${orgId}, 'personal', ${accountId}, 'cloud')`.execute(raw);
+  await enableFakeProvider(raw, orgId);
+  await sql`INSERT INTO capybara.devices (id, org_id, owner_kind, owner_account_id, source, provider)
+    VALUES (${deviceId}, ${orgId}, 'personal', ${accountId}, 'cloud', 'device-fake')`.execute(raw);
   return { orgId, accountId, deviceId };
 }
 

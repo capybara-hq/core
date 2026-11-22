@@ -1,8 +1,8 @@
 import {
+  type DeviceProvider,
   instanceSupported,
   type SandboxPermissionSupport,
   SandboxPermissionUnsupportedError,
-  type SandboxProvider,
 } from "@capybara-hq/plugin-sdk";
 /**
  * Why a device cannot run permission-scoped work, for people and for the kernel-rendered admission
@@ -47,7 +47,7 @@ export const unprobedPermissionAvailability = (): PermissionAvailability => ({
  * (ruling R9).
  */
 export function permissionAvailabilityFor(
-  provider: { impl: SandboxProvider; plugin: string; version?: string } | undefined,
+  provider: { impl: DeviceProvider; plugin: string; version?: string } | undefined,
 ): PermissionAvailability {
   if (!provider)
     return {

@@ -20,12 +20,12 @@ import type { ConversationEvent } from "../../src/conversations/events.js";
 import { type KernelSchemaDb, kernelDb } from "../../src/db/kernel-schema.js";
 import { createDb } from "../../src/db/pool.js";
 import { PLUGIN_UNLOADED_TOOL_ERROR } from "../../src/extensions/inflight.js";
-import { fakeSandboxMeta } from "../fixtures/plugins/sandbox-fake/index.js";
+import { fakeSandboxMeta } from "../fixtures/plugins/device-fake/index.js";
 import { anonymousGuestsFor } from "../helpers/channels.js";
 import { onlyBuiltins } from "../helpers/disabled-tools.js";
 import { accountsFor } from "../helpers/identity.js";
 import { MODEL_FAKE } from "../helpers/model-plugins.js";
-import { bootstrapFixture, packFake, sandboxFakePkg } from "../helpers/plugin-packages.js";
+import { bootstrapFixture, deviceFakePkg, packFake } from "../helpers/plugin-packages.js";
 import { enableExtensions, eventsOf, PW, waitFor, waitForTerminal } from "../helpers/runs.js";
 
 /**
@@ -33,7 +33,7 @@ import { enableExtensions, eventsOf, PW, waitFor, waitForTerminal } from "../hel
  * `extensionPermissions.autoApprove: false`；引导插件 fake-object-store（核心假扩展，SeaweedFS，起初没配）、配置声明的 model-fake 与
  * deploycfg；其余插件经后台安装。全部经 HTTP（「卡住工具调用」用测试连接锁表；匿名访客由渠道产生，这里直接建）。
  *
- * 1. replica A uploads the packed sandbox@2 fake plugin v1 (sensitive) and the fake extension
+ * 1. replica A uploads the packed device-provider@1 fake plugin v1 (sensitive) and the fake extension
  *    fake-tools-ui v1, replica B installs, approves and enables them: both replicas load them, no restart;
  * 2. fake-tools-ui 的工具调用卡在处理函数里（锁住它写的表）时在 A 上升级到 v2（带扩展迁移）：迁移只执行一次；在途调用超过
  *    `drainSeconds` 按 `PLUGIN_UNLOADED_TOOL_ERROR` 中止；运行照常 `completed`；之后的调用落到 v2；
@@ -211,7 +211,7 @@ describe("M6 第二段双副本验收（管理后台与免重启插件生命周�
         await writeFile(srcPath, next);
         await writeFile(join(dir, "migrations", "0002_item_tags.sql"), TAGS_MIGRATION);
       }),
-      sandboxFakePkg(),
+      deviceFakePkg(),
     ]);
     h = await createDualReplicaHarness({
       extensions: [MODEL_FAKE, DEPLOYCFG],
@@ -220,7 +220,7 @@ describe("M6 第二段双副本验收（管理后台与免重启插件生命周�
       redisUrl: rdc.url,
       extensionConfig: {
         "model-fake": { models: [{ id: "fake-1" }, { id: "fake-2" }] },
-        "sandbox-fake": { root: sandboxRoot },
+        "device-fake": { root: sandboxRoot },
         // region 在启动配置（文件）里：后台只读
         deploycfg: { endpoint: "https://file.example", region: "eu" },
       },
@@ -335,16 +335,16 @@ describe("M6 第二段双副本验收（管理后台与免重启插件生命周�
     };
     expect(sb.sha256).toBe(sha(sandboxPkg));
     expect(td.sha256).toBe(sha(toolsUiV1));
-    await ok(1, "POST", "/api/v1/admin/extensions/sandbox-fake/install", { sha256: sb.sha256 });
+    await ok(1, "POST", "/api/v1/admin/extensions/device-fake/install", { sha256: sb.sha256 });
     await ok(1, "POST", "/api/v1/admin/extensions/fake-tools-ui/install", { sha256: td.sha256 });
-    const sbView = await view("sandbox-fake", 1);
+    const sbView = await view("device-fake", 1);
     expect(sbView).toMatchObject({ status: "pending_approval", sensitive: true });
     expect((await view("fake-tools-ui", 1)).status).toBe("pending_approval");
-    await approve(1, "sandbox-fake");
+    await approve(1, "device-fake");
     await approve(1, "fake-tools-ui");
-    await ok(1, "POST", "/api/v1/admin/extensions/sandbox-fake/enable");
+    await ok(1, "POST", "/api/v1/admin/extensions/device-fake/enable");
     await ok(1, "POST", "/api/v1/admin/extensions/fake-tools-ui/enable");
-    await waitFor(() => loadedOnBoth("sandbox-fake", "0.1.0"), 30_000, "sandbox on both", 100);
+    await waitFor(() => loadedOnBoth("device-fake", "0.1.0"), 30_000, "sandbox on both", 100);
     await waitFor(
       () => loadedOnBoth("fake-tools-ui", "0.1.0"),
       30_000,
@@ -355,8 +355,11 @@ describe("M6 第二段双副本验收（管理后台与免重启插件生命周�
 
     const org = await ok(0, "POST", "/api/v1/orgs", { name: "Acme" });
     orgId = (org.org as { id: string }).id;
-    await enableExtensions(raw, orgId, "model-fake");
+    // a device provider serves only the orgs that switched it on; the person's default device is
+    // made on the org's default device provider
+    await enableExtensions(raw, orgId, "model-fake", "device-fake");
     base = `/api/v1/orgs/${orgId}`;
+    await ok(1, "PATCH", `${base}/settings`, { deviceDefaultProvider: "device-fake" });
     await ok(1, "PUT", `${base}/extensions/fake-tools-ui`, { enabled: true });
     await waitFor(
       async () => (await orgPluginAvailable(0, "fake-tools-ui")) === true,

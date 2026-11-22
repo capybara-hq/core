@@ -15,6 +15,13 @@ import {
 } from "../attribution/platform-attribution.js";
 import { productName } from "../config/product-name.js";
 import type { KernelSchemaDb } from "../db/kernel-schema.js";
+import {
+  DEVICES_DEFAULT_PROVIDER_PATCH,
+  DEVICES_DEFAULT_PROVIDER_SETTING,
+  type DevicesDefaultProviderPatch,
+  type DevicesDefaultProviderView,
+  readPlatformDefaultProvider,
+} from "../devices/default-provider-setting.js";
 import { ApiError } from "../errors.js";
 import { KernelConfigService } from "../infra/config/kernel-config.service.js";
 import { KernelDb } from "../infra/database/kernel-db.js";
@@ -314,6 +321,8 @@ export type DeploymentSettingsView = DeploymentSettings & {
   devicesOutsideSandbox: DevicesOutsideSandboxView;
   /** The sandbox network's default and ceiling (the default never above the ceiling). */
   devicesNetwork: DevicesNetworkView;
+  /** The device provider that makes a person's default device (null: none) and its source. */
+  devicesDefaultProvider: DevicesDefaultProviderView;
   attribution: PlatformAttributionView;
   /** The platform's external sharing switch in effect and where it comes from. */
   externalSharing: ExternalSharingView;
@@ -427,6 +436,12 @@ export const DEPLOYMENT_SETTINGS_PATCH = z
      * startup config is read-only (409 `deployment.setting_readonly`).
      */
     devicesNetwork: DEVICES_NETWORK_PATCH.optional(),
+    /**
+     * The platform's default device provider (the `device-provider@1` extension that makes a
+     * person's default device): `provider` replaced, null clears it (back to none). A value set in
+     * the startup config is read-only (409 `deployment.setting_readonly`).
+     */
+    devicesDefaultProvider: DEVICES_DEFAULT_PROVIDER_PATCH.optional(),
     /**
      * The platform's attribution defaults for agent-created git commits and pull requests (spec
      * 2026-11-14-agent-attribution): each given field replaces the stored one, null clears it
@@ -669,6 +684,7 @@ export class SettingsService {
       externalSharing,
       shareMaxExpiryDays,
       promptSuggestions,
+      devicesDefaultProvider,
     ] = await Promise.all([
       this.get(),
       readDeviceSandboxSettingsView(this.db.db, this.config, this.log),
@@ -676,11 +692,13 @@ export class SettingsService {
       readExternalSharing(this.db.db, this.config, this.log),
       readShareMaxExpiry(this.db.db, this.config, this.log),
       readPromptSuggestions(this.db.db, this.log),
+      readPlatformDefaultProvider(this.config, this.db.db, this.log),
     ]);
     return {
       ...settings,
       devicesOutsideSandbox: deviceSandbox.outsideSandbox,
       devicesNetwork: deviceSandbox.network,
+      devicesDefaultProvider,
       attribution: this.attributionView(attribution),
       externalSharing,
       shareMaxExpiryDays,
@@ -861,6 +879,17 @@ export class SettingsService {
           `Adding origins to the HTML CDN allowlist (${added.join(", ")}) needs a super admin in the admin console; an API token or the Platform tool may only remove origins.`,
         );
     }
+  }
+
+  /** Refuses a `devicesDefaultProvider` change while the startup config sets it. */
+  checkDefaultProvider(_patch: DevicesDefaultProviderPatch): void {
+    const source = this.config.fieldSource("devices.defaultProvider");
+    if (source === undefined) return;
+    throw new ApiError(
+      "deployment.setting_readonly",
+      "The default device provider is set in the startup config (file, Nacos or environment) and is read-only here: devicesDefaultProvider",
+      [{ path: "devicesDefaultProvider.provider", source }],
+    );
   }
 
   /**
@@ -1167,6 +1196,12 @@ export class SettingsService {
         if (value === null) deletes.push(key);
         else if (value !== undefined) writes.push([key, value]);
       }
+    }
+    if (patch.devicesDefaultProvider !== undefined) {
+      this.checkDefaultProvider(patch.devicesDefaultProvider);
+      if (patch.devicesDefaultProvider.provider === null)
+        deletes.push(DEVICES_DEFAULT_PROVIDER_SETTING);
+      else writes.push([DEVICES_DEFAULT_PROVIDER_SETTING, patch.devicesDefaultProvider]);
     }
     if (patch.promptSuggestions === null) deletes.push(PROMPT_SUGGESTIONS_SETTING);
     else if (patch.promptSuggestions !== undefined) {

@@ -26,6 +26,7 @@ import { accountsFor, kernelTransaction } from "../helpers/identity.js";
 import { testMembers } from "../helpers/members.js";
 import {
   createOrg,
+  enableDeviceProviders,
   PW,
   type Req,
   runConfig,
@@ -49,7 +50,7 @@ import { seedDevice } from "../helpers/sandbox.js";
  */
 
 const SANDBOX_FAKE = fileURLToPath(
-  new URL("../fixtures/plugins/sandbox-fake/index.ts", import.meta.url),
+  new URL("../fixtures/plugins/device-fake/index.ts", import.meta.url),
 );
 
 let pgc: TestContainer;
@@ -74,7 +75,7 @@ beforeAll(async () => {
       {
         roles: ["api", "worker"],
         extensions: [SANDBOX_FAKE],
-        extensionConfig: { "sandbox-fake": { root } },
+        extensionConfig: { "device-fake": { root } },
       },
     ),
     {
@@ -333,6 +334,8 @@ describe("offboarding owes its run stops and device destroys", () => {
 
   it("deleting a device destroys its instance with the fast path disabled", async () => {
     const orgId = await createOrg(owner, `Del ${randomUUID().slice(0, 6)}`);
+    // a new device needs a provider on in the org (its default here)
+    await enableDeviceProviders(k, orgId);
     const person = await member(orgId);
     const res = await person.req({
       method: "POST",

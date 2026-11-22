@@ -3,7 +3,7 @@ import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
-import type { SandboxLimits, SandboxProvider } from "@capybara-hq/plugin-sdk";
+import type { DeviceProvider, SandboxLimits } from "@capybara-hq/plugin-sdk";
 import { startTestPostgres, startTestRedis, type TestContainer } from "@capybara-hq/testing";
 import { Redis } from "ioredis";
 import { sql } from "kysely";
@@ -15,7 +15,7 @@ import { createDb } from "../../src/db/pool.js";
 import { readSandboxLimitOverride } from "../../src/identity/settings.js";
 import { effectiveSandboxLimits } from "../../src/orgs/settings.service.js";
 import type { SandboxService } from "../../src/sandbox/sandbox.service.js";
-import { createFakeSandbox, fakeSandboxMeta } from "../fixtures/plugins/sandbox-fake/index.js";
+import { createFakeSandbox, fakeSandboxMeta } from "../fixtures/plugins/device-fake/index.js";
 import { truncateTables } from "../helpers/db.js";
 import { orgSettingsFor } from "../helpers/identity.js";
 import { sandboxServiceFor, seedDevice } from "../helpers/sandbox.js";
@@ -62,7 +62,7 @@ let db: KernelSchemaDb;
 let redis: Redis;
 let config: KernelConfig;
 let root: string;
-let provider: SandboxProvider;
+let provider: DeviceProvider;
 const log = { info() {}, warn() {}, error() {} };
 const signal = () => AbortSignal.timeout(30_000);
 
@@ -110,7 +110,7 @@ const service = () =>
   sandboxServiceFor({
     db,
     redis,
-    provider: () => ({ plugin: "sandbox-fake", impl: provider }),
+    providers: () => [{ plugin: "device-fake", version: "1.0.0", impl: provider }],
     config: () => config,
     log,
     lockPollMs: 20,

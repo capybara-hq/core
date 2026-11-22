@@ -12,6 +12,7 @@ import {
 import type { AttachmentsService } from "../../../conversations/attachments.service.js";
 import type { AppendEvent, EventLog } from "../../../conversations/event-log.js";
 import { isValidArtifactName } from "../../../conversations/events.js";
+import type { DeviceUnusableReason } from "../../../devices/conversation-devices.js";
 import { ApiError } from "../../../errors.js";
 import type { KernelConfigService } from "../../../infra/config/kernel-config.service.js";
 import type { KernelDb } from "../../../infra/database/kernel-db.js";
@@ -56,7 +57,7 @@ import {
   inToolSandbox,
   type SandboxToolDeps,
   sandboxConversationOf,
-  sandboxUsable,
+  sandboxUnusableReason,
   withNotices,
   withPathLease,
 } from "../sandbox/common.js";
@@ -232,6 +233,13 @@ const vanishedText = (path: string): string =>
   `${clip(path, 200)} disappeared while it was being written; retry the call.`;
 /** The device line of a call whose conversation has no device to write to. */
 export const NO_DEVICE_LINE = "Not written to the device: this conversation has no device.";
+/** The device line of each reason a conversation's device cannot be used ({@link DeviceUnusableReason}). */
+export const DEVICE_UNUSABLE_LINE: Record<DeviceUnusableReason, string> = {
+  "provider-off":
+    "Not written to the device: this conversation's device runs on a device provider that is off in this organization or not installed; its files are kept.",
+  "no-device": NO_DEVICE_LINE,
+  none: "Not written to the device: no device provider is on in this organization.",
+};
 
 /** The file extension of each image media type. */
 const EXTENSIONS: Record<ImageMediaType, string> = {
@@ -614,7 +622,8 @@ async function copyToDevice(
 ): Promise<{ line: string; notices: string[] }> {
   const sb = deps.sandbox;
   const conv = sandboxConversationOf(ctx);
-  if (!(await hasDevice(sb, ctx.orgId, conv))) return { line: NO_DEVICE_LINE, notices: [] };
+  const noDevice = await noDeviceLine(sb, ctx.orgId, conv);
+  if (noDevice !== null) return { line: noDevice, notices: [] };
   const targets = generateImagePaths({ file_path: filePath, n: files.length });
   // the paths written so far (a rebuilt instance runs the copy again from the start)
   let written: { entry: string; artifactId: string }[] = [];
@@ -705,18 +714,25 @@ const MEDIA_EXTENSIONS: Record<ImageMediaType, readonly string[]> = {
 };
 
 /**
- * Whether the conversation tree has a device to write to: a provider it can run on, and a device
- * its owner has (an anonymous IM sender or a deployment without a cloud provider has none).
+ * The device line when the conversation tree has no device to write to, or null when it has one:
+ * why its device cannot be used ({@link DEVICE_UNUSABLE_LINE}: its provider is off, no device to
+ * bind, no provider on), or {@link NO_DEVICE_LINE} when binding one finds none (an anonymous IM
+ * sender has none).
  */
-async function hasDevice(sb: SandboxToolDeps, orgId: string, conv: string): Promise<boolean> {
-  if (!(await sandboxUsable(sb, orgId, conv))) return false;
+async function noDeviceLine(
+  sb: SandboxToolDeps,
+  orgId: string,
+  conv: string,
+): Promise<string | null> {
+  const reason = await sandboxUnusableReason(sb, orgId, conv);
+  if (reason !== null) return DEVICE_UNUSABLE_LINE[reason];
   try {
     await sb.devices.forTool(orgId, conv);
-    return true;
+    return null;
   } catch (e) {
-    if (e instanceof ApiError && e.code === "sandbox.unavailable") return false;
+    if (e instanceof ApiError && e.code === "sandbox.unavailable") return NO_DEVICE_LINE;
     // any other refusal (a gone or forbidden device) is reported by the copy itself
-    return true;
+    return null;
   }
 }
 

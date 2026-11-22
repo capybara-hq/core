@@ -433,3 +433,40 @@ describe("setupGuideHash", () => {
     ).not.toBe(h(slack));
   });
 });
+
+describe("shell action blocks", () => {
+  const src = doc(
+    "Before.",
+    "",
+    "::shell-action connect-this-machine Connect this Mac",
+    "",
+    "After {{orgName}}.",
+  );
+  const over = {
+    place: "device-connection",
+    audience: "member",
+    values: { orgName: "Acme" },
+  } as const;
+
+  it("renders a shell action as its own block in document order", () => {
+    const r = render(src, over);
+    expect(r.blocks.map((b) => b.kind)).toEqual(["markdown", "shell-action", "markdown"]);
+    expect(r.blocks[1]).toEqual({
+      kind: "shell-action",
+      action: "connect-this-machine",
+      label: "Connect this Mac",
+    });
+    expect(r.blocks[2]).toEqual({ kind: "markdown", text: "After Acme." });
+    expect(r.checks).toEqual([]);
+  });
+
+  it("keeps a shell action out of a section that is not selected", () => {
+    const sectioned = doc(
+      "::: audience member",
+      "::shell-action connect-this-machine Connect",
+      ":::",
+    );
+    expect(render(sectioned, over).blocks.map((b) => b.kind)).toEqual(["shell-action"]);
+    expect(render(sectioned, { ...over, audience: "admin" }).blocks).toEqual([]);
+  });
+});

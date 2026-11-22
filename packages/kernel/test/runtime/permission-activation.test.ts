@@ -52,13 +52,13 @@ import type { Answer } from "../local-devices/test-holder.js";
  * kernel as production starts it (no activation override) records a v2 permission context before
  * every agent request and answers, on each path a run reaches a device by: an anonymous IM guest
  * (no device), a member's local device whose machine speaks protocol 3 over the real gateway
- * route, and a member's cloud device on the sandbox-fake provider through the managed operation
+ * route, and a member's cloud device on the device-fake provider through the managed operation
  * route.
  */
 
 const CHAN_MINI = fileURLToPath(new URL("../fixtures/plugins/chan-mini/index.ts", import.meta.url));
 const SANDBOX_FAKE = fileURLToPath(
-  new URL("../fixtures/plugins/sandbox-fake/index.ts", import.meta.url),
+  new URL("../fixtures/plugins/device-fake/index.ts", import.meta.url),
 );
 
 const MACHINE_ROOTS: SandboxRoots = {
@@ -94,7 +94,7 @@ beforeAll(async () => {
       {
         roles: ["api", "worker", "gateway"],
         extensions: [MODEL_FAKE, CHAN_MINI, SANDBOX_FAKE],
-        extensionConfig: { "sandbox-fake": { root: sandboxRoot } },
+        extensionConfig: { "device-fake": { root: sandboxRoot } },
         http: { port: 0, publicUrl: "https://cap.example" },
         auth: { cookieSecure: false },
         channels: { scanIntervalMs: 100, leaseTtlMs: 10_000 },
@@ -341,7 +341,7 @@ describe("every path records a v2 permission context and replies", () => {
     });
   });
 
-  it("a cloud device on sandbox-fake: the managed call runs, the context is cloud and supported", async () => {
+  it("a cloud device on device-fake: the managed call runs, the context is cloud and supported", async () => {
     const m = await member("cloud-member");
     const res = await m.req({
       method: "POST",
@@ -359,7 +359,7 @@ describe("every path records a v2 permission context and replies", () => {
       .select(["devices.id", "devices.source", "devices.provider"])
       .where("conversations.id", "=", conv)
       .executeTakeFirstOrThrow();
-    expect(device).toMatchObject({ source: "cloud", provider: "sandbox-fake" });
+    expect(device).toMatchObject({ source: "cloud", provider: "device-fake" });
     cloudConv = { conv, req: m.req, deviceId: device.id };
     const result = ofType(events, "tool_result").at(-1)?.payload;
     expect(result?.isError, JSON.stringify(result)).toBe(false);

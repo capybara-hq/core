@@ -107,7 +107,11 @@ const approve = async (name: string) => {
   const ok = await post(`${name}/approve`, { sha256: v.sha256, reviewHash: v.reviewHash });
   expect([200, 409], ok.body).toContain(ok.statusCode);
 };
-const install = async (name: string, provides: string[] = ["sandbox@2"], version = "1.0.0") => {
+const install = async (
+  name: string,
+  provides: string[] = ["config-source@1"],
+  version = "1.0.0",
+) => {
   const sha256 = await upload(await lifePkg({ name, version, provides }));
   const res = await post(`${name}/install`, { sha256 });
   expect(res.statusCode, res.body).toBe(200);
@@ -182,15 +186,18 @@ describe("single-provider extension points: one enabled provider", () => {
 
     // The view says so before anyone tries
     expect((await view("sbx-b")).enableBlocked).toEqual({
-      extensionPoint: "sandbox@2",
+      extensionPoint: "config-source@1",
       enabled: { name: "sbx-a", displayName: null },
     });
     const refused = await enable("sbx-b");
     expect(refused.statusCode, refused.body).toBe(409);
     expect(refused.json().error).toEqual({
       code: "extension.single_provider_enabled",
-      message: "Only one extension may provide sandbox@2; disable sbx-a first, then enable sbx-b",
-      details: [{ extensionPoint: "sandbox@2", enabled: { name: "sbx-a", displayName: null } }],
+      message:
+        "Only one extension may provide config-source@1; disable sbx-a first, then enable sbx-b",
+      details: [
+        { extensionPoint: "config-source@1", enabled: { name: "sbx-a", displayName: null } },
+      ],
     });
     const row = await db
       .selectFrom("extension_installs")
@@ -260,7 +267,7 @@ describe("single-provider extension points: one enabled provider", () => {
     await waitFor(async () => (await view("sbx-a")).status === "conflict", 10_000, "conflict");
     const a = await view("sbx-a");
     expect(a.conflict).toEqual({
-      extensionPoint: "sandbox@2",
+      extensionPoint: "config-source@1",
       providers: [{ name: "sbx-b", displayName: null }],
     });
 
@@ -299,7 +306,7 @@ describe("single-provider extension points: one enabled provider", () => {
     const boot = await bootstrapFixture([
       { bytes: await packFake("fake-bootstrap-b") },
       {
-        bytes: await lifePkg({ name: "sbx-boot", version: "1.0.0", provides: ["sandbox@2"] }),
+        bytes: await lifePkg({ name: "sbx-boot", version: "1.0.0", provides: ["config-source@1"] }),
         required: false,
       },
     ]);
@@ -328,7 +335,7 @@ describe("single-provider extension points: one enabled provider", () => {
     // sbx-w was enabled before sbx-a (left from before the rule) but its package bytes are gone,
     // so it cannot load; the election still picks it on every replica
     const sha256 = await upload(
-      await lifePkg({ name: "sbx-w", version: "1.0.0", provides: ["sandbox@2"] }),
+      await lifePkg({ name: "sbx-w", version: "1.0.0", provides: ["config-source@1"] }),
     );
     expect((await post("sbx-w/install", { sha256 })).statusCode).toBe(200);
     await db.deleteFrom("extension_blobs").where("sha256", "=", sha256).execute();
@@ -343,13 +350,13 @@ describe("single-provider extension points: one enabled provider", () => {
     );
     const a = await view("sbx-a");
     expect(a.conflict).toEqual({
-      extensionPoint: "sandbox@2",
+      extensionPoint: "config-source@1",
       providers: [{ name: "sbx-w", displayName: null }],
       unprovided: true,
     });
     const detail = a.replicas.find((r) => r.state === "pending") as unknown as { detail: string };
     expect(detail.detail).toBe(
-      "extension point sandbox@2 is single-provider but provided by: sbx-w, sbx-a; sbx-w is not loaded, so sandbox@2 has no running provider",
+      "extension point config-source@1 is single-provider but provided by: sbx-w, sbx-a; sbx-w is not loaded, so config-source@1 has no running provider",
     );
     // Put back: sbx-w disabled, sbx-a loads again
     await setRow("sbx-w", null);
@@ -358,8 +365,8 @@ describe("single-provider extension points: one enabled provider", () => {
     expect((await view("sbx-a")).conflict).toBeUndefined();
   });
 
-  it("the occupant named is the elected holder: A holds sandbox, B (sandbox + secret-store) lost, C holds secret-store", async () => {
-    await install("multi-b", ["sandbox@2", "secret-store@1"]);
+  it("the occupant named is the elected holder: A holds config-source, B (config-source + secret-store) lost, C holds secret-store", async () => {
+    await install("multi-b", ["config-source@1", "secret-store@1"]);
     await install("sec-c", ["secret-store@1"]);
     await install("sec-d", ["secret-store@1"]);
     // Written straight to PG, as an older kernel let it happen; no reconcile runs
@@ -388,15 +395,16 @@ describe("single-provider extension points: one enabled provider", () => {
     expect((await enable("x-up")).statusCode).toBe(200);
     await waitFor(async () => loaded(k, "x-up") === "1.0.0", 15_000, "x-up loaded");
     const sha256 = await upload(
-      await lifePkg({ name: "x-up", version: "2.0.0", provides: ["sandbox@2"] }),
+      await lifePkg({ name: "x-up", version: "2.0.0", provides: ["config-source@1"] }),
     );
     const res = await post("x-up/install", { sha256 });
     expect(res.statusCode, res.body).toBe(200);
     expect((res.json() as { leftDisabled?: unknown }).leftDisabled).toEqual({
       code: "extension.single_provider_enabled",
-      message: "Only one extension may provide sandbox@2; disable sbx-a first, then enable x-up",
+      message:
+        "Only one extension may provide config-source@1; disable sbx-a first, then enable x-up",
       singleProvider: {
-        extensionPoint: "sandbox@2",
+        extensionPoint: "config-source@1",
         enabled: { name: "sbx-a", displayName: null },
       },
     });
@@ -410,7 +418,7 @@ describe("single-provider extension points: one enabled provider", () => {
     const boot = await bootstrapFixture([
       { bytes: await packFake("fake-bootstrap-b") },
       {
-        bytes: await lifePkg({ name: "sbx-req", version: "1.0.0", provides: ["sandbox@2"] }),
+        bytes: await lifePkg({ name: "sbx-req", version: "1.0.0", provides: ["config-source@1"] }),
         required: true,
       },
     ]);
@@ -431,7 +439,7 @@ describe("single-provider extension points: one enabled provider", () => {
           required: true,
           code: "extension.single_provider_enabled",
           message:
-            "Required plugin sbx-req provides sandbox@2, which sbx-a already provides; disable sbx-a and run the bootstrap again",
+            "Required plugin sbx-req provides config-source@1, which sbx-a already provides; disable sbx-a and run the bootstrap again",
         },
       ]);
       expect(await bs.isDone(bootstrapManifestSha256(boot.manifest))).toBe(false);
@@ -448,9 +456,9 @@ describe("single-provider extension points: one enabled provider", () => {
   });
 
   it("a required provider cannot be replaced: a distinct refusal, not a loop through disable", async () => {
-    // sbx-req (required, previous case) holds sandbox@2
+    // sbx-req (required, previous case) holds config-source@1
     expect((await view("sbx-b")).enableBlocked).toEqual({
-      extensionPoint: "sandbox@2",
+      extensionPoint: "config-source@1",
       enabled: { name: "sbx-req", displayName: null },
       required: true,
     });
@@ -458,10 +466,10 @@ describe("single-provider extension points: one enabled provider", () => {
     expect(refused.statusCode, refused.body).toBe(409);
     expect(refused.json().error).toEqual({
       code: "extension.single_provider_required",
-      message: "sandbox@2 is provided by the required plugin sbx-req; it can't be replaced",
+      message: "config-source@1 is provided by the required plugin sbx-req; it can't be replaced",
       details: [
         {
-          extensionPoint: "sandbox@2",
+          extensionPoint: "config-source@1",
           enabled: { name: "sbx-req", displayName: null },
           required: true,
         },

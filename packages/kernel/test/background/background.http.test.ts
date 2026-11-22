@@ -12,8 +12,8 @@ import { type BackgroundTaskRow, BackgroundTaskStore } from "../../src/backgroun
 import type { KernelSchemaDb } from "../../src/db/kernel-schema.js";
 import { createDb } from "../../src/db/pool.js";
 import { SandboxService } from "../../src/sandbox/sandbox.service.js";
+import { fakeWorkspaceDir } from "../fixtures/plugins/device-fake/index.js";
 import type { ScriptRule } from "../fixtures/plugins/model-script/index.js";
-import { fakeWorkspaceDir } from "../fixtures/plugins/sandbox-fake/index.js";
 import { launchManaged } from "../helpers/background-fake.js";
 import { legacyDbFor } from "../helpers/conversations.js";
 import { onlyBuiltins } from "../helpers/disabled-tools.js";
@@ -89,10 +89,10 @@ beforeAll(async () => {
       { pg: pgc.url, redis: rd.url },
       {
         roles: ["api", "worker"],
-        extensions: [MODEL_FAKE, fixture("model-script"), fixture("sandbox-fake")],
+        extensions: [MODEL_FAKE, fixture("model-script"), fixture("device-fake")],
         extensionConfig: {
           "model-script": { rules: RULES },
-          "sandbox-fake": { root },
+          "device-fake": { root },
         },
         sandbox: { background: { pollSeconds: 3600 } },
       },

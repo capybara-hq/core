@@ -184,3 +184,42 @@ describe("setupCheck ids in the permission snapshot", () => {
     expect(set().permissions).not.toHaveProperty("setupChecks");
   });
 });
+
+// ctx.provide runs the device-provider@1 load check (ctx/device-provider-check.ts): a provider that
+// does not declare networkAllowlist or lacks report is refused, so the plugin's setup fails.
+describe("ctx.provide device-provider@1", () => {
+  const providerMf = (name: string): ExtensionManifest =>
+    defineExtension({
+      name,
+      version: "0.1.0",
+      sdk: "^0.1.0-rc.0",
+      provides: ["device-provider@1"],
+      setup() {},
+    });
+  const valid = (): Record<string, unknown> => ({
+    networkAllowlist: true,
+    concurrentExec: true,
+    report: async () => ({}),
+    killTagged: async () => {},
+    exec: async () => ({}),
+    create: async () => ({}),
+    createFileSystem: async () => ({}),
+  });
+
+  it.each(["networkAllowlist", "report"])("refuses a provider without %s", async (member) => {
+    const ctx = createExtensionContext(deps, providerMf(`dp-${member.toLowerCase()}`), {});
+    expect(() => ctx.provide("device-provider@1", { ...valid(), [member]: undefined })).toThrow(
+      `device-provider@1 requires ${member}`,
+    );
+    expect(ctx.provided.size).toBe(0);
+    await ctx.close();
+  });
+
+  it("accepts a complete provider", async () => {
+    const ctx = createExtensionContext(deps, providerMf("dp-ok"), {});
+    const impl = valid();
+    ctx.provide("device-provider@1", impl);
+    expect(ctx.provided.get("device-provider@1")).toBe(impl);
+    await ctx.close();
+  });
+});

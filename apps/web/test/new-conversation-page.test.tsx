@@ -555,7 +555,8 @@ describe("the device picker (environments design §4.1)", () => {
         items: [envView("d1", "Laptop", { source: "local", provider: "@local", online: true })],
         defaultId: null,
         lastUsedId: null,
-        cloudAvailable: false,
+        providers: [],
+        defaultProvider: null,
       }),
     );
     expect(picker()?.textContent).toContain("Laptop");
@@ -573,7 +574,8 @@ describe("the device picker (environments design §4.1)", () => {
         items: [envView("d1", "Laptop", { source: "local", provider: "@local", online: false })],
         defaultId: null,
         lastUsedId: null,
-        cloudAvailable: false,
+        providers: [],
+        defaultProvider: null,
       }),
     );
     const user = userEvent.setup();
@@ -599,7 +601,8 @@ describe("the device picker (environments design §4.1)", () => {
         items: [envView("d1", "Laptop", { source: "local", provider: "@local", online: false })],
         defaultId: null,
         lastUsedId: null,
-        cloudAvailable: false,
+        providers: [],
+        defaultProvider: null,
       }),
     );
     expect(picker()?.textContent).toContain("—");
@@ -629,7 +632,13 @@ describe("the device picker (environments design §4.1)", () => {
     const calls = stubApi({ [`POST ${ORG}/conversations/first-message`]: createdAt });
     await renderRouteWithCache(
       "/",
-      withDevices({ items: [], defaultId: null, lastUsedId: null, cloudAvailable: false }),
+      withDevices({
+        items: [],
+        defaultId: null,
+        lastUsedId: null,
+        providers: [],
+        defaultProvider: null,
+      }),
     );
     expect(picker()).toBeNull();
     await send("go");

@@ -74,6 +74,7 @@ const facts: PermissionReviewSnapshot = {
   baseWriteDirectories: ["/project"],
   baseHosts: [],
   workingRoot: "/project",
+  projectRoot: "/project",
   outsideSandboxCeiling: true,
   broadProjectReach: true,
   fullConsent: false,
@@ -300,6 +301,7 @@ it("exact binding is required for expansion and exact evidence retries are immut
         baseWriteDirectories: ["/work"],
         baseHosts: [],
         workingRoot: "/work",
+        projectRoot: "/work",
         outsideSandboxCeiling: view.outsideSandboxCeiling,
         broadProjectReach: view.broadProjectReach,
         unattended: false,
@@ -396,7 +398,7 @@ it.each(["exec", "backgroundStart"] as const)(
       profile: "approve-for-me" as const,
       actor: { accountId: f.accountId, conversationId: f.conversationId, runId: f.runId },
       tag: operationId,
-      filesystem: { kind: "scoped" as const, readRoots: ["/work"], writeRoots: ["/work"] },
+      filesystem: { kind: "scoped" as const, projectRoot: "/work", writeRoots: ["/work"] },
       network: { kind: "allowlist" as const, hosts: ["registry.npmjs.org"] },
     };
     const input = {
@@ -865,6 +867,7 @@ describe("per-call hosts within the device sandbox's host ceiling", () => {
           baseWriteDirectories: ["/work"],
           baseHosts: [],
           workingRoot: "/work",
+          projectRoot: "/work",
           network: "allowlist",
           outsideSandboxCeiling: view.outsideSandboxCeiling,
           broadProjectReach: view.broadProjectReach,

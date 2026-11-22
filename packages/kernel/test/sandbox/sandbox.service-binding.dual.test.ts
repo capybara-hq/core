@@ -5,8 +5,8 @@ import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import {
   DEFAULT_SANDBOX_ROOTS,
+  type DeviceProvider,
   type SandboxHandle,
-  type SandboxProvider,
 } from "@capybara-hq/plugin-sdk";
 import { startTestPostgres, startTestRedis, type TestContainer } from "@capybara-hq/testing";
 import { afterAll, beforeAll, beforeEach, expect, it, vi } from "vitest";
@@ -17,9 +17,10 @@ import { LocalInstanceBindings } from "../../src/local-devices/instance-bindings
 import { LocalDeviceRelay } from "../../src/local-devices/relay.js";
 import { createLogger } from "../../src/log.js";
 import { SandboxLeases } from "../../src/sandbox/leases.js";
-import { LOCAL_PROVIDER, SandboxProviders } from "../../src/sandbox/providers.js";
+import { DeviceProviders, LOCAL_PROVIDER } from "../../src/sandbox/providers.js";
 import { SandboxService } from "../../src/sandbox/sandbox.service.js";
-import { readFakeSandboxOps } from "../fixtures/plugins/sandbox-fake/index.js";
+import { KERNEL_VERSION } from "../../src/version.js";
+import { readFakeSandboxOps } from "../fixtures/plugins/device-fake/index.js";
 import { truncateTables } from "../helpers/db.js";
 import { startKernel, type TestKernel } from "../helpers/runs.js";
 import { seedDevice } from "../helpers/sandbox.js";
@@ -36,7 +37,7 @@ import { stagedHello } from "../local-devices/fake-machine-v3.js";
  */
 
 const SANDBOX_FAKE = fileURLToPath(
-  new URL("../fixtures/plugins/sandbox-fake/index.ts", import.meta.url),
+  new URL("../fixtures/plugins/device-fake/index.ts", import.meta.url),
 );
 
 let pg: TestContainer, redis: TestContainer, raw: ReturnType<typeof createDb>;
@@ -53,7 +54,7 @@ beforeAll(async () => {
     http: { port: 0 },
     roles: ["api"],
     extensions: [SANDBOX_FAKE],
-    extensionConfig: { "sandbox-fake": { root } },
+    extensionConfig: { "device-fake": { root } },
     extensionPermissions: { autoApprove: true },
   });
   for (let i = 0; i < 2; i++)
@@ -89,7 +90,7 @@ function barrier() {
 }
 
 /** The machine's lifecycle as each replica's staged provider sees it. */
-function fakeLocal(creates: string[]): SandboxProvider {
+function fakeLocal(creates: string[]): DeviceProvider {
   const handle = (name: string): SandboxHandle => ({
     id: name.replace(/^cap-device-/, ""),
     roots: ROOTS,
@@ -124,7 +125,7 @@ function fakeLocal(creates: string[]): SandboxProvider {
     async stat() {
       return null;
     },
-  } as unknown as SandboxProvider;
+  } as unknown as DeviceProvider;
 }
 
 /**
@@ -169,8 +170,9 @@ async function device(opts: { binder?: boolean } = {}) {
     release: Promise.resolve() as Promise<void>,
   };
   kernels.forEach((k, replica) => {
-    k.app.get(SandboxProviders).register({
+    k.app.get(DeviceProviders).register({
       plugin: LOCAL_PROVIDER,
+      version: KERNEL_VERSION,
       impl: fakeLocal(creates),
       ...(opts.binder !== false && { binder: k.app.get(LocalInstanceBindings) }),
     });

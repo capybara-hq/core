@@ -3,7 +3,7 @@ import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
-import type { SandboxProvider } from "@capybara-hq/plugin-sdk";
+import type { DeviceProvider } from "@capybara-hq/plugin-sdk";
 import { startTestPostgres, startTestRedis, type TestContainer } from "@capybara-hq/testing";
 import { Redis } from "ioredis";
 import { sql } from "kysely";
@@ -17,7 +17,7 @@ import {
   createFakeSandbox,
   fakeSandboxState,
   readFakeSandboxOps,
-} from "../fixtures/plugins/sandbox-fake/index.js";
+} from "../fixtures/plugins/device-fake/index.js";
 import { truncateTables } from "../helpers/db.js";
 import { sandboxLeasesFor, sandboxServiceFor, seedDevice } from "../helpers/sandbox.js";
 import { seedConversation } from "../helpers/tool-fixtures.js";
@@ -44,8 +44,8 @@ const signal = () => AbortSignal.timeout(30_000);
 const DAY = 24 * 3600_000;
 
 /** The fake sandbox with its lifecycle calls and exec commands recorded. */
-function spied(impl: SandboxProvider): SandboxProvider {
-  const w = Object.create(impl) as SandboxProvider;
+function spied(impl: DeviceProvider): DeviceProvider {
+  const w = Object.create(impl) as DeviceProvider;
   w.create = (args) => {
     calls.push("create");
     return impl.create(args);
@@ -69,12 +69,12 @@ function spied(impl: SandboxProvider): SandboxProvider {
   return w;
 }
 
-let provider: SandboxProvider;
+let provider: DeviceProvider;
 const service = (): SandboxService =>
   sandboxServiceFor({
     db,
     redis,
-    provider: () => ({ plugin: "sandbox-fake", impl: provider }),
+    providers: () => [{ plugin: "device-fake", version: "1.0.0", impl: provider }],
     config: () => config,
     log: {},
     lockPollMs: 20,
@@ -156,12 +156,12 @@ describe("currentInstance", () => {
     const r = await row();
     expect(await s.currentInstance(env())).toEqual({
       createdAt: r?.created_at,
-      provider: "sandbox-fake",
+      provider: "device-fake",
     });
     expect(await s.suspendIdle(new Date(Date.now() + DAY))).toBe(1);
     expect(await s.currentInstance(env())).toEqual({
       createdAt: r?.created_at,
-      provider: "sandbox-fake",
+      provider: "device-fake",
     });
     await s.destroyInactive(new Date(Date.now() + 30 * DAY));
     expect(await s.currentInstance(env())).toBeNull();

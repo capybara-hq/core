@@ -21,19 +21,21 @@ import {
   stat,
   writeFile,
 } from "node:fs/promises";
-import { dirname, join } from "node:path";
+import { dirname, join, posix } from "node:path";
 import { promisify } from "node:util";
 import {
+  DEVICE_PROVIDER_EXTENSION_POINT,
+  type DeviceProvider,
   defineExtension,
   type ExecResult,
   FileSystemGoneError,
   type FileSystemHandle,
+  ProjectPathRefusedError,
   parseSandboxBrowseScope,
   parseSandboxExecutionRef,
   parseSandboxOperationRef,
   parseSandboxOperationScope,
   parseSandboxPreparationScope,
-  SANDBOX_EXTENSION_POINT,
   SANDBOX_TAG_RE,
   type SandboxBackground,
   type SandboxExecutionRef,
@@ -46,7 +48,6 @@ import {
   SandboxOperationOutcomeUnknownError,
   type SandboxPermissionSupport,
   SandboxPermissionUnsupportedError,
-  type SandboxProvider,
   SandboxScopeDeniedError,
   type SandboxStopResult,
   validateSandboxPathShape,
@@ -54,7 +55,7 @@ import {
 import { z } from "zod";
 
 /**
- * Test `sandbox@2` (for tests only, never for production: it has **no isolation** and runs the
+ * Test `device-provider@1` (for tests only, never for production: it has **no isolation** and runs the
  * commands tests write on the host).
  *
  * The "provider side" lives under the deployment config `root` (like a Docker daemon: kernel
@@ -103,7 +104,7 @@ import { z } from "zod";
  *   `update` got is appended to `root/limits.log` ({@link readFakeSandboxLimits}); an `update`
  *   also logs `update <id> <answer>` in `ops.log`.
  * - `list` (deployment config or {@link FakeSandboxOptions}; off by default, so the fake offers no
- *   projects unless a test asks): lists one directory as `SandboxProvider.list` does, with the
+ *   projects unless a test asks): lists one directory as `DeviceProvider.list` does, with the
  *   instance's directories mapped as for `readFile`, and adds a `scan` that suggests nothing.
  * - `root/refuse-open-egress` (optional, {@link setFakeSandboxRefuseOpenEgress}; read at each
  *   call): like sandbox-docker with `refuseOpenNetwork: true`, limits with the open public
@@ -116,8 +117,9 @@ import { z } from "zod";
  *   access with background ownership by default ({@link FAKE_PERMISSION_SUPPORT};
  *   `root/permission-support.json` overrides it, {@link setFakeSandboxPermissionSupport}).
  *   While it reports `boundary: "instance"`, `operation` runs only the instance scope, as
- *   sandbox-docker and sandbox-e2b do: a scoped filesystem must name `/` in both its read and
- *   write roots, else `SandboxPermissionUnsupportedError`.
+ *   sandbox-docker and sandbox-e2b do: a scoped filesystem must name `/` in its write roots,
+ *   else `SandboxPermissionUnsupportedError`. A scoped operation names no read roots: the fake
+ *   reads its project root (`/workspace` when null), `/skills` and its write roots.
  *   Operation records live in `root/operation-records`, revocation tombstones in
  *   `root/operation-revoked`, background executions in `root/instances/<id>/executions/<hash>`
  *   (`ref.json`, `pgid`, `exit`, `claim`, `lost`); `ops.log` adds `bg-start <id> <operationId>
@@ -134,18 +136,35 @@ const Deployment = z.object({
   updateMode: z.enum(["updated", "recreate", "throw", "none"]).optional(),
   limitsApplyAt: z.enum(["instance", "fileSystem"]).optional(),
   list: z.boolean().optional(),
+  refusePaths: z.array(z.string()).optional(),
 });
+
+/** Whether `path` is one of `refused` or below one (device paths, compared normalized). */
+function isRefused(refused: string[] | undefined, path: string): boolean {
+  const p = posix.normalize(path);
+  return (refused ?? []).some((r) => {
+    const n = posix.normalize(r).replace(/\/+$/, "");
+    return p === n || p.startsWith(`${n}/`);
+  });
+}
+
+/** What `device-fake` reports as its description. */
+export const DEFAULT_DESCRIPTION = "Test device (a local directory, no isolation)";
 
 /** A stand-in for a provider setting in the refusal's message (see the file header). */
 export const FAKE_REFUSAL_SECRET = "fake-secret-0c1d2e";
 
 /** How the fake applies new limits (see the file header). */
 export interface FakeSandboxOptions {
+  /** What `report` describes the device as (default: {@link DEFAULT_DESCRIPTION}). */
+  description?: string;
   /** `update`'s answer (`throw`: it fails with an ordinary error); `none` (default): no `update`. */
   updateMode?: "updated" | "recreate" | "throw" | "none";
   limitsApplyAt?: "instance" | "fileSystem";
   /** Gives the provider a `list` and a `scan` (see the file header). */
   list?: boolean;
+  /** `list` refuses these device paths and everything below them (`ProjectPathRefusedError`, "Refused by the test provider"). */
+  refusePaths?: string[];
 }
 
 /** One line of `root/limits.log`: the limits an operation got. */
@@ -269,7 +288,7 @@ function sessionPids(list) {
   return pids;
 }
 function usage(name) {
-  process.stderr.write(name + ": the sandbox-fake shim supports only " + name + " [-SIGNAL] -s <sid>[,<sid>...]\\n");
+  process.stderr.write(name + ": the device-fake shim supports only " + name + " [-SIGNAL] -s <sid>[,<sid>...]\\n");
   process.exit(2);
 }
 `;
@@ -495,7 +514,7 @@ function faultError(f: FakeSandboxFault): Error {
 }
 
 /** `provider` whose every method first throws the fault set in `root/fault.json`, if any. */
-function withFaults(root: string, provider: SandboxProvider): SandboxProvider {
+function withFaults(root: string, provider: DeviceProvider): DeviceProvider {
   const out: Record<string, unknown> = {};
   for (const [key, value] of Object.entries(provider)) {
     out[key] =
@@ -507,7 +526,7 @@ function withFaults(root: string, provider: SandboxProvider): SandboxProvider {
           }
         : value;
   }
-  return out as unknown as SandboxProvider;
+  return out as unknown as DeviceProvider;
 }
 
 /**
@@ -569,7 +588,7 @@ async function sleep(ms: number, signal: AbortSignal): Promise<void> {
 export function createFakeSandbox(
   rootDir: string,
   options: FakeSandboxOptions = {},
-): SandboxProvider {
+): DeviceProvider {
   // 用真实路径（macOS 的临时目录经符号链接），pwd 等输出才能换回沙箱路径
   mkdirSync(rootDir, { recursive: true });
   const root = realpathSync(rootDir);
@@ -584,7 +603,7 @@ export function createFakeSandbox(
       )
     ) {
       throw new Error(
-        `Sandbox open public network is refused: the sandbox-fake setting refuseOpenNetwork is true (token ${FAKE_REFUSAL_SECRET})`,
+        `Sandbox open public network is refused: the device-fake setting refuseOpenNetwork is true (token ${FAKE_REFUSAL_SECRET})`,
       );
     }
   };
@@ -695,8 +714,19 @@ export function createFakeSandbox(
     return join(instanceDir(root, h.id), "machine", p.slice(1));
   };
 
-  const provider: SandboxProvider = {
+  const provider: DeviceProvider = {
     concurrentExec: true as const,
+    networkAllowlist: true as const,
+    async report(device) {
+      const meta = device.handle === null ? null : await fakeSandboxMeta(root, device.handle.id);
+      return {
+        revision: meta?.fileSystem ?? "none",
+        description: { en: options.description ?? DEFAULT_DESCRIPTION },
+        home: null,
+        limits: [],
+        reset: true,
+      };
+    },
     ...(options.limitsApplyAt !== undefined && { limitsApplyAt: options.limitsApplyAt }),
 
     async createFileSystem({ name, limits, signal }): Promise<FileSystemHandle> {
@@ -948,6 +978,12 @@ export function createFakeSandbox(
     provider.list = async (h, path, opts) => {
       opts.signal.throwIfAborted();
       await requireRunning(h);
+      if (isRefused(options.refusePaths, path)) {
+        throw new ProjectPathRefusedError({
+          en: "Refused by the test provider",
+          zh: "测试提供方拒绝了这个目录",
+        });
+      }
       const p = await real(h, path);
       const s = await stat(p).catch(() => null);
       if (s === null) return null;
@@ -1007,27 +1043,39 @@ export function createFakeSandbox(
   return withFaults(root, provider);
 }
 
-/** 测试用 `sandbox@2`：部署配置 `{ root }`，见文件头注释。 */
-export default defineExtension({
-  name: "sandbox-fake",
-  version: "0.1.0",
-  sdk: "^0.1.0-rc.0",
-  provides: [SANDBOX_EXTENSION_POINT],
-  // 只用部署配置与本地文件，不用任何需要声明的平台能力
-  permissions: {},
-  config: { deployment: Deployment },
-  setup(ctx) {
-    const { root, updateMode, limitsApplyAt, list } = ctx.config as z.infer<typeof Deployment>;
-    ctx.provide(
-      SANDBOX_EXTENSION_POINT,
-      createFakeSandbox(root, {
-        ...(updateMode !== undefined && { updateMode }),
-        ...(limitsApplyAt !== undefined && { limitsApplyAt }),
-        ...(list !== undefined && { list }),
-      }),
-    );
-  },
-});
+/**
+ * The extension manifest and setup of a fake device provider named `name` (deployment config
+ * `{ root }`; `device-fake` and `device-fake-b` differ only in name and description).
+ */
+export function defineFakeDevice(name: string, description?: string) {
+  return defineExtension({
+    name,
+    version: "0.1.0",
+    sdk: "^0.1.0-rc.0",
+    provides: [DEVICE_PROVIDER_EXTENSION_POINT],
+    // Uses only its deployment config and local files: no platform capability to declare
+    permissions: {},
+    config: { deployment: Deployment },
+    setup(ctx) {
+      const { root, updateMode, limitsApplyAt, list, refusePaths } = ctx.config as z.infer<
+        typeof Deployment
+      >;
+      ctx.provide(
+        DEVICE_PROVIDER_EXTENSION_POINT,
+        createFakeSandbox(root, {
+          ...(description !== undefined && { description }),
+          ...(updateMode !== undefined && { updateMode }),
+          ...(limitsApplyAt !== undefined && { limitsApplyAt }),
+          ...(list !== undefined && { list }),
+          ...(refusePaths !== undefined && { refusePaths }),
+        }),
+      );
+    },
+  });
+}
+
+/** Test `device-provider@1`: deployment config `{ root }`, see the file header. */
+export default defineFakeDevice("device-fake");
 
 /** What the managed surface needs from the raw fake (see {@link createFakeSandbox}). */
 interface FakeInternals {
@@ -1141,7 +1189,7 @@ const TAIL_LINES = 20;
 const MAX_READ = 65_536;
 
 /**
- * The permission-scoped operation surface of `sandbox@2` (permission operation contract) over the
+ * The permission-scoped operation surface of `device-provider@1` (permission operation contract) over the
  * raw fake. Every check below is real so tests stay meaningful; what the fake cannot do is isolate
  * a command: a restricted `exec` runs on the host like any other, and only its working directory
  * and the instance roots its text names are checked against the scope (no network filter).
@@ -1162,10 +1210,10 @@ const MAX_READ = 65_536;
  *   instance kills its executions, which are then `lost` with their output unavailable.
  */
 function managedSurface(
-  raw: SandboxProvider,
+  raw: DeviceProvider,
   f: FakeInternals,
 ): Pick<
-  SandboxProvider,
+  DeviceProvider,
   "permissionSupport" | "operation" | "prepare" | "browse" | "revokeOperation" | "background"
 > {
   const instanceDir = (h: SandboxHandle) => join(f.root, "instances", h.id);
@@ -1204,19 +1252,34 @@ function managedSurface(
     return value;
   };
 
-  const readable = (scope: SandboxFileScope, path: string) => {
+  /**
+   * What an operation may reach here. A scoped operation names only its project root and write
+   * roots; the fake's read rule adds the project root (the workspace in free mode) and `/skills`.
+   */
+  type Reach =
+    | { kind: "device" }
+    | { kind: "scoped"; readRoots: readonly string[]; writeRoots: readonly string[] };
+  const reachOf = (scope: SandboxFileScope): Reach =>
+    scope.kind === "device"
+      ? scope
+      : {
+          kind: "scoped",
+          readRoots: [scope.projectRoot ?? "/workspace", "/skills"],
+          writeRoots: scope.writeRoots,
+        };
+  const readable = (scope: Reach, path: string) => {
     if (validateSandboxPathShape(path).length > 0) deny(`The path ${path}`);
     if (scope.kind === "device") return;
     if (![...scope.readRoots, ...scope.writeRoots].some((r) => within(path, r)))
       deny(`Reading ${path}`);
   };
-  const writable = (scope: SandboxFileScope, path: string) => {
+  const writable = (scope: Reach, path: string) => {
     if (validateSandboxPathShape(path).length > 0) deny(`The path ${path}`);
     if (scope.kind === "device") return;
     if (!scope.writeRoots.some((r) => within(path, r))) deny(`Writing ${path}`);
   };
   /** A command's working directory and the instance roots its text names (see the doc above). */
-  const runnable = (scope: SandboxFileScope, command: string, cwd: string) => {
+  const runnable = (scope: Reach, command: string, cwd: string) => {
     readable(scope, cwd);
     if (scope.kind === "device") return;
     const roots = [...scope.readRoots, ...scope.writeRoots];
@@ -1228,7 +1291,7 @@ function managedSurface(
 
   const native = (
     h: SandboxHandle,
-    fs: SandboxFileScope,
+    fs: Reach,
     signal: AbortSignal,
     once: <T>(input: unknown, work: () => Promise<T>) => Promise<T>,
   ) => ({
@@ -1255,7 +1318,7 @@ function managedSurface(
           list: async (path: string, opts: { limit: number; signal: AbortSignal }) => {
             readable(fs, path);
             return once({ method: "list", path, limit: opts.limit }, async () =>
-              (raw.list as NonNullable<SandboxProvider["list"]>)(h, path, {
+              (raw.list as NonNullable<DeviceProvider["list"]>)(h, path, {
                 ...opts,
                 signal: AbortSignal.any([signal, opts.signal]),
               }),
@@ -1264,7 +1327,7 @@ function managedSurface(
           scan: async (base: string, opts: { signal: AbortSignal }) => {
             readable(fs, base);
             return once({ method: "scan", base }, async () =>
-              (raw.scan as NonNullable<SandboxProvider["scan"]>)(h, base, {
+              (raw.scan as NonNullable<DeviceProvider["scan"]>)(h, base, {
                 signal: AbortSignal.any([signal, opts.signal]),
               }),
             );
@@ -1339,8 +1402,8 @@ function managedSurface(
       if (generation === undefined || !/^[0-9]{1,16}$/.test(generation))
         throw new SandboxScopeDeniedError("The fake needs the kernel's instance generation");
       const cwd = args.cwd ?? "/workspace";
-      runnable(scope.filesystem, args.command, cwd);
-      writable(scope.filesystem, args.outputPath);
+      runnable(reachOf(scope.filesystem), args.command, cwd);
+      writable(reachOf(scope.filesystem), args.outputPath);
       const { signal: _signal, ...input } = args;
       const inputHash = sha256(JSON.stringify({ scope, input }));
       const dir = executionDir(h, scope.operationId);
@@ -1530,19 +1593,19 @@ function managedSurface(
       if (
         scope.filesystem.kind === "scoped" &&
         (await support()).boundary === "instance" &&
-        !(scope.filesystem.readRoots.includes("/") && scope.filesystem.writeRoots.includes("/"))
+        !scope.filesystem.writeRoots.includes("/")
       )
         throw new SandboxPermissionUnsupportedError(
-          "sandbox-fake's instance boundary runs only the instance scope: / readable and writable",
+          "device-fake's instance boundary runs only the instance scope: / writable",
         );
       const once = <T>(input: unknown, work: () => Promise<T>) =>
         consume(scope.operationId, { scope, ...(input as object) }, work);
       await mkdir(join(f.root, "operation-tags"), { recursive: true });
       await writeFile(join(f.root, "operation-tags", sha256(scope.operationId)), scope.tag);
       return {
-        ...native(h, scope.filesystem, signal, once),
+        ...native(h, reachOf(scope.filesystem), signal, once),
         exec: async (args) => {
-          runnable(scope.filesystem, args.command, args.cwd ?? "/workspace");
+          runnable(reachOf(scope.filesystem), args.command, args.cwd ?? "/workspace");
           const { signal: callSignal, ...input } = args;
           return once({ method: "exec", args: input }, () =>
             raw.exec(h, {
@@ -1558,7 +1621,7 @@ function managedSurface(
 
     async prepare(h, given, signal) {
       const scope = parseSandboxPreparationScope(given);
-      const fs: SandboxFileScope = {
+      const fs: Reach = {
         kind: "scoped",
         readRoots: scope.writeRoots,
         writeRoots: scope.writeRoots,
@@ -1578,7 +1641,7 @@ function managedSurface(
     ...(f.list && {
       async browse(h, given, signal) {
         const scope = parseSandboxBrowseScope(given);
-        const fs: SandboxFileScope = { kind: "scoped", readRoots: scope.readRoots, writeRoots: [] };
+        const fs: Reach = { kind: "scoped", readRoots: scope.readRoots, writeRoots: [] };
         const n = native(h, fs, signal, (_input, work) => scopedCall.run(true, work));
         return {
           stat: n.stat,
@@ -1643,6 +1706,6 @@ async function killExecutions(instanceDir: string): Promise<void> {
  * Kept for callers written before the fake carried the permission-scoped surface itself: the
  * provider from {@link createFakeSandbox} is returned as it is.
  */
-export function fakeOperationFacade(_root: string, provider: SandboxProvider): SandboxProvider {
+export function fakeOperationFacade(_root: string, provider: DeviceProvider): DeviceProvider {
   return provider;
 }

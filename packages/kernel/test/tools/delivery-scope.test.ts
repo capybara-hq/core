@@ -38,7 +38,7 @@ import {
 /**
  * Truthful delivery spec §2: identical bytes reach the user once per delivery scope (the current
  * run after the person last spoke). A real kernel: model-fake scripts the calls (`tools:[…]` runs
- * the calls of one step in order), `sandbox-fake` is the device, `mem-store` the object store.
+ * the calls of one step in order), `device-fake` is the device, `mem-store` the object store.
  * The scope reads and the parallel race also call `storeArtifacts` directly against the real
  * event log and store.
  */
@@ -67,8 +67,8 @@ beforeAll(async () => {
       { pg: pgc.url, redis: rd.url },
       {
         roles: ["api", "worker"],
-        extensions: [MODEL_FAKE, fixture("mem-store"), fixture("sandbox-fake")],
-        extensionConfig: { "sandbox-fake": { root } },
+        extensions: [MODEL_FAKE, fixture("mem-store"), fixture("device-fake")],
+        extensionConfig: { "device-fake": { root } },
       },
     ),
   );

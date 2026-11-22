@@ -1,34 +1,35 @@
 ---
-name: writing-sandbox-providers
-description: 'Use when changing the kernel side of sandbox@2 or anything that drives a sandbox from the kernel: the contract as the kernel relies on it (devices, file system versus instance lifecycle, gone versus ordinary errors, abort, in-sandbox time limits, killTagged, exec tags, list / scan), permissionSupport v2 (boundary operation / instance), the device sandbox and its network (effectiveDeviceSandbox, open-public and the closed address classes, the fake-IP DNS fallback, no limits.mode, update, limitsApplyAt), protected write chains and the reserved staging prefix, per-call escalation, the SandboxService lifecycle keyed by device id (leases, holder records, path leases, fencing generation, idle suspension, inactivity destruction, rebuild and notices), the socket proxy config and compose sandbox profile core ships, and kernel tests on the sandbox-fake fixture. To write a sandbox extension (sandbox-docker, sandbox-e2b) see writing-sandbox-providers in capybara-hq/plugins.'
+name: writing-device-providers
+description: 'Use when changing the kernel side of device-provider@1 or anything that drives a sandbox from the kernel: the contract as the kernel relies on it (devices, file system versus instance lifecycle, gone versus ordinary errors, abort, in-sandbox time limits, killTagged, exec tags, list / scan), permissionSupport v2 (boundary operation / instance), the device sandbox and its network (effectiveDeviceSandbox, open-public and the closed address classes, the fake-IP DNS fallback, no limits.mode, update, limitsApplyAt), protected write chains and the reserved staging prefix, per-call escalation, the SandboxService lifecycle keyed by device id (leases, holder records, path leases, fencing generation, idle suspension, inactivity destruction, rebuild and notices), the socket proxy config and compose sandbox profile core ships, and kernel tests on the device-fake fixture. To write a device provider extension (sandbox-docker, sandbox-e2b) see writing-device-providers in capybara-hq/plugins.'
 ---
 
-# Sandboxes: the kernel side of `sandbox@2`
+# Sandboxes: the kernel side of `device-provider@1`
 
 Work happens in **devices** (spec `docs/superpowers/specs/2026-11-07-environments-design.md`): a device is one instance plus a file system, shared by all
 conversations bound to it (and their sub-agents). Instances are disposable, files are not: suspension and destruction act on the instance, and the files stay until the
 device is deleted. The kernel's sandbox tools (`Bash` / `Read` / `Write` / `Edit` / `Glob` / `Grep` / `Deliver`),
-attachment sync and `Skill` all use it through `SandboxService`. `sandbox@2` is a **single-choice, brokered** extension point: a deployment installs only one sandbox extension,
-and other extensions cannot `requires` it. For the extension host see `.agents/skills/writing-extensions`; for the tools side see `.agents/skills/writing-tools`.
+attachment sync and `Skill` all use it through `SandboxService`. `device-provider@1` is a **multi, brokered, org-scoped** extension point: several device providers load side by side and serve one org at once, each device on its own, and other extensions cannot `requires` it. For the extension host see `.agents/skills/writing-extensions`; for the tools side see `.agents/skills/writing-tools`.
 
 This skill covers what core owns: the contract as the kernel relies on it, `SandboxService` (leases, fencing, suspension, destruction), the builtin sandbox tools (`Bash`, `Read`, `Write`, `Edit`, `Glob`, `Grep`, `Deliver`),
-the socket proxy config and compose sandbox profile, and the kernel tests on the `sandbox-fake` fixture. **Writing a sandbox extension** (its code, README, Docker / E2B
-specifics and tests) is in [writing-sandbox-providers in capybara-hq/plugins](https://github.com/capybara-hq/plugins/tree/main/.agents/skills/writing-sandbox-providers).
+the socket proxy config and compose sandbox profile, and the kernel tests on the `device-fake` fixture. **Writing a device provider extension** (its code, README, Docker / E2B
+specifics and tests) is in [writing-device-providers in capybara-hq/plugins](https://github.com/capybara-hq/plugins/tree/main/.agents/skills/writing-device-providers).
 
 Implementations:
 
-- `packages/kernel/test/fixtures/plugins/sandbox-fake`: the minimal shape (a local directory + `/bin/sh`, **no isolation, for tests only**); every kernel sandbox test runs on it.
+- `packages/kernel/test/fixtures/plugins/device-fake`: the minimal shape (a local directory + `/bin/sh`, **no isolation, for tests only**); every kernel sandbox test runs on it.
 - The official [`sandbox-docker`](https://github.com/capybara-hq/plugins/tree/main/plugins/sandbox-docker) (one container per device, runc or gVisor's runsc, Docker only through
   a socket proxy, an egress proxy container per instance) and [`sandbox-e2b`](https://github.com/capybara-hq/plugins/tree/main/plugins/sandbox-e2b) (E2B cloud or self-hosted)
   plugins in capybara-hq/plugins; their READMEs list every platform trade-off.
 
-## Contract: `sandbox@2` (`packages/plugin-sdk/src/sandbox.ts`)
+## Contract: `device-provider@1` (`packages/plugin-sdk/src/device-provider.ts`)
 
-`@2` replaces `@1` with no overlap (no compatibility before 0.1.0): a kernel refuses to load a provider still on `@1`. A change here is an SDK change (API snapshot +
+`device-provider@1` replaces `sandbox@2` with no overlap (no compatibility before 0.1.0): the extension-point resolver
+refuses an unknown point name, so a plugin still declaring `sandbox@2` fails to load. The point is **multi** (several providers
+load side by side), **brokered** and **org-scoped**. A change here is an SDK change (API snapshot +
 changeset) and must keep the official providers working; check them in capybara-hq/plugins.
 
 ```ts
-interface SandboxProvider {
+interface DeviceProvider {
   createFileSystem({ name, limits, signal }): Promise<FileSystemHandle>;  // name = cap-device-<deviceId>
   destroyFileSystem(fs, signal): Promise<void>;          // not being there counts as success
   destroyFileSystemByName(name, signal): Promise<void>;  // no handle: a crash mid-create, the legacy cleanup
@@ -40,6 +41,8 @@ interface SandboxProvider {
   killAll(h, signal): Promise<void>;
   readonly concurrentExec: true;              // required: exec / readFile / writeFile / stat run concurrently on one instance
   killTagged(h, tags, signal): Promise<void>; // required: kill only the exec commands labelled with one of tags
+  readonly networkAllowlist: true;            // required static declaration: the provider enforces limits.network allowlists
+  report(device: DeviceRef, signal): Promise<DeviceReport>;  // what a person sees about the device (below)
   exec(h, { command, cwd?, env?, timeoutMs, maxOutputBytes, signal, tag, actor }): Promise<ExecResult>;  // actor = { accountId, conversationId, runId? }
   // ExecResult.network?.blocked (optional): hosts the provider's egress refused, with the layer; the kernel
   // recomputes the org layer and may ask the device owner (network ask-to-allow spec §4)
@@ -52,14 +55,28 @@ interface SandboxProvider {
 }
 ```
 
-On the activated tree (device protocol 4, `PERMISSION_CONTEXT_ACTIVE`) the kernel never calls the raw `exec` / `readFile` /
+On the activated tree (device protocol 5, `PERMISSION_CONTEXT_ACTIVE`) the kernel never calls the raw `exec` / `readFile` /
 `writeFile` / `stat` / `list` / `scan`, `killAll` or `killTagged` for a tool: every builtin enters a device through the
-permission-scoped surface (`packages/plugin-sdk/src/sandbox-operation.ts`): `permissionSupport(h)`, `operation(h, scope)`
-(the admitted `SandboxOperationScope`: filesystem roots, network, actor and tag come only from it), `prepare` (trusted staging
+permission-scoped surface (`packages/plugin-sdk/src/device-operation.ts`): `permissionSupport(h)`, `operation(h, scope)`
+(the admitted `SandboxOperationScope`: its filesystem is `{ kind: "scoped", projectRoot, writeRoots }` or `{ kind: "device" }`, with
+no read roots (what a scoped operation may read is the provider's own rule); network, actor and tag come only from it), `prepare` (trusted staging
 of skills and attachments), `browse` (owner metadata only), `revokeOperation(h, ref)` and `background` (`start` / `status` /
 `tail` / `readOutput` / `stop` by exact `SandboxExecutionRef`). A provider without that surface makes its devices
-`unsupported`: missing operation support never falls back to the raw methods. The raw methods stay in the `sandbox@2`
+`unsupported`: missing operation support never falls back to the raw methods. The raw methods stay in the `device-provider@1`
 signature for the lifecycle and the conformance suite.
+
+**`networkAllowlist: true`** is a static declaration, not a probe: a provider that cannot restrict outbound hosts does not implement
+`device-provider@1`.
+
+**`report(device, signal)`** answers `DeviceReport` (`{ revision, description: {en, zh?}, home, limits[], reset }`, checked by
+`parseDeviceReport` with the sizes in `DEVICE_REPORT_LIMITS`): what the device page shows (a description, the owner's home or
+null, up to 8 limit lines, whether the provider can reset the files). It is shown to people and never used for enforcement.
+The kernel stores the parsed report in `devices.report` (migration 0175) and refreshes it under the exclusive lifecycle lease
+after a create and a resume, through a bounded call raced against its deadline (a provider that ignores the signal is given up
+at the bound); a failed or invalid report leaves the stored one and never fails the lifecycle step.
+
+**`ProjectPathRefusedError`** (`isProjectPathRefusedError`, duck-typed): a provider's `list` / `scan` throws it with a `DeviceText`
+reason when a project directory lies where it will not serve; the kernel answers `device.project_refused` (422) with the reason.
 
 **`permissionSupport` is version 2** (approval-only profiles design, "SDK and protocol"; `parseSandboxPermissionSupport`):
 `{ version: 2, boundary, restricted, network: { openPublic, allowlist, perOperationHosts }, outsideSandbox, background,
@@ -115,7 +132,7 @@ Every provider must follow these; the kernel's behaviour below assumes them. How
   `writeFile` / `stat` / `killAll` throw `SandboxGoneError` and `resume` returns `"gone"`. The kernel then recreates the instance on the same file system and retries once; the model sees a recreated notice (processes are gone, files are kept).
   Losing the file system is a different error, `FileSystemGoneError` (above). If the instance is only temporarily unreachable (401, 5xx, network errors, a bare 404 returned by a proxy),
   throw an **ordinary error**; otherwise one network blip wipes the user's files. Use `isSandboxGoneError` to decide (duck-typed, compatible with an extension bundling its own copy of the SDK).
-  Throw network errors as they come (node's `code` / `syscall`, or wrapped as `cause` / `AggregateError.errors`, as `fetch` does): `SandboxProviders`
+  Throw network errors as they come (node's `code` / `syscall`, or wrapped as `cause` / `AggregateError.errors`, as `fetch` does): `DeviceProviders`
   hands every provider out through `guardProviderConnection` (`sandbox/unreachable.ts`), which rethrows a connection failure (`ECONNREFUSED`,
   `ENOTFOUND`, any `connect` / `getaddrinfo` error → never connected; `ECONNRESET`, `ETIMEDOUT`, `EPIPE`, socket hang up → dropped) as
   `SandboxProviderUnreachableError` with the raw error as `cause`; the sandbox tools give it a fixed text. Never write model-visible text in a provider.
@@ -128,7 +145,7 @@ Every provider must follow these; the kernel's behaviour below assumes them. How
   this limit guarantees it cannot run indefinitely in parallel with the next lock holder's commands.
 - **killAll**: kill every command started through `exec` that is still running (SIGKILL by process group and session); processes moved to the background in a new session are not guaranteed.
   The kernel no longer calls it (permission runtime cutover B-1): a resumed, failed-update or quarantined instance and a crashed holder are cleaned up by exact
-  operation revokes (`revokeOperation`, see "Takeover per holder" below). The method stays in the `sandbox@2` signature. When the exec that kills processes cannot even start (process table exhausted),
+  operation revokes (`revokeOperation`, see "Takeover per holder" below). The method stays in the `device-provider@1` signature. When the exec that kills processes cannot even start (process table exhausted),
   Docker falls back to `restart?t=0` and E2B falls back to pause + a `connect {memory: false}` cold start, which also end live siblings' commands; both log a
   warn and the call returns normally.
 - **Concurrent use (`concurrentExec`, `killTagged`, `tag`; both required)**: all sessions of a device and their sub-agents share one instance, so the kernel calls
@@ -149,7 +166,7 @@ Every provider must follow these; the kernel's behaviour below assumes them. How
 - Paths have already passed `validateSandboxPath` (only `/workspace`, `/skills`, `/tmp` are accepted); the working directory is `/workspace` and attachments are in
   `/workspace/attachments/<conversation>/` (the first 12 hex digits of the root conversation id).
 - **`list` and `scan` (projects, project root spec §4.1, §4.2)**: the kernel keeps a device's projects itself (`device_projects`) and asks
-  the provider only what it can read. Neither carries limits (protocol 4 removed the mode tier): the provider answers what
+  the provider only what it can read. Neither carries limits (the mode tier is gone): the provider answers what
   the device reaches (a cloud instance: its workspace; a local machine: its owner ceiling). `list` is one directory's entries, sorted
   by code unit, at most `limit` (the kernel asks `limit: 1` as the existence check when a project is added and up to
   `MAX_DEVICE_LIST_ENTRIES` for the skills tree at run start), never `.` / `..`, `isDir` following links (a dangling one `false`), `truncated`
@@ -210,7 +227,7 @@ Every provider must follow these; the kernel's behaviour below assumes them. How
     for each revoked managed start on an incarnation that no longer runs. A historical reservation without a recorded incarnation
     is `unknown`, never the current instance.
   - **Gate.** `SandboxService` enumerates the device itself and checks its obligations in `ensure`, under the exclusive lease,
-    before use, resume, rebuild or provider switch. A device with an unresolved obligation, or with a candidate not yet
+    before use, resume or rebuild. A device with an unresolved obligation, or with a candidate not yet
     enumerated, never takes the shared path. `LocalInstanceBindings.bind` refuses while one is unresolved.
     `RetireLegacyTasksJob` is retryable and bounded; the gate never depends on it.
   - **Retirement.** The current cloud incarnation is destroyed whole by its provider (never resumed or `killAll`ed; files kept),
@@ -334,8 +351,8 @@ Every provider must follow these; the kernel's behaviour below assumes them. How
     ("a super admin adds the host"); a local owner's allowlist is a second ceiling ("capybara-device
     policy add allowedDomains …"); nothing on an instance-boundary device or a closed network.
 - **What a provider gets.** `SandboxLimits` carries resources and the outer network only:
-  `network: { kind: "open-public" | "allowlist", hosts }`. There is **no `limits.mode`** (protocol 4
-  removed the tier; the device's `exec` / `create` limits refuse unknown keys, and a provider must
+  `network: { kind: "open-public" | "allowlist", hosts }`. There is **no `limits.mode`** (the tier
+  was removed; the device's `exec` / `create` limits refuse unknown keys, and a provider must
   not require or read a mode). The provider enforces the `limits` it receives and never reads org
   settings or platform switches. A cloud instance's outer network is its sandbox network; a local
   device's commands carry the device sandbox network and the machine intersects it with its owner
@@ -387,7 +404,10 @@ Every provider must follow these; the kernel's behaviour below assumes them. How
   Where a provider enforces more weakly, write it in the README (E2B looks only at Host / SNI and
   does not verify the destination IP, Ruling M14).
 
-## The kernel-internal provider `@local` (local devices)
+## The kernel-internal provider `@local` (local devices; until phase 2)
+
+This section describes the state until phase 2 of the device-provider design (`docs/superpowers/specs/2026-11-21-device-provider-design.md`),
+which moves local devices to the `device-local` provider over a dial-in channel; it is not done yet.
 
 Local devices (spec §6, §13 and §15) run on a person's machine, driven through a program that
 connects to the gateway. Their provider is `@local`, registered by the kernel itself
@@ -395,7 +415,7 @@ connects to the gateway. Their provider is `@local`, registered by the kernel it
 no plugin can take the name.
 
 - **Per-device resolution.** The provider is chosen by the device's row
-  (`devices.provider`), not by the deployment's one sandbox extension, so cloud and local
+  (`devices.provider`, `DeviceProviders.forDevice`), so cloud and local
   devices coexist. Handle ids are the device id (parsed from `cap-device-<deviceId>`).
 - **Relay.** Calls become requests on `capk:device-req:<deviceId>` and results come back under
   `capk:device-res:<requestId>`; no holder means `device.offline` at once. A waiting staged call
@@ -437,7 +457,7 @@ The kernel owns it; the extension implements only primitives. **Do not do schedu
   The old `sandboxes` table is no longer used (a later migration drops it).
 - **Leases** (phase C, `packages/kernel/src/sandbox/leases.ts`, spec `docs/superpowers/specs/2026-10-26-subagents-design.md` §10): using a sandbox recorded
   `running` takes a **shared** lease (up to `sandbox.maxConcurrentCommands`, default 6, hot, shared by all sessions of the device):
-  every sandbox tool, attachment sync, `Skill` copies. Every lifecycle change (create instance, first use, rebuild after `gone`, `resume`, provider switch,
+  every sandbox tool, attachment sync, `Skill` copies. Every lifecycle change (create instance, first use, rebuild after `gone`, `resume`,
   `suspend`, `destroy`, the exact revocation after a resume) takes the **exclusive** lease, alone. Keys: `capk:sandbox:<env>` (the lock key: an exclusive token or the literal `shared`), `capk:sandbox-users:<env>` (zset of shared tokens by expiry), `capk:sandbox-intent:<env>`
   (an exclusive waiter's intent: new shared leases wait, writer preference), `capk:sandbox-holders:<env>` (holder records), `capk:sandbox-path:<env>:<sha256>`.
   Every key carries a TTL, never shortened by a holder for a TTL another holder set: the lease keys (`capk:sandbox:<env>`, `capk:sandbox-users:<env>`)
@@ -501,17 +521,26 @@ The kernel owns it; the extension implements only primitives. **Do not do schedu
   Rows of a provider that is not loaded are kept (warned on the first tick of each hour); a failed row gets `sweep_failed_at` and is retried after the others. With
   no rows a tick is one `SELECT … LIMIT 1`; nothing else reads that table, and a later migration drops it.
 - **Skill directories accumulate**: `Skill` copies each skill version to its own `/skills/<name>@<digest12>/` in the device's file system, which every
-  conversation of the device shares, and nothing deletes an old one (there is no delete primitive in `sandbox@2`, and another conversation may still use that
+  conversation of the device shares, and nothing deletes an old one (there is no delete primitive in `device-provider@1`, and another conversation may still use that
   version). They are small and stay until the files are reset or the device is deleted.
 - **Transparent recovery**: a suspended instance is `resume`d on next use; on `gone` or after the instance was destroyed, a new instance is created on the kept file system
   (`restarted: true`, processes are gone, files stay) and the tool result carries an English notice. After a file reset each conversation's next use is told the files were
   reset instead (`filesReset: true`, `SANDBOX_FILES_RESET_NOTICE`): the seen key records `<created_at>:<fs_resets>`, a count of resets the kernel keeps itself, because a
   provider may give the new file system the old id (sandbox-docker's volumes are named after the device; the fake does it with `setFakeFileSystemIdsByName`). A file system gone at the provider is never replaced: `fs_status = 'lost'` and `device.files_lost` until reset.
-- **Provider switch**: a device whose files or instance belong to a provider that is not the current one cannot be used (`device.unavailable`, nothing changes; its
-  files are not migrated) until that provider is back. Deleting it destroys the old provider's instance and file system through `SandboxProviders.lookup` while that extension
-  is still loaded; otherwise the deletion fails and the row stays for a retry (an instance that cannot be destroyed is recorded in the `prev_*` columns).
-  A row the old provider left mid-create (`status = 'creating'`, no file system recorded) is taken over by the current one, which first calls the old
-  provider's `destroyFileSystemByName` (it may have made the file system by name); with the old provider not loaded, or on failure, it only warns.
+- **Provider per device**: a device is bound to its provider (`devices.provider`) for life
+  (`DeviceProviders.forDevice`, never another provider in its place). A use needs that provider loaded **and** on in the
+  device's org (`DeviceProviderSelection.isOnInOrg`, read at every use; `@local` is on wherever it is registered);
+  otherwise, and for an instance row naming another provider, the use fails `device.unavailable` (503) and nothing
+  changes: files and instance stay, nothing is demoted, recreated or taken over. Lifecycle work (destroy, reset, the
+  sweeps, revocation delivery) needs the provider loaded only; deleting a device whose provider is not loaded fails and
+  the row stays for a retry. The sweeps (`suspendIdle`, `destroyInactive`, `reconcileMarked`, the last with a cursor per
+  provider `capk:sandbox-reconcile-cursor:<plugin>`) run per loaded provider over its own rows; rows of a provider that is
+  not loaded are never touched.
+- **Which provider a new device gets**: device creation (`POST /devices`) takes a provider name, one that is on in the org
+  (`GET /devices` lists them); absent, the org's default (`DeviceProviderSelection.defaultFor`): the org setting
+  `deviceDefaultProvider`, else the platform setting `devices.defaultProvider` (deployment config or the admin console). Without a usable default (none set, or
+  the named provider is not on in the org) `defaultFor` returns none, and the caller must name a provider (`device.provider_required`, 400). `DeviceProviders` is a pure registry (`register`, `forDevice`,
+  `loaded`); which providers serve an org is `DeviceProviderSelection` (`onInOrg`, `isOnInOrg`, `defaultFor`).
 - **Live devices only**: the instance row is created only for a live device (`deleted_at IS NULL`) of the caller's org, with the device's own `org_id`, and
   the use path re-checks it under the exclusive lease before creating anything: a use that waited behind `destroyDevice` gets `device.not_found` instead of bringing
   the provider resources back. A row of another org is also reported as `device.not_found`.
@@ -559,13 +588,13 @@ The kernel owns it; the extension implements only primitives. **Do not do schedu
   renamed into git's subtrees keeps contents Seatbelt never saw; owners are advised to set
   `git config --global safe.bareRepository explicit` (documented, never changed automatically).
 
-## Local file access on protocol 4
+## Local file access on protocol 5
 
-A protocol 4 machine runs work only under an admitted operation scope: `LocalDeviceProvider.staged`
+A protocol 5 machine runs work only under an admitted operation scope: `LocalDeviceProvider.staged`
 (`packages/kernel/src/local-devices/local-device-provider.ts`) is the `@local` registration, and its raw
 `exec` / `readFile` / `writeFile` / `stat` / `list` / `scan` refuse with `SandboxPermissionUnsupportedError` before anything
-is queued, while `killAll` / `killTagged` queue nothing. Reads and writes go through `operation(h, scope)` (the scope's read
-and write roots, the frame-sized `readFile` cap of `devices.local.maxFrameBytes`), staging through `prepare`, owner browsing
+is queued, while `killAll` / `killTagged` queue nothing. Reads and writes go through `operation(h, scope)` (the scope's project root and
+write roots, the frame-sized `readFile` cap of `devices.local.maxFrameBytes`), staging through `prepare`, owner browsing
 through `browse`, commands through the request-bound execution adapter (the admitted call grants, cut to the org's current
 limits; a host the limits now refuse fails the call). The machine re-checks every scope against its owner ceiling
 (`ownerCeiling { outsideSandbox, network, allowedDomains, restrictedProjectReach }`, reported as `DeviceOwnerCeiling`
@@ -573,8 +602,9 @@ version 3). The web narrows it only through the `policy` op (network to `allowli
 off, `restrictedProjectReach: workspace`); a `policy` op that adds hosts or carries a `mode` is refused (`POLICY_ADD_REFUSED`): widening happens only on the
 machine (`capybara-device ceiling set --outside-sandbox on|off --network open|allowlist`, `capybara-device policy add
 allowedDomains <host>`). Kernels and device programs upgrade together with no fallback: the kernel refuses a protocol 3
-program (426, "Update capybara-device"), and a protocol 4 program facing an older deployment says the deployment must be
-upgraded.
+program (426, "Update capybara-device"), and a protocol 4 program is refused the same way (426); a protocol 5 program facing an older deployment says the deployment must be
+upgraded. Interim (ruling R1): a scope has no read roots, so an approved read outside the project on a local device is
+refused until phase 4 gives the device its own read rule.
 
 ## Per-call sandbox escalation
 
@@ -655,7 +685,7 @@ suite in `@capybara-hq/testing` checks it):
 
 ## Tests
 
-- **Kernel tests use the fake sandbox**: `packages/kernel/test/fixtures/plugins/sandbox-fake`, deployment config `{ root }`; multiple replicas sharing one
+- **Kernel tests use the fake sandbox**: `packages/kernel/test/fixtures/plugins/device-fake`, deployment config `{ root }`; multiple replicas sharing one
   root share the same instances. Helpers: `readFakeSandboxOps` (operation counts), `removeFakeSandbox` (simulate gone),
   `setFakeSandboxDelays` (slow operations; `exec` holds a command open), `fakeSandboxState`; the fake declares `concurrentExec`, records each command's tag in
   `procs/<pid>` and logs `exec <id> <tag> <startMs> <endMs>` and `kill-tagged <id> <tags>` in `ops.log`. Concurrent holders: `packages/kernel/test/sandbox/concurrent.test.ts`,

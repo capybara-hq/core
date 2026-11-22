@@ -47,7 +47,7 @@ import { ownerReportFor } from "../local-devices/fake-machine-v3.js";
  */
 
 const SANDBOX_FAKE = fileURLToPath(
-  new URL("../fixtures/plugins/sandbox-fake/index.ts", import.meta.url),
+  new URL("../fixtures/plugins/device-fake/index.ts", import.meta.url),
 );
 
 let pgc: TestContainer;
@@ -72,7 +72,7 @@ beforeAll(async () => {
       {
         roles: ["api", "worker"],
         extensions: [MODEL_FAKE, SANDBOX_FAKE],
-        extensionConfig: { "sandbox-fake": { root } },
+        extensionConfig: { "device-fake": { root } },
         // the test drives the background poll itself (`pollOnce`): the worker's own tick would
         // finish a task between a step and the poll that should see it
         sandbox: { background: { pollSeconds: 3600 } },

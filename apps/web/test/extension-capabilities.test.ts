@@ -23,15 +23,15 @@ describe("extension capabilities and the 扩展 tabs", () => {
     expect(tabsOf(provides("model-provider@2"))).toEqual(["model"]);
     expect(tabsOf(provides("web-search@1", "web-fetch@1"))).toEqual(["web"]);
     expect(tabsOf(provides("connector@1"))).toEqual(["connector"]);
-    expect(tabsOf(provides("sandbox@1"))).toEqual(["sandbox"]);
+    expect(tabsOf(provides("device-provider@1"))).toEqual(["deviceProvider"]);
     expect(tabsOf(provides("object-store@1"))).toEqual(["storage"]);
   });
 
   it("an extension spanning two tabs sits in both, and shows only that tab's capabilities there", () => {
-    const groups = [...provides("model-provider@2", "sandbox@1"), group("tools", ["run"])];
-    expect(tabsOf(groups)).toEqual(["model", "sandbox"]);
-    expect(capabilitiesIn(groups, "all")).toEqual(["model", "sandbox", "tools"]);
-    expect(capabilitiesIn(groups, "sandbox")).toEqual(["sandbox"]);
+    const groups = [...provides("model-provider@2", "device-provider@1"), group("tools", ["run"])];
+    expect(tabsOf(groups)).toEqual(["model", "deviceProvider"]);
+    expect(capabilitiesIn(groups, "all")).toEqual(["model", "deviceProvider", "tools"]);
+    expect(capabilitiesIn(groups, "deviceProvider")).toEqual(["deviceProvider"]);
     // Agent tools of an extension with a tab of its own don't put it in 工具与界面
     expect(capabilitiesIn(groups, "tools")).toEqual([]);
   });
@@ -52,7 +52,7 @@ describe("extension capabilities and the 扩展 tabs", () => {
   it("counts: 全部 once per extension, each tab once per extension in it", () => {
     const rows = [
       provides("web-search@1", "web-fetch@1"),
-      provides("model-provider@2", "sandbox@1"),
+      provides("model-provider@2", "device-provider@1"),
       [group("tools", ["echo"])],
     ];
     expect(tabCounts(rows, (r) => r)).toEqual({
@@ -60,7 +60,7 @@ describe("extension capabilities and the 扩展 tabs", () => {
       model: 1,
       web: 1,
       connector: 0,
-      sandbox: 1,
+      deviceProvider: 1,
       storage: 0,
       tools: 1,
     });

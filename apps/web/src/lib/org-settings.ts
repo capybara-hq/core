@@ -82,6 +82,8 @@ export interface OrgSettings {
   outsideSandbox?: "allowed" | "off";
   /** The org's device network; absent = follow the platform. */
   deviceNetwork?: DeviceNetworkSetting;
+  /** The org's default device provider (an extension name); absent = follow the platform. */
+  deviceDefaultProvider?: string;
   platformTool: "on" | "read-only" | "off";
   /** The org's default time zone (IANA) for senders without one of their own; absent = UTC. */
   timeZone?: string;
@@ -174,6 +176,7 @@ export type OrgSettingsPatch = Partial<
     OrgSettings,
     | "outsideSandbox"
     | "deviceNetwork"
+    | "deviceDefaultProvider"
     | "timeZone"
     | "theme"
     | "scheduledTasks"
@@ -189,6 +192,8 @@ export type OrgSettingsPatch = Partial<
   outsideSandbox?: "allowed" | "off" | null;
   /** Replaces the stored value whole (send it with the edited fields); null follows the platform. */
   deviceNetwork?: DeviceNetworkSetting | null;
+  /** An extension name on in the org; null follows the platform. */
+  deviceDefaultProvider?: string | null;
   /** null clears the default (UTC). */
   timeZone?: string | null;
   /** Per slot: the entry replaces the org's, null removes it (follow the platform). */

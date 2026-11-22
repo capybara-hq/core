@@ -1,9 +1,12 @@
 import { describe, expect, expectTypeOf, it } from "vitest";
 import {
+  DEVICE_PROVIDER_EXTENSION_POINT,
   EXTENSION_POINTS,
   isFileSystemGoneError,
+  isProjectPathRefusedError,
   isSandboxGoneError,
-  SANDBOX_EXTENSION_POINT,
+  ProjectPathRefusedError,
+  parseDeviceReport,
   SANDBOX_ROOTS,
   SANDBOX_TAG_RE,
   SandboxGoneError,
@@ -13,9 +16,9 @@ import {
   validateSandboxPathShape,
 } from "../src/index.js";
 
-describe("sandbox@2", () => {
-  it("SANDBOX_EXTENSION_POINT is sandbox@2", () => {
-    expect(SANDBOX_EXTENSION_POINT).toBe("sandbox@2");
+describe("device-provider@1", () => {
+  it("DEVICE_PROVIDER_EXTENSION_POINT is device-provider@1", () => {
+    expect(DEVICE_PROVIDER_EXTENSION_POINT).toBe("device-provider@1");
   });
 
   it("isFileSystemGoneError recognises a copy from another SDK instance", () => {
@@ -29,7 +32,7 @@ describe("sandbox@2", () => {
   });
 
   it("constants match the registry", () => {
-    expect(EXTENSION_POINTS.sandbox).toBeDefined();
+    expect(EXTENSION_POINTS["device-provider"]).toBeDefined();
     expect([...SANDBOX_ROOTS]).toEqual(["/workspace", "/skills", "/tmp"]);
   });
 
@@ -186,5 +189,50 @@ describe("SandboxLimits", () => {
       "allowUnsandboxed" extends keyof SandboxLimits ? true : false
     >().toEqualTypeOf<false>();
     expectTypeOf<"devHosts" extends keyof SandboxLimits ? true : false>().toEqualTypeOf<false>();
+  });
+
+  it("parseDeviceReport accepts the index shape and refuses extra keys, long text, bad home", () => {
+    const ok = {
+      revision: "r1",
+      description: { en: "Docker container" },
+      home: null,
+      limits: [],
+      reset: true,
+    };
+    expect(parseDeviceReport(ok)).toEqual(ok);
+    expect(() => parseDeviceReport({ ...ok, outsideSandbox: true })).toThrow(TypeError);
+    expect(() => parseDeviceReport({ ...ok, description: { en: "x".repeat(301) } })).toThrow(
+      TypeError,
+    );
+    expect(() => parseDeviceReport({ ...ok, home: "relative/path" })).toThrow(TypeError);
+    expect(() =>
+      parseDeviceReport({
+        ...ok,
+        limits: Array(9).fill({ label: { en: "cpu" }, value: "1" }),
+      }),
+    ).toThrow(TypeError);
+    const full = {
+      ...ok,
+      home: "/home/me",
+      limits: [{ label: { en: "CPU", zh: "处理器" }, value: "2" }],
+    };
+    expect(parseDeviceReport(full)).toEqual(full);
+    expect(() => parseDeviceReport({ ...ok, reset: "no" })).toThrow(TypeError);
+  });
+
+  it("isProjectPathRefusedError is duck-typed and keeps the reason", () => {
+    const e = new ProjectPathRefusedError({ en: "Another connection's directory" });
+    expect(isProjectPathRefusedError(e)).toBe(true);
+    expect(e.reason).toEqual({ en: "Another connection's directory" });
+    expect(
+      isProjectPathRefusedError(
+        Object.assign(new Error("x"), {
+          name: "ProjectPathRefusedError",
+          projectPathRefused: true,
+          reason: { en: "y" },
+        }),
+      ),
+    ).toBe(true);
+    expect(isProjectPathRefusedError(new Error("x"))).toBe(false);
   });
 });

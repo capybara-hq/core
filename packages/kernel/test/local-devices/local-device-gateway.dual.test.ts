@@ -36,7 +36,7 @@ const execArgs = (deviceId: string) => ({
     profile: "approve-for-me",
     actor: { accountId: "a", conversationId: "c" },
     tag: "t1",
-    filesystem: { kind: "scoped", readRoots: ["/work"], writeRoots: ["/work"] },
+    filesystem: { kind: "scoped", projectRoot: "/work", writeRoots: ["/work"] },
     network: { kind: "none" },
   },
   command: "echo hi",

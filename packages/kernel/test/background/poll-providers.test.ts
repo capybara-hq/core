@@ -7,9 +7,9 @@ import type { LockService } from "../../src/infra/lock/lock.service.js";
 import type { KernelLogger } from "../../src/log.js";
 
 /**
- * The poll skips an instance group whose device's provider is not there (environments spec
- * §6): a local device is polled with no cloud provider, a cloud one (or a task with no
- * device) waits until a cloud provider is back.
+ * The poll skips an instance group whose device's provider does not serve its org now
+ * (`SandboxService.availableFor`): its tasks wait until it does. A legacy task with no device
+ * needs no provider: it is finished as gone.
  */
 
 const config = KernelConfigSchema.parse({
@@ -22,15 +22,17 @@ const task = (id: string, deviceId: string | null): BackgroundTaskRow =>
   ({
     id,
     deviceId,
+    orgId: "org-1",
     sid: "123",
     sandboxCreatedAt: new Date(0),
     conversationId: `c-${id}`,
   }) as unknown as BackgroundTaskRow;
 
 describe("background poll per device provider", () => {
-  it("a device-only poll group with no cloud provider is polled; cloud and device-less groups are skipped", async () => {
+  it("only a group whose device's provider serves its org is polled; a device-less task finishes gone", async () => {
     const polled: string[] = [];
-    const finisherCalls: string[] = [];
+    const asked: string[] = [];
+    const finished: { id: string; status: string }[] = [];
     const job = new BackgroundTaskPollJob(
       {
         failAbandonedLaunches: async () => [],
@@ -43,11 +45,18 @@ describe("background poll per device provider", () => {
           task("t3", null),
         ],
       } as never,
-      new Proxy({}, { get: (_t, k) => async () => void finisherCalls.push(String(k)) }) as never,
+      {
+        finish: async (t: BackgroundTaskRow, to: { status: string }) => {
+          finished.push({ id: t.id, status: to.status });
+          return true;
+        },
+      } as never,
       { publishChanged: async () => {} },
       {
-        cloudAvailable: false,
-        availableFor: async (env: string) => env === "env-device",
+        availableFor: async (env: string, orgId: string) => {
+          asked.push(`${env}@${orgId}`);
+          return env === "env-device";
+        },
         ifRunning: async (env: string) => {
           polled.push(env);
           throw new Error("stop after recording");
@@ -58,9 +67,10 @@ describe("background poll per device provider", () => {
       { info() {}, warn() {}, debug() {}, error() {} } as unknown as KernelLogger,
       { stop: async () => Promise.reject(new Error("no managed task here")) } as never,
     );
-    expect(await job.pollOnce()).toBe(0);
+    expect(await job.pollOnce()).toBe(1);
     expect(polled).toEqual(["env-device"]);
-    // the device-less task would be marked gone by the finisher if its group were polled
-    expect(finisherCalls).toEqual([]);
+    // each device is judged in its own task's org; the device-less one asks no provider
+    expect(asked).toEqual(["env-device@org-1", "env-cloud@org-1"]);
+    expect(finished).toEqual([{ id: "t3", status: "lost" }]);
   });
 });

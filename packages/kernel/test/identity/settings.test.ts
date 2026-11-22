@@ -310,6 +310,74 @@ describe("SettingsService", () => {
   });
 });
 
+describe("SettingsService devicesDefaultProvider", () => {
+  const serviceWith = (provider: string | undefined, source: "env" | "file" | undefined) => {
+    const h = handlesFor(db);
+    return new SettingsService(
+      h.db,
+      h.txHost,
+      adminLockFor(db),
+      { warn: () => {} },
+      {
+        get: () =>
+          ({
+            devices: { defaultProvider: provider },
+            attribution: {},
+            platform: {},
+            sharing: {},
+          }) as never,
+        fieldSource: (path: string) =>
+          path === "devices.defaultProvider" && provider !== undefined ? source : undefined,
+      },
+      ceilingWritesFor(db),
+    );
+  };
+
+  it("devicesDefaultProvider: stored, read back with source db, cleared with null, read-only when configured", async () => {
+    await db.deleteFrom("deployment_settings").execute();
+    const admin = await accountsFor(db).createLocal({
+      login: "default-provider",
+      password: "correct horse battery",
+      displayName: "dp",
+      superAdmin: true,
+    });
+    const s = serviceWith(undefined, undefined);
+    expect((await s.view()).devicesDefaultProvider).toEqual({ provider: null, source: "default" });
+    expect(
+      await s.update({ devicesDefaultProvider: { provider: "device-fake-b" } }, admin.id),
+    ).toMatchObject({ devicesDefaultProvider: { provider: "device-fake-b", source: "db" } });
+    expect(await s.update({ devicesDefaultProvider: { provider: null } }, admin.id)).toMatchObject({
+      devicesDefaultProvider: { provider: null, source: "default" },
+    });
+    await expect(
+      s.update({ devicesDefaultProvider: { provider: "Bad Name" } }, admin.id),
+    ).rejects.toMatchObject({ code: "validation_failed" });
+    // an invalid stored value reads as none
+    await db
+      .insertInto("deployment_settings")
+      .values({ key: "devicesDefaultProvider", value: JSON.stringify({ provider: 5 }) })
+      .execute();
+    expect((await s.view()).devicesDefaultProvider).toEqual({ provider: null, source: "db" });
+    await db.deleteFrom("deployment_settings").execute();
+    for (const source of ["env", "file"] as const) {
+      const c = serviceWith("device-fake-a", source);
+      expect((await c.view()).devicesDefaultProvider).toEqual({
+        provider: "device-fake-a",
+        source,
+      });
+      const err = await c
+        .update({ devicesDefaultProvider: { provider: null } }, admin.id)
+        .catch((e: unknown) => e);
+      expect(err).toMatchObject({ code: "deployment.setting_readonly" });
+    }
+    // an empty configured value reads as none
+    expect((await serviceWith("", "env").view()).devicesDefaultProvider).toEqual({
+      provider: null,
+      source: "env",
+    });
+  });
+});
+
 describe("SettingsService devicesOutsideSandbox and devicesNetwork", () => {
   type Devices = {
     outsideSandbox?: "allowed" | "off";

@@ -18,8 +18,8 @@ import {
 } from "./device-projects.service.js";
 import { type DeviceList, DevicesService, type DeviceView } from "./devices.service.js";
 import {
+  type DeviceCreateBody,
   DeviceCreateBodyDto,
-  type DeviceNameBody,
   type DeviceParams,
   DeviceParamsDto,
   type DevicePatchBody,
@@ -37,9 +37,12 @@ import {
  * 2026-11-07-environments-design §9; `agents.use`, human users only: a service token gets 403).
  * Phase 1 has personal cloud devices only, each visible to its owner alone: another member
  * gets 404 `device.not_found`.
- * - `GET /` → `{ items, defaultId, lastUsedId, cloudAvailable }` (`cloudAvailable`: there is a
- *   current sandbox provider; ruling R4);
- * - `POST / { name }` → 201 `{ device }`; `GET /:id` → `{ device }`;
+ * - `GET /` → `{ items, defaultId, lastUsedId, providers, defaultProvider }` (`providers`: the
+ *   device providers on in the org, `{ plugin, displayName }`; `defaultProvider`: the one a device
+ *   gets when none is named, null when none serves the org);
+ * - `POST / { name, provider? }` → 201 `{ device }`, bound for life to `provider` (one of
+ *   `providers`, else 400 `validation_failed` at `provider`) or the default provider (none: 400
+ *   `device.provider_required`); `GET /:id` → `{ device }`;
  * - `PATCH /:id { name?, network? }` → `{ device }`: renames it and sets a cloud device's sandbox
  *   network (`{ mode: open | allowlist | none | null, hosts? }`, approval-only profiles design,
  *   "Settings model") within its org's and the platform's ceilings (400
@@ -87,14 +90,14 @@ export class DevicesController {
   async create(
     @CurrentPrincipal() principal: Principal,
     @CurrentOrg() org: OrgContext,
-    @ZBody(DeviceCreateBodyDto) body: z.infer<typeof DeviceNameBody>,
+    @ZBody(DeviceCreateBodyDto) body: z.infer<typeof DeviceCreateBody>,
   ): Promise<{ device: DeviceView }> {
     const p = requireUser(principal);
     return {
       device: await this.devices.create(
         org.orgId,
         p.account.id,
-        { name: body.name },
+        { name: body.name, ...(body.provider !== undefined && { provider: body.provider }) },
         patTokenId(p),
       ),
     };

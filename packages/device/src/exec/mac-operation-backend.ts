@@ -1,6 +1,7 @@
 import { createHash } from "node:crypto";
 import { resolve } from "node:path";
 import {
+  type DeviceProvider,
   type ExecResult,
   parseSandboxBrowseScope,
   parseSandboxOperationScope,
@@ -12,7 +13,6 @@ import {
   type SandboxOperationScope,
   SandboxPermissionUnsupportedError,
   type SandboxPreparationScope,
-  type SandboxProvider,
   SandboxScopeDeniedError,
   validateSandboxPathShape,
 } from "@capybara-hq/plugin-sdk";
@@ -63,7 +63,7 @@ export interface MacOperationBackendOptions {
 }
 export type MacOperationBackend = Required<
   Pick<
-    SandboxProvider,
+    DeviceProvider,
     "permissionSupport" | "operation" | "browse" | "prepare" | "revokeOperation" | "background"
   >
 > & {

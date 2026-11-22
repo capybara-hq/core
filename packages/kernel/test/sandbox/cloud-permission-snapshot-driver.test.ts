@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import type { SandboxProvider } from "@capybara-hq/plugin-sdk";
+import type { DeviceProvider } from "@capybara-hq/plugin-sdk";
 import { startTestPostgres, startTestRedis, type TestContainer } from "@capybara-hq/testing";
 import { afterAll, beforeAll, expect, it, vi } from "vitest";
 import { KernelConfigSchema } from "../../src/config/schema.js";
@@ -9,7 +9,7 @@ import { CloudPermissionSnapshots } from "../../src/sandbox/cloud-permission-sna
 import { SandboxLeases } from "../../src/sandbox/leases.js";
 import { LegacyRetirementStore } from "../../src/sandbox/legacy-retirement.js";
 import { PermissionCeilingWrites } from "../../src/sandbox/permission-ceiling-writes.js";
-import { SandboxProviders } from "../../src/sandbox/providers.js";
+import { DeviceProviders } from "../../src/sandbox/providers.js";
 import { startKernel, type TestKernel } from "../helpers/runs.js";
 
 /**
@@ -41,7 +41,7 @@ beforeAll(async () => {
     { env: {}, logger: log },
   );
   db = k.app.get(KernelDb);
-  k.app.get(SandboxProviders).register({
+  k.app.get(DeviceProviders).register({
     plugin: PROVIDER,
     version: "test",
     impl: {
@@ -54,7 +54,7 @@ beforeAll(async () => {
       revokeOperation() {
         throw new Error("provider IO forbidden");
       },
-    } as unknown as SandboxProvider,
+    } as unknown as DeviceProvider,
   });
 });
 afterAll(async () => {

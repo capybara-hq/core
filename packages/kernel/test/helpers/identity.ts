@@ -274,7 +274,12 @@ export function inTransaction<T>(db: Kysely<any>, fn: () => Promise<T>): Promise
   return handlesFor(db).txHost.run(fn);
 }
 
-export function orgSettingsFor(db: Kysely<any>, config: () => unknown): OrgSettingsService {
+export function orgSettingsFor(
+  db: Kysely<any>,
+  config: () => unknown,
+  /** The `device-provider@1` extensions on in every org (what `deviceDefaultProvider` accepts). */
+  deviceProviders: string[] = [],
+): OrgSettingsService {
   const h = handlesFor(db);
   return new OrgSettingsService(
     h.db,
@@ -293,6 +298,16 @@ export function orgSettingsFor(db: Kysely<any>, config: () => unknown): OrgSetti
           : "file",
     },
     ceilingWritesFor(db),
+    undefined,
+    {
+      get: () => ({
+        providersFor: async () =>
+          ({
+            providers: deviceProviders.map((extension) => ({ extension })),
+            failed: new Set<string>(),
+          }) as never,
+      }),
+    },
   );
 }
 

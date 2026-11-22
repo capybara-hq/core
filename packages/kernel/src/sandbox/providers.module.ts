@@ -1,9 +1,9 @@
 import { Module } from "@nestjs/common";
 import { ExtensionRegistryModule } from "../extensions/registry.js";
-import { SandboxProviders } from "./providers.js";
+import { DeviceProviders } from "./providers.js";
 @Module({
   imports: [ExtensionRegistryModule],
-  providers: [SandboxProviders],
-  exports: [SandboxProviders],
+  providers: [DeviceProviders],
+  exports: [DeviceProviders],
 })
 export class SandboxProviderRegistryModule {}

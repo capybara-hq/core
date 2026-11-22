@@ -48,7 +48,7 @@ import { seedConversation } from "../helpers/tool-fixtures.js";
  */
 
 const SANDBOX_FAKE = fileURLToPath(
-  new URL("../fixtures/plugins/sandbox-fake/index.ts", import.meta.url),
+  new URL("../fixtures/plugins/device-fake/index.ts", import.meta.url),
 );
 const SPILL = 50_000;
 const signal = () => AbortSignal.timeout(30_000);
@@ -76,7 +76,7 @@ beforeAll(async () => {
       {
         roles: ["api", "worker"],
         extensions: [MODEL_FAKE, SANDBOX_FAKE],
-        extensionConfig: { "sandbox-fake": { root } },
+        extensionConfig: { "device-fake": { root } },
         // one command at a time: a blocking TaskOutput must not hold the slot while it waits
         sandbox: { background: { pollSeconds: 3600 }, maxConcurrentCommands: 1 },
         tools: { outputSpillChars: SPILL },

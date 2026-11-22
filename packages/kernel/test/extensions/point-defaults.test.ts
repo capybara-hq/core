@@ -175,6 +175,54 @@ describe("ExtensionPointDefaults.resolve", () => {
   });
 });
 
+describe("ExtensionPointDefaults.serves", () => {
+  // serves() evaluates one provider; it must agree with providersFor() for each state
+  const agree = async () => {
+    const { providers } = await points.providersFor(orgId, "web-search");
+    const listed = new Set(providers.map((p) => p.extension));
+    const out: Record<string, boolean> = {};
+    for (const ext of ["fake-web", "fake-web-2"]) {
+      const one = await points.serves(orgId, "web-search", ext);
+      expect(one).toBe(listed.has(ext));
+      out[ext] = one;
+    }
+    return out;
+  };
+
+  it("agrees with providersFor when on, off, unconfigured and with an invalid stored config", async () => {
+    // off: nothing enabled
+    expect(await agree()).toEqual({ "fake-web": false, "fake-web-2": false });
+    // on / enabled but configured() false
+    await enable("fake-web", "a");
+    await enable("fake-web-2");
+    expect(await agree()).toEqual({ "fake-web": true, "fake-web-2": false });
+    await enable("fake-web-2", "b");
+    expect(await agree()).toEqual({ "fake-web": true, "fake-web-2": true });
+    // invalid stored org config (as after a schema change)
+    await db
+      .deleteFrom("secrets")
+      .where("org_id", "=", orgId)
+      .where("key", "=", "plugin-config:fake-web-2:token")
+      .execute();
+    await db
+      .updateTable("extension_org_configs")
+      .set({ config: JSON.stringify({ token: 5 }) })
+      .where("org_id", "=", orgId)
+      .where("plugin", "=", "fake-web-2")
+      .execute();
+    expect(await agree()).toEqual({ "fake-web": true, "fake-web-2": false });
+    // switched off
+    await disable("fake-web");
+    expect(await agree()).toEqual({ "fake-web": false, "fake-web-2": false });
+  });
+
+  it("an extension that does not provide the point does not serve it", async () => {
+    await enable("fake-web", "a");
+    expect(await points.serves(orgId, "channel", "fake-web")).toBe(false);
+    expect(await points.serves(orgId, "web-search", "no-such-extension")).toBe(false);
+  });
+});
+
 describe("ExtensionPointDefaults.setDefault", () => {
   it("400 validation_failed unless the extension provides the point and is enabled", async () => {
     await expect(points.setDefault(orgId, "web-search", "fake-web", ownerId)).rejects.toSatisfy(

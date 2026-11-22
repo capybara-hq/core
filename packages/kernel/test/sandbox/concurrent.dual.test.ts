@@ -3,7 +3,7 @@ import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
-import type { SandboxProvider } from "@capybara-hq/plugin-sdk";
+import type { DeviceProvider } from "@capybara-hq/plugin-sdk";
 import { startTestPostgres, startTestRedis, type TestContainer } from "@capybara-hq/testing";
 import { Redis } from "ioredis";
 import { sql } from "kysely";
@@ -13,7 +13,7 @@ import { kernelDb } from "../../src/db/kernel-schema.js";
 import { migrate } from "../../src/db/migrator.js";
 import { createDb } from "../../src/db/pool.js";
 import type { SandboxService } from "../../src/sandbox/sandbox.service.js";
-import { createFakeSandbox, readFakeSandboxOps } from "../fixtures/plugins/sandbox-fake/index.js";
+import { createFakeSandbox, readFakeSandboxOps } from "../fixtures/plugins/device-fake/index.js";
 import { truncateTables } from "../helpers/db.js";
 import { sandboxServiceFor } from "../helpers/sandbox.js";
 
@@ -50,7 +50,7 @@ afterAll(async () => {
   await Promise.all([pgc?.stop(), rdc?.stop()]);
 });
 
-const replica = (impl: SandboxProvider, o: { ttlMs?: number } = {}) => {
+const replica = (impl: DeviceProvider, o: { ttlMs?: number } = {}) => {
   const pool = createDb(pgc.url, 4);
   const redis = new Redis(rdc.url);
   pools.push(pool);
@@ -58,7 +58,7 @@ const replica = (impl: SandboxProvider, o: { ttlMs?: number } = {}) => {
   const s = sandboxServiceFor({
     db: kernelDb(pool),
     redis,
-    provider: () => ({ plugin: "sandbox-fake", impl }),
+    providers: () => [{ plugin: "device-fake", version: "1.0.0", impl }],
     config: () => config,
     log,
     lockPollMs: 20,
@@ -101,8 +101,8 @@ beforeEach(async () => {
         VALUES (${id}, ${orgId}, ${agentId}, ${accountId})`.execute(raw);
     }
     envId = randomUUID();
-    await sql`INSERT INTO capybara.devices (id, org_id, owner_kind, owner_account_id, source)
-      VALUES (${envId}, ${orgId}, 'personal', ${accountId}, 'cloud')`.execute(raw);
+    await sql`INSERT INTO capybara.devices (id, org_id, owner_kind, owner_account_id, source, provider)
+      VALUES (${envId}, ${orgId}, 'personal', ${accountId}, 'cloud', 'device-fake')`.execute(raw);
   } finally {
     await raw.destroy();
   }
@@ -146,7 +146,7 @@ describe("concurrent sandbox holders (two replicas)", () => {
   it("a crashed holder in a shared device is taken over without any kill; a live sibling runs on", async () => {
     const fake = createFakeSandbox(root);
     // A dies with its command still running: its provider never kills on abort
-    const deaf: SandboxProvider = {
+    const deaf: DeviceProvider = {
       ...fake,
       exec: (h, a) => fake.exec(h, { ...a, signal: new AbortController().signal }),
     };

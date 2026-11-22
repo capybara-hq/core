@@ -85,7 +85,8 @@ beforeAll(async () => {
   before = copyMigrations((f) => f < "0097");
   upTo = copyMigrations((f) => f <= FILE);
   await migrate(pg.url, { schema: "capybara", dir: before });
-  // sandbox: sbx-old enabled first by the audit, but the replicas run sbx-run (sorted after it)
+  // sandbox (sandbox@2, a single-provider point when 0098 was written; the applied migration
+  // names it): sbx-old enabled first by the audit, but the replicas run sbx-run (sorted after it)
   await seed("sbx-old", ["sandbox@2"], "enabled");
   await seed("sbx-run", ["sandbox@2"], "enabled");
   await enabledAudit("sbx-old", "2026-02-01T00:00:00Z");

@@ -25,7 +25,7 @@ const scope = {
   profile: "approve-for-me",
   actor: { accountId: "a", conversationId: "r" },
   tag: "op",
-  filesystem: { kind: "scoped", readRoots: ["/work"], writeRoots: ["/work"] },
+  filesystem: { kind: "scoped", projectRoot: "/work", writeRoots: ["/work"] },
   network: { kind: "none" },
 };
 const handle = { id: "d" };

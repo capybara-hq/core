@@ -702,7 +702,7 @@ it("an unbound first hello admits no operation until the authenticated bind", as
     client,
     {
       type: "hello",
-      protocol: 4,
+      protocol: 5,
       programVersion: "fixture",
       os: "darwin",
       arch: "arm64",

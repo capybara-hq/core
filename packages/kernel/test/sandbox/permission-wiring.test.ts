@@ -38,7 +38,7 @@ import { OperationAuthorityModule } from "../../src/sandbox/operation-authority.
 import { PermissionAuthorityEpochStore } from "../../src/sandbox/permission-authority-epochs.js";
 import { PermissionAuthorityLock } from "../../src/sandbox/permission-authority-lock.js";
 import { PermissionFacts } from "../../src/sandbox/permission-facts.js";
-import { SandboxProviders } from "../../src/sandbox/providers.js";
+import { DeviceProviders } from "../../src/sandbox/providers.js";
 import { SandboxModule } from "../../src/sandbox/sandbox.module.js";
 import { SandboxService } from "../../src/sandbox/sandbox.service.js";
 import { truncateTables } from "../helpers/db.js";
@@ -154,8 +154,8 @@ async function createConv(req: Req, orgId: string, agentId: string): Promise<Con
 }
 
 async function localDevice(orgId: string, name = "Laptop") {
-  const providers = k.app.get(SandboxProviders),
-    local = providers.forName("@local");
+  const providers = k.app.get(DeviceProviders),
+    local = providers.forDevice("@local");
   if (!local) throw new Error("Local provider was not registered");
   const impl = Object.create(local.impl);
   const neverProbe = async () => {
@@ -166,7 +166,7 @@ async function localDevice(orgId: string, name = "Laptop") {
     revokeOperation: neverProbe,
     permissionSupport: neverProbe,
   });
-  providers.register({ plugin: "@permission-test", impl });
+  providers.register({ plugin: "@permission-test", version: KERNEL_VERSION, impl });
   const db = kernelDb(raw);
   const id = randomUUID();
   await db
@@ -205,7 +205,7 @@ describe("permission reader behavior", () => {
   it("resolves one registry, grant store and authority from an acyclic lower module graph", () => {
     const modules = k.app.get(ModulesContainer);
     for (const token of [
-      SandboxProviders,
+      DeviceProviders,
       NetworkGrants,
       SandboxOperationAuthority,
       PermissionFacts,
@@ -228,7 +228,7 @@ describe("permission reader behavior", () => {
       for (const child of Reflect.getMetadata(MODULE_METADATA.IMPORTS, module) ?? []) walk(child);
     };
     walk(OperationAuthorityModule);
-    expect(k.app.get(SandboxProviders).forName("@local")).toBeDefined();
+    expect(k.app.get(DeviceProviders).forDevice("@local")).toBeDefined();
   });
   it("keeps profile views, authority roots and hashes aligned without lifecycle calls", async () => {
     const req = await session("owner");
@@ -270,7 +270,7 @@ describe("permission reader behavior", () => {
       vi.spyOn(sandbox, "withSandbox"),
       vi.spyOn(sandbox, "ifRunning"),
     ];
-    const impl = k.app.get(SandboxProviders).forName("@permission-test")?.impl;
+    const impl = k.app.get(DeviceProviders).forDevice("@permission-test")?.impl;
     if (!impl) throw new Error("Missing registered provider");
     if (!impl) throw new Error("Permission fixture provider is not registered");
     for (const name of [
@@ -467,8 +467,8 @@ it("owner browsing resolves bounded authority without a conversation and denies 
 });
 
 import {
+  type DeviceProvider,
   type SandboxOperationScope,
-  type SandboxProvider,
   SandboxScopeDeniedError,
 } from "@capybara-hq/plugin-sdk";
 import { KernelConfigService } from "../../src/infra/config/kernel-config.service.js";
@@ -486,6 +486,7 @@ import {
   PermissionRuntimeReports,
   readRuntimeReport,
 } from "../../src/sandbox/permission-runtime-reports.js";
+import { KERNEL_VERSION } from "../../src/version.js";
 import { storedOwnerReport } from "../helpers/owner-report.js";
 
 function barrier() {
@@ -496,7 +497,7 @@ function barrier() {
   return { promise, resolve };
 }
 async function operationFixture(
-  impl: Partial<SandboxProvider> = {},
+  impl: Partial<DeviceProvider> = {},
   opts: { evidence?: boolean } = {},
 ) {
   const f = await workingFixture(),
@@ -576,9 +577,9 @@ async function operationFixture(
       };
     },
     ...impl,
-  } as unknown as SandboxProvider;
+  } as unknown as DeviceProvider;
   k.app
-    .get(SandboxProviders)
+    .get(DeviceProviders)
     .register({ plugin: "@permission-test", version: "test-1", impl: provider });
   // the installed environment admission proves (B-16)
   if (opts.evidence !== false)
@@ -711,7 +712,7 @@ it("revocation before launch acknowledgement keeps the effect cancelled and the 
   const job = new SandboxOperationReconcileJob(
     k.app.get(SandboxOperationIntents),
     k.app.get(KernelDb),
-    k.app.get(SandboxProviders),
+    k.app.get(DeviceProviders),
     k.app.get(SandboxService),
     k.app.get(BackgroundTaskStore),
     k.app.get(BackgroundTaskStopper),
@@ -866,19 +867,19 @@ it("a stale execution claim cannot dispatch and disconnected revocation remains 
     await writes.lock({ orgId: f.orgId, deviceId: f.deviceId }, "device");
     await writes.publishLocked({ orgId: f.orgId, deviceId: f.deviceId }, "device");
   });
-  k.app.get(SandboxProviders).register({
+  k.app.get(DeviceProviders).register({
     plugin: "@permission-test",
     version: "test-1",
     impl: {
       async revokeOperation() {
         throw new Error("offline");
       },
-    } as unknown as SandboxProvider,
+    } as unknown as DeviceProvider,
   });
   await new SandboxOperationReconcileJob(
     intents,
     k.app.get(KernelDb),
-    k.app.get(SandboxProviders),
+    k.app.get(DeviceProviders),
     k.app.get(SandboxService),
     k.app.get(BackgroundTaskStore),
     k.app.get(BackgroundTaskStopper),
@@ -1036,9 +1037,9 @@ it("authority is read after waiting for the shared lease and gone after dispatch
   expect(f.scopes[0]?.profile).toBe("request-approval");
   const sdk = await import("@capybara-hq/plugin-sdk");
   let calls = 0;
-  const impl = k.app.get(SandboxProviders).forName("@permission-test")?.impl;
+  const impl = k.app.get(DeviceProviders).forDevice("@permission-test")?.impl;
   if (!impl) throw new Error("Missing registered provider");
-  k.app.get(SandboxProviders).register({
+  k.app.get(DeviceProviders).register({
     plugin: "@permission-test",
     version: "test-1",
     impl: {
@@ -1095,7 +1096,7 @@ it("expired payloads keep their consumed identity and cannot repeat an effect", 
   const job = new SandboxOperationReconcileJob(
     intents,
     k.app.get(KernelDb),
-    k.app.get(SandboxProviders),
+    k.app.get(DeviceProviders),
     k.app.get(SandboxService),
     k.app.get(BackgroundTaskStore),
     k.app.get(BackgroundTaskStopper),
@@ -1265,9 +1266,6 @@ it("first-use forTool binding orders authority before the real run fence against
     .set({ source: "cloud", is_default: true })
     .where("id", "=", f.deviceId)
     .execute();
-  const providers = k.app.get(SandboxProviders),
-    entry = providers.forName("@permission-test");
-  const providerSpy = vi.spyOn(providers, "cloud").mockReturnValue(entry);
   const ready = barrier(),
     attempt = barrier(),
     locks = k.app.get(PermissionAuthorityLock),
@@ -1309,7 +1307,6 @@ it("first-use forTool binding orders authority before the real run fence against
   } finally {
     attempt.resolve();
     spy.mockRestore();
-    providerSpy.mockRestore();
   }
 });
 
@@ -1328,10 +1325,6 @@ it.each(["replaced", "cancelled"] as const)(
       .where("id", "=", f.deviceId)
       .execute();
     const { runOutsideTransaction } = await import("../../src/infra/database/transaction-host.js");
-    const providers = k.app.get(SandboxProviders),
-      providerSpy = vi
-        .spyOn(providers, "cloud")
-        .mockReturnValue(providers.forName("@permission-test"));
     const ceilings = k.app.get(PermissionCeilingWrites),
       lock = ceilings.lock.bind(ceilings);
     let live = true;
@@ -1369,7 +1362,6 @@ it.each(["replaced", "cancelled"] as const)(
       ).toBeNull();
     } finally {
       spy.mockRestore();
-      providerSpy.mockRestore();
     }
   },
 );
@@ -1456,7 +1448,7 @@ it("native binary write/read above the old inline cap survives duplicate lookup"
   const job = new SandboxOperationReconcileJob(
     k.app.get(SandboxOperationIntents),
     k.app.get(KernelDb),
-    k.app.get(SandboxProviders),
+    k.app.get(DeviceProviders),
     k.app.get(SandboxService),
     k.app.get(BackgroundTaskStore),
     k.app.get(BackgroundTaskStopper),
@@ -1667,11 +1659,14 @@ describe("approval-only profiles: the device sandbox in admission and the record
       expect(scope.profile).toBe(profile);
       // the sandbox is the same under every profile: scoped, with the device's network
       expect(scope.filesystem.kind).toBe("scoped");
-      expect(recorded.scope?.filesystem).toEqual({
+      // the scope names the write roots and the project root; the readable directories stay the
+      // recorded context's (what the device reads is its own rule)
+      const fs = scope.filesystem.kind === "scoped" ? scope.filesystem : null;
+      expect(recorded.scope?.filesystem).toMatchObject({
         kind: "scoped",
-        readDirectories: scope.filesystem.kind === "scoped" ? scope.filesystem.readRoots : [],
-        writeDirectories: scope.filesystem.kind === "scoped" ? scope.filesystem.writeRoots : [],
+        writeDirectories: fs?.writeRoots,
       });
+      expect(fs?.writeRoots).toEqual([recorded.scope?.workingRoot]);
       expect(scope.network).toEqual(
         network === "open"
           ? { kind: "open-public" }
@@ -1718,7 +1713,7 @@ describe("approval-only profiles: the device sandbox in admission and the record
             profile: "full-access",
             actor: { accountId: owner.id, conversationId: f.root.id },
             tag: operationId,
-            filesystem: { kind: "scoped", readRoots: ["/work"], writeRoots: ["/work"] },
+            filesystem: { kind: "scoped", projectRoot: "/work", writeRoots: ["/work"] },
             network,
           }),
           epochs: JSON.stringify({ platform: 0, org: 0, device: 0, root: 0 }),
@@ -1833,11 +1828,8 @@ describe("approval-only profiles: the device sandbox in admission and the record
         .get(SandboxOperationAuthority)
         .resolve(f.ctx, "exec", new AbortController().signal);
       expect(scope.profile).toBe(profile);
-      expect(scope.filesystem).toEqual({
-        kind: "scoped",
-        readRoots: ["/", "/work"],
-        writeRoots: ["/", "/work"],
-      });
+      expect(scope.filesystem).toMatchObject({ kind: "scoped", writeRoots: ["/", "/work"] });
+      expect(Object.keys(scope.filesystem)).not.toContain("readRoots");
       const recorded = await context(f as never);
       expect(recorded.sandbox).toMatchObject({ boundary: "instance", outsideSandbox: false });
       expect(recorded.scope?.network).toEqual(scope.network);

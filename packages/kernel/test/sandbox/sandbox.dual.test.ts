@@ -12,11 +12,9 @@ import { createDb } from "../../src/db/pool.js";
 import { ApiError } from "../../src/errors.js";
 import { SANDBOX_DESTROY_JOB, SANDBOX_SUSPEND_JOB } from "../../src/sandbox/jobs.js";
 import { SandboxService } from "../../src/sandbox/sandbox.service.js";
-import {
-  readFakeSandboxOps,
-  setFakeSandboxDelays,
-} from "../fixtures/plugins/sandbox-fake/index.js";
+import { readFakeSandboxOps, setFakeSandboxDelays } from "../fixtures/plugins/device-fake/index.js";
 import { startKernel, type TestKernel } from "../helpers/runs.js";
+import { enableFakeProvider } from "../helpers/sandbox.js";
 
 /**
  * 两个内核副本（同一进程里的两个独立 Kernel：各自的 PG 池、Redis 连接、插件实例；共享 PG / Redis 与
@@ -27,7 +25,7 @@ import { startKernel, type TestKernel } from "../helpers/runs.js";
  */
 
 const SANDBOX_FAKE = fileURLToPath(
-  new URL("../fixtures/plugins/sandbox-fake/index.ts", import.meta.url),
+  new URL("../fixtures/plugins/device-fake/index.ts", import.meta.url),
 );
 
 let pgc: TestContainer;
@@ -45,7 +43,7 @@ const cfg = (plugins: string[], roles: string[] = ["api"]) =>
     http: { port: 0 },
     roles,
     extensions: plugins,
-    extensionConfig: { "sandbox-fake": { root } },
+    extensionConfig: { "device-fake": { root } },
     extensionPermissions: { autoApprove: true },
   });
 
@@ -78,13 +76,14 @@ async function seedConversation(): Promise<{
   );
   await sql`INSERT INTO capybara.orgs (id, slug, name, created_by)
     VALUES (${orgId}, ${`o-${orgId.slice(0, 8)}`}, 'O', ${accountId})`.execute(raw);
+  await enableFakeProvider(raw, orgId);
   await sql`INSERT INTO capybara.agents (id, org_id, owner_account_id, visibility, current_version)
     VALUES (${agentId}, ${orgId}, ${accountId}, 'org', 1)`.execute(raw);
   await sql`INSERT INTO capybara.conversations (id, org_id, agent_id, account_id)
     VALUES (${conversationId}, ${orgId}, ${agentId}, ${accountId})`.execute(raw);
   const deviceId = randomUUID();
-  await sql`INSERT INTO capybara.devices (id, org_id, owner_kind, owner_account_id, source)
-    VALUES (${deviceId}, ${orgId}, 'personal', ${accountId}, 'cloud')`.execute(raw);
+  await sql`INSERT INTO capybara.devices (id, org_id, owner_kind, owner_account_id, source, provider)
+    VALUES (${deviceId}, ${orgId}, 'personal', ${accountId}, 'cloud', 'device-fake')`.execute(raw);
   return {
     orgId,
     deviceId,
@@ -100,9 +99,9 @@ describe("沙箱（两个副本）", () => {
       startKernel(cfg([SANDBOX_FAKE])),
     ]);
     kernels.push(k1, k2);
-    expect(k1.app.get(SandboxService).cloudAvailable).toBe(true);
-    expect(k2.app.get(SandboxService).cloudAvailable).toBe(true);
     const ctx = await seedConversation();
+    expect(await k1.app.get(SandboxService).availableFor(ctx.deviceId, ctx.orgId)).toBe(true);
+    expect(await k2.app.get(SandboxService).availableFor(ctx.deviceId, ctx.orgId)).toBe(true);
     await setFakeSandboxDelays(root, { create: 300 });
 
     const use = (k: TestKernel) =>
@@ -131,17 +130,17 @@ describe("沙箱（两个副本）", () => {
     for (const id of [SANDBOX_SUSPEND_JOB, SANDBOX_DESTROY_JOB]) expect(id).not.toContain(":");
   });
 
-  it("没有装沙箱插件的内核：available 为 false，使用时 503 sandbox.unavailable", async () => {
+  it("a kernel without the device's provider: not available, a use answers 503 device.unavailable", async () => {
     const k = await startKernel(cfg([]));
     kernels.push(k);
-    expect(k.app.get(SandboxService).cloudAvailable).toBe(false);
     const ctx = await seedConversation();
+    expect(await k.app.get(SandboxService).availableFor(ctx.deviceId, ctx.orgId)).toBe(false);
     const err = await k.app
       .get(SandboxService)
       .withSandbox(ctx, async () => 1, AbortSignal.timeout(5000))
       .catch((e: unknown) => e);
     expect(err).toBeInstanceOf(ApiError);
     expect((err as ApiError).status).toBe(503);
-    expect((err as ApiError).code).toBe("sandbox.unavailable");
+    expect((err as ApiError).code).toBe("device.unavailable");
   });
 });

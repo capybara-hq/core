@@ -1,4 +1,5 @@
 import {
+  type DeviceProvider,
   type ExecResult,
   instanceSupported,
   type SandboxExecOptions,
@@ -6,7 +7,6 @@ import {
   type SandboxHandle,
   type SandboxOperationScope,
   SandboxPermissionUnsupportedError,
-  type SandboxProvider,
   SandboxScopeDeniedError,
 } from "@capybara-hq/plugin-sdk";
 import { assertManagedArtifactAdmitted } from "../background/launch.js";
@@ -14,12 +14,12 @@ import { isFullExecutionScope } from "./operation-authority-types.js";
 
 /** A callback can use native operations; it cannot obtain a new authority or change lifecycle. */
 export type HeldProvider = Pick<
-  SandboxProvider,
+  DeviceProvider,
   "readFile" | "writeFile" | "stat" | "list" | "scan"
 > & {
   exec(
     h: SandboxHandle,
-    args: Omit<Parameters<SandboxProvider["exec"]>[1], "tag" | "actor">,
+    args: Omit<Parameters<DeviceProvider["exec"]>[1], "tag" | "actor">,
   ): Promise<ExecResult>;
   /**
    * A managed background start (dormant until the paired activation): admitted, persisted and
@@ -52,7 +52,7 @@ export type OperationDispatch = <T>(
 
 /** The provider's runtime must enforce the scope's profile (and own background executions). */
 export async function assertPermissionSupport(
-  provider: SandboxProvider,
+  provider: DeviceProvider,
   handle: SandboxHandle,
   scope: SandboxOperationScope,
   method: OperationMethod,
@@ -93,7 +93,7 @@ export async function assertPermissionSupport(
  * then the runtime supports the profile and owns background executions.
  */
 export async function checkManagedStart(
-  provider: SandboxProvider,
+  provider: DeviceProvider,
   handle: SandboxHandle,
   scope: SandboxOperationScope,
   input: Omit<ManagedStartArgs, "signal">,
@@ -109,13 +109,10 @@ export async function checkManagedStart(
  * allocated after `create` returns), and the acknowledgement requires the ref to name it. A bound
  * (local) device knows its generation from its binding and is not given one.
  */
-export function withKernelGeneration(
-  provider: SandboxProvider,
-  generation: string,
-): SandboxProvider {
+export function withKernelGeneration(provider: DeviceProvider, generation: string): DeviceProvider {
   const background = provider.background;
   if (!background) return provider;
-  const wrapped = Object.create(provider) as SandboxProvider;
+  const wrapped = Object.create(provider) as DeviceProvider;
   // only `start` changes; every other method is the provider's own, bound to it (a provider may
   // leave out methods the kernel never calls on it)
   const bound = (m: unknown) =>
@@ -127,12 +124,12 @@ export function withKernelGeneration(
     stop: bound(background.stop),
     start: (h, scope, args) =>
       background.start(h, scope, { ...args, instanceGeneration: generation }),
-  } as NonNullable<SandboxProvider["background"]>;
+  } as NonNullable<DeviceProvider["background"]>;
   return wrapped;
 }
 
 export function createHeldOperations(
-  provider: SandboxProvider,
+  provider: DeviceProvider,
   handle: SandboxHandle,
   heldSignal: AbortSignal,
   dispatch: OperationDispatch,
@@ -143,7 +140,7 @@ export function createHeldOperations(
     input: unknown,
     signal: AbortSignal,
     invoke: (
-      op: Awaited<ReturnType<NonNullable<SandboxProvider["operation"]>>> | null,
+      op: Awaited<ReturnType<NonNullable<DeviceProvider["operation"]>>> | null,
       signal: AbortSignal,
       scope: SandboxOperationScope,
     ) => Promise<T>,
@@ -163,7 +160,7 @@ export function createHeldOperations(
         sig.throwIfAborted();
         // A background start has no operation object: the provider owns it by exact identity.
         if (method === "backgroundStart") return invoke(null, sig, scope);
-        const op = await (provider.operation as NonNullable<SandboxProvider["operation"]>)(
+        const op = await (provider.operation as NonNullable<DeviceProvider["operation"]>)(
           handle,
           scope,
           sig,
@@ -174,7 +171,7 @@ export function createHeldOperations(
     );
   };
   const native = (
-    op: Awaited<ReturnType<NonNullable<SandboxProvider["operation"]>>> | null,
+    op: Awaited<ReturnType<NonNullable<DeviceProvider["operation"]>>> | null,
   ): NonNullable<typeof op> => {
     if (!op) throw new SandboxPermissionUnsupportedError("Native operation is unavailable");
     return op;
@@ -253,9 +250,9 @@ export function createHeldOperations(
 
 /** Temporary v2 callback adapter. Removed with the coordinated Task 8 cutover. */
 export function createLegacyHeldProvider(
-  provider: SandboxProvider,
+  provider: DeviceProvider,
   tag: string,
-  actor: Parameters<SandboxProvider["exec"]>[1]["actor"],
+  actor: Parameters<DeviceProvider["exec"]>[1]["actor"],
   before: () => Promise<void>,
 ): HeldProvider {
   return {

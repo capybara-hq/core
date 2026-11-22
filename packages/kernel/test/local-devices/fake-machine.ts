@@ -132,7 +132,7 @@ export const stagedHello = (
   identity?: import("@capybara-hq/plugin-sdk").DeviceHello["runtimeIdentity"],
 ): import("@capybara-hq/plugin-sdk").DeviceHello => ({
   ...HELLO,
-  protocol: 4,
+  protocol: 5,
   transport: { maxFrameBytes: 69632 },
   permissionSupport: {
     version: 2,

@@ -40,11 +40,11 @@ import {
   DEVICE_OF_ANOTHER_ACCOUNT_TEXT,
 } from "../../src/tools/builtins/sandbox/common.js";
 import { PERMISSION_SUPPORT_UNVERIFIED_TEXT, ToolPipeline } from "../../src/tools/pipeline.js";
-import { scriptRules } from "../fixtures/plugins/model-script/index.js";
 import {
   readFakeSandboxOps,
   setFakeSandboxPermissionSupport,
-} from "../fixtures/plugins/sandbox-fake/index.js";
+} from "../fixtures/plugins/device-fake/index.js";
+import { scriptRules } from "../fixtures/plugins/model-script/index.js";
 import { onlyBuiltins } from "../helpers/disabled-tools.js";
 import { accountsFor } from "../helpers/identity.js";
 import { testMembers } from "../helpers/members.js";
@@ -73,7 +73,7 @@ import {
  */
 
 const SANDBOX_FAKE = fileURLToPath(
-  new URL("../fixtures/plugins/sandbox-fake/index.ts", import.meta.url),
+  new URL("../fixtures/plugins/device-fake/index.ts", import.meta.url),
 );
 const CHAN_MINI = fileURLToPath(new URL("../fixtures/plugins/chan-mini/index.ts", import.meta.url));
 const MODEL_SCRIPT = fileURLToPath(
@@ -111,7 +111,7 @@ beforeAll(async () => {
       {
         roles: ["api", "worker", "gateway"],
         extensions: [MODEL_FAKE, MODEL_SCRIPT, SANDBOX_FAKE, CHAN_MINI, HOOKS_PROBE],
-        extensionConfig: { "sandbox-fake": { root } },
+        extensionConfig: { "device-fake": { root } },
         http: { port: 0, publicUrl: "https://cap.example" },
         auth: { cookieSecure: false },
         channels: { scanIntervalMs: 100, leaseTtlMs: 10_000 },
@@ -672,7 +672,7 @@ describe("the command review in the pipeline", () => {
     expect(exec.permission_grant_id).toBeNull();
     expect((exec.scope as { filesystem: unknown }).filesystem).toEqual({
       kind: "scoped",
-      readRoots: ["/skills", "/workspace"],
+      projectRoot: null,
       writeRoots: ["/workspace"],
     });
   });
@@ -1195,7 +1195,7 @@ describe("the permission review order", () => {
     expect(exec?.permission_grant_id).toBeNull();
     expect((exec?.scope as { filesystem: unknown } | undefined)?.filesystem).toEqual({
       kind: "scoped",
-      readRoots: ["/skills", "/workspace"],
+      projectRoot: null,
       writeRoots: ["/workspace"],
     });
   });
@@ -1291,7 +1291,7 @@ describe("the permission review order", () => {
  * refuse: a call that needs more reach fails with an actionable text.
  */
 describe("the first managed call of a device", () => {
-  /** A new cloud device of the owner on sandbox-fake, bound to `conv`, never started. */
+  /** A new cloud device of the owner on device-fake, bound to `conv`, never started. */
   const freshDevice = async (conv: string): Promise<string> => {
     const deviceId = randomUUID();
     await db
@@ -1302,7 +1302,7 @@ describe("the first managed call of a device", () => {
         owner_kind: "personal",
         owner_account_id: ownerId,
         source: "cloud",
-        provider: "sandbox-fake",
+        provider: "device-fake",
         name: `Fresh ${deviceId.slice(0, 8)}`,
       })
       .execute();
@@ -1373,7 +1373,7 @@ describe("the first managed call of a device", () => {
   });
 
   it("a device that cannot run scoped work refuses an outside Write with its cause, no ask", async () => {
-    const cause = { kind: "provider-outdated" as const, plugin: "sandbox-fake", version: "0.0.1" };
+    const cause = { kind: "provider-outdated" as const, plugin: "device-fake", version: "0.0.1" };
     const authority = k.app.get(SandboxOperationAuthority);
     const real = authority.previewCall.bind(authority);
     const preview = vi.spyOn(authority, "previewCall").mockImplementation(async (...args) => ({

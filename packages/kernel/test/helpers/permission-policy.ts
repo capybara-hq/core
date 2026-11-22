@@ -1,8 +1,8 @@
 import { randomUUID } from "node:crypto";
 import {
   DEFAULT_SANDBOX_ROOTS,
+  type DeviceProvider,
   type SandboxOperationScope,
-  type SandboxProvider,
   SandboxScopeDeniedError,
 } from "@capybara-hq/plugin-sdk";
 import { vi } from "vitest";
@@ -14,7 +14,7 @@ import { ConversationDevices } from "../../src/devices/conversation-devices.js";
 import { KernelConfigService } from "../../src/infra/config/kernel-config.service.js";
 import { assistantIdemKey } from "../../src/runtime/model-call.js";
 import type { ExecutionClaim } from "../../src/runtime/run-execution.js";
-import { SandboxProviders } from "../../src/sandbox/providers.js";
+import { DeviceProviders } from "../../src/sandbox/providers.js";
 import { SandboxService } from "../../src/sandbox/sandbox.service.js";
 import { inSandboxOperations } from "../../src/tools/builtins/sandbox/common.js";
 import { ToolPipeline, type ToolStepContext } from "../../src/tools/pipeline.js";
@@ -137,7 +137,11 @@ export async function permissionFixture(
       scopes.push(scope);
       const check = (target: string, write: boolean) => {
         if (scope.filesystem.kind === "device") return;
-        const roots = write ? scope.filesystem.writeRoots : scope.filesystem.readRoots;
+        // the fixture's read rule: the project root and the write roots
+        const { projectRoot, writeRoots } = scope.filesystem;
+        const roots = write
+          ? writeRoots
+          : [...(projectRoot === null ? [] : [projectRoot]), ...writeRoots];
         if (!roots.some((root) => target === root || target.startsWith(`${root}/`)))
           throw new SandboxScopeDeniedError(
             "Fixture enforcement refused access outside the admitted directories",
@@ -168,9 +172,9 @@ export async function permissionFixture(
         },
       };
     },
-  } as unknown as SandboxProvider;
+  } as unknown as DeviceProvider;
   k.app
-    .get(SandboxProviders)
+    .get(DeviceProviders)
     .register({ plugin: "@permission-policy-test", version: "test-1", impl: provider });
   const spec = {
     name: toolKey,
@@ -202,7 +206,7 @@ export async function permissionFixture(
   });
   const install = (replica: TestKernel) => {
     replica.app
-      .get(SandboxProviders)
+      .get(DeviceProviders)
       .register({ plugin: "@permission-policy-test", version: "test-1", impl: provider });
     Object.assign((replica.app.get(ToolPipeline) as unknown as { deps: object }).deps, {
       permissionOperations: new Set(staged ? [toolKey] : []),

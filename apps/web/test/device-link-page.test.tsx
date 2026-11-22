@@ -42,6 +42,7 @@ const env = (id: string, name: string | null, over: Record<string, unknown> = {}
   source: "cloud",
   provider: "sandbox-docker",
   available: true,
+  report: null,
   online: null,
   machine: null,
   sessionIsolation: false,
@@ -58,7 +59,8 @@ const LIST = {
   ],
   defaultId: "e1",
   lastUsedId: null,
-  cloudAvailable: true,
+  providers: [{ plugin: "sandbox-docker", displayName: null }],
+  defaultProvider: "sandbox-docker",
 };
 const ROUTES: Routes = {
   "GET /api/v1/me": () => json(200, ME),
@@ -208,7 +210,6 @@ describe("/devices/link", () => {
               source: "local",
               provider: "@local",
               online: false,
-              demotedFrom: { provider: "sandbox-docker", displayName: null, ordinal: 2 },
             }),
           ],
         }),
@@ -216,7 +217,7 @@ describe("/devices/link", () => {
     await renderAuthRouteWithCache(PAGE, lastStubRoutes());
     const user = userEvent.setup();
     await user.click(await screen.findByRole("combobox", { name: D.device }));
-    expect(await screen.findByRole("option", { name: "Personal (sandbox-docker) 2" })).toBeTruthy();
+    expect(await screen.findByRole("option", { name: "Personal" })).toBeTruthy();
   });
 
   it("confirming invalidates the org's devices", async () => {

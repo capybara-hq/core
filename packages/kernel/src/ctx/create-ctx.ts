@@ -1,5 +1,6 @@
 import {
   type AvailableHook,
+  DEVICE_PROVIDER_EXTENSION_POINT,
   type EmbedClaims,
   EXTENSION_POINTS,
   type ExtensionContext,
@@ -64,6 +65,7 @@ import {
   type UiRender,
 } from "../ui/registry.js";
 import { type BusSubscriber, createBus } from "./bus.js";
+import { checkDeviceProvider } from "./device-provider-check.js";
 import { createKv } from "./kv.js";
 import { createLock } from "./lock.js";
 import { createExtensionNet, type ExtensionNetServices } from "./net.js";
@@ -914,7 +916,9 @@ export function createExtensionContext(
       const served =
         extensionPoint === FILE_PREVIEW_EXTENSION_POINT
           ? checkFilePreviewProvider(manifest, impl, uiResolution, deps.log)
-          : impl;
+          : extensionPoint === DEVICE_PROVIDER_EXTENSION_POINT
+            ? checkDeviceProvider(name, impl)
+            : impl;
       provided.set(extensionPoint, served);
       ledger.add({
         kind: "provide",

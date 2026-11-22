@@ -146,7 +146,7 @@ export interface AdminExtension {
   /** The current build's error reports, newest first (at most 50). */
   clientReports?: ClientReportRow[];
   /**
-   * Only with status `conflict`: the single-provider extension point (`sandbox@2`) and the other
+   * Only with status `conflict`: the single-provider extension point (`object-store@1`) and the other
    * extensions providing it; disabling them loads this one, no restart.
    */
   conflict?: {

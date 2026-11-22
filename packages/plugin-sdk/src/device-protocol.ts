@@ -7,6 +7,15 @@
  * (`LegacyDeviceHello`, `parseLegacyDeviceFrame`, ...); protocol 4 reuses their value guards, and
  * they go with the legacy device surface.
  */
+
+import {
+  parseSandboxBrowseScope,
+  parseSandboxExecutionRef,
+  parseSandboxOperationRef,
+  parseSandboxOperationScope,
+  parseSandboxPreparationScope,
+  type SandboxPermissionSupport,
+} from "./device-operation.js";
 import {
   type ExecResult,
   isDeviceProjectName,
@@ -20,25 +29,18 @@ import {
   type SandboxRoots,
   validateAllowHost,
   validateSandboxPathShape,
-} from "./sandbox.js";
-import {
-  parseSandboxBrowseScope,
-  parseSandboxExecutionRef,
-  parseSandboxOperationRef,
-  parseSandboxOperationScope,
-  parseSandboxPreparationScope,
-  type SandboxPermissionSupport,
-} from "./sandbox-operation.js";
+} from "./device-provider.js";
 
 /** The protocol version carried in `X-Capybara-Device-Protocol` and the hello frame. */
-export const DEVICE_PROTOCOL_VERSION = 4;
+export const DEVICE_PROTOCOL_VERSION = 5;
 
 /**
- * Protocol 3's version, which a deployment speaking {@link DEVICE_PROTOCOL_VERSION} refuses (426
- * on the header, a protocol close on the hello): its owner report and runtime support describe the
- * removed Full access ceiling, so a protocol 3 program must be updated.
+ * Protocol 4's version, which a deployment speaking {@link DEVICE_PROTOCOL_VERSION} refuses (426
+ * on the header, a protocol close on the hello): its operation frames carry read roots in the
+ * filesystem scope, which protocol 5 replaced with the project root, so a protocol 4 program must
+ * be updated.
  */
-export const LEGACY_DEVICE_PROTOCOL_VERSION = 3;
+export const LEGACY_DEVICE_PROTOCOL_VERSION = 4;
 
 /** The operations the kernel asks a device to run. */
 export type DeviceOp =
@@ -320,7 +322,7 @@ export interface LegacyDevicePolicyStatus {
 /**
  * Lists one directory (absolute `path`, {@link validateSandboxPathShape}): at most `limit` entries
  * (at most {@link MAX_DEVICE_LIST_ENTRIES}), read within the operation's scope. See
- * `SandboxProvider.list` for the semantics.
+ * `DeviceProvider.list` for the semantics.
  */
 export interface DeviceListArgs {
   path: string;
@@ -345,7 +347,7 @@ export type DeviceListResult = { entries: DeviceListEntry[]; truncated: boolean 
 /**
  * Looks for project-like directories under `base` (absolute, {@link validateSandboxPathShape}),
  * read within the operation's scope. A `base` that does not exist answers `[]`; a `base` that is a
- * file, unreadable, or outside the request's scope is an error. See `SandboxProvider.scan` for the
+ * file, unreadable, or outside the request's scope is an error. See `DeviceProvider.scan` for the
  * traversal.
  */
 export interface DeviceScanArgs {
@@ -354,7 +356,7 @@ export interface DeviceScanArgs {
 /**
  * `base` itself and the directories at most {@link MAX_DEVICE_SCAN_DEPTH} levels below it that
  * hold a `.git` entry or an `AGENTS.md` file, sorted by `path` in code-unit order and cut to the
- * first {@link MAX_DEVICE_SCAN_RESULTS}. Never file contents. See `SandboxProvider.scan`.
+ * first {@link MAX_DEVICE_SCAN_RESULTS}. Never file contents. See `DeviceProvider.scan`.
  */
 export type DeviceScanResult = DeviceProjectCandidate[];
 
@@ -958,7 +960,7 @@ export interface DevicePolicyChanged {
   ownerCeiling: DeviceOwnerCeiling;
 }
 export interface DeviceHello extends LegacyDeviceHello {
-  protocol: 4;
+  protocol: typeof DEVICE_PROTOCOL_VERSION;
   permissionSupport: SandboxPermissionSupport;
   ownerCeiling: DeviceOwnerCeiling;
   instanceGeneration: string | null;

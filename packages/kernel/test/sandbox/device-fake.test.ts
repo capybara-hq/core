@@ -2,15 +2,16 @@ import { mkdtemp, readdir, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
+  type DeviceProvider,
   isFileSystemGoneError,
   isSandboxScopeDeniedError,
   type SandboxHandle,
   type SandboxOperationScope,
-  type SandboxProvider,
 } from "@capybara-hq/plugin-sdk";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
-import {
+import deviceFake, {
   createFakeSandbox,
+  DEFAULT_DESCRIPTION,
   FAKE_INSTANCE_PERMISSION_SUPPORT,
   FAKE_PERMISSION_SUPPORT,
   fakeFileSystems,
@@ -19,13 +20,14 @@ import {
   readFakeSandboxOps,
   removeFakeFileSystem,
   setFakeSandboxPermissionSupport,
-} from "../fixtures/plugins/sandbox-fake/index.js";
+} from "../fixtures/plugins/device-fake/index.js";
+import deviceFakeB from "../fixtures/plugins/device-fake-b/index.js";
 
 /** 假沙箱（测试夹具）本身的冒烟测试：T8 的工具测试依赖这些行为。 */
 
 let root: string;
 beforeAll(async () => {
-  root = await mkdtemp(join(tmpdir(), "cap-sandbox-fake-"));
+  root = await mkdtemp(join(tmpdir(), "cap-device-fake-"));
 });
 afterAll(async () => {
   await rm(root, { recursive: true, force: true });
@@ -42,12 +44,41 @@ const sig = () => AbortSignal.timeout(10_000);
 const actor = { accountId: "acc-1", conversationId: "conv-1" };
 
 /** A file system and an instance attached to it. */
-async function mk(p: SandboxProvider, name: string): Promise<SandboxHandle> {
+async function mk(p: DeviceProvider, name: string): Promise<SandboxHandle> {
   const fileSystem = await p.createFileSystem({ name: `fs-${name}`, limits, signal: sig() });
   return p.create({ name, image: "i", limits, fileSystem, signal: sig() });
 }
 
-describe("sandbox-fake", () => {
+describe("device-fake", () => {
+  it("device-fake and device-fake-b report their own description and declare networkAllowlist", async () => {
+    const rootB = await mkdtemp(join(tmpdir(), "cap-device-fake-b-"));
+    try {
+      expect(deviceFakeB.name).toBe("device-fake-b");
+      expect(deviceFake.name).toBe("device-fake");
+      const a = createFakeSandbox(root);
+      const b = createFakeSandbox(rootB, { description: "Second test device" });
+      const ref = { deviceId: "d1", orgId: "o1", handle: null };
+      const reportA = await a.report(ref, sig());
+      expect(reportA).toEqual({
+        revision: "none",
+        description: { en: DEFAULT_DESCRIPTION },
+        home: null,
+        limits: [],
+        reset: true,
+      });
+      expect(DEFAULT_DESCRIPTION).toBe("Test device (a local directory, no isolation)");
+      expect((await b.report(ref, sig())).description.en).toBe("Second test device");
+      expect(a.networkAllowlist).toBe(true);
+      expect(b.networkAllowlist).toBe(true);
+      // with an instance, the revision is the file system id
+      const h = await mk(a, "cap-report");
+      const meta = await fakeSandboxMeta(root, h.id);
+      expect((await a.report({ ...ref, handle: h }, sig())).revision).toBe(meta?.fileSystem);
+    } finally {
+      await rm(rootB, { recursive: true, force: true });
+    }
+  });
+
   it("exec：沙箱路径映射到实例目录，输出里换回来；退出码、超时、截断", async () => {
     const p = createFakeSandbox(root);
     const h = await mk(p, "cap-x");
@@ -160,7 +191,7 @@ const hostAlive = (pid: number): boolean => {
  * The shims background tasks rely on (spec 2026-11-05-background-bash-design §4.2): `setsid`,
  * `timeout`, `pgrep -s` and `pkill -s`, on the fake's PATH so they work on macOS too.
  */
-describe("sandbox-fake background task shims", () => {
+describe("device-fake background task shims", () => {
   const exec = (
     p: ReturnType<typeof createFakeSandbox>,
     h: { id: string },
@@ -357,13 +388,13 @@ function scopeOf(
     network: filesystem.kind === "device" ? { kind: "environment" } : { kind: "none" },
   };
 }
-const scoped = (write: string[], read: string[] = []): SandboxOperationScope["filesystem"] => ({
-  kind: "scoped",
-  readRoots: read,
-  writeRoots: write,
-});
+/** The project root defaults to the first write root; the fake also reads `/skills`. */
+const scoped = (
+  write: string[],
+  projectRoot: string | null = write[0] ?? null,
+): SandboxOperationScope["filesystem"] => ({ kind: "scoped", projectRoot, writeRoots: write });
 
-describe("sandbox-fake permission-scoped surface", () => {
+describe("device-fake permission-scoped surface", () => {
   it("reports restricted and Full support with background ownership, overridable", async () => {
     const p = createFakeSandbox(root);
     const h = await mk(p, "cap-perm");
@@ -379,14 +410,14 @@ describe("sandbox-fake permission-scoped surface", () => {
   it("enforces the scope's roots on native operations and commands", async () => {
     const p = createFakeSandbox(root);
     const h = await mk(p, "cap-scope");
-    const op = (id: string, fs = scoped(["/workspace/a"], ["/skills"])) =>
-      (p.operation as NonNullable<SandboxProvider["operation"]>)(h, scopeOf(id, fs), sig());
+    const op = (id: string, fs = scoped(["/workspace/a"])) =>
+      (p.operation as NonNullable<DeviceProvider["operation"]>)(h, scopeOf(id, fs), sig());
     const data = new TextEncoder().encode("x");
     await (await op("op-w1")).writeFile("/workspace/a/f.txt", data, sig());
     await expect((await op("op-w2")).writeFile("/workspace/b.txt", data, sig())).rejects.toSatisfy(
       isSandboxScopeDeniedError,
     );
-    // a read root is readable, never writable
+    // the skills root is readable (the fake's read rule), never writable
     expect(await (await op("op-r1")).stat("/skills", sig())).toMatchObject({ isDir: true });
     await expect((await op("op-w3")).writeFile("/skills/s.txt", data, sig())).rejects.toSatisfy(
       isSandboxScopeDeniedError,
@@ -426,13 +457,13 @@ describe("sandbox-fake permission-scoped surface", () => {
       }),
     ).rejects.toThrow(/outside the instance roots/);
     // an operation whose scope grants the path reaches it (the scope, not the roots, bounds it)
-    const op = await (p.operation as NonNullable<SandboxProvider["operation"]>)(
+    const op = await (p.operation as NonNullable<DeviceProvider["operation"]>)(
       h,
       scopeOf("op-raw-1", scoped(["/home/u/project"])),
       sig(),
     );
     await op.writeFile("/home/u/project/f", data, sig());
-    const read = await (p.operation as NonNullable<SandboxProvider["operation"]>)(
+    const read = await (p.operation as NonNullable<DeviceProvider["operation"]>)(
       h,
       scopeOf("op-raw-2", scoped(["/home/u/project"])),
       sig(),
@@ -469,7 +500,7 @@ describe("sandbox-fake permission-scoped surface", () => {
     const p = createFakeSandbox(root);
     const h = await mk(p, "cap-once");
     const op = () =>
-      (p.operation as NonNullable<SandboxProvider["operation"]>)(
+      (p.operation as NonNullable<DeviceProvider["operation"]>)(
         h,
         scopeOf("op-once", scoped(["/workspace"])),
         sig(),
@@ -484,7 +515,7 @@ describe("sandbox-fake permission-scoped surface", () => {
   it("owns background executions by exact reference: output, status, stop and loss", async () => {
     const p = createFakeSandbox(root);
     const h = await mk(p, "cap-bg");
-    const bg = p.background as NonNullable<SandboxProvider["background"]>;
+    const bg = p.background as NonNullable<DeviceProvider["background"]>;
     const start = (id: string, command: string, outputPath = `/workspace/${id}.out`) =>
       bg.start(h, scopeOf(id, scoped(["/workspace"])), {
         command,

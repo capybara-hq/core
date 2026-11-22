@@ -331,8 +331,8 @@ times. On Linux, installing again restarts the unit so the new file applies.
 
 ## Operation backend
 
-The program speaks device protocol 4 only; the kernel and this program upgrade together (a
-protocol 4 program facing an older deployment says the deployment must be upgraded). It binds each instance generation the deployment creates
+The program speaks device protocol 5 only; the kernel and this program upgrade together (a
+protocol 5 program facing an older deployment says the deployment must be upgraded). It binds each instance generation the deployment creates
 to a verified, sealed runtime and reports restricted support only once a self-check on that runtime
 passed (macOS: a write in its root goes through, while a write outside it, reads of a denied secret
 and of an ordinary file it was never granted, and a local connection are refused) or the runtime's

@@ -78,7 +78,7 @@ export type SensitiveReason =
   | "channel"
   | "directory"
   | "identity_source"
-  | "sandbox"
+  | "device_provider"
   | "object_store"
   | "context"
   | "push_provider"
@@ -93,7 +93,7 @@ export interface PermissionItem {
 }
 
 /**
- * Sensitive capabilities (D10 + planned extensions, F-AI): `sandbox@2` runs arbitrary commands in
+ * Sensitive capabilities (D10 + planned extensions, F-AI): `device-provider@1` runs arbitrary commands in
  * the deployment, `object-store@1` holds every attachment and plugin package (D10); `channel@1`
  * receives the org's IM conversations (Ruling A33), `directory@1` can add people to orgs (creating
  * their accounts and identities), `identity-source@1` decides who can sign in as which account;
@@ -108,7 +108,7 @@ export const SENSITIVE_EXTENSION_POINTS: readonly string[] = [
   "channel@1",
   "directory@1",
   "identity-source@1",
-  "sandbox@2",
+  "device-provider@1",
   "object-store@1",
   "context@1",
   "push-provider@1",

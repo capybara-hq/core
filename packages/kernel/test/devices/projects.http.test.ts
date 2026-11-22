@@ -5,10 +5,10 @@ import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import {
   DEFAULT_SANDBOX_ROOTS,
+  type DeviceProvider,
   type KernelReq,
   type LegacyDeviceHello,
   type SandboxBrowseScope,
-  type SandboxProvider,
 } from "@capybara-hq/plugin-sdk";
 import { startTestPostgres, startTestRedis, type TestContainer } from "@capybara-hq/testing";
 import { Redis } from "ioredis";
@@ -31,13 +31,14 @@ import { MachinesService } from "../../src/local-devices/machines.js";
 import { SandboxOperationAuthority } from "../../src/sandbox/operation-authority.js";
 import { PermissionCeilingWrites } from "../../src/sandbox/permission-ceiling-writes.js";
 import { PermissionFacts } from "../../src/sandbox/permission-facts.js";
-import { SandboxProviders } from "../../src/sandbox/providers.js";
+import { DeviceProviders } from "../../src/sandbox/providers.js";
 import { SandboxService } from "../../src/sandbox/sandbox.service.js";
 import { legacyDbFor } from "../helpers/conversations.js";
 import { accountsFor } from "../helpers/identity.js";
 import { testMembers } from "../helpers/members.js";
 import {
   createOrg,
+  enableDeviceProviders,
   PW,
   type Req,
   runConfig,
@@ -57,7 +58,7 @@ import type { Answer } from "../local-devices/test-holder.js";
  */
 
 const SANDBOX_FAKE = fileURLToPath(
-  new URL("../fixtures/plugins/sandbox-fake/index.ts", import.meta.url),
+  new URL("../fixtures/plugins/device-fake/index.ts", import.meta.url),
 );
 
 const HOME = "/home/me";
@@ -112,7 +113,7 @@ beforeAll(async () => {
         roles: ["api", "worker", "gateway"],
         extensions: [SANDBOX_FAKE],
         // limits fixed at the file system: a narrowed cloud device can await a files reset
-        extensionConfig: { "sandbox-fake": { root: sandboxRoot, limitsApplyAt: "fileSystem" } },
+        extensionConfig: { "device-fake": { root: sandboxRoot, limitsApplyAt: "fileSystem" } },
         devices: { local: { reconnectGraceSeconds: 2, leaseTtlMs: 6000 } },
       },
     ),
@@ -124,6 +125,7 @@ beforeAll(async () => {
   ownerId = (await accountsFor(db).createLocal({ login: "owner", password: PW, displayName: "O" }))
     .id;
   orgId = await createOrg(await session(k, "owner"));
+  await enableDeviceProviders(k, orgId);
   url = `ws://127.0.0.1:${k.port}/device/connect`;
 });
 
@@ -754,8 +756,8 @@ describe("device projects", () => {
       },
     };
     // a provider that can list and scan offers projects (the calls go through `browse` above)
-    const impl = { list: browse.list, scan: browse.scan } as unknown as SandboxProvider;
-    const real = k.app.get(SandboxProviders);
+    const impl = { list: browse.list, scan: browse.scan } as unknown as DeviceProvider;
+    const real = k.app.get(DeviceProviders);
     const service = new DeviceProjectsService(
       k.app.get(KernelDb),
       txHost,
@@ -774,8 +776,11 @@ describe("device projects", () => {
         k.app.get(KernelDb),
         k.app.get(KernelConfigService),
         {
-          cloud: () => ({ plugin: real.cloud()?.plugin as string, impl }),
-          forName: () => ({ plugin: real.cloud()?.plugin as string, impl }),
+          forDevice: () => ({
+            plugin: real.loaded()[0]?.plugin as string,
+            version: real.loaded()[0]?.version as string,
+            impl,
+          }),
         },
         k.app.get(DeviceAccess),
       ),
@@ -790,7 +795,7 @@ describe("device projects", () => {
       .values({
         device_id: id,
         org_id: orgId,
-        provider: real.cloud()?.plugin as string,
+        provider: real.loaded()[0]?.plugin as string,
         fs_handle: JSON.stringify({ id: `fs-${id}` }),
         fs_status: "ready",
         instance_limits: JSON.stringify({

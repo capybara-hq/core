@@ -1,4 +1,5 @@
 export {
+  DEVICE_UNUSABLE_LINE,
   GENERATE_IMAGE_DENIED_TEXT,
   GENERATE_IMAGE_SPEC,
   type GenerateImageDeps,
