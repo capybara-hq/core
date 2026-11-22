@@ -496,7 +496,7 @@ describe("the native strip (nav@1)", () => {
     expect(onNavigate).toHaveBeenCalledWith("/inbox", { transition: "none" });
   });
 
-  it("keeps the action and account within bounds and the avatar to http(s)", () => {
+  it("keeps the action and account within bounds and the avatar to https or own-origin http", () => {
     window.matchMedia = matchMediaFor(390).matchMedia;
     const { nav } = fakeNav();
     const d = drawerData();
@@ -516,6 +516,18 @@ describe("the native strip (nav@1)", () => {
     blob.account = { ...blob.account, avatar: { kind: "image", src: "blob:http://x/1" } };
     view.rerender(shell(nav, "/agents", { drawer: blob }));
     expect(nav.set.mock.calls.at(-1)?.[0].account).toEqual(ACCOUNT);
+    // plain http only from the page's own origin; https from anywhere
+    const avatarFrom = (src: string) => {
+      const d2 = drawerData();
+      d2.account = { ...d2.account, avatar: { kind: "image", src } };
+      view.rerender(shell(nav, "/agents", { drawer: d2 }));
+      return nav.set.mock.calls.at(-1)?.[0].account?.avatarUrl;
+    };
+    expect(avatarFrom("http://cdn.example/a.png")).toBeUndefined();
+    expect(avatarFrom("https://cdn.example/b.png")).toBe("https://cdn.example/b.png");
+    const own = `${window.location.origin}/c.png`;
+    expect(window.location.protocol).toBe("http:");
+    expect(avatarFrom(own)).toBe(own);
   });
 
   it("the avatar tapped while the account sheet is open closes it", () => {

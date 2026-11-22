@@ -314,8 +314,11 @@ their full-width primary under the title (responsive D2): the pill's top item th
 
 Contract change (`nav@1`, minor version, mobile app spec §5.2):
 `set({ items, current, action?: { id: string; label: string; icon: "plus" | "square-pen" }, account?: { name: string; avatarUrl?: string | null; initial: string; badge?: number } })`,
-plus `onAction(cb)` and `onAccount(cb)`; `menu` becomes optional and is no longer sent by the web
-(kept in the contract for an older web). The web calls `set` on route and primary changes.
+plus `onAction(cb)` and `onAccount(cb)`; `menu` becomes optional in the type and the web always
+sends `menu: null` (no menu button; a button stays in the contract for an older web). A shell before
+the minor version (a `nav@1` without `onAction`) gets exactly the old shape
+`{ items: the four sections, current, menu: null }`, which its validator accepts. The web calls
+`set` on route and primary changes.
 
 ### 10.4 Sheets, drawer, scrim, menus and the keyboard with the strip
 

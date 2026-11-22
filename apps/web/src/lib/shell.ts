@@ -514,7 +514,7 @@ export const useOpenExternalCapability = () =>
  * confirming (the shell needs no activation), and the one capability call made from an effect: a
  * rejection or a throw is dropped (the strip keeps its last state). `onAction` / `onAccount` pass
  * through when the shell has them (a shell before the minor version lacks them); the web never
- * subscribes to `onMenu` (it sends no menu, D12). The strip's side is read by the design's
+ * subscribes to `onMenu` (it always sends `menu: null`, D12). The strip's side is read by the design's
  * environment, not here. The handle keeps its reference while the capability object does.
  */
 export function useNativeNavHandle(): NativeNavHandle | undefined {

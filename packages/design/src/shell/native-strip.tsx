@@ -248,8 +248,9 @@ function navBadge(badge: NavBadge | undefined): { count?: number; countMore?: bo
 }
 
 /**
- * The account avatar's state: the name (1..navAccountName), its initial and an http(s) image's
- * absolute URL (a data: or blob: source is not sent; the shell draws the initial). Null for an
+ * The account avatar's state: the name (1..navAccountName), its initial and the image's absolute
+ * URL when it is https, or plain http on the page's own origin (any other source, data: or blob:
+ * included, is not sent; the shell draws the initial). Null for an
  * empty name: no avatar.
  */
 function accountOf(
@@ -262,7 +263,12 @@ function accountOf(
   if (avatar?.kind === "image" && typeof window !== "undefined") {
     try {
       const url = new URL(avatar.src, window.location.href);
-      if (url.protocol === "https:" || url.protocol === "http:") avatarUrl = url.href;
+      // https from anywhere; plain http only from the page's own origin
+      if (
+        url.protocol === "https:" ||
+        (url.protocol === "http:" && url.origin === window.location.origin)
+      )
+        avatarUrl = url.href;
     } catch {
       // an unparsable source: the initial
     }
