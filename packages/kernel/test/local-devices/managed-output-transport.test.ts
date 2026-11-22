@@ -16,15 +16,15 @@ import { Redis } from "ioredis";
 import { afterAll, afterEach, beforeAll, expect, it, vi } from "vitest";
 import WebSocket, { WebSocketServer } from "ws";
 import { createBus, createBusSubscriber } from "../../src/ctx/bus.js";
+import { DialInGateway } from "../../src/dial-in/gateway.js";
+import { deviceLeaseKey, deviceReqKey } from "../../src/dial-in/keys.js";
+import { DeviceRequestNotSentError, DialInRelay } from "../../src/dial-in/relay.js";
+import { type DeviceTargetState, DeviceTargets } from "../../src/dial-in/targets.js";
 import { ApiError } from "../../src/errors.js";
 import type { KernelConfigService } from "../../src/infra/config/kernel-config.service.js";
 import type { KernelDb } from "../../src/infra/database/kernel-db.js";
 import { LockService } from "../../src/infra/lock/lock.service.js";
-import { deviceLeaseKey, deviceReqKey } from "../../src/local-devices/keys.js";
-import { LocalDeviceGateway } from "../../src/local-devices/local-device-gateway.js";
 import { LocalDeviceProvider } from "../../src/local-devices/local-device-provider.js";
-import { DeviceRequestNotSentError, LocalDeviceRelay } from "../../src/local-devices/relay.js";
-import { type DeviceTargetState, DeviceTargets } from "../../src/local-devices/targets.js";
 import { createLogger } from "../../src/log.js";
 
 let rd: TestContainer;
@@ -111,7 +111,7 @@ async function fixture(clientCap = 69632, serverCap = 100000) {
     }),
   } as KernelConfigService;
   const targets = new DeviceTargets({} as KernelDb, redis, locks);
-  const gateway = new LocalDeviceGateway(
+  const gateway = new DialInGateway(
     {
       authenticate: async (c) =>
         c === credential
@@ -127,7 +127,7 @@ async function fixture(clientCap = 69632, serverCap = 100000) {
     config,
     log,
   );
-  const relay = new LocalDeviceRelay(redis, bus, locks, config, log, {
+  const relay = new DialInRelay(redis, bus, locks, config, log, {
     current: targets.current.bind(targets),
     state: async () => targetState,
   });

@@ -10,9 +10,9 @@ import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import type { KernelSchemaDb } from "../../src/db/kernel-schema.js";
 import { createDb } from "../../src/db/pool.js";
 import { DevicesService } from "../../src/devices/devices.service.js";
+import { DialInMachines } from "../../src/dial-in/machines.js";
 import { TransactionHost } from "../../src/infra/database/transaction-host.js";
-import { MachinesService } from "../../src/local-devices/machines.js";
-import { NetworkGrants } from "../../src/local-devices/network-grants.js";
+import { NetworkGrants } from "../../src/sandbox/network-grants.js";
 import { legacyDbFor } from "../helpers/conversations.js";
 import { accountsFor } from "../helpers/identity.js";
 import { testMembers } from "../helpers/members.js";
@@ -24,7 +24,7 @@ import {
   startKernel,
   type TestKernel,
 } from "../helpers/runs.js";
-import { stagedHello } from "./fake-machine.js";
+import { stagedHello } from "../local-devices/fake-machine.js";
 
 /**
  * Machine rows and credentials (environments spec §13.2): one active machine per device
@@ -37,7 +37,7 @@ let rd: TestContainer;
 let raw: ReturnType<typeof createDb>;
 let db: KernelSchemaDb;
 let k: TestKernel;
-let machines: MachinesService;
+let machines: DialInMachines;
 let devices: DevicesService;
 let txHost: TransactionHost;
 let ownerId: string;
@@ -48,7 +48,7 @@ beforeAll(async () => {
   raw = createDb(pgc.url, 3);
   db = legacyDbFor(raw);
   k = await startKernel(runConfig({ pg: pgc.url, redis: rd.url }, { roles: ["api"] }));
-  machines = k.app.get(MachinesService);
+  machines = k.app.get(DialInMachines);
   devices = k.app.get(DevicesService);
   txHost = k.app.get(TransactionHost);
   ownerId = (await accountsFor(db).createLocal({ login: "owner", password: PW, displayName: "O" }))
@@ -90,7 +90,7 @@ async function connected(accountId: string, org = orgId) {
   });
 }
 
-describe("MachinesService", () => {
+describe("DialInMachines", () => {
   it("issue returns a cap_dev_ credential that authenticates", async () => {
     const a = await member();
     const m = await connected(a);
@@ -322,7 +322,7 @@ describe("MachinesService", () => {
     // again (protocol 4: the owner report's change, no summary mode)
     const k2 = await startKernel(runConfig({ pg: pgc.url, redis: rd.url }, { roles: ["api"] }));
     try {
-      const other = k2.app.get(MachinesService);
+      const other = k2.app.get(DialInMachines);
       const next = { type: "policy", policy: base, ownerCeiling: report(2, false) };
       await Promise.all([
         machines.recordPolicyV3(m.machineId, next),

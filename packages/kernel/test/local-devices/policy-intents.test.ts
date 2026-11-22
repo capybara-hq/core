@@ -12,6 +12,9 @@ import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from "vitest
 import type { KernelSchemaDb } from "../../src/db/kernel-schema.js";
 import { createDb } from "../../src/db/pool.js";
 import { DevicesService } from "../../src/devices/devices.service.js";
+import { deviceLeaseKey } from "../../src/dial-in/keys.js";
+import { DialInMachines } from "../../src/dial-in/machines.js";
+import { DialInRelay, LIST_TTL_MARGIN_MS } from "../../src/dial-in/relay.js";
 import { ApiError } from "../../src/errors.js";
 import { TransactionHost } from "../../src/infra/database/transaction-host.js";
 import { OUTBOX_DISPATCH_FAILS } from "../../src/infra/outbox/outbox.dispatcher.js";
@@ -20,10 +23,7 @@ import {
   DevicePolicyService,
   POLICY_DEADLINE_MS,
 } from "../../src/local-devices/device-policy.service.js";
-import { deviceLeaseKey } from "../../src/local-devices/keys.js";
-import { MachinesService } from "../../src/local-devices/machines.js";
 import type { DeviceOpResolveData } from "../../src/local-devices/policy-op-jobs.js";
-import { LIST_TTL_MARGIN_MS, LocalDeviceRelay } from "../../src/local-devices/relay.js";
 import { MAINTENANCE_QUEUE_NAME } from "../../src/runtime/maintenance-queue.js";
 import { DeviceOpResolver } from "../../src/tools/device-op-resolver.js";
 import { legacyDbFor } from "../helpers/conversations.js";
@@ -69,7 +69,7 @@ let raw: ReturnType<typeof createDb>;
 let db: KernelSchemaDb;
 let redis: Redis;
 let k: TestKernel;
-let machines: MachinesService;
+let machines: DialInMachines;
 let devices: DevicesService;
 let policies: DevicePolicyService;
 let resolver: DeviceOpResolver;
@@ -113,7 +113,7 @@ beforeAll(async () => {
       ],
     },
   );
-  machines = k.app.get(MachinesService);
+  machines = k.app.get(DialInMachines);
   devices = k.app.get(DevicesService);
   policies = k.app.get(DevicePolicyService);
   resolver = k.app.get(DeviceOpResolver);
@@ -594,7 +594,7 @@ describe("device policy intents", () => {
   it("a relay ApiError on the call (offline, disconnected, deleted) is offline, the op unknown", async () => {
     const d = await device();
     await connect(d, new Sim());
-    const relay = k.app.get(LocalDeviceRelay);
+    const relay = k.app.get(DialInRelay);
     for (const code of ["device.offline", "device.forbidden", "device.not_found"] as const) {
       const begun = await policies.begin({
         orgId,

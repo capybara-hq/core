@@ -13,8 +13,8 @@ import { afterAll, beforeAll, beforeEach, expect, it, vi } from "vitest";
 import { KernelConfigSchema } from "../../src/config/schema.js";
 import { kernelDb } from "../../src/db/kernel-schema.js";
 import { createDb } from "../../src/db/pool.js";
+import { DialInRelay } from "../../src/dial-in/relay.js";
 import { LocalInstanceBindings } from "../../src/local-devices/instance-bindings.js";
-import { LocalDeviceRelay } from "../../src/local-devices/relay.js";
 import { createLogger } from "../../src/log.js";
 import { SandboxLeases } from "../../src/sandbox/leases.js";
 import { DeviceProviders, LOCAL_PROVIDER } from "../../src/sandbox/providers.js";
@@ -176,7 +176,7 @@ async function device(opts: { binder?: boolean } = {}) {
       impl: fakeLocal(creates),
       ...(opts.binder !== false && { binder: k.app.get(LocalInstanceBindings) }),
     });
-    const relay = k.app.get(LocalDeviceRelay);
+    const relay = k.app.get(DialInRelay);
     vi.spyOn(relay, "connection").mockResolvedValue({ connectionId: "c1", maxFrameBytes: 69632 });
     vi.spyOn(relay, "callV3").mockImplementation(async (_d, op, args) => {
       expect(op).toBe("bindInstance");

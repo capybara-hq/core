@@ -219,7 +219,7 @@ const errMsg = (e: unknown) => (e instanceof Error ? e.message : String(e));
  * (ruling R15). Nothing is kept in process memory beyond the call.
  */
 @Injectable()
-export class LocalDeviceRelay {
+export class DialInRelay {
   constructor(
     @Inject(REDIS) private readonly redis: Redis,
     @Inject(KERNEL_BUS) private readonly bus: ExtensionContext["bus"],

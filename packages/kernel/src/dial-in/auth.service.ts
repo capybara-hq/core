@@ -17,7 +17,7 @@ import { readOrgSettings } from "../orgs/settings.service.js";
 import { allowedDeviceMode, readDeploymentDevicePolicy } from "../sandbox/modes.js";
 import { LOCAL_PROVIDER } from "../sandbox/providers.js";
 import { deviceNotFound } from "../sandbox/sandbox.service.js";
-import { MachinesService } from "./machines.js";
+import { DialInMachines } from "./machines.js";
 
 /** The 20 consonants a user code is made of (no vowels: no words; no look-alike letters). */
 export const USER_CODE_ALPHABET = "BCDFGHJKLMNPQRSTVWXZ";
@@ -174,7 +174,7 @@ function newUserCode(): string {
  * `capk:device-user:<userCode>` → the device code's hash. The device code itself is never stored.
  */
 @Injectable()
-export class DeviceAuthService {
+export class DialInAuthService {
   constructor(
     @Inject(KernelDb) private readonly db: KernelDb,
     @Inject(TransactionHost) readonly txHost: TransactionHost,
@@ -183,8 +183,8 @@ export class DeviceAuthService {
     private readonly config: Pick<KernelConfigService, "get" | "fieldSource">,
     @Inject(DevicesService)
     private readonly devices: Pick<DevicesService, "createLocal">,
-    @Inject(MachinesService)
-    private readonly machines: Pick<MachinesService, "issue" | "revokeMachine">,
+    @Inject(DialInMachines)
+    private readonly machines: Pick<DialInMachines, "issue" | "revokeMachine">,
     @Inject(KERNEL_LOGGER) private readonly log: Pick<KernelLogger, "warn">,
   ) {}
 

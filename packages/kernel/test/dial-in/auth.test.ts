@@ -6,14 +6,14 @@ import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } 
 import type { KernelSchemaDb } from "../../src/db/kernel-schema.js";
 import { createDb } from "../../src/db/pool.js";
 import type { DeviceView } from "../../src/devices/devices.service.js";
-import { KERNEL_BUS } from "../../src/infra/tokens.js";
 import {
-  DeviceAuthService,
+  DialInAuthService,
   deviceAuthKey,
   deviceUserKey,
   USER_CODE_ALPHABET,
-} from "../../src/local-devices/device-auth.js";
-import { MachinesService } from "../../src/local-devices/machines.js";
+} from "../../src/dial-in/auth.service.js";
+import { DialInMachines } from "../../src/dial-in/machines.js";
+import { KERNEL_BUS } from "../../src/infra/tokens.js";
 import { legacyDbFor } from "../helpers/conversations.js";
 import { accountsFor } from "../helpers/identity.js";
 import { testMembers } from "../helpers/members.js";
@@ -27,7 +27,7 @@ import {
   type TestKernel,
   waitFor,
 } from "../helpers/runs.js";
-import { TestHolder } from "./test-holder.js";
+import { TestHolder } from "../local-devices/test-holder.js";
 
 /**
  * Device authorization (environments spec §6.2, §13.2-13.3): the RFC 8628 shape, from
@@ -42,7 +42,7 @@ let raw: ReturnType<typeof createDb>;
 let db: KernelSchemaDb;
 let redis: Redis;
 let k: TestKernel;
-let machines: MachinesService;
+let machines: DialInMachines;
 let ownerId: string;
 let owner: Req;
 let orgId: string;
@@ -58,7 +58,7 @@ beforeAll(async () => {
       { roles: ["api", "worker"], http: { port: 0, publicUrl: `${PUBLIC_URL}/` } },
     ),
   );
-  machines = k.app.get(MachinesService);
+  machines = k.app.get(DialInMachines);
   ownerId = (await accountsFor(db).createLocal({ login: "owner", password: PW, displayName: "O" }))
     .id;
   owner = await session(k, "owner");
@@ -86,7 +86,7 @@ type Transition = (hash: string, from: string, to: string, grant?: string) => Pr
 
 /** Replaces the claimed → approved step of the service (the post-commit parking) with `park`. */
 function interceptParking(park: (original: Transition, hash: string) => Promise<boolean>): void {
-  const svc = k.app.get(DeviceAuthService) as unknown as { transition: Transition };
+  const svc = k.app.get(DialInAuthService) as unknown as { transition: Transition };
   const original = svc.transition.bind(svc);
   vi.spyOn(svc, "transition").mockImplementation((hash, from, to, grant) =>
     to === "approved" ? park(original, hash) : original(hash, from, to, grant),

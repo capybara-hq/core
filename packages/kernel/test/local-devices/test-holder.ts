@@ -13,7 +13,7 @@ import {
   deviceReqTopic,
   deviceResKey,
   deviceResTopic,
-} from "../../src/local-devices/keys.js";
+} from "../../src/dial-in/keys.js";
 
 /** The machine's answer to one request: a result, an error, or nothing (the test answers later). */
 export type Answer =

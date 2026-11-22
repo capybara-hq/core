@@ -2,7 +2,7 @@ import { apiFetch } from "./api";
 
 /**
  * Device sign-in as the confirmation page `/devices/link` uses it (the kernel's
- * `packages/kernel/src/local-devices/device-auth.controller.ts`; environments spec §13.3). Web
+ * `packages/kernel/src/dial-in/auth.controller.ts`; environments spec §13.3). Web
  * code never imports kernel code.
  */
 

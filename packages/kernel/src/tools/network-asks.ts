@@ -4,7 +4,7 @@ import type {
   DeviceLocalPolicySummary,
 } from "@capybara-hq/plugin-sdk/device-protocol";
 import { NETWORK_ASK_MAX_HOSTS, NETWORK_HOST_MAX_CHARS } from "../conversations/events.js";
-import type { NetworkRunState } from "../local-devices/network-grants.js";
+import type { NetworkRunState } from "../sandbox/network-grants.js";
 import { ESCALATION_UNATTENDED_WHY } from "../sandbox/review/permission-candidate.js";
 import {
   networkGrantKey,

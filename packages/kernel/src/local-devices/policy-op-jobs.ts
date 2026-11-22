@@ -1,5 +1,5 @@
 // The device policy op jobs' names and ids: a leaf module (no service imports), read by the
-// producers (DevicePolicyService, MachinesService) and the maintenance processor.
+// producers (DevicePolicyService, DialInMachines) and the maintenance processor.
 
 /**
  * Settles a device policy op whose outcome was not recorded (transactional outbox spec §7): owed

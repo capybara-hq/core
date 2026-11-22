@@ -9,6 +9,7 @@ import type {
   SandboxRoots,
 } from "@capybara-hq/plugin-sdk";
 import {
+  type NetworkBlockedHost,
   parseSandboxBrowseScope,
   parseSandboxOperationScope,
   parseSandboxPreparationScope,
@@ -18,6 +19,7 @@ import {
   type SandboxPermissionSupport,
   SandboxPermissionUnsupportedError,
   type SandboxPreparation,
+  validateAllowHost,
 } from "@capybara-hq/plugin-sdk";
 import {
   type BackgroundReadOutputResult,
@@ -26,14 +28,14 @@ import {
   parseOperationResult,
 } from "@capybara-hq/plugin-sdk/device-protocol";
 import { Inject, Injectable, Optional } from "@nestjs/common";
+import { DialInRelay, deviceOffline } from "../dial-in/relay.js";
+import { DeviceTargets, sameRoots } from "../dial-in/targets.js";
 import { KernelConfigService } from "../infra/config/kernel-config.service.js";
 import { hostGrantable } from "../sandbox/device-sandbox.js";
 import { providerLimits } from "../sandbox/modes.js";
+import { normalizeHost, orgAllows } from "../sandbox/network-grants.js";
 import { PermissionCallGrants } from "../sandbox/permission-call-grants.js";
 import { deviceNotFound, SandboxService } from "../sandbox/sandbox.service.js";
-import { relayer } from "./network-grants.js";
-import { deviceOffline, LocalDeviceRelay } from "./relay.js";
-import { DeviceTargets, sameRoots } from "./targets.js";
 
 /** Extra time the machine gets beyond a command's own timeout (spawn, output, the trip back). */
 export const EXEC_DEADLINE_MARGIN_MS = 5000;
@@ -106,13 +108,13 @@ const bytesOf = (b64: string): Uint8Array => new Uint8Array(Buffer.from(b64, "ba
 
 /**
  * The kernel-internal provider `@local` (environments spec §13.5): every operation runs on the
- * device's connected machine through the {@link LocalDeviceRelay}. The file system is the
+ * device's connected machine through the {@link DialInRelay}. The file system is the
  * machine's device directory (the program creates it on first use), so `createFileSystem`
  * touches nothing; `suspend` and `destroy` do nothing (the machine is not the platform's to stop);
  * deleting the device leaves the files on the machine where they are. Nothing here throws `device.offline` on the cleanup paths (ruling R9).
  *
  * The files on a machine are its owner's: `destroyFileSystem` (a files reset, the deletion sweep)
- * does nothing; the deletion's `stop` comes from `MachinesService.revokeActive` (ruling R24).
+ * does nothing; the deletion's `stop` comes from `DialInMachines.revokeActive` (ruling R24).
  */
 @Injectable()
 export class LocalDeviceProvider implements DeviceProvider {
@@ -135,7 +137,7 @@ export class LocalDeviceProvider implements DeviceProvider {
   }
 
   constructor(
-    @Inject(LocalDeviceRelay) private readonly relay: LocalDeviceRelay,
+    @Inject(DialInRelay) private readonly relay: DialInRelay,
     @Inject(DeviceTargets)
     private readonly targets: Pick<DeviceTargets, "orgOf" | "machineRoots" | "machineHome">,
     @Inject(SandboxService)
@@ -518,4 +520,24 @@ export class LocalDeviceProvider implements DeviceProvider {
   readonly stat: DeviceProvider["stat"] = refuseRaw("stat");
   readonly list: NonNullable<DeviceProvider["list"]> = refuseRaw("list");
   readonly scan: NonNullable<DeviceProvider["scan"]> = refuseRaw("scan");
+}
+
+/**
+ * The kernel's own layer for a device's report (auto mode spec §4.2): it trusts the device's word
+ * that a host was refused, never its word that the org allows it. A host the device calls `device`
+ * that the org's sandbox network (`limits`, read for this exec) does not allow becomes `org`; one
+ * that is no valid host name becomes `address`. Other layers are kept.
+ */
+export function relayer(
+  blocked: NetworkBlockedHost[],
+  limits: Pick<SandboxLimits, "network">,
+): NetworkBlockedHost[] {
+  return blocked.map((b) => {
+    if (b.layer !== "device") return b;
+    const h = normalizeHost(b.host);
+    if (validateAllowHost(h).length > 0 || h.startsWith("*.")) {
+      return { ...b, layer: "address" };
+    }
+    return orgAllows(b.host, limits) ? b : { ...b, layer: "org" };
+  });
 }

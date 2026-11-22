@@ -12,9 +12,9 @@ import { createDb } from "../../src/db/pool.js";
 import { ConversationDevices } from "../../src/devices/conversation-devices.js";
 import { DeviceProjectsService } from "../../src/devices/device-projects.service.js";
 import { DevicesService } from "../../src/devices/devices.service.js";
+import { DialInMachines } from "../../src/dial-in/machines.js";
 import { KernelDb } from "../../src/infra/database/kernel-db.js";
 import { TransactionHost } from "../../src/infra/database/transaction-host.js";
-import { MachinesService } from "../../src/local-devices/machines.js";
 import { createLogger } from "../../src/log.js";
 import {
   AGENTS_MD_TRUNCATED_MARKER,
@@ -223,7 +223,7 @@ async function localDevice(
     const { id } = await k.app
       .get(DevicesService)
       .createLocal(orgId, ownerId, `Box ${randomUUID().slice(0, 8)}`);
-    await k.app.get(MachinesService).issue({
+    await k.app.get(DialInMachines).issue({
       orgId,
       deviceId: id,
       accountId: ownerId,

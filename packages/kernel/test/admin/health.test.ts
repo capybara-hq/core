@@ -9,10 +9,10 @@ import { AdminHealthService, KERNEL_QUEUE_NAMES } from "../../src/admin/health.s
 import { ChannelSupervisor } from "../../src/channels/supervisor.js";
 import { TITLE_QUEUE } from "../../src/conversations/titles.js";
 import { createDb } from "../../src/db/pool.js";
+import { DialInGateway } from "../../src/dial-in/gateway.js";
 import { KernelDb } from "../../src/infra/database/kernel-db.js";
 import { PRESENCE_INTERVAL_MS } from "../../src/infra/presence/replica-presence.js";
 import { bullConnectionOptions } from "../../src/infra/queue/redis-connection.js";
-import { LocalDeviceGateway } from "../../src/local-devices/local-device-gateway.js";
 import { RUN_QUEUE_NAME } from "../../src/runtime/run-jobs.js";
 import { KERNEL_VERSION } from "../../src/version.js";
 import { runConfig, startKernel, type TestKernel, waitFor } from "../helpers/runs.js";
@@ -124,7 +124,7 @@ describe("AdminHealthService.read", () => {
     await sql`UPDATE capybara.orgs SET deleted_at = now() WHERE id = ${gone.orgId}`.execute(db());
 
     vi.spyOn(k.app.get(ChannelSupervisor), "heldCount").mockReturnValue(2);
-    vi.spyOn(k.app.get(LocalDeviceGateway), "connectionCount").mockReturnValue(1);
+    vi.spyOn(k.app.get(DialInGateway), "connectionCount").mockReturnValue(1);
 
     // queues: runs 2 waiting + 1 delayed; titles: one failure now, one 25 h ago
     const runs = queue(RUN_QUEUE_NAME);

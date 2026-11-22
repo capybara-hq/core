@@ -20,14 +20,14 @@ import { KernelConfigSchema } from "../../src/config/schema.js";
 import { createBus, createBusSubscriber } from "../../src/ctx/bus.js";
 import { kernelDb } from "../../src/db/kernel-schema.js";
 import { createDb } from "../../src/db/pool.js";
+import { DialInGateway } from "../../src/dial-in/gateway.js";
+import { DialInRelay } from "../../src/dial-in/relay.js";
 import type { Account, AccountsService } from "../../src/identity/accounts.js";
 import { KernelConfigService } from "../../src/infra/config/kernel-config.service.js";
 import { KernelDb } from "../../src/infra/database/kernel-db.js";
 import { TransactionHost } from "../../src/infra/database/transaction-host.js";
 import { LockService } from "../../src/infra/lock/lock.service.js";
-import { LocalDeviceGateway } from "../../src/local-devices/local-device-gateway.js";
 import { LocalDeviceProvider } from "../../src/local-devices/local-device-provider.js";
-import { LocalDeviceRelay } from "../../src/local-devices/relay.js";
 import { createLogger } from "../../src/log.js";
 import { SandboxOperationIntents } from "../../src/sandbox/operation-intents.js";
 import { SandboxOperationReconcileJob } from "../../src/sandbox/operation-reconcile.job.js";
@@ -287,7 +287,7 @@ async function gatewayFor(
       devices: { local: { maxFrameBytes: 100000, leaseTtlMs: 6000, reconnectGraceSeconds: 30 } },
     }),
   } as KernelConfigService;
-  const gateway = new LocalDeviceGateway(
+  const gateway = new DialInGateway(
     {
       authenticate: async (c) =>
         c === device.credential ? { ...identity, machineId: "machine" } : null,
@@ -350,7 +350,7 @@ async function gatewayFor(
 
 /** The staged provider each replica dispatches through: its own provider, relay and Redis. */
 function stagedProviderOf(k: TestKernel): DeviceProvider {
-  const relay = k.app.get(LocalDeviceRelay);
+  const relay = k.app.get(DialInRelay);
   const staged = k.app.get(LocalDeviceProvider).stagedOperations({
     call: relay.callV3.bind(relay),
     permissionSupport: async () => SUPPORT,
@@ -454,9 +454,9 @@ const taskOf = (f: Awaited<ReturnType<typeof fixture>>, operationId: string) =>
  * the call by async context, not by call order.
  */
 function staleFor(
-  relay: LocalDeviceRelay,
+  relay: DialInRelay,
   op: string,
-  stale: Awaited<ReturnType<LocalDeviceRelay["connection"]>>,
+  stale: Awaited<ReturnType<DialInRelay["connection"]>>,
 ) {
   type Codec = (deviceId: string, op: string, ...rest: unknown[]) => Promise<unknown>;
   const internal = relay as unknown as { callWithCodec: Codec };
@@ -683,7 +683,7 @@ describe("revocation across a disconnect on the real staged session", () => {
 describe("a staged request refused as not sent (B-5)", () => {
   it("is a definite pre-effect failure; a retry keeps the same operation and no unknown outcome", async () => {
     const f = await fixture();
-    const relay = a.app.get(LocalDeviceRelay);
+    const relay = a.app.get(DialInRelay);
     // the connection the caller read just before the device reconnected
     const stale = await relay.connection(f.deviceId);
     await f.gw.disconnect();
@@ -763,7 +763,7 @@ describe("a staged request refused as not sent (B-5)", () => {
     });
 
     // replica b's recovery asks under a connection the device has since replaced: not sent
-    const relay = b.app.get(LocalDeviceRelay);
+    const relay = b.app.get(DialInRelay);
     const stale = await relay.connection(f.deviceId);
     await f.gw.disconnect();
     await f.gw.connect();

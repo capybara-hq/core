@@ -15,13 +15,13 @@ import type { ConversationEvent } from "../../src/conversations/events.js";
 import type { KernelSchemaDb } from "../../src/db/kernel-schema.js";
 import { createDb } from "../../src/db/pool.js";
 import { DevicesService } from "../../src/devices/devices.service.js";
+import { deviceLeaseKey } from "../../src/dial-in/keys.js";
+import { DialInMachines } from "../../src/dial-in/machines.js";
 import { TransactionHost } from "../../src/infra/database/transaction-host.js";
-import { deviceLeaseKey } from "../../src/local-devices/keys.js";
-import { MachinesService } from "../../src/local-devices/machines.js";
-import { NetworkGrants, type NetworkRunState } from "../../src/local-devices/network-grants.js";
 import { PlatformOperations } from "../../src/platform/registry.js";
 import { assistantIdemKey } from "../../src/runtime/model-call.js";
 import { RunExecution } from "../../src/runtime/run-execution.js";
+import { NetworkGrants, type NetworkRunState } from "../../src/sandbox/network-grants.js";
 import { networkGrantRefusal } from "../../src/schedules/grant-rules.js";
 import { ScheduledTasksService } from "../../src/schedules/scheduled-tasks.service.js";
 import { ScheduledTaskStore } from "../../src/schedules/store.js";
@@ -228,7 +228,7 @@ async function setup(policy: Partial<DeviceLocalPolicySummary> = {}): Promise<Se
   const req = await session(k, login);
   const device = await k.app.get(TransactionHost).run(async () => {
     const { id: deviceId } = await k.app.get(DevicesService).createLocal(orgId, accountId, "Box");
-    const issued = await k.app.get(MachinesService).issue({
+    const issued = await k.app.get(DialInMachines).issue({
       orgId,
       deviceId,
       accountId,

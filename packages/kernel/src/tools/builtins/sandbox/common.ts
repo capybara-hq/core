@@ -32,10 +32,10 @@ import {
   type WorkingFacts,
 } from "../../../devices/conversation-devices.js";
 import { canonicalRoot, workingRootOf } from "../../../devices/working-root.js";
+import { isDeviceRequestNotSent } from "../../../dial-in/relay.js";
 import { ApiError } from "../../../errors.js";
 import type { KernelConfigService } from "../../../infra/config/kernel-config.service.js";
 import { InstanceBindingError } from "../../../local-devices/instance-bindings.js";
-import { isDeviceRequestNotSent } from "../../../local-devices/relay.js";
 import { type DeviceModeLevel, devicePathsChange } from "../../../runtime/context/device-paths.js";
 import {
   ATTACHMENTS_ROOT,

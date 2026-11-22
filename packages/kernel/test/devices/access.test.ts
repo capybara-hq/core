@@ -17,12 +17,12 @@ import {
   DevicesService,
   type DeviceView,
 } from "../../src/devices/devices.service.js";
+import { deviceLeaseKey } from "../../src/dial-in/keys.js";
 import type { ApiError } from "../../src/errors.js";
 import { KernelConfigService } from "../../src/infra/config/kernel-config.service.js";
 import { KernelDb } from "../../src/infra/database/kernel-db.js";
 import { TransactionHost } from "../../src/infra/database/transaction-host.js";
 import { REDIS } from "../../src/infra/tokens.js";
-import { deviceLeaseKey } from "../../src/local-devices/keys.js";
 import { PermissionCeilingWrites } from "../../src/sandbox/permission-ceiling-writes.js";
 import { PermissionFacts } from "../../src/sandbox/permission-facts.js";
 import {

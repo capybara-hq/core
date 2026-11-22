@@ -30,7 +30,7 @@
   "extensions/m7-segment2.dual.test.ts",
   "extensions/permission-client.test.ts",
   "git/gateway.test.ts",
-  "local-devices/local-device-gateway.dual.test.ts",
+  "dial-in/gateway.dual.test.ts",
   "migrations/0123.test.ts",
   "orgs/directory-sync.dual.test.ts",
   "push/push.dual.test.ts",

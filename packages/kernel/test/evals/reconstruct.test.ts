@@ -20,6 +20,7 @@ import type { ConversationEvent, EventPayload } from "../../src/conversations/ev
 import { type KernelSchemaDb, kernelDb, type SkillManifest } from "../../src/db/kernel-schema.js";
 import { createDb } from "../../src/db/pool.js";
 import { DevicesService } from "../../src/devices/devices.service.js";
+import { DialInMachines } from "../../src/dial-in/machines.js";
 import { ApiError } from "../../src/errors.js";
 import {
   reconstructRequest,
@@ -35,7 +36,6 @@ import {
 import { buildTrajectory } from "../../src/evals/trajectory.js";
 import { KernelConfigService } from "../../src/infra/config/kernel-config.service.js";
 import { TransactionHost } from "../../src/infra/database/transaction-host.js";
-import { MachinesService } from "../../src/local-devices/machines.js";
 import type { KernelLogger } from "../../src/log.js";
 import { type MediaInfo, TEXT_INLINE_MAX_CHARS } from "../../src/runtime/context/build.js";
 import { CLAUDE_CODE_TOOL_MAP } from "../../src/runtime/context/claude-tools.js";
@@ -2210,7 +2210,7 @@ describe("reconstructRequest：基线零漂移", () => {
     reset();
     const { deviceId, credential, machineId } = await k.app.get(TransactionHost).run(async () => {
       const { id } = await k.app.get(DevicesService).createLocal(orgId, ownerId, "Box");
-      const issued = await k.app.get(MachinesService).issue({
+      const issued = await k.app.get(DialInMachines).issue({
         orgId,
         deviceId: id,
         accountId: ownerId,

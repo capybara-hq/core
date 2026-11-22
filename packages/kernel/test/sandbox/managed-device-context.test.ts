@@ -17,15 +17,12 @@ import type { ManagedDevicePathsV1 } from "../../src/conversations/events.js";
 import { kernelDb } from "../../src/db/kernel-schema.js";
 import { createDb } from "../../src/db/pool.js";
 import { ConversationDevices } from "../../src/devices/conversation-devices.js";
+import { DeviceRequestNotSentError, isDeviceRequestNotSent } from "../../src/dial-in/relay.js";
 import { KernelConfigService } from "../../src/infra/config/kernel-config.service.js";
 import {
   runOutsideTransaction,
   TransactionHost,
 } from "../../src/infra/database/transaction-host.js";
-import {
-  DeviceRequestNotSentError,
-  isDeviceRequestNotSent,
-} from "../../src/local-devices/relay.js";
 import { createLogger } from "../../src/log.js";
 import { MembersService } from "../../src/orgs/members.service.js";
 import {

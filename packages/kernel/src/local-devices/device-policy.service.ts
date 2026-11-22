@@ -10,6 +10,13 @@ import type {
 } from "@capybara-hq/plugin-sdk/device-protocol";
 import { Inject, Injectable, Optional } from "@nestjs/common";
 import { sql } from "kysely";
+import { DialInMachines } from "../dial-in/machines.js";
+import {
+  DialInRelay,
+  LIST_TTL_MARGIN_MS,
+  ON_MACHINE_PREFIX,
+  wasDeviceRequestNotSent,
+} from "../dial-in/relay.js";
 import { ApiError } from "../errors.js";
 import { audit } from "../identity/audit.js";
 import { KernelConfigService } from "../infra/config/kernel-config.service.js";
@@ -22,7 +29,6 @@ import type { KernelLogger } from "../log.js";
 import { MAINTENANCE_QUEUE_NAME } from "../runtime/maintenance-queue.js";
 import { PermissionCeilingWrites } from "../sandbox/permission-ceiling-writes.js";
 import { deviceNotFound } from "../sandbox/sandbox.service.js";
-import { MachinesService } from "./machines.js";
 import { ownerFactsOf } from "./owner-report.js";
 import { OwnerReports } from "./owner-reports.js";
 import { DEVICE_OP_RESOLVE_JOB, deviceOpResolveJobId } from "./policy-op-jobs.js";
@@ -32,12 +38,6 @@ import {
   type PendingPolicyOp,
   pendingPolicyOpsOf,
 } from "./policy-summary.js";
-import {
-  LIST_TTL_MARGIN_MS,
-  LocalDeviceRelay,
-  ON_MACHINE_PREFIX,
-  wasDeviceRequestNotSent,
-} from "./relay.js";
 
 /** How long the machine may take to apply a policy change. */
 export const POLICY_DEADLINE_MS = 30_000;
@@ -142,7 +142,7 @@ const errMsg = (e: unknown) => (e instanceof Error ? e.message : String(e));
  * Narrows a local device's policy on its machine (approval-only profiles design, "Settings model":
  * hosts removed, the network to the allowlist, no running outside the sandbox, the workspace
  * reach): the kernel→device `policy`
- * op over the {@link LocalDeviceRelay}. The machine is the authority: it refuses what its owner
+ * op over the {@link DialInRelay}. The machine is the authority: it refuses what its owner
  * forbids, validates every host and answers with the policy as written, which the kernel then
  * keeps on the active machine's row (§5.4).
  *
@@ -162,12 +162,12 @@ export class DevicePolicyService {
   constructor(
     @Inject(KernelDb) private readonly db: KernelDb,
     @Inject(TransactionHost) readonly txHost: TransactionHost,
-    @Inject(LocalDeviceRelay)
+    @Inject(DialInRelay)
     private readonly relay: Pick<
-      LocalDeviceRelay,
+      DialInRelay,
       "call" | "callV3" | "holderLive" | "connection" | "stagedTransport"
     >,
-    @Inject(MachinesService) private readonly machines: Pick<MachinesService, "activeFor">,
+    @Inject(DialInMachines) private readonly machines: Pick<DialInMachines, "activeFor">,
     @Inject(OutboxService) private readonly outbox: Pick<OutboxService, "add">,
     @Inject(KernelConfigService) private readonly config: Pick<KernelConfigService, "get">,
     @Inject(KERNEL_LOGGER) private readonly log: Pick<KernelLogger, "warn">,

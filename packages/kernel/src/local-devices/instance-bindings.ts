@@ -7,6 +7,7 @@ import {
 } from "@capybara-hq/plugin-sdk/device-protocol";
 import { Inject, Injectable } from "@nestjs/common";
 import { sql } from "kysely";
+import { DialInRelay } from "../dial-in/relay.js";
 import { KernelDb } from "../infra/database/kernel-db.js";
 import { runOutsideTransaction, TransactionHost } from "../infra/database/transaction-host.js";
 import { Transactional } from "../infra/database/transactional.decorator.js";
@@ -20,7 +21,6 @@ import {
 import { LOCAL_PROVIDER, type SandboxInstanceBinder } from "../sandbox/providers.js";
 import { OP_DEADLINE_MS } from "./local-device-provider.js";
 import { OwnerReports } from "./owner-reports.js";
-import { LocalDeviceRelay } from "./relay.js";
 
 /** The committed binding of a local instance generation, as the coordinator sends it. */
 export interface CommittedBinding {
@@ -52,8 +52,8 @@ export class LocalInstanceBindings implements SandboxInstanceBinder {
   constructor(
     @Inject(KernelDb) private readonly db: KernelDb,
     @Inject(TransactionHost) readonly txHost: TransactionHost,
-    @Inject(LocalDeviceRelay)
-    private readonly relay: Pick<LocalDeviceRelay, "callV3" | "connection">,
+    @Inject(DialInRelay)
+    private readonly relay: Pick<DialInRelay, "callV3" | "connection">,
     @Inject(PermissionCeilingWrites) private readonly ceilings: PermissionCeilingWrites,
     @Inject(PermissionRuntimeReports) private readonly reports: PermissionRuntimeReports,
     @Inject(OwnerReports) private readonly owners: Pick<OwnerReports, "recordLocked">,

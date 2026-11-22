@@ -16,8 +16,8 @@ import type { ConversationEvent } from "../../src/conversations/events.js";
 import { type KernelSchemaDb, kernelDb } from "../../src/db/kernel-schema.js";
 import { createDb } from "../../src/db/pool.js";
 import { DevicesService } from "../../src/devices/devices.service.js";
+import { DialInMachines } from "../../src/dial-in/machines.js";
 import { TransactionHost } from "../../src/infra/database/transaction-host.js";
-import { MachinesService } from "../../src/local-devices/machines.js";
 import {
   PERMISSION_AUTO_GRANT_HOOKS,
   type PermissionAutoGrantHooks,
@@ -230,7 +230,7 @@ async function localDevice(
     const { id } = await kA.app
       .get(DevicesService)
       .createLocal(s.orgId, ownerId, `Laptop ${randomUUID().slice(0, 6)}`);
-    const issued = await kA.app.get(MachinesService).issue({
+    const issued = await kA.app.get(DialInMachines).issue({
       orgId: s.orgId,
       deviceId: id,
       accountId: ownerId,

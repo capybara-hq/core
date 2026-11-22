@@ -11,12 +11,12 @@ import type { KernelSchemaDb } from "../../src/db/kernel-schema.js";
 import { createDb } from "../../src/db/pool.js";
 import { ConversationDevices } from "../../src/devices/conversation-devices.js";
 import { DevicesService } from "../../src/devices/devices.service.js";
+import { deviceLeaseKey } from "../../src/dial-in/keys.js";
+import { DialInMachines } from "../../src/dial-in/machines.js";
+import { HOLDER_POLL_MS } from "../../src/dial-in/relay.js";
 import { ApiError } from "../../src/errors.js";
 import { KernelConfigService } from "../../src/infra/config/kernel-config.service.js";
 import { TransactionHost } from "../../src/infra/database/transaction-host.js";
-import { deviceLeaseKey } from "../../src/local-devices/keys.js";
-import { MachinesService } from "../../src/local-devices/machines.js";
-import { HOLDER_POLL_MS } from "../../src/local-devices/relay.js";
 import { RunExecution } from "../../src/runtime/run-execution.js";
 import {
   MANAGED_DEVICE_CONTEXT_STALE_TEXT,
@@ -74,7 +74,7 @@ let raw: ReturnType<typeof createDb>;
 let db: KernelSchemaDb;
 let redis: Redis;
 let k: TestKernel;
-let machines: MachinesService;
+let machines: DialInMachines;
 let devices: DevicesService;
 let txHost: TransactionHost;
 let ownerId: string;
@@ -97,7 +97,7 @@ beforeAll(async () => {
       },
     ),
   );
-  machines = k.app.get(MachinesService);
+  machines = k.app.get(DialInMachines);
   devices = k.app.get(DevicesService);
   txHost = k.app.get(TransactionHost);
   ownerId = (await accountsFor(db).createLocal({ login: "owner", password: PW, displayName: "O" }))

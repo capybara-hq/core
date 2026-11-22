@@ -12,24 +12,24 @@ import { Redis } from "ioredis";
 import { afterAll, afterEach, beforeAll, expect, it, vi } from "vitest";
 import WebSocket, { WebSocketServer } from "ws";
 import { createBus, createBusSubscriber } from "../../src/ctx/bus.js";
-import type { KernelConfigService } from "../../src/infra/config/kernel-config.service.js";
-import type { KernelDb } from "../../src/infra/database/kernel-db.js";
-import { LockService } from "../../src/infra/lock/lock.service.js";
+import { DialInGateway } from "../../src/dial-in/gateway.js";
 import {
   deviceReqKey,
   deviceReqTopic,
   deviceResKey,
   deviceRevokedTopic,
-} from "../../src/local-devices/keys.js";
-import { LocalDeviceGateway } from "../../src/local-devices/local-device-gateway.js";
-import { LocalDeviceProvider } from "../../src/local-devices/local-device-provider.js";
+} from "../../src/dial-in/keys.js";
 import {
   connectionChangedMessage,
   DeviceRequestNotSentError,
-  LocalDeviceRelay,
+  DialInRelay,
   wasDeviceRequestNotSent,
-} from "../../src/local-devices/relay.js";
-import { DeviceTargets } from "../../src/local-devices/targets.js";
+} from "../../src/dial-in/relay.js";
+import { DeviceTargets } from "../../src/dial-in/targets.js";
+import type { KernelConfigService } from "../../src/infra/config/kernel-config.service.js";
+import type { KernelDb } from "../../src/infra/database/kernel-db.js";
+import { LockService } from "../../src/infra/lock/lock.service.js";
+import { LocalDeviceProvider } from "../../src/local-devices/local-device-provider.js";
 import { createLogger } from "../../src/log.js";
 
 /**
@@ -101,9 +101,9 @@ async function fixture() {
     recordPolicyV3: vi.fn(async () => {}),
     touch: async () => {},
   };
-  const gateway = new LocalDeviceGateway(machines, locks, bus, redis, config, log);
+  const gateway = new DialInGateway(machines, locks, bus, redis, config, log);
   const targets = new DeviceTargets({} as KernelDb, redis, locks);
-  const relay = new LocalDeviceRelay(redis, bus, locks, config, log, {
+  const relay = new DialInRelay(redis, bus, locks, config, log, {
     current: targets.current.bind(targets),
     state: async () => "active",
   });
@@ -246,7 +246,7 @@ it("B-25: records a staged hello and policy frame through the v3 writers with th
 
 it("B-1: a revocation's stop reaches the staged device as a v3 stop before the connection closes", async () => {
   const f = await fixture();
-  // what MachinesService.disconnect does after the revocation commits
+  // what DialInMachines.disconnect does after the revocation commits
   await f.relay.send(f.deviceId, "stop", { reason: "revoked" }, 30_000, "machine");
   await f.bus.publish(deviceRevokedTopic(f.deviceId), { machineId: "machine" });
   expect(await f.session.closed).toBe(4003);

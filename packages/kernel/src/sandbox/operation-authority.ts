@@ -31,7 +31,6 @@ import {
   withTransactionFencePrelude,
 } from "../infra/database/transaction-host.js";
 import { Transactional } from "../infra/database/transactional.decorator.js";
-import { NetworkGrants } from "../local-devices/network-grants.js";
 import type { DeviceSandbox } from "./device-sandbox.js";
 import { hostGrantable } from "./device-sandbox.js";
 import {
@@ -43,6 +42,7 @@ import {
   kernelReadRoute,
 } from "./kernel-read.js";
 import { coversHost, type EffectiveDevicePolicy, projectReachOf } from "./modes.js";
+import { NetworkGrants } from "./network-grants.js";
 import {
   EscalationGrantMissingError,
   isExecutionMethod,

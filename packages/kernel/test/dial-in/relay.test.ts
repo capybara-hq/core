@@ -15,24 +15,24 @@ import { startTestRedis, type TestContainer } from "@capybara-hq/testing";
 import { Redis } from "ioredis";
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import { createBus, createBusSubscriber } from "../../src/ctx/bus.js";
-import { ApiError } from "../../src/errors.js";
-import type { KernelConfigService } from "../../src/infra/config/kernel-config.service.js";
-import { LockService } from "../../src/infra/lock/lock.service.js";
 import {
   deviceLeaseKey,
   deviceReqKey,
   deviceResKey,
   deviceResTopic,
-} from "../../src/local-devices/keys.js";
+} from "../../src/dial-in/keys.js";
 import {
+  DialInRelay,
   HOLDER_POLL_MS,
   LEASE_CHECK_TIMEOUT_MS,
   LIST_TTL_MARGIN_MS,
-  LocalDeviceRelay,
-} from "../../src/local-devices/relay.js";
-import type { DeviceTargetState, DeviceTargets } from "../../src/local-devices/targets.js";
+} from "../../src/dial-in/relay.js";
+import type { DeviceTargetState, DeviceTargets } from "../../src/dial-in/targets.js";
+import { ApiError } from "../../src/errors.js";
+import type { KernelConfigService } from "../../src/infra/config/kernel-config.service.js";
+import { LockService } from "../../src/infra/lock/lock.service.js";
 import { createLogger } from "../../src/log.js";
-import { TestHolder } from "./test-holder.js";
+import { TestHolder } from "../local-devices/test-holder.js";
 
 /**
  * The caller side of the device relay (environments spec §13.4): requests go through a Redis list
@@ -44,7 +44,7 @@ let rd: TestContainer;
 let redis: Redis;
 let sub: ReturnType<typeof createBusSubscriber>;
 let bus: ExtensionContext["bus"];
-let relay: LocalDeviceRelay;
+let relay: DialInRelay;
 let graceSeconds = 5;
 /** What the stubbed PG says about each device (absent: active). */
 const states = new Map<string, DeviceTargetState>();
@@ -79,7 +79,7 @@ const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
 /** A relay over `r` (the test's connection unless given). */
 const relayOver = (r: Redis) =>
-  new LocalDeviceRelay(
+  new DialInRelay(
     r,
     bus,
     new LockService(r, log),
@@ -138,7 +138,7 @@ beforeEach(() => {
 const holder = (answer?: (req: KernelReq) => Parameters<TestHolder["respond"]>[1] | undefined) =>
   new TestHolder(redis, bus, randomUUID(), answer);
 
-describe("LocalDeviceRelay", () => {
+describe("DialInRelay", () => {
   it("offline when no holder: device.offline at once, nothing queued", async () => {
     const env = randomUUID();
     const t0 = Date.now();
@@ -366,7 +366,7 @@ describe("LocalDeviceRelay", () => {
     const env = randomUUID();
     await holdLeaseOnly(env);
     let stall = false;
-    const stalling = new LocalDeviceRelay(
+    const stalling = new DialInRelay(
       redis,
       bus,
       {

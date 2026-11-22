@@ -7,10 +7,10 @@ import type { DeviceExecGrants } from "@capybara-hq/plugin-sdk/device-protocol";
 import { Inject, Injectable } from "@nestjs/common";
 import { sql } from "kysely";
 import { KernelDb } from "../infra/database/kernel-db.js";
+import { ownerModeOf } from "../local-devices/owner-report.js";
 import { budgetRunOf } from "../runtime/subagents/limits.js";
-import { coversHost, type SandboxMode } from "../sandbox/modes.js";
 import { taskGrantsRunOf } from "../schedules/unattended.js";
-import { ownerModeOf } from "./owner-report.js";
+import { coversHost, type SandboxMode } from "./modes.js";
 
 /** The most hosts one exec's grants carry (the device protocol's limit). */
 export const MAX_GRANT_HOSTS = 100;
@@ -243,7 +243,7 @@ export class NetworkGrants {
   }
 }
 
-const normalize = (host: string): string => {
+export const normalizeHost = (host: string): string => {
   const h = host.toLowerCase();
   return h.endsWith(".") ? h.slice(0, -1) : h;
 };
@@ -251,28 +251,8 @@ const normalize = (host: string): string => {
 /** Whether the org's sandbox-mode network lets a command reach `host`. */
 export function orgAllows(host: string, limits: Pick<SandboxLimits, "network">): boolean {
   if (limits.network.kind === "open-public") return true;
-  const h = normalize(host);
+  const h = normalizeHost(host);
   return limits.network.hosts.some((p) => coversHost(p.toLowerCase(), h));
-}
-
-/**
- * The kernel's own layer for a device's report (auto mode spec §4.2): it trusts the device's word
- * that a host was refused, never its word that the org allows it. A host the device calls `device`
- * that the org's sandbox network (`limits`, read for this exec) does not allow becomes `org`; one
- * that is no valid host name becomes `address`. Other layers are kept.
- */
-export function relayer(
-  blocked: NetworkBlockedHost[],
-  limits: Pick<SandboxLimits, "network">,
-): NetworkBlockedHost[] {
-  return blocked.map((b) => {
-    if (b.layer !== "device") return b;
-    const h = normalize(b.host);
-    if (validateAllowHost(h).length > 0 || h.startsWith("*.")) {
-      return { ...b, layer: "address" };
-    }
-    return orgAllows(b.host, limits) ? b : { ...b, layer: "org" };
-  });
 }
 
 /**

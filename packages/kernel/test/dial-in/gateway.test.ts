@@ -8,19 +8,19 @@ import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import type { KernelSchemaDb } from "../../src/db/kernel-schema.js";
 import { createDb } from "../../src/db/pool.js";
 import { DevicesService } from "../../src/devices/devices.service.js";
-import { TransactionHost } from "../../src/infra/database/transaction-host.js";
+import { DialInGateway } from "../../src/dial-in/gateway.js";
 import {
   deviceLeaseKey,
   deviceResKey,
   deviceResTopic,
   deviceRevokedTopic,
   deviceTakenKey,
-} from "../../src/local-devices/keys.js";
-import { LocalDeviceGateway } from "../../src/local-devices/local-device-gateway.js";
-import { MachinesService } from "../../src/local-devices/machines.js";
-import { NetworkGrants } from "../../src/local-devices/network-grants.js";
-import { LocalDeviceRelay } from "../../src/local-devices/relay.js";
+} from "../../src/dial-in/keys.js";
+import { DialInMachines } from "../../src/dial-in/machines.js";
+import { DialInRelay } from "../../src/dial-in/relay.js";
+import { TransactionHost } from "../../src/infra/database/transaction-host.js";
 import { LegacyRetirementStore } from "../../src/sandbox/legacy-retirement.js";
+import { NetworkGrants } from "../../src/sandbox/network-grants.js";
 import { DeviceProgramRestartedError } from "../../src/sandbox/request-not-sent.js";
 import { SandboxService } from "../../src/sandbox/sandbox.service.js";
 import { legacyDbFor } from "../helpers/conversations.js";
@@ -44,7 +44,7 @@ import {
   HELLO,
   ownerReportFor,
   refusal,
-} from "./fake-machine-v3.js";
+} from "../local-devices/fake-machine-v3.js";
 
 /**
  * The gateway holds the WebSocket connections of connected machines (environments spec §13.4):
@@ -87,9 +87,9 @@ let raw: ReturnType<typeof createDb>;
 let db: KernelSchemaDb;
 let redis: Redis;
 let k: TestKernel;
-let machines: MachinesService;
+let machines: DialInMachines;
 let devices: DevicesService;
-let relay: LocalDeviceRelay;
+let relay: DialInRelay;
 let txHost: TransactionHost;
 let ownerId: string;
 let orgId: string;
@@ -111,9 +111,9 @@ beforeAll(async () => {
       },
     ),
   );
-  machines = k.app.get(MachinesService);
+  machines = k.app.get(DialInMachines);
   devices = k.app.get(DevicesService);
-  relay = k.app.get(LocalDeviceRelay);
+  relay = k.app.get(DialInRelay);
   txHost = k.app.get(TransactionHost);
   ownerId = (await accountsFor(db).createLocal({ login: "owner", password: PW, displayName: "O" }))
     .id;
@@ -850,7 +850,7 @@ describe("GET /device/connect", () => {
   });
 
   it("a machine that misses two pongs is terminated", async () => {
-    const gw = k.app.get(LocalDeviceGateway);
+    const gw = k.app.get(DialInGateway);
     gw.pingIntervalMs = 200;
     try {
       const m = await connected();

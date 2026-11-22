@@ -19,10 +19,10 @@ import { SandboxService } from "../../src/sandbox/sandbox.service.js";
 import { inSandboxOperations } from "../../src/tools/builtins/sandbox/common.js";
 import { ToolPipeline, type ToolStepContext } from "../../src/tools/pipeline.js";
 import { type ResolvedTool, specHash, ToolRegistry } from "../../src/tools/registry.js";
-import { seedInstalledEvidence } from "../helpers/installed-evidence.js";
-import type { TestKernel } from "../helpers/runs.js";
-import { seedConversation } from "../helpers/tool-fixtures.js";
+import { seedInstalledEvidence } from "./installed-evidence.js";
 import { storedOwnerReport } from "./owner-report.js";
+import type { TestKernel } from "./runs.js";
+import { seedConversation } from "./tool-fixtures.js";
 
 export async function permissionFixture(
   k: TestKernel,

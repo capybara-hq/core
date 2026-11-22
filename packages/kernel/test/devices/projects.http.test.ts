@@ -21,12 +21,12 @@ import {
   MAX_DEVICE_PROJECTS,
 } from "../../src/devices/device-projects.service.js";
 import { DevicesService } from "../../src/devices/devices.service.js";
+import { deviceLeaseKey } from "../../src/dial-in/keys.js";
+import { DialInMachines } from "../../src/dial-in/machines.js";
 import { ApiError } from "../../src/errors.js";
 import { KernelConfigService } from "../../src/infra/config/kernel-config.service.js";
 import { KernelDb } from "../../src/infra/database/kernel-db.js";
 import { TransactionHost } from "../../src/infra/database/transaction-host.js";
-import { deviceLeaseKey } from "../../src/local-devices/keys.js";
-import { MachinesService } from "../../src/local-devices/machines.js";
 import { SandboxOperationAuthority } from "../../src/sandbox/operation-authority.js";
 import { PermissionCeilingWrites } from "../../src/sandbox/permission-ceiling-writes.js";
 import { PermissionFacts } from "../../src/sandbox/permission-facts.js";
@@ -90,7 +90,7 @@ let db: KernelSchemaDb;
 let redis: Redis;
 let k: TestKernel;
 let sandboxRoot: string;
-let machines: MachinesService;
+let machines: DialInMachines;
 let devices: DevicesService;
 let projects: DeviceProjectsService;
 let txHost: TransactionHost;
@@ -117,7 +117,7 @@ beforeAll(async () => {
       },
     ),
   );
-  machines = k.app.get(MachinesService);
+  machines = k.app.get(DialInMachines);
   devices = k.app.get(DevicesService);
   projects = k.app.get(DeviceProjectsService);
   txHost = k.app.get(TransactionHost);

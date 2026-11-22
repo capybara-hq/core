@@ -21,6 +21,18 @@ import { TransactionHost } from "../infra/database/transaction-host.js";
 import { Transactional } from "../infra/database/transactional.decorator.js";
 import { OutboxService } from "../infra/outbox/outbox.service.js";
 import { KERNEL_BUS, KERNEL_LOGGER } from "../infra/tokens.js";
+import { OwnerReports } from "../local-devices/owner-reports.js";
+import { DEVICE_OP_RESOLVE_JOB, deviceOpReportedJobId } from "../local-devices/policy-op-jobs.js";
+import {
+  deviceFeaturesOf,
+  localPolicyDiff,
+  localPolicyOf,
+  opExplains,
+  opVisibleIn,
+  ownerPolicyRevokes,
+  pendingPolicyOpsOf,
+  type ReportedPolicyOp,
+} from "../local-devices/policy-summary.js";
 import type { KernelLogger } from "../log.js";
 import { MAINTENANCE_QUEUE_NAME } from "../runtime/maintenance-queue.js";
 import { LegacyRetirementStore } from "../sandbox/legacy-retirement.js";
@@ -33,19 +45,7 @@ import {
 import { LOCAL_PROVIDER } from "../sandbox/providers.js";
 import { deviceNotFound } from "../sandbox/sandbox.service.js";
 import { deviceRevokedTopic } from "./keys.js";
-import { OwnerReports } from "./owner-reports.js";
-import { DEVICE_OP_RESOLVE_JOB, deviceOpReportedJobId } from "./policy-op-jobs.js";
-import {
-  deviceFeaturesOf,
-  localPolicyDiff,
-  localPolicyOf,
-  opExplains,
-  opVisibleIn,
-  ownerPolicyRevokes,
-  pendingPolicyOpsOf,
-  type ReportedPolicyOp,
-} from "./policy-summary.js";
-import { LocalDeviceRelay } from "./relay.js";
+import { DialInRelay } from "./relay.js";
 
 /** The machine credential's prefix (`cap_dev_` plus 32 random bytes, base64url). */
 export const MACHINE_CREDENTIAL_PREFIX = "cap_dev_";
@@ -101,11 +101,11 @@ const canonicalRoots = (roots: unknown): string => {
 };
 
 @Injectable()
-export class MachinesService {
+export class DialInMachines {
   constructor(
     @Inject(KernelDb) private readonly db: KernelDb,
     @Inject(TransactionHost) readonly txHost: TransactionHost,
-    @Inject(LocalDeviceRelay) private readonly relay: Pick<LocalDeviceRelay, "holderLive" | "send">,
+    @Inject(DialInRelay) private readonly relay: Pick<DialInRelay, "holderLive" | "send">,
     @Inject(KERNEL_BUS) private readonly bus: ExtensionContext["bus"],
     @Inject(OutboxService) private readonly outbox: Pick<OutboxService, "add">,
     @Inject(KERNEL_LOGGER) private readonly log: Pick<KernelLogger, "warn">,

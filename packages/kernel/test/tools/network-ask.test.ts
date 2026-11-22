@@ -25,9 +25,9 @@ import type { ConversationEvent } from "../../src/conversations/events.js";
 import type { KernelSchemaDb } from "../../src/db/kernel-schema.js";
 import { createDb } from "../../src/db/pool.js";
 import { DevicesService } from "../../src/devices/devices.service.js";
+import { deviceLeaseKey } from "../../src/dial-in/keys.js";
+import { DialInMachines } from "../../src/dial-in/machines.js";
 import { TransactionHost } from "../../src/infra/database/transaction-host.js";
-import { deviceLeaseKey } from "../../src/local-devices/keys.js";
-import { MachinesService } from "../../src/local-devices/machines.js";
 import { assistantIdemKey } from "../../src/runtime/model-call.js";
 import { RunExecution } from "../../src/runtime/run-execution.js";
 import { Waits } from "../../src/runtime/waits.js";
@@ -219,7 +219,7 @@ async function setup(over: Partial<Device> = {}, tools = ["Bash"]): Promise<Setu
   const req = await session(k, login);
   const device = await k.app.get(TransactionHost).run(async () => {
     const { id: deviceId } = await k.app.get(DevicesService).createLocal(orgId, accountId, "Box");
-    const issued = await k.app.get(MachinesService).issue({
+    const issued = await k.app.get(DialInMachines).issue({
       orgId,
       deviceId,
       accountId,

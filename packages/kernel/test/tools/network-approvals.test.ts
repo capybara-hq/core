@@ -10,13 +10,13 @@ import type { KernelSchemaDb } from "../../src/db/kernel-schema.js";
 import { createDb } from "../../src/db/pool.js";
 import { DeviceProjectsService } from "../../src/devices/device-projects.service.js";
 import { DevicesService } from "../../src/devices/devices.service.js";
+import { deviceLeaseKey } from "../../src/dial-in/keys.js";
+import { DialInMachines } from "../../src/dial-in/machines.js";
 import { TransactionHost } from "../../src/infra/database/transaction-host.js";
-import { deviceLeaseKey } from "../../src/local-devices/keys.js";
-import { MachinesService } from "../../src/local-devices/machines.js";
-import { NetworkGrants } from "../../src/local-devices/network-grants.js";
 import { assistantIdemKey } from "../../src/runtime/model-call.js";
 import { RunExecution, withExclusiveAdmission } from "../../src/runtime/run-execution.js";
 import { Waits } from "../../src/runtime/waits.js";
+import { NetworkGrants } from "../../src/sandbox/network-grants.js";
 import {
   type ApprovalRecord,
   ApprovalsService,
@@ -122,7 +122,7 @@ beforeEach(async () => {
   const req = await session(k, login);
   const device = await k.app.get(TransactionHost).run(async () => {
     const { id: deviceId } = await k.app.get(DevicesService).createLocal(orgId, accountId, "Box");
-    const issued = await k.app.get(MachinesService).issue({
+    const issued = await k.app.get(DialInMachines).issue({
       orgId,
       deviceId,
       accountId,

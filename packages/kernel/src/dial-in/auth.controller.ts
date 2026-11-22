@@ -13,10 +13,10 @@ import { Throttled } from "../infra/throttler/throttler.guard.js";
 import { ZBody, ZParam } from "../infra/validation/zod-params.js";
 import {
   type DeviceAuthorization,
-  DeviceAuthService,
   type DeviceGrant,
   type DeviceMachineInfo,
-} from "./device-auth.js";
+  DialInAuthService,
+} from "./auth.service.js";
 import {
   type DeviceAuthorizeBody,
   DeviceAuthorizeBodyDto,
@@ -53,9 +53,9 @@ const CODE_THROTTLER = ["device-code-account"] as const;
  * - `POST /deny { userCode }` → 204.
  */
 @Controller("api/v1/device")
-export class DeviceAuthController {
+export class DialInAuthController {
   constructor(
-    @Inject(DeviceAuthService) private readonly auth: DeviceAuthService,
+    @Inject(DialInAuthService) private readonly auth: DialInAuthService,
     @Inject(CredentialThrottler) private readonly throttler: CredentialThrottler,
   ) {}
 

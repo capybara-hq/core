@@ -1,7 +1,7 @@
 import { createHash } from "node:crypto";
 import { FileSystemGoneError, SandboxGoneError, ToolError } from "@capybara-hq/plugin-sdk";
 import { describe, expect, it } from "vitest";
-import { POLICY_REFUSAL_PREFIX } from "../../src/local-devices/relay.js";
+import { POLICY_REFUSAL_PREFIX } from "../../src/dial-in/relay.js";
 import {
   AGENTS_MD_MAX_BYTES,
   AGENTS_MD_TRUNCATED_MARKER,

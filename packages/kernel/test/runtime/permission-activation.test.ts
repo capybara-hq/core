@@ -22,9 +22,9 @@ import {
 import { type KernelSchemaDb, kernelDb } from "../../src/db/kernel-schema.js";
 import { createDb } from "../../src/db/pool.js";
 import { DevicesService } from "../../src/devices/devices.service.js";
+import { DialInMachines } from "../../src/dial-in/machines.js";
+import { DeviceTargets } from "../../src/dial-in/targets.js";
 import { TransactionHost } from "../../src/infra/database/transaction-host.js";
-import { MachinesService } from "../../src/local-devices/machines.js";
-import { DeviceTargets } from "../../src/local-devices/targets.js";
 import { RunSteps } from "../../src/runtime/run-steps.js";
 import { PERMISSION_CONTEXT_ACTIVE } from "../../src/sandbox/permission-context-types.js";
 import { onlyBuiltins } from "../helpers/disabled-tools.js";
@@ -256,7 +256,7 @@ describe("every path records a v2 permission context and replies", () => {
     const m = await member("local-member");
     const { deviceId, credential } = await k.app.get(TransactionHost).run(async () => {
       const { id } = await k.app.get(DevicesService).createLocal(orgId, m.id, "Box");
-      const issued = await k.app.get(MachinesService).issue({
+      const issued = await k.app.get(DialInMachines).issue({
         orgId,
         deviceId: id,
         accountId: m.id,

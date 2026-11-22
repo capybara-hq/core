@@ -13,6 +13,8 @@ import type {
 import { Inject, Injectable } from "@nestjs/common";
 import { type Selectable, sql } from "kysely";
 import type { SandboxOperationIntentsTable } from "../db/kernel-schema.js";
+import { deviceLeaseKey } from "../dial-in/keys.js";
+import { DialInMachines } from "../dial-in/machines.js";
 import { ApiError } from "../errors.js";
 import { ExtensionDisplayNames } from "../extensions/display-name.js";
 import { avatarColumns, type PersonRef, personAvatarUrl } from "../identity/account-avatar.js";
@@ -28,8 +30,6 @@ import { Transactional } from "../infra/database/transactional.decorator.js";
 import { LockService } from "../infra/lock/lock.service.js";
 import { OutboxService } from "../infra/outbox/outbox.service.js";
 import { DevicePolicyService } from "../local-devices/device-policy.service.js";
-import { deviceLeaseKey } from "../local-devices/keys.js";
-import { MachinesService } from "../local-devices/machines.js";
 import { type OwnerFacts, ownerFactsOf } from "../local-devices/owner-report.js";
 import { deviceFeaturesOf, localPolicyOf } from "../local-devices/policy-summary.js";
 import type { DeviceModeLevel } from "../runtime/context/device-paths.js";
@@ -344,8 +344,8 @@ export class DevicesService {
     @Inject(DeviceAccess) private readonly access: Pick<DeviceAccess, "usable">,
     /** Reads the device relay's lease (`online`). */
     @Inject(LockService) private readonly locks: Pick<LockService, "holderOf">,
-    @Inject(MachinesService)
-    private readonly machines: Pick<MachinesService, "revoke" | "revokeActive">,
+    @Inject(DialInMachines)
+    private readonly machines: Pick<DialInMachines, "revoke" | "revokeActive">,
     @Inject(DevicePolicyService)
     private readonly policies: Pick<DevicePolicyService, "apply" | "summary">,
     @Inject(PermissionCeilingWrites) private readonly ceilings: PermissionCeilingWrites,
@@ -991,7 +991,7 @@ export class DevicesService {
 
   /**
    * Disconnects the machine of one of the person's own local devices (it must sign in
-   * again); see {@link MachinesService.revoke}.
+   * again); see {@link DialInMachines.revoke}.
    */
   async revokeMachine(
     orgId: string,

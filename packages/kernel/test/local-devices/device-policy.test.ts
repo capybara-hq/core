@@ -16,16 +16,16 @@ import WebSocket, { WebSocketServer } from "ws";
 import type { KernelSchemaDb } from "../../src/db/kernel-schema.js";
 import { createDb } from "../../src/db/pool.js";
 import { DevicesService } from "../../src/devices/devices.service.js";
+import { DialInGateway } from "../../src/dial-in/gateway.js";
+import { deviceLeaseKey } from "../../src/dial-in/keys.js";
+import { DialInMachines } from "../../src/dial-in/machines.js";
+import { DialInRelay } from "../../src/dial-in/relay.js";
 import { ApiError } from "../../src/errors.js";
 import { TransactionHost } from "../../src/infra/database/transaction-host.js";
 import { DevicePolicyService } from "../../src/local-devices/device-policy.service.js";
 import { LocalInstanceBindings } from "../../src/local-devices/instance-bindings.js";
-import { deviceLeaseKey } from "../../src/local-devices/keys.js";
-import { LocalDeviceGateway } from "../../src/local-devices/local-device-gateway.js";
 import { LocalDeviceProvider } from "../../src/local-devices/local-device-provider.js";
 import { localProviderEntry } from "../../src/local-devices/local-devices.module.js";
-import { MachinesService } from "../../src/local-devices/machines.js";
-import { LocalDeviceRelay } from "../../src/local-devices/relay.js";
 import { DeviceProviders, LOCAL_PROVIDER } from "../../src/sandbox/providers.js";
 import { legacyDbFor } from "../helpers/conversations.js";
 import { accountsFor } from "../helpers/identity.js";
@@ -60,7 +60,7 @@ let raw: ReturnType<typeof createDb>;
 let db: KernelSchemaDb;
 let redis: Redis;
 let k: TestKernel;
-let machines: MachinesService;
+let machines: DialInMachines;
 let devices: DevicesService;
 let policies: DevicePolicyService;
 let txHost: TransactionHost;
@@ -83,7 +83,7 @@ beforeAll(async () => {
       },
     ),
   );
-  machines = k.app.get(MachinesService);
+  machines = k.app.get(DialInMachines);
   devices = k.app.get(DevicesService);
   policies = k.app.get(DevicePolicyService);
   txHost = k.app.get(TransactionHost);
@@ -541,7 +541,7 @@ async function stagedMachine(
   const address = server.address();
   if (typeof address === "string" || !address) throw Error("no address");
   server.on("connection", (socket) => {
-    void k.app.get(LocalDeviceGateway).accept(socket, d.credential);
+    void k.app.get(DialInGateway).accept(socket, d.credential);
   });
   stagedCleanups.push(async () => {
     for (const c of server.clients) c.terminate();
@@ -783,7 +783,7 @@ describe("staged (protocol 4) machines", () => {
   it("registration: the active @local entry is the protocol 3 provider with the instance binder", () => {
     const deps = {
       provider: k.app.get(LocalDeviceProvider),
-      relay: k.app.get(LocalDeviceRelay),
+      relay: k.app.get(DialInRelay),
       bindings: k.app.get(LocalInstanceBindings),
     };
     const staged = localProviderEntry(deps);

@@ -10,8 +10,8 @@ import type { ConversationEvent } from "../../src/conversations/events.js";
 import { type KernelSchemaDb, kernelDb } from "../../src/db/kernel-schema.js";
 import { createDb } from "../../src/db/pool.js";
 import { DevicesService } from "../../src/devices/devices.service.js";
+import { DialInMachines } from "../../src/dial-in/machines.js";
 import { TransactionHost } from "../../src/infra/database/transaction-host.js";
-import { MachinesService } from "../../src/local-devices/machines.js";
 import { admissionUnavailableText } from "../../src/tools/builtins/sandbox/common.js";
 import {
   readFakeSandboxOps,
@@ -555,7 +555,7 @@ describe("a local device's project outside its fixed workspace", () => {
   ): Promise<{ deviceId: string; machine: FakeMachineV3; conv: string; credential: string }> {
     const { deviceId, credential } = await kA.app.get(TransactionHost).run(async () => {
       const { id } = await kA.app.get(DevicesService).createLocal(orgId, ownerId, label);
-      const issued = await kA.app.get(MachinesService).issue({
+      const issued = await kA.app.get(DialInMachines).issue({
         orgId,
         deviceId: id,
         accountId: ownerId,

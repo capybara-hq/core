@@ -8,6 +8,9 @@ import { WebSocketServer } from "ws";
 import { KernelConfigSchema } from "../../src/config/schema.js";
 import { kernelDb } from "../../src/db/kernel-schema.js";
 import { createDb } from "../../src/db/pool.js";
+import { DialInGateway } from "../../src/dial-in/gateway.js";
+import { DialInMachines } from "../../src/dial-in/machines.js";
+import { DialInRelay } from "../../src/dial-in/relay.js";
 import { KernelConfigService } from "../../src/infra/config/kernel-config.service.js";
 import { TransactionHost } from "../../src/infra/database/transaction-host.js";
 import { LockService } from "../../src/infra/lock/lock.service.js";
@@ -16,9 +19,6 @@ import {
   InstanceBindingError,
   LocalInstanceBindings,
 } from "../../src/local-devices/instance-bindings.js";
-import { LocalDeviceGateway } from "../../src/local-devices/local-device-gateway.js";
-import { MachinesService } from "../../src/local-devices/machines.js";
-import { LocalDeviceRelay } from "../../src/local-devices/relay.js";
 import { createLogger } from "../../src/log.js";
 import { PermissionCeilingWrites } from "../../src/sandbox/permission-ceiling-writes.js";
 import {
@@ -193,7 +193,7 @@ async function localDevice() {
 
 /** The relay answers bindInstance as an authenticated device that verified `identity`. */
 function deviceAnswers(identity?: (generation: string) => ReturnType<typeof identityFor>) {
-  const relay = k.app.get(LocalDeviceRelay);
+  const relay = k.app.get(DialInRelay);
   const sent: Record<string, unknown>[] = [];
   vi.spyOn(relay, "connection").mockResolvedValue({ connectionId: "c1", maxFrameBytes: 69632 });
   vi.spyOn(relay, "callV3").mockImplementation(async (_d, op, args) => {
@@ -296,7 +296,7 @@ it("an awaiting binding attests nothing; only the post-commit bind installs the 
   });
   expect((await f.report()).state).toBe("unprobed");
   // a bound hello cannot finish an awaiting installation either
-  await k.app.get(MachinesService).recordHelloV3(f.machineId, stagedHello(identityFor(g)));
+  await k.app.get(DialInMachines).recordHelloV3(f.machineId, stagedHello(identityFor(g)));
   expect((await f.report()).state).toBe("unprobed");
 
   const sent = deviceAnswers();
@@ -418,7 +418,7 @@ it("bound hellos re-report only the installed identity; a lost or changed one re
   const g = await f.create();
   deviceAnswers();
   await k.app.get(LocalInstanceBindings).bind(f.deviceId, AbortSignal.timeout(5000));
-  const machines = k.app.get(MachinesService);
+  const machines = k.app.get(DialInMachines);
   const base = await f.fullRevision();
   // reconnect / restart / machine rename under the same authority: consent and report kept
   await f.db
@@ -499,7 +499,7 @@ it("an unbound hello recorded after its own connection installed the generation 
   // the bind answer arrives on connection c1 before that connection's own hello is recorded
   deviceAnswers();
   await k.app.get(LocalInstanceBindings).bind(f.deviceId, AbortSignal.timeout(5000));
-  const machines = k.app.get(MachinesService);
+  const machines = k.app.get(DialInMachines);
   const base = await f.fullRevision();
   await machines.recordHelloV3(f.machineId, unboundHello(), "c1");
   expect(await instanceRow(f)).toMatchObject({ status: "running" });
@@ -546,7 +546,7 @@ it("replacing an unattested generation revokes its admitted and background work"
     return operationId;
   };
   const ids = [await intent("admitted"), await intent("background-running")];
-  await k.app.get(MachinesService).recordHelloV3(f.machineId, unboundHello(), "c2");
+  await k.app.get(DialInMachines).recordHelloV3(f.machineId, unboundHello(), "c2");
   const rows = await f.db
     .selectFrom("sandbox_operation_intents")
     .select(["operation_id", "state"])
@@ -568,7 +568,7 @@ it("two concurrent unbound hellos replace the instance once", async () => {
   await f.create();
   deviceAnswers();
   await k.app.get(LocalInstanceBindings).bind(f.deviceId, AbortSignal.timeout(5000));
-  const machines = k.app.get(MachinesService);
+  const machines = k.app.get(DialInMachines);
   const base = await f.fullRevision();
   const fence = (await instanceRow(f)).generation;
   await Promise.all([
@@ -609,7 +609,7 @@ it("a hello from another machine of the device never replaces the installed gene
     })
     .returning("id")
     .executeTakeFirstOrThrow();
-  await k.app.get(MachinesService).recordHelloV3(other.id, unboundHello(), "c2");
+  await k.app.get(DialInMachines).recordHelloV3(other.id, unboundHello(), "c2");
   // the binding names the machine it was installed for: the new machine's hello leaves it
   expect(await instanceRow(f)).toEqual(before);
 });
@@ -726,7 +726,7 @@ async function realDevice(deviceId: string, credential: string, stateDir?: strin
 
 /** The relay delivers bindInstance to `device`; `lose` drops the answer after the device acted. */
 function relayTo(device: { binder: { bind: (r: never, s: AbortSignal) => Promise<unknown> } }) {
-  const relay = k.app.get(LocalDeviceRelay);
+  const relay = k.app.get(DialInRelay);
   const state = { lose: false };
   vi.spyOn(relay, "connection").mockResolvedValue({ connectionId: "c1", maxFrameBytes: 69632 });
   vi.spyOn(relay, "callV3").mockImplementation(async (_d, op, args, opts) => {
@@ -799,7 +799,7 @@ it("two devices sharing a state directory each bind their own chain (cross-side)
   const bindings = k.app.get(LocalInstanceBindings);
   const ga = await a.create();
   const gb = await b.create();
-  const relay = k.app.get(LocalDeviceRelay);
+  const relay = k.app.get(DialInRelay);
   vi.spyOn(relay, "connection").mockResolvedValue({ connectionId: "c1", maxFrameBytes: 69632 });
   vi.spyOn(relay, "callV3").mockImplementation(async (deviceId, _op, args, opts) =>
     (deviceId === a.deviceId ? first : second).binder.bind(args as never, opts.signal),
@@ -932,7 +932,7 @@ it("an environment change across an unconfirmed generation resets Full consent",
   // G2 committed, its answer lost: it stays awaiting
   const g2 = await f.create();
   vi.restoreAllMocks();
-  const relay = k.app.get(LocalDeviceRelay);
+  const relay = k.app.get(DialInRelay);
   vi.spyOn(relay, "connection").mockResolvedValue({ connectionId: "c1", maxFrameBytes: 69632 });
   vi.spyOn(relay, "callV3").mockRejectedValue(new Error("device.offline: answer lost"));
   await expect(bindings.bind(f.deviceId, AbortSignal.timeout(5000))).rejects.toThrow("lost");
@@ -955,7 +955,7 @@ it("the same environment across an unconfirmed generation keeps Full consent", a
   const base = await f.fullRevision();
   await f.create();
   vi.restoreAllMocks();
-  const relay = k.app.get(LocalDeviceRelay);
+  const relay = k.app.get(DialInRelay);
   vi.spyOn(relay, "connection").mockResolvedValue({ connectionId: "c1", maxFrameBytes: 69632 });
   vi.spyOn(relay, "callV3").mockRejectedValue(new Error("device.offline: answer lost"));
   await expect(bindings.bind(f.deviceId, AbortSignal.timeout(5000))).rejects.toThrow("lost");
@@ -1014,7 +1014,7 @@ it("binds through the real relay and the gateway with a staged fake machine answ
   const g = await f.create();
   // the real gateway's staged accept for this device; the machine table is a stub
   const credential = randomUUID();
-  const gateway = new LocalDeviceGateway(
+  const gateway = new DialInGateway(
     {
       authenticate: async (c: string) =>
         c === credential
@@ -1041,7 +1041,7 @@ it("binds through the real relay and the gateway with a staged fake machine answ
   const machine = new FakeMachineV3(`ws://127.0.0.1:${address.port}`, credential);
   try {
     await machine.ready;
-    const relay = k.app.get(LocalDeviceRelay);
+    const relay = k.app.get(DialInRelay);
     await expect.poll(() => relay.connection(f.deviceId).catch(() => null)).not.toBeNull();
     const answer = await k.app
       .get(LocalInstanceBindings)

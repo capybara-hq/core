@@ -5,16 +5,16 @@ import { afterEach, describe, expect, it } from "vitest";
 import { createBus, createBusSubscriber } from "../../src/ctx/bus.js";
 import { kernelDb } from "../../src/db/kernel-schema.js";
 import { createDb } from "../../src/db/pool.js";
+import { deviceLeaseKey } from "../../src/dial-in/keys.js";
+import { DialInRelay } from "../../src/dial-in/relay.js";
+import { DeviceTargets } from "../../src/dial-in/targets.js";
 import type { KernelConfigService } from "../../src/infra/config/kernel-config.service.js";
 import { LockService } from "../../src/infra/lock/lock.service.js";
-import { deviceLeaseKey } from "../../src/local-devices/keys.js";
-import { LocalDeviceRelay } from "../../src/local-devices/relay.js";
-import { DeviceTargets } from "../../src/local-devices/targets.js";
 import { createLogger } from "../../src/log.js";
 import { accountsFor } from "../helpers/identity.js";
 import { MODEL_FAKE } from "../helpers/model-plugins.js";
 import { PW, sleep, waitFor } from "../helpers/runs.js";
-import { FakeMachine } from "./fake-machine-v3.js";
+import { FakeMachine } from "../local-devices/fake-machine-v3.js";
 
 /**
  * Device connections across replicas (environments spec §13.4): the socket lives on a gateway
@@ -171,7 +171,7 @@ describe("device connections on gateway replicas (dual replica)", () => {
     const locks = new LockService(redis, log);
     // the holder's published transport (its connection id and capacity), read from the shared Redis
     const targets = new DeviceTargets({} as never, redis, locks);
-    const relay = new LocalDeviceRelay(
+    const relay = new DialInRelay(
       redis,
       bus,
       locks,

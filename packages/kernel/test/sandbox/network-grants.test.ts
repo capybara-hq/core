@@ -6,8 +6,9 @@ import { sql } from "kysely";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { migrate } from "../../src/db/migrator.js";
 import { createDb } from "../../src/db/pool.js";
-import { grantsWithin, NetworkGrants, relayer } from "../../src/local-devices/network-grants.js";
+import { relayer } from "../../src/local-devices/local-device-provider.js";
 import { createLogger } from "../../src/log.js";
+import { grantsWithin, NetworkGrants } from "../../src/sandbox/network-grants.js";
 import { databaseHandles } from "../helpers/database.js";
 
 /**

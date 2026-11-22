@@ -9,9 +9,9 @@ import {
 } from "@capybara-hq/plugin-sdk";
 import { DeviceProtocolError } from "@capybara-hq/plugin-sdk/device-protocol";
 import { describe, expect, it } from "vitest";
+import { DeviceRequestNotSentError } from "../../../src/dial-in/relay.js";
 import { ApiError } from "../../../src/errors.js";
 import { InstanceBindingError } from "../../../src/local-devices/instance-bindings.js";
-import { DeviceRequestNotSentError } from "../../../src/local-devices/relay.js";
 import type { PermissionAvailabilityCause } from "../../../src/sandbox/permission-availability.js";
 import { DeviceProgramRestartedError } from "../../../src/sandbox/request-not-sent.js";
 import {

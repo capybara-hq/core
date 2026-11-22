@@ -9,6 +9,8 @@ import { KernelConfigSchema } from "../../src/config/schema.js";
 import { PermissionProfilesService } from "../../src/conversations/permission-profiles.service.js";
 import { kernelDb } from "../../src/db/kernel-schema.js";
 import { createDb } from "../../src/db/pool.js";
+import { DialInMachines } from "../../src/dial-in/machines.js";
+import { DialInRelay } from "../../src/dial-in/relay.js";
 import type { Account } from "../../src/identity/accounts.js";
 import { SettingsService } from "../../src/identity/settings.js";
 import { KernelConfigService } from "../../src/infra/config/kernel-config.service.js";
@@ -18,8 +20,6 @@ import { OutboxService } from "../../src/infra/outbox/outbox.service.js";
 import { LocalInstanceBindings } from "../../src/local-devices/instance-bindings.js";
 import { LocalDeviceProvider } from "../../src/local-devices/local-device-provider.js";
 import { localProviderEntry } from "../../src/local-devices/local-devices.module.js";
-import { MachinesService } from "../../src/local-devices/machines.js";
-import { LocalDeviceRelay } from "../../src/local-devices/relay.js";
 import { createLogger } from "../../src/log.js";
 import { MAINTENANCE_QUEUE_NAME } from "../../src/runtime/maintenance-queue.js";
 import { HOLDER_REVOKE, SandboxOperationIntents } from "../../src/sandbox/operation-intents.js";
@@ -143,7 +143,7 @@ async function fullAccessFixture() {
     .select("id")
     .where("device_id", "=", f.deviceId)
     .executeTakeFirstOrThrow();
-  await k.app.get(MachinesService).recordPolicyV3(
+  await k.app.get(DialInMachines).recordPolicyV3(
     machine.id,
     {
       type: "policy",
@@ -591,7 +591,7 @@ async function localDevice() {
     })
     .execute();
   const frames: { op: string; args: Record<string, unknown> }[] = [];
-  const relay = k.app.get(LocalDeviceRelay);
+  const relay = k.app.get(DialInRelay);
   vi.spyOn(relay, "connection").mockResolvedValue({ connectionId: "c1", maxFrameBytes: 69632 });
   vi.spyOn(relay, "callV3").mockImplementation(async (_d, op, args) => {
     frames.push({ op, args });

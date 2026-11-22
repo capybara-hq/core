@@ -27,7 +27,7 @@ import {
   deviceTakeoverTopic,
   deviceTransportKey,
 } from "./keys.js";
-import { type MachineIdentity, MachinesService } from "./machines.js";
+import { DialInMachines, type MachineIdentity } from "./machines.js";
 import {
   connectionChangedMessage,
   GATEWAY_NOT_SENT,
@@ -146,7 +146,7 @@ class DeviceConnection {
   private recorded: Promise<void> = Promise.resolve();
 
   constructor(
-    private readonly gw: LocalDeviceGateway,
+    private readonly gw: DialInGateway,
     private readonly socket: WebSocket,
     readonly identity: MachineIdentity,
     private readonly credential: string,
@@ -665,7 +665,7 @@ class DeviceConnection {
  * sockets are this process's own; everything other replicas need is in Redis.
  */
 @Injectable()
-export class LocalDeviceGateway {
+export class DialInGateway {
   /** This replica's open connections (the sockets cannot live anywhere else). */
   private readonly connections = new Set<DeviceConnection>();
   private stopping = false;
@@ -673,9 +673,9 @@ export class LocalDeviceGateway {
   pingIntervalMs = PING_INTERVAL_MS;
 
   constructor(
-    @Inject(MachinesService)
+    @Inject(DialInMachines)
     readonly machines: Pick<
-      MachinesService,
+      DialInMachines,
       "authenticate" | "recordHelloV3" | "recordPolicyV3" | "touch"
     >,
     @Inject(LockService) readonly locks: Pick<LockService, "hold">,

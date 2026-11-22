@@ -9,14 +9,14 @@ import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from "vitest
 import type { KernelSchemaDb } from "../../src/db/kernel-schema.js";
 import { createDb } from "../../src/db/pool.js";
 import { DevicesService } from "../../src/devices/devices.service.js";
+import { DialInMachines } from "../../src/dial-in/machines.js";
 import { TransactionHost } from "../../src/infra/database/transaction-host.js";
-import { MachinesService } from "../../src/local-devices/machines.js";
-import { NetworkGrants } from "../../src/local-devices/network-grants.js";
 import {
   type DevicePathsPayload,
   devicePathsChange,
   devicePathsText,
 } from "../../src/runtime/context/device-paths.js";
+import { NetworkGrants } from "../../src/sandbox/network-grants.js";
 import { SandboxService } from "../../src/sandbox/sandbox.service.js";
 import { legacyDbFor } from "../helpers/conversations.js";
 import { accountsFor } from "../helpers/identity.js";
@@ -105,7 +105,7 @@ const SUMMARY = (p: Partial<DeviceLocalPolicySummary> = {}): DeviceLocalPolicySu
 async function localDevice(policy: Partial<DeviceLocalPolicySummary> = {}): Promise<string> {
   const { deviceId, machineId } = await k.app.get(TransactionHost).run(async () => {
     const { id } = await devices.createLocal(orgId, ownerId, `Box ${randomUUID().slice(0, 6)}`);
-    const issued = await k.app.get(MachinesService).issue({
+    const issued = await k.app.get(DialInMachines).issue({
       orgId,
       deviceId: id,
       accountId: ownerId,
@@ -117,7 +117,7 @@ async function localDevice(policy: Partial<DeviceLocalPolicySummary> = {}): Prom
     return { deviceId: id, machineId: issued.machineId };
   });
   await k.app
-    .get(MachinesService)
+    .get(DialInMachines)
     .recordHello(
       machineId,
       { ...HELLO, policy: SUMMARY(policy) },
@@ -130,7 +130,7 @@ async function localDevice(policy: Partial<DeviceLocalPolicySummary> = {}): Prom
 async function unreportedLocalDevice(): Promise<string> {
   const { deviceId, machineId } = await k.app.get(TransactionHost).run(async () => {
     const { id } = await devices.createLocal(orgId, ownerId, `Old ${randomUUID().slice(0, 6)}`);
-    const issued = await k.app.get(MachinesService).issue({
+    const issued = await k.app.get(DialInMachines).issue({
       orgId,
       deviceId: id,
       accountId: ownerId,
@@ -141,7 +141,7 @@ async function unreportedLocalDevice(): Promise<string> {
     });
     return { deviceId: id, machineId: issued.machineId };
   });
-  await k.app.get(MachinesService).recordHello(machineId, { ...HELLO, features: [] });
+  await k.app.get(DialInMachines).recordHello(machineId, { ...HELLO, features: [] });
   return deviceId;
 }
 
@@ -192,7 +192,7 @@ describe("DevicesService.modeLevel", () => {
 
   it("a policy the machine pushes after its hello reaches the level and the next device_paths", async () => {
     const deviceId = await localDevice();
-    const machines = k.app.get(MachinesService);
+    const machines = k.app.get(DialInMachines);
     const machineId = (await machines.activeFor(deviceId))?.id as string;
     const roots = { workspace: "/w", skills: "/s", tmp: "/t" };
     const before = await devices.modeLevel(orgId, deviceId);

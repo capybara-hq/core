@@ -1,6 +1,6 @@
 import type { NetworkBlockedHost } from "@capybara-hq/plugin-sdk";
 import { describe, expect, it } from "vitest";
-import type { NetworkRunState } from "../../src/local-devices/network-grants.js";
+import type { NetworkRunState } from "../../src/sandbox/network-grants.js";
 import {
   ESCALATION_DEVICE_OFF_WHY,
   ESCALATION_UNATTENDED_WHY,

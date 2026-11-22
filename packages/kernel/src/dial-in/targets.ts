@@ -5,8 +5,8 @@ import type { Redis } from "ioredis";
 import { KernelDb } from "../infra/database/kernel-db.js";
 import { LockService } from "../infra/lock/lock.service.js";
 import { REDIS } from "../infra/tokens.js";
+import { deviceFeaturesOf } from "../local-devices/policy-summary.js";
 import { deviceLeaseKey, deviceTransportKey } from "./keys.js";
-import { deviceFeaturesOf } from "./policy-summary.js";
 
 /**
  * Whether a local device can still be served: `active` (live and an unrevoked machine),
@@ -32,7 +32,7 @@ export const sameRoots = (a: SandboxRoots, b: SandboxRoots): boolean =>
  * Reads a local device and its machine from PG for the relay and the `@local` provider.
  * The relay asks {@link state} when a machine has no connection, so a revoked machine or a deleted
  * device fails a waiting call at once instead of after the reconnect grace (ruling R27).
- * Kept apart from `MachinesService` (which depends on the relay) so there is no dependency cycle.
+ * Kept apart from `DialInMachines` (which depends on the relay) so there is no dependency cycle.
  */
 @Injectable()
 export class DeviceTargets {

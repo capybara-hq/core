@@ -8,17 +8,17 @@ import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import { closeKernelApp, createKernelApp } from "../../src/app.js";
 import { KernelConfigSchema } from "../../src/config/schema.js";
 import { createBus, createBusSubscriber } from "../../src/ctx/bus.js";
+import { deviceReqKey } from "../../src/dial-in/keys.js";
+import { DialInRelay } from "../../src/dial-in/relay.js";
+import type { DeviceTargets } from "../../src/dial-in/targets.js";
 import { ApiError } from "../../src/errors.js";
 import type { KernelConfigService } from "../../src/infra/config/kernel-config.service.js";
 import { LockService } from "../../src/infra/lock/lock.service.js";
-import { deviceReqKey } from "../../src/local-devices/keys.js";
 import {
   FRAME_ENVELOPE_BYTES,
   LocalDeviceProvider,
   maxReadBytes,
 } from "../../src/local-devices/local-device-provider.js";
-import { LocalDeviceRelay } from "../../src/local-devices/relay.js";
-import type { DeviceTargets } from "../../src/local-devices/targets.js";
 import { createLogger } from "../../src/log.js";
 import { hostGrantCeiling } from "../../src/sandbox/device-sandbox.js";
 import {
@@ -134,7 +134,7 @@ beforeAll(async () => {
   redis = new Redis(rd.url);
   sub = createBusSubscriber(() => new Redis(rd.url));
   bus = createBus(redis, sub, "kernel");
-  const relay = new LocalDeviceRelay(
+  const relay = new DialInRelay(
     redis,
     bus,
     new LockService(redis, log),

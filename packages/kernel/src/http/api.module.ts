@@ -56,6 +56,8 @@ import { ConversationsModule } from "../conversations/conversations.module.js";
 import { PermissionProfilesController } from "../conversations/permission-profiles.controller.js";
 import { DevicesController } from "../devices/devices.controller.js";
 import { DevicesModule } from "../devices/devices.module.js";
+import { DialInAuthController } from "../dial-in/auth.controller.js";
+import { DialInAuthModule } from "../dial-in/auth.module.js";
 import { EvalsModule } from "../evals/evals.module.js";
 import { EvalRunsController } from "../evals/runs.controller.js";
 import { EvalSetsController } from "../evals/sets.controller.js";
@@ -81,8 +83,6 @@ import {
 } from "../identity/sso.controller.js";
 import { InboxModule } from "../inbox/inbox.module.js";
 import { PlatformInboxController } from "../inbox/platform-inbox.controller.js";
-import { DeviceAuthController } from "../local-devices/device-auth.controller.js";
-import { DeviceAuthModule } from "../local-devices/device-auth.module.js";
 import { ModelEnablementController } from "../models/enablement.controller.js";
 import { ModelsModule } from "../models/models.module.js";
 import { ModelPurposesController } from "../models/purposes.controller.js";
@@ -226,7 +226,7 @@ const CONTROLLERS: Type[] = [
   PlatformThemeController,
   PlatformIconController,
   PlatformIconPublicController,
-  DeviceAuthController,
+  DialInAuthController,
   ClientDeliveryController,
   OrgClientController,
   AdminClientController,
@@ -260,7 +260,7 @@ const CONTROLLERS: Type[] = [
     ConversationsModule,
     BackgroundModule,
     DevicesModule,
-    DeviceAuthModule,
+    DialInAuthModule,
     RuntimeModule,
     ChannelsModule,
     EvalsModule,

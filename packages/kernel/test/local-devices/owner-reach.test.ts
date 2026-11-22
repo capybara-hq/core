@@ -9,12 +9,12 @@ import { PermissionProfilesService } from "../../src/conversations/permission-pr
 import { createDb } from "../../src/db/pool.js";
 import { DevicesService } from "../../src/devices/devices.service.js";
 import { DevicePatchBody, DevicePolicyBody } from "../../src/devices/dto.js";
+import { DialInMachines } from "../../src/dial-in/machines.js";
+import { DialInRelay } from "../../src/dial-in/relay.js";
 import { KernelConfigService } from "../../src/infra/config/kernel-config.service.js";
 import { TransactionHost } from "../../src/infra/database/transaction-host.js";
 import { DevicePolicyService } from "../../src/local-devices/device-policy.service.js";
-import { MachinesService } from "../../src/local-devices/machines.js";
 import { OwnerReports } from "../../src/local-devices/owner-reports.js";
-import { LocalDeviceRelay } from "../../src/local-devices/relay.js";
 import { createLogger } from "../../src/log.js";
 import { OrgSettingsService } from "../../src/orgs/settings.service.js";
 import { SandboxOperationAuthority } from "../../src/sandbox/operation-authority.js";
@@ -464,7 +464,7 @@ describe("Full consent and revocation follow only actual Full changes", () => {
       roots,
       ownerCeiling: report(2, false, "os-user"),
     };
-    await k.app.get(MachinesService).recordHelloV3(f.machineId, hello, "c-reconnect");
+    await k.app.get(DialInMachines).recordHelloV3(f.machineId, hello, "c-reconnect");
     expect(await f.view()).toMatchObject({
       outsideSandbox: false,
       restrictedProjectReach: "os-user",
@@ -472,7 +472,7 @@ describe("Full consent and revocation follow only actual Full changes", () => {
     expect((await f.profileView()).profile).toBe("full-access");
     // a stale report on a reconnect blocks instead of reverting
     await k.app
-      .get(MachinesService)
+      .get(DialInMachines)
       .recordHelloV3(f.machineId, { ...hello, ownerCeiling: report(1, true, "os-user") }, "c-old");
     await expect(f.browse()).rejects.toMatchObject({ code: "device.owner_report_stale" });
   });
@@ -499,7 +499,7 @@ describe("web writes only narrow", () => {
       .set({ features: ["projects", "policyOp", "policyOpId"], owner_report: null })
       .where("id", "=", f.machineId)
       .execute();
-    const relay = k.app.get(LocalDeviceRelay);
+    const relay = k.app.get(DialInRelay);
     vi.spyOn(relay, "holderLive").mockResolvedValue(true);
     vi.spyOn(relay, "stagedTransport").mockResolvedValue({
       connectionId: "c-1",

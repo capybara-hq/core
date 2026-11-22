@@ -9,7 +9,7 @@ export const DEVICE_CONNECT_ROUTE = "/device/connect";
 /** The header carrying the program's protocol version. */
 export const DEVICE_PROTOCOL_HEADER = "x-capybara-device-protocol";
 
-/** What the route needs from the gateway (`LocalDeviceGateway`). */
+/** What the route needs from the gateway (`DialInGateway`). */
 export interface DeviceRoutesGateway {
   authenticate(credential: string): Promise<MachineIdentity | null>;
   /** Serves the upgraded socket (re-checks the credential with the socket paused). */

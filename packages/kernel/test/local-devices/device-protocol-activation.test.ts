@@ -11,11 +11,11 @@ import WebSocket from "ws";
 import type { KernelSchemaDb } from "../../src/db/kernel-schema.js";
 import { createDb } from "../../src/db/pool.js";
 import { DevicesService } from "../../src/devices/devices.service.js";
+import { DEVICE_CLOSE } from "../../src/dial-in/gateway.js";
+import { DialInMachines } from "../../src/dial-in/machines.js";
+import { DialInRelay } from "../../src/dial-in/relay.js";
+import { DeviceTargets } from "../../src/dial-in/targets.js";
 import { TransactionHost } from "../../src/infra/database/transaction-host.js";
-import { DEVICE_CLOSE } from "../../src/local-devices/local-device-gateway.js";
-import { MachinesService } from "../../src/local-devices/machines.js";
-import { LocalDeviceRelay } from "../../src/local-devices/relay.js";
-import { DeviceTargets } from "../../src/local-devices/targets.js";
 import { DeviceProviders, LOCAL_PROVIDER } from "../../src/sandbox/providers.js";
 import { legacyDbFor } from "../helpers/conversations.js";
 import { accountsFor } from "../helpers/identity.js";
@@ -92,7 +92,7 @@ async function connected() {
   await testMembers(db).add(orgId, accountId, "member", ownerId);
   return k.app.get(TransactionHost).run(async () => {
     const { id: deviceId } = await k.app.get(DevicesService).createLocal(orgId, accountId, "Box");
-    const issued = await k.app.get(MachinesService).issue({
+    const issued = await k.app.get(DialInMachines).issue({
       orgId,
       deviceId,
       accountId,
@@ -178,7 +178,7 @@ describe("the production route speaks protocol 5 only", () => {
     ws.send(JSON.stringify(LEGACY_HELLO));
     expect(LEGACY_HELLO.protocol).toBe(2);
     expect((await closed).code).toBe(DEVICE_CLOSE.protocol);
-    expect(await k.app.get(LocalDeviceRelay).holderLive(m.deviceId)).toBe(false);
+    expect(await k.app.get(DialInRelay).holderLive(m.deviceId)).toBe(false);
   });
 
   it("a hello whose protocol does not match the protocol 5 header closes 4400", async () => {
@@ -197,7 +197,7 @@ describe("the production route speaks protocol 5 only", () => {
       ws.send(JSON.stringify(hello));
       expect((await closed).code).toBe(DEVICE_CLOSE.protocol);
     }
-    expect(await k.app.get(LocalDeviceRelay).holderLive(m.deviceId)).toBe(false);
+    expect(await k.app.get(DialInRelay).holderLive(m.deviceId)).toBe(false);
   });
 
   it("a malformed frame closes 4400: not JSON, binary, incomplete, before and after ready", async () => {
@@ -352,7 +352,7 @@ describe("every protocol 5 operation makes the round trip over the production ro
     });
     open.push(machine);
     await machine.ready;
-    const relay = k.app.get(LocalDeviceRelay);
+    const relay = k.app.get(DialInRelay);
     const targets = k.app.get(DeviceTargets);
     await expect.poll(() => targets.transport(m.deviceId).catch(() => null)).not.toBeNull();
     for (const [op, args, result] of ops) {

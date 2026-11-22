@@ -46,7 +46,6 @@ import {
 import { Transactional } from "../infra/database/transactional.decorator.js";
 import { KERNEL_LOGGER } from "../infra/tokens.js";
 import { DevicePolicyService } from "../local-devices/device-policy.service.js";
-import { NetworkGrants, type NetworkRunState } from "../local-devices/network-grants.js";
 import type { KernelLogger } from "../log.js";
 import type { OrgRole } from "../orgs/roles.js";
 import { UNKNOWN_RESULT_TEXT } from "../runtime/context/pairing.js";
@@ -68,6 +67,7 @@ import { type MessageOutcome, SubagentMessages } from "../runtime/subagents/mess
 import { pairStoppedForks } from "../runtime/subagents/skill-fork.js";
 import { SubagentsService } from "../runtime/subagents/subagents.service.js";
 import { orgHostOutsideCeiling } from "../sandbox/modes.js";
+import { NetworkGrants, type NetworkRunState } from "../sandbox/network-grants.js";
 import { SandboxOperationAuthority } from "../sandbox/operation-authority.js";
 import { PermissionAuthorityLock } from "../sandbox/permission-authority-lock.js";
 import { PermissionAutoGrants } from "../sandbox/permission-auto-grants.js";

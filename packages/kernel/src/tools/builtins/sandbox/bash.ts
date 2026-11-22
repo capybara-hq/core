@@ -18,7 +18,7 @@ import {
 } from "../../../background/launch.js";
 import { taskReasonText } from "../../../background/render.js";
 import type { BackgroundTaskRow } from "../../../background/store.js";
-import { isDeviceRequestNotSent } from "../../../local-devices/relay.js";
+import { isDeviceRequestNotSent } from "../../../dial-in/relay.js";
 import { isEscalationGrantMissing } from "../../../sandbox/operation-authority-types.js";
 import { launchRefusedText, operationIdFor } from "../../../sandbox/operation-intents.js";
 import {

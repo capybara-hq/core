@@ -9,14 +9,14 @@ import { resolveConfig } from "../../src/config/load.js";
 import { KernelConfigSchema } from "../../src/config/schema.js";
 import { PermissionProfileStore } from "../../src/conversations/permission-profile-store.js";
 import { DeviceAccess } from "../../src/devices/access.js";
+import { DialInMachines } from "../../src/dial-in/machines.js";
 import { KernelConfigService } from "../../src/infra/config/kernel-config.service.js";
 import { KernelDb } from "../../src/infra/database/kernel-db.js";
 import { TransactionHost } from "../../src/infra/database/transaction-host.js";
 import { OutboxDispatcher } from "../../src/infra/outbox/outbox.dispatcher.js";
-import { MachinesService } from "../../src/local-devices/machines.js";
-import { NetworkGrants } from "../../src/local-devices/network-grants.js";
 import { createLogger } from "../../src/log.js";
 import { OrgSettingsService } from "../../src/orgs/settings.service.js";
+import { NetworkGrants } from "../../src/sandbox/network-grants.js";
 import { SandboxOperationAuthority } from "../../src/sandbox/operation-authority.js";
 import { PermissionAuthorityEpochStore } from "../../src/sandbox/permission-authority-epochs.js";
 import { PermissionAuthorityLock } from "../../src/sandbox/permission-authority-lock.js";
@@ -716,7 +716,7 @@ it.each(["exec", "backgroundStart"] as const)(
       })
       .returning("id")
       .executeTakeFirstOrThrow();
-    await k.app.get(MachinesService).recordPolicy(machine.id, { allowedDomains: [] });
+    await k.app.get(DialInMachines).recordPolicy(machine.id, { allowedDomains: [] });
     const rows = await db
       .selectFrom("sandbox_operation_intents")
       .select(["operation_id", "state"])

@@ -6,12 +6,12 @@ import { Redis } from "ioredis";
 import { afterAll, afterEach, beforeAll, expect, it, vi } from "vitest";
 import { WebSocketServer } from "ws";
 import { createBus, createBusSubscriber } from "../../src/ctx/bus.js";
+import { DialInGateway } from "../../src/dial-in/gateway.js";
+import { DialInRelay } from "../../src/dial-in/relay.js";
+import { DeviceTargets } from "../../src/dial-in/targets.js";
 import type { KernelConfigService } from "../../src/infra/config/kernel-config.service.js";
 import type { KernelDb } from "../../src/infra/database/kernel-db.js";
 import { LockService } from "../../src/infra/lock/lock.service.js";
-import { LocalDeviceGateway } from "../../src/local-devices/local-device-gateway.js";
-import { LocalDeviceRelay } from "../../src/local-devices/relay.js";
-import { DeviceTargets } from "../../src/local-devices/targets.js";
 import { createLogger } from "../../src/log.js";
 import { FakeMachineV3, fakeMachineFor, HELLO_V3 } from "./fake-machine-v3.js";
 
@@ -61,9 +61,9 @@ async function fixture() {
     recordPolicyV3: vi.fn(async () => {}),
     touch: async () => {},
   };
-  const gateway = new LocalDeviceGateway(machines, locks, bus, redis, config, log);
+  const gateway = new DialInGateway(machines, locks, bus, redis, config, log);
   const targets = new DeviceTargets({} as KernelDb, redis, locks);
-  const relay = new LocalDeviceRelay(redis, bus, locks, config, log, {
+  const relay = new DialInRelay(redis, bus, locks, config, log, {
     current: targets.current.bind(targets),
     state: async () => "active",
   });

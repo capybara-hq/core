@@ -10,6 +10,7 @@ import { ConversationsService } from "../conversations/conversations.service.js"
 import { ConversationQueue } from "../conversations/queue.service.js";
 import { channelSource } from "../conversations/source.js";
 import type { KernelSchemaDb } from "../db/kernel-schema.js";
+import { deviceLeaseKey } from "../dial-in/keys.js";
 import { ApiError } from "../errors.js";
 import { KernelConfigService } from "../infra/config/kernel-config.service.js";
 import { KernelDb } from "../infra/database/kernel-db.js";
@@ -18,7 +19,6 @@ import { Transactional } from "../infra/database/transactional.decorator.js";
 import { LockService } from "../infra/lock/lock.service.js";
 import { OutboxService } from "../infra/outbox/outbox.service.js";
 import { KERNEL_LOGGER } from "../infra/tokens.js";
-import { deviceLeaseKey } from "../local-devices/keys.js";
 import type { KernelLogger } from "../log.js";
 import { OrgLock, OrgLockModule } from "../orgs/org-lock.js";
 import { FORBIDDEN_TOOLS_UNREADABLE_ERROR } from "../orgs/settings.service.js";
