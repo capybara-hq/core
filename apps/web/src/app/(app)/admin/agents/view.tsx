@@ -55,8 +55,8 @@ function hrefOf(f: Filter): string {
  * 待重新指派 chip while the agent waits for a new owner), the visibility, the template it was
  * created from, the update time. The org filter and the name search live in the address
  * (`?orgId=&q=`), so changing one is a navigation and each filter is its own cache entry (the
- * layout prefetched the address's first page and the orgs on a first load); the later pages are read
- * in the browser. A row opens the agent's detail.
+ * layout prefetched the address's first page and the orgs on a first load); the later pages are
+ * read in the browser. A row opens the agent's detail.
  */
 export default function AdminAgentsView({ filter }: { filter: Filter }) {
   const gate = useAdmin();

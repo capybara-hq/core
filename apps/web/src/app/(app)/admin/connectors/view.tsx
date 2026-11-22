@@ -55,8 +55,8 @@ function hrefOf(f: Filter): string {
  * connector extension), the template it came from, the status, the tool count, the last tool sync
  * and who created it. The org and status filters and the name search live in the address
  * (`?orgId=&status=&q=`), so changing one is a navigation and each filter is its own cache entry
- * (the layout prefetched the address's first page and the orgs on a first load); the later pages are read
- * in the browser. A row opens the connector's detail.
+ * (the layout prefetched the address's first page and the orgs on a first load); the later pages
+ * are read in the browser. A row opens the connector's detail.
  */
 export default function AdminConnectorsView({ filter }: { filter: Filter }) {
   const gate = useAdmin();

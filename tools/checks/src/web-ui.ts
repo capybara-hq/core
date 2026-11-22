@@ -44,7 +44,6 @@ export {
 export interface ResponsiveLists {
   sizeAllowed: readonly SizeBranchAllowed[];
   footerPending?: readonly FooterPending[];
-  /** `web-ui-load-more`'s ratchet; left out: none (every Load more button is reported). */
   dualPending: readonly DualRenderPending[];
 }
 export type { Finding };

@@ -16,8 +16,9 @@ import NotFound from "../../not-found";
 /**
  * `/admin/audit`: the platform-level audit log (super admins, ListPage; spec
  * 2026-11-11-admin-overview-design.md §6.4, decision D2): events with no org, newest first, in the
- * overview's table, paged by cursor through the list, no filters. The first page comes from the query cache (the
- * layout prefetched it on a first load); later pages are read through the cache and appended.
+ * overview's table, paged by cursor through the list, no filters. The first page comes from the
+ * query cache (the layout prefetched it on a first load); later pages are read through the cache
+ * and appended.
  */
 export default function AdminAuditView() {
   const gate = useAdmin();

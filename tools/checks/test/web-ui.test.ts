@@ -568,10 +568,51 @@ describe("responsive guards (spec §5.3, §7)", () => {
       expect(f.some((x) => x.line >= 40)).toBe(false);
     });
 
+    it("the tree: a pending entry hides it; a clean or missing entry fails as stale", () => {
+      const pend = (path: string): FooterPending => ({ path, fix: "test" });
+      expect(dialogFooterTreeFindings(tree, []).map((x) => x.file.slice(tree.length + 1))).toEqual([
+        "pages/footer.tsx",
+      ]);
+      expect(dialogFooterTreeFindings(tree, [pend("pages/footer.tsx")])).toEqual([]);
+      const f = dialogFooterTreeFindings(tree, [
+        pend("pages/footer.tsx"),
+        pend("pages/clean.tsx"),
+        pend("pages/gone.tsx"),
+      ]);
+      expect(f.map((x) => x.rule)).toEqual([
+        "web-ui-dialog-footer-stale",
+        "web-ui-dialog-footer-stale",
+      ]);
+    });
+  });
+
+  describe("web-ui-load-more", () => {
+    it("a Load more button (by message key, by text) or the LoadMore wrapper fails", () => {
+      const f = loadMoreFindings(parse("load-more.tsx"));
+      expect(f.map((x) => [x.rule, x.line])).toEqual([
+        ["web-ui-load-more", 10],
+        ["web-ui-load-more", 19],
+        ["web-ui-load-more", 27],
+        ["web-ui-load-more", 31],
+        ["web-ui-load-more", 35],
+      ]);
+      expect(f[0]?.message).toContain("onLoadMore");
+    });
+
+    it("lists given onLoadMore, other buttons and non-button text pass", () => {
+      const f = loadMoreFindings(parse("load-more.tsx"));
+      expect(f.some((x) => x.line >= 38)).toBe(false);
+    });
+
     it("the tree: a Load more row fails, with no allowlist", () => {
       expect(loadMoreTreeFindings(tree).map((x) => x.file.slice(tree.length + 1))).toEqual([
         "pages/more.tsx",
       ]);
+    });
+
+    it("no page of apps/web draws a Load more row", () => {
+      const web = fileURLToPath(new URL("../../../apps/web/src", import.meta.url));
+      expect(loadMoreTreeFindings(web)).toEqual([]);
     });
   });
 
