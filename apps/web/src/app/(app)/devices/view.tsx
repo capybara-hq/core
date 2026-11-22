@@ -96,7 +96,9 @@ function DeviceCard({ device: e, thisMachine }: { device: Device; thisMachine: b
       avatar={{ icon: "cpu" }}
       title={nameOf(e)}
       href={`/devices/${encodeURIComponent(e.id)}`}
-      description={t(`source.${e.source}`)}
+      description={
+        e.available ? t(`source.${e.dialIn ? "local" : "cloud"}`) : (e.provider ?? t("none"))
+      }
       meta={[
         // the shell says this device is the machine the app runs on (desktop client spec §9.6)
         ...(thisMachine ? [t("thisMachine.mark")] : []),

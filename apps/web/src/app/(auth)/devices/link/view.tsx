@@ -14,14 +14,14 @@ import {
   versionLabel,
 } from "@capybara-hq/design";
 import { useQuery } from "@tanstack/react-query";
-import { useTranslations } from "next-intl";
+import { useLocale, useTranslations } from "next-intl";
 import { useEffect, useState } from "react";
 import { FormError } from "../../../../components/form-error";
-import { useDeviceName } from "../../../../components/use-device-name";
 import { useRouter } from "../../../../i18n/navigation";
 import { ApiClientError } from "../../../../lib/api";
 import { loginPathFor } from "../../../../lib/auth-sources";
 import { navigateBrowser } from "../../../../lib/browser";
+import { displayNameOf } from "../../../../lib/catalog";
 import {
   codeParam,
   confirmDevice,
@@ -35,8 +35,7 @@ import {
 import { isDeviceName } from "../../../../lib/devices";
 import { usePreferences } from "../../../../lib/preferences";
 import { retryOnMountOf } from "../../../../lib/query/client";
-import { pendingDeviceQuery } from "../../../../lib/query/device-sign-in";
-import { devicesQuery } from "../../../../lib/query/devices";
+import { deviceProvidersQuery, pendingDeviceQuery } from "../../../../lib/query/device-sign-in";
 import { keys } from "../../../../lib/query/keys";
 import { useAppMutation } from "../../../../lib/query/mutation";
 import { maybeMeQuery } from "../../../../lib/query/shell";
@@ -70,6 +69,7 @@ const LOADING_FIELDS: FieldShape[] = [
   { control: "key-value", rows: 3, keyWidth: "10ch" },
   { control: "select" },
   { control: "select" },
+  { control: "select" },
   { control: "input" },
 ];
 
@@ -88,8 +88,9 @@ function Disclosure() {
 /**
  * `/devices/link`: confirm a machine's `capybara-device login` (AuthPage; environments spec §6.2,
  * §13.3). The code stands out for comparison with the terminal, then the machine (name, system,
- * program version), the org, the device (新建设备 named after the machine by default, or one
- * of the person's local devices in that org) and the disclosure; 确认连接 or 拒绝.
+ * program version), the org, the dial-in provider (hidden when the org has exactly one), the
+ * device (新建设备 named after the machine by default, or one of the person's devices of that
+ * provider in that org) and the disclosure; 确认连接 or 拒绝.
  * Without a code the page asks for the one the terminal shows.
  */
 export default function DeviceLinkView({
@@ -276,37 +277,46 @@ function ConfirmForm({
 }) {
   const t = useTranslations("deviceLink");
   const te = useTranslations("devices");
-  const deviceLabel = useDeviceName();
+  const locale = useLocale();
+  const errorMessage = useErrorMessage();
   const memberships = me.memberships;
   const [orgId, setOrgId] = useState(() =>
     // the `org` of the link, when the person is in it; else their default
     org !== undefined && memberships.some((m) => m.orgId === org) ? org : defaultDeviceOrg(me),
   );
+  const [chosenProvider, setChosenProvider] = useState<string>();
   const [target, setTarget] = useState(NEW);
   const [name, setName] = useState(machine.name);
   const [error, setError] = useState<string>();
-  const envQ = devicesQuery(orgId ?? "");
-  const devices = useQuery({
-    ...envQ,
+  const providersQ = deviceProvidersQuery(orgId ?? "", code);
+  const providersRead = useQuery({
+    ...providersQ,
     enabled: orgId !== undefined,
-    retryOnMount: retryOnMountOf(envQ.queryKey),
+    retryOnMount: retryOnMountOf(providersQ.queryKey),
   });
-  const locals = (devices.data?.items ?? []).filter((e) => e.source === "local");
+  const providers = providersRead.data?.providers ?? [];
+  // the person's choice while it is still offered, else the first provider
+  const provider = providers.find((p) => p.plugin === chosenProvider) ?? providers[0];
+  const devices = provider?.devices ?? [];
   const confirm = useAppMutation({
     fn: (input: DeviceConfirmInput) => confirmDevice(input),
-    invalidates: (input) => [keys.org(input.orgId).devices()],
+    invalidates: (input) => [
+      keys.org(input.orgId).devices(),
+      keys.deployment().deviceProviders(input.orgId, input.userCode),
+    ],
   });
   const deny = useAppMutation({ fn: () => denyDevice(code), invalidates: () => [] });
   const busy = confirm.isPending || deny.isPending;
-  const valid = orgId !== undefined && (target !== NEW || isDeviceName(name));
+  const valid =
+    orgId !== undefined && provider !== undefined && (target !== NEW || isDeviceName(name));
 
   const onConfirm = async () => {
-    if (orgId === undefined || !valid || busy) return;
+    if (orgId === undefined || provider === undefined || !valid || busy) return;
     setError(undefined);
     const input: DeviceConfirmInput =
       target === NEW
-        ? { userCode: code, orgId, name: name.trim() }
-        : { userCode: code, orgId, deviceId: target };
+        ? { userCode: code, orgId, provider: provider.plugin, name: name.trim() }
+        : { userCode: code, orgId, provider: provider.plugin, deviceId: target };
     try {
       const r = await confirm.mutateAsync(input);
       onDone({ kind: "confirmed", orgId, deviceId: r.deviceId });
@@ -352,23 +362,55 @@ function ConfirmForm({
               disabled={busy}
               onChange={(e) => {
                 setOrgId(e.target.value);
+                setChosenProvider(undefined);
                 setTarget(NEW);
               }}
               options={memberships.map((m) => ({ value: m.orgId, label: m.name }))}
             />
           </Field>
-          <Field label={t("device")}>
-            <Select
-              value={target}
-              disabled={busy}
-              onChange={(e) => setTarget(e.target.value)}
-              options={[
-                { value: NEW, label: t("newDevice") },
-                ...locals.map((e) => ({ value: e.id, label: deviceLabel(e) })),
-              ]}
-            />
-          </Field>
-          {target === NEW && (
+          {providersRead.error !== null && providersRead.data === undefined ? (
+            <FormError message={errorMessage(providersRead.error)} />
+          ) : providersRead.data !== undefined && provider === undefined ? (
+            <Text variant="prose" tone="muted">
+              {t("noProvider")}
+            </Text>
+          ) : (
+            provider !== undefined && (
+              <>
+                {providers.length > 1 && (
+                  <Field label={t("provider")}>
+                    <Select
+                      value={provider.plugin}
+                      disabled={busy}
+                      onChange={(e) => {
+                        setChosenProvider(e.target.value);
+                        setTarget(NEW);
+                      }}
+                      options={providers.map((p) => ({
+                        value: p.plugin,
+                        label: displayNameOf(
+                          { name: p.plugin, displayName: p.displayName },
+                          locale,
+                        ),
+                      }))}
+                    />
+                  </Field>
+                )}
+                <Field label={t("device")}>
+                  <Select
+                    value={target}
+                    disabled={busy}
+                    onChange={(e) => setTarget(e.target.value)}
+                    options={[
+                      { value: NEW, label: t("newDevice") },
+                      ...devices.map((d) => ({ value: d.id, label: d.name })),
+                    ]}
+                  />
+                </Field>
+              </>
+            )
+          )}
+          {provider !== undefined && target === NEW && (
             <Field label={t("name")} required help={te("create.nameHelp")}>
               <Input
                 value={name}

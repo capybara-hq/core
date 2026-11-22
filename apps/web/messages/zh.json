@@ -375,7 +375,6 @@
       "project_name_taken": "这台设备上已有同名项目，请换一个名称。",
       "project_limit_reached": "这台设备的项目已达 100 个上限，请先移除一个再添加。",
       "project_outside_mode": "该目录超出了该设备的项目范围。项目范围为工作区时，只有工作区内的目录可以作为项目；电脑的所有者可以在电脑上放宽范围。",
-      "project_home_unknown": "项目范围为这台电脑的用户时，项目路径相对于你的主目录，但这台电脑还没有报告主目录。请在电脑上更新 capybara-device 并重新连接。",
       "project_path_missing": "设备上不存在该目录，请检查路径。",
       "project_path_too_broad": "这个目录包含主目录（或其他人的文件），范围太大。请选择项目自己的目录，或主目录及其下的目录。",
       "project_refused": "设备拒绝了这个目录。",
@@ -387,10 +386,7 @@
       "permission_reconcile_required": "该设备的沙箱限制需要重新确立，确立之前不会运行任何命令。请在设备页面重建文件后再试。",
       "owner_report_stale": "这台电脑发来的权限报告已过期，新的工作已暂停。请在电脑上重新运行 capybara-device login。",
       "network_not_allowed": "该网络比你的组织、平台或提供方对此设备允许的更宽，或有主机不在组织的清单里。",
-      "ceiling_on_machine": "本地设备的沙箱保存在它的电脑上：请在设备页面收窄，或由所有者在那台电脑上运行 capybara-device ceiling set。",
       "outside_sandbox_not_allowed": "平台、你的组织、设备所有者或该设备的提供方不允许此设备在沙箱外运行。",
-      "restart_required": "旧版本启动的后台任务可能仍在这台电脑上运行。请重启这台电脑以完成升级，然后再试。",
-      "replace_required": "旧版本启动的后台任务可能仍在这台电脑上运行，且这台电脑无法证明已重启。请删除这台设备，再把这台电脑作为新设备重新连接。",
       "recreate_required": "旧版本启动的后台任务可能仍在这台设备之前的实例上运行，且已无法确认该实例已被销毁。请删除这台设备后重新创建。",
       "provider_required": "请选择一个设备提供方；如果没有可选的，请联系组织管理员开启一个。"
     },
@@ -1835,7 +1831,10 @@
       "mark": "本机",
       "running": "正在运行",
       "runningEmpty": "目前没有正在运行的任务。",
-      "isolation": { "restricted": "沙箱内", "full": "沙箱外" },
+      "isolation": {
+        "restricted": "沙箱内",
+        "full": "沙箱外"
+      },
       "pause": "暂停",
       "resume": "恢复",
       "disconnect": "断开",
@@ -2257,7 +2256,6 @@
     "schedule_attention": "一个定时任务需要你处理",
     "other": "收件箱里有新消息"
   },
-
   "inbox": {
     "title": "收件箱",
     "listLabel": "待处理事项",
@@ -2465,7 +2463,10 @@
     },
     "tools": {
       "title": "工具",
-      "columns": { "name": "工具", "policy": "默认策略" },
+      "columns": {
+        "name": "工具",
+        "policy": "默认策略"
+      },
       "hintManage": "每个工具右侧是它的默认策略和启用开关。将指针停在工具名上可查看完整名称和说明。",
       "hintRead": "每个工具右侧是它的默认策略。将指针停在工具名上可查看完整名称和说明。",
       "search": "搜索工具",
@@ -3384,6 +3385,7 @@
     "system": "系统",
     "programVersion": "程序版本",
     "org": "组织",
+    "provider": "设备提供方",
     "device": "设备",
     "newDevice": "新建设备",
     "name": "新设备名称",
@@ -3398,7 +3400,8 @@
     "deniedHint": "这台机器不会连接。",
     "invalidTitle": "连接码已失效",
     "invalidHint": "在机器上重新运行 capybara-device login，获取新的连接码。",
-    "goHome": "前往 {product}"
+    "goHome": "前往 {product}",
+    "noProvider": "这个组织里没有可以连接这台电脑的设备提供方。"
   },
   "trajectories": {
     "title": "评测与运行",
@@ -7027,8 +7030,6 @@
     "reasonLabel": "原因",
     "added": "已为任务批准该工具",
     "needsAdmin": "只有组织管理员能允许这个域名",
-    "deviceRefuses": "任务所在的设备不接受平台修改网络。请在机器上允许这些域名：capybara-device policy add allowedDomains files.example.com。",
-    "deviceRefusesShort": "设备不接受",
     "addDomain": "加入允许的域名"
   },
   "networkAsk": {

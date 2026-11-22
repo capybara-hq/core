@@ -225,7 +225,7 @@ function LocalSteps({
   const done = useRef(false);
   useEffect(() => {
     if (list.data === undefined || done.current) return;
-    const locals = list.data.items.filter((e) => e.source === "local");
+    const locals = list.data.items.filter((e) => e.dialIn);
     if (known.current === null) {
       known.current = new Map(locals.map((e) => [e.id, e.machine?.id ?? null]));
       return;

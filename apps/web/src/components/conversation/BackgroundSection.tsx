@@ -189,7 +189,10 @@ export function BackgroundListPanel({
   );
 }
 
-/** The kernel's reason as the design's: a local device is the `device`, a cloud one the `sandbox`. */
+/**
+ * The kernel's reason as the design's environment: an offline device is the `device` (only a
+ * dial-in device has a machine that can be offline); every other reason names the `sandbox`.
+ */
 function unavailableOf(
   u: BackgroundTaskUnavailable | null | undefined,
   task: BackgroundTaskView,
@@ -197,7 +200,7 @@ function unavailableOf(
   if (!u) return undefined;
   return {
     reason: u.reason,
-    environment: u.environment === "local" ? "device" : "sandbox",
+    environment: u.reason === "device_offline" ? "device" : "sandbox",
     ...(u.reason === "not_started" && task.lostReason ? { detail: task.lostReason } : {}),
   };
 }

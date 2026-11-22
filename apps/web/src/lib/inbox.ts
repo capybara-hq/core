@@ -41,8 +41,6 @@ export interface ScheduleAttention {
   needsRole: string[];
   /** The `network:<host>` keys of `missing` outside the org's allowlist: only an org admin can add them. */
   needsAdmin: string[];
-  /** `missing` has domains and the task's device takes no network grants (always false now). */
-  deviceRefuses: boolean;
   /** `failed`: the run's error; else null. */
   error: string | null;
 }

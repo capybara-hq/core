@@ -83,7 +83,7 @@ import {
   modelsQuery,
   queueQuery,
 } from "./conversation";
-import { pendingDeviceQuery } from "./device-sign-in";
+import { deviceProvidersQuery, pendingDeviceQuery } from "./device-sign-in";
 import { deviceProjectsQuery, deviceQuery, devicesQuery } from "./devices";
 import {
   type EvalRunState,
@@ -736,7 +736,7 @@ const ROUTE_TABLE: readonly RouteEntry[] = [
   {
     pattern: "/devices/link",
     // The session (the device-link layout sends a signed-out visitor to sign-in first) and the machine
-    // behind `?code=`; then the org's devices (its connected ones can take the machine).
+    // behind `?code=`; then the org's dial-in providers for the code, with the person's devices.
     queries: ({ search }) => {
       const code = codeParam(search.get("code"));
       return code === "" ? [q(maybeMeQuery())] : [q(maybeMeQuery()), q(pendingDeviceQuery(code))];
@@ -745,8 +745,9 @@ const ROUTE_TABLE: readonly RouteEntry[] = [
     then: async ({ search }, qc) => {
       const me = qc.getQueryData<Me | null>(maybeMeQuery().queryKey);
       const orgId = me ? defaultDeviceOrg(me) : undefined;
-      if (orgId === undefined || codeParam(search.get("code")) === "") return;
-      await qc.prefetchQuery({ ...devicesQuery(orgId), retry: false });
+      const code = codeParam(search.get("code"));
+      if (orgId === undefined || code === "") return;
+      await qc.prefetchQuery({ ...deviceProvidersQuery(orgId, code), retry: false });
     },
   },
   {

@@ -4,7 +4,6 @@ import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import en from "../messages/en.json";
 import zh from "../messages/zh.json";
-import { SANDBOX_COMMANDS } from "../src/components/DeviceModeSection";
 import { RESET_POLL_DEADLINE_MS, RESET_POLL_MS, resetPollInterval } from "../src/lib/devices";
 import { keys } from "../src/lib/query/keys";
 import { bodyOf, type Call, json, lastStubRoutes, stubApi } from "./support/api";
@@ -48,24 +47,10 @@ const MACHINE = {
   id: "m1",
   name: "grant-mbp",
   os: "darwin",
-  mode: "os",
   programVersion: "0.4.0",
   lastSeenAt: T,
 };
 
-/** A local machine's authenticated owner report: outside allowed, the open network, the OS user's reach. */
-const report = (over: Record<string, unknown> = {}) => ({
-  state: "report",
-  revision: "r1",
-  sequence: 3,
-  outsideSandbox: true,
-  network: "open",
-  allowedDomains: [],
-  restrictedProjectReach: "os-user",
-  observedAt: T,
-  stale: false,
-  ...over,
-});
 /** The kernel's effective sandbox view (`DeviceSandboxView`): a local machine's open report. */
 const sandbox = (over: Record<string, unknown> = {}) => ({
   network: "open",
@@ -74,7 +59,6 @@ const sandbox = (over: Record<string, unknown> = {}) => ({
   ownNetwork: "open",
   allowedDomains: [],
   outsideSandbox: true,
-  restrictedProjectReach: "os-user",
   layer: { network: null, outsideSandbox: null },
   pendingNextUse: false,
   pendingFilesReset: false,
@@ -86,7 +70,6 @@ const cloudSandbox = (over: Record<string, unknown> = {}) =>
   sandbox({
     ownNetwork: null,
     outsideSandbox: false,
-    restrictedProjectReach: "workspace",
     layer: { network: null, outsideSandbox: "provider" },
     ...over,
   });
@@ -96,18 +79,15 @@ const cloud = (over: Record<string, unknown> = {}) => ({
   name: "Build box",
   isDefault: true,
   ownerKind: "personal",
-  source: "cloud",
+  dialIn: false,
   provider: "sandbox-docker",
   available: true,
   report: null,
   online: null,
   machine: null,
-  network: null,
-  sessionIsolation: false,
   filesLost: false,
   instance: null,
   limits: LIMITS,
-  ownerCeiling: null,
   sandbox: cloudSandbox(),
   reconcileRequired: false,
   createdAt: T,
@@ -118,21 +98,15 @@ const local = (over: Record<string, unknown> = {}, sandboxOver: Record<string, u
   name: "Laptop",
   isDefault: true,
   ownerKind: "personal",
-  source: "local",
+  dialIn: true,
   provider: "@local",
   available: true,
   report: null,
   online: true,
   machine: MACHINE,
-  network: {
-    features: ["networkReport", "policyOp", "policyOpId"],
-    policy: { mode: "auto", allowedDomains: [] },
-  },
-  sessionIsolation: false,
   filesLost: false,
   instance: null,
   limits: { ...LIMITS, network: { kind: "allowlist", hosts: [] } },
-  ownerCeiling: report(),
   sandbox: sandbox(sandboxOver),
   reconcileRequired: false,
   createdAt: T,
@@ -173,7 +147,6 @@ const radio = (group: string, name: string) =>
   }) as HTMLInputElement;
 const failWith = (status: number, code: string) => () =>
   json(status, { error: { code, message: `kernel says ${code}` } });
-const posts = (calls: Call[]) => calls.filter((c) => c.method === "POST");
 
 beforeEach(() => resetNavigation("/devices/e1"));
 afterEach(() => {
@@ -209,297 +182,58 @@ describe("the device nameplate head", () => {
   });
 });
 
-describe("a local device's sandbox", () => {
-  it("概览 shows it read only: network, outside the sandbox, project reach, report time", async () => {
+describe("a dial-in device's sandbox", () => {
+  it("概览 shows it read only: network and outside the sandbox, nothing about reach or reports", async () => {
     const calls = stubApi(detail(local()));
     await renderDetail();
     const section = await sandboxSection();
     expect(factRow(S.network)?.textContent).toContain(S.networkValue.open);
     expect(factRow(S.outside)?.textContent).toContain(S.outsideValue.allowed);
-    expect(factRow(S.reach)?.textContent).toContain(S.reachValue["os-user"]);
-    expect(factRow(S.reported)).toBeTruthy();
+    expect(factRow(S.reach)).toBeUndefined();
+    expect(factRow(S.reported)).toBeUndefined();
     expect(within(section).queryByRole("button")).toBeNull();
     expect(screen.queryByRole("radiogroup")).toBeNull();
     await settle();
     expect(calls.every((c) => c.method === "GET")).toBe(true);
   });
 
-  it("设置 is one 沙箱 section with the network and outside-sandbox groups, no box in a box", async () => {
-    stubApi(detail(local()));
+  it("设置 has no sandbox controls and no policy call: only the machine can be disconnected", async () => {
+    const calls = stubApi(detail(local()));
     const { container } = await renderDetail({ locale: "zh" });
     const user = userEvent.setup();
     await user.click(await screen.findByRole("tab", { name: "设置" }));
-    const section = await screen.findByRole("heading", { name: "沙箱" });
-    expect(section).toBeTruthy();
-    expect(screen.getByRole("radiogroup", { name: "网络" })).toBeTruthy();
-    expect(screen.getByRole("radiogroup", { name: "在沙箱外运行" })).toBeTruthy();
-    expect(screen.getByText("开放互联网（内网除外）")).toBeTruthy();
-    expect(screen.getByRole("heading", { name: "项目范围" })).toBeTruthy();
-    expect(findNestedBoxes(container)).toEqual([]);
-    expect(document.body.textContent).not.toMatch(/完全访问|企业/);
-  });
-
-  /** The keycap commands on the page, each as one line. */
-  const keycaps = () =>
-    [...document.querySelectorAll('[data-part="keycap-command-caps"]')].map((c) =>
-      [...c.querySelectorAll('[data-part="keycap-command-cap"]')]
-        .map((x) => x.textContent)
-        .join(" "),
-    );
-  /** A machine the device itself narrowed everywhere: allowlist, outside off, workspace reach. */
-  const narrowed = () =>
-    local({
-      ownerCeiling: report({
-        outsideSandbox: false,
-        network: "allowlist",
-        restrictedProjectReach: "workspace",
-      }),
-      sandbox: sandbox({
-        network: "allowlist",
-        outsideSandbox: false,
-        restrictedProjectReach: "workspace",
-        layer: { network: "device", outsideSandbox: "device" },
-      }),
-    });
-
-  it("shows the machine's widening commands as keycaps and never offers to widen", async () => {
-    stubApi(detail(narrowed()));
-    await renderDetail();
-    await openSettings();
-    await sandboxSection();
-    expect(keycaps()).toEqual(Object.values(SANDBOX_COMMANDS));
-    expect(screen.getByText(S.widenLocal)).toBeTruthy();
-    // no add-host control: the local host editor only removes
-    expect(screen.queryByRole("button", { name: /^add (a )?(host|domain)/i })).toBeNull();
-    expect(screen.queryByRole("dialog")).toBeNull();
-  });
-
-  // R3 Mac acceptance: `--network open` was offered on a machine already open
-  it("offers only the commands that would change something", async () => {
-    stubApi(detail(local()));
-    await renderDetail();
-    await openSettings();
-    await sandboxSection();
-    // open, outside allowed, the user's reach: nothing to widen, so no command and no lead
-    expect(keycaps()).toEqual([]);
-    expect(screen.queryByText(S.widenLocal)).toBeNull();
-  });
-
-  it("an open machine with running outside the sandbox off offers only that command", async () => {
-    stubApi(
-      detail(
-        local({
-          ownerCeiling: report({ outsideSandbox: false }),
-          sandbox: sandbox({
-            outsideSandbox: false,
-            layer: { network: null, outsideSandbox: "device" },
-          }),
-        }),
-      ),
-    );
-    await renderDetail();
-    await openSettings();
-    await sandboxSection();
-    expect(keycaps()).toEqual([SANDBOX_COMMANDS.outside]);
-  });
-
-  it("a limit the platform or org set is not offered as a machine command", async () => {
-    stubApi(
-      detail(
-        local({
-          ownerCeiling: report({ network: "allowlist", outsideSandbox: false }),
-          sandbox: sandbox({
-            network: "allowlist",
-            outsideSandbox: false,
-            layer: { network: "platform", outsideSandbox: "org" },
-          }),
-        }),
-      ),
-    );
-    await renderDetail();
-    await openSettings();
-    await sandboxSection();
-    // adding a host still changes the allowlist the machine runs
-    expect(keycaps()).toEqual([SANDBOX_COMMANDS.host]);
-  });
-
-  // R3 Mac acceptance: an empty allowlist panel showed while the network was open
-  it("the open network shows no host list; an allowlist shows it, empty or not", async () => {
-    stubApi(detail(local()));
-    await renderDetail();
-    await openSettings();
-    await sandboxSection();
-    expect(screen.queryByRole("list", { name: S.hosts })).toBeNull();
-    expect(screen.queryByText(S.hostsEmpty)).toBeNull();
-    expect(screen.queryByText(S.localHostsHelp)).toBeNull();
-    cleanup();
-    stubApi(detail(narrowed()));
-    await renderDetail();
-    await openSettings();
-    await sandboxSection();
-    expect(screen.getByText(S.hostsEmpty)).toBeTruthy();
-    expect(screen.getByText(S.localHostsHelp)).toBeTruthy();
-  });
-
-  it("narrows the network, outside the sandbox and the reach through the policy op only", async () => {
-    const calls = stubApi({
-      ...detail(local()),
-      [`POST ${BASE}/e1/policy`]: () =>
-        json(200, { policy: { mode: "sandbox", allowedDomains: [] } }),
-    });
-    await renderDetail();
-    const user = await openSettings();
-    await sandboxSection();
-    await user.click(radio(S.network, S.networkValue.allowlist));
-    await vi.waitFor(() => expect(posts(calls)).toHaveLength(1));
-    expect(bodyOf(posts(calls)[0])).toEqual({ ownerCeiling: { network: "allowlist" } });
-    await user.click(radio(S.outside, S.outsideValue.off));
-    await vi.waitFor(() => expect(posts(calls)).toHaveLength(2));
-    expect(bodyOf(posts(calls)[1])).toEqual({ ownerCeiling: { outsideSandbox: false } });
-    await user.click(screen.getByRole("button", { name: S.limitReach }));
-    await vi.waitFor(() => expect(posts(calls)).toHaveLength(3));
-    expect(bodyOf(posts(calls)[2])).toEqual({
-      ownerCeiling: { restrictedProjectReach: "workspace" },
-    });
-    for (const c of calls.filter((x) => x.method !== "GET")) {
-      expect(String(c.body)).not.toMatch(/true|os-user|"open"|"add"/);
-    }
-    expect(calls.some((c) => c.method === "PATCH")).toBe(false);
-  });
-
-  it("a narrowed machine names who widens: the owner on the computer", async () => {
-    stubApi(
-      detail(
-        local({
-          ownerCeiling: report({ outsideSandbox: false, network: "allowlist" }),
-          sandbox: sandbox({
-            network: "allowlist",
-            outsideSandbox: false,
-            layer: { network: "device", outsideSandbox: "device" },
-          }),
-        }),
-      ),
-    );
-    await renderDetail();
-    await openSettings();
-    await sandboxSection();
-    expect(radio(S.network, S.networkValue.open).disabled).toBe(true);
-    expect(radio(S.outside, S.outsideValue.allowed).disabled).toBe(true);
-    expect(screen.getByText(S.limited.network.device)).toBeTruthy();
-    expect(screen.getByText(S.limited.outside.device)).toBeTruthy();
-  });
-
-  it("a disabled option names its layer: 平台 / 超级管理员", async () => {
-    stubApi(
-      detail(
-        local({
-          sandbox: sandbox({
-            network: "allowlist",
-            outsideSandbox: false,
-            layer: { network: "platform", outsideSandbox: "org" },
-          }),
-        }),
-      ),
-    );
-    await renderDetail({ locale: "zh" });
-    const user = userEvent.setup();
-    await user.click(await screen.findByRole("tab", { name: "设置" }));
-    expect(await screen.findByText("平台已限定为白名单（超级管理员设置）")).toBeTruthy();
-    expect(screen.getByText(zh.devices.sandbox.limited.outside.org)).toBeTruthy();
-  });
-
-  it("removes a host from the machine's allowlist, and adds none", async () => {
-    const calls = stubApi({
-      ...detail(local({ ownerCeiling: report({ allowedDomains: ["files.example.com"] }) })),
-      [`POST ${BASE}/e1/policy`]: () =>
-        json(200, { policy: { mode: "sandbox", allowedDomains: [] } }),
-    });
-    await renderDetail();
-    const user = await openSettings();
-    const hosts = await screen.findByRole("list", { name: S.hosts });
-    expect(within(hosts).getByText("files.example.com")).toBeTruthy();
-    expect(screen.getByText(S.localHostsHelp)).toBeTruthy();
-    await user.click(screen.getByRole("button", { name: "Remove files.example.com" }));
-    await vi.waitFor(() => expect(posts(calls)).toHaveLength(1));
-    expect(bodyOf(posts(calls)[0])).toEqual({
-      remove: ["files.example.com"],
-    });
-  });
-
-  it("project reach keeps today's control: limited to the workspace, nothing else", async () => {
-    stubApi(detail(local({ ownerCeiling: report({ restrictedProjectReach: "workspace" }) })));
-    await renderDetail();
-    await openSettings();
-    await sandboxSection();
-    expect(screen.getByText(S.reachValue.workspace)).toBeTruthy();
-    expect(screen.queryByRole("button", { name: S.limitReach })).toBeNull();
-  });
-
-  it("an offline machine shows no refused control: it says to narrow on the computer", async () => {
-    stubApi(detail(local({ online: false, ownerCeiling: report({ stale: true }) })));
-    await renderDetail();
-    await openSettings();
-    expect(await screen.findByText(S.cannotNarrow.offline)).toBeTruthy();
-    expect(screen.getAllByText(S.notice.stale).length).toBeGreaterThan(0);
-    expect(radio(S.network, S.networkValue.allowlist).disabled).toBe(true);
-    expect(screen.queryByRole("button", { name: S.limitReach })).toBeNull();
-  });
-
-  it("a program that cannot take changes says to update it", async () => {
-    stubApi(detail(local({ network: { features: ["networkReport"], policy: null } })));
-    await renderDetail();
-    await openSettings();
-    expect(await screen.findByText(S.cannotNarrow.upgrade)).toBeTruthy();
-    expect(radio(S.outside, S.outsideValue.off).disabled).toBe(true);
-  });
-
-  it("a blocked report fails closed: unknown settings, the re-login step, no control", async () => {
-    stubApi(
-      detail(
-        local({
-          ownerCeiling: report({ state: "blocked" }),
-        }),
-      ),
-    );
-    await renderDetail();
-    await sandboxSection();
-    expect(factRow(S.network)?.textContent).toContain(S.unknown);
-    expect(screen.getByText(S.notice.blocked)).toBeTruthy();
-    await openSettings();
-    await sandboxSection();
+    expect(await screen.findByRole("button", { name: zh.devices.machine.revoke })).toBeTruthy();
     expect(screen.queryByRole("radiogroup")).toBeNull();
-  });
-
-  it("without a connected machine it says how to connect one and shows no command", async () => {
-    stubApi(
-      detail(
-        local({
-          machine: null,
-          network: null,
-          online: false,
-          ownerCeiling: null,
-        }),
-      ),
-    );
-    await renderDetail();
-    await sandboxSection();
-    expect(screen.getByText(S.notice.noMachine)).toBeTruthy();
-    await openSettings();
-    await sandboxSection();
     expect(document.querySelector('[data-part="keycap-command-caps"]')).toBeNull();
+    expect(findNestedBoxes(container)).toEqual([]);
+    expect(calls.some((c) => c.url.endsWith("/policy"))).toBe(false);
+  });
+});
+
+describe("a device whose provider is not loaded", () => {
+  /** What the kernel sends for a dial-in device while its provider is off: neither dial-in nor cloud. */
+  const unloaded = () =>
+    cloud({ provider: "device-ssh", available: false, dialIn: false, online: null, machine: null });
+
+  it("is unavailable and names its provider, never cloud", async () => {
+    stubApi(detail(unloaded()));
+    const { container } = await renderDetail();
+    const plate = container.querySelector('[data-part="device-nameplate"]') as HTMLElement;
+    expect(plate.textContent).toContain("device-ssh");
+    expect(plate.textContent).toContain(E.state.unavailable);
+    expect(plate.textContent).not.toContain(E.source.cloud);
+    expect(await screen.findByText(E.detail.providerOffNote)).toBeTruthy();
+    expect(screen.queryByRole("heading", { name: E.detail.resources })).toBeNull();
+    await openSettings();
+    expect(screen.queryByRole("radiogroup")).toBeNull();
+    expect(screen.queryByRole("heading", { name: S.title })).toBeNull();
   });
 
-  it("a refused narrowing shows its actionable copy: an outdated owner report", async () => {
-    stubApi({
-      ...detail(local()),
-      [`POST ${BASE}/e1/policy`]: failWith(409, "device.owner_report_stale"),
-    });
-    await renderDetail();
-    const user = await openSettings();
-    await sandboxSection();
-    await user.click(radio(S.outside, S.outsideValue.off));
-    const alert = await screen.findByRole("alert");
-    expect(alert.textContent).toContain(en.errors.device.owner_report_stale);
+  it("the list shows the provider name instead of a source", async () => {
+    stubApi({ [`GET ${BASE}`]: () => json(200, list([unloaded()])) });
+    await renderList();
+    expect(await screen.findByText("device-ssh")).toBeTruthy();
+    expect(screen.queryByText(E.source.cloud)).toBeNull();
   });
 });
 
@@ -679,7 +413,7 @@ describe("a cloud device's network", () => {
 });
 
 describe("the network on 概览", () => {
-  it("a local machine lists its allowlist read only and points at 设置", async () => {
+  it("a dial-in machine lists its allowlist read only", async () => {
     stubApi(
       detail(
         local({
@@ -695,8 +429,6 @@ describe("the network on 概览", () => {
     expect(await screen.findByRole("heading", { name: E.network.title })).toBeTruthy();
     const list = screen.getByRole("list", { name: E.network.domains });
     expect(within(list).getByText("files.example.com")).toBeTruthy();
-    await userEvent.setup().click(screen.getByRole("button", { name: E.overview.editNetwork }));
-    expect(await screen.findByRole("radiogroup", { name: S.network })).toBeTruthy();
   });
 
   it("a local machine on the open network has no network block", async () => {

@@ -29,7 +29,14 @@ test("connect a machine: authorize → confirm on /devices/link → token → th
   try {
     const authorize = await program.post("/api/v1/device/authorize", {
       headers: CSRF,
-      data: { name: machine, os: "linux", arch: "x64", programVersion: "0.1.0" },
+      // the protocol the program speaks decides which dial-in providers the confirm page offers
+      data: {
+        name: machine,
+        os: "linux",
+        arch: "x64",
+        programVersion: "0.1.0",
+        protocol: "capybara-device/5",
+      },
     });
     expect(authorize.status(), await authorize.text()).toBe(200);
     const { deviceCode, userCode } = (await authorize.json()) as {

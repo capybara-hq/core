@@ -830,7 +830,8 @@ export interface BackgroundTaskUnavailable {
     | "no_access"
     | "unavailable"
     | "read_failed";
-  environment: "local" | "cloud";
+  /** The provider of the device the task ran on; null when none is known. */
+  provider: string | null;
 }
 
 /**

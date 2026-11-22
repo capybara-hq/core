@@ -161,8 +161,7 @@ function Detail({
     forgetsOnLeave: () => [keys.org(orgId).device(e.id)],
   });
   const revoke = useAppMutation({ fn: () => revokeDeviceMachine(orgId, e.id), invalidates });
-  const { limits } = e;
-  const local = e.source === "local";
+  const local = e.dialIn;
   const npState: DeviceNameplateState =
     state === "running"
       ? "running"
@@ -207,14 +206,18 @@ function Detail({
         facts={
           <DeviceNameplate
             name={name}
-            origin={e.source}
+            origin={local ? "local" : "cloud"}
             state={npState}
             version={local ? (e.machine?.programVersion ?? null) : null}
             lastSeen={local ? (e.machine?.lastSeenAt ?? null) : (e.instance?.lastUsedAt ?? null)}
             created={e.createdAt}
             badge={<Badge>{t(`sandbox.mark.${mark}`)}</Badge>}
             labels={{
-              origin: { cloud: t("source.cloud"), local: t("source.local") },
+              // a device whose provider is not loaded is neither: it names its provider
+              origin: {
+                cloud: e.available ? t("source.cloud") : (e.provider ?? t("none")),
+                local: t("source.local"),
+              },
               state: { [npState]: t(`state.${state}`) },
             }}
           />

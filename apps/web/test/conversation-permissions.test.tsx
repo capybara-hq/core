@@ -188,7 +188,7 @@ describe("permission query foundation", () => {
     { ...DEVICES, items: [], defaultId: null, providers: [], defaultProvider: null },
     {
       ...DEVICES,
-      items: DEVICES.items.map((d) => ({ ...d, source: "local", available: false, online: false })),
+      items: DEVICES.items.map((d) => ({ ...d, dialIn: true, available: false, online: false })),
       providers: [],
       defaultProvider: null,
     },

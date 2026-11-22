@@ -375,7 +375,6 @@
       "project_name_taken": "This device already has a project with this name. Choose another name.",
       "project_limit_reached": "This device has reached its limit of 100 projects. Remove one to add another.",
       "project_outside_mode": "This directory is outside this device's project reach. With the workspace reach only the workspace can hold a project; the computer's owner widens the reach on the computer.",
-      "project_home_unknown": "With the project reach of this computer's user, a project's path is relative to your home directory, which this computer has not reported. Update capybara-device on the computer and reconnect it.",
       "project_path_missing": "This directory does not exist on the device. Check the path.",
       "project_path_too_broad": "This directory holds your home directory (or other people's files), which is too broad. Pick the project's own directory, your home or a directory below it.",
       "project_refused": "The device refused this directory.",
@@ -387,10 +386,7 @@
       "permission_reconcile_required": "This device's sandbox limits must be established again before it runs anything. Rebuild its files on its device page, then try again.",
       "owner_report_stale": "This computer sent an outdated permission report, so new work is paused. Run capybara-device login again on the computer.",
       "network_not_allowed": "This network is wider than your organization, the platform or the provider allows for this device, or a host is outside the organization's list.",
-      "ceiling_on_machine": "A local device's sandbox is kept on its computer: narrow it from the device page, or have its owner run capybara-device ceiling set on that computer.",
       "outside_sandbox_not_allowed": "Running outside the sandbox is not allowed for this device by your platform, your organization, its owner or its provider.",
-      "restart_required": "Background work started by an earlier version may still be running on this computer. Restart this computer to finish the upgrade, then try again.",
-      "replace_required": "Background work started by an earlier version may still be running on this computer, and it cannot prove a restart. Delete this device and connect the computer again as a new device.",
       "recreate_required": "Background work started by an earlier version may still be running on an earlier instance of this device, and that instance can no longer be verified as destroyed. Delete this device and create it again.",
       "provider_required": "Choose a device provider. If none is offered, ask an org admin to switch one on."
     },
@@ -1847,7 +1843,10 @@
       "mark": "This machine",
       "running": "Running now",
       "runningEmpty": "Nothing is running.",
-      "isolation": { "restricted": "In the sandbox", "full": "Outside the sandbox" },
+      "isolation": {
+        "restricted": "In the sandbox",
+        "full": "Outside the sandbox"
+      },
       "pause": "Pause",
       "resume": "Resume",
       "disconnect": "Disconnect",
@@ -2269,7 +2268,6 @@
     "schedule_attention": "A scheduled task needs you",
     "other": "There is something new in your inbox"
   },
-
   "inbox": {
     "title": "Inbox",
     "listLabel": "Pending items",
@@ -2477,7 +2475,10 @@
     },
     "tools": {
       "title": "Tools",
-      "columns": { "name": "Tool", "policy": "Default policy" },
+      "columns": {
+        "name": "Tool",
+        "policy": "Default policy"
+      },
       "hintManage": "Each tool shows its default policy and its switch on the right. Hover a tool's name to see its full name and description.",
       "hintRead": "Each tool shows its default policy on the right. Hover a tool's name to see its full name and description.",
       "search": "Search tools",
@@ -3396,6 +3397,7 @@
     "system": "System",
     "programVersion": "Program version",
     "org": "Organization",
+    "provider": "Device provider",
     "device": "Device",
     "newDevice": "New device",
     "name": "New device name",
@@ -3410,7 +3412,8 @@
     "deniedHint": "This machine will not be connected.",
     "invalidTitle": "Code expired",
     "invalidHint": "Run capybara-device login on the machine again to get a new code.",
-    "goHome": "Go to {product}"
+    "goHome": "Go to {product}",
+    "noProvider": "No device provider can connect this machine in this organization."
   },
   "trajectories": {
     "title": "Evals & runs",
@@ -7039,8 +7042,6 @@
     "reasonLabel": "Reason",
     "added": "Tool approved for the task",
     "needsAdmin": "Only an org admin can allow this domain",
-    "deviceRefuses": "The task's device takes no network changes from the platform. Allow the domains on the machine: capybara-device policy add allowedDomains files.example.com.",
-    "deviceRefusesShort": "The device doesn't accept it",
     "addDomain": "Add to allowed domains"
   },
   "networkAsk": {

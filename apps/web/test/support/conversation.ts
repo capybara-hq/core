@@ -112,19 +112,12 @@ export function permissionAvailability(
 }
 
 /**
- * The consent reach the kernel would record for these facts when a test does not state one:
- * outside only under the ceiling on an operation-boundary runtime that reports it. A test of a
- * stored support the runtime has not reported yet passes its own `consentReach`.
+ * A consent reach a test states: running outside the sandbox only when `outsideSandbox`, open
+ * network. It never reads the runtime's support: a test of a stored support the runtime has not
+ * reported yet passes its own reach.
  */
-export const consentReachOf = (
-  outsideSandboxCeiling: boolean,
-  availability: PermissionAvailability,
-): ConsentReach => ({
-  outsideSandbox:
-    outsideSandboxCeiling &&
-    availability.state === "supported" &&
-    availability.report.boundary === "operation" &&
-    availability.report.outsideSandbox,
+export const consentReachOf = (outsideSandbox: boolean): ConsentReach => ({
+  outsideSandbox,
   networkCeiling: "open",
   networkMode: "open",
   hostCeiling: { kind: "any", excluded: [] },
@@ -140,7 +133,7 @@ export const permissionPreview = (over: Partial<PermissionPreview> = {}): Permis
     scopeRevision: "scope-1",
     availability,
     outsideSandboxCeiling,
-    consentReach: consentReachOf(outsideSandboxCeiling, availability),
+    consentReach: consentReachOf(outsideSandboxCeiling),
     ...over,
   };
 };
@@ -165,8 +158,7 @@ export const permissionsView = (
     availability,
     outsideSandboxCeiling,
     // the kernel reads a reach only where it read the device's scope
-    consentReach:
-      over.scopeRevision != null ? consentReachOf(outsideSandboxCeiling, availability) : null,
+    consentReach: over.scopeRevision != null ? consentReachOf(outsideSandboxCeiling) : null,
     startingWorkNotice:
       "Changes apply to new operations. Work already started keeps its starting permissions.",
     ...over,
@@ -187,7 +179,6 @@ export const ENV_SANDBOX = {
   ownNetwork: null,
   allowedDomains: [],
   outsideSandbox: false,
-  restrictedProjectReach: "workspace",
   layer: { network: null, outsideSandbox: "provider" },
   pendingNextUse: false,
   pendingFilesReset: false,
@@ -198,13 +189,12 @@ export const envView = (id: string, name: string | null, over: Record<string, un
   name,
   isDefault: name === null,
   ownerKind: "personal",
-  source: "cloud",
+  dialIn: false,
   provider: "sandbox-docker",
   available: true,
   report: null,
   online: null,
   machine: null,
-  sessionIsolation: false,
   filesLost: false,
   instance: null,
   limits: ENV_LIMITS,

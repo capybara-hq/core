@@ -1482,7 +1482,6 @@ describe("inbox: a task refused domains", () => {
           missing: ["network:files.slack.com", "network:api.example.com"],
           needsRole: [],
           needsAdmin: ["network:api.example.com"],
-          deviceRefuses: false,
           error: null,
           ...over,
         },
@@ -1509,16 +1508,6 @@ describe("inbox: a task refused domains", () => {
     expect(
       bodyOf(calls.find((c) => c.method === "POST" && c.url.endsWith("/schedules/s1/grants"))),
     ).toEqual({ grants: [{ toolKey: "network:files.slack.com" }] });
-  });
-
-  it("a device that refuses network grants says what to do on the machine", async () => {
-    await renderInbox({
-      [LIST]: () => json(200, attention({ needsAdmin: [], deviceRefuses: true })),
-    });
-    expect(await screen.findByText(S.deviceRefuses)).toBeTruthy();
-    const missing = within(screen.getByRole("list", { name: S.missing }));
-    expect(missing.queryByRole("button", { name: S.addDomain })).toBeNull();
-    expect(missing.getAllByText(S.deviceRefusesShort)).toHaveLength(2);
   });
 });
 

@@ -241,6 +241,36 @@ describe("live profile change of an interactive root (Task 10D)", () => {
     expect(patches(calls)).toHaveLength(1);
   });
 
+  it("a view with a scope revision but no consent reach keeps Auto unavailable (check failed)", async () => {
+    const user = userEvent.setup();
+    const view = permissionsView({
+      revision: 2,
+      deviceId: "d1",
+      scopeRevision: "scope-9",
+      consentReach: null,
+      availability: permissionAvailability("supported"),
+      outsideSandboxCeiling: true,
+    });
+    const routes = {
+      ...chatRoutes("c1", { deviceId: "d1" }, view),
+      [`GET ${BASE}/c1/device`]: () => json(200, { device: envView("d1", "Build box") }),
+    };
+    const calls = stubApi(routes);
+    await renderRouteWithCache("/chat/c1", routes, { locale: "en" });
+    const button = await waitFor(() => {
+      const b = editable();
+      expect(b).not.toBeNull();
+      return b as HTMLElement;
+    });
+    await user.click(button);
+    const auto = within(screen.getByRole("menu")).getByRole("menuitemradio", { name: /^Auto/ });
+    expect(auto.getAttribute("aria-disabled")).toBe("true");
+    expect(within(auto).getByText("Couldn't check this device")).toBeTruthy();
+    await user.click(auto);
+    expect(screen.queryByRole("dialog")).toBeNull();
+    expect(patches(calls)).toHaveLength(0);
+  });
+
   it("without a device, Auto asks the device-less question, then PATCHes with no consent", async () => {
     const user = userEvent.setup();
     const view = permissionsView({ revision: 2 });

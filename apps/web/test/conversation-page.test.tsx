@@ -1337,20 +1337,9 @@ describe("the conversation page's server gate", () => {
 describe("the properties panel's device mark", () => {
   it("the device carries its neutral sandbox mark, never a daily mode", async () => {
     const device = envView("e1", "Laptop", {
-      source: "local",
+      dialIn: true,
       provider: "@local",
       online: true,
-      ownerCeiling: {
-        state: "report",
-        revision: "r1",
-        sequence: 1,
-        outsideSandbox: true,
-        network: "open",
-        allowedDomains: [],
-        restrictedProjectReach: "os-user",
-        observedAt: "2026-11-07T08:00:00.000Z",
-        stale: false,
-      },
       sandbox: {
         ...ENV_SANDBOX,
         ownNetwork: "open",

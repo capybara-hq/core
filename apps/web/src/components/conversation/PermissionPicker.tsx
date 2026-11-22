@@ -255,7 +255,12 @@ export function usePermissionChoice(input: PermissionChoiceInput): {
     enabled: deviceId !== undefined && input.preview === undefined,
     retryOnMount: retryOnMountOf(previewQ.queryKey),
   });
-  const preview = input.preview ?? { data: read.data, failed: read.isError };
+  // A read without its consent reach cannot name what Auto would confirm: the check failed.
+  const readPreview = read.data?.consentReach != null ? read.data : undefined;
+  const preview = input.preview ?? {
+    data: readPreview,
+    failed: read.isError || (read.data !== undefined && readPreview === undefined),
+  };
   const shown = deviceId !== undefined ? preview.data : undefined;
   const [choice, setChoice] = useState<Choice>({
     profile: input.initial ?? DEFAULT_PERMISSION_PROFILE,

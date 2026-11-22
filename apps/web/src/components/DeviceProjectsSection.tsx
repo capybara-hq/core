@@ -80,7 +80,7 @@ function UnsupportedNote({ device }: { device: Device }) {
   const t = useTranslations("devices.projects");
   return (
     <Text variant="prose" tone="muted">
-      {t(device.source === "local" ? "unsupportedLocal" : "unsupportedCloud")}
+      {t(device.dialIn ? "unsupportedLocal" : "unsupportedCloud")}
     </Text>
   );
 }
@@ -270,7 +270,7 @@ function AddProjectDialog({
       keys.org(orgId).permissionPreviewAll(device.id),
     ],
   });
-  const prefix = projectBasePrefix(device.source, list.mode);
+  const prefix = projectBasePrefix(device.dialIn, list.mode);
   const relative = normalizeProjectPath(path);
   const typedName = name.trim();
   const pending = add.isPending;
