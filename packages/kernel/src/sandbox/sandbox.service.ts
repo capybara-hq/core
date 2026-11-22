@@ -31,7 +31,7 @@ import {
   type RevokedIncarnation,
   SandboxOperationIntents,
 } from "./operation-intents.js";
-import { type CloudSupportReport, PermissionInstanceWrites } from "./permission-instance-writes.js";
+import { PermissionInstanceWrites, type SupportReport } from "./permission-instance-writes.js";
 
 export type { HeldProvider } from "./held-operations.js";
 
@@ -118,7 +118,7 @@ import {
   type SandboxPathLease,
   sandboxBusy,
 } from "./leases.js";
-import { isCloudProvider, LegacyRetirementStore } from "./legacy-retirement.js";
+import { isKnownProvider, LegacyRetirementStore } from "./legacy-retirement.js";
 import { ManagedDeviceContextFailed } from "./managed-device-context.js";
 import {
   type AppliedLimits,
@@ -137,7 +137,7 @@ import {
 } from "./modes.js";
 import type { HeldDeviceContextEvidence } from "./permission-context-types.js";
 import { networkOfSandbox, PermissionFacts } from "./permission-facts.js";
-import { cloudReportOwed, cloudSupportOf } from "./permission-runtime-reports.js";
+import { reportOwed, supportOf } from "./permission-runtime-reports.js";
 import {
   type DeviceProviderEntry,
   DeviceProviders,
@@ -709,7 +709,6 @@ export class SandboxService {
       LegacyRetirementStore,
       | "unresolved"
       | "hasUnresolved"
-      | "settleRebooted"
       | "scanUntilStable"
       | "frozen"
       | "frozenAt"
@@ -1958,31 +1957,20 @@ export class SandboxService {
     e: Entered,
   ): Promise<HeldDeviceContextEvidence | undefined> {
     const instanceGeneration = String(e.createdAt);
-    // a cloud instance is named by its installed environment as the managed writer reads it
-    // under the authority locks (B-15): current evidence, nothing unapplied, nothing wider than
-    // desired; otherwise the device is unavailable for managed work, not a stale retry
-    const cloud = (await this.deviceSource(ctx)) === "cloud";
-    const applied = cloud
-      ? await this.facts.readHeldEnvironment({ orgId: ctx.orgId, deviceId: ctx.deviceId })
-      : null;
+    // the instance is named by its installed environment as the managed writer reads it under the
+    // authority locks (B-15), the same for every provider: current evidence, nothing unapplied,
+    // nothing wider than desired; otherwise the device is unavailable for managed work, not a
+    // stale retry
+    const applied = await this.facts.readHeldEnvironment({
+      orgId: ctx.orgId,
+      deviceId: ctx.deviceId,
+    });
     if (
-      cloud &&
-      (applied === null ||
-        applied.provider !== p.plugin ||
-        applied.instanceGeneration !== instanceGeneration)
+      applied === null ||
+      applied.provider !== p.plugin ||
+      applied.instanceGeneration !== instanceGeneration
     )
       return undefined;
-    const binding = applied
-      ? { binding_id: applied.bindingId }
-      : await this.db
-          .selectFrom("device_instance_bindings")
-          .select("binding_id")
-          .where("device_id", "=", ctx.deviceId)
-          .where("instance_generation", "=", instanceGeneration)
-          .where("provider", "=", p.plugin)
-          .where("status", "=", "installed")
-          .executeTakeFirst();
-    if (!binding) return undefined;
     let workingRoot: string;
     try {
       workingRoot = await this.authority.workingRootFor({
@@ -2000,7 +1988,7 @@ export class SandboxService {
       provider: p.plugin,
       instanceId: e.handle.id,
       instanceGeneration,
-      bindingId: binding.binding_id,
+      revision: applied.revision,
       roots: { workspace: roots.workspace, skills: roots.skills, tmp: roots.tmp },
       workingRoot,
     };
@@ -2085,21 +2073,12 @@ export class SandboxService {
   }
 
   /**
-   * Whether this device's instances record cloud evidence (B-15): a cloud device whose provider
-   * (with a known version) reads its own permission support. A local device attests through its
-   * installed binding instead.
+   * Whether the lifecycle records this provider's instances' evidence (B-15): a provider (with a
+   * known version) that reads its own permission support, the same for every device. A provider
+   * entry with an instance binder records it when the binding is installed instead.
    */
-  private async recordsCloudSupport(
-    ctx: { orgId: string; deviceId: string },
-    p: DeviceProviderEntry,
-  ): Promise<boolean> {
-    return (
-      p.plugin !== LOCAL_PROVIDER &&
-      !p.binder &&
-      p.version !== undefined &&
-      typeof p.impl.permissionSupport === "function" &&
-      (await this.deviceSource(ctx)) === "cloud"
-    );
+  private recordsSupport(p: DeviceProviderEntry): boolean {
+    return !p.binder && p.version !== undefined && typeof p.impl.permissionSupport === "function";
   }
 
   /**
@@ -2115,13 +2094,13 @@ export class SandboxService {
     handle: SandboxHandle,
     signal: AbortSignal,
     warnOnce?: string,
-  ): Promise<CloudSupportReport | undefined> {
+  ): Promise<SupportReport | undefined> {
     const read = p.impl.permissionSupport?.bind(p.impl);
     if (!read || p.version === undefined) return undefined;
     let failure: { message: string; err?: unknown };
     try {
       const sig = AbortSignal.any([signal, AbortSignal.timeout(PERMISSION_SUPPORT_TIMEOUT_MS)]);
-      const report = cloudSupportOf(await read(handle, sig));
+      const report = supportOf(await read(handle, sig));
       if (report) return { provider: p.plugin, version: p.version, report };
       failure = { message: "cloud provider returned an invalid permission support report" };
     } catch (err) {
@@ -2165,8 +2144,8 @@ export class SandboxService {
     force: boolean,
   ): Promise<void> {
     try {
-      if (!(await this.recordsCloudSupport(ctx, p))) return;
-      if (!force && !(await cloudReportOwed(this.db.db, ctx.deviceId, p.plugin, p.version))) return;
+      if (!this.recordsSupport(p)) return;
+      if (!force && !(await reportOwed(this.db.db, ctx.deviceId, p.plugin, p.version))) return;
       const row = await this.db
         .selectFrom("device_instances")
         .select("instance_limits")
@@ -2183,11 +2162,11 @@ export class SandboxService {
       );
       if (support)
         await runOutsideTransaction(() =>
-          this.instanceWrites.recordCloudSupport(ctx.orgId, ctx.deviceId, held, support, signal),
+          this.instanceWrites.recordSupport(ctx.orgId, ctx.deviceId, held, support, signal),
         );
       else if (force && !signal.aborted)
         await runOutsideTransaction(() =>
-          this.instanceWrites.clearCloudSupport(ctx.orgId, ctx.deviceId, held, p.plugin),
+          this.instanceWrites.clearSupport(ctx.orgId, ctx.deviceId, held, p.plugin),
         );
     } catch (err) {
       if (!signal.aborted)
@@ -2340,15 +2319,17 @@ export class SandboxService {
         lease,
         s.resumed === true,
       );
-      // B-15: a resumed cloud instance reads its permission support again; any other instance
-      // whose recorded evidence is stale (a limits change, a provider version change) too
-      await this.refreshCloudSupport(ctx, p, s, sig, s.resumed === true);
-      // a new or resumed instance: the provider's report is stored again, still under the exclusive
-      // lease and outside any transaction; a failure keeps the stored one and never fails the use
-      if (s.info.fresh || s.resumed === true)
+      // a resumed instance: the provider's report is stored again (a new one stored it at its
+      // create), still under the exclusive lease and outside any transaction, before the support
+      // whose identity names its revision; a failure keeps the stored one and never fails the use
+      if (s.resumed === true)
         await runOutsideTransaction(() =>
           this.reports.refresh(p, { deviceId: env, orgId: ctx.orgId, handle: s.handle }, sig),
         );
+      // B-15: a resumed instance reads its permission support again; any other instance whose
+      // recorded evidence is stale (a limits change, a provider version change, a new report
+      // revision) too
+      await this.refreshCloudSupport(ctx, p, s, sig, s.resumed === true);
       // staged path (B-8): create → commit → legacy gate (ensure) → cleanup → bind → installed →
       // downgrade. The cleanup a resume or create owes runs first: a retry after a failed bind
       // finds the instance running and would not owe it again. The binder sends the committed
@@ -3009,12 +2990,11 @@ export class SandboxService {
    * before the instance is used, resumed, rebuilt, switched to another provider, bound or
    * downgraded to shared use: every unresolved obligation of the device is settled here or the
    * device is unavailable ({@link retirementPending}).
-   * - The obligation names the **current** incarnation (provider and exact generation): a cloud
-   *   one is destroyed whole by its provider (never resumed, never `killAll`ed, the file system
-   *   kept), the confirmed destruction is recorded and the row reads `destroyed`, so the use
-   *   creates a fresh instance; a failed destroy keeps the obligation. A kernel-internal (local)
-   *   one is quarantined: its destroy is a no-op and a restart proves nothing.
-   * - B-22: a **suspended** current cloud incarnation whose members are all revoked managed starts
+   * - The obligation names the **current** incarnation (provider and exact generation): it is
+   *   destroyed whole by its provider, whatever the provider (never resumed, never `killAll`ed,
+   *   the file system kept), the confirmed destruction is recorded and the row reads
+   *   `destroyed`, so the use creates a fresh instance; a failed destroy keeps the obligation.
+   * - B-22: a **suspended** current incarnation whose members are all revoked managed starts
    *   is not destroyed whole (its other tasks would be lost): each revoked ref gets its exact stop
    *   (persisted while suspended), the instance is resumed, each stop is confirmed (`stopped` or
    *   `already-exited`), and the obligation resolves as `exact-cancelled`. Any failure is noted on
@@ -3035,21 +3015,16 @@ export class SandboxService {
     /** A use's holder: a gate that resumed the instance (B-22) leaves it running and says so. */
     resumed?: { resumed: boolean },
   ): Promise<Row | undefined> {
-    // the device's own candidates first: the gate never depends on the worker having scanned
-    // (C1); then a later boot an authenticated hello already reported settles local ones
+    // the device's own candidates first: the gate never depends on the worker having scanned (C1)
     await this.retirement.scanUntilStable(5, id);
-    await this.retirement.settleRebooted(id);
     const open = await this.retirement.unresolved(id);
     let now = row;
     // every obligation is tried (one that stays never hides another that can resolve); the
     // device is refused at the end while any stays, with the answer that tells what would help:
-    // a failed or impossible destroy now → unavailable (a retry may succeed); a cloud incarnation
-    // no evidence can ever cover → recreate the device; a local one whose computer never reported
-    // a boot → replace the device; else only a restart of the computer is missing
+    // a failed or impossible destroy now → unavailable (a retry may succeed); an incarnation no
+    // evidence can ever cover → recreate the device
     let pending = false;
     let failed = false;
-    let cloudPermanent = false;
-    let unknownBoot = false;
     const isLive = (r: Row | undefined): r is Row & { handle: SandboxHandle } =>
       r !== undefined &&
       r.handle !== null &&
@@ -3072,7 +3047,7 @@ export class SandboxService {
       o: { id: string; provider: string; instanceGeneration: string },
       live: Row & { handle: SandboxHandle },
     ): Promise<{ cancelled: string[] } | "skip" | { failed: string }> => {
-      if (live.status !== "suspended" || !isCloudProvider(o.provider)) return "skip";
+      if (live.status !== "suspended" || !isKnownProvider(o.provider)) return "skip";
       const impl = this.providers.forDevice(o.provider)?.impl;
       const background = impl?.background;
       if (!impl || !background) return "skip";
@@ -3166,7 +3141,7 @@ export class SandboxService {
       live: Row & { handle: SandboxHandle },
     ): Promise<boolean> => {
       const provider = live.provider ?? "unknown";
-      const impl = isCloudProvider(provider) ? this.providers.forDevice(provider)?.impl : undefined;
+      const impl = isKnownProvider(provider) ? this.providers.forDevice(provider)?.impl : undefined;
       if (!impl) {
         await this.retirement.noteFailure(o.id, `provider ${provider} is not loaded`);
         return false;
@@ -3218,7 +3193,7 @@ export class SandboxService {
      */
     const destroyNamed = async (o: { id: string }, row: Row): Promise<boolean> => {
       const provider = row.provider ?? "unknown";
-      const impl = isCloudProvider(provider) ? this.providers.forDevice(provider)?.impl : undefined;
+      const impl = isKnownProvider(provider) ? this.providers.forDevice(provider)?.impl : undefined;
       if (!impl) {
         await this.retirement.noteFailure(o.id, `provider ${provider} is not loaded`);
         return false;
@@ -3262,21 +3237,9 @@ export class SandboxService {
     try {
       for (const o of open) {
         const gen = o.instanceGeneration;
-        const local = isInternalProvider(o.provider);
         const current =
           isLive(now) && now.provider === o.provider && String(now.created_at.getTime()) === gen;
         if (current && isLive(now)) {
-          if (local) {
-            await this.retirement.quarantine(
-              o.id,
-              o.bootId === null
-                ? "local instance: no boot identity was reported, so no restart can prove its legacy work ended"
-                : "local instance: waiting for a restart of the computer (a later boot identity)",
-            );
-            if (o.bootId === null) unknownBoot = true;
-            pending = true;
-            continue;
-          }
           let cancel = await cancelOnResume(o, now);
           if (cancel !== "skip" && "cancelled" in cancel) {
             // resolved only while no member outside the stopped refs exists (a concurrent scan's)
@@ -3305,13 +3268,13 @@ export class SandboxService {
           now.provider === o.provider &&
           String(now.created_at.getTime()) === gen &&
           now.prev_handle === null &&
-          isCloudProvider(o.provider);
+          isKnownProvider(o.provider);
         if (destroyedHere || (await this.retirement.destructionRecorded(id, o.provider, gen))) {
           await this.retirement.resolveDestroyed(o.id);
           continue;
         }
-        if (!local && (gen === "unknown" || o.provider === "unknown")) {
-          // R1-I1 (b): a cloud incarnation the kernel cannot name. Every incarnation the device had
+        if (gen === "unknown" || o.provider === "unknown") {
+          // R1-I1 (b): an incarnation the kernel cannot name. Every incarnation the device had
           // stopped being current through a kernel destroy, a provider `gone` or a kept
           // `prev_handle`; so once the device's current incarnation is destroyed with
           // confirmation, nothing earlier is kept (`prev_handle`) and the obligation was recorded
@@ -3366,20 +3329,13 @@ export class SandboxService {
             reason ??
               "an unknown cloud incarnation and no confirmed destruction of the current one",
           );
-          cloudPermanent = true;
           pending = true;
           continue;
         }
         await this.retirement.quarantine(
           o.id,
-          local
-            ? o.bootId === null
-              ? "local instance: no boot identity was reported, so no restart can prove its legacy work ended"
-              : "local instance: waiting for a restart of the computer (a later boot identity)"
-            : "the old instance was replaced without a recorded confirmed destruction",
+          "the old instance was replaced without a recorded confirmed destruction",
         );
-        if (!local) cloudPermanent = true;
-        else if (o.bootId === null) unknownBoot = true;
         pending = true;
       }
     } catch (err) {
@@ -3399,14 +3355,7 @@ export class SandboxService {
         still.impl.suspend(still.handle, s),
       );
     } else if (still !== null && resumed !== undefined) resumed.resumed = true;
-    if (pending)
-      throw failed
-        ? retirementPending()
-        : cloudPermanent
-          ? recreateRequired()
-          : unknownBoot
-            ? replaceRequired()
-            : restartRequired();
+    if (pending) throw failed ? retirementPending() : recreateRequired();
     return now;
   }
 
@@ -3787,10 +3736,16 @@ export class SandboxService {
     }
     let createdAt: Date;
     try {
-      // B-15: a cloud instance's permission support, read from it under the lease and recorded
-      // with the handle commit (an unread report never fails the create: the instance stays
-      // unprobed until a later use records it)
-      const support = (await this.recordsCloudSupport(ctx, p))
+      // the new instance's device report first, still under the lease and outside any
+      // transaction: its revision is part of the identity the support below is recorded with (a
+      // failure keeps the stored report and never fails the create)
+      await runOutsideTransaction(() =>
+        this.reports.refresh(p, { deviceId: id, orgId: ctx.orgId, handle }, signal),
+      );
+      // B-15: the instance's permission support, read from it under the lease and recorded with
+      // the handle commit (an unread report never fails the create: the instance stays unprobed
+      // until a later use records it)
+      const support = this.recordsSupport(p)
         ? await this.cloudSupport(id, p, handle, signal)
         : undefined;
       createdAt = await runOutsideTransaction(() =>
@@ -3809,7 +3764,7 @@ export class SandboxService {
             ...(!atFileSystem && { instance_limits: record }),
           },
           held.signal,
-          support,
+          p.binder ? "binding" : support,
         ),
       );
       fence.gen++;
@@ -4054,9 +4009,9 @@ export class SandboxService {
     const fence = { gen: row.generation };
     const signal = opSignal(held);
     const prev = await this.destroyInstance(row, p, signal);
-    // the provider's destroy resolved: confirmed destruction of exactly this cloud incarnation
-    // (8.5 evidence); a kernel-internal (local) destroy is a no-op and is never recorded
-    if (row.handle && isCloudProvider(p.plugin))
+    // the provider's destroy resolved: confirmed destruction of exactly this incarnation (8.5
+    // evidence), the same for every provider
+    if (row.handle && isKnownProvider(p.plugin))
       await this.retirement.recordDestruction(id, p.plugin, String(row.created_at.getTime()));
     if (mode === "device") await this.destroyFiles(row, p, signal);
     if (!(await held.renew())) throw new SandboxLockLostError(id);

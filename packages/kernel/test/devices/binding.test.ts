@@ -749,32 +749,22 @@ describe("binding a conversation to a project", () => {
     expect(await countOf(m.id)).toBe(0);
   });
 
-  it("refuses a project outside the device's current mode, and creates nothing", async () => {
-    const m = await member();
-    // sandbox mode reads only the workspace; the project lies outside it
-    const device = await localDevice(m.id, { mode: "sandbox", projects: [CORE] });
-    for (const message of BOTH) {
-      const res = await createWith(m.req, {
-        agentId,
-        deviceId: device,
-        project: "core",
-        ...(message !== undefined && { message: firstMessage() }),
-      });
-      expect(res.statusCode, res.body).toBe(422);
-      expect(errorOf(res).code).toBe("device.project_outside_mode");
-      expect(errorOf(res).message).toContain(CORE.path);
-    }
-    expect(await countOf(m.id)).toBe(0);
-  });
-
   it("refuses a project a later reported home puts above the home, and creates nothing", async () => {
     const m = await member();
     const device = await localDevice(m.id, { projects: [{ name: "srv", path: "/srv" }] });
-    // the machine reports a home under the stored path after it was added
+    // the device's provider reports a home under the stored path after it was added
     await db
-      .updateTable("device_machines")
-      .set({ home: "/srv/me" })
-      .where("device_id", "=", device)
+      .updateTable("devices")
+      .set({
+        report: JSON.stringify({
+          revision: "r1",
+          description: { en: "A test device." },
+          home: "/srv/me",
+          limits: [],
+          reset: false,
+        }),
+      })
+      .where("id", "=", device)
       .execute();
     for (const message of BOTH) {
       const res = await createWith(m.req, {
@@ -791,22 +781,6 @@ describe("binding a conversation to a project", () => {
 
   it("refuses a device that offers no projects, and creates nothing", async () => {
     const m = await member();
-    // an older capybara-device: no `projects` feature, whatever is stored for it
-    const older = await localDevice(m.id, {
-      features: ["networkReport", "policyOp"],
-      projects: [CORE],
-    });
-    for (const message of BOTH) {
-      const res = await createWith(m.req, {
-        agentId,
-        deviceId: older,
-        project: "core",
-        ...(message !== undefined && { message: firstMessage() }),
-      });
-      expect(res.statusCode, res.body).toBe(409);
-      expect(errorOf(res).code).toBe("device.projects_unsupported");
-      expect(errorOf(res).message).toContain("update capybara-device");
-    }
     // no deviceId: the default device, a cloud device on the fake sandbox (no list / scan)
     const cloud = await createWith(m.req, { agentId, project: "core" });
     expect(cloud.statusCode, cloud.body).toBe(409);

@@ -41,7 +41,7 @@ import {
   kernelReadRoot,
   kernelReadRoute,
 } from "./kernel-read.js";
-import { coversHost, type EffectiveDevicePolicy, projectReachOf } from "./modes.js";
+import { coversHost } from "./modes.js";
 import { NetworkGrants } from "./network-grants.js";
 import {
   EscalationGrantMissingError,
@@ -124,14 +124,15 @@ const RUNTIME_CAUSE: PermissionAvailabilityCause = { kind: "runtime" };
  * The one verdict over a device's runtime report and its applied environment (B1, B-16): the
  * recorded permission context withholds its scope exactly when this returns a verdict, and
  * admission refuses with the same reason, so the model is never told it can do what admission
- * refuses, nor the reverse (local and cloud devices alike, B-15). Unknown applied facts precede a
- * positive capability report; a working root that is not the installed workspace (no project) is
- * never installed scope. The sandbox is the same under every profile (support v2): a runtime that
- * enforces per-operation scopes, or an instance-boundary provider whose instance is the sandbox.
+ * refuses, nor the reverse (the same for every provider, B-15; device-provider spec §6.7).
+ * Unknown applied facts, or an applied environment whose boundary is not the one the current
+ * report states, precede a positive capability report; a working root that is not the installed
+ * workspace (no project) is never installed scope. The sandbox is the same under every profile
+ * (support v2): a runtime that enforces per-operation scopes, or an instance-boundary provider
+ * whose instance is the sandbox.
  */
 function withheldScope(input: {
   availability: PermissionAvailability;
-  location: "local" | "cloud";
   workingRoot: string;
   projectPath: string | null;
   applied: AppliedEnvironment | null;
@@ -146,11 +147,11 @@ function withheldScope(input: {
     };
   if (
     applied === null ||
-    applied.location !== input.location ||
+    applied.boundary !== availability.report.boundary ||
     (input.projectPath === null && input.workingRoot !== applied.roots.workspace)
   )
     return { state: "unprobed", reason: UNPROVED_ENVIRONMENT };
-  const verdict = runtimeReportVerdict(availability.report, input.location);
+  const verdict = runtimeReportVerdict(availability.report);
   return verdict === null ? null : { state: "unsupported", reason: verdict, cause: RUNTIME_CAUSE };
 }
 /**
@@ -159,7 +160,7 @@ function withheldScope(input: {
  */
 const KERNEL_READ_PROFILE: PermissionProfile = "request-approval";
 /**
- * The sandbox network of a call: the device sandbox's mode within a cloud instance's applied outer
+ * The sandbox network of a call: the device sandbox's mode within an instance's applied outer
  * boundary (an open network never sits inside an allowlisted or disabled one); `allowlist` takes
  * the call's hosts, and an allowlist without hosts is `none` at the scope.
  */
@@ -221,25 +222,6 @@ export function intersectPermissionScope(f: PermissionScopeFacts): SandboxOperat
           : { kind: "none" },
   });
 }
-/** Fresh authority shape only. Provider dispatch must add durable admission fencing before use. */
-/**
- * The read roots of a restricted profile: the working root, plus the held instance's
- * kernel-staged skills root (its committed roots), read-only, so a staged skill's scripts run
- * (`sh /skills/<name>@<digest>/…`). Never writable; nothing else is added. Sorted by code point,
- * as the recorded context requires.
- */
-export function restrictedReadRoots(
-  workingRoot: string,
-  applied: Pick<AppliedEnvironment, "roots"> | null | undefined,
-): string[] {
-  const skills = applied?.roots.skills;
-  const roots =
-    skills?.startsWith("/") && !withinDirectory(skills, workingRoot)
-      ? [workingRoot, skills]
-      : [workingRoot];
-  return [...new Set(roots)].sort(permissionCodePointCompare);
-}
-
 @Injectable()
 export class SandboxOperationAuthority {
   constructor(
@@ -263,7 +245,6 @@ export class SandboxOperationAuthority {
     await this.locks.acquire({ orgId: ctx.orgId, deviceId: ctx.deviceId }, { kind: "admit" });
     await this.publication.assertCurrent();
     await this.facts.assertCloudReconciled(ctx.orgId, ctx.deviceId);
-    await this.facts.assertOwnerReportUsable(ctx.orgId, ctx.deviceId);
     if (!(await this.isActiveMember(ctx.orgId, ctx.accountId)))
       throw new ApiError("device.not_found", "Device not found");
     await this.facts.preview(ctx.orgId, ctx.accountId, ctx.deviceId);
@@ -281,7 +262,9 @@ export class SandboxOperationAuthority {
       accountId: ctx.accountId,
       admitBeforeMs: Date.now() + 30000,
       ceilingRevision: permissionScopeHash(vector),
-      readRoots: scope.reach === "os-user" ? ["/"] : [scope.workspace],
+      // the base the picker starts from: the provider's reported home, else the workspace (what
+      // the device answers within it is the provider's rule)
+      readRoots: [scope.home ?? scope.workspace],
       tag: operationId,
     });
   }
@@ -459,8 +442,6 @@ export class SandboxOperationAuthority {
         .find((refusal) => refusal !== null);
       if (runtime) throw new ApiError("forbidden", runtime);
       if (
-        (!f.broadProjectReach &&
-          (grant.expansion.readDirectories.length || grant.expansion.writeDirectories.length)) ||
         grant.expansion.hosts.some((host) =>
           f.hostCeiling
             ? !hostGrantable(f.hostCeiling, host)
@@ -470,7 +451,7 @@ export class SandboxOperationAuthority {
       )
         throw new ApiError("forbidden", "Permission expansion exceeds the current ceiling");
     }
-    // an accepted host addition the applied cloud outer boundary does not cover cannot be
+    // an accepted host addition the applied instance outer boundary does not cover cannot be
     // reached: cut like the base hosts, so admission never names more than the context (B-15);
     // an open sandbox network needs none, and an instance-boundary device takes none per call
     const expansionHosts =
@@ -482,8 +463,6 @@ export class SandboxOperationAuthority {
       operation,
       {
         ...f,
-        // an accepted read-directory expansion stays in the review facts and the grant row but
-        // reaches no provider: a scope carries no read roots (the provider's read rule decides)
         baseWriteDirectories: [
           ...f.baseWriteDirectories,
           ...(grant?.expansion.writeDirectories ?? []),
@@ -576,17 +555,13 @@ export class SandboxOperationAuthority {
         restricted:
           availability.report.restricted !== null || instanceSupported(availability.report),
         fullAccess: availability.report.outsideSandbox,
-        isolated: await this.isolatedRuntime(ctx.orgId, ctx.deviceId),
+        // an instance-boundary runtime is isolated from its host's files
+        isolated: availability.report.boundary === "instance",
       });
       if (route === "refused") throw new KernelReadUnsupported();
     }
     const profile = this.scopeOf(ctx, method, f);
-    if (
-      profile.filesystem.kind === "scoped" &&
-      !f.baseReadDirectories.some(
-        (r) => covering === r || covering.startsWith(r === "/" ? "/" : `${r}/`),
-      )
-    )
+    if (profile.filesystem.kind === "scoped" && !withinDirectory(covering, f.workingRoot))
       throw new ApiError("forbidden", "The kernel read is outside the conversation's profile");
     // a restricted read-only scope whenever the runtime enforces it, whatever the conversation's
     // profile: a runtime keyed on Full access may follow a symlinked AGENTS.md or SKILL.md out of
@@ -606,25 +581,6 @@ export class SandboxOperationAuthority {
         : { kind: "scoped", projectRoot: covering, writeRoots: [] },
       network: { kind: "none" },
     });
-  }
-
-  /**
-   * Whether the device's runtime is isolated from its host's files (a kernel read may then go
-   * under the conversation's Full access on a Full-only runtime): a cloud device, or a local
-   * machine whose authenticated connection recorded its Docker mode (`device_machines.mode`,
-   * written at hello; a mode change resets the device's files).
-   */
-  private async isolatedRuntime(orgId: string, deviceId: string): Promise<boolean> {
-    const row = await this.db
-      .selectFrom("devices as d")
-      .leftJoin("device_machines as m", (j) =>
-        j.onRef("m.device_id", "=", "d.id").on("m.revoked_at", "is", null),
-      )
-      .select(["d.source", "m.mode"])
-      .where("d.id", "=", deviceId)
-      .where("d.org_id", "=", orgId)
-      .executeTakeFirst();
-    return row !== undefined && (row.source !== "local" || row.mode === "docker");
   }
 
   private scopeOf(
@@ -706,7 +662,6 @@ export class SandboxOperationAuthority {
       throw new ApiError("forbidden", "This run's actor is no longer authorized");
     await this.publication.assertCurrent();
     await this.facts.assertCloudReconciled(ctx.orgId, ctx.deviceId);
-    await this.facts.assertOwnerReportUsable(ctx.orgId, ctx.deviceId);
     const root = await this.profiles.readOwnedRoot(
       ctx.orgId,
       ctx.holderConversationId,
@@ -736,13 +691,13 @@ export class SandboxOperationAuthority {
       runId: ctx.actor.runId,
       ...opts,
     });
-    const { policy, device, workingRoot, projectRoot, grant, sandbox } = base;
+    const { policy, workingRoot, projectRoot, grant, sandbox } = base;
     const applied = await this.facts.readAppliedEnvironmentLocked({
       orgId: ctx.orgId,
       deviceId: ctx.deviceId,
     });
-    // admission's hosts, as the recorded context names them: within a cloud instance's applied
-    // outer boundary
+    // admission's hosts, as the recorded context names them: within an instance's applied outer
+    // boundary
     const allowedHosts = hostsWithinOuter(base.allowedHosts, applied?.outerNetwork);
     const grantHosts = hostsWithinOuter(base.grantHosts, applied?.outerNetwork);
     captureGrant?.(
@@ -754,18 +709,17 @@ export class SandboxOperationAuthority {
         : undefined,
     );
     const effectiveProfile: PermissionProfile = unattended ? "request-approval" : view.profile;
-    // one verdict for local and cloud devices alike (B-16, B-15): a cloud device without an
-    // instance yet is refused here, but provisioning is not an admitted operation: the lifecycle
-    // lease creates the instance and records its evidence before the first operation is admitted
+    // one verdict for every provider (B-16, B-15): a device without an instance yet is refused
+    // here, but provisioning is not an admitted operation: the lifecycle lease creates the
+    // instance and records its evidence before the first operation is admitted
     const withheld = withheldScope({
       availability: view.availability,
-      location: device.source === "local" ? "local" : "cloud",
       workingRoot,
       projectPath: projectRoot,
       applied,
     });
     // whether this call could run outside the sandbox (per-call escalation): the device's
-    // outside-sandbox ceiling, which already holds the provider's support for it
+    // outside-sandbox ceiling, which already holds the provider's support for it now
     const escalationRefusal = unattended
       ? ESCALATION_UNATTENDED_WHY
       : withheld
@@ -773,8 +727,8 @@ export class SandboxOperationAuthority {
         : !view.outsideSandboxCeiling
           ? escalationCeilingWhy({
               layer: sandbox.layer.outsideSandbox,
-              location: device.source === "local" ? "local" : "cloud",
               boundary: sandbox.boundary,
+              description: base.description,
             })
           : null;
     const vector = await this.epochs.readLocked(subject);
@@ -795,13 +749,11 @@ export class SandboxOperationAuthority {
       authorityRevision: permissionScopeHash({ scopeRevision: view.scopeRevision, vector }),
       workingRoot,
       projectRoot,
-      baseReadDirectories: restrictedReadRoots(workingRoot, applied),
       baseWriteDirectories: [workingRoot],
       baseHosts: allowedHosts,
       network: sandboxNetworkOf(sandbox, applied?.outerNetwork),
       boundary: sandbox.boundary,
       outsideSandboxCeiling: view.outsideSandboxCeiling,
-      broadProjectReach: view.broadProjectReach,
       // the view keeps Full access only while its consent covers the device's ceilings
       fullConsent: view.profile === "full-access",
       unattended,
@@ -867,20 +819,11 @@ export class SandboxOperationAuthority {
     projectUsable?: true;
   }) {
     const { orgId, deviceId } = input;
-    const { policy, owner, sandbox, hostCeiling, hostRefusal } = await this.facts.readDevice(
+    const { policy, sandbox, hostCeiling, hostRefusal, description } = await this.facts.readDevice(
       orgId,
       deviceId,
     );
-    const device = await this.db
-      .selectFrom("devices")
-      .select("source")
-      .where("id", "=", deviceId)
-      .executeTakeFirstOrThrow();
-    const { workingRoot, projectRoot } = await this.workingRootOf({
-      ...input,
-      reach: projectReachOf(device.source, policy, owner?.restrictedProjectReach),
-      mode: policy.mode,
-    });
+    const { workingRoot, projectRoot } = await this.workingRootOf(input);
     const grant = input.runId
       ? await this.grants.forExec({ orgId, deviceId, runId: input.runId })
       : undefined;
@@ -892,7 +835,7 @@ export class SandboxOperationAuthority {
       sandbox.networkMode !== "allowlist" ? [] : [...new Set([...sandbox.hosts, ...grantHosts])];
     return {
       policy,
-      device,
+      description,
       workingRoot,
       projectRoot,
       grant,
@@ -909,8 +852,9 @@ export class SandboxOperationAuthority {
    * (`devices/working-root.ts` `workingRootOf`, permission activation L2): the bound project's
    * root when the root conversation's latest `project_root` snapshot is usable and names that
    * root, else the recorded or reported workspace. A bound project before its first snapshot, an
-   * unavailable one, one outside the workspace without the os-user reach and one above the
-   * owner's home all work in the workspace, so a call the review judged against the workspace is
+   * unavailable one and one above the owner's home all work in the workspace (where a project
+   * may lie is its provider's rule, checked when it was added), so a call the review judged
+   * against the workspace is
    * not stale at admission. Narrowing only: no root other than the binding's or the workspace is
    * ever named. `projectUsable` (a kernel read of the bound project) takes the binding as its
    * snapshot. `projectRoot` is the bound project path when it is the working root, else null.
@@ -922,8 +866,6 @@ export class SandboxOperationAuthority {
     deviceId: string;
     root: PermissionRoot;
     holderConversationId: string;
-    reach: "workspace" | "os-user";
-    mode: EffectiveDevicePolicy["mode"];
     projectUsable?: true;
   }): Promise<{ workingRoot: string; projectRoot: string | null }> {
     const { orgId, deviceId, root } = input;
@@ -950,8 +892,6 @@ export class SandboxOperationAuthority {
         ? { root: bound, unavailable: false }
         : null;
     const workingRoot = reviewWorkingRootOf(usable, {
-      mode: input.mode,
-      reach: input.reach,
       workspace: working.workspace,
       home: working.home,
     });
@@ -972,20 +912,12 @@ export class SandboxOperationAuthority {
     conversationId: string;
   }): Promise<string> {
     const root = await this.profiles.readRoot(input.orgId, input.conversationId);
-    const { policy, owner } = await this.facts.readDevice(input.orgId, input.deviceId);
-    const device = await this.db
-      .selectFrom("devices")
-      .select("source")
-      .where("id", "=", input.deviceId)
-      .executeTakeFirstOrThrow();
     return (
       await this.workingRootOf({
         orgId: input.orgId,
         deviceId: input.deviceId,
         root,
         holderConversationId: input.conversationId,
-        reach: projectReachOf(device.source, policy, owner?.restrictedProjectReach),
-        mode: policy.mode,
       })
     ).workingRoot;
   }
@@ -1143,7 +1075,6 @@ export class SandboxOperationAuthority {
     // states admission refuses before any operation: the device is not verified for new work
     try {
       await this.facts.assertCloudReconciled(input.orgId, deviceId);
-      await this.facts.assertOwnerReportUsable(input.orgId, deviceId);
     } catch (error) {
       if (!(error instanceof ApiError)) throw error;
       return without("unprobed", error.message);
@@ -1171,13 +1102,11 @@ export class SandboxOperationAuthority {
       orgId: input.orgId,
       deviceId,
     });
-    const location = base.device.source === "local" ? "local" : "cloud";
-    // the hosts admission uses: within a cloud instance's applied outer boundary (B-15)
+    // the hosts admission uses: within an instance's applied outer boundary (B-15)
     const allowedHosts = hostsWithinOuter(base.allowedHosts, applied?.outerNetwork);
     // the verdict admission refuses with (B-16)
     const withheld = withheldScope({
       availability,
-      location,
       workingRoot: base.workingRoot,
       projectPath: base.projectRoot,
       applied,
@@ -1197,31 +1126,26 @@ export class SandboxOperationAuthority {
         : hosts.length
           ? ({ kind: "allowlist", hosts } as const)
           : ({ kind: "none" } as const);
-    const directories =
-      box.boundary === "instance"
-        ? instanceRoots(base.workingRoot)
-        : restrictedReadRoots(base.workingRoot, applied);
     return parse({
       ...known,
       availability: { state: "supported" },
       scope: {
-        location,
+        boundary: box.boundary,
         workingRoot: base.workingRoot,
         filesystem: {
           kind: "scoped",
-          readDirectories: directories,
-          writeDirectories: box.boundary === "instance" ? directories : [base.workingRoot],
+          writeDirectories:
+            box.boundary === "instance" ? instanceRoots(base.workingRoot) : [base.workingRoot],
         },
         network,
         outerNetwork: applied.outerNetwork,
       },
       sandbox: {
         boundary: box.boundary,
-        location,
         workingRoot: base.workingRoot,
         network: { kind: network.kind, hostsCount: hosts.length },
-        // a cloud device has no outside: its provider's instance is the outermost boundary
-        outsideSandbox: location === "local" && box.outsideSandbox,
+        // an instance boundary has no outside: its instance is the outermost boundary
+        outsideSandbox: box.boundary === "operation" && box.outsideSandbox,
         outerNetwork: applied.outerNetwork,
         // the provider's network covers a whole instance: no host is granted per call there
         perCallHosts: box.boundary !== "instance",

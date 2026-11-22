@@ -1,4 +1,4 @@
-import type { SandboxRoots } from "@capybara-hq/plugin-sdk";
+import type { SandboxBoundary, SandboxRoots } from "@capybara-hq/plugin-sdk";
 import type { PermissionContextV2 } from "../conversations/events.js";
 
 /**
@@ -15,15 +15,16 @@ export interface PermissionContextSubject {
 
 /**
  * What a managed operation entry already holds for the device it entered (Task 8 producer): the
- * installed instance incarnation and binding, its roots and the working root of the shared base
- * facts. Never read from model or tool input, never cached across operations.
+ * installed instance incarnation and the revision of its evidence, its roots and the working root
+ * of the shared base facts. Never read from model or tool input, never cached across operations.
  */
 export interface HeldDeviceContextEvidence {
   deviceId: string;
   provider: string;
   instanceId: string;
   instanceGeneration: string;
-  bindingId: string;
+  /** {@link AppliedEnvironment.revision} of the instance it entered. */
+  revision: string;
   roots: SandboxRoots;
   workingRoot: string;
 }
@@ -32,17 +33,23 @@ export interface HeldDeviceContextEvidence {
 export type AppliedOuterNetwork = NonNullable<PermissionContextV2["scope"]>["outerNetwork"];
 
 /**
- * The installed environment of a device's current instance, proved by its installed binding and
- * current runtime attestation (B1 adapter). Null from the reader means unproved: the context is
- * unprobed and carries no scope.
+ * The installed environment of a device's current instance, proved by its provider's current
+ * runtime report recorded with the kernel-built identity (B1 adapter, B-15; the same for every
+ * provider). Null from the reader means unproved: the context is unprobed and carries no scope.
  */
 export interface AppliedEnvironment {
-  location: "local" | "cloud";
-  /** The provider of the installed instance (its row and its installed binding agree). */
+  /**
+   * The identity hash of the current runtime report: it names the provider and its version, the
+   * instance handle and generation, the applied limits and the device's report revision, so any of
+   * them changing names another environment.
+   */
+  revision: string;
+  /** The provider's boundary as its current report states it. */
+  boundary: SandboxBoundary;
+  /** The provider of the installed instance (its row and the device agree). */
   provider: string;
   instanceId: string;
   instanceGeneration: string;
-  bindingId: string;
   roots: SandboxRoots;
   outerNetwork: AppliedOuterNetwork;
 }

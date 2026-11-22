@@ -70,13 +70,11 @@ const facts: PermissionReviewSnapshot = {
   profileRevision: 0,
   scopeRevision: "scope",
   authorityRevision: "authority",
-  baseReadDirectories: ["/project"],
   baseWriteDirectories: ["/project"],
   baseHosts: [],
   workingRoot: "/project",
   projectRoot: "/project",
   outsideSandboxCeiling: true,
-  broadProjectReach: true,
   fullConsent: false,
   unattended: false,
   availability: { state: "supported" },
@@ -110,7 +108,6 @@ it.each(["Write", "Edit"])(
         targetPath: "/outside/reports/report.txt",
         scopeKind: "directories-and-hosts",
         permissionScope: {
-          readDirectories: ["/outside/reports"],
           writeDirectories: ["/outside/reports"],
           hosts: [],
         },
@@ -151,9 +148,15 @@ describe("owner-denied device paths", () => {
     expect(message).toMatch(/cannot be approved/);
     expect(message).toMatch(/Ask the user/);
   });
-  it("an ordinary home path (and a lookalike name) is still proposed", () => {
-    for (const path of ["/home/u/notes/a.txt", "/home/u/.sshfoo/a.txt", "/home/u/.config/other/a"])
-      expect(build("Read", { file_path: path }), path).toMatchObject({ kind: "proposal" });
+  it("an ordinary home path (and a lookalike name) is still proposed for a write, never for a read", () => {
+    for (const path of [
+      "/home/u/notes/a.txt",
+      "/home/u/.sshfoo/a.txt",
+      "/home/u/.config/other/a",
+    ]) {
+      expect(build("Write", { file_path: path }), path).toMatchObject({ kind: "proposal" });
+      expect(build("Read", { file_path: path }), path).toEqual({ kind: "in-scope" });
+    }
     expect(build("Read", { file_path: "/home/u/.ssh-notes" }, atHome)).toEqual({
       kind: "in-scope",
     });
@@ -176,7 +179,6 @@ it("explicit cd directory and static URL host are exact proposals", () => {
     kind: "proposal",
     candidate: {
       permissionScope: {
-        readDirectories: ["/outside/reports"],
         writeDirectories: ["/outside/reports"],
         hosts: ["example.com"],
       },
@@ -186,15 +188,14 @@ it("explicit cd directory and static URL host are exact proposals", () => {
 it("rejects 65 combined roots and accepts 64 without truncating", () => {
   const rootFacts = {
     ...facts,
-    baseReadDirectories: Array.from({ length: 63 }, (_, i) => `/root${i}`),
-    baseWriteDirectories: [],
+    baseWriteDirectories: Array.from({ length: 63 }, (_, i) => `/root${i}`),
   };
   expect(candidate("Write", { file_path: "/outside/report.txt" }, rootFacts).kind).toBe("proposal");
   expect(
     candidate(
       "Write",
       { file_path: "/outside/report.txt" },
-      { ...rootFacts, baseReadDirectories: [...rootFacts.baseReadDirectories, "/last"] },
+      { ...rootFacts, baseWriteDirectories: [...rootFacts.baseWriteDirectories, "/last"] },
     ),
   ).toMatchObject({ kind: "unsupported" });
 });
@@ -297,13 +298,11 @@ it("exact binding is required for expansion and exact evidence retries are immut
         profileRevision: view.revision,
         scopeRevision: view.scopeRevision!,
         authorityRevision: permissionScopeHash({ scopeRevision: view.scopeRevision, vector }),
-        baseReadDirectories: ["/work"],
         baseWriteDirectories: ["/work"],
         baseHosts: [],
         workingRoot: "/work",
         projectRoot: "/work",
         outsideSandboxCeiling: view.outsideSandboxCeiling,
-        broadProjectReach: view.broadProjectReach,
         unattended: false,
         fullConsent: false,
         availability: view.availability,
@@ -562,11 +561,7 @@ describe("who approves a crossing", () => {
   });
 
   it("a candidate's crossing: escalation, directory (also with hosts), host", () => {
-    const scope = (dirs: string[], hosts: string[]) => ({
-      readDirectories: dirs,
-      writeDirectories: [],
-      hosts,
-    });
+    const scope = (dirs: string[], hosts: string[]) => ({ writeDirectories: dirs, hosts });
     expect(
       crossingOfCandidate({ scopeKind: "sandbox-escalation", permissionScope: scope([], []) }),
     ).toBe("outside-sandbox");
@@ -654,10 +649,8 @@ describe("candidate building under every profile", () => {
       kind: "proposal",
       candidate: { permissionScope: { writeDirectories: ["/tmp/build"] } },
     });
-    expect(build("Read", { file_path: "/run/user/1000/x" }, facts)).toMatchObject({
-      kind: "proposal",
-      candidate: { permissionScope: { readDirectories: ["/run/user/1000"], writeDirectories: [] } },
-    });
+    // a read proposes nothing: the provider's read rule decides it
+    expect(build("Read", { file_path: "/run/user/1000/x" }, facts)).toEqual({ kind: "in-scope" });
   });
 
   it("a protected location where escalation is refused says why instead", () => {
@@ -728,7 +721,6 @@ describe("per-call hosts within the device sandbox's host ceiling", () => {
     profile: (typeof profiles)[number],
     ceiling: "open" | "allowlist",
     org: DeviceSandboxOrgLayer = {},
-    owner: { network: "open" | "allowlist"; allowedDomains: string[] } | null = null,
     network: "allowlist" | "open-public" = "allowlist",
   ): PermissionReviewSnapshot => {
     const box = {
@@ -741,8 +733,8 @@ describe("per-call hosts within the device sandbox's host ceiling", () => {
       ...facts,
       profile,
       network,
-      hostCeiling: hostGrantCeiling(box, platform, org, owner),
-      hostRefusal: (host) => hostGrantRefusal(host, box, platform, org, owner),
+      hostCeiling: hostGrantCeiling(box, platform, org),
+      hostRefusal: (host) => hostGrantRefusal(host, box, platform, org),
     };
   };
   const curl = (url: string) => ({ command: `curl ${url}` });
@@ -767,20 +759,6 @@ describe("per-call hosts within the device sandbox's host ceiling", () => {
     });
   });
 
-  it.each(profiles)("%s: a host beyond the local owner's list names the owner", (p) => {
-    const f = ceilingFacts(
-      p,
-      "open",
-      {},
-      { network: "allowlist", allowedDomains: ["example.com"] },
-    );
-    const result = build(curl("https://api.test/x"), f);
-    expect(result).toMatchObject({ kind: "unsupported", code: "unbounded-scope" });
-    expect((result as { message: string }).message).toContain(
-      "the device owner adds it on the machine: capybara-device policy add allowedDomains api.test",
-    );
-  });
-
   it.each(profiles)("%s: an org's excluded host is never grantable", (p) => {
     const f = ceilingFacts(p, "open", { deviceNetwork: { excludedHosts: ["bad.test"] } });
     expect(build(curl("https://bad.test/x"), f)).toMatchObject({ kind: "unsupported" });
@@ -796,23 +774,12 @@ describe("per-call hosts within the device sandbox's host ceiling", () => {
     // the apex is no subdomain, and other hosts stay grantable
     expect(build(curl("https://example.com/x"), f)).toMatchObject({ kind: "proposal" });
     expect(build(curl("https://other.test/x"), f)).toMatchObject({ kind: "proposal" });
-    // through the owner's allowlist too: neither an own entry under the exclusion nor an own
-    // wildcard covering an excluded host grants it
-    const owned = ceilingFacts(
-      p,
-      "open",
-      { deviceNetwork: { excludedHosts: ["*.example.com", "bad.other.test"] } },
-      { network: "allowlist", allowedDomains: ["api.example.com", "*.other.test"] },
-    );
-    expect(build(curl("https://api.example.com/x"), owned)).toMatchObject({ kind: "unsupported" });
-    expect(build(curl("https://bad.other.test/x"), owned)).toMatchObject({ kind: "unsupported" });
-    expect(build(curl("https://ok.other.test/x"), owned)).toMatchObject({ kind: "proposal" });
   });
 
   it.each(profiles)("%s: an open-public sandbox network proposes no host", (p) => {
     for (const ceiling of ["open", "allowlist"] as const)
       expect(
-        build(curl("https://evil.test/x"), ceilingFacts(p, ceiling, {}, null, "open-public")),
+        build(curl("https://evil.test/x"), ceilingFacts(p, ceiling, {}, "open-public")),
       ).toEqual({ kind: "in-scope" });
   });
 
@@ -863,14 +830,12 @@ describe("per-call hosts within the device sandbox's host ceiling", () => {
           profileRevision: view.revision,
           scopeRevision: view.scopeRevision ?? "",
           authorityRevision: permissionScopeHash({ scopeRevision: view.scopeRevision, vector }),
-          baseReadDirectories: ["/work"],
           baseWriteDirectories: ["/work"],
           baseHosts: [],
           workingRoot: "/work",
           projectRoot: "/work",
           network: "allowlist",
           outsideSandboxCeiling: view.outsideSandboxCeiling,
-          broadProjectReach: view.broadProjectReach,
           unattended: false,
           fullConsent: false,
           availability: view.availability,

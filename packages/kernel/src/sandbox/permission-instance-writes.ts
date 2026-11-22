@@ -1,9 +1,8 @@
 import { randomUUID } from "node:crypto";
-import {
-  DEFAULT_SANDBOX_ROOTS,
-  type SandboxHandle,
-  type SandboxPermissionSupport,
-  type SandboxRoots,
+import type {
+  SandboxHandle,
+  SandboxPermissionSupport,
+  SandboxRoots,
 } from "@capybara-hq/plugin-sdk";
 import { Inject, Injectable } from "@nestjs/common";
 import { sql, type UpdateObject } from "kysely";
@@ -15,22 +14,21 @@ import { canonicalJson } from "../tools/canonical-json.js";
 import { SandboxLockLostError } from "./leases.js";
 import { PermissionCeilingWrites } from "./permission-ceiling-writes.js";
 import { PermissionRuntimeReports } from "./permission-runtime-reports.js";
-import { LOCAL_PROVIDER } from "./providers.js";
 
 const rootKey = (r: SandboxRoots) => JSON.stringify([r.workspace, r.skills, r.tmp]);
 /** The greatest epoch millisecond a JavaScript Date (and so a generation) can represent. */
 export const MAX_GENERATION_MS = 8_640_000_000_000_000;
 const GENERATION = /^[0-9]{1,16}$/;
 
-/** A cloud provider's permission support read from the instance being committed (B-15). */
-export interface CloudSupportReport {
+/** A provider's permission support read from the instance being committed (B-15). */
+export interface SupportReport {
   provider: string;
   version: string;
   report: SandboxPermissionSupport;
 }
 
 /** The instance a lifecycle holder probed: its handle, generation and limits before the probe. */
-export interface ProbedCloudInstance {
+export interface ProbedInstance {
   handle: SandboxHandle;
   createdAt: number;
   limits: unknown;
@@ -44,9 +42,7 @@ export class InconsistentGenerationError extends Error {
 /**
  * Final handle publication only; provider IO stays under the caller's exclusive lease outside this
  * transaction. It also allocates the instance generation (permission runtime cutover B4): the
- * row's `created_at` is an exact epoch millisecond above the device's durable high-water mark, and
- * a local instance gets a fresh `awaiting-device` binding the lifecycle coordinator sends after
- * commit.
+ * row's `created_at` is an exact epoch millisecond above the device's durable high-water mark.
  */
 @Injectable()
 export class PermissionInstanceWrites {
@@ -57,10 +53,12 @@ export class PermissionInstanceWrites {
     @Inject(PermissionRuntimeReports) private readonly reports: PermissionRuntimeReports,
   ) {}
   /**
-   * `cloud`: the permission support the lifecycle holder read from the new cloud instance before
-   * this commit; it is recorded with the kernel-built cloud identity in this same transaction, so
-   * the committed handle and its evidence appear together (B-15). Absent: none recorded (a local
-   * instance attests through its binding; a failed read leaves the cloud instance unprobed).
+   * `evidence`: the permission support the lifecycle holder read from the new instance before this
+   * commit, recorded with the kernel-built identity in this same transaction, so the committed
+   * handle and its evidence appear together (B-15); or `binding` for a provider whose entry has an
+   * instance binder (`DeviceProviderEntry.binder`, interim until it leaves the kernel), which gets
+   * a fresh `awaiting-device` binding the lifecycle holder sends after commit and which records
+   * the support itself. Absent: none recorded (a failed read leaves the instance unprobed).
    */
   @Transactional({ propagation: "requires_new" })
   async commitHandle(
@@ -70,7 +68,7 @@ export class PermissionInstanceWrites {
     roots: SandboxRoots,
     set: UpdateObject<KernelDatabase, "device_instances">,
     signal: AbortSignal,
-    cloud?: CloudSupportReport,
+    evidence?: SupportReport | "binding",
   ): Promise<Date> {
     signal.throwIfAborted();
     await this.ceilings.lock({ orgId, deviceId }, "device");
@@ -82,7 +80,10 @@ export class PermissionInstanceWrites {
       .executeTakeFirst();
     if (!row || row.generation !== generation)
       throw new SandboxLockLostError(deviceId, "generation");
-    if (rootKey(row.permission_roots ?? (await this.displayedRoots(deviceId))) !== rootKey(roots))
+    // a device that never had an instance has no committed roots: its first commit is what the
+    // person consented to (a consent names the device and its project, never roots it could not
+    // know yet), not a changed reach; a later instance on other roots is
+    if (row.permission_roots !== null && rootKey(row.permission_roots) !== rootKey(roots))
       await this.ceilings.publishLocked({ orgId, deviceId }, "device", true, true);
     signal.throwIfAborted();
     const createdAt = new Date(await this.allocateGenerationLocked(deviceId));
@@ -101,49 +102,58 @@ export class PermissionInstanceWrites {
     if (!updated) throw new SandboxLockLostError(deviceId, "generation");
     if (updated.created_at.getTime() !== createdAt.getTime())
       throw new Error("Instance generation was not stored exactly; check the database clock type");
-    if ((updated.provider ?? row.provider) === LOCAL_PROVIDER)
-      await this.awaitDevice(deviceId, String(createdAt.getTime()));
-    else if (cloud)
-      await this.reports.recordCloud(deviceId, cloud.provider, cloud.version, cloud.report);
+    if (evidence === "binding")
+      await this.awaitDevice(
+        deviceId,
+        String(createdAt.getTime()),
+        updated.provider ?? row.provider,
+      );
+    else if (evidence)
+      await this.reports.recordSupport(
+        deviceId,
+        evidence.provider,
+        evidence.version,
+        evidence.report,
+      );
     return updated.created_at;
   }
 
   /**
-   * Records a cloud instance's permission support read after a resume, a limits change or a
-   * provider version change, under the caller's lifecycle lease (B-15). Recorded only while the
+   * Records an instance's permission support read after a resume, a limits change, a provider
+   * version change or a new report revision, under the caller's lifecycle lease (B-15). Recorded only while the
    * row still holds exactly the probed instance (its handle and generation) with the limits read
    * before the probe: a holder whose lease was lost to one that replaced the instance or changed
    * its limits records nothing, so it never overwrites newer evidence. Never provider IO inside
    * the transaction.
    */
   @Transactional({ propagation: "requires_new" })
-  async recordCloudSupport(
+  async recordSupport(
     orgId: string,
     deviceId: string,
-    held: ProbedCloudInstance,
-    cloud: CloudSupportReport,
+    held: ProbedInstance,
+    support: SupportReport,
     signal: AbortSignal,
   ): Promise<boolean> {
     signal.throwIfAborted();
-    if (!(await this.lockProbed(orgId, deviceId, held, cloud.provider))) return false;
-    await this.reports.recordCloud(deviceId, cloud.provider, cloud.version, cloud.report);
+    if (!(await this.lockProbed(orgId, deviceId, held, support.provider))) return false;
+    await this.reports.recordSupport(deviceId, support.provider, support.version, support.report);
     return true;
   }
 
   /**
-   * Clears the recorded cloud identity of the probed instance (same checks as
-   * {@link recordCloudSupport}): a resumed instance whose permission support could not be read
-   * is unprobed, never supported by evidence from before its suspension.
+   * Clears the recorded identity of the probed instance (same checks as {@link recordSupport}): a
+   * resumed instance whose permission support could not be read is unprobed, never supported by
+   * evidence from before its suspension.
    */
   @Transactional({ propagation: "requires_new" })
-  async clearCloudSupport(
+  async clearSupport(
     orgId: string,
     deviceId: string,
-    held: ProbedCloudInstance,
+    held: ProbedInstance,
     provider: string,
   ): Promise<boolean> {
     if (!(await this.lockProbed(orgId, deviceId, held, provider))) return false;
-    await this.reports.clearCloud(deviceId, provider);
+    await this.reports.clearSupport(deviceId, provider);
     return true;
   }
 
@@ -151,7 +161,7 @@ export class PermissionInstanceWrites {
   private async lockProbed(
     orgId: string,
     deviceId: string,
-    held: ProbedCloudInstance,
+    held: ProbedInstance,
     provider: string,
   ): Promise<boolean> {
     await this.ceilings.lock({ orgId, deviceId }, "device");
@@ -169,24 +179,6 @@ export class PermissionInstanceWrites {
       canonicalJson(row.handle) === canonicalJson(held.handle) &&
       canonicalJson(row.instance_limits ?? null) === canonicalJson(held.limits ?? null)
     );
-  }
-
-  /**
-   * The roots a person saw before the first instance: the machine's reported roots for a local
-   * device (what the Full consent displayed), else the provider defaults. The first create that
-   * lands on those roots is proof of what was consented to, not a changed reach.
-   */
-  private async displayedRoots(deviceId: string): Promise<SandboxRoots> {
-    const machine = await this.db
-      .selectFrom("device_machines")
-      .select("roots")
-      .where("device_id", "=", deviceId)
-      .where("revoked_at", "is", null)
-      .executeTakeFirst();
-    const reported = machine?.roots as Partial<SandboxRoots> | null | undefined;
-    return reported && typeof reported === "object"
-      ? { ...DEFAULT_SANDBOX_ROOTS, ...reported }
-      : DEFAULT_SANDBOX_ROOTS;
   }
 
   /** Test seam: the database clock in epoch milliseconds. */
@@ -275,7 +267,12 @@ export class PermissionInstanceWrites {
    * fresh. Old rows are pruned, keeping the chain, each machine's latest installed binding and any
    * generation a retirement still needs.
    */
-  private async awaitDevice(deviceId: string, instanceGeneration: string): Promise<void> {
+  private async awaitDevice(
+    deviceId: string,
+    instanceGeneration: string,
+    provider: string | null,
+  ): Promise<void> {
+    if (provider === null) throw new Error("A bound instance needs its provider");
     const machine = await this.db
       .selectFrom("device_machines")
       .select("id")
@@ -298,7 +295,7 @@ export class PermissionInstanceWrites {
         device_id: deviceId,
         instance_generation: instanceGeneration,
         binding_id: randomUUID(),
-        provider: LOCAL_PROVIDER,
+        provider,
         previous_generation: previous?.instance_generation ?? null,
         status: "awaiting-device",
         machine_id: machine?.id ?? null,

@@ -272,11 +272,10 @@ const snapshot = (label: string, conv = conversationId): PermissionContextV2 => 
   authorityRevision: "authority-1",
   availability: { state: "supported" },
   scope: {
-    location: "local",
+    boundary: "operation",
     workingRoot: `/project-${label}`,
     filesystem: {
       kind: "scoped",
-      readDirectories: [`/project-${label}`],
       writeDirectories: [`/project-${label}`],
     },
     network: { kind: "none" },

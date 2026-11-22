@@ -19,6 +19,7 @@ import {
   runtimeIdentity,
 } from "../sandbox/permission-runtime-reports.js";
 import { LOCAL_PROVIDER, type SandboxInstanceBinder } from "../sandbox/providers.js";
+import { KERNEL_VERSION } from "../version.js";
 import { localCall } from "./local-codec.js";
 import { OP_DEADLINE_MS } from "./local-device-provider.js";
 import { OwnerReports } from "./owner-reports.js";
@@ -114,17 +115,11 @@ export class LocalInstanceBindings implements SandboxInstanceBinder {
    * report never admits an operation.
    */
   async permissionSupport(deviceId: string): Promise<SandboxPermissionSupport> {
-    const machine = await this.db
-      .selectFrom("device_machines")
-      .select("program_version")
-      .where("device_id", "=", deviceId)
-      .where("revoked_at", "is", null)
-      .executeTakeFirst();
     const { availability } = await readCurrentReport(
       this.db.db,
       deviceId,
       LOCAL_PROVIDER,
-      machine?.program_version ?? undefined,
+      KERNEL_VERSION,
     );
     if (availability.state === "supported") return availability.report;
     return {
@@ -325,11 +320,11 @@ export class LocalInstanceBindings implements SandboxInstanceBinder {
       .where("instance_generation", "=", request.instanceGeneration)
       .where("binding_id", "=", request.bindingId)
       .execute();
-    await this.reports.record(
+    // the attested support is recorded with the kernel-built identity, as every provider's is
+    await this.reports.recordSupport(
       deviceId,
       LOCAL_PROVIDER,
-      machine.program_version,
-      identity,
+      KERNEL_VERSION,
       answer.permissionSupport,
     );
   }

@@ -5,7 +5,7 @@ import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import type { KernelReq, LegacyDeviceHello } from "@capybara-hq/plugin-sdk/device-protocol";
 import { startTestPostgres, startTestRedis, type TestContainer } from "@capybara-hq/testing";
-import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { afterAll, beforeAll, describe, expect, it, onTestFinished } from "vitest";
 import type { ConversationEvent } from "../../src/conversations/events.js";
 import { type KernelSchemaDb, kernelDb } from "../../src/db/kernel-schema.js";
 import { createDb } from "../../src/db/pool.js";
@@ -14,6 +14,7 @@ import { DialInMachines } from "../../src/dial-in/machines.js";
 import { TransactionHost } from "../../src/infra/database/transaction-host.js";
 import { admissionUnavailableText } from "../../src/tools/builtins/sandbox/common.js";
 import {
+  FAKE_INSTANCE_PERMISSION_SUPPORT,
   readFakeSandboxOps,
   setFakeSandboxPermissionSupport,
 } from "../fixtures/plugins/device-fake/index.js";
@@ -404,32 +405,18 @@ describe("profile × operation matrix through the owner API on two replicas", ()
     await matrix("full-access");
   });
 
-  // R3 Mac dogfood (2026-11-20): a Read outside the scope asked as a write (detail kind "write",
-  // tool key Write), so the card said the agent wanted to write the file above a read-only scope
-  it("an outside Read asks as a read: its detail and tool key name a read, not a write", async () => {
+  // reads are the provider's rule (device-provider spec §6.1): a Read outside the scope proposes
+  // no read root and asks no one; what it may read is the device's to decide
+  it("an outside Read asks no one: the device's own read rule decides it", async () => {
     const deviceId = await cloudDevice();
     const conv = await conversation(deviceId);
     const bound = await call(conv, "Bash", { command: "echo bound", description: "Bind" }, 1);
     expect(bound.payload.isError, bound.payload.content).toBe(false);
     await setProfile(conv, "request-approval");
-    const outside = "/etc/capybara-read/note.txt";
-    await postMessage(ownerA, orgId, conv, `tool:Read:${JSON.stringify({ file_path: outside })}`);
-    const ask = await pendingAsk(conv);
-    const row = await db
-      .selectFrom("approvals")
-      .select("tool_key")
-      .where("id", "=", ask.id)
-      .executeTakeFirstOrThrow();
-    try {
-      expect(ask.detail as Record<string, unknown>).toMatchObject({
-        targetPath: outside,
-        permissionScope: { readDirectories: ["/etc/capybara-read"], writeDirectories: [] },
-      });
-      expect((ask.detail as { kind?: string }).kind).toBe("read");
-      expect(row.tool_key).toBe("Read");
-    } finally {
-      await denyThrough(conv, ask.id, 2);
-    }
+    await call(conv, "Read", { file_path: "/etc/capybara-read/note.txt" }, 2);
+    expect(
+      await db.selectFrom("approvals").select("id").where("conversation_id", "=", conv).execute(),
+    ).toEqual([]);
   });
 });
 
@@ -482,13 +469,11 @@ describe("a profile change applies to following operations only", () => {
       ),
     ).toHaveLength(stopsBefore);
 
-    // a read of what Full wrote outside the project is now outside the scope: it asks
-    await postMessage(ownerA, orgId, conv, `tool:Read:${JSON.stringify({ file_path: outside })}`);
-    const readAsk = await pendingAsk(conv);
-    expect(readAsk.detail as Record<string, unknown>).toMatchObject({
-      permissionScope: { readDirectories: ["/etc/capybara-change"] },
-    });
-    await denyThrough(conv, readAsk.id, 4);
+    // a read of what Full wrote outside the project asks no one: reads are the provider's rule
+    await call(conv, "Read", { file_path: outside }, 4);
+    expect(
+      await db.selectFrom("approvals").select("id").where("conversation_id", "=", conv).execute(),
+    ).toEqual([]);
     // an outside write asks as well, and in-project work runs at once under the new revision
     await postMessage(
       ownerA,
@@ -797,7 +782,7 @@ describe("a local device's project outside its fixed workspace", () => {
 
     // a directory crossing: Request approval and Approve for me (no review model here) ask the
     // person, Full access grants it; then the call runs with the granted directory
-    const crossing = async (key: string, input: unknown, kind: "read" | "write") => {
+    const crossing = async (key: string, input: unknown, kind: "write") => {
       await postMessage(ownerA, orgId, conv, `tool:${key}:${JSON.stringify(input)}`);
       if (profile !== "full-access") {
         const ask = await pendingAsk(conv);
@@ -810,13 +795,13 @@ describe("a local device's project outside its fixed workspace", () => {
       expect(r.payload.isError, r.payload.content).toBe(false);
       return r;
     };
-    const outsideRead = await crossing("Read", { file_path: `${NOTES}/todo.txt` }, "read");
+    // a read outside the project is no crossing: it asks no one and reaches the machine, whose own
+    // read rule decides it (a scope names no read roots)
+    const outsideRead = await call(conv, "Read", { file_path: `${NOTES}/todo.txt` }, ++n);
     expect(outsideRead.payload.content).toContain("buy milk");
+    expect(await approvalsOf(conv)).toEqual([]);
     const readReq = native("readFile", `${NOTES}/todo.txt`).at(-1);
     expect(readReq).toBeDefined();
-    // an approved read outside the project is not conveyed: a scope names no read roots (what
-    // the machine reads is its own rule; a real machine refuses it until it reads the whole
-    // machine minus its denies, an accepted interim narrowing)
     const readScope = ((readReq as KernelReq).args as { scope: Scope }).scope.filesystem;
     expect(readScope).not.toHaveProperty("readRoots");
     expect(readScope).toEqual(expect.objectContaining({ kind: "scoped" }));
@@ -1125,13 +1110,16 @@ describe("a device whose runtime cannot enforce its sandbox", () => {
   });
 });
 
-describe("a per-call sandbox escalation on a cloud device", () => {
-  // a cloud device has no outside of its sandbox (approval-only profiles design, decision 1):
-  // an escalation is refused before any effect, under every profile; the cross-replica
-  // escalation flows run on a local device (the approval-only profiles dual matrix)
+describe("a per-call sandbox escalation on an instance-boundary device", () => {
+  // an instance-boundary provider has no outside of its sandbox (approval-only profiles design,
+  // decision 1; its support says so): an escalation is refused before any effect, under every
+  // profile; the cross-replica escalation flows run on an operation-boundary device (the
+  // approval-only profiles dual matrix)
   it.each(["request-approval", "full-access"] as const)(
     "under %s it is refused before any effect and asks no one",
     async (profile) => {
+      await setFakeSandboxPermissionSupport(sandboxRoot, FAKE_INSTANCE_PERMISSION_SUPPORT);
+      onTestFinished(() => setFakeSandboxPermissionSupport(sandboxRoot, null));
       const deviceId = await cloudDevice();
       const conv = await conversation(deviceId);
       const bound = await call(conv, "Bash", { command: "echo bound", description: "Bind" }, 1);

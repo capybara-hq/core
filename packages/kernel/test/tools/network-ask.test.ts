@@ -31,7 +31,6 @@ import { TransactionHost } from "../../src/infra/database/transaction-host.js";
 import { assistantIdemKey } from "../../src/runtime/model-call.js";
 import { RunExecution } from "../../src/runtime/run-execution.js";
 import { Waits } from "../../src/runtime/waits.js";
-import { ESCALATION_DEVICE_OFF_WHY } from "../../src/sandbox/review/permission-candidate.js";
 import { ScheduledTaskStore } from "../../src/schedules/store.js";
 import { NETWORK_ASK_CANCELLED_NOTE } from "../../src/tools/approvals.service.js";
 import {
@@ -64,7 +63,7 @@ import {
   waitForTerminal,
 } from "../helpers/runs.js";
 import { webCaller } from "../helpers/step-context.js";
-import { FakeMachine, HELLO, ownerReportFor } from "../local-devices/fake-machine-v3.js";
+import { FakeMachine, HELLO } from "../local-devices/fake-machine-v3.js";
 
 /**
  * The network ask in the tool pipeline (network ask-to-allow spec §6.2, §6.6–§6.9, §8.3, P1.7):
@@ -489,11 +488,11 @@ describe("not asked", () => {
     await post([curl(["api.foo.com", "10.0.0.5"])]);
     await waitForTerminal(db, s.conversationId, 1, 20_000);
     const [r] = await results();
-    // the reply names who adds the host (the per-call host ceiling's refusal), and who could
-    // allow running outside the sandbox, the one way to a private address (off on this device)
+    // the reply names who adds the host (the per-call host ceiling's refusal), and that only a
+    // command run outside the sandbox reaches a private address (the provider's support allows it)
     expect(
       r?.content.endsWith(
-        `\n\n${unavailableHostNote("api.foo.com", "an organization admin adds api.foo.com to the organization's device network list")}\n${addressLayerNote(["10.0.0.5"], ESCALATION_DEVICE_OFF_WHY)}`,
+        `\n\n${unavailableHostNote("api.foo.com", "an organization admin adds api.foo.com to the organization's device network list")}\n${addressLayerNote(["10.0.0.5"])}`,
       ),
     ).toBe(true);
     expect(await asks()).toEqual([]);
@@ -506,26 +505,6 @@ describe("not asked", () => {
     const evs = await eventsOf(db, s.conversationId);
     const at = (t: string) => evs.findIndex((e) => e.type === t);
     expect(at("network_blocked")).toBeLessThan(at("tool_result"));
-  });
-
-  it("a host beyond the local owner's allowlist is not asked: the owner adds it on the machine", async () => {
-    s = await setup({
-      ownerCeiling: ownerReportFor(
-        { allowedDomains: ["pypi.example.com"] },
-        { network: "allowlist" },
-      ),
-    });
-    s.dev.blocking.set("files.example.com", "device");
-    await post([curl(["files.example.com"])]);
-    await waitForTerminal(db, s.conversationId, 1, 20_000);
-    const [r] = await results();
-    expect(
-      r?.content.endsWith(
-        `\n\n${unavailableHostNote("files.example.com", "the device owner adds it on the machine: capybara-device policy add allowedDomains files.example.com")}`,
-      ),
-    ).toBe(true);
-    expect(await asks()).toEqual([]);
-    expect(curlExecs()).toHaveLength(1);
   });
 
   it("a program without policyOpId: no ask, no note", async () => {

@@ -51,10 +51,6 @@ function nextStep(r: PermissionCutoverReport): string {
       waits.push("check the replicas on a different build (old ones must be stopped)");
     if (ret.unfencedWriters.recent > 0)
       waits.push("an old replica wrote unmarked legacy rows in the last 15 minutes: stop it");
-    if (ret.localWithoutBoot.length > 0)
-      waits.push(
-        "wait for the local devices to report a boot identity (or accept replace_required)",
-      );
     if (ret.cloudUnknown.length > 0)
       waits.push("review the cloud devices with unknown incarnations");
     return waits.length > 0
@@ -115,12 +111,6 @@ export function formatReport(r: PermissionCutoverReport): string {
         u.latestAt === null ? "" : `, latest ${iso(u.latestAt)}`
       }`,
   );
-  lines.push(`Local devices without a boot identity: ${ret.localWithoutBoot.length}`);
-  listed(
-    lines,
-    ret.localWithoutBoot,
-    (d) => `${d.deviceId} (${d.machineId === null ? "no machine" : `machine ${d.machineId}`})`,
-  );
   lines.push(`Cloud devices with unknown incarnations: ${ret.cloudUnknown.length}`);
   listed(lines, ret.cloudUnknown, (d) => {
     const flags = [
@@ -140,7 +130,7 @@ export function formatReport(r: PermissionCutoverReport): string {
     ret.unresolved,
     (o) =>
       `${o.deviceId} ${o.provider} generation ${o.instanceGeneration}: ${o.state}` +
-      `${o.reason === null ? "" : ` (${o.reason})`}${o.bootKnown ? ", boot known" : ""}`,
+      `${o.reason === null ? "" : ` (${o.reason})`}`,
   );
   listed(
     lines,

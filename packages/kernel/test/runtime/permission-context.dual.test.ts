@@ -226,7 +226,12 @@ describe("permission context across replicas", () => {
       provider: "@local",
       instanceId: f.deviceId,
       instanceGeneration: f.generation,
-      bindingId: f.bindingId,
+      revision:
+        (
+          await a.app
+            .get(PermissionFacts)
+            .readHeldEnvironment({ orgId: f.orgId, deviceId: f.deviceId })
+        )?.revision ?? "",
       roots: ROOTS,
       workingRoot: "/work",
     };

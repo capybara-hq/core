@@ -19,7 +19,7 @@ import { KernelConfigService } from "../../src/infra/config/kernel-config.servic
 import { TransactionHost } from "../../src/infra/database/transaction-host.js";
 import { RunExecution } from "../../src/runtime/run-execution.js";
 import {
-  MANAGED_DEVICE_CONTEXT_STALE_TEXT,
+  MANAGED_DEVICE_CONTEXT_UNAVAILABLE_TEXT,
   ManagedDeviceContextRecorder,
 } from "../../src/sandbox/managed-device-context.js";
 import { SandboxOperationAuthority } from "../../src/sandbox/operation-authority.js";
@@ -533,8 +533,9 @@ describe("local devices through the sandbox tools", () => {
       expect(next).toMatch(/was disconnected.*capybara-device login/);
       expect(next).not.toMatch(/retry/i);
     }
-    // a conversation whose root moved to another device keeps the stale "retry" (the retry runs
-    // on its new device), and so does a device check that fails
+    // the revoked machine's report left the held instance without evidence: a conversation whose
+    // root moved to another device keeps the unavailable answer (nothing gone on its new device),
+    // and so does a device check that fails
     const store = k.app.get(PermissionProfileStore);
     const readRoot = store.readRoot.bind(store);
     const moved = vi.spyOn(store, "readRoot").mockImplementation(async (o, id) => ({
@@ -543,7 +544,7 @@ describe("local devices through the sandbox tools", () => {
     }));
     try {
       expect(await toolError(m.run("Read", { file_path: `${ROOTS_A.workspace}/a.txt` }))).toBe(
-        MANAGED_DEVICE_CONTEXT_STALE_TEXT,
+        MANAGED_DEVICE_CONTEXT_UNAVAILABLE_TEXT,
       );
     } finally {
       moved.mockRestore();
@@ -557,7 +558,7 @@ describe("local devices through the sandbox tools", () => {
       .mockRejectedValue(new Error("the database is unreachable"));
     try {
       expect(await toolError(m.run("Read", { file_path: `${ROOTS_A.workspace}/a.txt` }))).toBe(
-        MANAGED_DEVICE_CONTEXT_STALE_TEXT,
+        MANAGED_DEVICE_CONTEXT_UNAVAILABLE_TEXT,
       );
     } finally {
       failing.mockRestore();

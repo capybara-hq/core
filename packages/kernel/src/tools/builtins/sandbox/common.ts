@@ -93,10 +93,7 @@ export interface SandboxToolDeps {
    */
   devices: Pick<ConversationDevices, "forTool"> &
     Partial<
-      Pick<
-        ConversationDevices,
-        "usableNow" | "unusableReason" | "modeLevel" | "workingFacts" | "projectReach"
-      >
+      Pick<ConversationDevices, "usableNow" | "unusableReason" | "modeLevel" | "workingFacts">
     >;
   /** Background `Bash` tasks; absent in test stubs, where `run_in_background` is refused. */
   background?: Pick<
@@ -851,9 +848,8 @@ async function inSandboxWith<T>(
     // the working facts (workspace, home, project snapshot) are read as the review reads them
     // a call the review covered runs in the working root it was reviewed against: never read again
     const reviewed = ctx.reviewedWorkingRoot;
-    const [level, reach, working] = await Promise.all([
+    const [level, working] = await Promise.all([
       deps.devices.modeLevel?.(ctx.orgId, deviceId) ?? null,
-      deps.devices.projectReach?.(ctx.orgId, deviceId),
       reviewed !== undefined
         ? null
         : (deps.devices.workingFacts?.(
@@ -878,8 +874,22 @@ async function inSandboxWith<T>(
               beforeUser: async (staging, info, sig) => {
                 // the held instance's device paths, recorded before any preparation or user callback
                 if (managed) {
-                  // no installed binding to describe the held instance: unavailable, not stale
-                  if (!info.contextEvidence) throw new ManagedDeviceContextUnavailable();
+                  // no installed evidence to describe the held instance: unavailable, not stale
+                  // (a device or machine that is gone for good says so instead)
+                  if (!info.contextEvidence)
+                    throw (
+                      (ctx.runId !== undefined &&
+                        (await managed.goneFor?.(
+                          {
+                            orgId: ctx.orgId,
+                            conversationId: ctx.conversationId,
+                            runId: ctx.runId,
+                            accountId: ctx.accountId,
+                          },
+                          deviceId,
+                        ))) ||
+                      new ManagedDeviceContextUnavailable()
+                    );
                   // B-18: the review judged the call against a root (the workspace included);
                   // held evidence of another root is stale, refused before anything is recorded
                   // or run
@@ -936,7 +946,7 @@ async function inSandboxWith<T>(
           workingRoot:
             (managed ? info.contextEvidence?.workingRoot : undefined) ??
             reviewed ??
-            sessionWorkingRoot(working, mode, info.roots.workspace, reach),
+            sessionWorkingRoot(working, info.roots.workspace),
           p,
           signal,
         };
@@ -1015,14 +1025,9 @@ async function recordDevicePaths(
  * workspace (`workspace`), where the call really runs. Every session built outside `inSandbox` (a
  * person's project skill invocation) takes its working root from here too.
  */
-export function sessionWorkingRoot(
-  working: WorkingFacts | null,
-  mode: SandboxMode,
-  workspace: string,
-  reach?: "workspace" | "os-user",
-): string {
+export function sessionWorkingRoot(working: WorkingFacts | null, workspace: string): string {
   if (working === null) return workspace;
-  const root = workingRootOf(working.project, { mode, reach, ...working });
+  const root = workingRootOf(working.project, working);
   return root === working.workspace ? workspace : root;
 }
 

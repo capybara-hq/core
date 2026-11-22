@@ -12,12 +12,6 @@ import { DevicesService } from "../../src/devices/devices.service.js";
 import { DialInMachines } from "../../src/dial-in/machines.js";
 import { TransactionHost } from "../../src/infra/database/transaction-host.js";
 import { LocalMachineReports } from "../../src/local-devices/local-machine-reports.js";
-import {
-  type DevicePathsPayload,
-  devicePathsChange,
-  devicePathsText,
-} from "../../src/runtime/context/device-paths.js";
-import { NetworkGrants } from "../../src/sandbox/network-grants.js";
 import { SandboxService } from "../../src/sandbox/sandbox.service.js";
 import { legacyDbFor } from "../helpers/conversations.js";
 import { accountsFor } from "../helpers/identity.js";
@@ -34,9 +28,8 @@ import { ownerReportFor } from "../local-devices/fake-machine-v3.js";
 
 /**
  * The mode and network the model is told (`DevicesService.modeLevel`, auto mode spec §4.2): a
- * local device's mode from its owner report (Full: auto) cut to the org's switch, its sandbox-mode
- * allowlist, an owner report the machine pushes afterwards, and a cloud device whose new limits
- * wait for a file reset.
+ * local device's mode cut to the org's switch, the device's own network choice, and a cloud device
+ * whose new limits wait for a file reset.
  */
 
 let pgc: TestContainer;
@@ -132,30 +125,6 @@ async function localDevice(policy: Partial<DeviceLocalPolicySummary> = {}): Prom
   return deviceId;
 }
 
-/** A local device whose machine said hello without an authenticated owner report. */
-async function unreportedLocalDevice(): Promise<string> {
-  const { deviceId, machineId } = await k.app.get(TransactionHost).run(async () => {
-    const { id } = await devices.createDialIn(
-      orgId,
-      ownerId,
-      "@local",
-      `Old ${randomUUID().slice(0, 6)}`,
-    );
-    const issued = await k.app.get(DialInMachines).issue({
-      orgId,
-      deviceId: id,
-      accountId: ownerId,
-      name: "old",
-      os: "linux",
-      arch: "x64",
-      programVersion: "0.2.0",
-    });
-    return { deviceId: id, machineId: issued.machineId };
-  });
-  await k.app.get(LocalMachineReports).recordHello(machineId, { ...HELLO, features: [] });
-  return deviceId;
-}
-
 describe("DevicesService.modeLevel", () => {
   it("a local device carries its reported tier and its device sandbox network", async () => {
     const deviceId = await localDevice();
@@ -168,12 +137,26 @@ describe("DevicesService.modeLevel", () => {
     });
   });
 
-  it("a machine without an owner report fails closed: sandbox", async () => {
-    const unreported = await unreportedLocalDevice();
-    expect(await k.app.get(NetworkGrants).reportedMode(unreported)).toBe("sandbox");
-    expect(await devices.modeLevel(orgId, unreported)).toMatchObject({
-      mode: "sandbox",
-      local: true,
+  it("the device's own network choice reaches the level, the same setting for every provider", async () => {
+    const deviceId = await localDevice();
+    await sql`UPDATE capybara.devices SET network_mode = 'allowlist',
+      network_hosts = ${JSON.stringify(["api.example.com"])}::jsonb WHERE id = ${deviceId}`.execute(
+      raw,
+    );
+    // the device's list narrows the org's hosts (`*.example.com`)
+    expect((await devices.modeLevel(orgId, deviceId))?.network).toEqual({
+      kind: "allowlist",
+      hosts: ["api.example.com"],
+    });
+  });
+
+  it("a device whose own network is closed reaches the level as an allowlist with no host", async () => {
+    const deviceId = await localDevice();
+    await sql`UPDATE capybara.devices SET network_mode = 'none', network_hosts = '[]'::jsonb
+      WHERE id = ${deviceId}`.execute(raw);
+    expect((await devices.modeLevel(orgId, deviceId))?.network).toEqual({
+      kind: "allowlist",
+      hosts: [],
     });
   });
 
@@ -181,8 +164,6 @@ describe("DevicesService.modeLevel", () => {
     const deviceId = await localDevice();
     await sql`UPDATE capybara.orgs SET settings = ${JSON.stringify({ outsideSandbox: "off" })}::jsonb
       WHERE id = ${orgId}`.execute(raw);
-    // the machine reports auto mode while the policy's ceiling is sandbox
-    expect(await k.app.get(NetworkGrants).reportedMode(deviceId)).toBe("auto");
     expect(await k.app.get(SandboxService).devicePolicy({ orgId, deviceId })).toMatchObject({
       mode: "sandbox",
       allowedMode: "sandbox",
@@ -199,73 +180,6 @@ describe("DevicesService.modeLevel", () => {
       allowedMode: "sandbox",
       local: true,
     });
-  });
-
-  it("a policy the machine pushes after its hello reaches the level and the next device_paths", async () => {
-    const deviceId = await localDevice();
-    const machines = k.app.get(DialInMachines);
-    const machineId = (await machines.activeFor(deviceId))?.id as string;
-    const roots = { workspace: "/w", skills: "/s", tmp: "/t" };
-    const before = await devices.modeLevel(orgId, deviceId);
-    const first = devicePathsChange(undefined, roots, undefined, before ?? undefined);
-    expect(devicePathsText(first?.payload as DevicePathsPayload)).toContain(
-      "Mode: auto. Commands run as the user on this machine",
-    );
-    // the owner ran `capybara-device ceiling set --outside-sandbox off --network allowlist` and
-    // allowed a host: the program pushes the new owner report with its summary
-    const summary: DeviceLocalPolicySummary = { allowedDomains: ["a.example.com"] };
-    await k.app.get(LocalMachineReports).recordPolicyV3(machineId, {
-      type: "policy",
-      policy: summary,
-      ownerCeiling: ownerReportFor(summary, { outsideSandbox: false, network: "allowlist" }),
-    });
-    expect((await machines.activeFor(deviceId))?.localPolicy).toEqual(summary);
-    const after = await devices.modeLevel(orgId, deviceId);
-    // the owner's list narrows the org's hosts
-    expect(after).toMatchObject({
-      mode: "sandbox",
-      local: true,
-      network: { kind: "allowlist", hosts: ["a.example.com"] },
-    });
-    // the next sandbox call records a new device_paths event, which tells the model
-    const next = devicePathsChange(
-      { seq: 7, payload: first?.payload as DevicePathsPayload },
-      roots,
-      undefined,
-      after ?? undefined,
-    );
-    expect(next).not.toBeNull();
-    expect(devicePathsText(next?.payload as DevicePathsPayload)).toContain(
-      "Mode: sandbox. Only the workspace, skills and temporary files are writable",
-    );
-    // a change made on the machine is audited as an owner-ceiling change, never a mode change
-    const audits = await db
-      .selectFrom("audit_events")
-      .select(["action", "detail"])
-      .where("target", "=", deviceId)
-      .where("action", "in", ["device.owner_ceiling_changed", "device.mode_changed"])
-      .execute();
-    expect(audits).toEqual([
-      {
-        action: "device.owner_ceiling_changed",
-        detail: expect.objectContaining({
-          from: { outsideSandbox: true, restrictedProjectReach: "workspace", network: "open" },
-          to: { outsideSandbox: false, restrictedProjectReach: "workspace", network: "allowlist" },
-          by: ownerId,
-          via: "device",
-          machineId,
-        }),
-      },
-    ]);
-    // unchanged facts: none
-    expect(
-      devicePathsChange(
-        { seq: 8, payload: next?.payload as DevicePathsPayload },
-        roots,
-        undefined,
-        after ?? undefined,
-      ),
-    ).toBeNull();
   });
 
   it("a cloud device waiting for a file reset reports the mode and network its instance still has", async () => {

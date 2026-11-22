@@ -11,7 +11,6 @@ import {
 import type { KernelReq, LegacyDeviceHello } from "@capybara-hq/plugin-sdk/device-protocol";
 import { startTestPostgres, startTestRedis, type TestContainer } from "@capybara-hq/testing";
 import { Redis } from "ioredis";
-import { sql } from "kysely";
 import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from "vitest";
 import type { KernelSchemaDb } from "../../src/db/kernel-schema.js";
 import { createDb } from "../../src/db/pool.js";
@@ -248,6 +247,19 @@ async function connect(
     10_000,
     "hello recorded",
   );
+  // the hello's device report (the home the picker starts from) is stored right after it
+  await waitFor(
+    async () =>
+      (
+        await db
+          .selectFrom("devices")
+          .select("report_at")
+          .where("id", "=", d.deviceId)
+          .executeTakeFirst()
+      )?.report_at != null,
+    10_000,
+    "device report stored",
+  );
   return machine;
 }
 
@@ -280,27 +292,12 @@ const storedOf = (deviceId: string) =>
     .execute();
 
 /**
- * Sets the machine's reported mode in PG (what a hello or a `policy` op records): its summary and
- * the owner report's project reach and Full ceiling (auto: the owner's OS user, sandbox: the
- * workspace).
- */
-const setLocalMode = (machineId: string, mode: "auto" | "sandbox") =>
-  sql`UPDATE capybara.device_machines
-    SET local_policy = ${JSON.stringify({ allowedDomains: [] })}::jsonb,
-      owner_report = jsonb_set(jsonb_set(owner_report, '{report,restrictedProjectReach}',
-        ${JSON.stringify(mode === "auto" ? "os-user" : "workspace")}::jsonb),
-        '{report,outsideSandbox}', ${JSON.stringify(mode === "auto")}::jsonb)
-    WHERE id = ${machineId}`.execute(raw);
-
-/**
  * The owner browse scope a protocol 3 machine is asked under: the owner's OS user in auto mode,
  * the workspace in sandbox mode (the machine intersects it with its own owner ceiling again).
  */
-const browsed = (deviceId: string, mode: "auto" | "sandbox") =>
-  expect.objectContaining({
-    deviceId,
-    readRoots: mode === "auto" ? ["/"] : [ROOTS.workspace],
-  });
+/** An owner browse starts at the provider's reported home (else the workspace), whatever the mode. */
+const browsed = (deviceId: string, _mode?: "auto" | "sandbox") =>
+  expect.objectContaining({ deviceId, readRoots: [HOME] });
 
 describe("device projects", () => {
   it("adds a readable directory in auto mode: relative to the home, stored absolute, named by its basename", async () => {
@@ -386,48 +383,6 @@ describe("device projects", () => {
     expect(errCode(res)).toBe("device.project_limit_reached");
   });
 
-  it("sandbox mode offers the workspace only: outside it is refused, an auto-mode project is hidden, not deleted", async () => {
-    const d = await owned();
-    const machine = await connect(d);
-    expect((await add(d.req, d.deviceId, { path: "src/capybara" })).statusCode).toBe(201);
-
-    await setLocalMode(d.machineId, "sandbox");
-    const l = await listOf(d.req, d.deviceId);
-    expect(l).toMatchObject({ mode: "sandbox", base: ROOTS.workspace, projects: [], hidden: 1 });
-    expect(await storedOf(d.deviceId)).toHaveLength(1);
-
-    const outside = await add(d.req, d.deviceId, { path: "../../../src" });
-    expect(outside.statusCode, outside.body).toBe(422);
-    expect(errCode(outside)).toBe("device.project_outside_mode");
-
-    const inside = await add(d.req, d.deviceId, { path: "app" });
-    expect(inside.statusCode, inside.body).toBe(201);
-    expect((inside.json() as { project: { path: string } }).project.path).toBe(
-      `${ROOTS.workspace}/app`,
-    );
-    expect(reqsOf(machine, "list").at(-1)?.args).toEqual({
-      path: `${ROOTS.workspace}/app`,
-      limit: 1,
-      scope: browsed(d.deviceId, "sandbox"),
-    });
-
-    // binding follows the same scope
-    await expect(
-      projects.resolveForBinding(orgId, d.deviceId, d.accountId, "capybara"),
-    ).rejects.toMatchObject({ code: "device.project_outside_mode" });
-    expect(await projects.resolveForBinding(orgId, d.deviceId, d.accountId, "app")).toEqual({
-      name: "app",
-      path: `${ROOTS.workspace}/app`,
-    });
-
-    // back in auto mode, the hidden project is offered again
-    await setLocalMode(d.machineId, "auto");
-    expect((await listOf(d.req, d.deviceId)).projects.map((p) => p.name)).toEqual([
-      "app",
-      "capybara",
-    ]);
-  });
-
   it("candidates: one scan of the base in the current mode, checked again by the kernel", async () => {
     const d = await owned();
     const machine = await connect(
@@ -453,16 +408,6 @@ describe("device projects", () => {
     expect(reqsOf(machine, "scan").map((r) => r.args)).toEqual([
       { base: HOME, scope: browsed(d.deviceId, "auto") },
     ]);
-
-    await setLocalMode(d.machineId, "sandbox");
-    const sandboxed = await d.req({ method: "GET", url: `${base(d.deviceId)}/candidates` });
-    expect(sandboxed.statusCode, sandboxed.body).toBe(200);
-    expect(reqsOf(machine, "scan").at(-1)?.args).toEqual({
-      base: ROOTS.workspace,
-      scope: browsed(d.deviceId, "sandbox"),
-    });
-    // in sandbox mode the kernel drops what lies outside the workspace, whatever the device says
-    expect((sandboxed.json() as { candidates: unknown[] }).candidates).toEqual([]);
   });
 
   it("refuses a root above the owner's home, without using the device; the home itself is fine", async () => {
@@ -494,18 +439,6 @@ describe("device projects", () => {
     expect(res.statusCode, res.body).toBe(422);
     expect(errCode(res)).toBe("device.project_path_too_broad");
     expect((res.json() as { error: { message: string } }).error.message).toContain("/var/lib");
-    expect(reqsOf(machine, "list")).toEqual([]);
-  });
-
-  it("auto mode without a reported home refuses a relative path", async () => {
-    const d = await owned();
-    const { home: _home, ...noHome } = AUTO;
-    const machine = await connect(d, noHome);
-    const l = await listOf(d.req, d.deviceId);
-    expect(l).toMatchObject({ mode: "auto", base: null });
-    const res = await add(d.req, d.deviceId, { path: "src" });
-    expect(res.statusCode, res.body).toBe(409);
-    expect(errCode(res)).toBe("device.project_home_unknown");
     expect(reqsOf(machine, "list")).toEqual([]);
   });
 
@@ -544,25 +477,6 @@ describe("device projects", () => {
     const unknown = projects.resolveForBinding(orgId, d.deviceId, d.accountId, "src");
     await expect(unknown).rejects.toBeInstanceOf(ApiError);
     await expect(unknown).rejects.toMatchObject({ code: "device.project_not_found" });
-  });
-
-  it("a machine without the projects feature offers none and refuses add, never asking it", async () => {
-    const d = await owned();
-    const machine = await connect(d, { ...AUTO, features: ["networkReport", "policyOp"] });
-    await db
-      .insertInto("device_projects")
-      .values({ device_id: d.deviceId, name: "old", path: `${HOME}/old`, created_by: d.accountId })
-      .execute();
-    const l = await listOf(d.req, d.deviceId);
-    expect(l).toMatchObject({ supported: false, projects: [] });
-    const res = await add(d.req, d.deviceId, { path: "src" });
-    expect(res.statusCode, res.body).toBe(409);
-    expect(errCode(res)).toBe("device.projects_unsupported");
-    const cand = await d.req({ method: "GET", url: `${base(d.deviceId)}/candidates` });
-    expect(cand.statusCode, cand.body).toBe(200);
-    expect(cand.json()).toMatchObject({ supported: false, candidates: [] });
-    expect(reqsOf(machine, "list")).toEqual([]);
-    expect(reqsOf(machine, "scan")).toEqual([]);
   });
 
   it("an offline machine is a readable refusal, never a 500", async () => {

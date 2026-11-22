@@ -28,12 +28,10 @@ import {
   orgEffectiveHosts,
 } from "./modes.js";
 import {
-  cloudDevicesFollowingDefault,
+  devicesFollowingDefault,
   hostsNarrowed,
-  localMachineRoots,
   needsFullCeiling,
   needsOpenNetwork,
-  needsWiderDeviceCeiling,
   PermissionCeilingWrites,
 } from "./permission-ceiling-writes.js";
 
@@ -387,7 +385,6 @@ export class PermissionConfigPublication {
       const devices = await this.db
         .selectFrom("devices")
         .select(["id", "org_id", "mode", "owner_full_access", "outer_network"])
-        .where("source", "=", "cloud")
         .where("network_mode", "is", null)
         .where("deleted_at", "is", null)
         .orderBy("id")
@@ -480,26 +477,23 @@ export class PermissionConfigPublication {
     const settings = new Map(
       orgs.map((org) => [org.id, orgDeviceSandboxOf(org.settings).deviceNetwork] as const),
     );
-    const devices = await this.db.selectFrom("devices").select(["id", "source"]).execute();
-    const machineRoots = await localMachineRoots(this.db.db);
-    const sources = new Map(devices.map((device) => [device.id, device.source]));
-    // the kill switch lifted is a widening for every cloud device (closing it only narrows)
+    // the kill switch lifted is a widening for every device (closing it only narrows)
     if (before.egress === "none" && next.egress !== "none")
       await this.ceilings.invalidateDeviceConsentUnderPlatform(
-        devices.filter((device) => device.source === "cloud").map((device) => device.id),
+        (await this.db.selectFrom("devices").select("id").execute()).map((device) => device.id),
       );
     // a network ceiling narrowed to the allowlist, or closed by the kill switch, takes running
     // open-network work
     const networkNarrowed =
       (beforeView.network.ceiling === "open" && nextView.network.ceiling === "allowlist") ||
       (before.egress !== "none" && next.egress === "none");
-    // a default narrowed to the allowlist takes it from the cloud devices following it
+    // a default narrowed to the allowlist takes it from the devices following it
     const following =
       !networkNarrowed &&
       beforeView.network.default === "open" &&
       nextView.network.default === "allowlist"
         ? new Set(
-            [...(await cloudDevicesFollowingDefault(this.db.db))]
+            [...(await devicesFollowingDefault(this.db.db))]
               .filter(([, org]) => settings.get(org)?.default === undefined)
               .map(([id]) => id),
           )
@@ -522,7 +516,6 @@ export class PermissionConfigPublication {
           { boundary: "operation", networkMode: "allowlist", networkCeiling: ceiling },
           next,
           org === undefined ? {} : { deviceNetwork: org },
-          null,
         ),
         host,
       );
@@ -533,17 +526,9 @@ export class PermissionConfigPublication {
       (scope, row) => {
         if (needsOpenNetwork(scope) && (networkNarrowed || following?.has(row.device_id) === true))
           return true;
-        // Full off also narrows restricted reach to the workspace (B2): running restricted work
-        // outside a machine's roots goes with Full work, as the owner writer decides
-        if (nextMode === "off" && needsWiderDeviceCeiling(scope, machineRoots.get(row.device_id)))
-          return true;
+        // escalated work goes with the outside-sandbox switch, and with the kill switch closing
         if (needsFullCeiling(scope))
-          return (
-            nextMode === "off" ||
-            (sources.get(row.device_id) === "cloud" &&
-              before.egress !== "none" &&
-              next.egress === "none")
-          );
+          return nextMode === "off" || (before.egress !== "none" && next.egress === "none");
         return hostsNarrowed(
           scope,
           row,
@@ -570,7 +555,7 @@ export class PermissionConfigPublication {
 }
 
 /**
- * Copies a cloud device's B1 snapshot network into its own sandbox network while it has none
+ * Copies a device's B1 snapshot network into its own sandbox network while it has none
  * (migrations 0165 and 0167, the snapshot writer): an allowlist with a non-empty list of strings
  * stays that allowlist, an empty or unreadable one ran closed and becomes `none`; an open snapshot
  * follows the org. Idempotent: only rows still following the org are written.
@@ -590,7 +575,6 @@ export async function copyCloudSnapshotNetworks(db: KernelSchemaDb): Promise<voi
       network_hosts: sql<string>`CASE WHEN ${readable} THEN outer_network -> 'hosts'
         ELSE '[]'::jsonb END`,
     })
-    .where("source", "=", "cloud")
     .where("network_mode", "is", null)
     .where(sql<boolean>`outer_network ->> 'kind' = 'allowlist'`)
     .execute();

@@ -21,15 +21,12 @@ import {
 } from "../../src/local-devices/instance-bindings.js";
 import { LocalMachineReports } from "../../src/local-devices/local-machine-reports.js";
 import { createLogger } from "../../src/log.js";
-import { PermissionCeilingWrites } from "../../src/sandbox/permission-ceiling-writes.js";
 import {
   InconsistentGenerationError,
   PermissionInstanceWrites,
 } from "../../src/sandbox/permission-instance-writes.js";
-import {
-  PermissionRuntimeReports,
-  readRuntimeReport,
-} from "../../src/sandbox/permission-runtime-reports.js";
+import { readRuntimeReport } from "../../src/sandbox/permission-runtime-reports.js";
+import { KERNEL_VERSION } from "../../src/version.js";
 import { truncateTables } from "../helpers/db.js";
 import { MODEL_PLUGINS_CONFIG } from "../helpers/model-plugins.js";
 import { startKernel, type TestKernel } from "../helpers/runs.js";
@@ -157,8 +154,13 @@ async function localDevice() {
         status: "running",
         handle: JSON.stringify({ id: deviceId, roots }),
         had_instance: true,
+        instance_limits: JSON.stringify({
+          mode: "auto",
+          network: { kind: "open-public", hosts: [] },
+        }),
       },
       new AbortController().signal,
+      "binding",
     );
     fence++;
     return String(at.getTime());
@@ -177,7 +179,7 @@ async function localDevice() {
       .where("device_id", "=", deviceId)
       .where("instance_generation", "=", generation)
       .executeTakeFirst();
-  const report = () => readRuntimeReport(db, deviceId, "@local", "0.1.0");
+  const report = () => readRuntimeReport(db, deviceId, "@local", KERNEL_VERSION);
   return {
     ...seed,
     db,
@@ -286,17 +288,11 @@ it("an awaiting binding attests nothing; only the post-commit bind installs the 
   const f = await localDevice();
   const before = await f.fullRevision();
   const g = await f.create();
-  // the first create landed on the roots the person saw: no Full consent reset
+  // the first create of a device is no changed reach: no Full consent reset
   expect((await f.fullRevision()).full_revision).toBe(before.full_revision);
   expect(await f.binding(g)).toMatchObject({
     status: "awaiting-device",
     previous_generation: null,
-  });
-  // a report recorded for this generation without the binding stays unprobed
-  const reports = k.app.get(PermissionRuntimeReports);
-  await k.app.get(TransactionHost).run(async () => {
-    await k.app.get(PermissionCeilingWrites).lock(f, "device");
-    await reports.record(f.deviceId, "@local", "0.1.0", identityFor(g), support);
   });
   expect((await f.report()).state).toBe("unprobed");
   // a bound hello cannot finish an awaiting installation either
@@ -355,10 +351,13 @@ it("an unresolved legacy retirement obligation refuses the bind before anything 
   ).toEqual([{ state: "quarantined" }]);
 });
 
-it("a first create on other roots than the person saw resets Full consent", async () => {
+it("a first create is no changed reach whatever its roots; a later one on other roots resets Full consent", async () => {
   const f = await localDevice();
   const before = await f.fullRevision();
   await f.create({ ...ROOTS, workspace: "/elsewhere" });
+  // a consent names the device and its project, never roots no instance had yet
+  expect((await f.fullRevision()).full_revision).toBe(before.full_revision);
+  await f.create();
   expect((await f.fullRevision()).full_revision).toBe(before.full_revision + 1);
 });
 
@@ -840,6 +839,7 @@ it("concurrent commits of one fence allocate one generation and one binding", as
       ROOTS,
       { status: "running", handle: JSON.stringify({ id: f.deviceId, roots: ROOTS }) },
       new AbortController().signal,
+      "binding",
     );
   const results = await Promise.allSettled([commit(), commit(), commit()]);
   const won = results.filter((r) => r.status === "fulfilled");

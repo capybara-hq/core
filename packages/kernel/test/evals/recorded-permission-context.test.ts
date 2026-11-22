@@ -56,11 +56,10 @@ const ctx = (revision: number): PermissionContextV2 => ({
   authorityRevision: `authority-${revision}`,
   availability: { state: "supported" },
   scope: {
-    location: "local",
+    boundary: "operation",
     workingRoot: `/project-${revision}`,
     filesystem: {
       kind: "scoped",
-      readDirectories: [`/project-${revision}`],
       writeDirectories: [`/project-${revision}`],
     },
     network: { kind: "none" },

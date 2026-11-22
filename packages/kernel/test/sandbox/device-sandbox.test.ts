@@ -18,7 +18,7 @@ import {
   type PermissionScopeFacts,
   sandboxNetworkOf,
 } from "../../src/sandbox/operation-authority.js";
-import { cloudOwnNetwork } from "../../src/sandbox/permission-facts.js";
+import { ownNetwork } from "../../src/sandbox/permission-facts.js";
 
 const HOSTS = ["example.com", "registry.npmjs.org"];
 
@@ -38,17 +38,12 @@ const platform = (
   egress: over.egress ?? "allowlist",
 });
 
-const local = (over: Partial<Extract<DeviceSandboxDeviceLayer, { location: "local" }>> = {}) =>
-  ({
-    location: "local",
-    outsideSandbox: true,
-    network: "open",
-    allowedDomains: [],
-    restrictedProjectReach: "workspace",
-    ...over,
-  }) as const;
-const cloud = (over: Partial<Extract<DeviceSandboxDeviceLayer, { location: "cloud" }>> = {}) =>
-  ({ location: "cloud", networkMode: null, networkHosts: [], ...over }) as const;
+/** The device layer: the device's stored network choice, the same for every provider. */
+const device = (over: Partial<DeviceSandboxDeviceLayer> = {}): DeviceSandboxDeviceLayer => ({
+  networkMode: null,
+  networkHosts: [],
+  ...over,
+});
 
 const operation: DeviceSandboxProviderLayer = {
   boundary: "operation",
@@ -63,14 +58,13 @@ const instance: DeviceSandboxProviderLayer = {
 const NO_ORG: DeviceSandboxOrgLayer = {};
 
 describe("effectiveDeviceSandbox", () => {
-  it("defaults: open network, outside allowed for a local owner who allows it", () => {
-    expect(effectiveDeviceSandbox(platform(), NO_ORG, local(), operation)).toEqual({
+  it("defaults: open network, outside allowed where the provider's support allows it", () => {
+    expect(effectiveDeviceSandbox(platform(), NO_ORG, device(), operation)).toEqual({
       boundary: "operation",
       networkMode: "open",
       networkCeiling: "open",
       hosts: [],
       outsideSandbox: true,
-      restrictedProjectReach: "workspace",
       layer: { network: null, outsideSandbox: null },
     });
   });
@@ -79,33 +73,33 @@ describe("effectiveDeviceSandbox", () => {
     ["platform off", platform({ outsideSandbox: "off" }), NO_ORG, "platform"],
     ["org off", platform(), { outsideSandbox: "off" }, "org"],
   ])("outside the sandbox: %s names its layer", (_, p, o, layer) => {
-    const box = effectiveDeviceSandbox(p, o, local(), operation);
+    const box = effectiveDeviceSandbox(p, o, device(), operation);
     expect(box.outsideSandbox).toBe(false);
     expect(box.layer.outsideSandbox).toBe(layer);
   });
 
-  it("outside the sandbox needs the owner and the provider too; a cloud device never has it", () => {
+  it("outside the sandbox follows the provider's support, whatever the provider; an instance boundary never has it", () => {
     expect(
-      effectiveDeviceSandbox(platform(), NO_ORG, local({ outsideSandbox: false }), operation).layer
-        .outsideSandbox,
-    ).toBe("device");
-    expect(
-      effectiveDeviceSandbox(platform(), NO_ORG, local(), { ...operation, outsideSandbox: false })
+      effectiveDeviceSandbox(platform(), NO_ORG, device(), { ...operation, outsideSandbox: false })
         .layer.outsideSandbox,
     ).toBe("provider");
-    expect(effectiveDeviceSandbox(platform(), NO_ORG, cloud(), operation).outsideSandbox).toBe(
-      false,
+    expect(effectiveDeviceSandbox(platform(), NO_ORG, device(), operation).outsideSandbox).toBe(
+      true,
     );
-    expect(effectiveDeviceSandbox(platform(), NO_ORG, cloud(), instance).layer.outsideSandbox).toBe(
-      "provider",
-    );
+    expect(
+      effectiveDeviceSandbox(platform(), NO_ORG, device(), instance).layer.outsideSandbox,
+    ).toBe("provider");
+    expect(
+      effectiveDeviceSandbox(platform(), NO_ORG, device(), { ...instance, outsideSandbox: true })
+        .outsideSandbox,
+    ).toBe(false);
   });
 
   it("the network ceiling is the narrower of the platform's and the org's, and clamps the mode", () => {
     const p = effectiveDeviceSandbox(
       platform({ ceiling: "allowlist" }),
       NO_ORG,
-      local(),
+      device(),
       operation,
     );
     expect([p.networkCeiling, p.networkMode, p.layer.network]).toEqual([
@@ -117,7 +111,7 @@ describe("effectiveDeviceSandbox", () => {
     const o = effectiveDeviceSandbox(
       platform(),
       { deviceNetwork: { ceiling: "allowlist" } },
-      cloud({ networkMode: "open" }),
+      device({ networkMode: "open" }),
       instance,
     );
     expect([o.networkCeiling, o.networkMode, o.layer.network]).toEqual([
@@ -128,20 +122,20 @@ describe("effectiveDeviceSandbox", () => {
   });
 
   it("the kill switch closes the network everywhere", () => {
-    const box = effectiveDeviceSandbox(platform({ egress: "none" }), NO_ORG, local(), operation);
+    const box = effectiveDeviceSandbox(platform({ egress: "none" }), NO_ORG, device(), operation);
     expect([box.networkCeiling, box.networkMode, box.hosts]).toEqual(["none", "none", []]);
   });
 
   it("mode: the device's choice, else the org default, else the platform default", () => {
     expect(
-      effectiveDeviceSandbox(platform({ default: "allowlist" }), NO_ORG, cloud(), instance)
+      effectiveDeviceSandbox(platform({ default: "allowlist" }), NO_ORG, device(), instance)
         .networkMode,
     ).toBe("allowlist");
     expect(
       effectiveDeviceSandbox(
         platform({ default: "allowlist" }),
         { deviceNetwork: { default: "open" } },
-        cloud(),
+        device(),
         instance,
       ).networkMode,
     ).toBe("open");
@@ -149,63 +143,63 @@ describe("effectiveDeviceSandbox", () => {
       effectiveDeviceSandbox(
         platform(),
         { deviceNetwork: { default: "open" } },
-        cloud({ networkMode: "allowlist" }),
+        device({ networkMode: "allowlist" }),
         instance,
       ).networkMode,
     ).toBe("allowlist");
     expect(
-      effectiveDeviceSandbox(platform(), NO_ORG, local({ network: "allowlist" }), operation).layer
-        .network,
-    ).toBe("device");
+      effectiveDeviceSandbox(platform(), NO_ORG, device({ networkMode: "allowlist" }), operation)
+        .layer.network,
+    ).toBeNull();
   });
 
   it("a device host list only narrows the org's hosts; an empty one adds no narrowing", () => {
     const own = effectiveDeviceSandbox(
       platform(),
       NO_ORG,
-      local({ network: "allowlist", allowedDomains: ["example.com", "evil.test"] }),
+      device({ networkMode: "allowlist", networkHosts: ["example.com", "evil.test"] }),
       operation,
     );
     expect(own.hosts).toEqual(["example.com"]);
     const none = effectiveDeviceSandbox(
       platform(),
       NO_ORG,
-      cloud({ networkMode: "allowlist", networkHosts: [] }),
+      device({ networkMode: "allowlist", networkHosts: [] }),
       instance,
     );
     expect(none.hosts).toEqual(HOSTS);
     const org = effectiveDeviceSandbox(
       platform(),
       { deviceNetwork: { base: "none", extraHosts: ["api.test"] } },
-      cloud({ networkMode: "allowlist", networkHosts: ["api.test", "example.com"] }),
+      device({ networkMode: "allowlist", networkHosts: ["api.test", "example.com"] }),
       instance,
     );
     expect(org.hosts).toEqual(["api.test"]);
   });
 
   it("a provider that cannot enforce the open network clamps it to the allowlist", () => {
-    const box = effectiveDeviceSandbox(platform(), NO_ORG, cloud(), {
+    const box = effectiveDeviceSandbox(platform(), NO_ORG, device(), {
       ...instance,
       network: { openPublic: false, allowlist: true, perOperationHosts: false },
     });
     expect([box.networkMode, box.layer.network]).toEqual(["allowlist", "provider"]);
   });
 
-  it("project reach follows the owner within a platform and org that allow running outside", () => {
-    const reach = local({ restrictedProjectReach: "os-user" });
+  it("the provider layer is its support; with none known, the same layer for every provider", () => {
+    // the networks open to the device's choice, nothing outside the sandbox
+    expect(providerLayerOf(null)).toEqual({ ...operation, outsideSandbox: false });
     expect(
-      effectiveDeviceSandbox(platform(), NO_ORG, reach, operation).restrictedProjectReach,
-    ).toBe("os-user");
-    expect(
-      effectiveDeviceSandbox(platform(), { outsideSandbox: "off" }, reach, operation)
-        .restrictedProjectReach,
-    ).toBe("workspace");
-  });
-
-  it("before a report, a local device runs per operation and a cloud device's instance is the sandbox", () => {
-    expect(providerLayerOf(null, "local").boundary).toBe("operation");
-    expect(providerLayerOf(null, "cloud")).toMatchObject({
+      providerLayerOf({
+        version: 2,
+        boundary: "instance",
+        restricted: null,
+        network: { openPublic: false, allowlist: true, perOperationHosts: false },
+        outsideSandbox: false,
+        background: true,
+      }),
+    ).toEqual({
       boundary: "instance",
+      network: { openPublic: false, allowlist: true, perOperationHosts: false },
       outsideSandbox: false,
     });
   });
@@ -237,52 +231,54 @@ const facts = (over: Partial<PermissionScopeFacts>): PermissionScopeFacts => ({
 const PROFILES: PermissionProfile[] = ["request-approval", "approve-for-me", "full-access"];
 
 describe("admission: the sandbox is the same under every profile", () => {
-  // profile × local/cloud × network mode → scope; the Full access rows are scoped too
+  // profile × boundary × network mode → scope; the Full access rows are scoped too
   const rows = PROFILES.flatMap((profile) =>
-    (["local", "cloud"] as const).flatMap((location) =>
+    (["operation", "instance"] as const).flatMap((boundary) =>
       (["open", "allowlist", "none"] as const).map(
-        (mode) => [profile, location, mode] as [PermissionProfile, "local" | "cloud", typeof mode],
+        (mode) =>
+          [profile, boundary, mode] as [PermissionProfile, "operation" | "instance", typeof mode],
       ),
     ),
   );
-  it.each(rows)("%s on a %s device with a %s network is scoped", (profile, location, mode) => {
-    const box = effectiveDeviceSandbox(
-      platform({ egress: mode === "none" ? "none" : "allowlist" }),
-      NO_ORG,
-      location === "local"
-        ? local({ network: mode === "allowlist" ? "allowlist" : "open", allowedDomains: HOSTS })
-        : cloud({ networkMode: mode === "allowlist" ? "allowlist" : "open" }),
-      location === "local" ? operation : instance,
-    );
-    const network = sandboxNetworkOf(box, null);
-    const scope = intersectPermissionScope(
-      facts({
-        profile,
-        boundary: box.boundary,
-        network,
-        allowedHosts: network === "allowlist" ? box.hosts : [],
-        outsideSandboxCeiling: box.outsideSandbox,
-      }),
-    );
-    expect(scope.filesystem.kind).toBe("scoped");
-    expect(scope.network.kind).toBe(
-      mode === "open" ? "open-public" : mode === "allowlist" ? "allowlist" : "none",
-    );
-    if (location === "cloud") {
-      // the instance is the sandbox: its whole filesystem, never outside
-      expect(scope.filesystem).toEqual({
-        kind: "scoped",
-        projectRoot: "/work",
-        writeRoots: ["/", "/work"],
-      });
-      expect(box.outsideSandbox).toBe(false);
-    } else
-      expect(scope.filesystem).toEqual({
-        kind: "scoped",
-        projectRoot: "/work",
-        writeRoots: ["/work"],
-      });
-  });
+  it.each(rows)(
+    "%s on an %s-boundary device with a %s network is scoped",
+    (profile, boundary, mode) => {
+      const box = effectiveDeviceSandbox(
+        platform({ egress: mode === "none" ? "none" : "allowlist" }),
+        NO_ORG,
+        device({ networkMode: mode === "allowlist" ? "allowlist" : "open" }),
+        boundary === "operation" ? operation : instance,
+      );
+      const network = sandboxNetworkOf(box, null);
+      const scope = intersectPermissionScope(
+        facts({
+          profile,
+          boundary: box.boundary,
+          network,
+          allowedHosts: network === "allowlist" ? box.hosts : [],
+          outsideSandboxCeiling: box.outsideSandbox,
+        }),
+      );
+      expect(scope.filesystem.kind).toBe("scoped");
+      expect(scope.network.kind).toBe(
+        mode === "open" ? "open-public" : mode === "allowlist" ? "allowlist" : "none",
+      );
+      if (boundary === "instance") {
+        // the instance is the sandbox: its whole filesystem, never outside
+        expect(scope.filesystem).toEqual({
+          kind: "scoped",
+          projectRoot: "/work",
+          writeRoots: ["/", "/work"],
+        });
+        expect(box.outsideSandbox).toBe(false);
+      } else
+        expect(scope.filesystem).toEqual({
+          kind: "scoped",
+          projectRoot: "/work",
+          writeRoots: ["/work"],
+        });
+    },
+  );
 
   it("only an escalated call within the outside-sandbox ceiling gets the device pair", () => {
     for (const profile of PROFILES) {
@@ -307,7 +303,7 @@ describe("admission: the sandbox is the same under every profile", () => {
 
 describe("sandboxNetworkOf", () => {
   it("an open network stays within a cloud instance's applied outer boundary", () => {
-    const box = effectiveDeviceSandbox(platform(), NO_ORG, cloud(), instance);
+    const box = effectiveDeviceSandbox(platform(), NO_ORG, device(), instance);
     expect(sandboxNetworkOf(box, { kind: "open-public" })).toBe("open-public");
     expect(sandboxNetworkOf(box, { kind: "allowlist", hosts: ["example.com"] })).toBe("allowlist");
     expect(sandboxNetworkOf(box, { kind: "none" })).toBe("none");
@@ -315,15 +311,17 @@ describe("sandboxNetworkOf", () => {
   });
 });
 
-describe("a local owner's allowlist", () => {
-  it("is the machine's ceiling: an empty one allows no host, as the device enforces it", () => {
-    const box = effectiveDeviceSandbox(
-      platform(),
-      NO_ORG,
-      local({ network: "allowlist", allowedDomains: [] }),
-      operation,
-    );
-    expect([box.networkMode, box.hosts]).toEqual(["allowlist", []]);
+describe("a device's own allowlist", () => {
+  it("is the same for every provider: an empty one follows the org's hosts", () => {
+    for (const provider of [operation, instance]) {
+      const box = effectiveDeviceSandbox(
+        platform(),
+        NO_ORG,
+        device({ networkMode: "allowlist", networkHosts: [] }),
+        provider,
+      );
+      expect([box.networkMode, box.hosts]).toEqual(["allowlist", HOSTS]);
+    }
   });
 });
 
@@ -343,99 +341,69 @@ describe("the per-call host grant ceiling", () => {
     const org = {
       deviceNetwork: { ceiling: "allowlist" as const, excludedHosts: ["example.com"] },
     };
-    const ceiling = hostGrantCeiling(box("allowlist"), lim(), org, null);
+    const ceiling = hostGrantCeiling(box("allowlist"), lim(), org);
     expect(ceiling).toEqual({ kind: "hosts", hosts: ["registry.npmjs.org"] });
-    expect(hostGrantRefusal("api.test", box("allowlist"), lim(), org, null)).toBe(
+    expect(hostGrantRefusal("api.test", box("allowlist"), lim(), org)).toBe(
       "an organization admin adds api.test to the organization's device network list",
     );
-    expect(hostGrantRefusal("registry.npmjs.org", box("allowlist"), lim(), org, null)).toBeNull();
+    expect(hostGrantRefusal("registry.npmjs.org", box("allowlist"), lim(), org)).toBeNull();
   });
 
   it("an open ceiling bounds grants by the kernel only, minus the org's exclusions", () => {
     const org = { deviceNetwork: { excludedHosts: ["example.com"] } };
-    expect(hostGrantable(hostGrantCeiling(box(), lim(), org, null), "api.test")).toBe(true);
-    expect(hostGrantable(hostGrantCeiling(box(), lim(), org, null), "example.com")).toBe(false);
-    expect(hostGrantRefusal("example.com", box(), lim(), org, null)).toMatch(
+    expect(hostGrantable(hostGrantCeiling(box(), lim(), org), "api.test")).toBe(true);
+    expect(hostGrantable(hostGrantCeiling(box(), lim(), org), "example.com")).toBe(false);
+    expect(hostGrantRefusal("example.com", box(), lim(), org)).toMatch(
       /organization admin adds example.com/,
     );
   });
 
   // R3 final review m1: an exclusion is a pattern, like an allowlist entry
-  it("an excluded wildcard refuses every subdomain, never the apex, also through an owner list", () => {
+  it("an excluded wildcard refuses every subdomain, never the apex", () => {
     const org = { deviceNetwork: { excludedHosts: ["*.Example.com"] } };
-    const open = hostGrantCeiling(box(), lim(), org, null);
+    const open = hostGrantCeiling(box(), lim(), org);
     expect(hostGrantable(open, "api.example.com")).toBe(false);
     expect(hostGrantable(open, "a.b.example.com")).toBe(false);
     expect(hostGrantable(open, "example.com")).toBe(true);
-    expect(hostGrantRefusal("api.example.com", box(), lim(), org, null)).toMatch(
+    expect(hostGrantRefusal("api.example.com", box(), lim(), org)).toMatch(
       /organization admin adds api.example.com/,
     );
-    const owner = {
-      network: "allowlist" as const,
-      allowedDomains: ["api.example.com", "*.other.test"],
-    };
-    const owned = hostGrantCeiling(
-      box(),
-      lim(),
-      { deviceNetwork: { excludedHosts: ["*.example.com", "bad.other.test"] } },
-      owner,
-    );
-    expect(owned).toEqual({
-      kind: "hosts",
-      hosts: ["*.other.test"],
-      excluded: ["*.example.com", "bad.other.test"],
-    });
-    expect(hostGrantable(owned, "api.example.com")).toBe(false);
-    expect(hostGrantable(owned, "bad.other.test")).toBe(false);
-    expect(hostGrantable(owned, "ok.other.test")).toBe(true);
   });
 
   it("within keeps grants inside the org's effective hosts; base none removes the platform list", () => {
-    expect(hostGrantRefusal("api.test", box(), lim("within"), {}, null)).toBe(
+    expect(hostGrantRefusal("api.test", box(), lim("within"), {})).toBe(
       "api.test is outside the platform's host list; a super admin adds the host",
     );
     const none = { deviceNetwork: { base: "none" as const, extraHosts: ["example.com"] } };
-    expect(hostGrantCeiling(box(), lim("within"), none, null)).toEqual({
+    expect(hostGrantCeiling(box(), lim("within"), none)).toEqual({
       kind: "hosts",
       hosts: ["example.com"],
     });
   });
 
-  it("a local owner's allowlist intersects both ways and names the machine", () => {
-    const owner = { network: "allowlist" as const, allowedDomains: ["*.npmjs.org"] };
-    // the two-sided intersection keeps the narrower entry of each pair
-    expect(hostGrantCeiling(box(), lim("within"), {}, owner)).toEqual({
-      kind: "hosts",
-      hosts: ["registry.npmjs.org"],
-    });
-    expect(hostGrantRefusal("api.test", box(), lim(), {}, owner)).toBe(
-      "the device owner adds it on the machine: capybara-device policy add allowedDomains api.test",
-    );
-  });
-
   it("an instance boundary or a closed network grants nothing", () => {
-    expect(hostGrantCeiling({ ...box(), boundary: "instance" }, lim(), {}, null)).toEqual({
+    expect(hostGrantCeiling({ ...box(), boundary: "instance" }, lim(), {})).toEqual({
       kind: "hosts",
       hosts: [],
     });
-    expect(hostGrantCeiling({ ...box(), networkMode: "none" }, lim(), {}, null)).toEqual({
+    expect(hostGrantCeiling({ ...box(), networkMode: "none" }, lim(), {})).toEqual({
       kind: "hosts",
       hosts: [],
     });
   });
 });
 
-describe("a closed cloud network", () => {
+describe("a closed device network", () => {
   it("network_mode none is no network; a device without a choice follows its org", () => {
     expect(
-      effectiveDeviceSandbox(platform(), NO_ORG, cloud({ networkMode: "none" }), instance)
+      effectiveDeviceSandbox(platform(), NO_ORG, device({ networkMode: "none" }), instance)
         .networkMode,
     ).toBe("none");
-    expect(cloudOwnNetwork({ network_mode: "none", network_hosts: [] })).toEqual({
+    expect(ownNetwork({ network_mode: "none", network_hosts: [] })).toEqual({
       networkMode: "none",
       networkHosts: [],
     });
-    expect(cloudOwnNetwork({ network_mode: null, network_hosts: [] })).toEqual({
+    expect(ownNetwork({ network_mode: null, network_hosts: [] })).toEqual({
       networkMode: null,
       networkHosts: [],
     });
@@ -447,7 +415,6 @@ describe("the Full access consent reach", () => {
     outsideSandbox: true,
     networkCeiling: "open",
     networkMode: "open",
-    restrictedProjectReach: "os-user",
     hostCeiling: { kind: "any", excluded: [] },
     ...over,
   });
@@ -457,7 +424,6 @@ describe("the Full access consent reach", () => {
       reach({ outsideSandbox: false }),
       reach({ networkMode: "allowlist" }),
       reach({ networkCeiling: "allowlist", networkMode: "allowlist" }),
-      reach({ restrictedProjectReach: "workspace" }),
       reach({ hostCeiling: { kind: "any", excluded: ["a.test"] } }),
       reach({ hostCeiling: { kind: "hosts", hosts: ["a.test"] } }),
     ])

@@ -242,6 +242,12 @@ async function localDevice(
     return { deviceId: id, credential: issued.credential };
   });
   const allowedDomains = owner.allowedDomains ?? [];
+  // the device's own network choice, the same setting for every provider
+  await kernelDb(raw)
+    .updateTable("devices")
+    .set({ network_mode: owner.network, network_hosts: JSON.stringify(allowedDomains) })
+    .where("id", "=", deviceId)
+    .execute();
   const ceiling: DeviceOwnerCeiling = ownerReportFor(
     { allowedDomains },
     { outsideSandbox: true, restrictedProjectReach: "os-user", network: owner.network },
@@ -1064,7 +1070,8 @@ describe("a stored version 1 permission context", () => {
     const recorded = (await contexts()).at(-1);
     if (!recorded) throw new Error("no permission context recorded");
     const v2 = recorded.payload as Record<string, unknown>;
-    expect(v2).toMatchObject({ version: 2, sandbox: { location: "cloud" } });
+    // device-fake reports an operation boundary
+    expect(v2).toMatchObject({ version: 2, sandbox: { boundary: "operation" } });
     const before = (await contexts()).length;
     // an older replica's row: version 1, no sandbox block (the kernel never rewrites the log; the
     // test stands in for the older writer)

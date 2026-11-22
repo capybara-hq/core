@@ -2942,11 +2942,10 @@ describe("reconstructRequest：漂移原因", () => {
       authorityRevision: "authority-1",
       availability: { state: "supported" as const },
       scope: {
-        location: "local" as const,
+        boundary: "operation" as const,
         workingRoot: "/project",
         filesystem: {
           kind: "scoped" as const,
-          readDirectories: ["/project"],
           writeDirectories: ["/project"],
         },
         network: { kind: "none" as const },
@@ -2954,7 +2953,6 @@ describe("reconstructRequest：漂移原因", () => {
       },
       sandbox: {
         boundary: "operation" as const,
-        location: "local" as const,
         workingRoot: "/project",
         network: { kind: "none" as const, hostsCount: 0 },
         outsideSandbox,

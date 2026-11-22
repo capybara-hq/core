@@ -109,6 +109,13 @@ beforeAll(async () => {
     async permissionSupport() {
       return REPORTS.both;
     },
+    // a provider that offers projects (what a project path may be is its own rule)
+    async list() {
+      return { entries: [], truncated: false };
+    },
+    async scan() {
+      return [];
+    },
     async revokeOperation() {},
     async prepare() {
       order.push("prepare");
@@ -207,7 +214,7 @@ async function seed(opts: { project?: string } = {}) {
       .acquire({ orgId: s.orgId, deviceId }, { kind: "write", level: "device" });
     await k.app
       .get(PermissionRuntimeReports)
-      .record(deviceId, PROVIDER, "test-1", identity, REPORTS.both);
+      .recordSupport(deviceId, PROVIDER, "test-1", REPORTS.both);
   });
   await db
     .insertInto("device_instance_bindings")
@@ -247,6 +254,18 @@ async function seed(opts: { project?: string } = {}) {
   return { ...s, db, deviceId, generation, bindingId, ...run };
 }
 type Fixture = Awaited<ReturnType<typeof seed>>;
+
+/** The device's provider reports another revision: the recorded evidence no longer names it. */
+const newReportRevision = (f: Fixture) =>
+  sql`UPDATE capybara.devices SET report = ${JSON.stringify({
+    revision: randomUUID(),
+    description: { en: "A test device." },
+    home: null,
+    limits: [],
+    reset: false,
+  })}::jsonb WHERE id = ${f.deviceId}`
+    .execute(raw)
+    .then(() => undefined);
 
 const depsOf = (
   over: { [K in keyof SandboxToolDeps]?: SandboxToolDeps[K] | undefined } = {},
@@ -407,22 +426,17 @@ describe("managed device context writer in the real common.ts route", () => {
     expect(paths[1]?.payload.permissionContextVersion).toBe(1);
   });
 
-  it("a binding or generation replaced between discovery and append fails before any callback, identical paths notwithstanding", async () => {
-    for (const replace of ["binding", "generation"] as const) {
+  it("a report revision or generation replaced between discovery and append fails before any callback, identical paths notwithstanding", async () => {
+    for (const replace of ["revision", "generation"] as const) {
       const f = await seed();
       order.length = 0;
       const publication = k.app.get(PermissionConfigPublication);
       const real = publication.assertCurrent.bind(publication);
       const spy = vi.spyOn(publication, "assertCurrent").mockImplementation(async () => {
-        // the held instance was entered and its evidence taken; now the binding is replaced
-        // (same device, same roots) on another connection, before the writer's comparison
+        // the held instance was entered and its evidence taken; now its provider reports another
+        // revision (same device, same roots), before the writer's comparison
         const db = kernelDb(raw);
-        if (replace === "binding")
-          await db
-            .updateTable("device_instance_bindings")
-            .set({ binding_id: randomUUID() })
-            .where("device_id", "=", f.deviceId)
-            .execute();
+        if (replace === "revision") await newReportRevision(f);
         else {
           const next = String(Number(f.generation) + 1);
           await db
@@ -452,21 +466,15 @@ describe("managed device context writer in the real common.ts route", () => {
     const recorder = k.app.get(ManagedDeviceContextRecorder);
     const real = recorder.record.bind(recorder);
     return vi.spyOn(recorder, "record").mockImplementation(async (input, held, sig) => {
-      expect(held).toMatchObject({ deviceId: f.deviceId, bindingId: f.bindingId });
+      expect(held).toMatchObject({ deviceId: f.deviceId, revision: expect.any(String) });
       await between(f);
       return real(input, held, sig);
     });
   };
 
-  it("a binding replaced between the held evidence and the writer fails before any callback", async () => {
+  it("a report revision replaced between the held evidence and the writer fails before any callback", async () => {
     const f = await seed();
-    betweenEvidenceAndWriter(async () => {
-      await f.db
-        .updateTable("device_instance_bindings")
-        .set({ binding_id: randomUUID() })
-        .where("device_id", "=", f.deviceId)
-        .execute();
-    }, f);
+    betweenEvidenceAndWriter(() => newReportRevision(f), f);
     const err = await failure(call(f));
     expect(err).toBeInstanceOf(ToolError);
     expect((err as ToolError).message).toBe(MANAGED_DEVICE_CONTEXT_STALE_TEXT);
@@ -677,9 +685,9 @@ describe("managed device context writer in the real common.ts route", () => {
     expect(await managedPaths(f)).toEqual([]);
   });
 
-  it("a held instance without an installed binding is unavailable, with non-retry copy, before any callback", async () => {
+  it("a held instance without installed evidence is unavailable, with non-retry copy, before any callback", async () => {
     const f = await seed();
-    await f.db.deleteFrom("device_instance_bindings").where("device_id", "=", f.deviceId).execute();
+    vi.spyOn(k.app.get(PermissionFacts), "readHeldEnvironment").mockResolvedValue(null);
     const err = await failure(call(f));
     expect(err).toBeInstanceOf(ToolError);
     expect((err as ToolError).message).toBe(MANAGED_DEVICE_CONTEXT_UNAVAILABLE_TEXT);
@@ -724,7 +732,8 @@ describe("cloud installed evidence in the real lifecycle", () => {
         async permissionSupport() {
           probes.push(version);
           if (supportFails) throw new Error("permission support unavailable");
-          return REPORTS.both;
+          // a cloud instance is its own sandbox (an instance boundary)
+          return REPORTS.instance;
         },
         // the trusted preparation runs only once admission admitted its scope
         async prepare(h, scope, signal) {
@@ -811,11 +820,11 @@ describe("cloud installed evidence in the real lifecycle", () => {
       }
     });
     const reports = k.app.get(PermissionRuntimeReports);
-    const recordCloud = reports.recordCloud.bind(reports);
+    const recordSupport = reports.recordSupport.bind(reports);
     const recordedDuringCommit: boolean[] = [];
-    vi.spyOn(reports, "recordCloud").mockImplementation(async (...args) => {
+    vi.spyOn(reports, "recordSupport").mockImplementation(async (...args) => {
       recordedDuringCommit.push(committing);
-      return recordCloud(...args);
+      return recordSupport(...args);
     });
     await call(f);
     expect(recordedDuringCommit).toEqual([true]);
@@ -843,7 +852,7 @@ describe("cloud installed evidence in the real lifecycle", () => {
       provider: CLOUD,
       provider_version: "v1",
       instance_generation: String(instance.created_at.getTime()),
-      report: REPORTS.both,
+      report: REPORTS.instance,
     });
     expect(instance.permission_runtime_identity?.instanceGeneration).toBe(
       String(instance.created_at.getTime()),
@@ -997,7 +1006,7 @@ describe("cloud installed evidence in the real lifecycle", () => {
     const recorded = await runOutsideTransaction(() =>
       k.app
         .get(PermissionInstanceWrites)
-        .recordCloudSupport(
+        .recordSupport(
           f.orgId,
           f.deviceId,
           stale,

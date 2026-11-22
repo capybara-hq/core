@@ -3,6 +3,7 @@ import {
   DEFAULT_SANDBOX_ROOTS,
   type DeviceProvider,
   type SandboxOperationScope,
+  type SandboxPermissionSupport,
   SandboxScopeDeniedError,
 } from "@capybara-hq/plugin-sdk";
 import { vi } from "vitest";
@@ -30,6 +31,8 @@ export async function permissionFixture(
   toolKey = "Read",
   input: Record<string, unknown> = { file_path: "/work/a" },
   staged = false,
+  /** Overrides the provider's permission support (an operation boundary running outside). */
+  support: Partial<SandboxPermissionSupport> = {},
 ) {
   const seed = await seedConversation(raw),
     db = kernelDb(raw),
@@ -51,6 +54,14 @@ export async function permissionFixture(
       source: "local",
       provider: "@permission-policy-test",
       name: "Laptop",
+      // the provider's report: the owner's home, where its denied paths lie
+      report: JSON.stringify({
+        revision: "test-1",
+        description: { en: "A test laptop." },
+        home: "/home/owner",
+        limits: [],
+        reset: false,
+      }),
     })
     .execute();
   await db
@@ -121,6 +132,7 @@ export async function permissionFixture(
         network: { openPublic: false, allowlist: true, perOperationHosts: true },
         outsideSandbox: true,
         background: false,
+        ...support,
       };
     },
     async revokeOperation() {},

@@ -20,6 +20,7 @@ import {
   sameRuntimeIdentity,
 } from "../sandbox/permission-runtime-reports.js";
 import { LOCAL_PROVIDER } from "../sandbox/providers.js";
+import { KERNEL_VERSION } from "../version.js";
 import { OwnerReports } from "./owner-reports.js";
 import {
   deviceFeaturesOf,
@@ -240,13 +241,16 @@ export class LocalMachineReports {
     // the hello predates the binding its own connection installed: that install recorded the
     // report, which this hello's must not overwrite
     if (attested === "installed-here") return;
-    await this.reports.record(
-      machine.device_id,
-      LOCAL_PROVIDER,
-      machine.program_version ?? "",
-      attested,
-      parsed.permissionSupport,
-    );
+    // the attested support is recorded with the kernel-built identity, as every provider's is;
+    // a hello that attests nothing leaves the instance unprobed
+    if (attested === undefined) await this.reports.clearSupport(machine.device_id, LOCAL_PROVIDER);
+    else
+      await this.reports.recordSupport(
+        machine.device_id,
+        LOCAL_PROVIDER,
+        KERNEL_VERSION,
+        parsed.permissionSupport,
+      );
   }
 
   /**

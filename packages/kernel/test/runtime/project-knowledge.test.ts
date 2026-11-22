@@ -505,27 +505,6 @@ describe("project knowledge at run start", () => {
     expect(read).toBe(0);
   });
 
-  it("records a machine that does not announce projects as unavailable (unsupported), asking it nothing", async () => {
-    const deviceId = await localDevice();
-    const convId = await insertBound({ deviceId, path: "/home/me/app" });
-    const events = await run(convId, 1);
-    const roots = projectRoots(events);
-    expect(roots).toHaveLength(1);
-    expect(roots[0]?.payload).toEqual({
-      project: "app",
-      root: "/home/me/app",
-      unavailable: { reason: "unsupported", message: expect.any(String) as string },
-      skills: [],
-    });
-    // the machine was never asked: no instance for the device
-    const instance = await db
-      .selectFrom("device_instances")
-      .select("handle")
-      .where("device_id", "=", deviceId)
-      .executeTakeFirst();
-    expect(instance?.handle ?? null).toBeNull();
-  });
-
   it("reads nothing for a free conversation and leaves its device unstarted", async () => {
     const login = `m-${randomUUID().slice(0, 8)}`;
     const memberId = (await accountsFor(db).createLocal({ login, password: PW, displayName: "M" }))

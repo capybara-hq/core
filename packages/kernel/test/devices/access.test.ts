@@ -419,7 +419,6 @@ describe("local devices", () => {
       {
         ensureDefault: async () => null,
         modeLevel: real.modeLevel.bind(real),
-        projectReach: real.projectReach.bind(real),
       },
       k.app.get(PermissionFacts),
       k.app.get(PermissionCeilingWrites),

@@ -38,18 +38,13 @@ import type {
 } from "../sandbox/device-sandbox.js";
 import { hostGrantable } from "../sandbox/device-sandbox.js";
 import { oweDeviceDestroy, SandboxJobs } from "../sandbox/jobs.js";
-import {
-  coversHost,
-  type DeviceLimits,
-  type DeviceNetwork,
-  projectReachOf,
-} from "../sandbox/modes.js";
+import { coversHost, type DeviceLimits, type DeviceNetwork } from "../sandbox/modes.js";
 import {
   hostsNarrowed,
   needsOpenNetwork,
   PermissionCeilingWrites,
 } from "../sandbox/permission-ceiling-writes.js";
-import { cloudOwnNetwork, networkOfSandbox, PermissionFacts } from "../sandbox/permission-facts.js";
+import { networkOfSandbox, ownNetwork, PermissionFacts } from "../sandbox/permission-facts.js";
 import {
   type DeviceProviderEntry,
   isInternalProvider,
@@ -143,8 +138,6 @@ export interface DeviceSandboxView {
   allowedDomains: string[];
   /** Whether a call may be granted escalation outside the sandbox (never on a cloud device). */
   outsideSandbox: boolean;
-  /** How far restricted work may root outside the workspace. */
-  restrictedProjectReach: "workspace" | "os-user";
   /** The layer that set each ceiling (a disabled option names it), or null when nothing did. */
   layer: { network: DeviceSandboxLayer | null; outsideSandbox: DeviceSandboxLayer | null };
   /**
@@ -733,7 +726,7 @@ export class DevicesService {
       .select(["network_mode", "network_hosts"])
       .where("id", "=", id)
       .executeTakeFirstOrThrow();
-    const own = cloudOwnNetwork(row);
+    const own = ownNetwork(row);
     const from: DeviceNetworkSetting = { mode: own.networkMode, hosts: [...own.networkHosts] };
     const to: DeviceNetworkSetting = {
       mode: want.mode,
@@ -826,31 +819,6 @@ export class DevicesService {
         ...opts.auditDetail,
       },
     });
-  }
-
-  /**
-   * How far restricted work may root outside the device's workspace now (B2): a local machine's
-   * owner reach within a platform and org that allow the wider device ceiling; a cloud device
-   * keeps its previous rule (its effective mode). Never the owner's Full permission alone.
-   */
-  async projectReach(orgId: string, deviceId: string): Promise<"workspace" | "os-user"> {
-    const row = await this.db
-      .selectFrom("devices as e")
-      .leftJoin("device_machines as m", (j) =>
-        j.onRef("m.device_id", "=", "e.id").on("m.revoked_at", "is", null),
-      )
-      .select(["e.source", "m.owner_report", "m.local_policy"])
-      .where("e.id", "=", deviceId)
-      .where("e.org_id", "=", orgId)
-      .where("e.deleted_at", "is", null)
-      .executeTakeFirst();
-    if (row === undefined) return "workspace";
-    const policy = await this.sandbox.devicePolicy({ orgId, deviceId });
-    return projectReachOf(
-      row.source,
-      policy,
-      row.source === "local" ? ownerFactsOf(row).restrictedProjectReach : null,
-    );
   }
 
   /**
@@ -1292,7 +1260,7 @@ export class DevicesService {
           perDevice.get(r.id)?.box as DeviceSandbox,
           r.source === "local"
             ? ownerFactsOf({ owner_report: r.machine_owner_report })
-            : cloudOwnNetwork(r),
+            : ownNetwork(r),
           {
             pendingNextUse: perDevice.get(r.id)?.state.pendingNextUse ?? false,
             pendingFilesReset: perDevice.get(r.id)?.state.pendingFilesReset ?? false,
@@ -1640,7 +1608,6 @@ export function sandboxViewOf(
     ownNetwork: local ? (own.state === "missing" ? null : own.network) : own.networkMode,
     allowedDomains: local ? [...own.allowedDomains] : [...own.networkHosts],
     outsideSandbox: box.outsideSandbox,
-    restrictedProjectReach: box.restrictedProjectReach,
     layer: { ...box.layer },
     ...extra,
   };

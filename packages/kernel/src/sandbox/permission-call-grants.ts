@@ -179,7 +179,6 @@ export class PermissionCallGrants {
       (escalation
         ? typeof candidate.escalation?.justification !== "string" ||
           candidate.escalation.justification.trim() === "" ||
-          candidate.permissionScope.readDirectories.length > 0 ||
           candidate.permissionScope.writeDirectories.length > 0 ||
           candidate.permissionScope.hosts.length > 0 ||
           candidate.targetPath !== undefined
@@ -218,7 +217,7 @@ export class PermissionCallGrants {
     const root = await this.profiles.readOwnedRoot(b.orgId, b.conversationId, b.accountId);
     const view = await this.facts.view(b.orgId, b.accountId, root);
     if (escalation) {
-      // the outside-sandbox ceiling: owner, org and platform, and a runtime that can run outside
+      // the outside-sandbox ceiling: platform, org and the provider's support for running outside
       if (
         b.toolKey !== "Bash" ||
         !view.outsideSandboxCeiling ||
@@ -242,15 +241,6 @@ export class PermissionCallGrants {
     // `hostGrantCeiling`): the one rule the candidate builder and admission read, so Full access
     // never auto-grants beyond it
     const { sandbox, hostCeiling, hostRefusal } = await this.facts.readDevice(b.orgId, b.deviceId);
-    if (
-      !view.broadProjectReach &&
-      (candidate.permissionScope.readDirectories.length ||
-        candidate.permissionScope.writeDirectories.length)
-    )
-      throw new ApiError(
-        "forbidden",
-        "Permission proposal exceeds the device owner's project reach",
-      );
     const refused = candidate.permissionScope.hosts.flatMap((host) =>
       hostGrantable(hostCeiling, host)
         ? []
@@ -263,7 +253,6 @@ export class PermissionCallGrants {
       );
     const baseRoot = root.project_path ?? working.workspace;
     const normalized = normalizePermissionExpansion(candidate.permissionScope, {
-      baseReadDirectories: [baseRoot],
       baseWriteDirectories: [baseRoot],
       baseHosts: sandbox.networkMode === "allowlist" ? sandbox.hosts : [],
     });

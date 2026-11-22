@@ -38,7 +38,6 @@ import {
 } from "../helpers/managed-background.js";
 import { MODEL_PLUGINS_CONFIG } from "../helpers/model-plugins.js";
 import { drainOutbox } from "../helpers/outbox.js";
-import { storedOwnerReport } from "../helpers/owner-report.js";
 import { startKernel, type TestKernel, waitFor } from "../helpers/runs.js";
 import { seedDevice } from "../helpers/sandbox.js";
 import { seedConversation } from "../helpers/tool-fixtures.js";
@@ -388,17 +387,20 @@ it("a network narrowing revokes only open-network work: an allowlist sibling kee
     .where("device_id", "=", f.deviceId)
     .execute();
   const openTask = await f.launchAnother();
-  // the owner's network on the allowlist from here on (setup only: the next task's admission
-  // reads it; the owner writer is covered elsewhere)
+  // the device's network on the allowlist from here on (setup only: the next task's admission
+  // reads it; the device network writer is covered elsewhere)
   await f.db
-    .updateTable("device_machines")
-    .set({
-      owner_report: storedOwnerReport({
-        network: "allowlist",
-        allowedDomains: ["registry.npmjs.org"],
-        sequence: 2,
-      }),
-    })
+    .updateTable("devices")
+    .set({ network_mode: "allowlist", network_hosts: JSON.stringify(["registry.npmjs.org"]) })
+    .where("id", "=", f.deviceId)
+    .execute();
+  // the instance already runs at the limits that network gives (no recreation on launch)
+  const limits = await k.app
+    .get(SandboxService)
+    .deviceLimits({ orgId: f.orgId, deviceId: f.deviceId }, { source: "cloud" });
+  await f.db
+    .updateTable("device_instances")
+    .set({ instance_limits: JSON.stringify({ mode: limits.mode, network: limits.network }) })
     .where("device_id", "=", f.deviceId)
     .execute();
   await k.app.get(PermissionProfilesService).set(f.orgId, f.conversationId, owner.id, {

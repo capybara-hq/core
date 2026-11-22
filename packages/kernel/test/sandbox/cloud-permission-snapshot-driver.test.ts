@@ -222,7 +222,8 @@ it("snapshots every live cloud device; a narrowing publishes once; a rerun publi
   expect(state(plain.deviceId)).toBe("unprobed");
   expect(state(strict.deviceId)).toBe("bound");
   expect(state(unknown.deviceId)).toBe("reconcile-required");
-  expect(state(local.deviceId)).toBeUndefined();
+  // every provider's device is snapshotted alike (no location branch)
+  expect(state(local.deviceId)).toBe("unprobed");
   expect(state(deleted.deviceId)).toBeUndefined();
   expect(run.failed).toEqual([]);
   expect(run.pending).toBe(0);
@@ -234,7 +235,6 @@ it("snapshots every live cloud device; a narrowing publishes once; a rerun publi
   expect(await plain.root()).toBe("full-access");
   // the unreconciled device keeps its marker
   expect((await unknown.device()).permission_reconcile_required).toBe(true);
-  expect((await local.device()).owner_full_access).toBeNull();
   expect((await deleted.device()).owner_full_access).toBeNull();
 
   const rerun = await snapshots().snapshotAll();

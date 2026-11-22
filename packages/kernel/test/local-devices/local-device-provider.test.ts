@@ -154,7 +154,7 @@ beforeAll(async () => {
     relay,
     {
       orgOf: async () => orgOfEnv,
-      machineHome: async () => machineHome,
+      activeMachine: async () => ({ id: "machine-1", home: machineHome }),
     },
     { machineRoots: async () => machineRoots },
     {
@@ -171,7 +171,6 @@ beforeAll(async () => {
           orgSettings.deviceNetwork === undefined
             ? {}
             : { deviceNetwork: orgSettings.deviceNetwork },
-          null,
         ),
       deviceLimits: async (_d, o = {}) => {
         const p = o.policy ?? effectiveDevicePolicy(deployment, orgSettings, null);
@@ -256,7 +255,7 @@ describe("LocalDeviceProvider", () => {
     const device = { deviceId: "dev-1", orgId: "org-1", handle: null };
     const report = await provider.report(device, signal());
     expect(report).toEqual({
-      revision: "local-1",
+      revision: "local-machine-1",
       description: {
         en: "Runs on a computer connected with capybara-device; the computer's owner limits it there.",
         zh: "运行在用 capybara-device 连接的电脑上，电脑的主人在本机限制它。",

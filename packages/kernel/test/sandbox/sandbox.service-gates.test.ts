@@ -103,7 +103,8 @@ const marked = (deviceId: string, on = true) =>
     .execute();
 const RECONCILE = { code: "device.permission_reconcile_required" };
 /** A local machine's quarantined earlier incarnation that never reported a boot (8.5). */
-const LEGACY = { name: "RetirementPendingError", code: "device.replace_required" };
+/** An earlier incarnation no recorded destruction covers: the device must be created again. */
+const LEGACY = { name: "RetirementPendingError", code: "device.recreate_required" };
 
 async function cloudDevice() {
   const seed = await seedConversation(raw);
@@ -537,6 +538,7 @@ describe("the exclusive holder binds before it downgrades (B-8, staged path)", (
     expect(await sandbox.withSandbox(f.ctx, async () => "ran", signal())).toBe("ran");
     expect(device.sent).toEqual([]);
     expect(f.events).toEqual(["createFileSystem", "create", "downgrade"]);
-    expect(await f.bindings()).toMatchObject([{ status: "awaiting-device" }]);
+    // a provider entry without an instance binder gets no binding
+    expect(await f.bindings()).toEqual([]);
   });
 });

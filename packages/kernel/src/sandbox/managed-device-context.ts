@@ -95,7 +95,8 @@ class ManagedWriterRefused extends Error {
 }
 
 /** The managed dependency `common.ts` requires on an activated managed route (spec B3). */
-export type ManagedDeviceContextPort = Pick<ManagedDeviceContextRecorder, "record">;
+export type ManagedDeviceContextPort = Pick<ManagedDeviceContextRecorder, "record"> &
+  Partial<Pick<ManagedDeviceContextRecorder, "goneFor">>;
 
 type Subject = { orgId: string; deviceId: string; rootConversationId: string };
 
@@ -178,6 +179,15 @@ export class ManagedDeviceContextRecorder {
         throw (await this.goneInstead(input, held.deviceId)) ?? mapped;
       throw mapped;
     }
+  }
+
+  /**
+   * The gone error of a held instance whose evidence is missing (its device deleted, its machine
+   * revoked): what never comes back says so instead of the unavailable answer. Undefined while the
+   * device is live (or the conversation moved to another device).
+   */
+  async goneFor(input: PermissionContextSubject, deviceId: string): Promise<ApiError | undefined> {
+    return this.goneInstead(input, deviceId);
   }
 
   /**
@@ -352,7 +362,7 @@ export class ManagedDeviceContextRecorder {
       applied.provider !== held.provider ||
       applied.instanceId !== held.instanceId ||
       applied.instanceGeneration !== held.instanceGeneration ||
-      applied.bindingId !== held.bindingId ||
+      applied.revision !== held.revision ||
       !sameRoots(applied.roots, held.roots)
     )
       throw new ManagedDeviceContextStale();

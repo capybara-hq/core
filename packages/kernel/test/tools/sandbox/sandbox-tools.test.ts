@@ -655,7 +655,8 @@ describe("sandbox tools", () => {
     const conv = await sandboxConversation();
     const a = await call(conv, "Read", { file_path: "/etc/passwd" }, 1);
     expect(a.isError).toBe(true);
-    expect(a.content).toContain("/workspace");
+    // reads are the provider's rule: no approval is proposed, the device refuses it
+    expect(a.content).toContain("outside the scope this conversation has on the device");
     const b = await call(conv, "Write", { file_path: "/workspace/../etc/x", content: "x" }, 2);
     expect(b.isError).toBe(true);
     expect(b.content).toContain("..");

@@ -792,21 +792,6 @@ describe("a call reviewed against another root than the held evidence's", () => 
     await expectNotStale(f, "Bash", BASH, against as string);
   });
 
-  it("a workspace review of a project outside the workspace without the wider reach runs", async () => {
-    const f = await seed();
-    // the device narrowed to sandbox mode: a cloud device then has only the workspace reach
-    await f.db
-      .updateTable("devices")
-      .set({ mode: "sandbox" })
-      .where("id", "=", f.deviceId)
-      .execute();
-    await bindProject(f, OUTSIDE);
-    await projectRoot(f, OUTSIDE);
-    const against = await reviewedRoot(f);
-    expect(against).toBe(ROOTS.workspace);
-    await expectNotStale(f, "Write", { file_path: "out.txt", content: "x" }, against as string);
-  });
-
   it("a workspace review of a project above the owner's home runs", async () => {
     const f = await seed();
     await bindProject(f, "/home");

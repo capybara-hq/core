@@ -682,7 +682,7 @@ async function seedLocal(mode: "os" | "docker", report: ReportKind): Promise<Fix
       .acquire({ orgId: f.orgId, deviceId: f.deviceId }, { kind: "write", level: "device" });
     await k.app
       .get(PermissionRuntimeReports)
-      .record(f.deviceId, CLOUD, "v1", identity, REPORTS[report]);
+      .recordSupport(f.deviceId, CLOUD, "v1", REPORTS[report]);
   });
   await f.db
     .insertInto("device_instance_bindings")
@@ -750,7 +750,7 @@ describe("the kernel read's route follows the device's recorded runtime support"
     expect(latest?.agentsMd).toBeUndefined();
   });
 
-  it("a local runtime that can only run outside the sandbox gets no read, Docker mode included", async () => {
+  it("an operation-boundary runtime that can only run outside the sandbox gets no read, whatever the machine runs (the isolated route is an instance boundary only)", async () => {
     const f = await seedLocal("docker", "full-only");
     await bindProject(f);
     await fullAccess(f);
@@ -835,9 +835,9 @@ describe("admission's working root follows the command review's fallbacks", () =
     expect(await workingRoot(f)).toBe(WS);
   });
 
-  it("a root outside the workspace without the os-user reach falls back to the workspace", async () => {
+  it("a root outside the workspace is the working root whatever the mode (the provider's rule)", async () => {
     const f = await seed();
-    // the device's narrowing switch: sandbox mode, so its reach is the workspace only
+    // the device's narrowing switch no longer narrows where a project may lie
     await f.db
       .updateTable("devices")
       .set({ mode: "sandbox" })
@@ -845,7 +845,7 @@ describe("admission's working root follows the command review's fallbacks", () =
       .execute();
     await bindProject(f, "/srv/app");
     await snapshot(f, "/srv/app");
-    expect(await workingRoot(f)).toBe(WS);
+    expect(await workingRoot(f)).toBe("/srv/app");
   });
 
   it("a snapshot naming another root than the binding never becomes the working root", async () => {

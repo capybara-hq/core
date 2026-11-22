@@ -220,13 +220,14 @@ export class DialInMachines {
     machineId: string,
     program: { version: string; os: string; arch: string; bootId?: string },
   ): Promise<void> {
-    const row = await this.db
+    await this.db
       .updateTable("device_machines")
       .set({
         program_version: program.version,
         os: program.os,
         arch: program.arch,
-        boot_id: program.bootId !== undefined && isDeviceBootId(program.bootId) ? program.bootId : null,
+        boot_id:
+          program.bootId !== undefined && isDeviceBootId(program.bootId) ? program.bootId : null,
         last_seen_at: sql<Date>`now()`,
       })
       .where("id", "=", machineId)

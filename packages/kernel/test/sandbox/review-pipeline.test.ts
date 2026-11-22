@@ -30,7 +30,6 @@ import { Waits } from "../../src/runtime/waits.js";
 import { SandboxOperationAuthority } from "../../src/sandbox/operation-authority.js";
 import { PermissionFacts } from "../../src/sandbox/permission-facts.js";
 import { REVIEW_SYSTEM_PROMPT } from "../../src/sandbox/review/index.js";
-import { ESCALATION_NO_OUTSIDE_WHY } from "../../src/sandbox/review/permission-candidate.js";
 import { ScheduledTaskFirer } from "../../src/schedules/fire.js";
 import { SCHED_SCAN_JOB } from "../../src/schedules/job-ids.js";
 import { type ScheduledTaskInsert, ScheduledTaskStore } from "../../src/schedules/store.js";
@@ -434,11 +433,11 @@ describe("the command review in the pipeline", () => {
       expect(r.payload.isError).toBe(false);
       const facts = await k.app.get(ConversationDevices).reviewFacts(orgId, conv);
       const bash = execute.mock.calls.find(([tool]) => tool.key === "Bash");
-      // a cloud device has no outside of its sandbox: the hints say so instead of inviting one
+      // device-fake's support runs a call outside the sandbox: the hints invite one
       expect(bash?.[6]).toEqual({
         workingRoot: undefined,
         against: facts?.workingRoot,
-        escalationRefusal: ESCALATION_NO_OUTSIDE_WHY,
+        escalation: "available",
       });
       expect(facts?.workingRoot).toBe(facts?.workspace);
     } finally {
@@ -468,7 +467,7 @@ describe("the command review in the pipeline", () => {
       expect(bash?.[6]).toEqual({
         workingRoot: undefined,
         against: approvedRoot,
-        escalationRefusal: ESCALATION_NO_OUTSIDE_WHY,
+        escalation: "available",
       });
     } finally {
       execute.mockRestore();
@@ -857,7 +856,6 @@ describe("the command review in the pipeline", () => {
     expect(ask.scopes).toEqual(["once"]);
     expect(ask.detail as Record<string, unknown>).toMatchObject({
       permissionScope: {
-        readDirectories: ["/etc/capybara-t7"],
         writeDirectories: ["/etc/capybara-t7"],
         hosts: [],
       },
@@ -1267,7 +1265,6 @@ describe("the permission review order", () => {
       kind: "write",
       targetPath: target,
       permissionScope: {
-        readDirectories: ["/etc/capybara-grant"],
         writeDirectories: ["/etc/capybara-grant"],
         hosts: [],
       },

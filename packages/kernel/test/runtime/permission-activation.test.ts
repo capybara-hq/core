@@ -338,11 +338,11 @@ describe("every path records a v2 permission context and replies", () => {
     expect(contexts.at(-1)?.payload).toMatchObject({
       deviceId,
       availability: { state: "supported" },
-      scope: { location: "local" },
+      scope: { boundary: "operation" },
     });
   });
 
-  it("a cloud device on device-fake: the managed call runs, the context is cloud and supported", async () => {
+  it("a cloud device on device-fake: the managed call runs, the context records its provider's boundary and is supported", async () => {
     const m = await member("cloud-member");
     const res = await m.req({
       method: "POST",
@@ -369,7 +369,8 @@ describe("every path records a v2 permission context and replies", () => {
     expect(contexts.at(-1)?.payload).toMatchObject({
       deviceId: device.id,
       availability: { state: "supported" },
-      scope: { location: "cloud" },
+      // device-fake reports an operation boundary: its context records the provider's boundary
+      scope: { boundary: "operation" },
     });
   });
   it("a profile change on the local device's conversation appends a new context before the next request", async () => {
@@ -405,7 +406,7 @@ describe("every path records a v2 permission context and replies", () => {
       effectiveProfile: "request-approval",
       deviceId: c.deviceId,
       availability: { state: "supported" },
-      scope: { location: "local" },
+      scope: { boundary: "operation" },
     });
     expect(calls.at(-1)?.payload.request.permissionContext?.contextSeq).toBe(added[0]?.seq);
     expect(replyOf(events)).toContain("after the change");

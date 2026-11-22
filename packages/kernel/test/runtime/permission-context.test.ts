@@ -59,9 +59,9 @@ const supported: PermissionContextV2 = {
   authorityRevision: "authority-1",
   availability: { state: "supported" },
   scope: {
-    location: "local",
+    boundary: "operation",
     workingRoot: "/project",
-    filesystem: { kind: "scoped", readDirectories: ["/project"], writeDirectories: ["/project"] },
+    filesystem: { kind: "scoped", writeDirectories: ["/project"] },
     network: { kind: "none" },
     outerNetwork: { kind: "host-environment" },
   },
@@ -73,7 +73,7 @@ const paths: ManagedDevicePathsV1 = {
   workingRoot: "/project",
 };
 const expected =
-  'Permission context for new operations: Request approval.\nThis context supersedes earlier device-mode descriptions for new operations.\nWorking directory: "/project".\nReadable directories: ["/project"].\nWritable directories: ["/project"].\nNetwork: no destinations are authorized for new commands.\nOuter network boundary: the host environment.\nExtra filesystem or network scope requires the person\'s approval.\nChanges apply to new operations. Work already started keeps its starting permissions. Actual owner or organization revocation may still stop affected work.';
+  'Permission context for new operations: Request approval.\nThis context supersedes earlier device-mode descriptions for new operations.\nWorking directory: "/project".\nReadable files: set by this device\'s provider, not by the permission profile.\nWritable directories: ["/project"].\nNetwork: no destinations are authorized for new commands.\nOuter network boundary: the host environment.\nExtra filesystem or network scope requires the person\'s approval.\nChanges apply to new operations. Work already started keeps its starting permissions. Actual owner or organization revocation may still stop affected work.';
 const pathsExpected =
   'Device directories: workspace "/workspace", skills "/skills", temporary files "/tmp".\nSelected working directory: "/project". These paths do not grant access; the current permission context governs new operations.';
 const agent = AgentDefinitionSchema.parse({
@@ -216,7 +216,7 @@ const closing =
 const supersedes = "This context supersedes earlier device-mode descriptions for new operations.";
 const restrictedFs = [
   'Working directory: "/project".',
-  'Readable directories: ["/project"].',
+  "Readable files: set by this device's provider, not by the permission profile.",
   'Writable directories: ["/project"].',
 ];
 const requestPolicy = "Extra filesystem or network scope requires the person's approval.";
@@ -226,20 +226,24 @@ const fullPolicy =
   "No discretionary command approval; explicit policy, device-owner limits and OS permissions still apply.";
 const localOuter = "Outer network boundary: the host environment.";
 const offNetwork = "Network: no destinations are authorized for new commands.";
-function snapshot(profile: PermissionProfile, location: "local" | "cloud"): PermissionContextV2 {
+function snapshot(
+  profile: PermissionProfile,
+  boundary: "operation" | "instance",
+): PermissionContextV2 {
   return {
     ...structuredClone(supported),
     selectedProfile: profile,
     effectiveProfile: profile,
     scope: {
-      location,
+      boundary,
       workingRoot: "/project",
       filesystem:
         profile === "full-access"
           ? { kind: "device" }
-          : { kind: "scoped", readDirectories: ["/project"], writeDirectories: ["/project"] },
+          : { kind: "scoped", writeDirectories: ["/project"] },
       network: profile === "full-access" ? { kind: "environment" } : { kind: "none" },
-      outerNetwork: location === "local" ? { kind: "host-environment" } : { kind: "open-public" },
+      outerNetwork:
+        boundary === "operation" ? { kind: "host-environment" } : { kind: "open-public" },
     },
   };
 }
@@ -252,89 +256,92 @@ function scopedFs(p: PermissionContextV2) {
   if (fs.kind !== "scoped") throw new Error("Expected a scoped filesystem");
   return fs;
 }
-const literalCases: { profile: PermissionProfile; location: "local" | "cloud"; lines: string[] }[] =
-  [
-    {
-      profile: "request-approval",
-      location: "local",
-      lines: [
-        "Permission context for new operations: Request approval.",
-        supersedes,
-        ...restrictedFs,
-        offNetwork,
-        localOuter,
-        requestPolicy,
-        closing,
-      ],
-    },
-    {
-      profile: "approve-for-me",
-      location: "local",
-      lines: [
-        "Permission context for new operations: Approve for me.",
-        supersedes,
-        ...restrictedFs,
-        offNetwork,
-        localOuter,
-        approvePolicy,
-        closing,
-      ],
-    },
-    {
-      profile: "full-access",
-      location: "local",
-      lines: [
-        "Permission context for new operations: Full access.",
-        supersedes,
-        'Working directory: "/project".',
-        "Filesystem: this device as the existing OS user; no additional OS privileges.",
-        "Network: the host environment; restricted-profile host lists do not restrict Full access.",
-        localOuter,
-        fullPolicy,
-        closing,
-      ],
-    },
-    {
-      profile: "request-approval",
-      location: "cloud",
-      lines: [
-        "Permission context for new operations: Request approval.",
-        supersedes,
-        ...restrictedFs,
-        offNetwork,
-        "Outer network boundary: public addresses only.",
-        requestPolicy,
-        closing,
-      ],
-    },
-    {
-      profile: "approve-for-me",
-      location: "cloud",
-      lines: [
-        "Permission context for new operations: Approve for me.",
-        supersedes,
-        ...restrictedFs,
-        offNetwork,
-        "Outer network boundary: public addresses only.",
-        approvePolicy,
-        closing,
-      ],
-    },
-    {
-      profile: "full-access",
-      location: "cloud",
-      lines: [
-        "Permission context for new operations: Full access.",
-        supersedes,
-        'Working directory: "/project".',
-        "Filesystem: the provisioned device environment as its existing OS user; no additional OS privileges.",
-        "Network: the provisioned environment, subject to its outer network boundary.",
-        "Outer network boundary: public addresses only.",
-        fullPolicy,
-        closing,
-      ],
-    },
-  ];
+const literalCases: {
+  profile: PermissionProfile;
+  boundary: "operation" | "instance";
+  lines: string[];
+}[] = [
+  {
+    profile: "request-approval",
+    boundary: "operation",
+    lines: [
+      "Permission context for new operations: Request approval.",
+      supersedes,
+      ...restrictedFs,
+      offNetwork,
+      localOuter,
+      requestPolicy,
+      closing,
+    ],
+  },
+  {
+    profile: "approve-for-me",
+    boundary: "operation",
+    lines: [
+      "Permission context for new operations: Approve for me.",
+      supersedes,
+      ...restrictedFs,
+      offNetwork,
+      localOuter,
+      approvePolicy,
+      closing,
+    ],
+  },
+  {
+    profile: "full-access",
+    boundary: "operation",
+    lines: [
+      "Permission context for new operations: Full access.",
+      supersedes,
+      'Working directory: "/project".',
+      "Filesystem: this device as the existing OS user; no additional OS privileges.",
+      "Network: the host environment; restricted-profile host lists do not restrict Full access.",
+      localOuter,
+      fullPolicy,
+      closing,
+    ],
+  },
+  {
+    profile: "request-approval",
+    boundary: "instance",
+    lines: [
+      "Permission context for new operations: Request approval.",
+      supersedes,
+      ...restrictedFs,
+      offNetwork,
+      "Outer network boundary: public addresses only.",
+      requestPolicy,
+      closing,
+    ],
+  },
+  {
+    profile: "approve-for-me",
+    boundary: "instance",
+    lines: [
+      "Permission context for new operations: Approve for me.",
+      supersedes,
+      ...restrictedFs,
+      offNetwork,
+      "Outer network boundary: public addresses only.",
+      approvePolicy,
+      closing,
+    ],
+  },
+  {
+    profile: "full-access",
+    boundary: "instance",
+    lines: [
+      "Permission context for new operations: Full access.",
+      supersedes,
+      'Working directory: "/project".',
+      "Filesystem: the provisioned device environment as its existing OS user; no additional OS privileges.",
+      "Network: the provisioned environment, subject to its outer network boundary.",
+      "Outer network boundary: public addresses only.",
+      fullPolicy,
+      closing,
+    ],
+  },
+];
 function literalText(index: number): string {
   return literalLines(index).join("\n");
 }
@@ -345,13 +352,13 @@ function literalLines(index: number): string[] {
 }
 describe("text without a sandbox block and availability matrix", () => {
   for (const row of literalCases) {
-    it(`${row.location} ${row.profile} supported uses exact authority lines`, () => {
-      expect(permissionContextText(snapshot(row.profile, row.location))).toBe(row.lines.join("\n"));
+    it(`${row.boundary} ${row.profile} supported uses exact authority lines`, () => {
+      expect(permissionContextText(snapshot(row.profile, row.boundary))).toBe(row.lines.join("\n"));
     });
     for (const state of ["unprobed", "unsupported"] as const) {
-      it(`${row.location} ${row.profile} ${state} makes no scope promise`, () => {
+      it(`${row.boundary} ${row.profile} ${state} makes no scope promise`, () => {
         const p = {
-          ...snapshot(row.profile, row.location),
+          ...snapshot(row.profile, row.boundary),
           scope: null,
           availability: { state, reason: "Runtime capability not established" },
         };
@@ -367,9 +374,9 @@ describe("text without a sandbox block and availability matrix", () => {
         );
       });
     }
-    it(`${row.location} ${row.profile} unavailable redacts device facts`, () => {
+    it(`${row.boundary} ${row.profile} unavailable redacts device facts`, () => {
       const p: PermissionContextV2 = {
-        ...snapshot(row.profile, row.location),
+        ...snapshot(row.profile, row.boundary),
         effectiveProfile: null,
         deviceId: null,
         scopeRevision: null,
@@ -392,7 +399,7 @@ describe("text without a sandbox block and availability matrix", () => {
     });
   }
   it("uses the scheduled policy only and accepts a selected Full profile with restricted effective scope", () => {
-    const p = snapshot("request-approval", "local");
+    const p = snapshot("request-approval", "operation");
     p.selectedProfile = "full-access";
     p.execution = "scheduled";
     expect(permissionContextText(p)).toBe(
@@ -404,7 +411,7 @@ describe("text without a sandbox block and availability matrix", () => {
     );
   });
   it("renders allowlists and applied cloud network-off exactly", () => {
-    const p = snapshot("approve-for-me", "cloud");
+    const p = snapshot("approve-for-me", "instance");
     scopeOf(p).network = { kind: "allowlist", hosts: ["api.example.com"] };
     scopeOf(p).outerNetwork = { kind: "allowlist", hosts: ["*.example.com"] };
     expect(permissionContextText(p)).toBe(
@@ -418,7 +425,7 @@ describe("text without a sandbox block and availability matrix", () => {
         closing,
       ].join("\n"),
     );
-    const full = snapshot("full-access", "cloud");
+    const full = snapshot("full-access", "instance");
     scopeOf(full).outerNetwork = { kind: "none" };
     expect(permissionContextText(full)).toBe(
       [
@@ -595,34 +602,27 @@ describe("complete strict schema", () => {
       },
     ],
     [
-      "missing readable write root",
-      (p) => {
-        scopedFs(p).writeDirectories.push("/write");
-      },
-    ],
-    [
       "missing working root",
       (p) => {
-        scopedFs(p).readDirectories = ["/other"];
         scopedFs(p).writeDirectories = ["/other"];
       },
     ],
     [
       "unsorted roots",
       (p) => {
-        scopedFs(p).readDirectories = ["/z", "/project"];
+        scopedFs(p).writeDirectories = ["/z", "/project"];
       },
     ],
     [
       "duplicate roots",
       (p) => {
-        scopedFs(p).readDirectories.push("/project");
+        scopedFs(p).writeDirectories.push("/project");
       },
     ],
     [
       "too many roots",
       (p) => {
-        scopedFs(p).readDirectories = Array.from(
+        scopedFs(p).writeDirectories = Array.from(
           { length: 65 },
           (_, i) => `/p${i.toString().padStart(2, "0")}`,
         );
@@ -703,13 +703,13 @@ describe("complete strict schema", () => {
     [
       "cloud host outer boundary",
       (p) => {
-        scopeOf(p).location = "cloud";
+        scopeOf(p).boundary = "instance";
       },
     ],
     [
       "cloud none with allowlist",
       (p) => {
-        scopeOf(p).location = "cloud";
+        scopeOf(p).boundary = "instance";
         scopeOf(p).outerNetwork = { kind: "none" };
         scopeOf(p).network = { kind: "allowlist", hosts: ["example.com"] };
       },
@@ -717,7 +717,7 @@ describe("complete strict schema", () => {
     [
       "cloud hosts exceeding outer ceiling",
       (p) => {
-        scopeOf(p).location = "cloud";
+        scopeOf(p).boundary = "instance";
         scopeOf(p).outerNetwork = { kind: "allowlist", hosts: ["other.com"] };
         scopeOf(p).network = { kind: "allowlist", hosts: ["example.com"] };
       },
@@ -742,16 +742,15 @@ describe("complete strict schema", () => {
     expect(() => permissionContextHash(p)).toThrow();
   });
   it("accepts consent fallback and Unicode code-point sorted roots without reordering", () => {
-    const p = snapshot("approve-for-me", "local");
+    const p = snapshot("approve-for-me", "operation");
     p.selectedProfile = "full-access";
     scopeOf(p).filesystem = {
       kind: "scoped",
-      readDirectories: ["/project", "/\ue000", "/\u{10000}"],
-      writeDirectories: ["/project"],
+      writeDirectories: ["/project", "/\ue000", "/\u{10000}"],
     };
     expect(PermissionContextV2Schema.parse(p)).toEqual(p);
     const q = structuredClone(p);
-    if (q.scope?.filesystem.kind === "scoped") q.scope.filesystem.readDirectories.reverse();
+    if (q.scope?.filesystem.kind === "scoped") q.scope.filesystem.writeDirectories.reverse();
     expect(PermissionContextV2Schema.safeParse(q).success).toBe(false);
   });
   it("redacts actor-device-access and uses exact unavailable diagnostics", () => {
@@ -824,7 +823,7 @@ describe("canonical hashes and predecessor identity", () => {
       '{"\ue000":"é","\u{10000}":null}',
     );
     const contextCanonical =
-      '["permission_context",2,{"authorityRevision":"authority-1","availability":{"state":"supported"},"deviceId":"00000000-0000-4000-8000-000000000002","effectiveProfile":"request-approval","execution":"interactive","inherited":false,"profileRevision":0,"rootConversationId":"00000000-0000-4000-8000-000000000001","sandbox":null,"scope":{"filesystem":{"kind":"scoped","readDirectories":["/project"],"writeDirectories":["/project"]},"location":"local","network":{"kind":"none"},"outerNetwork":{"kind":"host-environment"},"workingRoot":"/project"},"scopeRevision":"scope-1","selectedProfile":"request-approval","version":2}]';
+      '["permission_context",2,{"authorityRevision":"authority-1","availability":{"state":"supported"},"deviceId":"00000000-0000-4000-8000-000000000002","effectiveProfile":"request-approval","execution":"interactive","inherited":false,"profileRevision":0,"rootConversationId":"00000000-0000-4000-8000-000000000001","sandbox":null,"scope":{"boundary":"operation","filesystem":{"kind":"scoped","writeDirectories":["/project"]},"network":{"kind":"none"},"outerNetwork":{"kind":"host-environment"},"workingRoot":"/project"},"scopeRevision":"scope-1","selectedProfile":"request-approval","version":2}]';
     expect(canonicalPermissionJson(["permission_context", 2, supported])).toBe(contextCanonical);
     expect(permissionContextHash(supported)).toBe(
       createHash("sha256").update(contextCanonical, "utf8").digest("hex"),
@@ -911,7 +910,7 @@ describe("canonical hashes and predecessor identity", () => {
 });
 
 describe("ordered history, summaries and original request metadata", () => {
-  const b = snapshot("approve-for-me", "local");
+  const b = snapshot("approve-for-me", "operation");
   const changes = [
     event("permission_context", supported, 1),
     event("permission_context", b, 3),
@@ -1279,18 +1278,18 @@ describe("historical device paths keep their exact bytes and keys", () => {
 });
 
 describe("authority boundary normalization", () => {
-  const scoped = (readDirectories: string[], writeDirectories = ["/project"]) => {
-    const p = snapshot("request-approval", "local");
+  const scoped = (writeDirectories: string[]) => {
+    const p = snapshot("request-approval", "operation");
     if (p.scope === null) throw new Error("supported snapshot has a scope");
-    p.scope.filesystem = { kind: "scoped", readDirectories, writeDirectories };
+    p.scope.filesystem = { kind: "scoped", writeDirectories };
     return p;
   };
   const withScope = (
     profile: PermissionProfile,
-    location: "local" | "cloud",
+    boundary: "operation" | "instance",
     edit: (scope: NonNullable<PermissionContextV2["scope"]>) => void,
   ) => {
-    const p = snapshot(profile, location);
+    const p = snapshot(profile, boundary);
     if (p.scope === null) throw new Error("supported snapshot has a scope");
     edit(p.scope);
     return p;
@@ -1306,7 +1305,7 @@ describe("authority boundary normalization", () => {
     ],
     [
       "100 hosts",
-      withScope("request-approval", "local", (s) => {
+      withScope("request-approval", "operation", (s) => {
         s.network = {
           kind: "allowlist",
           hosts: Array.from(
@@ -1318,7 +1317,7 @@ describe("authority boundary normalization", () => {
     ],
     [
       "a 253-character host",
-      withScope("request-approval", "local", (s) => {
+      withScope("request-approval", "operation", (s) => {
         s.network = { kind: "allowlist", hosts: [host253] };
       }),
     ],
@@ -1326,7 +1325,7 @@ describe("authority boundary normalization", () => {
       "a 4096-character working root",
       (() => {
         const long = `/${"x".repeat(4095)}`;
-        const p = scoped([long], [long]);
+        const p = scoped([long]);
         if (p.scope) p.scope.workingRoot = long;
         return p;
       })(),
@@ -1349,27 +1348,27 @@ describe("authority boundary normalization", () => {
     ],
     [
       "a wildcard outer pattern covering a nested host",
-      withScope("approve-for-me", "cloud", (s) => {
+      withScope("approve-for-me", "instance", (s) => {
         s.network = { kind: "allowlist", hosts: ["a.b.example.com", "api.example.com"] };
         s.outerNetwork = { kind: "allowlist", hosts: ["*.example.com"] };
       }),
     ],
     [
       "an exact outer host equal to the restricted host",
-      withScope("request-approval", "cloud", (s) => {
+      withScope("request-approval", "instance", (s) => {
         s.network = { kind: "allowlist", hosts: ["example.com"] };
         s.outerNetwork = { kind: "allowlist", hosts: ["example.com"] };
       }),
     ],
     [
       "restricted hosts under an open public outer boundary",
-      withScope("request-approval", "cloud", (s) => {
+      withScope("request-approval", "instance", (s) => {
         s.network = { kind: "allowlist", hosts: ["*.example.com"] };
       }),
     ],
     [
       "Full cloud environment behind a disabled outer boundary",
-      withScope("full-access", "cloud", (s) => {
+      withScope("full-access", "instance", (s) => {
         s.outerNetwork = { kind: "none" };
       }),
     ],
@@ -1378,58 +1377,57 @@ describe("authority boundary normalization", () => {
     expect(permissionContextHash(p)).toMatch(/^[a-f0-9]{64}$/);
   });
   it.each<[string, PermissionContextV2]>([
-    ["a dot segment in a readable directory", scoped(["/./project", "/project"])],
-    ["a nested dot segment in a readable directory", scoped(["/a/./b", "/project"])],
-    ["a trailing slash in a readable directory", scoped(["/project", "/z/"])],
-    ["a trailing slash in a writable directory", scoped(["/project", "/z/"], ["/project", "/z/"])],
-    ["an empty segment in a readable directory", scoped(["//z", "/project"])],
+    ["a dot segment in a writable directory", scoped(["/./project", "/project"])],
+    ["a nested dot segment in a writable directory", scoped(["/a/./b", "/project"])],
+    ["a trailing slash in a writable directory", scoped(["/project", "/z/"])],
+    ["an empty segment in a writable directory", scoped(["//z", "/project"])],
     [
       "a trailing slash in the working root",
-      withScope("full-access", "local", (s) => {
+      withScope("full-access", "operation", (s) => {
         s.workingRoot = "/project/";
       }),
     ],
     [
       "a dot segment in the working root",
-      withScope("full-access", "local", (s) => {
+      withScope("full-access", "operation", (s) => {
         s.workingRoot = "/project/.";
       }),
     ],
     [
       "a 254-character host",
-      withScope("request-approval", "local", (s) => {
+      withScope("request-approval", "operation", (s) => {
         s.network = { kind: "allowlist", hosts: [`a${host253}`] };
       }),
     ],
     [
       "a wildcard outer pattern used for its bare apex",
-      withScope("request-approval", "cloud", (s) => {
+      withScope("request-approval", "instance", (s) => {
         s.network = { kind: "allowlist", hosts: ["example.com"] };
         s.outerNetwork = { kind: "allowlist", hosts: ["*.example.com"] };
       }),
     ],
     [
       "a restricted wildcard wider than an exact outer host",
-      withScope("request-approval", "cloud", (s) => {
+      withScope("request-approval", "instance", (s) => {
         s.network = { kind: "allowlist", hosts: ["*.example.com"] };
         s.outerNetwork = { kind: "allowlist", hosts: ["api.example.com"] };
       }),
     ],
     [
       "a host with a port",
-      withScope("request-approval", "local", (s) => {
+      withScope("request-approval", "operation", (s) => {
         s.network = { kind: "allowlist", hosts: ["example.com:443"] };
       }),
     ],
     [
       "an IP literal host",
-      withScope("request-approval", "local", (s) => {
+      withScope("request-approval", "operation", (s) => {
         s.network = { kind: "allowlist", hosts: ["10.0.0.1"] };
       }),
     ],
     [
       "an empty outer allowlist",
-      withScope("full-access", "cloud", (s) => {
+      withScope("full-access", "instance", (s) => {
         s.outerNetwork = { kind: "allowlist", hosts: [] };
       }),
     ],
@@ -1449,7 +1447,7 @@ describe("authority boundary normalization", () => {
     ["*.example.com", "*.api.example.com"],
     ["api.example.com", "*.example.com"],
   ])("outer allowlist %s covers %s exactly as sandbox coversHost", (pattern, host) => {
-    const p = withScope("request-approval", "cloud", (s) => {
+    const p = withScope("request-approval", "instance", (s) => {
       s.network = { kind: "allowlist", hosts: [host] };
       s.outerNetwork = { kind: "allowlist", hosts: [pattern] };
     });
@@ -1474,7 +1472,6 @@ describe("authority boundary normalization", () => {
 describe("permission context v2: the device sandbox and the approver per crossing", () => {
   const localSandbox = (outsideSandbox: boolean): PermissionContextSandbox => ({
     boundary: "operation",
-    location: "local",
     workingRoot: "/project",
     network: { kind: "allowlist", hostsCount: 1 },
     outsideSandbox,
@@ -1490,11 +1487,10 @@ describe("permission context v2: the device sandbox and the approver per crossin
       selectedProfile: profile,
       effectiveProfile: profile,
       scope: {
-        location: "local",
+        boundary: "operation",
         workingRoot: "/project",
         filesystem: {
           kind: "scoped",
-          readDirectories: ["/project"],
           writeDirectories: ["/project"],
         },
         network: { kind: "allowlist", hosts: ["api.example.com"] },
@@ -1509,7 +1505,7 @@ describe("permission context v2: the device sandbox and the approver per crossin
     "Sandbox: the same under every profile; new commands run in the device's OS sandbox, limited to the directories and network below.";
   const allowlisted = [
     'Working directory: "/project".',
-    'Readable directories: ["/project"].',
+    "Readable files: set by this device's provider, not by the permission profile.",
     'Writable directories: ["/project"].',
     'Network: new commands may reach only these authorized hosts: ["api.example.com"].',
     localOuter,
@@ -1518,7 +1514,7 @@ describe("permission context v2: the device sandbox and the approver per crossin
   const person = "the person approves";
   const reviewer = "a separate reviewer approves; uncertainty asks the person";
   const crossings = (approver: string, escalation: boolean) => [
-    `Directories outside the readable or writable directories: ${approver}.`,
+    `Directories outside the writable directories: ${approver}.`,
     `Hosts outside the network allowlist: ${approver}.`,
     ...(escalation ? [`Running a command outside the sandbox: ${approver}; ${escalate}.`] : []),
     `Sensitive commands: ${approver}.`,
@@ -1601,11 +1597,10 @@ describe("permission context v2: the device sandbox and the approver per crossin
       "an instance-boundary cloud device on the open public internet",
       sandboxed("approve-for-me", false, {
         scope: {
-          location: "cloud",
+          boundary: "instance",
           workingRoot: "/project",
           filesystem: {
             kind: "scoped",
-            readDirectories: ["/", "/project"],
             writeDirectories: ["/", "/project"],
           },
           network: { kind: "open-public" },
@@ -1613,7 +1608,6 @@ describe("permission context v2: the device sandbox and the approver per crossin
         },
         sandbox: {
           boundary: "instance",
-          location: "cloud",
           workingRoot: "/project",
           network: { kind: "open-public", hostsCount: 0 },
           outsideSandbox: false,
@@ -1624,7 +1618,7 @@ describe("permission context v2: the device sandbox and the approver per crossin
         ...head("Approve for me"),
         "Sandbox: the same under every profile; the provisioned device instance is the sandbox, its whole filesystem is in scope and its outer network applies.",
         'Working directory: "/project".',
-        'Readable directories: ["/","/project"].',
+        "Readable files: set by this device's provider, not by the permission profile.",
         'Writable directories: ["/","/project"].',
         "Network: the open public internet; private, LAN, loopback, link-local and metadata addresses are closed inside the sandbox.",
         "Outer network boundary: public addresses only.",
@@ -1635,11 +1629,10 @@ describe("permission context v2: the device sandbox and the approver per crossin
       "an instance-boundary allowlist, whose hosts no call can add",
       sandboxed("request-approval", false, {
         scope: {
-          location: "cloud",
+          boundary: "instance",
           workingRoot: "/project",
           filesystem: {
             kind: "scoped",
-            readDirectories: ["/", "/project"],
             writeDirectories: ["/", "/project"],
           },
           network: { kind: "allowlist", hosts: ["api.example.com"] },
@@ -1647,7 +1640,6 @@ describe("permission context v2: the device sandbox and the approver per crossin
         },
         sandbox: {
           boundary: "instance",
-          location: "cloud",
           workingRoot: "/project",
           network: { kind: "allowlist", hostsCount: 1 },
           outsideSandbox: false,
@@ -1658,7 +1650,7 @@ describe("permission context v2: the device sandbox and the approver per crossin
         ...head("Request approval"),
         "Sandbox: the same under every profile; the provisioned device instance is the sandbox, its whole filesystem is in scope and its outer network applies.",
         'Working directory: "/project".',
-        'Readable directories: ["/","/project"].',
+        "Readable files: set by this device's provider, not by the permission profile.",
         'Writable directories: ["/","/project"].',
         'Network: new commands may reach only these authorized hosts: ["api.example.com"].',
         'Outer network boundary: allowed hosts ["api.example.com"].',
@@ -1684,11 +1676,10 @@ describe("permission context v2: the device sandbox and the approver per crossin
           `Full access on an instance-boundary allowlist${recorded ? "" : " (stored before perCallHosts)"}`,
           sandboxed("full-access", false, {
             scope: {
-              location: "cloud",
+              boundary: "instance",
               workingRoot: "/project",
               filesystem: {
                 kind: "scoped",
-                readDirectories: ["/", "/project"],
                 writeDirectories: ["/", "/project"],
               },
               network: { kind: "allowlist", hosts: ["api.example.com"] },
@@ -1696,7 +1687,6 @@ describe("permission context v2: the device sandbox and the approver per crossin
             },
             sandbox: {
               boundary: "instance",
-              location: "cloud",
               workingRoot: "/project",
               network: { kind: "allowlist", hostsCount: 1 },
               outsideSandbox: false,
@@ -1708,7 +1698,7 @@ describe("permission context v2: the device sandbox and the approver per crossin
             ...head("Full access"),
             "Sandbox: the same under every profile; the provisioned device instance is the sandbox, its whole filesystem is in scope and its outer network applies.",
             'Working directory: "/project".',
-            'Readable directories: ["/","/project"].',
+            "Readable files: set by this device's provider, not by the permission profile.",
             'Writable directories: ["/","/project"].',
             'Network: new commands may reach only these authorized hosts: ["api.example.com"].',
             'Outer network boundary: allowed hosts ["api.example.com"].',
@@ -1752,10 +1742,10 @@ describe("permission context v2: the device sandbox and the approver per crossin
       },
     ],
     [
-      "another location",
+      "another boundary",
       (p) => {
         if (p.sandbox)
-          Object.assign(p.sandbox, { location: "cloud", outerNetwork: { kind: "open-public" } });
+          Object.assign(p.sandbox, { boundary: "instance", outerNetwork: { kind: "open-public" } });
       },
     ],
     [
@@ -1783,7 +1773,7 @@ describe("permission context v2: the device sandbox and the approver per crossin
       },
     ],
     [
-      "an instance boundary on a local device",
+      "an instance boundary on an operation-boundary scope",
       (p) => {
         if (p.sandbox) p.sandbox.boundary = "instance";
       },
@@ -1792,11 +1782,10 @@ describe("permission context v2: the device sandbox and the approver per crossin
       "running outside an instance boundary",
       (p) => {
         Object.assign(p, {
-          scope: { ...p.scope, location: "cloud", outerNetwork: { kind: "open-public" } },
+          scope: { ...p.scope, boundary: "instance", outerNetwork: { kind: "open-public" } },
           sandbox: {
             ...p.sandbox,
             boundary: "instance",
-            location: "cloud",
             outsideSandbox: true,
             outerNetwork: { kind: "open-public" },
           },
@@ -1838,19 +1827,17 @@ describe("permission context v2: the device sandbox and the approver per crossin
   ): PermissionContextV2 =>
     sandboxed("request-approval", outsideSandbox, {
       scope: {
-        location: "cloud",
+        boundary: "instance",
         workingRoot: "/project",
         filesystem: {
           kind: "scoped",
-          readDirectories: ["/project"],
           writeDirectories: ["/project"],
         },
         network,
         outerNetwork,
       },
       sandbox: {
-        boundary: "operation",
-        location: "cloud",
+        boundary: "instance",
         workingRoot: "/project",
         network: {
           kind: network.kind === "environment" ? "none" : network.kind,
@@ -1860,7 +1847,7 @@ describe("permission context v2: the device sandbox and the approver per crossin
         outerNetwork,
       },
     });
-  it("accepts the open public internet inside a cloud open-public outer boundary", () => {
+  it("accepts the open public internet inside an instance open-public outer boundary", () => {
     expect(
       PermissionContextV2Schema.safeParse(cloud({ kind: "open-public" }, { kind: "open-public" }))
         .success,
@@ -1876,7 +1863,7 @@ describe("permission context v2: the device sandbox and the approver per crossin
       cloud({ kind: "open-public" }, { kind: "none" }),
     ],
     [
-      "running outside the sandbox on a cloud device",
+      "running outside the sandbox on an instance boundary",
       cloud({ kind: "open-public" }, { kind: "open-public" }, true),
     ],
     [
@@ -1888,7 +1875,7 @@ describe("permission context v2: the device sandbox and the approver per crossin
       sandboxed("full-access", true, {
         sandbox: null,
         scope: {
-          location: "local",
+          boundary: "operation",
           workingRoot: "/project",
           filesystem: { kind: "device" },
           network: { kind: "none" },
@@ -2010,18 +1997,60 @@ describe("a stored v1 permission context", () => {
   const preBranch = {
     "request-approval": expected,
     "approve-for-me":
-      'Permission context for new operations: Approve for me.\nThis context supersedes earlier device-mode descriptions for new operations.\nWorking directory: "/project".\nReadable directories: ["/project"].\nWritable directories: ["/project"].\nNetwork: no destinations are authorized for new commands.\nOuter network boundary: the host environment.\nA separate reviewer may approve eligible extra scope; uncertainty asks the person.\nChanges apply to new operations. Work already started keeps its starting permissions. Actual owner or organization revocation may still stop affected work.',
+      'Permission context for new operations: Approve for me.\nThis context supersedes earlier device-mode descriptions for new operations.\nWorking directory: "/project".\nReadable files: set by this device\'s provider, not by the permission profile.\nWritable directories: ["/project"].\nNetwork: no destinations are authorized for new commands.\nOuter network boundary: the host environment.\nA separate reviewer may approve eligible extra scope; uncertainty asks the person.\nChanges apply to new operations. Work already started keeps its starting permissions. Actual owner or organization revocation may still stop affected work.',
     "full-access":
       'Permission context for new operations: Full access.\nThis context supersedes earlier device-mode descriptions for new operations.\nWorking directory: "/project".\nFilesystem: this device as the existing OS user; no additional OS privileges.\nNetwork: the host environment; restricted-profile host lists do not restrict Full access.\nOuter network boundary: the host environment.\nNo discretionary command approval; explicit policy, device-owner limits and OS permissions still apply.\nChanges apply to new operations. Work already started keeps its starting permissions. Actual owner or organization revocation may still stop affected work.',
   } satisfies Record<PermissionProfile, string>;
   it.each(Object.keys(preBranch) as PermissionProfile[])(
     "a v2 context without a sandbox block and its v1 form render the pre-branch bytes: %s",
     (profile) => {
-      const p = snapshot(profile, "local");
+      const p = snapshot(profile, "operation");
       expect(permissionContextText(p)).toBe(preBranch[profile]);
       expect(permissionContextText(v1(p))).toBe(preBranch[profile]);
     },
   );
+  it("reads a payload recorded with a device location as its boundary, without read roots", () => {
+    const stored = {
+      ...v1(supported),
+      scope: {
+        location: "local",
+        workingRoot: "/project",
+        filesystem: {
+          kind: "scoped",
+          readDirectories: ["/project"],
+          writeDirectories: ["/project"],
+        },
+        network: { kind: "none" },
+        outerNetwork: { kind: "host-environment" },
+      },
+    };
+    expect(readRecordedPermissionContext(stored)).toEqual(supported);
+    const cloudBlock = {
+      boundary: "instance",
+      location: "cloud",
+      workingRoot: "/project",
+      network: { kind: "open-public", hostsCount: 0 },
+      outsideSandbox: false,
+      outerNetwork: { kind: "open-public" },
+    };
+    const read = readRecordedPermissionContext({
+      ...supported,
+      scope: {
+        location: "cloud",
+        workingRoot: "/project",
+        filesystem: {
+          kind: "scoped",
+          readDirectories: ["/", "/project"],
+          writeDirectories: ["/", "/project"],
+        },
+        network: { kind: "open-public" },
+        outerNetwork: { kind: "open-public" },
+      },
+      sandbox: cloudBlock,
+    });
+    expect(read.scope?.boundary).toBe("instance");
+    expect(read.sandbox).not.toHaveProperty("location");
+  });
   it("reads as v2 with a null sandbox and hashes as that form", () => {
     expect(readRecordedPermissionContext(v1(supported))).toEqual(supported);
     expect(permissionContextHash(readRecordedPermissionContext(v1(supported)))).toBe(
@@ -2041,7 +2070,7 @@ describe("a stored v1 permission context", () => {
   it("renders in live build and after a summary, and a step replay has zero drift", () => {
     const events = [
       event("permission_context", v1(supported), 1),
-      event("permission_context", v1(snapshot("approve-for-me", "local")), 2),
+      event("permission_context", v1(snapshot("approve-for-me", "operation")), 2),
       event("compaction_summary", { coversUpToSeq: 1, text: "Summary" }, 3),
     ];
     expect(() => assertRecordedPermissionEvents(events)).not.toThrow();

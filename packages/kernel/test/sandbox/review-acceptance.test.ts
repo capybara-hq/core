@@ -186,8 +186,12 @@ beforeAll(async () => {
   const off = await owner({
     method: "PATCH",
     url: `/api/v1/orgs/${orgSandbox}/settings`,
-    // sandbox mode on a cloud device narrows the network to the org's allowlist
-    payload: { outsideSandbox: "off", deviceNetwork: { ceiling: "allowlist" } },
+    // sandbox mode narrows the network to the org's allowlist; the acceptance clone's host is on
+    // it (the fake reports an operation boundary, whose hosts are checked per call)
+    payload: {
+      outsideSandbox: "off",
+      deviceNetwork: { ceiling: "allowlist", extraHosts: ["github.com"] },
+    },
   });
   expect(off.statusCode, off.body).toBe(200);
   agentSandbox = await createAgent(orgSandbox);
@@ -289,14 +293,21 @@ describe("acceptance: auto mode on a real kernel", () => {
 
   it("scenario 1 (sandbox): the file tools stay root-confined and the clone writes under the workspace", async () => {
     const conv = await createConv(owner, orgSandbox, agentSandbox);
-    // a read outside the device's roots is refused (the sandbox keeps the workspace, skills, tmp)
+    // a read outside what the device lets sandboxed work read is refused by the device itself
     const outside = await callIn(orgSandbox, conv, "Read", { file_path: "/etc/passwd" }, 1);
     expect(outside.payload.isError).toBe(true);
-    expect(outside.payload.content).toContain("/workspace");
-    // a write outside the roots is refused before the device is touched
-    const write = await callIn(orgSandbox, conv, "Write", { file_path: "/etc/x", content: "x" }, 2);
-    expect(write.payload.isError).toBe(true);
-    expect(write.payload.content).toContain("/workspace");
+    expect(outside.payload.content).toContain(
+      "outside the scope this conversation has on the device",
+    );
+    // a write inside the workspace runs at once (one outside it is a crossing the profile decides)
+    const write = await callIn(
+      orgSandbox,
+      conv,
+      "Write",
+      { file_path: "/workspace/note.txt", content: "x" },
+      2,
+    );
+    expect(write.payload.isError, write.payload.content).toBe(false);
 
     // the clone runs in the workspace; its files are there and readable
     const cloned = await callIn(

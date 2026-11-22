@@ -329,7 +329,6 @@ it("two different grant issuances race for one exact binding on distinct Postgre
   const alternative = {
     ...candidate,
     permissionScope: {
-      readDirectories: ["/outside/other"],
       writeDirectories: ["/outside/other"],
       hosts: [],
     },

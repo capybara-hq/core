@@ -15,7 +15,7 @@ import { KERNEL_LOGGER } from "../infra/tokens.js";
 import type { KernelLogger } from "../log.js";
 import { untilAborted } from "../until-aborted.js";
 import { PermissionCeilingWrites, requiresFullExecution } from "./permission-ceiling-writes.js";
-import { cloudSupportOf } from "./permission-runtime-reports.js";
+import { supportOf } from "./permission-runtime-reports.js";
 import { type DeviceProviderEntry, DeviceProviders } from "./providers.js";
 
 /** How long a provider's `report` may take before the refresh gives up (keeps the stored one). */
@@ -30,16 +30,30 @@ const FAILURE_LOG_WINDOW_MS = 60 * 60_000;
 const failureLogKey = (deviceId: string): string => `capk:device-report-failure:${deviceId}`;
 
 /** The revision of a stored report, or null when none (or not a readable one) is stored. */
-function storedRevision(stored: unknown): string | null {
+export function storedRevision(stored: unknown): string | null {
   if (typeof stored !== "object" || stored === null) return null;
   const revision = (stored as { revision?: unknown }).revision;
   return typeof revision === "string" ? revision : null;
 }
 
 /** The permission support stored with a report (its `support` key), or null when none passes. */
-function storedSupport(stored: unknown): SandboxPermissionSupport | null {
+export function storedSupport(stored: unknown): SandboxPermissionSupport | null {
   if (typeof stored !== "object" || stored === null) return null;
-  return cloudSupportOf((stored as { support?: unknown }).support);
+  return supportOf((stored as { support?: unknown }).support);
+}
+
+/**
+ * A stored report (`devices.report`) checked again ({@link parseDeviceReport}) without its
+ * `support` key; null when none is stored or it no longer passes.
+ */
+export function storedReport(stored: unknown): DeviceReport | null {
+  if (typeof stored !== "object" || stored === null) return null;
+  const { support: _support, ...report } = stored as Record<string, unknown>;
+  try {
+    return parseDeviceReport(report);
+  } catch {
+    return null;
+  }
 }
 
 /**
@@ -190,13 +204,7 @@ export class DeviceReports {
       .where("org_id", "=", orgId)
       .where("deleted_at", "is", null)
       .executeTakeFirst();
-    if (typeof row?.report !== "object" || row.report === null) return null;
-    const { support: _support, ...report } = row.report as Record<string, unknown>;
-    try {
-      return parseDeviceReport(report);
-    } catch {
-      return null;
-    }
+    return storedReport(row?.report);
   }
 
   /**
@@ -239,18 +247,15 @@ export class DeviceReports {
     if (handle === null) return { report };
     if (!read) return { report, support: null };
     const s2 = bounded();
-    const support = await untilAborted(read(handle, s2), s2).then(
-      cloudSupportOf,
-      (err: unknown) => {
-        if (!signal.aborted)
-          this.log.warn("cannot read the device's permission support with its report", {
-            deviceId: ref.deviceId,
-            provider: entry.plugin,
-            err,
-          });
-        return null;
-      },
-    );
+    const support = await untilAborted(read(handle, s2), s2).then(supportOf, (err: unknown) => {
+      if (!signal.aborted)
+        this.log.warn("cannot read the device's permission support with its report", {
+          deviceId: ref.deviceId,
+          provider: entry.plugin,
+          err,
+        });
+      return null;
+    });
     return { report, support };
   }
 

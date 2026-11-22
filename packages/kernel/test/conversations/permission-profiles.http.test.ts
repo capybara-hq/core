@@ -26,7 +26,7 @@ import { KERNEL_VERSION } from "../../src/version.js";
 import { truncateTables } from "../helpers/db.js";
 import { asUser, cookieJar } from "../helpers/http.js";
 import { accountsFor, apiTokensFor } from "../helpers/identity.js";
-import { seedInstalledEvidence } from "../helpers/installed-evidence.js";
+import { SUPPORTS_BOTH, seedInstalledEvidence } from "../helpers/installed-evidence.js";
 import { testMembers } from "../helpers/members.js";
 import { MODEL_PLUGINS_CONFIG } from "../helpers/model-plugins.js";
 import { storedOwnerReport } from "../helpers/owner-report.js";
@@ -183,6 +183,24 @@ async function localDevice(orgId: string, name = "Laptop") {
     })
     .execute();
   return id;
+}
+
+/** The device's provider tells, in its stored report, that it runs nothing outside its sandbox. */
+async function providerAllowsNoOutside(deviceId: string): Promise<void> {
+  await kernelDb(raw)
+    .updateTable("devices")
+    .set({
+      report: JSON.stringify({
+        revision: "r1",
+        description: { en: "A test device." },
+        home: null,
+        limits: [],
+        reset: false,
+        support: { ...SUPPORTS_BOTH, outsideSandbox: false },
+      }),
+    })
+    .where("id", "=", deviceId)
+    .execute();
 }
 
 describe("Conversation permission profiles", () => {
@@ -489,11 +507,7 @@ describe("Conversation permission profiles", () => {
       agentId = await createAgent(req, orgId),
       conv = await createConv(req, orgId, agentId),
       deviceId = await localDevice(orgId);
-    await kernelDb(raw)
-      .updateTable("device_machines")
-      .set({ owner_report: storedOwnerReport({ outsideSandbox: false, sequence: 1 }) })
-      .where("device_id", "=", deviceId)
-      .execute();
+    await providerAllowsNoOutside(deviceId);
     for (const migration of [
       "0146_permission_authority_epochs.sql",
       "0147_conversation_permission_profiles.sql",
@@ -568,8 +582,9 @@ describe("Conversation permission profiles", () => {
     const previewUrl = `/api/v1/orgs/${orgId}/conversation-permission-preview?deviceId=${deviceId}`;
     const preview = await req({ method: "GET", url: previewUrl });
     expect(preview.statusCode, preview.body).toBe(200);
+    // no support known yet: nothing runs outside the sandbox until the provider's support says so
     expect(preview.json()).toMatchObject({
-      outsideSandboxCeiling: true,
+      outsideSandboxCeiling: false,
       availability: { state: "unprobed" },
     });
     expect(
@@ -640,11 +655,14 @@ describe("Conversation permission profiles", () => {
     );
     // Full access keeps the sandbox: a scoped filesystem, never the device pair
     expect(scope).toMatchObject({ profile: "full-access", filesystem: { kind: "scoped" } });
-    await kernelDb(raw)
-      .updateTable("device_machines")
-      .set({ owner_report: storedOwnerReport({ outsideSandbox: false, sequence: 1 }) })
-      .where("device_id", "=", deviceId)
-      .execute();
+    // the provider's current support no longer runs outside the sandbox
+    await seedInstalledEvidence(k, raw, {
+      orgId,
+      deviceId,
+      provider: "@permission-test",
+      version: "test-1",
+      report: { ...SUPPORTS_BOTH, outsideSandbox: false },
+    });
     // running outside removed is a narrowing: the consent still covers the device
     expect((await req({ method: "GET", url })).json()).toMatchObject({
       profile: "full-access",
@@ -674,11 +692,7 @@ describe("Conversation permission profiles", () => {
       method: "GET",
       url: `/api/v1/orgs/${orgId}/conversation-permission-preview?deviceId=${deviceId}`,
     });
-    await kernelDb(raw)
-      .updateTable("device_machines")
-      .set({ owner_report: storedOwnerReport({ outsideSandbox: false, sequence: 1 }) })
-      .where("device_id", "=", deviceId)
-      .execute();
+    await providerAllowsNoOutside(deviceId);
     const first = await req({
       method: "POST",
       url: `/api/v1/orgs/${orgId}/conversations/first-message`,

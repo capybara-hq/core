@@ -9,10 +9,7 @@ import {
   type StoredOwnerReport,
 } from "../../src/local-devices/owner-report.js";
 import { ownerPolicyRevokes } from "../../src/local-devices/policy-summary.js";
-import {
-  needsFullCeiling,
-  needsWiderDeviceCeiling,
-} from "../../src/sandbox/permission-ceiling-writes.js";
+import { needsFullCeiling } from "../../src/sandbox/permission-ceiling-writes.js";
 
 const report = (sequence: number, over: Record<string, unknown> = {}) =>
   ({
@@ -201,7 +198,6 @@ describe("a running per-call sandbox escalation loses to every Full ceiling turn
 
   it("the org and platform writers' selectors take it (Full execution needs the Full ceiling)", () => {
     expect(needsFullCeiling(escalated)).toBe(true);
-    expect(needsWiderDeviceCeiling(escalated, ["/work"])).toBe(true);
     expect(needsFullCeiling(op())).toBe(false);
   });
 });

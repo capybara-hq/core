@@ -110,6 +110,17 @@ export class DeviceTargets {
   }
 
   /** The owner's home directory the active machine reported in its hello, or null. */
+  /** The device's active machine (its id and reported home), or null when none is active. */
+  async activeMachine(deviceId: string): Promise<{ id: string; home: string | null } | null> {
+    const row = await this.db
+      .selectFrom("device_machines")
+      .select(["id", "home"])
+      .where("device_id", "=", deviceId)
+      .where("revoked_at", "is", null)
+      .executeTakeFirst();
+    return row === undefined ? null : { id: row.id, home: row.home ?? null };
+  }
+
   async machineHome(deviceId: string): Promise<string | null> {
     const row = await this.db
       .selectFrom("device_machines")

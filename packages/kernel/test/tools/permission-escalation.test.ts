@@ -1,6 +1,7 @@
 import { randomUUID } from "node:crypto";
+import type { SandboxPermissionSupport } from "@capybara-hq/plugin-sdk";
 import { startTestPostgres, startTestRedis, type TestContainer } from "@capybara-hq/testing";
-import { afterAll, beforeAll, beforeEach, expect, it, vi } from "vitest";
+import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { KernelConfigSchema } from "../../src/config/schema.js";
 import { EventLog } from "../../src/conversations/event-log.js";
 import { PermissionProfilesService } from "../../src/conversations/permission-profiles.service.js";
@@ -19,6 +20,7 @@ import { SandboxOperationAuthority } from "../../src/sandbox/operation-authority
 import { PermissionAuthorityLock } from "../../src/sandbox/permission-authority-lock.js";
 import { PermissionCallGrants } from "../../src/sandbox/permission-call-grants.js";
 import { PermissionCeilingWrites } from "../../src/sandbox/permission-ceiling-writes.js";
+import { escalationDeviceOffWhy } from "../../src/sandbox/review/permission-candidate.js";
 import { CommandReviewService } from "../../src/sandbox/review/review.service.js";
 import { ApprovalsService } from "../../src/tools/approvals.service.js";
 import { ESCALATION_GRANT_MISSING_TEXT } from "../../src/tools/builtins/sandbox/common.js";
@@ -26,9 +28,7 @@ import { ToolPipeline } from "../../src/tools/pipeline.js";
 import { ToolRegistry } from "../../src/tools/registry.js";
 import { truncateTables } from "../helpers/db.js";
 import { accountsFor } from "../helpers/identity.js";
-import { SUPPORTS_BOTH, seedInstalledEvidence } from "../helpers/installed-evidence.js";
 import { MODEL_PLUGINS_CONFIG } from "../helpers/model-plugins.js";
-import { storedOwnerReport } from "../helpers/owner-report.js";
 import { permissionFixture } from "../helpers/permission-policy.js";
 import { startKernel, type TestKernel } from "../helpers/runs.js";
 
@@ -76,8 +76,9 @@ const ESCALATED = { command: "npm run dev", sandbox: "escalated", justification:
 async function escalated(
   profile: "request-approval" | "approve-for-me" | "full-access",
   input: Record<string, unknown> = ESCALATED,
+  support: Partial<SandboxPermissionSupport> = {},
 ) {
-  const f = await permissionFixture(k, raw, "Bash", input, true);
+  const f = await permissionFixture(k, raw, "Bash", input, true, support);
   if (profile === "full-access") {
     const view = await k.app
       .get(PermissionProfilesService)
@@ -620,21 +621,45 @@ it.each(["approve-for-me", "request-approval"] as const)(
   },
 );
 
-it("an owner who turned running outside the sandbox off refuses the escalation, naming the machine command", async () => {
-  const f = await escalated("request-approval");
-  await f.db
-    .updateTable("device_machines")
-    .set({ owner_report: storedOwnerReport({ outsideSandbox: false }) })
-    .where("device_id", "=", f.deviceId)
-    .execute();
-  const review = vi.spyOn(k.app.get(CommandReviewService), "review");
-  await f.step();
-  expect(f.effects()).toBe(0);
-  expect(review).not.toHaveBeenCalled();
-  expect(JSON.stringify((await f.results())[0]?.content)).toMatch(
-    /off on this device; its owner turns it on by running `capybara-device ceiling set --outside-sandbox on`.*Call Bash without sandbox/,
-  );
-});
+// device-provider spec §6.7: whether a call may run outside the sandbox is the provider's support,
+// read from its runtime report, the same for every provider; its device report says why not
+describe.each([true, false])(
+  "outside-sandbox escalation follows the provider's support, whatever the provider (outsideSandbox %s)",
+  (outsideSandbox) => {
+    it("the escalation is proposed to the person, or refused with the provider's description", async () => {
+      const f = await escalated("request-approval", ESCALATED, { outsideSandbox });
+      await f.db
+        .updateTable("devices")
+        .set({
+          report: JSON.stringify({
+            revision: "r1",
+            description: { en: "Runs commands on a test machine." },
+            home: null,
+            limits: [],
+            reset: false,
+          }),
+        })
+        .where("id", "=", f.deviceId)
+        .execute();
+      const review = vi.spyOn(k.app.get(CommandReviewService), "review");
+      const step = await f.step();
+      expect(f.effects()).toBe(0);
+      if (outsideSandbox) {
+        // asked: the person decides this call
+        expect(step.kind).toBe("suspended");
+        const ask = await k.app.get(ApprovalsService).commandForCall(f.runId, f.callId);
+        expect(ask?.command).toMatchObject({ escalation: { justification: JUSTIFICATION } });
+        return;
+      }
+      expect(review).not.toHaveBeenCalled();
+      const text = JSON.stringify((await f.results())[0]?.content);
+      expect(text).toContain(
+        `but ${escalationDeviceOffWhy("Runs commands on a test machine.")}, so it did not run`,
+      );
+      expect(text).not.toMatch(/capybara-device/);
+    });
+  },
+);
 
 it("a platform outside-sandbox setting off refuses the escalation, naming the super admin", async () => {
   const f = await escalated("request-approval");
@@ -650,24 +675,6 @@ it("a platform outside-sandbox setting off refuses the escalation, naming the su
   } finally {
     await platformFull("allowed");
   }
-});
-
-it("a runtime that cannot run outside its sandbox refuses the escalation with its reason", async () => {
-  const f = await escalated("request-approval");
-  await seedInstalledEvidence(k, raw, {
-    orgId: f.orgId,
-    deviceId: f.deviceId,
-    provider: "@permission-policy-test",
-    version: "test-1",
-    report: { ...SUPPORTS_BOTH, outsideSandbox: false },
-  });
-  const review = vi.spyOn(k.app.get(CommandReviewService), "review");
-  await f.step();
-  expect(f.effects()).toBe(0);
-  expect(review).not.toHaveBeenCalled();
-  expect(JSON.stringify((await f.results())[0]?.content)).toMatch(
-    /cannot run commands outside its sandbox now/,
-  );
 });
 
 it.each(["org", "platform"] as const)(
@@ -926,7 +933,6 @@ it("admission refuses a granted write root that is a system runtime or socket di
   vi.spyOn(k.app.get(PermissionCallGrants), "findForAdmission").mockResolvedValue({
     id: randomUUID(),
     expansion: {
-      readDirectories: ["/run/user/1000"],
       writeDirectories: ["/run/user/1000"],
       hosts: [],
     },

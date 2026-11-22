@@ -201,7 +201,7 @@ export async function toCloudDevice(
         .acquire({ orgId: f.orgId, deviceId: f.deviceId }, { kind: "write", level: "device" });
       await k.app
         .get(PermissionRuntimeReports)
-        .recordCloud(f.deviceId, CLOUD_PROVIDER, CLOUD_VERSION, REPORTS[opts.report ?? "both"]);
+        .recordSupport(f.deviceId, CLOUD_PROVIDER, CLOUD_VERSION, REPORTS[opts.report ?? "both"]);
     });
   return { spy, desired };
 }
@@ -298,17 +298,23 @@ export async function seedContext(k: TestKernel, raw: Kysely<unknown>, seed: Con
         created_at: new Date(Number(generation)),
         fs_status: "ready",
         had_instance: true,
+        instance_limits: JSON.stringify({
+          mode: "auto",
+          network: { kind: "open-public", hosts: [] },
+        }),
       })
       .execute();
     const identity = identityFor(generation);
-    if (seed.report !== null)
+    // the provider's support is recorded with the kernel-built identity, as for every provider;
+    // the interim `@local` records it when its binding is installed
+    if (seed.report !== null && (seed.binding ?? "installed") === "installed")
       await k.app.get(TransactionHost).run(async () => {
         await k.app
           .get(PermissionAuthorityLock)
           .acquire({ orgId: s.orgId, deviceId }, { kind: "write", level: "device" });
         await k.app
           .get(PermissionRuntimeReports)
-          .record(deviceId, "@local", "0.1.0", identity, REPORTS[seed.report ?? "both"]);
+          .recordSupport(deviceId, "@local", KERNEL_VERSION, REPORTS[seed.report ?? "both"]);
       });
     if ((seed.binding ?? "installed") !== "none")
       await db

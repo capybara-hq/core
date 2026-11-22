@@ -190,6 +190,13 @@ function managedProvider() {
   };
   const impl = {
     concurrentExec: true,
+    // a provider that offers projects (where one may lie is its own rule)
+    async list() {
+      return { entries: [], truncated: false };
+    },
+    async scan() {
+      return [];
+    },
     async permissionSupport() {
       return {
         version: 2,

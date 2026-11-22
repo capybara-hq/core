@@ -1,6 +1,5 @@
 import { posix } from "node:path";
 import { validateSandboxPathShape } from "@capybara-hq/plugin-sdk";
-import type { SandboxMode } from "../sandbox/modes.js";
 
 /**
  * What decides a conversation's working root (project root spec §4.3): the latest `project_root`
@@ -38,18 +37,13 @@ const isInside = (path: string, dir: string): boolean =>
  * `Glob` and `Grep` search by default, what a relative file-tool path resolves against, and the
  * command review's `workspace` fact. It is the project's root when the latest snapshot is usable,
  * else the device's `workspace` (free mode). It never widens anything: a root that is not a clean
- * absolute path, one the run cannot use, one outside the workspace in sandbox mode (where the
- * device reads nothing else), and one above the owner's home ({@link aboveHome}) all fall back
- * to the device's workspace.
+ * absolute path, one the run cannot use and one above the owner's home ({@link aboveHome}) all
+ * fall back to the device's workspace. Where a project may lie is its device provider's rule
+ * (device-provider spec §6.1), checked when the project was added.
  */
 export function workingRootOf(
   project: WorkingProject | null | undefined,
-  device: {
-    mode: SandboxMode;
-    workspace: string;
-    home?: string | null;
-    reach?: "workspace" | "os-user" | undefined;
-  },
+  device: { workspace: string; home?: string | null },
 ): string {
   if (project == null || project.unavailable) return device.workspace;
   const root =
@@ -57,10 +51,6 @@ export function workingRootOf(
       ? project.root.slice(0, -1)
       : project.root;
   if (validateSandboxPathShape(root).length > 0) return device.workspace;
-  // B2: a root outside the workspace needs the wider restricted reach (`reach`, given apart from
-  // the Full mode); without it, the protocol 2 encoding (`mode: auto` was that reach)
-  const wide = device.reach !== undefined ? device.reach === "os-user" : device.mode === "auto";
-  if (!wide && !isInside(root, device.workspace)) return device.workspace;
   if (aboveHome(root, device.home)) return device.workspace;
   return root;
 }

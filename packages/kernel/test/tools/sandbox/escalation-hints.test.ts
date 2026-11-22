@@ -1,9 +1,9 @@
 import type { ExecResult } from "@capybara-hq/plugin-sdk";
 import { describe, expect, it } from "vitest";
 import {
-  ESCALATION_DEVICE_OFF_WHY,
   ESCALATION_ORG_OFF_WHY,
   ESCALATION_RETRY_HINT,
+  escalationDeviceOffWhy,
 } from "../../../src/sandbox/review/permission-candidate.js";
 import {
   SCOPE_DENIED_ESCALATION_TEXT,
@@ -11,6 +11,8 @@ import {
   sandboxDenied,
 } from "../../../src/tools/builtins/sandbox/bash.js";
 import { SCOPE_DENIED_TOOL_TEXT } from "../../../src/tools/builtins/sandbox/common.js";
+
+const ESCALATION_DEVICE_OFF_WHY = escalationDeviceOffWhy(null);
 
 // The Bash hints that invite a per-call sandbox escalation (approval profiles design, "Per-call
 // sandbox escalation"): only a sandbox signal invites it, never a credential or auth failure.

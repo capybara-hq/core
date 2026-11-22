@@ -1,16 +1,11 @@
-import {
-  type NetworkBlockedHost,
-  type SandboxLimits,
-  validateAllowHost,
-} from "@capybara-hq/plugin-sdk";
+import { type SandboxLimits, validateAllowHost } from "@capybara-hq/plugin-sdk";
 import type { DeviceExecGrants } from "@capybara-hq/plugin-sdk/device-protocol";
 import { Inject, Injectable } from "@nestjs/common";
 import { sql } from "kysely";
 import { KernelDb } from "../infra/database/kernel-db.js";
-import { ownerModeOf } from "../local-devices/owner-report.js";
 import { budgetRunOf } from "../runtime/subagents/limits.js";
 import { taskGrantsRunOf } from "../schedules/unattended.js";
-import { coversHost, type SandboxMode } from "./modes.js";
+import { coversHost } from "./modes.js";
 
 /** The most hosts one exec's grants carry (the device protocol's limit). */
 export const MAX_GRANT_HOSTS = 100;
@@ -216,22 +211,6 @@ export class NetworkGrants {
       .slice(0, MAX_GRANT_HOSTS);
     if (hosts.length === 0) return undefined;
     return { hosts, source: { kind: "task", id: task.taskId, accountId: task.accountId } };
-  }
-
-  /**
-   * The mode a local device's connected machine runs, read fresh at each exec: null when no machine
-   * is connected, else {@link localModeOf} (a program without the `mode` feature is `sandbox`
-   * unless its legacy summary said it ran unsandboxed, i.e. `auto`).
-   */
-  async reportedMode(deviceId: string): Promise<SandboxMode | null> {
-    const row = await this.db
-      .selectFrom("device_machines")
-      .select(["local_policy", "features", "owner_report"])
-      .where("device_id", "=", deviceId)
-      .where("revoked_at", "is", null)
-      .executeTakeFirst();
-    if (row === undefined) return null;
-    return ownerModeOf(row);
   }
 
   /** The runs of the tree whose budget run is `root`. */

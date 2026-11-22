@@ -906,7 +906,7 @@ describe("GenerateImage file_path", () => {
       command: "GenerateImage",
       targetPath: `${dir}/fox.png`,
       path: `${dir}/fox.png`,
-      permissionScope: { readDirectories: [dir], writeDirectories: [dir], hosts: [] },
+      permissionScope: { writeDirectories: [dir], hosts: [] },
     });
     // the call waits: no image was generated yet
     expect(seen).toEqual([]);

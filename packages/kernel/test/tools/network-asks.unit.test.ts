@@ -2,8 +2,8 @@ import type { NetworkBlockedHost } from "@capybara-hq/plugin-sdk";
 import { describe, expect, it } from "vitest";
 import type { NetworkRunState } from "../../src/sandbox/network-grants.js";
 import {
-  ESCALATION_DEVICE_OFF_WHY,
   ESCALATION_UNATTENDED_WHY,
+  escalationDeviceOffWhy,
 } from "../../src/sandbox/review/permission-candidate.js";
 import { networkGrantRefusal } from "../../src/schedules/grant-rules.js";
 import type { UnattendedRun } from "../../src/schedules/unattended.js";
@@ -22,6 +22,8 @@ import {
   settledNetworkNotes,
   withNetworkNotes,
 } from "../../src/tools/network-asks.js";
+
+const ESCALATION_DEVICE_OFF_WHY = escalationDeviceOffWhy(null);
 
 /** Pure parts of the network ask (network ask-to-allow spec §6.2, §6.6, §6.8, §8.3). */
 

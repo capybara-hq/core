@@ -118,6 +118,7 @@
   "sandbox/device-sandbox.test.ts",
   "sandbox/instance.test.ts",
   "sandbox/lifecycle.test.ts",
+  "sandbox/no-local-branches.test.ts",
   "sandbox/non-tool-callers.test.ts",
   "sandbox/operation-authority.test.ts",
   "sandbox/operation-payloads.test.ts",

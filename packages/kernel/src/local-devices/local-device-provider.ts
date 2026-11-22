@@ -124,15 +124,19 @@ export class LocalDeviceProvider implements DeviceProvider {
   readonly networkAllowlist = true as const;
   readonly sessionIsolation = false;
 
-  /** What the kernel tells about a local device: fixed text, the machine's home, nothing to reset. */
+  /**
+   * What the kernel tells about a local device: fixed text, the machine's home, nothing to reset.
+   * Its revision names the active machine, so a machine revoked or replaced is a new report.
+   */
   async report(device: DeviceRef, _signal: AbortSignal): Promise<DeviceReport> {
+    const machine = await this.targets.activeMachine(device.deviceId);
     return {
-      revision: "local-1",
+      revision: `local-${machine?.id ?? "none"}`,
       description: {
         en: "Runs on a computer connected with capybara-device; the computer's owner limits it there.",
         zh: "运行在用 capybara-device 连接的电脑上，电脑的主人在本机限制它。",
       },
-      home: await this.targets.machineHome(device.deviceId),
+      home: machine?.home ?? null,
       limits: [],
       reset: false,
     };
@@ -142,7 +146,7 @@ export class LocalDeviceProvider implements DeviceProvider {
     @Inject(DialInRelay)
     private readonly relay: Pick<DialInRelay, "request" | "connection" | "online">,
     @Inject(DeviceTargets)
-    private readonly targets: Pick<DeviceTargets, "orgOf" | "machineHome">,
+    private readonly targets: Pick<DeviceTargets, "orgOf" | "activeMachine">,
     @Inject(LocalMachineReports)
     private readonly machineReports: Pick<LocalMachineReports, "machineRoots">,
     @Inject(SandboxService)

@@ -1,11 +1,9 @@
-import { isDeviceBootId } from "@capybara-hq/plugin-sdk/device-protocol";
 import { Inject, Injectable } from "@nestjs/common";
 import { sql } from "kysely";
 import { KernelDb } from "../infra/database/kernel-db.js";
 import { TransactionHost } from "../infra/database/transaction-host.js";
 import { Transactional } from "../infra/database/transactional.decorator.js";
 import { PermissionAuthorityLock } from "./permission-authority-lock.js";
-import { isInternalProvider, LOCAL_PROVIDER } from "./providers.js";
 
 /**
  * Legacy retirement (permission runtime cutover phase 8.5): the durable legacy-launch freeze and
@@ -27,11 +25,10 @@ import { isInternalProvider, LOCAL_PROVIDER } from "./providers.js";
  *   names the row. Obligations live apart from the task rows, so output retention never removes
  *   them, and task finish and event semantics stay with the task's own finisher.
  * - **Resolution** is the sandbox service's, under the device's exclusive lifecycle lease
- *   (`SandboxService` gate): a cloud incarnation is destroyed whole by its provider (confirmed
- *   destruction, the file system kept) or found destroyed by a recorded confirmed destruction; a
- *   local one, a replaced cloud one without recorded destruction and an unknown one are
- *   quarantined. Nothing here resolves on a new generation, a restart, a local (no-op) destroy, a
- *   timeout or a process scan.
+ *   (`SandboxService` gate), the same for every provider: an incarnation is destroyed whole by its
+ *   provider (confirmed destruction, the file system kept) or found destroyed by a recorded
+ *   confirmed destruction; a replaced one without recorded destruction and an unknown one are
+ *   quarantined. Nothing here resolves on a new generation, a timeout or a process scan.
  */
 
 /** The freeze's single row id. */
@@ -51,22 +48,9 @@ export interface RetirementObligation {
   state: "open" | "quarantined" | "resolved" | "abandoned";
   reason: string | null;
   attempts: number;
-  /** A local incarnation's boot identity when recorded; null: none (never resolves by itself). */
-  bootId: string | null;
   /** When it was recorded (a cloud `unknown` one resolves only if recorded after the freeze). */
   createdAt: Date;
 }
-
-/** {@link LegacyRetirementStore.recordBoot}'s answer. */
-export type BootReport =
-  /** First seen for the machine: its current boot now (a restart when one was seen before). */
-  | "new"
-  /** The machine's current boot again (a reconnect). */
-  | "current"
-  /** A boot seen before a later one (stale or replayed): ignored. */
-  | "stale"
-  /** Malformed, or the machine is unknown or revoked: ignored. */
-  | "ignored";
 
 /** {@link LegacyRetirementStore.freeze}'s answer: the freeze is published and enumerated. */
 export interface LegacyFreezeResult {
@@ -182,8 +166,6 @@ export interface LegacyRetirementReport {
     deviceId: string;
     provider: string;
     instanceGeneration: string;
-    local: boolean;
-    bootKnown: boolean;
     abandonedAt: Date;
   }[];
   /**
@@ -204,21 +186,12 @@ export interface LegacyRetirementReport {
     noInstance: boolean;
     currentUnconfirmed: boolean;
   }[];
-  /**
-   * The cutover pre-check (before the freeze, too): local devices with legacy rows whose processes
-   * may still exist and whose current machine has no recorded boot identity. Their obligations
-   * could never resolve by a restart: ship the boot-reporting device build and wait for these to
-   * report before publishing the freeze.
-   */
-  localWithoutBoot: { deviceId: string; machineId: string | null }[];
   unresolved: {
     deviceId: string;
     provider: string;
     instanceGeneration: string;
     state: "open" | "quarantined";
     reason: string | null;
-    /** A local incarnation with a recorded boot: a restart of that computer resolves it. */
-    bootKnown: boolean;
   }[];
 }
 
@@ -229,9 +202,12 @@ export interface RetirementMember {
   refId: string;
 }
 
-/** Whether `provider` is a cloud provider (one whose whole-instance destroy is confirmed). */
-export const isCloudProvider = (provider: string): boolean =>
-  provider !== "unknown" && !isInternalProvider(provider);
+/**
+ * Whether `provider` names a provider (one whose whole-instance destroy is confirmed): any
+ * recorded provider, the same for every one, never the `unknown` of an incarnation the kernel
+ * cannot name.
+ */
+export const isKnownProvider = (provider: string): boolean => provider !== "unknown";
 
 /** The epoch millisecond of `d` as recorded generation text. */
 const generationOf = (d: Date): string => String(d.getTime());
@@ -239,14 +215,13 @@ const generationOf = (d: Date): string => String(d.getTime());
 /**
  * The incarnation a legacy row's obligation is keyed by: the one it started in, else the one its
  * dispatch was admitted for; a historical reservation without either is `unknown`, never the
- * instance current now (I2). Its own provider: local `@local`, else the admitted one, else the
- * instance row's only when it is that incarnation, else `unknown` (M6).
+ * instance current now (I2). Its own provider: the admitted one, else the instance row's only
+ * when it is that incarnation, else `unknown` (M6).
  */
 function legacyKey(r: {
   sandbox_created_at: Date | string | null;
   legacy_dispatch_generation: string | null;
   legacy_dispatch_provider: string | null;
-  source: string | null;
   instance_provider: string | null;
   instance_created_at: Date | null;
 }): { provider: string; generation: string } {
@@ -257,10 +232,8 @@ function legacyKey(r: {
   const current =
     r.instance_created_at !== null && generationOf(r.instance_created_at) === generation;
   const provider =
-    r.source === "local"
-      ? LOCAL_PROVIDER
-      : (r.legacy_dispatch_provider ??
-        (current && r.instance_provider ? r.instance_provider : "unknown"));
+    r.legacy_dispatch_provider ??
+    (current && r.instance_provider ? r.instance_provider : "unknown");
   return { provider, generation };
 }
 
@@ -273,7 +246,6 @@ const toObligation = (r: {
   state: "open" | "quarantined" | "resolved" | "abandoned";
   reason: string | null;
   attempts: number;
-  boot_id: string | null;
   created_at: Date;
 }): RetirementObligation => ({
   id: r.id,
@@ -284,7 +256,6 @@ const toObligation = (r: {
   state: r.state,
   reason: r.reason,
   attempts: r.attempts,
-  bootId: r.boot_id,
   createdAt: r.created_at,
 });
 
@@ -384,11 +355,11 @@ export class LegacyRetirementStore {
   /**
    * The worker's sweep of obligations whose device is gone (its row missing, `deleted_at` set, or
    * its org soft-deleted), at most `limit` per call:
-   * - a cloud one (any provider not kernel-internal) waits while the device's instance row exists:
+   * - one waits while the device's instance row exists:
    *   its destroy is still owed (the destroy job or the destruction sweep deletes the row when it
    *   is done) and records the destruction then;
    * - one whose exact incarnation has a recorded confirmed destruction resolves
-   *   `provider-destroyed`, an already `abandoned` cloud one too (provider evidence, not a
+   *   `provider-destroyed`, an already `abandoned` one too (provider evidence, not a
    *   reopen);
    * - every other one becomes `abandoned`. Device ids are never reused, so no device can acquire
    *   that incarnation again, but abandonment is no evidence that its processes ended (they may
@@ -398,7 +369,7 @@ export class LegacyRetirementStore {
   async abandonDeleted(limit: number): Promise<{ resolved: number; abandoned: number }> {
     let resolved = 0,
       abandoned = 0;
-    // abandoned cloud obligations that gained a matching recorded destruction
+    // abandoned obligations that gained a matching recorded destruction
     const evidenced = await this.db
       .selectFrom("device_retirement_obligations as o")
       .innerJoin("device_instance_destructions as x", (j) =>
@@ -439,19 +410,16 @@ export class LegacyRetirementStore {
           eb("g.deleted_at", "is not", null),
         ]),
       )
-      // a cloud destroy still owed keeps its instance row (R2-I2)
+      // a destroy still owed keeps its instance row (R2-I2)
       .where((eb) =>
-        eb.or([
-          eb("o.provider", "like", "@%"),
-          eb.not(
-            eb.exists(
-              eb
-                .selectFrom("device_instances as i")
-                .select("i.device_id")
-                .whereRef("i.device_id", "=", "o.device_id"),
-            ),
+        eb.not(
+          eb.exists(
+            eb
+              .selectFrom("device_instances as i")
+              .select("i.device_id")
+              .whereRef("i.device_id", "=", "o.device_id"),
           ),
-        ]),
+        ),
       )
       .orderBy("o.created_at")
       .limit(limit)
@@ -526,7 +494,6 @@ export class LegacyRetirementStore {
         "t.sandbox_created_at",
         "t.legacy_dispatch_generation",
         "t.legacy_dispatch_provider",
-        "d.source",
         "i.provider as instance_provider",
         "i.created_at as instance_created_at",
       ])
@@ -634,9 +601,6 @@ export class LegacyRetirementStore {
     kind: RetirementMember["kind"],
     refId: string,
   ): Promise<boolean> {
-    // a local incarnation keeps the boot its machine reported last: only a later boot of that
-    // machine proves its processes gone (none reported: never by itself)
-    const boot = isCloudProvider(provider) ? null : await this.currentBoot(deviceId);
     await this.db
       .insertInto("device_retirement_obligations")
       .values({
@@ -644,8 +608,6 @@ export class LegacyRetirementStore {
         org_id: orgId,
         provider,
         instance_generation: generation,
-        boot_machine_id: boot?.machineId ?? null,
-        boot_id: boot?.bootId ?? null,
       })
       .onConflict((oc) => oc.columns(["device_id", "provider", "instance_generation"]).doNothing())
       .execute();
@@ -663,156 +625,21 @@ export class LegacyRetirementStore {
       .onConflict((oc) => oc.columns(["kind", "ref_id", "obligation_id"]).doNothing())
       .returning("ref_id")
       .executeTakeFirst();
-    // a restart covers only what ran before it: a member found later (a row of an old replica) on
-    // the same local incarnation reopens the obligation against the current boot; an exact
-    // cancel covers only the refs it stopped, and the incarnation lives on (B-22)
+    // an exact cancel covers only the refs it stopped, and the incarnation lives on (B-22): a
+    // member found later (a row of an old replica) reopens the obligation; so does one found on
+    // an incarnation an old replica resolved by a restart of its computer
     if (
       r !== undefined &&
       obligation.state === "resolved" &&
       (obligation.resolution === "host-rebooted" || obligation.resolution === "exact-cancelled")
     ) {
-      // read under the obligation's lock: a hello that resolved it meanwhile is seen (M1); a
-      // cloud incarnation has no boot
-      const now = isCloudProvider(provider) ? null : await this.currentBoot(deviceId);
       await this.db
         .updateTable("device_retirement_obligations")
-        .set({
-          state: "open",
-          resolution: null,
-          resolved_at: null,
-          boot_machine_id: now?.machineId ?? null,
-          boot_id: now?.bootId ?? null,
-        })
+        .set({ state: "open", resolution: null, resolved_at: null })
         .where("id", "=", obligation.id)
         .execute();
     }
     return r !== undefined;
-  }
-
-  /** The device's active machine and the boot it reported last (null: no machine). */
-  private async currentBoot(
-    deviceId: string,
-  ): Promise<{ machineId: string; bootId: string | null } | null> {
-    const m = await this.db
-      .selectFrom("device_machines")
-      .select(["id", "boot_id"])
-      .where("device_id", "=", deviceId)
-      .where("revoked_at", "is", null)
-      .orderBy("created_at", "desc")
-      .orderBy("id", "desc")
-      .limit(1)
-      .executeTakeFirst();
-    return m ? { machineId: m.id, bootId: m.boot_id } : null;
-  }
-
-  /**
-   * Records the OS boot identity an authenticated hello of `machineId` reported. The caller is the
-   * gateway's hello record, after the connection authenticated with the machine's credential and
-   * claimed the device, inside its transaction with the machine row locked. A boot first seen for
-   * the machine becomes its current one; the current one again is a reconnect; one seen before a
-   * later one (stale, replayed) changes nothing. A new or current boot then settles the device's
-   * local obligations recorded under another boot of the computer ({@link settleRebooted}).
-   */
-  async recordBoot(machineId: string, bootId: unknown): Promise<BootReport> {
-    if (!isDeviceBootId(bootId)) return "ignored";
-    const machine = await this.db
-      .selectFrom("device_machines")
-      .select(["device_id", "boot_id"])
-      .where("id", "=", machineId)
-      .where("revoked_at", "is", null)
-      .executeTakeFirst();
-    if (!machine) return "ignored";
-    const inserted = await this.db
-      .insertInto("device_machine_boots")
-      .values({ machine_id: machineId, boot_id: bootId })
-      .onConflict((oc) => oc.columns(["machine_id", "boot_id"]).doNothing())
-      .returning("seq")
-      .executeTakeFirst();
-    let report: BootReport;
-    if (inserted !== undefined) {
-      await this.db
-        .updateTable("device_machines")
-        .set({ boot_id: bootId })
-        .where("id", "=", machineId)
-        .execute();
-      report = "new";
-    } else if (machine.boot_id === bootId) report = "current";
-    else return "stale";
-    await this.settleRebooted(machine.device_id);
-    return report;
-  }
-
-  /**
-   * A hello without a boot identity: the machine has no current boot any more, so a boot it
-   * reported earlier is never taken as the one its later work ran under (M2).
-   */
-  async clearBoot(machineId: string): Promise<void> {
-    await this.db
-      .updateTable("device_machines")
-      .set({ boot_id: null })
-      .where("id", "=", machineId)
-      .execute();
-  }
-
-  /**
-   * Resolves (`host-rebooted`) every unresolved local obligation of the device for which a current
-   * (non-revoked) machine of the device has recorded a boot other than the obligation's: the
-   * evidence is the OS instance, not the credential, so a re-login on the same computer reporting
-   * the same boot changes nothing, and one after a restart (or any later boot) resolves it. A boot
-   * that some machine of the device had already reported when the obligation's boot was first
-   * seen is an older boot, never evidence (a replay through another credential). An obligation
-   * without a recorded boot never resolves here. Returns how many resolved.
-   */
-  async settleRebooted(deviceId: string): Promise<number> {
-    const r = await this.db
-      .updateTable("device_retirement_obligations as o")
-      .set({
-        state: "resolved",
-        resolution: "host-rebooted",
-        resolved_at: sql<Date>`now()`,
-        last_error: null,
-      })
-      .where("o.device_id", "=", deviceId)
-      .where("o.state", "in", ["open", "quarantined"])
-      .where("o.provider", "like", "@%")
-      .where("o.boot_id", "is not", null)
-      .where(({ exists, selectFrom }) =>
-        exists(
-          selectFrom("device_machines as m")
-            .select("m.id")
-            .whereRef("m.device_id", "=", "o.device_id")
-            .where("m.revoked_at", "is", null)
-            .where("m.boot_id", "is not", null)
-            .whereRef("m.boot_id", "<>", "o.boot_id")
-            // not a boot the device's machines had already reported by the obligation's boot
-            .where((inner) =>
-              inner.not(
-                inner.exists(
-                  inner
-                    .selectFrom("device_machine_boots as seen")
-                    .innerJoin("device_machines as sm", "sm.id", "seen.machine_id")
-                    .select("seen.boot_id")
-                    .whereRef("sm.device_id", "=", "o.device_id")
-                    .whereRef("seen.boot_id", "=", "m.boot_id")
-                    .where((e) =>
-                      e(
-                        "seen.seq",
-                        "<=",
-                        e
-                          .selectFrom("device_machine_boots as ob")
-                          .innerJoin("device_machines as om", "om.id", "ob.machine_id")
-                          .select((f) => f.fn.min("ob.seq").as("first"))
-                          .whereRef("om.device_id", "=", "o.device_id")
-                          .whereRef("ob.boot_id", "=", "o.boot_id"),
-                      ),
-                    ),
-                ),
-              ),
-            ),
-        ),
-      )
-      .executeTakeFirst();
-    return Number(r.numUpdatedRows);
   }
 
   /** The device's unresolved obligations (open and quarantined), oldest first. */
@@ -828,7 +655,6 @@ export class LegacyRetirementStore {
         "state",
         "reason",
         "attempts",
-        "boot_id",
         "created_at",
       ])
       .where("device_id", "=", deviceId)
@@ -1026,11 +852,11 @@ export class LegacyRetirementStore {
   }
 
   /**
-   * Records the provider-confirmed destruction of a cloud incarnation. A kernel-internal
-   * provider's destroy (a local machine: a no-op) is never evidence and is refused.
+   * Records the provider-confirmed destruction of an incarnation, the same for every provider (a
+   * provider is trusted like every extension). An `unknown` provider names nothing and is refused.
    */
   async recordDestruction(deviceId: string, provider: string, generation: string): Promise<void> {
-    if (!isCloudProvider(provider))
+    if (!isKnownProvider(provider))
       throw new Error(`A ${provider} destroy is not evidence of destruction`);
     if (!GENERATION_RE.test(generation)) throw new Error(`invalid generation ${generation}`);
     await this.db
@@ -1040,13 +866,13 @@ export class LegacyRetirementStore {
       .execute();
   }
 
-  /** Whether a confirmed destruction of exactly that cloud incarnation was recorded. */
+  /** Whether a confirmed destruction of exactly that incarnation was recorded. */
   async destructionRecorded(
     deviceId: string,
     provider: string,
     generation: string,
   ): Promise<boolean> {
-    if (!isCloudProvider(provider) || !GENERATION_RE.test(generation)) return false;
+    if (!isKnownProvider(provider) || !GENERATION_RE.test(generation)) return false;
     const row = await this.db
       .selectFrom("device_instance_destructions")
       .select("device_id")
@@ -1186,29 +1012,13 @@ export class LegacyRetirementStore {
       .executeTakeFirstOrThrow();
     const unresolved = await this.db
       .selectFrom("device_retirement_obligations")
-      .select(["device_id", "provider", "instance_generation", "state", "reason", "boot_id"])
+      .select(["device_id", "provider", "instance_generation", "state", "reason"])
       .where("state", "in", ["open", "quarantined"])
       .orderBy("created_at", "asc")
       .execute();
-    const withoutBoot = await this.db
-      .selectFrom("background_tasks as t")
-      .innerJoin("devices as d", "d.id", "t.device_id")
-      .leftJoin("device_machines as m", (j) =>
-        j.onRef("m.device_id", "=", "d.id").on("m.revoked_at", "is", null),
-      )
-      .select(["t.device_id", "m.id as machine_id"])
-      .distinct()
-      .where("d.source", "=", "local")
-      .where("d.deleted_at", "is", null)
-      .where("t.launch_state", "=", "legacy")
-      .where(MAY_STILL_RUN)
-      .where(MAY_HAVE_DISPATCHED)
-      .where((eb) => eb.or([eb("m.id", "is", null), eb("m.boot_id", "is", null)]))
-      .orderBy("t.device_id")
-      .execute();
     const abandonedRows = await this.db
       .selectFrom("device_retirement_obligations")
-      .select(["device_id", "provider", "instance_generation", "boot_id", "abandoned_at"])
+      .select(["device_id", "provider", "instance_generation", "abandoned_at"])
       .where("state", "=", "abandoned")
       .orderBy("abandoned_at", "asc")
       .execute();
@@ -1234,7 +1044,6 @@ export class LegacyRetirementStore {
         "i.handle as instance_handle",
         "i.had_instance",
       ])
-      .where("d.source", "=", "cloud")
       .where("d.deleted_at", "is", null)
       .where("t.launch_state", "=", "legacy")
       .where(MAY_STILL_RUN)
@@ -1246,7 +1055,7 @@ export class LegacyRetirementStore {
       { prevHandle: boolean; noInstance: boolean; currentUnconfirmed: boolean }
     >();
     for (const r of cloudCandidates) {
-      const key = legacyKey({ ...r, source: "cloud" });
+      const key = legacyKey(r);
       if (key.generation !== "unknown" && key.provider !== "unknown") continue;
       if (cloudUnknown.has(r.device_id as string)) continue;
       const live =
@@ -1297,22 +1106,15 @@ export class LegacyRetirementStore {
         deviceId: r.device_id,
         provider: r.provider,
         instanceGeneration: r.instance_generation,
-        local: isInternalProvider(r.provider),
-        bootKnown: r.boot_id !== null,
         abandonedAt: r.abandoned_at as Date,
       })),
       cloudUnknown: [...cloudUnknown].map(([deviceId, flags]) => ({ deviceId, ...flags })),
-      localWithoutBoot: withoutBoot.map((r) => ({
-        deviceId: r.device_id as string,
-        machineId: r.machine_id,
-      })),
       unresolved: unresolved.map((r) => ({
         deviceId: r.device_id,
         provider: r.provider,
         instanceGeneration: r.instance_generation,
         state: r.state as "open" | "quarantined",
         reason: r.reason,
-        bootKnown: r.boot_id !== null,
       })),
     };
   }

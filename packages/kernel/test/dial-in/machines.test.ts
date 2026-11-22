@@ -13,7 +13,6 @@ import { DevicesService } from "../../src/devices/devices.service.js";
 import { DialInMachines } from "../../src/dial-in/machines.js";
 import { TransactionHost } from "../../src/infra/database/transaction-host.js";
 import { LocalMachineReports } from "../../src/local-devices/local-machine-reports.js";
-import { NetworkGrants } from "../../src/sandbox/network-grants.js";
 import { legacyDbFor } from "../helpers/conversations.js";
 import { accountsFor } from "../helpers/identity.js";
 import { testMembers } from "../helpers/members.js";
@@ -411,38 +410,6 @@ describe("DialInMachines", () => {
       .where("id", "=", m.machineId)
       .executeTakeFirstOrThrow();
     expect(later.last_seen_at?.getTime()).toBeGreaterThan(Date.now() - 10_000);
-  });
-
-  it("derives a machine's mode from its owner report only, fail closed without one", async () => {
-    const a = await member();
-    const m = await connected(a);
-    const hello: HelloBody = {
-      mode: "os",
-      roots: { workspace: "/w", skills: "/s", tmp: "/t" },
-      sessionIsolation: false,
-      features: [],
-    };
-    // protocol 4 has no legacy owner state: a hello without a report is sandbox, whatever summary
-    // an older program would have sent
-    await reports.recordHello(m.machineId, hello);
-    expect((await machines.activeFor(m.deviceId))?.localPolicy).toBeNull();
-    expect(await k.app.get(NetworkGrants).reportedMode(m.deviceId)).toBe("sandbox");
-    // an authenticated report allowing outside the sandbox is auto
-    await reports.recordHelloV3(m.machineId, {
-      ...stagedHello(),
-      ownerCeiling: { ...stagedHello().ownerCeiling, sequence: 1, outsideSandbox: true },
-    });
-    expect(await k.app.get(NetworkGrants).reportedMode(m.deviceId)).toBe("auto");
-    await reports.recordHelloV3(m.machineId, {
-      ...stagedHello(),
-      ownerCeiling: {
-        ...stagedHello().ownerCeiling,
-        sequence: 2,
-        revision: "r2",
-        outsideSandbox: false,
-      },
-    });
-    expect(await k.app.get(NetworkGrants).reportedMode(m.deviceId)).toBe("sandbox");
   });
 });
 

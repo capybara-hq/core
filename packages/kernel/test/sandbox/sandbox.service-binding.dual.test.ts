@@ -342,7 +342,8 @@ it("an open legacy obligation refuses both replicas and sends no bind", async ()
   for (const r of results)
     expect(r.status === "rejected" && r.reason).toMatchObject({
       name: "RetirementPendingError",
-      code: "device.replace_required",
+      // an earlier incarnation no recorded destruction covers, whatever its provider
+      code: "device.recreate_required",
     });
   expect(f.machine.sent).toHaveLength(1);
   expect(await f.bindings()).toMatchObject([{ status: "awaiting-device" }]);
@@ -351,8 +352,9 @@ it("an open legacy obligation refuses both replicas and sends no bind", async ()
 it("protocol 2 (no binder) on both replicas: one instance, no bind", async () => {
   const f = await device({ binder: false });
   const [a, b] = await Promise.all([use(0, f.ctx), use(1, f.ctx)]);
-  expect(a).toEqual(["awaiting-device"]);
-  expect(b).toEqual(["awaiting-device"]);
+  // a provider entry without an instance binder gets no binding
+  expect(a).toEqual([]);
+  expect(b).toEqual([]);
   expect(f.creates).toHaveLength(1);
   expect(f.machine.sent).toEqual([]);
 });

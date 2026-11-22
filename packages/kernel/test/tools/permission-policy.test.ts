@@ -18,7 +18,6 @@ import { permissionCheckFailedText, ToolPipeline } from "../../src/tools/pipelin
 import { ToolRegistry } from "../../src/tools/registry.js";
 import { truncateTables } from "../helpers/db.js";
 import { MODEL_PLUGINS_CONFIG } from "../helpers/model-plugins.js";
-import { storedOwnerReport } from "../helpers/owner-report.js";
 import { permissionFixture } from "../helpers/permission-policy.js";
 import { startKernel, type TestKernel } from "../helpers/runs.js";
 
@@ -121,7 +120,6 @@ it.each(["Write", "Edit"])(
     const approval = await k.app.get(ApprovalsService).commandForCall(f.runId, f.callId);
     expect(approval?.command).toMatchObject({
       permissionScope: {
-        readDirectories: ["/outside/reports"],
         writeDirectories: ["/outside/reports"],
         hosts: [],
       },
@@ -232,7 +230,6 @@ it("a reused grant records its real source: the person's approval", async () => 
   vi.spyOn(k.app.get(PermissionCallGrants), "findForAdmission").mockResolvedValueOnce({
     id: randomUUID(),
     expansion: {
-      readDirectories: ["/outside/reports"],
       writeDirectories: ["/outside/reports"],
       hosts: [],
     },
@@ -748,45 +745,6 @@ it("transition rollback preserves revision, pending decision, audit and outbox",
       .execute(),
   ).toEqual([]);
 });
-it("local current host ceiling refuses an unapproved host before independent review", async () => {
-  const f = await fixture(
-    "Bash",
-    { command: "curl https://not-in-org-ceiling.example/data" },
-    true,
-  );
-  // the local ceiling: the owner's allowlist network (an open owner network adds no narrowing,
-  // and under the org's open ceiling any host would be grantable per call)
-  await f.db
-    .updateTable("device_machines")
-    .set({
-      owner_report: storedOwnerReport({
-        network: "allowlist",
-        allowedDomains: ["registry.npmjs.org"],
-      }),
-    })
-    .where("device_id", "=", f.deviceId)
-    .execute();
-  const review = vi.spyOn(k.app.get(CommandReviewService), "review");
-  await k.app.get(RunExecution).withClaim(
-    f.claim,
-    () => true,
-    () => k.app.get(ToolPipeline).runStep(f.ctx),
-  );
-  expect(review).not.toHaveBeenCalled();
-  expect(f.effects()).toBe(0);
-  expect(await f.db.selectFrom("permission_call_grants").selectAll().execute()).toEqual([]);
-  const [refused] = await f.db
-    .selectFrom("conversation_events")
-    .select("payload")
-    .where("type", "=", "tool_result")
-    .where("run_id", "=", f.runId)
-    .execute();
-  // the reply names who adds the host: the machine's owner
-  expect((refused?.payload as { content?: string } | undefined)?.content).toContain(
-    "capybara-device policy add allowedDomains not-in-org-ceiling.example",
-  );
-});
-
 it.each([
   "cat /home/owner/.ssh/id_rsa",
   "sudo true",

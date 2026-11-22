@@ -76,11 +76,7 @@ import {
   escalationRefusedText,
 } from "../../src/sandbox/review/permission-candidate.js";
 
-const ESCALATION_CEILING_WHY = escalationCeilingWhy({
-  layer: "device",
-  location: "local",
-  boundary: "operation",
-});
+const ESCALATION_CEILING_WHY = escalationCeilingWhy({ layer: "provider", boundary: "operation" });
 
 describe("per-call sandbox escalation", () => {
   const base = {
@@ -136,13 +132,11 @@ describe("per-call sandbox escalation", () => {
     profileRevision: 1,
     scopeRevision: "scope",
     authorityRevision: "authority",
-    baseReadDirectories: ["/work"],
     baseWriteDirectories: ["/work"],
     baseHosts: [],
     workingRoot: "/work",
     projectRoot: "/work",
     outsideSandboxCeiling: true,
-    broadProjectReach: false,
     unattended: false,
     fullConsent: false,
     availability: { state: "supported" },
@@ -170,7 +164,7 @@ describe("per-call sandbox escalation", () => {
     expect(built.candidate).toMatchObject({
       scopeKind: "sandbox-escalation",
       escalation: { justification: escalated.justification },
-      permissionScope: { readDirectories: [], writeDirectories: [], hosts: [] },
+      permissionScope: { writeDirectories: [], hosts: [] },
       binding: { toolKey: "Bash", callId: "call", profile: "approve-for-me" },
     });
     // a changed input is another binding: the grant of one call never covers another input
@@ -190,20 +184,22 @@ describe("per-call sandbox escalation", () => {
     );
   });
   it("a refused escalation names the layer that blocks it and how to lift it", () => {
-    const why = (layer: Parameters<typeof escalationCeilingWhy>[0]["layer"], cloud = false) =>
+    const why = (layer: Parameters<typeof escalationCeilingWhy>[0]["layer"], instance = false) =>
       escalationCeilingWhy({
         layer,
-        location: cloud ? "cloud" : "local",
-        boundary: cloud ? "instance" : "operation",
+        boundary: instance ? "instance" : "operation",
+        description: "Runs on a test machine.",
       });
-    expect(why("device")).toContain("capybara-device ceiling set --outside-sandbox on");
-    expect(why("device")).toMatch(/owner/);
+    // the provider's support says no now: its own description of the device says why
+    expect(why("provider")).toBe(
+      "this device's provider does not allow running outside the sandbox now: Runs on a test machine",
+    );
     expect(why("org")).toMatch(/an organization admin/);
     expect(why("platform")).toMatch(/a super admin/);
-    // a cloud instance is its sandbox: there is nothing outside it to allow, whatever layer is off
+    // an instance is its sandbox: there is nothing outside it to allow, whatever layer is off
     for (const layer of ["device", "org", "platform", "provider"] as const)
       expect(why(layer, true)).toMatch(/no outside of its sandbox/);
-    const texts = [why("device"), why("org"), why("platform"), why("device", true)];
+    const texts = [why("provider"), why("org"), why("platform"), why("provider", true)];
     expect(new Set(texts).size).toBe(4);
     for (const text of texts) {
       expect(text).not.toMatch(/Full access/);

@@ -228,10 +228,9 @@ describe("file tool paths in the device's mode", () => {
     expect(r.payload.content).toContain("/skills");
   });
 
-  // the file tools' own path check no longer follows the tier: on this operation-boundary cloud
-  // device the outside-sandbox setting is still its directory reach ceiling (broadProjectReach),
-  // so the review refuses the crossing before the tool runs
-  it("sandbox mode: a path outside the workspace is refused by the device's reach", async () => {
+  // the file tools' own path check no longer follows the tier: a read is no crossing (reads are
+  // the provider's rule), so it reaches the device, which refuses what lies outside its scope
+  it("sandbox mode: a read outside the workspace is refused by the device's own read rule", async () => {
     const off = await owner({
       method: "PATCH",
       url: `/api/v1/orgs/${orgId}/settings`,
@@ -241,11 +240,12 @@ describe("file tool paths in the device's mode", () => {
     const conv = await createConv(owner, orgId, agentId);
     const read = await call(conv, "Read", { file_path: "/etc/passwd" }, 1);
     expect(read.payload.isError).toBe(true);
-    expect(read.payload.content).toContain("outside the working directory /workspace");
-    const write = await call(conv, "Write", { file_path: "/etc/x", content: "x" }, 2);
-    expect(write.payload.isError).toBe(true);
-    expect(write.payload.content).toContain("/workspace");
-    // inside the roots it works as before
+    // reads are the provider's rule: no approval is proposed, the device refuses it
+    expect(read.payload.content).toContain("outside the scope this conversation has on the device");
+    // a write outside the workspace is a crossing the profile decides (not run here); a write
+    // inside works at once
+    const inside = await call(conv, "Write", { file_path: "/workspace/b.txt", content: "b" }, 2);
+    expect(inside.payload.isError, inside.payload.content).toBe(false);
     const ok = await call(conv, "Write", { file_path: "/workspace/a.txt", content: "a" }, 3);
     expect(ok.payload.isError).toBe(false);
   });

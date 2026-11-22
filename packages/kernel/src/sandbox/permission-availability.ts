@@ -72,18 +72,12 @@ export function permissionAvailabilityFor(
 }
 
 /**
- * Why a recorded runtime report cannot run permission-scoped work on a device at `location`, or
- * null when it can: the one rule admission's withheld scope and the people's view both apply
- * (the "one verdict" rule, B-16). A local machine's sandbox is per operation (only a cloud
- * provider's instance is the sandbox); a runtime without a restricted mode and without an instance
- * boundary only runs outside its sandbox.
+ * Why a recorded runtime report cannot run permission-scoped work on its device, or null when it
+ * can: the one rule admission's withheld scope and the people's view both apply (the "one
+ * verdict" rule, B-16), the same for every provider. A runtime without a restricted mode and
+ * without an instance boundary only runs outside its sandbox.
  */
-export function runtimeReportVerdict(
-  report: SandboxPermissionSupport,
-  location: "local" | "cloud",
-): string | null {
-  if (report.boundary === "instance" && location === "local")
-    return "A local device cannot report an instance boundary";
+export function runtimeReportVerdict(report: SandboxPermissionSupport): string | null {
   if (report.restricted === null && !instanceSupported(report))
     return report.unavailableReason ?? "This device's runtime cannot enforce its sandbox";
   return null;
@@ -97,10 +91,9 @@ export function runtimeReportVerdict(
  */
 export function deviceWorkAvailability(
   availability: PermissionAvailability,
-  location: "local" | "cloud",
 ): PermissionAvailability {
   if (availability.state !== "supported") return availability;
-  const reason = runtimeReportVerdict(availability.report, location);
+  const reason = runtimeReportVerdict(availability.report);
   return reason === null
     ? availability
     : { state: "unsupported", reason, cause: { kind: "runtime" } };

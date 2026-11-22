@@ -76,7 +76,7 @@ function networkLine(s: NonNullable<PermissionContextV2["scope"]>): string {
     case "open-public":
       return "Network: the open public internet; private, LAN, loopback, link-local and metadata addresses are closed inside the sandbox.";
     case "environment":
-      return s.location === "local"
+      return s.boundary === "operation"
         ? "Network: the host environment; restricted-profile host lists do not restrict Full access."
         : "Network: the provisioned environment, subject to its outer network boundary.";
   }
@@ -136,8 +136,7 @@ function approverLines(p: PermissionContextV2, box: PermissionContextSandbox): s
       ? "the person approves"
       : "a separate reviewer approves; uncertainty asks the person";
   const lines: string[] = [];
-  if (!instance)
-    lines.push(`Directories outside the readable or writable directories: ${approver}.`);
+  if (!instance) lines.push(`Directories outside the writable directories: ${approver}.`);
   // `none` is both an allowlist without hosts and the kill switch, which the block does not tell
   // apart: the line names the approver and leaves the device's network switch to the device
   if (box.network.kind !== "open-public")
@@ -192,12 +191,12 @@ export function permissionContextText(payload: PermissionContextV2): string {
     lines.push(`Working directory: ${permissionQuote(s.workingRoot)}.`);
     if (s.filesystem.kind === "scoped") {
       lines.push(
-        `Readable directories: ${arrayText(s.filesystem.readDirectories)}.`,
+        "Readable files: set by this device's provider, not by the permission profile.",
         `Writable directories: ${arrayText(s.filesystem.writeDirectories)}.`,
       );
     } else
       lines.push(
-        s.location === "local"
+        s.boundary === "operation"
           ? "Filesystem: this device as the existing OS user; no additional OS privileges."
           : "Filesystem: the provisioned device environment as its existing OS user; no additional OS privileges.",
       );

@@ -189,8 +189,6 @@ const members = async () =>
 const unavailable = { code: "device.unavailable" };
 /** A cloud incarnation no evidence can cover: recreate the device. */
 const recreate = { code: "device.recreate_required" };
-/** A local device whose computer never reported a boot identity: replace it. */
-const replace = { code: "device.replace_required" };
 
 /** A legacy (SID-era) row as an older kernel wrote it (`legacy_dispatch` left at its default). */
 async function legacyRow(
@@ -422,57 +420,6 @@ describe("the retirement gate", () => {
     expect(calls).toEqual([`cloud destroy ${old.id}`, `cloud create ${fresh.id}`]);
   });
 
-  it("local: a no-op destroy, a reset or a new generation never clears; the device stays unavailable", async () => {
-    const s = service();
-    const dev = await seedDevice(raw, seed.orgId, seed.accountId, "local");
-    await use(s, dev);
-    await legacyRow(dev, { createdAt: (await instance(dev)).created_at });
-    await retirement.freeze("test");
-    await retirement.scanUntilStable();
-    expect(await obligations(dev)).toMatchObject([{ provider: LOCAL_PROVIDER, state: "open" }]);
-    calls = [];
-
-    await expect(use(s, dev)).rejects.toMatchObject(replace);
-    expect(await obligations(dev)).toMatchObject([{ state: "quarantined" }]);
-    expect(calls).toEqual([]);
-
-    // the reset destroys through the local provider (a no-op on a machine): no evidence
-    await s.resetFileSystem(dev);
-    await expect(use(s, dev)).rejects.toMatchObject(replace);
-    expect(await s.retireLegacy(dev)).toBe("unavailable");
-    expect(await obligations(dev)).toMatchObject([{ state: "quarantined", resolution: null }]);
-    expect(await db.selectFrom("device_instance_destructions").selectAll().execute()).toEqual([]);
-    await expect(
-      retirement.recordDestruction(dev, LOCAL_PROVIDER, String(Date.now())),
-    ).rejects.toThrow(/not evidence/);
-  });
-
-  it("offline: the obligation survives output pruning and later scans", async () => {
-    const s = service();
-    const dev = await seedDevice(raw, seed.orgId, seed.accountId, "local");
-    await use(s, dev);
-    const task = await legacyRow(dev, {
-      status: "lost",
-      createdAt: (await instance(dev)).created_at,
-      killPending: true,
-    });
-    await retirement.freeze("test");
-    await retirement.scanUntilStable();
-    await sql`UPDATE capybara.background_tasks SET finished_at = now() - interval '400 days'`.execute(
-      raw,
-    );
-    expect(await tasks.pruneFinished(new Date())).toBe(1);
-    expect(await tasks.get(task)).toBeUndefined();
-    expect(await retirement.scanUntilStable()).toEqual({ added: 0, stable: true });
-    expect(await members()).toEqual([`legacy-task ${task}`]);
-    await expect(use(s, dev)).rejects.toMatchObject(replace);
-    expect(await retirement.report()).toMatchObject({
-      frozen: true,
-      quarantined: 1,
-      retired: false,
-    });
-  });
-
   it("a reused provider handle with a changed generation is neither destroyed nor trusted", async () => {
     const s = service();
     const dev = await seedDevice(raw, seed.orgId, seed.accountId);
@@ -674,6 +621,8 @@ describe("obligations of deleted devices", () => {
     });
     await retirement.freeze("test");
     await sql`UPDATE capybara.devices SET deleted_at = now() WHERE id = ${dev}`.execute(raw);
+    // the destroy owed with the deletion went without a recorded destruction
+    await sql`DELETE FROM capybara.device_instances WHERE device_id = ${dev}`.execute(raw);
     const r = await jobFor(s).runOnce();
     expect(r.abandoned).toBe(1);
     expect(await obligations(dev)).toMatchObject([{ state: "abandoned", resolution: null }]);
@@ -688,7 +637,7 @@ describe("obligations of deleted devices", () => {
       abandonedMembers: 1,
       retired: true,
       cleanRetirement: false,
-      abandonedList: [{ deviceId: dev, provider: LOCAL_PROVIDER, local: true, bootKnown: false }],
+      abandonedList: [{ deviceId: dev, provider: LOCAL_PROVIDER }],
     });
     // a later tick changes nothing
     expect((await jobFor(s).runOnce()).abandoned).toBe(0);
@@ -704,6 +653,8 @@ describe("obligations of deleted devices", () => {
     // the device's deletion destroys its instance with the provider (recorded) and its files
     await s.destroyDevice(dev);
     await sql`UPDATE capybara.devices SET deleted_at = now() WHERE id = ${dev}`.execute(raw);
+    // the destroy owed with the deletion went without a recorded destruction
+    await sql`DELETE FROM capybara.device_instances WHERE device_id = ${dev}`.execute(raw);
     const r = await jobFor(s).runOnce();
     expect(r.abandoned).toBe(0);
     expect(await obligations(dev)).toMatchObject([
@@ -771,6 +722,7 @@ describe("obligations of deleted devices whose destroy is still owed (R2-I2)", (
     });
     await retirement.freeze("test");
     await sql`UPDATE capybara.orgs SET deleted_at = now() WHERE id = ${seed.orgId}`.execute(raw);
+    await sql`DELETE FROM capybara.device_instances WHERE device_id = ${dev}`.execute(raw);
     expect((await jobFor(s).runOnce()).abandoned).toBe(1);
     expect(await obligations(dev)).toMatchObject([{ state: "abandoned" }]);
   });
@@ -789,6 +741,7 @@ describe("obligations of deleted devices whose destroy is still owed (R2-I2)", (
     }
     await retirement.freeze("test");
     await sql`UPDATE capybara.devices SET deleted_at = now()`.execute(raw);
+    await sql`DELETE FROM capybara.device_instances`.execute(raw);
     expect(await retirement.abandonDeleted(1)).toMatchObject({ abandoned: 1 });
     expect(await retirement.abandonDeleted(1)).toMatchObject({ abandoned: 1 });
     expect(await retirement.abandonDeleted(1)).toMatchObject({ abandoned: 0 });
