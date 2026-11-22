@@ -153,7 +153,10 @@ owner report keep working.
 Linux residuals of the deny list, stated plainly. Landlock grants directories, so a denied path is
 carved out of the whole machine by granting its siblings: files directly inside a directory on the
 path to a denied one are unreadable, and such a directory cannot be listed (for example `~/.bashrc`
-and `~/.gitconfig` when `~/.ssh` is denied, unless a tool home grants them). A bind mount or second
+and `~/.gitconfig` when `~/.ssh` is denied, unless a tool home grants them; likewise files
+directly in `~/.cargo`, `~/.claude`, `~/.codex`, `~/.terraform.d`, `~/.local`, `~/.local/share` and
+`~/.config/mise`, so cargo cannot read `~/.cargo/config.toml` for a project under the home: use
+the `paths` reach or an escalated call there). A bind mount or second
 mount of a denied directory elsewhere stays readable, because the carve works on paths. More than
 4096 carved roots refuses machine reach for that operation: use the `paths` reach instead. macOS
 Seatbelt denies the paths directly and has none of these.

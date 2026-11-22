@@ -77,7 +77,7 @@ function defaultSleep(ms: number, signal: AbortSignal): Promise<void> {
 }
 
 /**
- * Connects a staged (protocol 5, `capybara-device/5`) program and serves it until told to stop
+ * Connects a staged (protocol 6, `capybara-device/6`) program and serves it until told to stop
  * (permission activation W3-M), with protocol 2's lifetime rules (`connect`): backoff, liveness,
  * 401 / 426 / replaced / revoked endings, and the kernel's `stop` frame. Each socket is served by
  * {@link serveStagedSession} with the credential's one session state ({@link StagedDevice.states},

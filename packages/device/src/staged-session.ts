@@ -302,7 +302,7 @@ export async function drainStagedSession(
 
 /**
  * Serves one authenticated socket with the dial-in envelope: sends the hello (protocol
- * `capybara-device/5`, this run's id, the program facts, the credential's frame capacity and the
+ * `capybara-device/6`, this run's id, the program facts, the credential's frame capacity and the
  * device protocol body), waits for `ready`, then answers each `req` body with a `res` body and
  * honours `cancel` and the kernel's `stop`. Every frame from the kernel is parsed strictly (the
  * envelope, then the request body) and bounded by the connection's capacity (the credential's
