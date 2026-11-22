@@ -405,6 +405,48 @@ describe("ctx.dialIn", () => {
     expect((e as Error).message).toBe(`device ${other.deviceId} is not served by fake-dial-in`);
     expect(await redis.exists(`capk:device-req:${other.deviceId}`)).toBe(0);
   });
+
+  /** `ctx.dialIn.capacity` called by the fixture's `GET /capacity` route. */
+  const capacity = async (deviceId: string) => {
+    const res = await fetch(
+      `http://127.0.0.1:${k.port}/plugins/fake-dial-in/capacity?deviceId=${deviceId}`,
+    );
+    expect(res.status).toBe(200);
+    return (await res.json()) as
+      | { ok: true; capacity: { maxFrameBytes: number } | null }
+      | { ok: false; error: { name: string; message: string } };
+  };
+
+  it("ctx.dialIn.capacity is the maxFrameBytes of ready while connected, null once offline", async () => {
+    const d = await device();
+    expect(await capacity(d.deviceId)).toEqual({ ok: true, capacity: null });
+    const machine = await FakeDialInMachine.connect({
+      url,
+      credential: d.credential,
+      hello: { revision: "r1" },
+      maxFrameBytes: 4096,
+    });
+    // the machine announced less than the kernel's 16 MiB default: its own cap wins
+    expect(machine.maxFrameBytes).toBe(4096);
+    expect(await capacity(d.deviceId)).toEqual({
+      ok: true,
+      capacity: { maxFrameBytes: machine.maxFrameBytes },
+    });
+    await machine.close();
+    await waitFor(async () => ((await k.app.get(DialInRelay).online(d.deviceId)) ? null : true));
+    expect(await capacity(d.deviceId)).toEqual({ ok: true, capacity: null });
+  });
+
+  it("ctx.dialIn.capacity for a device of another provider throws ExtensionPermissionError", async () => {
+    const other = await device(undefined, "device-fake");
+    expect(await capacity(other.deviceId)).toEqual({
+      ok: false,
+      error: {
+        name: "ExtensionPermissionError",
+        message: `device ${other.deviceId} is not served by fake-dial-in`,
+      },
+    });
+  });
 });
 
 /**

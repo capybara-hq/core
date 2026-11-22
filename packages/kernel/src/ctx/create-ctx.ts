@@ -123,7 +123,7 @@ export interface KernelDeps {
    * served by the calling extension. Absent (a ctx built alone in a test): `ctx.dialIn` calls
    * reject.
    */
-  dialIn?: Pick<DialInAccess, "serves" | "request" | "online" | "stop">;
+  dialIn?: Pick<DialInAccess, "serves" | "request" | "online" | "capacity" | "stop">;
   /**
    * What `ctx.devices` is built from (`DeviceReports`): `changed` reads a device's report again
    * from the calling provider and refuses (`not-served`) a device bound to another one. Absent
@@ -570,6 +570,8 @@ export function createExtensionContext(
           },
           online: async (deviceId) =>
             (access as NonNullable<typeof access>).online(await served(deviceId)),
+          capacity: async (deviceId) =>
+            (access as NonNullable<typeof access>).capacity(await served(deviceId)),
           stop: async (deviceId, reason) => {
             if (reason !== "drain" && reason !== "stop")
               throw new TypeError(`plugin ${name}: ctx.dialIn.stop reason must be drain or stop`);

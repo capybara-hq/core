@@ -12,7 +12,8 @@ import { DialInRelay, type DialInRequestOptions } from "./relay.js";
 export class DialInAccess {
   constructor(
     @Inject(KernelDb) private readonly kdb: KernelDb,
-    @Inject(DialInRelay) private readonly relay: Pick<DialInRelay, "request" | "online" | "stop">,
+    @Inject(DialInRelay)
+    private readonly relay: Pick<DialInRelay, "request" | "online" | "capacity" | "stop">,
   ) {}
 
   /**
@@ -48,6 +49,10 @@ export class DialInAccess {
 
   online(deviceId: string): Promise<boolean> {
     return this.relay.online(deviceId);
+  }
+
+  capacity(deviceId: string): Promise<{ maxFrameBytes: number } | null> {
+    return this.relay.capacity(deviceId);
   }
 
   stop(deviceId: string, reason: "drain" | "stop"): Promise<void> {

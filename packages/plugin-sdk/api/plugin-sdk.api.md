@@ -1090,6 +1090,9 @@ export const DIAL_IN_PROTOCOL_RE: RegExp;
 
 // @public
 export interface DialInChannel {
+    capacity(deviceId: string): Promise<{
+        maxFrameBytes: number;
+    } | null>;
     online(deviceId: string): Promise<boolean>;
     request(deviceId: string, frame: unknown, opts: {
         timeoutMs: number;

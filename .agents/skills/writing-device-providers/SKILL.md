@@ -428,7 +428,10 @@ treats a dial-in device like any other (its provider, report and permission supp
   (`programRunId`) ends a waiting request with `DeviceProgramRestartedError`. Every call checks the
   device is bound to the calling provider. Before a new managed dispatch on a dial-in device the
   sandbox service asks `DialInRelay.connection`, so an offline or revoked machine fails before
-  anything is recorded as sent.
+  anything is recorded as sent. `ctx.dialIn.capacity(deviceId)` gives a provider the current
+  connection's negotiated `maxFrameBytes` (the value of `ready`, read from the holder's
+  `capk:device-transport:*` record under its lease, never config) to size its frames by; null
+  with no holder.
 - **Reports.** A provider stores what its machine says (in `ctx.kv` / `ctx.db`) and calls
   `ctx.devices.reportChanged(deviceId)`; the kernel reads `report()` again and moves the device's
   authority epoch when the revision changed. Online state is `DialInRelay.online` (a replica holds

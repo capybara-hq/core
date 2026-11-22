@@ -173,6 +173,15 @@ export interface DialInChannel {
     opts: { timeoutMs: number; signal?: AbortSignal },
   ): Promise<unknown>;
   online(deviceId: string): Promise<boolean>;
+  /**
+   * The negotiated frame capacity of the machine's current connection: the `maxFrameBytes` the
+   * kernel sent in that connection's `ready` (the smaller of the machine's announced
+   * `transport.maxFrameBytes` and the deployment's limit). A provider sizes its request bodies
+   * and the answers it asks for by it: a `req` frame larger than this is refused. Null when no
+   * machine holds the device now. Read from shared state at every call, so a reconnect with
+   * another capacity shows at once; it can change between this call and a later request.
+   */
+  capacity(deviceId: string): Promise<{ maxFrameBytes: number } | null>;
   stop(deviceId: string, reason: "drain" | "stop"): Promise<void>;
 }
 

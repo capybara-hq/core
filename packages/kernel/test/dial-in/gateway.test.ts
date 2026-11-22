@@ -254,6 +254,22 @@ describe("GET /device/connect", () => {
     );
   });
 
+  it("ctx.dialIn.capacity answers the kernel's lowered limit the connection negotiated", async () => {
+    const m = await connected();
+    const machine = new EnvelopeMachine(url, m.credential);
+    await machine.opened;
+    // the machine announced 69632 bytes, the deployment allows 64 KiB: ready carries the smaller
+    const { maxFrameBytes } = await machine.ready;
+    expect(maxFrameBytes).toBe(MAX_FRAME_BYTES);
+    const res = await fetch(
+      `http://127.0.0.1:${k.port}/plugins/fake-dial-in/capacity?deviceId=${m.deviceId}`,
+    );
+    expect(await res.json()).toEqual({ ok: true, capacity: { maxFrameBytes } });
+    expect(await relay.capacity(m.deviceId)).toEqual({ maxFrameBytes });
+    machine.close();
+    await machine.closed;
+  });
+
   it("a result is stored with the grace + deadline TTL and a cancel is forwarded", async () => {
     const m = await connected();
     const machine = new EnvelopeMachine(url, m.credential);

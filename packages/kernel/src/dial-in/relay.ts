@@ -170,6 +170,18 @@ export class DialInRelay {
   }
 
   /**
+   * The negotiated frame capacity of the machine's current connection (`ctx.dialIn.capacity`):
+   * the `maxFrameBytes` the holder published with its lease and sent in `ready`, read from Redis
+   * under the exact lease (never current config, never process memory), so any replica answers.
+   * Null when no replica holds the machine's connection; throws while the holder has not
+   * published its capacity yet ({@link DeviceTargets.current}).
+   */
+  async capacity(deviceId: string): Promise<{ maxFrameBytes: number } | null> {
+    const current = await this.targets.current(deviceId);
+    return current ? { maxFrameBytes: current.maxFrameBytes } : null;
+  }
+
+  /**
    * The negotiated transport of the machine's current connection. Liveness is checked first
    * (ruling R27): no holder throws `device.not_found` for a deleted device, `device.forbidden` for
    * a revoked machine and `device.offline` ({@link deviceOffline}) otherwise. It carries the

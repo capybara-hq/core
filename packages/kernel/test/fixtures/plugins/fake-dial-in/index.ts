@@ -53,7 +53,9 @@ import {
  * request's signal (a client that disconnects gives the request up), and answers 200 with
  * `{ ok: true, body }` or `{ ok: false, error: { name, message, code?, offline } }`; the error is
  * also kept as `request-error:<deviceId>` (one hour). `GET /plugins/fake-dial-in/online?deviceId=`
- * answers `{ online }` from `ctx.dialIn.online`. The dual-replica tests drive the relay with them.
+ * answers `{ online }` from `ctx.dialIn.online`, and `GET /plugins/fake-dial-in/capacity?deviceId=`
+ * answers `{ ok: true, capacity }` from `ctx.dialIn.capacity` or `{ ok: false, error: { name,
+ * message } }`. The dual-replica tests drive the relay with them.
  *
  * Handles are the device id: the device's file system and its instance are both named
  * `cap-device-<deviceId>`, so every operation can address its machine.
@@ -124,6 +126,7 @@ export default defineExtension({
     http: [
       { method: "POST", path: "/request", access: "public" },
       { method: "GET", path: "/online", access: "public" },
+      { method: "GET", path: "/capacity", access: "public" },
     ],
   },
   setup(ctx) {
@@ -434,6 +437,20 @@ export default defineExtension({
     ctx.http.route("GET", "/online", async (req) => {
       const deviceId = new URL(req.url).searchParams.get("deviceId") ?? "";
       return Response.json({ online: await ctx.dialIn.online(deviceId) });
+    });
+    ctx.http.route("GET", "/capacity", async (req) => {
+      const deviceId = new URL(req.url).searchParams.get("deviceId") ?? "";
+      try {
+        return Response.json({ ok: true, capacity: await ctx.dialIn.capacity(deviceId) });
+      } catch (e) {
+        return Response.json({
+          ok: false,
+          error: {
+            name: e instanceof Error ? e.name : "Error",
+            message: e instanceof Error ? e.message : String(e),
+          },
+        });
+      }
     });
   },
 });
