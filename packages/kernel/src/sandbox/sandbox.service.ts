@@ -145,7 +145,6 @@ import { isDeviceRequestNotSent } from "./request-not-sent.js";
 import { SandboxProviderUnreachableError } from "./unreachable.js";
 import type { SandboxUseContext } from "./use-context.js";
 
-export { deviceNotFound } from "../devices/errors.js";
 // Moved to leases.ts (phase C); re-exported for existing importers
 export {
   SANDBOX_LOCK_PREFIX,

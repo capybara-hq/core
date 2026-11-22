@@ -12,10 +12,11 @@ import { PermissionCeilingWrites } from "../sandbox/permission-ceiling-writes.js
 import { PermissionFacts, type WorkingFacts } from "../sandbox/permission-facts.js";
 import { servesDialIn } from "../sandbox/providers.js";
 import { homeOf } from "../sandbox/review/rules.js";
-import { deviceNotFound, sandboxUnavailable } from "../sandbox/sandbox.service.js";
+import { sandboxUnavailable } from "../sandbox/sandbox.service.js";
 import { DeviceAccess } from "./access.js";
 import { DeviceProviderSelection } from "./device-provider-selection.js";
 import { DevicesService } from "./devices.service.js";
+import { deviceNotFound } from "./errors.js";
 import { type WorkingProject, workingRootOf } from "./working-root.js";
 
 export type { WorkingFacts } from "../sandbox/permission-facts.js";

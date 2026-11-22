@@ -30,10 +30,10 @@ import {
   permissionContextActive,
 } from "../sandbox/permission-context-types.js";
 import { PermissionFacts } from "../sandbox/permission-facts.js";
-import { deviceNotFound, type HeldProvider, SandboxService } from "../sandbox/sandbox.service.js";
+import { type HeldProvider, SandboxService } from "../sandbox/sandbox.service.js";
 import { SandboxProviderUnreachableError } from "../sandbox/unreachable.js";
 import { DeviceAccess } from "./access.js";
-import { projectsUnsupported } from "./errors.js";
+import { deviceNotFound, projectsUnsupported } from "./errors.js";
 import {
   baseOf,
   clipped,

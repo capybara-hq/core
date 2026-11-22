@@ -48,9 +48,10 @@ import {
 } from "../sandbox/permission-ceiling-writes.js";
 import { ownNetwork, PermissionFacts } from "../sandbox/permission-facts.js";
 import { type DeviceProviderEntry, DeviceProviders, servesDialIn } from "../sandbox/providers.js";
-import { deviceNotFound, SandboxService } from "../sandbox/sandbox.service.js";
+import { SandboxService } from "../sandbox/sandbox.service.js";
 import { DeviceAccess } from "./access.js";
 import { DeviceProviderSelection } from "./device-provider-selection.js";
+import { deviceNotFound } from "./errors.js";
 
 /** A device as its owner sees it (`GET /orgs/:orgId/devices`). */
 export interface DeviceView {

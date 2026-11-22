@@ -3,6 +3,7 @@ import type { ExtensionContext } from "@capybara-hq/plugin-sdk";
 import { isDeviceBootId } from "@capybara-hq/plugin-sdk/device-protocol";
 import { Inject, Injectable } from "@nestjs/common";
 import { sql } from "kysely";
+import { deviceNotFound } from "../devices/errors.js";
 import { audit } from "../identity/audit.js";
 import { sha256Hex } from "../identity/hash.js";
 import { afterCommit } from "../infra/database/after-commit.js";
@@ -13,7 +14,6 @@ import { KERNEL_BUS, KERNEL_LOGGER } from "../infra/tokens.js";
 import type { KernelLogger } from "../log.js";
 import { PermissionCeilingWrites } from "../sandbox/permission-ceiling-writes.js";
 import { DeviceProviders, servesDialIn } from "../sandbox/providers.js";
-import { deviceNotFound } from "../sandbox/sandbox.service.js";
 import { deviceRevokedTopic } from "./keys.js";
 import { DialInRelay } from "./relay.js";
 

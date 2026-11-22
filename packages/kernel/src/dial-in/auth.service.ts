@@ -3,6 +3,7 @@ import type { LocalizedName } from "@capybara-hq/plugin-sdk";
 import { Inject, Injectable } from "@nestjs/common";
 import type { Redis } from "ioredis";
 import { DevicesService, dialInProviderUnavailable } from "../devices/devices.service.js";
+import { deviceNotFound } from "../devices/errors.js";
 import { ApiError } from "../errors.js";
 import { ExtensionDisplayNames } from "../extensions/display-name.js";
 import { audit } from "../identity/audit.js";
@@ -17,7 +18,6 @@ import type { KernelLogger } from "../log.js";
 import { authorizeOrgAction } from "../orgs/org.guard.js";
 import { readOrgSettings } from "../orgs/settings.service.js";
 import { allowedDeviceMode, readDeploymentDevicePolicy } from "../sandbox/modes.js";
-import { deviceNotFound } from "../sandbox/sandbox.service.js";
 import { DialInHandlers } from "./handlers.js";
 import { DialInMachines } from "./machines.js";
 
