@@ -181,7 +181,10 @@ describe("the drawer from the menu button", () => {
       (t) => t.textContent,
     );
     expect(titles).toEqual(["部署失败排查", "周报"]);
-    expect(calls.map((c) => c.url)).toContain("/api/v1/orgs/o1/conversations?limit=30");
+    // the drawer's 30 s poll asks for no count (only the conversations page shows one)
+    const lists = calls.filter((c) => c.url.startsWith("/api/v1/orgs/o1/conversations?"));
+    expect(lists.map((c) => c.url)).toContain("/api/v1/orgs/o1/conversations?limit=30");
+    for (const c of lists) expect(c.url).not.toContain("withTotal");
   });
 
   it("the account row opens the account sheet: the profile row, the org, status, sign out", async () => {

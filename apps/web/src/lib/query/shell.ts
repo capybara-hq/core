@@ -96,8 +96,9 @@ const listParams = (s: ConversationListSearch, after?: string) =>
   JSON.stringify([s.q?.trim() ?? "", s.agentId ?? "", after ?? ""]);
 
 /**
- * A page of my conversations by time, newest first (`GET …/conversations`: the drawer's recent
- * list and the conversations page); `after` continues from the previous page's `next`.
+ * A page of the conversations page (`GET …/conversations`, my conversations by time, newest
+ * first); `after` continues from the previous page's `next`. The first page asks for the exact
+ * `total` the page header shows.
  */
 export const conversationListQuery = (
   orgId: string,
@@ -111,8 +112,20 @@ export const conversationListQuery = (
         limit: CONVERSATION_PAGE,
         ...(search.q?.trim() ? { q: search.q } : {}),
         ...(search.agentId ? { agentId: search.agentId } : {}),
-        ...(after !== undefined ? { after } : {}),
+        ...(after !== undefined ? { after } : { withTotal: true }),
       }),
+    freshness: "live",
+  });
+
+/**
+ * The compact drawer's recent conversations: the newest page of my conversations by time, its own
+ * entry (the drawer polls it every 30 s), so it asks for no count. Under the same list prefix, so
+ * every write that refreshes the conversations page refreshes it too.
+ */
+export const drawerRecentQuery = (orgId: string) =>
+  defineQuery({
+    key: keys.org(orgId).conversationList("recent"),
+    fn: () => listConversations(orgId, { limit: CONVERSATION_PAGE }),
     freshness: "live",
   });
 

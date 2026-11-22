@@ -86,7 +86,8 @@ const ROUTES: Routes = {
       ? json(200, SECOND)
       : call.url.includes("agentId=ag2")
         ? json(200, { conversations: [FIRST.conversations[1]], next: null })
-        : json(200, FIRST),
+        : // like the kernel: the count comes only when the first page asks for it
+          json(200, call.url.includes("withTotal=true") ? FIRST : { ...FIRST, total: undefined }),
 };
 
 const settle = () => act(() => new Promise((r) => setTimeout(r, 20)));
@@ -202,7 +203,9 @@ describe("/conversations", () => {
     const calls = stubApi(ROUTES);
     await userEvent.click(within(chips).getByRole("radio", { name: "Writer" }));
     await waitFor(() => expect(within(list()).queryByText("Industry reports")).toBeNull());
-    expect(calls.map((c) => c.url)).toContain(`${O}/conversations?agentId=ag2&limit=30`);
+    expect(calls.map((c) => c.url)).toContain(
+      `${O}/conversations?agentId=ag2&limit=30&withTotal=true`,
+    );
   });
 
   it("rows name their agent themselves: no groups or agents read for the names", async () => {
@@ -233,6 +236,7 @@ describe("/conversations", () => {
     const calls = stubApi(ROUTES);
     await scrollToEnd();
     expect(await within(list()).findByRole("link", { name: /Older research/ })).toBeTruthy();
+    // a later page asks for no count
     expect(calls.map((c) => c.url)).toEqual([`${O}/conversations?after=c3&limit=30`]);
     // a later page carries no total: the count stays the first page's
     expect(document.querySelector(".cb-pageheader-count")?.textContent).toBe("4");

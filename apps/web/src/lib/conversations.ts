@@ -996,7 +996,10 @@ export interface ConversationAgent {
  */
 export type ConversationListRow = Conversation & { agent: ConversationAgent | null };
 
-/** A page of the by-time list; `total` (all my matching conversations) only on the first page. */
+/**
+ * A page of the by-time list; `total` (all my matching conversations) only on a first page read
+ * with `withTotal`.
+ */
 export interface ConversationListPage {
   conversations: ConversationListRow[];
   next: string | null;
@@ -1071,16 +1074,26 @@ export const listConversationGroups = (
     })}`,
   );
 
-/** My conversations, newest first; `agentId` keeps one agent's (a group's "More"). */
+/**
+ * My conversations, newest first; `agentId` keeps one agent's (a group's "More"). `withTotal` asks
+ * the first page (no `after`) for `total`, which the kernel counts over every match: only a page
+ * that shows the count asks, never a polled list.
+ */
 export const listConversations = (
   orgId: string,
-  opts: { agentId?: string; after?: string; limit?: number } & ConversationSearch = {},
+  opts: {
+    agentId?: string;
+    after?: string;
+    limit?: number;
+    withTotal?: boolean;
+  } & ConversationSearch = {},
 ) =>
   apiFetch<ConversationListPage>(
     `${base(orgId)}${query({
       agentId: opts.agentId,
       after: opts.after,
       limit: opts.limit,
+      withTotal: opts.withTotal === true && opts.after === undefined ? "true" : undefined,
       ...searchQuery(opts),
     })}`,
   );
