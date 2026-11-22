@@ -67,6 +67,12 @@ export {
   startFakeChannelServer,
 } from "./fake-channel.js";
 export {
+  FAKE_DIAL_IN_PROTOCOL,
+  FakeDialInMachine,
+  type FakeDialInMachineOptions,
+  signInFakeMachine,
+} from "./fake-dial-in-machine.js";
+export {
   type FakeE2BCall,
   type FakeE2BMatch,
   type FakeE2BOptions,

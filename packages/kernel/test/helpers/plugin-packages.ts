@@ -525,6 +525,28 @@ export const deviceFakePkg = (): Promise<Uint8Array> => packDeviceFake(DEVICE_FA
 /** The same for `device-fake-b` (`test/fixtures/plugins/device-fake-b`, its own `root`). */
 export const deviceFakeBPkg = (): Promise<Uint8Array> => packDeviceFake(DEVICE_FAKE_B_SRC);
 
+const FAKE_DIAL_IN_SRC = fileURLToPath(
+  new URL("../fixtures/plugins/fake-dial-in/index.ts", import.meta.url),
+);
+
+/**
+ * Test dial-in `device-provider@1` plugin `fake-dial-in` (`test/fixtures/plugins/fake-dial-in`,
+ * `permissions.dialIn = { protocol: "fake-dial-in/1" }`) as a plugin package: the entry is its
+ * source with types stripped (it imports only the SDK). Machines are `FakeDialInMachine`.
+ */
+export async function fakeDialInPkg(): Promise<Uint8Array> {
+  const { stripTypeScriptTypes } = await import("node:module");
+  const mod = (await import(FAKE_DIAL_IN_SRC)) as { default: ExtensionManifest };
+  return pluginTgz({
+    manifest: { name: mod.default.name, version: mod.default.version },
+    packageName: `@test/plugin-${mod.default.name}`,
+    extension: {
+      manifest: staticManifestOf(mod.default) as unknown as Record<string, unknown>,
+      entry: stripTypeScriptTypes(await readFile(FAKE_DIAL_IN_SRC, "utf8"), { mode: "strip" }),
+    },
+  });
+}
+
 /** One package of {@link bootstrapFixture}: bytes, or a plugin directory packed with pack-plugin. */
 export interface BootstrapFixtureEntry {
   /** A plugin tgz (e.g. from {@link pluginTgz} / {@link lifePkg}). */

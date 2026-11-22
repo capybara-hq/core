@@ -1,0 +1,237 @@
+import { randomUUID } from "node:crypto";
+import { WebSocket } from "ws";
+import type { KernelResponse, TestKernel } from "./kernel-helpers.js";
+
+/** The protocol of the `fake-dial-in` fixture provider (`permissions.dialIn.protocol`). */
+export const FAKE_DIAL_IN_PROTOCOL = "fake-dial-in/1";
+
+export interface FakeDialInMachineOptions {
+  /** The kernel's `connectUrl` (a `ws://` URL). */
+  url: string;
+  /** The machine credential `POST /api/v1/device/token` handed over. */
+  credential: string;
+  /** The protocol of the upgrade header and the hello (default {@link FAKE_DIAL_IN_PROTOCOL}). */
+  protocol?: string;
+  /** The hello's `body`: the provider's own. */
+  hello: unknown;
+  /** The largest frame this machine accepts, announced in the hello (default 1 MiB). */
+  maxFrameBytes?: number;
+  /** Random per program run (default: a fresh one). */
+  programRunId?: string;
+}
+
+type RequestHandler = (body: unknown) => unknown | Promise<unknown>;
+
+/**
+ * A machine on the dial-in channel for kernel tests: connects to a deployment, sends the hello
+ * envelope, waits for the kernel's `ready` and then answers each `req` through the handler set
+ * with {@link onRequest} (a `res` with the same `id`). Bodies are opaque to it, like they are to
+ * the kernel.
+ */
+export class FakeDialInMachine {
+  /** Resolves when the socket closes, with the close code and reason the kernel sent. */
+  readonly closed: Promise<{ code: number; reason: string }>;
+  /** The kernel's id of this connection (from `ready`). */
+  readonly connectionId: string;
+  /** The bodies of the `req` frames received, in order. */
+  readonly requests: unknown[] = [];
+  /** The ids of the `cancel` frames received, in order. */
+  readonly cancels: string[] = [];
+  /** The reasons of the `stop` frames received, in order. */
+  readonly stops: ("drain" | "stop")[] = [];
+  private handler: RequestHandler = () => ({});
+
+  private constructor(
+    private readonly ws: WebSocket,
+    connectionId: string,
+    closed: Promise<{ code: number; reason: string }>,
+  ) {
+    this.connectionId = connectionId;
+    this.closed = closed;
+    ws.on("message", (data) => this.onMessage(data.toString()));
+  }
+
+  /**
+   * Connects and resolves once the kernel answered `ready`. Rejects when the upgrade is refused
+   * (the message carries the HTTP status and body) or the socket closes first (the close code).
+   */
+  static connect(opts: FakeDialInMachineOptions): Promise<FakeDialInMachine> {
+    const protocol = opts.protocol ?? FAKE_DIAL_IN_PROTOCOL;
+    const maxFrameBytes = opts.maxFrameBytes ?? 1024 * 1024;
+    const ws = new WebSocket(opts.url, {
+      headers: {
+        authorization: `Bearer ${opts.credential}`,
+        "x-capybara-device-protocol": protocol,
+      },
+      maxPayload: maxFrameBytes,
+    });
+    const closed = new Promise<{ code: number; reason: string }>((resolve) => {
+      ws.once("close", (code, reason) => resolve({ code, reason: reason.toString() }));
+    });
+    return new Promise<FakeDialInMachine>((resolve, reject) => {
+      ws.once("unexpected-response", (_req, res) => {
+        const chunks: Buffer[] = [];
+        res.on("data", (c: Buffer) => chunks.push(c));
+        res.on("end", () =>
+          reject(
+            new Error(
+              `upgrade refused: HTTP ${res.statusCode}: ${Buffer.concat(chunks).toString()}`,
+            ),
+          ),
+        );
+      });
+      ws.once("error", reject);
+      void closed.then((c) =>
+        reject(new Error(`closed before ready: ${c.code} ${c.reason}`.trim())),
+      );
+      ws.once("open", () => {
+        ws.send(
+          JSON.stringify({
+            type: "hello",
+            protocol,
+            programRunId: opts.programRunId ?? randomUUID(),
+            program: { version: "0.0.0-fake", os: "linux", arch: "x64" },
+            transport: { maxFrameBytes },
+            body: opts.hello,
+          }),
+        );
+        ws.once("message", (data) => {
+          let frame: { type?: unknown; connectionId?: unknown };
+          try {
+            frame = JSON.parse(data.toString());
+          } catch {
+            ws.terminate();
+            reject(new Error("the kernel's first frame is not JSON"));
+            return;
+          }
+          if (frame.type !== "ready" || typeof frame.connectionId !== "string") {
+            ws.terminate();
+            reject(new Error(`expected a ready frame, got ${data.toString()}`));
+            return;
+          }
+          resolve(new FakeDialInMachine(ws, frame.connectionId, closed));
+        });
+      });
+    });
+  }
+
+  /** Sets the handler of `req` bodies; its result (or its thrown message) is the `res` body. */
+  onRequest(fn: RequestHandler): void {
+    this.handler = fn;
+  }
+
+  /** Sends an unsolicited `event` frame with `event` as its body. */
+  async send(event: unknown): Promise<void> {
+    await this.sendFrame({ type: "event", body: event });
+  }
+
+  /** Closes the socket (a normal close) and resolves when it is closed. */
+  async close(): Promise<void> {
+    if (this.ws.readyState !== WebSocket.CLOSED) this.ws.close(1000);
+    await this.closed;
+  }
+
+  private sendFrame(frame: unknown): Promise<void> {
+    return new Promise((resolve, reject) =>
+      this.ws.send(JSON.stringify(frame), (e) => (e ? reject(e) : resolve())),
+    );
+  }
+
+  private onMessage(text: string): void {
+    const frame = JSON.parse(text) as {
+      type: string;
+      id?: string;
+      body?: unknown;
+      reason?: "drain" | "stop";
+    };
+    if (frame.type === "req" && frame.id !== undefined) {
+      const id = frame.id;
+      this.requests.push(frame.body);
+      void (async () => {
+        let body: unknown;
+        try {
+          body = await this.handler(frame.body);
+        } catch (e) {
+          body = { error: e instanceof Error ? e.message : String(e) };
+        }
+        // a socket closed meanwhile has nobody to answer
+        if (this.ws.readyState === WebSocket.OPEN)
+          await this.sendFrame({ type: "res", id, body: body ?? null });
+      })();
+    } else if (frame.type === "cancel" && frame.id !== undefined) {
+      this.cancels.push(frame.id);
+    } else if (frame.type === "stop" && frame.reason !== undefined) {
+      this.stops.push(frame.reason);
+    }
+  }
+}
+
+function expectOk(res: KernelResponse, what: string): Record<string, unknown> {
+  if (res.statusCode !== 200) {
+    throw new Error(`${what}: expected HTTP 200, got ${res.statusCode}: ${res.body}`);
+  }
+  return JSON.parse(res.body) as Record<string, unknown>;
+}
+
+/**
+ * Signs a fake machine in over HTTP like `capybara-device login` does: `authorize` (public),
+ * `confirm` (the person's session, `session` is its `Cookie` header value) into a new device of
+ * `provider` (the plugin name) in `orgId`, then `token`. Returns the machine credential and the
+ * new device's id; connect with {@link FakeDialInMachine.connect} at `kernel`'s `connectUrl`.
+ */
+export async function signInFakeMachine(
+  kernel: TestKernel,
+  opts: {
+    orgId: string;
+    session: string;
+    provider: string;
+    protocol: string;
+    name?: string;
+  },
+): Promise<{ credential: string; deviceId: string; connectUrl: string }> {
+  const csrf = { "x-capybara-csrf": "1", "content-type": "application/json" };
+  const name = opts.name ?? "fake-machine";
+  const authorized = expectOk(
+    await kernel.http.inject({
+      method: "POST",
+      url: "/api/v1/device/authorize",
+      headers: csrf,
+      payload: {
+        name,
+        os: "linux",
+        arch: "x64",
+        programVersion: "0.0.0-fake",
+        protocol: opts.protocol,
+      },
+    }),
+    "device authorize",
+  );
+  expectOk(
+    await kernel.http.inject({
+      method: "POST",
+      url: "/api/v1/device/confirm",
+      headers: { ...csrf, cookie: opts.session },
+      payload: {
+        userCode: authorized.userCode,
+        orgId: opts.orgId,
+        provider: opts.provider,
+        name,
+      },
+    }),
+    "device confirm",
+  );
+  const grant = expectOk(
+    await kernel.http.inject({
+      method: "POST",
+      url: "/api/v1/device/token",
+      headers: csrf,
+      payload: { deviceCode: authorized.deviceCode },
+    }),
+    "device token",
+  );
+  return {
+    credential: String(grant.credential),
+    deviceId: String(grant.deviceId),
+    connectUrl: String(grant.connectUrl),
+  };
+}
