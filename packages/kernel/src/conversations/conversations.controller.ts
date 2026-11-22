@@ -47,6 +47,7 @@ import {
 } from "./conversations.schemas.js";
 import {
   type ConversationGroup,
+  type ConversationListRow,
   ConversationsService,
   type ConversationView,
   type SubagentView,
@@ -337,26 +338,35 @@ export class ConversationsController {
     await this.conversations.remove(org.orgId, id, p.account.id);
   }
 
-  /** 我的会话，最近更新的在前：`next` 为下一页游标（作为 `after` 传回），没有更多时为 null。 */
+  /**
+   * My conversations, most recently updated first, each with its agent: `next` is the next page's
+   * cursor (passed back as `after`), null when there are no more; `total` counts every match of
+   * the filters and comes on the first page (no `after`) only.
+   */
   @Get()
   @OrgAction("agents.use")
   async list(
     @CurrentPrincipal() principal: Principal,
     @CurrentOrg() org: OrgContext,
     @ZQuery(ConversationListQueryDto) q: z.infer<typeof ListQuery>,
-  ): Promise<{ conversations: ConversationView[]; next: string | null }> {
+  ): Promise<{ conversations: ConversationListRow[]; next: string | null; total?: number }> {
     const p = requireUser(principal);
-    const rows = await this.conversations.listMine(org.orgId, p.account.id, {
-      limit: q.limit + 1,
-      ...(q.after !== undefined && { after: q.after }),
-      ...(q.agentId !== undefined && { agentId: q.agentId }),
-      ...(q.q !== undefined && { q: q.q }),
-      ...(q.state !== undefined && { state: q.state }),
-      ...(q.archived !== undefined && { archived: true }),
-    });
+    const { conversations: rows, total } = await this.conversations.listMine(
+      org.orgId,
+      p.account.id,
+      {
+        limit: q.limit + 1,
+        total: q.after === undefined,
+        ...(q.after !== undefined && { after: q.after }),
+        ...(q.agentId !== undefined && { agentId: q.agentId }),
+        ...(q.q !== undefined && { q: q.q }),
+        ...(q.state !== undefined && { state: q.state }),
+        ...(q.archived !== undefined && { archived: true }),
+      },
+    );
     const conversations = rows.slice(0, q.limit);
     const next = rows.length > q.limit ? (conversations.at(-1)?.id ?? null) : null;
-    return { conversations, next };
+    return { conversations, next, ...(total !== undefined && { total }) };
   }
 
   /**

@@ -9,8 +9,8 @@ import {
   SubagentsQuery,
 } from "../../conversations/conversations.schemas.js";
 import {
+  type ConversationListRow,
   ConversationsService,
-  type ConversationView,
 } from "../../conversations/conversations.service.js";
 import { ConversationDeviceStatus } from "../../conversations/device-status.js";
 import { ConversationFiles } from "../../conversations/files.js";
@@ -27,11 +27,12 @@ const Id = z.object({ conversationId: ConversationId }).strict();
 const EVENTS_PAGE_MAX = 100;
 
 /** A list row: the compact form (`state` is what the run is doing, else archived or idle). */
-const row = (c: ConversationView) => ({
+const row = (c: ConversationListRow) => ({
   id: c.id,
   name: c.title ?? "Untitled",
   state: c.activity ?? (c.archivedAt === null ? "idle" : "archived"),
   agentId: c.agentId,
+  agent: c.agent,
   updatedAt: c.updatedAt,
 });
 
@@ -90,7 +91,7 @@ export class ConversationsOperations implements OnModuleInit {
       defineOperation({
         id: "conversations.list",
         description:
-          "List your own conversations, most recently updated first: id, name, state (running, waiting, idle or archived), agent id and update time. Pages by 50: pass the returned next as params.after. Filter by title text q, by agentId, by state (running or waiting), or pass archived 1 for the archived ones.",
+          "List your own conversations, most recently updated first: id, name, state (running, waiting, idle or archived), agent (id, name, profile; null when no longer visible) and update time. Pages by 50: pass the returned next as params.after; the first page (no after) also returns total, the count of all matches. Filter by title text q, by agentId, by state (running or waiting), or pass archived 1 for the archived ones.",
         input: ListQuery.pick({
           q: true,
           state: true,
@@ -105,18 +106,24 @@ export class ConversationsOperations implements OnModuleInit {
         omits: ["limit"],
         confirm: "read",
         run: async (input, ctx) => {
-          const rows = await this.conversations.listMine(ctx.orgId, ctx.actorAccountId, {
-            limit: PAGE + 1,
-            ...(input.after !== undefined && { after: input.after }),
-            ...(input.agentId !== undefined && { agentId: input.agentId }),
-            ...(input.q !== undefined && { q: input.q }),
-            ...(input.state !== undefined && { state: input.state }),
-            ...(input.archived !== undefined && { archived: true }),
-          });
+          const { conversations: rows, total } = await this.conversations.listMine(
+            ctx.orgId,
+            ctx.actorAccountId,
+            {
+              limit: PAGE + 1,
+              total: input.after === undefined,
+              ...(input.after !== undefined && { after: input.after }),
+              ...(input.agentId !== undefined && { agentId: input.agentId }),
+              ...(input.q !== undefined && { q: input.q }),
+              ...(input.state !== undefined && { state: input.state }),
+              ...(input.archived !== undefined && { archived: true }),
+            },
+          );
           const items = rows.slice(0, PAGE);
           return {
             conversations: items.map(row),
             next: rows.length > PAGE ? (items.at(-1)?.id ?? null) : null,
+            ...(total !== undefined && { total }),
           };
         },
       }),
