@@ -104,9 +104,15 @@ function resultColumns(
     return <Text tone="muted">{t(`run.judgeStatus.${r.judgeStatus}`)}</Text>;
   };
   return [
-    { key: "case", header: t("run.columns.case"), cell: (r) => <Text truncate>{title(r)}</Text> },
+    {
+      key: "case",
+      compact: "title",
+      header: t("run.columns.case"),
+      cell: (r) => <Text truncate>{title(r)}</Text>,
+    },
     {
       key: "step",
+      compact: "subtitle",
       header: t("run.columns.step"),
       width: 90,
       tone: "muted",
@@ -114,6 +120,7 @@ function resultColumns(
     },
     {
       key: "status",
+      compact: "trailing",
       header: t("run.columns.status"),
       width: 110,
       cell: (r) => (
@@ -122,6 +129,7 @@ function resultColumns(
     },
     {
       key: "tools",
+      compact: "meta",
       header: t("run.columns.tools"),
       width: 100,
       cell: (r) =>
@@ -135,14 +143,22 @@ function resultColumns(
     },
     {
       key: "similarity",
+      compact: "meta",
       header: t("run.columns.similarity"),
       width: 110,
       align: "right",
       cell: (r) => formatRate(r.textSimilarity),
     },
-    { key: "judge", header: t("run.columns.judge"), width: 100, cell: judgeCell },
+    {
+      key: "judge",
+      compact: "hidden",
+      header: t("run.columns.judge"),
+      width: 100,
+      cell: judgeCell,
+    },
     {
       key: "label",
+      compact: "hidden",
       header: t("run.columns.label"),
       width: 100,
       cell: (r) =>
@@ -187,10 +203,13 @@ function EvalRunInOrg({ orgId, runId }: { orgId: string; runId: string }) {
   );
   /** The next page of results after the loaded ones (merged by id: polled rows may be in it). */
   const [loadingMore, setLoadingMore] = useState(false);
+  const [loadMoreError, setLoadMoreError] = useState<string | null>(null);
+  const errorMessage = useErrorMessage();
   const loadMore = async () => {
     const after = qc.getQueryData<EvalRunState>(runQ.queryKey)?.next;
     if (after == null) return;
     setLoadingMore(true);
+    setLoadMoreError(null);
     try {
       const page = await qc.fetchQuery(evalResultPageQuery(orgId, runId, after));
       qc.setQueryData<EvalRunState>(runQ.queryKey, (prev) =>
@@ -198,8 +217,9 @@ function EvalRunInOrg({ orgId, runId }: { orgId: string; runId: string }) {
           ? prev
           : { ...prev, rows: mergeResultRows(prev.rows, page.rows), next: page.next },
       );
-    } catch {
-      // Kept as it was: the button stays to try again.
+    } catch (e) {
+      // The rows stay as they were; the list's end shows the error and a retry.
+      setLoadMoreError(errorMessage(e));
     } finally {
       setLoadingMore(false);
     }
@@ -245,6 +265,7 @@ function EvalRunInOrg({ orgId, runId }: { orgId: string; runId: string }) {
       onTab={setTab}
       onRefresh={refresh}
       loadingMore={loadingMore}
+      loadMoreError={loadMoreError}
       onLoadMore={() => void loadMore()}
     />
   );
@@ -257,6 +278,7 @@ function EvalRunView({
   onTab,
   onRefresh,
   loadingMore,
+  loadMoreError,
   onLoadMore,
 }: {
   orgId: string;
@@ -265,6 +287,7 @@ function EvalRunView({
   onTab(tab: Tab): void;
   onRefresh(): void;
   loadingMore: boolean;
+  loadMoreError: string | null;
   onLoadMore(): void;
 }) {
   const timeZone = useTimeZone();
@@ -396,17 +419,14 @@ function EvalRunView({
               empty={{ title: t("run.resultsEmpty") }}
               {...(current && { activeKey: current.id })}
               onOpen={(r) => setSelected(r.id)}
+              hasMore={data.next !== null}
+              loadingMore={loadingMore}
+              loadMoreError={loadMoreError}
+              onLoadMore={onLoadMore}
             />
           ) : (
             <SummaryTab run={run} />
           )}
-          {tab === "results" && data.next !== null ? (
-            <Stack direction="row">
-              <Button loading={loadingMore} onClick={onLoadMore}>
-                {t("run.loadMore")}
-              </Button>
-            </Stack>
-          ) : null}
         </Stack>
       </DetailPage>
       {/* An open result is a right-side Sheet over the one column (spec §5.2: no inspector); a

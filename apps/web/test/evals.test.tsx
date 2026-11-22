@@ -1,5 +1,5 @@
 import { formatDateTime } from "@capybara-hq/design";
-import { act, cleanup, screen, waitFor, within } from "@testing-library/react";
+import { act, cleanup, fireEvent, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import en from "../messages/en.json";
@@ -11,6 +11,7 @@ import { bodyOf, type Call, json, lastStubRoutes, noContent, stubApi } from "./s
 import { resetNavigation, router } from "./support/navigation";
 import { renderRouteWithCache } from "./support/query";
 import { fieldOptionLabels, optionLabels, pickOption } from "./support/select";
+import { stubWindowWidth } from "./support/width";
 
 vi.mock("../src/i18n/navigation", () => import("./support/navigation"));
 vi.mock("next/navigation", () => ({
@@ -1286,5 +1287,72 @@ describe("评测运行（DetailPage）", () => {
         fill(E.run.candidate.judgeShareValue, { tokens: "2,345", cost: usd(0.002, "en") }),
       ),
     ).toBeTruthy();
+  });
+});
+
+describe("eval tables at 390", () => {
+  /** The compact table of the page: grouped rows, no wide `<table>` header. */
+  const compact = () => {
+    const el = document.querySelector('[data-part="table-compact"]');
+    expect(el).not.toBeNull();
+    return el as HTMLElement;
+  };
+
+  it("/evals/[setId]: a case's title leads, version and steps are its meta, remove in the menu", async () => {
+    stubWindowWidth(390);
+    resetNavigation("/evals/s1");
+    stubApi({
+      [`GET ${SETS}/s1`]: () => json(200, { set: { ...SET, cases: CASES } }),
+      [`GET ${ORG}/agents/ag1`]: () => json(200, { agent: AGENT }),
+      [`GET ${SETS}/s1/runs`]: () => json(200, { runs: [evalRun()] }),
+    });
+    await renderRouteWithCache("/evals/s1", lastStubRoutes(), { locale: "en" });
+    const table = await vi.waitFor(compact);
+    expect(within(table).getByText("Delete the stale item")).toBeTruthy();
+    expect(within(table).getByText(/v2/)).toBeTruthy();
+    fireEvent.contextMenu(within(table).getByText("Delete the stale item"));
+    expect(screen.getByRole("button", { name: E.set.removeCase })).toBeTruthy();
+  });
+
+  it("/evals/runs/[runId]: the case leads with its status trailing; the next page loads from the list's end", async () => {
+    stubWindowWidth(390);
+    // the list's end reads the next page as it comes into view: it is in view at once
+    vi.stubGlobal(
+      "IntersectionObserver",
+      class {
+        constructor(private readonly cb: IntersectionObserverCallback) {}
+        observe(target: Element) {
+          this.cb(
+            [{ target, isIntersecting: true } as IntersectionObserverEntry],
+            this as unknown as IntersectionObserver,
+          );
+        }
+        disconnect() {}
+        unobserve() {}
+      },
+    );
+    resetNavigation("/evals/runs/er1");
+    const RUN = `${ORG}/eval-runs/er1`;
+    const calls = stubApi({
+      [`GET ${RUN}`]: () => json(200, { run: evalRun() }),
+      [`GET ${RUN}/results`]: (c: Call) =>
+        c.url.includes("after=")
+          ? json(200, {
+              results: [light(result({ id: "res2", caseId: "k2" }))],
+              next: null,
+              asOf: T,
+            })
+          : json(200, { results: [light(result())], next: "res1", asOf: T }),
+      [`GET ${SETS}/s1`]: () => json(200, { set: { ...SET, cases: CASES } }),
+    });
+    await renderRouteWithCache("/evals/runs/er1", lastStubRoutes(), { locale: "en" });
+    const table = await vi.waitFor(compact);
+    expect(within(table).getByText("Delete the stale item")).toBeTruthy();
+    expect(within(table).getByText(E.run.resultStatus.done)).toBeTruthy();
+    expect(within(table).queryByText(E.run.verdict.fail)).toBeNull();
+    // the page draws no Load more of its own: the list's end reads the next page
+    expect(screen.queryByRole("button", { name: E.run.loadMore })).toBeNull();
+    await vi.waitFor(() => expect(calls.some((c) => c.url.includes("after=res1"))).toBe(true));
+    expect(await within(compact()).findByText("Summarize the doc")).toBeTruthy();
   });
 });
