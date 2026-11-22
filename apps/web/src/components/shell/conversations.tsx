@@ -32,11 +32,7 @@ import {
 } from "../../lib/query/shell";
 import { useWarm } from "../../lib/query/warm";
 import { HOME_PATH, newConversationPath } from "../../lib/routes";
-import {
-  conversationRow,
-  useConversationAgents,
-  useConversationRowActions,
-} from "../conversation-rows";
+import { conversationRow, useConversationRowActions } from "../conversation-rows";
 
 /** The conversation id of a `/chat/<id>` route. */
 export function activeIdFrom(pathname: string): string | undefined {
@@ -428,7 +424,7 @@ export function useConversationGroups(
 /**
  * The compact drawer's recent conversations (design spec §6.54, maintainer decision 2026-11-22):
  * my newest conversations by time (`GET …/conversations`, the conversations page's first page, so
- * the two share one read), with their agents from the sidebar's groups. Read only on a compact
+ * the two share one read), each row carrying its agent. Read only on a compact
  * window, where the drawer exists, and then again every 30 s for the state dots; a row's actions
  * invalidate every view of my conversations.
  */
@@ -446,15 +442,11 @@ export function useDrawerRecent(
     refetchInterval: compact ? GROUPS_POLL_MS : false,
   });
   const rows = q.data?.conversations ?? [];
-  const { byId } = useConversationAgents(
-    orgId,
-    rows.map((c) => c.agentId),
-  );
   const actions = useConversationRowActions(orgId, pathname, options.onError);
   const activeId = activeIdFrom(pathname);
   return {
     state: q.data !== undefined ? "ready" : q.error !== null ? "error" : "loading",
-    items: rows.map((c) => conversationRow(c, byId)),
+    items: rows.map((c) => conversationRow(c, orgId)),
     onRetry: () => void q.refetch(),
     onRefresh: () => q.refetch(),
     actions,
