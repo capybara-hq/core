@@ -325,4 +325,3 @@ describe("useCompactScroll", () => {
     field.remove();
   });
 });
-
