@@ -424,8 +424,9 @@ export interface NavStateV1 {
   items: NavItemV1[];
   current: NavSectionId | null;
   /**
-   * The strip's menu button, or null for none. Optional since the 2026-11-22 minor version: the
-   * web no longer sends it (no menu button on the strip); kept for an older web.
+   * The strip's menu button, or null for none. Optional in the type since the 2026-11-22 minor
+   * version, but the current web always sends `null` (no menu button on the strip, D12); an older
+   * web may send a button.
    */
   menu?: NavMenuV1 | null;
   /** The pill's top item (absent: the shell shows none). */
@@ -438,7 +439,10 @@ export interface NavStateV1 {
  * `nav@1`: offered only while the window has a strip (mobile app spec §6.1): presence is
  * visibility. `side` is the edge the strip is on (right unless the app is the left one of a
  * split), reported with the capability and updated with the envelope's `change`. `onAction`,
- * `onAccount` and `side` arrived in a minor version: a shell before it lacks them.
+ * `onAccount` and `side` arrived in a minor version: a shell before it lacks them and its `set`
+ * validator rejects any key beyond `items` / `current` / `menu`, an absent `menu`, more than the
+ * four sections and the `search` item. The web treats a capability without an `onAction`
+ * function as such a shell and sends it exactly `{ items: the four sections, current, menu: null }`.
  */
 export interface NavCapabilityV1 {
   set(state: NavStateV1): Promise<void>;

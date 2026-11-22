@@ -8,8 +8,8 @@
  * controls, `--cb-shell-controls-x|y|width|height`; with the native strip (`nav@1` an own
  * object of `capabilities`), `data-native-nav`, so the web's section entries and menu button never
  * paint beside it (the AppShell clears it when the strip goes), and `data-strip="left|right"`, the
- * strip's side: the one `nav@1.side` reports, else the side whose reported inset is the larger,
- * else right (interaction model §10.7, D16; CSS places the parts relative to the strip by it).
+ * strip's side: the one `nav@1.side` reports, else the side whose reported inset (rounded to
+ * hundredths, as the reader does) is the larger, else right (interaction model §10.7, D16; CSS places the parts relative to the strip by it).
  *
  * A fixed string: nothing of the page, the request or the user is interpolated into it, so the
  * request's CSP nonce is the only thing that differs between documents. It does nothing outside
@@ -43,7 +43,7 @@ export const SHELL_ENVIRONMENT_SCRIPT =
   "var caps=s.capabilities,nav=caps&&typeof caps==='object'&&" +
   "Object.prototype.hasOwnProperty.call(caps,'nav@1')?caps['nav@1']:null;" +
   "if(nav&&typeof nav==='object'){d.setAttribute('data-native-nav','');" +
-  "var side=nav.side;if(side!=='left'&&side!=='right')side=ins[3]>ins[1]?'left':'right';" +
+  "var side=nav.side;if(side!=='left'&&side!=='right')side=Math.round(ins[3]*100)>Math.round(ins[1]*100)?'left':'right';" +
   "d.setAttribute('data-strip',side);}" +
   "}catch(e){}})();";
 

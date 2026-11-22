@@ -32,12 +32,15 @@ export const NATIVE_NAV_ACCOUNT_NAME = 64;
 /**
  * The strip's whole state (`nav@1.set`, mobile app spec §5.2; interaction model §10.2–10.3): the
  * items the person sees (with the inbox count), the current section, the pill's top item (the
- * page's primary, else the new conversation) and the account avatar. The web sends no `menu`
- * (no menu button on the strip, D12).
+ * page's primary, else the new conversation) and the account avatar; `menu` is always null (no
+ * menu button on the strip, D12). A shell before the minor version (a handle without `onAction`)
+ * gets only `{ items: the four sections, current, menu: null }`, the shape its validator takes.
  */
 export interface NativeNavState {
   items: { id: NativeSectionId; label: string; count?: number; countMore?: boolean }[];
   current: NativeSectionId | null;
+  /** Always null (no menu button): a shell before the minor version requires the key. */
+  menu: null;
   action?: { id: string; label: string; icon: "plus" | "square-pen" };
   account?: { name: string; avatarUrl?: string | null; initial: string; badge?: number };
 }

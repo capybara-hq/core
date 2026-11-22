@@ -58,39 +58,58 @@ export function useNativeStrip(input: NativeStripInput): ReactNode {
   const [accountOpen, setAccountOpen] = useState(false);
   const { nativeNav, drawer, reference } = input;
   const hasNav = nativeNav !== undefined;
-  const primary = input.compact ? input.primary : undefined;
-  const state: NativeNavState | null = drawer
-    ? {
-        items: [
-          { id: "chats" as const, label: navLabel(t("shell.chats")) },
-          ...drawer.sections.map((s) => ({
-            id: s.id,
-            label: navLabel(s.label),
-            ...navBadge(s.badge),
-          })),
-          ...(input.searchable
-            ? [{ id: "search" as const, label: navLabel(t("shell.searchShort")) }]
-            : []),
-        ],
-        current: currentSection(input.pathname, input.surface, drawer),
-        action: primary
-          ? {
-              id: NATIVE_MENU_ID.test(primary.id) ? primary.id : "primary",
-              label: navLabel(primary.label),
-              icon: primary.icon ?? "plus",
-            }
-          : {
-              id: NEW_CONVERSATION_ACTION,
-              label: navLabel(drawer.newConversation.label),
-              icon: "square-pen",
-            },
-        account: accountOf(drawer.account.name, drawer.account.avatar),
-      }
-    : null;
+  // A shell before the minor version (no `onAction`) validates the old shape only: the four
+  // sections, current and menu, nothing else (mobile app spec §5.2).
+  const legacy = nativeNav !== undefined && typeof nativeNav.onAction !== "function";
+  // the pill carries a primary with a label (an empty one leaves the new conversation)
+  const primary = input.compact && input.primary?.label ? input.primary : undefined;
+  const account = drawer ? accountOf(drawer.account.name, drawer.account.avatar) : null;
+  const state: NativeNavState | null = !drawer
+    ? null
+    : legacy
+      ? {
+          items: [
+            { id: "chats" as const, label: navLabel(t("shell.chats")) },
+            ...drawer.sections.map((s) => ({
+              id: s.id,
+              label: navLabel(s.label),
+              ...navBadge(s.badge),
+            })),
+          ],
+          current: currentSection(input.pathname, input.surface, drawer),
+          menu: null,
+        }
+      : {
+          items: [
+            { id: "chats" as const, label: navLabel(t("shell.chats")) },
+            ...drawer.sections.map((s) => ({
+              id: s.id,
+              label: navLabel(s.label),
+              ...navBadge(s.badge),
+            })),
+            ...(input.searchable
+              ? [{ id: "search" as const, label: navLabel(t("shell.searchShort")) }]
+              : []),
+          ],
+          current: currentSection(input.pathname, input.surface, drawer),
+          menu: null,
+          action: primary
+            ? {
+                id: NATIVE_MENU_ID.test(primary.id) ? primary.id : "primary",
+                label: navLabel(primary.label),
+                icon: primary.icon ?? "plus",
+              }
+            : {
+                id: NEW_CONVERSATION_ACTION,
+                label: navLabel(drawer.newConversation.label),
+                icon: "square-pen",
+              },
+          ...(account ? { account } : {}),
+        };
   const key = state === null ? null : JSON.stringify(state);
   const sent = useRef<string | null>(null);
-  const latest = useRef({ input, state, primary, haptics });
-  latest.current = { input, state, primary, haptics };
+  const latest = useRef({ input, state, primary, haptics, accountOpen });
+  latest.current = { input, state, primary, haptics, accountOpen };
   // `nav.set` is the one capability call made from an effect: a state push, not confirming. Only
   // the handle's presence and the state key it: an equivalent new handle sends nothing.
   useEffect(() => {
@@ -177,13 +196,27 @@ export function useNativeStrip(input: NativeStripInput): ReactNode {
             closeThen(() => {
               const { input: now, primary: p } = latest.current;
               if (p !== undefined) p.run();
-              else if (now.drawer !== undefined) go(now.drawer.newConversation.href);
+              else if (now.drawer !== undefined) {
+                const href = now.drawer.newConversation.href;
+                if (href === now.pathname) return;
+                // like a strip selection: swaps at once (no slide)
+                now.instantRoute.current = href;
+                go(href, { transition: "none" });
+              }
             });
           })),
     );
     listen(
       nativeNav.onAccount &&
-        (() => nativeNav.onAccount?.(() => closeThen(() => setAccountOpen(true)))),
+        (() =>
+          nativeNav.onAccount?.(() => {
+            // a second tap while the sheet is open closes it (no close and reopen)
+            if (latest.current.accountOpen) {
+              setAccountOpen(false);
+              return;
+            }
+            closeThen(() => setAccountOpen(true));
+          })),
     );
     return () => {
       for (const off of offs) {
@@ -214,16 +247,22 @@ function navBadge(badge: NavBadge | undefined): { count?: number; countMore?: bo
   return { count, ...(more ? { countMore: true } : {}) };
 }
 
-/** The account avatar's state: the name, its initial and an image's absolute URL. */
+/**
+ * The account avatar's state: the name (1..navAccountName), its initial and an http(s) image's
+ * absolute URL (a data: or blob: source is not sent; the shell draws the initial). Null for an
+ * empty name: no avatar.
+ */
 function accountOf(
   name: string,
   avatar: DrawerNavData["account"]["avatar"],
-): NonNullable<NativeNavState["account"]> {
-  const short = navLabel(name, NATIVE_NAV_ACCOUNT_NAME);
+): NonNullable<NativeNavState["account"]> | null {
+  const short = navLabel(name.trim(), NATIVE_NAV_ACCOUNT_NAME);
+  if (short === "") return null;
   let avatarUrl: string | undefined;
   if (avatar?.kind === "image" && typeof window !== "undefined") {
     try {
-      avatarUrl = new URL(avatar.src, window.location.href).href;
+      const url = new URL(avatar.src, window.location.href);
+      if (url.protocol === "https:" || url.protocol === "http:") avatarUrl = url.href;
     } catch {
       // an unparsable source: the initial
     }

@@ -447,7 +447,7 @@ describe("the nav@1 and profiles@1 accessors", () => {
     act(() => f.change({ "nav@1": nav }));
     const handle = seen.at(-1);
     expect(handle).toBeTruthy();
-    const state = { items: [{ id: "chats" as const, label: "对话" }], current: null };
+    const state = { items: [{ id: "chats" as const, label: "对话" }], current: null, menu: null };
     const unhandled = await unhandledDuring(() => handle?.set(state));
     expect(set).toHaveBeenCalledWith(state);
     expect(unhandled).not.toHaveBeenCalled();

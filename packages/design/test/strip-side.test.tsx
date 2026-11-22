@@ -81,6 +81,11 @@ const CASES: [string, Record<string, unknown>, "left" | "right" | null][] = [
     { capabilities: { "nav@1": nav() }, insets: insets(30, 30) },
     "right",
   ],
+  [
+    "a tie after rounding to hundredths: right in both readers",
+    { capabilities: { "nav@1": nav() }, insets: insets(30.004, 30) },
+    "right",
+  ],
   ["no nav@1: no strip", { capabilities: {}, insets: insets(30, 0) }, null],
 ];
 

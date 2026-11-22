@@ -121,7 +121,7 @@ describe("AppFrame with nav@1", () => {
     expect(state.items[1]?.count).toBe(3);
     expect(state.current).toBe("chats");
     // no menu button on the strip (D12); the pill's top item is New conversation on a page without a primary
-    expect(state).not.toHaveProperty("menu");
+    expect(state.menu).toBeNull();
     expect(state.action).toEqual({ id: "new-conversation", label: "新会话", icon: "square-pen" });
     expect(state.account).toEqual(
       expect.objectContaining({ name: ME.account.displayName, initial: "G" }),

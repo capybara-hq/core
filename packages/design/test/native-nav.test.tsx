@@ -196,6 +196,7 @@ describe("the native strip (nav@1)", () => {
     expect(nav.set).toHaveBeenLastCalledWith({
       items: FOUR,
       current: "chats",
+      menu: null,
       action: NEW,
       account: ACCOUNT,
     });
@@ -235,7 +236,8 @@ describe("the native strip (nav@1)", () => {
     view.rerender(shell(fake.nav, "/agents", { onNavigate }));
     act(() => fake.action());
     expect(run).toHaveBeenCalledTimes(1);
-    expect(onNavigate).toHaveBeenCalledWith("/");
+    // like a strip selection: no slide
+    expect(onNavigate).toHaveBeenCalledWith("/", { transition: "none" });
   });
 
   it("an inline primary run re-registers nothing and the tap calls the latest one", () => {
@@ -353,6 +355,7 @@ describe("the native strip (nav@1)", () => {
     expect(nav.set).toHaveBeenLastCalledWith({
       items: FOUR.slice(0, 3),
       current: "inbox",
+      menu: null,
       action: { id: "p", label: "新建", icon: "plus" },
       account: ACCOUNT,
     });
@@ -472,15 +475,60 @@ describe("the native strip (nav@1)", () => {
     expect(fake.nav.set).toHaveBeenCalledTimes(1);
   });
 
-  it("an older shell without onAction / onAccount still gets its sections and taps", () => {
+  it("an older shell without onAction / onAccount gets exactly the old shape and its taps", () => {
     window.matchMedia = matchMediaFor(390).matchMedia;
     const fake = fakeNav();
     const onNavigate = vi.fn();
     const older: NativeNavHandle = { set: fake.nav.set, onSelect: fake.nav.onSelect };
-    render(shell(older, "/", { onNavigate }));
-    expect(fake.nav.set).toHaveBeenCalledTimes(1);
-    act(() => fake.select("agents"));
-    expect(onNavigate).toHaveBeenCalledWith("/agents", { transition: "none" });
+    render(
+      shell(older, "/agents", {
+        onNavigate,
+        search: true,
+        primary: { id: "p", label: "新建", run() {} },
+      }),
+    );
+    // the shipped validator takes only items / current / menu, the four sections, menu present
+    for (const [state] of fake.nav.set.mock.calls) {
+      expect(Object.keys(state).sort()).toEqual(["current", "items", "menu"]);
+    }
+    expect(fake.nav.set).toHaveBeenLastCalledWith({ items: FOUR, current: "agents", menu: null });
+    act(() => fake.select("inbox"));
+    expect(onNavigate).toHaveBeenCalledWith("/inbox", { transition: "none" });
+  });
+
+  it("keeps the action and account within bounds and the avatar to http(s)", () => {
+    window.matchMedia = matchMediaFor(390).matchMedia;
+    const { nav } = fakeNav();
+    const d = drawerData();
+    d.account = {
+      ...d.account,
+      name: "",
+      avatar: { kind: "image", src: "data:image/png;base64,AA" },
+    };
+    const view = render(
+      shell(nav, "/agents", { drawer: d, primary: { id: "p", label: "", run() {} } }),
+    );
+    const state = nav.set.mock.calls.at(-1)?.[0];
+    // an empty label falls back to the new conversation; an empty name sends no account
+    expect(state?.action).toEqual(NEW);
+    expect(state).not.toHaveProperty("account");
+    const blob = drawerData();
+    blob.account = { ...blob.account, avatar: { kind: "image", src: "blob:http://x/1" } };
+    view.rerender(shell(nav, "/agents", { drawer: blob }));
+    expect(nav.set.mock.calls.at(-1)?.[0].account).toEqual(ACCOUNT);
+  });
+
+  it("the avatar tapped while the account sheet is open closes it", () => {
+    window.matchMedia = matchMediaFor(390).matchMedia;
+    const fake = fakeNav();
+    render(shell(fake.nav, "/"));
+    act(() => fake.account());
+    const sheet = accountSheet();
+    expect(sheet).not.toBeNull();
+    act(() => fake.account());
+    expect(accountSheet()).toBeNull();
+    act(() => fake.account());
+    expect(accountSheet()).not.toBeNull();
   });
 
   it("unmount unsubscribes the three listeners and calls nothing else", () => {
