@@ -34,11 +34,12 @@ import {
  * Phase 1 has personal cloud devices only, each visible to its owner alone: another member
  * gets 404 `device.not_found`.
  * - `GET /` → `{ items, defaultId, lastUsedId, providers, defaultProvider }` (`providers`: the
- *   device providers on in the org, `{ plugin, displayName }`; `defaultProvider`: the one a device
+ *   device providers on in the org, `{ plugin, displayName, description, dialIn, guide }`; `defaultProvider`: the one a device
  *   gets when none is named, null when none serves the org);
  * - `POST / { name, provider? }` → 201 `{ device }`, bound for life to `provider` (one of
  *   `providers`, else 400 `validation_failed` at `provider`) or the default provider (none: 400
- *   `device.provider_required`); `GET /:id` → `{ device }`;
+ *   `device.provider_required`; a dial-in provider: 409 `device.provider_dial_in`, its devices are
+ *   made by the machine); `GET /:id` → `{ device }`;
  * - `PATCH /:id { name?, network? }` → `{ device }`: renames it and sets its sandbox network
  *   (`{ mode: open | allowlist | none | null, hosts? }`, approval-only profiles design, "Settings
  *   model") within its org's and the platform's ceilings (400 `device.network_not_allowed` above
@@ -67,7 +68,7 @@ export class DevicesController {
     @CurrentOrg() org: OrgContext,
   ): Promise<DeviceList> {
     const p = requireUser(principal);
-    return this.devices.list(org.orgId, p.account.id);
+    return this.devices.list(org.orgId, p.account.id, org.role);
   }
 
   @Post()

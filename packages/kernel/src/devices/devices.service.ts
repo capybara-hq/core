@@ -2,6 +2,7 @@ import { randomUUID } from "node:crypto";
 import {
   type DeviceReport,
   type LocalizedName,
+  pluginDescription,
   type SandboxBrowseScope,
   type SandboxLimits,
   type SandboxOperationScope,
@@ -15,6 +16,7 @@ import { DialInMachines } from "../dial-in/machines.js";
 import { DialInRelay } from "../dial-in/relay.js";
 import { ApiError } from "../errors.js";
 import { ExtensionDisplayNames } from "../extensions/display-name.js";
+import { PluginGuides, type SetupGuideRef } from "../extensions/plugin-guides.js";
 import { avatarColumns, type PersonRef, personAvatarUrl } from "../identity/account-avatar.js";
 import { audit } from "../identity/audit.js";
 import { KernelConfigService } from "../infra/config/kernel-config.service.js";
@@ -27,6 +29,7 @@ import {
 } from "../infra/database/transaction-host.js";
 import { Transactional } from "../infra/database/transactional.decorator.js";
 import { OutboxService } from "../infra/outbox/outbox.service.js";
+import type { OrgRole } from "../orgs/roles.js";
 import type { DeviceModeLevel } from "../runtime/context/device-paths.js";
 import { DeviceReports } from "../sandbox/device-reports.js";
 import type {
@@ -58,6 +61,11 @@ export interface DeviceView {
   ownerKind: "personal";
   /** The provider it is bound to for life (`devices.provider`). */
   provider: string | null;
+  /**
+   * The provider's extension display name (`ExtensionDisplayNames`), also while the provider is
+   * off or not loaded when the name is known; null otherwise.
+   */
+  providerDisplayName: LocalizedName | null;
   /**
    * Its provider serves its devices over the dial-in channel (a machine signs in to the device);
    * false while the provider is not loaded here.
@@ -193,6 +201,12 @@ export interface DeviceProviderOption {
   plugin: string;
   /** The extension's display name; null when it has none. */
   displayName: LocalizedName | null;
+  /** The catalog item's description (`{ en, zh? }`); null when the item has none. */
+  description: { en: string; zh?: string } | null;
+  /** The provider declares `permissions.dialIn`: its devices are made by the machine signing in. */
+  dialIn: boolean;
+  /** Its device-connection setup guide, when the org's catalog shows it; null otherwise. */
+  guide: SetupGuideRef | null;
 }
 
 const isUniqueViolation = (e: unknown, constraint: string): boolean =>
@@ -219,6 +233,13 @@ const providerNotOn = (provider: string, on: DeviceProviderEntry[]): ApiError =>
   const message = `Device provider ${provider} is not on in this organization; choose one of: ${providerChoices(on)}`;
   return new ApiError("validation_failed", message, [{ path: "provider", message }]);
 };
+
+/** A new device is created on a dial-in provider: its devices are made by the machine (409). */
+const providerDialIn = (provider: string): ApiError =>
+  new ApiError(
+    "device.provider_dial_in",
+    `Devices of provider ${provider} are connected from the machine: follow its guide in New device (新建设备) instead of creating one here`,
+  );
 
 /** A device sign-in names a provider that is no dial-in provider on in the org (403). */
 export const dialInProviderUnavailable = (provider: string): ApiError =>
@@ -271,20 +292,33 @@ export class DevicesService {
     @Inject(DeviceReports) private readonly reports: Pick<DeviceReports, "read">,
     /** The dial-in providers on in an org (a device signed in from a machine). */
     @Inject(DialInHandlers) private readonly dialIn: Pick<DialInHandlers, "onInOrg">,
+    /** The providers' device-connection guides. */
+    @Inject(PluginGuides) private readonly guides: Pick<PluginGuides, "deviceGuides">,
   ) {}
 
   /**
    * The person's live devices in the org, the default first, then by creation, with the device
    * providers on in the org and its default one. With a default provider serving the org the
    * default device is created first if missing (its first need, spec §4.2 item 7; an existing one
-   * is only read, whatever its provider's state).
+   * is only read, whatever its provider's state). `role` is the caller's role in the org: it
+   * decides which setup guides the org's catalog shows them (none without it).
    */
-  async list(orgId: string, accountId: string): Promise<DeviceList> {
+  async list(orgId: string, accountId: string, role?: OrgRole): Promise<DeviceList> {
     const on = await this.selection.onInOrg(orgId);
-    const names = await this.displayNames.many(on.map((e) => e.plugin));
+    const plugins = on.map((e) => e.plugin);
+    const [names, descriptions, guides] = await Promise.all([
+      this.displayNames.many(plugins),
+      this.catalogDescriptions(plugins),
+      role === undefined
+        ? new Map<string, SetupGuideRef>()
+        : this.guides.deviceGuides(plugins, { orgId, role }),
+    ]);
     const providers = on.map((e) => ({
       plugin: e.plugin,
       displayName: names.get(e.plugin) ?? null,
+      description: descriptions.get(e.plugin) ?? null,
+      dialIn: servesDialIn(e),
+      guide: guides.get(e.plugin) ?? null,
     }));
     const defaultProvider = (await this.selection.defaultFor(orgId))?.plugin ?? null;
     const defaultId = await this.ensureDefault(orgId, accountId);
@@ -309,6 +343,30 @@ export class DevicesService {
       providers,
       defaultProvider,
     };
+  }
+
+  /** The latest catalog descriptions of `names` (one query); an item without one is absent. */
+  private async catalogDescriptions(
+    names: string[],
+  ): Promise<Map<string, { en: string; zh?: string }>> {
+    const out = new Map<string, { en: string; zh?: string }>();
+    if (names.length === 0) return out;
+    const rows = await this.db
+      .selectFrom("catalog_items as i")
+      .innerJoin("catalog_item_versions as v", (j) =>
+        j.onRef("v.item_id", "=", "i.id").onRef("v.version", "=", "i.latest_version"),
+      )
+      .select(["i.name", "v.manifest"])
+      .where("i.name", "in", names)
+      .where("i.deleted_at", "is", null)
+      .execute();
+    for (const r of rows) {
+      const d = (r.manifest as { description?: unknown } | null)?.description;
+      if (typeof d !== "string" && (typeof d !== "object" || d === null)) continue;
+      const text = pluginDescription(d as string | { en: string; zh?: string });
+      if (text.en !== "" && !out.has(r.name)) out.set(r.name, text);
+    }
+    return out;
   }
 
   /** One of the person's live devices; anyone else's (or a missing one) → `not_found`. */
@@ -347,11 +405,14 @@ export class DevicesService {
   private async providerFor(orgId: string, named: string | undefined): Promise<string> {
     const on = await this.selection.onInOrg(orgId);
     if (named !== undefined) {
-      if (on.some((e) => e.plugin === named)) return named;
-      throw providerNotOn(named, on);
+      const entry = on.find((e) => e.plugin === named);
+      if (!entry) throw providerNotOn(named, on);
+      if (servesDialIn(entry)) throw providerDialIn(named);
+      return named;
     }
     const fallback = await this.selection.defaultFor(orgId);
     if (!fallback) throw providerRequired(on);
+    if (servesDialIn(fallback)) throw providerDialIn(fallback.plugin);
     return fallback.plugin;
   }
 
@@ -1186,6 +1247,7 @@ export class DevicesService {
         providerNames.map(async (p) => [p, await this.selection.isOnInOrg(orgId, p)] as const),
       ),
     );
+    const providerNamesOf = await this.displayNames.many(providerNames);
     // each device's sandbox, limits, its instance's pending change and its stored report
     const perDevice = new Map(
       await Promise.all(
@@ -1218,6 +1280,7 @@ export class DevicesService {
         isDefault: r.is_default,
         ownerKind: "personal",
         provider,
+        providerDisplayName: provider === null ? null : (providerNamesOf.get(provider) ?? null),
         dialIn: dialIn.has(r.id),
         // an instance row of another provider (never written by this kernel) is refused on use
         available:

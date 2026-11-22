@@ -130,7 +130,7 @@ export class DevicesOperations implements OnModuleInit {
       defineOperation({
         id: "devices.list",
         description:
-          "List your own devices in this org: one compact row each (name, state, whether it is the default, provider, whether it is a dial-in device signed in from a machine, whether that machine is online and which it is, last use), plus the default and last used ids, the device providers on in this org (a new device may name one) and the default provider (null: a new device must name one). The default device is shown as Personal. A device stays on the provider it was created on; while that provider is off it is unavailable.",
+          "List your own devices in this org: one compact row each (name, state, whether it is the default, provider, whether it is a dial-in device signed in from a machine, whether that machine is online and which it is, last use), plus the default and last used ids, the device providers on in this org (a new device may name one; each has its name, description and whether it is a dial-in provider) and the default provider (null: a new device must name one). A dial-in provider's devices are made on the machine, not created here. The default device is shown as Personal. A device stays on the provider it was created on; while that provider is off it is unavailable.",
         input: z.object({}).strict(),
         example: {},
         authz: { orgAction: "agents.use" },
@@ -142,7 +142,7 @@ export class DevicesOperations implements OnModuleInit {
             items: l.items.map(row),
             defaultId: l.defaultId,
             lastUsedId: l.lastUsedId,
-            providers: l.providers,
+            providers: l.providers.map(({ guide: _guide, ...p }) => p),
             defaultProvider: l.defaultProvider,
           };
         },
@@ -176,7 +176,7 @@ export class DevicesOperations implements OnModuleInit {
       defineOperation({
         id: "devices.create",
         description:
-          "Create a personal cloud device with a name (1-64 characters, unique among yours, case-insensitive) on a device provider: provider is one of the providers devices.list returns; omit it for the org's default provider. The device stays on that provider for life. It is ready at once; its instance and files are made on first use. Devices are limited per person.",
+          "Create a personal cloud device with a name (1-64 characters, unique among yours, case-insensitive) on a device provider: provider is one of the providers devices.list returns that is not a dial-in provider (a dial-in provider's device is created on the machine by following its guide on the web); omit it for the org's default provider. The device stays on that provider for life. It is ready at once; its instance and files are made on first use. Devices are limited per person.",
         input: DeviceCreateBody,
         example: { name: "Data analysis" },
         authz: { orgAction: "agents.use" },
@@ -205,6 +205,10 @@ export class DevicesOperations implements OnModuleInit {
               member:
                 "Call again naming one of the providers in the message as provider; with none listed, ask an org admin to switch one on.",
             },
+          },
+          {
+            code: "device.provider_dial_in",
+            next: "That provider's devices are made on the machine: tell the person to follow its guide in 新建设备 on the web, or name a provider whose dialIn is false.",
           },
           {
             code: "validation_failed",

@@ -455,6 +455,11 @@ export const ERROR_CODES = {
    * message lists the providers on in the org.
    */
   "device.provider_required": 400,
+  /**
+   * A new device is created on a dial-in provider (or the default is one): its devices are made
+   * by the machine signing in, following the provider's guide in the new-device dialog.
+   */
+  "device.provider_dial_in": 409,
   /** The person already has a live device with this name (case-insensitive). */
   "device.name_taken": 409,
   /** The person already has `devices.maxPersonal` live personal devices. */

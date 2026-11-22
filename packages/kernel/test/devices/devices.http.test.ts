@@ -12,6 +12,7 @@ import { createDb } from "../../src/db/pool.js";
 import type { DeviceList, DeviceView } from "../../src/devices/devices.service.js";
 import { DevicesService } from "../../src/devices/devices.service.js";
 import { ApiError } from "../../src/errors.js";
+import { ExtensionDisplayNames } from "../../src/extensions/display-name.js";
 import { TransactionHost, withOrderedLocks } from "../../src/infra/database/transaction-host.js";
 import { deviceDestroyJobId } from "../../src/sandbox/jobs.js";
 import { SandboxService } from "../../src/sandbox/sandbox.service.js";
@@ -67,7 +68,7 @@ beforeAll(async () => {
       { pg: pgc.url, redis: rd.url },
       {
         roles: ["api", "worker"],
-        extensions: [fixture("device-fake"), fixture("device-fake-b")],
+        extensions: [fixture("device-fake"), fixture("device-fake-b"), fixture("fake-dial-in")],
         extensionConfig: { "device-fake": { root }, "device-fake-b": { root: rootB } },
         devices: { maxPersonal: MAX },
       },
@@ -81,6 +82,8 @@ beforeAll(async () => {
   // both providers on in the org, device-fake its default
   await enableDeviceProviders(k, orgId);
   await setDefaultProvider("device-fake");
+  // the dial-in provider is on only in the tests that name it
+  await setEnabled("fake-dial-in", false);
 });
 
 afterAll(async () => {
@@ -672,6 +675,89 @@ describe("device providers (device-provider spec §6.1)", () => {
     const there = await owner({ method: "GET", url: `/api/v1/orgs/${otherOrg}/devices` });
     expect(there.statusCode, there.body).toBe(200);
     expect(there.json()).toMatchObject({ providers: [], defaultProvider: null, defaultId: null });
+  });
+
+  it("GET /devices describes each provider: description, dial-in and setup guide", async () => {
+    const m = await member();
+    const itemId = randomUUID();
+    const manifest = {
+      schemaVersion: 1,
+      name: "fake-dial-in",
+      description: { en: "Connect a machine", zh: "连接一台机器" },
+      setupGuides: [{ id: "connect", place: "device-connection" }],
+    };
+    await sql`INSERT INTO capybara.catalog_items
+      (id, name, package_name, publisher, description, latest_version, scope)
+      VALUES (${itemId}, 'fake-dial-in', '@acme/plugin-fake-dial-in', 'Acme', 'Connect a machine',
+        '1.0.0', 'all')`.execute(raw);
+    await sql`INSERT INTO capybara.catalog_item_versions
+      (item_id, version, manifest, source, source_ref, files, size)
+      VALUES (${itemId}, '1.0.0', ${JSON.stringify(manifest)}::jsonb, 'file', 'upload', '[]'::jsonb,
+        1000)`.execute(raw);
+    await setEnabled("fake-dial-in", true);
+    try {
+      const l = await list(m.req);
+      expect(l.providers.map((p) => p.plugin)).toEqual([
+        "device-fake",
+        "device-fake-b",
+        "fake-dial-in",
+      ]);
+      expect(l.providers.find((p) => p.plugin === "fake-dial-in")).toMatchObject({
+        dialIn: true,
+        description: { en: "Connect a machine", zh: "连接一台机器" },
+        guide: { itemId, guideId: "connect", version: "1.0.0" },
+      });
+      expect(l.providers.find((p) => p.plugin === "device-fake")).toMatchObject({
+        dialIn: false,
+        description: null,
+        guide: null,
+      });
+    } finally {
+      await setEnabled("fake-dial-in", false);
+      await sql`DELETE FROM capybara.catalog_item_versions WHERE item_id = ${itemId}`.execute(raw);
+      await sql`DELETE FROM capybara.catalog_items WHERE id = ${itemId}`.execute(raw);
+    }
+  });
+
+  it("POST /devices naming a dial-in provider answers device.provider_dial_in and creates nothing", async () => {
+    const m = await member();
+    await list(m.req); // makes the default
+    const before = await countDevices(m.id);
+    await setEnabled("fake-dial-in", true);
+    try {
+      const res = await m.req({
+        method: "POST",
+        url: base(),
+        payload: { name: "Box", provider: "fake-dial-in" },
+      });
+      expect(res.statusCode, res.body).toBe(409);
+      expect(errCode(res)).toBe("device.provider_dial_in");
+      expect(
+        await k.app
+          .get(DevicesService)
+          .checkCreate(orgId, m.id, "Box", "fake-dial-in")
+          .catch((e: ApiError) => e.code),
+      ).toBe("device.provider_dial_in");
+      expect(await countDevices(m.id)).toBe(before);
+    } finally {
+      await setEnabled("fake-dial-in", false);
+    }
+  });
+
+  it("a device carries its provider's display name, also while the provider is off", async () => {
+    const m = await member();
+    const onB = await create(m.req, "Named", "device-fake-b");
+    expect(onB.providerDisplayName).toEqual(
+      (await k.app.get(ExtensionDisplayNames).get("device-fake-b")) ?? null,
+    );
+    await setEnabled("device-fake-b", false);
+    try {
+      const off = (await list(m.req)).items.find((d) => d.id === onB.id);
+      expect(off).toMatchObject({ available: false });
+      expect(off?.providerDisplayName).toEqual(onB.providerDisplayName);
+    } finally {
+      await setEnabled("device-fake-b", true);
+    }
   });
 
   it("a device whose provider is switched off lists as available false with its stored report", async () => {
