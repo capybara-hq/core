@@ -16,6 +16,9 @@ import {
   WEB_UI_TEMPLATES,
 } from "../src/web-ui.js";
 import {
+  dialogFooterFindings,
+  dialogFooterTreeFindings,
+  type FooterPending,
   filtersScopeFindings,
   filtersScopeTreeFindings,
   type ScopePending,
@@ -30,7 +33,12 @@ const run = (
   pending: SsrPending[] = [],
   queryPending: QueryPending[] = [],
   boxPending: BoxPending[] = [],
-  responsive: ResponsiveLists = { sizeAllowed: [], scopePending: [], dualPending: [] },
+  responsive: ResponsiveLists = {
+    sizeAllowed: [],
+    scopePending: [],
+    footerPending: [],
+    dualPending: [],
+  },
 ) => {
   const dir = fileURLToPath(new URL(`../fixtures/web-ui/${name}`, import.meta.url));
   return checkWebUi(
@@ -52,11 +60,22 @@ describe("checkWebUi", () => {
     expect(run("clean")).toEqual([]);
   });
 
-  it("bad-import -> web-ui-import，行号正确", () => {
+  it("bad-import (a Radix dialog) -> web-ui-overlay-primitive，行号正确", () => {
     const f = run("bad-import");
-    expect(f.map((x) => x.rule)).toEqual(["web-ui-import"]);
+    expect(f.map((x) => x.rule)).toEqual(["web-ui-overlay-primitive"]);
     expect(f[0]?.line).toBe(2);
     expect(f[0]?.message).toContain("@capybara-hq/design");
+  });
+
+  it("overlay packages -> web-ui-overlay-primitive; other Radix packages stay web-ui-import", () => {
+    const f = run("overlay-import");
+    expect(f.map((x) => [x.rule, x.line])).toEqual([
+      ["web-ui-overlay-primitive", 2],
+      ["web-ui-import", 3],
+      ["web-ui-overlay-primitive", 4],
+      ["web-ui-overlay-primitive", 5],
+      ["web-ui-overlay-primitive", 6],
+    ]);
   });
 
   it("class-name -> web-ui-class-name", () => {
@@ -474,6 +493,8 @@ describe("responsive guards (spec §5.3, §7)", () => {
         ["web-ui-size-branch", 52],
         ["web-ui-size-branch", 53],
         ["web-ui-size-branch", 54],
+        // useNative: a page never reads the shell
+        ["web-ui-size-branch", 58],
       ]);
       expect(f[0]?.message).toContain("design package");
     });
@@ -538,6 +559,39 @@ describe("responsive guards (spec §5.3, §7)", () => {
       expect(f.map((x) => x.rule)).toEqual([
         "web-ui-filters-scope-stale",
         "web-ui-filters-scope-stale",
+      ]);
+    });
+  });
+
+  describe("web-ui-dialog-footer", () => {
+    it("a Dialog footer wrapped in an element fails, also in a conditional branch", () => {
+      const f = dialogFooterFindings(parse("dialog-footer.tsx"));
+      expect(f.map((x) => [x.rule, x.line])).toEqual([
+        ["web-ui-dialog-footer", 9],
+        ["web-ui-dialog-footer", 24],
+      ]);
+      expect(f[0]?.message).toContain("fragment");
+    });
+
+    it("fragments, arrays, a single Button / LinkButton, values and other components pass", () => {
+      const f = dialogFooterFindings(parse("dialog-footer.tsx"));
+      expect(f.some((x) => x.line >= 27)).toBe(false);
+    });
+
+    it("the tree: a pending entry hides it; a clean or missing entry fails as stale", () => {
+      const pend = (path: string): FooterPending => ({ path, fix: "test" });
+      expect(dialogFooterTreeFindings(tree, []).map((x) => x.file.slice(tree.length + 1))).toEqual([
+        "pages/footer.tsx",
+      ]);
+      expect(dialogFooterTreeFindings(tree, [pend("pages/footer.tsx")])).toEqual([]);
+      const f = dialogFooterTreeFindings(tree, [
+        pend("pages/footer.tsx"),
+        pend("pages/clean.tsx"),
+        pend("pages/gone.tsx"),
+      ]);
+      expect(f.map((x) => x.rule)).toEqual([
+        "web-ui-dialog-footer-stale",
+        "web-ui-dialog-footer-stale",
       ]);
     });
   });

@@ -53,3 +53,6 @@ import {
   useClassForm,
   useMobileSizes,
 } from "@capybara-hq/design";
+
+// A page never reads the native shell either: useNative is a design-side hook.
+import { useNative } from "@capybara-hq/design";

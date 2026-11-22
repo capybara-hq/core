@@ -20,6 +20,8 @@ export const SIZE_BRANCH_STALE_RULE = "web-ui-size-branch-stale";
 export const FILTERS_SCOPE_RULE = "web-ui-filters-scope";
 export const FILTERS_SCOPE_STALE_RULE = "web-ui-filters-scope-stale";
 export const TEMPLATE_ONLY_RULE = "web-ui-template-only-props";
+export const DIALOG_FOOTER_RULE = "web-ui-dialog-footer";
+export const DIALOG_FOOTER_STALE_RULE = "web-ui-dialog-footer-stale";
 
 // --- shared helpers --------------------------------------------------------------------------
 
@@ -97,6 +99,7 @@ const SIZE_NAMES = new Set([
   "useTouch",
   "useMobileSizes",
   "useClassForm",
+  "useNative",
   "ClassForms",
   "SIZE_CLASS_QUERIES",
   "TOUCH_QUERY",
@@ -563,4 +566,82 @@ export function templateOnlyPropsTreeFindings(webSrcDir: string): Finding[] {
     if (!isParseError(p)) out.push(...templateOnlyPropsFindings(p));
   }
   return out;
+}
+
+// --- web-ui-dialog-footer --------------------------------------------------------------------
+
+const FOOTER_SINGLE = new Set(["Button", "LinkButton"]);
+
+export const DIALOG_FOOTER_MESSAGE =
+  "a Dialog `footer` is a fragment or an array of buttons (or one Button): the compact sheet stacks and reverses its direct children, so a wrapper element such as <Stack> or <div> breaks the order and the full-width buttons";
+
+export interface FooterPending {
+  /** Under apps/web/src, `/`-separated. */
+  path: string;
+  /** The task that drops the wrapper. */
+  fix: string;
+}
+
+/** Pages whose Dialog footer is still wrapped; a ratchet, new pages are never added. */
+export const FOOTER_PENDING: readonly FooterPending[] = [];
+
+/** The first wrapper element a footer value can draw, through conditionals and `&&`. */
+function footerWrapper(v: Node | null | undefined): Node | undefined {
+  if (!v) return undefined;
+  switch (v.type) {
+    case "ConditionalExpression":
+      return footerWrapper(v.consequent as Node) ?? footerWrapper(v.alternate as Node);
+    case "LogicalExpression":
+      return footerWrapper(v.right as Node);
+    case "ParenthesizedExpression":
+      return footerWrapper(v.expression as Node);
+    case "JSXElement": {
+      const name = (v.openingElement as Node).name as Node;
+      if (name.type === "JSXMemberExpression") return undefined; // React.Fragment
+      const id = name.name as string;
+      return id === "Fragment" || FOOTER_SINGLE.has(id) ? undefined : v;
+    }
+    default:
+      return undefined;
+  }
+}
+
+/** `web-ui-dialog-footer` over one parsed file. */
+export function dialogFooterFindings(p: ParsedFile): Finding[] {
+  const out: Finding[] = [];
+  walk(p.program, (n) => {
+    if (n.type !== "JSXOpeningElement" || jsxName(n) !== "Dialog") return;
+    const a = attrNamed(n, "footer");
+    const v = a?.value as Node | null | undefined;
+    if (v?.type !== "JSXExpressionContainer") return;
+    const bad = footerWrapper(v.expression as Node);
+    if (bad)
+      out.push({
+        file: p.file,
+        line: p.lineOf(bad.start),
+        rule: DIALOG_FOOTER_RULE,
+        message: DIALOG_FOOTER_MESSAGE,
+      });
+  });
+  return out;
+}
+
+export function dialogFooterTreeFindings(
+  webSrcDir: string,
+  pending: readonly FooterPending[] = FOOTER_PENDING,
+): Finding[] {
+  const raw: Finding[] = [];
+  for (const { file, isTest } of listSourceFiles(webSrcDir)) {
+    if (isTest) continue;
+    const p = parseFile(file);
+    if (!isParseError(p)) raw.push(...dialogFooterFindings(p));
+  }
+  return applyPathRatchet(
+    raw,
+    pending,
+    webSrcDir,
+    DIALOG_FOOTER_STALE_RULE,
+    "wrapped Dialog footer",
+    "FOOTER_PENDING in tools/checks/src/web-ui-responsive.ts",
+  );
 }
