@@ -46,22 +46,18 @@ const atTop = (scrollers: readonly Element[]) => scrollers.every((s) => s.scroll
 /**
  * Pull to refresh (interaction spec §3, D4): only in the native mobile shell (the shell's declared
  * `kind`, read from `window.capybaraShell` like the shell environment; never the user agent) on a
- * touch device, where a pull down from the top reads the data again. The browser keeps its own pull-to-reload and the
- * desktop shell has none: there the children render untouched and no listener is added. The
- * listeners are passive: the scroller's own overscroll bounce plays and the indicator rides on
- * top. A pull counts only when every scroller under the finger starts at its top and the drag is
- * more vertical than horizontal; past the threshold the indicator says "release"; letting go
- * there plays the `selection` haptic and calls `onRefresh`; the spinner stays until it settles.
+ * touch device, where a pull down from the top reads the data again. The browser keeps its own
+ * pull-to-reload and the desktop shell has none: there no listener is added and nothing is drawn.
+ * The wrapper (no box) is always there, so turning active after hydration never remounts the
+ * list. The listeners are passive: the scroller's own overscroll bounce plays and the indicator
+ * rides on top. A pull counts only when every scroller under the finger starts at its top and the
+ * drag is more vertical than horizontal; past the threshold the indicator says "release"; letting
+ * go there plays the `selection` haptic and calls `onRefresh`; the spinner stays until it settles.
  */
 export function PullToRefresh({ onRefresh, children }: PullRefreshProps) {
   const shell = useShellKind() === "mobile";
   const touch = useTouch() === true;
   const active = shell && touch;
-  if (!active) return <>{children}</>;
-  return <Active onRefresh={onRefresh}>{children}</Active>;
-}
-
-function Active({ onRefresh, children }: PullRefreshProps) {
   const t = useDesignT();
   const haptics = useHaptics();
   const ref = useRef<HTMLDivElement>(null);
@@ -90,7 +86,7 @@ function Active({ onRefresh, children }: PullRefreshProps) {
 
   useEffect(() => {
     const el = ref.current;
-    if (el === null) return;
+    if (!active || el === null) return;
     let start: { x: number; y: number; scrollers: Element[]; vertical: boolean } | null = null;
     const reset = () => {
       if (pulled.current !== 0) {
@@ -147,7 +143,7 @@ function Active({ onRefresh, children }: PullRefreshProps) {
       el.removeEventListener("touchend", end);
       el.removeEventListener("touchcancel", end);
     };
-  }, [finish]);
+  }, [active, finish]);
 
   const shown = pending ? PULL_THRESHOLD : pull;
   const ready = !pending && pull >= PULL_THRESHOLD;
@@ -158,11 +154,13 @@ function Active({ onRefresh, children }: PullRefreshProps) {
       : "pullRefresh.pull";
   return (
     <div className="cb-pullrefresh" data-part="pull-refresh" ref={ref}>
-      {/* always mounted, so the announcement of a refresh is heard */}
-      <span className="cb-sr-only" role="status">
-        {pending ? t("pullRefresh.refreshing") : ""}
-      </span>
-      {shown > 0
+      {/* always mounted while active, so the announcement of a refresh is heard */}
+      {active ? (
+        <span className="cb-sr-only" role="status">
+          {pending ? t("pullRefresh.refreshing") : ""}
+        </span>
+      ) : null}
+      {active && shown > 0
         ? // in the body: a container-type ancestor would otherwise hold the fixed indicator
           createPortal(
             <div

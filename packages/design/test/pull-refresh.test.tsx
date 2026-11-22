@@ -1,5 +1,6 @@
-// Pull to refresh (interaction spec §3, D4): active only in the native mobile shell (the shell's
-// declared `kind`, read from window.capybaraShell like the shell environment) on a touch device; a vertical pull past the threshold from the top of every scroller under the finger plays
+// Pull to refresh (interaction spec §3, D4): active only in the native mobile shell (the
+// shell's declared `kind`, read from window.capybaraShell like the shell environment) on a touch
+// device; a vertical pull past the threshold from the top of every scroller under the finger plays
 // the selection haptic and refreshes.
 import { act, cleanup, fireEvent, render, screen } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -66,7 +67,7 @@ describe("PullToRefresh", () => {
     Reflect.deleteProperty(window, "capybaraShell");
     const onRefresh = vi.fn(() => Promise.resolve());
     const { container } = setup(mobile(), onRefresh);
-    expect(container.querySelector("[data-part=pull-refresh]")).toBeNull();
+    expect(container.querySelector("[data-part=pull-refresh] [role=status]")).toBeNull();
     pullBy(screen.getByTestId("content"), FAR);
     expect(onRefresh).not.toHaveBeenCalled();
   });
@@ -75,7 +76,7 @@ describe("PullToRefresh", () => {
     installShell("desktop", { "haptics@1": { impact: async () => {} } });
     const onRefresh = vi.fn(() => Promise.resolve());
     const { container } = setup(mobile(), onRefresh);
-    expect(container.querySelector("[data-part=pull-refresh]")).toBeNull();
+    expect(container.querySelector("[data-part=pull-refresh] [role=status]")).toBeNull();
     pullBy(screen.getByTestId("content"), FAR);
     expect(onRefresh).not.toHaveBeenCalled();
   });
@@ -84,7 +85,7 @@ describe("PullToRefresh", () => {
     window.matchMedia = realMatchMedia;
     const onRefresh = vi.fn(() => Promise.resolve());
     const { container } = setup(mobile(), onRefresh);
-    expect(container.querySelector("[data-part=pull-refresh]")).toBeNull();
+    expect(container.querySelector("[data-part=pull-refresh] [role=status]")).toBeNull();
     pullBy(screen.getByTestId("content"), FAR);
     expect(onRefresh).not.toHaveBeenCalled();
   });
@@ -92,9 +93,36 @@ describe("PullToRefresh", () => {
   it("is active in the mobile shell on touch without any native handlers", () => {
     const onRefresh = vi.fn(() => Promise.resolve());
     const { container } = setup(undefined, onRefresh);
-    expect(container.querySelector("[data-part=pull-refresh]")).not.toBeNull();
+    expect(container.querySelector("[data-part=pull-refresh] [role=status]")).not.toBeNull();
     pullBy(screen.getByTestId("content"), FAR);
     expect(onRefresh).toHaveBeenCalledTimes(1);
+  });
+
+  it("keeps its children's DOM when it turns active after hydration (no remount)", () => {
+    let coarse = false;
+    const listeners = new Set<() => void>();
+    window.matchMedia = ((q: string) => ({
+      get matches() {
+        if (q.trim() === "(min-width: 600px)") return true;
+        if (q.includes("pointer: coarse") || q.includes("not (any-pointer: fine)")) return coarse;
+        return false;
+      },
+      media: q,
+      addEventListener: (_: string, fn: () => void) => listeners.add(fn),
+      removeEventListener: (_: string, fn: () => void) => listeners.delete(fn),
+    })) as unknown as typeof window.matchMedia;
+    setup(
+      undefined,
+      vi.fn(() => Promise.resolve()),
+    );
+    const before = screen.getByTestId("content");
+    expect(live()).toBeNull();
+    act(() => {
+      coarse = true;
+      for (const fn of [...listeners]) fn();
+    });
+    expect(live()).not.toBeNull();
+    expect(screen.getByTestId("content")).toBe(before);
   });
 
   it("calls onRefresh with the selection haptic after a pull past the threshold", async () => {
