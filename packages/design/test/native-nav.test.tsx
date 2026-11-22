@@ -512,7 +512,7 @@ describe("the native strip (nav@1)", () => {
     expect(fake.nav.set).toHaveBeenLastCalledWith(expect.objectContaining({ current: "chats" }));
     act(() => fake.select("chats"));
     expect(onNavigate).toHaveBeenLastCalledWith("/conversations", { transition: "none" });
-    // the new-conversation home is the pill's first item, not 对话
+    // the new-conversation home is the pill's first item, not Chats
     act(() => fake.action());
     expect(onNavigate).toHaveBeenLastCalledWith("/", { transition: "none" });
   });
