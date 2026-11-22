@@ -157,7 +157,7 @@ export async function runCli(argv: string[], io: CliEnv = {}): Promise<number> {
         ...(cmd.timeoutSeconds !== undefined && { timeoutMs: cmd.timeoutSeconds * 1000 }),
       });
     case "policy":
-      return policyCommand(cmd, { stateDir: dir, out, err });
+      return policyCommand(cmd, { stateDir: dir, stateRoot: dir, home, out, err });
     case "ceiling":
       return ceilingCommand(cmd, {
         stateDir: dir,

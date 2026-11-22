@@ -1,17 +1,28 @@
+import { realpathSync, statSync } from "node:fs";
+import { resolve } from "node:path";
 import { validateAllowHost } from "@capybara-hq/plugin-sdk";
 import type { Command } from "../args.js";
 import { noteCliPolicyChange } from "../command-log.js";
+import { readStrictOwnerCeilingSync } from "../exec/operation-types.js";
+import { projectPathRefusal, unreadableConnectionMessage } from "../exec/read-model.js";
+import { osRoots } from "../exec/shared.js";
+import { deniedSecretPaths } from "../policy.js";
 import { PolicyStore } from "../policy-store.js";
 import { type Policy, policyPath, readCredential } from "../state.js";
 
 export interface PolicyDeps {
   stateDir: string;
+  /** The program state root (every connection's state), as the CLI computes it. */
+  stateRoot: string;
+  home: string;
+  /** What a relative project path resolves against; default the process's working directory. */
+  cwd?: string;
   out: (line: string) => void;
   err: (line: string) => void;
 }
 
 /** The fields `show` prints and `set` may replace. */
-const KEYS = ["allowedDomains", "allowCredentials", "cpu", "memoryMb"] as const;
+const KEYS = ["allowedDomains", "allowCredentials", "cpu", "memoryMb", "projectPaths"] as const;
 
 /** What OS mode does not enforce yet, shown with `show` and with a limits change. */
 export const NOT_ENFORCED_NOTE =
@@ -21,7 +32,12 @@ export const NOT_ENFORCED_NOTE =
 /** Where the owner ceiling is changed (the policy command never changes it). */
 const CEILING_COMMAND =
   "capybara-device ceiling set --outside-sandbox on|off --network open|allowlist " +
-  "--project-reach workspace|os-user";
+  "--project-reach machine|paths|workspace";
+
+/** Printed with a projectPaths change while the reach is not `paths`. */
+const PROJECT_PATHS_REACH_NOTE =
+  "Project paths apply while the project reach is paths (capybara-device ceiling set " +
+  "--project-reach paths).";
 
 function list(value: string): string[] {
   return value
@@ -49,7 +65,7 @@ function dockerMode(stateDir: string): boolean {
 }
 
 /** The keys `add` and `remove` work on: the list fields. */
-const LIST_KEYS = ["allowedDomains", "allowCredentials"] as const;
+const LIST_KEYS = ["allowedDomains", "allowCredentials", "projectPaths"] as const;
 type ListKey = (typeof LIST_KEYS)[number];
 
 /** Lowercased, validated hosts; throws naming the first bad one. */
@@ -58,6 +74,80 @@ function domains(value: string): string[] {
   for (const d of out) {
     const errors = validateAllowHost(d);
     if (errors.length > 0) throw new Error(`"${d}": ${errors.join("; ")}`);
+  }
+  return out;
+}
+
+/**
+ * The real paths of the project paths given (relative ones against `cwd`), deduplicated; throws
+ * naming the first that is missing, not a directory, or one sandboxed work may never read (a
+ * secret path, this program's state, another connection's directory). Only the deny lists decide
+ * (the machine reach); they are checked again at every operation.
+ */
+function projectPaths(value: string, deps: PolicyDeps): string[] {
+  const { stateDir, stateRoot, home } = deps;
+  const given = list(value);
+  // Logged in: the owner ceiling's deny lists, every other connection included (an unreadable one
+  // refuses: its directory cannot be kept out). Logged out: secrets and this program's state.
+  let denies: { secretAndStateDenies: readonly string[]; otherConnectionDenies: readonly string[] };
+  const cred = readCredential(stateDir);
+  if (cred !== undefined) {
+    let ceiling: ReturnType<typeof readStrictOwnerCeilingSync>;
+    try {
+      ceiling = readStrictOwnerCeilingSync({
+        stateDir,
+        stateRoot,
+        deviceId: cred.deviceId,
+        dir: cred.dir,
+        home,
+      });
+    } catch (e) {
+      throw new Error(
+        `Cannot check project paths against the owner ceiling: ${(e as Error).message}`,
+      );
+    }
+    const unreadable = ceiling.unreadableConnections[0];
+    if (unreadable !== undefined) throw new Error(unreadableConnectionMessage(unreadable));
+    denies = ceiling;
+  } else {
+    denies = {
+      secretAndStateDenies: [...deniedSecretPaths(home), stateDir, stateRoot],
+      otherConnectionDenies: [],
+    };
+  }
+  const out: string[] = [];
+  for (const entry of given) {
+    const path = resolve(deps.cwd ?? process.cwd(), entry);
+    let real: string;
+    try {
+      real = realpathSync.native(path);
+    } catch (e) {
+      if ((e as NodeJS.ErrnoException).code === "ENOENT") throw new Error(`${path} does not exist`);
+      throw new Error(`Cannot read ${path}: ${(e as Error).message}`);
+    }
+    if (!statSync(real).isDirectory()) throw new Error(`${path} is not a directory`);
+    if (real === "/") {
+      throw new Error(
+        '"/" is not a project path: use capybara-device ceiling set --project-reach machine',
+      );
+    }
+    // the roots matter only under the paths and workspace reaches, never under machine
+    const refusal = projectPathRefusal(real, {
+      reach: "machine",
+      projectPaths: [],
+      roots: osRoots(resolve(stateDir)),
+      ...denies,
+    });
+    if (refusal === "denied") {
+      throw new Error(
+        `${path} holds secrets or this program's state; sandboxed work never reads it`,
+      );
+    }
+    if (refusal === "other-connection") {
+      throw new Error(`${path} belongs to another connection of this machine`);
+    }
+    if (refusal !== null) throw new Error(`${path} cannot be a project path (${refusal})`);
+    if (!out.includes(real)) out.push(real);
   }
   return out;
 }
@@ -101,9 +191,12 @@ export function describeCeiling(policy: Policy, runMode: "os" | "docker" = "os")
     network === "open"
       ? "Sandbox network: open (the public internet; private, local and metadata addresses stay closed)."
       : "Sandbox network: allowlist (allowedDomains only).",
-    projectReach !== "workspace"
-      ? "Sandboxed work and project browsing may read projects outside the device's workspace."
-      : "Sandboxed work and project browsing stay in the device's workspace.",
+    projectReach === "machine"
+      ? "Sandboxed work and project browsing read the whole machine except secrets, this " +
+        "program's state and other connections."
+      : projectReach === "paths"
+        ? "Sandboxed work and project browsing read the device's workspace and the projectPaths list."
+        : "Sandboxed work and project browsing stay in the device's workspace.",
     `Change the owner ceiling with: ${CEILING_COMMAND}`,
   ];
 }
@@ -152,6 +245,11 @@ export async function policyCommand(
           change = (p) => ({ ...p, allowCredentials: next });
           break;
         }
+        case "projectPaths": {
+          const next = projectPaths(value, deps);
+          change = (p) => ({ ...p, projectPaths: next });
+          break;
+        }
         case "cpu":
         case "memoryMb": {
           const next = ceiling(key, value);
@@ -179,11 +277,13 @@ export async function policyCommand(
       const listKey = key as ListKey;
       // Only additions are validated: any entry already in the file can be removed.
       const values =
-        listKey !== "allowedDomains"
-          ? list(value)
-          : action === "add"
+        listKey === "allowedDomains"
+          ? action === "add"
             ? domains(value)
-            : list(value).map((d) => d.toLowerCase());
+            : list(value).map((d) => d.toLowerCase())
+          : listKey === "projectPaths" && action === "add"
+            ? projectPaths(value, deps)
+            : list(value);
       if (values.length === 0) throw new Error(`${action} needs at least one value`);
       change = (p, say) => ({ ...p, [listKey]: edit(p[listKey], action, listKey, values, say) });
     }
@@ -192,8 +292,9 @@ export async function policyCommand(
     return 2;
   }
   const lines: string[] = [];
+  let saved: Policy;
   try {
-    store.update((p) => change(p, (l) => lines.push(l)));
+    saved = store.update((p) => change(p, (l) => lines.push(l)));
   } catch (e) {
     err(`Cannot change ${policyPath(stateDir)}: ${(e as Error).message}`);
     return 1;
@@ -208,6 +309,8 @@ export async function policyCommand(
         "organization allows them too.",
     );
   }
+  if (key === "projectPaths" && saved.ownerCeiling.projectReach !== "paths")
+    out(PROJECT_PATHS_REACH_NOTE);
   if (key === "cpu" || key === "memoryMb" || key === "allowCredentials") out(NOT_ENFORCED_NOTE);
   return 0;
 }

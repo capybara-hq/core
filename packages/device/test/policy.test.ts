@@ -1,4 +1,13 @@
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import {
+  chmodSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  realpathSync,
+  rmSync,
+  symlinkSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { SandboxLimits } from "@capybara-hq/plugin-sdk";
@@ -134,11 +143,17 @@ describe("grantedHosts", () => {
 });
 
 describe("policy command", () => {
+  let base: string;
   let dir: string;
+  let home: string;
   beforeEach(() => {
-    dir = mkdtempSync(join(tmpdir(), "device-policy-"));
+    base = mkdtempSync(join(tmpdir(), "device-policy-"));
+    dir = join(base, "state");
+    home = join(base, "home");
+    mkdirSync(dir);
+    mkdirSync(home);
   });
-  afterEach(() => rmSync(dir, { recursive: true, force: true }));
+  afterEach(() => rmSync(base, { recursive: true, force: true }));
 
   const run = (argv: string[]) => {
     const out: string[] = [];
@@ -146,8 +161,49 @@ describe("policy command", () => {
     return policyCommand(
       // The CLI parser turns the arguments into the command; this is the same shape.
       parse(argv),
-      { stateDir: dir, out: (l) => out.push(l), err: (l) => err.push(l) },
+      {
+        stateDir: dir,
+        stateRoot: dir,
+        home,
+        cwd: base,
+        out: (l) => out.push(l),
+        err: (l) => err.push(l),
+      },
     ).then((code) => ({ code, out: out.join("\n"), err: err.join("\n") }));
+  };
+
+  const login = (workDir = join(base, "device")) =>
+    writeCredential(dir, {
+      url: "https://x.test",
+      connectUrl: "wss://x.test/device/connect",
+      credential: "cap_dev_abc",
+      orgId: "o",
+      deviceId: "e",
+      dir: workDir,
+      mode: "os",
+      reconnectGraceSeconds: 120,
+      maxFrameBytes: 1_000_000,
+    });
+  const otherConnection = (id: string, workDir: string) => {
+    const connDir = join(dir, "connections", id);
+    mkdirSync(connDir, { recursive: true });
+    writeCredential(connDir, {
+      url: "https://y.test",
+      connectUrl: "wss://y.test/device/connect",
+      credential: "cap_dev_other",
+      orgId: "o2",
+      deviceId: id,
+      dir: workDir,
+      mode: "os",
+      reconnectGraceSeconds: 120,
+      maxFrameBytes: 1_000_000,
+    });
+    return connDir;
+  };
+  const project = (name: string) => {
+    const p = join(base, name);
+    mkdirSync(p, { recursive: true });
+    return p;
   };
 
   // A minimal parser for the tests: policy [show | set|add|remove key value].
@@ -184,14 +240,117 @@ describe("policy command", () => {
     expect(auto[1]).toMatch(/one approved call may run as you/);
     expect(describeCeiling(policy({ mode: "auto" }), "docker")[1]).toMatch(/container/);
     expect(auto[2]).toMatch(/Sandbox network: open/);
-    expect(auto[3]).toMatch(/outside the device's workspace/);
+    expect(auto[3]).toMatch(/whole machine except secrets/);
+    const paths = describeCeiling(
+      policy({ ownerCeiling: { outsideSandbox: false, network: "open", projectReach: "paths" } }),
+    );
+    expect(paths[3]).toMatch(/the device's workspace and the projectPaths list/);
     const sandbox = describeCeiling(policy({ mode: "sandbox" }));
     expect(sandbox[1]).toMatch(/outside the sandbox off/);
     expect(sandbox[2]).toMatch(/Sandbox network: allowlist/);
     expect(sandbox[3]).toMatch(/stay in the device's workspace/);
     expect(describeCeiling(policy({ mode: "sandbox" })).at(-1)).toMatch(
-      /capybara-device ceiling set/,
+      /capybara-device ceiling set .*--project-reach machine\|paths\|workspace/,
     );
+  });
+
+  it("add projectPaths stores the real absolute path, deduped", async () => {
+    login();
+    writePolicy(dir, DEFAULT_POLICY);
+    const a = project("a");
+    const r = await run(["add", "projectPaths", "./a"]);
+    expect(r.err).toBe("");
+    expect(r.code).toBe(0);
+    expect(readPolicy(dir).projectPaths).toEqual([realpathSync.native(a)]);
+    // a link is stored by its real path, so adding it again finds the same entry
+    symlinkSync(a, join(base, "link"));
+    const again = await run(["add", "projectPaths", join(base, "link")]);
+    expect(again.code).toBe(0);
+    expect(again.out).toContain(`${realpathSync.native(a)} is already in projectPaths.`);
+    expect(readPolicy(dir).projectPaths).toEqual([realpathSync.native(a)]);
+  });
+
+  it("add refuses a missing directory, a file, a secret path and another connection's directory", async () => {
+    login();
+    writePolicy(dir, DEFAULT_POLICY);
+    const otherWork = project("other-work");
+    otherConnection("other", otherWork);
+    mkdirSync(join(home, ".ssh"));
+    writeFileSync(join(base, "file.txt"), "x");
+    const before = readFileSync(policyPath(dir), "utf8");
+    const cases: [string, RegExp][] = [
+      [join(base, "missing"), /does not exist/],
+      [join(base, "file.txt"), /is not a directory/],
+      [join(home, ".ssh"), /holds secrets/],
+      [dir, /holds secrets/],
+      [otherWork, /belongs to another connection/],
+    ];
+    for (const [path, reason] of cases) {
+      const r = await run(["add", "projectPaths", path]);
+      expect(r.code, path).toBe(2);
+      expect(r.err, path).toMatch(reason);
+    }
+    // set validates each entry the same way
+    const set = await run(["set", "projectPaths", `${project("ok")},${join(home, ".ssh")}`]);
+    expect(set.code).toBe(2);
+    expect(set.err).toMatch(/holds secrets/);
+    expect(readFileSync(policyPath(dir), "utf8")).toBe(before);
+  });
+
+  it("add refuses while another connection cannot be read", async () => {
+    login();
+    writePolicy(dir, DEFAULT_POLICY);
+    const connDir = otherConnection("bad", project("bad-work"));
+    chmodSync(join(connDir, "credential.json"), 0o644);
+    const before = readFileSync(policyPath(dir), "utf8");
+    const r = await run(["add", "projectPaths", project("a")]);
+    expect(r.code).toBe(2);
+    expect(r.err).toMatch(/Cannot read connections\/bad .*capybara-device logout -c bad/);
+    expect(readFileSync(policyPath(dir), "utf8")).toBe(before);
+  });
+
+  it("add checks secrets and the state directory when not logged in", async () => {
+    mkdirSync(join(home, ".aws"));
+    const r = await run(["add", "projectPaths", join(home, ".aws")]);
+    expect(r.code).toBe(2);
+    expect(r.err).toMatch(/holds secrets/);
+    expect((await run(["add", "projectPaths", project("a")])).code).toBe(0);
+  });
+
+  it("remove takes any listed entry", async () => {
+    login();
+    const a = realpathSync.native(project("a"));
+    writePolicy(dir, { ...DEFAULT_POLICY, projectPaths: ["/gone/away", a] });
+    const r = await run(["remove", "projectPaths", "/gone/away"]);
+    expect(r.code).toBe(0);
+    expect(r.out).toContain("Removed /gone/away from projectPaths.");
+    expect(readPolicy(dir).projectPaths).toEqual([a]);
+  });
+
+  it("set projectPaths replaces the list with the validated real paths", async () => {
+    login();
+    writePolicy(dir, { ...DEFAULT_POLICY, projectPaths: ["/gone/away"] });
+    const a = project("a");
+    const b = project("b");
+    expect((await run(["set", "projectPaths", `${a},./b,${a}`])).code).toBe(0);
+    expect(readPolicy(dir).projectPaths).toEqual([realpathSync.native(a), realpathSync.native(b)]);
+  });
+
+  it("says the list applies only under the paths reach", async () => {
+    login();
+    writePolicy(dir, DEFAULT_POLICY); // projectReach: machine
+    const note =
+      "Project paths apply while the project reach is paths (capybara-device ceiling set " +
+      "--project-reach paths).";
+    const r = await run(["add", "projectPaths", project("a")]);
+    expect(r.out).toContain(note);
+    writePolicy(dir, {
+      ...DEFAULT_POLICY,
+      ownerCeiling: { ...DEFAULT_POLICY.ownerCeiling, projectReach: "paths" },
+    });
+    const under = await run(["add", "projectPaths", project("b")]);
+    expect(under.code).toBe(0);
+    expect(under.out).not.toContain(note);
   });
 
   it("a change of allowed domains says sandboxed work may reach them, also in Docker mode", async () => {
