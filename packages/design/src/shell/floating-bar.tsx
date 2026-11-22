@@ -75,6 +75,11 @@ export type FloatingBarProps = {
   lead?: FloatingLead | undefined;
   /** The trailing floating control (a page's overflow menu); the home has none (Decision 27). */
   trailing?: ReactNode;
+  /**
+   * A pushed page's title once its large title has scrolled under the row (design spec §6.56,
+   * §6.65): drawn centred between the lead and the trailing control; absent, nothing.
+   */
+  title?: string | undefined;
 };
 
 /**
@@ -83,7 +88,7 @@ export type FloatingBarProps = {
  * the pending inbox count on a chat surface and the back button on a pushed page; the centre and
  * trailing controls belong to the page (the conversation's title pill and overflow).
  */
-export function FloatingBar({ lead, trailing }: FloatingBarProps) {
+export function FloatingBar({ lead, trailing, title }: FloatingBarProps) {
   const t = useDesignT();
   let leading: ReactNode = null;
   if (lead?.kind === "menu") {
@@ -125,6 +130,12 @@ export function FloatingBar({ lead, trailing }: FloatingBarProps) {
           chat surface only where the shell reports window controls, and not while a conversation's
           title pill lies over it). */}
       <span className="cb-floatbar-gap cb-drag-fill" aria-hidden="true" />
+      {/* The page's large title stays in the page for assistive technology; this is its echo. */}
+      {title ? (
+        <span className="cb-floating-title" data-part="floating-title" aria-hidden="true">
+          {title}
+        </span>
+      ) : null}
       {trailing}
     </div>
   );

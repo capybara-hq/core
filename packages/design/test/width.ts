@@ -1,3 +1,11 @@
+import { act, type RenderResult, render } from "@testing-library/react";
+import { type ComponentProps, createElement, type ReactElement } from "react";
+import { renderToString } from "react-dom/server";
+import { DesignProvider } from "../src/index";
+
+/** `createElement` takes the children as its third argument. */
+type DesignProviderProps = ComponentProps<typeof DesignProvider>;
+
 /**
  * A `window.matchMedia` stand-in for a window `width` CSS px wide (and `height` high): evaluates
  * `min-` / `max-` `width` / `height` features joined by `and` and `,`; other queries do not match.
@@ -36,4 +44,24 @@ export function matchMediaFor(width: number, height = 900) {
       for (const fn of [...listeners]) fn();
     },
   };
+}
+
+/**
+ * Renders `ui` the way a page arrives at a window `width` CSS px wide: stubs `window.matchMedia`
+ * with `matchMediaFor(width)`, server-renders inside `DesignProvider locale="zh"`, hydrates that
+ * markup and flushes the hydration re-render, so size-class forms are already pruned. `resize`
+ * moves the window across classes. The caller restores `window.matchMedia` after the test.
+ */
+export function renderAtClass(
+  width: number,
+  ui: ReactElement,
+): RenderResult & { resize: (width: number) => void } {
+  const mm = matchMediaFor(width);
+  window.matchMedia = mm.matchMedia;
+  const tree = createElement(DesignProvider, { locale: "zh" } as DesignProviderProps, ui);
+  const container = document.createElement("div");
+  document.body.append(container);
+  container.innerHTML = renderToString(tree);
+  const result = render(tree, { container, hydrate: true });
+  return { ...result, resize: (w: number) => act(() => mm.resize(w)) };
 }

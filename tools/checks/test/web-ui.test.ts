@@ -4,21 +4,33 @@ import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
 // design 是浏览器包（无扩展名导入）；names.ts 无 React 依赖，直接按相对路径取常量。
 import { PAGE_TEMPLATES } from "../../../packages/design/src/templates/names.js";
+import { isParseError, parseFile } from "../src/source.js";
 import {
   BOX_PENDING,
   type BoxPending,
   checkWebUi,
   QUERY_PENDING,
   type QueryPending,
+  type ResponsiveLists,
   type SsrPending,
   WEB_UI_TEMPLATES,
 } from "../src/web-ui.js";
+import {
+  filtersScopeFindings,
+  filtersScopeTreeFindings,
+  type ScopePending,
+  type SizeBranchAllowed,
+  sizeBranchFindings,
+  sizeBranchTreeFindings,
+  templateOnlyPropsFindings,
+} from "../src/web-ui-responsive.js";
 
 const run = (
   name: string,
   pending: SsrPending[] = [],
   queryPending: QueryPending[] = [],
   boxPending: BoxPending[] = [],
+  responsive: ResponsiveLists = { sizeAllowed: [], scopePending: [], dualPending: [] },
 ) => {
   const dir = fileURLToPath(new URL(`../fixtures/web-ui/${name}`, import.meta.url));
   return checkWebUi(
@@ -27,6 +39,7 @@ const run = (
     pending,
     queryPending,
     boxPending,
+    responsive,
   );
 };
 
@@ -419,6 +432,130 @@ describe("checkWebUi", () => {
     });
     it("BOX_PENDING is empty since AB wave 2: the ratchet only shrinks and new code adds no entry", () => {
       expect(BOX_PENDING).toEqual([]);
+    });
+  });
+});
+
+describe("responsive guards (spec §5.3, §7)", () => {
+  const fx = (name: string) =>
+    fileURLToPath(new URL(`../fixtures/web-ui/${name}`, import.meta.url));
+  const parse = (name: string) => {
+    const p = parseFile(fx(name));
+    if (isParseError(p)) throw new Error(p.message);
+    return p;
+  };
+  const tree = fx("responsive-tree");
+  const allow = (path: string): SizeBranchAllowed => ({ path, reason: "test" });
+  const pend = (path: string): ScopePending => ({ path, fix: "test" });
+
+  describe("web-ui-size-branch", () => {
+    it("imports of the class hooks and constants and reads of window.matchMedia / innerWidth fail", () => {
+      const f = sizeBranchFindings(parse("size-branch.tsx"));
+      expect(f.map((x) => [x.rule, x.line])).toEqual([
+        ["web-ui-size-branch", 1],
+        ["web-ui-size-branch", 1],
+        ["web-ui-size-branch", 1],
+        ["web-ui-size-branch", 1],
+        ["web-ui-size-branch", 1],
+        ["web-ui-size-branch", 7],
+        ["web-ui-size-branch", 8],
+        // a namespace import member and the bare globals
+        ["web-ui-size-branch", 19],
+        ["web-ui-size-branch", 20],
+        ["web-ui-size-branch", 21],
+        // destructuring the window and the namespace
+        ["web-ui-size-branch", 41],
+        ["web-ui-size-branch", 42],
+        // the class forms and the other size queries
+        ["web-ui-size-branch", 48],
+        ["web-ui-size-branch", 49],
+        ["web-ui-size-branch", 50],
+        ["web-ui-size-branch", 51],
+        ["web-ui-size-branch", 52],
+        ["web-ui-size-branch", 53],
+        ["web-ui-size-branch", 54],
+      ]);
+      expect(f[0]?.message).toContain("design package");
+    });
+
+    it("other window reads and a string naming a hook pass", () => {
+      const f = sizeBranchFindings(parse("size-branch.tsx"));
+      // line 13 reads other window props; 26-29 bind the names locally; 31-37 are keys and types
+      expect(f.some((x) => (x.line >= 12 && x.line <= 18) || (x.line >= 22 && x.line <= 40))).toBe(
+        false,
+      );
+    });
+
+    it("the tree: tests and dev/ are skipped, a file fails unless allowlisted", () => {
+      const f = sizeBranchTreeFindings(tree, []);
+      expect(f.map((x) => x.file.slice(tree.length + 1))).toEqual(["pages/branch.tsx"]);
+      expect(sizeBranchTreeFindings(tree, [allow("pages/branch.tsx")])).toEqual([]);
+    });
+
+    it("an allowlist entry for a clean or missing file fails as stale", () => {
+      const f = sizeBranchTreeFindings(tree, [
+        allow("pages/branch.tsx"),
+        allow("pages/clean.tsx"),
+        allow("pages/gone.tsx"),
+      ]);
+      expect(f.map((x) => [x.rule, x.message.includes("does not exist")])).toEqual([
+        ["web-ui-size-branch-stale", false],
+        ["web-ui-size-branch-stale", true],
+      ]);
+    });
+  });
+
+  describe("web-ui-filters-scope", () => {
+    it("a Segmented / Tabs in ListPage filters fails: direct, const, spread, hook", () => {
+      const f = filtersScopeFindings(fx("filters-scope.tsx"), tree);
+      expect(f.map((x) => [x.rule, x.line])).toEqual([
+        ["web-ui-filters-scope", 5],
+        ["web-ui-filters-scope", 10],
+        ["web-ui-filters-scope", 19],
+        ["web-ui-filters-scope", 26],
+        ["web-ui-filters-scope", 32],
+        ["web-ui-filters-scope", 37],
+        ["web-ui-filters-scope", 42],
+      ]);
+      expect(f[0]?.message).toContain("ScopeChips");
+    });
+
+    it("Select fields in filters and a Segmented in the body pass", () => {
+      const f = filtersScopeFindings(fx("filters-scope.tsx"), tree);
+      expect(f.some((x) => x.line >= 44)).toBe(false);
+    });
+
+    it("the tree: a pending entry hides its file, a clean or missing entry is stale", () => {
+      expect(filtersScopeTreeFindings(tree, []).map((x) => x.file.slice(tree.length + 1))).toEqual([
+        "pages/scope.tsx",
+      ]);
+      expect(filtersScopeTreeFindings(tree, [pend("pages/scope.tsx")])).toEqual([]);
+      const f = filtersScopeTreeFindings(tree, [
+        pend("pages/scope.tsx"),
+        pend("pages/clean.tsx"),
+        pend("pages/gone.tsx"),
+      ]);
+      expect(f.map((x) => x.rule)).toEqual([
+        "web-ui-filters-scope-stale",
+        "web-ui-filters-scope-stale",
+      ]);
+    });
+  });
+
+  describe("web-ui-template-only-props", () => {
+    it("primaryForm on PageHeader or in a header object, and look on Tabs fail", () => {
+      const f = templateOnlyPropsFindings(parse("template-only-props.tsx"));
+      expect(f.map((x) => [x.rule, x.line])).toEqual([
+        ["web-ui-template-only-props", 4],
+        ["web-ui-template-only-props", 8],
+        ["web-ui-template-only-props", 12],
+        ["web-ui-template-only-props", 17],
+        // two different findings on one line are both kept
+        ["web-ui-template-only-props", 31],
+        ["web-ui-template-only-props", 31],
+      ]);
+      expect(f[0]?.message).toContain("PageHeader");
+      expect(f[3]?.message).toContain("Tabs");
     });
   });
 });

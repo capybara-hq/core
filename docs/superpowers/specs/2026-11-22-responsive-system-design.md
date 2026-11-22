@@ -425,16 +425,18 @@ the detail page.
 
 | | M | O | S | total |
 |---|---|---|---|---|
-| Templated routes (excl. auth, shared file, not found, redirect, dev) | 26 | 25 | 28 | 79 |
-| auto (no declaration) | 19 | 17 | 13 | 49 |
+| Templated routes (excl. auth, shared file, not found, redirect, dev) | 24 | 25 | 28 | 77 |
+| auto (no declaration) | 17 | 17 | 13 | 47 |
 | needs **scope** | 1 | 0 | 3 | 4 |
 | needs **rows** (required for M / O; optional for S) | 6 | 8 | 13 | 27 |
 
 (`/admin/connectors/templates` needs both, so the S row adds up to 28 with one overlap.)
 
-\* Overview states inside other routes and the shared components are counted with their routes;
-the counts are approximate where one route draws two templates (an off state), and the plan's
-first task re-derives them with a script (`tools/checks` can list template use per route).
+\* Re-derived with `pnpm --filter @capybara-hq/checks inventory:templates` (2026-11-22): the O and S
+counts and every per-template count of §6 held; the member count was 24, not 26, because the first
+count added the template-off state of `/agents/templates/<id>` and the setup home, which are no
+routes of their own (they are states of routes already counted). Overview states inside other
+routes and the shared components are counted with their routes.
 
 ## 7. Guards
 

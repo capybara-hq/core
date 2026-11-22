@@ -22,6 +22,7 @@ import {
   useHaptics,
 } from "../native";
 import { type CommandGroup, CommandPalette } from "../overlays/index";
+import type { MenuItem } from "../overlays/menus";
 import { popOverlaysThen } from "../overlays/use-overlay-history";
 import { useDesignT } from "../provider";
 import { DesktopOnlyNotice, type DesktopOnlyNoticeProps } from "../templates/desktop-only";
@@ -210,11 +211,22 @@ export function AppShell({
   const page = useMemo(() => {
     const merged: ShellPage = {};
     // later registrations win within a layer, a higher layer over a lower one (a stable sort)
-    for (const { page: p } of [...pages.values()].sort((a, b) => a.layer - b.layer)) {
-      if (p.title !== undefined) merged.title = p.title;
+    const sorted = [...pages.values()].sort((a, b) => a.layer - b.layer);
+    let titleLayer: number | undefined;
+    for (const { page: p, layer } of sorted) {
+      if (p.title !== undefined) {
+        merged.title = p.title;
+        titleLayer = layer;
+      }
       if (p.path !== undefined) merged.path = p.path;
       if (p.menu !== undefined) merged.menu = p.menu;
       if (p.onBack !== undefined) merged.onBack = p.onBack;
+      if (p.actions !== undefined) merged.actions = p.actions;
+    }
+    // The scrolled title belongs to the title drawn: only the layer that gave the title reports it
+    // (a pushed part's own title is not "away" because the page under it scrolled).
+    for (const { page: p, layer } of sorted) {
+      if (layer === titleLayer && p.titleAway !== undefined) merged.titleAway = p.titleAway;
     }
     return merged;
   }, [pages]);
@@ -525,7 +537,16 @@ export function AppShell({
         : drawer
           ? { kind: "menu", onOpen: () => setDrawerOpen(true), badge: drawer.menuBadge }
           : undefined;
-  const overflow = page.menu ?? menu ?? [];
+  // The trailing "…" (responsive system spec §2.5): the page's menu, then the head's actions.
+  const overflow = joinOverflow(
+    page.menu ?? menu ?? [],
+    headActionEntries(
+      page.actions ?? [],
+      (href) => (onNavigate ? onNavigate(href) : window.location.assign(href)),
+      touch === true,
+    ),
+  );
+  const titleAway = page.titleAway === true && page.title !== undefined;
   // The collapsed sidebar's expand button in the desktop's top row (desktop client spec §7.3):
   // drawn inside a desktop shell while the person has collapsed the sidebar on the expanded class
   // (the medium rail cannot expand); CSS shows it only where the window controls reach past the
@@ -598,11 +619,16 @@ export function AppShell({
             onOpenCommands={() => setPaletteOpen(true)}
             {...(railRef ? { mode: "rail" as const } : {})}
           />
-          <div className="cb-shell-column" data-part="shell-content">
+          <div
+            className="cb-shell-column"
+            data-part="shell-content"
+            data-title-away={titleAway ? "true" : undefined}
+          >
             {/* Drawn always, shown below 600 by CSS: the server render is right at every width. */}
             <div className="cb-shell-float" data-part="floating-bar-slot">
               <FloatingBar
                 lead={lead}
+                title={titleAway ? page.title : undefined}
                 trailing={
                   overflow.length > 0 ? (
                     <ConvMenu
@@ -742,4 +768,71 @@ function subscribeNavigation(onChange: () => void): () => void {
   const notify = () => queueMicrotask(onChange);
   nav.addEventListener("currententrychange", notify);
   return () => nav.removeEventListener("currententrychange", notify);
+}
+
+/** Two runs of overflow entries, a separator between them when both have any. */
+function joinOverflow(menu: ConvMenuEntry[], actions: ConvMenuEntry[]): ConvMenuEntry[] {
+  if (menu.length === 0) return actions;
+  if (actions.length === 0) return menu;
+  return [...menu, { kind: "separator" }, ...actions];
+}
+
+/**
+ * The head's secondary actions as the floating row's overflow entries (responsive system spec
+ * §2.5): a link calls `go(href)` after its own `onSelect`; a submenu becomes a labelled run of its
+ * items between separators; a desktop-only entry is left out on touch (as a menu hides it there),
+ * and a submenu left with no item draws no label.
+ * Separators at either end or doubled are dropped.
+ */
+function headActionEntries(
+  items: readonly MenuItem[],
+  go: (href: string) => void,
+  touch: boolean,
+): ConvMenuEntry[] {
+  const out: ConvMenuEntry[] = [];
+  const separate = () => {
+    if (out.length > 0 && out[out.length - 1]?.kind !== "separator")
+      out.push({ kind: "separator" });
+  };
+  const walk = (list: readonly MenuItem[], prefix: string) => {
+    list.forEach((item, i) => {
+      if (item === "separator") {
+        separate();
+        return;
+      }
+      if (item.desktopOnly && touch) return;
+      if (item.submenu) {
+        const before = out.length;
+        separate();
+        const labelAt = out.length;
+        out.push({ kind: "label", label: item.label });
+        walk(item.submenu, `${prefix}${i}-`);
+        // nothing left in the run (every item desktop-only on touch): no bare label
+        if (!out.slice(labelAt + 1).some((e) => e.kind === "item")) {
+          out.length = before;
+          return;
+        }
+        separate();
+        return;
+      }
+      const { href, onSelect } = item;
+      out.push({
+        kind: "item",
+        id: `head-action-${prefix}${i}`,
+        label: item.label,
+        ...(item.icon ? { icon: item.icon } : {}),
+        ...(item.description ? { description: item.description } : {}),
+        ...(item.checked !== undefined ? { checked: item.checked } : {}),
+        ...(item.danger ? { tone: "fail" as const } : {}),
+        ...(item.disabled ? { disabled: true } : {}),
+        onSelect: () => {
+          onSelect?.();
+          if (href !== undefined) go(href);
+        },
+      });
+    });
+  };
+  walk(items, "");
+  while (out[out.length - 1]?.kind === "separator") out.pop();
+  return out;
 }

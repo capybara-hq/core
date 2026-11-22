@@ -17,11 +17,20 @@ import { Pagination } from "../display/pagination";
 import { useScrollbarRelayout } from "../display/scrollbar-relayout";
 import { Icon } from "../icons/icon";
 import { useInBox } from "../layout/box";
+import { ActionSheet } from "../overlays/action-sheet";
 import { Menu, menuActions } from "../overlays/menus";
 import { useDesignT } from "../provider";
+import { ClassForms, useClassForm } from "../shell/class-forms";
 import { SIZE_CLASS_QUERIES } from "../shell/size-class";
 import { useMediaQuery } from "../shell/use-media-query";
 import { CellTitle } from "./cell-title";
+import {
+  assertCompactColumns,
+  CompactHeader,
+  CompactRow,
+  compactRoles,
+  declaresCompact,
+} from "./compact-rows";
 import { EmptyArea } from "./empty";
 import type { DataTableProps } from "./types";
 
@@ -91,6 +100,7 @@ export function DataTable<T>({
   expand,
   isDisabled,
   rowLabel,
+  compactLead,
   sort,
   pagination,
   rowHeight = "default",
@@ -103,6 +113,13 @@ export function DataTable<T>({
   // Below 600 the rows stack (spec §6.6): the header row is only read by screen readers, so its
   // sort buttons and select-all checkbox move to a compact bar above the rows.
   const narrow = useMediaQuery(SIZE_CLASS_QUERIES.compact);
+  // A table whose columns declare compact roles draws grouped rows below 600 (a different DOM:
+  // spec §5.1 reason 1); selection and the bulk bar are not mounted there (decision D5).
+  const mapped = declaresCompact(columns);
+  if (mapped) assertCompactColumns(columns);
+  const classForm = useClassForm();
+  const mappedCompact = mapped && classForm === "compact";
+  const [sheetKey, setSheetKey] = useState<string | null>(null);
   const bodyRef = useRef<HTMLTableSectionElement>(null);
   const [focusKey, setFocusKey] = useState<string | undefined>();
 
@@ -184,7 +201,7 @@ export function DataTable<T>({
     return () => document.removeEventListener("keydown", onKey);
   }, [hasSelection]);
 
-  const bulk = selection && selected.size > 0;
+  const bulk = selection && selected.size > 0 && !mappedCompact;
   const colCount = columns.length + (selection ? 1 : 0) + (rowMenu ? 1 : 0);
 
   // Explicit roles throughout ({@link ROLE}).
@@ -268,9 +285,9 @@ export function DataTable<T>({
           ]);
   const sortValue = sort ? `${sort.key}:${sort.dir}` : "";
   const narrowBar =
-    narrow && kind === null && (selection || sortOptions.length > 0) ? (
+    narrow && kind === null && ((selection && !mapped) || sortOptions.length > 0) ? (
       <div className="cb-table-narrow-bar" data-part="table-narrow-bar">
-        {selection ? (
+        {selection && !mapped ? (
           <Checkbox
             checked={allState}
             onChange={toggleAll}
@@ -296,6 +313,186 @@ export function DataTable<T>({
       </div>
     ) : null;
 
+  const wideTable = (
+    <TableScroll>
+      <table
+        className="cb-table-el"
+        {...ROLE.table}
+        aria-label={label}
+        data-select={selection ? "true" : undefined}
+      >
+        {head}
+
+        <DensityContext value="dense">
+          <tbody ref={bodyRef} {...ROLE.rowgroup}>
+            {rows.map((row, idx) => {
+              const key = rowKey(row);
+              const disabled = !!isDisabled?.(row);
+              const states = [
+                key === activeKey ? "active" : "",
+                selected.has(key) ? "checked" : "",
+                disabled ? "disabled" : "",
+              ]
+                .filter(Boolean)
+                .join(" ");
+              const first = columns[0]?.cell(row);
+              const rowName = rowLabel?.(row) ?? rowNameOf(first) ?? key;
+              const extra = expand?.(row);
+              const menuItems = rowMenu?.(row);
+              // Row controls follow the row (roving tabindex): only the Tab-stop row's checkbox / ⋯ is in the Tab order
+              const inTabRow = key === tabKey ? 0 : -1;
+              return (
+                <Fragment key={key}>
+                  <tr
+                    className="cb-table-row"
+                    {...ROLE.row}
+                    data-part="row"
+                    data-row-key={key}
+                    data-state={states || undefined}
+                    aria-current={key === activeKey ? "true" : undefined}
+                    tabIndex={key === tabKey ? 0 : -1}
+                    // Focus entering any control in the row (a checkbox click) also makes it the Tab-stop row
+                    onFocus={() => setFocusKey(key)}
+                    onKeyDown={(e) => onRowKey(e, row, idx)}
+                    onClick={(e) => onRowClick(e, row)}
+                  >
+                    {selection ? (
+                      <td
+                        className="cb-table-check"
+                        {...ROLE.cell}
+                        data-part="cell"
+                        data-no-open="true"
+                      >
+                        <Checkbox
+                          checked={selected.has(key)}
+                          onChange={() => toggle(key)}
+                          disabled={disabled}
+                          tabIndex={inTabRow}
+                          aria-label={t("table.selectRow").replace("{name}", rowName)}
+                        />
+                      </td>
+                    ) : null}
+                    {columns.map((c, ci) => {
+                      const content = c.cell(row);
+                      // Below 600 the rows stack (spec §6.6): the first cell is the card's
+                      // title line, every other cell is labelled with its column header.
+                      const lead = ci === 0;
+                      const list = c.wrap ? stringList(content) : null;
+                      return (
+                        <td
+                          key={c.key}
+                          {...ROLE.cell}
+                          data-part="cell"
+                          data-align={c.align === "right" ? "right" : undefined}
+                          data-tone={c.tone}
+                          data-wrap={c.wrap ? "true" : undefined}
+                          data-fit={c.fit ? "true" : undefined}
+                          data-lead={lead ? "true" : undefined}
+                          data-label={!lead && c.header ? c.header : undefined}
+                          data-no-open={c.interactive ? "true" : undefined}
+                        >
+                          <span
+                            className="cb-table-cell"
+                            title={list ? list.join(" · ") : titleOf(content)}
+                          >
+                            {list ? cellList(list) : content}
+                          </span>
+                        </td>
+                      );
+                    })}
+                    {menuItems === undefined ? null : menuActions(menuItems).length === 0 ? (
+                      // This row has no available action: keep the cell so columns align, draw no ⋯
+                      <td
+                        className="cb-table-menu"
+                        {...ROLE.cell}
+                        data-part="menu-cell"
+                        data-no-open="true"
+                      />
+                    ) : (
+                      <td
+                        className="cb-table-menu"
+                        {...ROLE.cell}
+                        data-part="menu-cell"
+                        data-no-open="true"
+                      >
+                        <Menu
+                          items={menuItems}
+                          trigger={
+                            <IconButton
+                              label={t("table.rowActions")}
+                              icon={<Icon name="more-horizontal" size={14} />}
+                              tabIndex={inTabRow}
+                            />
+                          }
+                        />
+                      </td>
+                    )}
+                  </tr>
+                  {extra ? (
+                    <tr className="cb-table-expand" {...ROLE.row}>
+                      <td colSpan={colCount} {...ROLE.cell}>
+                        {/* Each direct child is one line; CSS adds a └ lead at the start of the line */}
+                        <div className="cb-table-expand-body">
+                          {typeof extra === "string" || typeof extra === "number" ? (
+                            <div>{extra}</div>
+                          ) : (
+                            extra
+                          )}
+                        </div>
+                      </td>
+                    </tr>
+                  ) : null}
+                </Fragment>
+              );
+            })}
+          </tbody>
+        </DensityContext>
+      </table>
+    </TableScroll>
+  );
+
+  const compactList = (
+    // biome-ignore lint/a11y/useAriaPropsSupportedByRole: the explicit table role is spread (ROLE)
+    <div className="cb-table-compact" {...ROLE.table} aria-label={label} data-part="table-compact">
+      <CompactHeader columns={columns} menuLabel={rowMenu ? t("table.rowActions") : undefined} />
+      <div {...ROLE.rowgroup}>
+        {rows.map((row) => {
+          const key = rowKey(row);
+          const disabled = !!isDisabled?.(row);
+          const menuItems = rowMenu?.(row);
+          return (
+            <CompactRow<T>
+              key={key}
+              row={row}
+              rowKey={key}
+              columns={columns}
+              lead={compactLead?.(row)}
+              state={
+                [key === activeKey ? "active" : "", disabled ? "disabled" : ""]
+                  .filter(Boolean)
+                  .join(" ") || undefined
+              }
+              active={key === activeKey}
+              disabled={disabled}
+              open={onOpen && !disabled ? () => onOpen(row) : undefined}
+              menuItems={menuItems}
+              menuColumn={rowMenu !== undefined}
+              menuLabel={t("table.rowActions")}
+              onMenu={() => setSheetKey(key)}
+              extra={expand?.(row)}
+            />
+          );
+        })}
+      </div>
+    </div>
+  );
+  const tableArea = mapped ? <ClassForms compact={compactList} wide={wideTable} /> : wideTable;
+  const sheetRow = sheetKey === null ? undefined : rows.find((r) => rowKey(r) === sheetKey);
+  const sheetName =
+    sheetRow === undefined
+      ? undefined
+      : (rowLabel?.(sheetRow) ?? rowNameOf(compactRoles(columns).title?.cell(sheetRow)));
+
   // Density (spec §6.6): the toolbar, bulk bar and empty-state actions are `default`, as the signed
   // reference draws them; the rows (row menus) and pagination are `dense`.
   return (
@@ -303,6 +500,7 @@ export function DataTable<T>({
       className="cb-table"
       data-row-height={rowHeight}
       data-framed={framed ? "true" : "false"}
+      data-compact-map={mapped ? "true" : undefined}
       data-error={kind === "error" ? "true" : undefined}
     >
       {bulk ? (
@@ -336,148 +534,24 @@ export function DataTable<T>({
             <EmptyArea<T> kind={kind} error={error} empty={empty} noResults={noResults} />
           </>
         ) : (
-          <TableScroll>
-            <table
-              className="cb-table-el"
-              {...ROLE.table}
-              aria-label={label}
-              data-select={selection ? "true" : undefined}
-            >
-              {head}
-
-              <DensityContext value="dense">
-                <tbody ref={bodyRef} {...ROLE.rowgroup}>
-                  {rows.map((row, idx) => {
-                    const key = rowKey(row);
-                    const disabled = !!isDisabled?.(row);
-                    const states = [
-                      key === activeKey ? "active" : "",
-                      selected.has(key) ? "checked" : "",
-                      disabled ? "disabled" : "",
-                    ]
-                      .filter(Boolean)
-                      .join(" ");
-                    const first = columns[0]?.cell(row);
-                    const rowName = rowLabel?.(row) ?? rowNameOf(first) ?? key;
-                    const extra = expand?.(row);
-                    const menuItems = rowMenu?.(row);
-                    // 行内控件随行做 roving tabindex：只有 Tab 停靠行的复选框 / ⋯ 在 Tab 顺序里
-                    const inTabRow = key === tabKey ? 0 : -1;
-                    return (
-                      <Fragment key={key}>
-                        <tr
-                          className="cb-table-row"
-                          {...ROLE.row}
-                          data-part="row"
-                          data-row-key={key}
-                          data-state={states || undefined}
-                          aria-current={key === activeKey ? "true" : undefined}
-                          tabIndex={key === tabKey ? 0 : -1}
-                          // 焦点进入行内任意控件（如点击复选框）也让该行成为 Tab 停靠行
-                          onFocus={() => setFocusKey(key)}
-                          onKeyDown={(e) => onRowKey(e, row, idx)}
-                          onClick={(e) => onRowClick(e, row)}
-                        >
-                          {selection ? (
-                            <td
-                              className="cb-table-check"
-                              {...ROLE.cell}
-                              data-part="cell"
-                              data-no-open="true"
-                            >
-                              <Checkbox
-                                checked={selected.has(key)}
-                                onChange={() => toggle(key)}
-                                disabled={disabled}
-                                tabIndex={inTabRow}
-                                aria-label={t("table.selectRow").replace("{name}", rowName)}
-                              />
-                            </td>
-                          ) : null}
-                          {columns.map((c, ci) => {
-                            const content = c.cell(row);
-                            // Below 600 the rows stack (spec §6.6): the first cell is the card's
-                            // title line, every other cell is labelled with its column header.
-                            const lead = ci === 0;
-                            const list = c.wrap ? stringList(content) : null;
-                            return (
-                              <td
-                                key={c.key}
-                                {...ROLE.cell}
-                                data-part="cell"
-                                data-align={c.align === "right" ? "right" : undefined}
-                                data-tone={c.tone}
-                                data-wrap={c.wrap ? "true" : undefined}
-                                data-fit={c.fit ? "true" : undefined}
-                                data-lead={lead ? "true" : undefined}
-                                data-label={!lead && c.header ? c.header : undefined}
-                                data-no-open={c.interactive ? "true" : undefined}
-                              >
-                                <span
-                                  className="cb-table-cell"
-                                  title={list ? list.join(" · ") : titleOf(content)}
-                                >
-                                  {list ? cellList(list) : content}
-                                </span>
-                              </td>
-                            );
-                          })}
-                          {menuItems === undefined ? null : menuActions(menuItems).length === 0 ? (
-                            // 这一行没有可用的操作：保留单元格对齐列，不显示 ⋯
-                            <td
-                              className="cb-table-menu"
-                              {...ROLE.cell}
-                              data-part="menu-cell"
-                              data-no-open="true"
-                            />
-                          ) : (
-                            <td
-                              className="cb-table-menu"
-                              {...ROLE.cell}
-                              data-part="menu-cell"
-                              data-no-open="true"
-                            >
-                              <Menu
-                                items={menuItems}
-                                trigger={
-                                  <IconButton
-                                    label={t("table.rowActions")}
-                                    icon={<Icon name="more-horizontal" size={14} />}
-                                    tabIndex={inTabRow}
-                                  />
-                                }
-                              />
-                            </td>
-                          )}
-                        </tr>
-                        {extra ? (
-                          <tr className="cb-table-expand" {...ROLE.row}>
-                            <td colSpan={colCount} {...ROLE.cell}>
-                              {/* 每个直接子元素是一行，CSS 在行首加 └ 引导 */}
-                              <div className="cb-table-expand-body">
-                                {typeof extra === "string" || typeof extra === "number" ? (
-                                  <div>{extra}</div>
-                                ) : (
-                                  extra
-                                )}
-                              </div>
-                            </td>
-                          </tr>
-                        ) : null}
-                      </Fragment>
-                    );
-                  })}
-                </tbody>
-              </DensityContext>
-            </table>
-          </TableScroll>
+          tableArea
         )}
       </div>
       {pagination ? <Pagination {...pagination} /> : null}
+      {rowMenu && (mappedCompact || sheetRow !== undefined) ? (
+        // Mounted while its row is chosen, so leaving compact with a sheet up does not drop it.
+        <ActionSheet
+          open={sheetRow !== undefined}
+          onOpenChange={(o) => {
+            if (!o) setSheetKey(null);
+          }}
+          title={sheetName ?? t("overlay.actions")}
+          items={sheetRow === undefined ? [] : (rowMenu(sheetRow) ?? [])}
+        />
+      ) : null}
     </div>
   );
 }
-
 /**
  * The table's sideways (and capped vertical) scroller, kept sized to its scrollbar in WebKit
  * ({@link useScrollbarRelayout}). Its own component: it mounts only once there are rows.

@@ -12,6 +12,14 @@
   --cb-inset-right: max(env(safe-area-inset-right, 0px), var(--cb-shell-inset-right, 0px));
   --cb-inset-bottom: max(env(safe-area-inset-bottom, 0px), var(--cb-shell-inset-bottom, 0px));
   --cb-inset-left: max(env(safe-area-inset-left, 0px), var(--cb-shell-inset-left, 0px));
+  /* The grouped list (DataTable's grouped rows §6.6, CardGrid on phones §6.34): one set of values
+     for the frame, the row padding, the 40 px lead and the hairline inset to the text column. */
+  --cb-grouped-line: 1px solid var(--cb-line-soft);
+  --cb-grouped-pad: var(--cb-space-3) var(--cb-space-4);
+  --cb-grouped-lead: 40px;
+  --cb-grouped-row-lead: calc(var(--cb-grouped-lead) + 2 * var(--cb-space-3));
+  --cb-grouped-inset: var(--cb-space-4);
+  --cb-grouped-inset-lead: calc(var(--cb-space-4) + var(--cb-grouped-lead) + var(--cb-space-3));
 }
 
 /* Touch behaviour (mobile app spec §7.1), for the browser, the PWA and the app alike: no grey tap

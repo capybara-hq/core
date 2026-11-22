@@ -3,6 +3,11 @@ import { dirname, join, relative, resolve, sep } from "node:path";
 import { BOX_PENDING, type BoxPending, boxFindings } from "./box-in-box.js";
 import { breakpointFindings } from "./design-breakpoint.js";
 import {
+  DUAL_RENDER_PENDING,
+  type DualRenderPending,
+  dualRenderTreeFindings,
+} from "./design-dual-render.js";
+import {
   collectImports,
   type Finding,
   isParseError,
@@ -13,8 +18,31 @@ import {
   walk,
 } from "./source.js";
 import { shellAccessFindings } from "./web-shell-access.js";
+import {
+  filtersScopeTreeFindings,
+  SCOPE_PENDING,
+  type ScopePending,
+  SIZE_BRANCH_ALLOWED,
+  type SizeBranchAllowed,
+  sizeBranchTreeFindings,
+  templateOnlyPropsTreeFindings,
+} from "./web-ui-responsive.js";
 
 export { BOX_PENDING, type BoxPending } from "./box-in-box.js";
+export { DUAL_RENDER_PENDING, type DualRenderPending } from "./design-dual-render.js";
+export {
+  SCOPE_PENDING,
+  type ScopePending,
+  SIZE_BRANCH_ALLOWED,
+  type SizeBranchAllowed,
+} from "./web-ui-responsive.js";
+
+/** The allowlists and ratchets of the responsive rules (`web-ui-size-branch` & co.). */
+export interface ResponsiveLists {
+  sizeAllowed: readonly SizeBranchAllowed[];
+  scopePending: readonly ScopePending[];
+  dualPending: readonly DualRenderPending[];
+}
 export type { Finding };
 
 /** The page templates of spec §5; must equal @capybara-hq/design PAGE_TEMPLATES (a test checks). */
@@ -1405,6 +1433,11 @@ export function checkWebUi(
   pending: readonly SsrPending[] = SSR_PENDING,
   queryPending: readonly QueryPending[] = QUERY_PENDING,
   boxPending: readonly BoxPending[] = BOX_PENDING,
+  responsive: ResponsiveLists = {
+    sizeAllowed: SIZE_BRANCH_ALLOWED,
+    scopePending: SCOPE_PENDING,
+    dualPending: DUAL_RENDER_PENDING,
+  },
 ): Finding[] {
   const findings: Finding[] = [];
   const readers = kernelReaders(webSrcDir);
@@ -1423,6 +1456,10 @@ export function checkWebUi(
   }
   findings.push(...charIconMessageFindings(join(webSrcDir, "..", "messages")));
   findings.push(...checkDesign(designSrcDir));
+  findings.push(...dualRenderTreeFindings(designSrcDir, responsive.dualPending));
+  findings.push(...sizeBranchTreeFindings(webSrcDir, responsive.sizeAllowed));
+  findings.push(...filtersScopeTreeFindings(webSrcDir, responsive.scopePending));
+  findings.push(...templateOnlyPropsTreeFindings(webSrcDir));
   findings.push(...boxFindings(webSrcDir, boxPending));
   return applyQueryPending(applySsrPending(findings, webSrcDir, pending), webSrcDir, queryPending);
 }
