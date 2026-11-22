@@ -491,7 +491,7 @@ export function useOwnerTabs(rows: PlatformComponent[] | null): {
 }
 
 /**
- * The 全部 / 平台 / 组织创建 owner choice of a template list, a `ListPage` `scope` (chips on a
+ * The All / Platform / Org-created owner choice of a template list, a `ListPage` `scope` (chips on a
  * compact window, a Segmented on a wide one), and the rows it leaves.
  */
 export function useOwnerFilter(rows: PlatformComponent[] | null): {
