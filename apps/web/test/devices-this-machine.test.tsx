@@ -5,6 +5,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import en from "../messages/en.json";
 import zh from "../messages/zh.json";
 import { useDeviceChoice } from "../src/components/conversation/useSelection";
+import { useConnectThisMachine } from "../src/lib/use-this-machine";
 import { json, lastStubRoutes, stubApi } from "./support/api";
 import { resetNavigation } from "./support/navigation";
 import { renderRouteWithCache } from "./support/query";
@@ -348,5 +349,59 @@ describe("copy", () => {
     expect(z.mark).toBe("本机");
     expect(z.wakeNote).toBe("电脑曾休眠");
     expect([z.pause, z.resume, z.disconnect]).toEqual(["暂停", "恢复", "断开"]);
+  });
+});
+
+describe("useConnectThisMachine", () => {
+  function mount() {
+    renderPage(<div />);
+    const wrapper = ({ children }: { children: ReactNode }) => pageElement(children);
+    return renderHook(() => useConnectThisMachine("o1"), { wrapper });
+  }
+
+  it("is not offered in a browser", () => {
+    const { result } = mount();
+    expect(result.current.offered).toBe(false);
+  });
+
+  it("connect() calls device@2.connect({ orgId })", async () => {
+    const connect = vi.fn().mockResolvedValue("connected");
+    installShell({ "device@2": { ...fakeDevice().device, connect } });
+    const { result } = mount();
+    await waitFor(() => expect(result.current.offered).toBe(true));
+    act(() => result.current.connect());
+    await waitFor(() => expect(connect).toHaveBeenCalledWith({ orgId: "o1" }));
+    await waitFor(() => expect(result.current.pending).toBe(false));
+    expect(result.current.failed).toBe(false);
+  });
+
+  it("a cancelled connect (answer or rejection) is not a failure", async () => {
+    const connect = vi
+      .fn()
+      .mockResolvedValueOnce("cancelled")
+      .mockRejectedValueOnce({ code: "cancelled" });
+    installShell({ "device@2": { ...fakeDevice().device, connect } });
+    const { result } = mount();
+    await waitFor(() => expect(result.current.offered).toBe(true));
+    for (let n = 1; n <= 2; n++) {
+      act(() => result.current.connect());
+      await waitFor(() => expect(connect).toHaveBeenCalledTimes(n));
+      await waitFor(() => expect(result.current.pending).toBe(false));
+      expect(result.current.failed).toBe(false);
+    }
+  });
+
+  it.each([
+    ["an { error } answer", vi.fn().mockResolvedValue({ error: "login failed" })],
+    ["a rejection", vi.fn().mockRejectedValue({ code: "failed" })],
+  ])("%s sets failed, and a new attempt clears it", async (_name, connect) => {
+    installShell({ "device@2": { ...fakeDevice().device, connect } });
+    const { result } = mount();
+    await waitFor(() => expect(result.current.offered).toBe(true));
+    act(() => result.current.connect());
+    await waitFor(() => expect(result.current.failed).toBe(true));
+    connect.mockResolvedValueOnce("connected");
+    act(() => result.current.connect());
+    await waitFor(() => expect(result.current.failed).toBe(false));
   });
 });

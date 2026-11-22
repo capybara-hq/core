@@ -26,8 +26,8 @@ import { extensionLabel, labelLocale } from "../lib/extension-label";
 import { devicesQuery } from "../lib/query/devices";
 import { keys } from "../lib/query/keys";
 import { useAppMutation } from "../lib/query/mutation";
-import { useDeviceCapability } from "../lib/shell";
 import { useErrorMessage } from "../lib/use-error-message";
+import { useConnectThisMachine } from "../lib/use-this-machine";
 import { FormError } from "./form-error";
 
 /** How often the dialog reads the devices while it waits for a machine to connect. */
@@ -224,45 +224,20 @@ function useWatchNewDevice(orgId: string, enabled: boolean, onConnected: (e: Dev
 /** The commands that connect a machine, shown while the dialog waits (`useWatchNewDevice`). */
 function LocalSteps({ orgId }: { orgId: string }) {
   const t = useTranslations("devices.create");
-  const cap = useDeviceCapability();
-  const [connectError, setConnectError] = useState<string>();
-  // `connect` runs inside the click-driven mutation, so the shell sees the person's activation
-  const connect = useAppMutation({
-    fn: () => {
-      if (cap === undefined) return Promise.resolve("cancelled" as const);
-      return cap.connect({ orgId });
-    },
-    invalidates: () => [keys.shell().deviceStatus()],
-  });
-  const onConnect = async () => {
-    if (connect.isPending) return;
-    setConnectError(undefined);
-    try {
-      const result = await connect.mutateAsync(undefined);
-      if (typeof result === "object") setConnectError(t("connectFailed"));
-    } catch (e) {
-      const code = (e as { code?: unknown } | null)?.code;
-      if (code !== "cancelled") setConnectError(t("connectFailed"));
-    }
-  };
+  const { offered, pending, failed, connect } = useConnectThisMachine(orgId);
   // The deployment's address, read after mount (a server render has no window).
   const [origin, setOrigin] = useState("");
   useEffect(() => setOrigin(window.location.origin), []);
   return (
     <Stack gap={16}>
-      {cap !== undefined && (
+      {offered && (
         <Stack gap={8}>
           <Stack direction="row">
-            <Button
-              variant="primary"
-              loading={connect.isPending}
-              disabled={connect.isPending}
-              onClick={() => void onConnect()}
-            >
+            <Button variant="primary" loading={pending} disabled={pending} onClick={connect}>
               {t("connectMachine")}
             </Button>
           </Stack>
-          {connectError !== undefined && <FormError message={connectError} />}
+          {failed && <FormError message={t("connectFailed")} />}
         </Stack>
       )}
       <CopyField label={t("installStep")} value={DEVICE_INSTALL_COMMAND} />

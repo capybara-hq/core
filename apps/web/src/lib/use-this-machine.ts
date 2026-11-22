@@ -1,9 +1,10 @@
 "use client";
 
 import { useQuery, useQueryClient } from "@tanstack/react-query";
-import { useEffect, useMemo } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { deviceStatusQuery } from "./query/device-status";
 import { keys } from "./query/keys";
+import { useAppMutation } from "./query/mutation";
 import { type DeviceCapabilityV2, type ThisMachineConnection, useDeviceCapability } from "./shell";
 
 const NO_IDS: ReadonlySet<string> = new Set();
@@ -60,4 +61,43 @@ export function useThisMachineDeviceIds(orgId: string): ReadonlySet<string> {
     const ids = (connections ?? []).filter((c) => c.orgId === orgId).map((c) => c.deviceId);
     return ids.length === 0 ? NO_IDS : new Set(ids);
   }, [connections, orgId]);
+}
+
+/**
+ * The shell's 「connect this machine」 into the org `orgId` (`device@2.connect`). `connect()` runs the
+ * call inside the click's mutation so the shell sees the person's activation. `cancelled` shows
+ * nothing; an `{ error }` answer or a rejection other than `{ code: "cancelled" }` sets `failed`
+ * (the shell's own text is never kept or shown). A connection that was added shows up through the
+ * shell status and the org's device list.
+ */
+export function useConnectThisMachine(orgId: string): {
+  offered: boolean;
+  pending: boolean;
+  failed: boolean;
+  connect: () => void;
+} {
+  const cap = useDeviceCapability();
+  const [failed, setFailed] = useState(false);
+  const mutation = useAppMutation({
+    fn: () => {
+      if (cap === undefined) return Promise.resolve("cancelled" as const);
+      return cap.connect({ orgId });
+    },
+    invalidates: () => [keys.shell().deviceStatus(), keys.org(orgId).devices()],
+  });
+  const { mutateAsync, isPending } = mutation;
+  const connect = useCallback(() => {
+    if (isPending) return;
+    setFailed(false);
+    mutateAsync(undefined).then(
+      (result) => {
+        if (typeof result === "object") setFailed(true);
+      },
+      (e: unknown) => {
+        const code = (e as { code?: unknown } | null)?.code;
+        if (code !== "cancelled") setFailed(true);
+      },
+    );
+  }, [isPending, mutateAsync]);
+  return { offered: cap !== undefined, pending: isPending, failed, connect };
 }
