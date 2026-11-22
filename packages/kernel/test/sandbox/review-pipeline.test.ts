@@ -14,7 +14,7 @@ import {
 } from "@capybara-hq/testing";
 import { SchedulerRegistry } from "@nestjs/schedule";
 import { sql } from "kysely";
-import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
+import { afterAll, beforeAll, describe, expect, it, onTestFinished, vi } from "vitest";
 import { EventLog } from "../../src/conversations/event-log.js";
 import {
   ACTOR_NOT_DEVICE_OWNER_REASON,
@@ -40,6 +40,7 @@ import {
 } from "../../src/tools/builtins/sandbox/common.js";
 import { PERMISSION_SUPPORT_UNVERIFIED_TEXT, ToolPipeline } from "../../src/tools/pipeline.js";
 import {
+  FAKE_INSTANCE_PERMISSION_SUPPORT,
   readFakeSandboxOps,
   setFakeSandboxPermissionSupport,
 } from "../fixtures/plugins/device-fake/index.js";
@@ -1314,6 +1315,10 @@ describe("the first managed call of a device", () => {
     db.selectFrom("approvals").select("id").where("conversation_id", "=", conv).execute();
 
   it("a fresh cloud device's first call is reviewed as supported: Full access runs sudo with no ask", async () => {
+    // an instance-boundary provider: its first support allows no crossing the consent did not
+    // cover (one that did would ask the person to confirm Full again)
+    await setFakeSandboxPermissionSupport(root, FAKE_INSTANCE_PERMISSION_SUPPORT);
+    onTestFinished(() => setFakeSandboxPermissionSupport(root, null));
     const conv = await createConv(owner, orgId, agentId);
     const deviceId = await freshDevice(conv);
     const consent = (await k.app.get(PermissionFacts).scope(orgId, deviceId, null, null))

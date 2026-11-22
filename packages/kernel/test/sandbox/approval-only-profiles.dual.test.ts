@@ -23,7 +23,10 @@ import {
   type PermissionAutoGrantHooks,
 } from "../../src/sandbox/permission-auto-grants.js";
 import { REVIEW_SYSTEM_PROMPT } from "../../src/sandbox/review/index.js";
-import { setFakeSandboxPermissionSupport } from "../fixtures/plugins/device-fake/index.js";
+import {
+  FAKE_INSTANCE_PERMISSION_SUPPORT,
+  setFakeSandboxPermissionSupport,
+} from "../fixtures/plugins/device-fake/index.js";
 import { type ScriptRule, scriptRules } from "../fixtures/plugins/model-script/index.js";
 import { onlyBuiltins } from "../helpers/disabled-tools.js";
 import { accountsFor } from "../helpers/identity.js";
@@ -1102,35 +1105,41 @@ describe("a stored version 1 permission context", () => {
 });
 
 describe("Full access chosen before a device's first start", () => {
-  // approval-only profiles design, "Consent fingerprint": a runtime report arriving only narrows
-  // what the consent covers, so the device's first start never resets it
-  it("keeps the consent when the device starts with the roots its machine reported", async () => {
+  // approval-only profiles design, "Consent fingerprint", with the provider's support as the one
+  // layer of the consent and the ceilings: a consent given before any support is known covers no
+  // crossing, so a first start whose support allows one (running outside the sandbox) asks the
+  // person to confirm again; one whose support allows none keeps it
+  it("asks again when the device starts with a support that runs outside the sandbox", async () => {
     const s = await scene();
     const d = await localDevice(s, { network: "open" });
     const conv = await conversation(s, d.deviceId);
     await setProfile(s, conv, "full-access");
     const first = await call(s, conv, "Bash", { command: "echo first", description: "Run" }, 1);
     expect(first.payload.isError, first.payload.content).toBe(false);
-    expect((await permissions(s, conv)).profile).toBe("full-access");
-    expect(
-      (await eventsOf(db, conv)).filter((e) => e.type === "permission_profile_changed"),
-    ).toHaveLength(1);
+    expect((await permissions(s, conv)).profile).toBe("approve-for-me");
   });
 
-  it("keeps the consent when a cloud device's first instance has the roots the consent covered", async () => {
-    await setFakeSandboxPermissionSupport(sandboxRoot, null);
-    const s = await scene();
-    const created = await ownerA({
-      method: "POST",
-      url: `/api/v1/orgs/${s.orgId}/devices`,
-      payload: { name: `Cloud ${randomUUID().slice(0, 8)}` },
-    });
-    expect(created.statusCode, created.body).toBe(201);
-    const deviceId = (created.json() as { device: { id: string } }).device.id;
-    const conv = await conversation(s, deviceId);
-    await setProfile(s, conv, "full-access");
-    const first = await call(s, conv, "Bash", { command: "echo first", description: "Run" }, 1);
-    expect(first.payload.isError, first.payload.content).toBe(false);
-    expect((await permissions(s, conv)).profile).toBe("full-access");
+  it("keeps the consent when a cloud device's first instance allows no crossing", async () => {
+    await setFakeSandboxPermissionSupport(sandboxRoot, FAKE_INSTANCE_PERMISSION_SUPPORT);
+    try {
+      const s = await scene();
+      const created = await ownerA({
+        method: "POST",
+        url: `/api/v1/orgs/${s.orgId}/devices`,
+        payload: { name: `Cloud ${randomUUID().slice(0, 8)}` },
+      });
+      expect(created.statusCode, created.body).toBe(201);
+      const deviceId = (created.json() as { device: { id: string } }).device.id;
+      const conv = await conversation(s, deviceId);
+      await setProfile(s, conv, "full-access");
+      const first = await call(s, conv, "Bash", { command: "echo first", description: "Run" }, 1);
+      expect(first.payload.isError, first.payload.content).toBe(false);
+      expect((await permissions(s, conv)).profile).toBe("full-access");
+      expect(
+        (await eventsOf(db, conv)).filter((e) => e.type === "permission_profile_changed"),
+      ).toHaveLength(1);
+    } finally {
+      await setFakeSandboxPermissionSupport(sandboxRoot, null);
+    }
   });
 });

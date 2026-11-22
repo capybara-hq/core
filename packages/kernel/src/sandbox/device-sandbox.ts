@@ -205,20 +205,16 @@ export function effectiveDeviceSandbox(
 
 /**
  * The provider layer of a device from its provider's permission support (support v2): the current
- * runtime report, else the support stored with the device's report, the one chain the crossing
- * ceilings and the Full access consent reach both read. With no support known yet, `unknown`
- * decides what is assumed, the same for every provider:
- * - `closed` (the ceilings, the device page, the lifecycle): the networks open to the device's own
- *   choice (the provider still enforces its own, and admission refuses until a report is
- *   recorded) and nothing outside the sandbox, which only the provider's support grants;
- * - `widest` (the consent reach): every crossing a provider could allow, so a consent given before
- *   any support is known covers no less than the ceilings that support later gives. Once support
- *   is known, the consent reach and the ceilings come from the same support: a support that widens
- *   a crossing outgrows the consent, which then no longer holds.
+ * runtime report, else the support stored with the device's report, the one layer the crossing
+ * ceilings and the Full access consent reach both read. With no support known yet, the kernel
+ * assumes no crossing for every provider: the networks open to the device's own choice (the
+ * provider still enforces its own, and admission refuses until a report is recorded), no per-call
+ * host (as an instance boundary) and nothing outside the sandbox. A support that later allows a
+ * crossing therefore widens the reach, so a Full access consent given before it no longer holds
+ * and the person confirms again with that crossing shown.
  */
 export function providerLayerOf(
   support: SandboxPermissionSupport | null,
-  unknown: "closed" | "widest" = "closed",
 ): DeviceSandboxProviderLayer {
   if (support !== null)
     return {
@@ -227,9 +223,9 @@ export function providerLayerOf(
       outsideSandbox: support.outsideSandbox,
     };
   return {
-    boundary: "operation",
-    network: { openPublic: true, allowlist: true, perOperationHosts: true },
-    outsideSandbox: unknown === "widest",
+    boundary: "instance",
+    network: { openPublic: true, allowlist: true, perOperationHosts: false },
+    outsideSandbox: false,
   };
 }
 

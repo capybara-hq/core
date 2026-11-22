@@ -186,8 +186,12 @@ describe("effectiveDeviceSandbox", () => {
   });
 
   it("the provider layer is its support; with none known, the same layer for every provider", () => {
-    // the networks open to the device's choice, nothing outside the sandbox
-    expect(providerLayerOf(null)).toEqual({ ...operation, outsideSandbox: false });
+    // no crossing: the networks open to the device's choice, no per-call host, nothing outside
+    expect(providerLayerOf(null)).toEqual({
+      boundary: "instance",
+      network: { openPublic: true, allowlist: true, perOperationHosts: false },
+      outsideSandbox: false,
+    });
     expect(
       providerLayerOf({
         version: 2,

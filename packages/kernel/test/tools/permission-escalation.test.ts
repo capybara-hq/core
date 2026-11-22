@@ -731,6 +731,82 @@ describe.each([true, false])(
   },
 );
 
+// A Full consent given while no support is known covers no crossing (the ceilings' layer): the
+// first support that allows one outgrows it, so the person confirms again with it shown
+describe("Full chosen before any support is known", () => {
+  /** The device as before its first start: no runtime evidence and no stored support. */
+  async function withoutSupport(input: Record<string, unknown>) {
+    const f = await escalated("request-approval", input);
+    await f.db
+      .updateTable("device_instances")
+      .set({ permission_runtime_identity: null })
+      .where("device_id", "=", f.deviceId)
+      .execute();
+    await sql`UPDATE capybara.devices SET report = report - 'support' WHERE id = ${f.deviceId}`.execute(
+      raw,
+    );
+    const profiles = k.app.get(PermissionProfilesService);
+    const view = await profiles.get(f.orgId, f.conversationId, f.accountId);
+    expect(view.outsideSandboxCeiling).toBe(false);
+    await profiles.set(f.orgId, f.conversationId, f.accountId, {
+      profile: "full-access",
+      expectedRevision: view.revision,
+      consentScopeRevision: view.scopeRevision ?? undefined,
+    });
+    expect((await profiles.get(f.orgId, f.conversationId, f.accountId)).profile).toBe(
+      "full-access",
+    );
+    return f;
+  }
+  const profileOf = async (f: Awaited<ReturnType<typeof escalated>>) =>
+    (await k.app.get(PermissionProfilesService).get(f.orgId, f.conversationId, f.accountId))
+      .profile;
+  const supportArrives = (
+    f: Awaited<ReturnType<typeof escalated>>,
+    report: SandboxPermissionSupport,
+  ) =>
+    seedInstalledEvidence(k, raw, {
+      orgId: f.orgId,
+      deviceId: f.deviceId,
+      provider: "@permission-policy-test",
+      version: "test-1",
+      report,
+    });
+
+  it("an outside-capable support arriving makes an escalated Bash ask", async () => {
+    const f = await withoutSupport(ESCALATED);
+    await supportArrives(f, SUPPORTS_BOTH);
+    expect(await profileOf(f)).toBe("approve-for-me");
+    vi.spyOn(k.app.get(CommandReviewService), "review").mockResolvedValue({
+      decision: "ask",
+      by: "classifier",
+      reason: "Unsure about running outside the sandbox.",
+      rule: null,
+    });
+    expect((await f.step()).kind).toBe("suspended");
+    expect(f.effects()).toBe(0);
+    expect(
+      await f.db
+        .selectFrom("permission_call_grants")
+        .select("id")
+        .where("source", "=", "full-access")
+        .execute(),
+    ).toEqual([]);
+    expect(await k.app.get(ApprovalsService).commandForCall(f.runId, f.callId)).toMatchObject({
+      status: "pending",
+    });
+  });
+
+  it("a support with per-call hosts arriving outgrows the consent too", async () => {
+    const f = await withoutSupport({
+      command: "curl https://api.example.com/x",
+      description: "Fetch",
+    });
+    await supportArrives(f, { ...SUPPORTS_BOTH, outsideSandbox: false });
+    expect(await profileOf(f)).toBe("approve-for-me");
+  });
+});
+
 it("a platform outside-sandbox setting off refuses the escalation, naming the super admin", async () => {
   const f = await escalated("request-approval");
   await platformFull("off");

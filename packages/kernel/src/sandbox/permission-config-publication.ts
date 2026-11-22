@@ -264,8 +264,10 @@ export class PermissionConfigPublication {
     projection: PermissionConfigProjection,
     activation?: Readonly<{ expectedActiveHash: string }>,
   ): Promise<PermissionConfigInitialization> {
-    // the org rows a key conversion writes, before the platform lock (org row -> permission locks)
+    // the org rows a key conversion writes, then the device rows a conversion may pin, before the
+    // platform lock (org row -> device row -> permission locks, the writers' order)
     await lockOrgsWithStoredPermissionKeys(this.db.db);
+    await lockDevicesFollowingTheirOrg(this.db.db);
     await this.ceilings.lock({}, "platform");
     const candidateHash = permissionProjectionFingerprint(projection);
     const row = await this.db
@@ -317,6 +319,7 @@ export class PermissionConfigPublication {
   @Transactional({ propagation: "requires_new" })
   async publish(before: KernelConfig, next: KernelConfig): Promise<void> {
     await lockOrgsWithStoredPermissionKeys(this.db.db);
+    await lockDevicesFollowingTheirOrg(this.db.db);
     await this.ceilings.lock({}, "platform");
     try {
       await this.publishLocked(
@@ -552,6 +555,23 @@ export class PermissionConfigPublication {
         "This replica has not applied the current permission configuration",
       );
   }
+}
+
+/**
+ * Locks the device rows a publication's conversion may write (`network_mode` still NULL: the
+ * snapshot copy and the network pins only touch those), in id order, before the platform
+ * authority writer lock: a device writer locks its row and then its authority (device row ->
+ * permission locks), so the publication must never hold the platform lock while it waits for a
+ * device row.
+ */
+export async function lockDevicesFollowingTheirOrg(db: KernelSchemaDb): Promise<void> {
+  await db
+    .selectFrom("devices")
+    .select("id")
+    .where("network_mode", "is", null)
+    .orderBy("id")
+    .forNoKeyUpdate()
+    .execute();
 }
 
 /**

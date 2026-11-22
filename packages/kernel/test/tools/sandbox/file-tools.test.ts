@@ -343,6 +343,9 @@ async function followPlatformMode(): Promise<void> {
  */
 async function fullAccess(convId: string): Promise<void> {
   const deviceId = await deviceOf(convId);
+  // the device started first, so its provider's support is known and the confirmation shows the
+  // crossings it allows (a consent given before covers none, and its first start would ask again)
+  await put(deviceId, {});
   const preview = await k.app.get(PermissionFacts).scope(orgId, deviceId, null, null);
   if (!preview.scopeRevision) throw new Error("the device offers no Full access scope");
   await k.app.get(PermissionProfilesService).set(orgId, convId, ownerId, {

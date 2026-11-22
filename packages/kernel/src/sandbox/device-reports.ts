@@ -307,7 +307,10 @@ export class DeviceReports {
         (!now.outsideSandbox && requiresFullExecution(scope)) ||
         (!now.perOperationHosts && intent.granted_hosts.length > 0),
       // Full access approves crossings by itself: a changed outside-sandbox crossing, or per-call
-      // hosts becoming possible, needs the person's consent again
+      // hosts becoming possible, needs the person's consent again. This reset is a backstop: the
+      // stored support usually already follows the runtime (`recordSupport` stores it), and the
+      // guard is the consent check itself (`consentHolds` / `reachWithin` against the reach the
+      // ceilings' support gives), which fails on any widening whether or not this flag is set
       was.outsideSandbox !== now.outsideSandbox ||
         (!was.perOperationHosts && now.perOperationHosts),
     );

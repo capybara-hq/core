@@ -146,13 +146,13 @@ export class PermissionFacts {
     /** The device's network as it would be stored (a change checked before it is written). */
     pending?: { networkMode: "open" | "allowlist" | "none" | null; networkHosts: string[] },
     /**
-     * Which provider layer: `ceilings` (the support chain, nothing outside while none is known),
-     * `consent` (the same chain, the widest layer while none is known: {@link providerLayerOf}) or
-     * `lifecycle` (no support: the network an instance is created with is the device's own choice
-     * within the ceilings, never a support read after an earlier instance, so a support arriving
-     * never makes the next use recreate the instance; the provider enforces what it can).
+     * Which provider layer: `ceilings` (the support chain, {@link providerLayerOf}; the consent
+     * reach reads it too) or `lifecycle` (no support: the network an instance is created with is
+     * the device's own choice within the ceilings, never a support read after an earlier
+     * instance, so a support arriving never makes the next use recreate the instance; the
+     * provider enforces what it can).
      */
-    layer: "ceilings" | "consent" | "lifecycle" = "ceilings",
+    layer: "ceilings" | "lifecycle" = "ceilings",
   ) {
     const [settings, org, row] = await Promise.all([
       readDeviceSandboxSettings(this.db.db, this.config),
@@ -184,12 +184,7 @@ export class PermissionFacts {
       ...(org.outsideSandbox !== undefined && { outsideSandbox: org.outsideSandbox }),
       ...(org.deviceNetwork !== undefined && { deviceNetwork: org.deviceNetwork }),
     };
-    const box = effectiveDeviceSandbox(
-      platform,
-      orgLayer,
-      device,
-      providerLayerOf(support, layer === "consent" ? "widest" : "closed"),
-    );
+    const box = effectiveDeviceSandbox(platform, orgLayer, device, providerLayerOf(support));
     const hostCeiling = hostGrantCeiling(box, platform, orgLayer);
     return {
       box,
@@ -522,14 +517,11 @@ export class PermissionFacts {
       if (row.kind === "platform" || row.kind === "org" || row.kind === "device")
         authority[row.kind] = row.full_revision;
     // the consent fingerprint: the device, the project binding and the crossing ceilings Full
-    // access auto-approves within (approval-only profiles design, "Consent fingerprint"), from
-    // the settings layers under the same provider support the ceilings read (the current runtime
-    // report, else the stored support): a support that allows a crossing the consent did not
-    // cover outgrows it, so Full access never auto-approves past what the person consented to.
-    // With no support known, the widest provider layer: a support arriving only narrows it
-    const consentReach = (
-      await this.deviceSandboxFacts(orgId, deviceId, availability, undefined, "consent")
-    ).reach;
+    // access auto-approves within (approval-only profiles design, "Consent fingerprint"), read
+    // from exactly the layer the ceilings read (the current runtime support, else the stored one,
+    // else no crossing): a support that allows a crossing the consent did not cover outgrows it,
+    // so Full access never auto-approves past what the person confirmed
+    const consentReach = (await this.deviceSandboxFacts(orgId, deviceId, availability)).reach;
     // what a consent is bound to besides the reach: the device, the project binding and the
     // epochs a widening writer bumps (a ceiling restored to the same values still resets; an
     // instance committed on other roots than the device's previous one bumps the device epoch)

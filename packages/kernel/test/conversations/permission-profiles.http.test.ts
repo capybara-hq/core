@@ -636,8 +636,22 @@ describe("Conversation permission profiles", () => {
       provider: "@permission-test",
       version: "test-1",
     });
-    // the support now known narrows the consent reach (the scope revision moves with it), and a
-    // narrowing keeps the consent
+    // the support now known runs outside the sandbox, which the consent given before it did not
+    // cover: Full access asks again, and the person confirms it with that crossing shown
+    expect((await req({ method: "GET", url })).json().profile).toBe("approve-for-me");
+    const shown = await req({ method: "GET", url: previewUrl });
+    expect(shown.json()).toMatchObject({ outsideSandboxCeiling: true });
+    const current = (await req({ method: "GET", url })).json() as { revision: number };
+    const again = await req({
+      method: "PATCH",
+      url,
+      payload: {
+        profile: "full-access",
+        expectedRevision: current.revision,
+        consentScopeRevision: shown.json().scopeRevision,
+      },
+    });
+    expect(again.statusCode, again.body).toBe(200);
     expect((await req({ method: "GET", url })).json().profile).toBe("full-access");
     expect(provision).not.toHaveBeenCalled();
     provision.mockRestore();

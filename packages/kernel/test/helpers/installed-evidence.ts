@@ -8,12 +8,7 @@ import type { Kysely } from "kysely";
 import { kernelDb } from "../../src/db/kernel-schema.js";
 import { KernelDb } from "../../src/infra/database/kernel-db.js";
 import { TransactionHost } from "../../src/infra/database/transaction-host.js";
-import {
-  type AppliedLimits,
-  appliedOf,
-  appliedWider,
-  readInstanceLimits,
-} from "../../src/sandbox/modes.js";
+import { type AppliedLimits, readInstanceLimits } from "../../src/sandbox/modes.js";
 import { PermissionAuthorityLock } from "../../src/sandbox/permission-authority-lock.js";
 import { PermissionFacts } from "../../src/sandbox/permission-facts.js";
 import { PermissionRuntimeReports } from "../../src/sandbox/permission-runtime-reports.js";
@@ -76,26 +71,6 @@ export async function seedInstalledEvidence(
       .execute();
   }
   await seedCloudEvidence(k, input);
-  // the support just recorded is stored with the device's report and decides the network it
-  // wants: an instance applied wider than that is brought to it, as the lifecycle's next use
-  // would, and its evidence recorded again under the new limits
-  const desired = await k.app
-    .get(PermissionFacts)
-    .devicePolicy({ orgId: input.orgId, deviceId: input.deviceId });
-  const want = appliedOf(desired);
-  const now = await db
-    .selectFrom("device_instances")
-    .select("instance_limits")
-    .where("device_id", "=", input.deviceId)
-    .executeTakeFirstOrThrow();
-  if (appliedWider(readInstanceLimits(now.instance_limits).applied, want)) {
-    await db
-      .updateTable("device_instances")
-      .set({ instance_limits: JSON.stringify(want) })
-      .where("device_id", "=", input.deviceId)
-      .execute();
-    await seedCloudEvidence(k, input);
-  }
   const machine = await db
     .selectFrom("device_machines")
     .select("id")
