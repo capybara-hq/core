@@ -110,7 +110,7 @@ describe("deviceAskTerms: what a device's sandbox lets an ask offer", () => {
     refusal: () => null,
     // x.dev is outside the org's effective hosts: never on the device's own list
     listAddRefusal: (h: string) => (h === "x.dev" ? outsideOrg : null),
-    box: { perCallHosts: false },
+    box: { perCallHosts: false, hosts: ["a.dev", "*.added.dev"] },
     ownList: true,
     ownHosts: ["a.dev", "*.added.dev"],
     limitsApplyAt: "fileSystem" as const,
@@ -131,11 +131,15 @@ describe("deviceAskTerms: what a device's sandbox lets an ask offer", () => {
     // per-operation hosts: a run grant for it, never the device's list
     const perOp = planNetworkAsk([dev("x.dev"), dev("b.dev")], run(), {
       unattended: null,
-      ...deviceAskTerms(facts({ box: { perCallHosts: true } })),
+      ...deviceAskTerms(facts({ box: { perCallHosts: true, hosts: ["a.dev", "*.added.dev"] } })),
     });
     expect(perOp.ask.map((a) => a.host)).toEqual(["x.dev", "b.dev"]);
     expect(perOp.offer).toEqual({ scopes: ["once"], appliesAt: "next-command" });
-    expect(deviceAskTerms(facts({ box: { perCallHosts: true } })).offer(["b.dev"])).toEqual({
+    expect(
+      deviceAskTerms(facts({ box: { perCallHosts: true, hosts: ["a.dev", "*.added.dev"] } })).offer(
+        ["b.dev"],
+      ),
+    ).toEqual({
       scopes: ["once", "always"],
       appliesAt: "next-command",
     });
@@ -143,7 +147,9 @@ describe("deviceAskTerms: what a device's sandbox lets an ask offer", () => {
 
   it("no list of its own: never always (a per-operation device keeps once, a list-only one nothing)", () => {
     expect(
-      deviceAskTerms(facts({ ownList: false, box: { perCallHosts: true } })).offer(["b.dev"]),
+      deviceAskTerms(
+        facts({ ownList: false, box: { perCallHosts: true, hosts: ["a.dev", "*.added.dev"] } }),
+      ).offer(["b.dev"]),
     ).toEqual({ scopes: ["once"], appliesAt: "next-command" });
     expect(deviceAskTerms(facts({ ownList: false })).offer(["b.dev"])).toBeNull();
     // an instance provider applies at the next use
@@ -160,17 +166,23 @@ describe("deviceAskTerms: what a device's sandbox lets an ask offer", () => {
     });
     expect(p.ask).toEqual([{ host: "b.dev", port: 443 }]);
     expect(p.notes).toEqual([
-      "[network] a.dev, x.added.dev were blocked by this device's network policy. a.dev, x.added.dev are already on this device's network list; it applies after the files are rebuilt. Continue without them until then or tell the user.",
+      "[network] a.dev, x.added.dev were blocked by this device's network policy. This device's network settings already allow them, but its sandbox has not applied them yet; they apply after the files are rebuilt. Continue without them until then or tell the user.",
     ]);
     expect(onListNote(["a.dev"], "next-use")).toBe(
-      "[network] a.dev was blocked by this device's network policy. a.dev is already on this device's network list; it applies the next time the device is used. Continue without it until then or tell the user.",
+      "[network] a.dev was blocked by this device's network policy. This device's network settings already allow it, but its sandbox has not applied them yet; they apply the next time the device is used. Continue without it until then or tell the user.",
     );
     expect(deviceAskTerms(facts({ limitsApplyAt: "instance" })).onList("a.dev")).toBe("next-use");
-    expect(deviceAskTerms(facts({ box: { perCallHosts: true } })).onList("a.dev")).toBe(
-      "next-command",
-    );
-    // a device following its org's hosts has no own list to name it
-    expect(deviceAskTerms(facts({ ownList: false })).onList("a.dev")).toBeNull();
+    // a device following its org's hosts: its effective hosts allow it, applying the same way
+    expect(
+      deviceAskTerms(facts({ ownList: false, ownHosts: [], limitsApplyAt: "instance" })).onList(
+        "a.dev",
+      ),
+    ).toBe("next-use");
+    expect(
+      deviceAskTerms(
+        facts({ ownList: false, ownHosts: [], box: { perCallHosts: false, hosts: [] } }),
+      ).onList("a.dev"),
+    ).toBeNull();
     expect(deviceAskTerms(facts()).onList("added.dev")).toBeNull();
     // the host is matched case-insensitively, as the list's refusal is
     expect(deviceAskTerms(facts()).onList("A.DEV")).toBe("files-reset");
@@ -188,7 +200,7 @@ describe("deviceAskTerms: what a device's sandbox lets an ask offer", () => {
     // with per-operation hosts, a per-call refusal of a listed host is shown too
     const grant = "an organization admin adds a.dev to the organization's device network list";
     const perOp = facts({
-      box: { perCallHosts: true },
+      box: { perCallHosts: true, hosts: ["a.dev", "*.added.dev"] },
       refusal: (h) => (h === "a.dev" ? grant : null),
     });
     expect(deviceAskTerms(perOp).onList("a.dev")).toBeNull();
@@ -199,10 +211,62 @@ describe("deviceAskTerms: what a device's sandbox lets an ask offer", () => {
     ]);
   });
 
+  it("per-operation hosts: an allowed host the device still refused is the device's own block", () => {
+    const perOp = facts({ box: { perCallHosts: true, hosts: ["a.dev", "*.added.dev"] } });
+    // every operation carries the list: nothing is pending, so never "it applies"
+    expect(deviceAskTerms(perOp).onList("a.dev")).toBeNull();
+    expect(deviceAskTerms(perOp).deviceBlocks("A.dev")).toBe(true);
+    expect(deviceAskTerms(perOp).deviceBlocks("b.dev")).toBe(false);
+    const p = planNetworkAsk([dev("a.dev"), dev("x.added.dev"), dev("b.dev")], run(), {
+      unattended: null,
+      ...deviceAskTerms(perOp),
+    });
+    expect(p.ask).toEqual([{ host: "b.dev", port: 443 }]);
+    expect(p.notes).toEqual([
+      "[network] a.dev, x.added.dev were blocked by this device's network policy. This device's network settings allow them and every command carries them, so the block comes from the device itself (such as its owner's local network policy on the machine); it cannot be allowed from this conversation. Continue without them or tell the user.",
+    ]);
+    // a device following its org's hosts keeps the ask (a run grant names the exact host)
+    const following = facts({
+      ownList: false,
+      ownHosts: [],
+      box: { perCallHosts: true, hosts: ["a.dev"] },
+    });
+    expect(deviceAskTerms(following).deviceBlocks("a.dev")).toBe(false);
+    // without per-operation hosts the device has not applied its settings yet: never its own block
+    expect(deviceAskTerms(facts()).deviceBlocks("a.dev")).toBe(false);
+  });
+
+  it("a device following its org's hosts: an allowed host not yet applied says when it applies", () => {
+    const following = facts({
+      ownList: false,
+      ownHosts: [],
+      box: { perCallHosts: false, hosts: ["a.dev", "*.org.dev"] },
+      limitsApplyAt: "instance",
+    });
+    const p = planNetworkAsk([dev("x.org.dev"), dev("b.dev")], run(), {
+      unattended: null,
+      ...deviceAskTerms(following),
+    });
+    expect(p.ask).toEqual([]);
+    expect(p.notes).toEqual([
+      "[network] x.org.dev was blocked by this device's network policy. This device's network settings already allow it, but its sandbox has not applied them yet; they apply the next time the device is used. Continue without it until then or tell the user.",
+      "[network] b.dev was blocked by this device's network policy and cannot be allowed from this conversation: the device's owner changes the device's network on its page. Continue without it or tell the user.",
+    ]);
+    // a provider fixing limits at its file system: after the files are rebuilt
+    expect(deviceAskTerms({ ...following, limitsApplyAt: "fileSystem" }).onList("x.org.dev")).toBe(
+      "files-reset",
+    );
+  });
+
   it("a per-call grant refusal decides with per-operation hosts; the list refusal without", () => {
     const grant = "an organization admin adds b.dev to the organization's device network list";
     const f = facts({ refusal: (h) => (h === "b.dev" ? grant : null) });
-    expect(deviceAskTerms({ ...f, box: { perCallHosts: true } }).refusal("b.dev")).toBe(grant);
+    expect(
+      deviceAskTerms({
+        ...f,
+        box: { perCallHosts: true, hosts: ["a.dev", "*.added.dev"] },
+      }).refusal("b.dev"),
+    ).toBe(grant);
     expect(deviceAskTerms(f).refusal("b.dev")).toBeNull();
     expect(deviceAskTerms(f).refusal("x.dev")).toBe(outsideOrg);
   });

@@ -81,8 +81,12 @@ export interface DeviceAskFacts {
   refusal: (host: string) => string | null;
   /** Why a host cannot join the device's own network list (`deviceListAddRefusal`), or null. */
   listAddRefusal: (host: string) => string | null;
-  /** `perCallHosts`: the provider gives each operation its own hosts (an operation boundary). */
-  box: { perCallHosts: boolean };
+  /**
+   * `perCallHosts`: the provider gives each operation its own hosts (an operation boundary);
+   * `hosts`: the device's effective allowlist (its own list within the org's hosts, else the org's
+   * hosts), what the device should allow.
+   */
+  box: { perCallHosts: boolean; hosts: readonly string[] };
   /** The device's network is an allowlist with a host list of its own. */
   ownList: boolean;
   /** That list's hosts (entries may be `*.` patterns). */
@@ -99,7 +103,7 @@ export interface DeviceAskFacts {
  */
 export function deviceAskTerms(
   f: DeviceAskFacts,
-): Required<Pick<NetworkPlanContext, "refusal" | "offer" | "onList">> {
+): Required<Pick<NetworkPlanContext, "refusal" | "offer" | "onList" | "deviceBlocks">> {
   const perOperationHosts = f.box.perCallHosts;
   const appliesAt: NetworkAppliesAt = perOperationHosts
     ? "next-command"
@@ -108,16 +112,26 @@ export function deviceAskTerms(
       : "next-use";
   return {
     refusal: perOperationHosts ? f.refusal : f.listAddRefusal,
-    // a host the device's own list already names, refused because the instance does not have it
-    // yet: it applies when a list edit applies, so it is not asked again. Only a host the list can
-    // carry (the org's hosts still cover it; with per-operation hosts a per-call grant could too):
-    // an entry the org dropped since is in effect nowhere and never applies
+    // a host the device's network settings already allow (its own list, else the org's hosts it
+    // follows), refused because the instance does not have it yet: it applies when a network
+    // change applies, so it is not asked again. Only a host the list can carry (the org's hosts
+    // still cover it): an entry the org dropped since is in effect nowhere and never applies.
+    // With per-operation hosts every operation carries the list, so there is nothing pending
     onList: (host) => {
+      if (perOperationHosts) return null;
       const h = host.toLowerCase();
-      if (!f.ownList || !f.ownHosts.some((p) => coversHost(p.toLowerCase(), h))) return null;
+      const allowed = f.ownList ? f.ownHosts : f.box.hosts;
+      if (!allowed.some((p) => coversHost(p.toLowerCase(), h))) return null;
       if (f.listAddRefusal(h) !== null) return null;
-      if (perOperationHosts && f.refusal(h) !== null) return null;
       return appliesAt;
+    },
+    // with per-operation hosts, a host the device's own list carries (within the org's hosts, its
+    // effective allowlist) went out with the operation: a device-layer refusal of it comes from the
+    // device itself
+    deviceBlocks: (host) => {
+      if (!perOperationHosts || !f.ownList) return false;
+      const h = host.toLowerCase();
+      return f.box.hosts.some((p) => coversHost(p.toLowerCase(), h));
     },
     offer: (hosts) =>
       networkAskOffer(
@@ -147,12 +161,21 @@ export const addedToDeviceNote = (hosts: readonly string[], appliesAt: NetworkAp
   `${blockedLead(hosts)} The person added ${list(hosts)} to this device's network list; it applies ${APPLIES_TEXT[appliesAt]}. This command is not run again.`;
 
 /**
- * Not asked: the host is already on the device's own network list (added by an earlier answer or
- * on the device page) and applies at `appliesAt`, not yet to this command (device-provider spec
- * §6.3).
+ * Not asked: the device's network settings already allow the host (its own list, added by an
+ * earlier answer or on the device page, or the org's hosts it follows), but its sandbox has not
+ * applied them yet; they apply at `appliesAt`, not to this command (device-provider spec §6.3).
  */
 export const onListNote = (hosts: readonly string[], appliesAt: NetworkAppliesAt) =>
-  `${blockedLead(hosts)} ${list(hosts)} ${one(hosts) ? "is" : "are"} already on this device's network list; it applies ${APPLIES_TEXT[appliesAt]}. Continue without ${pron(hosts)} until then or tell the user.`;
+  `${blockedLead(hosts)} This device's network settings already allow ${pron(hosts)}, but its sandbox has not applied them yet; they apply ${APPLIES_TEXT[appliesAt]}. Continue without ${pron(hosts)} until then or tell the user.`;
+
+/**
+ * Not asked: on a device whose operations each carry its own host list, the list allows the host
+ * and it went out with the command, so the refusal comes from the device itself (such as
+ * its owner's local policy on the machine, device-provider spec §7.3); nothing in the
+ * conversation changes it.
+ */
+export const deviceOwnBlockNote = (hosts: readonly string[]) =>
+  `${blockedLead(hosts)} This device's network settings allow ${pron(hosts)} and every command carries them, so the block comes from the device itself (such as its owner's local network policy on the machine); it cannot be allowed from this conversation. Continue without ${pron(hosts)} or tell the user.`;
 
 /** Asked and declined (also the unchecked hosts of a partial decision, and a host refused earlier in the run). */
 export const deniedNote = (hosts: readonly string[], reason?: string | null) =>
@@ -277,6 +300,11 @@ export interface NetworkPlanContext {
    */
   onList?: (host: string) => NetworkAppliesAt | null;
   /**
+   * Whether a device-layer refusal of a host comes from the device itself (its own list allows the
+   * host and every operation carries it): never asked, {@link deviceOwnBlockNote}.
+   */
+  deviceBlocks?: (host: string) => boolean;
+  /**
    * {@link addressEscalationHint}: a private-address block of an attended run answers with the
    * escalation hint.
    */
@@ -332,8 +360,10 @@ export function blockedEventHosts(blocked: readonly NetworkBlockedHost[]): Netwo
  *   allowlist ceiling, or on a device without per-operation hosts one its own list cannot take):
  *   a note naming who adds it, never an ask;
  * - `device` layer with no device sandbox known (no `ctx.offer`): nothing (no ask);
- * - a `device` host the device's own list already names (`ctx.onList`: added, not yet applied to
- *   the instance): a note saying when it applies, never asked again;
+ * - a `device` host the device itself refused although its own list allows it and the operation
+ *   carried that list (`ctx.deviceBlocks`): a note saying so, never asked;
+ * - a `device` host the device's settings already allow (`ctx.onList`: not yet applied to the
+ *   instance): a note saying when it applies, never asked again;
  * - approved by the scheduled task the run serves (`run.taskGranted`) yet refused: a note that
  *   the device ignores the task's grants (never asked, never a missing grant);
  * - refused earlier in the run tree: the denied note; an unattended run in `fail` mode: its note
@@ -357,6 +387,7 @@ export function planNetworkAsk(
   const missingGrants: string[] = [];
   const unavailable: string[] = [];
   const onList: { host: string; appliesAt: NetworkAppliesAt }[] = [];
+  const deviceOwn: string[] = [];
   for (const b of hostsOf(blocked)) {
     if (b.layer === "address") address.push(b.host);
     else if (b.layer === "org") {
@@ -373,6 +404,7 @@ export function planNetworkAsk(
       if (b.host.startsWith("*.") || validateAllowHost(b.host).length > 0) {
         address.push(b.host);
       } else if (why !== null) unavailable.push(unavailableHostNote(b.host, why));
+      else if (ctx.deviceBlocks?.(b.host) === true) deviceOwn.push(b.host);
       else if (listed !== null) onList.push({ host: b.host, appliesAt: listed });
       else if (run?.taskGranted?.has(b.host)) taskIgnored.push(b.host);
       else if (run?.refused.has(b.host)) refused.push(b.host);
@@ -390,6 +422,7 @@ export function planNetworkAsk(
     const hosts = onList.filter((o) => o.appliesAt === at).map((o) => o.host);
     if (hosts.length > 0) notes.push(onListNote(hosts, at));
   }
+  if (deviceOwn.length > 0) notes.push(deviceOwnBlockNote(deviceOwn));
   let ask: { host: string; port: number }[] = [];
   let offer: NetworkAskOffer | null = null;
   if (candidates.length > 0) {
@@ -417,7 +450,10 @@ export function planNetworkAsk(
   return { ask, ...(ask.length > 0 && offer !== null && { offer }), notes, missingGrants };
 }
 
-/** Why a host is not asked about where nothing can be offered (a device with no own list). */
+/**
+ * Why a host is not asked about where nothing can be offered (a device with no own list whose
+ * settings do not allow the host).
+ */
 const NO_OFFER_WHY = "the device's owner changes the device's network on its page";
 
 /**

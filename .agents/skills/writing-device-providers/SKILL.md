@@ -357,8 +357,12 @@ Every provider must follow these; the kernel's behaviour below assumes them. How
     per-operation hosts a host the list cannot take is never asked (its note names who adds it). An
     `always` decision adds the hosts with `DevicesService.addNetworkHostsIn` in the decision's
     ordered prelude (after `lockNetworkAddSubject`, before any conversation row: a widening locks
-    the device's Full access roots), writes no run grant and never reruns the command; a host
-    already on the device's own list is not asked again, its note says when it applies.
+    the device's Full access roots), writes no run grant and never reruns the command. Without
+    per-operation hosts a host the device's settings already allow (its own list, else the org's
+    hosts it follows) but its instance has not applied is not asked again, its note says when it
+    applies (`onList`); with per-operation hosts every operation carries the device's own list,
+    so a refusal of a host on it is the device's own (`deviceBlocks`, e.g. a machine's local
+    narrowing) and its note says so, never "it applies".
 - **What a provider gets.** `SandboxLimits` carries resources and the outer network only:
   `network: { kind: "open-public" | "allowlist", hosts }`. There is **no `limits.mode`** (the tier
   was removed; the device's `exec` / `create` limits refuse unknown keys, and a provider must
