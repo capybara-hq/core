@@ -1,5 +1,22 @@
 # @capybara-hq/design
 
+## 0.2.0-rc.39
+
+### Patch Changes
+
+- 5bbe04b: Back on compact no longer traps the person on a section's first page. Without an in-app history
+  entry behind the page, back went to the last linked path segment, which on `/account/profile`
+  (and `/settings/organization`) is the page itself: a link to the same address replaces the entry
+  and changes nothing, so back never left. Back now skips a segment that links to the current page.
+  
+  Settings sub-nav items and link tabs are sibling views of one page: switching between them now
+  replaces the history entry instead of pushing one, so back leaves the page rather than retracing
+  every switch. `LinkComponent` takes an optional `replace`.
+- 6a50bf4: Compact: the quick-return bar (and the settings sub-nav) docks right under the top row again
+  instead of leaving a row-high gap the list shows through; a toast no longer stops the desktop top
+  row from dragging the window; toasts on compact sit at the top under the top row, slide down and
+  are dismissed by a swipe up (maintainer decision 2026-11-23).
+
 ## 0.2.0-rc.38
 
 ### Patch Changes
