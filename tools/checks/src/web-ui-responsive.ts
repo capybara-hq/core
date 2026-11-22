@@ -677,9 +677,6 @@ export const LOAD_MORE_PENDING: readonly LoadMorePending[] = [
   { path: "app/(app)/admin/audit/view.tsx", fix: LOAD_MORE_FIX },
   { path: "app/(app)/admin/connectors/view.tsx", fix: LOAD_MORE_FIX },
   { path: "app/(app)/admin/overview/AttentionSection.tsx", fix: LOAD_MORE_FIX },
-  { path: "app/(app)/evals/runs/[runId]/view.tsx", fix: LOAD_MORE_FIX },
-  { path: "app/(app)/settings/audit/view.tsx", fix: LOAD_MORE_FIX },
-  { path: "app/(app)/trajectories/view.tsx", fix: LOAD_MORE_FIX },
 ];
 
 const LOAD_MORE_BUTTONS = new Set(["Button", "LinkButton"]);
