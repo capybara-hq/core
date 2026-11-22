@@ -14,6 +14,7 @@ import {
   type DrawerRecent,
   type LinkComponent,
   PageHeader,
+  useRegisterScrolledTitle,
   useRegisterShellPage,
 } from "../src/index";
 import { css, parseCss } from "./css-rules";
@@ -563,5 +564,126 @@ describe("back closes overlays first (Decision 25)", () => {
     expect(window.location.pathname).toBe("/");
     act(() => window.history.back());
     await waitFor(() => expect(window.location.pathname).toBe("/agents"));
+  });
+});
+
+describe("head actions and the scrolled title in the compact top row (responsive spec §2.5, §2.6)", () => {
+  const pushed = (children: React.ReactNode, onNavigate?: (href: string) => void) => (
+    <DesignProvider locale="zh">
+      <AppShell
+        sidebar={sidebar}
+        status={status}
+        commands={[]}
+        pathname="/agents/a1"
+        chatSurface={false}
+        {...(onNavigate ? { onNavigate } : {})}
+      >
+        {children}
+      </AppShell>
+    </DesignProvider>
+  );
+  const more = () => within(bar()).getByRole("button", { name: "更多操作" });
+
+  it("head actions join the overflow after the page menu", async () => {
+    window.matchMedia = matchMediaFor(390).matchMedia;
+    const onExport = vi.fn();
+    function Page() {
+      useRegisterShellPage({
+        title: "研究助手",
+        menu: [{ kind: "item", id: "rename", label: "重命名", onSelect: () => {} }],
+        actions: [
+          { label: "导出", onSelect: onExport },
+          "separator",
+          { label: "删除", danger: true, onSelect: () => {} },
+        ],
+      });
+      return null;
+    }
+    render(pushed(<Page />));
+    await userEvent.click(more());
+    const items = (await screen.findAllByRole("menuitem")).map((i) => i.textContent);
+    expect(items).toEqual(["重命名", "导出", "删除"]);
+    await userEvent.click(screen.getByRole("menuitem", { name: "导出" }));
+    expect(onExport).toHaveBeenCalledTimes(1);
+  });
+
+  it("head actions alone make the overflow", async () => {
+    window.matchMedia = matchMediaFor(390).matchMedia;
+    function Page() {
+      useRegisterShellPage({ title: "研究助手", actions: [{ label: "导出", onSelect: () => {} }] });
+      return null;
+    }
+    render(pushed(<Page />));
+    await userEvent.click(more());
+    expect((await screen.findAllByRole("menuitem")).map((i) => i.textContent)).toEqual(["导出"]);
+  });
+
+  it("a link action navigates through onNavigate", async () => {
+    window.matchMedia = matchMediaFor(390).matchMedia;
+    const onNavigate = vi.fn();
+    function Page() {
+      useRegisterShellPage({
+        title: "研究助手",
+        actions: [{ label: "版本", href: "/agents/a1/v" }],
+      });
+      return null;
+    }
+    render(pushed(<Page />, onNavigate));
+    await userEvent.click(more());
+    await userEvent.click(await screen.findByRole("menuitem", { name: "版本" }));
+    expect(onNavigate).toHaveBeenCalledWith("/agents/a1/v");
+  });
+
+  it("titleAway draws the centred title and the hairline mark", () => {
+    window.matchMedia = matchMediaFor(390).matchMedia;
+    function Page() {
+      useRegisterShellPage({ title: "研究助手", path: [{ label: "智能体", href: "/agents" }] });
+      return null;
+    }
+    function Scrolled() {
+      useRegisterScrolledTitle(true);
+      return null;
+    }
+    render(
+      pushed(
+        <>
+          <Page />
+          <Scrolled />
+        </>,
+      ),
+    );
+    const title = bar().querySelector('[data-part="floating-title"]') as HTMLElement;
+    expect(title.textContent).toBe("研究助手");
+    expect(title.getAttribute("aria-hidden")).toBe("true");
+    expect(document.querySelector(".cb-shell-column")?.getAttribute("data-title-away")).toBe(
+      "true",
+    );
+    const compact = (sel: string) =>
+      parseCss(css("shell.css")).find((r) => r.selector === sel && r.at === "(max-width: 599px)")
+        ?.decls;
+    expect(compact('.cb-shell-column[data-title-away="true"]::before')?.["border-bottom"]).toBe(
+      "1px solid var(--cb-line-soft)",
+    );
+    const t = compact(".cb-floating-title");
+    expect(t?.position).toBe("absolute");
+    expect(t?.["text-align"]).toBe("center");
+    expect(t?.["text-overflow"]).toBe("ellipsis");
+    expect(t?.["font-weight"]).toBe("500");
+  });
+
+  it("no title while titleAway is false", () => {
+    window.matchMedia = matchMediaFor(390).matchMedia;
+    function Page({ away }: { away: boolean }) {
+      useRegisterShellPage({ title: "研究助手" });
+      useRegisterScrolledTitle(away);
+      return null;
+    }
+    const { rerender } = render(pushed(<Page away={false} />));
+    expect(bar().querySelector('[data-part="floating-title"]')).toBeNull();
+    expect(document.querySelector(".cb-shell-column")?.hasAttribute("data-title-away")).toBe(false);
+    rerender(pushed(<Page away />));
+    expect(bar().querySelector('[data-part="floating-title"]')?.textContent).toBe("研究助手");
+    rerender(pushed(<Page away={false} />));
+    expect(bar().querySelector('[data-part="floating-title"]')).toBeNull();
   });
 });

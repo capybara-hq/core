@@ -161,6 +161,33 @@
   .cb-floatbar > * {
     pointer-events: auto;
   }
+  /* The scrolled title (spec §6.56, §6.65): once a pushed page's large title has passed under the
+     row, its name centred between the lead and the trailing control, and a hairline under the
+     strip marks the content scrolling beneath. */
+  .cb-floatbar {
+    position: relative;
+  }
+  .cb-floating-title {
+    position: absolute;
+    top: 0;
+    bottom: 0;
+    left: calc(var(--cb-float-size) + var(--cb-space-2));
+    right: calc(var(--cb-float-size) + var(--cb-space-2));
+    overflow: hidden;
+    color: var(--cb-ink);
+    font-size: var(--cb-type-body-size);
+    font-weight: 500;
+    line-height: var(--cb-float-size);
+    text-align: center;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .cb-floatbar > .cb-floating-title {
+    pointer-events: none;
+  }
+  .cb-shell-column[data-title-away="true"]::before {
+    border-bottom: 1px solid var(--cb-line-soft);
+  }
   .cb-shell[data-surface="pushed"] .cb-shell-main {
     padding-top: var(--cb-float-row);
   }
