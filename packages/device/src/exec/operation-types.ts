@@ -109,8 +109,11 @@ export interface OwnerCeilingInput {
     readable: readonly { deviceId: string; workDir: string }[];
     unreadable: readonly { deviceId: string; reason: string }[];
   };
-  /** The macOS user temp dir holding each connection's private temporary parent. */
-  macTempBase?: string;
+  /**
+   * The macOS temp dirs that may hold a connection's private temporary parent; default on macOS
+   * the user temp dir and this process's temp dir (the worker's fallback), elsewhere none.
+   */
+  macTempBases?: readonly string[];
 }
 /** Strict additive reader: no absent-file defaults or last-good fallback. */
 export async function readStrictOwnerCeiling(
@@ -119,9 +122,19 @@ export async function readStrictOwnerCeiling(
   return readStrictOwnerCeilingSync(input);
 }
 /** The macOS user temp dir the operation worker makes private temporary directories in. */
-function defaultMacTempBase(): string | undefined {
-  if (process.platform !== "darwin") return undefined;
-  return macUserTempDir() ?? realpathSync(tmpdir());
+function defaultMacTempBases(): string[] {
+  if (process.platform !== "darwin") return [];
+  // the worker's base: the user temp dir, else this process's temp dir (which depends on each
+  // process's TMPDIR): every form is denied
+  const bases = new Set<string>();
+  const user = macUserTempDir();
+  if (user !== undefined) bases.add(user);
+  try {
+    bases.add(realpathSync(tmpdir()));
+  } catch {
+    bases.add(resolve(tmpdir()));
+  }
+  return [...bases];
 }
 /**
  * The real paths of the listed project paths that exist as directories, without duplicates. A
@@ -174,11 +187,11 @@ export function readStrictOwnerCeilingSync(input: OwnerCeilingInput): DeviceOwne
         Object.freeze({ deviceId: c.deviceId, reason: "its working directory is not absolute" }),
       ),
   ].sort((a, b) => (a.deviceId < b.deviceId ? -1 : a.deviceId > b.deviceId ? 1 : 0));
-  const macTempBase = input.macTempBase ?? defaultMacTempBase();
+  const macTempBases = input.macTempBases ?? defaultMacTempBases();
   const otherDirs = otherConnectionDenies({
     ownDeviceId: input.deviceId,
     connections: others.filter((c) => isAbsolute(c.workDir)),
-    ...(macTempBase !== undefined && { macTempBase }),
+    macTempBases,
   });
   const secretAndStateDenies = withCanonicalForms([
     ...deniedSecretPaths(input.home ?? homedir()),

@@ -578,8 +578,17 @@ function message(child: ChildProcess, event: string): Promise<Record<string, unk
  * another process controls could redirect or expose every temp of this device. Every other
  * connection's parent is denied to this device's commands (the owner ceiling), this one is not.
  */
-async function privateTempParent(base: string, deviceId: string): Promise<string> {
+async function privateTempParent(
+  base: string,
+  deviceId: string,
+  deniedReadRoots: readonly string[],
+): Promise<string> {
   const parent = join(base, privateTempParentName(deviceId));
+  // checked before anything is created or changed there
+  if (deniedReadRoots.some((d) => within(parent, d) || within(d, parent)))
+    throw new SandboxScopeDeniedError(
+      `The device's private temporary parent ${parent} is, or contains, a denied path`,
+    );
   try {
     await mkdir(parent, { mode: 0o700 });
   } catch (error) {
@@ -800,11 +809,11 @@ export async function startMacOperationWorker(
       // other connection's parent is a denied read root (the owner ceiling).
       if (request.kind === "exec" && !request.grant.full) {
         const base = macUserTempDir() ?? (await realpath(tmpdir()));
-        const parent = await privateTempParent(base, request.scope.deviceId);
-        if (request.grant.deniedReadRoots.some((d) => within(parent, d) || within(d, parent)))
-          throw new SandboxScopeDeniedError(
-            `The device's private temporary parent ${parent} is, or contains, a denied path`,
-          );
+        const parent = await privateTempParent(
+          base,
+          request.scope.deviceId,
+          request.grant.deniedReadRoots,
+        );
         await sweepPrivateTemps(parent);
         privateTmp = await mkdtemp(join(parent, `op-${process.pid}-`));
       }

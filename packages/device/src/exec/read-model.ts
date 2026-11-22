@@ -58,7 +58,7 @@ export function unreadableConnectionMessage(u: { deviceId: string; reason: strin
 }
 
 /**
- * Every other connection's working directory (and, with `macTempBase`, its private temporary
+ * Every other connection's working directory (and, with `macTempBases`, its private temporary
  * parent), resolved. Connections this program cannot read are not here: the owner ceiling carries
  * them and refuses every sandboxed grant while one exists ({@link unreadableConnectionMessage}).
  * The program state root (every connection's state) is denied separately.
@@ -66,8 +66,12 @@ export function unreadableConnectionMessage(u: { deviceId: string; reason: strin
 export function otherConnectionDenies(input: {
   ownDeviceId: string;
   connections: readonly { deviceId: string; workDir: string }[];
-  /** macOS user temp dir; adds join(base, privateTempParentName(id)) per other connection. */
-  macTempBase?: string;
+  /**
+   * The bases of the macOS private temporary parents (the user temp dir and the process temp
+   * dir the worker falls back to); adds join(base, privateTempParentName(id)) per other connection
+   * and base.
+   */
+  macTempBases?: readonly string[];
 }): string[] {
   const out = new Set<string>();
   for (const c of input.connections) {
@@ -79,8 +83,7 @@ export function otherConnectionDenies(input: {
           `with capybara-device logout -c ${id}`,
       );
     out.add(resolve(c.workDir));
-    if (input.macTempBase !== undefined)
-      out.add(join(resolve(input.macTempBase), tempParentName(id)));
+    for (const base of input.macTempBases ?? []) out.add(join(resolve(base), tempParentName(id)));
   }
   return [...out];
 }

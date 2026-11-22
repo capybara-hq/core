@@ -10,7 +10,8 @@ import {
   type MacWorkerRequest,
   startMacOperationWorker,
 } from "./operation-worker.js";
-import { shellQuote } from "./shared.js";
+import { privateTempParentName } from "./read-model.js";
+import { macUserTempDir, shellQuote } from "./shared.js";
 
 /** Trusted input of the macOS restricted self-check; nothing here comes from a request. */
 export interface MacSelfCheckInput {
@@ -81,6 +82,8 @@ export async function macRestrictedSelfCheck(
   if (!runtimeHash)
     return "Restricted macOS execution needs an instance binding with an attested runtime";
   const scratch = join(input.stateDir, `restricted-check-${randomUUID()}`);
+  // a device id of this check alone: the worker's private temp parent it creates is removed after
+  const deviceId = `self-check-${randomUUID()}`;
   let elsewhere: string | undefined;
   try {
     await mkdir(scratch, { mode: 0o700 });
@@ -105,7 +108,7 @@ export async function macRestrictedSelfCheck(
       const scope: SandboxOperationScope = {
         operationId,
         admitBeforeMs: Date.now() + 60_000,
-        deviceId: "self-check",
+        deviceId,
         rootConversationId: "self-check",
         profileRevision: 0,
         ceilingRevision: "self-check",
@@ -191,6 +194,12 @@ export async function macRestrictedSelfCheck(
   } finally {
     await rm(scratch, { recursive: true, force: true }).catch(() => {});
     if (elsewhere) await rm(elsewhere, { recursive: true, force: true }).catch(() => {});
+    for (const base of new Set([macUserTempDir(), await realpath(tmpdir()).catch(() => undefined)]))
+      if (base)
+        await rm(join(base, privateTempParentName(deviceId)), {
+          recursive: true,
+          force: true,
+        }).catch(() => {});
   }
 }
 

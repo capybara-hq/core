@@ -12,7 +12,10 @@ import {
   type LocalOperationGrant,
 } from "../src/exec/operation-types.js";
 import { startMacOperationWorker } from "../src/exec/operation-worker.js";
+import { removeTempParent, testDeviceId } from "./mac-temp-parent.js";
 import { sealWorkspaceRuntime } from "./runtime-seal.js";
+
+const DEVICE_ID = testDeviceId("mac-open-network");
 
 // The open network on macOS (approval-only profiles design, "Open network"): a restricted command
 // reaches the public internet through the operation's own proxy, which decides on the resolved
@@ -61,6 +64,7 @@ beforeAll(async () => {
   internet = await reachable("1.1.1.1", 443);
 });
 afterAll(async () => {
+  await removeTempParent(DEVICE_ID);
   server?.closeAllConnections();
   await new Promise<void>((r) => (server ? server.close(() => r()) : r()));
   await workspace.cleanup();
@@ -80,9 +84,7 @@ async function run(
   const worker = await startMacOperationWorker(
     {
       kind: "exec",
-      scope:
-        extra.scope ??
-        ({ operationId: "open", tag: "open", deviceId: "test-mac-open-network" } as never),
+      scope: extra.scope ?? ({ operationId: "open", tag: "open", deviceId: DEVICE_ID } as never),
       grant: {
         full: false,
         openNetwork: true,

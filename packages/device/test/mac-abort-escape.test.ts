@@ -5,7 +5,10 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterAll, beforeAll, expect, it } from "vitest";
 import { type MacWorkerHandle, startMacOperationWorker } from "../src/exec/operation-worker.js";
+import { removeTempParent, testDeviceId } from "./mac-temp-parent.js";
 import { sealWorkspaceRuntime } from "./runtime-seal.js";
+
+const DEVICE_ID = testDeviceId("mac-abort-escape");
 
 const workspace = { runtimeHash: "", cleanup: async () => {} };
 let root = "";
@@ -15,6 +18,7 @@ beforeAll(async () => {
   root = await realpath(await mkdtemp(join(tmpdir(), "cap-mac-abort-")));
 });
 afterAll(async () => {
+  await removeTempParent(DEVICE_ID);
   await workspace.cleanup();
   if (root) await rm(root, { recursive: true, force: true });
 });
@@ -46,7 +50,6 @@ async function until(what: string, check: () => boolean): Promise<void> {
   }
   throw new Error(`timed out waiting for ${what}`);
 }
-const DEVICE_ID = "test-mac-abort-escape";
 /** This process's private temporary directories of restricted operations still on disk. */
 async function privateTemps(): Promise<string[]> {
   const base = spawnSync("/usr/bin/getconf", ["DARWIN_USER_TEMP_DIR"], { encoding: "utf8" });

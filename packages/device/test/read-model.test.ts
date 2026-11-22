@@ -93,8 +93,8 @@ describe("otherConnectionDenies", () => {
       "/home/u/capybara-device/b",
     ]);
     expect(
-      sorted(otherConnectionDenies({ ownDeviceId: "a", connections, macTempBase: "/T" })),
-    ).toEqual(sorted(["/home/u/capybara-device/b", "/T/capybara-op-b"]));
+      sorted(otherConnectionDenies({ ownDeviceId: "a", connections, macTempBases: ["/T", "/U"] })),
+    ).toEqual(sorted(["/home/u/capybara-device/b", "/T/capybara-op-b", "/U/capybara-op-b"]));
     expect(privateTempParentName("b")).toBe("capybara-op-b");
   });
 
@@ -114,7 +114,7 @@ describe("otherConnectionDenies", () => {
         otherConnectionDenies({
           ownDeviceId: "a",
           connections: [{ deviceId: id, workDir: "/w" }],
-          macTempBase: "/T",
+          macTempBases: ["/T"],
         }),
       ).toThrow(/device id/i);
   });

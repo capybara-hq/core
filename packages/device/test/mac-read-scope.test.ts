@@ -6,7 +6,9 @@ import { tmpdir } from "node:os";
 import { basename, dirname, join } from "node:path";
 import type { ExecResult } from "@capybara-hq/plugin-sdk";
 import { afterAll, beforeAll, expect, it } from "vitest";
+import { withCanonicalForms } from "../src/exec/operation-types.js";
 import { startMacOperationWorker } from "../src/exec/operation-worker.js";
+import { otherConnectionDenies } from "../src/exec/read-model.js";
 import { sealWorkspaceRuntime } from "./runtime-seal.js";
 
 const workspace = { runtimeHash: "", cleanup: async () => {} };
@@ -417,6 +419,63 @@ it.runIf(process.platform === "darwin")(
       expect(existsSync(join(U, "new"))).toBe(false);
       expect(caseInsensitive, "the case probe needs a case-insensitive volume").toBe(true);
       expect(got).not.toContain("case-secret");
+    } finally {
+      await rm(base, { recursive: true, force: true });
+    }
+  },
+);
+
+// Another connection's private temporary parent is denied by the ceiling's list
+// (otherConnectionDenies over the worker's own base): its temps stay unreadable under machine reach.
+it.runIf(process.platform === "darwin")(
+  "machine reach cannot read another connection's private temp parent",
+  async () => {
+    const base = await realpath(await mkdtemp(join(tmpdir(), "cap-mac-othertemp-")));
+    const otherId = `other-${randomUUID()}`;
+    const otherParent = join(userTemp(), `capybara-op-${otherId}`);
+    parents.add(otherParent);
+    try {
+      const A = join(base, "own");
+      const S = join(base, "state");
+      await mkdir(A);
+      await mkdir(S, { mode: 0o700 });
+      await mkdir(join(otherParent, "op-x"), { recursive: true, mode: 0o700 });
+      await writeFile(join(otherParent, "op-x", "secret"), "other temp");
+      await writeFile(join(base, "plain"), "plain");
+      const denied = withCanonicalForms([
+        S,
+        ...otherConnectionDenies({
+          ownDeviceId: DEVICE_ID,
+          connections: [
+            { deviceId: DEVICE_ID, workDir: A },
+            { deviceId: otherId, workDir: join(base, "otherwork") },
+          ],
+          macTempBases: [userTemp()],
+        }),
+      ]);
+      expect(denied).toContain(otherParent);
+      const q = (s: string) => JSON.stringify(s);
+      const probe = (name: string, cmd: string) =>
+        `if ${cmd} >/dev/null 2>&1; then echo ${name} >> got; fi`;
+      const result = await restrictedExec(
+        [
+          probe("plain", `cat ${q(join(base, "plain"))}`),
+          probe("other-temp", `cat ${q(join(otherParent, "op-x", "secret"))}`),
+          probe("other-temp-listing", `ls ${q(otherParent)}`),
+          "true",
+        ].join("; "),
+        undefined,
+        A,
+        S,
+        { grant: { readRoots: ["/"], writeRoots: [A], deniedReadRoots: denied } },
+      );
+      expect(result.exitCode, result.stderr).toBe(0);
+      const got = existsSync(join(A, "got"))
+        ? readFileSync(join(A, "got"), "utf8").trim().split("\n")
+        : [];
+      expect(got, "the positive control").toContain("plain");
+      expect(got).not.toContain("other-temp");
+      expect(got).not.toContain("other-temp-listing");
     } finally {
       await rm(base, { recursive: true, force: true });
     }

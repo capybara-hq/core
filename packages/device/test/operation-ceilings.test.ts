@@ -64,7 +64,7 @@ async function fixture(policy: Partial<Policy> = {}) {
     home: join(dir, "home"),
     stateRoot,
     connections: () => connections,
-    macTempBase: join(dir, "usertemp"),
+    macTempBases: [join(dir, "usertemp")],
   };
   const read = () => readStrictOwnerCeiling(input);
   const addOther = (deviceId: string) => {
@@ -367,14 +367,18 @@ describe("project reach and other connections' directories", () => {
     expect(grantStillHolds(listedGrant, narrowed)).toBe(false);
   });
   it.runIf(process.platform === "darwin")(
-    "on macOS the default temp base is the user temp dir the worker uses",
+    "on macOS the default temp bases are the user temp dir and the process temp dir the worker may use",
     async () => {
       const f = await fixture();
       f.addOther("b");
-      const { macTempBase: _base, ...input } = f.input;
+      const { macTempBases: _bases, ...input } = f.input;
       const c = readStrictOwnerCeilingSync(input);
-      const base = macUserTempDir() ?? realpathSync(tmpdir());
-      expect(c.otherConnectionDenies).toContain(join(base, privateTempParentName("b")));
+      // the user temp dir and this process's temp dir: the worker's fallback base
+      const user = macUserTempDir();
+      if (user) expect(c.otherConnectionDenies).toContain(join(user, privateTempParentName("b")));
+      expect(c.otherConnectionDenies).toContain(
+        join(realpathSync(tmpdir()), privateTempParentName("b")),
+      );
     },
   );
 });

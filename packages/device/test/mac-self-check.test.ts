@@ -1,3 +1,4 @@
+import { existsSync } from "node:fs";
 import { mkdtemp, readdir, realpath, rm } from "node:fs/promises";
 import { connect } from "node:net";
 import { tmpdir } from "node:os";
@@ -5,6 +6,8 @@ import { dirname, join } from "node:path";
 import { afterAll, afterEach, beforeAll, expect, it } from "vitest";
 import { createRestrictedProof, macRestrictedSelfCheck } from "../src/exec/mac-self-check.js";
 import { type MacWorkerRequest, startMacOperationWorker } from "../src/exec/operation-worker.js";
+import { privateTempParentName } from "../src/exec/read-model.js";
+import { macUserTempDir } from "../src/exec/shared.js";
 import { sealWorkspaceRuntime } from "./runtime-seal.js";
 
 // restricted workers launch only from a verified, sealed runtime closure (B-7)
@@ -37,12 +40,27 @@ it.runIf(process.platform === "darwin")(
   "a real restricted worker on the sealed runtime passes, and leaves nothing behind",
   async () => {
     const dir = await stateDir();
+    const deviceIds: string[] = [];
+    const recording = async (request: MacWorkerRequest, s: AbortSignal) => {
+      if (request.kind === "exec") deviceIds.push(request.scope.deviceId);
+      return startMacOperationWorker(request, s);
+    };
     expect(
       await macRestrictedSelfCheck(
-        { stateDir: dir, pythonPath: "/usr/bin/python3", runtimeHash: workspace.runtimeHash },
+        {
+          stateDir: dir,
+          pythonPath: "/usr/bin/python3",
+          runtimeHash: workspace.runtimeHash,
+          startWorker: recording,
+        },
         signal(),
       ),
     ).toBeNull();
+    // the private temp parent of the check's own device id is gone too
+    expect(deviceIds.length).toBeGreaterThan(0);
+    const userTemp = macUserTempDir() ?? (await realpath(tmpdir()));
+    for (const id of new Set(deviceIds))
+      expect(existsSync(join(userTemp, privateTempParentName(id))), id).toBe(false);
     // only the staged worker runtime stays; the scratch directories are gone
     expect((await readdir(dir)).filter((n) => n.startsWith("restricted-check-"))).toEqual([]);
   },
