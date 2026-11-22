@@ -189,6 +189,7 @@ describe("replaceable slots on /admin/settings", () => {
   it("the super admin's pick is the platform default; 内置 removes it", async () => {
     const calls = stubApi({
       "GET /api/v1/admin/platform/icons": () => json(200, { icons: [] }),
+      "GET /api/v1/platform/theme": () => json(200, null),
       "GET /api/v1/admin/settings": () =>
         json(200, {
           orgCreation: "anyone",
