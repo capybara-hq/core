@@ -143,6 +143,7 @@ function pipeline(): ToolPipeline {
           ReturnType<SandboxService["hostRefusal"]>
         >["box"],
         ownList: false,
+        ownHosts: [],
         limitsApplyAt: undefined,
       }),
     },

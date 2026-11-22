@@ -14,6 +14,7 @@ import type { KernelSchemaDb } from "../../src/db/kernel-schema.js";
 import { createDb } from "../../src/db/pool.js";
 import { assistantIdemKey } from "../../src/runtime/model-call.js";
 import { Waits } from "../../src/runtime/waits.js";
+import { instanceLimitsJson } from "../../src/sandbox/modes.js";
 import { NetworkGrants } from "../../src/sandbox/network-grants.js";
 import { SandboxService } from "../../src/sandbox/sandbox.service.js";
 import {
@@ -24,6 +25,8 @@ import {
 } from "../../src/tools/approvals.service.js";
 import {
   deviceAskTerms,
+  onListNote,
+  planNetworkAsk,
   settledNetworkNotes,
   withNetworkNotes,
 } from "../../src/tools/network-asks.js";
@@ -395,7 +398,11 @@ const deviceView = async (deviceId: string) =>
   (
     (await s.req({ method: "GET", url: `/api/v1/orgs/${orgId}/devices/${deviceId}` })).json() as {
       device: {
-        sandbox: { allowedDomains: string[]; recent: { via?: string }[] };
+        sandbox: {
+          allowedDomains: string[];
+          pendingFilesReset: boolean;
+          recent: { via?: string }[];
+        };
       };
     }
   ).device;
@@ -418,8 +425,16 @@ const errCode = (res: { json(): unknown }) =>
   (res.json() as { error: { code: string } }).error.code;
 
 describe("what an ask offers (device-provider spec §6.3)", () => {
-  it("always on a fileSystem provider: appliesAt files-reset, hosts stored, no run grant", async () => {
+  it("always on a fileSystem provider: appliesAt files-reset, hosts stored, pendingFilesReset", async () => {
     const device = await ownListDevice(FAKE_INSTANCE_PERMISSION_SUPPORT);
+    // a file system made with the device's current limits: nothing pending yet
+    const { effective } = await k.app.get(SandboxService).limitsState({ orgId, deviceId: device });
+    await sql`INSERT INTO capybara.device_instances (device_id, org_id, provider, status, handle,
+        fs_status, fs_handle, instance_limits)
+      VALUES (${device}, ${orgId}, 'device-fake', 'suspended',
+        ${JSON.stringify({ id: "fake-i" })}::jsonb, 'ready', ${JSON.stringify({ id: "fs-i" })}::jsonb,
+        ${instanceLimitsJson(effective)}::jsonb)`.execute(raw);
+    expect((await deviceView(device)).sandbox.pendingFilesReset).toBe(false);
     const a = await blockedAsk(device, ["b.dev"]);
     expect(a.scopes).toEqual(["always"]);
     expect(a.detail?.appliesAt).toBe("files-reset");
@@ -432,6 +447,7 @@ describe("what an ask offers (device-provider spec §6.3)", () => {
     });
     const d = await deviceView(device);
     expect(d.sandbox.allowedDomains).toEqual(["a.dev", "b.dev"]);
+    expect(d.sandbox.pendingFilesReset).toBe(true);
     // no run grant: the command that asked never gets the host, and is not run again
     expect(await runGrantsOf(a.runId, device)).toEqual([]);
     expect(await keptResultOf(a)).toMatch(
@@ -445,6 +461,84 @@ describe("what an ask offers (device-provider spec §6.3)", () => {
       },
     ]);
     await waitFor(async () => (await runStatus(s.runId)) === "queued", 10_000, "run resumed");
+    // blocked again in the same run before the files are rebuilt: not asked again, told when
+    const terms = deviceAskTerms(
+      await k.app.get(SandboxService).hostRefusal({ orgId, deviceId: device }),
+    );
+    const again = planNetworkAsk(
+      [{ host: "b.dev", port: 443, layer: "device" }],
+      await k.app.get(NetworkGrants).runState(a.runId, device),
+      { unattended: null, ...terms },
+    );
+    expect(again.ask).toEqual([]);
+    expect(again.notes).toEqual([onListNote(["b.dev"], "files-reset")]);
+  });
+
+  // the device write is the decision's prelude: a widening locks the device's Full access roots
+  // before any conversation row, so a cascade that locks a root and then its sub-agent's
+  // conversation (offboarding, a sub-agent cancel) never deadlocks with it
+  it("a sub-agent asks under a Full access root on the device: the root is locked before the asking conversation", async () => {
+    const device = await ownListDevice(FAKE_PERMISSION_SUPPORT);
+    await sql`UPDATE capybara.conversations SET device_id = ${device},
+        permission_profile = 'full-access',
+        permission_consent = ${JSON.stringify({ deviceId: device, scopeRevision: "test" })}::jsonb
+      WHERE id = ${s.conversationId}`.execute(raw);
+    const childConv = await subagentConversation();
+    const childRun = await run(childConv, s.accountId, s.runId);
+    const terms = deviceAskTerms(
+      await k.app.get(SandboxService).hostRefusal({ orgId, deviceId: device }),
+    );
+    const offer = terms.offer(["b.dev"]);
+    if (offer === null) throw new Error("nothing to offer");
+    const a = await ask({
+      conversationId: childConv,
+      runId: childRun,
+      detail: {
+        deviceId: device,
+        hosts: [{ host: "b.dev", port: 443 }],
+        command: "curl b.dev",
+        description: null,
+        appliesAt: offer.appliesAt,
+        result: KEPT,
+      },
+      scopes: offer.scopes,
+    });
+    // a cascade holds the root first
+    const cascade = await raw.connection().execute(async (c) => {
+      await sql`BEGIN`.execute(c);
+      await sql`SELECT id FROM capybara.conversations WHERE id = ${s.conversationId} FOR UPDATE`.execute(
+        c,
+      );
+      const decision = decide(a.id, { decision: "approve", scope: "always" });
+      // the decision waits on the root ...
+      await waitFor(
+        async () =>
+          (
+            await sql<{ n: number }>`SELECT count(*)::int AS n FROM pg_stat_activity
+              WHERE wait_event_type = 'Lock' AND query ILIKE '%conversations%'`.execute(raw)
+          ).rows[0]?.n === 1,
+        10_000,
+        "the decision waits on the root conversation",
+      );
+      // ... without holding the sub-agent's conversation, which the cascade takes next
+      await sql`SELECT id FROM capybara.conversations WHERE id = ${childConv} FOR UPDATE NOWAIT`.execute(
+        c,
+      );
+      await sql`COMMIT`.execute(c);
+      return decision;
+    });
+    expect(cascade.statusCode, cascade.body).toBe(200);
+    expect((await deviceView(device)).sandbox.allowedDomains).toEqual(["a.dev", "b.dev"]);
+    // the widening reset the root's Full access consent
+    expect(
+      (
+        await db
+          .selectFrom("conversations")
+          .select("permission_profile")
+          .where("id", "=", s.conversationId)
+          .executeTakeFirstOrThrow()
+      ).permission_profile,
+    ).toBe("approve-for-me");
   });
 
   it("once on a list-only device → 409 approval.scope_not_allowed", async () => {

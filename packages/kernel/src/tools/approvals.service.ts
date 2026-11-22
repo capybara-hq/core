@@ -693,16 +693,15 @@ export class ApprovalsService {
     private readonly leakCheck: Pick<ConversationLeakCheck, "leaked">,
     /** A person's entered values are sealed in the decision's transaction (§4.3). */
     @Inject(SealedInputs) private readonly sealed: Pick<SealedInputs, "sealIn">,
+    /** A network ask's "add to this device's list" writes the device's own network list. */
+    @Inject(DevicesService)
+    private readonly devices: Pick<DevicesService, "lockNetworkAddSubject" | "addNetworkHostsIn">,
     @Optional()
     @Inject(PermissionAuthorityLock)
     private readonly permissionLocks?: PermissionAuthorityLock,
     @Optional()
     @Inject(PermissionCallGrants)
     private readonly permissionGrants?: PermissionCallGrants,
-    /** A network ask's "add to this device's list" writes the device's own network list. */
-    @Optional()
-    @Inject(DevicesService)
-    private readonly devices?: Pick<DevicesService, "lockNetworkAddSubject" | "addNetworkHostsIn">,
   ) {}
 
   /**
@@ -1471,14 +1470,16 @@ export class ApprovalsService {
     const decide = () => this.decideIn(orgId, id, accountId, body, actorTokenId, network);
     let decided: Awaited<ReturnType<typeof decide>>;
     if (network.outcome === "always") {
-      const devices = this.devices;
-      if (devices === undefined) throw new Error("Devices are unavailable");
+      const granted = network.granted;
       // the decider is the device's owner (checked above; the prelude checks it again under the
-      // device row's lock): the device's permission write lock precedes the conversation rows
-      decided = await withOrderedLocks(
-        () => devices.lockNetworkAddSubject(orgId, accountId, detail.deviceId),
-        decide,
-      );
+      // device row's lock). The device write is the prelude's, before any conversation row: a
+      // widening locks the device's Full access root conversations (global order device →
+      // authority → root conversation → conversation), so it must precede the asking
+      // conversation's row. A refusal of the decision below rolls the addition back with it.
+      decided = await withOrderedLocks(async () => {
+        await this.devices.lockNetworkAddSubject(orgId, accountId, detail.deviceId);
+        await this.devices.addNetworkHostsIn(orgId, accountId, detail.deviceId, granted, via);
+      }, decide);
     } else decided = await decide();
     await this.announceDecided(decided.record, decided.toSeq);
     return decided.record;
@@ -1872,19 +1873,6 @@ export class ApprovalsService {
         'Scope "session" is not allowed for a command with no concrete rule',
       );
     }
-    // "add to this device's list": the hosts join the device's own network list in this
-    // transaction (refused, writing nothing, if the device can no longer take them); the device's
-    // permission write lock was taken in the decision's ordered prelude
-    if (network?.outcome === "always" && before.detail !== null) {
-      if (this.devices === undefined) throw new Error("Devices are unavailable");
-      await this.devices.addNetworkHostsIn(
-        orgId,
-        accountId,
-        before.detail.deviceId,
-        network.granted,
-        network.via,
-      );
-    }
     const updated = await t
       .updateTable("approvals")
       .set({
@@ -1923,7 +1911,7 @@ export class ApprovalsService {
     const connectorId = before.connectorId;
     if (network !== undefined) {
       // a network ask grants nothing of the tool kind: its run grant is the row itself (`once`);
-      // `always` added the hosts to the device's list above
+      // `always` added the hosts to the device's list in the decision's prelude
     } else if (git !== undefined) {
       // a git ask's run grant is the row itself; `always` is the actor's standing allow for the
       // repository on the connector (a row the connector's deletion removes with it)

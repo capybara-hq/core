@@ -59,6 +59,10 @@ const REPLY_FOR: Partial<Record<ErrorCode, ChannelPhrase>> = {
   "approval.not_yours": "cannotHandle",
   // an approval with person fields is approved only on the web (platform web parity spec R5)
   "auth.session_required": "cannotHandle",
+  // "add to this device's list" refused: the device can no longer take the host, or is gone or
+  // no longer the clicker's
+  "device.network_not_allowed": "invalidAction",
+  "device.not_found": "cannotHandle",
 };
 
 /**

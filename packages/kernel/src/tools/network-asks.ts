@@ -1,5 +1,6 @@
 import { type NetworkBlockedHost, validateAllowHost } from "@capybara-hq/plugin-sdk";
 import { NETWORK_ASK_MAX_HOSTS, NETWORK_HOST_MAX_CHARS } from "../conversations/events.js";
+import { coversHost } from "../sandbox/modes.js";
 import type { NetworkRunState } from "../sandbox/network-grants.js";
 import { ESCALATION_UNATTENDED_WHY } from "../sandbox/review/permission-candidate.js";
 import {
@@ -84,6 +85,8 @@ export interface DeviceAskFacts {
   box: { perCallHosts: boolean };
   /** The device's network is an allowlist with a host list of its own. */
   ownList: boolean;
+  /** That list's hosts (entries may be `*.` patterns). */
+  ownHosts: readonly string[];
   limitsApplyAt: "instance" | "fileSystem" | undefined;
 }
 
@@ -96,10 +99,19 @@ export interface DeviceAskFacts {
  */
 export function deviceAskTerms(
   f: DeviceAskFacts,
-): Required<Pick<NetworkPlanContext, "refusal" | "offer">> {
+): Required<Pick<NetworkPlanContext, "refusal" | "offer" | "onList">> {
   const perOperationHosts = f.box.perCallHosts;
+  const appliesAt: NetworkAppliesAt = perOperationHosts
+    ? "next-command"
+    : f.limitsApplyAt === "fileSystem"
+      ? "files-reset"
+      : "next-use";
   return {
     refusal: perOperationHosts ? f.refusal : f.listAddRefusal,
+    // a host the device's own list already names, refused because the instance does not have it
+    // yet: it applies when a list edit applies, so it is not asked again
+    onList: (host) =>
+      f.ownList && f.ownHosts.some((p) => coversHost(p.toLowerCase(), host)) ? appliesAt : null,
     offer: (hosts) =>
       networkAskOffer(
         { perOperationHosts },
@@ -126,6 +138,14 @@ export const allowedOnceNote = (hosts: readonly string[]) =>
  */
 export const addedToDeviceNote = (hosts: readonly string[], appliesAt: NetworkAppliesAt) =>
   `${blockedLead(hosts)} The person added ${list(hosts)} to this device's network list; it applies ${APPLIES_TEXT[appliesAt]}. This command is not run again.`;
+
+/**
+ * Not asked: the host is already on the device's own network list (added by an earlier answer or
+ * on the device page) and applies at `appliesAt`, not yet to this command (device-provider spec
+ * §6.3).
+ */
+export const onListNote = (hosts: readonly string[], appliesAt: NetworkAppliesAt) =>
+  `${blockedLead(hosts)} ${list(hosts)} ${one(hosts) ? "is" : "are"} already on this device's network list; it applies ${APPLIES_TEXT[appliesAt]}. Continue without ${pron(hosts)} until then or tell the user.`;
 
 /** Asked and declined (also the unchecked hosts of a partial decision, and a host refused earlier in the run). */
 export const deniedNote = (hosts: readonly string[], reason?: string | null) =>
@@ -245,6 +265,11 @@ export interface NetworkPlanContext {
    */
   refusal?: (host: string) => string | null;
   /**
+   * When a host the device's own list already names applies there, or null when the list does not
+   * name it: such a host is not asked again, its note says when it applies.
+   */
+  onList?: (host: string) => NetworkAppliesAt | null;
+  /**
    * {@link addressEscalationHint}: a private-address block of an attended run answers with the
    * escalation hint.
    */
@@ -300,6 +325,8 @@ export function blockedEventHosts(blocked: readonly NetworkBlockedHost[]): Netwo
  *   allowlist ceiling, or on a device without per-operation hosts one its own list cannot take):
  *   a note naming who adds it, never an ask;
  * - `device` layer with no device sandbox known (no `ctx.offer`): nothing (no ask);
+ * - a `device` host the device's own list already names (`ctx.onList`: added, not yet applied to
+ *   the instance): a note saying when it applies, never asked again;
  * - approved by the scheduled task the run serves (`run.taskGranted`) yet refused: a note that
  *   the device ignores the task's grants (never asked, never a missing grant);
  * - refused earlier in the run tree: the denied note; an unattended run in `fail` mode: its note
@@ -322,6 +349,7 @@ export function planNetworkAsk(
   const candidates: { host: string; port: number }[] = [];
   const missingGrants: string[] = [];
   const unavailable: string[] = [];
+  const onList: { host: string; appliesAt: NetworkAppliesAt }[] = [];
   for (const b of hostsOf(blocked)) {
     if (b.layer === "address") address.push(b.host);
     else if (b.layer === "org") {
@@ -334,9 +362,11 @@ export function planNetworkAsk(
       if (ctx.offer === undefined) continue;
       const why = ctx.refusal?.(b.host) ?? null;
       // relayer already made an invalid name an address; a wildcard is never asked
+      const listed = ctx.onList?.(b.host) ?? null;
       if (b.host.startsWith("*.") || validateAllowHost(b.host).length > 0) {
         address.push(b.host);
-      } else if (why !== null) unavailable.push(unavailableHostNote(b.host, why));
+      } else if (listed !== null) onList.push({ host: b.host, appliesAt: listed });
+      else if (why !== null) unavailable.push(unavailableHostNote(b.host, why));
       else if (run?.taskGranted?.has(b.host)) taskIgnored.push(b.host);
       else if (run?.refused.has(b.host)) refused.push(b.host);
       else if (unattendedFails(ctx.unattended)) {
@@ -349,6 +379,10 @@ export function planNetworkAsk(
   if (refused.length > 0) notes.push(deniedNote(refused));
   if (taskIgnored.length > 0) notes.push(taskGrantIgnoredNote(taskIgnored));
   if (unattended.length > 0) notes.push(unattendedNetworkNote(unattended));
+  for (const at of ["next-command", "next-use", "files-reset"] as const) {
+    const hosts = onList.filter((o) => o.appliesAt === at).map((o) => o.host);
+    if (hosts.length > 0) notes.push(onListNote(hosts, at));
+  }
   let ask: { host: string; port: number }[] = [];
   let offer: NetworkAskOffer | null = null;
   if (candidates.length > 0) {
@@ -394,8 +428,8 @@ export function settledNetworkNotes(a: ApprovalRecord, hours: number): string[] 
       const notes: string[] = [];
       if (granted.length > 0) {
         notes.push(
-          a.scope === "always"
-            ? addedToDeviceNote(granted, a.detail?.appliesAt ?? "next-use")
+          a.scope === "always" && a.detail !== null
+            ? addedToDeviceNote(granted, a.detail.appliesAt)
             : allowedOnceNote(granted),
         );
       }

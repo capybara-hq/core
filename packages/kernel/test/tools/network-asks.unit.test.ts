@@ -22,6 +22,7 @@ import {
   NETWORK_ASK_KEPT_MAX_BYTES,
   type NetworkAskOffer,
   networkAskOffer,
+  onListNote,
   planNetworkAsk,
   settledNetworkNotes,
   withNetworkNotes,
@@ -111,6 +112,7 @@ describe("deviceAskTerms: what a device's sandbox lets an ask offer", () => {
     listAddRefusal: (h: string) => (h === "x.dev" ? outsideOrg : null),
     box: { perCallHosts: false },
     ownList: true,
+    ownHosts: ["a.dev", "*.added.dev"],
     limitsApplyAt: "fileSystem" as const,
     ...over,
   });
@@ -149,6 +151,27 @@ describe("deviceAskTerms: what a device's sandbox lets an ask offer", () => {
       scopes: ["always"],
       appliesAt: "next-use",
     });
+  });
+
+  it("a host already on the device's own list is not asked again: a note says when it applies", () => {
+    const p = planNetworkAsk([dev("a.dev"), dev("x.added.dev"), dev("b.dev")], run(), {
+      unattended: null,
+      ...deviceAskTerms(facts()),
+    });
+    expect(p.ask).toEqual([{ host: "b.dev", port: 443 }]);
+    expect(p.notes).toEqual([
+      "[network] a.dev, x.added.dev were blocked by this device's network policy. a.dev, x.added.dev are already on this device's network list; it applies after the files are rebuilt. Continue without them until then or tell the user.",
+    ]);
+    expect(onListNote(["a.dev"], "next-use")).toBe(
+      "[network] a.dev was blocked by this device's network policy. a.dev is already on this device's network list; it applies the next time the device is used. Continue without it until then or tell the user.",
+    );
+    expect(deviceAskTerms(facts({ limitsApplyAt: "instance" })).onList("a.dev")).toBe("next-use");
+    expect(deviceAskTerms(facts({ box: { perCallHosts: true } })).onList("a.dev")).toBe(
+      "next-command",
+    );
+    // a device following its org's hosts has no own list to name it
+    expect(deviceAskTerms(facts({ ownList: false })).onList("a.dev")).toBeNull();
+    expect(deviceAskTerms(facts()).onList("added.dev")).toBeNull();
   });
 
   it("a per-call grant refusal decides with per-operation hosts; the list refusal without", () => {

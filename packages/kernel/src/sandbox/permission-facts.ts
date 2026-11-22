@@ -202,6 +202,8 @@ export class PermissionFacts {
        * already allows every host its list could name.
        */
       ownList: device.networkMode === "allowlist" && device.networkHosts.length > 0,
+      /** The device's own host list (empty unless its network is an allowlist of its own). */
+      ownHosts: device.networkMode === "allowlist" ? [...device.networkHosts] : [],
       /** Where its provider applies new limits (`limitsApplyAt`; absent: at its instance). */
       limitsApplyAt: row ? this.providers.forDevice(row.provider)?.impl.limitsApplyAt : undefined,
       reach: {
