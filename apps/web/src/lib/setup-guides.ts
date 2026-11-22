@@ -12,7 +12,11 @@ export interface SetupGuideRef {
  * A place a setup guide is shown at (setup guides v2 spec §9.1; `extension-deployment`: the super
  * admin's extension page, checks against the platform deployment config).
  */
-export type SetupGuidePlace = "channel-connection" | "connector-template" | "extension-deployment";
+export type SetupGuidePlace =
+  | "channel-connection"
+  | "connector-template"
+  | "extension-deployment"
+  | "device-connection";
 
 /** Who the guide's text is for: the page passes the audience it serves (spec §8). */
 export type SetupGuideAudience = "admin" | "member";
@@ -34,12 +38,13 @@ export type UnresolvedReason =
 /**
  * One block of a rendered guide (spec §7.2): sanitized Markdown prose (it may hold U+2060 word
  * joiners that keep text from being auto-linked: rendered as is), a code block with its title, or
- * a check line.
+ * a check line, or a shell action (`device-connection` guides: a button the native shell runs).
  */
 export type SetupGuideBlock =
   | { kind: "markdown"; text: string }
   | { kind: "code"; language: string; title: string | null; text: string }
-  | { kind: "check"; id: string; label: string };
+  | { kind: "check"; id: string; label: string }
+  | { kind: "shell-action"; action: "connect-this-machine"; label: string };
 
 /** A plugin's setup guide rendered by the kernel for an org and target (spec §7.2). */
 export interface RenderedSetupGuide {

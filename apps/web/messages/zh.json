@@ -1751,10 +1751,10 @@
       "allowlist": "白名单"
     },
     "empty": "你还没有设备。",
-    "noCloud": {
-      "text": "本组织没有开启设备提供方。",
-      "hint": "请联系组织管理员开启。",
-      "notice": "本组织没有开启设备提供方，下列云端设备不可用，但仍可删除。请联系组织管理员开启。"
+    "noProviders": {
+      "text": "这个组织还没有可用的设备类型",
+      "hint": "请组织管理员在 扩展 中启用一个设备插件",
+      "notice": "这个组织没有可用的设备类型，下列设备不可用，但仍可删除。请组织管理员在 扩展 中启用一个设备插件。"
     },
     "create": {
       "title": "新建设备",
@@ -1763,32 +1763,10 @@
       "cancel": "取消",
       "submit": "创建",
       "created": "已创建设备 {name}。",
-      "provider": "提供方",
-      "providerHelp": "设备运行的位置，创建后不能更改。",
-      "kindLabel": "设备类型",
-      "cloud": "云端",
-      "cloudHint": "在平台的沙箱里运行，创建后即可使用。",
-      "local": "本地",
-      "localHint": "在你自己的电脑或服务器上运行命令。",
-      "installStep": "1. 在这台机器上安装连接程序",
-      "loginStep": "2. 登录并在打开的网页上确认",
-      "waiting": "正在等待机器登录…确认后它会出现在设备列表里，运行第 3 步后变为在线。",
+      "providerLabel": "设备类型",
       "connected": "已连接 {name}。",
       "close": "关闭",
-      "startStep": "3. 启动连接，保持设备在线（开机自动连接：capybara-device service install）",
-      "connectMachine": "连接本机",
-      "connectFailed": "无法连接本机，请重试。",
-      "thisMachineConnected": "这台电脑已连接到这个平台：{state}。",
-      "thisMachineOtherOrg": "这台电脑已连接到你的另一个组织。",
-      "connectedElsewhere": "这台电脑已连接到另一个平台（{origin}）。请用下面的命令连接到这里。",
-      "openDevice": "打开设备",
-      "connection": {
-        "starting": "正在启动",
-        "online": "在线",
-        "offline": "离线",
-        "draining": "正在结束任务",
-        "stopped": "已停止"
-      }
+      "connectFailed": "无法连接本机，请重试。"
     },
     "detail": {
       "providerOffNote": "此设备的提供方已在本组织关闭或未安装，文件仍保留。",

@@ -1763,10 +1763,10 @@
       "allowlist": "Allowlist"
     },
     "empty": "You have no devices yet.",
-    "noCloud": {
-      "text": "No device provider is on in this organization.",
-      "hint": "Ask an org admin to switch one on.",
-      "notice": "No device provider is on in this organization, so these cloud devices are unavailable. You can still delete them. Ask an org admin to switch one on."
+    "noProviders": {
+      "text": "This organization has no device type yet",
+      "hint": "Ask an org admin to switch on a device plugin under Extensions",
+      "notice": "This organization has no device type on, so these devices are unavailable. You can still delete them. Ask an org admin to switch on a device plugin under Extensions."
     },
     "create": {
       "title": "New device",
@@ -1775,32 +1775,10 @@
       "cancel": "Cancel",
       "submit": "Create",
       "created": "Device {name} created.",
-      "provider": "Provider",
-      "providerHelp": "Where the device runs. It cannot be changed later.",
-      "kindLabel": "Device type",
-      "cloud": "Cloud",
-      "cloudHint": "Runs in the platform's sandbox, ready as soon as it is created.",
-      "local": "Local",
-      "localHint": "Runs commands on your own computer or server.",
-      "installStep": "1. Install the connector program on the machine",
-      "loginStep": "2. Sign in and confirm on the page it opens",
-      "waiting": "Waiting for the machine to log in… It appears in the device list once confirmed, and comes online after step 3.",
+      "providerLabel": "Device type",
       "connected": "{name} connected.",
       "close": "Close",
-      "startStep": "3. Start the connection to keep the device online (to connect at login: capybara-device service install)",
-      "connectMachine": "Connect this machine",
-      "connectFailed": "Could not connect this machine. Try again.",
-      "thisMachineConnected": "This computer is connected to this platform: {state}.",
-      "thisMachineOtherOrg": "This computer is connected to another of your organizations.",
-      "connectedElsewhere": "This computer is connected to another platform ({origin}). Use the commands below to connect it here.",
-      "openDevice": "Open device",
-      "connection": {
-        "starting": "Starting",
-        "online": "Online",
-        "offline": "Offline",
-        "draining": "Finishing tasks",
-        "stopped": "Stopped"
-      }
+      "connectFailed": "Could not connect this machine. Try again."
     },
     "detail": {
       "providerOffNote": "The provider of this device is switched off or not installed in this organization. Its files are kept.",

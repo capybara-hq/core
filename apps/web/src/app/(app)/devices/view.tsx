@@ -1,14 +1,15 @@
 "use client";
 
 import { ListPage, ObjectCard } from "@capybara-hq/design";
-import { useTranslations } from "next-intl";
+import { useLocale, useTranslations } from "next-intl";
 import { useState } from "react";
 import { DeviceCreateDialog } from "../../../components/DeviceCreateDialog";
 import { ErrorFrame } from "../../../components/ErrorFrame";
 import { NoAccess } from "../../../components/NoAccess";
 import { usePagePath } from "../../../components/shell/path";
 import { useDeviceName } from "../../../components/use-device-name";
-import { type Device, deviceCeilingMark, deviceState } from "../../../lib/devices";
+import { type Device, deviceCeilingMark, deviceState, providerLabel } from "../../../lib/devices";
+import { labelLocale } from "../../../lib/extension-label";
 import { devicesQuery } from "../../../lib/query/devices";
 import { usePageQuery } from "../../../lib/query/page-query";
 import { useWorkspace } from "../../../lib/query/workspace";
@@ -16,13 +17,13 @@ import { useThisMachineDeviceId } from "../../../lib/use-this-machine";
 import NotFound from "../not-found";
 
 /**
- * `/devices` (设备): the person's devices as cards (the default shows as 个人设备): source
- * (云端设备 / 本地设备), state (运行中 / 已暂停 / 未启动 / 文件已丢失 / 不可用; a connected one 在线 /
+ * `/devices` (设备): the person's devices as cards (the default shows as 个人设备): its provider's
+ * display name, state (运行中 / 已暂停 / 未启动 / 文件已丢失 / 不可用; a connected one 在线 /
  * 离线) and the mode mark (自动 / 沙箱 for a local device, 开放（挡内网） / 白名单 for a cloud one); a
- * card opens the device's page. 新建设备 opens a
- * dialog (a cloud sandbox or a connected device); without a sandbox provider the page says the
- * platform has no cloud sandbox and the dialog only connects a device; the cloud devices it
- * still has are listed as 不可用 under a notice (they can be deleted). From the query cache (the
+ * card opens the device's page. 新建设备 (offered
+ * only when a device provider is on in the org) opens a dialog of provider cards with their
+ * connection guides; without a provider the page says so, and the devices it still has are listed
+ * as 不可用 under a notice (they can be deleted). From the query cache (the
  * layout prefetched it on a first load).
  */
 export default function DevicesView() {
@@ -40,11 +41,16 @@ function Devices({ orgId }: { orgId: string }) {
   const thisMachine = useThisMachineDeviceId(orgId);
   if (list.kind === "notFound") return <NotFound />;
   if (list.kind === "error") return <ErrorFrame reset={list.retry} />;
-  // 新建设备 is always there: without a cloud sandbox it still connects a device
+  // 新建设备 needs a provider to create on: without one it is not offered
+  const canCreate = list.kind === "ready" && list.data.providers.length > 0;
   const header = {
     path: [...scope, { label: "devices" }],
     title: t("title"),
-    actions: [{ label: t("new"), variant: "primary" as const, onSelect: () => setCreating(true) }],
+    ...(canCreate && {
+      actions: [
+        { label: t("new"), variant: "primary" as const, onSelect: () => setCreating(true) },
+      ],
+    }),
   };
   const common = { variant: "cards" as const, listLabel: t("listLabel") };
   if (list.kind === "loading")
@@ -56,11 +62,11 @@ function Devices({ orgId }: { orgId: string }) {
     items.length > 0
       ? undefined
       : list.data.providers.length === 0
-        ? { text: t("noCloud.text"), hint: t("noCloud.hint") }
+        ? { text: t("noProviders.text"), hint: t("noProviders.hint") }
         : { text: t("empty") };
   const callout =
     items.length > 0 && list.data.providers.length === 0
-      ? { tone: "warn" as const, children: t("noCloud.notice") }
+      ? { tone: "warn" as const, children: t("noProviders.notice") }
       : undefined;
   return (
     <>
@@ -89,6 +95,7 @@ function Devices({ orgId }: { orgId: string }) {
 function DeviceCard({ device: e, thisMachine }: { device: Device; thisMachine: boolean }) {
   const t = useTranslations("devices");
   const nameOf = useDeviceName();
+  const locale = labelLocale(useLocale());
   const state = deviceState(e);
   const mark = deviceCeilingMark(e);
   return (
@@ -96,9 +103,7 @@ function DeviceCard({ device: e, thisMachine }: { device: Device; thisMachine: b
       avatar={{ icon: "cpu" }}
       title={nameOf(e)}
       href={`/devices/${encodeURIComponent(e.id)}`}
-      description={
-        e.available ? t(`source.${e.dialIn ? "local" : "cloud"}`) : (e.provider ?? t("none"))
-      }
+      description={e.provider === null ? t("none") : providerLabel(e, locale)}
       meta={[
         // the shell says this device is the machine the app runs on (desktop client spec §9.6)
         ...(thisMachine ? [t("thisMachine.mark")] : []),
