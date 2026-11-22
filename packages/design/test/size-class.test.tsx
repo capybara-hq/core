@@ -71,7 +71,7 @@ describe("size classes", () => {
 
   it("the queries are exactly the ones the spec names", () => {
     expect(SIZE_CLASS_QUERIES).toEqual({
-      compact: "(max-width: 599px)",
+      compact: "not all and (min-width: 600px)",
       medium: "(min-width: 600px) and (max-width: 840px)",
       expanded: "(min-width: 841px)",
     });

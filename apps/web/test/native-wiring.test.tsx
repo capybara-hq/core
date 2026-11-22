@@ -29,10 +29,15 @@ function window_(width: number) {
   vi.stubGlobal("matchMedia", (q: string) => {
     const t = q.trim();
     const features = [...t.matchAll(/\((min|max)-width:\s*(\d+)px\)/g)];
+    const hit =
+      features.length > 0 &&
+      features.every(([, k, n]) => (k === "min" ? width >= Number(n) : width <= Number(n)));
+    // the compact query is the complement of (min-width: 600px)
     const matches = /pointer/.test(t)
       ? !t.startsWith("(any-pointer: fine)")
-      : features.length > 0 &&
-        features.every(([, k, n]) => (k === "min" ? width >= Number(n) : width <= Number(n)));
+      : t.startsWith("not all and ")
+        ? !hit
+        : hit;
     return { matches, media: q, addEventListener() {}, removeEventListener() {} };
   });
 }

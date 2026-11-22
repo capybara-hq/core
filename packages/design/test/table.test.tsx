@@ -669,7 +669,7 @@ describe("DataTable semantics and the narrow controls (spec §6.6)", () => {
   const realMatchMedia = window.matchMedia;
   const phone = () => {
     window.matchMedia = ((q: string) => ({
-      matches: q === "(max-width: 599px)",
+      matches: q === "not all and (min-width: 600px)",
       media: q,
       addEventListener: () => {},
       removeEventListener: () => {},

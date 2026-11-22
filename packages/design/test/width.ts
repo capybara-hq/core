@@ -8,14 +8,20 @@ type DesignProviderProps = ComponentProps<typeof DesignProvider>;
 
 /**
  * A `window.matchMedia` stand-in for a window `width` CSS px wide (and `height` high): evaluates
- * `min-` / `max-` `width` / `height` features joined by `and` and `,`; other queries do not match.
+ * `min-` / `max-` `width` / `height` features joined by `and` and `,`, each comma part optionally
+ * negated by a leading `not all and` (the compact query); other queries do not match.
  * Listeners are kept so a test can resize the window with `resize()`.
  */
 export function matchMediaFor(width: number, height = 900) {
   const listeners = new Set<() => void>();
   const state = { width, height };
-  const one = (q: string): boolean => {
-    const features = [...q.matchAll(/\((min|max)-(width|height):\s*(\d+)px\)/g)];
+  const one = (part: string): boolean => {
+    const negated = /^not\s+all\s+and\s+/.exec(part);
+    if (negated) return !plain(part.slice(negated[0].length));
+    return plain(part);
+  };
+  const plain = (q: string): boolean => {
+    const features = [...q.matchAll(/\((min|max)-(width|height):\s*(\d+(?:\.\d+)?)px\)/g)];
     if (features.length === 0) return false;
     return features.every(([, kind, dim, n]) => {
       const v = dim === "width" ? state.width : state.height;
