@@ -65,8 +65,9 @@ export interface MacOperationBackendOptions {
    */
   onOperationEnded?: (operationId: string) => void;
   /**
-   * Called with the scope's project root when a scoped operation is admitted (the connection's
-   * record of the project directories it used). Best effort: a failure never refuses the operation.
+   * Called with the scope's project root when a scoped operation launches, after every admission
+   * and launch check (the connection's record of the project directories it used). Best effort: a
+   * failure never affects the operation.
    */
   onProjectAdmitted?: (projectRoot: string) => void;
 }
@@ -380,13 +381,10 @@ export async function createLocalOperationBackend(
       boundedPath(background.outputPath, grant, true);
       if (!grant.full) host.checkArtifactTarget?.(background.outputPath);
     }
-    if ("profile" in scope && scope.filesystem.kind === "scoped" && scope.filesystem.projectRoot) {
-      try {
-        options.onProjectAdmitted?.(scope.filesystem.projectRoot);
-      } catch {
-        // the record of used project directories never refuses an operation
-      }
-    }
+    const projectRoot =
+      "profile" in scope && scope.filesystem.kind === "scoped"
+        ? scope.filesystem.projectRoot
+        : null;
     const common = {
       scope,
       grant,
@@ -403,7 +401,16 @@ export async function createLocalOperationBackend(
             "Owner policy changed before launch; resolve fresh authority",
           );
       },
-      onLaunch: async () => {},
+      // the supervisor calls this after its own admission and launch checks: only an operation
+      // that actually launches records its project root
+      onLaunch: async () => {
+        if (!projectRoot) return;
+        try {
+          options.onProjectAdmitted?.(projectRoot);
+        } catch {
+          // the record of used project directories never affects an operation
+        }
+      },
     };
     const request: MacWorkerRequest = native
       ? {

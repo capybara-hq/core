@@ -371,8 +371,8 @@ describe("staged device parts (W3-M)", () => {
     await expect(s.device.create(signal())).rejects.toBeInstanceOf(FileSystemGoneError);
   });
 
-  it("an admitted scoped operation records its project root for this connection", async () => {
-    const s = staged();
+  /** A scoped exec in `<workspace>/core`, admitted until `admitBeforeMs` (the fixture clock is 1). */
+  async function scopedExec(s: ReturnType<typeof staged>, admitBeforeMs: number) {
     await s.device.binder.bind(request(G1, B1, null), signal());
     const bound = s.device.binder.current();
     if (!bound) throw new Error("expected binding");
@@ -380,7 +380,7 @@ describe("staged device parts (W3-M)", () => {
     mkdirSync(project, { recursive: true });
     const scope: SandboxOperationScope = {
       operationId: "scoped-1",
-      admitBeforeMs: 1000,
+      admitBeforeMs,
       deviceId: "d",
       rootConversationId: "r",
       profileRevision: 1,
@@ -400,10 +400,25 @@ describe("staged device parts (W3-M)", () => {
       maxOutputBytes: 4,
       signal: signal(),
     });
+    return { project, running };
+  }
+
+  it("a scoped operation that launches records its project root for this connection", async () => {
+    const s = staged();
+    const { project, running } = await scopedExec(s, 1000);
     await vi.waitFor(() => expect(s.launched.length).toBe(1));
     for (const f of s.finishers) f();
     await running;
     expect(readProjectRoots(state)).toEqual([project]);
+  });
+
+  it("a scoped operation refused before it launches records nothing", async () => {
+    const s = staged();
+    // admission already expired on the fixture clock: the supervisor refuses it
+    const refused = scopedExec(s, 1).then((e) => e.running);
+    await expect(refused).rejects.toThrow(/expired/);
+    expect(s.launched).toHaveLength(0);
+    expect(readProjectRoots(state)).toEqual([]);
   });
 
   it("machine stop exact-stops every owned operation and admits nothing new", async () => {

@@ -243,6 +243,8 @@ export function connectStaged(device: StagedDevice, opts: StagedConnectOptions =
         }, stableMs);
         void (async () => {
           let served: ReturnType<typeof serveStagedSession>;
+          // what the hello carried: the first owner change event is compared against it
+          let announced = "";
           try {
             const report = await device.report({
               ...(opts.programVersion !== undefined && { programVersion: opts.programVersion }),
@@ -250,6 +252,10 @@ export function connectStaged(device: StagedDevice, opts: StagedConnectOptions =
               ...(bootId !== undefined && { bootId }),
             });
             if (sock.readyState !== WebSocket.OPEN) return;
+            announced = JSON.stringify({
+              policy: report.body.policy,
+              ownerCeiling: report.body.ownerCeiling,
+            });
             served = serveStagedSession(
               sock,
               report,
@@ -266,12 +272,13 @@ export function connectStaged(device: StagedDevice, opts: StagedConnectOptions =
             sock.close(4400, "Device report unavailable; reconnect");
             return;
           }
-          // the owner changed the ceiling on the machine: push the new owner report as an event
-          // (the provider turns it into a report revision change). A report that fails now (a
-          // broken policy.json) is said and retried by the check, never thrown.
-          let sent = "";
+          // the owner changed the ceiling on the machine, or the shared project directories changed:
+          // push the new owner report and summary as an event. The check compares against what the
+          // hello carried, so a change made while the hello was built is still announced. A report
+          // that fails now (a broken policy.json) is said and retried by the check, never thrown.
+          let sent = announced;
           try {
-            sent = JSON.stringify(report_(device));
+            report_(device);
           } catch (error) {
             err(`Owner report unavailable: ${(error as Error).message}`);
           }

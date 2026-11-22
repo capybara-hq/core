@@ -1,3 +1,4 @@
+import { execFileSync } from "node:child_process";
 import {
   chmodSync,
   mkdirSync,
@@ -76,6 +77,21 @@ describe("project roots of one connection", () => {
     recordProjectRoot(d, "relative/dir");
     recordProjectRoot(d, "/a/../b");
     expect(readProjectRoots(d)).toEqual(["/ok"]);
+    // never through a symlink, never a FIFO (no blocking read), never an oversized file
+    const elsewhere = join(m, "elsewhere.json");
+    writeFileSync(elsewhere, JSON.stringify({ version: 1, roots: ["/p/linked"] }));
+    rmSync(projectRootsPath(d));
+    symlinkSync(elsewhere, projectRootsPath(d));
+    expect(readProjectRoots(d)).toEqual([]);
+    rmSync(projectRootsPath(d));
+    execFileSync("mkfifo", [projectRootsPath(d)]);
+    expect(readProjectRoots(d)).toEqual([]);
+    rmSync(projectRootsPath(d));
+    writeFileSync(
+      projectRootsPath(d),
+      JSON.stringify({ version: 1, roots: ["/ok"], pad: "x".repeat(2 * 1024 * 1024) }),
+    );
+    expect(readProjectRoots(d)).toEqual([]);
     // a write replaces a broken file
     writeFileSync(projectRootsPath(d), "[]");
     recordProjectRoot(d, "/p/new");

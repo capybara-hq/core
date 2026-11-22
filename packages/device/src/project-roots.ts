@@ -1,4 +1,13 @@
-import { existsSync, readdirSync, readFileSync, realpathSync } from "node:fs";
+import {
+  closeSync,
+  constants,
+  existsSync,
+  fstatSync,
+  openSync,
+  readdirSync,
+  readFileSync,
+  realpathSync,
+} from "node:fs";
 import { join, resolve } from "node:path";
 import { validateSandboxPathShape } from "@capybara-hq/plugin-sdk";
 import { MAX_DEVICE_SHARED_PROJECT_ROOTS } from "@capybara-hq/plugin-sdk/device-protocol";
@@ -18,6 +27,25 @@ export function projectRootsPath(connectionStateDir: string): string {
   return join(connectionStateDir, "projects.json");
 }
 
+/** The largest projects.json read: every root at the longest path, with slack. */
+const PROJECT_ROOTS_FILE_MAX_BYTES = PROJECT_ROOTS_MAX * 4200 + 1024;
+
+/**
+ * The file's text: never through a symlink, never a FIFO or other non-regular file (no blocking
+ * read on the program's event loop), never more than {@link PROJECT_ROOTS_FILE_MAX_BYTES}.
+ */
+function readBounded(file: string): string {
+  const fd = openSync(file, constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK);
+  try {
+    const st = fstatSync(fd);
+    if (!st.isFile() || st.size > PROJECT_ROOTS_FILE_MAX_BYTES)
+      throw new Error(`${file} is not a bounded regular file`);
+    return readFileSync(fd, "utf8");
+  } finally {
+    closeSync(fd);
+  }
+}
+
 const isRoot = (v: unknown): v is string =>
   typeof v === "string" && validateSandboxPathShape(v).length === 0;
 
@@ -25,7 +53,7 @@ const isRoot = (v: unknown): v is string =>
 export function readProjectRoots(connectionStateDir: string): string[] {
   let raw: unknown;
   try {
-    raw = JSON.parse(readFileSync(projectRootsPath(connectionStateDir), "utf8"));
+    raw = JSON.parse(readBounded(projectRootsPath(connectionStateDir)));
   } catch {
     return [];
   }
