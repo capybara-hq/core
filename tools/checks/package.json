@@ -8,7 +8,8 @@
     "node": ">=24"
   },
   "scripts": {
-    "build": "tsc -b"
+    "build": "tsc -b",
+    "inventory:templates": "tsx --tsconfig ../../tsconfig.base.json --conditions=@capybara-hq/source src/template-inventory.ts"
   },
   "dependencies": {
     "@formatjs/icu-messageformat-parser": "^3.5.21",
