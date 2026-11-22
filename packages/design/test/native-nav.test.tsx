@@ -196,7 +196,6 @@ describe("the native strip (nav@1)", () => {
     expect(nav.set).toHaveBeenLastCalledWith({
       items: FOUR,
       current: "chats",
-      menu: null,
       action: NEW,
       account: ACCOUNT,
     });
@@ -355,7 +354,6 @@ describe("the native strip (nav@1)", () => {
     expect(nav.set).toHaveBeenLastCalledWith({
       items: FOUR.slice(0, 3),
       current: "inbox",
-      menu: null,
       action: { id: "p", label: "新建", icon: "plus" },
       account: ACCOUNT,
     });
@@ -475,25 +473,13 @@ describe("the native strip (nav@1)", () => {
     expect(fake.nav.set).toHaveBeenCalledTimes(1);
   });
 
-  it("an older shell without onAction / onAccount gets exactly the old shape and its taps", () => {
+  it("sends only the lockstep shape: no menu key, an action always", () => {
     window.matchMedia = matchMediaFor(390).matchMedia;
     const fake = fakeNav();
-    const onNavigate = vi.fn();
-    const older: NativeNavHandle = { set: fake.nav.set, onSelect: fake.nav.onSelect };
-    render(
-      shell(older, "/agents", {
-        onNavigate,
-        search: true,
-        primary: { id: "p", label: "新建", run() {} },
-      }),
-    );
-    // the shipped validator takes only items / current / menu, the four sections, menu present
+    render(shell(fake.nav, "/agents", { search: true }));
     for (const [state] of fake.nav.set.mock.calls) {
-      expect(Object.keys(state).sort()).toEqual(["current", "items", "menu"]);
+      expect(Object.keys(state).sort()).toEqual(["account", "action", "current", "items"]);
     }
-    expect(fake.nav.set).toHaveBeenLastCalledWith({ items: FOUR, current: "agents", menu: null });
-    act(() => fake.select("inbox"));
-    expect(onNavigate).toHaveBeenCalledWith("/inbox", { transition: "none" });
   });
 
   it("keeps the action and account within bounds and the avatar to https or own-origin http", () => {

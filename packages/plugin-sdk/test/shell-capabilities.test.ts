@@ -10,7 +10,6 @@ import {
   type NavAccountV1,
   type NavActionV1,
   type NavCapabilityV1,
-  type NavMenuV1,
   type NavSectionId,
   type NavStateV1,
   type NotifyCapabilityV1,
@@ -131,20 +130,20 @@ describe("desktop shell capability types", () => {
     expectTypeOf<NavSectionId>().toEqualTypeOf<
       "chats" | "inbox" | "agents" | "schedules" | "search"
     >();
-    expectTypeOf<keyof NavStateV1>().toEqualTypeOf<
-      "items" | "current" | "menu" | "action" | "account"
-    >();
-    // the minor version (interaction model §10.3, D16): menu optional, action, account and side
-    expectTypeOf<NavStateV1["menu"]>().toEqualTypeOf<NavMenuV1 | null | undefined>();
-    expectTypeOf<NonNullable<NavStateV1["action"]>>().toEqualTypeOf<NavActionV1>();
+    expectTypeOf<keyof NavStateV1>().toEqualTypeOf<"items" | "current" | "action" | "account">();
+    // the shape the shell and the web ship in lockstep (interaction model §10.3, D12, D16): no
+    // menu button, the pill's action always sent, account and side
+    expectTypeOf<NavStateV1["action"]>().toEqualTypeOf<NavActionV1>();
     expectTypeOf<NavActionV1["icon"]>().toEqualTypeOf<"plus" | "square-pen">();
     expectTypeOf<keyof NavAccountV1>().toEqualTypeOf<"name" | "avatarUrl" | "initial" | "badge">();
     expectTypeOf<NavCapabilityV1["side"]>().toEqualTypeOf<"left" | "right" | undefined>();
-    expectTypeOf<ReturnType<NavCapabilityV1["onMenu"]>>().toEqualTypeOf<() => void>();
-    expectTypeOf<NonNullable<NavCapabilityV1["onAction"]>>().toEqualTypeOf<
+    expectTypeOf<keyof NavCapabilityV1>().toEqualTypeOf<
+      "set" | "onSelect" | "onAction" | "onAccount" | "side"
+    >();
+    expectTypeOf<NavCapabilityV1["onAction"]>().toEqualTypeOf<
       (listener: () => void) => () => void
     >();
-    expectTypeOf<NonNullable<NavCapabilityV1["onAccount"]>>().toEqualTypeOf<
+    expectTypeOf<NavCapabilityV1["onAccount"]>().toEqualTypeOf<
       (listener: () => void) => () => void
     >();
     expectTypeOf<ReturnType<ProfilesCapabilityV1["show"]>>().toEqualTypeOf<Promise<void>>();

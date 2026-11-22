@@ -313,12 +313,12 @@ icon = `plus` or the action's own). A page without a primary leaves 新会话 th
 their full-width primary under the title (responsive D2): the pill's top item then stays 新会话.
 
 Contract change (`nav@1`, minor version, mobile app spec §5.2):
-`set({ items, current, action?: { id: string; label: string; icon: "plus" | "square-pen" }, account?: { name: string; avatarUrl?: string | null; initial: string; badge?: number } })`,
-plus `onAction(cb)` and `onAccount(cb)`; `menu` becomes optional in the type and the web always
-sends `menu: null` (no menu button; a button stays in the contract for an older web). A shell before
-the minor version (a `nav@1` without `onAction`) gets exactly the old shape
-`{ items: the four sections, current, menu: null }`, which its validator accepts. The web calls
-`set` on route and primary changes.
+`set({ items, current, action: { id: string; label: string; icon: "plus" | "square-pen" }, account?: { name: string; avatarUrl?: string | null; initial: string; badge?: number } })`,
+plus `onAction(cb)` and `onAccount(cb)`; `menu` and `onMenu` leave the contract (no menu button,
+D12). **Lockstep** (amended 2026-11-22, final review of phase 0b): the shell's minor version ships
+with or before the web that sends this shape; before 0.1.0 there is no older-shell path (no
+compatibility layer, AGENTS.md "Before 0.1.0"), so the web sends this shape to every `nav@1`. The
+web calls `set` on route and primary changes.
 
 ### 10.4 Sheets, drawer, scrim, menus and the keyboard with the strip
 
@@ -421,7 +421,7 @@ Design spec section numbers after these merges: §6.59 bottom sheet, §6.60 Conv
 | T0b.7 | Guards `web-ui-overlay-primitive`, `design-sheet-parts`, `useNative` in `web-ui-size-branch` (§9) | T0.4 |
 | T0b.8 | Haptic additions (long press opens a sheet, refresh) (§7) | — (`useLongPress` exists, #596) |
 | T0b.9 | Duo: the head's primary (the §6.62 FAB form) goes to the strip pill while `nav@1` is present: `ShellPage.primary`, the FAB form hidden (§10.3; D10, D14) | T0.6 |
-| T0b.10 | Duo: `nav@1` minor version (`action`, `account`, `side`, `onAction`, `onAccount`, `menu` optional), web adapter, overlays close before a strip selection (§10.2–10.4, §10.7; D11, D12, D16) | mobile app line (clients repo for the native side) |
+| T0b.10 | Duo: `nav@1` minor version (`action`, `account`, `side`, `onAction`, `onAccount`; `menu` and `onMenu` removed in the final review, lockstep), web adapter, overlays close before a strip selection (§10.2–10.4, §10.7; D11, D12, D16) | mobile app line (clients repo for the native side) |
 | T0b.11 | Duo: drawer / rail / sidebar drop the pill's entries; 技能、连接器、设备… in the account sheet; sheet panel inside the strip side's inset, scrim full bleed; `data-strip`; `duo.spec.ts` shots (§10.4–10.7; D13, D15) | T0b.10 |
 
 Phase 0b's Duo tasks need the native side in the clients repo (the mobile app line) (decisions D10–D16).

@@ -170,7 +170,7 @@ export const MOBILE_SHELL_LIMITS = {
   shareTitle: 256,
   shareText: 4000,
   url: 2048,
-  /** `nav@1`: a section or menu label is 1..32 characters. */
+  /** `nav@1`: an item or action label is 1..32 characters. */
   navLabel: 32,
   /** `nav@1`: a badge count is an integer 0..9999 (`countMore` says there are more). */
   navCount: 9999,
@@ -183,7 +183,7 @@ export const MENU_ITEM_ID = /^[A-Za-z0-9_.-]{1,64}$/;
 
 /**
  * The strip's items: the four sections and, last, `search` (opens the web's command palette; never
- * `current`). A shell before the 2026-11-22 minor version knows only the four sections.
+ * `current`).
  */
 export type NavSectionId = "chats" | "inbox" | "agents" | "schedules" | "search";
 
@@ -203,10 +203,6 @@ export interface NavBadgeV1 {
 
 export interface NavItemV1 extends NavBadgeV1 {
   id: NavSectionId;
-  label: string;
-}
-
-export interface NavMenuV1 extends NavBadgeV1 {
   label: string;
 }
 
@@ -235,14 +231,8 @@ export interface NavStateV1 {
   /** The items the person sees, in NAV_SECTION_ORDER (a guest has no `schedules`). */
   items: NavItemV1[];
   current: NavSectionId | null;
-  /**
-   * The strip's menu button, or null for none. Optional in the type since the 2026-11-22 minor
-   * version, but the current web always sends `null` (no menu button on the strip, D12); an older
-   * web may send a button.
-   */
-  menu?: NavMenuV1 | null;
-  /** The pill's top item (absent: the shell shows none). */
-  action?: NavActionV1;
+  /** The pill's top item: the page's primary, else the new conversation (no menu button, D12). */
+  action: NavActionV1;
   /** The avatar under the status (absent: the shell shows none). */
   account?: NavAccountV1;
 }
@@ -250,20 +240,17 @@ export interface NavStateV1 {
 /**
  * `nav@1`: offered only while the window has a strip (mobile app spec §6.1): presence is
  * visibility. `side` is the edge the strip is on (right unless the app is the left one of a
- * split), reported with the capability and updated with the envelope's `change`. `onAction`,
- * `onAccount` and `side` arrived in a minor version: a shell before it lacks them and its `set`
- * validator rejects any key beyond `items` / `current` / `menu`, an absent `menu`, more than the
- * four sections and the `search` item. The web treats a capability without an `onAction`
- * function as such a shell and sends it exactly `{ items: the four sections, current, menu: null }`.
+ * split), reported with the capability and updated with the envelope's `change`. The shell and
+ * the web ship this shape in lockstep (no older-shell path before 0.1.0): the shell's nav@1
+ * minor version of 2026-11-22 ships with or before the web that sends it.
  */
 export interface NavCapabilityV1 {
   set(state: NavStateV1): Promise<void>;
   onSelect(listener: (id: NavSectionId) => void): () => void;
-  onMenu(listener: () => void): () => void;
   /** The pill's top item was tapped: the web runs the action. */
-  onAction?(listener: () => void): () => void;
+  onAction(listener: () => void): () => void;
   /** The account avatar was tapped: the web opens its account sheet. */
-  onAccount?(listener: () => void): () => void;
+  onAccount(listener: () => void): () => void;
   readonly side?: "left" | "right";
 }
 

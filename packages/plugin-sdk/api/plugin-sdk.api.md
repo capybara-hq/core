@@ -2908,9 +2908,8 @@ export interface NavBadgeV1 {
 
 // @public
 export interface NavCapabilityV1 {
-    onAccount?(listener: () => void): () => void;
-    onAction?(listener: () => void): () => void;
-    onMenu(listener: () => void): () => void;
+    onAccount(listener: () => void): () => void;
+    onAction(listener: () => void): () => void;
     onSelect(listener: (id: NavSectionId) => void): () => void;
     set(state: NavStateV1): Promise<void>;
     readonly side?: "left" | "right";
@@ -2923,20 +2922,14 @@ export interface NavItemV1 extends NavBadgeV1 {
 }
 
 // @public
-export interface NavMenuV1 extends NavBadgeV1 {
-    label: string;
-}
-
-// @public
 export type NavSectionId = "chats" | "inbox" | "agents" | "schedules" | "search";
 
 // @public
 export interface NavStateV1 {
     account?: NavAccountV1;
-    action?: NavActionV1;
+    action: NavActionV1;
     current: NavSectionId | null;
     items: NavItemV1[];
-    menu?: NavMenuV1 | null;
 }
 
 // @public

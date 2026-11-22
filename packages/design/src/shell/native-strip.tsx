@@ -58,54 +58,37 @@ export function useNativeStrip(input: NativeStripInput): ReactNode {
   const [accountOpen, setAccountOpen] = useState(false);
   const { nativeNav, drawer, reference } = input;
   const hasNav = nativeNav !== undefined;
-  // A shell before the minor version (no `onAction`) validates the old shape only: the four
-  // sections, current and menu, nothing else (mobile app spec §5.2).
-  const legacy = nativeNav !== undefined && typeof nativeNav.onAction !== "function";
   // the pill carries a primary with a label (an empty one leaves the new conversation)
   const primary = input.compact && input.primary?.label ? input.primary : undefined;
   const account = drawer ? accountOf(drawer.account.name, drawer.account.avatar) : null;
   const state: NativeNavState | null = !drawer
     ? null
-    : legacy
-      ? {
-          items: [
-            { id: "chats" as const, label: navLabel(t("shell.chats")) },
-            ...drawer.sections.map((s) => ({
-              id: s.id,
-              label: navLabel(s.label),
-              ...navBadge(s.badge),
-            })),
-          ],
-          current: currentSection(input.pathname, input.surface, drawer),
-          menu: null,
-        }
-      : {
-          items: [
-            { id: "chats" as const, label: navLabel(t("shell.chats")) },
-            ...drawer.sections.map((s) => ({
-              id: s.id,
-              label: navLabel(s.label),
-              ...navBadge(s.badge),
-            })),
-            ...(input.searchable
-              ? [{ id: "search" as const, label: navLabel(t("shell.searchShort")) }]
-              : []),
-          ],
-          current: currentSection(input.pathname, input.surface, drawer),
-          menu: null,
-          action: primary
-            ? {
-                id: NATIVE_MENU_ID.test(primary.id) ? primary.id : "primary",
-                label: navLabel(primary.label),
-                icon: primary.icon ?? "plus",
-              }
-            : {
-                id: NEW_CONVERSATION_ACTION,
-                label: navLabel(drawer.newConversation.label),
-                icon: "square-pen",
-              },
-          ...(account ? { account } : {}),
-        };
+    : {
+        items: [
+          { id: "chats" as const, label: navLabel(t("shell.chats")) },
+          ...drawer.sections.map((s) => ({
+            id: s.id,
+            label: navLabel(s.label),
+            ...navBadge(s.badge),
+          })),
+          ...(input.searchable
+            ? [{ id: "search" as const, label: navLabel(t("shell.searchShort")) }]
+            : []),
+        ],
+        current: currentSection(input.pathname, input.surface, drawer),
+        action: primary
+          ? {
+              id: NATIVE_MENU_ID.test(primary.id) ? primary.id : "primary",
+              label: navLabel(primary.label),
+              icon: primary.icon ?? "plus",
+            }
+          : {
+              id: NEW_CONVERSATION_ACTION,
+              label: navLabel(drawer.newConversation.label),
+              icon: "square-pen",
+            },
+        ...(account ? { account } : {}),
+      };
   const key = state === null ? null : JSON.stringify(state);
   const sent = useRef<string | null>(null);
   const latest = useRef({ input, state, primary, haptics, accountOpen });
@@ -146,8 +129,7 @@ export function useNativeStrip(input: NativeStripInput): ReactNode {
   useEffect(() => {
     if (nativeNav === undefined) return;
     const offs: (() => void)[] = [];
-    const listen = (subscribe: (() => unknown) | undefined) => {
-      if (subscribe === undefined) return;
+    const listen = (subscribe: () => unknown) => {
       try {
         const off = subscribe();
         if (typeof off === "function") offs.push(off as () => void);
@@ -189,34 +171,30 @@ export function useNativeStrip(input: NativeStripInput): ReactNode {
         });
       }),
     );
-    listen(
-      nativeNav.onAction &&
-        (() =>
-          nativeNav.onAction?.(() => {
-            closeThen(() => {
-              const { input: now, primary: p } = latest.current;
-              if (p !== undefined) p.run();
-              else if (now.drawer !== undefined) {
-                const href = now.drawer.newConversation.href;
-                if (href === now.pathname) return;
-                // like a strip selection: swaps at once (no slide)
-                now.instantRoute.current = href;
-                go(href, { transition: "none" });
-              }
-            });
-          })),
+    listen(() =>
+      nativeNav.onAction(() => {
+        closeThen(() => {
+          const { input: now, primary: p } = latest.current;
+          if (p !== undefined) p.run();
+          else if (now.drawer !== undefined) {
+            const href = now.drawer.newConversation.href;
+            if (href === now.pathname) return;
+            // like a strip selection: swaps at once (no slide)
+            now.instantRoute.current = href;
+            go(href, { transition: "none" });
+          }
+        });
+      }),
     );
-    listen(
-      nativeNav.onAccount &&
-        (() =>
-          nativeNav.onAccount?.(() => {
-            // a second tap while the sheet is open closes it (no close and reopen)
-            if (latest.current.accountOpen) {
-              setAccountOpen(false);
-              return;
-            }
-            closeThen(() => setAccountOpen(true));
-          })),
+    listen(() =>
+      nativeNav.onAccount(() => {
+        // a second tap while the sheet is open closes it (no close and reopen)
+        if (latest.current.accountOpen) {
+          setAccountOpen(false);
+          return;
+        }
+        closeThen(() => setAccountOpen(true));
+      }),
     );
     return () => {
       for (const off of offs) {

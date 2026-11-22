@@ -185,12 +185,12 @@ fails when the native projects drift from it.
 | Capability · function | Does |
 |---|---|
 | `chrome@1.ready()` (new function) | The web's first paint is done: the shell drops its splash. Additive; the desktop may ignore it |
-| `nav@1.set({ items, current, menu?, action?, account? })` (decided 2026-11-21; minor version 2026-11-22, interaction model §10.3) | The strip's state. `items`: the pill's entries the person sees, in the order `chats` (对话), `inbox` (收件箱), `agents` (智能体), `schedules` (定时任务), `search` (搜索, last; sent while the web has a command palette), each `{ id, label, count?, countMore? }`; `current` the section of the page on screen or `null` (never `search`). `action`: the pill's top item, accent-filled, `{ id, label, icon: "plus" \| "square-pen" }`: the page's primary on compact (新建智能体, 新建定时任务…, `plus`), else 新会话 (`square-pen`); `id` matches the menu item id pattern, `label` 1..32. `account`: the avatar under the status, `{ name, avatarUrl?, initial, badge? }` (`name` 1..64; `avatarUrl` absolute, https or the profile's origin, else the shell draws `initial` in a circle; `badge` 0..9999). `menu` (`{ label, count?, countMore? }` or `null`) is optional in the type; the current web always sends `menu: null` (no menu button on the strip, D12); a shell keeps drawing a button for an older web that sends one. **Compatibility with an older shell**: a shell before the minor version rejects a `set` with any key beyond `items` / `current` / `menu`, without `menu`, or with more than the four sections (so `search` too); the web recognises it by a `nav@1` without an `onAction` function and sends it exactly `{ items: the four sections, current, menu: null }` (no pill action, no avatar, no 搜索 there). The shell draws every item with its own fixed glyph per id / icon (no icon data crosses), counts in the OS badge style. Not confirming, no activation |
+| `nav@1.set({ items, current, action, account? })` (decided 2026-11-21; minor version 2026-11-22, interaction model §10.3) | The strip's state. `items`: the pill's entries the person sees, in the order `chats` (对话), `inbox` (收件箱), `agents` (智能体), `schedules` (定时任务), `search` (搜索, last; sent while the web has a command palette), each `{ id, label, count?, countMore? }`; `current` the section of the page on screen or `null` (never `search`). `action`: the pill's top item, accent-filled, `{ id, label, icon: "plus" \| "square-pen" }`: the page's primary on compact (新建智能体, 新建定时任务…, `plus`), else 新会话 (`square-pen`); `id` matches the menu item id pattern, `label` 1..32. `account`: the avatar under the status, `{ name, avatarUrl?, initial, badge? }` (`name` 1..64; `avatarUrl` absolute, https or the profile's origin, else the shell draws `initial` in a circle; `badge` 0..9999). No `menu` key: the strip has no menu button (D12). **Lockstep** (amended 2026-11-22): the shell takes exactly this shape and ships its minor version with or before the web that sends it; before 0.1.0 there is no older-shell or older-web path, so neither side keeps a compatibility branch. The shell draws every item with its own fixed glyph per id / icon (no icon data crosses), counts in the OS badge style. Not confirming, no activation |
 | `nav@1.onSelect(cb)` | An item was tapped, the current one included: for a section the web closes any open overlay, then navigates to that section's route (the web owns routes); for `search` it opens the command palette |
 | `nav@1.onAction(cb)` (minor version 2026-11-22) | The pill's top item was tapped: the web closes any open overlay, then runs the action (the page's primary, else opens the new conversation) |
 | `nav@1.onAccount(cb)` (minor version 2026-11-22) | The account avatar was tapped: the web closes any open overlay, then opens its account sheet |
 | `nav@1.side` (minor version 2026-11-22, D16) | `"left"` \| `"right"`, a field of the capability object: the edge the strip is on (right with one app in the foreground; left only for the left app of an inner-display split), updated with the envelope's `change`. Absent: the web takes the side whose reported inset is the larger, else right, and writes `data-strip` on `<html>` before the first paint |
-| `nav@1.onMenu(cb)` (decided 2026-11-21; retired by the web 2026-11-22, D12) | The strip's menu button was tapped: an older web opens its drawer. The current web always sends `menu: null` and does not subscribe. A shell before the minor version lacks `onAction`, `onAccount` and `side`: the web then sends it the old shape (above), and takes the side from the inset fallback |
+| `nav@1.onMenu(cb)` (decided 2026-11-21; removed 2026-11-22, D12) | Gone with the strip's menu button: the shell offers no `onMenu` and the web never subscribes. `onAction` and `onAccount` are part of every `nav@1` (lockstep, above) |
 | `profiles@1.show()` (designer's call 2026-11-21) | Opens the native profile switcher (the app's deployments, add, remove) and resolves when it closes. Returns nothing, so the page learns nothing about other profiles; needs a user activation; no confirmation of its own |
 | `haptics@1.impact(kind)` | `selection`, `light`, `success`, `warning`; no confirmation |
 | `share@1.share({ title?, text?, url? })` | The OS share sheet; `url` must be on the profile's origin or https; needs a user activation |
@@ -258,11 +258,11 @@ Clarified (decided 2026-11-21, spike 1.2): see §15, "The origin gate, clarified
   `null`, and the shell leaves its selection as it was); `action`, the page's registered primary
   on compact, else 新会话 (on medium and expanded, the inner display, the head draws the primary
   and the pill keeps 新会话, D14); `account`, the person's name, initial and avatar image. No
-  `menu` since 2026-11-22 (D12); the older web sent it non-null exactly when its class was compact.
+  `menu` since 2026-11-22 (D12).
 - **Section routes**: `chats` → `/`, `inbox` → `/inbox`, `agents` → `/agents`, `schedules` →
-  `/schedules`. A selection navigates without a slide (as native tab bars switch), a selection of
-  the current section returns to its root, and `onMenu` toggles the drawer (older web only; the
-  current web closes any open overlay first and then navigates, interaction model §10.2).
+  `/schedules`. A selection navigates without a slide (as native tab bars switch), closing any
+  open overlay first (interaction model §10.2); a selection of the current section returns to
+  its root, and 对话 selected again on the home opens the conversations page (a tab re-tap).
 - **The web while the strip shows**: on compact it draws no menu button of its own (the floating
   row's leading slot stays empty on chat surfaces; pushed pages keep their back button) and the
   drawer drops 收件箱, 智能体 and 定时任务; on medium and expanded the rail and the sidebar keep
@@ -353,7 +353,7 @@ only; the desktop keeps E 终端 unchanged.
 - **Inner display in the app (decided 2026-11-21; maintainer confirmed the inner display has the right strip too, native strip navigation there as in plan)**: the strip's sections stay (the board draws
   them on both displays) and the content runs under the strip as on the outer display; the web
   shows the rail or the sidebar with only search, the recent conversations, the account and the
-  new conversation, and sends `menu: null` (no menu button: the sidebar is on screen). Open and
+  new conversation (no menu button on the strip, D12: the sidebar is on screen). Open and
   close are resizes: the web's class changes and it calls `nav@1.set` again. If the inner display
   turns out to have no strip, `nav@1` disappears there and the web's full sidebar returns, by the
   same rule (§6.1).

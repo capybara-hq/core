@@ -32,16 +32,13 @@ export const NATIVE_NAV_ACCOUNT_NAME = 64;
 /**
  * The strip's whole state (`nav@1.set`, mobile app spec §5.2; interaction model §10.2–10.3): the
  * items the person sees (with the inbox count), the current section, the pill's top item (the
- * page's primary, else the new conversation) and the account avatar; `menu` is always null (no
- * menu button on the strip, D12). A shell before the minor version (a handle without `onAction`)
- * gets only `{ items: the four sections, current, menu: null }`, the shape its validator takes.
+ * page's primary, else the new conversation) and the account avatar. No menu button (D12). The
+ * shell takes exactly this shape: it ships in lockstep with the web (no older-shell path).
  */
 export interface NativeNavState {
   items: { id: NativeSectionId; label: string; count?: number; countMore?: boolean }[];
   current: NativeSectionId | null;
-  /** Always null (no menu button): a shell before the minor version requires the key. */
-  menu: null;
-  action?: { id: string; label: string; icon: "plus" | "square-pen" };
+  action: { id: string; label: string; icon: "plus" | "square-pen" };
   account?: { name: string; avatarUrl?: string | null; initial: string; badge?: number };
 }
 
@@ -55,10 +52,10 @@ export interface NativeNavHandle {
   set(state: NativeNavState): void;
   /** A tap on an item, also the current one; returns the unsubscribe. */
   onSelect(listener: (id: NativeSectionId) => void): () => void;
-  /** A tap on the pill's top item; returns the unsubscribe. Absent on an older shell. */
-  onAction?(listener: () => void): () => void;
-  /** A tap on the account avatar; returns the unsubscribe. Absent on an older shell. */
-  onAccount?(listener: () => void): () => void;
+  /** A tap on the pill's top item; returns the unsubscribe. */
+  onAction(listener: () => void): () => void;
+  /** A tap on the account avatar; returns the unsubscribe. */
+  onAccount(listener: () => void): () => void;
 }
 
 export type NativeHapticKind = "selection" | "light" | "success" | "warning";
