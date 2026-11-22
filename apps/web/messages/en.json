@@ -4109,8 +4109,7 @@
           "discardHint": "{job} will never run. Retry it instead if the work is still needed.",
           "retried": "Queued again.",
           "alreadyOwed": "The same work was already queued; this copy was discarded.",
-          "discarded": "Discarded.",
-          "loadMore": "Load more"
+          "discarded": "Discarded."
         },
         "queue": {
           "lostJobs": "The queue lost background jobs",

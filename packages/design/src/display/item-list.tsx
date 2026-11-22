@@ -1,7 +1,9 @@
 import { Children, type ReactNode, useId } from "react";
 import { LinkPendingMark, useDesignLink } from "../provider";
 import { EmptyState, type EmptyStateProps } from "./empty-state";
+import { ListEnd, ListMoreButton, type ListMoreProps } from "./list-end";
 import { ObjectMark } from "./object-mark";
+import { SkeletonText } from "./skeleton";
 
 export type ItemListRow = {
   id: string;
@@ -44,16 +46,19 @@ export type ItemListProps = {
    */
   empty?: string | Omit<EmptyStateProps, "size">;
   inset?: ItemListInset;
-};
+} & ListMoreProps;
 
 /**
  * Rows of things to look at, act on or edit inside one box (spec §6.12, §1 "One box is enough"):
  * an agent's channels, the org chooser's orgs, the model purposes, a plugin's permissions. The
  * rows are split by `line-soft` hairlines, never drawn as cards. Plain rows come as `rows`; rows
  * with more in them (meta lines, fields, a warning and its code) are `ItemListItem` children.
- * Empty, it shows `empty` as the panel empty state: a list is always inside a box (§6.18).
+ * Empty, it shows `empty` as the panel empty state: a list is always inside a box (§6.18). A list
+ * with more pages (`onLoadMore`, `hasMore`, `loadingMore`, `loadMoreError`; {@link ListMoreProps})
+ * reads the next one as its end comes into view below 600 and draws Load more under it from 600 up
+ * (§6.17 "More pages").
  */
-export function ItemList({ label, rows, children, empty, inset = "card" }: ItemListProps) {
+export function ItemList({ label, rows, children, empty, inset = "card", ...more }: ItemListProps) {
   const Link = useDesignLink();
   const hasChildren = Children.toArray(children).length > 0;
   if ((rows ?? []).length === 0 && !hasChildren) {
@@ -65,41 +70,65 @@ export function ItemList({ label, rows, children, empty, inset = "card" }: ItemL
     );
   }
   return (
-    <ul
-      className="cb-item-list"
-      data-part="item-list"
-      data-inset={inset === "flush" ? "flush" : undefined}
-      aria-label={label}
+    <>
+      <ul
+        className="cb-item-list"
+        data-part="item-list"
+        data-inset={inset === "flush" ? "flush" : undefined}
+        aria-label={label}
+        aria-busy={more.loadingMore === true ? true : undefined}
+      >
+        {(rows ?? []).map((r) => (
+          <li key={r.id} className="cb-item-list-row" data-part="item-list-row">
+            {r.tag ? (
+              <span className="cb-item-list-tag" data-tone={r.tag.tone ?? "default"}>
+                {r.tag.label}
+              </span>
+            ) : null}
+            {r.mark ? (
+              <ObjectMark text={r.mark.text} image={r.mark.image ?? null} size={28} />
+            ) : null}
+            <span className="cb-item-list-text">
+              {r.href ? (
+                <Link href={r.href} className="cb-item-list-title">
+                  {r.title}
+                  <LinkPendingMark />
+                </Link>
+              ) : (
+                <span className="cb-item-list-title">{r.title}</span>
+              )}
+              {r.meta ? <span className="cb-item-list-meta">{r.meta}</span> : null}
+            </span>
+            {r.status ? (
+              <span className="cb-item-list-status" data-tone={r.status.tone ?? "default"}>
+                {r.status.label}
+              </span>
+            ) : null}
+            {r.actions ? <span className="cb-item-list-actions">{r.actions}</span> : null}
+          </li>
+        ))}
+        {children}
+        <ListEnd more={more} skeleton={<SkeletonRow />} />
+      </ul>
+      <ListMoreButton more={more} />
+    </>
+  );
+}
+
+/** The row an item list with more pages shows at its end while the next page loads. */
+function SkeletonRow() {
+  return (
+    <li
+      className="cb-item-list-row"
+      data-part="item-list-row"
+      data-skeleton="true"
+      data-end="skeleton"
+      aria-hidden
     >
-      {(rows ?? []).map((r) => (
-        <li key={r.id} className="cb-item-list-row" data-part="item-list-row">
-          {r.tag ? (
-            <span className="cb-item-list-tag" data-tone={r.tag.tone ?? "default"}>
-              {r.tag.label}
-            </span>
-          ) : null}
-          {r.mark ? <ObjectMark text={r.mark.text} image={r.mark.image ?? null} size={28} /> : null}
-          <span className="cb-item-list-text">
-            {r.href ? (
-              <Link href={r.href} className="cb-item-list-title">
-                {r.title}
-                <LinkPendingMark />
-              </Link>
-            ) : (
-              <span className="cb-item-list-title">{r.title}</span>
-            )}
-            {r.meta ? <span className="cb-item-list-meta">{r.meta}</span> : null}
-          </span>
-          {r.status ? (
-            <span className="cb-item-list-status" data-tone={r.status.tone ?? "default"}>
-              {r.status.label}
-            </span>
-          ) : null}
-          {r.actions ? <span className="cb-item-list-actions">{r.actions}</span> : null}
-        </li>
-      ))}
-      {children}
-    </ul>
+      <span className="cb-item-list-text">
+        <SkeletonText width="45%" />
+      </span>
+    </li>
   );
 }
 

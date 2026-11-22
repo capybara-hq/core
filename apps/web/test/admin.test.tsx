@@ -14,6 +14,7 @@ import { resetNavigation } from "./support/navigation";
 import { personAvatarSrc, personInitial } from "./support/person";
 import { renderRouteWithCache } from "./support/query";
 import { ME, renderPage } from "./support/render";
+import { stubInView, stubWindowWidth } from "./support/width";
 
 vi.mock("../src/i18n/navigation", () => import("./support/navigation"));
 
@@ -464,11 +465,57 @@ describe("/admin 概览（OverviewPage）", () => {
     const list = await screen.findByRole("list", { name: o.groups.outbox });
     await within(list).findByText("first-page-job");
     expect(within(list).queryByText("second-page-job")).toBeNull();
-    await userEvent.setup().click(await screen.findByRole("button", { name: o.outbox.loadMore }));
+    await userEvent.setup().click(await screen.findByRole("button", { name: "加载更多" }));
     await within(list).findByText("second-page-job");
     expect(within(list).getByText("first-page-job")).toBeTruthy();
-    expect(screen.queryByRole("button", { name: o.outbox.loadMore })).toBeNull();
+    expect(screen.queryByRole("button", { name: "加载更多" })).toBeNull();
     expect(calls.some((c) => c.url.endsWith("/outbox/dead?after=cursor-1"))).toBe(true);
+  });
+
+  it("attention: compact reads the next dead page from the list's end; a failure shows Retry", async () => {
+    stubWindowWidth(390);
+    stubInView();
+    const o = zh.admin.overview.attention;
+    const deadRow = (id: string, jobName: string) => ({
+      id,
+      queue: "cap-kernel-maintenance",
+      jobName,
+      jobId: `job-${id}`,
+      orgId: null,
+      attempts: 20,
+      lastError: null,
+      deadAt: "2026-11-12T08:00:00.000Z",
+      createdAt: "2026-11-12T07:00:00.000Z",
+    });
+    let fail = true;
+    stubApi(
+      overviewRoutes({
+        "GET /api/v1/admin/overview/attention": () =>
+          json(200, {
+            ...EMPTY_ATTENTION,
+            outbox: [{ kind: "outbox_dead", count: 2, oldestAt: "2026-11-12T08:00:00.000Z" }],
+          }),
+        "GET /api/v1/admin/outbox/dead": () =>
+          json(200, { items: [deadRow("7", "first-page-job")], next: "cursor-1" }),
+        "GET /api/v1/admin/outbox/dead?after=cursor-1": () =>
+          fail
+            ? json(500, { error: { code: "internal", message: "boom" } })
+            : json(200, { items: [deadRow("8", "second-page-job")], next: null }),
+      }),
+    );
+    await renderRouteWithCache("/admin", lastStubRoutes(), { locale: "zh" });
+    const list = await screen.findByRole("list", { name: o.groups.outbox });
+    await within(list).findByText("first-page-job");
+    expect(screen.queryByRole("button", { name: "加载更多" })).toBeNull();
+    // the row buttons are 重试 too: the list end's retry sits in the end row
+    await vi.waitFor(() =>
+      expect(list.querySelector('[data-part="list-end"][data-state="error"]')).not.toBeNull(),
+    );
+    const end = list.querySelector('[data-part="list-end"]') as HTMLElement;
+    const retry = within(end).getByRole("button", { name: "重试" });
+    fail = false;
+    await userEvent.setup().click(retry);
+    await within(list).findByText("second-page-job");
   });
 
   it("attention: retrying a dead row on a later page drops the later pages (the first page is unchanged)", async () => {
@@ -507,12 +554,12 @@ describe("/admin 概览（OverviewPage）", () => {
     const list = await screen.findByRole("list", { name: o.groups.outbox });
     await within(list).findByText("first-page-job");
     const user = userEvent.setup();
-    await user.click(await screen.findByRole("button", { name: o.outbox.loadMore }));
+    await user.click(await screen.findByRole("button", { name: "加载更多" }));
     const row = (await within(list).findByText("second-page-job")).closest("li") as HTMLElement;
     await user.click(within(row).getByRole("button", { name: o.outbox.retry }));
     await waitFor(() => expect(within(list).queryByText("second-page-job")).toBeNull());
     expect(within(list).getByText("first-page-job")).toBeTruthy();
-    expect(screen.getByRole("button", { name: o.outbox.loadMore })).toBeTruthy();
+    expect(screen.getByRole("button", { name: "加载更多" })).toBeTruthy();
   });
 
   it("attention: a failed read of the dead outbox rows is the group's unavailable state with retry", async () => {
