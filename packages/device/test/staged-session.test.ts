@@ -30,6 +30,8 @@ async function fixture(
   opts: {
     state?: ReturnType<typeof createStagedSessionState>;
     binder?: (b: { backend: unknown; handle: { id: string } }) => InstanceBinder;
+    /** The effective frame capacity the kernel's `ready` names (default the credential's). */
+    readyCap?: number;
   } = {},
 ) {
   const root = await realpath(await mkdtemp(join(tmpdir(), "cap-output-session-")));
@@ -146,7 +148,8 @@ async function fixture(
     const connection = ++connections;
     socket.on("message", (raw) => {
       const f = readMachineFrame(raw.toString(), 69632);
-      if (f.type === "hello" && negotiate) socket.send(readyFrame(`connection-${connection}`));
+      if (f.type === "hello" && negotiate)
+        socket.send(readyFrame(`connection-${connection}`, opts.readyCap ?? 69632));
       else if (f.type === "res") {
         responses.push({ connection, res: f.res });
         answers.get(f.res.id)?.(f.res);
@@ -361,6 +364,35 @@ it("refuses requests before ready and incoming frames above the credential's cap
   const tooBig = once(g.client, "close");
   g.socket.send(padded(69633));
   expect((await tooBig)[0]).toBe(4400);
+});
+it("frames in both directions obey the effective capacity of ready when the kernel's is lower", async () => {
+  const f = await fixture(true, true, { readyCap: 2048 });
+  expect(f.session.ready()).toEqual({ connectionId: "connection-1", maxFrameBytes: 2048 });
+  const bytes = Buffer.alloc(3072, 67);
+  await f.emit(bytes);
+  // an answer above 2048 bytes (but within the credential's 69632) becomes the fitted error
+  const big = await f.request("backgroundReadOutput", { ref: f.ref, offset: 0, maxBytes: 3072 })
+    .response;
+  expect(big).toMatchObject({
+    ok: false,
+    error: { kind: "error", message: expect.stringMatching(/exceeds negotiated capacity/) },
+  });
+  const small = await f.request("backgroundReadOutput", { ref: f.ref, offset: 0, maxBytes: 16 })
+    .response;
+  expect(small).toMatchObject({ ok: true });
+  expect(f.client.readyState).toBe(WebSocket.OPEN);
+  // an incoming frame above the effective capacity closes the socket
+  const frame = JSON.stringify({ type: "cancel", id: "unknown" });
+  const closed = once(f.client, "close");
+  f.socket.send(frame + " ".repeat(2049 - Buffer.byteLength(frame)));
+  expect((await closed)[0]).toBe(4400);
+});
+it("a ready naming more capacity than this program announced closes the socket", async () => {
+  const f = await fixture(false);
+  const closed = once(f.client, "close");
+  f.socket.send(readyFrame("c", 69633));
+  expect((await closed)[0]).toBe(4400);
+  expect(f.session.ready()).toBeUndefined();
 });
 it("answers an unbound instance and a duplicate request id without closing the socket", async () => {
   const unbound = await fixture(true, false);

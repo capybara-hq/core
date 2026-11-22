@@ -27,7 +27,8 @@ export function readMachineFrame(raw: string, maxBytes: number): MachineFrame {
   return { type: "event", event: parseDeviceFrame(frame.body, "event") };
 }
 
-export const readyFrame = (connectionId: string) => JSON.stringify({ type: "ready", connectionId });
+export const readyFrame = (connectionId: string, maxFrameBytes = 69632) =>
+  JSON.stringify({ type: "ready", connectionId, maxFrameBytes });
 
 export const requestFrame = (id: string, op: string, args: unknown, deadlineMs: number) =>
   JSON.stringify({ type: "req", id, deadlineMs, body: { op, args } });

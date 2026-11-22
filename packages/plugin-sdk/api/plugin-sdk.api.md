@@ -1112,10 +1112,15 @@ export interface DialInHandler {
 
 // @public
 export type DialInKernelFrame =
-/** The kernel accepted the hello (the provider's `onHello` answered ok). */
+/**
+* The kernel accepted the hello (the provider's `onHello` answered ok). `maxFrameBytes` is the
+* connection's effective frame capacity: the smaller of the machine's `transport.maxFrameBytes`
+* and the kernel's limit. Neither side sends a larger frame on this connection.
+*/
     {
     type: "ready";
     connectionId: string;
+    maxFrameBytes: number;
 }
 /** A provider's request ({@link DialInChannel.request}); answered by a `res` with its `id`. */
 | {

@@ -54,9 +54,9 @@ export class FakeKernel {
     this.sockets[conn]?.send(JSON.stringify(frame));
   }
 
-  /** Accepts the hello on connection `conn`. */
-  ready(conn: number): void {
-    this.send(conn, { type: "ready", connectionId: `c${conn}` });
+  /** Accepts the hello on connection `conn`, with the connection's effective frame capacity. */
+  ready(conn: number, maxFrameBytes = 69632): void {
+    this.send(conn, { type: "ready", connectionId: `c${conn}`, maxFrameBytes });
   }
 
   /** Sends one request: the envelope's id and deadline around the body `{ op, args }`. */

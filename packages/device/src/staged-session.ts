@@ -8,6 +8,7 @@ import {
 import {
   DEVICE_DIAL_IN_PROTOCOL,
   type DeviceHello,
+  type DevicePolicyChanged,
   type DeviceResponse,
   type DeviceResponseBody,
   type KernelRequest,
@@ -177,6 +178,17 @@ export interface StagedMachineControl {
   kernelStop?(reason: "drain" | "stop"): void;
 }
 
+/** A served socket: its `ready` state and the sender of unsolicited events. */
+export interface StagedSession {
+  /** The kernel's `ready`, with the connection's effective frame capacity; undefined before. */
+  ready(): { connectionId: string; maxFrameBytes: number } | undefined;
+  /**
+   * Sends an event body on this connection once it is ready. False when it is not ready or the
+   * frame does not fit the connection's capacity (nothing is sent).
+   */
+  event(body: DevicePolicyChanged): boolean;
+}
+
 /** The program facts a hello's envelope carries (`DialInMachineFrame`'s `program`). */
 export type StagedProgram = Extract<DialInMachineFrame, { type: "hello" }>["program"];
 
@@ -293,8 +305,9 @@ export async function drainStagedSession(
  * `capybara-device/5`, this run's id, the program facts, the credential's frame capacity and the
  * device protocol body), waits for `ready`, then answers each `req` body with a `res` body and
  * honours `cancel` and the kernel's `stop`. Every frame from the kernel is parsed strictly (the
- * envelope, then the request body) and bounded by the credential's capacity; a malformed one
- * closes the socket with 4400.
+ * envelope, then the request body) and bounded by the connection's capacity (the credential's
+ * until `ready`, then the effective one `ready` names), which every frame sent obeys too; a
+ * malformed frame closes the socket with 4400.
  *
  * Reconnect semantics follow protocol 2: a socket close aborts only in-flight output reads; every
  * other operation keeps running, and an answer produced while no socket is ready waits up to the
@@ -318,7 +331,7 @@ export function serveStagedSession(
   owner?: StagedOwnerPolicy,
   /** Serves the machine lifecycle `create` and `stop`; without it they are unsupported. */
   machine?: StagedMachineControl,
-): { ready: () => { connectionId: string } | undefined } {
+): StagedSession {
   if (!state || state.discarded)
     throw new Error("Serve the session with the current credential's session state");
   const bootId = report.envelope.program.bootId ?? currentBootId();
@@ -335,10 +348,12 @@ export function serveStagedSession(
     transport: { maxFrameBytes: cap },
     body: report.body,
   } satisfies DialInMachineFrame;
-  let ready: { connectionId: string } | undefined;
+  let ready: { connectionId: string; maxFrameBytes: number } | undefined;
+  /** This connection's capacity: the kernel's effective one once ready, the credential's before. */
+  const limit = () => ready?.maxFrameBytes ?? cap;
   const send = (value: unknown) => {
     const raw = JSON.stringify(value);
-    if (Buffer.byteLength(raw) > cap)
+    if (Buffer.byteLength(raw) > limit())
       throw new Error("Check device and deployment frame limits: control frame cannot fit");
     socket.send(raw);
   };
@@ -347,7 +362,7 @@ export function serveStagedSession(
   const wire = (res: DeviceResponse) => {
     const { type: _type, id, ...body } = res;
     const frame = { type: "res" as const, id, body };
-    return Buffer.byteLength(JSON.stringify(frame)) <= cap
+    return Buffer.byteLength(JSON.stringify(frame)) <= limit()
       ? frame
       : {
           type: "res" as const,
@@ -395,10 +410,12 @@ export function serveStagedSession(
     }
     try {
       if (binary) throw new Error("Use JSON text frames");
-      const envelope = parseDialInKernelFrame(data.toString(), cap);
+      const envelope = parseDialInKernelFrame(data.toString(), limit());
       if (envelope.type === "ready") {
-        if (ready) throw new Error("Duplicate ready; reconnect");
-        ready = { connectionId: envelope.connectionId };
+        // the effective capacity is at most what this program announced
+        if (ready || envelope.maxFrameBytes > cap)
+          throw new Error("Invalid ready capacity; reconnect");
+        ready = { connectionId: envelope.connectionId, maxFrameBytes: envelope.maxFrameBytes };
         state.current = deliverHere;
         // answers produced while no socket was ready, within the grace
         const now = state.now();
@@ -410,6 +427,7 @@ export function serveStagedSession(
       }
       if (!ready) throw new Error("Wait for ready before sending requests");
       if (envelope.type === "stop") {
+        // a session served without the machine lifecycle (tests) has nothing to stop
         machine?.kernelStop?.(envelope.reason);
         return;
       }
@@ -501,5 +519,14 @@ export function serveStagedSession(
   } catch (error) {
     fail(error);
   }
-  return { ready: () => ready };
+  return {
+    ready: () => ready,
+    event(body) {
+      if (ready === undefined || socket.readyState !== socket.OPEN) return false;
+      const raw = JSON.stringify({ type: "event", body });
+      if (Buffer.byteLength(raw) > limit()) return false;
+      socket.send(raw);
+      return true;
+    },
+  };
 }

@@ -25,6 +25,10 @@ import type { Credential } from "./state.js";
 export const CREDENTIAL_CHANGED_MESSAGE =
   "The machine credential changed (a new login). Restarting with the new one.";
 
+/** Printed when the deployment stopped this program without naming a reason (no close code). */
+export const KERNEL_STOPPED_MESSAGE =
+  "The deployment stopped this machine's connection. Start capybara-device again to reconnect.";
+
 /** How long a stop (`capybara-device stop`, a signal) waits for the owned work to be stopped. */
 export const STOP_CANCEL_TIMEOUT_MS = 10_000;
 
@@ -98,6 +102,8 @@ export function connectStaged(device: StagedDevice, opts: StagedConnectOptions =
   let stopping = false;
   let draining = false;
   let exitAfterStop: { exit: number; message?: string } | undefined;
+  /** The kernel sent `stop` (reason `stop`): the program ends at the next close. */
+  let kernelStopped = false;
   let session: ((end: SessionEnd) => void) | undefined;
   let state: StagedSessionState = device.states.for(started);
 
@@ -189,8 +195,8 @@ export function connectStaged(device: StagedDevice, opts: StagedConnectOptions =
         exit: 0,
         message: reason === "revoked" ? DISCONNECTED_MESSAGE : DELETED_MESSAGE,
       }),
-    // the envelope's `stop`: the kernel asks for a drain or an immediate stop
-    kernelStop: (reason: "drain" | "stop") => (reason === "drain" ? drain() : stop()),
+    // the envelope's `stop`: the kernel asks for a drain (then exit 0) or an immediate stop
+    kernelStop: (reason: "drain" | "stop") => (reason === "drain" ? drain() : kernelStop()),
   };
 
   let attempt = 0;
@@ -278,7 +284,11 @@ export function connectStaged(device: StagedDevice, opts: StagedConnectOptions =
               const json = JSON.stringify(next);
               if (json === sent) return;
               sent = json;
-              sock.send(JSON.stringify({ type: "event", body: { type: "policy", ...next } }));
+              if (!served.event({ type: "policy", ...next }))
+                err(
+                  "The owner report does not fit the connection's frame capacity; the deployment " +
+                    "learns the change at the next connection.",
+                );
             })().catch((error: unknown) =>
               err(`Owner ceiling reconciliation failed: ${String(error)}`),
             );
@@ -323,7 +333,13 @@ export function connectStaged(device: StagedDevice, opts: StagedConnectOptions =
         }
         if (exitAfterStop) return endSession(exitAfterStop);
         if (code === 4002) return endSession({ exit: 0, message: REPLACED_MESSAGE });
-        if (code === 4003) return endSession({ exit: 0, message: DISCONNECTED_MESSAGE });
+        if (code === 4003) {
+          // the kernel closes a deleted device's machine with the same code as a revoked one
+          const deleted = /\bdeleted\b/i.test(reason.toString("utf8"));
+          return endSession({ exit: 0, message: deleted ? DELETED_MESSAGE : DISCONNECTED_MESSAGE });
+        }
+        // the kernel stopped this program: whatever closes the socket now, it does not reconnect
+        if (kernelStopped) return endSession({ exit: 0, message: KERNEL_STOPPED_MESSAGE });
         if (code === 4400) {
           const why = reason.toString("utf8");
           reportFailure(`The deployment closed the connection: 4400${why ? ` ${why}` : ""}.`);
@@ -377,6 +393,20 @@ export function connectStaged(device: StagedDevice, opts: StagedConnectOptions =
         err(`Drain failed: ${String(error)}`);
         finish({ exit: 1 });
       });
+  }
+  /**
+   * The kernel's `stop` with reason `stop`: the owned work is stopped now, but the exit waits for
+   * the kernel's close (its code names why: revoked, deleted, replaced), at most the close
+   * timeout after the work stopped; without a close it ends with {@link KERNEL_STOPPED_MESSAGE}.
+   */
+  function kernelStop(): void {
+    if (kernelStopped || stopping || exitAfterStop) return;
+    kernelStopped = true;
+    void stopOwned().then(() => {
+      setTimeout(() => {
+        if (!exitAfterStop && !stopping) finish({ exit: 0, message: KERNEL_STOPPED_MESSAGE });
+      }, closeTimeoutMs).unref();
+    });
   }
   function stop(): void {
     if (stopping || exitAfterStop) return;

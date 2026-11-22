@@ -107,9 +107,10 @@ describe("parseDialInMachineFrame", () => {
 describe("parseDialInKernelFrame", () => {
   const parse = (frame: unknown, max = 4096) => parseDialInKernelFrame(JSON.stringify(frame), max);
   it("parses ready, req, cancel and stop and keeps a request body opaque", () => {
-    expect(parse({ type: "ready", connectionId: "c-1" })).toEqual({
+    expect(parse({ type: "ready", connectionId: "c-1", maxFrameBytes: 4096 })).toEqual({
       type: "ready",
       connectionId: "c-1",
+      maxFrameBytes: 4096,
     });
     const req = { type: "req", id: "r-1", deadlineMs: 5000, body: { op: "x", args: [1] } };
     expect(parse(req)).toEqual(req);
@@ -121,7 +122,10 @@ describe("parseDialInKernelFrame", () => {
     for (const bad of [
       { type: "hello", protocol: "capybara-device/5" },
       { type: "res", id: "r", body: null },
-      { type: "ready", connectionId: "c", maxFrameBytes: 4096 },
+      { type: "ready", connectionId: "c" },
+      { type: "ready", connectionId: "c", maxFrameBytes: 1023 },
+      { type: "ready", connectionId: "c", maxFrameBytes: 4096.5 },
+      { type: "ready", connectionId: "c", maxFrameBytes: 4096, extra: 1 },
       { type: "req", id: "r", deadlineMs: 0, body: {} },
       { type: "req", id: "r", deadlineMs: 1.5, body: {} },
       { type: "req", id: "r", deadlineMs: 10 },

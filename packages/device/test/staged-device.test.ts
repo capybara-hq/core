@@ -14,10 +14,13 @@ import {
 } from "@capybara-hq/plugin-sdk/device-protocol";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
+  DELETED_MESSAGE,
   DISCONNECTED_MESSAGE,
   deploymentOutdatedMessage,
   foreignProtocolMessage,
   OUTDATED_MESSAGE,
+  outdatedMessage,
+  REPLACED_MESSAGE,
 } from "../src/client.js";
 import type { OperationContainerHost } from "../src/exec/docker-operations.js";
 import type { LinuxProbe } from "../src/exec/linux-runtime.js";
@@ -25,7 +28,11 @@ import type { MacSelfCheckInput } from "../src/exec/mac-self-check.js";
 import type { MacWorkerRequest } from "../src/exec/operation-worker.js";
 import type { EnvironmentInputs } from "../src/exec/runtime-manifest.js";
 import { PolicyStore } from "../src/policy-store.js";
-import { CREDENTIAL_CHANGED_MESSAGE, connectStaged } from "../src/staged-connect.js";
+import {
+  CREDENTIAL_CHANGED_MESSAGE,
+  connectStaged,
+  KERNEL_STOPPED_MESSAGE,
+} from "../src/staged-connect.js";
 import { createStagedDevice, UNBOUND_SUPPORT } from "../src/staged-device.js";
 import { PROGRAM_RUN_ID } from "../src/staged-session.js";
 import { type Credential, DEFAULT_POLICY, FULL_OWNER_CEILING, writePolicy } from "../src/state.js";
@@ -539,25 +546,53 @@ describe("staged connection (W3-M)", () => {
     expect(k.of("event")).toHaveLength(1);
   });
 
-  for (const reason of ["drain", "stop"] as const)
-    it(`a kernel stop frame (${reason}) ends the program`, async () => {
+  it("a kernel stop frame (drain) refuses new work, waits for the owned work and exits 0", async () => {
+    const k = await kernel();
+    const s = staged({ cred: credential({ connectUrl: k.url }) });
+    const conn = connectStaged(s.device, { err: () => {}, bootId: null });
+    await k.waitFor("hello", () => k.of("hello")[0]);
+    ready(k, 0);
+    send(k, 0, "b1", "bindInstance", request(G1, B1, null));
+    await res(k, "b1");
+    await s.startTask("task-1");
+    k.send(0, { type: "stop", reason: "drain" });
+    send(k, 0, "c1", "create", { limits: LIMITS });
+    expect(await res(k, "c1")).toMatchObject({ ok: false, error: { kind: "unsupported" } });
+    for (const f of s.finishers) f();
+    expect(await conn.done).toBe(0);
+    expect(s.cancelled).toEqual([]);
+  });
+
+  // The kernel's revocation, deletion and replacement send `stop` right before the close: the
+  // close code still names why the program ends.
+  for (const [ending, close, expected] of [
+    ["revoked", [4003, "the machine was disconnected"], DISCONNECTED_MESSAGE],
+    ["deleted", [4003, "the device was deleted"], DELETED_MESSAGE],
+    ["replaced", [4002, "replaced by a newer connection"], REPLACED_MESSAGE],
+    ["no close", undefined, KERNEL_STOPPED_MESSAGE],
+  ] as const)
+    it(`a kernel stop frame (stop) then ${ending} stops the owned work and says why`, async () => {
       const k = await kernel();
       const s = staged({ cred: credential({ connectUrl: k.url }) });
-      const conn = connectStaged(s.device, { err: () => {}, bootId: null });
+      const errs: string[] = [];
+      const conn = connectStaged(s.device, {
+        err: (l) => errs.push(l),
+        bootId: null,
+        sleep: async () => {},
+        closeTimeoutMs: 50,
+      });
       await k.waitFor("hello", () => k.of("hello")[0]);
       ready(k, 0);
       send(k, 0, "b1", "bindInstance", request(G1, B1, null));
       await res(k, "b1");
       await s.startTask("task-1");
-      k.send(0, { type: "stop", reason });
-      if (reason === "drain") {
-        // a drain refuses new admissions and waits for the owned work
-        send(k, 0, "c1", "create", { limits: LIMITS });
-        expect(await res(k, "c1")).toMatchObject({ ok: false, error: { kind: "unsupported" } });
-        for (const f of s.finishers) f();
-      }
+      k.send(0, { type: "stop", reason: "stop" });
+      await vi.waitFor(() => expect(s.cancelled).toEqual(["task-1"]));
+      if (close) k.sockets[0]?.close(close[0], close[1]);
       expect(await conn.done).toBe(0);
-      expect(s.cancelled).toEqual(reason === "stop" ? ["task-1"] : []);
+      expect(errs).toContain(expected);
+      // it never reconnects
+      expect(k.sockets).toHaveLength(1);
     });
 
   it("a frame that is not a valid kernel envelope closes the socket with 4400", async () => {
@@ -767,6 +802,20 @@ describe("staged connection (W3-M)", () => {
       expect(errs).toContain(expected);
     });
   }
+
+  it("reads the kernel's own 426 sentence: plugin names and the install hint never match first", () => {
+    const body = (expected: string) =>
+      JSON.stringify({
+        error: {
+          code: "device.program_outdated",
+          message: `This device is served by device-local2, which speaks ${expected}; this program speaks capybara-device/5. Update the program on the machine to the release that speaks this protocol (for capybara-device: npm install -g @capybara-hq/device@next), then start it again.`,
+        },
+      });
+    expect(outdatedMessage(body("capybara-device/4"))).toBe(
+      deploymentOutdatedMessage("capybara-device/4"),
+    );
+    expect(outdatedMessage(body("capybara-device/6"))).toBe(OUTDATED_MESSAGE);
+  });
 
   it("a machine stop whose cancellations do not settle answers an error naming them (I-2)", async () => {
     const k = await kernel();
