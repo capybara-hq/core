@@ -1,5 +1,34 @@
 # @capybara-hq/design
 
+## 0.2.0-rc.32
+
+### Patch Changes
+
+- db8935e: The compact drawer follows the approved mockup: a search field and a 新会话 button at the top, the
+  navigation as one grouped card (收件箱 with its count, 智能体, 定时任务, 更多), 最近会话 with 全部
+  over the newest conversations by time (not grouped by agent, each with its agent, state and time;
+  a long press or right click opens rename / archive / delete), and the account as one row at the
+  foot. The conversations page lists conversations by time in day sections (今天 / 昨天 / 本周 /
+  更早) with a search and a chip per agent, reads the next page as the end nears (no Load more rows)
+  and offers each row's actions in an action sheet; on compact the page's primary is a floating
+  action button (the head's primary restyled by CSS). New design pieces: `ConversationList`,
+  `ActionSheet` with `useLongPress`, `ScopeChips`, `ListPage.scope`, `formatListTime` / `dayBucket`.
+- a0e48a2: Pages outside the theme (#451): the kernel-starting frame, the root error pages and the root 404
+  draw the theme this browser last drew (the `cb-brand` cookie, else the platform default); app
+  icons and the manifest colours follow the platform default theme; the browser's theme colour
+  follows the scheme shown (design `useThemeColorMeta`).
+- 599ed63: One bottom sheet look (spec §6.59, maintainer decision 2026-11-22): a 52 high head with no
+  hairline, the title centred and a 30 px round close on a fixed ground at the body's 14 px inset,
+  its 44 px hit area an invisible ring, so nothing paints on open; shared body parts (`SheetGroup`,
+  `SheetRow`, `SheetFootnote`). The account sheet is regrouped: a profile row that opens Personal
+  settings, 组织 with the current org (a menu with several), 语言 and 外观, sign out alone, the
+  status line as a footnote. `AccountSheetData` takes `orgMenu`, `language: { value, label, items }`
+  and the theme switch's data instead of slots.
+- 2c28141: An org's default theme can now shape the agent avatar choices: it may hide built-in presets and add presets of its own. The kernel lists them in `GET /orgs/:orgId/themes` (`avatars`), accepts a theme preset key on create and update (stored pinned to the theme version, `agent.avatar_unavailable` when the org does not offer it), and draws the random default from the visible choices. `AvatarPicker` gains `hidden` and `extra`, and the web create form, template flow and basics section follow the org's choices.
+- 7a8e816: Theme brand graphics (#451): the empty state, the greeting and the working line draw the theme's
+  mark or illustration (the empty-state art as a mask in the faint colour), a theme can turn the
+  sign-in decoration off, and a theme mark that fails to load falls back to the pixel capybara.
+
 ## 0.2.0-rc.31
 
 ### Minor Changes
