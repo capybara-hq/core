@@ -286,7 +286,7 @@ edge, on both displays. Ours follows it:
 |---|---|---|
 | under the status | **account avatar** (the person's `Avatar`, circle) | opens the account sheet (§10.4) |
 | pill, first item | **primary action**, accent-filled: the page's FAB action when the page has one (新建智能体, 新建定时任务…), else **新会话** | runs the action; the web draws no FAB while the pill carries it |
-| pill | 对话 | `/conversations`, the time-grouped list (coordinator ruling 2026-11-22, pending maintainer confirmation; `/conversations` and `/chat/…` mark it current); the new-conversation home `/` is the pill's first item |
+| pill | 对话 | `/conversations`, the time-grouped list (maintainer decision 2026-11-22, D17; `/conversations` and `/chat/…` mark it current); the new-conversation home `/` is the pill's first item |
 | pill | 收件箱 (badge) | `/inbox` |
 | pill | 智能体 | `/agents` |
 | pill | 定时任务 (not for a guest) | `/schedules` |
@@ -294,8 +294,8 @@ edge, on both displays. Ours follows it:
 
 - **No hamburger on Duo.** The pill is the navigation on both displays; the drawer's remaining
   content (recent conversations, 全部会话, 「技能、连接器、设备…」) is reached from 对话, which
-  opens the conversations page `/conversations` (it holds the recents; coordinator ruling
-  2026-11-22, pending maintainer confirmation), and from the account sheet (技能、连接器、设备… joins it as
+  opens the conversations page `/conversations` (it holds the recents; maintainer decision
+  2026-11-22, D17), and from the account sheet (技能、连接器、设备… joins it as
   a row, as the inner display's account popover already does). This retires the outer display's
   native menu button of mobile app spec §6.1 (D12).
 - **Pushed pages** keep their floating back button at the top start; the floating row's "…" stays
@@ -460,6 +460,8 @@ All sixteen open questions of the review draft were answered as recommended:
 - **D16** `nav@1` reports the strip's `side`; the insets are the fallback; right when nothing is
   reported (one app in the foreground is always right; only the left app of an inner-display split
   is left).
+- **D17** (maintainer decision 2026-11-22) The strip pill's 对话 opens `/conversations`; the "+"
+  top item goes to the new conversation `/`, where no section is current.
 
 ## AGENTS.md rules touched
 

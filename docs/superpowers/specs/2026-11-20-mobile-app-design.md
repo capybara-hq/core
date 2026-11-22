@@ -185,7 +185,7 @@ fails when the native projects drift from it.
 | Capability · function | Does |
 |---|---|
 | `chrome@1.ready()` (new function) | The web's first paint is done: the shell drops its splash. Additive; the desktop may ignore it |
-| `nav@1.set({ items, current, action, account? })` (decided 2026-11-21; minor version 2026-11-22, interaction model §10.3) | The strip's state. `items`: the pill's entries the person sees, in the order `chats` (对话), `inbox` (收件箱), `agents` (智能体), `schedules` (定时任务), `search` (搜索, last; sent while the web has a command palette), each `{ id, label, count?, countMore? }`; `current` the section of the page on screen or `null` (never `search`). `action`: the pill's top item, accent-filled, `{ id, label, icon: "plus" \| "square-pen" }`: the page's primary on compact (新建智能体, 新建定时任务…, `plus`), else 新会话 (`square-pen`); `id` matches the menu item id pattern, `label` 1..32. `account`: the avatar under the status, `{ name, avatarUrl?, initial, badge? }` (`name` 1..64; `avatarUrl` absolute, https or the profile's origin, else the shell draws `initial` in a circle; `badge` 0..9999). No `menu` key: the strip has no menu button (D12). **Lockstep** (amended 2026-11-22): the shell takes exactly this shape and ships its minor version with or before the web that sends it; before 0.1.0 there is no older-shell or older-web path, so neither side keeps a compatibility branch. The shell draws every item with its own fixed glyph per id / icon (no icon data crosses), counts in the OS badge style. Not confirming, no activation |
+| `nav@1.set({ items, current, action, account? })` (decided 2026-11-21; minor version 2026-11-22, interaction model §10.3) | The strip's state. `items`: the pill's entries the person sees, in the order `chats` (对话), `inbox` (收件箱), `agents` (智能体), `schedules` (定时任务), `search` (搜索, last; sent while the web has a command palette), each `{ id, label, count?, countMore? }`; `current` the section of the page on screen or `null`: no section is selected and the shell clears its highlight (coordinator ruling 2026-11-22; never `search`). `action`: the pill's top item, accent-filled, `{ id, label, icon: "plus" \| "square-pen" }`: the page's primary on compact (新建智能体, 新建定时任务…, `plus`), else 新会话 (`square-pen`); `id` matches the menu item id pattern, `label` 1..32. `account`: the avatar under the status, `{ name, avatarUrl?, initial, badge? }` (`name` 1..64; `avatarUrl` absolute, https or the profile's origin, else the shell draws `initial` in a circle; `badge` 0..9999). No `menu` key: the strip has no menu button (D12). **Lockstep** (amended 2026-11-22): the shell takes exactly this shape and ships its minor version with or before the web that sends it; before 0.1.0 there is no older-shell or older-web path, so neither side keeps a compatibility branch. The shell draws every item with its own fixed glyph per id / icon (no icon data crosses), counts in the OS badge style. Not confirming, no activation |
 | `nav@1.onSelect(cb)` | An item was tapped, the current one included: for a section the web closes any open overlay, then navigates to that section's route (the web owns routes); for `search` it opens the command palette |
 | `nav@1.onAction(cb)` (minor version 2026-11-22) | The pill's top item was tapped: the web closes any open overlay, then runs the action (the page's primary, else opens the new conversation) |
 | `nav@1.onAccount(cb)` (minor version 2026-11-22) | The account avatar was tapped: the web closes any open overlay, then opens its account sheet |
@@ -255,13 +255,14 @@ Clarified (decided 2026-11-21, spike 1.2): see §15, "The origin gate, clarified
   sections the person sees (guests see no 定时任务) and 搜索, their labels in the page's language and
   the inbox's pending count; `current` from the route (`/chat/…` and `/conversations` are
   `chats`; `/inbox…` `inbox`; `/agents…` `agents`; `/schedules…` `schedules`; the home `/` and
-  anything else `null`, the home being the pill's first item, coordinator ruling 2026-11-22; on
-  `null` the shell leaves its selection as it was); `action`, the page's registered primary
+  anything else `null`, the home being the pill's first item, maintainer decision 2026-11-22;
+  `null` means no section is selected: the shell clears its highlight, coordinator ruling
+  2026-11-22); `action`, the page's registered primary
   on compact, else 新会话 (on medium and expanded, the inner display, the head draws the primary
   and the pill keeps 新会话, D14); `account`, the person's name, initial and avatar image. No
   `menu` since 2026-11-22 (D12).
-- **Section routes**: `chats` → `/conversations` (coordinator ruling 2026-11-22, pending maintainer
-  confirmation; the new-conversation home `/` is the pill's first item, `action`), `inbox` →
+- **Section routes**: `chats` → `/conversations` (maintainer decision 2026-11-22,
+  interaction model D17; the new-conversation home `/` is the pill's first item, `action`), `inbox` →
   `/inbox`, `agents` → `/agents`, `schedules` → `/schedules`. A selection navigates without a slide
   (as native tab bars switch), closing any open overlay first (interaction model §10.2); a
   selection of the current section returns to its root.
