@@ -49,7 +49,7 @@ export type ItemListProps = {
 } & ListMoreProps;
 
 /**
- * Rows of things to look at, act on or edit inside one box (spec §6.12, §1 "One box is enough"):
+ * Rows of things to look at, act on or edit inside one box (spec §6.33, §1 "One box is enough"):
  * an agent's channels, the org chooser's orgs, the model purposes, a plugin's permissions. The
  * rows are split by `line-soft` hairlines, never drawn as cards. Plain rows come as `rows`; rows
  * with more in them (meta lines, fields, a warning and its code) are `ItemListItem` children.

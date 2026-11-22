@@ -769,7 +769,7 @@ a.cb-item-list-title:hover {
 .cb-object-row:first-child {
   border-top: 0;
 }
-/* The end of a list with more pages (ObjectList, CardGrid, DataTable; mobile interaction model
+/* The end of a list with more pages (ObjectList, CardGrid, DataTable, ItemList; mobile interaction model
    spec §3 "Infinite scroll", D6): below 600, inside the list's grouped card, the sentinel and the
    loading status take no room (the skeleton row before them shows the load) and a failure is one
    row with its message and Retry; from 600 up a Load more button under the list. */
