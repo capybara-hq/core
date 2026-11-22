@@ -567,6 +567,24 @@ describe("scroll restoration", () => {
     expect(el.scrollTop).toBe(50);
   });
 
+  it("a push to a new query drops what an earlier traversal still owed", () => {
+    scrolledAway(1200);
+    geo.g.content = 700;
+    popstate();
+    const view = renderAtClass(390, agents());
+    const el = root(view.container) as HTMLElement;
+    expect(el.scrollTop).toBe(100);
+    // a tab pushed as a query (no traversal) while the old position was still owed
+    window.history.pushState(null, "", "/agents?tab=templates");
+    geo.g.content = 2000;
+    rerender(view, agents({ header: header({ activeTab: "templates" }) }));
+    // the new location owes nothing: no jump, and its scrolls are stored again
+    expect(el.scrollTop).toBe(100);
+    el.dispatchEvent(new Event("scroll"));
+    flushFrames();
+    expect(sessionStorage.getItem("cb-list-scroll:/agents?tab=templates")).toBe("100");
+  });
+
   it("the old list re-rendering after a traversal away leaves the position to the next list", () => {
     sessionStorage.setItem("cb-list-scroll:/agents/a1", "300");
     const old = renderAtClass(390, agents());

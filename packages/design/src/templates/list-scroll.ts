@@ -113,8 +113,8 @@ export function writeScroll(key: string, top: number): void {
  * path) in a layout effect. While the content is shorter than the owed position (still loading,
  * rows still arriving) the scroller goes as far as there is, the scroll is not stored, and the
  * restore is retried on every render and every size change of the body, up to {@link MAX_TRIES}
- * times. A person's gesture drops what is owed without moving the scroller: from then on the
- * position is theirs. Returns the ref for the template root.
+ * times. A person's gesture, or a push to another location, drops what is owed without moving
+ * the scroller: from then on the position is theirs. Returns the ref for the template root.
  */
 export function useScrollRestore(loaded: boolean): (el: HTMLDivElement | null) => void {
   const [scroller, setScroller] = useState<HTMLDivElement | null>(null);
@@ -128,9 +128,10 @@ export function useScrollRestore(loaded: boolean): (el: HTMLDivElement | null) =
     ro: null,
     body: null,
   });
+  // A location reached without a traversal (a push) owes nothing, also when an earlier traversal's
+  // position was still owed: that one belonged to the location before.
   const take = useCallback(() => {
-    if (!takeTraversal()) return;
-    owed.current = readScroll(here());
+    owed.current = takeTraversal() ? readScroll(here()) : null;
     tries.current = 0;
   }, []);
   const settle = useCallback((el: HTMLElement) => {
