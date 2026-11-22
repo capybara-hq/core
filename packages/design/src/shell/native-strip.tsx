@@ -229,7 +229,15 @@ export function useNativeStrip(input: NativeStripInput): ReactNode {
     };
   }, [nativeNav]);
   if (!hasNav || drawer === undefined) return null;
-  return <AccountSheet open={accountOpen} onOpenChange={setAccountOpen} data={drawer.account} />;
+  // the drawer is not drawn beside the strip: its More entries join the account sheet (D11)
+  return (
+    <AccountSheet
+      open={accountOpen}
+      onOpenChange={setAccountOpen}
+      data={drawer.account}
+      more={drawer.more}
+    />
+  );
 }
 
 /** A label within `navLabel` characters (the strip's bound; a longer one is cut). */

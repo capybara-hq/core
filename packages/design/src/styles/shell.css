@@ -155,7 +155,9 @@
     position: absolute;
     z-index: calc(var(--cb-z-sheet) - 10);
     top: var(--cb-float-top);
-    left: calc(var(--cb-space-4) + var(--cb-inset-left));
+    /* the column already starts after the left inset (the shell pads it): back clears a left
+       strip (interaction model §10.7) or a notch once, not twice */
+    left: var(--cb-space-4);
     right: calc(var(--cb-space-4) + var(--cb-inset-right));
     /* the row lets taps through to the page between its controls */
     pointer-events: none;
@@ -1019,8 +1021,9 @@ a.cb-stat-card:focus-visible {
 [data-native-nav] .cb-shell-menu-btn {
   display: none;
 }
-/* Medium and expanded keep only search, the recent conversations, the account and the new
-   conversation: the sidebar's other entries (技能, 连接器, 更多) move into the account menu. */
+/* Medium and expanded keep only the account: the sidebar's other entries (Skills, Connectors,
+   More) move into the account menu; search, the recents and the new conversation are the pill's
+   (`data-nav-pill`, sidebar.css). */
 @media (min-width: 600px) {
   [data-native-nav] [data-nav-other] {
     display: none;
