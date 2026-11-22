@@ -35,6 +35,8 @@ const SUCCESS_MS = 4000;
 /** How long a success toast carrying an action (Undo) stays (spec §6.7). */
 const UNDO_MS = 8000;
 const SEGMENTS = 10;
+/** A touch drag down by this many px dismisses a toast (spec §7). */
+const SWIPE_DISMISS_PX = 40;
 const TOAST_ICON = {
   success: "circle-check",
   error: "circle-alert",
@@ -106,10 +108,23 @@ export function ToastProvider({ children }: { children: ReactNode }) {
     [close],
   );
 
+  const swipeStart = useRef<number | null>(null);
+
   const renderToast = (it: ToastItem) => (
     <div
       key={it.id}
       className="cb-toast"
+      onPointerDown={(e) => {
+        swipeStart.current = e.pointerType === "touch" ? e.clientY : null;
+      }}
+      onPointerUp={(e) => {
+        const from = swipeStart.current;
+        swipeStart.current = null;
+        if (from !== null && e.clientY - from >= SWIPE_DISMISS_PX) close(it.id);
+      }}
+      onPointerCancel={() => {
+        swipeStart.current = null;
+      }}
       data-kind={it.kind}
       role={it.kind === "error" ? "alert" : undefined}
     >
