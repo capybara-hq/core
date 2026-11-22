@@ -611,6 +611,23 @@ describe("service command", () => {
     );
   });
 
+  it("an invalid device id is refused before any path, label or unit is built", async () => {
+    for (const bad of ["../../x", "a/b", "", "a%i", "x".repeat(129)]) {
+      expect(() => launchdLabel(bad)).toThrow(/Invalid device id/);
+      expect(() => plistPath(home, bad)).toThrow(/Invalid device id/);
+      expect(() => systemdUnit(bad)).toThrow(/Invalid device id/);
+      expect(() => unitWantsLink(home, bad)).toThrow(/Invalid device id/);
+      for (const platform of ["darwin", "linux"] as const) {
+        const deps = { ...base(), deviceId: bad, platform };
+        expect(await serviceCommand("install", deps)).toBe(1);
+        expect(await serviceCommand("uninstall", deps)).toBe(1);
+      }
+    }
+    expect(calls).toEqual([]);
+    expect(existsSync(join(home, "Library"))).toBe(false);
+    expect(existsSync(join(home, ".config", "systemd"))).toBe(false);
+  });
+
   it("the old top.capybara.device agent and capybara-device.service unit are never touched", async () => {
     const oldPlist = join(home, "Library", "LaunchAgents", "top.capybara.device.plist");
     mkdirSync(dirname(oldPlist), { recursive: true });

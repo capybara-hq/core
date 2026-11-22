@@ -1,11 +1,12 @@
 import { join } from "node:path";
+import { serviceDeviceId } from "./device-id.js";
 import type { ServiceSpec } from "./launchd.js";
 
 export const SYSTEMD_TEMPLATE = "capybara-device@.service";
 
 /** The unit instance of one connection. */
 export function systemdUnit(deviceId: string): string {
-  return `capybara-device@${deviceId}.service`;
+  return `capybara-device@${serviceDeviceId(deviceId)}.service`;
 }
 
 function userUnitDir(home: string): string {
@@ -32,7 +33,10 @@ function word(s: string): string {
   return `"${s.replaceAll("\\", "\\\\").replaceAll('"', '\\"').replaceAll("%", "%%")}"`;
 }
 
-/** The systemd user unit: `node <bin> start --connection %i` (one instance per connection), restarted on failure, wanted by the default target. */
+/**
+ * The systemd user unit template: `node <bin> start --connection %i` (one instance per
+ * connection), restarted on failure, wanted by the default target.
+ */
 export function unitContent(spec: ServiceSpec): string {
   const env = Object.entries(spec.env)
     .map(([k, v]) => `Environment=${word(`${k}=${v}`)}`)

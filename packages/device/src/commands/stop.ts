@@ -1,4 +1,5 @@
 import { homedir } from "node:os";
+import { DEVICE_ID_PATTERN } from "../connections.js";
 import { type ProcessChecks, readRunning } from "../pid.js";
 import { hasLoginService } from "../service/installed.js";
 import { defaultRunSystem, managerState, type RunSystem } from "../service/manager.js";
@@ -15,7 +16,8 @@ export interface StopOptions extends ProcessChecks {
 /** The device of the connection's credential; none when it is missing or unreadable. */
 function credentialDeviceId(stateDir: string): string | undefined {
   try {
-    return readCredential(stateDir)?.deviceId;
+    const id = readCredential(stateDir)?.deviceId;
+    return id !== undefined && DEVICE_ID_PATTERN.test(id) ? id : undefined;
   } catch {
     return undefined;
   }

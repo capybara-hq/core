@@ -1,11 +1,12 @@
 import { copyFileSync, statSync, truncateSync } from "node:fs";
 import { join } from "node:path";
+import { serviceDeviceId } from "./device-id.js";
 
 export const LAUNCHD_LABEL_PREFIX = "top.capybara.device.";
 
 /** The launchd label of one connection's agent. */
 export function launchdLabel(deviceId: string): string {
-  return `${LAUNCHD_LABEL_PREFIX}${deviceId}`;
+  return `${LAUNCHD_LABEL_PREFIX}${serviceDeviceId(deviceId)}`;
 }
 
 /**
@@ -36,7 +37,8 @@ function xml(s: string): string {
 }
 
 /**
- * The launchd agent: `node <bin> start --connection <id>` at login, and again after every failing exit. The program
+ * The launchd agent: `node <bin> start --connection <id>` at login, and again after every
+ * failing exit. The program
  * exits 0 only for a deliberate stop (logout, a revoked credential, `drain`, not logged in, a
  * newer connection of this device), which must stay stopped; every exit it must recover from (a
  * crash, a deployment that needs a newer program) is non-zero, so `KeepAlive { SuccessfulExit:
