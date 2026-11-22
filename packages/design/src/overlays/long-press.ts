@@ -1,4 +1,5 @@
 import { type MouseEvent, type PointerEvent, useCallback, useEffect, useRef } from "react";
+import { useHaptics } from "../native";
 
 /** How long a touch must rest before it counts as a long press (responsive system spec §2.4). */
 export const LONG_PRESS_MS = 500;
@@ -44,6 +45,9 @@ export function useLongPress(
   const disarm = useRef<(() => void) | null>(null);
   const latest = useRef(onLongPress);
   latest.current = onLongPress;
+  const haptics = useHaptics();
+  const hapticsRef = useRef(haptics);
+  hapticsRef.current = haptics;
   const clear = useCallback(() => {
     if (timer.current !== null) clearTimeout(timer.current);
     timer.current = null;
@@ -73,6 +77,9 @@ export function useLongPress(
     // (Android sends contextmenu and usually no click): that press clicks normally.
     disarm.current = unswallow;
     window.addEventListener("pointerdown", unswallow, true);
+    // The touch path only (the timer, or a touch's contextmenu that beat it): a mouse right click
+    // is no touch and plays nothing. `fired` keeps a later contextmenu from repeating it.
+    hapticsRef.current("light");
     latest.current();
   }, [unswallow]);
   useEffect(
