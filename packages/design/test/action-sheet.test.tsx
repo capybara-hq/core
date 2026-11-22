@@ -5,7 +5,7 @@ import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { userEvent } from "@testing-library/user-event";
-import { useState } from "react";
+import { type ComponentProps, useState } from "react";
 import { renderToString } from "react-dom/server";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import {
@@ -14,6 +14,7 @@ import {
   DesignProvider,
   dayBucket,
   formatListTime,
+  type LinkComponent,
   ListPage,
   type MenuItem,
   ScopeChips,
@@ -79,9 +80,31 @@ describe("ActionSheet", () => {
     await waitFor(() => expect(archive).toHaveBeenCalledOnce());
   });
 
-  it("a link item is a link through the design link", () => {
-    render(<Sheet items={[{ label: "设置", href: "/agents/a1" }]} />);
-    expect(screen.getByRole("link", { name: "设置" }).getAttribute("href")).toBe("/agents/a1");
+  it("a link item is a link through the design link, and following it closes the sheet", async () => {
+    const DesignLink = ({ href, children, ...rest }: ComponentProps<"a">) => (
+      <a {...rest} href={href} data-design-link="true" onClick={(e) => e.preventDefault()}>
+        {children}
+      </a>
+    );
+    function LinkSheet() {
+      const [open, setOpen] = useState(true);
+      return (
+        <DesignProvider locale="zh" link={DesignLink as LinkComponent}>
+          <ActionSheet
+            open={open}
+            onOpenChange={setOpen}
+            title="部署失败排查"
+            items={[{ label: "设置", href: "/agents/a1" }]}
+          />
+        </DesignProvider>
+      );
+    }
+    render(<LinkSheet />);
+    const link = screen.getByRole("link", { name: "设置" });
+    expect(link.getAttribute("href")).toBe("/agents/a1");
+    expect(link.getAttribute("data-design-link")).toBe("true");
+    await userEvent.click(link);
+    await waitFor(() => expect(document.querySelector('[data-part="action-sheet"]')).toBeNull());
   });
 });
 
@@ -153,6 +176,43 @@ describe("useLongPress", () => {
     expect(onLong).toHaveBeenCalledOnce();
     expect(ev.defaultPrevented).toBe(true);
   });
+  it("pointercancel cancels the long press", () => {
+    vi.useFakeTimers();
+    const onLong = vi.fn();
+    render(<Pressable onLong={onLong} onClick={() => {}} />);
+    const el = screen.getByRole("button");
+    touch("pointerdown", el);
+    act(() => vi.advanceTimersByTime(300));
+    touch("pointercancel", el);
+    act(() => vi.advanceTimersByTime(600));
+    expect(onLong).not.toHaveBeenCalled();
+  });
+
+  it("a long press whose release sends no click leaves the next tap elsewhere alone", () => {
+    vi.useFakeTimers();
+    const onLong = vi.fn();
+    const outside = vi.fn();
+    render(
+      <>
+        <Pressable onLong={onLong} onClick={() => {}} />
+        <button type="button" onClick={outside}>
+          外面
+        </button>
+      </>,
+    );
+    const el = screen.getByRole("button", { name: "行" });
+    touch("pointerdown", el);
+    act(() => vi.advanceTimersByTime(500));
+    expect(onLong).toHaveBeenCalledOnce();
+    touch("pointerup", el);
+    // no click from the release (Android): the next press is a new tap on a portal's row
+    const other = screen.getByRole("button", { name: "外面" });
+    touch("pointerdown", other);
+    touch("pointerup", other);
+    fireEvent.click(other);
+    expect(outside).toHaveBeenCalledOnce();
+  });
+
   it("disabled hook does nothing and leaves contextmenu alone", () => {
     vi.useFakeTimers();
     const onLong = vi.fn();

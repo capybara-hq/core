@@ -1,5 +1,6 @@
-import { type MouseEvent, useEffect, useState } from "react";
-import { isPlainMenu, useNative, useNativeMenuTrigger } from "../native";
+import { type MouseEvent, useEffect, useRef, useState } from "react";
+import { isPlainMenu, useNative } from "../native";
+import { useSizeClass } from "../shell/size-class";
 import { BottomSheet } from "./bottom-sheet";
 import type { MenuItem } from "./menus";
 import { SheetGroup, SheetRow } from "./sheet-parts";
@@ -67,47 +68,68 @@ function groupsOf(items: MenuItem[]): Exclude<MenuItem, "separator">[][] {
  * recent row's actions keep the drawer open). The system back closes it first (the bottom sheet's
  * history entry).
  *
- * In a shell with `menu@1` (decision P3) a sheet of plain actions (no link) opens as the
- * platform's action sheet instead, anchored to the focused element (the row or the ⋯ that opened
- * it): the open state hands over at once (closed again), a pick runs its action, a dismissal
- * nothing, and a native failure draws this web sheet. A sheet with a link stays the web sheet, so
- * its link rows keep link behaviour (a modified click, the system's link menu).
+ * On the compact class in a shell with `menu@1` (decision P3) a sheet of plain actions (no link)
+ * opens as the platform's action sheet instead. The owner's `open` stays true while it is up;
+ * when it settles the sheet closes (`onOpenChange(false)`), then a pick runs its action (a
+ * dismissal runs nothing). A native failure draws this web sheet with the same items, still
+ * open. A sheet with a link stays the web sheet, so its link rows keep link behaviour (a
+ * modified click, the system's link menu).
  */
 export function ActionSheet({ open, onOpenChange, title, items }: ActionSheetProps) {
   const native = useNative();
-  // the native sheet failed: this open draws the web sheet
+  const compact = useSizeClass() === "compact";
+  // the native sheet failed during this open: the web sheet draws
   const [fallback, setFallback] = useState(false);
-  const nativeMenu = native?.menu && isPlainMenu(items) ? native.menu : undefined;
-  const trigger = useNativeMenuTrigger(
-    nativeMenu,
-    () => ({
-      title,
-      actions: items.flatMap((item, n) =>
-        item === "separator"
-          ? []
-          : [
-              {
-                id: `item-${n}`,
-                label: item.label,
-                ...(item.danger ? { destructive: true } : {}),
-                ...(item.disabled ? { disabled: true } : {}),
-                run: () => item.onSelect?.(),
-              },
-            ],
-      ),
-    }),
-    () => {
-      setFallback(true);
-      onOpenChange(true);
-    },
-  );
+  const nativeMenu = native?.menu && compact && isPlainMenu(items) ? native.menu : undefined;
   const handOver = open && nativeMenu !== undefined && !fallback;
+  // what the native sheet's settlement reads (the render that opened it may be stale by then)
+  const latest = useRef({ nativeMenu, title, items, onOpenChange });
+  latest.current = { nativeMenu, title, items, onOpenChange };
   useEffect(() => {
     if (!handOver) return;
-    const anchor = document.activeElement instanceof HTMLElement ? document.activeElement : null;
-    trigger.onClick?.({ currentTarget: anchor ?? document.body });
-    onOpenChange(false);
-  });
+    let live = true;
+    const { nativeMenu: menu, title: heading, items: list } = latest.current;
+    if (menu === undefined) return;
+    const actions = list.flatMap((item, n) =>
+      item === "separator"
+        ? []
+        : [
+            {
+              id: `item-${n}`,
+              label: item.label,
+              ...(item.danger ? { destructive: true } : {}),
+              ...(item.disabled ? { disabled: true } : {}),
+              run: () => item.onSelect?.(),
+            },
+          ],
+    );
+    let result: Promise<string | null>;
+    try {
+      result = Promise.resolve(
+        menu({
+          ...(heading ? { title: heading } : {}),
+          items: actions.map(({ run: _, ...i }) => i),
+        }),
+      );
+    } catch (e) {
+      result = Promise.reject(e);
+    }
+    void result.then(
+      (id) => {
+        if (!live) return;
+        latest.current.onOpenChange(false);
+        const action = id === null ? undefined : actions.find((a) => a.id === id);
+        if (action !== undefined && action.disabled !== true) action.run();
+      },
+      () => {
+        if (live) setFallback(true);
+      },
+    );
+    return () => {
+      // the owner closed or unmounted meanwhile: the settlement no longer belongs to this open
+      live = false;
+    };
+  }, [handOver]);
   // the fallback sheet closed: the next open tries the native sheet again
   useEffect(() => {
     if (!open && fallback) setFallback(false);

@@ -12,6 +12,7 @@ import {
   type NativeHandlers,
   OVERLAY_HISTORY_MARKER,
 } from "../src/index";
+import { matchMediaFor } from "./width";
 
 /** A compact touch window, as the overlay history needs it. */
 function stubTouchPhone() {
@@ -50,9 +51,52 @@ function Owner({ items, native }: { items: MenuItem[]; native?: NativeHandlers }
   );
 }
 
+/** An owner like ConversationList: `open` is `target !== null`, a close clears the target. */
+function TargetOwner({
+  native,
+  onArchive,
+}: {
+  native: NativeHandlers;
+  onArchive(id: string): void;
+}) {
+  const [target, setTarget] = useState<string | null>(null);
+  const [, setTick] = useState(0);
+  return (
+    <DesignProvider locale="zh" native={native}>
+      <button type="button" onClick={() => setTarget("c1")}>
+        更多
+      </button>
+      <button type="button" onClick={() => setTick((n) => n + 1)}>
+        重绘
+      </button>
+      <span data-testid="target">{target ?? ""}</span>
+      <ActionSheet
+        open={target !== null}
+        onOpenChange={(o) => {
+          if (!o) setTarget(null);
+        }}
+        title={target ?? "x"}
+        items={target ? [{ label: "归档", onSelect: () => onArchive(target) }] : []}
+      />
+    </DesignProvider>
+  );
+}
+
+function deferred<T>() {
+  let resolve!: (v: T) => void;
+  const promise = new Promise<T>((res) => {
+    resolve = res;
+  });
+  return { promise, resolve };
+}
+
 const webSheet = () => document.querySelector('[data-part="action-sheet"]');
 
 describe("ActionSheet in a native shell", () => {
+  beforeEach(() => {
+    vi.stubGlobal("matchMedia", matchMediaFor(390).matchMedia);
+  });
+
   it("native menu used for a sheet without links", async () => {
     const archive = vi.fn();
     const remove = vi.fn();
@@ -113,6 +157,49 @@ describe("ActionSheet in a native shell", () => {
     await userEvent.click(screen.getByRole("button", { name: "更多" }));
     await act(async () => {});
     expect(failing).toHaveBeenCalledTimes(2);
+  });
+
+  it("an owner whose open state carries the target keeps it until the native sheet settles", async () => {
+    const archive = vi.fn();
+    const d = deferred<string | null>();
+    const menu = vi.fn<NonNullable<NativeHandlers["menu"]>>(() => d.promise);
+    render(<TargetOwner native={{ menu }} onArchive={archive} />);
+    await userEvent.click(screen.getByRole("button", { name: "更多" }));
+    await act(async () => {});
+    expect(menu).toHaveBeenCalledTimes(1);
+    // the target stays while the native sheet is up; a re-render shows no second sheet
+    expect(screen.getByTestId("target").textContent).toBe("c1");
+    await userEvent.click(screen.getByRole("button", { name: "重绘" }));
+    await act(async () => {});
+    expect(menu).toHaveBeenCalledTimes(1);
+    const id = menu.mock.calls[0]?.[0].items[0]?.id ?? "";
+    await act(async () => d.resolve(id));
+    expect(screen.getByTestId("target").textContent).toBe("");
+    expect(archive).toHaveBeenCalledWith("c1");
+  });
+
+  it("a rejection draws the web sheet for a target-carrying owner, with the same items", async () => {
+    const archive = vi.fn();
+    const menu = vi.fn<NonNullable<NativeHandlers["menu"]>>(async () => {
+      throw new Error("busy");
+    });
+    render(<TargetOwner native={{ menu }} onArchive={archive} />);
+    await userEvent.click(screen.getByRole("button", { name: "更多" }));
+    await waitFor(() => expect(webSheet()).not.toBeNull());
+    expect(menu).toHaveBeenCalledTimes(1);
+    expect(screen.getByTestId("target").textContent).toBe("c1");
+    await userEvent.click(within(webSheet() as HTMLElement).getByRole("button", { name: "归档" }));
+    await waitFor(() => expect(archive).toHaveBeenCalledWith("c1"));
+    expect(menu).toHaveBeenCalledTimes(1);
+  });
+
+  it("at 1440 a native shell still draws the web sheet", async () => {
+    vi.stubGlobal("matchMedia", matchMediaFor(1440).matchMedia);
+    const menu = vi.fn<NonNullable<NativeHandlers["menu"]>>(async () => null);
+    render(<Owner native={{ menu }} items={[{ label: "归档", onSelect: () => {} }]} />);
+    await userEvent.click(screen.getByRole("button", { name: "更多" }));
+    await waitFor(() => expect(webSheet()).not.toBeNull());
+    expect(menu).not.toHaveBeenCalled();
   });
 
   it("sheet with a link stays the web sheet in a native shell", async () => {
