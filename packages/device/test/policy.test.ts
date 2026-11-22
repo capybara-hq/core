@@ -1,5 +1,6 @@
 import {
   chmodSync,
+  existsSync,
   mkdirSync,
   mkdtempSync,
   readFileSync,
@@ -172,7 +173,7 @@ describe("policy command", () => {
     ).then((code) => ({ code, out: out.join("\n"), err: err.join("\n") }));
   };
 
-  const login = (workDir = join(base, "device")) =>
+  const login = (workDir = join(base, "device"), mode: "os" | "docker" = "os") =>
     writeCredential(dir, {
       url: "https://x.test",
       connectUrl: "wss://x.test/device/connect",
@@ -180,7 +181,7 @@ describe("policy command", () => {
       orgId: "o",
       deviceId: "e",
       dir: workDir,
-      mode: "os",
+      mode,
       reconnectGraceSeconds: 120,
       maxFrameBytes: 1_000_000,
     });
@@ -315,6 +316,69 @@ describe("policy command", () => {
     expect(r.code).toBe(2);
     expect(r.err).toMatch(/holds secrets/);
     expect((await run(["add", "projectPaths", project("a")])).code).toBe(0);
+  });
+
+  it("add refuses a case variant of a denied directory on a case-insensitive volume", async (ctx) => {
+    writeFileSync(join(base, "Probe"), "");
+    if (!existsSync(join(base, "probe"))) ctx.skip();
+    login();
+    writePolicy(dir, DEFAULT_POLICY);
+    const otherWork = project("other-work");
+    otherConnection("other", otherWork);
+    mkdirSync(join(home, ".ssh"));
+    const before = readFileSync(policyPath(dir), "utf8");
+    const secret = await run(["add", "projectPaths", join(home, ".SSH")]);
+    expect(secret.code).toBe(2);
+    expect(secret.err).toMatch(/holds secrets/);
+    const other = await run(["add", "projectPaths", join(base, "OTHER-WORK")]);
+    expect(other.code).toBe(2);
+    expect(other.err).toMatch(/belongs to another connection/);
+    expect(readFileSync(policyPath(dir), "utf8")).toBe(before);
+  });
+
+  it("notes that denied directories inside an added path stay unreadable", async () => {
+    login();
+    writePolicy(dir, DEFAULT_POLICY);
+    const note =
+      "Secrets, capybara-device's own state and other connections inside it stay unreadable.";
+    const inside = await run(["add", "projectPaths", home]);
+    expect(inside.code).toBe(0);
+    expect(inside.out).toContain(note);
+    // a parent of the state root
+    const parent = await run(["add", "projectPaths", base]);
+    expect(parent.code).toBe(0);
+    expect(parent.out).toContain(note);
+    const plain = await run(["add", "projectPaths", project("a")]);
+    expect(plain.code).toBe(0);
+    expect(plain.out).not.toContain(note);
+  });
+
+  it("add checks other connections when not logged in", async () => {
+    const otherWork = project("other-work");
+    otherConnection("other", otherWork);
+    const r = await run(["add", "projectPaths", otherWork]);
+    expect(r.code).toBe(2);
+    expect(r.err).toMatch(/belongs to another connection/);
+    const connDir = otherConnection("bad", project("bad-work"));
+    chmodSync(join(connDir, "credential.json"), 0o644);
+    const bad = await run(["add", "projectPaths", project("a")]);
+    expect(bad.code).toBe(2);
+    expect(bad.err).toMatch(/Cannot read connections\/bad .*capybara-device logout -c bad/);
+    expect(existsSync(policyPath(dir))).toBe(false);
+  });
+
+  it("says project paths do not apply in Docker mode", async () => {
+    login(join(base, "device"), "docker");
+    writePolicy(dir, {
+      ...DEFAULT_POLICY,
+      ownerCeiling: { ...DEFAULT_POLICY.ownerCeiling, projectReach: "paths" },
+    });
+    const r = await run(["add", "projectPaths", project("a")]);
+    expect(r.code).toBe(0);
+    expect(r.out).toContain(
+      "Project paths do not apply in Docker mode: sandboxed work runs in the device's container.",
+    );
+    expect(r.out).not.toContain("Project paths apply while");
   });
 
   it("remove takes any listed entry", async () => {

@@ -1,10 +1,15 @@
 import { realpathSync, statSync } from "node:fs";
-import { resolve } from "node:path";
+import { isAbsolute, resolve } from "node:path";
 import { validateAllowHost } from "@capybara-hq/plugin-sdk";
 import type { Command } from "../args.js";
 import { noteCliPolicyChange } from "../command-log.js";
-import { readStrictOwnerCeilingSync } from "../exec/operation-types.js";
-import { projectPathRefusal, unreadableConnectionMessage } from "../exec/read-model.js";
+import { scanConnections } from "../connections.js";
+import { readStrictOwnerCeilingSync, withCanonicalForms, within } from "../exec/operation-types.js";
+import {
+  otherConnectionDenies,
+  projectPathRefusal,
+  unreadableConnectionMessage,
+} from "../exec/read-model.js";
 import { osRoots } from "../exec/shared.js";
 import { deniedSecretPaths } from "../policy.js";
 import { PolicyStore } from "../policy-store.js";
@@ -38,6 +43,14 @@ const CEILING_COMMAND =
 const PROJECT_PATHS_REACH_NOTE =
   "Project paths apply while the project reach is paths (capybara-device ceiling set " +
   "--project-reach paths).";
+
+/** Printed instead in Docker mode, where sandboxed work runs in the device's container. */
+const PROJECT_PATHS_DOCKER_NOTE =
+  "Project paths do not apply in Docker mode: sandboxed work runs in the device's container.";
+
+/** Printed when an added project path contains a denied directory. */
+const PROJECT_PATHS_INNER_DENY_NOTE =
+  "Secrets, capybara-device's own state and other connections inside it stay unreadable.";
 
 function list(value: string): string[] {
   return value
@@ -82,13 +95,18 @@ function domains(value: string): string[] {
  * The real paths of the project paths given (relative ones against `cwd`), deduplicated; throws
  * naming the first that is missing, not a directory, or one sandboxed work may never read (a
  * secret path, this program's state, another connection's directory). Only the deny lists decide
- * (the machine reach); they are checked again at every operation.
+ * (the machine reach); they are checked again at every operation. `containsDenied`: one of them
+ * holds a denied directory (which stays unreadable).
  */
-function projectPaths(value: string, deps: PolicyDeps): string[] {
+function projectPaths(
+  value: string,
+  deps: PolicyDeps,
+): { paths: string[]; containsDenied: boolean } {
   const { stateDir, stateRoot, home } = deps;
   const given = list(value);
-  // Logged in: the owner ceiling's deny lists, every other connection included (an unreadable one
-  // refuses: its directory cannot be kept out). Logged out: secrets and this program's state.
+  // Logged in: the owner ceiling's deny lists. Logged out: secrets, this program's state and the
+  // other connections' directories. Either way an unreadable connection refuses (fail closed: its
+  // directory cannot be kept out).
   let denies: { secretAndStateDenies: readonly string[]; otherConnectionDenies: readonly string[] };
   const cred = readCredential(stateDir);
   if (cred !== undefined) {
@@ -110,11 +128,32 @@ function projectPaths(value: string, deps: PolicyDeps): string[] {
     if (unreadable !== undefined) throw new Error(unreadableConnectionMessage(unreadable));
     denies = ceiling;
   } else {
+    let others: string[];
+    try {
+      const scan = scanConnections(stateRoot);
+      const unreadable = [
+        ...scan.unreadable,
+        ...scan.readable
+          .filter((c) => !isAbsolute(c.workDir))
+          .map((c) => ({ deviceId: c.deviceId, reason: "its working directory is not absolute" })),
+      ][0];
+      if (unreadable !== undefined) throw new Error(unreadableConnectionMessage(unreadable));
+      // logged out, so every connection is another one
+      others = otherConnectionDenies({ ownDeviceId: "", connections: scan.readable });
+    } catch (e) {
+      throw new Error(
+        `Cannot check project paths against the connections: ${(e as Error).message}`,
+      );
+    }
     denies = {
       secretAndStateDenies: [...deniedSecretPaths(home), stateDir, stateRoot],
-      otherConnectionDenies: [],
+      otherConnectionDenies: others,
     };
   }
+  const allDenies = withCanonicalForms(
+    [...denies.secretAndStateDenies, ...denies.otherConnectionDenies].map((d) => resolve(d)),
+  );
+  let containsDenied = false;
   const out: string[] = [];
   for (const entry of given) {
     const path = resolve(deps.cwd ?? process.cwd(), entry);
@@ -147,9 +186,10 @@ function projectPaths(value: string, deps: PolicyDeps): string[] {
       throw new Error(`${path} belongs to another connection of this machine`);
     }
     if (refusal !== null) throw new Error(`${path} cannot be a project path (${refusal})`);
+    if (allDenies.some((d) => d !== real && within(d, real))) containsDenied = true;
     if (!out.includes(real)) out.push(real);
   }
-  return out;
+  return { paths: out, containsDenied };
 }
 
 /** The new value of a list field after `add` / `remove`; unchanged entries are reported. */
@@ -232,6 +272,7 @@ export async function policyCommand(
   const { action, key, value } = cmd;
   // Parse and validate before taking the lock; apply inside it, against the file as it is then.
   let change: (p: Policy, say: (line: string) => void) => Policy;
+  let containsDenied = false;
   try {
     if (action === "set") {
       switch (key) {
@@ -246,7 +287,9 @@ export async function policyCommand(
           break;
         }
         case "projectPaths": {
-          const next = projectPaths(value, deps);
+          const checked = projectPaths(value, deps);
+          const next = checked.paths;
+          containsDenied = checked.containsDenied;
           change = (p) => ({ ...p, projectPaths: next });
           break;
         }
@@ -276,14 +319,16 @@ export async function policyCommand(
       }
       const listKey = key as ListKey;
       // Only additions are validated: any entry already in the file can be removed.
-      const values =
-        listKey === "allowedDomains"
-          ? action === "add"
-            ? domains(value)
-            : list(value).map((d) => d.toLowerCase())
-          : listKey === "projectPaths" && action === "add"
-            ? projectPaths(value, deps)
-            : list(value);
+      let values: string[];
+      if (listKey === "projectPaths" && action === "add") {
+        const checked = projectPaths(value, deps);
+        values = checked.paths;
+        containsDenied = checked.containsDenied;
+      } else if (listKey === "allowedDomains") {
+        values = action === "add" ? domains(value) : list(value).map((d) => d.toLowerCase());
+      } else {
+        values = list(value);
+      }
       if (values.length === 0) throw new Error(`${action} needs at least one value`);
       change = (p, say) => ({ ...p, [listKey]: edit(p[listKey], action, listKey, values, say) });
     }
@@ -309,8 +354,11 @@ export async function policyCommand(
         "organization allows them too.",
     );
   }
-  if (key === "projectPaths" && saved.ownerCeiling.projectReach !== "paths")
-    out(PROJECT_PATHS_REACH_NOTE);
+  if (key === "projectPaths") {
+    if (containsDenied) out(PROJECT_PATHS_INNER_DENY_NOTE);
+    if (docker) out(PROJECT_PATHS_DOCKER_NOTE);
+    else if (saved.ownerCeiling.projectReach !== "paths") out(PROJECT_PATHS_REACH_NOTE);
+  }
   if (key === "cpu" || key === "memoryMb" || key === "allowCredentials") out(NOT_ENFORCED_NOTE);
   return 0;
 }
