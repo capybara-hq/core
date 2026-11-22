@@ -1,0 +1,16 @@
+/* ClassForms (responsive spec §5.2 mechanism A): before hydration both copies are in the DOM and
+   the window width shows one; after hydration only the matching copy is mounted. The wrappers
+   take no box of their own. */
+.cb-class-form {
+  display: contents;
+}
+@media (max-width: 599px) {
+  .cb-class-form[data-class-form="wide"] {
+    display: none;
+  }
+}
+@media (min-width: 600px) {
+  .cb-class-form[data-class-form="compact"] {
+    display: none;
+  }
+}

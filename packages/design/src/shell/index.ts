@@ -7,6 +7,7 @@ export {
 export { ActionRow, type ActionRowProps, type ButtonSpec } from "./action-row";
 export { AppShell, type AppShellProps } from "./app-shell";
 export { Body, type BodyProps } from "./body";
+export { type ClassForm, ClassForms, type ClassFormsProps, useClassForm } from "./class-forms";
 export { ClassSwap } from "./class-swap";
 export {
   ConversationList,
