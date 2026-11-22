@@ -4,7 +4,7 @@ import { cleanup, screen, within } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import zh from "../messages/zh.json";
 import { resetNavigation } from "./support/navigation";
-import { renderRouteWithCache } from "./support/query";
+import { renderRouteEmptyCache, renderRouteWithCache } from "./support/query";
 import { ME } from "./support/render";
 import type { Routes } from "./support/server";
 
@@ -83,10 +83,22 @@ describe("/agents scope", () => {
     resetNavigation("/agents");
     await renderRouteWithCache("/agents", served(), { locale: "zh", me: ME });
     await screen.findByText("Agent ag1");
-    const group = screen.getAllByRole("radiogroup", { name: zh.agents.filter })[0] as HTMLElement;
+    const group = screen.getByRole("radiogroup", { name: zh.agents.filter });
     const chips = within(group).getAllByRole("radio");
     expect(chips.map((c) => c.textContent)).toEqual(labels);
     expect(chips.map((c) => c.getAttribute("aria-checked"))).toEqual(["true", "false", "false"]);
+  });
+
+  it("at 390 the chips are there while the agents load", async () => {
+    vi.stubGlobal("matchMedia", mediaFor(390));
+    resetNavigation("/agents");
+    const held = () => new Promise<Response>(() => {});
+    await renderRouteEmptyCache("/agents", { ...served(), [`GET ${O}/agents`]: held }, { me: ME });
+    // the loading skeleton is one aria-busy group: look the chips up by their part
+    await vi.waitFor(() => {
+      const chips = document.querySelectorAll('[data-part="scope-chips"] [role="radio"]');
+      expect(chips).toHaveLength(3);
+    });
   });
 
   it("at 1440 it is a Segmented", async () => {
