@@ -1,5 +1,31 @@
 # @capybara-hq/capybara
 
+## 0.1.0-rc.89
+
+### Patch Changes
+
+- 14978b9: The new conversation's composer in the mobile form sits at the window bottom (space.3 over the
+  safe-area inset, as the conversation's), no longer over an empty ~128 px band: the thread's reserve
+  for the floating composer applied to the new conversation's scroll too, whose composer is inside it.
+- a938c37: The composer exposes its pieces as UI parts: `composer.box` (the text with ＋ and send; the
+  floating pill in the mobile form, `:focus-within` while one of them has focus, never for the control
+  row), `composer.options` (the mobile settings chip) and `composer.send` (send, and stop in its
+  place). The pill is now that real element instead of the frame's `::before`, so a theme's frame,
+  corners and run effects can follow it without enclosing the chip row; the control row sits outside
+  it (the DOM order is the text, ＋, send, then the row). In the mobile form send keeps its place at
+  the pill's end when the agent picker above it is wider. `Button` and `IconButton` let a caller's
+  `data-cap-part` name the control too.
+- 5f10f47: The org admin pages (settings members, tokens, schedules and audit, extensions, trajectories, evals)
+  use the responsive compact rows, and join the responsive visual matrix.
+  
+  The conversation list counts its matches only when asked (`withTotal=true`, first page), so the
+  compact drawer's 30 s poll no longer pays for the count.
+  
+  DataTable columns can be `compactOnly`: drawn only in the compact grouped rows, never in the wide
+  table.
+- Updated dependencies [5f10f47]
+  - @capybara-hq/kernel@0.1.0-rc.70
+
 ## 0.1.0-rc.88
 
 ### Minor Changes

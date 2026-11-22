@@ -1,5 +1,20 @@
 # @capybara-hq/kernel
 
+## 0.1.0-rc.70
+
+### Patch Changes
+
+- 5f10f47: The org admin pages (settings members, tokens, schedules and audit, extensions, trajectories, evals)
+  use the responsive compact rows, and join the responsive visual matrix.
+  
+  The conversation list counts its matches only when asked (`withTotal=true`, first page), so the
+  compact drawer's 30 s poll no longer pays for the count.
+  
+  DataTable columns can be `compactOnly`: drawn only in the compact grouped rows, never in the wide
+  table.
+- Updated dependencies [a938c37]
+  - @capybara-hq/plugin-sdk@0.1.0-rc.55
+
 ## 0.1.0-rc.69
 
 ### Minor Changes
