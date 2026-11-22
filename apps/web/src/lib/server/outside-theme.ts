@@ -6,9 +6,9 @@ import { serverQueryClient } from "./query";
 
 /**
  * The theme of a page outside a route-group layout (theme brand coverage spec §5), one rule: the
- * brand cookie of the request's mode when valid (`currentBrandCookie`) (what this browser last drew); else the public platform default when the
- * kernel answers (through the request's query client, so a layout's read is reused); else null,
- * the built-in theme.
+ * brand cookie of the request's mode when valid (`currentBrandCookie`: what this browser last
+ * drew); else the public platform default when the kernel answers (through the request's query
+ * client, so a layout's read is reused); else null, the built-in theme.
  */
 export async function outsideTheme(): Promise<BrandRef | null> {
   const cookie = await currentBrandCookie();

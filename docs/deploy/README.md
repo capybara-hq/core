@@ -210,7 +210,10 @@ starting. Read its output with `docker compose logs init`.
   like the proxy's address and all clients share one login rate limit, and `web` takes every request
   for plain http. With it, `web` also keeps the trusted proxy's `X-Forwarded-Proto` (nginx:
   `proxy_set_header X-Forwarded-Proto $scheme;`), so its own cookies get `Secure` and the server
-  reads the https name of the brand cookie (`__Host-cb-brand`).
+  reads the https name of the brand cookie (`__Host-cb-brand`). A proxy that receives plain http
+  from an outer TLS terminator must pass `https` on (`proxy_set_header X-Forwarded-Proto https;`
+  or `$http_x_forwarded_proto`), not its own `$scheme`. Without a trusted `https`, the server
+  takes the site for plain http and reads the plain `cb-brand`, which a sibling subdomain can set.
   - **A proxy on the same host:** set `CAPYBARA_WEB_BIND=127.0.0.1` and
     `CAPYBARA_WEB_TRUST_PROXY=1` (one hop). Only the local proxy can reach the port, so nobody can
     send `web` a forged `X-Forwarded-For`. This doesn't depend on Docker's network addresses.
