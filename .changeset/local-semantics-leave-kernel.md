@@ -8,7 +8,10 @@ Local device semantics leave the kernel: the kernel-internal `@local` provider, 
 reports, owner reports, instance bindings and boot history are gone; the kernel knows only
 generic dial-in devices (a provider implementing `DeviceProvider.dialIn` and declaring
 `permissions.dialIn`), and the `device-local` plugin takes local devices over. Until it is
-installed, a deployment has no local device provider. Migration 0177 drops `device_machines`'
+installed, a deployment has no local device provider. Local devices registered before the upgrade stay
+bound to the removed `@local` provider and are unavailable (`device.unavailable`; their files stay
+on the machine); their owners delete them on the devices page and connect the machine again with a
+`capybara-device` that signs in to the `device-local` provider. Migration 0177 drops `device_machines`'
 `features`, `local_policy`, `owner_report`, `pending_policy_ops`, `home`, `roots`, `mode` and
 `session_isolation`, the tables `device_machine_boots` and `device_instance_bindings`, and
 `devices.source`; a machine credential is accepted for any device a machine signed in to, and the
