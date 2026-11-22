@@ -144,7 +144,7 @@ function shell(nav: NativeNavHandle | undefined, pathname: string, extra: Extra 
         sidebar={sidebar}
         status={status}
         pathname={pathname}
-        chatSurface={chatPaths.has(pathname)}
+        chatSurface={chatPaths.has(pathname) || pathname.startsWith("/chat/")}
         drawer={extra.drawer ?? drawerData()}
         {...(nav ? { nativeNav: nav } : {})}
         {...(extra.onNavigate ? { onNavigate: extra.onNavigate } : {})}
@@ -440,7 +440,7 @@ describe("the native strip (nav@1)", () => {
     act(() => fake.select("agents"));
     expect(onNavigate).toHaveBeenLastCalledWith("/agents", { transition: "none" });
     act(() => fake.select("chats"));
-    expect(onNavigate).toHaveBeenLastCalledWith("/", { transition: "none" });
+    expect(onNavigate).toHaveBeenLastCalledWith("/conversations", { transition: "none" });
   });
 
   it("a strip selection closes the open sheet first (fine pointer: no entries)", () => {
@@ -496,21 +496,25 @@ describe("the native strip (nav@1)", () => {
     }
   });
 
-  it("re-tapping 对话 on the home opens the conversations page (tab re-tap)", () => {
+  it("对话 opens the conversations page and is current there and in a conversation", () => {
     window.matchMedia = matchMediaFor(390).matchMedia;
     const fake = fakeNav();
     const onNavigate = vi.fn();
-    const view = render(shell(fake.nav, "/", { onNavigate }));
+    const view = render(shell(fake.nav, "/agents", { onNavigate }));
     act(() => fake.select("chats"));
     expect(onNavigate).toHaveBeenLastCalledWith("/conversations", { transition: "none" });
-    // from the conversations page or a conversation, Chats goes back to the home
     view.rerender(shell(fake.nav, "/conversations", { onNavigate }));
+    expect(fake.nav.set).toHaveBeenLastCalledWith(expect.objectContaining({ current: "chats" }));
+    // the current section at its root: no second push of the same URL
     act(() => fake.select("chats"));
-    expect(onNavigate).toHaveBeenLastCalledWith("/", { transition: "none" });
+    expect(onNavigate).toHaveBeenCalledTimes(1);
     view.rerender(shell(fake.nav, "/chat/c1", { onNavigate }));
+    expect(fake.nav.set).toHaveBeenLastCalledWith(expect.objectContaining({ current: "chats" }));
     act(() => fake.select("chats"));
+    expect(onNavigate).toHaveBeenLastCalledWith("/conversations", { transition: "none" });
+    // the new-conversation home is the pill's first item, not 对话
+    act(() => fake.action());
     expect(onNavigate).toHaveBeenLastCalledWith("/", { transition: "none" });
-    expect(onNavigate).toHaveBeenCalledTimes(3);
   });
 
   it("keeps the action and account within bounds and the avatar to https or own-origin http", () => {

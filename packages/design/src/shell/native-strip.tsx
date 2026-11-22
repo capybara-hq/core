@@ -47,9 +47,9 @@ export type NativeStripInput = {
  * inbox count, Search when there is a palette, the current section, the pill's top item: the
  * page's primary on compact, else New conversation; the account avatar), sent once per change;
  * `<html data-native-nav>` while the handle is there; the taps: a section navigates to its root
- * without a slide (Chats again on the home opens the conversations page, a tab re-tap), Search
- * opens the palette, the top item runs the primary (else opens the new conversation), the avatar
- * opens the account sheet. Every tap closes an open overlay first, as
+ * without a slide (Chats opens the conversations page), Search opens the palette, the top item
+ * runs the primary (else opens the new conversation, the home), the avatar opens the account
+ * sheet. Every tap closes an open overlay first, as
  * back would (on a touch window its history entries are popped and the act runs once that
  * landed). Returns the account sheet the avatar opens (null without a strip).
  */
@@ -160,11 +160,8 @@ export function useNativeStrip(input: NativeStripInput): ReactNode {
           closeThen(() => latest.current.input.openPalette());
           return;
         }
-        const root = now.drawer === undefined ? undefined : sectionHref(id, now.drawer);
-        if (root === undefined || now.drawer === undefined) return;
-        // a tab re-tap: Chats on the home opens the conversations page (the drawer's All conversations)
-        const href =
-          id === "chats" && root === now.pathname ? now.drawer.allConversations.href : root;
+        const href = now.drawer === undefined ? undefined : sectionHref(id, now.drawer);
+        if (href === undefined) return;
         buzz("selection");
         // a tap on the section whose root is already shown moves nowhere
         closeThen(() => {
@@ -283,8 +280,11 @@ function currentSection(
   return drawer.sections.find((s) => under(pathname, s.href))?.id ?? null;
 }
 
-/** A section's root: the new conversation for chats, else the drawer's entry. */
+/**
+ * A section's root: the conversations page for chats (the new conversation is the pill's first
+ * item; coordinator ruling 2026-11-22), else the drawer's entry.
+ */
 function sectionHref(id: NativeSectionId, drawer: DrawerNavData): string | undefined {
-  if (id === "chats") return drawer.newConversation.href;
+  if (id === "chats") return drawer.allConversations.href;
   return drawer.sections.find((s) => s.id === id)?.href;
 }

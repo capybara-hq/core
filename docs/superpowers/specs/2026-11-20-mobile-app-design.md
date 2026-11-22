@@ -231,8 +231,8 @@ Clarified (decided 2026-11-21, spike 1.2): see §15, "The origin gate, clarified
   display a native menu button at the top of the strip that asks the web to open its drawer.
   Content runs under the strip (§8). *Retired 2026-11-22 (interaction model §10.2, D12): no menu
   button; the strip holds the account avatar under the status and the pill (the page's primary or
-  新会话, the four sections, 搜索); the drawer's other content is reached from 对话 and the account
-  sheet.*
+  新会话, the four sections, 搜索); the drawer's other content is reached from 对话 (the
+  conversations page) and the account sheet.*
 - **No native tab bar elsewhere.** Ordinary iPhones, iPads and every Android device show none:
   the web's menu button and drawer (compact) or rail and sidebar (medium, expanded) are the
   navigation (layout spec §4.1–§4.3). **Android, foldables included, follows the same rule**
@@ -259,10 +259,11 @@ Clarified (decided 2026-11-21, spike 1.2): see §15, "The origin gate, clarified
   on compact, else 新会话 (on medium and expanded, the inner display, the head draws the primary
   and the pill keeps 新会话, D14); `account`, the person's name, initial and avatar image. No
   `menu` since 2026-11-22 (D12).
-- **Section routes**: `chats` → `/`, `inbox` → `/inbox`, `agents` → `/agents`, `schedules` →
-  `/schedules`. A selection navigates without a slide (as native tab bars switch), closing any
-  open overlay first (interaction model §10.2); a selection of the current section returns to
-  its root, and 对话 selected again on the home opens the conversations page (a tab re-tap).
+- **Section routes**: `chats` → `/conversations` (coordinator ruling 2026-11-22, pending maintainer
+  confirmation; the new-conversation home `/` is the pill's first item, `action`), `inbox` →
+  `/inbox`, `agents` → `/agents`, `schedules` → `/schedules`. A selection navigates without a slide
+  (as native tab bars switch), closing any open overlay first (interaction model §10.2); a
+  selection of the current section returns to its root.
 - **The web while the strip shows**: on compact it draws no menu button of its own (the floating
   row's leading slot stays empty on chat surfaces; pushed pages keep their back button) and the
   drawer drops 收件箱, 智能体 and 定时任务; on medium and expanded the rail and the sidebar keep

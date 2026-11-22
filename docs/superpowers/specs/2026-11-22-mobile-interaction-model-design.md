@@ -286,15 +286,16 @@ edge, on both displays. Ours follows it:
 |---|---|---|
 | under the status | **account avatar** (the person's `Avatar`, circle) | opens the account sheet (§10.4) |
 | pill, first item | **primary action**, accent-filled: the page's FAB action when the page has one (新建智能体, 新建定时任务…), else **新会话** | runs the action; the web draws no FAB while the pill carries it |
-| pill | 对话 | `/` (the home; `/chat/…` and `/conversations` mark it current) |
+| pill | 对话 | `/conversations`, the time-grouped list (coordinator ruling 2026-11-22, pending maintainer confirmation; `/conversations` and `/chat/…` mark it current); the new-conversation home `/` is the pill's first item |
 | pill | 收件箱 (badge) | `/inbox` |
 | pill | 智能体 | `/agents` |
 | pill | 定时任务 (not for a guest) | `/schedules` |
 | pill, last item | 搜索 | opens the command palette |
 
 - **No hamburger on Duo.** The pill is the navigation on both displays; the drawer's remaining
-  content (recent conversations, 全部会话, 「技能、连接器、设备…」) is reached from 对话 (the
-  conversations page holds the recents) and from the account sheet (技能、连接器、设备… joins it as
+  content (recent conversations, 全部会话, 「技能、连接器、设备…」) is reached from 对话, which
+  opens the conversations page `/conversations` (it holds the recents; coordinator ruling
+  2026-11-22, pending maintainer confirmation), and from the account sheet (技能、连接器、设备… joins it as
   a row, as the inner display's account popover already does). This retires the outer display's
   native menu button of mobile app spec §6.1 (D12).
 - **Pushed pages** keep their floating back button at the top start; the floating row's "…" stays
