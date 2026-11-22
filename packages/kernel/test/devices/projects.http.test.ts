@@ -7,6 +7,7 @@ import {
   DEFAULT_SANDBOX_ROOTS,
   type DeviceProvider,
   type SandboxBrowseScope,
+  SandboxScopeDeniedError,
 } from "@capybara-hq/plugin-sdk";
 import { startTestPostgres, startTestRedis, type TestContainer } from "@capybara-hq/testing";
 import { Redis } from "ioredis";
@@ -53,7 +54,8 @@ import {
 
 /**
  * A device's projects (project root design §4.1, §4.2): `device_projects` written only by the
- * kernel, owner-only routes, every project scoped by the device's current mode, the device asked
+ * kernel, owner-only routes, every stored project listed (the provider refuses what it will not
+ * serve, with a reason; the kernel hides none), the device asked
  * through its provider's owner browse (`browse`: `stat` / `list` / `scan`). A dial-in device on
  * the `fake-dial-in` provider offers projects (a machine on a real WebSocket answers each relayed
  * browse); a cloud device on `device-fake`, which has no `list` / `scan`, offers none.
@@ -196,6 +198,16 @@ function listAnswer(p: string): NonNullable<Answer> | null {
   if (p.endsWith("/locked")) {
     return { error: { kind: "refused", message: "Outside what this device serves" } };
   }
+  // the provider refuses another connection's directory, with a localized reason
+  if (p.endsWith("/claimed")) {
+    return {
+      error: {
+        kind: "refused",
+        message: "Another connection uses this directory",
+        zh: "另一个连接在用这个目录",
+      },
+    };
+  }
   if (!DIRS.has(p)) return null;
   return { entries: [], truncated: false };
 }
@@ -240,8 +252,6 @@ const listOf = async (req: Req, deviceId: string) => {
   expect(res.statusCode, res.body).toBe(200);
   return res.json() as {
     projects: { name: string; path: string }[];
-    hidden: number;
-    mode: string;
     base: string | null;
     supported: boolean;
   };
@@ -260,11 +270,11 @@ const storedOf = (deviceId: string) =>
     .orderBy("name")
     .execute();
 
-/** An owner browse starts at the provider's reported home (else the workspace), whatever the mode. */
+/** An owner browse starts at the provider's reported home (else the workspace). */
 const browsed = (deviceId: string) => expect.objectContaining({ deviceId, readRoots: [HOME] });
 
 describe("device projects", () => {
-  it("adds a readable directory in auto mode: relative to the home, stored absolute, named by its basename", async () => {
+  it("adds a readable directory: relative to the home, stored absolute, named by its basename", async () => {
     const d = await owned();
     const machine = await connect(d);
     const res = await add(d.req, d.deviceId, { path: "src/capybara/" });
@@ -272,7 +282,7 @@ describe("device projects", () => {
     expect(res.json()).toEqual({
       project: { name: "capybara", path: `${HOME}/src/capybara`, createdAt: expect.any(String) },
     });
-    // the device was asked in the current mode, for one entry
+    // the device was asked for one entry
     expect(reqsOf(machine, "list").map((r) => r.args)).toEqual([
       { path: `${HOME}/src/capybara`, limit: 1, scope: browsed(d.deviceId) },
     ]);
@@ -284,7 +294,9 @@ describe("device projects", () => {
     expect(named.statusCode, named.body).toBe(201);
     expect((named.json() as { project: { path: string } }).project.path).toBe(HOME);
     const l = await listOf(d.req, d.deviceId);
-    expect(l).toMatchObject({ mode: "auto", base: HOME, supported: true, hidden: 0 });
+    expect(l).toMatchObject({ base: HOME, supported: true });
+    expect(l).not.toHaveProperty("hidden");
+    expect(l).not.toHaveProperty("mode");
     expect(l.projects.map((p) => [p.name, p.path])).toEqual([
       ["capybara", `${HOME}/src/capybara`],
       ["home dir", HOME],
@@ -347,7 +359,7 @@ describe("device projects", () => {
     expect(errCode(res)).toBe("device.project_limit_reached");
   });
 
-  it("candidates: one scan of the base in the current mode, checked again by the kernel", async () => {
+  it("candidates: one scan of the base, checked again by the kernel", async () => {
     const d = await owned();
     const machine = await connect(
       d,
@@ -361,7 +373,6 @@ describe("device projects", () => {
     const res = await d.req({ method: "GET", url: `${base(d.deviceId)}/candidates` });
     expect(res.statusCode, res.body).toBe(200);
     expect(res.json()).toEqual({
-      mode: "auto",
       base: HOME,
       supported: true,
       candidates: [
@@ -500,6 +511,56 @@ describe("device projects", () => {
     expect(await storedOf(d.deviceId)).toEqual([]);
   });
 
+  it("lists every stored project; no hidden count, no mode", async () => {
+    const d = await owned();
+    await connect(d);
+    await db
+      .insertInto("device_projects")
+      .values(
+        ["a", "b"].map((name) => ({
+          device_id: d.deviceId,
+          name,
+          path: `${HOME}/${name}`,
+          created_by: d.accountId,
+        })),
+      )
+      .execute();
+    // the provider stops reporting a home: the base falls back to the workspace and the stored
+    // projects outside it stay listed (the provider refuses what it will not serve)
+    await db
+      .updateTable("devices")
+      .set({ report: JSON.stringify({}) })
+      .where("id", "=", d.deviceId)
+      .execute();
+    const r = await listOf(d.req, d.deviceId);
+    expect(r).not.toHaveProperty("hidden");
+    expect(r).not.toHaveProperty("mode");
+    expect(r.base).toBe(DEFAULT_SANDBOX_ROOTS.workspace);
+    expect(r.projects.map((p) => p.name)).toEqual(["a", "b"]);
+  });
+
+  it("a provider refusal is 422 device.project_refused with its localized reason", async () => {
+    const d = await owned();
+    await connect(d);
+    const res = await add(d.req, d.deviceId, { path: "claimed" });
+    expect(res.statusCode, res.body).toBe(422);
+    expect(res.json()).toEqual({
+      error: {
+        code: "device.project_refused",
+        message: "Another connection uses this directory",
+        details: [
+          {
+            reason: {
+              en: "Another connection uses this directory",
+              zh: "另一个连接在用这个目录",
+            },
+          },
+        ],
+      },
+    });
+    expect(await storedOf(d.deviceId)).toEqual([]);
+  });
+
   it("two concurrent adds of one name: exactly one is stored, the other is name_taken", async () => {
     const d = await owned();
     const machine = await connect(d, HOME, answering([], { holdList: true }));
@@ -600,7 +661,7 @@ describe("device projects", () => {
     expect((await storedOf(d.deviceId)).map((r) => r.name)).toEqual(["src"]);
   });
 
-  it("a cloud device is scoped to its workspace at its effective mode, not a wider one", async () => {
+  it("a cloud device is browsed in its workspace at its effective mode, not a wider one", async () => {
     const d = await owned();
     const created = await d.req({
       method: "POST",
@@ -622,10 +683,14 @@ describe("device projects", () => {
     }));
     // the owner browse the activated route opens (its scope is SandboxService.withBrowse's: the
     // effective policy's, never the instance's wider applied mode), on a stand-in provider
+    // the stand-in enforces the workspace-only browse scope as a real provider does
     const browse = {
       stat: async () => ({ size: 0, isDir: true }),
       list: async (path: string) => {
         seen.push({ op: "list", path });
+        if (path !== workspace && !path.startsWith(`${workspace}/`)) {
+          throw new SandboxScopeDeniedError(`${path} is outside the browse scope`);
+        }
         return { entries: [], truncated: false };
       },
       scan: async (path: string) => {
@@ -691,10 +756,12 @@ describe("device projects", () => {
     // asked at the effective (sandbox) policy: the workspace only, never the instance's wider
     // applied auto mode
     expect(scopes.map((x) => x.readRoots)).toEqual([[workspace], [workspace]]);
-    // auto mode (the platform allows it) widens the ceiling, never the scope: still the workspace
+    // auto mode (the platform allows it) widens the ceiling, never the scope: still the workspace;
+    // the kernel no longer narrows the path itself, the device's browse scope refuses it
     await db.updateTable("devices").set({ mode: null }).where("id", "=", id).execute();
     const outside = service.add(orgId, d.accountId, id, { path: "../etc" });
     await expect(outside).rejects.toMatchObject({ code: "device.project_outside_mode" });
+    expect(seen.at(-1)).toEqual({ op: "list", path: "/etc" });
     expect(await service.add(orgId, d.accountId, id, { path: "", name: "ws" })).toMatchObject({
       path: workspace,
     });

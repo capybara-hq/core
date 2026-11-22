@@ -24,7 +24,6 @@ import { TransactionHost, withOrderedLocks } from "../infra/database/transaction
 import { Transactional } from "../infra/database/transactional.decorator.js";
 import { KERNEL_LOGGER } from "../infra/tokens.js";
 import type { KernelLogger } from "../log.js";
-import type { SandboxMode } from "../sandbox/modes.js";
 import { PermissionCeilingWrites } from "../sandbox/permission-ceiling-writes.js";
 import {
   PERMISSION_CONTEXT_ACTIVATION,
@@ -43,13 +42,12 @@ import {
   nameTaken,
   outsideMode,
   tooBroad,
-  withinMode,
 } from "./project-rules.js";
 // a path above the owner's home is never stored as a project: the working root would fall back for
 // it anyway (project root §4.3), so both use the one rule; the home itself may be one
 import { aboveHome } from "./working-root.js";
 
-export { type DeviceProjectScope, withinMode } from "./project-rules.js";
+export type { DeviceProjectScope } from "./project-rules.js";
 
 /** The most projects one device keeps (project root §4.1). */
 export const MAX_DEVICE_PROJECTS = 100;
@@ -120,16 +118,12 @@ export interface DeviceProjectView {
 
 /** `GET /devices/:id/projects`. */
 export interface DeviceProjectList {
-  /** The projects the device's current mode can read (the others are kept, only hidden). */
-  projects: DeviceProjectView[];
-  /** How many stored projects the current mode hides. */
-  hidden: number;
-  /** The mode the device runs at now. */
-  mode: SandboxMode;
   /**
-   * The base a relative path is resolved against: the workspace in sandbox mode and on a cloud
-   * device, the owner's home in auto mode; null when that home is not known.
+   * Every stored project (none when the device offers no projects): the kernel hides none, the
+   * provider refuses what it will not serve.
    */
+  projects: DeviceProjectView[];
+  /** The base a relative path is resolved against: the home the provider reports, else the workspace. */
   base: string | null;
   /** The device offers projects (a machine announcing `projects`, a provider with list / scan). */
   supported: boolean;
@@ -147,7 +141,6 @@ export interface DeviceProjectCandidateView {
 /** `GET /devices/:id/projects/candidates`. */
 export interface DeviceProjectCandidates {
   candidates: DeviceProjectCandidateView[];
-  mode: SandboxMode;
   base: string | null;
   supported: boolean;
 }
@@ -156,11 +149,10 @@ type Scope = DeviceProjectScope;
 /**
  * A device's projects (project root design §4.1, §4.2, §6): kept in `device_projects`, keyed by the
  * device's id, written only here. Only the device's owner reads or changes them (anyone else gets
- * `device.not_found`). Every project is scoped by the device's current effective mode
- * (`SandboxService.devicePolicy`, what the command review's mode derives from): sandbox mode and a cloud device
- * offer only the workspace, auto mode on a machine whatever its owner can read; a project outside
- * the mode is hidden, never deleted. The device stays the authority on what it can read: adding asks
- * it with `list`, the suggestions with `scan`, both carrying the current mode, both outside any
+ * `device.not_found`). Paths are relative to the base (the home the provider reports, else the
+ * workspace); the kernel narrows none below it, only refuses one above the owner's home. The
+ * provider is the authority on what it serves: adding asks it with `list` (it may refuse a path
+ * with a reason, `device.project_refused`), the suggestions with `scan`, both outside any
  * transaction; the insert then runs in its own, with uniqueness from the primary key.
  */
 @Injectable()
@@ -185,7 +177,7 @@ export class DeviceProjectsService {
     @Optional() @Inject(PERMISSION_CONTEXT_ACTIVATION) private readonly activation?: boolean,
   ) {}
 
-  /** The projects the device's current mode can read; see {@link DeviceProjectList}. */
+  /** Every stored project; see {@link DeviceProjectList}. */
   async list(orgId: string, accountId: string, deviceId: string): Promise<DeviceProjectList> {
     const scope = await this.scope(orgId, accountId, deviceId);
     const rows = await this.db
@@ -195,23 +187,21 @@ export class DeviceProjectsService {
       .orderBy("name")
       .execute();
     // a device that offers no projects offers none of the stored ones either
-    const visible = scope.supported ? rows.filter((r) => withinMode(scope, r.path)) : [];
+    const listed = scope.supported ? rows : [];
     return {
-      projects: visible.map((r) => ({
+      projects: listed.map((r) => ({
         name: r.name,
         path: r.path,
         createdAt: r.created_at.toISOString(),
       })),
-      hidden: rows.length - visible.length,
-      mode: scope.mode,
       base: baseOf(scope),
       supported: scope.supported,
     };
   }
 
   /**
-   * The picker's suggestions: one `scan` of the base in the current mode (never file contents).
-   * A device that offers no projects suggests none; auto mode without a known home is refused.
+   * The picker's suggestions: one `scan` of the base (never file contents). A device that offers
+   * no projects suggests none.
    */
   async candidates(
     orgId: string,
@@ -222,7 +212,7 @@ export class DeviceProjectsService {
     // ownership is the scope's; whether the provider can serve the device is withSandbox's
     const scope = await this.scope(orgId, accountId, deviceId);
     if (!scope.supported) {
-      return { candidates: [], mode: scope.mode, base: baseOf(scope), supported: false };
+      return { candidates: [], base: baseOf(scope), supported: false };
     }
     return this.onDevice(orgId, accountId, deviceId, scope, signal, async (r, sig) => {
       const workspace = r.workspace;
@@ -239,13 +229,12 @@ export class DeviceProjectsService {
         this.log.warn("device projects: the device could not scan", { deviceId, err: e });
         throw unavailable(e);
       }
-      // the device's answer is checked again: inside the base and the mode, a valid name, bounded
+      // the device's answer is checked again: inside the base, a valid name, bounded
       const candidates = found
         .filter(
           (c) =>
             validateSandboxPathShape(c.path).length === 0 &&
             (c.path === base || c.path.startsWith(base === "/" ? "/" : `${base}/`)) &&
-            withinMode(scope, c.path, workspace) &&
             isDeviceProjectName(c.suggestedName),
         )
         .slice(0, MAX_DEVICE_SCAN_RESULTS)
@@ -254,7 +243,7 @@ export class DeviceProjectsService {
           relativePath: relativeTo(base, c.path),
           suggestedName: c.suggestedName,
         }));
-      return { candidates, mode: scope.mode, base, supported: true };
+      return { candidates, base, supported: true };
     });
   }
 
@@ -294,12 +283,14 @@ export class DeviceProjectsService {
   }
 
   /**
-   * Adds a project: `path` is resolved against the base of the device's current mode and must
-   * stay inside what that mode reads and not lie above the owner's home ({@link aboveHome},
+   * Adds a project: `path` is resolved against the base (the home the provider reports, else the
+   * workspace) and must not lie above the owner's home ({@link aboveHome},
    * `device.project_path_too_broad`); `name` defaults to the directory's basename. The device is
    * asked `list(path, { limit: 1 })` first, outside any transaction: an answer (even no entries)
-   * is a readable directory, null a missing one, an error a file, an unreadable path or one the
-   * device refused in its mode; each is a readable refusal. Then the insert, serialized per device.
+   * is a readable directory, null a missing one, a `ProjectPathRefusedError` the provider refusing
+   * it with a reason (`device.project_refused`), another error a file, an unreadable path or one
+   * the device's browse scope refused; each is a readable refusal. Then the insert, serialized per
+   * device.
    */
   async add(
     orgId: string,
@@ -317,8 +308,7 @@ export class DeviceProjectsService {
     const path = trimSlash(
       posix.normalize(posix.join(early, input.path === "" ? "." : input.path)),
     );
-    // outside the mode stays the device-side refusal it is (the held workspace decides it)
-    if (withinMode(scope, path) && aboveHome(path, scope.home)) throw tooBroad(path);
+    if (aboveHome(path, scope.home)) throw tooBroad(path);
     const resolved = await this.onDevice(
       orgId,
       accountId,
@@ -335,7 +325,7 @@ export class DeviceProjectsService {
         try {
           answer = await list(path, 1, sig);
         } catch (e) {
-          throw await listFailure(e, r, path, scope.mode, sig, (err, statErr) =>
+          throw await listFailure(e, r, path, sig, (err, statErr) =>
             this.log.warn("device projects: the device could not list", {
               deviceId,
               err,
@@ -471,10 +461,10 @@ export class DeviceProjectsService {
 
   /**
    * The project a new conversation of `accountId` binds to (project root §4.3): one of the
-   * owner's device's projects that its current mode can read. Refused with `device.not_found`
-   * (not the caller's device), `device.projects_unsupported`, `device.project_not_found` or
-   * `device.project_outside_mode` or `device.project_path_too_broad`. Reads only (the caller's transaction, if any); the device is
-   * not asked: it enforces its mode on every access anyway.
+   * owner's device's projects. Refused with `device.not_found` (not the caller's device),
+   * `device.projects_unsupported`, `device.project_not_found` or `device.project_path_too_broad`.
+   * Reads only (the caller's transaction, if any); the device is not asked: its provider enforces
+   * what it serves on every access anyway.
    */
   async resolveForBinding(
     orgId: string,
@@ -600,15 +590,13 @@ const trimSlash = (path: string): string =>
 
 /**
  * The absolute path of `relative` against the scope's base (the home its provider reported, else
- * the instance's `workspace`), normalized; refused when the result is not a valid path, or it
- * leaves what the scope reaches.
+ * the instance's `workspace`), normalized; refused when the result is not a valid device path or
+ * lies above the owner's home. Where a project may lie below that is the provider's rule.
  */
 function resolve(scope: Scope, workspace: string, relative: string): string {
   const base = baseOf(scope, workspace);
   const path = trimSlash(posix.normalize(posix.join(base, relative === "" ? "." : relative)));
-  if (validateSandboxPathShape(path).length > 0 || !withinMode(scope, path, workspace)) {
-    throw outsideMode(path, scope.mode);
-  }
+  if (validateSandboxPathShape(path).length > 0) throw outsideMode(path);
   if (aboveHome(path, scope.home)) throw tooBroad(path);
   return path;
 }
@@ -654,9 +642,9 @@ const pathMissing = (path: string): ApiError =>
 /**
  * What a failed `list(path)` becomes. A provider's `ProjectPathRefusedError` is
  * `device.project_refused` with its reason; the owner browse scope refusing the path is the
- * device refusing it (`device.project_outside_mode`). Any other error alone cannot tell a file or
- * an unreadable directory from a failure on the device, so the device is asked `stat(path)`: a file
- * or a directory it cannot list is the path's problem (422 `device.project_path_unreadable`), a
+ * device refusing it (`device.project_outside_mode`, the browse scope gives no reason). Any other
+ * error alone cannot tell a file or an unreadable directory from a failure on the device, so the
+ * device is asked `stat(path)`: a file or a directory it cannot list is the path's problem (422 `device.project_path_unreadable`), a
  * missing path `device.project_path_missing`, and a `stat` that fails too means the device could
  * not be asked (503 `device.projects_unavailable`).
  */
@@ -664,7 +652,6 @@ async function listFailure(
   e: unknown,
   r: ProjectReader,
   path: string,
-  mode: SandboxMode,
   signal: AbortSignal,
   logUnavailable: (err: unknown, statErr: unknown) => void,
 ): Promise<unknown> {
@@ -679,7 +666,7 @@ async function listFailure(
   if (r.browse && isSandboxScopeDeniedError(e)) {
     return new ApiError(
       "device.project_outside_mode",
-      `The device refused ${clipped(path)} in ${mode} mode${why}`,
+      `The device refused ${clipped(path)}: it is outside what the device lets a project reach${why}`,
     );
   }
   let st: { size: number; isDir: boolean } | null;

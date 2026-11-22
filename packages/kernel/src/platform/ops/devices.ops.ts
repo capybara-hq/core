@@ -466,7 +466,7 @@ export class DevicesOperations implements OnModuleInit {
       defineOperation({
         id: "devices.list-projects",
         description:
-          "List the projects of one of your devices that its current mode can read (name and absolute path), plus the mode, the base a new project's path is relative to (the workspace in sandbox mode and on a cloud device, your home directory in auto mode), how many stored projects the mode hides, and whether the device offers projects at all. Takes the id from devices.list.",
+          "List every project of one of your devices (name and absolute path), plus the base a new project's path is relative to (the home directory the device reports, else its workspace) and whether the device offers projects at all. Takes the id from devices.list.",
         input: DeviceId,
         example: { deviceId: "4e8a0c1d-6b2f-4a37-8d19-3c5e7f9a1b20" },
         authz: { orgAction: "agents.use" },
@@ -507,7 +507,7 @@ export class DevicesOperations implements OnModuleInit {
       defineOperation({
         id: "devices.add-project",
         description:
-          "Add a project to one of your devices: path is relative to the device's base (see devices.list-projects; empty for the base itself), never absolute, and must stay inside what the device reads in its current mode; name defaults to the directory's name (1-64 characters, no /, unique on the device). The device is asked first, so a missing directory, a file or an unreadable path is refused. At most 100 projects per device. Takes the id from devices.list.",
+          "Add a project to one of your devices: path is relative to the device's base (see devices.list-projects; empty for the base itself), never absolute, and never above the owner's home; name defaults to the directory's name (1-64 characters, no /, unique on the device). The device is asked first, so a missing directory, a file, an unreadable path or one the device refuses (with its reason) is refused. At most 100 projects per device. Takes the id from devices.list.",
         input: DeviceId.extend(DeviceProjectAddBody.shape).strict(),
         example: { deviceId: "4e8a0c1d-6b2f-4a37-8d19-3c5e7f9a1b20", path: "src/capybara" },
         authz: { orgAction: "agents.use" },
@@ -529,7 +529,7 @@ export class DevicesOperations implements OnModuleInit {
           },
           {
             code: "device.project_outside_mode",
-            next: "Pick a directory inside the device's workspace, or ask the person to switch the device to auto mode on its machine.",
+            next: "The device does not let a project reach this directory: pick one inside its base (see devices.list-projects).",
           },
           {
             code: "device.project_path_missing",
@@ -545,7 +545,7 @@ export class DevicesOperations implements OnModuleInit {
           },
           {
             code: "device.project_refused",
-            next: "The device's provider refused this directory (its reason is in the message): pick another directory.",
+            next: "The device refused the path: the reason says why; pick another directory.",
           },
           {
             code: "device.projects_unsupported",

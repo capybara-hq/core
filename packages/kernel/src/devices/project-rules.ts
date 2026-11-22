@@ -8,7 +8,7 @@ export interface DeviceProjectScope {
   /**
    * The home its provider last reported (`devices.report.home`): projects are relative to it and
    * the kernel narrows no path below it (where a project may lie is the provider's rule); null
-   * when the provider reports none, and projects stay in the workspace.
+   * when the provider reports none, and the workspace is the base.
    */
   home: string | null;
   supported: boolean;
@@ -18,16 +18,6 @@ type Scope = DeviceProjectScope;
 
 /** The base a relative path resolves against (project root §4.2): the home, else the workspace. */
 export const baseOf = (s: Scope, workspace: string = s.workspace): string => s.home ?? workspace;
-
-/**
- * `path` lies inside what the kernel lets the scope's projects reach: anywhere when the provider
- * reports a home (the provider refuses what it will not serve), else inside the workspace (as the
- * held instance reports it when given).
- */
-export const withinMode = (s: Scope, path: string, workspace: string = s.workspace): boolean =>
-  s.home !== null ||
-  path === workspace ||
-  path.startsWith(workspace === "/" ? "/" : `${workspace}/`);
 
 export const nameInvalid = (name: string): ApiError =>
   new ApiError(
@@ -41,12 +31,14 @@ export const nameTaken = (name: string): ApiError =>
   );
 export const projectNotFound = (name: string): ApiError =>
   new ApiError("device.project_not_found", `This device has no project named "${clipped(name)}"`);
-export const outsideMode = (path: string, mode: SandboxMode): ApiError =>
+/**
+ * A path outside what the device lets a project reach: the device's browse scope refused it, or
+ * the resolved path is not one a device can hold.
+ */
+export const outsideMode = (path: string): ApiError =>
   new ApiError(
     "device.project_outside_mode",
-    mode === "sandbox"
-      ? `${clipped(path)} is outside the device's workspace, the only directory it can read in sandbox mode`
-      : `${clipped(path)} is outside the device's workspace, the only directory a cloud device can read`,
+    `${clipped(path)} is outside what the device lets a project reach; pick a directory inside its base`,
   );
 export const tooBroad = (path: string): ApiError =>
   new ApiError(

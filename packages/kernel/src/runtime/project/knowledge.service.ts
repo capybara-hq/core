@@ -3,7 +3,7 @@ import { DeviceProtocolError } from "@capybara-hq/plugin-sdk/device-protocol";
 import { Inject, Injectable, Optional } from "@nestjs/common";
 import { EventLog } from "../../conversations/event-log.js";
 import { ConversationDevices } from "../../devices/conversation-devices.js";
-import { DeviceProjectsService, withinMode } from "../../devices/device-projects.service.js";
+import { DeviceProjectsService } from "../../devices/device-projects.service.js";
 import { aboveHome } from "../../devices/working-root.js";
 import { ApiError } from "../../errors.js";
 import { KernelDb } from "../../infra/database/kernel-db.js";
@@ -233,12 +233,13 @@ export class ProjectKnowledgeService {
         },
         async (h, p, info, sig) => {
           const target = { project: bound.project, root: bound.root, mode: scope.mode };
-          // the kernel's own check first: a root the mode cannot read is never asked about
-          // a root above the owner's home is refused as the working root's rule refuses it
-          // (`workingRootOf`, the same home: the reported one, else the workspace's prefix)
+          // the kernel's own check first: a root above the owner's home is refused as the working
+          // root's rule refuses it (`workingRootOf`, the same home: the reported one, else the
+          // workspace's prefix); below it, what the device serves is its provider's rule (a
+          // refusal is read as the root being outside what it can read)
           const reported = scope.home;
           const home = reported?.startsWith("/") ? reported : homeOf(info.roots.workspace);
-          if (!withinMode(scope, bound.root, info.roots.workspace) || aboveHome(bound.root, home)) {
+          if (aboveHome(bound.root, home)) {
             return unavailableProject(
               bound.project,
               bound.root,
