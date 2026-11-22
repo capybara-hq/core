@@ -433,7 +433,11 @@ treats a dial-in device like any other (its provider, report and permission supp
   authority epoch when the revision changed. Online state is `DialInRelay.online` (a replica holds
   the connection).
 - **Tests.** The fixture `fake-dial-in` (`test/fixtures/plugins/fake-dial-in`, loaded as a bootstrap
-  plugin with `fakeDialInPkg()`) relays every provider method as `{ op, args }`;
+  plugin with `fakeDialInPkg()`) relays every provider method as `{ op, args }`, the
+  permission-scoped surface too (`operation`, `prepare*`, `browse*`, `background*`,
+  `revokeOperation`, each with its scope); a machine refuses with `{ error: { kind, message } }`
+  (`gone`, `fileSystemGone`, `refused`, `offline`, else ordinary). Its hello sets the support
+  (`outsideSandbox`, `openPublic`, `background`, `perOperationHosts`) and the report's `home`.
   `FakeDialInMachine` (`@capybara-hq/testing`) or `EnvelopeMachine` (`test/helpers/dial-in-machine.ts`,
   for scripted hellos, raw frames and recorded requests) answers it.
 

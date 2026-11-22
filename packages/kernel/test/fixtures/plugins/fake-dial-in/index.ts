@@ -1,11 +1,17 @@
 import {
   DEVICE_PROVIDER_EXTENSION_POINT,
+  DeviceOfflineError,
   type DeviceProvider,
   type DeviceReport,
   defineExtension,
   type ExecResult,
+  FileSystemGoneError,
   type FileSystemHandle,
   isDeviceOfflineError,
+  ProjectPathRefusedError,
+  type SandboxBackground,
+  type SandboxExecutionRef,
+  SandboxGoneError,
   type SandboxHandle,
   type SandboxPermissionSupport,
 } from "@capybara-hq/plugin-sdk";
@@ -17,16 +23,30 @@ import {
  * machine answers with the operation's result (bytes as base64). The kernel tests drive it with
  * `FakeDialInMachine` from `@capybara-hq/testing`, never with the real device-local plugin.
  *
+ * A machine refuses an operation by answering `{ error: { kind, message } }`: kind `gone` throws
+ * `SandboxGoneError` (the instance is gone), `fileSystemGone` `FileSystemGoneError`, `refused`
+ * `ProjectPathRefusedError` (the message is its reason), `offline` `DeviceOfflineError`; any other
+ * kind is an ordinary error with the message. An unconnected machine is the relay's own
+ * `DeviceOfflineError`.
+ *
  * The machine's hello body is `{ revision: string; outsideSandbox: boolean; perOperationHosts?:
- * boolean; refuse?: string }`: a `refuse` makes `onHello` refuse with code `fake.refused`;
- * `perOperationHosts` (default true) is what its permission support reports. The accepted hello is kept in `ctx.kv`
+ * boolean; openPublic?: boolean; background?: boolean; home?: string; refuse?: string }`: a
+ * `refuse` makes `onHello` refuse with code `fake.refused`; `perOperationHosts` (default true),
+ * `openPublic` and `background` (default false) are what its permission support reports, `home`
+ * the report's home (default none). The accepted hello is kept in `ctx.kv`
  * (`hello:<deviceId>`, one hour) and `report()` is built from it; an `event` frame
  * `{ revision, outsideSandbox? }` replaces the revision (and the outside-sandbox answer, when
  * given). Both tell the kernel through `ctx.devices.reportChanged`. `permissionSupport` is an
- * operation boundary whose `outsideSandbox` is the stored answer; the permission-scoped surface
- * (`operation`, `revokeOperation`) relays each method with its admitted scope. Every event body is kept as
- * `frame:<deviceId>` and the reason of the last close as `closed:<deviceId>` (one hour), for the
- * tests to read; an event `{ hang: true }` is never finished.
+ * operation boundary whose `outsideSandbox` is the stored answer. The permission-scoped surface
+ * is relayed method by method, each with its scope in `args.scope`: `operation` (`stat`,
+ * `readFile`, `writeFile`, `exec`, `list`, `scan` as the raw ops), `prepare` (`prepareStat`,
+ * `prepareReadFile`, `prepareWriteFile`), `browse` (`browseStat`, `browseList`
+ * `{ path, limit }`, `browseScan` `{ base }`), `background` (`backgroundStart` with the start's
+ * input, `backgroundStatus`, `backgroundTail` `{ ref, maxBytes }`, `backgroundReadOutput`
+ * `{ ref, offset, maxBytes }`, `backgroundStop` `{ ref, graceMs }`; output bytes as `data` in
+ * base64) and `revokeOperation` `{ ref }`; raw `list` / `scan` likewise. Every event body is
+ * kept as `frame:<deviceId>` and the reason of the last close as `closed:<deviceId>` (one hour),
+ * for the tests to read; an event `{ hang: true }` is never finished.
  *
  * The public route `POST /plugins/fake-dial-in/request` (body `{ deviceId, body, timeoutMs? }`)
  * is a test seam: it calls `ctx.dialIn.request` on the replica that serves it, with the HTTP
@@ -49,7 +69,42 @@ interface StoredHello {
   revision: string;
   outsideSandbox: boolean;
   perOperationHosts?: boolean;
+  openPublic?: boolean;
+  background?: boolean;
+  home?: string;
 }
+
+/** The support facts of a hello body that an `event` frame keeps. */
+function supportFacts(body: Record<string, unknown> | StoredHello | null): Partial<StoredHello> {
+  const b = (body ?? {}) as Record<string, unknown>;
+  return {
+    ...(b.perOperationHosts === false && { perOperationHosts: false }),
+    ...(b.openPublic === true && { openPublic: true }),
+    ...(b.background === true && { background: true }),
+    ...(typeof b.home === "string" && { home: b.home }),
+  };
+}
+
+/** The machine's refusal `{ error: { kind, message } }` as the provider error it stands for. */
+function refusal(deviceId: string, answer: unknown): Error | null {
+  if (!isRecord(answer) || !isRecord(answer.error) || typeof answer.error.kind !== "string")
+    return null;
+  const message = typeof answer.error.message === "string" ? answer.error.message : "refused";
+  switch (answer.error.kind) {
+    case "gone":
+      return new SandboxGoneError(message);
+    case "fileSystemGone":
+      return new FileSystemGoneError(message);
+    case "refused":
+      return new ProjectPathRefusedError({ en: message });
+    case "offline":
+      return new DeviceOfflineError(deviceId);
+    default:
+      return new Error(message);
+  }
+}
+
+const bytes = (b64: string): Uint8Array => Buffer.from(b64, "base64");
 
 function isRecord(v: unknown): v is Record<string, unknown> {
   return typeof v === "object" && v !== null && !Array.isArray(v);
@@ -81,16 +136,54 @@ export default defineExtension({
       ctx.kv.set(helloKey(deviceId), JSON.stringify(hello), { ttlSeconds: HELLO_TTL_SECONDS });
     const reportChanged = (deviceId: string): Promise<void> => ctx.devices.reportChanged(deviceId);
 
-    const relay = (
+    const relay = async (
       deviceId: string,
       op: string,
       args: unknown,
       signal: AbortSignal,
       timeoutMs = DEFAULT_TIMEOUT_MS,
-    ): Promise<unknown> =>
-      ctx.dialIn.request(deviceId, { op, args }, { timeoutMs: timeoutMs + SLACK_MS, signal });
+    ): Promise<unknown> => {
+      const answer = await ctx.dialIn.request(
+        deviceId,
+        { op, args },
+        { timeoutMs: timeoutMs + SLACK_MS, signal },
+      );
+      const refused = refusal(deviceId, answer);
+      if (refused !== null) throw refused;
+      return answer;
+    };
     const relayHandle = (h: SandboxHandle, op: string, args: unknown, signal: AbortSignal) =>
       relay(h.id, op, args, signal);
+
+    type Output = { data: string } & Record<string, unknown>;
+    const output = (r: unknown) => {
+      const o = r as Output | { unavailable: "lost" | "expired" };
+      return "unavailable" in o ? o : { ...o, data: bytes(o.data) };
+    };
+    const background: SandboxBackground = {
+      async start(h, scope, { signal, ...args }) {
+        return (await relayHandle(
+          h,
+          "backgroundStart",
+          { ...args, scope },
+          signal,
+        )) as SandboxExecutionRef;
+      },
+      async status(h, ref, signal) {
+        return (await relayHandle(h, "backgroundStatus", { ref }, signal)) as never;
+      },
+      async tail(h, ref, { maxBytes, signal }) {
+        return output(await relayHandle(h, "backgroundTail", { ref, maxBytes }, signal)) as never;
+      },
+      async readOutput(h, ref, { offset, maxBytes, signal }) {
+        return output(
+          await relayHandle(h, "backgroundReadOutput", { ref, offset, maxBytes }, signal),
+        ) as never;
+      },
+      async stop(h, ref, { graceMs, signal }) {
+        return (await relayHandle(h, "backgroundStop", { ref, graceMs }, signal)) as never;
+      },
+    };
 
     const provider: DeviceProvider = {
       concurrentExec: true,
@@ -101,7 +194,7 @@ export default defineExtension({
         return {
           revision: hello?.revision ?? "0",
           description: { en: "Fake dial-in device" },
-          home: null,
+          home: hello?.home ?? null,
           limits: [],
           reset: false,
         };
@@ -113,12 +206,12 @@ export default defineExtension({
           boundary: "operation",
           restricted: { filesystem: true, network: true, native: true, concurrentScopes: true },
           network: {
-            openPublic: false,
+            openPublic: hello?.openPublic ?? false,
             allowlist: true,
             perOperationHosts: hello?.perOperationHosts ?? true,
           },
           outsideSandbox: hello?.outsideSandbox ?? false,
-          background: false,
+          background: hello?.background ?? false,
         };
       },
       // the permission-scoped surface, relayed with the admitted scope: the machine answers each
@@ -145,11 +238,69 @@ export default defineExtension({
           async exec({ signal: sig, ...args }: { signal: AbortSignal } & Record<string, unknown>) {
             return (await op("exec", args, sig)) as ExecResult;
           },
+          async list(path: string, opts: { limit: number; signal: AbortSignal }) {
+            return await op("list", { path, limit: opts.limit }, opts.signal);
+          },
+          async scan(base: string, opts: { signal: AbortSignal }) {
+            return await op("scan", { base }, opts.signal);
+          },
         } as never;
+      },
+      async prepare(h, scope, _signal) {
+        return {
+          async stat(path: string, sig: AbortSignal) {
+            return (await relayHandle(h, "prepareStat", { path, scope }, sig)) as {
+              size: number;
+              isDir: boolean;
+            } | null;
+          },
+          async readFile(path: string, opts: { maxBytes: number; signal: AbortSignal }) {
+            const r = (await relayHandle(
+              h,
+              "prepareReadFile",
+              { path, maxBytes: opts.maxBytes, scope },
+              opts.signal,
+            )) as { data: string; truncated: boolean } | null;
+            return r === null ? null : { data: bytes(r.data), truncated: r.truncated };
+          },
+          async writeFile(path: string, data: Uint8Array, sig: AbortSignal) {
+            await relayHandle(
+              h,
+              "prepareWriteFile",
+              { path, data: Buffer.from(data).toString("base64"), scope },
+              sig,
+            );
+          },
+        };
+      },
+      async browse(h, scope, _signal) {
+        return {
+          async stat(path: string, sig: AbortSignal) {
+            return (await relayHandle(h, "browseStat", { path, scope }, sig)) as {
+              size: number;
+              isDir: boolean;
+            } | null;
+          },
+          async list(path: string, opts: { limit: number; signal: AbortSignal }) {
+            return (await relayHandle(
+              h,
+              "browseList",
+              { path, limit: opts.limit, scope },
+              opts.signal,
+            )) as { entries: { name: string; isDir: boolean }[]; truncated: boolean } | null;
+          },
+          async scan(base: string, opts: { signal: AbortSignal }) {
+            return (await relayHandle(h, "browseScan", { base, scope }, opts.signal)) as {
+              path: string;
+              suggestedName: string;
+            }[];
+          },
+        };
       },
       async revokeOperation(h, ref, signal) {
         await relayHandle(h, "revokeOperation", { ref }, signal);
       },
+      background,
       dialIn: {
         async onHello(deviceId, hello) {
           const body = isRecord(hello) ? hello : {};
@@ -158,7 +309,7 @@ export default defineExtension({
           await writeHello(deviceId, {
             revision: typeof body.revision === "string" ? body.revision : "0",
             outsideSandbox: body.outsideSandbox === true,
-            ...(body.perOperationHosts === false && { perOperationHosts: false }),
+            ...supportFacts(body),
           });
           await reportChanged(deviceId);
           return { ok: true };
@@ -172,7 +323,7 @@ export default defineExtension({
           if (!isRecord(frame) || typeof frame.revision !== "string") return;
           const hello = await readHello(deviceId);
           await writeHello(deviceId, {
-            ...(hello?.perOperationHosts === false && { perOperationHosts: false }),
+            ...supportFacts(hello),
             outsideSandbox:
               typeof frame.outsideSandbox === "boolean"
                 ? frame.outsideSandbox
@@ -242,6 +393,18 @@ export default defineExtension({
           size: number;
           isDir: boolean;
         } | null;
+      },
+      async list(h, path, { limit, signal }) {
+        return (await relayHandle(h, "list", { path, limit }, signal)) as {
+          entries: { name: string; isDir: boolean }[];
+          truncated: boolean;
+        } | null;
+      },
+      async scan(h, base, { signal }) {
+        return (await relayHandle(h, "scan", { base }, signal)) as {
+          path: string;
+          suggestedName: string;
+        }[];
       },
     };
     ctx.provide(DEVICE_PROVIDER_EXTENSION_POINT, provider);

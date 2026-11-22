@@ -1,6 +1,7 @@
 import { posix } from "node:path";
 import {
   type DeviceProvider,
+  isDeviceOfflineError,
   isDeviceProjectName,
   isFileSystemGoneError,
   isProjectPathRefusedError,
@@ -15,6 +16,7 @@ import {
 import { DeviceProtocolError } from "@capybara-hq/plugin-sdk/device-protocol";
 import { Inject, Injectable, Optional } from "@nestjs/common";
 import { sql } from "kysely";
+import { deviceOffline } from "../dial-in/relay.js";
 import { ApiError } from "../errors.js";
 import { audit } from "../identity/audit.js";
 import { KernelDb } from "../infra/database/kernel-db.js";
@@ -551,6 +553,8 @@ export class DeviceProjectsService {
       );
     } catch (e) {
       if (e instanceof ApiError) throw e;
+      // a dial-in device's machine that is not connected: the relay's offline error
+      if (isDeviceOfflineError(e)) throw deviceOffline();
       if (e instanceof SandboxProviderUnreachableError) throw providerUnreachable();
       // the answer hides the cause (a provider's text is not for people): ops read it here
       this.log.warn("device projects: the device could not be asked", { deviceId, err: e });
