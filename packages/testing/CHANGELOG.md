@@ -1,5 +1,17 @@
 # @capybara-hq/testing
 
+## 0.1.0-rc.36
+
+### Patch Changes
+
+- 6ce2186: Linux conformance sibling outside the workspace reach
+- Updated dependencies [5d2b9f3]
+- Updated dependencies [87ddef5]
+- Updated dependencies [271d6d9]
+  - @capybara-hq/plugin-sdk@0.1.0-rc.57
+  - @capybara-hq/kernel@0.1.0-rc.73
+  - @capybara-hq/plugin-tools@0.1.0-rc.20
+
 ## 0.1.0-rc.35
 
 ### Minor Changes

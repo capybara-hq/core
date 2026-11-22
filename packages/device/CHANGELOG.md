@@ -1,5 +1,55 @@
 # @capybara-hq/device
 
+## 0.1.0-rc.29
+
+### Minor Changes
+
+- a325666: Every command except `login` takes `--connection <selector>` / `-c <selector>` (a device id, device
+  name or host) and runs against that connection's directory; with one connection it is implied, with
+  several a command that needs one refuses and lists them. `logout -c` removes only that
+  connection's credential and login service (its policy, logs and working directory stay),
+  `service` acts on that connection's login service, and `start -c` of a connection that is not
+  logged in exits 0, which leaves its service stopped. `login` refuses a symlinked `connections/`
+  before creating anything, and never follows a symlinked `credential.json`.
+- a6b0ca0: Per-connection state layout: each connection to a deployment lives in
+  `<stateDir>/connections/<deviceId>/` (credential, policy, `pid`), `machine.json` records the
+  layout version, and the control socket of a connection is `<stateDir>/run/<hash>.sock` (a short,
+  fixed-length name in a 0700 directory). New exports `listConnections`, `resolveConnection`
+  (device id, device name or host), `connectionDir`, `connectionsDir`, `DEVICE_ID_PATTERN` and
+  `ConnectionInfo`; a credential may carry `deviceName` and `orgName`.
+- 6ce2186: Sandboxed reads cover the machine minus secrets and other connections; project reach is a
+  per-connection setting `machine|paths|workspace` (with `projectPaths`); device protocol 6; policy
+  format 4.
+  
+  Upgrading: a version 3 `policy.json` is refused when the program starts. Run
+  `capybara-device ceiling set ...` once: it rewrites the file from the closed policy (workspace
+  reach, allowlist network, nothing outside the sandbox, keep-awake off) and prints what it reset.
+  Allowed domains, credentials, resource limits and keep-awake must be set again.
+  
+  Sandboxed work also never reads the default state path `~/.config/capybara-device` (when
+  `XDG_CONFIG_HOME` moves the state elsewhere) or the default working directory of a logged-out
+  connection; `login` prints the project reach.
+- fd38ff8: `login` adds a connection instead of refusing when the machine is already logged in: each
+  deployment device gets its own `connections/<deviceId>/`. Logging in again into a device this
+  machine already serves replaces its credential in place, keeping its working directory, mode and
+  policy (a differing `--dir` / `--mode` is not applied, and login says so); the same device id
+  from another deployment URL or organization fails with `device_id_in_use` and stores nothing
+  (log that connection out first). A device id from the
+  deployment that is not a safe directory name fails with `invalid_device_id` and stores nothing.
+  The JSON `done` event carries `replaced`; the credential stores the device and organization
+  names when they are not empty. The old flat `credential.json` is never read, moved or deleted.
+
+### Patch Changes
+
+- 4210c85: The login service is now per connection: one launchd agent `top.capybara.device.<deviceId>` or one
+  systemd instance `capybara-device@<deviceId>.service` (of a shared template) runs
+  `start --connection <deviceId>`, so two connections of one machine start, stop and uninstall
+  independently. The old single `top.capybara.device` agent and `capybara-device.service` unit are
+  never touched: their plain `start` (no `--connection`) says how to upgrade and exits 0, so the
+  service manager leaves them stopped. `service uninstall|status -c <deviceId>` also work for an
+  installed service whose connection has lost its credential.
+- 16c5f88: `capybara-device status` lists every connection of this machine (text and `--json`), names the ones it cannot read, and reports each connection's control socket path.
+
 ## 0.1.0-rc.28
 
 ### Minor Changes

@@ -1,5 +1,15 @@
 # @capybara-hq/kernel
 
+## 0.1.0-rc.73
+
+### Patch Changes
+
+- 87ddef5: The device sign-in token response now names the device (`deviceName`, null when it has none) and
+  the organization (`orgName`), so `capybara-device status` can show them.
+- Updated dependencies [5d2b9f3]
+- Updated dependencies [271d6d9]
+  - @capybara-hq/plugin-sdk@0.1.0-rc.57
+
 ## 0.1.0-rc.72
 
 ### Patch Changes
