@@ -5,6 +5,10 @@ compact-list line, 2026-11-22. Supersedes nothing yet; once approved, its §§ 2
 `docs/design/spec.md` (§4, §5, §6.4, §6.6, §6.17, §6.34, §6.56, new components) and to the mobile
 layout spec (`2026-11-19-mobile-layout-design.md` §4.5, §5.1).
 
+Companion: `2026-11-22-mobile-interaction-model-design.md` defines the mobile **interaction** model
+(navigation layers and back, sheets vs pushed pages, lists, input and keyboard, feedback) that this
+layout system serves.
+
 ## 0. Why
 
 The maintainer approved a mockup of the 智能体 list at compact width (2026-11-22) and asked first
