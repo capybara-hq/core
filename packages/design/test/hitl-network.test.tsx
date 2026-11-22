@@ -81,7 +81,7 @@ describe("ApprovalBlock, network variant (network ask spec §6.5)", () => {
     expect(screen.queryByText("需要你批准")).toBeNull();
   });
 
-  it("offers only 这次允许 (primary, with its hint), 拒绝 and the machine command, even if always is listed", async () => {
+  it("offers only 这次允许 (primary, with its hint) and 拒绝 when only once is listed", async () => {
     const onApprove = vi.fn();
     wrap(<ApprovalBlock {...ask({ scopes: ["once"], onApprove })} />);
     const once = screen.getByRole("button", { name: "这次允许" });
@@ -251,7 +251,7 @@ describe("ApprovalBlock, network variant (network ask spec §6.5)", () => {
       screen.getByRole("group", { name: "The agent wants to reach 2 domains. Allow?" }),
     ).toBeTruthy();
     expect(screen.getByRole("button", { name: "Allow this time" })).toBeTruthy();
-    expect(screen.queryByRole("button", { name: /Always allow/ })).toBeNull();
+    expect(screen.queryByRole("button", { name: "Add to this device's list" })).toBeNull();
     expect(screen.getByText("Until the agent finishes this reply")).toBeTruthy();
     expect(screen.getByRole("button", { name: "Deny" })).toBeTruthy();
   });
