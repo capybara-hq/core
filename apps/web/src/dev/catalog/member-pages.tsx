@@ -44,12 +44,12 @@ import { sidebarProps, statusFixture } from "./shell-fixture";
  * the compact rows, the actions of each row and the page's own primary show as a person sees them.
  */
 
-const ORG = "o1";
-const T = "2026-11-10T08:30:00.000Z";
+export const ORG = "o1";
+export const T = "2026-11-10T08:30:00.000Z";
 /** Within the day of the fixed "today" of the shots; the rows only show relative sections. */
-const RECENT = "2026-11-12T09:00:00.000Z";
+export const RECENT = "2026-11-12T09:00:00.000Z";
 
-const ME: Me = {
+export const ME: Me = {
   account: {
     id: "a1",
     displayName: "Grant",
@@ -70,7 +70,7 @@ const AGENT_NAMES: [string, string, string][] = [
   ["ag3", "客服助手", "Drafts replies to support tickets in the house style."],
 ];
 
-const AGENTS: Agent[] = AGENT_NAMES.map(([id, name, description], i) => ({
+export const AGENTS: Agent[] = AGENT_NAMES.map(([id, name, description], i) => ({
   id,
   orgId: ORG,
   ownerAccountId: "a1",
@@ -136,7 +136,7 @@ const TASKS: [string, string, string, string][] = [
   ["s3", "工单回顾", "ag3", "0 9 * * 2"],
 ];
 
-const SCHEDULES: ScheduledTaskListItem[] = TASKS.map(([id, name, agentId, expr]) => ({
+export const SCHEDULES: ScheduledTaskListItem[] = TASKS.map(([id, name, agentId, expr]) => ({
   id,
   name,
   agentId,
@@ -247,7 +247,7 @@ const SESSION: Session = {
   switchOrg: async () => {},
 };
 
-function seeded(): QueryClient {
+export function seeded(): QueryClient {
   const qc = new QueryClient({
     defaultOptions: { queries: { staleTime: Number.POSITIVE_INFINITY, retry: false } },
   });

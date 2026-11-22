@@ -47,6 +47,16 @@ export const PAGE_ROUTES = [
   "pages/member-conversations",
   "pages/member-inbox",
   "pages/member-profile",
+  // the org admin pages of phase 2 (`admin-pages.tsx`)
+  "pages/org-members",
+  "pages/org-tokens",
+  "pages/org-schedules",
+  "pages/org-audit",
+  "pages/org-extensions",
+  "pages/org-trajectories",
+  "pages/org-evals",
+  "pages/org-eval-set",
+  "pages/org-eval-run",
 ] as const;
 
 /** The member pages drawn at `pages/member-<page>` (`member-pages.tsx`). */
@@ -55,6 +65,15 @@ export const MEMBER_PAGES = PAGE_ROUTES.filter((r) => r.startsWith("pages/member
 ) as readonly MemberPage[];
 export type MemberPage =
   Extract<(typeof PAGE_ROUTES)[number], `pages/member-${string}`> extends `pages/member-${infer P}`
+    ? P
+    : never;
+
+/** The org admin pages drawn at `pages/org-<page>` (`admin-pages.tsx`). */
+export const ADMIN_PAGES = PAGE_ROUTES.filter((r) => r.startsWith("pages/org-")).map((r) =>
+  r.slice("pages/org-".length),
+) as readonly AdminPage[];
+export type AdminPage =
+  Extract<(typeof PAGE_ROUTES)[number], `pages/org-${string}`> extends `pages/org-${infer P}`
     ? P
     : never;
 

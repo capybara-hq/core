@@ -1,5 +1,5 @@
 import { expect, type Page, test } from "@playwright/test";
-import { MEMBER_PAGES, TEMPLATE_ROUTES } from "../src/dev/catalog/routes";
+import { ADMIN_PAGES, MEMBER_PAGES, TEMPLATE_ROUTES } from "../src/dev/catalog/routes";
 import { findSmallTargets } from "./mobile-sizes";
 import { heightFor } from "./size-matrix";
 
@@ -28,6 +28,9 @@ const ORIGIN = `http://localhost:${process.env.CAPYBARA_VISUAL_PORT ?? "3100"}`;
 
 /** A member page's route: the real view drawn from a seeded cache (`member-pages.tsx`). */
 const memberRoute = (p: string) => `pages/member-${p}`;
+
+/** An org admin page's route (`admin-pages.tsx`): desktop-only on touch, so a fine pointer at every width. */
+const orgRoute = (p: string) => `pages/org-${p}`;
 
 async function open(page: Page, route: string, theme: Theme) {
   await page.context().addCookies([{ name: "cb-theme", value: theme, url: ORIGIN }]);
@@ -68,6 +71,24 @@ for (const theme of THEMES) {
       }
     });
   }
+
+  // The org admin pages phase 2 changed (settings members, tokens, schedules, audit, extensions,
+  // trajectories, evals with a set and a run): a fine pointer at every width, 390 included (they
+  // have no touch form).
+  for (const width of [390, 768, 1440]) {
+    test.describe(`responsive org ${width} fine pointer ${theme}`, () => {
+      test.use({ viewport: { width, height: heightFor(width) }, isMobile: false, hasTouch: false });
+
+      for (const p of ADMIN_PAGES) {
+        test(`org ${p}`, async ({ page }) => {
+          await open(page, orgRoute(p), theme);
+          await expect(page).toHaveScreenshot(`responsive-org-${p}-${width}-${theme}.png`, {
+            fullPage: true,
+          });
+        });
+      }
+    });
+  }
 }
 
 for (const touch of [true, false]) {
@@ -89,6 +110,17 @@ for (const touch of [true, false]) {
         const small = await findSmallTargets(page);
         expect(small.out, "controls without a 44 x 44 hit box").toEqual([]);
       });
+    }
+
+    // the org admin pages: the same 44 x 44 rule at 390 with a fine pointer (maintainer decision)
+    if (!touch) {
+      for (const p of ADMIN_PAGES) {
+        test(`org ${p}`, async ({ page }) => {
+          await open(page, orgRoute(p), "dark");
+          const small = await findSmallTargets(page);
+          expect(small.out, "controls without a 44 x 44 hit box").toEqual([]);
+        });
+      }
     }
   });
 }
