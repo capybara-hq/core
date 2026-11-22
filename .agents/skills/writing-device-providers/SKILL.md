@@ -82,7 +82,7 @@ reason when a project directory lies where it will not serve; the kernel answers
 `{ version: 2, boundary, restricted, network: { openPublic, allowlist, perOperationHosts }, outsideSandbox, background,
 unavailableReason? }`. A report of any other shape reads unprobed and admits nothing.
 
-- **`boundary: "operation"`** (a local device, a future Linux-runtime cloud provider): every operation gets its own
+- **`boundary: "operation"`** (a dial-in machine such as device-local's, a future Linux-runtime cloud provider): every operation gets its own
   restricted scope (`restricted` set), per-operation hosts are possible, and `outsideSandbox` says whether the runtime can
   run the escalated pair (`filesystem: device` + `network: environment`, recognized by `isFullExecutionScope`).
 - **`boundary: "instance"`** (`sandbox-docker`, `sandbox-e2b`): the container or microVM is the sandbox. `restricted: null`
@@ -167,7 +167,7 @@ Every provider must follow these; the kernel's behaviour below assumes them. How
   `/workspace/attachments/<conversation>/` (the first 12 hex digits of the root conversation id).
 - **`list` and `scan` (projects, project root spec §4.1, §4.2)**: the kernel keeps a device's projects itself (`device_projects`) and asks
   the provider only what it can read. Neither carries limits (the mode tier is gone): the provider answers what
-  the device reaches (a cloud instance: its workspace; a local machine: its owner ceiling). `list` is one directory's entries, sorted
+  the device reaches (a cloud instance: its workspace; a dial-in machine: whatever its provider lets it read there). `list` is one directory's entries, sorted
   by code unit, at most `limit` (the kernel asks `limit: 1` as the existence check when a project is added and up to
   `MAX_DEVICE_LIST_ENTRIES` for the skills tree at run start), never `.` / `..`, `isDir` following links (a dangling one `false`), `truncated`
   when more; null only for a missing path the device could reach; a file, an unreadable directory or an unreachable path throws.
@@ -228,7 +228,7 @@ Every provider must follow these; the kernel's behaviour below assumes them. How
     is `unknown`, never the current instance.
   - **Gate.** `SandboxService` enumerates the device itself and checks its obligations in `ensure`, under the exclusive lease,
     before use, resume or rebuild. A device with an unresolved obligation, or with a candidate not yet
-    enumerated, never takes the shared path. `LocalInstanceBindings.bind` refuses while one is unresolved.
+    enumerated, never takes the shared path.
     `RetireLegacyTasksJob` is retryable and bounded; the gate never depends on it.
   - **Retirement.** The current cloud incarnation is destroyed whole by its provider (never resumed or `killAll`ed; files kept),
     and the confirmed destruction is recorded in `device_instance_destructions`. `retire()` and `destroyRow` record theirs too.
@@ -278,11 +278,10 @@ Every provider must follow these; the kernel's behaviour below assumes them. How
        the first new one starts: an old replica is not fenced by the freeze and B1 settings writes are not fenced either.
        Drain the old workers too: an old retirement worker neither reopens an `exact-cancelled` obligation (B-22) nor
        skips a member added to one after the cancel, so it could acknowledge a revoked start nobody stopped.
-    2. `report`. It lists `localWithoutBoot` (local devices with legacy rows whose machine has no recorded boot) and
-       `cloudUnknown` (cloud devices whose legacy rows name no incarnation; it reads the task rows and never empties by
+    2. `report`. It lists `cloudUnknown` (cloud devices whose legacy rows name no incarnation; it reads the task rows and never empties by
        itself: `prevHandle` / `noInstance` devices will answer `recreate_required`, `currentUnconfirmed` ones clear on
        first use through `destroyByName` while their row's provider is loaded, unflagged ones clear on first use). Wait
-       until both are empty or accepted. Old replicas are detected where possible: live replicas (presence, Redis) whose
+       until it is empty or accepted. Old replicas are detected where possible: live replicas (presence, Redis) whose
        kernel version differs from the CLI's (an old replica, or the CLI is the different build; builds of one version
        are not told apart), and `unfencedWriters` (legacy rows without the dispatch marker started after migration
        0157; how many after the freeze, after its enumeration and in the last 15 minutes by the database clock: only a
@@ -320,8 +319,8 @@ Every provider must follow these; the kernel's behaviour below assumes them. How
   boundary, the network mode and ceiling, the allowlist hosts, whether a call may run outside the
   sandbox and the layer that set each ceiling. The device mirrors it in `intersectOperation`.
   - **Outside the sandbox:** only when the platform (`devices.outsideSandbox`), the org
-    (`outsideSandbox`), the device owner (`ownerCeiling.outsideSandbox`, set on the machine) and the
-    provider all allow it; a cloud device and an instance-boundary provider never do.
+    (`outsideSandbox`) and the provider's permission support (`outsideSandbox`) all allow it; a
+    provider without outside-sandbox support and an instance-boundary provider never do.
   - **Network ceiling:** the narrower of `devices.network.ceiling` and the org's
     `deviceNetwork.ceiling` (`allowlist` is narrower than `open`), clamped to what the provider
     can enforce; `sandbox.limits.egress: none` (the kill switch) closes it.
@@ -337,21 +336,23 @@ Every provider must follow these; the kernel's behaviour below assumes them. How
     `device.network_changed` (`via: web | token | agent`).
   - **Hosts:** the org's effective hosts (`orgEffectiveHosts`: the platform's `allowHosts` minus the
     org's `excludedHosts` plus its `extraHosts`, or the extras alone under `base: none`; never a
-    copy, so platform changes reach every org), intersected with the device's own list (a local
-    owner's `allowedDomains` while its network is `allowlist`, an empty one allowing nothing; a
-    cloud device's `network_hosts`, an empty one following the org). A device list only narrows.
+    copy, so platform changes reach every org), intersected with the device's own list
+    (`devices.network_hosts`, the same for every provider; an empty one follows the org). A device
+    list only narrows.
   - **Per-call host grants** follow `hostGrantCeiling` / `hostGrantRefusal` (same file) under every
     profile: the org's `excludedHosts` never; an allowlist ceiling (platform or org) is hard (only
     the org's hosts; "an organization admin adds …"); `orgHosts: within` keeps grants within them
-    ("a super admin adds the host"); a local owner's allowlist is a second ceiling ("capybara-device
-    policy add allowedDomains …"); nothing on an instance-boundary device or a closed network.
+    ("a super admin adds the host"); nothing on an instance-boundary device, on an
+    operation-boundary device whose provider does not report `perOperationHosts`, or on a closed
+    network. The kernel reads no machine owner's list: a dial-in provider that keeps one enforces it
+    on its side and reports what it then enforces through its permission support.
 - **What a provider gets.** `SandboxLimits` carries resources and the outer network only:
   `network: { kind: "open-public" | "allowlist", hosts }`. There is **no `limits.mode`** (the tier
   was removed; the device's `exec` / `create` limits refuse unknown keys, and a provider must
   not require or read a mode). The provider enforces the `limits` it receives and never reads org
-  settings or platform switches. A cloud instance's outer network is its sandbox network; a local
-  device's commands carry the device sandbox network and the machine intersects it with its owner
-  ceiling.
+  settings or platform switches. A cloud instance's outer network is its sandbox network; a dial-in
+  device's commands carry the device sandbox network, and the provider may narrow it further on the
+  machine (device-local's owner settings live in its own skill, in `capybara-hq/plugins`).
   - `open-public` (开放挡内网): the public internet on any port. Closed, by resolved address and by
     IP literal alike (the SDK's one table, `packages/plugin-sdk/src/network-classes.ts`:
     `classifyAddress`, `ADDRESS_CLASS_RANGES`, `OPEN_PUBLIC_DENIED_CLASSES` /
