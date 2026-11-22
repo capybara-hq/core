@@ -1039,3 +1039,10 @@ a.cb-stat-card:focus-visible {
 .cb-pageheader-primary-icon[data-implicit="true"] {
   display: none;
 }
+
+/* While the on-screen keyboard is open (`AppShell` sets the state on `<html>`; sheets portal to the
+   body), a scroller keeps the keyboard's height clear at its bottom, so `scrollIntoView` on a
+   focused field lands above it (mobile interaction model §5). */
+:root[data-keyboard="open"] * {
+  scroll-padding-bottom: var(--cb-keyboard-inset, 0px);
+}

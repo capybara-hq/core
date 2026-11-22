@@ -1,4 +1,7 @@
+import { readFileSync } from "node:fs";
+import { resolve } from "node:path";
 import { act, cleanup, fireEvent, render } from "@testing-library/react";
+import { createPortal } from "react-dom";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { AppShell, DesignProvider, Input, Textarea } from "../src/index";
 import { matchMediaFor } from "./width";
@@ -95,5 +98,64 @@ describe("scroll to input", () => {
       vi.runAllTimers();
     });
     expect(scrollIntoView).not.toHaveBeenCalled();
+  });
+
+  it("a field outside any scroller is not scrolled", () => {
+    window.matchMedia = matchMediaFor(390).matchMedia;
+    const { getByLabelText } = render(
+      <DesignProvider locale="en">
+        <AppShell sidebar={sidebar} status={status}>
+          <Input aria-label="plain" />
+        </AppShell>
+      </DesignProvider>,
+    );
+    fireEvent.focus(getByLabelText("plain"));
+    act(() => vv.set(500));
+    act(() => {
+      vi.runAllTimers();
+    });
+    expect(scrollIntoView).not.toHaveBeenCalled();
+  });
+
+  it("scrolls Textarea on a compact window", () => {
+    const { getByLabelText } = renderAt(390);
+    fireEvent.focus(getByLabelText("notes"));
+    act(() => vv.set(500));
+    act(() => {
+      vi.runAllTimers();
+    });
+    expect(scrollIntoView).toHaveBeenCalledTimes(1);
+  });
+
+  it("scrolls at once when the keyboard is already open, also inside a portaled sheet", () => {
+    window.matchMedia = matchMediaFor(390).matchMedia;
+    const Sheet = () =>
+      createPortal(
+        <div style={{ overflowY: "auto" }}>
+          <Input aria-label="sheet field" />
+        </div>,
+        document.body,
+      );
+    const { getByLabelText } = render(
+      <DesignProvider locale="en">
+        <AppShell sidebar={sidebar} status={status}>
+          <Sheet />
+        </AppShell>
+      </DesignProvider>,
+    );
+    act(() => vv.set(500));
+    act(() => {
+      vi.runAllTimers();
+    });
+    expect(document.documentElement.dataset.keyboard).toBe("open");
+    fireEvent.focus(getByLabelText("sheet field"));
+    expect(scrollIntoView).toHaveBeenCalledTimes(1);
+  });
+
+  it("scrollers keep the keyboard inset as scroll padding while it is open", () => {
+    const css = readFileSync(resolve(__dirname, "../src/styles/shell.css"), "utf8");
+    expect(css).toMatch(
+      /:root\[data-keyboard="open"\][^{]*\{[^}]*scroll-padding-bottom:[^;}]*--cb-keyboard-inset/,
+    );
   });
 });

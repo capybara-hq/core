@@ -8,7 +8,7 @@ import {
 } from "react";
 import { useDesignT } from "../provider";
 import { KEYBOARD_INSET_SETTLED_EVENT } from "../shell/keyboard-settled";
-import { useMobileSizes } from "../shell/touch";
+import { readMobileSizes, useMobileSizes } from "../shell/touch";
 import type { ControlA11y } from "./a11y";
 import { type Density, useDensity } from "./density";
 import { useNumberDraft } from "./number-draft";
@@ -21,39 +21,49 @@ function inScroller(el: HTMLElement): boolean {
   return false;
 }
 
+// One settled listener at a time, installed while a field has focus (spec §5 "Scroll to input").
+let focusedField: HTMLElement | null = null;
+
+function scrollFocusedIntoView() {
+  const el = focusedField;
+  if (el && readMobileSizes() && inScroller(el)) el.scrollIntoView({ block: "nearest" });
+}
+
 /**
  * Under the mobile query, a focused field inside a scroller is scrolled into view above the
  * keyboard once the shell's inset has settled (mobile interaction model §5); props for the control.
+ * The scrollers' `scroll-padding-bottom` (shell.css) keeps the field clear of the keyboard.
  */
 function useScrollIntoViewOnKeyboard<E extends HTMLElement>(
   onFocus?: (e: FocusEvent<E>) => void,
   onBlur?: (e: FocusEvent<E>) => void,
 ) {
   const mobile = useMobileSizes() === true;
-  const focused = useRef<E | null>(null);
-  useEffect(() => {
-    if (!mobile) return;
-    const settled = () => {
-      const el = focused.current;
-      if (el && inScroller(el)) el.scrollIntoView({ block: "nearest" });
-    };
-    window.addEventListener(KEYBOARD_INSET_SETTLED_EVENT, settled);
-    return () => window.removeEventListener(KEYBOARD_INSET_SETTLED_EVENT, settled);
-  }, [mobile]);
+  const own = useRef<HTMLElement | null>(null);
+  // An unmounted field no longer holds the listener
+  useEffect(() => () => (own.current ? releaseField(own.current) : undefined), []);
   return {
     onFocus: (e: FocusEvent<E>) => {
-      focused.current = e.currentTarget;
-      // The keyboard is already open (moving between fields): no inset change will follow.
-      const shell = e.currentTarget.closest<HTMLElement>("[data-keyboard='open']");
-      if (mobile && shell && inScroller(e.currentTarget))
-        e.currentTarget.scrollIntoView({ block: "nearest" });
+      if (mobile) {
+        if (!focusedField)
+          window.addEventListener(KEYBOARD_INSET_SETTLED_EVENT, scrollFocusedIntoView);
+        focusedField = own.current = e.currentTarget;
+        // The keyboard is already open (moving between fields): no inset change will follow.
+        if (document.documentElement.dataset.keyboard === "open") scrollFocusedIntoView();
+      }
       onFocus?.(e);
     },
     onBlur: (e: FocusEvent<E>) => {
-      focused.current = null;
+      releaseField(e.currentTarget);
       onBlur?.(e);
     },
   };
+}
+
+function releaseField(el: HTMLElement) {
+  if (focusedField !== el) return;
+  focusedField = null;
+  window.removeEventListener(KEYBOARD_INSET_SETTLED_EVENT, scrollFocusedIntoView);
 }
 
 export function Input({

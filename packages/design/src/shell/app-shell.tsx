@@ -413,6 +413,11 @@ export function AppShell({
           );
           if (shell) {
             shell.style.setProperty("--cb-keyboard-inset", `${inset}px`);
+            // The root carries the state too: sheets portal to the body, outside the shell.
+            const root = document.documentElement;
+            root.style.setProperty("--cb-keyboard-inset", `${inset}px`);
+            if (inset > 0) root.dataset.keyboard = "open";
+            else delete root.dataset.keyboard;
             if (inset !== lastInset) {
               lastInset = inset;
               // The inset stopped changing (the keyboard's animation ended): fields scroll into view.
@@ -443,6 +448,8 @@ export function AppShell({
     return () => {
       cancelAnimationFrame(frame);
       clearTimeout(settleTimer);
+      document.documentElement.style.removeProperty("--cb-keyboard-inset");
+      delete document.documentElement.dataset.keyboard;
       document.removeEventListener("focusout", update);
       vv?.removeEventListener("resize", update);
       vv?.removeEventListener("scroll", update);
