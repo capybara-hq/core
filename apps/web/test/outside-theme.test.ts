@@ -24,7 +24,9 @@ vi.mock("../src/lib/server/query", () => ({
 }));
 
 const { outsideTheme } = await import("../src/lib/server/outside-theme");
-const { BRAND_COOKIE, brandRefOf, encodeBrandCookie } = await import("../src/lib/brand-cookie");
+const { BRAND_COOKIE_HTTP, BRAND_COOKIE_HTTPS, brandRefOf, encodeBrandCookie } = await import(
+  "../src/lib/brand-cookie"
+);
 const { keys } = await import("../src/lib/query/keys");
 
 const COOKIE_ID = "11111111-1111-4111-8111-111111111111";
@@ -44,7 +46,7 @@ const PLATFORM: ThemeRef = {
 const COOKIE_REF = brandRefOf({ ...PLATFORM, id: COOKIE_ID, cssUrl: themeCssUrl(COOKIE_ID, "4") });
 
 const withCookie = (value: string) => {
-  req.headers = new Headers({ cookie: `cb-theme=dark; ${BRAND_COOKIE}=${value}` });
+  req.headers = new Headers({ cookie: `cb-theme=dark; ${BRAND_COOKIE_HTTP}=${value}` });
 };
 
 beforeEach(() => {
@@ -75,6 +77,20 @@ describe("outsideTheme()", () => {
       throw new Error("upstream_unavailable");
     };
     expect(await outsideTheme()).toBeNull();
+  });
+
+  it("over https the __Host- cookie wins and a plain cb-brand is never read", async () => {
+    const value = encodeBrandCookie(COOKIE_REF) ?? "";
+    req.headers = new Headers({
+      "x-forwarded-proto": "https",
+      cookie: `${BRAND_COOKIE_HTTP}=${value}`,
+    });
+    expect(await outsideTheme()).toEqual(brandRefOf(PLATFORM));
+    req.headers = new Headers({
+      "x-forwarded-proto": "https",
+      cookie: `${BRAND_COOKIE_HTTPS}=${value}`,
+    });
+    expect(await outsideTheme()).toEqual(COOKIE_REF);
   });
 
   it("an invalid cookie falls through to the platform default", async () => {

@@ -25,7 +25,7 @@ vi.mock("../src/lib/server/query", () => ({
 
 const { rootViewport } = await import("../src/lib/web-manifest");
 const { generateViewport } = await import("../src/app/layout");
-const { BRAND_COOKIE, encodeBrandCookie } = await import("../src/lib/brand-cookie");
+const { BRAND_COOKIE_HTTP, encodeBrandCookie } = await import("../src/lib/brand-cookie");
 
 const tokens = JSON.parse(
   readFileSync(new URL("../../../docs/design/tokens.json", import.meta.url), "utf8"),
@@ -79,7 +79,7 @@ describe("rootViewport", () => {
 describe("the root layout's generateViewport", () => {
   it("the cb-theme scheme and the brand cookie's colour", async () => {
     req.headers = new Headers({
-      cookie: `cb-theme=light; ${BRAND_COOKIE}=${encodeBrandCookie(REF)}`,
+      cookie: `cb-theme=light; ${BRAND_COOKIE_HTTP}=${encodeBrandCookie(REF)}`,
     });
     expect((await generateViewport()).themeColor).toBe("#F0F1F2");
   });

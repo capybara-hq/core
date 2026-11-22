@@ -2,8 +2,13 @@
 
 import { renderHook } from "@testing-library/react";
 import { renderToString } from "react-dom/server";
-import { afterEach, describe, expect, it } from "vitest";
-import { BRAND_COOKIE, type BrandRef, encodeBrandCookie } from "../src/lib/brand-cookie";
+import { afterEach, describe, expect, it, vi } from "vitest";
+import {
+  BRAND_COOKIE_HTTP,
+  BRAND_COOKIE_HTTPS,
+  type BrandRef,
+  encodeBrandCookie,
+} from "../src/lib/brand-cookie";
 import { useBrandCookie } from "../src/lib/use-brand-cookie";
 import { themeCssUrl } from "./support/themes";
 
@@ -24,14 +29,14 @@ const setCookie = (v: string) => {
 };
 
 afterEach(() => {
-  setCookie(`${BRAND_COOKIE}=; max-age=0; path=/`);
+  setCookie(`${BRAND_COOKIE_HTTP}=; max-age=0; path=/`);
   setCookie("other=; max-age=0; path=/");
 });
 
 describe("useBrandCookie", () => {
   it("reads the brand cookie among others and keeps the snapshot's identity", () => {
     setCookie("other=1; path=/");
-    setCookie(`${BRAND_COOKIE}=${encodeBrandCookie(REF)}; path=/`);
+    setCookie(`${BRAND_COOKIE_HTTP}=${encodeBrandCookie(REF)}; path=/`);
     const { result, rerender } = renderHook(() => useBrandCookie());
     const first = result.current;
     expect(first).toEqual(REF);
@@ -40,14 +45,33 @@ describe("useBrandCookie", () => {
   });
 
   it("an invalid or missing cookie is the built-in theme", () => {
-    setCookie(`${BRAND_COOKIE}=garbage; path=/`);
+    setCookie(`${BRAND_COOKIE_HTTP}=garbage; path=/`);
     expect(renderHook(() => useBrandCookie()).result.current).toBeNull();
-    setCookie(`${BRAND_COOKIE}=; max-age=0; path=/`);
+    setCookie(`${BRAND_COOKIE_HTTP}=; max-age=0; path=/`);
     expect(renderHook(() => useBrandCookie()).result.current).toBeNull();
   });
 
+  it("over https only __Host-cb-brand is read: a plain cb-brand is rejected", () => {
+    let jar = "";
+    vi.spyOn(document, "cookie", "get").mockImplementation(() => jar);
+    const real = window.location;
+    vi.stubGlobal(
+      "location",
+      new Proxy(real, { get: (t, k) => (k === "protocol" ? "https:" : Reflect.get(t, k)) }),
+    );
+    try {
+      jar = `${BRAND_COOKIE_HTTP}=${encodeBrandCookie(REF)}`;
+      expect(renderHook(() => useBrandCookie()).result.current).toBeNull();
+      jar = `${BRAND_COOKIE_HTTPS}=${encodeBrandCookie(REF)}`;
+      expect(renderHook(() => useBrandCookie()).result.current).toEqual(REF);
+    } finally {
+      vi.unstubAllGlobals();
+      vi.restoreAllMocks();
+    }
+  });
+
   it("the server snapshot is null", () => {
-    setCookie(`${BRAND_COOKIE}=${encodeBrandCookie(REF)}; path=/`);
+    setCookie(`${BRAND_COOKIE_HTTP}=${encodeBrandCookie(REF)}; path=/`);
     let seen: BrandRef | null | undefined;
     function Probe() {
       seen = useBrandCookie();

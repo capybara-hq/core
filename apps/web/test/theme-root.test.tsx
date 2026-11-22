@@ -17,9 +17,13 @@ const { themeIcons } = await import("../src/lib/server/theme");
 const { ThemeLink } = await import("../src/components/theme-link");
 const { brandOf, ThemeRoot } = await import("../src/components/theme-root");
 const { platformThemeQuery } = await import("../src/lib/query/themes");
-const { BRAND_COOKIE, BRAND_COOKIE_MAX_AGE, brandRefOf, decodeBrandCookie } = await import(
-  "../src/lib/brand-cookie"
-);
+const {
+  BRAND_COOKIE_HTTP,
+  BRAND_COOKIE_HTTPS,
+  BRAND_COOKIE_MAX_AGE,
+  brandRefOf,
+  decodeBrandCookie,
+} = await import("../src/lib/brand-cookie");
 
 const NEON_GRID: ThemeRef = {
   id: "t-night",
@@ -285,7 +289,7 @@ describe("the brand cookie (theme brand coverage §5)", () => {
     const proto = Document.prototype;
     const desc = Object.getOwnPropertyDescriptor(proto, "cookie");
     vi.spyOn(document, "cookie", "set").mockImplementation((v: string) => {
-      if (v.startsWith(`${BRAND_COOKIE}=`)) writes.push(v);
+      if (v.startsWith(`${BRAND_COOKIE_HTTP}=`)) writes.push(v);
       desc?.set?.call(document, v);
     });
   });
@@ -294,7 +298,7 @@ describe("the brand cookie (theme brand coverage §5)", () => {
   it("ThemeRoot writes cb-brand for a theme and deletes it for the built-in theme", () => {
     const view = renderFrame(shellOf(ME, { theme: BRANDED }));
     expect(writes).toHaveLength(1);
-    const value = writes[0]?.split(";")[0]?.slice(BRAND_COOKIE.length + 1);
+    const value = writes[0]?.split(";")[0]?.slice(BRAND_COOKIE_HTTP.length + 1);
     expect(decodeBrandCookie(value)).toEqual(brandRefOf(BRANDED));
     expect(writes[0]).toContain(`Max-Age=${BRAND_COOKIE_MAX_AGE}`);
     view.update(shellOf(ME, { theme: null }));
@@ -326,5 +330,28 @@ describe("the brand cookie (theme brand coverage §5)", () => {
       { client: testQueryClient() },
     );
     expect(writes).toEqual([]);
+  });
+
+  it("over https ThemeRoot writes __Host-cb-brand (Secure) and deletes a plain cb-brand", () => {
+    const all: string[] = [];
+    vi.spyOn(document, "cookie", "set").mockImplementation((v: string) => {
+      all.push(v);
+    });
+    const real = window.location;
+    vi.stubGlobal(
+      "location",
+      new Proxy(real, { get: (t, k) => (k === "protocol" ? "https:" : Reflect.get(t, k)) }),
+    );
+    try {
+      renderFrame(shellOf(ME, { theme: BRANDED }));
+    } finally {
+      vi.unstubAllGlobals();
+    }
+    expect(all).toHaveLength(2);
+    const value = all[0]?.split(";")[0]?.slice(`${BRAND_COOKIE_HTTPS}=`.length);
+    expect(all[0]?.startsWith(`${BRAND_COOKIE_HTTPS}=`)).toBe(true);
+    expect(decodeBrandCookie(value)).toEqual(brandRefOf(BRANDED));
+    expect(all[0]).toMatch(/; Path=\/; SameSite=Lax; Secure$/);
+    expect(all[1]).toMatch(/^cb-brand=; Max-Age=0; Path=\//);
   });
 });
