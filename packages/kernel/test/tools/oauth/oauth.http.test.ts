@@ -894,7 +894,11 @@ describe("authorizationParams (#552) on the authorize request", () => {
     const r = await runTool(convId, 1, "mcp__docs__whoami");
     expect(r).toMatchObject({ content: "you are [REDACTED]", isError: false });
     expect(refreshes(as)).toMatchObject([{ status: 200 }]);
-    expect((await storedTokens(id))?.refresh_token).toEqual(expect.any(String));
+    // the fake server rotates on refresh: the stored refresh token is the one it just issued
+    const afterRefresh = (await storedTokens(id))?.refresh_token;
+    expect(afterRefresh).toEqual(expect.any(String));
+    expect(afterRefresh).not.toBe(first?.refresh_token);
+    expect(as.issuedSecrets()).toContain(afterRefresh);
 
     // reconnect sends the same parameters and gets a fresh refresh token
     const beforeReconnect = (await storedTokens(id))?.refresh_token;
@@ -906,6 +910,16 @@ describe("authorizationParams (#552) on the authorize request", () => {
     expect(again).toEqual(expect.any(String));
     expect(again).not.toBe(beforeReconnect);
 
+    // never on a token request: the code exchanges and the refresh carry none of them
+    expect(as.tokenRequests.map((t) => t.grantType)).toEqual([
+      "authorization_code",
+      "refresh_token",
+      "authorization_code",
+    ]);
+    for (const t of as.tokenRequests) {
+      expect(t.paramNames).not.toContain("access_type");
+      expect(t.paramNames).not.toContain("prompt");
+    }
     // neither the authorize URL nor the parameters are logged
     expect(logLines.some((l) => l.includes("access_type"))).toBe(false);
   });

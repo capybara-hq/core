@@ -2,6 +2,7 @@
 "@capybara-hq/kernel": patch
 "@capybara-hq/plugin-sdk": minor
 "@capybara-hq/capybara": patch
+"@capybara-hq/testing": patch
 ---
 
 An `oauth_code` auth preset may set `authorizationParams`, extra query parameters of the
@@ -12,3 +13,4 @@ or that would change the callback or the token exchange (`OAUTH_RESERVED_AUTHORI
 are refused there and in the query of a manual `authorizationUrl`. A template update that changes
 only `authorizationParams` keeps members' connections. A member whose access token dies without a
 refresh token is now asked to reconnect instead of told the authorization server is unavailable.
+`startFakeOAuthServer` records the form parameter names of each token request (`paramNames`).
