@@ -30,7 +30,8 @@ export interface DialInUnavailable {
 export class DialInHandlers {
   constructor(
     @Inject(KernelDb) private readonly kdb: KernelDb,
-    @Inject(DeviceProviders) private readonly providers: Pick<DeviceProviders, "forDevice">,
+    @Inject(DeviceProviders)
+    private readonly providers: Pick<DeviceProviders, "forDevice" | "loaded">,
     @Inject(DeviceProviderSelection)
     private readonly selection: Pick<DeviceProviderSelection, "isOnInOrg" | "onInOrg">,
     @Inject(ExtensionRegistry) private readonly registry: Pick<ExtensionRegistry, "current">,
@@ -61,6 +62,20 @@ export class DialInHandlers {
   async onInOrg(orgId: string): Promise<{ plugin: string; protocol: string }[]> {
     const out: { plugin: string; protocol: string }[] = [];
     for (const e of await this.selection.onInOrg(orgId)) {
+      const protocol = this.protocolOf(e);
+      if (protocol !== undefined) out.push({ plugin: e.plugin, protocol });
+    }
+    return out;
+  }
+
+  /**
+   * The dial-in providers loaded in this process, in any org or none, each with the protocol its
+   * machines speak (registry order). Read at every call; `GET /api/v1/meta` reports from it
+   * whether machines running `capybara-device` can connect at all.
+   */
+  loaded(): { plugin: string; protocol: string }[] {
+    const out: { plugin: string; protocol: string }[] = [];
+    for (const e of this.providers.loaded()) {
       const protocol = this.protocolOf(e);
       if (protocol !== undefined) out.push({ plugin: e.plugin, protocol });
     }

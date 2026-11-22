@@ -22,10 +22,12 @@
  * `./bootstrap` is used instead), before `capybara start`, which then finds the step done.
  * `model-fake`'s fake-1 declares image and document support. The device provider is the kernel
  * test fixture `device-fake` (a real /bin/sh, instance directories under a temp dir, for tests
- * only; no bootstrap plugin provides devices), the platform's default device provider
+ * only; the device providers among the bootstrap plugins, `device-docker` and `device-local`, are
+ * imported but serve no default device), the platform's default device provider
  * (`devices.defaultProvider`); like every provider it serves only the orgs that switch it on,
  * which `signIn` does. The dial-in provider is the kernel test fixture `fake-dial-in` (protocol
- * `fake-dial-in/1`), which device-connect.spec.ts switches on in the org for its sign-in.
+ * `fake-dial-in/1`), which device-connect.spec.ts switches on in the org for its sign-in; the
+ * same spec checks that the pinned `device-local` (scope `all`) is imported and on in the org.
  * The web URL goes into `CAPYBARA_E2E_BASE_URL` (inherited by the worker processes as Playwright's
  * baseURL), the fake MCP endpoint into `CAPYBARA_E2E_MCP_URL`, the pets API's document URL and
  * API key into `CAPYBARA_E2E_OPENAPI_SPEC_URL` / `CAPYBARA_E2E_OPENAPI_KEY`. An extension package

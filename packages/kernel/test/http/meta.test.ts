@@ -53,14 +53,14 @@ describe("GET /api/v1/meta", () => {
       name: null,
       icon: null,
       icons: { app: null, maskable: null, favicon: null },
-      // device protocol 5 only: a protocol 4 program is refused (426)
+      // no dial-in provider speaking capybara-device is loaded: no local devices, the SDK's major
       protocols: { device: { min: 5, max: 5 } },
-      features: { localDevices: true, appSignIn: false, push: [] },
+      features: { localDevices: false, appSignIn: false, push: [] },
       appRedirectUris: [],
     });
   });
 
-  it("takes the device range from the SDK", async () => {
+  it("without a capybara-device provider the device range is the SDK's", async () => {
     const body = (await app.inject({ method: "GET", url: "/api/v1/meta" })).json();
     expect(body.protocols.device).toEqual({
       min: DEVICE_PROTOCOL_VERSION,

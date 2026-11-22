@@ -13,7 +13,7 @@
   "conversation-subagents.spec.ts": 11,
   "csp.spec.ts": 10,
   "css-layers.spec.ts": 6,
-  "device-connect.spec.ts": 8,
+  "device-connect.spec.ts": 10,
   "embed-panel.spec.ts": 3,
   "evals.spec.ts": 5,
   "extension-config-form.spec.ts": 3,
