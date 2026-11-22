@@ -22,7 +22,8 @@ import {
  * (`hello:<deviceId>`, one hour) and `report()` is built from it; an `event` frame
  * `{ revision, outsideSandbox? }` replaces the revision (and the outside-sandbox answer, when
  * given). Both tell the kernel through `ctx.devices.reportChanged`. `permissionSupport` is an
- * operation boundary whose `outsideSandbox` is the stored answer. Every event body is kept as
+ * operation boundary whose `outsideSandbox` is the stored answer; the permission-scoped surface
+ * (`operation`, `revokeOperation`) relays each method with its admitted scope. Every event body is kept as
  * `frame:<deviceId>` and the reason of the last close as `closed:<deviceId>` (one hour), for the
  * tests to read; an event `{ hang: true }` is never finished.
  *
@@ -113,6 +114,35 @@ export default defineExtension({
           outsideSandbox: hello?.outsideSandbox ?? false,
           background: false,
         };
+      },
+      // the permission-scoped surface, relayed with the admitted scope: the machine answers each
+      // operation's method as it answers the raw one
+      async operation(h, scope, _signal) {
+        const op = (method: string, args: Record<string, unknown>, sig: AbortSignal) =>
+          relayHandle(h, method, { ...args, scope }, sig);
+        return {
+          async stat(path: string, sig: AbortSignal) {
+            return (await op("stat", { path }, sig)) as { size: number; isDir: boolean } | null;
+          },
+          async readFile(path: string, opts: { maxBytes: number; signal: AbortSignal }) {
+            const r = (await op("readFile", { path, maxBytes: opts.maxBytes }, opts.signal)) as {
+              data: string;
+              truncated: boolean;
+            } | null;
+            return r === null
+              ? null
+              : { data: Buffer.from(r.data, "base64"), truncated: r.truncated };
+          },
+          async writeFile(path: string, data: Uint8Array, sig: AbortSignal) {
+            await op("writeFile", { path, data: Buffer.from(data).toString("base64") }, sig);
+          },
+          async exec({ signal: sig, ...args }: { signal: AbortSignal } & Record<string, unknown>) {
+            return (await op("exec", args, sig)) as ExecResult;
+          },
+        } as never;
+      },
+      async revokeOperation(h, ref, signal) {
+        await relayHandle(h, "revokeOperation", { ref }, signal);
       },
       dialIn: {
         async onHello(deviceId, hello) {

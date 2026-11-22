@@ -7,6 +7,7 @@ import {
   type DeviceProvider,
   ExtensionPermissionError,
   isDeviceOfflineError,
+  type SandboxPermissionSupport,
 } from "@capybara-hq/plugin-sdk";
 import {
   FAKE_DIAL_IN_PROTOCOL,
@@ -26,13 +27,22 @@ import { DialInMachines } from "../../src/dial-in/machines.js";
 import { DialInRelay } from "../../src/dial-in/relay.js";
 import { TransactionHost } from "../../src/infra/database/transaction-host.js";
 import { DeviceReports } from "../../src/sandbox/device-reports.js";
+import {
+  PermissionAdmissionStale,
+  SandboxOperationIntents,
+} from "../../src/sandbox/operation-intents.js";
 import { PermissionAuthorityEpochStore } from "../../src/sandbox/permission-authority-epochs.js";
 import { PermissionAuthorityLock } from "../../src/sandbox/permission-authority-lock.js";
 import { permissionScopeHash } from "../../src/sandbox/permission-facts.js";
 import { DeviceProviders } from "../../src/sandbox/providers.js";
-import { setFakeReportRevision } from "../fixtures/plugins/device-fake/index.js";
+import {
+  FAKE_INSTANCE_PERMISSION_SUPPORT,
+  setFakeReportRevision,
+  setFakeSandboxPermissionSupport,
+} from "../fixtures/plugins/device-fake/index.js";
 import { legacyDbFor } from "../helpers/conversations.js";
 import { accountsFor } from "../helpers/identity.js";
+import { SUPPORTS_BOTH, seedInstalledEvidence } from "../helpers/installed-evidence.js";
 import { MODEL_FAKE } from "../helpers/model-plugins.js";
 import { bootstrapFixture, fakeDialInPkg } from "../helpers/plugin-packages.js";
 import {
@@ -495,6 +505,104 @@ describe("ctx.devices.reportChanged and the device authority epoch", () => {
         expect(await storedRevision(id)).toBe("r2");
         expect(await askedUnder(id)).not.toBe(asked);
       } finally {
+        await d.close();
+      }
+    });
+  });
+
+  /**
+   * A conversation of the owner bound to `deviceId` with a running claim and a started call, on
+   * a running instance of `provider` whose installed evidence (its permission support `report`
+   * with the kernel-built identity, which names the stored report revision) is recorded as the
+   * lifecycle records it: what admission proves before any operation.
+   */
+  async function admissionOn(deviceId: string, provider: string, report: SandboxPermissionSupport) {
+    const agentId = randomUUID(),
+      conversationId = randomUUID(),
+      runId = randomUUID(),
+      executionId = randomUUID(),
+      callId = randomUUID();
+    await sql`INSERT INTO capybara.agents (id, org_id, owner_account_id, visibility, current_version)
+      VALUES (${agentId}, ${orgId}, ${ownerId}, 'org', 1)`.execute(raw);
+    await sql`INSERT INTO capybara.conversations (id, org_id, agent_id, account_id, device_id, last_seq)
+      VALUES (${conversationId}, ${orgId}, ${agentId}, ${ownerId}, ${deviceId}, 1)`.execute(raw);
+    await sql`INSERT INTO capybara.runs
+        (id, conversation_id, execution_id, trigger_account_id, status, agent_version, trigger_seq)
+      VALUES (${runId}, ${conversationId}, ${executionId}, ${ownerId}, 'running', 1, 0)`.execute(
+      raw,
+    );
+    await sql`INSERT INTO capybara.conversation_events (conversation_id, run_id, seq, type, payload)
+      VALUES (${conversationId}, ${runId}, 1, 'tool_call_started',
+        ${JSON.stringify({ callId, toolKey: "Read" })}::jsonb)`.execute(raw);
+    const roots = { workspace: "/work", skills: "/skills", tmp: "/tmp" };
+    await sql`INSERT INTO capybara.device_instances
+        (device_id, org_id, provider, status, handle, created_at, fs_status, had_instance,
+         instance_limits)
+      VALUES (${deviceId}, ${orgId}, ${provider}, 'running',
+        ${JSON.stringify({ id: deviceId, roots })}::jsonb, ${new Date(1_700_000_000_000)},
+        'ready', true,
+        ${JSON.stringify({ mode: "auto", network: { kind: "open-public", hosts: [] } })}::jsonb)
+      ON CONFLICT (device_id) DO UPDATE SET provider = EXCLUDED.provider,
+        status = EXCLUDED.status, handle = EXCLUDED.handle, created_at = EXCLUDED.created_at,
+        instance_limits = EXCLUDED.instance_limits`.execute(raw);
+    const version = k.app.get(DeviceProviders).forDevice(provider)?.version;
+    if (!version) throw new Error(`${provider} is not loaded`);
+    await seedInstalledEvidence(k, raw, { orgId, deviceId, provider, version, report });
+    const claim = { orgId, conversationId, rootId: conversationId, runId, executionId };
+    const ctx = {
+      orgId,
+      deviceId,
+      holderConversationId: conversationId,
+      actor: { accountId: ownerId, conversationId, runId },
+    };
+    const intents = k.app.get(SandboxOperationIntents);
+    const invocation = (ordinal: number) => ({
+      claim,
+      callId,
+      deadlineMs: Date.now() + 30_000,
+      ordinal,
+    });
+    return {
+      pend: (ordinal: number) =>
+        intents.pending(
+          ctx,
+          invocation(ordinal),
+          { provider, providerVersion: version, generation: "1700000000000" },
+          "stat",
+          { path: "/work/file" },
+          "holder",
+          new AbortController().signal,
+        ),
+      admit: (ordinal: number) => intents.admit(ctx, invocation(ordinal)),
+    };
+  }
+
+  // Review Focus (index): a report revision changing between an approval being asked and being
+  // granted invalidates it, for an instance-boundary provider (device-fake) as for an
+  // operation-boundary dial-in provider (fake-dial-in), end to end through admission
+  describe.each([
+    ["device-fake", FAKE_INSTANCE_PERMISSION_SUPPORT],
+    ["fake-dial-in", SUPPORTS_BOTH],
+  ] as const)("%s through admission", (name, support) => {
+    it("an operation pending under one report revision is stale after reportChanged; the same revision admits it", async () => {
+      const d = drivers[name]();
+      if (name === "device-fake") await setFakeSandboxPermissionSupport(root, support);
+      try {
+        const id = await d.device("r1");
+        const a = await admissionOn(id, name, support);
+        // the provider tells r1 again now that an instance runs: its support is stored with it
+        await d.report(id, "r1");
+        await a.pend(0);
+        // told again with the same revision: the pending admission still matches
+        await d.report(id, "r1");
+        expect((await a.admit(0)).state).toBe("admitted");
+        // asked under r1, the provider reports r2 before it is admitted: stale, never admitted
+        await a.pend(1);
+        await d.report(id, "r2");
+        expect(await storedRevision(id)).toBe("r2");
+        await expect(a.admit(1)).rejects.toBeInstanceOf(PermissionAdmissionStale);
+      } finally {
+        if (name === "device-fake") await setFakeSandboxPermissionSupport(root, null);
         await d.close();
       }
     });
