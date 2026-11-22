@@ -30,6 +30,9 @@ function stubWindow(start: Win) {
       if (t === "(pointer: coarse)") return w.coarse;
       if (t === "(any-pointer: coarse)") return w.coarse;
       if (t === "(any-pointer: fine)") return !w.coarse;
+      // the compact query is the complement of (min-width: 600px) (size-class.ts)
+      const notMin = /^not all and \(min-width:\s*(\d+)px\)$/.exec(t);
+      if (notMin) return w.width < Number(notMin[1]);
       const max = /^\(max-width:\s*(\d+)px\)$/.exec(t);
       if (max) return w.width <= Number(max[1]);
       const min = /^\(min-width:\s*(\d+)px\)$/.exec(t);
