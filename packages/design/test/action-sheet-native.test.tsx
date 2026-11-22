@@ -3,7 +3,7 @@
 // link stays the web sheet; unmounting the owner with the sheet open leaves no history entry.
 import { act, cleanup, render, screen, waitFor, within } from "@testing-library/react";
 import { userEvent } from "@testing-library/user-event";
-import { useState } from "react";
+import { StrictMode, useState } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import {
   ActionSheet,
@@ -125,7 +125,7 @@ describe("ActionSheet in a native shell", () => {
     // the web sheet never drew, and the owner's state is closed again
     expect(webSheet()).toBeNull();
     expect(screen.getByTestId("state").textContent).toBe("closed");
-    expect(archive).toHaveBeenCalledOnce();
+    await waitFor(() => expect(archive).toHaveBeenCalledOnce());
     expect(remove).not.toHaveBeenCalled();
   });
 
@@ -160,7 +160,10 @@ describe("ActionSheet in a native shell", () => {
   });
 
   it("an owner whose open state carries the target keeps it until the native sheet settles", async () => {
-    const archive = vi.fn();
+    const seen: (string | null)[] = [];
+    const archive = vi.fn(() => {
+      seen.push(screen.getByTestId("target").textContent);
+    });
     const d = deferred<string | null>();
     const menu = vi.fn<NonNullable<NativeHandlers["menu"]>>(() => d.promise);
     render(<TargetOwner native={{ menu }} onArchive={archive} />);
@@ -175,7 +178,9 @@ describe("ActionSheet in a native shell", () => {
     const id = menu.mock.calls[0]?.[0].items[0]?.id ?? "";
     await act(async () => d.resolve(id));
     expect(screen.getByTestId("target").textContent).toBe("");
-    expect(archive).toHaveBeenCalledWith("c1");
+    await waitFor(() => expect(archive).toHaveBeenCalledWith("c1"));
+    // the pick ran after the close had rendered (deferred as a web pick)
+    expect(seen).toEqual([""]);
   });
 
   it("a rejection draws the web sheet for a target-carrying owner, with the same items", async () => {
@@ -191,6 +196,90 @@ describe("ActionSheet in a native shell", () => {
     await userEvent.click(within(webSheet() as HTMLElement).getByRole("button", { name: "归档" }));
     await waitFor(() => expect(archive).toHaveBeenCalledWith("c1"));
     expect(menu).toHaveBeenCalledTimes(1);
+  });
+
+  it("one native sheet at a time: a rotation while it is up draws no web sheet, the pick still runs", async () => {
+    const mm = matchMediaFor(390, 844);
+    vi.stubGlobal("matchMedia", mm.matchMedia);
+    const archive = vi.fn();
+    const d = deferred<string | null>();
+    const menu = vi.fn<NonNullable<NativeHandlers["menu"]>>(() => d.promise);
+    render(<TargetOwner native={{ menu }} onArchive={archive} />);
+    await userEvent.click(screen.getByRole("button", { name: "更多" }));
+    await act(async () => {});
+    expect(menu).toHaveBeenCalledTimes(1);
+    // landscape: the class leaves compact while the platform sheet is on screen
+    act(() => mm.resize(844, 390));
+    await act(async () => {});
+    expect(webSheet()).toBeNull();
+    // and back: no second native sheet while the first is unsettled
+    act(() => mm.resize(390, 844));
+    await act(async () => {});
+    expect(menu).toHaveBeenCalledTimes(1);
+    const id = menu.mock.calls[0]?.[0].items[0]?.id ?? "";
+    await act(async () => d.resolve(id));
+    await waitFor(() => expect(archive).toHaveBeenCalledWith("c1"));
+    expect(screen.getByTestId("target").textContent).toBe("");
+    expect(webSheet()).toBeNull();
+  });
+
+  it("an owner that closes and reopens before the native sheet settles gets no second sheet until it does", async () => {
+    const archive = vi.fn();
+    const first = deferred<string | null>();
+    const menu = vi
+      .fn<NonNullable<NativeHandlers["menu"]>>()
+      .mockImplementationOnce(() => first.promise)
+      .mockImplementation(async () => null);
+    function Flipper() {
+      const [open, setOpen] = useState(false);
+      return (
+        <DesignProvider locale="zh" native={{ menu }}>
+          <button type="button" onClick={() => setOpen((o) => !o)}>
+            切换
+          </button>
+          <ActionSheet
+            open={open}
+            onOpenChange={setOpen}
+            title="x"
+            items={[{ label: "归档", onSelect: archive }]}
+          />
+        </DesignProvider>
+      );
+    }
+    render(<Flipper />);
+    const toggle = screen.getByRole("button", { name: "切换" });
+    await userEvent.click(toggle);
+    await act(async () => {});
+    expect(menu).toHaveBeenCalledTimes(1);
+    await userEvent.click(toggle); // close
+    await userEvent.click(toggle); // reopen while the first is unsettled
+    await act(async () => {});
+    expect(menu).toHaveBeenCalledTimes(1);
+    expect(webSheet()).toBeNull();
+    // the first settles: dropped (the owner closed since), and the new open shows its own sheet
+    const id = menu.mock.calls[0]?.[0].items[0]?.id ?? "";
+    await act(async () => first.resolve(id));
+    await waitFor(() => expect(menu).toHaveBeenCalledTimes(2));
+    expect(archive).not.toHaveBeenCalled();
+  });
+
+  it("under StrictMode a sheet mounted open calls the native menu once", async () => {
+    const menu = vi.fn<NonNullable<NativeHandlers["menu"]>>(() => new Promise(() => {}));
+    render(
+      <StrictMode>
+        <DesignProvider locale="zh" native={{ menu }}>
+          <ActionSheet
+            open
+            onOpenChange={() => {}}
+            title="x"
+            items={[{ label: "归档", onSelect: () => {} }]}
+          />
+        </DesignProvider>
+      </StrictMode>,
+    );
+    await act(async () => {});
+    expect(menu).toHaveBeenCalledTimes(1);
+    expect(webSheet()).toBeNull();
   });
 
   it("at 1440 a native shell still draws the web sheet", async () => {

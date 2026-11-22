@@ -28,8 +28,8 @@ const NONE: LongPressHandlers = {
  * that rests `LONG_PRESS_MS` without moving more than `LONG_PRESS_SLOP` px, or a `contextmenu`
  * event (right click, two-finger tap, Android's long press), calls `onLongPress`. The browser's
  * own context menu is prevented, and after a touch long press the click its release sends is
- * eaten (on the window, in the capture phase), so a row link does not navigate. Disabled (`enabled: false`), it hands back no-op
- * handlers and leaves the browser's context menu alone.
+ * eaten (on the window, in the capture phase), so a row link does not navigate. Disabled
+ * (`enabled: false`), it hands back no-op handlers and leaves the browser's context menu alone.
  */
 export function useLongPress(
   onLongPress: () => void,

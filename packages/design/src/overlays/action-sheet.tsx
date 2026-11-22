@@ -70,24 +70,42 @@ function groupsOf(items: MenuItem[]): Exclude<MenuItem, "separator">[][] {
  *
  * On the compact class in a shell with `menu@1` (decision P3) a sheet of plain actions (no link)
  * opens as the platform's action sheet instead. The owner's `open` stays true while it is up;
- * when it settles the sheet closes (`onOpenChange(false)`), then a pick runs its action (a
- * dismissal runs nothing). A native failure draws this web sheet with the same items, still
- * open. A sheet with a link stays the web sheet, so its link rows keep link behaviour (a
- * modified click, the system's link menu).
+ * when it settles the sheet closes (`onOpenChange(false)`), then a pick runs its action, deferred
+ * like a web pick (a dismissal runs nothing). One native sheet at a time: while it is up the web
+ * sheet stays closed and no second one opens, even if the class or the items change meanwhile
+ * (a rotation); only the owner's close or unmount drops its settlement. A native failure draws
+ * this web sheet with the same items, still open. A sheet with a link stays the web sheet, so its
+ * link rows keep link behaviour (a modified click, the system's link menu).
  */
 export function ActionSheet({ open, onOpenChange, title, items }: ActionSheetProps) {
   const native = useNative();
   const compact = useSizeClass() === "compact";
   // the native sheet failed during this open: the web sheet draws
   const [fallback, setFallback] = useState(false);
+  // a native sheet is on screen (the render's view of `showing`)
+  const [up, setUp] = useState(false);
+  // the latch: set when native.menu is called, cleared when it settles (StrictMode's second
+  // effect run and a handover that comes back while it is up call nothing)
+  const showing = useRef(false);
+  // bumped by each owner close: a settlement from an earlier open is dropped
+  const generation = useRef(0);
+  const mounted = useRef(false);
   const nativeMenu = native?.menu && compact && isPlainMenu(items) ? native.menu : undefined;
   const handOver = open && nativeMenu !== undefined && !fallback;
   // what the native sheet's settlement reads (the render that opened it may be stale by then)
   const latest = useRef({ nativeMenu, title, items, onOpenChange });
   latest.current = { nativeMenu, title, items, onOpenChange };
   useEffect(() => {
-    if (!handOver) return;
-    let live = true;
+    mounted.current = true;
+    return () => {
+      mounted.current = false;
+    };
+  }, []);
+  useEffect(() => {
+    if (!open) generation.current++;
+  }, [open]);
+  useEffect(() => {
+    if (!handOver || up || showing.current) return;
     const { nativeMenu: menu, title: heading, items: list } = latest.current;
     if (menu === undefined) return;
     const actions = list.flatMap((item, n) =>
@@ -103,6 +121,11 @@ export function ActionSheet({ open, onOpenChange, title, items }: ActionSheetPro
             },
           ],
     );
+    showing.current = true;
+    setUp(true);
+    const opened = generation.current;
+    // the owner has not closed or unmounted since this sheet opened
+    const current = () => mounted.current && generation.current === opened;
     let result: Promise<string | null>;
     try {
       result = Promise.resolve(
@@ -116,20 +139,21 @@ export function ActionSheet({ open, onOpenChange, title, items }: ActionSheetPro
     }
     void result.then(
       (id) => {
-        if (!live) return;
+        showing.current = false;
+        if (mounted.current) setUp(false);
+        if (!current()) return;
         latest.current.onOpenChange(false);
         const action = id === null ? undefined : actions.find((a) => a.id === id);
-        if (action !== undefined && action.disabled !== true) action.run();
+        // after the sheet has closed, as a web pick
+        if (action !== undefined && action.disabled !== true) setTimeout(action.run, 0);
       },
       () => {
-        if (live) setFallback(true);
+        showing.current = false;
+        if (mounted.current) setUp(false);
+        if (current()) setFallback(true);
       },
     );
-    return () => {
-      // the owner closed or unmounted meanwhile: the settlement no longer belongs to this open
-      live = false;
-    };
-  }, [handOver]);
+  }, [handOver, up]);
   // the fallback sheet closed: the next open tries the native sheet again
   useEffect(() => {
     if (!open && fallback) setFallback(false);
@@ -142,7 +166,7 @@ export function ActionSheet({ open, onOpenChange, title, items }: ActionSheetPro
   };
   return (
     <BottomSheet
-      open={open && !handOver}
+      open={open && !handOver && !up}
       onOpenChange={onOpenChange}
       title={title}
       part="action-sheet"
