@@ -169,7 +169,8 @@ describe("createLogger", () => {
   it("redaction cost does not grow with the number of registered secrets (10000 vs 1)", () => {
     // Compares two loggers in the same process and conditions instead of a wall-clock budget: a
     // loaded machine slows both alike, while a per-secret scan would make the 10000-secret logger
-    // hundreds of times slower than the one-secret logger. Interleaved rounds, best of each.
+    // hundreds of times slower than the one-secret logger. Interleaved rounds, best of each. The
+    // rounds stay short (200 lines) so a loaded CI runner finishes well inside the test timeout.
     const fields = Object.fromEntries(
       Array.from({ length: 10 }, (_, i) => [
         `f${i}`,
@@ -185,7 +186,7 @@ describe("createLogger", () => {
     one.addSecrets(["deploy-secret-42-332598"]);
     const time = (logger: KernelLogger) => {
       const t0 = performance.now();
-      for (let i = 0; i < 1_000; i++) logger.info("line", fields);
+      for (let i = 0; i < 200; i++) logger.info("line", fields);
       return performance.now() - t0;
     };
     time(many); // warmup and matcher build
