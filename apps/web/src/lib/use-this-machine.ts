@@ -64,7 +64,7 @@ export function useThisMachineDeviceIds(orgId: string): ReadonlySet<string> {
 }
 
 /**
- * The shell's 「connect this machine」 into the org `orgId` (`device@2.connect`). `connect()` runs the
+ * The shell's "connect this machine" action into the org `orgId` (`device@2.connect`). `connect()` runs the
  * call inside the click's mutation so the shell sees the person's activation. `cancelled` shows
  * nothing; an `{ error }` answer or a rejection other than `{ code: "cancelled" }` sets `failed`
  * (the shell's own text is never kept or shown). A connection that was added shows up through the
