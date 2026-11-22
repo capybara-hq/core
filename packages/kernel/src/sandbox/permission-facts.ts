@@ -24,6 +24,7 @@ import {
   canonicalHostCeiling,
   type DeviceSandbox,
   type DeviceSandboxDeviceLayer,
+  deviceListAddRefusal,
   effectiveDeviceSandbox,
   type HostGrantCeiling,
   hostGrantCeiling,
@@ -192,6 +193,8 @@ export class PermissionFacts {
       /** The org's effective hosts: what a device's own host list may narrow, never add to. */
       orgHosts: orgHostsOf(platform, orgLayer),
       refusal: (host: string) => hostGrantRefusal(host, box, platform, orgLayer),
+      /** Why a host cannot be added to the device's own network list ({@link deviceListAddRefusal}). */
+      listAddRefusal: (host: string) => deviceListAddRefusal(host, box, platform, orgLayer),
       description: storedReport(row?.report)?.description.en ?? null,
       /** Its provider enforces a sandbox allowlist (its support): a blocked host may be asked about. */
       allowlist:

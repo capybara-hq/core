@@ -1,10 +1,11 @@
 import { randomUUID } from "node:crypto";
-import type {
-  DeviceReport,
-  LocalizedName,
-  SandboxBrowseScope,
-  SandboxLimits,
-  SandboxOperationScope,
+import {
+  type DeviceReport,
+  type LocalizedName,
+  type SandboxBrowseScope,
+  type SandboxLimits,
+  type SandboxOperationScope,
+  validateAllowHost,
 } from "@capybara-hq/plugin-sdk";
 import { Inject, Injectable } from "@nestjs/common";
 import { type Selectable, sql } from "kysely";
@@ -128,47 +129,24 @@ export interface DeviceSandboxView {
 export const RECENT_POLICY_CHANGES = 10;
 
 /**
- * One setting change of a device, as its owner sees it on the device page:
- * - `policy` (`device.policy_changed`): hosts removed from a local machine's allowlist by the
- *   platform (`web`, `im`), or added or removed on the machine by its owner (`device`,
- *   `capybara-device policy ...`); one sent whose answer never came (`device.policy_unknown`) or
- *   that failed (`device.policy_failed`) too;
- * - `ceiling` (`device.owner_ceiling_changed`): a machine's owner ceiling changed, narrowed from the
- *   device page (`web`) or on the machine (`device`);
- * - `network` (`device.network_changed`): a cloud device's sandbox network changed on its device
- *   page (`web`), through an API token (`token`), or by an agent's Platform tool call (`agent`).
+ * One setting change of a device, as its owner sees it on the device page: its sandbox network
+ * changed (`device.network_changed`), whatever its provider.
  */
 export interface DeviceSettingChangeView {
   at: string;
-  kind: "policy" | "ceiling" | "network";
-  /** Hosts added to / removed from the local allowlist (`policy` only; else empty). */
-  add: string[];
-  remove: string[];
-  /** The owner ceiling change (`ceiling` only; else null). `from` is null when the row does not say. */
-  ceiling: { from: DeviceCeilingFacts | null; to: DeviceCeilingFacts } | null;
-  /** The cloud network change (`network` only; else null). */
-  network: { from: DeviceNetworkSetting; to: DeviceNetworkSetting } | null;
+  kind: "network";
+  network: { from: DeviceNetworkSetting; to: DeviceNetworkSetting };
   /** The deciding account (null when the account is gone). */
   by: PersonRef | null;
   /**
-   * `device`: made or reported on the machine itself; `token`: through an API token; `agent`: an
-   * agent's Platform tool call.
+   * Where it was decided: `web` on the device page or a network approval there, `im` a network
+   * approval on an IM card, `token` through an API token, `agent` an agent's Platform tool call.
    */
-  via: "web" | "im" | "device" | "token" | "agent";
-  /**
-   * What became of a `policy` change sent to the machine: `applied` (also every change made or
-   * reported on the machine, and every other row); `unknown`, its answer never came, `failed`, the
-   * machine refused it, never received it or stopped while applying it.
-   */
-  outcome: "applied" | "unknown" | "failed";
+  via: DeviceNetworkChangeVia;
 }
 
-/** One side of a {@link DeviceSettingChangeView.ceiling} change. */
-export interface DeviceCeilingFacts {
-  outsideSandbox: boolean;
-  restrictedProjectReach?: "workspace" | "os-user";
-  network?: "open" | "allowlist";
-}
+/** Where a device's network change was decided ({@link DeviceSettingChangeView.via}). */
+export type DeviceNetworkChangeVia = "web" | "im" | "token" | "agent";
 
 /** A device's stored network setting: `mode` null follows its org. */
 export interface DeviceNetworkSetting {
@@ -281,7 +259,7 @@ export class DevicesService {
     /** Each device's provider (whether it serves its devices over the dial-in channel). */
     @Inject(DeviceProviders) private readonly providers: Pick<DeviceProviders, "forDevice">,
     @Inject(DialInMachines)
-    private readonly machines: Pick<DialInMachines, "revoke" | "revokeActive">,
+    private readonly machines: Pick<DialInMachines, "revokeActive">,
     @Inject(PermissionCeilingWrites) private readonly ceilings: PermissionCeilingWrites,
     @Inject(PermissionFacts)
     private readonly facts: Pick<PermissionFacts, "deviceSandbox" | "deviceSandboxFacts">,
@@ -708,7 +686,8 @@ export class DevicesService {
    * transaction: a narrowing bumps the device epoch and revokes the admitted or started work it
    * takes ({@link networkNarrowingRevokes}; the revocations are owed through the outbox) and keeps
    * Full consent; a widening resets Full consent with a `permission_profile_changed` event.
-   * Audited `device.network_changed` (`via`: `web`, `token` for an API token, or the agent's).
+   * Audited `device.network_changed` (`via`: `opts.via` (a network approval's), else `web`,
+   * `token` for an API token, or the agent's in `auditDetail`).
    */
   private async networkLocked(
     orgId: string,
@@ -716,7 +695,11 @@ export class DevicesService {
     id: string,
     want: NonNullable<DevicePatch["network"]>,
     actorTokenId: string | undefined,
-    opts: { narrowOnly?: boolean; auditDetail?: Record<string, unknown> },
+    opts: {
+      narrowOnly?: boolean;
+      auditDetail?: Record<string, unknown>;
+      via?: DeviceNetworkChangeVia;
+    },
   ): Promise<void> {
     await this.ceilings.lock({ orgId, deviceId: id }, "device");
     const plan = await this.planNetwork(orgId, id, want, opts.narrowOnly === true);
@@ -747,10 +730,90 @@ export class DevicesService {
         from,
         to,
         by: accountId,
-        via: actorTokenId !== undefined ? "token" : "web",
+        via: opts.via ?? (actorTokenId !== undefined ? "token" : "web"),
         ...opts.auditDetail,
       },
     });
+  }
+
+  /**
+   * Adds `hosts` to one of the person's devices' own network list: a network approval decided
+   * "add to this device's list" (`via`: where it was decided). It joins the caller's transaction
+   * (the approval decision's), with the membership, the device row and the device's permission
+   * write lock as the ordered prelude ({@link withOrderedLocks}: inline in a caller's
+   * transaction, whose lock order the caller owns), and takes no distributed lock. The write is a
+   * network change like `PATCH` ({@link networkLocked}: audited `device.network_changed` from → to,
+   * listed as a recent change, the device epoch bumped and the instance marked for its next use).
+   * Refuses with `device.network_not_allowed`, writing nothing, unless the stored network is
+   * `allowlist` with a host list of its own (a device following its org's hosts already allows
+   * every host its list could name) and every host may join that list
+   * (`deviceListAddRefusal`). Hosts already listed change nothing.
+   */
+  async addNetworkHostsIn(
+    orgId: string,
+    accountId: string,
+    deviceId: string,
+    hosts: string[],
+    via: "web" | "im",
+  ): Promise<void> {
+    await withOrderedLocks(
+      () => this.lockNetworkSubject(orgId, accountId, deviceId),
+      () => this.addNetworkHostsLocked(orgId, accountId, deviceId, hosts, via),
+    );
+  }
+
+  /** {@link addNetworkHostsIn} under the locks of its prelude (naming them again re-checks). */
+  @Transactional()
+  private async addNetworkHostsLocked(
+    orgId: string,
+    accountId: string,
+    id: string,
+    hosts: string[],
+    via: "web" | "im",
+  ): Promise<void> {
+    await this.lockOwn(orgId, accountId, id);
+    await this.ceilings.lock({ orgId, deviceId: id }, "device");
+    const row = await this.db
+      .selectFrom("devices")
+      .select(["network_mode", "network_hosts"])
+      .where("id", "=", id)
+      .executeTakeFirstOrThrow();
+    const own = ownNetwork(row);
+    if (own.networkMode === "none")
+      throw new ApiError(
+        "device.network_not_allowed",
+        "Network access is turned off for this device's sandbox; its owner changes that on the device page",
+      );
+    if (own.networkMode !== "allowlist" || own.networkHosts.length === 0)
+      throw new ApiError(
+        "device.network_not_allowed",
+        "This device has no host list of its own: it follows its organization's hosts, which already include every host its list could name; an organization admin adds another host to the organization's device network list",
+      );
+    const wanted = [...new Set(hosts.map((h) => h.toLowerCase()))];
+    for (const host of wanted) {
+      const invalid = validateAllowHost(host);
+      if (invalid.length > 0)
+        throw new ApiError("validation_failed", `${host}: ${invalid.join("; ")}`, [
+          { path: "hosts", message: `${host}: ${invalid.join("; ")}` },
+        ]);
+    }
+    const facts = await this.facts.deviceSandboxFacts(orgId, id);
+    for (const host of wanted) {
+      const why = facts.listAddRefusal(host);
+      if (why !== null)
+        throw new ApiError(
+          "device.network_not_allowed",
+          `${host} cannot be added to this device's network list: ${why}`,
+        );
+    }
+    await this.networkLocked(
+      orgId,
+      accountId,
+      id,
+      { mode: "allowlist", hosts: [...own.networkHosts, ...wanted] },
+      undefined,
+      { via },
+    );
   }
 
   /**
@@ -888,19 +951,6 @@ export class DevicesService {
       detail: { name: before.name, isDefault: before.is_default, ...auditDetail },
     });
     await oweDeviceDestroy(this.outbox, id, orgId);
-  }
-
-  /**
-   * Disconnects the machine of one of the person's own dial-in devices (it must sign in
-   * again); see {@link DialInMachines.revoke}.
-   */
-  async revokeMachine(
-    orgId: string,
-    accountId: string,
-    id: string,
-    actorTokenId?: string,
-  ): Promise<void> {
-    await this.machines.revoke(orgId, accountId, id, actorTokenId);
   }
 
   /**
@@ -1188,8 +1238,8 @@ export class DevicesService {
   }
 
   /**
-   * The last {@link RECENT_POLICY_CHANGES} setting changes of each device in the org (audit rows
-   * {@link SETTING_CHANGE_ACTIONS}), newest first, with the deciding account's display name.
+   * The last {@link RECENT_POLICY_CHANGES} setting changes of each device in the org (its
+   * `device.network_changed` audit rows), newest first, with the deciding account's display name.
    */
   private async recentChanges(
     orgId: string,
@@ -1201,7 +1251,6 @@ export class DevicesService {
       .selectFrom("audit_events as a")
       .select([
         "a.target",
-        "a.action",
         "a.at",
         "a.detail",
         "a.actor_account_id",
@@ -1210,14 +1259,13 @@ export class DevicesService {
         ),
       ])
       .where("a.org_id", "=", orgId)
-      .where("a.action", "in", [...SETTING_CHANGE_ACTIONS])
+      .where("a.action", "=", "device.network_changed")
       .where("a.target", "in", deviceIds);
     const rows = await this.db
       .selectFrom(ranked.as("r"))
       .leftJoin("accounts as ac", "ac.id", "r.actor_account_id")
       .select((eb) => [
         "r.target",
-        "r.action",
         "r.at",
         "r.detail",
         "r.actor_account_id",
@@ -1232,7 +1280,6 @@ export class DevicesService {
       const list = out.get(r.target) ?? [];
       list.push(
         settingChangeOf(
-          r.action,
           r.at,
           (r.detail ?? {}) as Record<string, unknown>,
           r.actor_account_id === null || r.display_name === null
@@ -1363,7 +1410,7 @@ function networkWidens(
 const STORED_RANK = { none: 0, allowlist: 1, open: 2 } as const;
 
 /**
- * Whether a cloud device's stored network setting widens from `a` to `b`, whatever the network in
+ * Whether a device's stored network setting widens from `a` to `b`, whatever the network in
  * effect now (a stored widening takes effect when a ceiling opens later): a wider mode, where
  * following the org (null) counts as wider than any explicit mode; or an explicit host list
  * replaced by none of its own (follow the org's hosts) or gaining a host.
@@ -1377,7 +1424,7 @@ export function storedNetworkWidens(a: DeviceNetworkSetting, b: DeviceNetworkSet
 }
 
 /**
- * What a cloud device's new network takes from admitted or started work (`next`: its sandbox
+ * What a device's new network takes from admitted or started work (`next`: its sandbox
  * after the change): open-network work once it is no longer open, and allowlist work naming a host
  * its new hosts no longer cover, unless an independent grant the new per-call ceiling still allows
  * holds it (`hostsNarrowed`).
@@ -1408,31 +1455,7 @@ function networkLayerText(layer: DeviceSandboxLayer | null): string {
   }
 }
 
-/** The audit actions a device's recent setting changes list. */
-const SETTING_CHANGE_ACTIONS = [
-  "device.policy_changed",
-  "device.policy_unknown",
-  "device.policy_failed",
-  "device.owner_ceiling_changed",
-  "device.network_changed",
-] as const;
-
-/** One side of an audited ceiling change; null when the row does not carry a readable one. */
-function ceilingFactsOf(v: unknown): DeviceCeilingFacts | null {
-  if (typeof v !== "object" || v === null) return null;
-  const o = v as Record<string, unknown>;
-  // rows written before the rename carry the same fact as `fullAccess`
-  const outside = typeof o.outsideSandbox === "boolean" ? o.outsideSandbox : o.fullAccess;
-  if (typeof outside !== "boolean") return null;
-  const reach = o.restrictedProjectReach;
-  return {
-    outsideSandbox: outside,
-    ...((reach === "workspace" || reach === "os-user") && { restrictedProjectReach: reach }),
-    ...((o.network === "open" || o.network === "allowlist") && { network: o.network }),
-  };
-}
-
-/** One side of an audited cloud network change. */
+/** One side of an audited network change. */
 function networkSettingOf(v: unknown): DeviceNetworkSetting {
   const o = (typeof v === "object" && v !== null ? v : {}) as Record<string, unknown>;
   const mode = o.mode;
@@ -1442,53 +1465,20 @@ function networkSettingOf(v: unknown): DeviceNetworkSetting {
   };
 }
 
-/** One audit row of {@link SETTING_CHANGE_ACTIONS} as a {@link DeviceSettingChangeView}. */
+/** One `device.network_changed` audit row as a {@link DeviceSettingChangeView}. */
 function settingChangeOf(
-  action: string,
   at: Date,
   d: Record<string, unknown>,
   by: PersonRef | null,
 ): DeviceSettingChangeView {
-  const hosts = (v: unknown) =>
-    Array.isArray(v) ? v.filter((h): h is string => typeof h === "string") : [];
-  const via: DeviceSettingChangeView["via"] =
-    d.via === "im"
-      ? "im"
-      : d.via === "device"
-        ? "device"
-        : d.via === "token"
-          ? "token"
-          : d.via === "agent"
-            ? "agent"
-            : "web";
-  const base = { at: at.toISOString(), add: [], remove: [], ceiling: null, network: null, by, via };
-  if (action === "device.owner_ceiling_changed") {
-    const to = ceilingFactsOf(d.to);
-    return {
-      ...base,
-      kind: "ceiling",
-      ceiling: to === null ? null : { from: ceilingFactsOf(d.from), to },
-      outcome: "applied",
-    };
-  }
-  if (action === "device.network_changed")
-    return {
-      ...base,
-      kind: "network",
-      network: { from: networkSettingOf(d.from), to: networkSettingOf(d.to) },
-      outcome: "applied",
-    };
+  const via: DeviceNetworkChangeVia =
+    d.via === "im" || d.via === "token" || d.via === "agent" ? d.via : "web";
   return {
-    ...base,
-    kind: "policy",
-    add: hosts(d.add),
-    remove: hosts(d.remove),
-    outcome:
-      action === "device.policy_unknown"
-        ? "unknown"
-        : action === "device.policy_failed"
-          ? "failed"
-          : "applied",
+    at: at.toISOString(),
+    kind: "network",
+    network: { from: networkSettingOf(d.from), to: networkSettingOf(d.to) },
+    by,
+    via,
   };
 }
 

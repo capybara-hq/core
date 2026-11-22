@@ -23,7 +23,7 @@ const CREDENTIAL_RE = /^cap_dev_[A-Za-z0-9_-]{43}$/;
 
 /**
  * Why a machine was revoked, for the machine and for the provider (`onClose`): `revoked`
- * (disconnected, signed out, or a sign-in whose credential never reached its program) or `deleted`
+ * (signed out, or a sign-in whose credential never reached its program) or `deleted`
  * (its device was deleted), both told to stop first; `replaced` (the device signed in from
  * another machine): no stop, which could reach the replacement instead, and its connection
  * closes as replaced (4002).
@@ -247,9 +247,10 @@ export class DialInMachines {
 
   /**
    * Disconnects the machine of one of the person's own live dial-in devices, whatever its
-   * provider (`DELETE /orgs/:orgId/devices/:id/machine`): revokes it and audits
-   * `device.machine_revoked`. Anyone else's device, a cloud one or a missing one →
-   * `device.not_found`; no machine connected is a no-op.
+   * provider: revokes it and audits `device.machine_revoked`. No route calls it (the device page
+   * no longer disconnects a machine; deleting the device revokes it, {@link revokeActive}); the
+   * kernel tests revoke a connected machine with it. Anyone else's device, a cloud one or a
+   * missing one → `device.not_found`; no machine connected is a no-op.
    */
   @Transactional()
   async revoke(

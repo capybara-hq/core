@@ -645,34 +645,6 @@ describe("device authorization", () => {
     }
   });
 
-  it("revoke audits and the credential no longer authenticates", async () => {
-    const m = await member();
-    const g = await login(m.req, "Revokable");
-    const url = `/api/v1/orgs/${orgId}/devices/${g.deviceId}/machine`;
-    // someone else cannot revoke it
-    const other = await member();
-    const denied = await other.req({ method: "DELETE", url });
-    expect(denied.statusCode).toBe(404);
-    expect(errCode(denied)).toBe("device.not_found");
-    expect(await machines.authenticate(g.credential)).not.toBeNull();
-
-    const holder = new TestHolder(redis, k.app.get(KERNEL_BUS), g.deviceId);
-    await holder.connect();
-    try {
-      const res = await m.req({ method: "DELETE", url });
-      expect(res.statusCode, res.body).toBe(204);
-      const stop = await holder.next((f) => f.type === "stop");
-      expect(stop).toEqual({ type: "stop", reason: "stop", machineId: expect.any(String) });
-    } finally {
-      await holder.disconnect();
-    }
-    expect(await machines.authenticate(g.credential)).toBeNull();
-    expect(await auditActions(g.deviceId)).toContain("device.machine_revoked");
-    expect((await envView(m.req, g.deviceId)).machine).toBeNull();
-    // the device stays
-    expect((await envView(m.req, g.deviceId)).dialIn).toBe(true);
-  });
-
   it("deleting a dial-in device revokes its machine", async () => {
     const m = await member();
     const g = await login(m.req, "Doomed");

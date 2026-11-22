@@ -851,8 +851,8 @@ describe("a cloud device's sandbox network (approval-only profiles design)", () 
       kind: "network",
       network: { from: { mode: null, hosts: [] }, to: { mode: "allowlist", hosts: [] } },
       via: "web",
-      outcome: "applied",
     });
+    expect(view.sandbox.recent[0]).not.toHaveProperty("outcome");
     expect(await networkAudits(env.id)).toEqual([
       {
         actor_account_id: me.id,
@@ -918,6 +918,104 @@ describe("a cloud device's sandbox network (approval-only profiles design)", () 
         .executeTakeFirstOrThrow();
       expect(row).toEqual({ network_mode: null, network_hosts: [] });
       expect(await networkAudits(env.id)).toEqual([]);
+    } finally {
+      await setOrgNetwork(null);
+    }
+  });
+
+  it("addNetworkHostsIn adds within the org's hosts, like PATCH; refuses outside them or with no own list", async () => {
+    await setOrgNetwork({ extraHosts: ["a.dev", "b.dev"] });
+    try {
+      const me = await member();
+      const env = await create(me.req, "Adds");
+      const svc = k.app.get(DevicesService);
+      const refused = async (hosts: string[]) => {
+        const err = await svc.addNetworkHostsIn(orgId, me.id, env.id, hosts, "web").then(
+          () => null,
+          (e: unknown) => e,
+        );
+        expect(err).toBeInstanceOf(ApiError);
+        expect(err).toMatchObject({ code: "device.network_not_allowed" });
+        return (err as ApiError).message;
+      };
+      // following its org (mode null) or the org's whole allowlist: every addable host is in
+      expect(await refused(["b.dev"])).toContain("follows its organization's hosts");
+      expect((await patch(me.req, env.id, { network: { mode: "allowlist" } })).statusCode).toBe(
+        200,
+      );
+      await refused(["b.dev"]);
+
+      const own = await patch(me.req, env.id, { network: { mode: "allowlist", hosts: ["a.dev"] } });
+      expect(own.statusCode, own.body).toBe(200);
+      const audits = (await networkAudits(env.id)).length;
+      const epoch = async () =>
+        (
+          await db
+            .selectFrom("permission_authority_epochs")
+            .select("revision")
+            .where("kind", "=", "device")
+            .where("id", "=", env.id)
+            .executeTakeFirst()
+        )?.revision ?? 0;
+      const before = await epoch();
+      await svc.addNetworkHostsIn(orgId, me.id, env.id, ["B.dev"], "im");
+      const view = viewOf(await me.req({ method: "GET", url: `${base()}/${env.id}` }));
+      expect(view.sandbox.allowedDomains).toEqual(["a.dev", "b.dev"]);
+      expect(view.sandbox.hosts).toEqual(["a.dev", "b.dev"]);
+      expect(view.sandbox.recent[0]).toMatchObject({
+        kind: "network",
+        network: {
+          from: { mode: "allowlist", hosts: ["a.dev"] },
+          to: { mode: "allowlist", hosts: ["a.dev", "b.dev"] },
+        },
+        via: "im",
+      });
+      const rows = await networkAudits(env.id);
+      expect(rows).toHaveLength(audits + 1);
+      expect(rows.at(-1)).toEqual({
+        actor_account_id: me.id,
+        detail: {
+          from: { mode: "allowlist", hosts: ["a.dev"] },
+          to: { mode: "allowlist", hosts: ["a.dev", "b.dev"] },
+          by: me.id,
+          via: "im",
+        },
+      });
+      expect(await epoch()).toBeGreaterThan(before);
+      // a host already listed changes nothing
+      await svc.addNetworkHostsIn(orgId, me.id, env.id, ["a.dev"], "web");
+      expect(await networkAudits(env.id)).toHaveLength(audits + 1);
+
+      // a host outside the org's list, even next to an addable one: nothing is written
+      expect(await refused(["x.dev"])).toContain("an organization admin adds x.dev");
+      await setOrgNetwork({ extraHosts: ["a.dev", "b.dev", "c.dev"], excludedHosts: ["pypi.org"] });
+      await refused(["c.dev", "x.dev"]);
+      // a platform host the org excludes
+      await refused(["pypi.org"]);
+      expect(await networkAudits(env.id)).toHaveLength(audits + 1);
+
+      // it joins the caller's transaction: a rollback there takes the addition with it
+      await expect(
+        k.app.get(TransactionHost).run(async () => {
+          await svc.addNetworkHostsIn(orgId, me.id, env.id, ["c.dev"], "web");
+          throw new Error("rolled back");
+        }),
+      ).rejects.toThrow("rolled back");
+      const row = await db
+        .selectFrom("devices")
+        .select(["network_hosts"])
+        .where("id", "=", env.id)
+        .executeTakeFirstOrThrow();
+      expect(row.network_hosts).toEqual(["a.dev", "b.dev"]);
+      expect(await networkAudits(env.id)).toHaveLength(audits + 1);
+
+      // closed: refused; another member's device: not found
+      const other = await member();
+      await expect(
+        svc.addNetworkHostsIn(orgId, other.id, env.id, ["c.dev"], "web"),
+      ).rejects.toMatchObject({ code: "device.not_found" });
+      expect((await patch(me.req, env.id, { network: { mode: "none" } })).statusCode).toBe(200);
+      await refused(["c.dev"]);
     } finally {
       await setOrgNetwork(null);
     }
