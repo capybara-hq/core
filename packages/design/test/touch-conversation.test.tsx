@@ -92,13 +92,31 @@ describe("touch rules (stylesheets)", () => {
     const composer = touch(".cb-conv-composer");
     expect(composer.position).toBe("absolute");
     expect(composer["padding-bottom"]).toContain("--cb-inset-bottom");
-    expect(touch(".cb-conv-scroll")["padding-bottom"]).toContain("--cb-touch-composer");
+    expect(touch('.cb-conv-scroll:not([data-center="true"])')["padding-bottom"]).toContain(
+      "--cb-touch-composer",
+    );
     // the page lifts its column by the keyboard's height, once
     const page = rules.find((r) => r.at === null && r.selector === ".cb-conv-page");
     expect(page?.decls["padding-bottom"]).toContain("--cb-keyboard-inset");
     expect(touch('.cb-shell[data-keyboard="open"] .cb-conv-composer')["padding-bottom"]).toBe(
       "var(--cb-space-3)",
     );
+  });
+
+  it("the new conversation's scroll keeps no floating composer reserve (its composer is in it)", () => {
+    // The new conversation draws its composer inside its scroll (sticky at the bottom on compact),
+    // never as the floating composer, and measures no `--cb-composer-h`: a reserve for the floating
+    // composer there leaves an empty band (~128 px) under the composer.
+    for (const r of rules) {
+      if (r.at !== MOBILE_SIZE_QUERY) continue;
+      for (const sel of r.selector.split(",").map((s) => s.trim())) {
+        if (!sel.startsWith(".cb-conv-scroll") || sel.includes(':not([data-center="true"])')) {
+          continue;
+        }
+        expect(r.decls["padding-bottom"] ?? "", sel).not.toContain("--cb-touch-composer");
+        expect(r.decls["padding-bottom"] ?? "", sel).not.toContain("--cb-composer-h");
+      }
+    }
   });
 
   it("the command is set in the code font", () => {

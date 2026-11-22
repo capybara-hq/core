@@ -1591,6 +1591,8 @@ button.cb-property-row {
     flex-direction: column;
     align-items: stretch;
     justify-content: flex-start;
+    /* the pinned composer below carries the bottom gap */
+    padding-bottom: 0;
   }
   .cb-conv-new {
     flex: 1 0 auto;
@@ -1602,8 +1604,13 @@ button.cb-property-row {
     bottom: 0;
     z-index: 1;
     margin-top: auto;
-    padding-bottom: var(--cb-space-3);
+    /* docked as the conversation's composer is: space.3 over the home indicator (spec §4.7) */
+    padding-bottom: calc(var(--cb-space-3) + var(--cb-inset-bottom));
     background: var(--cb-bg);
+  }
+  /* An open keyboard covers the home indicator's inset. */
+  .cb-shell[data-keyboard="open"] .cb-conv-new-composer {
+    padding-bottom: var(--cb-space-3);
   }
   .cb-conv-new-quick {
     display: block;
@@ -2139,8 +2146,10 @@ button.cb-property-row {
     padding-bottom: var(--cb-space-3);
   }
   /* the composer's measured height (`--cb-composer-h`, a ResizeObserver in the page) clears a
-     grown textarea; before the first measure, a one-line pill with its chip row */
-  .cb-conv-scroll {
+     grown textarea; before the first measure, a one-line pill with its chip row. Only the
+     thread's scroll: the new conversation's composer sits inside its own scroll (sticky at the
+     bottom on compact) and floats over nothing, so a reserve there is an empty band under it. */
+  .cb-conv-scroll:not([data-center="true"]) {
     padding-bottom: calc(
       var(
         --cb-composer-h,
