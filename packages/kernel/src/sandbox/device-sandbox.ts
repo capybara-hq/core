@@ -326,6 +326,31 @@ export function hostGrantRefusal(
     : `${host} is outside the platform's host list; a super admin adds the host`;
 }
 
+/**
+ * Why `host` cannot be added to this device's own network list, naming who can make it possible,
+ * or null when it can. The device's list only narrows the org's effective hosts
+ * ({@link effectiveDeviceSandbox}), so a host is addable only when the network is not closed, the
+ * org's hosts ({@link orgHostsOf}) cover it and no org exclusion (a pattern) covers it. Otherwise
+ * the org admin can add it when the org may extend the platform's list or the platform's list
+ * covers it; else only a super admin can.
+ */
+export function deviceListAddRefusal(
+  host: string,
+  box: Pick<DeviceSandbox, "networkMode" | "networkCeiling" | "layer">,
+  platform: Pick<DeviceSandboxPlatformLayer, "egress" | "allowHosts" | "orgHosts">,
+  org: DeviceSandboxOrgLayer,
+): string | null {
+  if (box.networkMode === "none" || box.networkCeiling === "none" || platform.egress === "none")
+    return "network access is turned off for this device's sandbox";
+  const h = host.toLowerCase();
+  const covers = (list: readonly string[]) => list.some((p) => coversHost(p.toLowerCase(), h));
+  const excluded = covers(org.deviceNetwork?.excludedHosts ?? []);
+  if (!excluded && covers(orgHostsOf(platform, org))) return null;
+  return platform.orgHosts === "extend" || covers(platform.allowHosts)
+    ? `an organization admin adds ${host} to the organization's device network list`
+    : `${host} is outside the platform's host list; a super admin adds the host`;
+}
+
 const MODE_RANK = { none: 0, allowlist: 1, open: 2 } as const;
 
 /**
