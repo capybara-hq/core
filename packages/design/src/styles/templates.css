@@ -969,6 +969,21 @@ a.cb-object-name:hover {
   .cb-object-row[data-open="true"] {
     cursor: pointer;
   }
+  /* The text column fits the lead, so a row of a name and one more line is exactly 64 (the 40
+     lead and space.3 twice, as the card rows): each line takes half the lead, whatever the
+     compact type scale's own line heights would add. */
+  .cb-object-row:not([data-skeleton="true"]) .cb-object-text {
+    gap: 0;
+  }
+  .cb-object-row:not([data-skeleton="true"]) .cb-object-line,
+  .cb-object-row:not([data-skeleton="true"]) .cb-object-desc,
+  .cb-object-row:not([data-skeleton="true"]) .cb-object-meta {
+    min-height: 0;
+    line-height: calc(var(--cb-grouped-lead) / 2);
+  }
+  .cb-object-row:not([data-skeleton="true"]) .cb-object-desc {
+    font-size: var(--cb-type-small-size);
+  }
   .cb-object-row:not([data-skeleton="true"]) .cb-object-desc {
     overflow: hidden;
     text-overflow: ellipsis;

@@ -205,4 +205,15 @@ describe("ObjectRow compact styles", () => {
     expect(decl('.cb-object-row[data-press="true"]')["-webkit-touch-callout"]).toBe("none");
     expect(decl('.cb-object-row[data-press="true"]')["user-select"]).toBe("none");
   });
+
+  it("a name and one more line fit the lead: half of it each, so the row is exactly 64", () => {
+    const half = "calc(var(--cb-grouped-lead) / 2)";
+    const lines = rules.find((r) =>
+      r.selector.includes('.cb-object-row:not([data-skeleton="true"]) .cb-object-desc'),
+    );
+    expect(lines?.selector).toContain(".cb-object-line");
+    expect(lines?.selector).toContain(".cb-object-meta");
+    expect(lines?.decls["line-height"]).toBe(half);
+    expect(decl('.cb-object-row:not([data-skeleton="true"]) .cb-object-text').gap).toBe("0");
+  });
 });

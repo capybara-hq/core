@@ -2974,7 +2974,7 @@ States: `person`, `compact`
 | object-row-person avatar[data-shape=circle] | person | border-top-left-radius | 50% |
 | object-row-person person-name[data-size=16] | person | column-gap | space.1 |
 | object-row-person person-name-text | person | font-size | type.small |
-| object-row | compact | min-height | 64 |
+| object-row | compact | height | 64 |
 | object-row | compact | padding-left | space.4 |
 
 ### 6.18 EmptyState
