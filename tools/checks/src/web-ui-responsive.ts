@@ -116,29 +116,91 @@ export function sizeBranchFindings(p: ParsedFile): Finding[] {
       rule: SIZE_BRANCH_RULE,
       message: `${what}: size-class logic belongs to the design package (templates, ClassForms); a page does not branch on the window; if a structure must differ per class, ask the template for it`,
     });
-  walk(p.program, (n) => {
+  const namespaces = new Set<string>();
+  const isFn = (n: Node) =>
+    n.type === "FunctionDeclaration" ||
+    n.type === "FunctionExpression" ||
+    n.type === "ArrowFunctionExpression";
+  const bindInto = (into: Set<string>, id: unknown) => {
+    const n = id as Node | null | undefined;
+    if (!n) return;
+    if (n.type === "Identifier") into.add(n.name as string);
+    else if (n.type === "ObjectPattern")
+      for (const prop of n.properties as Node[])
+        bindInto(into, prop.type === "Property" ? prop.value : prop.argument);
+    else if (n.type === "ArrayPattern") for (const el of n.elements as Node[]) bindInto(into, el);
+    else if (n.type === "AssignmentPattern") bindInto(into, n.left);
+    else if (n.type === "RestElement") bindInto(into, n.argument);
+  };
+  /** The names a scope binds: a function's params and the declarations in it, nested functions apart. */
+  const scopeOf = (root: Node): Set<string> => {
+    const names = new Set<string>();
+    if (isFn(root)) for (const param of root.params as Node[]) bindInto(names, param);
+    const go = (n: unknown, top: boolean): void => {
+      if (typeof n !== "object" || n === null) return;
+      if (Array.isArray(n)) {
+        for (const x of n) go(x, false);
+        return;
+      }
+      const node = n as Node;
+      if (node.type === "VariableDeclarator") bindInto(names, node.id);
+      else if (node.type === "ImportSpecifier" || node.type === "ImportDefaultSpecifier")
+        bindInto(names, node.local);
+      else if (node.type === "ImportNamespaceSpecifier") {
+        bindInto(names, node.local);
+        namespaces.add((node.local as Node).name as string);
+      }
+      if (!top && isFn(node)) {
+        if (node.type === "FunctionDeclaration") bindInto(names, node.id);
+        return;
+      }
+      for (const [k, v] of Object.entries(node))
+        if (k !== "type" && k !== "start" && k !== "end") go(v, false);
+    };
+    go(root, true);
+    return names;
+  };
+  const visit = (n: Node, parent: Node | null, key: string, scopes: Set<string>[]): void => {
     if (n.type === "ImportSpecifier" || n.type === "ExportSpecifier") {
       const imported = (n.type === "ImportSpecifier" ? n.imported : n.local) as Node;
       const name = (imported.name ?? imported.value) as string;
       if (SIZE_NAMES.has(name)) flag(n, `\`${name}\``);
       return;
     }
-    if (n.type !== "MemberExpression") return;
-    const obj = n.object as Node;
-    const prop = n.property as Node;
-    const name = n.computed
-      ? prop.type === "Literal"
-        ? (prop.value as string)
-        : undefined
-      : (prop.name as string | undefined);
-    if (
-      name &&
-      WINDOW_READS.has(name) &&
-      obj.type === "Identifier" &&
-      WINDOW_GLOBALS.has(obj.name as string)
-    )
-      flag(n, `\`${obj.name as string}.${name}\``);
-  });
+    if (n.type === "Identifier") {
+      const name = n.name as string;
+      if (!WINDOW_READS.has(name) || scopes.some((s) => s.has(name))) return;
+      // a property name or an object key is not a read of the global
+      if (parent?.type === "MemberExpression" && key === "property" && !parent.computed) return;
+      if (parent?.type === "Property" && key === "key" && !parent.computed) return;
+      flag(n, `\`${name}\``);
+      return;
+    }
+    if (n.type === "MemberExpression") {
+      const obj = n.object as Node;
+      const prop = n.property as Node;
+      const name = n.computed
+        ? prop.type === "Literal"
+          ? (prop.value as string)
+          : undefined
+        : (prop.name as string | undefined);
+      if (name && obj.type === "Identifier") {
+        if (WINDOW_READS.has(name) && WINDOW_GLOBALS.has(obj.name as string))
+          flag(n, `\`${obj.name as string}.${name}\``);
+        else if (SIZE_NAMES.has(name) && namespaces.has(obj.name as string))
+          flag(n, `\`${obj.name as string}.${name}\``);
+      }
+    }
+    const inner = isFn(n) ? [...scopes, scopeOf(n)] : scopes;
+    for (const [k, v] of Object.entries(n)) {
+      if (k === "type" || k === "start" || k === "end" || typeof v !== "object" || v === null)
+        continue;
+      for (const c of Array.isArray(v) ? v : [v])
+        if (c && typeof c === "object" && typeof (c as Node).type === "string")
+          visit(c as Node, n, k, inner);
+    }
+  };
+  visit(p.program, null, "", [scopeOf(p.program)]);
   return out;
 }
 
@@ -253,7 +315,9 @@ export function templateOnlyPropsFindings(p: ParsedFile): Finding[] {
     }
   });
   // the same object can be reached twice (a const used as `header=`)
-  return out.filter((f, i) => out.findIndex((g) => g.line === f.line) === i);
+  return out.filter(
+    (f, i) => out.findIndex((g) => g.line === f.line && g.message === f.message) === i,
+  );
 }
 
 // --- web-ui-filters-scope --------------------------------------------------------------------

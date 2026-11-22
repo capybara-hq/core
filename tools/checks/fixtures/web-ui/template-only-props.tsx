@@ -26,3 +26,7 @@ export function Fine() {
     </ListPage>
   );
 }
+
+export function TwoOnOneLine() {
+  return <PageHeader title="x" primaryForm="a" header={{ primaryForm: "b" }} />;
+}

@@ -459,13 +459,18 @@ describe("responsive guards (spec §5.3, §7)", () => {
         ["web-ui-size-branch", 1],
         ["web-ui-size-branch", 7],
         ["web-ui-size-branch", 8],
+        // a namespace import member and the bare globals
+        ["web-ui-size-branch", 19],
+        ["web-ui-size-branch", 20],
+        ["web-ui-size-branch", 21],
       ]);
       expect(f[0]?.message).toContain("design package");
     });
 
     it("other window reads and a string naming a hook pass", () => {
       const f = sizeBranchFindings(parse("size-branch.tsx"));
-      expect(f.some((x) => x.line >= 12)).toBe(false);
+      // line 13 reads other window props; lines 26-29 bind the names locally
+      expect(f.some((x) => (x.line >= 12 && x.line <= 18) || x.line >= 22)).toBe(false);
     });
 
     it("the tree: tests and dev/ are skipped, a file fails unless allowlisted", () => {
@@ -532,6 +537,9 @@ describe("responsive guards (spec §5.3, §7)", () => {
         ["web-ui-template-only-props", 8],
         ["web-ui-template-only-props", 12],
         ["web-ui-template-only-props", 17],
+        // two different findings on one line are both kept
+        ["web-ui-template-only-props", 31],
+        ["web-ui-template-only-props", 31],
       ]);
       expect(f[0]?.message).toContain("PageHeader");
       expect(f[3]?.message).toContain("Tabs");

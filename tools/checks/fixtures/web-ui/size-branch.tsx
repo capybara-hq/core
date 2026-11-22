@@ -11,3 +11,19 @@ export function Page() {
 
 // Not a size branch: other reads of window and a string that only names a hook.
 export const fine = typeof window.scrollY === "number" && "useSizeClass".length > 0;
+
+// Evasions: a namespace import and the bare globals.
+import * as design from "@capybara-hq/design";
+
+export function Evasions() {
+  const sizeClass = design.useSizeClass();
+  const coarse = matchMedia("(pointer: coarse)").matches;
+  const wide = innerWidth > 900;
+  return [sizeClass, coarse, wide];
+}
+
+// A locally bound name is not the global.
+export function Bound(matchMedia: (q: string) => boolean) {
+  const innerWidth = 3;
+  return [matchMedia("x"), innerWidth, design.Button];
+}
