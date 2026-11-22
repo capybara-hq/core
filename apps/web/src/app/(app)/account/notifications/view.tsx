@@ -75,18 +75,21 @@ function Notifications({ accountId }: { accountId: string }) {
     {
       key: "device",
       header: t("devices.device"),
+      compact: "title",
       cell: (r) => (r.current ? `${r.deviceName} · ${t("devices.thisDevice")}` : r.deviceName),
     },
     {
       key: "lastSeen",
       header: t("devices.lastSeen"),
       tone: "muted",
+      compact: "trailing",
       cell: (r) => <DateTime value={r.lastSeenAt} />,
     },
     {
       key: "actions",
       header: t("devices.actions"),
       align: "right",
+      compact: "hidden",
       cell: (r) => (
         <Button
           density="dense"
@@ -122,6 +125,18 @@ function Notifications({ accountId }: { accountId: string }) {
           rows={rows}
           rowKey={(r) => r.id}
           rowLabel={(r) => r.deviceName}
+          rowMenu={(r) => [
+            {
+              label: t("devices.remove"),
+              danger: true,
+              disabled: remove.isPending,
+              onSelect: () =>
+                void remove.mutateAsync(r.id).then(
+                  () => toast.success(t("devices.removed")),
+                  (e: unknown) => toast.error(errorMessage(e)),
+                ),
+            },
+          ]}
           state={registrations.kind === "ready" ? "ready" : "loading"}
           empty={{ title: t("devices.empty") }}
         />
