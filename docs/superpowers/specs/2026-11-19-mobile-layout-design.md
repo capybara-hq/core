@@ -241,8 +241,10 @@ a read-only 管理 group on a phone, because management is not offered on touch 
 admin navigation of 2026-11-20 goes with it.
 
 While the native strip shows (the mobile app on the iPhone Duo, mobile app spec §6.1), the drawer
-drops its section entries (收件箱, 智能体, 定时任务) and the shell draws no menu button of its own:
-the strip's menu button opens the drawer.
+drops its section entries (收件箱, 智能体, 定时任务) and the shell draws no menu button of its own.
+The strip has no menu button either (amended 2026-11-22, interaction model D12): the strip's pill
+is the navigation, the recents are reached through 对话 (the conversations page) and 「技能、连接器、
+设备…」 through the account sheet.
 
 ### 4.3 Medium: the rail (decided)
 
@@ -625,9 +627,9 @@ The design:
   the strip: the outer display is the phone layout (the menu button and the drawer, §4.1), the
   inner display and a tablet the rail or the sidebar with their section entries.
 - **In the mobile app on the iPhone Duo** (decided 2026-11-21) the sections are native: a vertical
-  system tab bar in the strip on both displays, with a native menu button that asks the web to
-  open its drawer on the outer display; the web hides its own section entries while the strip
-  shows (`nav@1`, mobile app spec §6.1). On ordinary phones and on Android the app has no strip
+  system tab bar in the strip on both displays (amended 2026-11-22, interaction model D12: no
+  native menu button; the account avatar and the pill's primary action join the strip); the web
+  hides its own section entries while the strip shows (`nav@1`, mobile app spec §6.1). On ordinary phones and on Android the app has no strip
   and the web keeps its drawer or sidebar.
 - Safe areas on the outer display come from `env(safe-area-inset-*)` whatever Apple decides
   (§7.5); nothing assumes content behind the side controls.
