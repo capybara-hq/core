@@ -64,6 +64,11 @@ export interface MacOperationBackendOptions {
    * task long after its start answered. Feeds the control socket's running operations.
    */
   onOperationEnded?: (operationId: string) => void;
+  /**
+   * Called with the scope's project root when a scoped operation is admitted (the connection's
+   * record of the project directories it used). Best effort: a failure never refuses the operation.
+   */
+  onProjectAdmitted?: (projectRoot: string) => void;
 }
 export type MacOperationBackend = Required<
   Pick<
@@ -374,6 +379,13 @@ export async function createLocalOperationBackend(
     if (background) {
       boundedPath(background.outputPath, grant, true);
       if (!grant.full) host.checkArtifactTarget?.(background.outputPath);
+    }
+    if ("profile" in scope && scope.filesystem.kind === "scoped" && scope.filesystem.projectRoot) {
+      try {
+        options.onProjectAdmitted?.(scope.filesystem.projectRoot);
+      } catch {
+        // the record of used project directories never refuses an operation
+      }
     }
     const common = {
       scope,

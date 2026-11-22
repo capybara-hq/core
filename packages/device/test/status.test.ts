@@ -6,6 +6,7 @@ import { status } from "../src/commands/status.js";
 import { connectionDir } from "../src/connections.js";
 import { controlSocketPath, type LiveStatus } from "../src/control/protocol.js";
 import { startControlServer } from "../src/control/server.js";
+import { recordProjectRoot } from "../src/project-roots.js";
 import { writeCredential } from "../src/state.js";
 
 /** The machine directory, and `dir` the connection directory in it. */
@@ -212,6 +213,34 @@ describe("status: every connection of the machine", () => {
     expect(shown[0]).toMatchObject({ deviceId: "dev-a", control: "unavailable", live: null });
     expect(shown[0].controlReason).toContain("boom");
     expect(shown[1]).toMatchObject({ deviceId: "dev-b", control: "absent" });
+  });
+
+  it("status marks a connection whose project directory another connection also uses, without naming it", async () => {
+    const a = addConnection("dev-a", { url: "http://a.test" });
+    const b = addConnection("dev-b", { url: "http://b.test" });
+    for (const r of ["/p/a", "/p/shared", "/p/both"]) recordProjectRoot(a, r);
+    for (const r of ["/p/b", "/p/shared", "/p/both"]) recordProjectRoot(b, r);
+    addConnection("dev-c", { url: "http://c.test" });
+    const text = await run(m, false, { running: () => undefined });
+    const lineA = text.out.find((l) => l.includes("(dev-a)")) ?? "";
+    expect(lineA).toContain(
+      "(2 project directories also used by another connection on this machine)",
+    );
+    expect(lineA).not.toContain("dev-b");
+    expect(lineA).not.toContain("b.test");
+    const lineC = text.out.find((l) => l.includes("(dev-c)")) ?? "";
+    expect(lineC).not.toContain("also used");
+    const json = await run(m, true, { running: () => undefined });
+    const shown = JSON.parse(json.out[0] ?? "").connections;
+    expect(shown[0]).toMatchObject({ deviceId: "dev-a", sharedProjects: ["/p/both", "/p/shared"] });
+    expect(JSON.stringify(shown[0])).not.toContain("dev-b");
+    expect(shown[2]).toMatchObject({ deviceId: "dev-c", sharedProjects: [] });
+    // the detail of one connection says it too
+    const one = await run(m, false, { running: () => undefined }, "dev-a");
+    expect(one.out.join("\n")).toContain(
+      "2 project directories also used by another connection on this machine",
+    );
+    expect(one.out.join("\n")).not.toContain("dev-b");
   });
 
   it("--json lists every connection with its live state and never a credential", async () => {

@@ -19,14 +19,20 @@ import type { Policy } from "./state.js";
 /** What the summary describes besides the policy file. */
 export interface SummaryFacts {
   mode: "os" | "docker";
+  /** This connection's project directories another connection on the machine also uses. */
+  sharedProjectRoots: readonly string[];
 }
 
 /**
  * The summary of the local policy a hello and an owner change event carry: the device's sandbox
- * allowlist. The owner ceiling travels in the owner report.
+ * allowlist and the project directories it shares with another connection on the machine (never
+ * which one). The owner ceiling travels in the owner report.
  */
-export function policySummary(p: Policy, _facts: SummaryFacts): DeviceLocalPolicySummary {
-  return { allowedDomains: [...p.allowedDomains] };
+export function policySummary(p: Policy, facts: SummaryFacts): DeviceLocalPolicySummary {
+  return {
+    allowedDomains: [...p.allowedDomains],
+    sharedProjectRoots: [...facts.sharedProjectRoots],
+  };
 }
 
 /** A deployment-supplied string fit for the local log: no control or format characters. */

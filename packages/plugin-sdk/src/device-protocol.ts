@@ -70,7 +70,17 @@ const DEVICE_FEATURES: readonly DeviceFeature[] = ["networkReport", "projects"];
 export interface DeviceLocalPolicySummary {
   /** The device's sandbox allowlist (the owner's `allowedDomains`). */
   allowedDomains: string[];
+  /**
+   * This connection's project directories that another connection on the same machine also uses
+   * (absolute paths, {@link validateSandboxPathShape}; at most
+   * {@link MAX_DEVICE_SHARED_PROJECT_ROOTS}). Never names the other connection. Absent from an
+   * older device; a malformed value is dropped by the parser (the rest of the summary is kept).
+   */
+  sharedProjectRoots?: string[];
 }
+
+/** The most project directories a policy summary's `sharedProjectRoots` lists. */
+export const MAX_DEVICE_SHARED_PROJECT_ROOTS = 256;
 
 /**
  * A directory a `scan` found that looks like a project (it holds `.git` or `AGENTS.md`): a
@@ -381,7 +391,22 @@ function parseScanResult(v: unknown): DeviceScanResult {
 
 function parsePolicySummary(v: unknown): DeviceLocalPolicySummary {
   const o = obj(v, 'field "policy"');
-  return { allowedDomains: strArray(o, "allowedDomains") };
+  const shared = sharedProjectRoots(o.sharedProjectRoots);
+  return {
+    allowedDomains: strArray(o, "allowedDomains"),
+    ...(shared !== undefined && { sharedProjectRoots: shared }),
+  };
+}
+
+/**
+ * A summary's `sharedProjectRoots`: at most {@link MAX_DEVICE_SHARED_PROJECT_ROOTS} absolute paths.
+ * Undefined when absent or malformed (an optional field: only it is dropped).
+ */
+function sharedProjectRoots(v: unknown): string[] | undefined {
+  if (!Array.isArray(v) || v.length > MAX_DEVICE_SHARED_PROJECT_ROOTS) return undefined;
+  if (!v.every((p) => typeof p === "string" && validateSandboxPathShape(p).length === 0))
+    return undefined;
+  return [...(v as string[])];
 }
 
 /** Optional hello fields: malformed values are ignored so old and new peers interoperate. */

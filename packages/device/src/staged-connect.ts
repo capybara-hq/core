@@ -11,7 +11,6 @@ import {
   REPLACED_MESSAGE,
 } from "./client.js";
 import type { LiveStatus } from "./control/protocol.js";
-import { policySummary } from "./server-ops.js";
 import { type OwnedStop, type StagedDevice, unconfirmedStops } from "./staged-device.js";
 import {
   drainStagedSession,
@@ -421,7 +420,7 @@ export function connectStaged(device: StagedDevice, opts: StagedConnectOptions =
 /** The owner report and policy summary an owner change event carries. */
 function report_(device: StagedDevice) {
   return {
-    policy: policySummary(device.owner.store.current(), { mode: device.mode }),
+    policy: device.policySummary(),
     ownerCeiling: device.owner.report(),
   };
 }

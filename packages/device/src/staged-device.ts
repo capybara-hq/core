@@ -10,7 +10,10 @@ import {
   type SandboxStopResult,
   validateSandboxPathShape,
 } from "@capybara-hq/plugin-sdk";
-import type { DeviceFeature } from "@capybara-hq/plugin-sdk/device-protocol";
+import type {
+  DeviceFeature,
+  DeviceLocalPolicySummary,
+} from "@capybara-hq/plugin-sdk/device-protocol";
 import { RunningOperations } from "./activity.js";
 import { CommandLog } from "./command-log.js";
 import type { OperationContainerHost } from "./exec/docker-operations.js";
@@ -27,6 +30,7 @@ import type { EnvironmentInputs, VerifiedRuntime } from "./exec/runtime-manifest
 import { deviceSandboxHome, osRoots, RootGuard } from "./exec/shared.js";
 import { issueOwnerReport } from "./owner-report.js";
 import type { PolicyStore } from "./policy-store.js";
+import { recordProjectRoot, sharedProjectRoots } from "./project-roots.js";
 import { policySummary, type StagedOwnerPolicy } from "./server-ops.js";
 import { type StagedHello, StagedSessionStates } from "./staged-session.js";
 import type { Credential } from "./state.js";
@@ -134,6 +138,8 @@ export interface StagedDevice {
   readonly states: StagedSessionStates;
   readonly binder: InstanceBinder;
   readonly owner: StagedOwnerPolicy;
+  /** The local policy summary a hello and an owner change event carry, read now. */
+  policySummary(): DeviceLocalPolicySummary;
   /** The bound generation's backend, or the refusing placeholder while unbound. */
   backend(): MacOperationBackend;
   /** What a drain waits for: the bound backend's owned work (nothing while unbound). */
@@ -230,12 +236,15 @@ export function createStagedDevice(o: StagedDeviceOptions): StagedDevice {
       readOwnerCeiling,
       // a background task stays in the running operations until its worker is gone
       onOperationEnded: (operationId) => running.endOperation(operationId),
+      // the project directories this connection used, for the ones it shares with another
+      onProjectAdmitted: (projectRoot) => recordProjectRoot(stateDir, projectRoot),
     };
     const deps = o.backendDependencies ?? {};
     if (mode === "docker") {
       const { createDockerOperationBackend } = await import("./exec/docker-operations.js");
-      // a command in the container keeps HOME at its working directory (the image's paths)
-      const { roots: _host, sandboxHome: _home, ...rest } = options;
+      // a command in the container keeps HOME at its working directory (the image's paths); its
+      // project roots are the container's paths, never a directory another connection could use
+      const { roots: _host, sandboxHome: _home, onProjectAdmitted: _projects, ...rest } = options;
       return createDockerOperationBackend(
         { ...rest, hostRoots, container: o.container as OperationContainerHost },
         { ...deps, ...o.linux },
@@ -301,6 +310,11 @@ export function createStagedDevice(o: StagedDeviceOptions): StagedDevice {
     },
   };
   const backend = () => binder.current()?.backend ?? UNBOUND_BACKEND;
+  const summary = () =>
+    policySummary(policy.current(), {
+      mode,
+      sharedProjectRoots: sharedProjectRoots(stateRoot, cred.deviceId),
+    });
 
   return {
     cred,
@@ -311,6 +325,7 @@ export function createStagedDevice(o: StagedDeviceOptions): StagedDevice {
     binder,
     owner,
     backend,
+    policySummary: summary,
     drainTarget: () => binder.current()?.backend ?? { lifecycle: IDLE_LIFECYCLE },
     async report(r = {}) {
       const bound = binder.current();
@@ -338,7 +353,7 @@ export function createStagedDevice(o: StagedDeviceOptions): StagedDevice {
           // a container device offers only its container's workspace: the host's home is no base
           ...(mode === "os" &&
             validateSandboxPathShape(ownerHome).length === 0 && { home: ownerHome }),
-          policy: policySummary(policy.current(), { mode }),
+          policy: summary(),
           permissionSupport,
           ownerCeiling: owner.report(),
           instanceGeneration: bound?.binding.instanceGeneration ?? null,
