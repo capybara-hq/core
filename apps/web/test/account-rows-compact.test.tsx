@@ -8,17 +8,9 @@ import { json, lastStubRoutes, noContent, stubApi } from "./support/api";
 import { resetNavigation } from "./support/navigation";
 import { renderRouteWithCache } from "./support/query";
 import { ME } from "./support/render";
+import { stubWindowWidth } from "./support/width";
 
 vi.mock("../src/i18n/navigation", () => import("./support/navigation"));
-
-/** A `matchMedia` for a window `width` px wide (min-/max-width features only). */
-const mediaFor = (width: number) => (q: string) => {
-  const features = [...q.matchAll(/\((min|max)-width:\s*(\d+)px\)/g)];
-  const matches =
-    features.length > 0 &&
-    features.every(([, k, n]) => (k === "min" ? width >= Number(n) : width <= Number(n)));
-  return { matches, media: q, addEventListener: () => {}, removeEventListener: () => {} };
-};
 
 const O = "/api/v1/orgs/o1";
 const GRANT = {
@@ -49,7 +41,7 @@ const REG = {
   current: false,
 };
 
-beforeEach(() => vi.stubGlobal("matchMedia", mediaFor(390)));
+beforeEach(() => stubWindowWidth(390));
 afterEach(() => {
   cleanup();
   vi.unstubAllGlobals();
@@ -72,7 +64,7 @@ describe("account tables at 390", () => {
     await renderRouteWithCache("/account/grants", lastStubRoutes(), { locale: "en", me: ME });
     const table = await vi.waitFor(compact);
     expect(within(table).getByText("Helper")).toBeTruthy();
-    expect(within(table).queryByText("Bash", { selector: "[data-part='cell']" })).toBeNull();
+    expect(within(table).getByText("Bash")).toBeTruthy();
     await userEvent.setup().click(within(table).getByRole("button", { name: /Row actions/ }));
     await userEvent
       .setup()

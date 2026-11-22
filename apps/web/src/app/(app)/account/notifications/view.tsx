@@ -71,6 +71,12 @@ function Notifications({ accountId }: { accountId: string }) {
   const hasCurrent = rows.some((r) => r.current);
   const canEnable = push.state === "prompt" || (push.state === "granted" && !hasCurrent);
 
+  const removeOne = (r: PushRegistrationView) =>
+    void remove.mutateAsync(r.id).then(
+      () => toast.success(t("devices.removed")),
+      (e: unknown) => toast.error(errorMessage(e)),
+    );
+
   const columns: Column<PushRegistrationView>[] = [
     {
       key: "device",
@@ -96,12 +102,7 @@ function Notifications({ accountId }: { accountId: string }) {
           variant="danger"
           aria-label={`${t("devices.remove")} ${r.deviceName}`}
           disabled={remove.isPending}
-          onClick={() =>
-            void remove.mutateAsync(r.id).then(
-              () => toast.success(t("devices.removed")),
-              (e: unknown) => toast.error(errorMessage(e)),
-            )
-          }
+          onClick={() => removeOne(r)}
         >
           {t("devices.remove")}
         </Button>
@@ -130,11 +131,7 @@ function Notifications({ accountId }: { accountId: string }) {
               label: t("devices.remove"),
               danger: true,
               disabled: remove.isPending,
-              onSelect: () =>
-                void remove.mutateAsync(r.id).then(
-                  () => toast.success(t("devices.removed")),
-                  (e: unknown) => toast.error(errorMessage(e)),
-                ),
+              onSelect: () => removeOne(r),
             },
           ]}
           state={registrations.kind === "ready" ? "ready" : "loading"}
