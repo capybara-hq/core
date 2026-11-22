@@ -43,6 +43,10 @@ const TOAST_ICON = {
   progress: "spinner",
 } as const;
 
+const prefersReducedMotion = () =>
+  typeof window.matchMedia === "function" &&
+  window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+
 export function ToastProvider({ children }: { children: ReactNode }) {
   const t = useDesignT();
   const [items, setItems] = useState<ToastItem[]>([]);
@@ -115,15 +119,24 @@ export function ToastProvider({ children }: { children: ReactNode }) {
       key={it.id}
       className="cb-toast"
       onPointerDown={(e) => {
-        swipeStart.current = e.pointerType === "touch" ? e.clientY : null;
+        // A drag that starts on the action or the close button is a press, not a swipe.
+        const onButton = (e.target as HTMLElement).closest("button") !== null;
+        swipeStart.current = e.pointerType === "touch" && !onButton ? e.clientY : null;
+      }}
+      onPointerMove={(e) => {
+        const from = swipeStart.current;
+        if (from === null || prefersReducedMotion()) return;
+        e.currentTarget.style.transform = `translateY(${Math.max(0, e.clientY - from)}px)`;
       }}
       onPointerUp={(e) => {
         const from = swipeStart.current;
         swipeStart.current = null;
+        e.currentTarget.style.transform = "";
         if (from !== null && e.clientY - from >= SWIPE_DISMISS_PX) close(it.id);
       }}
-      onPointerCancel={() => {
+      onPointerCancel={(e) => {
         swipeStart.current = null;
+        e.currentTarget.style.transform = "";
       }}
       data-kind={it.kind}
       role={it.kind === "error" ? "alert" : undefined}

@@ -34,6 +34,10 @@ describe("the toast region on compact", () => {
     expect(decls(COMPACT, ".cb-toast-group > .cb-toast:not(:first-child)")?.display).toBe("none");
   });
 
+  it("leaves vertical drags to the swipe, not the page pan", () => {
+    expect(decls(COMPACT, ".cb-toast")?.["touch-action"]).toBe("pan-x");
+  });
+
   it("keeps the desktop rule at the top center", () => {
     const d = decls(null, ".cb-toast-region");
     expect(d?.top).toBe("var(--cb-space-4)");
@@ -66,6 +70,27 @@ describe("swipe down to dismiss", () => {
       fireEvent.pointerUp(toast, { clientY: 160, pointerType: "touch" });
     });
     expect(screen.queryByText("Saved")).toBeNull();
+  });
+
+  it("follows the finger and ignores a drag that starts on the close button", () => {
+    render(
+      <DesignProvider locale="en">
+        <ToastProvider>
+          <Fire />
+        </ToastProvider>
+      </DesignProvider>,
+    );
+    fireEvent.click(screen.getByText("go"));
+    const toast = screen.getByText("Saved").closest(".cb-toast") as HTMLElement;
+    fireEvent.pointerDown(toast, { clientY: 100, pointerType: "touch" });
+    fireEvent.pointerMove(toast, { clientY: 120, pointerType: "touch" });
+    expect(toast.style.transform).toBe("translateY(20px)");
+    fireEvent.pointerCancel(toast);
+    expect(toast.style.transform).toBe("");
+    const close = toast.querySelector("button") as HTMLElement;
+    fireEvent.pointerDown(close, { clientY: 100, pointerType: "touch" });
+    fireEvent.pointerUp(close, { clientY: 200, pointerType: "touch" });
+    expect(screen.queryByText("Saved")).not.toBeNull();
   });
 
   it("keeps it on a short drag", () => {
