@@ -916,10 +916,13 @@ export class SandboxService {
       return { applied: null, effective, pendingNextUse: false, pendingFilesReset: false };
     }
     const rec = readInstanceLimits(row.instance_limits);
-    // another kind, or a desired host the instance lacks (a host added to a list): pending
+    // what mustApply applies at the next use: another kind, a host the instance allows that the
+    // desired list does not (a narrowing), or a desired host it lacks (a host added to a list)
     const differs =
       row.provider === p.plugin &&
-      (!sameApplied(rec.applied, effective) || appliedLacksHost(rec.applied, effective));
+      (!sameApplied(rec.applied, effective) ||
+        appliedWider(rec.applied, effective) ||
+        appliedLacksHost(rec.applied, effective));
     const fsBound = differs && row.fs_status === "ready" && this.fsBound(p, rec, effective);
     const hasInstance =
       row.handle !== null && (row.status === "running" || row.status === "suspended");

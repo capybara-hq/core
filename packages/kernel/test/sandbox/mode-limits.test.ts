@@ -456,12 +456,33 @@ describe("a changed mode on use", () => {
       outsideSandbox: "off",
       deviceNetwork: { ceiling: "allowlist", excludedHosts: ["pypi.org"] },
     });
+    // the device page says so before the use applies it
+    expect(await s.limitsState({ orgId, deviceId })).toMatchObject({
+      pendingNextUse: true,
+      pendingFilesReset: false,
+    });
     const again = await use(s);
     expect(again.h).toEqual(first.h);
     expect(await ops("update")).toHaveLength(1);
+    expect((await s.limitsState({ orgId, deviceId })).pendingNextUse).toBe(false);
     const network = (await record())?.network as { hosts?: string[] } | undefined;
     expect(network?.hosts).toContain("github.com");
     expect(network?.hosts).not.toContain("pypi.org");
+  });
+
+  it("limits fixed at the file system, no update: a host-only narrowing is pending a file reset", async () => {
+    provider = fake({ limitsApplyAt: "fileSystem" });
+    const s = service();
+    await setAutoMode("off");
+    await use(s);
+    await setOrgSettings({
+      outsideSandbox: "off",
+      deviceNetwork: { ceiling: "allowlist", excludedHosts: ["pypi.org"] },
+    });
+    expect(await s.limitsState({ orgId, deviceId })).toMatchObject({
+      pendingNextUse: false,
+      pendingFilesReset: true,
+    });
   });
 });
 

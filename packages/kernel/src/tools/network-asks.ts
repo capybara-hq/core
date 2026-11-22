@@ -109,9 +109,16 @@ export function deviceAskTerms(
   return {
     refusal: perOperationHosts ? f.refusal : f.listAddRefusal,
     // a host the device's own list already names, refused because the instance does not have it
-    // yet: it applies when a list edit applies, so it is not asked again
-    onList: (host) =>
-      f.ownList && f.ownHosts.some((p) => coversHost(p.toLowerCase(), host)) ? appliesAt : null,
+    // yet: it applies when a list edit applies, so it is not asked again. Only a host the list can
+    // carry (the org's hosts still cover it; with per-operation hosts a per-call grant could too):
+    // an entry the org dropped since is in effect nowhere and never applies
+    onList: (host) => {
+      const h = host.toLowerCase();
+      if (!f.ownList || !f.ownHosts.some((p) => coversHost(p.toLowerCase(), h))) return null;
+      if (f.listAddRefusal(h) !== null) return null;
+      if (perOperationHosts && f.refusal(h) !== null) return null;
+      return appliesAt;
+    },
     offer: (hosts) =>
       networkAskOffer(
         { perOperationHosts },
@@ -365,8 +372,8 @@ export function planNetworkAsk(
       const listed = ctx.onList?.(b.host) ?? null;
       if (b.host.startsWith("*.") || validateAllowHost(b.host).length > 0) {
         address.push(b.host);
-      } else if (listed !== null) onList.push({ host: b.host, appliesAt: listed });
-      else if (why !== null) unavailable.push(unavailableHostNote(b.host, why));
+      } else if (why !== null) unavailable.push(unavailableHostNote(b.host, why));
+      else if (listed !== null) onList.push({ host: b.host, appliesAt: listed });
       else if (run?.taskGranted?.has(b.host)) taskIgnored.push(b.host);
       else if (run?.refused.has(b.host)) refused.push(b.host);
       else if (unattendedFails(ctx.unattended)) {

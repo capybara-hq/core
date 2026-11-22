@@ -172,6 +172,31 @@ describe("deviceAskTerms: what a device's sandbox lets an ask offer", () => {
     // a device following its org's hosts has no own list to name it
     expect(deviceAskTerms(facts({ ownList: false })).onList("a.dev")).toBeNull();
     expect(deviceAskTerms(facts()).onList("added.dev")).toBeNull();
+    // the host is matched case-insensitively, as the list's refusal is
+    expect(deviceAskTerms(facts()).onList("A.DEV")).toBe("files-reset");
+  });
+
+  it("a listed host outside the org's hosts gets the unavailable note, never 'it applies'", () => {
+    // x.dev is on the device's own list, but the org dropped it since: in effect nowhere
+    const f = facts({ ownHosts: ["a.dev", "x.dev"] });
+    expect(deviceAskTerms(f).onList("x.dev")).toBeNull();
+    const p = planNetworkAsk([dev("x.dev")], run(), { unattended: null, ...deviceAskTerms(f) });
+    expect(p.ask).toEqual([]);
+    expect(p.notes).toEqual([
+      `[network] x.dev was blocked by this device's network policy and cannot be allowed from this conversation: ${outsideOrg}. Continue without it or tell the user.`,
+    ]);
+    // with per-operation hosts, a per-call refusal of a listed host is shown too
+    const grant = "an organization admin adds a.dev to the organization's device network list";
+    const perOp = facts({
+      box: { perCallHosts: true },
+      refusal: (h) => (h === "a.dev" ? grant : null),
+    });
+    expect(deviceAskTerms(perOp).onList("a.dev")).toBeNull();
+    expect(
+      planNetworkAsk([dev("a.dev")], run(), { unattended: null, ...deviceAskTerms(perOp) }).notes,
+    ).toEqual([
+      `[network] a.dev was blocked by this device's network policy and cannot be allowed from this conversation: ${grant}. Continue without it or tell the user.`,
+    ]);
   });
 
   it("a per-call grant refusal decides with per-operation hosts; the list refusal without", () => {
