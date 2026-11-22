@@ -378,6 +378,8 @@ Three levels, most specific first:
   SDK's rules, else the whole cookie is discarded. A hint only, never an input to access or to a
   kernel call. `StaticTheme` links and brands a page from such a reference without a query; when
   the kernel is down the immutable CSS and assets come from the browser's cache.
+  Over https the cookie is `__Host-cb-brand` (maintainer decision 2026-11-22, #602), over plain
+  http `cb-brand`; readers take only the name of the request's mode (brand coverage spec §5).
 
 ## 9. APIs and the `Platform` tool
 

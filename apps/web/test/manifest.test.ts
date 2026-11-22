@@ -219,9 +219,11 @@ describe("app icons follow the platform default theme (theme brand coverage §6)
   });
 
   it("the root metadata's favicon is the brand cookie's, else the platform's", async () => {
-    const { BRAND_COOKIE, brandRefOf, encodeBrandCookie } = await import("../src/lib/brand-cookie");
+    const { BRAND_COOKIE_HTTP, brandRefOf, encodeBrandCookie } = await import(
+      "../src/lib/brand-cookie"
+    );
     req.headers = new Headers({
-      cookie: `${BRAND_COOKIE}=${encodeBrandCookie(brandRefOf(THEME))}`,
+      cookie: `${BRAND_COOKIE_HTTP}=${encodeBrandCookie(brandRefOf(THEME))}`,
     });
     readMeta = async () => CUSTOM;
     const md = await generateMetadata();

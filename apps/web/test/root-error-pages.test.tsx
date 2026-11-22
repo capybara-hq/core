@@ -4,7 +4,7 @@
 import { act, cleanup } from "@testing-library/react";
 import { createRoot } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { BRAND_COOKIE, type BrandRef, encodeBrandCookie } from "../src/lib/brand-cookie";
+import { BRAND_COOKIE_HTTP, type BrandRef, encodeBrandCookie } from "../src/lib/brand-cookie";
 import { resetNavigation } from "./support/navigation";
 import { renderPage } from "./support/render";
 import { themeCssUrl } from "./support/themes";
@@ -40,13 +40,13 @@ const themeLinks = () =>
 beforeEach(() => resetNavigation("/agents"));
 afterEach(() => {
   cleanup();
-  setCookie(`${BRAND_COOKIE}=; max-age=0; path=/`);
+  setCookie(`${BRAND_COOKIE_HTTP}=; max-age=0; path=/`);
   for (const l of document.querySelectorAll('link[data-precedence="theme"]')) l.remove();
 });
 
 describe("app/error.tsx", () => {
   it("the root error page links the cookie's CSS and draws its mark", () => {
-    setCookie(`${BRAND_COOKIE}=${encodeBrandCookie(REF)}; path=/`);
+    setCookie(`${BRAND_COOKIE_HTTP}=${encodeBrandCookie(REF)}; path=/`);
     renderPage(<RootError error={new Error("x")} reset={() => {}} />);
     expect(themeLinks()).toEqual([REF.cssUrl]);
     expect(document.querySelector('[data-template="StatusPage"]')).not.toBeNull();
@@ -56,7 +56,7 @@ describe("app/error.tsx", () => {
   });
 
   it("without a valid cookie, the built-in theme", () => {
-    setCookie(`${BRAND_COOKIE}=nope; path=/`);
+    setCookie(`${BRAND_COOKIE_HTTP}=nope; path=/`);
     renderPage(<RootError error={new Error("x")} reset={() => {}} />);
     expect(themeLinks()).toEqual([]);
     expect(document.querySelector('[data-part="logo-mark"]')).toBeNull();
@@ -67,7 +67,7 @@ describe("app/global-error.tsx", () => {
   it("global-error links the cookie's CSS", async () => {
     // its own version: React remembers a stylesheet it hoisted once per document
     const ref = { ...REF, cssUrl: themeCssUrl(UUID, "10") };
-    setCookie(`${BRAND_COOKIE}=${encodeBrandCookie(ref)}; path=/`);
+    setCookie(`${BRAND_COOKIE_HTTP}=${encodeBrandCookie(ref)}; path=/`);
     const root = createRoot(document);
     await act(async () => root.render(<GlobalError error={new Error("x")} reset={() => {}} />));
     expect(themeLinks()).toEqual([ref.cssUrl]);

@@ -1,3 +1,4 @@
+import { cookieOf } from "./cookies";
 import type { ThemeRef, ThemeScheme } from "./themes";
 
 /**
@@ -11,7 +12,19 @@ import type { ThemeRef, ThemeScheme } from "./themes";
  * grammar, and a single invalid field discards the whole cookie. One codec for the server and the
  * browser.
  */
-export const BRAND_COOKIE = "cb-brand";
+export const BRAND_COOKIE_HTTP = "cb-brand";
+
+/**
+ * The cookie's name over https: `__Host-` makes the browser keep it only when it is `Secure`,
+ * `Path=/` and host-only (no `Domain`), so a sibling subdomain cannot plant one that sets the
+ * wordmark on this site's error pages. Browsers refuse the prefix over plain http, where the
+ * name is {@link BRAND_COOKIE_HTTP}.
+ */
+export const BRAND_COOKIE_HTTPS = "__Host-cb-brand";
+
+/** The cookie's name for a request (or page) served over https or plain http. */
+export const brandCookieName = (https: boolean): string =>
+  https ? BRAND_COOKIE_HTTPS : BRAND_COOKIE_HTTP;
 
 /** 30 days, in seconds; renewed on every themed document. */
 export const BRAND_COOKIE_MAX_AGE = 2_592_000;
@@ -168,14 +181,28 @@ export function decodeBrandCookie(raw: string | undefined): BrandRef | null {
 }
 
 /**
- * The `document.cookie` string that stores `ref` (`Path=/`, `SameSite=Lax`, 30 days, `Secure` on
- * https), or deletes the cookie when `ref` is null (the built-in theme) or cannot be stored.
+ * The brand a `Cookie` header holds for a request served over https or plain http: only the name
+ * of that mode is read, so over https a plain `cb-brand` (which a sibling subdomain can plant) is
+ * never read. A header carrying `__Host-cb-brand` came over https whatever `https` says (the
+ * browser sends a Secure cookie only there), which covers a TLS proxy the web tier cannot see.
  */
-export function brandCookieHeader(ref: BrandRef | null, secure: boolean): string {
+export function brandCookieOf(header: string | null, https: boolean): BrandRef | null {
+  const secure = https || cookieOf(header, BRAND_COOKIE_HTTPS) !== undefined;
+  return decodeBrandCookie(cookieOf(header, brandCookieName(secure)));
+}
+
+/**
+ * The `document.cookie` string that stores `ref` (`Path=/`, `SameSite=Lax`, 30 days, no `Domain`)
+ * under the name of the mode: over https `__Host-cb-brand` with `Secure`, over plain http
+ * `cb-brand`. It deletes the cookie when `ref` is null (the built-in theme) or cannot be stored.
+ */
+export function brandCookieHeader(ref: BrandRef | null, https: boolean): string {
+  const name = brandCookieName(https);
   const raw = ref === null ? null : encodeBrandCookie(ref);
   const value =
-    raw === null
-      ? `${BRAND_COOKIE}=; Max-Age=0`
-      : `${BRAND_COOKIE}=${raw}; Max-Age=${BRAND_COOKIE_MAX_AGE}`;
-  return `${value}; Path=/; SameSite=Lax${secure ? "; Secure" : ""}`;
+    raw === null ? `${name}=; Max-Age=0` : `${name}=${raw}; Max-Age=${BRAND_COOKIE_MAX_AGE}`;
+  return `${value}; Path=/; SameSite=Lax${https ? "; Secure" : ""}`;
 }
+
+/** The `document.cookie` string that deletes a plain `cb-brand` left from an http visit. */
+export const STALE_BRAND_COOKIE_CLEAR = `${BRAND_COOKIE_HTTP}=; Max-Age=0; Path=/; SameSite=Lax`;

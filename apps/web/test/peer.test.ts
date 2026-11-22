@@ -109,6 +109,28 @@ describe("sanitizeIncoming with CAPYBARA_WEB_TRUST_PROXY", () => {
     );
   });
 
+  /** The x-forwarded-proto Next sees for a request from `peer` carrying `proto`. */
+  const protoOf = (trustRaw: string | undefined, peer: string, proto: string) => {
+    const req: IncomingLike = {
+      headers: { "x-forwarded-proto": proto },
+      socket: { remoteAddress: peer },
+    };
+    sanitizeIncoming(req, TOKEN, parseTrustProxy(trustRaw));
+    return req.headers["x-forwarded-proto"];
+  };
+
+  it("x-forwarded-proto: kept only from a trusted peer, only http or https, the proxy's value", () => {
+    expect(protoOf("1", "127.0.0.1", "https")).toBe("https");
+    expect(protoOf("1", "127.0.0.1", "HTTP")).toBe("http");
+    // a value the client prepended before the proxy appended its own
+    expect(protoOf("1", "127.0.0.1", "http, https")).toBe("https");
+    expect(protoOf("10.0.0.0/8", "::ffff:10.0.0.2", "https")).toBe("https");
+    // no trust, an untrusted peer, or a value that is no scheme: Next takes the socket's
+    expect(protoOf(undefined, "127.0.0.1", "https")).toBeUndefined();
+    expect(protoOf("10.0.0.0/8", "172.16.0.9", "https")).toBeUndefined();
+    expect(protoOf("1", "127.0.0.1", "wss")).toBeUndefined();
+  });
+
   it("rejects a malformed CAPYBARA_WEB_TRUST_PROXY", () => {
     for (const bad of [
       "-1",
