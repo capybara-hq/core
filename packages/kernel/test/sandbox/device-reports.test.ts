@@ -582,6 +582,31 @@ describe("the report revision and the device authority epoch", () => {
     expect((await reports.current(id))?.support).toBeNull();
   });
 
+  it("a revision change on a device without an instance keeps the stored support and Full consent", async () => {
+    const id = await seedDevice(raw, orgId, accountId);
+    await seedInstance(id);
+    await fullAccessOn(id);
+    answer = async () => report("r1");
+    supportAnswer = async () => FAKE_PERMISSION_SUPPORT;
+    await reports.changed("device-fake", id);
+    // the instance goes away (destroyed, or a dial-in device with none yet)
+    await db.deleteFrom("device_instances").where("device_id", "=", id).execute();
+    const probes = vi.fn(async () => FAKE_PERMISSION_SUPPORT as SandboxPermissionSupport);
+    supportAnswer = probes;
+    answer = async () => report("r2");
+    expect(await reports.changed("device-fake", id)).toBe("bumped");
+    expect(probes).not.toHaveBeenCalled();
+    expect((await reports.current(id))?.support).toEqual(FAKE_PERMISSION_SUPPORT);
+    expect(await epoch(id)).toEqual({ revision: 1, full_revision: 0 });
+    expect(await profile()).toBe("full-access");
+    // the next instance-backed report with the same support resets nothing either
+    await seedInstance(id);
+    answer = async () => report("r3");
+    expect(await reports.changed("device-fake", id)).toBe("bumped");
+    expect(await epoch(id)).toEqual({ revision: 2, full_revision: 0 });
+    expect(await profile()).toBe("full-access");
+  });
+
   it("a kernel refresh that replaces the revision publishes the same change", async () => {
     const s = service();
     const id = await seedDevice(raw, orgId, accountId);

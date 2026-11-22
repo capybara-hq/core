@@ -73,8 +73,10 @@ export type DeviceReportChange = "bumped" | "same" | "not-served";
 /**
  * The stored device report (`devices.report`, `report_at`; device-provider spec §6.1, §6.7): what a
  * device's provider last told about it (`device-provider@1` `report()`, with the instance's
- * `permissionSupport()` read at the last {@link changed} kept under the key `support`), shown to people and never used for
- * enforcement. {@link refresh} (the kernel, on a create or resume) and {@link changed} (the
+ * `permissionSupport()` read at the last {@link changed} that had an instance, kept under the key
+ * `support`). The report's text is shown to people; its revision and the stored support drive
+ * the device authority epoch below (what an operation may do is still decided by the authority
+ * and the provider's own enforcement, never read from here). {@link refresh} (the kernel, on a create or resume) and {@link changed} (the
  * provider, through `ctx.devices.reportChanged`) ask the provider and store the answer; request
  * paths {@link read} the stored copy from PG and never call the provider.
  *
@@ -216,8 +218,8 @@ export class DeviceReports {
 
   /**
    * The provider's report (checked; throws when it fails or does not pass) and, with
-   * `withSupport`, the instance's permission support (null when the provider has none, there is
-   * no instance, or the read fails or does not pass; absent without `withSupport`: the stored one
+   * `withSupport`, the instance's permission support (null when the provider has none or the read
+   * fails or does not pass; absent without `withSupport` or without an instance: the stored one
    * is kept), each bounded and raced so a provider ignoring the signal holds nothing.
    */
   private async ask(
@@ -233,7 +235,9 @@ export class DeviceReports {
     if (!withSupport) return { report };
     const { handle } = ref;
     const read = entry.impl.permissionSupport?.bind(entry.impl);
-    if (!read || handle === null) return { report, support: null };
+    // no instance to ask: what the last instance-backed read said still stands
+    if (handle === null) return { report };
+    if (!read) return { report, support: null };
     const s2 = bounded();
     const support = await untilAborted(read(handle, s2), s2).then(
       cloudSupportOf,
