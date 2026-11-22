@@ -1,5 +1,26 @@
 # @capybara-hq/plugin-tools
 
+## 0.1.0-rc.20
+
+### Minor Changes
+
+- 718eb52: Add the setup guide place `device-connection` (member audience; variables `publicUrl`, `orgId`,
+  `orgName`, `pluginName`) and the `::shell-action connect-this-machine <label>` directive, so device
+  provider plugins can ship connection guides. Rendered guides carry a `shell-action` block; at most 4
+  per document, allowed only in this place. The kernel serves these guides to org members
+  (`agents.use`). `capybara-plugin guide` prints shell actions.
+
+### Patch Changes
+
+- Updated dependencies [718eb52]
+- Updated dependencies [c49d70e]
+- Updated dependencies [f4c2ae8]
+- Updated dependencies [42e4ae0]
+- Updated dependencies [78fe943]
+- Updated dependencies [2c28141]
+  - @capybara-hq/plugin-sdk@0.1.0-rc.51
+  - @capybara-hq/kernel@0.1.0-rc.67
+
 ## 0.1.0-rc.19
 
 ### Patch Changes

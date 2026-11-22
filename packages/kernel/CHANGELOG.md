@@ -1,5 +1,46 @@
 # @capybara-hq/kernel
 
+## 0.1.0-rc.67
+
+### Minor Changes
+
+- 718eb52: Add the setup guide place `device-connection` (member audience; variables `publicUrl`, `orgId`,
+  `orgName`, `pluginName`) and the `::shell-action connect-this-machine <label>` directive, so device
+  provider plugins can ship connection guides. Rendered guides carry a `shell-action` block; at most 4
+  per document, allowed only in this place. The kernel serves these guides to org members
+  (`agents.use`). `capybara-plugin guide` prints shell actions.
+- c49d70e: Add the platform setting `devices.defaultProvider` (config field, `CAPYBARA_DEVICES__DEFAULT_PROVIDER`,
+  and the admin setting `devicesDefaultProvider`) naming the device provider that makes a person's
+  default device, with an org override `deviceDefaultProvider` (accepted only for a provider that is on
+  in the org, else `org.device_provider_not_available`).
+- f4c2ae8: Rename the `sandbox@2` extension point to `device-provider@1`, a multi-provider point: several
+  device providers can be loaded side by side. `SANDBOX_EXTENSION_POINT` becomes
+  `DEVICE_PROVIDER_EXTENSION_POINT` and `SandboxProvider` becomes `DeviceProvider`. The
+  `sandbox-docker` bootstrap pin is removed.
+- 42e4ae0: `device-provider@1` providers now declare `networkAllowlist: true` and implement
+  `report(device, signal)`, which answers a `DeviceReport` (revision, description, home, limits,
+  reset; checked by `parseDeviceReport`). A provider can refuse a project directory with
+  `ProjectPathRefusedError`. The kernel refuses to load a provider that lacks any required member.
+  The kernel stores each device's report (`devices.report`, migration 0175), refreshed after its
+  instance is created or resumed; request paths read the stored copy.
+- 78fe943: An operation scope's filesystem is now `{ kind: "scoped", projectRoot, writeRoots }`: the scope
+  names the project root (null in free mode) and the roots the operation may write, and no longer
+  carries read roots; what a sandboxed operation may read is the device provider's rule. The scope
+  parser refuses a `readRoots` key. Device protocol goes to 5 (`DEVICE_PROTOCOL_VERSION`), and a
+  protocol 4 program is refused with 426 ("Update capybara-device"). `capybara-device` derives its
+  read roots from the write roots, the project root (the workspace in free mode) and its skills root;
+  an approved read outside the project is not conveyed to a local device for now. The permission
+  conformance suite sends the fixture root as the project root.
+
+### Patch Changes
+
+- 2c28141: An org's default theme can now shape the agent avatar choices: it may hide built-in presets and add presets of its own. The kernel lists them in `GET /orgs/:orgId/themes` (`avatars`), accepts a theme preset key on create and update (stored pinned to the theme version, `agent.avatar_unavailable` when the org does not offer it), and draws the random default from the visible choices. `AvatarPicker` gains `hidden` and `extra`, and the web create form, template flow and basics section follow the org's choices.
+- Updated dependencies [718eb52]
+- Updated dependencies [f4c2ae8]
+- Updated dependencies [42e4ae0]
+- Updated dependencies [78fe943]
+  - @capybara-hq/plugin-sdk@0.1.0-rc.51
+
 ## 0.1.0-rc.66
 
 ### Minor Changes
