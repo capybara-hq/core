@@ -5,6 +5,7 @@ import {
   type DeviceProviderOption,
   deviceChoiceShown,
   deviceState,
+  projectBasePrefix,
   providerLabel,
 } from "../src/lib/devices";
 
@@ -64,5 +65,10 @@ describe("devices model", () => {
     expect(deviceChoiceShown(list({ providers: [], items: [] }))).toBe(false);
     expect(deviceChoiceShown(list({ providers: [OPTION], items: [] }))).toBe(true);
     expect(deviceChoiceShown(list({ items: [dev({})] }))).toBe(true);
+  });
+  it("projectBasePrefix shows the base the kernel returned, ending in one slash", () => {
+    expect(projectBasePrefix("/workspace")).toBe("/workspace/");
+    expect(projectBasePrefix("/Users/grant/")).toBe("/Users/grant/");
+    expect(projectBasePrefix("/")).toBe("/");
   });
 });

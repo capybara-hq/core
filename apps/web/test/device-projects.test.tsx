@@ -88,8 +88,6 @@ const local = (over: Record<string, unknown> = {}) =>
 const project = (name: string, path: string) => ({ name, path, createdAt: T });
 const projectList = (over: Record<string, unknown> = {}) => ({
   projects: [project("api", "/workspace/api"), project("web", "/workspace/web")],
-  hidden: 0,
-  mode: "sandbox",
   base: "/workspace",
   supported: true,
   ...over,
@@ -102,9 +100,10 @@ const routes = (device: unknown, list: unknown = projectList()) => ({
 const settle = () => act(() => new Promise((r) => setTimeout(r, 20)));
 const renderDetail = (opts: Parameters<typeof renderRouteWithCache>[2] = {}) =>
   renderRouteWithCache("/devices/e1", lastStubRoutes(), opts);
-const openSettings = async () => {
+/** The device page's 项目 tab. */
+const openProjects = async () => {
   const user = userEvent.setup();
-  await user.click(await screen.findByRole("tab", { name: E.detail.tabSettings }));
+  await user.click(await screen.findByRole("tab", { name: E.detail.tabProjects }));
   return user;
 };
 const projectsSection = () =>
@@ -118,23 +117,18 @@ afterEach(() => {
   vi.unstubAllGlobals();
 });
 
-describe("the overview's projects", () => {
-  it("lists the device's projects read-only, with the hidden count", async () => {
-    stubApi(routes(cloud(), projectList({ hidden: 2 })));
+describe("the projects read", () => {
+  it("概览 holds no projects: they live on the 项目 tab", async () => {
+    stubApi(routes(cloud()));
     await renderDetail();
-    const section = await projectsSection();
-    expect(within(section).getByText("api")).toBeTruthy();
-    expect(within(section).getByText("/workspace/web")).toBeTruthy();
-    expect(within(section).getByText(/2 more projects/)).toBeTruthy();
-    // read only: no remove, no add
-    expect(within(section).queryByRole("button", { name: /Remove/ })).toBeNull();
-    expect(within(section).queryByRole("button", { name: P.add })).toBeNull();
-    expect(findNestedBoxes(document.body).map(describeNestedBox)).toEqual([]);
+    await screen.findByRole("tab", { name: E.detail.tabOverview });
+    expect(screen.queryByRole("region", { name: P.title })).toBeNull();
   });
 
   it("first render from the hydrated cache makes no browser read (projects prefetched)", async () => {
     const browser = expectNoFirstPaintFetch();
     await renderRouteWithCache("/devices/e1", routes(cloud()));
+    await openProjects();
     expect(await screen.findByText("api")).toBeTruthy();
     await settle();
     expect(browser).toEqual([]);
@@ -144,8 +138,11 @@ describe("the overview's projects", () => {
     const { calls } = await renderRouteEmptyCache("/devices/e1", {
       ...routes(cloud()),
       [`GET ${PROJECTS}/candidates`]: () =>
-        json(200, { candidates: [], mode: "sandbox", base: "/workspace", supported: true }),
+        json(200, { candidates: [], base: "/workspace", supported: true }),
     });
+    // the loading frame's tabs do nothing: wait for the device first
+    await screen.findByRole("heading", { level: 1, name: "Build box" });
+    await openProjects();
     expect(await screen.findByText("api")).toBeTruthy();
     await settle();
     expect(gets(calls, PROJECTS)).toBe(1);
@@ -153,11 +150,11 @@ describe("the overview's projects", () => {
   });
 });
 
-describe("the settings tab's projects", () => {
+describe("the 项目 tab", () => {
   it("lists the projects with 移除 each; the candidates are not read on page load", async () => {
     const calls = stubApi(routes(cloud()));
     await renderDetail();
-    await openSettings();
+    await openProjects();
     const section = await projectsSection();
     expect(within(section).getByText("api")).toBeTruthy();
     expect(within(section).getByRole("button", { name: "Remove project api" })).toBeTruthy();
@@ -166,7 +163,7 @@ describe("the settings tab's projects", () => {
     expect(gets(calls, `${PROJECTS}/candidates`)).toBe(0);
   });
 
-  it("adding sends the typed relative path (the workspace/ prefix is fixed) and refreshes the list", async () => {
+  it("adding sends the typed relative path (the base prefix is fixed) and refreshes the list", async () => {
     let added = false;
     const calls = stubApi({
       ...routes(cloud()),
@@ -180,18 +177,18 @@ describe("the settings tab's projects", () => {
             : projectList(),
         ),
       [`GET ${PROJECTS}/candidates`]: () =>
-        json(200, { candidates: [], mode: "sandbox", base: "/workspace", supported: true }),
+        json(200, { candidates: [], base: "/workspace", supported: true }),
       [`POST ${PROJECTS}`]: () => {
         added = true;
         return json(201, { project: project("app", "/workspace/src/app") });
       },
     });
     await renderDetail();
-    const user = await openSettings();
+    const user = await openProjects();
     await user.click(within(await projectsSection()).getByRole("button", { name: P.add }));
     const dialog = await screen.findByRole("dialog", { name: P.addTitle });
     // the base is shown, never typed
-    expect(within(dialog).getByText("workspace/")).toBeTruthy();
+    expect(within(dialog).getByText("/workspace/")).toBeTruthy();
     const path = within(dialog).getByRole("textbox", { name: P.pathLabel });
     await user.type(path, "src/app");
     // the name defaults to the last segment
@@ -221,19 +218,20 @@ describe("the settings tab's projects", () => {
             { path: "/workspace/repo", relativePath: "repo", suggestedName: "repo" },
             { path: "/workspace/repo/pkg", relativePath: "repo/pkg", suggestedName: "pkg" },
           ],
-          mode: "sandbox",
           base: "/workspace",
           supported: true,
         }),
       [`POST ${PROJECTS}`]: () => json(201, { project: project("pkg", "/workspace/repo/pkg") }),
     });
     await renderDetail();
-    const user = await openSettings();
+    const user = await openProjects();
     await settle();
     expect(gets(calls, `${PROJECTS}/candidates`)).toBe(0);
     await user.click(within(await projectsSection()).getByRole("button", { name: P.add }));
     const dialog = await screen.findByRole("dialog", { name: P.addTitle });
-    await user.click(await within(dialog).findByRole("button", { name: "Use workspace/repo/pkg" }));
+    await user.click(
+      await within(dialog).findByRole("button", { name: "Use /workspace/repo/pkg" }),
+    );
     // the dialog with its candidate list, over the settings section: never a box in a box
     expect(findNestedBoxes(document.body).map(describeNestedBox)).toEqual([]);
     expect(gets(calls, `${PROJECTS}/candidates`)).toBe(1);
@@ -259,14 +257,14 @@ describe("the settings tab's projects", () => {
     const calls = stubApi({
       ...routes(cloud()),
       [`GET ${PROJECTS}/candidates`]: () =>
-        json(200, { candidates: [], mode: "sandbox", base: "/workspace", supported: true }),
+        json(200, { candidates: [], base: "/workspace", supported: true }),
       [`POST ${PROJECTS}`]: () =>
         json(422, {
           error: { code: "device.project_path_missing", message: "No such directory: nope" },
         }),
     });
     await renderDetail();
-    const user = await openSettings();
+    const user = await openProjects();
     await user.click(within(await projectsSection()).getByRole("button", { name: P.add }));
     const dialog = await screen.findByRole("dialog", { name: P.addTitle });
     const path = within(dialog).getByRole("textbox", { name: P.pathLabel });
@@ -286,12 +284,12 @@ describe("the settings tab's projects", () => {
     stubApi({
       ...routes(cloud()),
       [`GET ${PROJECTS}/candidates`]: () =>
-        json(200, { candidates: [], mode: "sandbox", base: "/workspace", supported: true }),
+        json(200, { candidates: [], base: "/workspace", supported: true }),
       [`POST ${PROJECTS}`]: () =>
         json(409, { error: { code: "device.project_name_taken", message: "taken" } }),
     });
     await renderDetail();
-    const user = await openSettings();
+    const user = await openProjects();
     await user.click(within(await projectsSection()).getByRole("button", { name: P.add }));
     const dialog = await screen.findByRole("dialog", { name: P.addTitle });
     await user.type(within(dialog).getByRole("textbox", { name: P.pathLabel }), "api2");
@@ -307,7 +305,7 @@ describe("the settings tab's projects", () => {
     stubApi({
       ...routes(cloud()),
       [`GET ${PROJECTS}/candidates`]: () =>
-        json(200, { candidates: [], mode: "sandbox", base: "/workspace", supported: true }),
+        json(200, { candidates: [], base: "/workspace", supported: true }),
       [`POST ${PROJECTS}`]: () =>
         json(400, {
           error: {
@@ -318,7 +316,7 @@ describe("the settings tab's projects", () => {
         }),
     });
     await renderDetail();
-    const user = await openSettings();
+    const user = await openProjects();
     await user.click(within(await projectsSection()).getByRole("button", { name: P.add }));
     const dialog = await screen.findByRole("dialog", { name: P.addTitle });
     const path = within(dialog).getByRole("textbox", { name: P.pathLabel });
@@ -332,7 +330,7 @@ describe("the settings tab's projects", () => {
     field = "path";
     await user.click(within(dialog).getByRole("button", { name: P.addSubmit }));
     expect(
-      await within(dialog).findByText(P.pathInvalid.replace("{prefix}", "workspace/")),
+      await within(dialog).findByText(P.pathInvalid.replace("{prefix}", "/workspace/")),
     ).toBeTruthy();
     expect(path.getAttribute("aria-invalid")).toBe("true");
     expect(within(dialog).queryByText("server text")).toBeNull();
@@ -342,16 +340,16 @@ describe("the settings tab's projects", () => {
     const calls = stubApi({
       ...routes(cloud()),
       [`GET ${PROJECTS}/candidates`]: () =>
-        json(200, { candidates: [], mode: "sandbox", base: "/workspace", supported: true }),
+        json(200, { candidates: [], base: "/workspace", supported: true }),
       [`POST ${PROJECTS}`]: () => json(201, { project: project("app", "/workspace/app") }),
     });
     await renderDetail();
-    const user = await openSettings();
+    const user = await openProjects();
     await user.click(within(await projectsSection()).getByRole("button", { name: P.add }));
     const dialog = await screen.findByRole("dialog", { name: P.addTitle });
     const path = within(dialog).getByRole("textbox", { name: P.pathLabel });
     await user.type(path, "/workspace/app");
-    const hint = P.pathAbsolute.replace("{prefix}", "workspace/");
+    const hint = P.pathAbsolute.replace("{prefix}", "/workspace/");
     expect(await within(dialog).findByText(hint)).toBeTruthy();
     expect(path.getAttribute("aria-invalid")).toBe("true");
     await user.click(within(dialog).getByRole("button", { name: P.addSubmit }));
@@ -360,38 +358,39 @@ describe("the settings tab's projects", () => {
     expect(findNestedBoxes(document.body).map(describeNestedBox)).toEqual([]);
   });
 
-  it("a local device in auto mode shows the home as ~/", async () => {
+  it("the prefix is the base the kernel returns (a provider-reported home), never a guess", async () => {
     stubApi({
-      ...routes(local(), projectList({ mode: "auto", base: "/Users/grant", projects: [] })),
+      ...routes(local(), projectList({ base: "/Users/grant", projects: [] })),
       [`GET ${PROJECTS}/candidates`]: () =>
-        json(200, { candidates: [], mode: "auto", base: "/Users/grant", supported: true }),
+        json(200, { candidates: [], base: "/Users/grant", supported: true }),
     });
     await renderDetail({ locale: "zh" });
     const user = userEvent.setup();
-    await user.click(await screen.findByRole("tab", { name: "设置" }));
+    await user.click(await screen.findByRole("tab", { name: zh.devices.detail.tabProjects }));
     const section = (await screen.findByRole("region", {
       name: zh.devices.projects.title,
     })) as HTMLElement;
     await user.click(within(section).getByRole("button", { name: zh.devices.projects.add }));
     const dialog = await screen.findByRole("dialog", { name: zh.devices.projects.addTitle });
-    expect(within(dialog).getByText("~/")).toBeTruthy();
+    expect(within(dialog).getByText("/Users/grant/")).toBeTruthy();
+    expect(within(dialog).queryByText("~/")).toBeNull();
   });
 
   it("a device without project support explains why and offers no form", async () => {
-    stubApi(routes(local(), projectList({ projects: [], supported: false, mode: "auto" })));
+    stubApi(routes(local(), projectList({ projects: [], supported: false })));
     await renderDetail();
-    await openSettings();
+    await openProjects();
     const section = await projectsSection();
-    expect(within(section).getByText(P.unsupportedLocal)).toBeTruthy();
+    expect(within(section).getByText(P.unsupported)).toBeTruthy();
     expect(within(section).queryByRole("button", { name: P.add })).toBeNull();
   });
 
-  it("a cloud device without project support names its provider as the reason", async () => {
+  it("a cloud device without project support says the same", async () => {
     stubApi(routes(cloud(), projectList({ projects: [], supported: false })));
     await renderDetail();
-    await openSettings();
+    await openProjects();
     const section = await projectsSection();
-    expect(within(section).getByText(P.unsupportedCloud)).toBeTruthy();
+    expect(within(section).getByText(P.unsupported)).toBeTruthy();
     expect(within(section).queryByRole("button", { name: P.add })).toBeNull();
   });
 
@@ -410,7 +409,7 @@ describe("the settings tab's projects", () => {
       },
     });
     await renderDetail();
-    const user = await openSettings();
+    const user = await openProjects();
     await user.click(
       within(await projectsSection()).getByRole("button", { name: "Remove project api" }),
     );
@@ -429,7 +428,7 @@ describe("the settings tab's projects", () => {
     const calls = stubApi({
       ...routes(cloud()),
       [`GET ${PROJECTS}/candidates`]: () =>
-        json(200, { candidates: [], mode: "sandbox", base: "/workspace", supported: true }),
+        json(200, { candidates: [], base: "/workspace", supported: true }),
       [`POST ${PROJECTS}`]: () => json(201, { project: project("app", "/workspace/src/app") }),
       [`DELETE ${PROJECTS}/api`]: () => new Response(null, { status: 204 }),
     });
@@ -439,7 +438,7 @@ describe("the settings tab's projects", () => {
     const previews = [k.permissionPreview("e1", "api"), k.permissionPreview("e1")];
     const other = k.permissionPreview("e2", "api");
     for (const key of [...previews, other]) client.setQueryData(key, { cached: true });
-    const user = await openSettings();
+    const user = await openProjects();
     await user.click(
       within(await projectsSection()).getByRole("button", { name: "Remove project api" }),
     );
@@ -470,7 +469,7 @@ describe("the settings tab's projects", () => {
       [`GET ${PROJECTS}`]: () => json(404, { error: { code: "device.not_found", message: "no" } }),
     });
     await renderDetail();
-    await openSettings();
+    await openProjects();
     await settle();
     expect(screen.queryByRole("region", { name: P.title })).toBeNull();
   });

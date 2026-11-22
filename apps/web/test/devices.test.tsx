@@ -23,7 +23,7 @@ const BASE = "/api/v1/orgs/o1/devices";
 /** The device page also reads the device's projects (project root §4.1): none here. */
 const NO_PROJECTS = {
   [`GET ${BASE}/e1/projects`]: () =>
-    json(200, { projects: [], hidden: 0, mode: "auto", base: "/workspace", supported: true }),
+    json(200, { projects: [], base: "/workspace", supported: true }),
 };
 const T = "2026-11-07T08:00:00.000Z";
 const E = en.devices;
@@ -47,6 +47,14 @@ const SANDBOX = {
   pendingFilesReset: false,
   recent: [],
 };
+/** What the provider last reported (kernel `DeviceReport`): it offers a file rebuild. */
+const REPORT = {
+  revision: "r1",
+  description: { en: "A container on the platform" },
+  home: null,
+  limits: [],
+  reset: true,
+};
 const env = (id: string, name: string | null, over: Record<string, unknown> = {}) => ({
   id,
   name,
@@ -61,7 +69,7 @@ const env = (id: string, name: string | null, over: Record<string, unknown> = {}
   filesLost: false,
   instance: null,
   limits: LIMITS,
-  report: null,
+  report: REPORT,
   sandbox: SANDBOX,
   createdAt: T,
   ...over,
@@ -132,11 +140,10 @@ const renderList = (opts: RenderOpts = {}) =>
 const renderDetail = (opts: RenderOpts = {}) =>
   renderRouteWithCache("/devices/e1", lastStubRoutes(), opts);
 const settle = () => act(() => new Promise((r) => setTimeout(r, 20)));
-/** The device page's 设置 tab: every control lives there. */
-const settingsTab = () => screen.findByRole("tab", { name: E.detail.tabSettings });
-const openSettings = async () => {
+/** The device page's 网络 tab. */
+const openNetwork = async () => {
   const user = userEvent.setup();
-  await user.click(await settingsTab());
+  await user.click(await screen.findByRole("tab", { name: E.detail.tabNetwork }));
   return user;
 };
 const template = (name: string) => document.querySelector(`[data-template="${name}"]`);
@@ -334,8 +341,8 @@ describe("device detail", () => {
     const plate = container.querySelector('[data-part="device-nameplate"]') as HTMLElement;
     expect(within(plate).getByText("Build box")).toBeTruthy();
     expect(screen.getByText(E.detail.filesAndSuspendNote)).toBeTruthy();
-    // origin and state live in the nameplate alone (the facts rows no longer repeat them)
-    expect(screen.getByText(E.source.cloud)).toBeTruthy();
+    // the nameplate names the provider (its plugin name without a display name)
+    expect(plate.textContent).toContain("sandbox-docker");
     await settle();
     expect(browser).toEqual([]);
   });
@@ -348,7 +355,9 @@ describe("device detail", () => {
     });
     await renderDetail({ locale: "zh" });
     expect(
-      await screen.findByText("此设备的提供方已在本组织关闭或未安装，文件仍保留。"),
+      await screen.findByText(
+        "这台设备的设备类型（sandbox-gone）在这个组织里没有启用，文件保留着。",
+      ),
     ).toBeTruthy();
   });
 
@@ -465,14 +474,14 @@ describe("device detail", () => {
     client.setQueryData(["org", "o1", "devices"], list([env("e1", "Build box")]));
     // the composer's cached permission preview of this device
     client.setQueryData(["org", "o1", "device", "e1", "permissionPreview", null], { cached: 1 });
-    const user = await openSettings();
-    const group = await screen.findByRole("radiogroup", { name: E.sandbox.network });
+    const user = await openNetwork();
+    const group = await screen.findByRole("radiogroup", { name: E.network.title });
     await user.click(
       within(group).getByRole("radio", {
-        name: new RegExp(`^${E.sandbox.networkValue.allowlist}`),
+        name: new RegExp(`^${E.network.allowlist}`),
       }),
     );
-    await user.click(screen.getByRole("button", { name: E.sandbox.save }));
+    await user.click(screen.getByRole("button", { name: E.network.save }));
     await vi.waitFor(() =>
       expect(client.getQueryState(["org", "o1", "devices"])?.isInvalidated).toBe(true),
     );
@@ -492,7 +501,7 @@ describe("device detail", () => {
     const calls = stubApi({ ...routes, [`DELETE ${BASE}/e1`]: () => json(202, {}) });
     const { client, unmount } = await renderDetail();
     client.setQueryData(["org", "o1", "devices"], list([env("e1", "Build box")]));
-    const user = await openSettings();
+    const user = userEvent.setup();
     await user.click(await screen.findByRole("button", { name: E.detail.delete }));
     const dialog = await screen.findByRole("dialog");
     expect(dialog.textContent).toContain(E.detail.deleteHint.replace("{name}", "Build box"));
@@ -511,7 +520,7 @@ describe("device detail", () => {
   it("deleting the default device says a new empty one comes next time", async () => {
     stubApi({ ...NO_PROJECTS, [`GET ${BASE}/e1`]: () => json(200, { device: env("e1", null) }) });
     await renderDetail();
-    const user = await openSettings();
+    const user = userEvent.setup();
     await user.click(await screen.findByRole("button", { name: E.detail.delete }));
     const dialog = await screen.findByRole("dialog");
     expect(dialog.textContent).toContain(
@@ -769,97 +778,45 @@ describe("local devices (environments spec §6, §9)", () => {
     });
   });
 
-  it("device page shows the machine and revokes it", async () => {
-    let revoked = false;
-    const calls = stubApi({
+  it("a dial-in device's page names its provider and its machine's version, with no machine block", async () => {
+    stubApi({
       [`GET ${BASE}`]: () => json(200, list([device("e1", "Laptop")])),
       ...NO_PROJECTS,
-      [`GET ${BASE}/e1`]: () =>
-        json(200, {
-          device: device("e1", "Laptop", revoked ? { machine: null, online: false } : {}),
-        }),
-      [`DELETE ${BASE}/e1/machine`]: () => {
-        revoked = true;
-        return new Response(null, { status: 204 });
-      },
+      [`GET ${BASE}/e1`]: () => json(200, { device: device("e1", "Laptop") }),
     });
-    const { client } = await renderDetail();
-    client.setQueryData(["org", "o1", "devices"], list([device("e1", "Laptop")]));
-    const user = await openSettings();
-    expect(await screen.findByText(E.machine.title)).toBeTruthy();
-    // origin and state are the nameplate's alone
-    expect(screen.getByText(E.source.local)).toBeTruthy();
-    expect(screen.getByText(E.state.online)).toBeTruthy();
-    expect(screen.getByText("v0.1.0")).toBeTruthy();
-    // the machine's name is the device's name, and the nameplate carries its mode: neither is
-    // repeated in the machine block, which keeps 系统 and 断开
+    await renderDetail();
+    const plate = (await screen.findByText("v0.1.0")).closest(
+      '[data-part="device-nameplate"]',
+    ) as HTMLElement;
+    expect(plate.textContent).toContain(LOCAL.displayName.en);
+    expect(plate.textContent).toContain(E.state.online);
+    // the machine's name is the device's name: never repeated, and no disconnect on the page
     expect(screen.queryByText("grant-mbp")).toBeNull();
-    // the cloud facts do not apply to a machine
-    expect(screen.queryByText(E.detail.filesAndSuspendNote)).toBeNull();
-    await user.click(screen.getByRole("button", { name: E.machine.revoke }));
-    const dialog = await screen.findByRole("dialog");
-    expect(calls.some((c) => c.method === "DELETE")).toBe(false);
-    await user.click(within(dialog).getByRole("button", { name: E.machine.revokeSubmit }));
-    await vi.waitFor(() => expect(calls.some((c) => c.method === "DELETE")).toBe(true));
-    // no machine left: the settings tab no longer offers 断开, and the overview has no 机器 block
-    await vi.waitFor(() =>
-      expect(screen.queryByRole("button", { name: E.machine.revoke })).toBeNull(),
-    );
-    expect(client.getQueryState(["org", "o1", "devices"])?.isInvalidated).toBe(true);
+    expect(screen.queryByRole("button", { name: /Disconnect/ })).toBeNull();
+    // the same files note as every other device
+    expect(screen.getByText(E.detail.filesAndSuspendNote)).toBeTruthy();
   });
 
-  it("a local device that lost its files says to log out and in again and offers no 重建文件", async () => {
+  it("a local device that lost its files offers 重建文件 when its provider's report allows it", async () => {
     stubApi({
       ...NO_PROJECTS,
       [`GET ${BASE}/e1`]: () => json(200, { device: device("e1", "Laptop", { filesLost: true }) }),
     });
     await renderDetail();
-    expect(await screen.findByText(E.detail.localFilesLostNote)).toBeTruthy();
-    expect(E.detail.localFilesLostNote).toContain(
-      "capybara-device logout, then capybara-device login",
-    );
-    expect(screen.queryByText(E.detail.filesLostNote)).toBeNull();
-    expect(screen.queryByRole("button", { name: E.detail.resetFiles })).toBeNull();
+    expect(await screen.findByText(E.detail.filesLostNote)).toBeTruthy();
+    expect(screen.queryByText(/capybara-device/)).toBeNull();
+    expect(screen.getByRole("button", { name: E.detail.resetFiles })).toBeTruthy();
   });
 
-  it("deleting a local device says the files on the machine stay", async () => {
+  it("deleting a local device has the same hint as any other", async () => {
     stubApi({
       ...NO_PROJECTS,
       [`GET ${BASE}/e1`]: () => json(200, { device: device("e1", "Laptop") }),
     });
     await renderDetail();
-    const user = await openSettings();
+    const user = userEvent.setup();
     await user.click(await screen.findByRole("button", { name: E.detail.delete }));
     const dialog = await screen.findByRole("dialog");
-    expect(dialog.textContent).toContain(E.detail.deleteLocalHint.replace("{name}", "Laptop"));
-  });
-});
-
-describe("a dial-in machine's allowlist (read only)", () => {
-  it("lists the hosts on 概览 and offers no way to change them from the page", async () => {
-    const calls = stubApi({
-      ...NO_PROJECTS,
-      [`GET ${BASE}/e1`]: () =>
-        json(200, {
-          device: env("e1", "Laptop", {
-            dialIn: true,
-            provider: "@local",
-            online: true,
-            machine: {
-              id: "m1",
-              name: "grant-mbp",
-              os: "darwin",
-              programVersion: "0.1.0",
-              lastSeenAt: T,
-            },
-            sandbox: { ...SANDBOX, network: "allowlist", hosts: ["files.example.com"] },
-          }),
-        }),
-    });
-    await renderDetail();
-    expect(await screen.findByText("files.example.com")).toBeTruthy();
-    await openSettings();
-    expect(screen.queryByRole("button", { name: /files\.example\.com/ })).toBeNull();
-    expect(calls.some((c) => c.url.endsWith("/policy"))).toBe(false);
+    expect(dialog.textContent).toContain(E.detail.deleteHint.replace("{name}", "Laptop"));
   });
 });

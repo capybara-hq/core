@@ -341,10 +341,10 @@ export interface DeviceProjectCandidates {
 }
 
 /**
- * The fixed prefix the add form shows before the relative path (project root §4.2): the owner's
- * home (`~/`) for a dial-in device, else the workspace (`workspace/`).
+ * The fixed prefix the add form shows before the relative path (project root §4.2): the base the
+ * kernel returned (the provider-reported home, else the workspace), ending in one `/`.
  */
-export const projectBasePrefix = (dialIn: boolean): string => (dialIn ? "~/" : "workspace/");
+export const projectBasePrefix = (base: string): string => `${base.replace(/\/+$/, "")}/`;
 
 /** The relative path as sent: trimmed, without a leading `./` or trailing slashes. */
 export const normalizeProjectPath = (p: string): string =>
