@@ -22,6 +22,7 @@ import {
 import { DialInMachines } from "../../src/dial-in/machines.js";
 import { ExtensionHost } from "../../src/extensions/host.js";
 import { KERNEL_BUS } from "../../src/infra/tokens.js";
+import { PlatformOperations } from "../../src/platform/registry.js";
 import { DeviceProviders } from "../../src/sandbox/providers.js";
 import { legacyDbFor } from "../helpers/conversations.js";
 import { accountsFor } from "../helpers/identity.js";
@@ -668,6 +669,125 @@ describe("device authorization", () => {
     } finally {
       await holder.disconnect();
     }
+  });
+});
+
+/**
+ * A dial-in device's sandbox network (device-provider spec, phase 3): set on the web like every
+ * other device's, within the org's and the platform's ceilings, audited and published with the
+ * device's authority epoch; the machine-disconnect route is gone.
+ */
+describe("a dial-in device's sandbox network", () => {
+  const setOrgDeviceNetwork = async (deviceNetwork: unknown) => {
+    const res = await owner({
+      method: "PATCH",
+      url: `/api/v1/orgs/${orgId}/settings`,
+      payload: { deviceNetwork },
+    });
+    expect(res.statusCode, res.body).toBe(200);
+  };
+  /** The device's permission authority epoch (its revision; 0 before any publication). */
+  const authorityEpoch = async (deviceId: string) =>
+    (
+      await db
+        .selectFrom("permission_authority_epochs")
+        .select("revision")
+        .where("kind", "=", "device")
+        .where("id", "=", deviceId)
+        .executeTakeFirst()
+    )?.revision ?? 0;
+  const networkAudits = (target: string) =>
+    db
+      .selectFrom("audit_events")
+      .select(["detail"])
+      .where("action", "=", "device.network_changed")
+      .where("target", "=", target)
+      .orderBy("id")
+      .execute();
+  const patchDevice = (req: Req, id: string, payload: Record<string, unknown>) =>
+    req({ method: "PATCH", url: `/api/v1/orgs/${orgId}/devices/${id}`, payload });
+
+  it("local device: open network on the web → clamped by the org ceiling, audited, epoch bumped", async () => {
+    const m = await member();
+    const g = await login(m.req, "Laptop");
+    expect(await envView(m.req, g.deviceId)).toMatchObject({
+      provider: "fake-dial-in",
+      dialIn: true,
+      machine: { name: MACHINE.name },
+    });
+    await setOrgDeviceNetwork({ ceiling: "allowlist" });
+    try {
+      const before = await authorityEpoch(g.deviceId);
+      const res = await patchDevice(m.req, g.deviceId, { network: { mode: "open" } });
+      expect(res.statusCode, res.body).toBe(400);
+      expect(errCode(res)).toBe("device.network_not_allowed");
+      expect(await networkAudits(g.deviceId)).toHaveLength(0);
+      await setOrgDeviceNetwork({ ceiling: "open" });
+      const ok = await patchDevice(m.req, g.deviceId, { network: { mode: "open" } });
+      expect(ok.statusCode, ok.body).toBe(200);
+      expect((ok.json() as { device: DeviceView }).device.sandbox).toMatchObject({
+        network: "open",
+        ownNetwork: "open",
+      });
+      expect(await networkAudits(g.deviceId)).toEqual([
+        {
+          detail: {
+            from: { mode: null, hosts: [] },
+            to: { mode: "open", hosts: [] },
+            by: m.id,
+            via: "web",
+          },
+        },
+      ]);
+      expect(await authorityEpoch(g.deviceId)).toBeGreaterThan(before);
+    } finally {
+      await setOrgDeviceNetwork(null);
+    }
+  });
+
+  it("DELETE /devices/:id/machine is gone", async () => {
+    const m = await member();
+    const g = await login(m.req, "Kept");
+    const res = await m.req({
+      method: "DELETE",
+      url: `/api/v1/orgs/${orgId}/devices/${g.deviceId}/machine`,
+    });
+    expect(res.statusCode).toBe(404);
+    // the machine stays signed in
+    expect(await machines.authenticate(g.credential)).not.toBeNull();
+    expect((await envView(m.req, g.deviceId)).machine).not.toBeNull();
+  });
+
+  it("devices.set-network narrows a local device too", async () => {
+    const m = await member();
+    const g = await login(m.req, "Narrowed");
+    const o = k.app.get(PlatformOperations).get("devices.set-network");
+    if (o === null) throw new Error("no devices.set-network");
+    const ctx = {
+      orgId,
+      actorAccountId: m.id,
+      agentId: randomUUID(),
+      conversationId: randomUUID(),
+      runId: randomUUID(),
+      signal: new AbortController().signal,
+    };
+    const input = o.input.parse({
+      deviceId: g.deviceId,
+      network: { mode: "allowlist", hosts: ["registry.npmjs.org"] },
+    });
+    expect(await o.precheck?.(input, ctx)).toEqual({ ok: true });
+    const r = (await o.run(input, ctx)) as {
+      device: { dialIn: boolean; sandbox: { network: string; hosts: string[] } };
+    };
+    expect(r.device).toMatchObject({
+      dialIn: true,
+      sandbox: { network: "allowlist", hosts: ["registry.npmjs.org"] },
+    });
+    expect((await networkAudits(g.deviceId)).at(-1)?.detail).toMatchObject({
+      to: { mode: "allowlist", hosts: ["registry.npmjs.org"] },
+      via: "agent",
+      operation: "devices.set-network",
+    });
   });
 });
 
