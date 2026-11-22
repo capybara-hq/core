@@ -237,7 +237,13 @@ async function consent() {
     .updateTable("conversations")
     .set({
       permission_profile: "full-access",
-      permission_consent: JSON.stringify({ deviceId, scopeRevision: preview.scopeRevision }),
+      // what the profile service stores: the scope confirmed, the identity and the reach covered
+      permission_consent: JSON.stringify({
+        deviceId,
+        scopeRevision: preview.scopeRevision,
+        identity: preview.consentIdentity,
+        reach: preview.consentReach,
+      }),
     })
     .where("id", "=", conversationId)
     .execute();

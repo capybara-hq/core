@@ -312,6 +312,9 @@ export class PermissionRuntimeReports {
    * transaction) or after resume and limits changes, with the support it read from that exact
    * instance under its lease. An instance of another provider records nothing; one without a
    * handle or without recorded applied limits records nothing new and clears a stale identity.
+   * The support recorded is also stored with the device's report (`devices.report.support`), so
+   * the stored support never lags what the runtime last said: the caller holds the device row
+   * lock (taken before the authority writer lock, the device writers' order).
    */
   @Transactional({ propagation: "mandatory" })
   async recordSupport(
@@ -358,6 +361,13 @@ export class PermissionRuntimeReports {
       .onConflict((oc) =>
         oc.column("device_id").doUpdateSet({ ...values, observed_at: new Date() }),
       )
+      .execute();
+    await this.db
+      .updateTable("devices")
+      .set({
+        report: sql`COALESCE(report, '{}'::jsonb) || jsonb_build_object('support', ${JSON.stringify(report)}::jsonb)`,
+      })
+      .where("id", "=", deviceId)
       .execute();
   }
 

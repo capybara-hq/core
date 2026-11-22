@@ -1,6 +1,7 @@
 import { randomUUID } from "node:crypto";
 import type { SandboxPermissionSupport } from "@capybara-hq/plugin-sdk";
 import { startTestPostgres, startTestRedis, type TestContainer } from "@capybara-hq/testing";
+import { sql } from "kysely";
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { KernelConfigSchema } from "../../src/config/schema.js";
 import { EventLog } from "../../src/conversations/event-log.js";
@@ -28,6 +29,7 @@ import { ToolPipeline } from "../../src/tools/pipeline.js";
 import { ToolRegistry } from "../../src/tools/registry.js";
 import { truncateTables } from "../helpers/db.js";
 import { accountsFor } from "../helpers/identity.js";
+import { SUPPORTS_BOTH, seedInstalledEvidence } from "../helpers/installed-evidence.js";
 import { MODEL_PLUGINS_CONFIG } from "../helpers/model-plugins.js";
 import { permissionFixture } from "../helpers/permission-policy.js";
 import { startKernel, type TestKernel } from "../helpers/runs.js";
@@ -628,19 +630,10 @@ describe.each([true, false])(
   (outsideSandbox) => {
     it("the escalation is proposed to the person, or refused with the provider's description", async () => {
       const f = await escalated("request-approval", ESCALATED, { outsideSandbox });
-      await f.db
-        .updateTable("devices")
-        .set({
-          report: JSON.stringify({
-            revision: "r1",
-            description: { en: "Runs commands on a test machine." },
-            home: null,
-            limits: [],
-            reset: false,
-          }),
-        })
-        .where("id", "=", f.deviceId)
-        .execute();
+      // the provider's description of the device, in the report it stored (same revision)
+      await sql`UPDATE capybara.devices SET report = report || ${JSON.stringify({
+        description: { en: "Runs commands on a test machine." },
+      })}::jsonb WHERE id = ${f.deviceId}`.execute(raw);
       const review = vi.spyOn(k.app.get(CommandReviewService), "review");
       const step = await f.step();
       expect(f.effects()).toBe(0);
@@ -657,6 +650,83 @@ describe.each([true, false])(
         `but ${escalationDeviceOffWhy("Runs commands on a test machine.")}, so it did not run`,
       );
       expect(text).not.toMatch(/capybara-device/);
+    });
+  },
+);
+
+// Full access never auto-approves past its consent: the consent reach and the crossing ceilings
+// read one provider layer (the current runtime support, else the stored one), so a support that
+// turns a crossing on after the consent outgrows it, whether or not the stored support followed
+describe.each([true, false])(
+  "a support that allows a crossing after the Full consent outgrows it (stored support updated: %s)",
+  (storedFollows) => {
+    /** Records the provider's new runtime support; `storedFollows` false puts the old one back. */
+    async function supportBecomes(
+      f: Awaited<ReturnType<typeof escalated>>,
+      next: SandboxPermissionSupport,
+      old: SandboxPermissionSupport,
+    ) {
+      await seedInstalledEvidence(k, raw, {
+        orgId: f.orgId,
+        deviceId: f.deviceId,
+        provider: "@permission-policy-test",
+        version: "test-1",
+        report: next,
+      });
+      if (!storedFollows)
+        await sql`UPDATE capybara.devices
+          SET report = report || jsonb_build_object('support', ${JSON.stringify(old)}::jsonb)
+          WHERE id = ${f.deviceId}`.execute(raw);
+    }
+    const profileOf = async (f: Awaited<ReturnType<typeof escalated>>) =>
+      (await k.app.get(PermissionProfilesService).get(f.orgId, f.conversationId, f.accountId))
+        .profile;
+
+    it("an outside call is asked, never auto-granted", async () => {
+      const closed = { ...SUPPORTS_BOTH, outsideSandbox: false };
+      const f = await escalated("full-access", ESCALATED, { outsideSandbox: false });
+      expect(await profileOf(f)).toBe("full-access");
+      await supportBecomes(f, SUPPORTS_BOTH, closed);
+      // the consent covered no outside: Full access no longer holds, the profile asks again
+      expect(await profileOf(f)).toBe("approve-for-me");
+      vi.spyOn(k.app.get(CommandReviewService), "review").mockResolvedValue({
+        decision: "ask",
+        by: "classifier",
+        reason: "Unsure about running outside the sandbox.",
+        rule: null,
+      });
+      expect((await f.step()).kind).toBe("suspended");
+      expect(f.effects()).toBe(0);
+      expect(
+        await f.db
+          .selectFrom("permission_call_grants")
+          .select("id")
+          .where("source", "=", "full-access")
+          .execute(),
+      ).toEqual([]);
+      expect(await k.app.get(ApprovalsService).commandForCall(f.runId, f.callId)).toMatchObject({
+        status: "pending",
+      });
+    });
+
+    it("per-call hosts turned on outgrow the consent too", async () => {
+      // an instance boundary takes no host per call; an operation boundary does
+      const instance: SandboxPermissionSupport = {
+        version: 2,
+        boundary: "instance",
+        restricted: null,
+        network: { openPublic: false, allowlist: true, perOperationHosts: false },
+        outsideSandbox: false,
+        background: false,
+      };
+      const f = await escalated(
+        "full-access",
+        { command: "curl https://api.example.com/x", description: "Fetch" },
+        instance,
+      );
+      expect(await profileOf(f)).toBe("full-access");
+      await supportBecomes(f, { ...SUPPORTS_BOTH, outsideSandbox: false }, instance);
+      expect(await profileOf(f)).toBe("approve-for-me");
     });
   },
 );

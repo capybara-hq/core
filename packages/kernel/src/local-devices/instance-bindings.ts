@@ -240,6 +240,14 @@ export class LocalInstanceBindings implements SandboxInstanceBinder {
     connectionId: string | null = null,
   ): Promise<void> {
     const subject = { orgId: committed.orgId, deviceId };
+    // the device row before the authority writer (the device writers' order): the attested
+    // support is stored on it too
+    await this.db
+      .selectFrom("devices")
+      .select("id")
+      .where("id", "=", deviceId)
+      .forNoKeyUpdate()
+      .executeTakeFirst();
     await this.ceilings.lock(subject, "device");
     const { request } = committed;
     const identity = runtimeIdentity(answer.runtimeIdentity);

@@ -636,9 +636,8 @@ describe("Conversation permission profiles", () => {
       provider: "@permission-test",
       version: "test-1",
     });
-    expect((await req({ method: "GET", url: previewUrl })).json().scopeRevision).toBe(
-      preview.json().scopeRevision,
-    );
+    // the support now known narrows the consent reach (the scope revision moves with it), and a
+    // narrowing keeps the consent
     expect((await req({ method: "GET", url })).json().profile).toBe("full-access");
     expect(provision).not.toHaveBeenCalled();
     provision.mockRestore();

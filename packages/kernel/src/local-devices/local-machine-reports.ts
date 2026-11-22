@@ -224,6 +224,15 @@ export class LocalMachineReports {
     connectionId: string | null = null,
   ): Promise<void> {
     const parsed = parseDeviceFrame(body, "hello");
+    // the device row before the authority writer the hello takes (the device writers' order):
+    // the attested support is stored on it too
+    await this.db
+      .selectFrom("devices as d")
+      .innerJoin("device_machines as m", "m.device_id", "d.id")
+      .select("d.id")
+      .where("m.id", "=", machineId)
+      .forNoKeyUpdate("d")
+      .executeTakeFirst();
     await this.recordHello(machineId, parsed, {
       report: parsed.ownerCeiling,
       connectionId,

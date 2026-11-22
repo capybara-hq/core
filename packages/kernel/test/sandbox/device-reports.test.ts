@@ -175,6 +175,17 @@ const stored = (deviceId: string) =>
     .select(["report", "report_at"])
     .where("id", "=", deviceId)
     .executeTakeFirstOrThrow();
+/**
+ * The stored report's own text and its time, without the runtime support the lifecycle stores
+ * with it (`recordSupport` keeps `report.support` current even while no report is stored).
+ */
+const reportText = async (id: string) => {
+  const row = await stored(id);
+  return {
+    revision: (row.report as { revision?: string } | null)?.revision ?? null,
+    report_at: row.report_at,
+  };
+};
 
 const reportWarnings = () =>
   warn.mock.calls.filter(([msg]) => String(msg).startsWith("cannot refresh the device report"));
@@ -278,10 +289,11 @@ describe("the stored device report", () => {
     );
     expect(await reports.read(orgId, id)).toBeNull();
 
-    // a first use whose report fails stores nothing, and the use still runs
+    // a first use whose report fails stores no report (only the runtime support the lifecycle
+    // records), and the use still runs
     const other = await seedDevice(raw, orgId, accountId);
     await run(s, other);
-    expect(await stored(other)).toEqual({ report: null, report_at: null });
+    expect(await reportText(other)).toEqual({ revision: null, report_at: null });
     expect(reportWarnings()).toHaveLength(2);
   });
 
@@ -325,7 +337,7 @@ describe("the stored device report", () => {
     // the use that creates the instance completes although the report never does
     await run(s, id);
     expect(seen?.aborted).toBe(true);
-    expect(await stored(id)).toEqual({ report: null, report_at: null });
+    expect(await reportText(id)).toEqual({ revision: null, report_at: null });
     expect(reportWarnings()).toHaveLength(1);
     // the exclusive lease was released: the next use and a resume run too
     await run(s, id);
@@ -336,7 +348,7 @@ describe("the stored device report", () => {
     const started = Date.now();
     expect(await bounded.refresh(entry, ref, signal())).toEqual({ changed: false });
     expect(Date.now() - started).toBeLessThan(5_000);
-    expect(await stored(id)).toEqual({ report: null, report_at: null });
+    expect(await reportText(id)).toEqual({ revision: null, report_at: null });
   });
 
   it("a guarded extension provider hands report its arguments and answer unchanged", async () => {

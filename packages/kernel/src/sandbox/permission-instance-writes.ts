@@ -71,6 +71,7 @@ export class PermissionInstanceWrites {
     evidence?: SupportReport | "binding",
   ): Promise<Date> {
     signal.throwIfAborted();
+    await this.lockDevice(orgId, deviceId);
     await this.ceilings.lock({ orgId, deviceId }, "device");
     const row = await this.db
       .selectFrom("device_instances")
@@ -157,6 +158,20 @@ export class PermissionInstanceWrites {
     return true;
   }
 
+  /**
+   * The device row lock, before the authority writer lock (the device writers' order): the
+   * support recorded is stored on the device row too ({@link PermissionRuntimeReports.recordSupport}).
+   */
+  private async lockDevice(orgId: string, deviceId: string): Promise<void> {
+    await this.db
+      .selectFrom("devices")
+      .select("id")
+      .where("id", "=", deviceId)
+      .where("org_id", "=", orgId)
+      .forNoKeyUpdate()
+      .executeTakeFirst();
+  }
+
   /** Takes the device writer lock; true while the row still holds exactly the probed instance. */
   private async lockProbed(
     orgId: string,
@@ -164,6 +179,7 @@ export class PermissionInstanceWrites {
     held: ProbedInstance,
     provider: string,
   ): Promise<boolean> {
+    await this.lockDevice(orgId, deviceId);
     await this.ceilings.lock({ orgId, deviceId }, "device");
     const row = await this.db
       .selectFrom("device_instances")

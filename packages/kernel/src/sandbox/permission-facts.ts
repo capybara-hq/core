@@ -145,6 +145,14 @@ export class PermissionFacts {
     availability?: PermissionAvailability,
     /** The device's network as it would be stored (a change checked before it is written). */
     pending?: { networkMode: "open" | "allowlist" | "none" | null; networkHosts: string[] },
+    /**
+     * Which provider layer: `ceilings` (the support chain, nothing outside while none is known),
+     * `consent` (the same chain, the widest layer while none is known: {@link providerLayerOf}) or
+     * `lifecycle` (no support: the network an instance is created with is the device's own choice
+     * within the ceilings, never a support read after an earlier instance, so a support arriving
+     * never makes the next use recreate the instance; the provider enforces what it can).
+     */
+    layer: "ceilings" | "consent" | "lifecycle" = "ceilings",
   ) {
     const [settings, org, row] = await Promise.all([
       readDeviceSandboxSettings(this.db.db, this.config),
@@ -160,7 +168,12 @@ export class PermissionFacts {
     const device: DeviceSandboxDeviceLayer = pending ?? ownNetwork(row);
     const current = availability ?? (await this.availability(orgId, deviceId));
     // the provider's support: its current runtime report, else the one stored with its report
-    const support = current.state === "supported" ? current.report : storedSupport(row?.report);
+    const support =
+      layer === "lifecycle"
+        ? null
+        : current.state === "supported"
+          ? current.report
+          : storedSupport(row?.report);
     const platform = {
       settings,
       allowHosts: limits.allowHosts,
@@ -171,7 +184,12 @@ export class PermissionFacts {
       ...(org.outsideSandbox !== undefined && { outsideSandbox: org.outsideSandbox }),
       ...(org.deviceNetwork !== undefined && { deviceNetwork: org.deviceNetwork }),
     };
-    const box = effectiveDeviceSandbox(platform, orgLayer, device, providerLayerOf(support));
+    const box = effectiveDeviceSandbox(
+      platform,
+      orgLayer,
+      device,
+      providerLayerOf(support, layer === "consent" ? "widest" : "closed"),
+    );
     const hostCeiling = hostGrantCeiling(box, platform, orgLayer);
     return {
       box,
@@ -254,12 +272,17 @@ export class PermissionFacts {
     ]);
     const policy = effectiveDevicePolicy(deployment, settings, chosen.mode);
     if (!chosen.found || device.deviceId === undefined) return policy;
-    // an instance's outer network is its sandbox network (its provider enforces it), read under
-    // the provider layer known before the instance runs
-    const box = await this.deviceSandbox(device.orgId, device.deviceId, {
-      state: "unprobed",
-      reason: "lifecycle",
-    });
+    // an instance's outer network is its sandbox network (its provider enforces it), from the
+    // device's own choice within the ceilings: the same before and after a support is known
+    const box = (
+      await this.deviceSandboxFacts(
+        device.orgId,
+        device.deviceId,
+        { state: "unprobed", reason: "lifecycle" },
+        undefined,
+        "lifecycle",
+      )
+    ).box;
     return { ...policy, network: networkOfSandbox(box) };
   }
 
@@ -420,9 +443,10 @@ export class PermissionFacts {
    * The owner's live device's project scope: whether its provider offers projects (it has
    * `list`), the home its provider last reported (the base the picker starts from; null: none,
    * the workspace) and the workspace as last known (the instance's handle). What a project path
-   * may be is the provider's rule (device-provider spec §6.1): it refuses one it will not serve.
-   * `source` and `reach` keep the projects service's shape until it drops them: a device whose
-   * provider reports a home is browsed from that home.
+   * may be is the provider's rule (device-provider spec §6.1): it refuses one it will not serve,
+   * so the kernel narrows no path by reach (`reach: "os-user"` for every device: the projects
+   * service's shape until it drops the field). `source` only picks the base for that service: a
+   * device whose provider reports a home starts from it, any other from its workspace.
    */
   async projectScope(orgId: string, accountId: string, deviceId: string): Promise<Scope> {
     const row = await this.db
@@ -443,7 +467,7 @@ export class PermissionFacts {
     return {
       source: home === null ? "cloud" : "local",
       mode,
-      reach: home === null ? "workspace" : "os-user",
+      reach: "os-user",
       workspace: handle === null ? DEFAULT_SANDBOX_ROOTS.workspace : rootsOf(handle).workspace,
       home,
       supported: typeof impl?.list === "function",
@@ -499,11 +523,12 @@ export class PermissionFacts {
         authority[row.kind] = row.full_revision;
     // the consent fingerprint: the device, the project binding and the crossing ceilings Full
     // access auto-approves within (approval-only profiles design, "Consent fingerprint"), from
-    // the settings layers under the provider's support stored with its report (its current
-    // runtime report is not read here, so a runtime report arriving never resets the consent; a
-    // stored support that widens a crossing does, and its report revision moves the epoch)
+    // the settings layers under the same provider support the ceilings read (the current runtime
+    // report, else the stored support): a support that allows a crossing the consent did not
+    // cover outgrows it, so Full access never auto-approves past what the person consented to.
+    // With no support known, the widest provider layer: a support arriving only narrows it
     const consentReach = (
-      await this.deviceSandboxFacts(orgId, deviceId, { state: "unprobed", reason: "consent" })
+      await this.deviceSandboxFacts(orgId, deviceId, availability, undefined, "consent")
     ).reach;
     // what a consent is bound to besides the reach: the device, the project binding and the
     // epochs a widening writer bumps (a ceiling restored to the same values still resets; an

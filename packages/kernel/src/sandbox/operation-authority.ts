@@ -125,8 +125,8 @@ const RUNTIME_CAUSE: PermissionAvailabilityCause = { kind: "runtime" };
  * recorded permission context withholds its scope exactly when this returns a verdict, and
  * admission refuses with the same reason, so the model is never told it can do what admission
  * refuses, nor the reverse (the same for every provider, B-15; device-provider spec §6.7).
- * Unknown applied facts, or an applied environment whose boundary is not the one the current
- * report states, precede a positive capability report; a working root that is not the installed
+ * Unknown applied facts precede a positive capability report (the applied environment is proved
+ * by that same current report, its boundary included); a working root that is not the installed
  * workspace (no project) is never installed scope. The sandbox is the same under every profile
  * (support v2): a runtime that enforces per-operation scopes, or an instance-boundary provider
  * whose instance is the sandbox.
@@ -147,7 +147,6 @@ function withheldScope(input: {
     };
   if (
     applied === null ||
-    applied.boundary !== availability.report.boundary ||
     (input.projectPath === null && input.workingRoot !== applied.roots.workspace)
   )
     return { state: "unprobed", reason: UNPROVED_ENVIRONMENT };
