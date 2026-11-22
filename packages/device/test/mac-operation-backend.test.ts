@@ -1,10 +1,12 @@
 import { mkdir, mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
+import { SandboxScopeDeniedError } from "@capybara-hq/plugin-sdk";
 import { afterAll, afterEach, beforeAll, expect, it } from "vitest";
 import { createMacOperationBackend } from "../src/exec/mac-operation-backend.js";
-import type { DeviceOwnerCeiling } from "../src/exec/operation-types.js";
+import { type DeviceOwnerCeiling, PROJECT_REFUSAL_MESSAGES } from "../src/exec/operation-types.js";
 import type { MacWorkerHandle } from "../src/exec/operation-worker.js";
+import { DeviceProjectRefusedError } from "../src/exec/types.js";
 import { sealWorkspaceRuntime } from "./runtime-seal.js";
 
 // restricted workers launch only from a verified, sealed runtime closure (B-7)
@@ -218,6 +220,65 @@ it("reports runtime support for running outside the sandbox, not the owner's con
   expect(off.outsideSandbox).toBe(true);
   f.setCeiling({ revision: "on", outsideSandbox: true });
   expect((await f.backend.permissionSupport({ id: "d" }, signal)).outsideSandbox).toBe(true);
+});
+
+it("browsing another connection's directory is refused with its code", async () => {
+  const { mkdir, realpath, symlink } = await import("node:fs/promises");
+  const f = await fixture();
+  const base = await realpath(await mkdtemp(join(tmpdir(), "cap-browse-refusal-")));
+  dirs.push(base);
+  const other = join(base, "b");
+  const listed = join(base, "listed");
+  const unlisted = join(base, "unlisted");
+  await Promise.all([mkdir(other), mkdir(listed), mkdir(unlisted)]);
+  await symlink(other, join(base, "into-b"));
+  f.setCeiling({ otherConnectionDenies: [other] });
+  let id = 0;
+  const browse = (root: string) =>
+    f.backend
+      .browse(
+        { id: "d" },
+        {
+          operationId: `browse-${++id}`,
+          admitBeforeMs: Date.now() + 60000,
+          deviceId: "d",
+          accountId: "a",
+          ceilingRevision: "opaque",
+          readRoots: [root],
+          tag: "browse",
+        },
+        signal,
+      )
+      .then((b) => b.stat(root, signal));
+  const refusal = (root: string) =>
+    browse(root).then(
+      () => null,
+      (error: unknown) => {
+        expect(error).toBeInstanceOf(DeviceProjectRefusedError);
+        const e = error as DeviceProjectRefusedError;
+        expect(e.message).toBe(PROJECT_REFUSAL_MESSAGES[e.refusal]);
+        return e.refusal;
+      },
+    );
+  expect(await refusal(other)).toBe("other-connection");
+  expect(await refusal(join(other, "sub"))).toBe("other-connection");
+  expect(await refusal(join(base, "into-b"))).toBe("other-connection");
+  f.setCeiling({ revision: "paths", projectReach: "paths", projectPaths: [listed] });
+  expect(await refusal(unlisted)).toBe("outside-reach");
+  expect(f.launched).toHaveLength(0);
+  f.setCeiling({ revision: "machine", projectReach: "machine", projectPaths: [] });
+  await expect(browse("/opt/x")).resolves.toEqual({ size: 3, isDir: false });
+  // an unreadable other connection stays a plain denial with its actionable message
+  f.setCeiling({
+    revision: "unreadable",
+    unreadableConnections: [{ deviceId: "c", reason: "permission denied" }],
+  });
+  await expect(browse(other)).rejects.toSatisfy(
+    (e) =>
+      e instanceof SandboxScopeDeniedError &&
+      !(e instanceof DeviceProjectRefusedError) &&
+      /Cannot read connections\/c/.test(e.message),
+  );
 });
 
 it("rejects wrong device handles before creating a worker", async () => {
