@@ -1,8 +1,9 @@
 import { randomBytes } from "node:crypto";
 import type { ExtensionContext } from "@capybara-hq/plugin-sdk";
-import type {
-  DeviceFeature,
-  DeviceLocalPolicySummary,
+import {
+  type DeviceFeature,
+  type DeviceLocalPolicySummary,
+  isDeviceBootId,
 } from "@capybara-hq/plugin-sdk/device-protocol";
 import { Inject, Injectable } from "@nestjs/common";
 import { sql } from "kysely";
@@ -15,9 +16,7 @@ import { Transactional } from "../infra/database/transactional.decorator.js";
 import { KERNEL_BUS, KERNEL_LOGGER } from "../infra/tokens.js";
 import { deviceFeaturesOf, localPolicyOf } from "../local-devices/policy-summary.js";
 import type { KernelLogger } from "../log.js";
-import { LegacyRetirementStore } from "../sandbox/legacy-retirement.js";
 import { PermissionCeilingWrites } from "../sandbox/permission-ceiling-writes.js";
-import { LOCAL_PROVIDER } from "../sandbox/providers.js";
 import { deviceNotFound } from "../sandbox/sandbox.service.js";
 import { deviceRevokedTopic } from "./keys.js";
 import { DialInRelay } from "./relay.js";
@@ -86,9 +85,6 @@ export class DialInMachines {
     @Inject(KERNEL_BUS) private readonly bus: ExtensionContext["bus"],
     @Inject(KERNEL_LOGGER) private readonly log: Pick<KernelLogger, "warn">,
     @Inject(PermissionCeilingWrites) private readonly ceilings: PermissionCeilingWrites,
-    /** The host's boot identity: restart evidence for local legacy obligations (8.5). */
-    @Inject(LegacyRetirementStore)
-    private readonly retirement: Pick<LegacyRetirementStore, "recordBoot" | "clearBoot">,
   ) {}
 
   /**
@@ -216,9 +212,8 @@ export class DialInMachines {
   /**
    * What a machine's hello envelope says about its program, recorded once the connection holds the
    * device's lease (before the provider's `onHello`): its version, OS and architecture, and the
-   * host's boot identity (restart evidence for the legacy retirement; none clears the stored one,
-   * so a downgraded program leaves no stale boot as evidence). Marks the machine seen. A revoked
-   * machine is left alone.
+   * host's boot identity (none clears the stored one). Marks the machine seen. A revoked machine
+   * is left alone.
    */
   @Transactional()
   async recordConnect(
@@ -231,15 +226,12 @@ export class DialInMachines {
         program_version: program.version,
         os: program.os,
         arch: program.arch,
+        boot_id: program.bootId !== undefined && isDeviceBootId(program.bootId) ? program.bootId : null,
         last_seen_at: sql<Date>`now()`,
       })
       .where("id", "=", machineId)
       .where("revoked_at", "is", null)
-      .returning("id")
-      .executeTakeFirst();
-    if (!row) return;
-    if (program.bootId !== undefined) await this.retirement.recordBoot(machineId, program.bootId);
-    else await this.retirement.clearBoot(machineId);
+      .execute();
   }
 
   /** Marks the machine seen (a ping); writes at most once every 60 seconds. */
@@ -259,8 +251,8 @@ export class DialInMachines {
   }
 
   /**
-   * Disconnects the machine of one of the person's own live local devices (`DELETE
-   * /orgs/:orgId/devices/:id/machine`): revokes it and audits
+   * Disconnects the machine of one of the person's own live dial-in devices, whatever its
+   * provider (`DELETE /orgs/:orgId/devices/:id/machine`): revokes it and audits
    * `device.machine_revoked`. Anyone else's device, a cloud one or a missing one →
    * `device.not_found`; no machine connected is a no-op.
    */
@@ -279,7 +271,6 @@ export class DialInMachines {
       .where("owner_kind", "=", "personal")
       .where("owner_account_id", "=", accountId)
       .where("source", "=", "local")
-      .where("provider", "=", LOCAL_PROVIDER)
       .where("deleted_at", "is", null)
       .forNoKeyUpdate()
       .executeTakeFirst();

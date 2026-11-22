@@ -5,6 +5,7 @@ import {
   defineExtension,
   type ExecResult,
   type FileSystemHandle,
+  isDeviceOfflineError,
   type SandboxHandle,
   type SandboxPermissionSupport,
 } from "@capybara-hq/plugin-sdk";
@@ -24,6 +25,13 @@ import {
  * operation boundary whose `outsideSandbox` is the stored answer. Every event body is kept as
  * `frame:<deviceId>` and the reason of the last close as `closed:<deviceId>` (one hour), for the
  * tests to read; an event `{ hang: true }` is never finished.
+ *
+ * The public route `POST /plugins/fake-dial-in/request` (body `{ deviceId, body, timeoutMs? }`)
+ * is a test seam: it calls `ctx.dialIn.request` on the replica that serves it, with the HTTP
+ * request's signal (a client that disconnects gives the request up), and answers 200 with
+ * `{ ok: true, body }` or `{ ok: false, error: { name, message, code?, offline } }`; the error is
+ * also kept as `request-error:<deviceId>` (one hour). `GET /plugins/fake-dial-in/online?deviceId=`
+ * answers `{ online }` from `ctx.dialIn.online`. The dual-replica tests drive the relay with them.
  *
  * Handles are the device id: the device's file system and its instance are both named
  * `cap-device-<deviceId>`, so every operation can address its machine.
@@ -53,7 +61,13 @@ export default defineExtension({
   version: "0.1.0",
   sdk: "^0.1.0-rc.0",
   provides: [DEVICE_PROVIDER_EXTENSION_POINT],
-  permissions: { dialIn: { protocol: PROTOCOL } },
+  permissions: {
+    dialIn: { protocol: PROTOCOL },
+    http: [
+      { method: "POST", path: "/request", access: "public" },
+      { method: "GET", path: "/online", access: "public" },
+    ],
+  },
   setup(ctx) {
     const helloKey = (deviceId: string) => `hello:${deviceId}`;
     const readHello = async (deviceId: string): Promise<StoredHello | null> => {
@@ -193,5 +207,32 @@ export default defineExtension({
       },
     };
     ctx.provide(DEVICE_PROVIDER_EXTENSION_POINT, provider);
+
+    // test seams: ctx.dialIn called on whichever replica serves the route
+    ctx.http.route("POST", "/request", async (req) => {
+      const input = (await req.json()) as { deviceId: string; body: unknown; timeoutMs?: number };
+      try {
+        const body = await ctx.dialIn.request(input.deviceId, input.body, {
+          timeoutMs: input.timeoutMs ?? DEFAULT_TIMEOUT_MS,
+          signal: req.signal,
+        });
+        return Response.json({ ok: true, body });
+      } catch (e) {
+        const error = {
+          name: e instanceof Error ? e.name : "Error",
+          message: e instanceof Error ? e.message : String(e),
+          ...(isRecord(e) && typeof e.code === "string" && { code: e.code }),
+          offline: isDeviceOfflineError(e),
+        };
+        await ctx.kv.set(`request-error:${input.deviceId}`, JSON.stringify(error), {
+          ttlSeconds: HELLO_TTL_SECONDS,
+        });
+        return Response.json({ ok: false, error });
+      }
+    });
+    ctx.http.route("GET", "/online", async (req) => {
+      const deviceId = new URL(req.url).searchParams.get("deviceId") ?? "";
+      return Response.json({ online: await ctx.dialIn.online(deviceId) });
+    });
   },
 });
