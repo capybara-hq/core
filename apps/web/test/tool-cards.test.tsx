@@ -441,8 +441,8 @@ describe("ApprovalCard: a network ask (network ask spec §6.5)", () => {
     });
     const once = await screen.findByRole("button", { name: "这次允许" });
     expect(once.getAttribute("data-variant")).toBe("primary");
-    // device protocol 4: a network ask is granted for this run only, never "always"
-    expect(screen.queryByRole("button", { name: "这台设备一直允许" })).toBeNull();
+    // the ask offers only "once" here: no "add to this device's list" button
+    expect(screen.queryByRole("button", { name: /加入此设备的列表/ })).toBeNull();
     expect(
       screen.getByText("这条命令被这台设备的网络规则拦下了：Install the dependencies"),
     ).toBeTruthy();

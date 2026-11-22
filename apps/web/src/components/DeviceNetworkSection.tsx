@@ -33,8 +33,8 @@ const wider = (a: DeviceNetworkMode, b: DeviceNetworkMode) =>
 type Choice = DeviceNetworkMode | "follow";
 
 /**
- * Network (device provider design §6.3, §6.6): one settings section, identical for every provider.
- * The device's owner follows the organization (`mode: null`), opens it to the internet (private
+ * Network (device provider design §6.3, §6.6): one settings section, identical for every
+ * provider. The device's owner follows the organization (`mode: null`), opens it to the internet (private
  * networks blocked), keeps it to an allowlist whose own hosts only narrow the organization's list
  * (none of its own follows the org's hosts), or closes it, saved with `PATCH { network }`. An
  * option above `sandbox.networkCeiling` is disabled and names the layer that set it; the kernel

@@ -102,7 +102,10 @@ export interface Device {
   report: DeviceReport | null;
   /** A dial-in device: its machine is connected now; null for any other. */
   online: boolean | null;
-  /** A dial-in device's connected machine; null for any other, or when none is connected. */
+  /**
+   * A dial-in device's signed-in machine (its unrevoked one, whatever its connection); null for any
+   * other, or when none is signed in.
+   */
   machine: DeviceMachine | null;
   /** Its sandbox in effect (approval-only profiles design, "Settings model"). */
   sandbox: DeviceSandboxView;

@@ -99,8 +99,8 @@ export type SetupGuideSectionProps = (
   /** A line under the mode switch (why a mode is the default, or why it cannot be used). */
   modeNote?: { text: string; tone: "muted" | "warn" } | null;
   /**
-   * Draws a `::shell-action` block (a `device-connection` guide's Connect this machine): the page owns the
-   * button. Absent or null: the block draws nothing.
+   * Draws a `::shell-action` block (a `device-connection` guide's Connect this machine): the page
+   * owns the button. Absent or null: the block draws nothing.
    */
   renderShellAction?: (action: "connect-this-machine", label: string) => ReactNode;
 };
@@ -186,8 +186,6 @@ export function SetupGuideSection({
   const full = saved || admin || onDeployment || g.place === "device-connection";
   const blocks = full ? g.blocks : beforeReference(g.blocks);
   const pendingChecks = !full && blocks.some((b) => b.kind === "check");
-  const draw = (b: RenderedSetupGuide["blocks"][number]): GuideBlock =>
-    b.kind === "shell-action" ? { kind: "action", id: b.action, label: b.label } : b;
   const renderAction = (a: { id: string; label: string }) =>
     renderShellAction?.(a.id as "connect-this-machine", a.label) ?? null;
   const selection: SetupCheckSelection = {
@@ -250,7 +248,7 @@ export function SetupGuideSection({
         />
       ) : (
         <GuideDocument
-          blocks={blocks.map(draw)}
+          blocks={blocks.map(guideBlock)}
           renderAction={renderAction}
           renderCheck={(c) =>
             // the platform view has no target to check (spec §9.3), and before save the rows are
@@ -345,6 +343,10 @@ const POLL_WINDOW_MS = 10_000;
 const MAX_IN_FLIGHT = 4;
 /** Runs a row gets on view (a run answered `running` that left no result is tried again). */
 const MAX_AUTO_RUNS = 3;
+
+/** A rendered guide block as the design's: a `::shell-action` is an action block the page draws. */
+const guideBlock = (b: RenderedSetupGuide["blocks"][number]): GuideBlock =>
+  b.kind === "shell-action" ? { kind: "action", id: b.action, label: b.label } : b;
 
 /**
  * The guide with live check rows (spec §10.3, §10.4): the cached states first (`GET …/checks`,
@@ -476,10 +478,7 @@ function LiveGuideDocument({
   return (
     <>
       <GuideDocument
-        blocks={g.blocks.map(
-          (b): GuideBlock =>
-            b.kind === "shell-action" ? { kind: "action", id: b.action, label: b.label } : b,
-        )}
+        blocks={g.blocks.map(guideBlock)}
         renderAction={renderAction}
         renderCheck={(c) => (
           <CheckRow

@@ -683,6 +683,28 @@ describe("local devices (environments spec §6, §9)", () => {
     });
   });
 
+  it("a dial-in provider without a guide says to ask an org admin", async () => {
+    stubApi({
+      [`GET ${BASE}`]: () =>
+        json(
+          200,
+          list([env("e1", null)], {
+            providers: [DOCKER, { ...LOCAL, guide: null }],
+            defaultProvider: DOCKER.plugin,
+          }),
+        ),
+      ...guide(DOCKER),
+    });
+    await renderList();
+    const user = userEvent.setup();
+    await user.click(await screen.findByRole("button", { name: E.new }));
+    const dialog = await screen.findByRole("dialog");
+    expect(within(dialog).queryByText(E.create.noGuide)).toBeNull();
+    await user.click(within(dialog).getByRole("radio", { name: /Local machine/ }));
+    expect(await within(dialog).findByText(E.create.noGuide)).toBeTruthy();
+    expect(within(dialog).queryByRole("textbox")).toBeNull();
+  });
+
   it("a machine that connects after the window crossed 600 is still detected as new", async () => {
     const win = stubWindowWidth(390);
     let connected = false;

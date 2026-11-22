@@ -23,10 +23,9 @@ import { Person } from "./Person";
 import { ThisMachineSection } from "./ThisMachineSection";
 
 /**
- * Overview (device provider design §6.6): values only, the same for every provider. The this-machine
- * block on
- * top (only inside the desktop shell, for this machine's device), then what the provider last
- * reported (its description line in the page language and its limits as read-only rows; no report
+ * Overview (device provider design §6.6): values only, the same for every provider. The
+ * this-machine block on top (only inside the desktop shell, for this machine's device), then what
+ * the provider last reported (its description line in the page language and its limits as read-only rows; no report
  * on a usable device: the provider did not answer), the files note and the recent network changes.
  */
 export function DeviceOverviewSection({ orgId, device: e }: { orgId: string; device: Device }) {

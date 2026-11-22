@@ -1759,7 +1759,8 @@
       "providerLabel": "设备类型",
       "connected": "已连接 {name}。",
       "close": "关闭",
-      "connectFailed": "无法连接本机，请重试。"
+      "connectFailed": "无法连接本机，请重试。",
+      "noGuide": "这个设备类型没有提供连接指南，请联系组织管理员。"
     },
     "detail": {
       "providerOffNote": "这台设备的设备类型（{provider}）在这个组织里没有启用，文件保留着。",
@@ -1864,7 +1865,7 @@
     },
     "overview": {
       "about": "说明",
-      "noReport": "设备没有回应。"
+      "noReport": "设备的提供方没有回应。"
     },
     "files": {
       "title": "文件"

@@ -1771,7 +1771,8 @@
       "providerLabel": "Device type",
       "connected": "{name} connected.",
       "close": "Close",
-      "connectFailed": "Could not connect this machine. Try again."
+      "connectFailed": "Could not connect this machine. Try again.",
+      "noGuide": "This device type has no connection guide; ask an org admin."
     },
     "detail": {
       "providerOffNote": "This device's provider ({provider}) is not on in this organization; its files are kept.",

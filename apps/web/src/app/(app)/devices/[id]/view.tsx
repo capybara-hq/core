@@ -56,11 +56,11 @@ import NotFound from "../../not-found";
  * the right — the page's one bright element, and the page's title: the PageHeader is title-less,
  * so the name is said once (`titleHidden`). Tabs Overview (values: the provider's report, files,
  * recent changes, the danger zone), Network (the network setting) and Projects (the projects).
- * Rename, Rebuild files (only when the provider's report offers a reset and its files are lost, a change
- * waits for a file reset or its sandbox limits must be established again, said up front in a
- * callout; behind a confirmation; a job, so the page then polls until the files are back) and
- * Delete (typing its name; deleting the personal device says a new empty one is created the next time one is
- * needed). A provider not on in the org is one callout naming it.
+ * Rename, Rebuild files (only when the provider's report offers a reset and its files are lost, a
+ * change waits for a file reset or its sandbox limits must be established again, said up front in
+ * a callout; behind a confirmation; a job, so the page then polls until the files are back) and
+ * Delete (typing its name; deleting the personal device says a new empty one is created the next
+ * time one is needed). A provider not on in the org is one callout naming it.
  * From the query cache (the layout prefetched it on a first load); a device the kernel does not
  * find is the not-found state.
  */

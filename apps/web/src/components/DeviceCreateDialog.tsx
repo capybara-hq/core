@@ -1,6 +1,15 @@
 "use client";
 
-import { Button, Dialog, Field, Input, RadioGroup, Stack, useToast } from "@capybara-hq/design";
+import {
+  Button,
+  Dialog,
+  Field,
+  Input,
+  RadioGroup,
+  Stack,
+  Text,
+  useToast,
+} from "@capybara-hq/design";
 import { useQuery } from "@tanstack/react-query";
 import { useLocale, useTranslations } from "next-intl";
 import { useEffect, useRef, useState } from "react";
@@ -25,16 +34,19 @@ import { SetupGuideSection } from "./SetupGuideSection";
 const WAIT_POLL_MS = 3000;
 
 /**
- * New device on the Devices page: a card per device provider on in the org (the org's default preselected
- * when it is one, else the first) and, under the cards, the chosen provider's connection guide.
+ * New device on the Devices page: a card per device provider on in the org (the org's default
+ * preselected when it is one, else the first) and, under the cards, the chosen provider's
+ * connection guide.
  *
- * - A provider that creates devices itself: a name (1-64 characters) and Create (primary, disabled until
- *   the name is valid). A created device is ready at once: the dialog invalidates the list and opens
- *   its page. A kernel refusal (name taken, limit reached) keeps the dialog open with its copy.
- * - A dial-in provider (a machine signs in): no name; the guide says how, and the dialog reads the
- *   devices until one of that provider it had not seen appears, and opens its page.
- * - In the desktop shell the guide's shell-action block is a primary Connect this machine button; in a browser it
- *   draws nothing.
+ * - A provider that creates devices itself: a name (1-64 characters) and Create (primary, disabled
+ *   until the name is valid). A created device is ready at once: the dialog invalidates the list
+ *   and opens its page. A kernel refusal (name taken, limit reached) keeps the dialog open with its
+ *   copy.
+ * - A dial-in provider (a machine signs in): no name; the guide says how (a provider without one
+ *   gets a line to ask an org admin), and the dialog reads the devices until one of that provider
+ *   it had not seen appears, and opens its page.
+ * - In the desktop shell the guide's shell-action block is a primary Connect this machine button;
+ *   in a browser it draws nothing.
  */
 export function DeviceCreateDialog({
   orgId,
@@ -142,6 +154,11 @@ export function DeviceCreateDialog({
             renderShellAction={(_, label) => <ConnectThisMachine orgId={orgId} label={label} />}
           />
         )}
+        {dialIn && chosen?.guide == null && (
+          <Text variant="prose" tone="muted">
+            {t("noGuide")}
+          </Text>
+        )}
         {!dialIn && (
           <Stack gap={12}>
             <Field label={t("name")} required help={t("nameHelp")}>
@@ -212,22 +229,32 @@ function useWatchNewDevice(
 }
 
 /**
- * The guide's shell-action block: the primary Connect this machine button, only in a shell that offers
- * `device@1` (a browser draws nothing). `connect` runs inside the click-driven mutation, so the
- * shell sees the person's activation.
+ * The guide's shell-action block: the primary Connect this machine button, only in a shell that
+ * offers `device@1` (a browser draws nothing). `connect` runs inside the click-driven mutation, so
+ * the shell sees the person's activation.
  */
 function ConnectThisMachine({ orgId, label }: { orgId: string; label: string }) {
-  const t = useTranslations("devices.create");
   const { cap } = useThisMachine();
+  if (cap === undefined) return null;
+  return <ConnectButton orgId={orgId} label={label} cap={cap} />;
+}
+
+/** {@link ConnectThisMachine}'s button, inside a shell that offers `device@1`. */
+function ConnectButton({
+  orgId,
+  label,
+  cap,
+}: {
+  orgId: string;
+  label: string;
+  cap: NonNullable<ReturnType<typeof useThisMachine>["cap"]>;
+}) {
+  const t = useTranslations("devices.create");
   const [connectError, setConnectError] = useState<string>();
   const connect = useAppMutation({
-    fn: () => {
-      if (cap === undefined) return Promise.resolve("cancelled" as const);
-      return cap.connect({ orgId });
-    },
+    fn: () => cap.connect({ orgId }),
     invalidates: () => [keys.shell().deviceStatus()],
   });
-  if (cap === undefined) return null;
   const onConnect = async () => {
     if (connect.isPending) return;
     setConnectError(undefined);
