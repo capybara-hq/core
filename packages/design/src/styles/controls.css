@@ -1287,3 +1287,10 @@
     padding-left: var(--cb-space-3);
   }
 }
+
+/* The picker sheet's search field (compact Select): pinned at the top of the sheet's scroll. */
+.cb-select-sheet-search {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+}

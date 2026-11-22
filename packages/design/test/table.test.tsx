@@ -5,7 +5,6 @@ import { userEvent } from "@testing-library/user-event";
 import { useState } from "react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { Button, CellTitle, type Column, DataTable, DesignProvider } from "../src/index";
-import { optionLabels, pickOption } from "./support/select";
 
 afterEach(cleanup);
 
@@ -725,9 +724,16 @@ describe("DataTable semantics and the narrow controls (spec §6.6)", () => {
     expect(screen.getByText("已选 3 项")).toBeTruthy();
     // sort: the sortable columns, each way
     const select = within(bar).getByRole("combobox", { name: "排序" }) as HTMLButtonElement;
-    expect(await optionLabels(select, user)).toEqual(["名称 升序", "名称 降序"]);
+    // a narrow window: the select opens a picker sheet with radio rows (interaction spec §2.5)
+    await user.click(select);
+    const sheet = await screen.findByRole("dialog", { name: "排序" });
+    expect(
+      within(sheet)
+        .getAllByRole("radio")
+        .map((r) => (r as HTMLInputElement).value),
+    ).toEqual(["name:asc", "name:desc"]);
     expect(select.value).toBe("name:asc");
-    await pickOption(select, "name:desc", user);
+    await user.click(within(sheet).getByRole("radio", { name: "名称 降序" }));
     expect(onChange).toHaveBeenCalledWith("name", "desc");
   });
 
