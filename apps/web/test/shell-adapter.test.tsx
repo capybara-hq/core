@@ -288,19 +288,18 @@ describe("shellCapability (event handlers only)", () => {
 });
 
 describe("the root layout", () => {
-  it("declares the viewport: device width, cover, resizes-content and a theme color per scheme", async () => {
-    vi.doMock("../src/lib/server/register", () => ({}));
-    const { viewport } = await import("../src/app/layout");
+  it("declares the viewport: device width, cover, resizes-content and the scheme's page colour", async () => {
+    // the root layout's generateViewport builds it (theme brand coverage spec §6: one colour)
+    const { rootViewport } = await import("../src/lib/web-manifest");
+    const viewport = rootViewport("dark", null);
     expect(viewport).toMatchObject({
       width: "device-width",
       initialScale: 1,
       viewportFit: "cover",
       interactiveWidget: "resizes-content",
-      themeColor: [
-        { media: "(prefers-color-scheme: light)", color: "#FAF9F6" },
-        { media: "(prefers-color-scheme: dark)", color: "#0A0A0A" },
-      ],
+      themeColor: "#0A0A0A",
     });
+    expect(rootViewport("light", null).themeColor).toBe("#FAF9F6");
     // pinch zoom stays
     expect(viewport).not.toHaveProperty("maximumScale");
     expect(viewport).not.toHaveProperty("userScalable");

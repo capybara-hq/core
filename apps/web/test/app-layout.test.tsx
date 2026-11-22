@@ -54,6 +54,9 @@ vi.mock("../src/lib/query/routes", async (original) => {
 });
 
 const { default: AppLayout } = await import("../src/app/(app)/layout");
+const { StaticTheme } = await import("../src/components/static-theme");
+const { BRAND_COOKIE, encodeBrandCookie } = await import("../src/lib/brand-cookie");
+type StartingElement = ReactElement<{ brand: unknown; children: ReactElement }>;
 
 const O = "/api/v1/orgs/o1";
 const THEMES = { themes: [], resolved: null, org: { id: null, personal: "allowed" } };
@@ -233,10 +236,34 @@ describe("the (app) layout's first-load prefetch", () => {
     await expect(layoutAt("/nope")).resolves.toBeTruthy();
   });
 
-  it("the kernel unavailable on a first load gives the starting frame", async () => {
+  it("KernelStarting renders under the built-in theme without a cookie", async () => {
     req.headers = new Headers({ "x-cap-path": "/agents", "x-cap-session": "unavailable" });
-    const element = (await AppLayout({ children: <p>page body</p> })) as ReactElement;
-    expect((element.type as { name?: string }).name).toBe("KernelStarting");
+    const element = (await AppLayout({ children: <p>page body</p> })) as StartingElement;
+    expect(element.type).toBe(StaticTheme);
+    expect(element.props.brand).toBeNull();
+    expect((element.props.children.type as { name?: string }).name).toBe("KernelStarting");
+  });
+
+  it("KernelStarting renders under the cookie's theme when the shell is unavailable", async () => {
+    const id = "0f8fad5b-d9cb-469f-a165-70867728950e";
+    const ref = {
+      cssUrl: `/api/v1/themes/${id}/3/r2/theme.css`,
+      markUrl: `/api/v1/themes/${id}/3/assets/logo.svg`,
+      wordmark: "ACME",
+      illustrationUrl: null,
+      faviconUrl: null,
+      decoration: "dither" as const,
+      background: {},
+    };
+    req.headers = new Headers({
+      "x-cap-path": "/agents",
+      "x-cap-session": "unavailable",
+      cookie: `${BRAND_COOKIE}=${encodeBrandCookie(ref)}`,
+    });
+    const element = (await AppLayout({ children: <p>page body</p> })) as StartingElement;
+    expect(element.type).toBe(StaticTheme);
+    expect(element.props.brand).toEqual(ref);
+    expect((element.props.children.type as { name?: string }).name).toBe("KernelStarting");
   });
 });
 

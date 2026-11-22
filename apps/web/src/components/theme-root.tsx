@@ -1,8 +1,22 @@
 "use client";
 
-import type { Brand } from "@capybara-hq/design";
+import { type Brand, useThemeColorMeta } from "@capybara-hq/design";
 import { useQuery } from "@tanstack/react-query";
-import { createContext, type ReactNode, useContext, useLayoutEffect, useMemo } from "react";
+import {
+  createContext,
+  type ReactNode,
+  useContext,
+  useEffect,
+  useLayoutEffect,
+  useMemo,
+} from "react";
+import {
+  type BrandRef,
+  brandCookieHeader,
+  brandRefOf,
+  decodeBrandCookie,
+  encodeBrandCookie,
+} from "../lib/brand-cookie";
 import { useProductName } from "../lib/product-name";
 import { retryOnMountOf } from "../lib/query/client";
 import { orgThemesQuery, platformThemeQuery } from "../lib/query/themes";
@@ -33,14 +47,22 @@ export function ThemeRoot({ orgId, children }: { orgId: string | null; children:
 
 function OrgTheme({ orgId, children }: { orgId: string; children: ReactNode }) {
   const q = orgThemesQuery(orgId);
-  const theme = useQuery({ ...q, retryOnMount: retryOnMountOf(q.queryKey) }).data?.resolved ?? null;
-  return <Themed theme={theme}>{children}</Themed>;
+  const read = useQuery({ ...q, retryOnMount: retryOnMountOf(q.queryKey) });
+  return (
+    <Themed theme={read.data?.resolved ?? null} answered={read.data !== undefined}>
+      {children}
+    </Themed>
+  );
 }
 
 function PlatformTheme({ children }: { children: ReactNode }) {
   const q = platformThemeQuery();
-  const theme = useQuery({ ...q, retryOnMount: retryOnMountOf(q.queryKey) }).data ?? null;
-  return <Themed theme={theme}>{children}</Themed>;
+  const read = useQuery({ ...q, retryOnMount: retryOnMountOf(q.queryKey) });
+  return (
+    <Themed theme={read.data ?? null} answered={read.data !== undefined}>
+      {children}
+    </Themed>
+  );
 }
 
 /** The theme stylesheets React hoisted into `<head>` (`ThemeLink`). */
@@ -54,7 +76,7 @@ const THEME_SHEETS = 'link[rel="stylesheet"][data-precedence="theme"]';
  * one (none for the built-in theme), so the order of the nodes no longer matters. The server render
  * holds only the current link, so the first paint is unchanged.
  */
-function useOnlyThemeSheet(cssUrl: string | null): void {
+export function useOnlyThemeSheet(cssUrl: string | null): void {
   useLayoutEffect(() => {
     for (const link of document.querySelectorAll<HTMLLinkElement>(THEME_SHEETS)) {
       link.disabled = link.getAttribute("href") !== cssUrl;
@@ -70,17 +92,49 @@ function useOnlyThemeSheet(cssUrl: string | null): void {
  * alone makes no brand.
  */
 export function brandOf(theme: ThemeRef | null, productName: string | null): Brand | null {
-  const markUrl = theme?.logo?.markUrl ?? null;
-  const wordmark = theme?.logo?.wordmark ?? null;
-  const illustrationUrl = theme?.logo?.illustrationUrl ?? null;
-  const decoration = theme?.decoration === "none" ? "none" : "dither";
+  return brandOfRef(theme === null ? null : brandRefOf(theme), productName);
+}
+
+/** {@link brandOf} of a theme reference an outside page has (the brand cookie, `StaticTheme`). */
+export function brandOfRef(ref: BrandRef | null, productName: string | null): Brand | null {
+  const markUrl = ref?.markUrl ?? null;
+  const wordmark = ref?.wordmark ?? null;
+  const illustrationUrl = ref?.illustrationUrl ?? null;
+  const decoration = ref?.decoration === "none" ? "none" : "dither";
   if (markUrl === null && wordmark === null && illustrationUrl === null && decoration === "dither")
     return null;
   return { markUrl, wordmark, illustrationUrl, decoration, productName };
 }
 
-function Themed({ theme, children }: { theme: ThemeRef | null; children: ReactNode }) {
+/**
+ * Stores the drawn theme in the brand cookie (theme brand coverage spec §5) for the pages outside
+ * the route-group layouts: on every themed document (renewing its 30 days) and after each commit
+ * whose drawn theme changes; deleted under the built-in theme. Nothing while the theme read has no
+ * answer (pending or failed: the last theme drawn stays, which is what a kernel-down page wants).
+ */
+function useBrandCookieWrite(theme: ThemeRef | null, answered: boolean): void {
+  const value = theme === null ? null : encodeBrandCookie(brandRefOf(theme));
+  useEffect(() => {
+    if (!answered) return;
+    // a theme the cookie cannot hold (over 1 KB) deletes it, as the built-in theme does
+    const ref = value === null ? null : decodeBrandCookie(value);
+    // biome-ignore lint/suspicious/noDocumentCookie: the Cookie Store API is async and not everywhere
+    document.cookie = brandCookieHeader(ref, location.protocol === "https:");
+  }, [answered, value]);
+}
+
+function Themed({
+  theme,
+  answered,
+  children,
+}: {
+  theme: ThemeRef | null;
+  answered: boolean;
+  children: ReactNode;
+}) {
   useOnlyThemeSheet(theme?.cssUrl ?? null);
+  useBrandCookieWrite(theme, answered);
+  useThemeColorMeta(theme?.cssUrl ?? null);
   const productName = useProductName();
   const brand = useMemo(() => brandOf(theme, productName), [theme, productName]);
   return (

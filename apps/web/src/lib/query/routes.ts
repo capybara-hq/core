@@ -597,14 +597,16 @@ const ROUTE_TABLE: readonly RouteEntry[] = [
   {
     pattern: "/admin/settings",
     // The settings, the themes (the appearance section's eligible ones, with their names and
-    // swatches), the uploaded platform icons (the app icon section), the platform arrangement and
-    // the extensions (the plugin UI code section lists those with client code).
+    // swatches), the uploaded platform icons and the platform default theme (the app icon section
+    // previews its app icons), the platform arrangement and the extensions (the plugin UI code
+    // section lists those with client code).
     queries: ({ me }) =>
       superAdmin(me)
         ? [
             q(deploymentSettingsQuery()),
             q(adminComponentsQuery("theme")),
             q(platformIconsQuery()),
+            q(platformThemeQuery()),
             q(adminUiArrangementQuery()),
             q(adminExtensionsQuery()),
           ]

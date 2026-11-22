@@ -296,8 +296,11 @@ Three levels, most specific first:
 - The person's pick is one value for the person, across all their orgs, not one per org
   **(decided, 2026-11-08)**; in an org where it is not on (or that locks), the org's default
   applies.
-- **Before sign-in** (auth pages, `/invite`, the org chooser): the platform default. The root
-  error and not-found pages sit outside both layouts and draw the built-in theme.
+- **Before sign-in** (auth pages, `/invite`, the org chooser): the platform default. The pages
+  outside both layouts (the kernel-starting frame, the root error pages, the root 404) draw
+  `outsideTheme()` (amended by the [theme brand coverage spec](2026-11-22-theme-brand-coverage-design.md)
+  §5): the brand cookie (the theme this browser last drew), else the platform default when the
+  kernel answers, else the built-in theme.
   Only platform-owned `all` themes can be the platform default, so nothing org-specific leaks to
   an anonymous page.
 - The platform default can only be a platform-owned theme whose scope is `all` **(decided,
@@ -365,6 +368,16 @@ Three levels, most specific first:
   context (`DesignProvider`, a new `brand` value set by the web's `design-root`); `Logo` keeps its
   props (`wordmark` stays the boolean "draw the wordmark") and reads the brand from the context.
   Without a brand, the pixel capybara and `CAPYBARA` as today.
+- **The brand cookie** (theme brand coverage spec §5): `ThemeRoot` writes `cb-brand` in the
+  browser after each commit whose drawn theme changes and on every themed document (base64url
+  JSON with `v: 1`, ≤ 1 KB, `Path=/`, `SameSite=Lax`, `Secure` on https, 30 days; deleted under
+  the built-in theme; nothing while the theme read has no answer): the drawn theme's `cssUrl`,
+  `markUrl`, `wordmark`, `illustrationUrl`, `faviconUrl`, `decoration` and `background`. One codec
+  (`apps/web/src/lib/brand-cookie.ts`) reads it on the server and in the browser: every URL must
+  match the delivery grammar above (same origin, no query, no `..`), the wordmark and colours the
+  SDK's rules, else the whole cookie is discarded. A hint only, never an input to access or to a
+  kernel call. `StaticTheme` links and brands a page from such a reference without a query; when
+  the kernel is down the immutable CSS and assets come from the browser's cache.
 
 ## 9. APIs and the `Platform` tool
 
@@ -475,8 +488,10 @@ mark (§4.3); every theme's CSS and assets are public (§8).
 
 Recorded at the final branch review (2026-11-09); none blocks the merge.
 
-- **Visual suite under a theme** (review M2): add one page rendered under the fixture theme to the
-  visual suite with the next `visual-update`.
+- ~~**Visual suite under a theme** (review M2)~~: closed by the theme brand coverage work (#451):
+  the catalog's `brand/fixture` route draws the fixture brand (empty states, greeting, working
+  line, sign-in without decoration, avatar presets, the 404 page) in the visual suite, and the
+  fixture theme's tokens stay covered by the computed-style checks in `apps/web/e2e/themes.spec.ts`.
 - **Embeds under a single-scheme theme** (M4): `<html data-theme>` keeps the cookie's scheme, and
   embeds receive it through the embed bridge, so a light embed can render inside a dark
   single-scheme page. The L1 slot spec decides what an embed is told.

@@ -30,8 +30,15 @@ const PAPER_DARK_ACCENT = "#e0a070";
 /** Neon Grid's dark accent. */
 const NEON_GRID_ACCENT = "#fce300";
 
+/** The fixture's themes these cases use, by English name. */
+interface FixtureThemes {
+  neonGrid: Listed;
+  paper: Listed;
+  brandKit: Listed;
+}
+
 /** Imports `fake-theme` once (scope `all`); returns the `platform_themes` ids by English name. */
-async function themeIds(page: Page): Promise<{ neonGrid: Listed; paper: Listed }> {
+async function themeIds(page: Page): Promise<FixtureThemes> {
   const orgId = await currentOrg(page);
   const list = async () => {
     const r = await page.request.get(`/api/v1/orgs/${orgId}/themes`);
@@ -57,17 +64,18 @@ async function themeIds(page: Page): Promise<{ neonGrid: Listed; paper: Listed }
     );
     expect(confirmed.status(), await confirmed.text()).toBe(201);
   }
-  let found: { neonGrid: Listed; paper: Listed } | null = null;
+  let found: FixtureThemes | null = null;
   await expect
     .poll(async () => {
       const themes = await list();
       const neonGrid = byName(themes, "Neon Grid");
       const paper = byName(themes, "Paper");
-      found = neonGrid && paper ? { neonGrid, paper } : null;
+      const brandKit = byName(themes, "Brand Kit");
+      found = neonGrid && paper && brandKit ? { neonGrid, paper, brandKit } : null;
       return found !== null;
     })
     .toBe(true);
-  return found as unknown as { neonGrid: Listed; paper: Listed };
+  return found as unknown as FixtureThemes;
 }
 
 async function setOrgTheme(page: Page, id: string | null): Promise<void> {
@@ -416,6 +424,126 @@ test.describe("appearance pages", () => {
       await expect(picker.getByRole("radio")).toHaveCount(3);
     } finally {
       await scope({ follow: true });
+    }
+  });
+});
+
+/**
+ * Theme brand coverage (spec `docs/superpowers/specs/2026-11-22-theme-brand-coverage-design.md`
+ * §3, §5, §6) under the fixture's `brand-kit` (mark, wordmark `BRAND KIT`, illustration, app icons,
+ * `decoration: "none"`) as the platform default: the pages outside the route-group layouts draw the
+ * brand cookie's theme, else the platform default; the manifest lists the theme's app icons; the
+ * graphics show no capybara. Each case puts the platform default back.
+ */
+test.describe("theme brand coverage", () => {
+  /**
+   * A path outside the route groups whose page answers notFound(): the design catalog's unknown
+   * route reaches the root 404 (any other unknown path falls to the workspace's `[...rest]`).
+   */
+  const NO_PAGE = "/dev/ui/no-such-page";
+  const themeLink = (page: Page) =>
+    page.locator('head link[rel="stylesheet"][data-precedence="theme"]:not([disabled])');
+
+  test("the root 404 links the theme CSS and draws the mark", async ({ page, browser }) => {
+    await signIn(page);
+    const { brandKit } = await themeIds(page);
+    await setPlatformTheme(page, brandKit.id);
+    const visitor = await anonymousPage(browser);
+    try {
+      const res = await visitor.goto(NO_PAGE);
+      expect(res?.status()).toBe(404);
+      await expect(visitor.locator('[data-template="StatusPage"]')).toHaveAttribute(
+        "data-kind",
+        "404",
+      );
+      await expect(themeLink(visitor)).toHaveAttribute("href", brandKit.cssUrl);
+      await expect(visitor.locator('[data-part="logo-mark"]').first()).toBeVisible();
+    } finally {
+      await visitor.context().close();
+      await setPlatformTheme(page, null);
+    }
+  });
+
+  test("the brand cookie holds the theme this browser drew: the root 404 keeps it after the default changes", async ({
+    page,
+    browser,
+  }) => {
+    await signIn(page);
+    const { brandKit } = await themeIds(page);
+    await setPlatformTheme(page, brandKit.id);
+    const visitor = await anonymousPage(browser);
+    try {
+      await visitor.goto("/login");
+      await hydrated(visitor);
+      await expect
+        .poll(async () => (await visitor.context().cookies()).some((c) => c.name === "cb-brand"))
+        .toBe(true);
+      await setPlatformTheme(page, null);
+      await visitor.goto(NO_PAGE);
+      await expect(themeLink(visitor)).toHaveAttribute("href", brandKit.cssUrl);
+      // a themed document under the built-in theme deletes it
+      await visitor.goto("/login");
+      await hydrated(visitor);
+      await expect
+        .poll(async () => (await visitor.context().cookies()).some((c) => c.name === "cb-brand"))
+        .toBe(false);
+    } finally {
+      await visitor.context().close();
+      await setPlatformTheme(page, null);
+    }
+  });
+
+  // The fake kernel is shared by every spec and cannot stop answering for one document here, so
+  // the starting frame under the cookie's theme is covered by the (app) layout's component test
+  // (apps/web/test/app-layout.test.tsx) and the root error pages by root-error-pages.test.tsx.
+  test.skip("KernelStarting renders the cookie's theme", () => {});
+
+  test("the manifest lists the theme's app icons", async ({ page }) => {
+    await signIn(page);
+    const { brandKit } = await themeIds(page);
+    await setPlatformTheme(page, brandKit.id);
+    try {
+      const res = await page.request.get("/manifest.webmanifest");
+      expect(res.ok()).toBe(true);
+      const m = (await res.json()) as { icons: { src: string; purpose: string }[] };
+      const prefix = brandKit.cssUrl.slice(0, brandKit.cssUrl.indexOf("/r"));
+      expect(m.icons.map((i) => i.purpose)).toEqual(["any", "maskable"]);
+      for (const icon of m.icons) expect(icon.src.startsWith(`${prefix}/assets/`)).toBe(true);
+    } finally {
+      await setPlatformTheme(page, null);
+    }
+  });
+
+  test("empty states show the theme art and no capybara", async ({ page }) => {
+    await signIn(page);
+    const { brandKit } = await themeIds(page);
+    await setOrgTheme(page, null);
+    await setPlatformTheme(page, brandKit.id);
+    try {
+      await page.goto("/schedules");
+      const empty = page.locator('[data-part="empty-state"]').first();
+      await expect(empty).toBeVisible();
+      await expect(empty.locator('[data-part="empty-brand-art"]')).toHaveCount(1);
+      await expect(empty.locator(".cb-logo-line")).toHaveCount(0);
+    } finally {
+      await setPlatformTheme(page, null);
+    }
+  });
+
+  test("sign-in without dither under brand-kit", async ({ page, browser }) => {
+    await signIn(page);
+    const { brandKit } = await themeIds(page);
+    await setPlatformTheme(page, brandKit.id);
+    const visitor = await anonymousPage(browser);
+    try {
+      await visitor.goto("/login");
+      const auth = visitor.locator('[data-template="AuthPage"]');
+      await expect(auth).toHaveAttribute("data-decoration", "none");
+      await expect(visitor.locator(".cb-dither")).toHaveCount(0);
+      await expect(visitor.getByText("BRAND KIT").first()).toBeVisible();
+    } finally {
+      await visitor.context().close();
+      await setPlatformTheme(page, null);
     }
   });
 });

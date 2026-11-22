@@ -6614,7 +6614,7 @@
   },
   "appIcon": {
     "title": "App icon",
-    "description": "The icon of the installed app and the browser tab for the whole platform. Without an upload, the built-in icon is used.",
+    "description": "The icon of the installed app and the browser tab for the whole platform. Without an upload, the app icons are the platform default theme's, else the built-in ones; the browser tab follows the page's theme.",
     "app": {
       "title": "Standard icon",
       "hint": "PNG, exactly 512 × 512"
@@ -6629,6 +6629,7 @@
     },
     "default": "Default",
     "custom": "Uploaded",
+    "fromTheme": "From theme {name}",
     "upload": "Upload",
     "uploadLabel": "Upload {name}",
     "restore": "Restore default",

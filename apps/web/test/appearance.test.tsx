@@ -370,7 +370,10 @@ describe("/admin/settings › 外观 (平台默认主题)", () => {
     await vi.waitFor(() =>
       expect(client.getQueryState(orgThemesQuery("o1").queryKey)?.isInvalidated).toBe(true),
     );
-    expect(client.getQueryState(platformThemeQuery().queryKey)?.isInvalidated).toBe(true);
+    // the platform default is read again: the app icon section on this page observes it
+    await vi.waitFor(() =>
+      expect(calls.filter((c) => c.url === "/api/v1/platform/theme").length).toBeGreaterThan(0),
+    );
   });
 
   it("a theme off in some org: the refusal names those orgs", async () => {
@@ -435,6 +438,7 @@ describe("/admin/themes", () => {
     // 插件界面代码 lists the extensions with client code
     "GET /api/v1/admin/extensions": () => json(200, { extensions: [], drainSeconds: 30 }),
     "GET /api/v1/admin/platform/icons": () => json(200, { icons: [] }),
+    "GET /api/v1/platform/theme": () => json(200, null),
     "GET /api/v1/admin/settings": () => json(200, { uiTheme: { id: "t-night" } }),
     "GET /api/v1/admin/components/theme/t-night/versions": versions,
     "GET /api/v1/admin/components/theme/t-paper/versions": versions,

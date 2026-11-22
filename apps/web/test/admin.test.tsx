@@ -1582,6 +1582,7 @@ describe("/admin/orgs（ListPage）", () => {
       // 插件界面代码 lists the extensions with client code
       "GET /api/v1/admin/extensions": () => json(200, { extensions: [], drainSeconds: 30 }),
       "GET /api/v1/admin/platform/icons": () => json(200, { icons: [] }),
+      "GET /api/v1/platform/theme": () => json(200, null),
       "GET /api/v1/admin/settings": () => json(200, SETTINGS),
       "GET /api/v1/admin/ui/arrangement": () => json(200, { slots: [] }),
     });
@@ -1599,6 +1600,7 @@ describe("/admin/orgs（ListPage）", () => {
       // 插件界面代码 lists the extensions with client code
       "GET /api/v1/admin/extensions": () => json(200, { extensions: [], drainSeconds: 30 }),
       "GET /api/v1/admin/platform/icons": () => json(200, { icons: [] }),
+      "GET /api/v1/platform/theme": () => json(200, null),
       "GET /api/v1/admin/settings": () => json(200, SETTINGS),
       "GET /api/v1/admin/ui/arrangement": () => json(200, { slots: [] }),
       "PUT /api/v1/admin/settings": () =>
@@ -1658,6 +1660,7 @@ describe("/admin/orgs（ListPage）", () => {
       // 插件界面代码 lists the extensions with client code
       "GET /api/v1/admin/extensions": () => json(200, { extensions: [], drainSeconds: 30 }),
       "GET /api/v1/admin/platform/icons": () => json(200, { icons: [] }),
+      "GET /api/v1/platform/theme": () => json(200, null),
       "GET /api/v1/admin/settings": () => json(200, SETTINGS),
       "GET /api/v1/admin/ui/arrangement": () => json(200, { slots: [] }),
       "PUT /api/v1/admin/settings": () =>
@@ -1699,6 +1702,7 @@ describe("/admin/orgs（ListPage）", () => {
         // 插件界面代码 lists the extensions with client code
         "GET /api/v1/admin/extensions": () => json(200, { extensions: [], drainSeconds: 30 }),
         "GET /api/v1/admin/platform/icons": () => json(200, { icons: [] }),
+        "GET /api/v1/platform/theme": () => json(200, null),
         "GET /api/v1/admin/settings": () =>
           json(200, { ...SETTINGS, subagentLimitOverrides: { o2: { maxDispatchesPerRun: 9 } } }),
         "PUT /api/v1/admin/settings": () => json(200, SETTINGS),
@@ -1762,6 +1766,7 @@ describe("/admin/orgs（ListPage）", () => {
         // 插件界面代码 lists the extensions with client code
         "GET /api/v1/admin/extensions": () => json(200, { extensions: [], drainSeconds: 30 }),
         "GET /api/v1/admin/platform/icons": () => json(200, { icons: [] }),
+        "GET /api/v1/platform/theme": () => json(200, null),
         "GET /api/v1/admin/settings": () =>
           json(200, { ...SETTINGS, subagentLimitOverrides: { o2: { maxTokensPerRun: 0 } } }),
         "PUT /api/v1/admin/settings": () =>
@@ -1816,6 +1821,7 @@ describe("/admin/orgs（ListPage）", () => {
       // 插件界面代码 lists the extensions with client code
       "GET /api/v1/admin/extensions": () => json(200, { extensions: [], drainSeconds: 30 }),
       "GET /api/v1/admin/platform/icons": () => json(200, { icons: [] }),
+      "GET /api/v1/platform/theme": () => json(200, null),
       "GET /api/v1/admin/settings": () => json(200, SETTINGS),
       "GET /api/v1/admin/ui/arrangement": () => json(200, { slots: [] }),
       "PUT /api/v1/admin/settings": () =>
@@ -1852,6 +1858,7 @@ describe("/admin/settings（FormPage）", () => {
         // 插件界面代码 lists the extensions with client code
         "GET /api/v1/admin/extensions": () => json(200, { extensions: [], drainSeconds: 30 }),
         "GET /api/v1/admin/platform/icons": () => json(200, { icons: [] }),
+        "GET /api/v1/platform/theme": () => json(200, null),
         "GET /api/v1/admin/settings": () => json(200, SETTINGS),
         "GET /api/v1/admin/ui/arrangement": () => json(200, { slots: [] }),
         ...THEME_ROUTES,
@@ -1888,6 +1895,7 @@ describe("/admin/settings（FormPage）", () => {
       // 插件界面代码 lists the extensions with client code
       "GET /api/v1/admin/extensions": () => json(200, { extensions: [], drainSeconds: 30 }),
       "GET /api/v1/admin/platform/icons": () => json(200, { icons: [] }),
+      "GET /api/v1/platform/theme": () => json(200, null),
       "GET /api/v1/admin/settings": () => json(200, SETTINGS),
       "GET /api/v1/admin/ui/arrangement": () => json(200, { slots: [] }),
       ...THEME_ROUTES,
@@ -1909,6 +1917,7 @@ describe("/admin/settings（FormPage）", () => {
       // 插件界面代码 lists the extensions with client code
       "GET /api/v1/admin/extensions": () => json(200, { extensions: [], drainSeconds: 30 }),
       "GET /api/v1/admin/platform/icons": () => json(200, { icons: [] }),
+      "GET /api/v1/platform/theme": () => json(200, null),
       "GET /api/v1/admin/settings": () => json(200, SETTINGS),
       "GET /api/v1/admin/ui/arrangement": () => json(200, { slots: [] }),
       ...THEME_ROUTES,
