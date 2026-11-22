@@ -72,18 +72,21 @@ const local = (id: string, over: Record<string, unknown> = {}) => ({
   ...over,
 });
 
-const CONNECTED = {
-  state: "connected",
-  deviceId: "e1",
+/** One of this machine's connections (`device@2` `ThisMachineConnection`). */
+const conn = (deviceId: string, over: Record<string, unknown> = {}) => ({
+  deviceId,
   orgId: "o1",
   mode: "os",
   connection: "online",
   serviceInstalled: true,
   keepAwake: { mode: "while-busy", held: false },
-};
-const RUNNING = [
+  ...over,
+});
+const CONNECTED = conn("e1");
+/** What runs on each device: `running({ deviceId })` answers per connection. */
+const runningOf = (deviceId: string) => [
   {
-    tag: "build-7",
+    tag: `build-${deviceId}`,
     conversationId: "c1",
     accountId: "a1",
     isolation: "restricted",
@@ -102,17 +105,17 @@ function installShell(caps: Record<string, unknown>) {
     },
   };
 }
-/** A fake `device@1` whose status the test can change and push. */
-function fakeDevice(status: unknown = CONNECTED, over: Record<string, unknown> = {}) {
-  let current = status;
-  const listeners = new Set<(s: unknown) => void>();
+/** A fake `device@2` whose connections the test can change and push. */
+function fakeDevice(connections: unknown[] = [CONNECTED], over: Record<string, unknown> = {}) {
+  let current = connections;
+  const listeners = new Set<() => void>();
   const device = {
-    status: vi.fn(async () => current),
-    onStatus: (l: (s: unknown) => void) => {
+    status: vi.fn(async () => ({ connections: current })),
+    onStatus: (l: () => void) => {
       listeners.add(l);
       return () => listeners.delete(l);
     },
-    running: vi.fn(async () => RUNNING),
+    running: vi.fn(async ({ deviceId }: { deviceId: string }) => runningOf(deviceId)),
     pause: vi.fn(async () => {}),
     resume: vi.fn(async () => "resumed"),
     disconnect: vi.fn(async () => {}),
@@ -123,19 +126,21 @@ function fakeDevice(status: unknown = CONNECTED, over: Record<string, unknown> =
   };
   return {
     device,
-    set(next: unknown) {
+    set(next: unknown[]) {
       current = next;
       act(() => {
-        for (const l of listeners) l(next);
+        for (const l of listeners) l();
       });
     },
   };
 }
 
-const renderDetail = () => renderRouteWithCache("/devices/e1", lastStubRoutes(), {});
-const detailRoutes = (device: unknown) => ({
+const renderDetail = (id = "e1") => renderRouteWithCache(`/devices/${id}`, lastStubRoutes(), {});
+const detailRoutes = (device: { id: string }) => ({
   ...NO_PROJECTS,
-  [`GET ${BASE}/e1`]: () => json(200, { device }),
+  [`GET ${BASE}/${device.id}/projects`]: () =>
+    json(200, { projects: [], hidden: 0, mode: "auto", base: "/workspace", supported: true }),
+  [`GET ${BASE}/${device.id}`]: () => json(200, { device }),
 });
 
 beforeEach(() => {
@@ -148,12 +153,27 @@ afterEach(() => {
 });
 
 describe("本机 on the device page", () => {
+  it("本机 on each of this machine's devices, with that device's running list and actions", async () => {
+    const fake = fakeDevice([conn("e1"), conn("e2")]);
+    installShell({ "device@2": fake.device });
+    resetNavigation("/devices/e2");
+    stubApi(detailRoutes(local("e2")));
+    await renderDetail("e2");
+    expect(await screen.findByRole("heading", { name: M.title })).toBeTruthy();
+    expect(await screen.findByText("build-e2")).toBeTruthy();
+    expect(screen.queryByText("build-e1")).toBeNull();
+    expect(fake.device.running).toHaveBeenCalledWith({ deviceId: "e2" });
+    expect(fake.device.running).not.toHaveBeenCalledWith({ deviceId: "e1" });
+    await userEvent.setup().click(screen.getByRole("button", { name: M.pause }));
+    expect(fake.device.pause).toHaveBeenCalledWith({ deviceId: "e2" });
+  });
+
   it("shows the running list, 暂停 / 断开 and the keep-awake choice with what it cannot prevent", async () => {
-    installShell({ "device@1": fakeDevice().device });
+    installShell({ "device@2": fakeDevice().device });
     stubApi(detailRoutes(local("e1")));
     await renderDetail();
     expect(await screen.findByRole("heading", { name: M.title })).toBeTruthy();
-    expect(await screen.findByText("build-7")).toBeTruthy();
+    expect(await screen.findByText("build-e1")).toBeTruthy();
     expect(screen.getByRole("button", { name: M.pause })).toBeTruthy();
     expect(screen.getByRole("button", { name: M.disconnect })).toBeTruthy();
     expect(screen.queryByRole("button", { name: M.resume })).toBeNull();
@@ -169,7 +189,7 @@ describe("本机 on the device page", () => {
   });
 
   it("a stopped machine offers 恢复 only", async () => {
-    installShell({ "device@1": fakeDevice({ ...CONNECTED, connection: "stopped" }).device });
+    installShell({ "device@2": fakeDevice([conn("e1", { connection: "stopped" })]).device });
     stubApi(detailRoutes(local("e1")));
     await renderDetail();
     expect(await screen.findByRole("button", { name: M.resume })).toBeTruthy();
@@ -178,41 +198,38 @@ describe("本机 on the device page", () => {
   });
 
   it("pause calls the shell and reads the status again; a cancelled resume shows nothing", async () => {
-    const fake = fakeDevice(
-      { ...CONNECTED, connection: "stopped" },
-      {
-        resume: vi.fn(async () => "cancelled"),
-      },
-    );
-    installShell({ "device@1": fake.device });
+    const fake = fakeDevice([conn("e1", { connection: "stopped" })], {
+      resume: vi.fn(async () => "cancelled"),
+    });
+    installShell({ "device@2": fake.device });
     stubApi(detailRoutes(local("e1")));
     await renderDetail();
     const user = userEvent.setup();
     await user.click(await screen.findByRole("button", { name: M.resume }));
-    await waitFor(() => expect(fake.device.resume).toHaveBeenCalled());
+    await waitFor(() => expect(fake.device.resume).toHaveBeenCalledWith({ deviceId: "e1" }));
     expect(screen.queryByRole("alert")).toBeNull();
     expect(screen.queryByText(M.failed)).toBeNull();
     // the status is read again after the call
     await waitFor(() => expect(fake.device.status.mock.calls.length).toBeGreaterThan(1));
-    fake.set(CONNECTED);
+    fake.set([CONNECTED]);
     await user.click(await screen.findByRole("button", { name: M.pause }));
-    expect(fake.device.pause).toHaveBeenCalled();
+    expect(fake.device.pause).toHaveBeenCalledWith({ deviceId: "e1" });
   });
 
-  it("a keep-awake choice calls setKeepAwake", async () => {
+  it("a keep-awake choice calls setKeepAwake({ deviceId, mode })", async () => {
     const fake = fakeDevice();
-    installShell({ "device@1": fake.device });
+    installShell({ "device@2": fake.device });
     stubApi(detailRoutes(local("e1")));
     await renderDetail();
     const user = userEvent.setup();
     await user.click(await screen.findByRole("radio", { name: M.keepAwake.connected }));
-    expect(fake.device.setKeepAwake).toHaveBeenCalledWith("connected");
+    expect(fake.device.setKeepAwake).toHaveBeenCalledWith({ deviceId: "e1", mode: "connected" });
   });
 
   it("says the computer was asleep when it woke after the last view", async () => {
     window.localStorage.setItem("capybara.device.lastView.e1", "2026-11-07T07:00:00.000Z");
     installShell({
-      "device@1": fakeDevice({ ...CONNECTED, lastWakeAt: "2026-11-07T07:30:00.000Z" }).device,
+      "device@2": fakeDevice([conn("e1", { lastWakeAt: "2026-11-07T07:30:00.000Z" })]).device,
     });
     stubApi(detailRoutes(local("e1")));
     await renderDetail();
@@ -226,7 +243,7 @@ describe("本机 on the device page", () => {
   it("no wake note when the wake is older than the last view, or without one", async () => {
     window.localStorage.setItem("capybara.device.lastView.e1", "2026-11-07T09:00:00.000Z");
     installShell({
-      "device@1": fakeDevice({ ...CONNECTED, lastWakeAt: "2026-11-07T07:30:00.000Z" }).device,
+      "device@2": fakeDevice([conn("e1", { lastWakeAt: "2026-11-07T07:30:00.000Z" })]).device,
     });
     stubApi(detailRoutes(local("e1")));
     await renderDetail();
@@ -236,10 +253,11 @@ describe("本机 on the device page", () => {
 
   it("an unavailable keep-awake says why", async () => {
     installShell({
-      "device@1": fakeDevice({
-        ...CONNECTED,
-        keepAwake: { mode: "connected", held: false, unavailable: "systemd-inhibit missing" },
-      }).device,
+      "device@2": fakeDevice([
+        conn("e1", {
+          keepAwake: { mode: "connected", held: false, unavailable: "systemd-inhibit missing" },
+        }),
+      ]).device,
     });
     stubApi(detailRoutes(local("e1")));
     await renderDetail();
@@ -250,8 +268,10 @@ describe("本机 on the device page", () => {
     ).toBeTruthy();
   });
 
-  it("another device, or a browser: no 本机", async () => {
-    installShell({ "device@1": fakeDevice({ ...CONNECTED, deviceId: "other" }).device });
+  it("another device, another org, or a browser: no 本机", async () => {
+    installShell({
+      "device@2": fakeDevice([conn("other"), conn("e1", { orgId: "o2" })]).device,
+    });
     stubApi(detailRoutes(local("e1")));
     await renderDetail();
     await screen.findByRole("tab", { name: D.detail.tabSettings });
@@ -269,12 +289,14 @@ describe("本机 on the device page", () => {
 });
 
 describe("marks", () => {
-  it("the device list marks this machine's device 本机", async () => {
-    installShell({ "device@1": fakeDevice().device });
+  it("the device list marks both of this machine's devices 本机", async () => {
+    installShell({
+      "device@2": fakeDevice([conn("e1"), conn("e2"), conn("e3", { orgId: "o2" })]).device,
+    });
     stubApi({
       [`GET ${BASE}`]: () =>
         json(200, {
-          items: [local("e1"), local("e2")],
+          items: [local("e1"), local("e2"), local("e3")],
           defaultId: null,
           lastUsedId: null,
           providers: [{ plugin: "sandbox-docker", displayName: null }],
@@ -285,17 +307,21 @@ describe("marks", () => {
     await screen.findByText("Laptop e1");
     const cardOf = (name: string) => screen.getByText(name).closest("li") as HTMLElement;
     await waitFor(() => expect(cardOf("Laptop e1").textContent).toContain(M.mark));
-    expect(cardOf("Laptop e2").textContent).not.toContain(M.mark);
+    expect(cardOf("Laptop e2").textContent).toContain(M.mark);
+    // e3 is this machine's device in another org, not this one
+    expect(cardOf("Laptop e3").textContent).not.toContain(M.mark);
   });
 
-  it("the new-conversation picker tags this machine's device 本机", async () => {
-    installShell({ "device@1": fakeDevice().device });
+  it("the new-conversation picker tags both devices 本机", async () => {
+    installShell({
+      "device@2": fakeDevice([conn("e1"), conn("e2"), conn("e3", { orgId: "o2" })]).device,
+    });
     stubApi({
       [`GET ${BASE}/e1/projects`]: () =>
         json(200, { projects: [], hidden: 0, mode: "auto", base: "/workspace", supported: true }),
     });
     const list = {
-      items: [local("e1"), local("e2")],
+      items: [local("e1"), local("e2"), local("e3")],
       defaultId: null,
       lastUsedId: null,
       providers: [],
@@ -307,9 +333,10 @@ describe("marks", () => {
     await waitFor(() => {
       const items = result.current.picker?.groups[0]?.items ?? [];
       expect(items.find((i) => i.id === "e1")?.tag).toContain(M.mark);
+      expect(items.find((i) => i.id === "e2")?.tag).toContain(M.mark);
     });
     expect(
-      result.current.picker?.groups[0]?.items.find((i) => i.id === "e2")?.tag ?? "",
+      result.current.picker?.groups[0]?.items.find((i) => i.id === "e3")?.tag ?? "",
     ).not.toContain(M.mark);
   });
 });

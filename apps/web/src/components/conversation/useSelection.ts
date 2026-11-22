@@ -16,7 +16,7 @@ import {
 import { extensionLabel } from "../../lib/extension-label";
 import { retryOnMountOf } from "../../lib/query/client";
 import { deviceProjectsQuery } from "../../lib/query/devices";
-import { useThisMachineDeviceId } from "../../lib/use-this-machine";
+import { useThisMachineDeviceIds } from "../../lib/use-this-machine";
 import { useDeviceName } from "../use-device-name";
 
 const EFFORTS = ["low", "medium", "high", "xhigh", "max"] as const;
@@ -242,8 +242,8 @@ export function useDeviceChoice(orgId: string, list: DeviceList | undefined): De
   const t = useTranslations("chat");
   const te = useTranslations("devices");
   const nameOf = useDeviceName();
-  // the device the shell says this machine is (the desktop client): marked "this machine" in the menu
-  const thisMachine = useThisMachineDeviceId(orgId);
+  // the devices this machine holds connections to (the desktop client): marked "this machine" in the menu
+  const thisMachine = useThisMachineDeviceIds(orgId);
   const [picked, setPicked] = useState<string | null>(null);
   /** The project picked, with the device it belongs to. */
   const [pickedProject, setPickedProject] = useState<{ device: string; name: string } | null>(null);
@@ -268,7 +268,7 @@ export function useDeviceChoice(orgId: string, list: DeviceList | undefined): De
       : undefined;
   const tagOf = (e: Device) => {
     const state = deviceState(e);
-    const mark = e.id === thisMachine ? te("thisMachine.mark") : undefined;
+    const mark = thisMachine.has(e.id) ? te("thisMachine.mark") : undefined;
     const join = (...parts: (string | undefined)[]) => parts.filter(Boolean).join(" · ");
     if (state === "unavailable" || state === "filesLost" || state === "offline")
       return { disabled: true, tag: join(mark, te(`state.${state}`)) };
