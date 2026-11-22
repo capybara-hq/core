@@ -137,6 +137,15 @@ describe("the list primary on the Duo", () => {
     expect(stub.primary()).toBeUndefined();
   });
 
+  it.each([
+    ["disabled", { disabled: true }],
+    ["loading", { loading: true }],
+  ])("a %s primary registers none (the pill keeps the new conversation)", (_, state) => {
+    const { ui, stub } = page({}, header([{ ...create, ...state }]));
+    renderAtClass(390, ui);
+    expect(stub.primary()).toBeUndefined();
+  });
+
   it("no primary action registers none", () => {
     const { ui, stub } = page({}, header());
     renderAtClass(390, ui);
