@@ -389,6 +389,16 @@ describe("InboxPage rows (D6)", () => {
     );
   });
 
+  it("the title line and the meta line take half the lead each, so a row is exactly 64", () => {
+    const rules = parseCss(css("templates.css")).filter(
+      (r) => r.at === "not all and (min-width: 600px)",
+    );
+    const lines = rules.find((r) => r.selector.includes(".cb-inbox-rail .cb-ld-head"));
+    expect(lines?.selector).toContain(".cb-inbox-rail .cb-ld-head > *");
+    expect(lines?.selector).toContain(".cb-inbox-rail .cb-ld-meta");
+    expect(lines?.decls["line-height"]).toBe("calc(var(--cb-grouped-lead) / 2)");
+  });
+
   it("inbox row has no contextmenu handler", () => {
     const { container } = renderAtClass(
       390,

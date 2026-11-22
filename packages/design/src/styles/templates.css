@@ -1932,8 +1932,9 @@ li:first-child > .cb-ld-row {
 /* InboxPage list rows on compact (responsive system spec §3.6, §2.3; design spec §6.47): the rows
    of the inbox's list are one grouped card from the shared --cb-grouped-* values (as ObjectList,
    CardGrid and DataTable): the panel ground, a 1px line-soft frame, radius md, rows padded
-   grouped-pad, at least 64 high (the title over its meta line), hairlines inset space.4. No long
-   press and no context menu (D6): the rows only open the item. */
+   grouped-pad, exactly 64 high (the title over its meta line, half the lead each, as the card and
+   object rows), hairlines inset space.4. No long press and no context menu (D6): the rows only
+   open the item. */
 @media not all and (min-width: 600px) {
   .cb-inbox-rail .cb-ld-list {
     overflow: hidden;
@@ -1952,6 +1953,11 @@ li:first-child > .cb-ld-row {
     background-repeat: no-repeat;
     background-position: right top;
     background-size: calc(100% - var(--cb-grouped-inset)) 1px;
+  }
+  .cb-inbox-rail .cb-ld-head,
+  .cb-inbox-rail .cb-ld-head > *,
+  .cb-inbox-rail .cb-ld-meta {
+    line-height: calc(var(--cb-grouped-lead) / 2);
   }
 }
 /* TracePage on compact (spec §5.11): the waterfall is the page, an open span its own screen. */
