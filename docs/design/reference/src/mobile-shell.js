@@ -107,10 +107,30 @@ window.__CB_EXTRA__ = ({ F, esc, icon, table }) => {
     return `<div class="r-sh-stage" data-part="sheet-stage" style="--r-drag:${drag}"><div class="r-sh-page">${topBar({ title: F.LIST_PAGE_FIXTURE.title })}<div class="r-ld-scroll"><div class="r-sh-rows">${table({ narrow: true, rows: 3 })}</div></div></div><div class="r-sh-scrim" data-part="scrim"></div><div class="r-sh" role="dialog" aria-modal="true" aria-label="${esc(S.title)}" data-drag="${o.state}" data-part="sheet"><div class="r-sh-handle-zone" data-part="handle-zone"><span class="r-sh-handle" data-part="sheet-handle" aria-label="${esc(S.handle)}"></span></div><div class="r-sh-head" data-part="sheet-head"><h2 class="r-sh-title">${esc(S.title)}</h2><button class="r-icon-btn r-tb-btn" aria-label="${esc(S.close)}">${icon("x")}</button></div><div class="r-sh-body" role="radiogroup">${options}</div></div></div>`;
   }
 
+  // ── Action sheet (§6.61): the sheet at rest over a list page ──────────────
+
+  // The object's actions (the same copy as the /dev/ui block): a primary, two actions and one
+  // destructive action, in one group (the sheet's SheetGroup / SheetRow, §6.59).
+  const AS_ITEMS = [
+    { label: "开始会话", icon: "chats" },
+    { label: "设置", icon: "settings" },
+    { label: "复制链接", icon: "copy" },
+    { label: "删除", icon: "trash-2", danger: true },
+  ];
+
+  function actionSheet() {
+    const rows = AS_ITEMS.map(
+      (it) =>
+        `<button class="r-as-item" data-part="action-sheet-item"${it.danger ? ' data-danger="true"' : ""}><span class="r-as-icon" aria-hidden="true">${icon(it.icon)}</span><span class="r-as-label">${esc(it.label)}</span></button>`,
+    ).join("");
+    return `<div class="r-sh-stage" data-part="sheet-stage" style="--r-drag:0"><div class="r-sh-page">${topBar({ title: F.LIST_PAGE_FIXTURE.title })}<div class="r-ld-scroll"><div class="r-sh-rows">${table({ narrow: true, rows: 3 })}</div></div></div><div class="r-sh-scrim" data-part="scrim"></div><div class="r-sh" role="dialog" aria-modal="true" aria-label="研究助手" data-part="action-sheet"><div class="r-sh-handle-zone" data-part="handle-zone"><span class="r-sh-handle" data-part="sheet-handle" aria-label="${esc(S.handle)}"></span></div><div class="r-sh-head" data-part="sheet-head"><h2 class="r-sh-title">研究助手</h2><button class="r-icon-btn r-tb-btn" aria-label="${esc(S.close)}">${icon("x")}</button></div><div class="r-as-group" data-part="action-sheet-group">${rows}</div></div></div>`;
+  }
+
   // bottom-nav, top-bar and me-panel left the design with the chat-first shell (mobile touch plan
   // Task 28); their renderers stay only where list-detail and sheet still draw them
   return {
     "list-detail": listDetail,
     sheet,
+    "action-sheet": actionSheet,
   };
 };

@@ -1,4 +1,4 @@
-import { Fragment, type ReactNode } from "react";
+import { Fragment, type ReactNode, useMemo, useRef } from "react";
 import { Button, IconButton, Input, LinkButton } from "../controls/index";
 import type { MetricProps } from "../display/index";
 import {
@@ -12,10 +12,9 @@ import { Icon } from "../icons/icon";
 import type { IconName } from "../icons/paths";
 import { Menu, type MenuItem, menuActions, menuLone } from "../overlays/index";
 import { LinkPendingMark, useDesignLink, useDesignT } from "../provider";
+import { ClassForms, useClassForm } from "./class-forms";
 import { DragFill } from "./drag-fill";
-import { useRegisterShellPage } from "./shell-page";
-import { SIZE_CLASS_QUERIES } from "./size-class";
-import { useHydrated, useMediaQuery } from "./use-media-query";
+import { useHasShell, useRegisterShellPage } from "./shell-page";
 
 type HeaderButton = {
   label: string;
@@ -87,6 +86,14 @@ export type PageHeaderProps = {
    * the object's avatar will be (so the row keeps the loaded height), `actions` / `tabs` slot counts.
    */
   loading?: { title?: boolean; avatar?: boolean; actions?: number; tabs?: number };
+  /**
+   * Where the primary goes on compact (responsive system spec §2.1, D2; set by the template, never
+   * by a page): `"head"` (default) the head's own button; `"fab"` the same button, which the
+   * ListPage's `data-fab` CSS restyles as its floating action button (design spec §6.62);
+   * `"block"` a full-width button under the title (DetailPage, SettingsPage, OverviewPage).
+   * Medium and expanded draw the head button whatever it says (D9).
+   */
+  primaryForm?: "head" | "fab" | "block";
 };
 
 /** Spec §4.2: metrics ≤ 5, at most one solid primary. Throws in development and tests. */
@@ -112,20 +119,98 @@ export function hasTabRow(p: PageHeaderProps): boolean {
   return (p.tabs?.length ?? 0) > 0 || p.search !== undefined || (p.loading?.tabs ?? 0) > 0;
 }
 
+/** What menu items show: every field but the handlers, submenus included. */
+function shownKey(items: readonly MenuItem[]): unknown[] {
+  return items.map((it) =>
+    it === "separator"
+      ? it
+      : Object.keys(it)
+          .sort()
+          .flatMap((k) => {
+            const v = (it as Record<string, unknown>)[k];
+            if (typeof v === "function") return [];
+            return [[k, k === "submenu" ? shownKey(v as MenuItem[]) : v]];
+          }),
+  );
+}
+
+/** The item at `path` (indices through submenus) in `items`. */
+function itemAt(items: readonly MenuItem[], path: readonly number[]): MenuItem | undefined {
+  let level: readonly MenuItem[] | undefined = items;
+  let found: MenuItem | undefined;
+  for (const i of path) {
+    found = level?.[i];
+    level = found === undefined || found === "separator" ? undefined : found.submenu;
+  }
+  return found;
+}
+
+/**
+ * The secondary actions as menu items whose handlers (in submenus too) always call the page's
+ * latest ones, with an identity that changes only when what the menu shows changes (any field but
+ * a handler), so registering them with the shell does not re-register on every render.
+ */
+function useStableItems(items: MenuItem[]): MenuItem[] {
+  const latest = useRef(items);
+  latest.current = items;
+  const key = JSON.stringify(shownKey(items));
+  // biome-ignore lint/correctness/useExhaustiveDependencies: `key` stands for what the items show
+  return useMemo(() => {
+    const wrap = (level: readonly MenuItem[], path: readonly number[]): MenuItem[] =>
+      level.map((it, i): MenuItem => {
+        if (it === "separator") return it;
+        const here = [...path, i];
+        if (it.submenu !== undefined) return { ...it, submenu: wrap(it.submenu, here) };
+        if (it.onSelect === undefined) return it;
+        const { onSelect: _drop, ...rest } = it;
+        return {
+          ...rest,
+          onSelect: () => {
+            const now = itemAt(latest.current, here);
+            if (now !== undefined && now !== "separator") now.onSelect?.();
+          },
+        } as MenuItem;
+      });
+    return wrap(latest.current, []);
+  }, [key]);
+}
+
+/**
+ * The head's search field (spec §4.2 row 4): its label is its accessible name and placeholder.
+ * The one field the PageHeader's tab row and a compact ListPage's quick-return bar both draw.
+ */
+export function HeadSearch({ search }: { search: NonNullable<PageHeaderProps["search"]> }) {
+  return (
+    <Input
+      type="search"
+      aria-label={search.label}
+      placeholder={search.label}
+      value={search.value}
+      onChange={(e) => search.onChange(e.target.value)}
+      prefix={<Icon name="search" size={14} />}
+    />
+  );
+}
+
 /**
  * The page header (spec §4.2): row 1 the path, row 2 the title (+ count / status) and the
- * description, actions on the right. No line, no ground. Below 600 the actions other than the
- * primary fold into a `more-horizontal` menu. The vertical rhythm is the head tokens (spec §4.2
- * "Head rhythm"): `layout.head-path` between the path and the title row, `layout.head-description`
- * between the title and the description, `layout.head-tabs` above the notice and the tab row.
+ * description, actions on the right. No line, no ground. Compact (below 600; responsive system
+ * spec §2.1, design spec §4.2 "Compact head") draws no path row, puts the count beside the large
+ * title (`count`, else the first tab's count), sends every secondary action to the shell's "…"
+ * (`ShellPage.actions`; without a shell a `more-horizontal` menu in the head), places the primary
+ * by `primaryForm` and draws 2-3 tabs as a segmented control; the per-class structure goes through
+ * `ClassForms`, and the primary stays one element in both forms. The vertical rhythm is the head
+ * tokens (spec §4.2 "Head rhythm"): `layout.head-path` between the path and the title row,
+ * `layout.head-description` between the title and the description, `layout.head-tabs` above the
+ * notice and the tab row.
  */
 export function PageHeader(p: PageHeaderProps) {
   assertHeader(p);
   // The compact floating row goes up the page's path (design spec §4.6, §6.56).
-  useRegisterShellPage({ ...(p.title ? { title: p.title } : {}), path: p.path });
   const t = useDesignT();
   const Link = useDesignLink();
-  const narrow = useMediaQuery(SIZE_CLASS_QUERIES.compact);
+  const hasShell = useHasShell();
+  const form = useClassForm();
   const announces = useSkeletonAnnounces();
   const segments = p.path;
   const tabItems = p.tabs ?? [];
@@ -158,14 +243,17 @@ export function PageHeader(p: PageHeaderProps) {
       });
     }
   }
-  // One action besides the primary stays a button below 600 too.
-  const more: HeaderAction | null =
-    folded.length > 1 ? { label: t("shell.moreActions"), menu: folded } : null;
+  // The shell's floating row draws them in its "…" (shown on compact only, by CSS), so they are
+  // registered whatever the class: the server render and the first paint agree (D1).
+  const shellActions = useStableItems(folded);
+  useRegisterShellPage({
+    ...(p.title ? { title: p.title } : {}),
+    path: p.path,
+    ...(hasShell && folded.length > 0 ? { actions: shellActions } : {}),
+  });
   const rest = actions.filter((a) => !isPrimary(a));
   const primaries = actions.filter(isPrimary);
-  // Before hydration both the inline actions and the fold menu are drawn and CSS media queries
-  // show one (m6), so the first paint below 600 never lays every action out in one row.
-  const pre = !useHydrated();
+  const primaryForm = p.primaryForm ?? "head";
   const content = (a: Extract<HeaderAction, { variant: string }>, primary: boolean) =>
     primary ? (
       <>
@@ -227,33 +315,56 @@ export function PageHeader(p: PageHeaderProps) {
   // The primary in a wrapper of no box of its own. A ListPage restyles this very button as its
   // floating action button below 600 (responsive system spec §2.5, §5.4: one DOM, CSS only), so
   // its icon (default `plus`, drawn only there when the action has none) and label are parts.
+  // `data-form` names its compact form: `block` CSS makes it the full-width button under the
+  // title (the actions take a line of their own there), `fab` the ListPage's CSS restyles it.
   const renderPrimary = (a: HeaderAction) => (
-    <span key={`primary-${a.label}`} className="cb-pageheader-primary" data-head-primary="true">
+    <span
+      key={`primary-${a.label}`}
+      className="cb-pageheader-primary"
+      data-head-primary="true"
+      data-form={primaryForm}
+    >
       {renderAction(a, true)}
     </span>
   );
-  const drawn: ReactNode[] = !more
-    ? [...rest.map((a) => renderAction(a)), ...primaries.map(renderPrimary)]
-    : pre
-      ? [
-          ...rest.map((a) => (
-            <span key={`inline-${a.label}`} className="cb-pageheader-fold" data-fold="inline">
-              {renderAction(a)}
-            </span>
-          )),
-          more ? (
-            <span key="fold-menu" className="cb-pageheader-fold" data-fold="menu">
-              {renderAction(more)}
-            </span>
-          ) : null,
-          ...primaries.map(renderPrimary),
-        ]
-      : narrow
-        ? [more ? renderAction(more) : null, ...primaries.map(renderPrimary)]
-        : [...rest.map((a) => renderAction(a)), ...primaries.map(renderPrimary)];
+  // The secondaries per class (spec §5.4, D1, D9): wide draws them as buttons; compact folds them
+  // all into the head's ⋯ (also one), which a hydrated page in a shell drops because the shell's
+  // "…" holds them then. The server render and the first client render (`form` null) keep the
+  // head ⋯, so a page without JavaScript still reaches them (coordinator ruling 2026-11-22).
+  const secondaries: ReactNode =
+    rest.length === 0 ? null : (
+      <ClassForms
+        key="secondaries"
+        compact={
+          hasShell && form !== null
+            ? null
+            : renderAction({ label: t("shell.moreActions"), menu: folded })
+        }
+        wide={rest.map((a) => renderAction(a))}
+      />
+    );
+  const drawn: ReactNode[] = [secondaries, ...primaries.map(renderPrimary)];
   const loading = p.loading;
   const actionSlots = actions.length === 0 ? (loading?.actions ?? 0) : 0;
   const tabSlots = tabItems.length === 0 ? (loading?.tabs ?? 0) : 0;
+  // On compact the placeholders are what the loaded actions line will show (design spec §4.2), so
+  // the head keeps its height: in a shell the secondaries go to its "…" and one slot stands for
+  // the primary (none for a FAB, which is out of flow); outside a shell the ⋯ and the primary.
+  const compactSlots =
+    primaryForm === "fab"
+      ? hasShell || actionSlots < 2
+        ? 0
+        : 1
+      : hasShell
+        ? Math.min(actionSlots, 1)
+        : Math.min(actionSlots, 2);
+  const slotBoxes = (n: number) =>
+    n === 0
+      ? null
+      : Array.from({ length: n }, (_, i) => (
+          // biome-ignore lint/suspicious/noArrayIndexKey: the placeholders are positional
+          <SkeletonBox key={i} part="default" width={72} />
+        ));
   const navNode =
     segments.length > 0 ? (
       <nav className="cb-pageheader-path" data-part="path" aria-label={t("shell.path")}>
@@ -287,23 +398,32 @@ export function PageHeader(p: PageHeaderProps) {
         <DragFill />
       </nav>
     ) : null;
+  // No path row on compact (design spec §4.2): the floating row's back and the h1 name the page.
+  // Before hydration the path is drawn and the compact stylesheet hides it; after, compact drops
+  // it (one element, no ClassForms wrapper: the path keeps its place as the head's first row).
+  const pathNode = form === "compact" ? null : navNode;
   const actionsNode =
     actions.length > 0 ? (
-      <div
-        className="cb-pageheader-actions"
-        data-part="page-header-actions"
-        data-responsive={pre && more ? "true" : undefined}
-      >
+      <div className="cb-pageheader-actions" data-part="page-header-actions">
         {drawn}
       </div>
     ) : actionSlots > 0 ? (
-      <div className="cb-pageheader-actions" data-part="page-header-action-slots">
-        {Array.from({ length: actionSlots }, (_, i) => (
-          // biome-ignore lint/suspicious/noArrayIndexKey: the placeholders are positional
-          <SkeletonBox key={i} part="default" width={72} />
-        ))}
+      <div
+        className="cb-pageheader-actions"
+        data-part="page-header-action-slots"
+        data-form={primaryForm}
+      >
+        <ClassForms compact={slotBoxes(compactSlots)} wide={slotBoxes(actionSlots)} />
       </div>
     ) : null;
+  // The count beside the title: `count`; on compact, without one, the first tab's (D10).
+  const tabCount = tabItems[0]?.pending ? undefined : tabItems[0]?.count;
+  const countSpan = (v: ReactNode) => <span className="cb-pageheader-count">{v}</span>;
+  const countNode = shown(p.count) ? (
+    countSpan(p.count)
+  ) : tabCount !== undefined ? (
+    <ClassForms compact={countSpan(tabCount)} wide={null} />
+  ) : null;
   return (
     <header
       className="cb-pageheader"
@@ -317,12 +437,12 @@ export function PageHeader(p: PageHeaderProps) {
         // the path and the actions share one row and the name stays an h1 for assistive tech.
         <div className="cb-pageheader-titleless" data-part="page-header-titleless">
           <h1 className="cb-sr-only">{p.title}</h1>
-          {navNode}
+          {pathNode}
           {actionsNode}
         </div>
       ) : (
         <>
-          {navNode}
+          {pathNode}
           <div
             className="cb-pageheader-row"
             data-part="page-header-row"
@@ -348,7 +468,7 @@ export function PageHeader(p: PageHeaderProps) {
                     {p.title}
                   </h1>
                 )}
-                {shown(p.count) ? <span className="cb-pageheader-count">{p.count}</span> : null}
+                {countNode}
                 {shown(p.status) ? <span className="cb-pageheader-count">{p.status}</span> : null}
               </div>
               {p.description ? (
@@ -370,6 +490,7 @@ export function PageHeader(p: PageHeaderProps) {
         <div className="cb-pageheader-tabs" data-part="page-header-tabs">
           {tabItems.length > 0 ? (
             <Tabs
+              look="segmented-compact"
               label={t("shell.pageViews")}
               items={tabItems.map(({ onSelect: _o, ...it }) => it)}
               value={p.activeTab ?? tabItems[0]?.id ?? ""}
@@ -385,14 +506,7 @@ export function PageHeader(p: PageHeaderProps) {
           ) : null}
           {p.search ? (
             <div className="cb-pageheader-search" data-part="page-header-search">
-              <Input
-                type="search"
-                aria-label={p.search.label}
-                placeholder={p.search.label}
-                value={p.search.value}
-                onChange={(e) => p.search?.onChange(e.target.value)}
-                prefix={<Icon name="search" size={14} />}
-              />
+              <HeadSearch search={p.search} />
             </div>
           ) : null}
         </div>

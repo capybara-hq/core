@@ -208,6 +208,9 @@ export const ACCEPTED: string[] = [
   // the list-detail region (mobile layout spec §5.2; spec §6.47): accepted side by side in the
   // Linux image (blind review round 2)
   "list-detail",
+  // the action sheet at rest (spec §6.61; responsive system phase 0): block and size table in place;
+  // the reference PNG waits for the reference-update workflow
+  "action-sheet",
 ];
 
 /**

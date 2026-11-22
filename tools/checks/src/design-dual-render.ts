@@ -44,7 +44,6 @@ export interface DualRenderPending {
 
 export const DUAL_RENDER_PENDING: readonly DualRenderPending[] = [
   { path: "shell/body.tsx", max: 1, fix: "BodyFrame rail / inspector forms move to ClassForms" },
-  { path: "shell/page-header.tsx", max: 1, fix: "PageHeader primary form moves to ClassForms" },
   { path: "shell/sidebar.tsx", max: 1, fix: "Sidebar modes move to ClassForms" },
   { path: "shell/app-shell.tsx", max: 1, fix: "AppShell frame forms move to ClassForms" },
 ];

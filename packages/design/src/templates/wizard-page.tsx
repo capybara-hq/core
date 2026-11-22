@@ -11,6 +11,7 @@ import {
   LoadingFields,
   loadingActionRow,
   loadingHeader,
+  TemplateFrame,
   TemplateHead,
 } from "./frame";
 
@@ -101,12 +102,12 @@ export function WizardPage({
     </>
   );
   return (
-    <div className="cb-template" data-template="WizardPage" data-width="content">
+    <TemplateFrame template="WizardPage">
       {loading ? (
         <SkeletonGroup label={header.title || t("table.loading")}>{page}</SkeletonGroup>
       ) : (
         page
       )}
-    </div>
+    </TemplateFrame>
   );
 }

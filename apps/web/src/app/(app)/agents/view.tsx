@@ -1,11 +1,6 @@
 "use client";
 
-import {
-  type EmptyStateProps,
-  ListPage,
-  type PageHeaderProps,
-  Segmented,
-} from "@capybara-hq/design";
+import { type EmptyStateProps, ListPage, type PageHeaderProps } from "@capybara-hq/design";
 import { useQuery } from "@tanstack/react-query";
 import { useTranslations } from "next-intl";
 import { useState } from "react";
@@ -31,12 +26,13 @@ import { useUrlTab } from "../../../lib/url-tab";
 import NotFound from "../not-found";
 
 /**
- * `/agents` (rulings P4-14 to P4-16): one page with the tabs 智能体 and 模板 (`?tab=templates`,
+ * `/agents` (rulings P4-14 to P4-16): one page with the tabs Agents and Templates (`?tab=templates`,
  * members up: guests cannot create agents, so they get the agents and no tabs), both lists as
- * cards. 智能体: the org's agents with the filter 全部 / 我的 / 组织共享 in the toolbar; 模板: the
- * templates the org can use and the platform ones offered to it, with the org admin's switch. One
- * search per tab (cleared on a switch). From the query cache (the layout prefetched both tabs'
- * lists on a first load, so a switch paints at once and the head counts both).
+ * cards. Agents: the org's agents with the scope All / Mine / Shared with the org (ListPage
+ * `scope`); Templates: the templates the org can use and the platform ones offered to it, with
+ * the org admin's switch. One search per tab (cleared on a switch). From the query cache (the
+ * layout prefetched both tabs' lists on a first load, so a switch paints at once and the head
+ * counts both).
  */
 export default function AgentsView({ tab = "agents" }: { tab?: AgentsTab }) {
   const ws = useWorkspace();
@@ -149,7 +145,7 @@ function useTabError(): (retry: () => void) => EmptyStateProps {
 }
 
 /**
- * 智能体: the agents as cards with the toolbar filter 全部 / 我的 / 组织共享 (a page-local view
+ * Agents tab: the agents as cards with the scope All / Mine / Shared with the org (a page-local view
  * choice, as the old head tabs were) and the search. The owner names come from the members list
  * (members up; a guest's cards show the visibility only).
  */
@@ -181,19 +177,17 @@ function AgentsTabList({
     retryOnMount: retryOnMountOf(mq.queryKey),
   });
   if (list.kind === "notFound") return <NotFound />;
-  const filters = (
-    <Segmented
-      label={t("filter")}
-      value={filter}
-      onChange={(v) => onFilter(v as AgentScope)}
-      options={(["all", "mine", "shared"] as const).map((id) => ({
-        value: id,
-        label: t(`tabs.${id}`),
-      }))}
-    />
-  );
+  const scopeChoice = {
+    label: t("filter"),
+    value: filter,
+    options: (["all", "mine", "shared"] as const).map((id) => ({
+      value: id,
+      label: t(`tabs.${id}`),
+    })),
+    onChange: (v: string) => onFilter(v as AgentScope),
+  };
   const header = { ...head, path: [...scope, { label: "agents" }] };
-  const common = { variant: "cards" as const, listLabel: t("title"), filters };
+  const common = { variant: "cards" as const, listLabel: t("title"), scope: scopeChoice };
   if (list.kind === "loading") {
     return <ListPage header={header} {...common} loading={{ rows: 6 }} />;
   }

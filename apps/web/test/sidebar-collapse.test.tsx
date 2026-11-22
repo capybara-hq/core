@@ -13,10 +13,12 @@ const real = window.matchMedia;
 const widthStub = (width: number) =>
   ((q: string) => {
     const features = [...q.matchAll(/\((min|max)-width:\s*(\d+)px\)/g)];
+    const hit =
+      features.length > 0 &&
+      features.every(([, k, n]) => (k === "min" ? width >= Number(n) : width <= Number(n)));
     return {
-      matches:
-        features.length > 0 &&
-        features.every(([, k, n]) => (k === "min" ? width >= Number(n) : width <= Number(n))),
+      // the compact query is the complement of (min-width: 600px)
+      matches: q.trim().startsWith("not all and ") ? !hit : hit,
       media: q,
       addEventListener: () => {},
       removeEventListener: () => {},

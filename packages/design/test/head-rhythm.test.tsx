@@ -211,6 +211,11 @@ const ALLOWED: Record<string, Record<string, string[]>> = {
   // The band form (spec §4.2, §5.2): the head ends with the path row; the template places the band
   // and the tab row below it, so the head adds nothing.
   '.cb-template-head[data-band="true"]': { "padding-bottom": ["0"] },
+  // A compact ListPage (design spec §6.65): the tab row leaves the head for the quick-return bar,
+  // whose own space.2 completes layout.head-tabs above the search (list-page.css).
+  '.cb-template[data-compact-bar="true"] .cb-template-head': {
+    "padding-bottom": ["var(--cb-space-2)"],
+  },
   '.cb-template-head-frame[data-width="content"]': { margin: ["0 auto"] },
   ".cb-pageheader-path": { gap: ["var(--cb-space-2)"] },
   ".cb-pageheader-row": { gap: ["var(--cb-space-3)"] },

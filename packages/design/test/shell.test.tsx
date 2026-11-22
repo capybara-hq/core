@@ -234,7 +234,7 @@ describe("AppShell", () => {
     const css = readFileSync(resolve(import.meta.dirname, "../src/styles/shell.css"), "utf8");
     expect(css).toMatch(/\.cb-shell-float \{\s*display: none;/);
     expect(css).toMatch(
-      /@media \(max-width: 599px\) \{[\s\S]*?\.cb-shell-float \{\s*display: block;/,
+      /@media not all and \(min-width: 600px\) \{[\s\S]*?\.cb-shell-float \{\s*display: block;/,
     );
   });
 });
@@ -477,7 +477,7 @@ describe("PageHeader", () => {
     expect(screen.getByRole("menuitem", { name: "导入" })).toBeTruthy();
   });
 
-  it("below 640 a single action besides the primary stays a button (no menu of one)", () => {
+  it("below 600 a single action besides the primary folds too (responsive spec D1)", () => {
     stubMedia(599);
     zh(
       <PageHeader
@@ -489,13 +489,13 @@ describe("PageHeader", () => {
         ]}
       />,
     );
-    expect(screen.getByRole("button", { name: "导入" })).toBeTruthy();
-    expect(screen.queryByRole("button", { name: "更多操作" })).toBeNull();
+    expect(screen.queryByRole("button", { name: "导入" })).toBeNull();
+    expect(screen.getByRole("button", { name: "更多操作" })).toBeTruthy();
   });
 });
 
 describe("PageHeader first paint (m6)", () => {
-  it("the server render draws the inline actions and the fold menu; CSS picks one by width", () => {
+  it("the server render draws both forms of the secondaries; ClassForms' CSS picks one", () => {
     const html = renderToString(
       <DesignProvider locale="zh">
         <PageHeader
@@ -511,20 +511,16 @@ describe("PageHeader first paint (m6)", () => {
     );
     const doc = new DOMParser().parseFromString(html, "text/html");
     const actions = doc.querySelector(".cb-pageheader-actions") as HTMLElement;
-    expect(actions.getAttribute("data-responsive")).toBe("true");
-    const wide = [...actions.querySelectorAll('[data-fold="inline"]')].map((e) => e.textContent);
-    expect(wide).toEqual(["导入", "导出"]);
-    const menu = actions.querySelector('[data-fold="menu"]');
-    expect(menu?.querySelector('[aria-label="更多操作"]')).not.toBeNull();
-    // the primary is drawn once, always, and last
+    const wide = actions.querySelector('[data-class-form="wide"]');
+    expect([...(wide?.querySelectorAll("button") ?? [])].map((e) => e.textContent)).toEqual([
+      "导入",
+      "导出",
+    ]);
+    const compact = actions.querySelector('[data-class-form="compact"]');
+    expect(compact?.querySelector('[aria-label="更多操作"]')).not.toBeNull();
+    // the primary is drawn once, always, and last, outside both copies
     expect(actions.lastElementChild?.textContent).toBe("新建");
-    const css = readFileSync(resolve(import.meta.dirname, "../src/styles/shell.css"), "utf8");
-    expect(css).toMatch(
-      /@media \(max-width: 599px\) \{\s*\.cb-pageheader-actions\[data-responsive="true"\] \[data-fold="inline"\] \{\s*display: none;/,
-    );
-    expect(css).toMatch(
-      /@media \(min-width: 600px\) \{\s*\.cb-pageheader-actions\[data-responsive="true"\] \[data-fold="menu"\] \{\s*display: none;/,
-    );
+    expect(actions.querySelectorAll('[data-head-primary="true"]')).toHaveLength(1);
   });
 });
 

@@ -21,6 +21,9 @@ function stubTouchPhone() {
       const t = s.trim();
       if (t === "(pointer: coarse)" || t === "(any-pointer: coarse)") return true;
       if (t === "(any-pointer: fine)") return false;
+      // the compact query is the complement of (min-width: 600px)
+      const notMin = /^not all and \(min-width:\s*(\d+)px\)$/.exec(t);
+      if (notMin) return 390 < Number(notMin[1]);
       const max = /\(max-width:\s*(\d+)px\)/.exec(t);
       return max ? 390 <= Number(max[1]) : false;
     };

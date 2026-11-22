@@ -14,6 +14,7 @@ import { DensityContext } from "../controls/density";
 import { Select } from "../controls/select";
 import { Checkbox } from "../controls/toggles";
 import { Pagination } from "../display/pagination";
+import { rowActionsLabel } from "../display/row-actions-label";
 import { useScrollbarRelayout } from "../display/scrollbar-relayout";
 import { Icon } from "../icons/icon";
 import { useInBox } from "../layout/box";
@@ -460,6 +461,8 @@ export function DataTable<T>({
           const key = rowKey(row);
           const disabled = !!isDisabled?.(row);
           const menuItems = rowMenu?.(row);
+          // The ⋯ button names its row, as the sidebar's does
+          const rowName = rowLabel?.(row) ?? rowNameOf(compactRoles(columns).title?.cell(row));
           return (
             <CompactRow<T>
               key={key}
@@ -477,7 +480,7 @@ export function DataTable<T>({
               open={onOpen && !disabled ? () => onOpen(row) : undefined}
               menuItems={menuItems}
               menuColumn={rowMenu !== undefined}
-              menuLabel={t("table.rowActions")}
+              menuLabel={rowActionsLabel(t, rowName)}
               onMenu={() => setSheetKey(key)}
               extra={expand?.(row)}
             />

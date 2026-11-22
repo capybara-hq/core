@@ -19,6 +19,7 @@ import {
   loadingActionRow,
   loadingCount,
   loadingHeader,
+  TemplateFrame,
   TemplateHead,
 } from "./frame";
 
@@ -79,13 +80,13 @@ export function FormPage({
     </>
   );
   return (
-    <div className="cb-template" data-template="FormPage" data-width="content" ref={body}>
+    <TemplateFrame template="FormPage" rootRef={body}>
       {loading ? (
         <SkeletonGroup label={header.title || t("table.loading")}>{page}</SkeletonGroup>
       ) : (
         page
       )}
-    </div>
+    </TemplateFrame>
   );
 }
 

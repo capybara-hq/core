@@ -1,0 +1,61 @@
+/* ListPage (design spec §5.1, §6.65; responsive system spec §2.2, §2.6, §3.1). */
+
+/* The active-filter count on the Body's Filter button (ListPage `filterCount`), mono and muted
+   like a tab's count. */
+.cb-body-tool-count {
+  margin-left: var(--cb-space-1);
+  color: var(--cb-muted);
+  font-family: var(--cb-font-code);
+}
+
+/* Compact (below 600; the ClassForms query): the search, the head's tabs and the scope chips are
+   one quick-return bar, a direct child of the template's one scroller. It sticks under the
+   floating row (`--cb-float-row`; 0 outside a compact shell) and slides away under it while the
+   frame reports `barHidden` (`data-bar-hidden` on the root), back on the next upward scroll, over
+   motion.overlay. A transform moves it, never its box, so hiding never changes the scroll height
+   (a short list cannot start a hide-show loop). */
+@media not all and (min-width: 600px) {
+  /* Before hydration the head still carries its tab row (ClassForms keeps one form after it). */
+  .cb-template[data-compact-bar="true"] [data-part="page-header-tabs"] {
+    display: none;
+  }
+  /* The head ends space.2 above the bar; with the bar's own space.2 the search sits
+     layout.head-tabs (16) below the title row, as the head's tab row did. */
+  .cb-template[data-compact-bar="true"] .cb-template-head {
+    padding-bottom: var(--cb-space-2);
+  }
+  .cb-list-compact-bar {
+    position: sticky;
+    top: var(--cb-float-row, 0px);
+    z-index: 1;
+    display: flex;
+    flex: none;
+    flex-direction: column;
+    gap: var(--cb-space-2);
+    padding: var(--cb-space-2) calc(var(--cb-content-pad) + var(--cb-inset-right, 0px))
+      var(--cb-layout-head-tabs-content) var(--cb-content-pad);
+    background: var(--cb-bg);
+    transition: transform var(--cb-motion-overlay) ease-out;
+  }
+  .cb-template[data-bar-hidden="true"] .cb-list-compact-bar {
+    transform: translateY(calc(-100% - var(--cb-float-row, 0px)));
+  }
+  /* The phone's search field (responsive system spec §0 item 2): filled ground, no border; the
+     mobile sizes make it 44 high with 16 px text. */
+  .cb-list-compact-search .cb-input {
+    border-color: transparent;
+    background: var(--cb-selected);
+  }
+  /* Tab placeholders while the tabs are unknown: the compact tabs' touch.hit height. */
+  .cb-list-compact-tab-slots {
+    display: flex;
+    align-items: center;
+    gap: var(--cb-space-3);
+    height: var(--cb-touch-hit);
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .cb-list-compact-bar {
+    transition: none;
+  }
+}

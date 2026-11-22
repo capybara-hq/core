@@ -870,10 +870,15 @@ describe("the first send carries the permission choice (atomic first message, Ta
     // a 390 px touch phone: the size queries by width, the pointer queries coarse
     vi.stubGlobal("matchMedia", (query: string) => {
       const widths = [...query.matchAll(/\((min|max)-width:\s*(\d+)px\)/g)];
+      const hit =
+        widths.length > 0 &&
+        widths.every(([, k, n]) => (k === "min" ? 390 >= Number(n) : 390 <= Number(n)));
+      // the compact query is the complement of (min-width: 600px)
       const matches = /pointer/.test(query)
         ? query.trim() !== "(any-pointer: fine)"
-        : widths.length > 0 &&
-          widths.every(([, k, n]) => (k === "min" ? 390 >= Number(n) : 390 <= Number(n)));
+        : query.trim().startsWith("not all and ")
+          ? !hit
+          : hit;
       return { matches, media: query, addEventListener() {}, removeEventListener() {} };
     });
     try {
