@@ -144,7 +144,7 @@ const errMsg = (e: unknown) => (e instanceof Error ? e.message : String(e));
  * The caller subscribes to its result topic before pushing and reads the result key once after,
  * and once more before giving up (the run-abort pattern; a publish lost while the subscriber
  * reconnects is still found). It waits within its own call for at most `timeoutMs` plus
- * `devices.local.reconnectGraceSeconds`; when the lease disappears meanwhile (checked every
+ * `devices.dialIn.reconnectGraceSeconds`; when the lease disappears meanwhile (checked every
  * {@link HOLDER_POLL_MS}) the wait ends at most one grace later ({@link DeviceOfflineError}), and
  * when the machine is connected again as another run of its program (`programRunId`) it ends at
  * that poll with {@link DeviceProgramRestartedError}: the old run's kept results died with it. A
@@ -438,7 +438,7 @@ export class DialInRelay {
   }
 
   private graceMs(): number {
-    return this.config.get().devices.local.reconnectGraceSeconds * 1000;
+    return this.config.get().devices.dialIn.reconnectGraceSeconds * 1000;
   }
 
   private async push(deviceId: string, frame: string, ttlMs: number): Promise<void> {

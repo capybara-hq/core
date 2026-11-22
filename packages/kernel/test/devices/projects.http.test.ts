@@ -100,7 +100,7 @@ beforeAll(async () => {
         extensions: [SANDBOX_FAKE],
         // limits fixed at the file system: a narrowed cloud device can await a files reset
         extensionConfig: { "device-fake": { root: sandboxRoot, limitsApplyAt: "fileSystem" } },
-        devices: { local: { reconnectGraceSeconds: 2, leaseTtlMs: 6000 } },
+        devices: { dialIn: { reconnectGraceSeconds: 2, leaseTtlMs: 6000 } },
       },
     ),
     { bootstrap: { dir: bootstrap.dir }, bootstrapManifest: bootstrap.manifest },

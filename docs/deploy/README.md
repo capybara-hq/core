@@ -763,11 +763,11 @@ long-lived WebSocket connection to the kernel's `gateway` role.
 - **Replicas.** Any gateway replica can hold the connection; one lease per device
   (`capk:device-lease:<deviceId>`) keeps it to one connection across replicas, and the newest
   connection wins. Requests from api and worker replicas reach the holder through Redis.
-- **Config.** `devices.local.reconnectGraceSeconds` (how long a disconnected machine is not yet
+- **Config.** `devices.dialIn.reconnectGraceSeconds` (how long a disconnected machine is not yet
   reported offline, default 120; also sent to the program at sign-in), `leaseTtlMs`,
   `authCodeTtlSeconds`, `pollIntervalSeconds` and `maxFrameBytes`; names and defaults in
   [docs/config.md](../config.md). Environment variables follow the usual rule
-  (`CAPYBARA_DEVICES__LOCAL__RECONNECT_GRACE_SECONDS`).
+  (`CAPYBARA_DEVICES__DIAL_IN__RECONNECT_GRACE_SECONDS`).
 - **Sign-in** uses the public routes `POST /api/v1/device/authorize` and `/device/token` and the web
   page `/devices/link`, so `CAPYBARA_PUBLIC_URL` must be the origin people open in the browser.
 - **Desktop client sign-in.** The desktop client (`capybara-hq/clients`, an external app) signs

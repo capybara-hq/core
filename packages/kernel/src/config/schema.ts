@@ -2135,7 +2135,7 @@ export const KernelConfigSchema = z.strictObject({
               "Most personal devices a member may have in one org, the default one and dial-in devices included; creating one more fails with device.limit_reached",
           }),
         ),
-      local: z
+      dialIn: z
         .strictObject({
           reconnectGraceSeconds: z
             .number()

@@ -34,7 +34,7 @@ import { LIST_TTL_MARGIN_MS } from "./relay.js";
 export const DEVICE_CLOSE = {
   /** The kernel is shutting down: reconnect (another gateway replica takes over). */
   shutdown: 1001,
-  /** A frame larger than `devices.local.maxFrameBytes` (sent by `ws` itself). */
+  /** A frame larger than `devices.dialIn.maxFrameBytes` (sent by `ws` itself). */
   tooBig: 1009,
   /** The kernel failed (e.g. the database): reconnect. */
   internal: 1011,
@@ -829,15 +829,15 @@ export class DialInGateway {
   ) {}
 
   graceMs(): number {
-    return this.config.get().devices.local.reconnectGraceSeconds * 1000;
+    return this.config.get().devices.dialIn.reconnectGraceSeconds * 1000;
   }
 
   leaseTtlMs(): number {
-    return this.config.get().devices.local.leaseTtlMs;
+    return this.config.get().devices.dialIn.leaseTtlMs;
   }
 
   maxFrameBytes(): number {
-    return this.config.get().devices.local.maxFrameBytes;
+    return this.config.get().devices.dialIn.maxFrameBytes;
   }
 
   /**

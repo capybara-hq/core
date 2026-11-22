@@ -122,6 +122,10 @@ devices page and connects the machine again with a `capybara-device` that signs 
 narrowing route (`POST …/devices/:id/policy`) and `device.ceiling_on_machine`: a device's network
 is its own setting for every provider.
 
+The dial-in settings move from `devices.local.*` to `devices.dialIn.*`: rename any of
+`CAPYBARA_DEVICES__LOCAL__*` you set to `CAPYBARA_DEVICES__DIAL_IN__*` (the same field names); the
+old keys are rejected by the config schema.
+
 ### Profiles govern every approval: upgrade the kernel first, then devices
 
 **Behavior change: tool asks under Approve for me and Auto no longer raise person cards.** A

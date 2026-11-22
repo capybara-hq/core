@@ -92,7 +92,7 @@ const relayOver = (r: Redis) =>
     bus,
     new LockService(r, log),
     {
-      get: () => ({ devices: { local: { reconnectGraceSeconds: graceSeconds } } }),
+      get: () => ({ devices: { dialIn: { reconnectGraceSeconds: graceSeconds } } }),
     } as unknown as KernelConfigService,
     log,
     targets,
@@ -377,7 +377,7 @@ describe("DialInRelay", () => {
         holderOf: (key: string) => (stall ? new Promise<string | null>(() => {}) : redis.get(key)),
       } as unknown as LockService,
       {
-        get: () => ({ devices: { local: { reconnectGraceSeconds: graceSeconds } } }),
+        get: () => ({ devices: { dialIn: { reconnectGraceSeconds: graceSeconds } } }),
       } as unknown as KernelConfigService,
       log,
       targets,

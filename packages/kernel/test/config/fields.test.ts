@@ -56,7 +56,7 @@ describe("configFields", () => {
       "devices.network.default",
       "devices.network.ceiling",
       "devices.maxPersonal",
-      "devices.local.reconnectGraceSeconds",
+      "devices.dialIn.reconnectGraceSeconds",
       "evals.orgConcurrency",
       "models.listTimeoutMs",
       "models.embedTimeoutMs",

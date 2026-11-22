@@ -106,7 +106,7 @@ beforeAll(async () => {
       {
         roles: ["api", "worker", "gateway"],
         devices: {
-          local: { reconnectGraceSeconds: 5, leaseTtlMs: 6000, maxFrameBytes: MAX_FRAME_BYTES },
+          dialIn: { reconnectGraceSeconds: 5, leaseTtlMs: 6000, maxFrameBytes: MAX_FRAME_BYTES },
         },
       },
     ),

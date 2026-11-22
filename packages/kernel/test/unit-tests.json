@@ -26,7 +26,7 @@
   "channels/public-https.test.ts",
   "config/auth-trust.test.ts",
   "config/channels-webhook.test.ts",
-  "config/devices-local.test.ts",
+  "config/devices-dial-in.test.ts",
   "config/platform.test.ts",
   "config/env.test.ts",
   "config/fields.test.ts",

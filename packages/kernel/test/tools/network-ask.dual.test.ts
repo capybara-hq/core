@@ -56,7 +56,7 @@ describe("network ask (dual replica)", () => {
           extensionHost: { dir: extensionsDir },
           http: { publicUrl: "https://cap.example" },
           sandbox: { limits: { egress: "allowlist", allowHosts: ["*.example.com"] } },
-          devices: { local: { reconnectGraceSeconds: 5, leaseTtlMs: 6000 } },
+          devices: { dialIn: { reconnectGraceSeconds: 5, leaseTtlMs: 6000 } },
         },
       });
       const harness = h;
@@ -250,7 +250,7 @@ describe("network ask (dual replica)", () => {
         extensionHost: { dir: extensionsDir },
         http: { publicUrl: "https://cap.example" },
         sandbox: { limits: { egress: "allowlist", allowHosts: ["*.example.com"] } },
-        devices: { local: { reconnectGraceSeconds: 5, leaseTtlMs: 6000 } },
+        devices: { dialIn: { reconnectGraceSeconds: 5, leaseTtlMs: 6000 } },
       },
     });
     const harness = h;

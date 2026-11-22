@@ -18,7 +18,7 @@ export interface DeviceRoutesGateway {
 
 export interface DeviceRoutesOptions {
   gateway: DeviceRoutesGateway;
-  /** `devices.local.maxFrameBytes`: a larger incoming frame closes the socket (1009). */
+  /** `devices.dialIn.maxFrameBytes`: a larger incoming frame closes the socket (1009). */
   maxFrameBytes: number;
 }
 

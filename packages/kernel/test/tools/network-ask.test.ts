@@ -96,7 +96,7 @@ beforeAll(async () => {
         roles: ["api", "worker", "gateway"],
         // the org allows *.example.com; anything else a device calls `device` becomes `org`
         sandbox: { limits: { egress: "allowlist", allowHosts: ["*.example.com"] } },
-        devices: { local: { reconnectGraceSeconds: 1, leaseTtlMs: 6000 } },
+        devices: { dialIn: { reconnectGraceSeconds: 1, leaseTtlMs: 6000 } },
       },
     ),
     { bootstrap: { dir: bootstrap.dir }, bootstrapManifest: bootstrap.manifest },

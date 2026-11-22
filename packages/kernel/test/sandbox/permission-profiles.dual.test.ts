@@ -97,7 +97,7 @@ beforeAll(async () => {
         http: { port: 0, publicUrl: "https://cap.example" },
         auth: { cookieSecure: false },
         // every case makes its own device
-        devices: { maxPersonal: 30, local: { reconnectGraceSeconds: 30, leaseTtlMs: 6000 } },
+        devices: { maxPersonal: 30, dialIn: { reconnectGraceSeconds: 30, leaseTtlMs: 6000 } },
       },
     );
   const boot = { bootstrap: { dir: bootstrap.dir }, bootstrapManifest: bootstrap.manifest };

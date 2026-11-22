@@ -138,7 +138,7 @@ export interface DeviceAuthorization {
 export interface DeviceGrant extends Grant {
   connectUrl: string;
   reconnectGraceSeconds: number;
-  /** `devices.local.maxFrameBytes`: the program never sends a larger frame (ruling R26). */
+  /** `devices.dialIn.maxFrameBytes`: the program never sends a larger frame (ruling R26). */
   maxFrameBytes: number;
   /**
    * Whether the platform and the organization allow running outside the sandbox now
@@ -180,7 +180,7 @@ function newUserCode(): string {
  * for a code pair (`authorize`), the signed-in person confirms the user code on the web page
  * `/device` (`pending`, `confirm` or `deny`), and the program polls `token` until it gets the
  * machine credential, once. State lives only in Redis, both keys with the code's TTL
- * (`devices.local.authCodeTtlSeconds`): `capk:device-auth:<sha256(deviceCode)>` (a hash:
+ * (`devices.dialIn.authCodeTtlSeconds`): `capk:device-auth:<sha256(deviceCode)>` (a hash:
  * `info` JSON, `status`, `interval`, `lastPollAt`, the parked `grant`) and
  * `capk:device-user:<userCode>` → the device code's hash. The device code itself is never stored.
  */
@@ -206,7 +206,7 @@ export class DialInAuthService {
   async authorize(machine: DeviceMachineInfo): Promise<DeviceAuthorization> {
     const web = this.publicUrl();
     const { authCodeTtlSeconds: ttl, pollIntervalSeconds: interval } =
-      this.config.get().devices.local;
+      this.config.get().devices.dialIn;
     const deviceCode = DEVICE_CODE_PREFIX + randomBytes(32).toString("base64url");
     const hash = sha256Hex(deviceCode);
     for (let attempt = 0; ; attempt++) {
@@ -261,7 +261,7 @@ export class DialInAuthService {
     switch (r[0]) {
       case "approved": {
         const grant = JSON.parse(r[1] as string) as Grant;
-        const local = this.config.get().devices.local;
+        const dialIn = this.config.get().devices.dialIn;
         const [deployment, settings] = await Promise.all([
           readDeploymentDevicePolicy(this.db.db, this.config),
           readOrgSettings(this.db.db, grant.orgId),
@@ -269,8 +269,8 @@ export class DialInAuthService {
         return {
           ...grant,
           connectUrl,
-          reconnectGraceSeconds: local.reconnectGraceSeconds,
-          maxFrameBytes: local.maxFrameBytes,
+          reconnectGraceSeconds: dialIn.reconnectGraceSeconds,
+          maxFrameBytes: dialIn.maxFrameBytes,
           outsideSandbox:
             allowedDeviceMode(deployment.fullAccess, settings.outsideSandbox) === "auto"
               ? "allowed"

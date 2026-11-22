@@ -78,7 +78,7 @@ beforeAll(async () => {
       { pg: pgc.url, redis: rd.url },
       {
         roles: ["api", "worker", "gateway"],
-        devices: { maxPersonal: 50, local: { reconnectGraceSeconds: GRACE_SECONDS } },
+        devices: { maxPersonal: 50, dialIn: { reconnectGraceSeconds: GRACE_SECONDS } },
         extensions: [MODEL_FAKE],
       },
     ),

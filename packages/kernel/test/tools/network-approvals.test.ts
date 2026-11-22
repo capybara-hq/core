@@ -67,7 +67,7 @@ beforeAll(async () => {
       { pg: pgc.url, redis: rd.url },
       {
         roles: ["api", "gateway"],
-        devices: { local: { reconnectGraceSeconds: 2, leaseTtlMs: 6000 } },
+        devices: { dialIn: { reconnectGraceSeconds: 2, leaseTtlMs: 6000 } },
       },
     ),
   );

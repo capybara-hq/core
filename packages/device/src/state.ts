@@ -28,9 +28,9 @@ export interface Credential {
   deviceId: string;
   dir: string;
   mode: DeviceMode;
-  /** The deployment's `devices.local.reconnectGraceSeconds`, returned with the credential. */
+  /** The deployment's `devices.dialIn.reconnectGraceSeconds`, returned with the credential. */
   reconnectGraceSeconds: number;
-  /** The deployment's `devices.local.maxFrameBytes`: no frame this program sends is larger. */
+  /** The deployment's `devices.dialIn.maxFrameBytes`: no frame this program sends is larger. */
   maxFrameBytes: number;
 }
 

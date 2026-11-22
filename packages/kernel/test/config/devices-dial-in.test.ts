@@ -8,10 +8,10 @@ const base = {
   masterKey: Buffer.alloc(32, 1).toString("base64"),
 };
 
-describe("devices.local config", () => {
-  it("devices.local defaults", () => {
+describe("devices.dialIn config", () => {
+  it("devices.dialIn defaults", () => {
     const c = KernelConfigSchema.parse(base);
-    expect(c.devices.local).toEqual({
+    expect(c.devices.dialIn).toEqual({
       reconnectGraceSeconds: 120,
       leaseTtlMs: 30000,
       authCodeTtlSeconds: 600,
@@ -36,18 +36,18 @@ describe("devices.local config", () => {
   it("rejects a lease TTL below 6000 ms", () => {
     const r = KernelConfigSchema.safeParse({
       ...base,
-      devices: { local: { leaseTtlMs: 1000 } },
+      devices: { dialIn: { leaseTtlMs: 1000 } },
     });
     expect(r.success).toBe(false);
     expect(r.error?.issues).toEqual([
       expect.objectContaining({
         code: "too_small",
         minimum: 6000,
-        path: ["devices", "local", "leaseTtlMs"],
+        path: ["devices", "dialIn", "leaseTtlMs"],
       }),
     ]);
-    const c = KernelConfigSchema.parse({ ...base, devices: { local: { leaseTtlMs: 6000 } } });
-    expect(c.devices.local.leaseTtlMs).toBe(6000);
+    const c = KernelConfigSchema.parse({ ...base, devices: { dialIn: { leaseTtlMs: 6000 } } });
+    expect(c.devices.dialIn.leaseTtlMs).toBe(6000);
   });
 
   it("environment variables override single fields", () => {
@@ -57,12 +57,12 @@ describe("devices.local config", () => {
         CAPYBARA_DB__URL: base.db.url,
         CAPYBARA_REDIS__URL: base.redis.url,
         CAPYBARA_MASTER_KEY: base.masterKey,
-        CAPYBARA_DEVICES__LOCAL__RECONNECT_GRACE_SECONDS: "60",
+        CAPYBARA_DEVICES__DIAL_IN__RECONNECT_GRACE_SECONDS: "60",
         CAPYBARA_DEVICES__OUTSIDE_SANDBOX: "off",
       },
     );
-    expect(c.devices.local.reconnectGraceSeconds).toBe(60);
-    expect(c.devices.local.pollIntervalSeconds).toBe(5);
+    expect(c.devices.dialIn.reconnectGraceSeconds).toBe(60);
+    expect(c.devices.dialIn.pollIntervalSeconds).toBe(5);
     expect(c.devices.outsideSandbox).toBe("off");
   });
 });

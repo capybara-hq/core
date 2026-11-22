@@ -115,7 +115,7 @@ beforeAll(async () => {
         extensionConfig: { "device-fake": { root: sandboxRoot } },
         http: { port: 0, publicUrl: "https://cap.example" },
         auth: { cookieSecure: false },
-        devices: { local: { reconnectGraceSeconds: 30, leaseTtlMs: 6000 } },
+        devices: { dialIn: { reconnectGraceSeconds: 30, leaseTtlMs: 6000 } },
       },
     );
   const boot = { bootstrap: { dir: bootstrap.dir }, bootstrapManifest: bootstrap.manifest };

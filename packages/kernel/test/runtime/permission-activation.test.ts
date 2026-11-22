@@ -96,7 +96,7 @@ beforeAll(async () => {
         http: { port: 0, publicUrl: "https://cap.example" },
         auth: { cookieSecure: false },
         channels: { scanIntervalMs: 100, leaseTtlMs: 10_000 },
-        devices: { local: { reconnectGraceSeconds: 30, leaseTtlMs: 6000 } },
+        devices: { dialIn: { reconnectGraceSeconds: 30, leaseTtlMs: 6000 } },
       },
     ),
     { bootstrap: { dir: bootstrap.dir }, bootstrapManifest: bootstrap.manifest },

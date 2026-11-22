@@ -46,7 +46,7 @@ export class GatewayRole {
       webhookMaxBodyBytes: config.channels.webhookMaxBodyBytes,
       devices: {
         gateway: this.devices,
-        maxFrameBytes: config.devices.local.maxFrameBytes,
+        maxFrameBytes: config.devices.dialIn.maxFrameBytes,
       },
     };
   }

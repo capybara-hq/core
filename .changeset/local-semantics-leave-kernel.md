@@ -16,7 +16,9 @@ on the machine); their owners delete them on the devices page and connect the ma
 `session_isolation`, the tables `device_machine_boots` and `device_instance_bindings`, and
 `devices.source`; a machine credential is accepted for any device a machine signed in to, and the
 connection's provider check decides the rest. The error codes `device.policy_refused`,
-`device.policy_unsupported` and `device.owner_report_stale` are removed.
+`device.policy_unsupported` and `device.owner_report_stale` are removed. The dial-in config moves from
+`devices.local.*` to `devices.dialIn.*` (`CAPYBARA_DEVICES__LOCAL__*` becomes
+`CAPYBARA_DEVICES__DIAL_IN__*`); rename any value you set.
 
 The SDK's `device-protocol` subpath drops the protocol 4 surface: `LEGACY_DEVICE_PROTOCOL_VERSION`,
 `LegacyDeviceHello`, `LegacyDeviceFrame`, `parseLegacyDeviceFrame`, `KernelReq`, `KernelCancel`,

@@ -197,7 +197,7 @@ beforeAll(async () => {
       {
         roles: ["api", "worker", "gateway"],
         sandbox: { limits: { allowHosts: ["*.example.com"] } },
-        devices: { local: { reconnectGraceSeconds: 1, leaseTtlMs: 6000 } },
+        devices: { dialIn: { reconnectGraceSeconds: 1, leaseTtlMs: 6000 } },
       },
     ),
     { bootstrap: { dir: bootstrap.dir }, bootstrapManifest: bootstrap.manifest },

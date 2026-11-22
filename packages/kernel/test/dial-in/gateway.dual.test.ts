@@ -78,7 +78,7 @@ beforeAll(async () => {
       auth: { cookieSecure: false },
       extensionHost: { dir: extensionsDir },
       http: { publicUrl: "https://cap.example" },
-      devices: { maxPersonal: 50, local: { reconnectGraceSeconds: GRACE_SECONDS } },
+      devices: { maxPersonal: 50, dialIn: { reconnectGraceSeconds: GRACE_SECONDS } },
     },
   });
   raw = createDb(h.dbUrl, 2);
