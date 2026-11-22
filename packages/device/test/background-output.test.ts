@@ -2,13 +2,16 @@ import * as fs from "node:fs";
 import { mkdtemp, readFile, realpath, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { afterEach, expect, it, vi } from "vitest";
+import { afterAll, afterEach, expect, it, vi } from "vitest";
 import {
   MacOperationSupervisor,
   type SupervisorOptions,
 } from "../src/exec/operation-supervisor.js";
 import { type MacWorkerRequest, startMacOperationWorker } from "../src/exec/operation-worker.js";
 import { shellQuote } from "../src/exec/shared.js";
+import { removeTempParent, testDeviceId } from "./mac-temp-parent.js";
+
+const DEVICE_ID = testDeviceId("background-output");
 
 vi.mock("node:fs", async (importOriginal) => {
   const actual = await importOriginal<typeof import("node:fs")>();
@@ -46,7 +49,7 @@ async function fixture(options: Partial<SupervisorOptions> = {}) {
   let cancelFailures = 0;
   const supervisor = new MacOperationSupervisor({
     stateDir: root,
-    deviceId: "d",
+    deviceId: DEVICE_ID,
     instanceGeneration: "g",
     now: () => now,
     ...options,
@@ -80,7 +83,7 @@ async function fixture(options: Partial<SupervisorOptions> = {}) {
     scope: {
       operationId: "op",
       admitBeforeMs: 1000,
-      deviceId: "d",
+      deviceId: DEVICE_ID,
       rootConversationId: "r",
       profileRevision: 0,
       ceilingRevision: "c",
@@ -268,7 +271,7 @@ it("fault-and-pending-cancel-journal-enospc", async () => {
   expect(await all(f.supervisor, ref)).toEqual(Buffer.from("durable"));
   const recovered = new MacOperationSupervisor({
     stateDir: f.root,
-    deviceId: "d",
+    deviceId: DEVICE_ID,
     instanceGeneration: "g",
     now: () => 1,
   });
@@ -389,7 +392,7 @@ it.each(["collecting", "fault", "complete"])(
     }
     const recovered = new MacOperationSupervisor({
       stateDir: f.root,
-      deviceId: "d",
+      deviceId: DEVICE_ID,
       instanceGeneration: "g",
       now: () => 1,
       start: async () => {
@@ -641,7 +644,7 @@ it.runIf(process.platform === "darwin")(
       ceilingReads = 0;
     const backend = await createMacOperationBackend(
       {
-        deviceId: "d",
+        deviceId: DEVICE_ID,
         instanceGeneration: "actual",
         stateDir: f.root,
         roots: { workspace: f.root, tmp: f.root, skills: f.root },
@@ -672,7 +675,7 @@ it.runIf(process.platform === "darwin")(
       },
     );
     const path = join(f.root, "ordinary.out");
-    const ref = await backend.background.start({ id: "d" }, f.request.scope, {
+    const ref = await backend.background.start({ id: DEVICE_ID }, f.request.scope, {
       command: "printf 'ordinary artifact'",
       cwd: f.root,
       timeoutMs: 10000,
@@ -684,7 +687,7 @@ it.runIf(process.platform === "darwin")(
     });
     await finished.promise;
     const native = await backend.operation(
-      { id: "d" },
+      { id: DEVICE_ID },
       { ...f.request.scope, operationId: "native-read" },
       signal,
     );
@@ -693,11 +696,15 @@ it.runIf(process.platform === "darwin")(
     fullAccess = false;
     const calls = ceilingReads;
     expect(
-      await backend.background.readOutput({ id: "d" }, ref, { offset: 0, maxBytes: 65536, signal }),
+      await backend.background.readOutput({ id: DEVICE_ID }, ref, {
+        offset: 0,
+        maxBytes: 65536,
+        signal,
+      }),
     ).toMatchObject({ data: Buffer.from("ordinary artifact"), totalBytes: 17 });
     expect(ceilingReads).toBe(calls);
     const narrowed = await backend.operation(
-      { id: "d" },
+      { id: DEVICE_ID },
       { ...f.request.scope, operationId: "narrowed-read" },
       signal,
     );
@@ -829,7 +836,7 @@ it.each(
       );
       const recovered = new MacOperationSupervisor({
         stateDir: f.root,
-        deviceId: "d",
+        deviceId: DEVICE_ID,
         instanceGeneration: "g",
         now: () => 1,
       });
@@ -905,7 +912,7 @@ it("syncs the final decision namespace before append ACK and complete visibility
     expect(events.slice(-3)).toEqual(["decision", "file", "directory"]);
     const recovered = new MacOperationSupervisor({
       stateDir: f.root,
-      deviceId: "d",
+      deviceId: DEVICE_ID,
       instanceGeneration: "g",
       now: () => 1,
     });
@@ -920,7 +927,7 @@ it("syncs the final decision namespace before append ACK and complete visibility
 function recover(root: string, options: Partial<SupervisorOptions> = {}) {
   return new MacOperationSupervisor({
     stateDir: root,
-    deviceId: "d",
+    deviceId: DEVICE_ID,
     instanceGeneration: "g",
     now: () => 1,
     ...options,
@@ -1635,3 +1642,7 @@ it.runIf(process.platform === "darwin").each(["stop", "revoke"])(
     }
   },
 );
+
+afterAll(async () => {
+  await removeTempParent(DEVICE_ID);
+});
