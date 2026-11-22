@@ -1,4 +1,5 @@
-import type { MouseEvent } from "react";
+import { type MouseEvent, useEffect, useState } from "react";
+import { isPlainMenu, useNative, useNativeMenuTrigger } from "../native";
 import { BottomSheet } from "./bottom-sheet";
 import type { MenuItem } from "./menus";
 import { SheetGroup, SheetRow } from "./sheet-parts";
@@ -64,9 +65,53 @@ function groupsOf(items: MenuItem[]): Exclude<MenuItem, "separator">[][] {
  * item in `fail`. A pick closes the sheet, then runs (so a dialog it opens starts over the page);
  * a link row navigates through the design link. A pick never reaches a drawer under the sheet (a
  * recent row's actions keep the drawer open). The system back closes it first (the bottom sheet's
- * history entry). Phase 0 adds the native `menu@1` form for sheets without links.
+ * history entry).
+ *
+ * In a shell with `menu@1` (decision P3) a sheet of plain actions (no link) opens as the
+ * platform's action sheet instead, anchored to the focused element (the row or the ⋯ that opened
+ * it): the open state hands over at once (closed again), a pick runs its action, a dismissal
+ * nothing, and a native failure draws this web sheet. A sheet with a link stays the web sheet, so
+ * its link rows keep link behaviour (a modified click, the system's link menu).
  */
 export function ActionSheet({ open, onOpenChange, title, items }: ActionSheetProps) {
+  const native = useNative();
+  // the native sheet failed: this open draws the web sheet
+  const [fallback, setFallback] = useState(false);
+  const nativeMenu = native?.menu && isPlainMenu(items) ? native.menu : undefined;
+  const trigger = useNativeMenuTrigger(
+    nativeMenu,
+    () => ({
+      title,
+      actions: items.flatMap((item, n) =>
+        item === "separator"
+          ? []
+          : [
+              {
+                id: `item-${n}`,
+                label: item.label,
+                ...(item.danger ? { destructive: true } : {}),
+                ...(item.disabled ? { disabled: true } : {}),
+                run: () => item.onSelect?.(),
+              },
+            ],
+      ),
+    }),
+    () => {
+      setFallback(true);
+      onOpenChange(true);
+    },
+  );
+  const handOver = open && nativeMenu !== undefined && !fallback;
+  useEffect(() => {
+    if (!handOver) return;
+    const anchor = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+    trigger.onClick?.({ currentTarget: anchor ?? document.body });
+    onOpenChange(false);
+  });
+  // the fallback sheet closed: the next open tries the native sheet again
+  useEffect(() => {
+    if (!open && fallback) setFallback(false);
+  }, [open, fallback]);
   const pick = (run: (() => void) | undefined) => (e: MouseEvent) => {
     e.stopPropagation();
     onOpenChange(false);
@@ -74,7 +119,12 @@ export function ActionSheet({ open, onOpenChange, title, items }: ActionSheetPro
     if (run) setTimeout(run, 0);
   };
   return (
-    <BottomSheet open={open} onOpenChange={onOpenChange} title={title} part="action-sheet">
+    <BottomSheet
+      open={open && !handOver}
+      onOpenChange={onOpenChange}
+      title={title}
+      part="action-sheet"
+    >
       {groupsOf(items).map((g, n) => (
         // biome-ignore lint/suspicious/noArrayIndexKey: groups are positional
         <SheetGroup key={n} part="action-sheet-group">

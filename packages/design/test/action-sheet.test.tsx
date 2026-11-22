@@ -85,8 +85,16 @@ describe("ActionSheet", () => {
   });
 });
 
-function Pressable({ onLong, onClick }: { onLong(): void; onClick(): void }) {
-  const press = useLongPress(onLong);
+function Pressable({
+  onLong,
+  onClick,
+  enabled,
+}: {
+  onLong(): void;
+  onClick(): void;
+  enabled?: boolean;
+}) {
+  const press = useLongPress(onLong, enabled === undefined ? {} : { enabled });
   return (
     <div {...press}>
       <button type="button" onClick={onClick}>
@@ -144,6 +152,22 @@ describe("useLongPress", () => {
     fireEvent(screen.getByRole("button"), ev);
     expect(onLong).toHaveBeenCalledOnce();
     expect(ev.defaultPrevented).toBe(true);
+  });
+  it("disabled hook does nothing and leaves contextmenu alone", () => {
+    vi.useFakeTimers();
+    const onLong = vi.fn();
+    const onClick = vi.fn();
+    render(<Pressable onLong={onLong} onClick={onClick} enabled={false} />);
+    const el = screen.getByRole("button");
+    touch("pointerdown", el);
+    act(() => vi.advanceTimersByTime(600));
+    touch("pointerup", el);
+    fireEvent.click(el);
+    expect(onClick).toHaveBeenCalledOnce();
+    const ev = new MouseEvent("contextmenu", { bubbles: true, cancelable: true });
+    fireEvent(el, ev);
+    expect(ev.defaultPrevented).toBe(false);
+    expect(onLong).not.toHaveBeenCalled();
   });
 });
 
