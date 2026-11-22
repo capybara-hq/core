@@ -308,6 +308,7 @@ export function PageHeader(p: PageHeaderProps) {
   const secondaries: ReactNode =
     rest.length === 0 ? null : (
       <ClassForms
+        key="secondaries"
         compact={hasShell ? null : renderAction({ label: t("shell.moreActions"), menu: folded })}
         wide={rest.map((a) => renderAction(a))}
       />

@@ -175,6 +175,18 @@ describe("PageHeader compact form", () => {
     expect(slots?.querySelectorAll(".cb-skeleton-box")).toHaveLength(2);
   });
 
+  it.each([390, 1440])("draws its actions with stable keys (no React key warning) at %i", (w) => {
+    const spy = vi.spyOn(console, "error").mockImplementation(() => {});
+    try {
+      const r = renderAtClass(w, head());
+      r.rerender(<DesignProvider locale="zh">{head({ primaryForm: "block" })}</DesignProvider>);
+      const keyWarnings = spy.mock.calls.filter((c) => String(c[0]).includes('unique "key"'));
+      expect(keyWarnings).toEqual([]);
+    } finally {
+      spy.mockRestore();
+    }
+  });
+
   it("tabs are the segmented-compact look (2-3 tabs)", () => {
     renderAtClass(390, head({ tabs: TABS }));
     expect(screen.getByRole("tablist").getAttribute("data-look")).toBe("segmented-compact");
