@@ -38,8 +38,11 @@ export type ShellPrimary = {
   label: string;
   /** The strip's glyph: `plus` (the default) or `square-pen`. */
   icon?: "plus" | "square-pen";
-  run(): void;
-};
+} & (
+  | { run(): void; href?: undefined }
+  /** A link: the shell navigates there through its `onNavigate` (the app's router). */
+  | { href: string; run?: undefined }
+);
 
 type Register = (id: symbol, page: ShellPage | null, layer?: number) => void;
 
@@ -60,7 +63,7 @@ export function useRegisterShellPage(page: ShellPage, layer = 0): void {
     page.title,
     page.path,
     page.titleAway,
-    page.primary && [page.primary.id, page.primary.label, page.primary.icon],
+    page.primary && [page.primary.id, page.primary.label, page.primary.icon, page.primary.href],
   ]);
   // Layout effects: the row follows the page before paint (a restored scroll's titleAway lands
   // with the restored position, no late flash).
@@ -80,7 +83,7 @@ export function useRegisterShellPage(page: ShellPage, layer = 0): void {
               id: p.id,
               label: p.label,
               ...(p.icon ? { icon: p.icon } : {}),
-              run: () => run.current?.(),
+              ...(p.href !== undefined ? { href: p.href } : { run: () => run.current?.() }),
             },
           },
       layer,

@@ -78,15 +78,12 @@ describe("the list primary on the Duo", () => {
     expect(container.querySelector('[data-head-primary="true"]')).not.toBeNull();
   });
 
-  it("running the registered primary follows the head link", () => {
+  it("a link primary carries its href to the shell (the shell's router follows it)", () => {
     document.documentElement.setAttribute("data-native-nav", "");
     const { ui, stub } = page();
     renderAtClass(390, ui);
-    const link = screen.getByRole("link", { name: "新建智能体" });
-    const click = vi.fn((e: Event) => e.preventDefault());
-    link.addEventListener("click", click);
-    act(() => stub.primary()?.run());
-    expect(click).toHaveBeenCalledTimes(1);
+    expect(stub.primary()).toMatchObject({ id: "list-primary", href: "/agents/new" });
+    expect(stub.primary()?.run).toBeUndefined();
   });
 
   it("a button primary runs its onSelect", () => {
@@ -96,7 +93,7 @@ describe("the list primary on the Duo", () => {
       header([{ label: "新建", variant: "primary", icon: "plus", onSelect }]),
     );
     renderAtClass(390, ui);
-    act(() => stub.primary()?.run());
+    act(() => stub.primary()?.run?.());
     expect(onSelect).toHaveBeenCalledTimes(1);
   });
 

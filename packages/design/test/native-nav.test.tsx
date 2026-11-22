@@ -239,6 +239,20 @@ describe("the native strip (nav@1)", () => {
     expect(onNavigate).toHaveBeenCalledWith("/", { transition: "none" });
   });
 
+  it("onAction follows a link primary through the shell's navigation", () => {
+    window.matchMedia = matchMediaFor(390).matchMedia;
+    const fake = fakeNav();
+    const onNavigate = vi.fn();
+    render(
+      shell(fake.nav, "/agents", {
+        onNavigate,
+        primary: { id: "new-agent", label: "新建", href: "/agents/new" },
+      }),
+    );
+    act(() => fake.action());
+    expect(onNavigate).toHaveBeenCalledWith("/agents/new");
+  });
+
   it("an inline primary run re-registers nothing and the tap calls the latest one", () => {
     window.matchMedia = matchMediaFor(390).matchMedia;
     const fake = fakeNav();

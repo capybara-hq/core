@@ -179,7 +179,9 @@ export function useNativeStrip(input: NativeStripInput): ReactNode {
       nativeNav.onAction(() => {
         closeThen(() => {
           const { input: now, primary: p } = latest.current;
-          if (p !== undefined) p.run();
+          // a link primary goes through the shell's navigation (a pushed page: the usual slide)
+          if (p?.href !== undefined) go(p.href);
+          else if (p !== undefined) p.run();
           else if (now.drawer !== undefined) {
             const href = now.drawer.newConversation.href;
             if (href === now.pathname) return;

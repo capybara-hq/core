@@ -220,11 +220,10 @@ export function ListPage({
             id: "list-primary",
             label: primaryAction.label,
             icon: primaryAction.icon === "square-pen" ? "square-pen" : "plus",
-            run: () => {
-              if (primaryAction.href === undefined) primaryAction.onSelect?.();
-              // a link goes through the design link the head drew (the app's router)
-              else document.querySelector<HTMLElement>('[data-head-primary="true"] a')?.click();
-            },
+            // a link is followed by the shell's own navigation (the app's router)
+            ...(primaryAction.href !== undefined
+              ? { href: primaryAction.href }
+              : { run: () => primaryAction.onSelect?.() }),
           },
         }
       : {}),
