@@ -89,6 +89,11 @@ export interface DeviceSandbox {
   hosts: readonly string[];
   /** Whether a call may be granted escalation outside the sandbox. */
   outsideSandbox: boolean;
+  /**
+   * Whether a call may be granted a host per call: only on an operation boundary whose provider
+   * reports `perOperationHosts` (each operation carries its own network).
+   */
+  perCallHosts: boolean;
   /** The layer that set each ceiling, or null when nothing narrowed it. */
   layer: { network: DeviceSandboxLayer | null; outsideSandbox: DeviceSandboxLayer | null };
 }
@@ -136,6 +141,7 @@ export function orgHostsOf(
  *   default, clamped to the ceiling.
  * - Allowlist hosts are the org's effective hosts, narrowed by the device's own list: a device list
  *   never adds a host, and an empty one adds no narrowing.
+ * - `perCallHosts`: only an operation-boundary provider that reports `perOperationHosts`.
  */
 export function effectiveDeviceSandbox(
   platform: DeviceSandboxPlatformLayer,
@@ -199,6 +205,7 @@ export function effectiveDeviceSandbox(
     networkCeiling: ceiling,
     hosts,
     outsideSandbox: outsideLayer === null,
+    perCallHosts: !instance && provider.network.perOperationHosts,
     layer: { network: networkLayer, outsideSandbox: outsideLayer },
   };
 }
@@ -233,8 +240,9 @@ export function providerLayerOf(
  * The ceiling of a per-call host grant (approval-only profiles design, "Per-call host grant"):
  * `any` (bounded by the kernel only, minus the org's exclusions) or exactly the `hosts` a grant may
  * name.
- * - Nothing on an instance-boundary device (its provider's network covers the whole instance) or
- *   on a closed network.
+ * - Nothing on an instance-boundary device (its provider's network covers the whole instance), on
+ *   an operation-boundary device whose provider does not report `perOperationHosts` (it cannot give
+ *   one operation a host the others lack), or on a closed network.
  * - An allowlist network ceiling (platform or org) is a hard ceiling: only the org's effective
  *   hosts.
  * - Under an open ceiling, `orgHosts: within` keeps grants within the org's effective hosts (the
@@ -250,12 +258,19 @@ export type HostGrantCeiling =
 
 export function hostGrantCeiling(
   box: Pick<DeviceSandbox, "boundary" | "networkMode" | "networkCeiling"> & {
+    /** Absent for an org- or platform-level ceiling with no device: the boundary decides. */
+    perCallHosts?: boolean;
     layer?: Pick<DeviceSandbox["layer"], "network">;
   },
   platform: Pick<DeviceSandboxPlatformLayer, "egress" | "allowHosts" | "orgHosts">,
   org: DeviceSandboxOrgLayer,
 ): HostGrantCeiling {
-  if (box.boundary === "instance" || box.networkMode === "none" || platform.egress === "none")
+  if (
+    box.boundary === "instance" ||
+    box.perCallHosts === false ||
+    box.networkMode === "none" ||
+    platform.egress === "none"
+  )
     return { kind: "hosts", hosts: [] };
   // the platform's or org's allowlist ceiling is hard; a provider that cannot enforce the open
   // network clamps the sandbox network, not what an org allows per call
@@ -292,6 +307,8 @@ export function canonicalHostCeiling(ceiling: HostGrantCeiling): HostGrantCeilin
 export function hostGrantRefusal(
   host: string,
   box: Pick<DeviceSandbox, "boundary" | "networkMode" | "networkCeiling"> & {
+    /** Absent for an org- or platform-level ceiling with no device: the boundary decides. */
+    perCallHosts?: boolean;
     layer?: Pick<DeviceSandbox["layer"], "network">;
   },
   platform: Pick<DeviceSandboxPlatformLayer, "egress" | "allowHosts" | "orgHosts">,
@@ -301,7 +318,7 @@ export function hostGrantRefusal(
   if (hostGrantable(ceiling, host)) return null;
   if (box.networkMode === "none" || platform.egress === "none")
     return "network access is turned off for this device's sandbox";
-  if (box.boundary === "instance")
+  if (box.boundary === "instance" || box.perCallHosts === false)
     return `a host cannot be granted per call on this device; add ${host} to the device's network list`;
   return (box.networkCeiling === "allowlist" && box.layer?.network !== "provider") ||
     ceiling.kind === "any"

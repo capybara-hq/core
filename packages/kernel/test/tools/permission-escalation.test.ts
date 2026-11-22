@@ -21,6 +21,7 @@ import { SandboxOperationAuthority } from "../../src/sandbox/operation-authority
 import { PermissionAuthorityLock } from "../../src/sandbox/permission-authority-lock.js";
 import { PermissionCallGrants } from "../../src/sandbox/permission-call-grants.js";
 import { PermissionCeilingWrites } from "../../src/sandbox/permission-ceiling-writes.js";
+import { PermissionFacts } from "../../src/sandbox/permission-facts.js";
 import { escalationDeviceOffWhy } from "../../src/sandbox/review/permission-candidate.js";
 import { CommandReviewService } from "../../src/sandbox/review/review.service.js";
 import { ApprovalsService } from "../../src/tools/approvals.service.js";
@@ -805,6 +806,72 @@ describe("Full chosen before any support is known", () => {
     await supportArrives(f, { ...SUPPORTS_BOTH, outsideSandbox: false });
     expect(await profileOf(f)).toBe("approve-for-me");
   });
+});
+
+// The Auto confirmation names exactly what the consent records (web keys its clause on the
+// preview's `consentReach`): with the runtime not reported (a recreated instance, a provider
+// version change, a machine's new hello) the stored support still sets the reach, so the preview
+// shows running outside, the consent records it and admission auto-approves within it
+it("stored support, unprobed runtime: the preview's consent reach is what Full records and admission applies", async () => {
+  const f = await escalated("request-approval");
+  await f.db
+    .updateTable("device_instances")
+    .set({ permission_runtime_identity: null })
+    .where("device_id", "=", f.deviceId)
+    .execute();
+  const profiles = k.app.get(PermissionProfilesService);
+  const preview = await profiles.preview(f.orgId, f.accountId, f.deviceId);
+  expect(preview.availability.state).not.toBe("supported");
+  expect(preview.consentReach.outsideSandbox).toBe(true);
+  expect(preview.outsideSandboxCeiling).toBe(true);
+  const view = await profiles.get(f.orgId, f.conversationId, f.accountId);
+  expect(view.consentReach).toEqual(preview.consentReach);
+  expect(view.scopeRevision).toBe(preview.scopeRevision);
+  await profiles.set(f.orgId, f.conversationId, f.accountId, {
+    profile: "full-access",
+    expectedRevision: view.revision,
+    consentScopeRevision: preview.scopeRevision,
+  });
+  const row = await f.db
+    .selectFrom("conversations")
+    .select("permission_consent")
+    .where("id", "=", f.conversationId)
+    .executeTakeFirstOrThrow();
+  expect((row.permission_consent as { reach?: unknown }).reach).toEqual(preview.consentReach);
+  // the runtime reports the same support again: the consent still holds, and admission
+  // auto-approves the escalation the confirmation named
+  await seedInstalledEvidence(k, raw, {
+    orgId: f.orgId,
+    deviceId: f.deviceId,
+    provider: "@permission-policy-test",
+    version: "test-1",
+    report: SUPPORTS_BOTH,
+  });
+  expect((await profiles.get(f.orgId, f.conversationId, f.accountId)).profile).toBe("full-access");
+  await f.step();
+  expect(f.effects()).toBe(1);
+  expect(
+    await f.db.selectFrom("permission_call_grants").select(["scope_kind", "source"]).execute(),
+  ).toEqual([{ scope_kind: "sandbox-escalation", source: "full-access" }]);
+});
+
+// spec §6.3: `perOperationHosts` is the gate for per-call host grants, not the boundary alone
+it("an operation boundary without perOperationHosts grants no host per call, and its consent covers none", async () => {
+  const f = await escalated(
+    "request-approval",
+    { command: "curl https://api.example.com/x", description: "Fetch" },
+    { network: { openPublic: false, allowlist: true, perOperationHosts: false } },
+  );
+  const device = await k.app.get(PermissionFacts).readDevice(f.orgId, f.deviceId);
+  expect(device.sandbox).toMatchObject({ boundary: "operation", perCallHosts: false });
+  expect(device.hostCeiling).toEqual({ kind: "hosts", hosts: [] });
+  expect(device.hostRefusal("api.example.com")).toBe(
+    "a host cannot be granted per call on this device; add api.example.com to the device's network list",
+  );
+  const preview = await k.app
+    .get(PermissionProfilesService)
+    .preview(f.orgId, f.accountId, f.deviceId);
+  expect(preview.consentReach.hostCeiling).toEqual({ kind: "hosts", hosts: [] });
 });
 
 it("a platform outside-sandbox setting off refuses the escalation, naming the super admin", async () => {

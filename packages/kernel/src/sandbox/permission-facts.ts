@@ -544,7 +544,10 @@ export class PermissionFacts {
   }
   /**
    * The preview people see before choosing a profile: availability is the device-work verdict
-   * ({@link deviceWorkAvailability}). Kernel callers only use it as a check.
+   * ({@link deviceWorkAvailability}). Kernel callers only use it as a check. `consentReach` is the
+   * reach an Auto consent confirmed against this `scopeRevision` records (the same layer as the
+   * crossing ceilings, whatever the runtime's state): the confirmation names exactly what it
+   * covers, never a guess from the runtime availability.
    */
   async preview(orgId: string, accountId: string, deviceId: string, project?: string) {
     await this.devices.usable(orgId, accountId, deviceId);
@@ -622,6 +625,8 @@ export class PermissionFacts {
           cause: { kind: "runtime" as const },
         },
         outsideSandboxCeiling: preview?.outsideSandboxCeiling ?? false,
+        /** What an Auto consent confirmed now records (the confirmation names exactly this). */
+        consentReach: preview?.consentReach ?? null,
         sandbox: preview?.sandbox ?? null,
         startingWorkNotice: notice,
       },

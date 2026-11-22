@@ -2,6 +2,7 @@
 import { DEFAULT_LIMITS } from "../../src/lib/attachments";
 import type { ConversationEvent } from "../../src/lib/conversations";
 import type {
+  ConsentReach,
   ConversationPermissions,
   PermissionAvailability,
   PermissionPreview,
@@ -110,36 +111,67 @@ export function permissionAvailability(
   return { state, reason: "Checked when this device starts" };
 }
 
-/** A side-effect-free device preview, separate from a conversation's effective profile. */
-export const permissionPreview = (over: Partial<PermissionPreview> = {}): PermissionPreview => ({
-  deviceId: "d1",
-  project: null,
-  scopeRevision: "scope-1",
-  availability: permissionAvailability(),
-  outsideSandboxCeiling: true,
-  ...over,
+/**
+ * The consent reach the kernel would record for these facts when a test does not state one:
+ * outside only under the ceiling on an operation-boundary runtime that reports it. A test of a
+ * stored support the runtime has not reported yet passes its own `consentReach`.
+ */
+export const consentReachOf = (
+  outsideSandboxCeiling: boolean,
+  availability: PermissionAvailability,
+): ConsentReach => ({
+  outsideSandbox:
+    outsideSandboxCeiling &&
+    availability.state === "supported" &&
+    availability.report.boundary === "operation" &&
+    availability.report.outsideSandbox,
+  networkCeiling: "open",
+  networkMode: "open",
+  hostCeiling: { kind: "any", excluded: [] },
 });
+
+/** A side-effect-free device preview, separate from a conversation's effective profile. */
+export const permissionPreview = (over: Partial<PermissionPreview> = {}): PermissionPreview => {
+  const availability = over.availability ?? permissionAvailability();
+  const outsideSandboxCeiling = over.outsideSandboxCeiling ?? true;
+  return {
+    deviceId: "d1",
+    project: null,
+    scopeRevision: "scope-1",
+    availability,
+    outsideSandboxCeiling,
+    consentReach: consentReachOf(outsideSandboxCeiling, availability),
+    ...over,
+  };
+};
 
 /** Revision zero is a real initial profile, and no device has neither scope nor a ceiling. */
 export const permissionsView = (
   over: Partial<ConversationPermissions> = {},
-): ConversationPermissions => ({
-  profile: "approve-for-me",
-  revision: 0,
-  rootConversationId: "c1",
-  deviceId: null,
-  consentScope: null,
-  scopeRevision: null,
-  availability: {
+): ConversationPermissions => {
+  const availability: PermissionAvailability = over.availability ?? {
     state: "unsupported",
     reason: "Choose a device to run device operations",
     cause: { kind: "runtime" },
-  },
-  outsideSandboxCeiling: false,
-  startingWorkNotice:
-    "Changes apply to new operations. Work already started keeps its starting permissions.",
-  ...over,
-});
+  };
+  const outsideSandboxCeiling = over.outsideSandboxCeiling ?? false;
+  return {
+    profile: "approve-for-me",
+    revision: 0,
+    rootConversationId: "c1",
+    deviceId: null,
+    consentScope: null,
+    scopeRevision: null,
+    availability,
+    outsideSandboxCeiling,
+    // the kernel reads a reach only where it read the device's scope
+    consentReach:
+      over.scopeRevision != null ? consentReachOf(outsideSandboxCeiling, availability) : null,
+    startingWorkNotice:
+      "Changes apply to new operations. Work already started keeps its starting permissions.",
+    ...over,
+  };
+};
 
 const ENV_LIMITS = {
   cpu: 2,

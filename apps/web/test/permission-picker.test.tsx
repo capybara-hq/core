@@ -433,6 +433,44 @@ describe("Auto consent", () => {
     );
   });
 
+  // the confirmation names exactly what the recorded consent covers: a stored support that allows
+  // running outside while the runtime is not reported yet (a recreated instance, a provider
+  // version change, a machine's new hello) still covers it, so the dialog says so
+  it("names running outside the sandbox from the consent reach while the runtime is unprobed", async () => {
+    const user = userEvent.setup();
+    const covered = permissionPreview({ availability: permissionAvailability("unprobed") });
+    mount(
+      { deviceId: "d1", deviceLabel: "MacBook-Pro.local" },
+      {
+        availability: permissionAvailability("unprobed"),
+        outsideSandboxCeiling: true,
+        consentReach: { ...covered.consentReach, outsideSandbox: true },
+      },
+    );
+    const dialog = await chooseFull(user);
+    expect(dialog.textContent).toContain(
+      "the agent's requests to go beyond it (including running commands outside the sandbox) are approved automatically",
+    );
+  });
+
+  it("leaves running outside the sandbox out when the consent reach does not cover it, whatever the runtime reports", async () => {
+    const user = userEvent.setup();
+    const supported = permissionPreview({ availability: permissionAvailability("supported") });
+    mount(
+      { deviceId: "d1", deviceLabel: "MacBook-Pro.local" },
+      {
+        availability: permissionAvailability("supported"),
+        outsideSandboxCeiling: true,
+        consentReach: { ...supported.consentReach, outsideSandbox: false },
+      },
+    );
+    const dialog = await chooseFull(user);
+    expect(dialog.textContent).toContain(
+      "Commands still run in the sandbox; the agent's requests to go beyond it are approved automatically",
+    );
+    expect(dialog.textContent).not.toContain("outside the sandbox)");
+  });
+
   it.each([
     [
       "the ceiling is off",

@@ -141,7 +141,7 @@ function approverLines(p: PermissionContextV2, box: PermissionContextSandbox): s
   // apart: the line names the approver and leaves the device's network switch to the device
   if (box.network.kind !== "open-public")
     lines.push(
-      instance
+      instance || box.perCallHosts === false
         ? instanceHostsLine(box)
         : box.network.kind === "none"
           ? `Network hosts (none authorized yet): ${approver}, where this device allows network access.`

@@ -1626,6 +1626,22 @@ describe("permission context v2: the device sandbox and the approver per crossin
       ],
     ],
     [
+      // spec §6.3: a provider that does not report perOperationHosts takes no host per call
+      "an operation-boundary allowlist without per-operation hosts",
+      sandboxed("request-approval", true, {
+        sandbox: { ...localSandbox(true), perCallHosts: false },
+      }),
+      [
+        ...head("Request approval"),
+        operationSandbox,
+        ...allowlisted,
+        `Directories outside the writable directories: ${person}.`,
+        "Hosts outside the network allowlist: not approvable per call on this device; the device's host list must include them.",
+        `Running a command outside the sandbox: ${person}; ${escalate}.`,
+        `Sensitive commands: ${person}.`,
+      ],
+    ],
+    [
       "an instance-boundary allowlist, whose hosts no call can add",
       sandboxed("request-approval", false, {
         scope: {

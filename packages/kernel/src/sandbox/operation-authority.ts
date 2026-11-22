@@ -1146,8 +1146,9 @@ export class SandboxOperationAuthority {
         // an instance boundary has no outside: its instance is the outermost boundary
         outsideSandbox: box.boundary === "operation" && box.outsideSandbox,
         outerNetwork: applied.outerNetwork,
-        // the provider's network covers a whole instance: no host is granted per call there
-        perCallHosts: box.boundary !== "instance",
+        // a host is granted per call only where each operation carries its own network (an
+        // operation boundary whose provider reports `perOperationHosts`)
+        perCallHosts: box.perCallHosts,
       },
     });
   }

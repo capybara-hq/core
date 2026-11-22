@@ -65,6 +65,7 @@ describe("effectiveDeviceSandbox", () => {
       networkCeiling: "open",
       hosts: [],
       outsideSandbox: true,
+      perCallHosts: true,
       layer: { network: null, outsideSandbox: null },
     });
   });
@@ -394,6 +395,24 @@ describe("the per-call host grant ceiling", () => {
       kind: "hosts",
       hosts: [],
     });
+  });
+
+  // spec §6.3: `perOperationHosts` gates per-call host grants, not the boundary alone
+  it("an operation boundary whose provider lacks perOperationHosts grants no host per call", () => {
+    const layer = { ...operation, network: { ...operation.network, perOperationHosts: false } };
+    const sandbox = effectiveDeviceSandbox(platform(), NO_ORG, device(), layer);
+    expect(sandbox.boundary).toBe("operation");
+    expect(sandbox.perCallHosts).toBe(false);
+    // running outside the sandbox is a separate dimension: the provider still allows it
+    expect(sandbox.outsideSandbox).toBe(true);
+    expect(hostGrantCeiling(sandbox, lim(), {})).toEqual({ kind: "hosts", hosts: [] });
+    expect(hostGrantRefusal("api.test", sandbox, lim(), {})).toBe(
+      "a host cannot be granted per call on this device; add api.test to the device's network list",
+    );
+    const withHosts = effectiveDeviceSandbox(platform(), NO_ORG, device(), operation);
+    expect(withHosts.perCallHosts).toBe(true);
+    expect(hostGrantCeiling(withHosts, lim(), {}).kind).toBe("any");
+    expect(effectiveDeviceSandbox(platform(), NO_ORG, device(), instance).perCallHosts).toBe(false);
   });
 });
 

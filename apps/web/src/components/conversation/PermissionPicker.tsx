@@ -119,17 +119,11 @@ export function pickerNotice(
 }
 
 /**
- * Whether the Auto confirmation names running outside the sandbox: the device may grant
- * it (its outside-sandbox ceiling allows it and its runtime can do it; never a cloud instance).
+ * Whether the Auto confirmation names running outside the sandbox: exactly when the consent the
+ * kernel records for this scope covers it (`consentReach`), whatever the runtime's state now.
  */
 export function fullAccessReachesOutside(p: PermissionPreview): boolean {
-  const a = p.availability;
-  return (
-    p.outsideSandboxCeiling &&
-    a.state === "supported" &&
-    a.report.boundary === "operation" &&
-    a.report.outsideSandbox
-  );
+  return p.consentReach.outsideSandbox;
 }
 
 /**
@@ -605,16 +599,17 @@ export function useConversationPermission(o: {
     // the view is the scope the kernel checks an Auto consent against: no preview is read
     preview: {
       data:
-        view?.deviceId != null && view.scopeRevision !== null
+        view?.deviceId != null && view.scopeRevision !== null && view.consentReach !== null
           ? {
               deviceId: view.deviceId,
               project: project ?? null,
               scopeRevision: view.scopeRevision,
               availability: view.availability,
               outsideSandboxCeiling: view.outsideSandboxCeiling,
+              consentReach: view.consentReach,
             }
           : undefined,
-      failed: view?.deviceId != null && view.scopeRevision === null,
+      failed: view?.deviceId != null && (view.scopeRevision === null || view.consentReach === null),
     },
     onChange: (selection) => {
       if (view === undefined || !confirmed || patch.isPending) return;
