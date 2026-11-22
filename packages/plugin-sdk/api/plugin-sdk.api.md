@@ -176,40 +176,6 @@ export interface AuthInjection {
 export type AvailableHook = (typeof HOOKS_AVAILABLE)[number];
 
 // @public
-export interface BackgroundReadOutputRequest {
-    maxBytes: number;
-    offset: number;
-}
-
-// @public
-export type BackgroundReadOutputResult = {
-    dataB64: string;
-    offset: number;
-    nextOffset: number;
-    totalBytes: number;
-} | {
-    unavailable: "lost" | "expired";
-};
-
-// @public
-export interface BindInstanceRequest {
-    bindingId: string;
-    expectedPreviousGeneration: string | null;
-    instanceGeneration: string;
-    instanceId: string;
-}
-
-// @public
-export interface BindInstanceResult {
-    bindingId: string;
-    instanceGeneration: string;
-    instanceId: string;
-    ownerCeiling: DeviceOwnerCeiling;
-    permissionSupport: SandboxPermissionSupport;
-    runtimeIdentity: DeviceRuntimeIdentity;
-}
-
-// @public
 export const BOOTSTRAP_EXTRA_MANIFEST_SCHEMA_VERSION = 1;
 
 // @public
@@ -224,6 +190,7 @@ export type BootstrapEntry = {
     integrity: string;
     required: boolean;
     builtin?: boolean;
+    scope?: "all" | "optional";
 } | {
     name: string;
     source: "workspace";
@@ -232,6 +199,7 @@ export type BootstrapEntry = {
     integrity: string;
     required: boolean;
     builtin?: boolean;
+    scope?: "all" | "optional";
 };
 
 // @public
@@ -276,6 +244,7 @@ export interface BootstrapGitEntry {
     name: string;
     path: string;
     required?: boolean;
+    scope?: "all" | "optional";
     source: "git";
     version: string;
 }
@@ -944,16 +913,10 @@ export const DEFAULT_SANDBOX_ROOTS: Readonly<SandboxRoots>;
 export function defineExtension(m: ExtensionManifest): ExtensionManifest;
 
 // @public
-export const DEVICE_BOOT_ID_RE: RegExp;
-
-// @public
 export const DEVICE_DEFAULT_STATE_PATH = "~/.config/capybara-device";
 
 // @public
 export const DEVICE_DENIED_SECRET_PATHS: readonly string[];
-
-// @public
-export const DEVICE_PROTOCOL_VERSION = 5;
 
 // @public
 export const DEVICE_PROVIDER_EXTENSION_POINT = "device-provider@1";
@@ -1001,183 +964,11 @@ export interface DeviceCeilingRequest {
 export type DeviceConnection = "starting" | "online" | "offline" | "draining" | "stopped";
 
 // @public
-export interface DeviceCreateArgs {
-    limits: SandboxLimits;
-}
-
-// @public
-export interface DeviceCreateResult {
-    roots: SandboxRoots;
-}
-
-// @public
-export type DeviceErrorKind = "gone" | "fs_gone" | "policy" | "error";
-
-// @public
-export interface DeviceExecArgs {
-    actor: SandboxActor;
-    command: string;
-    cwd?: string;
-    env?: Record<string, string>;
-    grants?: DeviceExecGrants;
-    limits: SandboxLimits;
-    maxOutputBytes: number;
-    tag: string;
-    timeoutMs: number;
-}
-
-// @public
-export interface DeviceExecGrants {
-    hosts: string[];
-    source: {
-        kind: "run" | "task";
-        id: string;
-        accountId: string;
-    };
-}
-
-// @public
-export type DeviceExecResult = ExecResult;
-
-// @public
-export type DeviceFeature = "networkReport" | "policyOp" | "policyOpId" | "projects";
-
-// @public
-export type DeviceFrame = DeviceHello | KernelReady | KernelRequest | KernelCancel | DeviceResponse | DevicePolicyChanged;
-
-// @public
-export interface DeviceHello extends LegacyDeviceHello {
-    instanceGeneration: string | null;
-    ownerCeiling: DeviceOwnerCeiling;
-    permissionSupport: SandboxPermissionSupport;
-    protocol: typeof DEVICE_PROTOCOL_VERSION;
-    runtimeIdentity?: DeviceRuntimeIdentity;
-    transport: {
-        maxFrameBytes: number;
-    };
-}
-
-// @public
-export type DeviceKillAllArgs = Record<string, never>;
-
-// @public
-export interface DeviceKillTaggedArgs {
-    tags: string[];
-}
-
-// @public
-export interface DeviceListArgs {
-    limit: number;
-    path: string;
-}
-
-// @public
-export interface DeviceListEntry {
-    isDir: boolean;
-    name: string;
-}
-
-// @public
-export type DeviceListResult = {
-    entries: DeviceListEntry[];
-    truncated: boolean;
-} | null;
-
-// @public
-export interface DeviceLocalPolicySummary {
-    allowedDomains: string[];
-}
-
-// @public
-export type DeviceNetworkMode = "open" | "allowlist";
-
-// @public
-export type DeviceOp = "create" | "exec" | "readFile" | "writeFile" | "stat" | "killTagged" | "killAll" | "stop" | "policy" | "policyStatus" | "list" | "scan";
-
-// @public
-export type DeviceOperation = Exclude<DeviceOp, "killTagged" | "killAll"> | "prepareReadFile" | "prepareWriteFile" | "prepareStat" | "browseStat" | "browseList" | "browseScan" | "backgroundStart" | "backgroundStatus" | "backgroundTail" | "backgroundReadOutput" | "backgroundStop" | "revokeOperation" | "bindInstance";
-
-// @public
-export interface DeviceOpResults {
-    create: DeviceCreateResult;
-    exec: DeviceExecResult;
-    killAll: null;
-    killTagged: null;
-    list: DeviceListResult;
-    policy: LegacyDevicePolicyResult;
-    policyStatus: LegacyDevicePolicyStatus;
-    readFile: DeviceReadFileResult;
-    scan: DeviceScanResult;
-    stat: DeviceStatResult;
-    stop: null;
-    writeFile: DeviceWriteFileResult;
-}
-
-// @public
-export interface DeviceOwnerCeiling {
-    readonly allowedDomains: readonly string[];
-    readonly network: DeviceNetworkMode;
-    readonly outsideSandbox: boolean;
-    readonly restrictedProjectReach: "workspace" | "os-user";
-    readonly revision: string;
-    readonly sequence: number;
-    readonly version: 3;
-}
-
-// @public
-export interface DeviceOwnerCeilingNarrowing {
-    readonly network?: "allowlist";
-    readonly outsideSandbox?: false;
-    readonly removeAllowedDomains?: readonly string[];
-    readonly restrictedProjectReach?: "workspace";
-}
-
-// @public
-export interface DevicePolicyArgs extends LegacyDevicePolicyArgs {
-    ownerCeiling?: DeviceOwnerCeilingNarrowing;
-}
-
-// @public
-export interface DevicePolicyChanged {
-    ownerCeiling: DeviceOwnerCeiling;
-    policy?: DeviceLocalPolicySummary;
-    type: "policy";
-}
-
-// @public
-export type DevicePolicyOpOutcome = "applied" | "refused" | "started";
-
-// @public
-export interface DevicePolicyOpReport {
-    opId: string;
-    outcome: DevicePolicyOpOutcome;
-}
-
-// @public
-export interface DevicePolicyResult {
-    ownerCeiling: DeviceOwnerCeiling;
-    policy: DeviceLocalPolicySummary;
-}
-
-// @public
-export interface DevicePolicyStatus extends LegacyDevicePolicyStatus {
-    ownerCeiling?: DeviceOwnerCeiling;
-}
-
-// @public
-export interface DevicePolicyStatusArgs {
-    opId: string;
-}
-
-// @public
-export interface DeviceProjectCandidate {
-    path: string;
-    suggestedName: string;
-}
-
-// @public
-export class DeviceProtocolError extends Error {
-    constructor(message: string);
+export class DeviceOfflineError extends Error {
+    constructor(deviceId: string, opts?: {
+        cause?: unknown;
+    });
+    readonly code = "device.offline";
 }
 
 // @public
@@ -1201,6 +992,7 @@ export interface DeviceProvider {
     destroyByName(name: string, signal: AbortSignal): Promise<void>;
     destroyFileSystem(fs: FileSystemHandle_2, signal: AbortSignal): Promise<void>;
     destroyFileSystemByName(name: string, signal: AbortSignal): Promise<void>;
+    readonly dialIn?: DialInHandler;
     exec(h: SandboxHandle, args: {
         command: string;
         cwd?: string;
@@ -1255,18 +1047,6 @@ export interface DeviceProvider {
 }
 
 // @public
-export interface DeviceReadFileArgs {
-    maxBytes: number;
-    path: string;
-}
-
-// @public
-export type DeviceReadFileResult = {
-    dataB64: string;
-    truncated: boolean;
-} | null;
-
-// @public
 export interface DeviceRef {
     deviceId: string;
     handle: SandboxHandle | null;
@@ -1289,64 +1069,13 @@ export interface DeviceReportLimit {
 }
 
 // @public
-export type DeviceRes = {
-    type: "res";
-    id: string;
-    ok: true;
-    result: unknown;
-} | {
-    type: "res";
-    id: string;
-    ok: false;
-    error: {
-        kind: DeviceErrorKind;
-        message: string;
-    };
-};
-
-// @public
-export type DeviceResponse = Exclude<DeviceRes, {
-    ok: false;
-}> | {
-    type: "res";
-    id: string;
-    ok: false;
-    error: {
-        kind: "gone" | "fs_gone" | "policy" | "error" | "denied" | "unsupported" | "unsettled" | "unknown" | "invalid";
-        message: string;
-    };
-};
-
-// @public
-export interface DeviceRuntimeIdentity {
-    helperHash: string;
-    imageFingerprint: string;
-    instanceGeneration: string;
-    runtimeHash: string;
+export class DeviceRequestNotSentError extends SandboxScopeDeniedError {
+    readonly notSent: true;
 }
 
 // @public
-export interface DeviceScanArgs {
-    base: string;
-}
-
-// @public
-export type DeviceScanResult = DeviceProjectCandidate[];
-
-// @public
-export interface DeviceStatArgs {
-    path: string;
-}
-
-// @public
-export type DeviceStatResult = {
-    size: number;
-    isDir: boolean;
-} | null;
-
-// @public
-export interface DeviceStopArgs {
-    reason: "revoked" | "deleted";
+export interface DevicesCtx {
+    reportChanged(deviceId: string): Promise<void>;
 }
 
 // @public
@@ -1356,13 +1085,88 @@ export interface DeviceText {
 }
 
 // @public
-export interface DeviceWriteFileArgs {
-    dataB64: string;
-    path: string;
+export const DIAL_IN_PROTOCOL_RE: RegExp;
+
+// @public
+export interface DialInChannel {
+    online(deviceId: string): Promise<boolean>;
+    request(deviceId: string, frame: unknown, opts: {
+        timeoutMs: number;
+        signal?: AbortSignal;
+    }): Promise<unknown>;
+    stop(deviceId: string, reason: "drain" | "stop"): Promise<void>;
 }
 
 // @public
-export type DeviceWriteFileResult = null;
+export interface DialInHandler {
+    onClose?(deviceId: string, reason: "offline" | "replaced" | "revoked" | "deleted"): void;
+    onFrame?(deviceId: string, frame: unknown): Promise<void>;
+    onHello(deviceId: string, hello: unknown, signal: AbortSignal): Promise<{
+        ok: true;
+    } | {
+        ok: false;
+        code: string;
+        message: string;
+    }>;
+}
+
+// @public
+export type DialInKernelFrame =
+/** The kernel accepted the hello (the provider's `onHello` answered ok). */
+    {
+    type: "ready";
+    connectionId: string;
+}
+/** A provider's request ({@link DialInChannel.request}); answered by a `res` with its `id`. */
+| {
+    type: "req";
+    id: string;
+    deadlineMs: number;
+    body: unknown;
+}
+/** The kernel no longer waits for request `id` (aborted or timed out). */
+| {
+    type: "cancel";
+    id: string;
+}
+/** The machine should finish its work and disconnect (`drain`) or stop at once (`stop`). */
+| {
+    type: "stop";
+    reason: "drain" | "stop";
+};
+
+// @public
+export type DialInMachineFrame = {
+    type: "hello";
+    protocol: string;
+    programRunId: string;
+    program: {
+        version: string;
+        os: string;
+        arch: string;
+        bootId?: string;
+    };
+    transport: {
+        maxFrameBytes: number;
+    };
+    body: unknown;
+}
+/** The answer to the kernel's `req` with the same `id`. */
+| {
+    type: "res";
+    id: string;
+    body: unknown;
+}
+/** An unsolicited frame, handed to {@link DialInHandler.onFrame}. */
+| {
+    type: "event";
+    body: unknown;
+};
+
+// @public
+export class DialInProtocolError extends Error {
+    constructor(message: string);
+}
 
 // @public
 export interface Directory {
@@ -1594,6 +1398,8 @@ export interface ExtensionContext {
     };
     readonly config: unknown;
     db: Kysely<any>;
+    devices: DevicesCtx;
+    dialIn: DialInChannel;
     extensionPoints: {
         get<T>(ref: ExtensionPointRef, provider?: string): T;
         get<T>(ref: ExtensionPointRef, provider: string | undefined, opts: {
@@ -1775,6 +1581,9 @@ export class ExtensionPermissionError extends Error {
 // @public
 export interface ExtensionPermissions {
     client?: boolean;
+    dialIn?: {
+        protocol: string;
+    };
     hooks?: HookMountPoint[];
     http?: HttpPermission[];
     models?: {
@@ -2292,10 +2101,13 @@ export function isChannelSendError(e: unknown): e is ChannelSendError;
 export function isCompactForm(v: unknown): v is CompactForm;
 
 // @public
-export function isDeviceBootId(v: unknown): v is string;
+export function isDeviceOfflineError(e: unknown): e is DeviceOfflineError;
 
 // @public
 export function isDeviceProjectName(v: unknown): v is string;
+
+// @public
+export function isDeviceRequestNotSent(e: unknown): boolean;
 
 // @public
 export function isDisallowedSkillRef(v: unknown): v is string;
@@ -2314,9 +2126,6 @@ export function isNetDeniedError(e: unknown): e is NetDeniedError;
 
 // @public
 export function isPermissionProfile(value: unknown): value is PermissionProfile;
-
-// @public
-export function isPolicyOpId(v: unknown): v is string;
 
 // @public
 export function isProjectPathRefusedError(e: unknown): e is ProjectPathRefusedError;
@@ -2384,94 +2193,9 @@ export type JsonValue = string | number | boolean | null | JsonValue[] | {
 export type KeepAwakeMode = "off" | "while-busy" | "connected";
 
 // @public
-export interface KernelCancel {
-    id: string;
-    type: "cancel";
-}
-
-// @public
-export interface KernelReady {
-    connectionId: string;
-    maxFrameBytes: number;
-    type: "ready";
-}
-
-// @public
-export interface KernelReq {
-    args: unknown;
-    deadlineMs: number;
-    id: string;
-    op: DeviceOp;
-    type: "req";
-}
-
-// @public
-export interface KernelRequest {
-    args: Readonly<Record<string, unknown>>;
-    deadlineMs: number;
-    id: string;
-    op: DeviceOperation;
-    type: "req";
-}
-
-// @public
 export interface Lease {
     release(): Promise<void>;
     renew(): Promise<boolean>;
-}
-
-// @public
-export const LEGACY_DEVICE_PROTOCOL_VERSION = 4;
-
-// @public
-export type LegacyDeviceFrame = LegacyDeviceHello | DeviceRes | LegacyDevicePolicyChanged | KernelReq | KernelCancel;
-
-// @public
-export interface LegacyDeviceHello {
-    arch: string;
-    bootId?: string;
-    features?: DeviceFeature[];
-    home?: string;
-    mode: "os" | "docker";
-    os: "darwin" | "linux";
-    policy?: DeviceLocalPolicySummary;
-    programRunId?: string;
-    programVersion: string;
-    protocol: number;
-    recentOps?: DevicePolicyOpReport[];
-    roots: SandboxRoots;
-    sessionIsolation: boolean;
-    type: "hello";
-}
-
-// @public
-export interface LegacyDevicePolicyArgs {
-    opId: string;
-    remove?: string[];
-    source: {
-        approvalId?: string;
-        accountId: string;
-        accountName: string;
-        via: "web" | "im";
-    };
-}
-
-// @public
-export interface LegacyDevicePolicyChanged {
-    policy?: DeviceLocalPolicySummary;
-    type: "policy";
-}
-
-// @public
-export interface LegacyDevicePolicyResult {
-    policy: DeviceLocalPolicySummary;
-}
-
-// @public
-export interface LegacyDevicePolicyStatus {
-    message?: string;
-    outcome: DevicePolicyOpOutcome | "unknown";
-    policy?: DeviceLocalPolicySummary;
 }
 
 // @public
@@ -2602,9 +2326,6 @@ export type MarketplaceSource = {
 };
 
 // @public
-export const MAX_DEVICE_LIST_ENTRIES = 1000;
-
-// @public
 export const MAX_DEVICE_PROJECT_NAME_LENGTH = 64;
 
 // @public
@@ -2615,15 +2336,6 @@ export const MAX_DEVICE_SCAN_DIRS = 500;
 
 // @public
 export const MAX_DEVICE_SCAN_RESULTS = 50;
-
-// @public
-export const MAX_NETWORK_BLOCKED_HOSTS = 20;
-
-// @public
-export const MAX_POLICY_OP_ID_LENGTH = 128;
-
-// @public
-export const MAX_RECENT_POLICY_OPS = 100;
 
 // @public
 export const MEDIA_LIMITS: {
@@ -3100,10 +2812,10 @@ export function parseConnectorTemplateFile(json: unknown): ConnectorTemplateFile
 };
 
 // @public
-export function parseDeviceFrame(raw: string, from: "device" | "kernel", maxFrameBytes?: number): DeviceFrame;
+export function parseDeviceReport(value: unknown): DeviceReport;
 
 // @public
-export function parseDeviceReport(value: unknown): DeviceReport;
+export function parseDialInMachineFrame(text: string, maxBytes: number): DialInMachineFrame;
 
 // @public
 export interface ParsedSetupGuide {
@@ -3160,24 +2872,9 @@ export function parseGitSource(git: unknown): GitSource | {
 };
 
 // @public
-export function parseLegacyDeviceFrame(raw: string, from: "device" | "kernel"): LegacyDeviceFrame;
-
-// @public
 export function parseMarketplaceManifest(json: unknown, opts?: MarketplaceParseOptions): MarketplaceManifest | {
     errors: string[];
 };
-
-// @public
-export function parseOperationResult(op: DeviceOperation, result: unknown, request?: BackgroundReadOutputRequest | BindInstanceRequest): unknown;
-
-// @public
-export function parseOpResult<Op extends DeviceOp>(op: Op, result: unknown): DeviceOpResults[Op];
-
-// @public
-export function parseOwnerCeilingNarrowing(value: unknown): DeviceOwnerCeilingNarrowing;
-
-// @public
-export function parseOwnerCeilingReport(value: unknown): DeviceOwnerCeiling;
 
 // @public
 export function parsePluginManifest(json: unknown): PluginManifest | {
@@ -3195,9 +2892,6 @@ export function parseSandboxOperationRef(value: unknown): SandboxOperationRef;
 
 // @public
 export function parseSandboxOperationScope(value: unknown): SandboxOperationScope;
-
-// @public
-export function parseSandboxPermissionSupport(value: unknown): SandboxPermissionSupport;
 
 // @public
 export function parseSandboxPreparationScope(value: unknown): SandboxPreparationScope;
@@ -3375,9 +3069,6 @@ export interface PluginSkillRef {
 export interface PluginThemeRef {
     path: string;
 }
-
-// @public
-export const POLICY_ADD_REFUSED = "The deployment may not add hosts to a device's sandbox allowlist: widening happens only on the machine (capybara-device policy add allowedDomains <host>)";
 
 // @public
 export const POLICY_HOOKS: readonly ["model.request", "tool.preExecute"];
@@ -5249,7 +4940,7 @@ export function validateParams(decl: ModelParameter[], params: Record<string, un
 };
 
 // @public
-export function validatePermissions(plugin: string, p: unknown): string[];
+export function validatePermissions(plugin: string, p: unknown, provides?: readonly string[]): string[];
 
 // @public
 export function validatePluginPackageJsonFor(pkg: unknown, manifest: PluginManifest, hostSdkVersion: string, opts?: {

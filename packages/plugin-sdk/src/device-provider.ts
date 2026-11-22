@@ -20,6 +20,7 @@ import type {
   SandboxPreparation,
   SandboxPreparationScope,
 } from "./device-operation.js";
+import type { DialInHandler } from "./dial-in.js";
 
 /** Device provider extension point ref. */
 export const DEVICE_PROVIDER_EXTENSION_POINT = "device-provider@1";
@@ -386,6 +387,11 @@ export interface DeviceProvider {
    * {@link parseDeviceReport}. Must respond to `signal`.
    */
   report(device: DeviceRef, signal: AbortSignal): Promise<DeviceReport>;
+  /**
+   * The dial-in side of the provider, for an extension declaring `permissions.dialIn`: the kernel
+   * hands it the hellos and unsolicited frames of the machines serving its devices.
+   */
+  readonly dialIn?: DialInHandler;
   /**
    * Whether the provider isolates the sessions of one device from each other inside the
    * instance (a declared capability; absent means false).

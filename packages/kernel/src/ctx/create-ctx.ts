@@ -391,6 +391,9 @@ export class LiveConfig {
   constructor(public value: unknown) {}
 }
 
+/** The ctx members that are a plain property when allowed and a denying getter otherwise. */
+type GatedKey = "secrets" | "storage" | "models" | "dialIn" | "devices";
+
 /**
  * Builds the namespaced ctx for one extension from its permission manifest, and returns its
  * registered routes, provided extension points and a close function.
@@ -651,7 +654,7 @@ export function createExtensionContext(
     },
   } as ExtensionContext["extensionPoints"];
 
-  const ctx: Omit<KernelExtensionContext, "secrets" | "storage" | "models"> = {
+  const ctx: Omit<KernelExtensionContext, GatedKey> = {
     kv: createKv(deps.redis, name),
     lock: {
       // 取到的租约记账：实例撤销时释放仍持有的；插件自己 release 时销账
@@ -979,13 +982,13 @@ export function createExtensionContext(
   };
   // secrets / storage / models: a plain property when declared; otherwise a non-enumerable getter
   // that throws, so spreading or printing ctx triggers no denial and no audit
-  const gated = (key: "secrets" | "storage" | "models", api: unknown): void => {
+  const gated = (key: GatedKey, api: unknown, item = `permissions.${key}`): void => {
     if (api) {
       Object.assign(ctx, { [key]: api });
       return;
     }
     Object.defineProperty(ctx, key, {
-      get: () => deny(`permissions.${key}`),
+      get: () => deny(item),
       enumerable: false,
       configurable: false,
     });
@@ -993,6 +996,10 @@ export function createExtensionContext(
   gated("secrets", secretsApi);
   gated("storage", storageApi);
   gated("models", modelsApi);
+  // ctx.dialIn / ctx.devices (SDK contract only so far): denied for every extension until the
+  // dial-in channel and the report revision wire them
+  gated("dialIn", undefined);
+  gated("devices", undefined, `provides ${DEVICE_PROVIDER_EXTENSION_POINT}`);
   return ctx as KernelExtensionContext;
 }
 

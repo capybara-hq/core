@@ -135,7 +135,7 @@ export function defineExtension(m: ExtensionManifest): ExtensionManifest {
     }
   }
   if (m.permissions !== undefined) {
-    const errs = validatePermissions(plugin, m.permissions);
+    const errs = validatePermissions(plugin, m.permissions, m.provides);
     if (errs.length > 0) fail(`invalid permissions: ${errs.join("; ")}`);
   }
   // structural ui problems only; slot resolution never fails the extension (UI slots spec §3.2)

@@ -81,6 +81,22 @@ export function isSandboxScopeDeniedError(e: unknown): e is SandboxScopeDeniedEr
   );
 }
 
+/**
+ * A request refused because the machine's connection changed before it was sent: the request
+ * never reached the machine, so it ran nothing. A scope refusal (it keeps that error's name, so
+ * every scope check treats it as the definite pre-effect failure it is) that the operation path
+ * records as `not_sent`, never as an unknown outcome. It says nothing about an earlier request of
+ * the same operation, so a recovery tells it apart ({@link isDeviceRequestNotSent}).
+ */
+export class DeviceRequestNotSentError extends SandboxScopeDeniedError {
+  readonly notSent = true as const;
+}
+
+/** Recognizes {@link DeviceRequestNotSentError} by its scope refusal's name and tags, across SDK copies. */
+export function isDeviceRequestNotSent(e: unknown): boolean {
+  return isSandboxScopeDeniedError(e) && (e as { notSent?: unknown }).notSent === true;
+}
+
 /** A scope or execution reference is malformed; validate it before performing any effects. */
 export class SandboxScopeValidationError extends Error {
   readonly sandboxScopeValidation = true as const;

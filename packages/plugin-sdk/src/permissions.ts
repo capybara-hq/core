@@ -1,3 +1,5 @@
+import { DEVICE_PROVIDER_EXTENSION_POINT } from "./device-provider.js";
+import { DIAL_IN_PROTOCOL_RE } from "./dial-in.js";
 import { POLICY_HOOKS, type PolicyHook } from "./hooks.js";
 import { HTTP_ACCESS, type HttpPermission } from "./http-access.js";
 import { SETUP_CHECK_ID_RE, SETUP_CHECK_LIMITS } from "./setup-check.js";
@@ -55,6 +57,13 @@ export interface ExtensionPermissions {
    * receives for the same target.
    */
   setupChecks?: string[];
+  /**
+   * The dial-in channel (`ctx.dialIn`): machines connect to the deployment and serve this
+   * extension's devices, speaking `protocol` (`<name>/<major>`, {@link DIAL_IN_PROTOCOL_RE}) inside
+   * the kernel's envelope. Only for an extension that provides `device-provider@1`; its provider
+   * then implements `dialIn` (`DialInHandler`).
+   */
+  dialIn?: { protocol: string };
 }
 
 /** Hook mount points (a closed list, see the overall design 2.4). */
@@ -105,6 +114,7 @@ const KEYS = new Set([
   "ui",
   "client",
   "setupChecks",
+  "dialIn",
 ]);
 const POLICY: ReadonlySet<string> = new Set(POLICY_HOOKS);
 const METHODS = new Set(["GET", "POST", "PUT", "DELETE"]);
@@ -127,8 +137,15 @@ function strList(label: string, v: unknown, errs: string[]): string[] {
   return out;
 }
 
-/** Validates the permission manifest and returns the list of errors (empty means valid). */
-export function validatePermissions(plugin: string, p: unknown): string[] {
+/**
+ * Validates the permission manifest and returns the list of errors (empty means valid). `provides`
+ * is the manifest's `provides` (`permissions.dialIn` needs `device-provider@1` in it).
+ */
+export function validatePermissions(
+  plugin: string,
+  p: unknown,
+  provides: readonly string[] = [],
+): string[] {
   if (p === undefined) return [];
   if (!isObj(p)) return ["permissions must be an object"];
   const errs: string[] = [];
@@ -267,6 +284,21 @@ export function validatePermissions(plugin: string, p: unknown): string[] {
           errs.push(`permissions.models has duplicate purpose "${m.purpose}"`);
         seen.add(m.purpose);
       }
+    }
+  }
+  if (p.dialIn !== undefined) {
+    if (
+      !isObj(p.dialIn) ||
+      Object.keys(p.dialIn).some((k) => k !== "protocol") ||
+      typeof p.dialIn.protocol !== "string" ||
+      !DIAL_IN_PROTOCOL_RE.test(p.dialIn.protocol)
+    ) {
+      errs.push(
+        `permissions.dialIn must be { protocol: "<name>/<major>" } matching ${DIAL_IN_PROTOCOL_RE}`,
+      );
+    }
+    if (!provides.includes(DEVICE_PROVIDER_EXTENSION_POINT)) {
+      errs.push(`permissions.dialIn needs "${DEVICE_PROVIDER_EXTENSION_POINT}" in provides`);
     }
   }
   return errs;

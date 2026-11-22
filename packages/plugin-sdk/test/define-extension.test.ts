@@ -26,6 +26,12 @@ describe("defineExtension", () => {
     const m = valid();
     expect(defineExtension(m)).toBe(m);
   });
+  it("checks permissions.dialIn against the manifest's provides", () => {
+    const permissions = { dialIn: { protocol: "capybara-device/5" } };
+    const m = valid({ provides: ["device-provider@1"], permissions });
+    expect(defineExtension(m)).toBe(m);
+    expect(() => defineExtension(valid({ permissions }))).toThrow(/device-provider@1/);
+  });
   it("rejects missing setup", () => {
     // biome-ignore lint/suspicious/noExplicitAny: 构造缺 setup 的畸形清单
     const bad = { ...valid(), setup: undefined } as any;
