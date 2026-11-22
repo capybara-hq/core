@@ -1,5 +1,5 @@
 import { spawn } from "node:child_process";
-import { existsSync } from "node:fs";
+import { chmodSync, existsSync, lstatSync, mkdirSync, statSync } from "node:fs";
 import { hostname } from "node:os";
 import { isAbsolute, resolve } from "node:path";
 import {
@@ -7,12 +7,21 @@ import {
   type DeviceNetworkMode,
 } from "@capybara-hq/plugin-sdk/device-protocol";
 import { ApiError, authorize, type FetchFn, programVersion, token } from "../api.js";
-import type { Command } from "../args.js";
+import type { Command, DeviceMode } from "../args.js";
+import {
+  connectionDir,
+  connectionLine,
+  connectionsDir,
+  DEVICE_ID_PATTERN,
+  ensureMachineFile,
+  listConnections,
+} from "../connections.js";
 import { SANDBOX_INSTALL_HINT } from "../exec/sandbox-messages.js";
 import { prepareDeviceDir } from "../exec/shared.js";
 import { resetOwnerReport } from "../owner-report.js";
 import { hasLoginService } from "../service/installed.js";
 import {
+  type Credential,
   DEFAULT_MAX_FRAME_BYTES,
   DEFAULT_POLICY,
   defaultWorkDir,
@@ -37,7 +46,7 @@ export const OUTSIDE_SANDBOX_RISK_TEXT =
   "call, and the deployment reviews every command before it runs. Prompt injection can make an " +
   "agent try to delete files or send your credentials away; the review blocks or asks about the " +
   "dangerous ones. Such commands can also read this program's own credential: if you suspect " +
-  "misuse, run capybara-device logout and log in again.";
+  "misuse, log this connection out (capybara-device logout -c <deviceId>) and log in again.";
 
 /** The OS sandbox check `login` uses (default: the runtime's, loaded on demand). */
 export type SandboxCheck = () => { ok: true } | { ok: false; reason: string };
@@ -92,7 +101,8 @@ export function restrictedUnavailableLoginLine(reason: string): string {
 }
 
 export interface LoginDeps {
-  stateDir: string;
+  /** `$XDG_CONFIG_HOME/capybara-device`: the login goes into `connections/<deviceId>/` under it. */
+  machineDir: string;
   home: string;
   fetch?: FetchFn;
   sleep?: (ms: number) => Promise<void>;
@@ -135,6 +145,60 @@ function persistDefaultPolicy(stateDir: string): boolean {
     writePolicy(stateDir, { ...DEFAULT_POLICY, ownerCeiling: { ...DEFAULT_POLICY.ownerCeiling } });
     return true;
   });
+}
+
+/**
+ * Prepares the machine directory before the person approves anything: `machine.json` of this
+ * format, and the directory private. An existing directory other users can reach is tightened to
+ * 0700 when it is this user's; one owned by another user is refused (it is not ours to change).
+ */
+function prepareMachineDir(machineDir: string): void {
+  ensureMachineFile(machineDir);
+  const st = statSync(machineDir);
+  if ((st.mode & 0o077) === 0) return;
+  const uid = process.getuid?.();
+  if (uid !== undefined && st.uid !== uid) {
+    throw new Error(
+      `${machineDir} belongs to another user and others can open it; ` +
+        "use a directory of your own (XDG_CONFIG_HOME)",
+    );
+  }
+  chmodSync(machineDir, 0o700);
+}
+
+/**
+ * The connection this machine already serves for a device: its credential when it is readable and
+ * names that device. An unusable file is reported and replaced like a new connection.
+ */
+function servedCredential(
+  connDir: string,
+  deviceId: string,
+  err: (line: string) => void,
+): Credential | undefined {
+  let cred: Credential | undefined;
+  try {
+    cred = readCredential(connDir);
+  } catch (e) {
+    err(`Replacing the unusable credential file: ${(e as Error).message}`);
+    return undefined;
+  }
+  if (cred === undefined) return undefined;
+  if (cred.deviceId !== deviceId) {
+    err(`Replacing the credential in ${connDir}: it names device ${JSON.stringify(cred.deviceId)}`);
+    return undefined;
+  }
+  return cred;
+}
+
+/** "host · org · device (id)" of a served connection, or its id when it cannot be listed. */
+function servedLine(machineDir: string, deviceId: string): string {
+  try {
+    const c = listConnections(machineDir).find((x) => x.deviceId === deviceId);
+    if (c !== undefined) return connectionLine(c);
+  } catch {
+    // only the message loses detail
+  }
+  return deviceId;
 }
 
 /** Normalises the deployment URL: http(s) origin plus optional path prefix, no trailing slash. */
@@ -188,16 +252,15 @@ export async function login(
       1,
     );
   }
+  // Before the person approves anything: a credential the kernel issues must have a place here.
   try {
-    if (readCredential(deps.stateDir) !== undefined) {
-      return fail(
-        "already_logged_in",
-        "This machine is already logged in. Run `capybara-device logout` first.",
-        1,
-      );
-    }
+    prepareMachineDir(deps.machineDir);
   } catch (e) {
-    err(`Replacing the unusable credential file: ${(e as Error).message}`);
+    return fail(
+      "machine_dir_unusable",
+      `Cannot use ${deps.machineDir}: ${(e as Error).message}`,
+      1,
+    );
   }
 
   try {
@@ -226,30 +289,68 @@ export async function login(
       waited += interval;
       try {
         const granted = await token(fetchFn, baseUrl, auth.deviceCode);
-        const dir =
-          cmd.dir === undefined
-            ? defaultWorkDir(granted.deviceId, deps.home)
-            : isAbsolute(cmd.dir)
-              ? cmd.dir
-              : resolve(cmd.dir);
+        // The deployment names the device: it becomes a directory name only once it is safe.
+        if (typeof granted.deviceId !== "string" || !DEVICE_ID_PATTERN.test(granted.deviceId)) {
+          return fail(
+            "invalid_device_id",
+            `The deployment returned the device id ${JSON.stringify(granted.deviceId)}, which ` +
+              'is not 1 to 128 letters, digits, "_" or "-"; nothing was stored. Report this to ' +
+              "the deployment's administrator.",
+            1,
+          );
+        }
+        const deviceId = granted.deviceId;
+        const connDir = connectionDir(deps.machineDir, deviceId);
+        mkdirSync(connectionsDir(deps.machineDir), { recursive: true, mode: 0o700 });
+        mkdirSync(connDir, { recursive: true, mode: 0o700 });
+        // the listing never follows a symlinked connections/ or connection: neither does login
+        for (const d of [connectionsDir(deps.machineDir), connDir]) {
+          if (!lstatSync(d).isDirectory()) {
+            return fail("machine_dir_unusable", `${d} is not a directory (a symlink?)`, 1);
+          }
+        }
+        chmodSync(connDir, 0o700);
+        // A device this machine already serves: the kernel has just replaced its credential, so
+        // the new one goes into the same connection, keeping its directory, mode and policy.
+        const served = servedCredential(connDir, deviceId, err);
+        const asked =
+          cmd.dir === undefined ? undefined : isAbsolute(cmd.dir) ? cmd.dir : resolve(cmd.dir);
+        let dir: string;
+        let mode: DeviceMode;
+        if (served !== undefined) {
+          dir = served.dir;
+          mode = served.mode;
+          if (
+            (asked !== undefined && asked !== dir) ||
+            (cmd.mode !== undefined && cmd.mode !== mode)
+          ) {
+            out(
+              `This machine already serves device ${deviceId} (${servedLine(deps.machineDir, deviceId)}): ` +
+                `it keeps its directory ${dir} and mode ${mode}. Log out of it first to change them.`,
+            );
+          }
+        } else {
+          dir = asked ?? defaultWorkDir(deviceId, deps.home);
+          mode = cmd.mode ?? "os";
+        }
         // Recreates a lost directory, marker or root: the device starts afresh.
         prepareDeviceDir(dir);
-        // A new setup gets the default written before the credential makes the login final; the
-        // printed lines follow the policy this machine actually has.
+        // A new connection gets the default written before the credential makes the login final
+        // (an existing policy is kept); the printed lines follow the policy it actually has.
         let ceiling: OwnerCeilingPolicy = { ...DEFAULT_POLICY.ownerCeiling };
         try {
-          persistDefaultPolicy(deps.stateDir);
+          persistDefaultPolicy(connDir);
         } catch (e) {
-          err(`Cannot set the local policy in ${deps.stateDir}: ${(e as Error).message}`);
+          err(`Cannot set the local policy in ${connDir}: ${(e as Error).message}`);
         }
         try {
-          ceiling = readPolicy(deps.stateDir).ownerCeiling;
+          ceiling = readPolicy(connDir).ownerCeiling;
         } catch (e) {
-          err(`Cannot read the local policy in ${deps.stateDir}: ${(e as Error).message}`);
+          err(`Cannot read the local policy in ${connDir}: ${(e as Error).message}`);
         }
         /** Why sandboxed work cannot run here: the OS sandbox is missing (OS mode only). */
         let noSandbox: string | undefined;
-        if (cmd.mode !== "docker") {
+        if (mode !== "docker") {
           const available = await checkSandbox(deps.sandboxAvailable);
           if (!available.ok) noSandbox = available.reason;
         }
@@ -260,33 +361,40 @@ export async function login(
         // (it keeps reports per machine credential); a corrupt sidecar still issues no report
         // until a later login resets it
         try {
-          resetOwnerReport(deps.stateDir);
+          resetOwnerReport(connDir);
         } catch (e) {
           err(
-            `Cannot reset the owner report sequence in ${deps.stateDir}: ${(e as Error).message}; ` +
-              "run capybara-device login again once no other capybara-device runs",
+            `Cannot reset the owner report sequence in ${connDir}: ${(e as Error).message}; ` +
+              `run capybara-device login again once no capybara-device of ${deviceId} runs`,
           );
         }
-        writeCredential(deps.stateDir, {
+        writeCredential(connDir, {
           url: baseUrl,
           connectUrl: granted.connectUrl,
           credential: granted.credential,
           orgId: granted.orgId,
-          deviceId: granted.deviceId,
+          deviceId,
           dir,
-          mode: cmd.mode,
+          mode,
           reconnectGraceSeconds: granted.reconnectGraceSeconds,
           maxFrameBytes: granted.maxFrameBytes ?? DEFAULT_MAX_FRAME_BYTES,
+          ...(typeof granted.deviceName === "string" && { deviceName: granted.deviceName }),
+          ...(typeof granted.orgName === "string" && { orgName: granted.orgName }),
         });
-        emit({ event: "done", deviceId: granted.deviceId, orgId: granted.orgId, dir });
-        out(`Logged in. Device ${granted.deviceId}, working directory ${dir}`);
+        const replaced = served !== undefined;
+        emit({ event: "done", deviceId, orgId: granted.orgId, dir, replaced });
+        out(
+          replaced
+            ? `Logged in again. Device ${deviceId} keeps its connection, working directory ${dir}`
+            : `Logged in. Device ${deviceId}, working directory ${dir}`,
+        );
         if (ceiling.outsideSandbox) {
           out(OUTSIDE_SANDBOX_LOGIN_LINE);
           // the token's `outsideSandbox` is the platform and organization outside-sandbox setting
           if (granted.outsideSandbox === "off") out(OUTSIDE_SANDBOX_NOT_ALLOWED_LOGIN_LINE);
           // the risk text is shown once at login, and only when an escalated call runs as the
           // owner on this machine (outside Docker)
-          else if (cmd.mode !== "docker") out(OUTSIDE_SANDBOX_RISK_TEXT);
+          else if (mode !== "docker") out(OUTSIDE_SANDBOX_RISK_TEXT);
         } else {
           out(SANDBOX_ONLY_LOGIN_LINE);
         }
@@ -295,9 +403,11 @@ export async function login(
         // An installed service stays stopped after a deliberate exit (not logged in, logged out):
         // it needs starting again, not a second program.
         out(
-          hasLoginService(deps.home, platform, granted.deviceId)
-            ? "The login service is installed: bring it online with `capybara-device service restart`."
-            : "Run `capybara-device start` to bring it online (or `capybara-device service install` to connect at login).",
+          hasLoginService(deps.home, platform, deviceId)
+            ? "The login service is installed: restart it to use the new credential: " +
+                `\`capybara-device service restart -c ${deviceId}\`.`
+            : `Run \`capybara-device start -c ${deviceId}\` to bring it online (or ` +
+                `\`capybara-device service install -c ${deviceId}\` to connect at login).`,
         );
         return 0;
       } catch (e) {

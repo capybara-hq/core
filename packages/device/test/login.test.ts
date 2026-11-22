@@ -3,6 +3,7 @@ import {
   existsSync,
   mkdirSync,
   mkdtempSync,
+  readdirSync,
   readFileSync,
   rmSync,
   statSync,
@@ -23,14 +24,19 @@ import {
   SANDBOX_ONLY_LOGIN_LINE,
 } from "../src/commands/login.js";
 import { logout } from "../src/commands/logout.js";
+import { connectionDir, listConnections } from "../src/connections.js";
 
 import { pidPath, writePid } from "../src/pid.js";
 import { PolicyStore } from "../src/policy-store.js";
 import {
+  type Credential,
   MISSING_POLICY_OWNER_CEILING,
   policyLockPath,
   policyPath,
+  readCredential,
   readPolicy,
+  writeCredential,
+  writePolicy,
 } from "../src/state.js";
 
 /** The owner ceiling a new setup writes (B-14). */
@@ -156,10 +162,30 @@ const granted = {
     reconnectGraceSeconds: 90,
   },
 };
-const stateDir = () => join(home, "cfg", "capybara-device");
+/** The machine directory: one directory per connection under connections/. */
+const machineDir = () => join(home, "cfg", "capybara-device");
+/** The connection directory of a device (the granted one by default). */
+const stateDir = (deviceId = "env-1") => connectionDir(machineDir(), deviceId);
 const credFile = () => join(stateDir(), "credential.json");
 /** Whether the owner allows running outside the sandbox, as the hello's owner report says. */
 const helloOutside = () => new PolicyStore(stateDir()).current().ownerCeiling.outsideSandbox;
+/** A token answer for another device. */
+const grantedAs = (body: Record<string, unknown>) => ({
+  status: 200,
+  body: { ...granted.body, ...body },
+});
+/** The old single-connection layout: credential.json directly in the machine directory. */
+const flatCredential = (): Credential => ({
+  url: base,
+  connectUrl: "wss://x.test/device/connect",
+  credential: "cap_dev_secret",
+  orgId: "org-1",
+  deviceId: "env-1",
+  dir: join(home, "capybara-device", "env-1"),
+  mode: "os",
+  reconnectGraceSeconds: 90,
+  maxFrameBytes: 16_777_216,
+});
 
 describe("login --json", () => {
   const events = () => out.map((l) => JSON.parse(l) as Record<string, unknown>);
@@ -179,6 +205,7 @@ describe("login --json", () => {
         deviceId: "env-1",
         orgId: "org-1",
         dir: join(home, "capybara-device", "env-1"),
+        replaced: false,
       },
     ]);
     expect(opened).toEqual([]);
@@ -200,14 +227,34 @@ describe("login --json", () => {
     ]);
   });
 
-  it("an existing login ends with an already_logged_in error event", async () => {
-    tokenAnswers = [granted];
-    expect(await run(["login", "--url", base])).toBe(0);
+  it("logging in again into a served device replaces its credential in place, keeping directory and policy", async () => {
+    const dir = join(home, "x");
+    tokenAnswers = [grantedAs({ deviceId: "dev-a" })];
+    expect(await run(["login", "--url", base, "--dir", dir])).toBe(0);
+    writePolicy(stateDir("dev-a"), { ...readPolicy(stateDir("dev-a")), keepAwake: "connected" });
     out.length = 0;
+    tokenAnswers = [grantedAs({ deviceId: "dev-a", credential: "new" })];
+    expect(await run(["login", "--url", base, "--json"])).toBe(0);
+    expect(readCredential(stateDir("dev-a"))).toMatchObject({ credential: "new", dir });
+    expect(readPolicy(stateDir("dev-a")).keepAwake).toBe("connected");
+    expect(events().at(-1)).toMatchObject({
+      event: "done",
+      deviceId: "dev-a",
+      dir,
+      replaced: true,
+    });
+    expect(readdirSync(join(machineDir(), "connections"))).toEqual(["dev-a"]);
+  });
+
+  it("a device id that is not a safe path segment is refused and nothing is written", async () => {
+    tokenAnswers = [grantedAs({ deviceId: "../evil" })];
     expect(await run(["login", "--url", base, "--json"])).toBe(1);
-    expect(events()).toEqual([
-      { event: "error", code: "already_logged_in", message: expect.any(String) },
-    ]);
+    expect(events().at(-1)).toMatchObject({ event: "error", code: "invalid_device_id" });
+    expect(existsSync(join(machineDir(), "evil"))).toBe(false);
+    expect(existsSync(join(home, "cfg", "evil"))).toBe(false);
+    expect(existsSync(join(machineDir(), "connections"))).toBe(false);
+    expect(existsSync(join(home, "capybara-device"))).toBe(false);
+    expect(out.join("\n")).not.toContain("cap_dev_secret");
   });
 
   it("an expired code ends with an error event", async () => {
@@ -366,7 +413,6 @@ describe("login", () => {
     const dir = join(home, "capybara-device", "env-1");
     writeFileSync(join(dir, "workspace", "kept"), "x");
     rmSync(dir, { recursive: true });
-    expect(await run(["logout"])).toBe(0);
     tokenAnswers = [granted];
     expect(await run(["login", "--url", base])).toBe(0);
     for (const sub of ["workspace", "skills", "tmp", ".capybara-device"]) {
@@ -374,7 +420,6 @@ describe("login", () => {
     }
     expect(existsSync(join(dir, "workspace", "kept"))).toBe(false);
     // A lost root under a kept directory is recreated as well.
-    expect(await run(["logout"])).toBe(0);
     rmSync(join(dir, "skills"), { recursive: true });
     tokenAnswers = [granted];
     expect(await run(["login", "--url", base])).toBe(0);
@@ -398,7 +443,6 @@ describe("login", () => {
     expect(readPolicy(stateDir()).ownerCeiling).toEqual(NEW_INSTALL);
     expect(out).toContain(SANDBOX_ONLY_LOGIN_LINE);
     expect(out.some((l) => l.includes("not needed in docker"))).toBe(false);
-    expect(await run(["logout"])).toBe(0);
     out.length = 0;
     writeOldAutoPolicy(stateDir());
     tokenAnswers = [granted];
@@ -415,7 +459,14 @@ describe("login", () => {
     writeFileSync(join(unitDir, "default.target.wants", "capybara-device@env-1.service"), "");
     tokenAnswers = [granted];
     expect(await run(["login", "--url", base])).toBe(0);
-    expect(out.join("\n")).toContain("capybara-device service restart");
+    expect(out.at(-1)).toContain("capybara-device service restart -c env-1");
+  });
+
+  it("without a login service it says how to start this connection", async () => {
+    tokenAnswers = [granted];
+    expect(await run(["login", "--url", base])).toBe(0);
+    expect(out.at(-1)).toContain("capybara-device start -c env-1");
+    expect(out.at(-1)).toContain("capybara-device service install -c env-1");
   });
 
   it("does not open the browser with --no-browser and honours --dir / --mode", async () => {
@@ -457,18 +508,13 @@ describe("login", () => {
   });
 
   it("replaces an unusable credential file with a warning", async () => {
-    mkdirSync(join(home, "cfg", "capybara-device"), { recursive: true });
+    mkdirSync(stateDir(), { recursive: true });
     writeFileSync(credFile(), "{not json", { mode: 0o600 });
     tokenAnswers = [granted];
     expect(await run(["login", "--url", base])).toBe(0);
     expect(err.join("\n")).toContain("credential.json");
     expect(JSON.parse(readFileSync(credFile(), "utf8")).deviceId).toBe("env-1");
 
-    await run(["logout"]);
-    tokenAnswers = [granted];
-    await run(["login", "--url", base]);
-    await run(["logout"]);
-    mkdirSync(join(home, "cfg", "capybara-device"), { recursive: true });
     writeFileSync(credFile(), "{}", { mode: 0o600 });
     chmodSync(credFile(), 0o644);
     err.length = 0;
@@ -495,11 +541,93 @@ describe("login", () => {
     expect(sleeps.length).toBeLessThan(100);
   });
 
-  it("refuses a second login", async () => {
+  it("a second login adds a second connection", async () => {
+    const other = base.replace("127.0.0.1", "localhost");
+    tokenAnswers = [grantedAs({ deviceId: "dev-a" })];
+    expect(await run(["login", "--url", base])).toBe(0);
+    tokenAnswers = [grantedAs({ deviceId: "dev-b", credential: "cap_dev_b" })];
+    expect(await run(["login", "--url", other])).toBe(0);
+    expect(listConnections(machineDir()).map((c) => [c.deviceId, c.host])).toEqual([
+      ["dev-a", new URL(base).host],
+      ["dev-b", new URL(other).host],
+    ]);
+    expect(readCredential(stateDir("dev-a"))?.credential).toBe("cap_dev_secret");
+    for (const id of ["dev-a", "dev-b"]) {
+      expect(statSync(stateDir(id)).mode & 0o777).toBe(0o700);
+      expect(readPolicy(stateDir(id)).ownerCeiling).toEqual(NEW_INSTALL);
+    }
+    expect(JSON.parse(readFileSync(join(machineDir(), "machine.json"), "utf8"))).toEqual({
+      version: 1,
+    });
+  });
+
+  it("--dir or --mode differing from the served connection is not applied, and says so", async () => {
+    tokenAnswers = [grantedAs({ orgName: "Acme", deviceName: "Laptop" })];
+    expect(await run(["login", "--url", base])).toBe(0);
+    const dir = join(home, "capybara-device", "env-1");
+    out.length = 0;
+    tokenAnswers = [grantedAs({ credential: "new", orgName: "Acme", deviceName: "Laptop" })];
+    expect(
+      await run(["login", "--url", base, "--dir", join(home, "other"), "--mode", "docker"]),
+    ).toBe(0);
+    expect(readCredential(stateDir())).toMatchObject({ credential: "new", dir, mode: "os" });
+    expect(existsSync(join(home, "other"))).toBe(false);
+    expect(out).toContain(
+      `This machine already serves device env-1 (${new URL(base).host} · Acme · Laptop (env-1)): ` +
+        `it keeps its directory ${dir} and mode os. Log out of it first to change them.`,
+    );
+    // the same values say nothing
+    out.length = 0;
+    tokenAnswers = [granted];
+    expect(await run(["login", "--url", base, "--dir", dir, "--mode", "os"])).toBe(0);
+    expect(out.some((l) => l.includes("already serves"))).toBe(false);
+  });
+
+  it("stores the device and organization names from the token", async () => {
+    tokenAnswers = [grantedAs({ deviceName: "Laptop", orgName: "Acme" })];
+    expect(await run(["login", "--url", base])).toBe(0);
+    expect(readCredential(stateDir())).toMatchObject({ deviceName: "Laptop", orgName: "Acme" });
+    // a device without a name (null) stores none
+    tokenAnswers = [grantedAs({ deviceName: null, orgName: "Acme" })];
+    expect(await run(["login", "--url", base])).toBe(0);
+    const cred = readCredential(stateDir());
+    expect(cred?.orgName).toBe("Acme");
+    expect(cred && "deviceName" in cred).toBe(false);
+  });
+
+  it("the old flat credential.json does not stop a login and is left untouched", async () => {
+    writeCredential(machineDir(), flatCredential());
+    writeFileSync(policyPath(machineDir()), `${JSON.stringify({ mode: "auto" })}\n`, {
+      mode: 0o600,
+    });
+    const before = readFileSync(join(machineDir(), "credential.json"), "utf8");
+    tokenAnswers = [grantedAs({ credential: "new" })];
+    expect(await run(["login", "--url", base])).toBe(0);
+    expect(readFileSync(join(machineDir(), "credential.json"), "utf8")).toBe(before);
+    expect(JSON.parse(readFileSync(policyPath(machineDir()), "utf8"))).toEqual({ mode: "auto" });
+    expect(readCredential(stateDir())?.credential).toBe("new");
+    // the connection gets its own new-install policy, not the flat one
+    expect(readPolicy(stateDir()).ownerCeiling).toEqual(NEW_INSTALL);
+  });
+
+  it("tightens a machine directory other users can read to 0700", async () => {
+    mkdirSync(machineDir(), { recursive: true, mode: 0o755 });
+    chmodSync(machineDir(), 0o755);
     tokenAnswers = [granted];
     expect(await run(["login", "--url", base])).toBe(0);
+    expect(statSync(machineDir()).mode & 0o777).toBe(0o700);
+  });
+
+  it("a machine.json of another format version stops the login before the browser opens", async () => {
+    mkdirSync(machineDir(), { recursive: true, mode: 0o700 });
+    writeFileSync(join(machineDir(), "machine.json"), `${JSON.stringify({ version: 2 })}\n`, {
+      mode: 0o600,
+    });
+    tokenAnswers = [granted];
     expect(await run(["login", "--url", base])).toBe(1);
-    expect(err.join("\n")).toContain("already logged in");
+    expect(err.join("\n")).toContain("format version 2");
+    expect(opened).toEqual([]);
+    expect(seen).toEqual([]);
   });
 });
 
@@ -512,10 +640,10 @@ describe("status and logout", () => {
     expect(JSON.parse(out[0] ?? "")).toEqual({ loggedIn: false });
   });
 
+  // status and logout still read the flat layout until they take --connection (Tasks 8 and 9)
   it("status shows the login without the credential; logout removes it", async () => {
-    tokenAnswers = [granted];
-    await run(["login", "--url", base]);
-    out.length = 0;
+    writeCredential(machineDir(), flatCredential());
+    const credFile = () => join(machineDir(), "credential.json");
     expect(await run(["status", "--json"])).toBe(0);
     const shown = JSON.parse(out[0] ?? "");
     expect(shown).toMatchObject({ loggedIn: true, deviceId: "env-1" });
@@ -526,8 +654,8 @@ describe("status and logout", () => {
   });
 
   it("logout stops the running program before forgetting the credential", async () => {
-    tokenAnswers = [granted];
-    await run(["login", "--url", base]);
+    writeCredential(machineDir(), flatCredential());
+    const credFile = () => join(machineDir(), "credential.json");
     const state = join(home, "cfg", "capybara-device");
     writePid(state, 999_001);
     const alive = new Set([999_001]);
@@ -552,8 +680,8 @@ describe("status and logout", () => {
   });
 
   it("logout warns when the program does not exit in time, and still logs out", async () => {
-    tokenAnswers = [granted];
-    await run(["login", "--url", base]);
+    writeCredential(machineDir(), flatCredential());
+    const credFile = () => join(machineDir(), "credential.json");
     const state = join(home, "cfg", "capybara-device");
     writePid(state, 999_002);
     const kill = (() => true) as unknown as typeof process.kill;

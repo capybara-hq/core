@@ -135,41 +135,48 @@ describe("connections: listing", () => {
     ]);
   });
 
-  it("a connection directory that cannot be examined is unreadable, never skipped", () => {
-    add("dev-a", "a.example.com");
-    add("dev-b", "b.example.com");
-    chmodSync(connectionDir(m, "dev-b"), 0o000);
-    try {
-      expect(listConnections(m).map((c) => c.deviceId)).toEqual(["dev-a"]);
-      expect(unreadableConnections(m)).toEqual([
-        { deviceId: "dev-b", reason: expect.stringContaining("cannot be examined") },
-      ]);
-      // one snapshot gives both lists
-      expect(scanConnections(m)).toEqual({
-        readable: [expect.objectContaining({ deviceId: "dev-a" })],
-        unreadable: [{ deviceId: "dev-b", reason: expect.stringContaining("EACCES") }],
-      });
-    } finally {
-      chmodSync(connectionDir(m, "dev-b"), 0o700);
-    }
-  });
+  // root reads through mode 000: these need an ordinary user
+  it.skipIf(process.getuid?.() === 0)(
+    "a connection directory that cannot be examined is unreadable, never skipped",
+    () => {
+      add("dev-a", "a.example.com");
+      add("dev-b", "b.example.com");
+      chmodSync(connectionDir(m, "dev-b"), 0o000);
+      try {
+        expect(listConnections(m).map((c) => c.deviceId)).toEqual(["dev-a"]);
+        expect(unreadableConnections(m)).toEqual([
+          { deviceId: "dev-b", reason: expect.stringContaining("cannot be examined") },
+        ]);
+        // one snapshot gives both lists
+        expect(scanConnections(m)).toEqual({
+          readable: [expect.objectContaining({ deviceId: "dev-a" })],
+          unreadable: [{ deviceId: "dev-b", reason: expect.stringContaining("EACCES") }],
+        });
+      } finally {
+        chmodSync(connectionDir(m, "dev-b"), 0o700);
+      }
+    },
+  );
 
-  it("a connections directory that cannot be read, or is a symlink, throws", () => {
-    add("dev-a", "a.example.com");
-    chmodSync(connectionsDir(m), 0o000);
-    try {
-      expect(() => listConnections(m)).toThrow(/cannot be read/);
-      expect(() => unreadableConnections(m)).toThrow(/cannot be read/);
-      expect(() => resolveConnection(undefined, m)).toThrow(/cannot be read/);
-    } finally {
-      chmodSync(connectionsDir(m), 0o700);
-    }
-    // another machine dir whose connections/ links to this one's
-    const linked = join(m, "linked");
-    mkdirSync(linked);
-    symlinkSync(connectionsDir(m), join(linked, "connections"));
-    expect(() => listConnections(linked)).toThrow(/not a directory/);
-  });
+  it.skipIf(process.getuid?.() === 0)(
+    "a connections directory that cannot be read, or is a symlink, throws",
+    () => {
+      add("dev-a", "a.example.com");
+      chmodSync(connectionsDir(m), 0o000);
+      try {
+        expect(() => listConnections(m)).toThrow(/cannot be read/);
+        expect(() => unreadableConnections(m)).toThrow(/cannot be read/);
+        expect(() => resolveConnection(undefined, m)).toThrow(/cannot be read/);
+      } finally {
+        chmodSync(connectionsDir(m), 0o700);
+      }
+      // another machine dir whose connections/ links to this one's
+      const linked = join(m, "linked");
+      mkdirSync(linked);
+      symlinkSync(connectionsDir(m), join(linked, "connections"));
+      expect(() => listConnections(linked)).toThrow(/not a directory/);
+    },
+  );
 
   it("a credential that names another device, or a bad one, is unreadable", () => {
     writeCredential(connectionDir(m, "dev-x"), credOf("dev-other", "x.example.com"));

@@ -7,7 +7,6 @@ describe("parseCommandLine", () => {
       command: "login",
       url: "u",
       browser: false,
-      mode: "os",
       json: true,
     });
   });
@@ -37,12 +36,11 @@ describe("parseCommandLine", () => {
     ).toThrow(UsageError);
   });
 
-  it("parses login flags with defaults", () => {
+  it("parses login flags; --mode is absent unless given", () => {
     expect(parseCommandLine(["login", "--url", "https://x.test"])).toEqual({
       command: "login",
       url: "https://x.test",
       browser: true,
-      mode: "os",
     });
     expect(
       parseCommandLine(["login", "--url", "u", "--no-browser", "--dir", "/d", "--mode", "docker"]),

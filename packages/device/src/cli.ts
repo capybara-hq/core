@@ -100,7 +100,7 @@ export async function runCli(argv: string[], io: CliEnv = {}): Promise<number> {
       return 0;
     case "login":
       return login(cmd, {
-        stateDir: dir,
+        machineDir: dir,
         home,
         platform,
         out,

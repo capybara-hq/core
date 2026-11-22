@@ -11,7 +11,8 @@ export type Command =
       url: string;
       browser: boolean;
       dir?: string;
-      mode: DeviceMode;
+      /** `--mode`; absent when not given (a new connection then runs in `os` mode). */
+      mode?: DeviceMode;
       /** `--json`: one JSON event per line on stdout (implies `--no-browser`). */
       json?: true;
     }
@@ -132,14 +133,16 @@ export function parseCommandLine(argv: string[]): Command {
       });
       if (positionals.length > 0) throw new UsageError("login takes no positional arguments");
       if (values.url === undefined || values.url === "") throw new UsageError("login needs --url");
-      const mode = values.mode ?? "os";
-      if (mode !== "os" && mode !== "docker") throw new UsageError("--mode must be os or docker");
+      const mode = values.mode;
+      if (mode !== undefined && mode !== "os" && mode !== "docker") {
+        throw new UsageError("--mode must be os or docker");
+      }
       return {
         command: "login",
         url: String(values.url),
         browser: values["no-browser"] !== true && values.json !== true,
         ...(values.dir !== undefined && { dir: String(values.dir) }),
-        mode,
+        ...(mode !== undefined && { mode }),
         ...(values.json === true && { json: true as const }),
       };
     }
