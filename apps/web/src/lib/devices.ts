@@ -1,13 +1,12 @@
 import { apiFetch } from "./api";
 import type { LocalizedName } from "./catalog";
+import { extensionLabel } from "./extension-label";
+import type { SetupGuideRef } from "./setup-guides";
 
 /**
  * The kernel's devices API (`packages/kernel/src/devices/devices.service.ts`; only the
  * fields the UI uses). Web code never imports kernel code.
  */
-
-/** How much power a device gives an agent's commands (auto mode spec §4). */
-export type DeviceMode = "auto" | "sandbox";
 
 /** A device network: the open public network (private ranges and loopback blocked) or an allowlist. */
 export type DeviceNetworkKind = "open-public" | "allowlist";
@@ -30,15 +29,6 @@ export interface DeviceMachine {
   lastSeenAt: string | null;
 }
 
-/** One side of an owner ceiling change (kernel `DeviceCeilingFacts`). */
-export interface DeviceCeilingChangeSide {
-  outsideSandbox: boolean;
-  /** A machine's restricted project reach, when the row records it. */
-  restrictedProjectReach?: "workspace" | "os-user";
-  /** The owner's sandbox network, when the row records it. */
-  network?: "open" | "allowlist";
-}
-
 /** A cloud device's stored network (kernel `DeviceNetworkSetting`): `mode` null follows its org. */
 export interface DeviceNetworkSetting {
   mode: DeviceNetworkMode | null;
@@ -48,27 +38,18 @@ export interface DeviceNetworkSetting {
 /** One setting change of a device (kernel `DeviceSettingChangeView`), newest first. */
 export interface DeviceSettingChange {
   at: string;
-  /**
-   * `policy`: a local allowlist change; `ceiling`: a machine's owner ceiling changed; `network`: a
-   * cloud device's network changed.
-   */
-  kind: "policy" | "ceiling" | "network";
+  kind: "network";
   add: string[];
   remove: string[];
-  /** The owner ceiling change (`ceiling` rows only; `from` null when unknown); else null. */
-  ceiling: { from: DeviceCeilingChangeSide | null; to: DeviceCeilingChangeSide } | null;
-  /** The cloud network change (`network` rows only); else null. */
+  /** The network change; else null. */
   network: { from: DeviceNetworkSetting; to: DeviceNetworkSetting } | null;
   /** The deciding account (null once the account is gone). */
   by: { id: string; name: string; avatarUrl: string | null } | null;
+  /** `agent`: an agent's Platform tool call; `token`: an API token. */
+  via: "web" | "im" | "agent" | "token";
   /**
-   * `device`: made or reported on the machine itself; `agent`: an agent's Platform tool call;
-   * `token`: an API token.
-   */
-  via: "web" | "im" | "device" | "agent" | "token";
-  /**
-   * What became of a change sent to the machine: `unknown`, its answer never came; `failed`, it
-   * did not take effect. Every other row is `applied`.
+   * What became of a change: `unknown`, its answer never came; `failed`, it did not take effect.
+   * Every other row is `applied`.
    */
   outcome: "applied" | "unknown" | "failed";
 }
@@ -119,6 +100,8 @@ export interface Device {
   ownerKind: "personal";
   /** The provider it is bound to for life. */
   provider: string | null;
+  /** The provider's extension display name (also when the provider is off); null without one. */
+  providerDisplayName: LocalizedName | null;
   /** Its provider serves its devices over the dial-in channel (a machine signs in to the device). */
   dialIn: boolean;
   /** Its provider serves the org now (on in the org). */
@@ -166,6 +149,9 @@ export const deviceText = (t: DeviceText, locale: "zh" | "en"): string =>
 export interface DeviceProviderOption {
   plugin: string;
   displayName: LocalizedName | null;
+  description: DeviceText | null;
+  dialIn: boolean;
+  guide: SetupGuideRef | null;
 }
 
 export interface DeviceList {
@@ -193,10 +179,19 @@ export type DeviceState =
 
 export function deviceState(e: Device): DeviceState {
   if (!e.available) return "unavailable";
-  if (e.dialIn) return e.online === true ? "online" : "offline";
   if (e.filesLost) return "filesLost";
+  if (e.online !== null) return e.online ? "online" : "offline";
   return e.instance?.status ?? "notStarted";
 }
+
+/** A device's provider for people: its display name in the page language, else the plugin name. */
+export const providerLabel = (
+  e: Pick<Device, "provider" | "providerDisplayName">,
+  locale: "zh" | "en",
+): string =>
+  e.provider === null
+    ? ""
+    : extensionLabel({ name: e.provider, displayName: e.providerDisplayName }, locale);
 
 /** How often the device page reads a device while a file reset it requested is pending. */
 export const RESET_POLL_MS = 1500;
@@ -243,10 +238,10 @@ export const devicePickable = (e: Device): boolean => {
 
 /**
  * Whether the new conversation's device picker shows at all: a device provider is on in the org, or
- * the person has a dial-in device.
+ * the person has a device.
  */
 export const deviceChoiceShown = (list: DeviceList): boolean =>
-  list.providers.length > 0 || list.items.some((e) => e.dialIn);
+  list.providers.length > 0 || list.items.length > 0;
 
 /**
  * The device a new conversation starts on (environments design §4.1 item 2): the one `picked`,
@@ -280,10 +275,10 @@ export const listDevices = (orgId: string) => apiFetch<DeviceList>(org(orgId));
 export const getDevice = (orgId: string, id: string) =>
   apiFetch<{ device: Device }>(`${org(orgId)}/${enc(id)}`);
 
-export const createDevice = (orgId: string, name: string, provider?: string) =>
+export const createDevice = (orgId: string, body: { name: string; provider: string }) =>
   apiFetch<{ device: Device }>(org(orgId), {
     method: "POST",
-    body: JSON.stringify({ name: name.trim(), ...(provider === undefined ? {} : { provider }) }),
+    body: JSON.stringify({ name: body.name.trim(), provider: body.provider }),
   });
 
 export const renameDevice = (orgId: string, id: string, name: string) =>
@@ -295,10 +290,6 @@ export const renameDevice = (orgId: string, id: string, name: string) =>
 export const deleteDevice = (orgId: string, id: string) =>
   apiFetch<void>(`${org(orgId)}/${enc(id)}`, { method: "DELETE" });
 
-/** Disconnects a local device's machine (its credential is revoked). */
-export const revokeDeviceMachine = (orgId: string, id: string) =>
-  apiFetch<void>(`${org(orgId)}/${enc(id)}/machine`, { method: "DELETE" });
-
 export const resetDeviceFiles = (orgId: string, id: string) =>
   apiFetch<void>(`${org(orgId)}/${enc(id)}/files/reset`, { method: "POST" });
 
@@ -308,7 +299,7 @@ export const resetDeviceFiles = (orgId: string, id: string) =>
  * allowlist's hosts only narrow the organization's list (empty follows it), `mode: null` follows the
  * organization.
  */
-export const setCloudDeviceNetwork = (
+export const setDeviceNetwork = (
   orgId: string,
   id: string,
   network: { mode: DeviceNetworkMode | null; hosts?: string[] },
@@ -328,16 +319,8 @@ export interface DeviceProject {
 
 /** `GET …/devices/:id/projects` (kernel `DeviceProjectList`). */
 export interface DeviceProjectList {
-  /** The projects the device's current mode can read. */
   projects: DeviceProject[];
-  /** How many stored projects the current mode hides (kept, not deleted). */
-  hidden: number;
-  /** The mode the device runs at now: it decides the base a relative path is read against. */
-  mode: DeviceMode;
-  /**
-   * The base a relative path is resolved against: the workspace in sandbox mode and on a cloud
-   * device, the owner's home in auto mode; null when that home is not known.
-   */
+  /** The base a relative path is resolved against; null when it is not known. */
   base: string | null;
   /** The device offers projects (a machine announcing `projects`, a provider with list / scan). */
   supported: boolean;
@@ -353,17 +336,15 @@ export interface DeviceProjectCandidate {
 
 export interface DeviceProjectCandidates {
   candidates: DeviceProjectCandidate[];
-  mode: DeviceMode;
   base: string | null;
   supported: boolean;
 }
 
 /**
  * The fixed prefix the add form shows before the relative path (project root §4.2): the owner's
- * home (`~/`) for a dial-in device in auto mode, else the workspace (`workspace/`).
+ * home (`~/`) for a dial-in device, else the workspace (`workspace/`).
  */
-export const projectBasePrefix = (dialIn: boolean, mode: DeviceMode): string =>
-  dialIn && mode === "auto" ? "~/" : "workspace/";
+export const projectBasePrefix = (dialIn: boolean): string => (dialIn ? "~/" : "workspace/");
 
 /** The relative path as sent: trimmed, without a leading `./` or trailing slashes. */
 export const normalizeProjectPath = (p: string): string =>
