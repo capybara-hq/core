@@ -53,7 +53,8 @@ function themeIconOf(
   appUploaded: boolean,
 ): string | null {
   if (purpose === "app") return theme?.logo?.appIconUrl ?? null;
-  if (purpose === "maskable" && !appUploaded) return theme?.logo?.appIconMaskableUrl ?? null;
+  if (purpose === "maskable" && !appUploaded && (theme?.logo?.appIconUrl ?? null) !== null)
+    return theme?.logo?.appIconMaskableUrl ?? null;
   return null;
 }
 
