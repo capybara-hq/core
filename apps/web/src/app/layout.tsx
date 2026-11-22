@@ -12,7 +12,6 @@ import { DesignRoot } from "../components/design-root";
 import { QueryProvider } from "../components/QueryProvider";
 import { isAppLocale, routing } from "../i18n/routing";
 import type { PlatformMeta } from "../lib/app-auth";
-import { BRAND_COOKIE, decodeBrandCookie } from "../lib/brand-cookie";
 import { NONCE_HEADER } from "../lib/headers";
 import { DEFAULT_PLATFORM_NAME } from "../lib/platform-icons";
 import { platformMetaQuery } from "../lib/query/app-auth";
@@ -57,16 +56,16 @@ export async function generateMetadata(): Promise<Metadata> {
   const t = await getTranslations("metadata");
   const qc = serverQueryClient();
   // an unreachable kernel: the defaults
-  const [meta, theme, cookie] = await Promise.all([
+  const [meta, theme, outside] = await Promise.all([
     qc.fetchQuery({ ...platformMetaQuery(), retry: false }).catch((): PlatformMeta | null => null),
     qc.fetchQuery({ ...platformThemeQuery(), retry: false }).catch((): ThemeRef | null => null),
-    currentCookie(BRAND_COOKIE),
+    outsideTheme(),
   ]);
   const name = meta?.name ?? DEFAULT_PLATFORM_NAME;
   const icons = platformIconsMetadata(meta, theme);
-  // the favicon follows the theme this browser last drew (theme brand coverage spec §5); the
-  // route-group layouts set their own
-  const favicon = decodeBrandCookie(cookie)?.faviconUrl ?? null;
+  // the favicon follows the page's theme (theme brand coverage spec §5): outside the route groups
+  // `outsideTheme()` (the brand cookie, else the platform default); the route groups set their own
+  const favicon = outside?.faviconUrl ?? null;
   return {
     title: name,
     description: t("description"),

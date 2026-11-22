@@ -211,7 +211,11 @@ describe("app icons follow the platform default theme (theme brand coverage §6)
   it("the root metadata reads the platform theme for the apple-touch-icon", async () => {
     readTheme = async () => THEME;
     const md = await generateMetadata();
-    expect(md.icons).toEqual(platformIconsMetadata(DEFAULT, THEME));
+    // without a brand cookie the platform default is the page's theme: its favicon too
+    expect(md.icons).toEqual({
+      ...platformIconsMetadata(DEFAULT, THEME),
+      icon: T_ASSET("favicon.svg"),
+    });
   });
 
   it("the root metadata's favicon is the brand cookie's, else the platform's", async () => {
