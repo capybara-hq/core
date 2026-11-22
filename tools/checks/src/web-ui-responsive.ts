@@ -625,28 +625,9 @@ export function dialogFooterTreeFindings(
 // --- web-ui-load-more ------------------------------------------------------------------------
 
 export const LOAD_MORE_RULE = "web-ui-load-more";
-export const LOAD_MORE_STALE_RULE = "web-ui-load-more-stale";
 
 export const LOAD_MORE_MESSAGE =
   "a 「加载更多」 / Load more button beside or inside a list: pass `onLoadMore`, `hasMore`, `loadingMore` and `loadMoreError` to the list (ObjectList, CardGrid, DataTable), which reads the next page as its end comes into view below 600 and draws Load more itself from 600 up (mobile interaction model spec §3, D6)";
-
-export interface LoadMorePending {
-  /** Under apps/web/src, `/`-separated. */
-  path: string;
-  /** The task that moves the page onto the list's `onLoadMore`. */
-  fix: string;
-}
-
-const LOAD_MORE_FIX = "pass onLoadMore / hasMore / loadingMore / loadMoreError to the list";
-
-/** Pages that still draw their own Load more button; a ratchet, new pages are never added. */
-export const LOAD_MORE_PENDING: readonly LoadMorePending[] = [
-  { path: "app/(app)/admin/accounts/view.tsx", fix: LOAD_MORE_FIX },
-  { path: "app/(app)/admin/agents/view.tsx", fix: LOAD_MORE_FIX },
-  { path: "app/(app)/admin/audit/view.tsx", fix: LOAD_MORE_FIX },
-  { path: "app/(app)/admin/connectors/view.tsx", fix: LOAD_MORE_FIX },
-  { path: "app/(app)/admin/overview/AttentionSection.tsx", fix: LOAD_MORE_FIX },
-];
 
 const LOAD_MORE_BUTTONS = new Set(["Button", "LinkButton"]);
 /** The apps/web wrapper that draws a Load more row (components/cursor-pages.tsx). */
@@ -695,22 +676,12 @@ export function loadMoreFindings(p: ParsedFile): Finding[] {
   return out;
 }
 
-export function loadMoreTreeFindings(
-  webSrcDir: string,
-  pending: readonly LoadMorePending[] = LOAD_MORE_PENDING,
-): Finding[] {
-  const raw: Finding[] = [];
+export function loadMoreTreeFindings(webSrcDir: string): Finding[] {
+  const out: Finding[] = [];
   for (const { file, isTest } of listSourceFiles(webSrcDir)) {
     if (isTest) continue;
     const p = parseFile(file);
-    if (!isParseError(p)) raw.push(...loadMoreFindings(p));
+    if (!isParseError(p)) out.push(...loadMoreFindings(p));
   }
-  return applyPathRatchet(
-    raw,
-    pending,
-    webSrcDir,
-    LOAD_MORE_STALE_RULE,
-    "Load more button",
-    "LOAD_MORE_PENDING in tools/checks/src/web-ui-responsive.ts",
-  );
+  return out;
 }

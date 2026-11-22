@@ -24,8 +24,6 @@ import {
   FOOTER_PENDING,
   type FooterPending,
   filtersScopeTreeFindings,
-  LOAD_MORE_PENDING,
-  type LoadMorePending,
   loadMoreTreeFindings,
   SIZE_BRANCH_ALLOWED,
   type SizeBranchAllowed,
@@ -38,8 +36,6 @@ export { DUAL_RENDER_PENDING, type DualRenderPending } from "./design-dual-rende
 export {
   FOOTER_PENDING,
   type FooterPending,
-  LOAD_MORE_PENDING,
-  type LoadMorePending,
   SIZE_BRANCH_ALLOWED,
   type SizeBranchAllowed,
 } from "./web-ui-responsive.js";
@@ -49,7 +45,6 @@ export interface ResponsiveLists {
   sizeAllowed: readonly SizeBranchAllowed[];
   footerPending?: readonly FooterPending[];
   /** `web-ui-load-more`'s ratchet; left out: none (every Load more button is reported). */
-  loadMorePending?: readonly LoadMorePending[];
   dualPending: readonly DualRenderPending[];
 }
 export type { Finding };
@@ -1477,7 +1472,6 @@ export function checkWebUi(
   responsive: ResponsiveLists = {
     sizeAllowed: SIZE_BRANCH_ALLOWED,
     footerPending: FOOTER_PENDING,
-    loadMorePending: LOAD_MORE_PENDING,
     dualPending: DUAL_RENDER_PENDING,
   },
 ): Finding[] {
@@ -1504,7 +1498,7 @@ export function checkWebUi(
   findings.push(...filtersScopeTreeFindings(webSrcDir));
   findings.push(...templateOnlyPropsTreeFindings(webSrcDir));
   findings.push(...dialogFooterTreeFindings(webSrcDir, responsive.footerPending ?? FOOTER_PENDING));
-  findings.push(...loadMoreTreeFindings(webSrcDir, responsive.loadMorePending ?? []));
+  findings.push(...loadMoreTreeFindings(webSrcDir));
   findings.push(...boxFindings(webSrcDir, boxPending));
   return applyQueryPending(applySsrPending(findings, webSrcDir, pending), webSrcDir, queryPending);
 }
