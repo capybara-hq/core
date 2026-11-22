@@ -1,15 +1,21 @@
+import {
+  type ConnectionInfo,
+  connectionLine,
+  resolveConnection,
+  scanConnections,
+} from "../connections.js";
 import { queryControl } from "../control/client.js";
-import type { LiveStatus } from "../control/protocol.js";
+import { controlSocketPath, type LiveStatus } from "../control/protocol.js";
 import { controlUnavailableReason } from "../control/server.js";
 import { type ProcessChecks, readRunningPid } from "../pid.js";
-import { type OwnerCeilingPolicy, readCredential, readPolicy } from "../state.js";
+import { hasLoginService } from "../service/installed.js";
 
 /** How long `status` waits for the running program to answer on its control socket. */
 export const STATUS_CONTROL_TIMEOUT_MS = 500;
 
 export interface StatusOptions extends ProcessChecks {
-  /** The running program's pid, if any (default: the pid file, checked against the process). */
-  running?: () => number | undefined;
+  /** The running program's pid for a connection directory, if any (default: the pid file, checked against the process). */
+  running?: (stateDir: string) => number | undefined;
 }
 
 /** What the running program says of itself over the control socket, or why it cannot. */
@@ -39,7 +45,7 @@ async function controlState(stateDir: string, opts: StatusOptions): Promise<Cont
   }
   if (isLiveStatus(answer)) return { control: "ok", live: answer };
   // an answer of another shape is treated as no answer
-  const pid = (opts.running ?? (() => readRunningPid(stateDir, opts)))();
+  const pid = opts.running ? opts.running(stateDir) : readRunningPid(stateDir, opts);
   if (pid === undefined) return { control: "absent", live: null };
   // a program runs but does not answer: say why when it is visible from here (decision 3)
   return {
@@ -51,57 +57,118 @@ async function controlState(stateDir: string, opts: StatusOptions): Promise<Cont
   };
 }
 
-/** `status`: exit 0 when logged in, 1 when not (or the credential file is unusable). */
+/** One connection as `status --json` shows it. Never the credential. */
+export type ConnectionStatusJson = {
+  deviceId: string;
+  orgId: string;
+  orgName: string | null;
+  deviceName: string | null;
+  url: string;
+  host: string;
+  mode: "os" | "docker";
+  dir: string;
+  serviceInstalled: boolean;
+  /** Absolute path of this connection's control socket; clients read it only from here. */
+  controlSocket: string;
+} & Control;
+
+export interface MachineStatusJson {
+  connections: ConnectionStatusJson[];
+  unreadable: Array<{ deviceId: string; reason: string }>;
+}
+
+async function connectionStatus(
+  c: ConnectionInfo,
+  opts: StatusOptions & { home: string; platform: NodeJS.Platform },
+): Promise<ConnectionStatusJson> {
+  const control = await controlState(c.stateDir, opts);
+  return {
+    deviceId: c.deviceId,
+    orgId: c.orgId,
+    orgName: c.orgName,
+    deviceName: c.deviceName,
+    url: c.url,
+    host: c.host,
+    mode: c.mode,
+    dir: c.workDir,
+    serviceInstalled: hasLoginService(opts.home, opts.platform, c.deviceId),
+    controlSocket: controlSocketPath(c.stateDir),
+    ...control,
+  };
+}
+
+function stateWord(c: Control): string {
+  if (c.control === "absent") return "stopped";
+  if (c.control === "unavailable") return `no live status (${c.controlReason})`;
+  return c.live.connection;
+}
+
+/**
+ * `status`: without a selector, every connection of this machine (one line each, or
+ * {@link MachineStatusJson}); with one, the detail of that connection. Exit 0 when a connection is
+ * shown, 1 when there is none or the selector names none.
+ */
 export async function status(
-  stateDir: string,
+  machineDir: string,
+  selector: string | undefined,
   json: boolean,
   out: (line: string) => void,
   err: (line: string) => void,
-  opts: StatusOptions = {},
+  opts: StatusOptions & { home: string; platform: NodeJS.Platform },
 ): Promise<number> {
-  let cred: ReturnType<typeof readCredential>;
+  if (selector !== undefined) {
+    let c: ConnectionInfo;
+    try {
+      c = resolveConnection(selector, machineDir);
+    } catch (e) {
+      err((e as Error).message);
+      return 1;
+    }
+    const s = await connectionStatus(c, opts);
+    if (json) {
+      out(JSON.stringify(s));
+    } else {
+      out(
+        [
+          "Connected.",
+          `  deployment:   ${c.url}`,
+          `  organization: ${c.orgName === null ? c.orgId : `${c.orgName} (${c.orgId})`}`,
+          `  device:       ${c.deviceName === null ? c.deviceId : `${c.deviceName} (${c.deviceId})`}`,
+          `  directory:    ${c.workDir}`,
+          `  mode:         ${c.mode}`,
+          `  service:      ${s.serviceInstalled ? "installed" : "not installed"}`,
+          `  running:      ${runningLine(s)}`,
+        ].join("\n"),
+      );
+    }
+    return 0;
+  }
+  let scan: ReturnType<typeof scanConnections>;
   try {
-    cred = readCredential(stateDir);
+    scan = scanConnections(machineDir);
   } catch (e) {
     err((e as Error).message);
     return 1;
   }
-  if (cred === undefined) {
-    out(json ? JSON.stringify({ loggedIn: false }) : "Not logged in.");
+  const { readable, unreadable } = scan;
+  if (readable.length === 0 && unreadable.length === 0) {
+    out(
+      json
+        ? JSON.stringify({ connections: [], unreadable: [] } satisfies MachineStatusJson)
+        : "No connection. Run capybara-device login --url <url>.",
+    );
     return 1;
   }
-  // An unreadable policy file is reported by `start` and `policy show`; status still answers.
-  let ceiling: OwnerCeilingPolicy | undefined;
-  try {
-    ceiling = readPolicy(stateDir).ownerCeiling;
-  } catch {
-    ceiling = undefined;
-  }
-  const sandbox = ceiling && { network: ceiling.network, outsideSandbox: ceiling.outsideSandbox };
-  // The credential itself is never printed.
-  const { credential: _secret, ...shown } = cred;
-  const control = await controlState(stateDir, opts);
+  const connections = await Promise.all(readable.map((c) => connectionStatus(c, opts)));
   if (json) {
-    out(JSON.stringify({ loggedIn: true, ...shown, ...(sandbox && { sandbox }), ...control }));
+    out(JSON.stringify({ connections, unreadable } satisfies MachineStatusJson));
   } else {
-    out(
-      [
-        "Logged in.",
-        `  deployment:   ${cred.url}`,
-        `  organization: ${cred.orgId}`,
-        `  device:       ${cred.deviceId}`,
-        `  directory:    ${cred.dir}`,
-        `  mode:         ${cred.mode}`,
-        `  sandbox:      ${
-          sandbox
-            ? `network ${sandbox.network}, outside the sandbox ${sandbox.outsideSandbox ? "allowed" : "off"}`
-            : "unknown"
-        }`,
-        `  running:      ${runningLine(control)}`,
-      ].join("\n"),
-    );
+    readable.forEach((c, i) => {
+      out(`${connectionLine(c)} · ${stateWord(connections[i] as ConnectionStatusJson)}`);
+    });
+    for (const u of unreadable) out(`${u.deviceId}: unreadable (${u.reason})`);
   }
-  return 0;
+  return readable.length > 0 ? 0 : 1;
 }
 
 function runningLine(c: Control): string {

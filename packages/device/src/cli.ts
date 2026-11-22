@@ -118,7 +118,9 @@ export async function runCli(argv: string[], io: CliEnv = {}): Promise<number> {
         ...(io.ps && { ps: io.ps }),
       });
     case "status":
-      return status(dir, cmd.json, out, err, {
+      return status(dir, undefined, cmd.json, out, err, {
+        home,
+        platform,
         ...(io.kill && { kill: io.kill }),
         ...(io.ps && { ps: io.ps }),
       });

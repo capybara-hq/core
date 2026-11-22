@@ -1,6 +1,7 @@
 export type { RunningOperation } from "./activity.js";
 export { type Command, parseCommandLine } from "./args.js";
 export { runCli } from "./cli.js";
+export type { ConnectionStatusJson, MachineStatusJson } from "./commands/status.js";
 export {
   type ConnectionInfo,
   connectionDir,

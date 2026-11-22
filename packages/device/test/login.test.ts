@@ -634,23 +634,25 @@ describe("login", () => {
 describe("status and logout", () => {
   it("status reports not logged in", async () => {
     expect(await run(["status"])).toBe(1);
-    expect(out).toEqual(["Not logged in."]);
+    expect(out).toEqual(["No connection. Run capybara-device login --url <url>."]);
     out.length = 0;
     expect(await run(["status", "--json"])).toBe(1);
-    expect(JSON.parse(out[0] ?? "")).toEqual({ loggedIn: false });
+    expect(JSON.parse(out[0] ?? "")).toEqual({ connections: [], unreadable: [] });
   });
 
-  // status and logout still read the flat layout until they take --connection (Tasks 8 and 9)
+  // logout still reads the flat layout until it takes --connection (Task 9)
   it("status shows the login without the credential; logout removes it", async () => {
-    writeCredential(machineDir(), flatCredential());
-    const credFile = () => join(machineDir(), "credential.json");
+    const connDir = connectionDir(machineDir(), "env-1");
+    mkdirSync(connDir, { recursive: true, mode: 0o700 });
+    writeCredential(connDir, flatCredential());
     expect(await run(["status", "--json"])).toBe(0);
     const shown = JSON.parse(out[0] ?? "");
-    expect(shown).toMatchObject({ loggedIn: true, deviceId: "env-1" });
+    expect(shown.connections[0]).toMatchObject({ deviceId: "env-1" });
     expect(JSON.stringify(shown)).not.toContain("cap_dev_secret");
+    writeCredential(machineDir(), flatCredential());
+    const credFile = () => join(machineDir(), "credential.json");
     expect(await run(["logout"])).toBe(0);
     expect(existsSync(credFile())).toBe(false);
-    expect(await run(["status"])).toBe(1);
   });
 
   it("logout stops the running program before forgetting the credential", async () => {
