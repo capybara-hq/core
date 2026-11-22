@@ -49,6 +49,8 @@ export type OAuthAuth =
       tokenAuthMethod?: "client_secret_basic" | "client_secret_post" | undefined;
       /** More `token_type` values accepted as bearer tokens (besides Bearer and `user`). */
       tokenTypes?: string[] | undefined;
+      /** Extra query parameters of the authorize request only (never the token endpoint). */
+      authorizationParams?: Record<string, string> | undefined;
     }
   | {
       type: "oauth_client";

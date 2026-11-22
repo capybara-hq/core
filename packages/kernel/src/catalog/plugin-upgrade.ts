@@ -68,6 +68,7 @@ import {
   switchOf,
   themeIdClashes,
 } from "./component-state.js";
+import { credentialKey } from "./credential-key.js";
 import { LIVE_INSTALL_STATUSES } from "./install-status.js";
 import { CatalogItemLock } from "./locks.js";
 import { itemPendingError, itemRemovedError } from "./ownership.js";
@@ -299,26 +300,6 @@ const KIND_ORDER: Record<ComponentKind, number> = {
 };
 /** How long one update holds its item (renewed while it runs). */
 const UPDATE_LOCK_TTL_MS = 60_000;
-
-/**
- * What a credential of `auth` looks like: two auths with the same key take the same stored
- * credential (static: the type family, ownership and header names; OAuth: any change re-enters).
- */
-function credentialKey(auth: ConnectorAuth): string {
-  switch (auth.type) {
-    case "none":
-      return "none";
-    case "bearer":
-    case "api_key":
-      return `token:${auth.ownership}`;
-    case "basic":
-      return `basic:${auth.ownership}`;
-    case "headers":
-      return `headers:${auth.ownership}:${[...auth.names].sort().join(",")}`;
-    default:
-      return canonicalJson(auth);
-  }
-}
 
 /** The digest of all files of a catalog version. */
 const filesDigest = (row: CatalogVersionFiles): string =>

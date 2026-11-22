@@ -73,6 +73,8 @@ export interface FakeTokenRequest {
   clientId: string | undefined;
   resource: string | undefined;
   scope: string | undefined;
+  /** The names of the form parameters sent (values are never recorded). */
+  paramNames: string[];
   /** 客户端认证方式：Basic 头、表单里的 client_secret、或只有 client_id。 */
   clientAuth: "basic" | "post" | "none";
   /** 本次响应的 HTTP 状态（dialect slack: errors are 200 too). */
@@ -293,6 +295,7 @@ export async function startFakeOAuthServer(
       clientId: undefined,
       resource: form.get("resource") ?? undefined,
       scope: form.get("scope") ?? undefined,
+      paramNames: [...new Set(form.keys())],
       clientAuth: req.headers.authorization?.startsWith("Basic ")
         ? "basic"
         : form.has("client_secret")

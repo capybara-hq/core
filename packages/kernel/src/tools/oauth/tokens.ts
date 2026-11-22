@@ -419,7 +419,8 @@ export class OAuthTokens {
           `Could not obtain an access token: the authorization server rejected the request (${e.error}). Ask an administrator to check the app.`,
         );
       }
-      if (e instanceof OAuthUnavailable) throw e;
+      // invalidate() inside the try ends in a reconnect (or unavailable): never "request failed"
+      if (e instanceof OAuthUnavailable || e instanceof OAuthReconnectRequired) throw e;
       // URL 校验失败等（配置问题）：按不可用处理，不删凭据
       this.log.warn("oauth token request failed", { connectorId, err: e });
       throw new OAuthUnavailable();
