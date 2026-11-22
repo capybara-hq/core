@@ -2269,3 +2269,31 @@ a.cb-attachment:hover {
   font-family: var(--cb-font-code);
   opacity: 0.7;
 }
+
+/* Tabs segmented-compact (spec D4): 2-3 tabs below 600 become a full-width segmented control, same
+   DOM. The selected tab takes the selected ground instead of the underline. */
+@media (max-width: 599px) {
+  .cb-tabs[data-look="segmented-compact"] {
+    box-sizing: border-box;
+    width: 100%;
+    height: var(--cb-control-default);
+    overflow: hidden;
+    border: 1px solid var(--cb-line);
+    border-radius: var(--cb-radius-sm);
+    -webkit-mask-image: none;
+    mask-image: none;
+  }
+  .cb-tabs[data-look="segmented-compact"] > .cb-tab {
+    flex: 1 1 0;
+    min-width: 0;
+    min-height: var(--cb-touch-hit);
+    justify-content: center;
+    padding: 0 var(--cb-space-2);
+    box-shadow: none;
+  }
+  .cb-tabs[data-look="segmented-compact"] > .cb-tab[data-state="selected"],
+  .cb-tabs[data-look="segmented-compact"] > .cb-tab[aria-current="page"] {
+    background: var(--cb-selected);
+    box-shadow: none;
+  }
+}

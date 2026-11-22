@@ -48,6 +48,11 @@ export type TabsProps = {
   value: string;
   onChange?: (id: string) => void;
   label: string;
+  /**
+   * `segmented-compact`: with 2 or 3 tabs, below 600 the list is a full-width segmented control
+   * (spec D4). With 4 or more it stays a scrolling row. Default `underline`.
+   */
+  look?: "underline" | "segmented-compact";
 };
 
 /** Which edges of a sideways-scrolling row hide tabs (none until measured, and in a server render). */
@@ -87,7 +92,9 @@ export const edgeAttrs = (e: ScrollEdges) => ({
   "data-fade-end": e.end ? "true" : undefined,
 });
 
-export function Tabs({ items, value, onChange, label }: TabsProps) {
+export function Tabs({ items, value, onChange, label, look }: TabsProps) {
+  const dataLook =
+    look === "segmented-compact" && items.length >= 2 && items.length <= 3 ? look : undefined;
   const Link = useDesignLink();
   const ref = useRef<HTMLDivElement>(null);
   const navRef = useRef<HTMLElement>(null);
@@ -114,7 +121,13 @@ export function Tabs({ items, value, onChange, label }: TabsProps) {
 
   if (hasLinks) {
     return (
-      <nav className="cb-tabs" aria-label={label} ref={navRef} {...edgeAttrs(edges)}>
+      <nav
+        className="cb-tabs"
+        aria-label={label}
+        data-look={dataLook}
+        ref={navRef}
+        {...edgeAttrs(edges)}
+      >
         {items.map((it) => {
           const current = it.id === value;
           if (it.disabled || !it.href) {
@@ -172,6 +185,7 @@ export function Tabs({ items, value, onChange, label }: TabsProps) {
       className="cb-tabs"
       role="tablist"
       aria-label={label}
+      data-look={dataLook}
       ref={ref}
       onKeyDown={onKey}
       {...edgeAttrs(edges)}
