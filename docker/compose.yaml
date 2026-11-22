@@ -321,12 +321,12 @@ services:
   # The plugin pulls the published images ghcr.io/capybara-hq/capybara-sandbox and
   # capybara-sandbox-egress itself; the profile only starts sandbox-proxy. Offline route: build the
   # images locally (profile sandbox-build, below), set CAPYBARA_SANDBOX__IMAGE and the plugin's
-  # egressProxyImage. The build services use plugins/sandbox-docker of https://github.com/capybara-hq/plugins at the commit
+  # egressProxyImage. The build services use plugins/device-docker of https://github.com/capybara-hq/plugins at the commit
   # packages/kernel/bootstrap.json pins as marketplace.commit (pnpm check: bootstrap-compose-ref), so
   # building needs git and network access to GitHub. First install the plugin
-  # @capybara-hq/plugin-sandbox-docker
-  #   docker compose run --rm api extensions install npm:@capybara-hq/plugin-sandbox-docker --yes
-  #   docker compose run --rm api extensions enable sandbox-docker
+  # @capybara-hq/plugin-device-docker
+  #   docker compose run --rm api extensions install npm:@capybara-hq/plugin-device-docker --yes
+  #   docker compose run --rm api extensions enable device-docker
   # and set its endpoint to tcp://sandbox-proxy:2375 (only worker can reach it).
   #
   # sandbox-proxy is the only container that mounts the Docker socket, and it allows only the
@@ -351,7 +351,7 @@ services:
   # CAPYBARA_SANDBOX__IMAGE and the plugin's egressProxyImage.
   sandbox-image:
     profiles: ["sandbox-build"]
-    build: https://github.com/capybara-hq/plugins.git#895bfc11d7ed76726b20e2e6140764b7fadc6598:plugins/sandbox-docker/image
+    build: https://github.com/capybara-hq/plugins.git#ae3c41845e672ece6210d202a325056b6e784c08:plugins/device-docker/image
     image: capybara-sandbox:latest
     command: ["true"]
     restart: "no"
@@ -359,7 +359,7 @@ services:
 
   sandbox-egress-image:
     profiles: ["sandbox-build"]
-    build: https://github.com/capybara-hq/plugins.git#895bfc11d7ed76726b20e2e6140764b7fadc6598:plugins/sandbox-docker/egress-proxy
+    build: https://github.com/capybara-hq/plugins.git#ae3c41845e672ece6210d202a325056b6e784c08:plugins/device-docker/egress-proxy
     image: capybara-sandbox-egress:latest
     command: ["node", "-e", "0"]
     restart: "no"

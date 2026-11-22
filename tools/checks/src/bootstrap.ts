@@ -23,11 +23,11 @@ export interface BootstrapCheckOptions {
   composeFiles?: string[];
   /**
    * Core's socket proxy config (`docker/sandbox-proxy/haproxy.cfg`); with `network`, the
-   * sandbox-docker plugin's test copy at `marketplace.commit` must equal it (`bootstrap-haproxy`).
+   * device-docker plugin's test copy at `marketplace.commit` must equal it (`bootstrap-haproxy`).
    */
   haproxyFile?: string;
   /**
-   * The SDK runtime files the sandbox-docker image stages (`SANDBOX_RUNTIME_SOURCE.files`); with
+   * The SDK runtime files the device-docker image stages (`SANDBOX_RUNTIME_SOURCE.files`); with
    * `network`, the image's `SHA256SUMS` at `marketplace.commit` must list each with the sha256 of
    * its `source` (`bootstrap-sandbox-runtime`).
    */
@@ -36,7 +36,7 @@ export interface BootstrapCheckOptions {
 
 /** Core's compose files (repo-relative) whose sandbox images build from the plugins repository. */
 export const BOOTSTRAP_COMPOSE_FILES = ["docker/compose.yaml", "docker/compose.dev.yaml"];
-/** Core's socket proxy config (repo-relative), copied by the sandbox-docker plugin's tests. */
+/** Core's socket proxy config (repo-relative), copied by the device-docker plugin's tests. */
 export const SANDBOX_PROXY_HAPROXY = "docker/sandbox-proxy/haproxy.cfg";
 
 /** 1-based line of the entry's `"name": "<name>"` in the manifest text, else 1. */
@@ -71,7 +71,7 @@ function lineOf(text: string, name: string): number {
  * `marketplace.commit` (`bootstrap-compose-ref`, offline); with `network` as well, its Dockerfile
  * must exist at that commit, and with `haproxyFile` the plugin's test copy of the socket proxy
  * config there must equal core's file (`bootstrap-haproxy`). With `sandboxRuntime` and `network`,
- * the sandbox-docker image's `SHA256SUMS` at that commit must list each SDK runtime file with the
+ * the device-docker image's `SHA256SUMS` at that commit must list each SDK runtime file with the
  * digest of core's source (`bootstrap-sandbox-runtime`).
  */
 export async function checkBootstrap(

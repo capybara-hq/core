@@ -1,25 +1,25 @@
 services:
   on-a-branch:
-    build: https://github.com/capybara-hq/plugins.git#main:plugins/sandbox-docker/image
+    build: https://github.com/capybara-hq/plugins.git#main:plugins/device-docker/image
   default-branch:
     build:
-      context: https://github.com/capybara-hq/plugins.git#:plugins/sandbox-docker/egress-proxy
+      context: https://github.com/capybara-hq/plugins.git#:plugins/device-docker/egress-proxy
   another-commit:
-    build: https://github.com/capybara-hq/plugins.git#fedcba9876543210fedcba9876543210fedcba98:plugins/sandbox-docker/image
+    build: https://github.com/capybara-hq/plugins.git#fedcba9876543210fedcba9876543210fedcba98:plugins/device-docker/image
   root:
     build: 'https://github.com/capybara-hq/plugins.git'
   fork-at-the-commit:
-    build: https://github.com/someone/plugins.git#0123456789abcdef0123456789abcdef01234567:plugins/sandbox-docker/image
+    build: https://github.com/someone/plugins.git#0123456789abcdef0123456789abcdef01234567:plugins/device-docker/image
   scp-style:
-    build: git@github.com:capybara-hq/plugins.git#main:plugins/sandbox-docker/image
+    build: git@github.com:capybara-hq/plugins.git#main:plugins/device-docker/image
   scheme-less:
-    build: github.com/capybara-hq/plugins#main:plugins/sandbox-docker/image
+    build: github.com/capybara-hq/plugins#main:plugins/device-docker/image
   plain-http:
-    build: http://github.com/capybara-hq/plugins.git#0123456789abcdef0123456789abcdef01234567:plugins/sandbox-docker/image
+    build: http://github.com/capybara-hq/plugins.git#0123456789abcdef0123456789abcdef01234567:plugins/device-docker/image
   no-dot-git:
-    build: https://github.com/capybara-hq/plugins#0123456789abcdef0123456789abcdef01234567:plugins/sandbox-docker/image
+    build: https://github.com/capybara-hq/plugins#0123456789abcdef0123456789abcdef01234567:plugins/device-docker/image
   flow-form:
-    build: { context: "https://github.com/capybara-hq/plugins.git#main:plugins/sandbox-docker/image" }
+    build: { context: "https://github.com/capybara-hq/plugins.git#main:plugins/device-docker/image" }
   query-ref:
     build: https://github.com/capybara-hq/plugins.git?ref=0123456789abcdef0123456789abcdef01234567
   no-dir:

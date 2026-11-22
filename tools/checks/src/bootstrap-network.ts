@@ -53,20 +53,20 @@ export interface NetworkProblem {
 export interface PluginsRepoFiles {
   /** Compose build contexts pinned to the commit: each `<dir>/Dockerfile` must exist there. */
   contexts?: ComposeGitContext[];
-  /** Core's socket proxy config, which the sandbox-docker plugin's test copy must equal. */
+  /** Core's socket proxy config, which the device-docker plugin's test copy must equal. */
   haproxy?: { file: string; bytes: Uint8Array };
   /**
-   * The sha256 (hex) of each file of core's SDK `SANDBOX_RUNTIME_SOURCE`, which the sandbox-docker
+   * The sha256 (hex) of each file of core's SDK `SANDBOX_RUNTIME_SOURCE`, which the device-docker
    * image stages: the image's `SHA256SUMS` must list each name with that digest.
    */
   sandboxRuntime?: readonly { name: string; sha256: string }[];
 }
 
 const MARKETPLACE_FILE = ".capybara-plugin/marketplace.json";
-/** The sandbox-docker plugin's test copy of core's `docker/sandbox-proxy/haproxy.cfg`. */
-export const PLUGIN_HAPROXY_COPY = "plugins/sandbox-docker/test/sandbox-proxy/haproxy.cfg";
-/** The digests of the SDK runtime files the sandbox-docker image stages (`sha256sum` format). */
-export const PLUGIN_SANDBOX_RUNTIME_SUMS = "plugins/sandbox-docker/image/runtime/SHA256SUMS";
+/** The device-docker plugin's test copy of core's `docker/sandbox-proxy/haproxy.cfg`. */
+export const PLUGIN_HAPROXY_COPY = "plugins/device-docker/test/sandbox-proxy/haproxy.cfg";
+/** The digests of the SDK runtime files the device-docker image stages (`sha256sum` format). */
+export const PLUGIN_SANDBOX_RUNTIME_SUMS = "plugins/device-docker/image/runtime/SHA256SUMS";
 const dockerfileOf = (c: ComposeGitContext) => `${c.dir}/Dockerfile`;
 const errText = (e: unknown) => (e instanceof Error ? e.message : String(e));
 
@@ -240,7 +240,7 @@ function parseSums(text: string): Map<string, string> {
 }
 
 /**
- * `bootstrap-sandbox-runtime`: the sandbox-docker image at the commit stages the SDK runtime files
+ * `bootstrap-sandbox-runtime`: the device-docker image at the commit stages the SDK runtime files
  * core's kernel verifies (`SANDBOX_RUNTIME_SOURCE`); its `SHA256SUMS` must list every file with the
  * digest of core's in-repo source. A mismatch means every device on a current kernel refuses the
  * staged file ("does not match its digest").
@@ -252,15 +252,15 @@ function checkSandboxRuntime(
   at: string,
 ): NetworkProblem[] {
   const fix =
-    "restage the sandbox-docker image in capybara-hq/plugins with the current SDK runtime sources " +
-    "(plugins/sandbox-docker/image/runtime and its SHA256SUMS), then bump marketplace.commit and " +
-    "the sandbox-docker pin in packages/kernel/bootstrap.json in the same change";
+    "restage the device-docker image in capybara-hq/plugins with the current SDK runtime sources " +
+    "(plugins/device-docker/image/runtime and its SHA256SUMS), then bump marketplace.commit and " +
+    "the device-docker pin in packages/kernel/bootstrap.json in the same change";
   const raw = files.get(PLUGIN_SANDBOX_RUNTIME_SUMS);
   if (raw === undefined) {
     return [
       {
         rule: "bootstrap-sandbox-runtime",
-        message: `${PLUGIN_SANDBOX_RUNTIME_SUMS} is missing at ${at} of ${url}; the sandbox-docker image must stage the SDK runtime files with their digests: ${fix}`,
+        message: `${PLUGIN_SANDBOX_RUNTIME_SUMS} is missing at ${at} of ${url}; the device-docker image must stage the SDK runtime files with their digests: ${fix}`,
       },
     ];
   }
@@ -278,7 +278,7 @@ function checkSandboxRuntime(
 }
 
 /**
- * `bootstrap-haproxy`: the sandbox-docker plugin's test copy of the socket proxy config equals
+ * `bootstrap-haproxy`: the device-docker plugin's test copy of the socket proxy config equals
  * core's file byte for byte; `bootstrap-sandbox-runtime` ({@link checkSandboxRuntime});
  * `bootstrap-compose-ref`: every compose build context pinned to the commit has its Dockerfile there.
  */

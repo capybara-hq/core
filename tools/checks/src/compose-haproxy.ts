@@ -45,7 +45,7 @@ function inlineBlock(
  * The haproxy config of the compose sandbox profile is inlined in compose.yaml (a clean host has
  * only that file) and must stay identical, comments aside, to docker/sandbox-proxy/haproxy.cfg
  * (used by compose.dev.yaml). In compose content a literal "$" is written "$$"; a single "$"
- * would be interpolated by compose. (The sandbox-docker plugin's test copy of the file, in
+ * would be interpolated by compose. (The device-docker plugin's test copy of the file, in
  * capybara-hq/plugins, is compared by `check:bootstrap --network`, rule `bootstrap-haproxy`.)
  */
 export function checkComposeHaproxy(composeFile: string, cfgFile: string): Finding[] {

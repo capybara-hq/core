@@ -283,7 +283,7 @@ describe("planFromFiles: by diff", () => {
     ]) {
       expect(plan(f).bootstrapNetwork, f).toBe(false);
     }
-    // the SDK runtime sources the sandbox-docker image stages (bootstrap-sandbox-runtime); this
+    // the SDK runtime sources the device-docker image stages (bootstrap-sandbox-runtime); this
     // workspace holds packages/plugin-sdk, so its other files do not run everything
     const sdk: Workspace = { ...ws, packages: [...ws.packages, pkg("packages/plugin-sdk")] };
     const sdkPlan = (f: string) => planFromFiles([f], sdk);

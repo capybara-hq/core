@@ -179,7 +179,7 @@ describe("checkBootstrap: compose builds from the plugins repository (bootstrap-
       ]),
     );
     expect(f[0]?.message).toBe(
-      `builds from https://github.com/capybara-hq/plugins.git#main:plugins/sandbox-docker/image; a remote build context must be https://github.com/capybara-hq/plugins.git#${COMMIT}:<dir> (the official plugins repository at marketplace.commit)`,
+      `builds from https://github.com/capybara-hq/plugins.git#main:plugins/device-docker/image; a remote build context must be https://github.com/capybara-hq/plugins.git#${COMMIT}:<dir> (the official plugins repository at marketplace.commit)`,
     );
     expect(f[4]?.message).toContain("builds from https://github.com/someone/plugins.git#");
     expect(f[5]?.message).toContain("builds from git@github.com:capybara-hq/plugins.git#main");
@@ -422,9 +422,9 @@ describe("checkBootstrap --network (npm entries and the marketplace commit)", ()
       fileURLToPath(new URL("../fixtures/compose-haproxy/", import.meta.url)),
       "haproxy.cfg",
     );
-    const COPY = "plugins/sandbox-docker/test/sandbox-proxy/haproxy.cfg";
-    const IMAGE = "plugins/sandbox-docker/image";
-    const EGRESS = "plugins/sandbox-docker/egress-proxy";
+    const COPY = "plugins/device-docker/test/sandbox-proxy/haproxy.cfg";
+    const IMAGE = "plugins/device-docker/image";
+    const EGRESS = "plugins/device-docker/egress-proxy";
     /** A plugins repository commit: the marketplace listing demo as pinned, plus `files`. */
     const repoCommit = (files: Record<string, string>) =>
       git.commit("plugins", { ...marketplace([npmEntry("1.2.3", pin)]), ...files });
@@ -471,7 +471,7 @@ describe("checkBootstrap --network (npm entries and the marketplace commit)", ()
       const f = await checkBootstrap(await npmManifest(drift), dir, await opts(drift));
       expect(rules(f)).toEqual(["bootstrap-haproxy"]);
       expect(f[0]?.message).toMatch(
-        /^plugins\/sandbox-docker\/test\/sandbox-proxy\/haproxy\.cfg at [0-9a-f]{12} of .* differs from .*haproxy\.cfg/,
+        /^plugins\/device-docker\/test\/sandbox-proxy\/haproxy\.cfg at [0-9a-f]{12} of .* differs from .*haproxy\.cfg/,
       );
       const missing = await repoCommit(contexts);
       const g = await checkBootstrap(await npmManifest(missing), dir, await opts(missing));
@@ -490,12 +490,12 @@ describe("checkBootstrap --network (npm entries and the marketplace commit)", ()
         ["bootstrap-compose-ref", o.composeFiles[0], 5],
       ]);
       expect(f[0]?.message).toMatch(
-        /^plugins\/sandbox-docker\/egress-proxy\/Dockerfile is missing at [0-9a-f]{12} of /,
+        /^plugins\/device-docker\/egress-proxy\/Dockerfile is missing at [0-9a-f]{12} of /,
       );
     });
 
-    describe("the sandbox-docker image's runtime digests (bootstrap-sandbox-runtime)", () => {
-      const SUMS = "plugins/sandbox-docker/image/runtime/SHA256SUMS";
+    describe("the device-docker image's runtime digests (bootstrap-sandbox-runtime)", () => {
+      const SUMS = "plugins/device-docker/image/runtime/SHA256SUMS";
       /** Stand-ins for the SDK's SANDBOX_RUNTIME_SOURCE files. */
       const runtime = [
         { name: "native-files.py", source: "print('native')\n" },
@@ -535,12 +535,12 @@ describe("checkBootstrap --network (npm entries and the marketplace commit)", ()
         expect(rules(f)).toEqual(["bootstrap-sandbox-runtime"]);
         expect(f[0]?.message).toMatch(
           new RegExp(
-            `^plugins/sandbox-docker/image/runtime/SHA256SUMS at [0-9a-f]{12} of .* lists native-files\\.py as ${stale}, but core's SDK source hashes to ${sha(runtime[0]?.source ?? "")}`,
+            `^plugins/device-docker/image/runtime/SHA256SUMS at [0-9a-f]{12} of .* lists native-files\\.py as ${stale}, but core's SDK source hashes to ${sha(runtime[0]?.source ?? "")}`,
           ),
         );
-        expect(f[0]?.message).toContain("restage the sandbox-docker image in capybara-hq/plugins");
+        expect(f[0]?.message).toContain("restage the device-docker image in capybara-hq/plugins");
         expect(f[0]?.message).toContain(
-          "bump marketplace.commit and the sandbox-docker pin in packages/kernel/bootstrap.json in the same change",
+          "bump marketplace.commit and the device-docker pin in packages/kernel/bootstrap.json in the same change",
         );
       });
 

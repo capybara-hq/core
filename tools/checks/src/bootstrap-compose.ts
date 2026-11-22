@@ -52,7 +52,7 @@ export async function composeRemoteContexts(file: string): Promise<ComposeRemote
 
 /**
  * Rule `bootstrap-compose-ref` (offline): every remote build context of core's compose files (the
- * sandbox-docker images) must be exactly `<official url>#<marketplace.commit>:<dir>`, so one commit
+ * device-docker images) must be exactly `<official url>#<marketplace.commit>:<dir>`, so one commit
  * of the official plugins repository pins everything core takes from it. Anything else is reported:
  * another repository or a fork, another URL form of the official one (scp-style, scheme-less,
  * http, without `.git`), a branch, a tag, the default branch, another commit, a `?ref=` query, no
