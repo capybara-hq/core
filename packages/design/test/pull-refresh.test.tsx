@@ -1,30 +1,59 @@
-// Pull to refresh (interaction spec §3, D4): active only in a native shell; a pull past the
-// threshold from the scroller's top plays the selection haptic and refreshes.
+// Pull to refresh (interaction spec §3, D4): active only in the native mobile shell on a touch
+// device; a vertical pull past the threshold from the top of every scroller under the finger plays
+// the selection haptic and refreshes.
 import { act, cleanup, fireEvent, render, screen } from "@testing-library/react";
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { DesignProvider, type NativeHandlers, PULL_THRESHOLD, PullToRefresh } from "../src/index";
 
-afterEach(cleanup);
+const realMatchMedia = window.matchMedia;
+const touchMatchMedia = ((q: string) => ({
+  matches:
+    q.trim() === "(min-width: 600px)" ||
+    q.includes("pointer: coarse") ||
+    q.includes("not (any-pointer: fine)"),
+  media: q,
+  addEventListener() {},
+  removeEventListener() {},
+})) as unknown as typeof window.matchMedia;
+
+beforeEach(() => {
+  window.matchMedia = touchMatchMedia;
+});
+afterEach(() => {
+  cleanup();
+  window.matchMedia = realMatchMedia;
+});
+
+/** The mobile shell's handlers as the web adapter passes them. */
+const mobile = (extra: Partial<NativeHandlers> = {}): NativeHandlers => ({
+  pullToRefresh: true,
+  haptics: vi.fn(),
+  ...extra,
+});
 
 function setup(native: NativeHandlers | undefined, onRefresh: () => Promise<unknown>) {
   return render(
     <DesignProvider locale="en" {...(native ? { native } : {})}>
       <div data-testid="scroller" style={{ overflowY: "auto" }}>
         <PullToRefresh onRefresh={onRefresh}>
-          <p data-testid="content">rows</p>
+          <div data-testid="pane" style={{ overflowY: "auto" }}>
+            <p data-testid="content">rows</p>
+          </div>
         </PullToRefresh>
       </div>
     </DesignProvider>,
   );
 }
 
-const touch = (y: number) => ({ touches: [{ clientY: y }] });
-const pullBy = (el: Element, dy: number) => {
+const touch = (y: number, x = 50) => ({ touches: [{ clientY: y, clientX: x }] });
+const pullBy = (el: Element, dy: number, dx = 0) => {
   fireEvent.touchStart(el, touch(100));
-  fireEvent.touchMove(el, touch(100 + dy));
+  fireEvent.touchMove(el, touch(100 + dy, 50 + dx));
   fireEvent.touchEnd(el, { touches: [] });
 };
 const FAR = PULL_THRESHOLD * 3;
+const indicator = () => document.querySelector("[data-part=pull-indicator]");
+const live = () => document.querySelector("[data-part=pull-refresh] [role=status]");
 
 describe("PullToRefresh", () => {
   it("is inactive in a browser", () => {
@@ -32,7 +61,32 @@ describe("PullToRefresh", () => {
     const { container } = setup(undefined, onRefresh);
     expect(container.querySelector("[data-part=pull-refresh]")).toBeNull();
     pullBy(screen.getByTestId("content"), FAR);
-    expect(screen.queryByRole("status")).toBeNull();
+    expect(onRefresh).not.toHaveBeenCalled();
+  });
+
+  it("is inactive with the web's empty handler set (a browser through the adapter)", () => {
+    const onRefresh = vi.fn(() => Promise.resolve());
+    const { container } = setup({}, onRefresh);
+    expect(container.querySelector("[data-part=pull-refresh]")).toBeNull();
+    pullBy(screen.getByTestId("content"), FAR);
+    expect(onRefresh).not.toHaveBeenCalled();
+  });
+
+  it("is inactive in a shell that is not the mobile one (desktop-like handlers)", () => {
+    const onRefresh = vi.fn(() => Promise.resolve());
+    const desktop: NativeHandlers = { menu: vi.fn(), share: vi.fn() };
+    const { container } = setup(desktop, onRefresh);
+    expect(container.querySelector("[data-part=pull-refresh]")).toBeNull();
+    pullBy(screen.getByTestId("content"), FAR);
+    expect(onRefresh).not.toHaveBeenCalled();
+  });
+
+  it("is inactive in the mobile shell without a touch pointer", () => {
+    window.matchMedia = realMatchMedia;
+    const onRefresh = vi.fn(() => Promise.resolve());
+    const { container } = setup(mobile(), onRefresh);
+    expect(container.querySelector("[data-part=pull-refresh]")).toBeNull();
+    pullBy(screen.getByTestId("content"), FAR);
     expect(onRefresh).not.toHaveBeenCalled();
   });
 
@@ -40,29 +94,84 @@ describe("PullToRefresh", () => {
     let settle = () => {};
     const onRefresh = vi.fn(() => new Promise<void>((r) => (settle = r)));
     const haptics = vi.fn();
-    setup({ haptics }, onRefresh);
+    setup(mobile({ haptics }), onRefresh);
     pullBy(screen.getByTestId("content"), FAR);
     expect(haptics).toHaveBeenCalledWith("selection");
     expect(onRefresh).toHaveBeenCalledTimes(1);
-    expect(screen.getByRole("status").getAttribute("data-pending")).toBe("true");
+    expect(indicator()?.getAttribute("data-pending")).toBe("true");
+    expect(live()?.textContent).toBe("Refreshing");
     await act(async () => settle());
-    expect(screen.queryByRole("status")).toBeNull();
+    expect(indicator()).toBeNull();
+    expect(live()?.textContent).toBe("");
+  });
+
+  it("keeps its live region mounted while idle", () => {
+    setup(
+      mobile(),
+      vi.fn(() => Promise.resolve()),
+    );
+    expect(live()).not.toBeNull();
+    expect(live()?.textContent).toBe("");
+  });
+
+  it("says release to refresh once the pull passes the threshold", () => {
+    setup(
+      mobile(),
+      vi.fn(() => Promise.resolve()),
+    );
+    const el = screen.getByTestId("content");
+    fireEvent.touchStart(el, touch(100));
+    fireEvent.touchMove(el, touch(100 + PULL_THRESHOLD));
+    expect(indicator()?.getAttribute("data-ready")).toBeNull();
+    expect(indicator()?.textContent).toBe("Pull to refresh");
+    fireEvent.touchMove(el, touch(100 + FAR));
+    expect(indicator()?.getAttribute("data-ready")).toBe("true");
+    expect(indicator()?.textContent).toBe("Release to refresh");
+  });
+
+  it("centres the indicator by a translate, not a margin guess", () => {
+    setup(
+      mobile(),
+      vi.fn(() => Promise.resolve()),
+    );
+    const el = screen.getByTestId("content");
+    fireEvent.touchStart(el, touch(100));
+    fireEvent.touchMove(el, touch(100 + FAR));
+    const style = (indicator() as HTMLElement).style;
+    expect(style.transform).toMatch(/translate\(-50%/);
+    expect(style.marginLeft).toBe("");
   });
 
   it("does not refresh for a short pull", () => {
     const onRefresh = vi.fn(() => Promise.resolve());
     const haptics = vi.fn();
-    setup({ haptics }, onRefresh);
+    setup(mobile({ haptics }), onRefresh);
     pullBy(screen.getByTestId("content"), PULL_THRESHOLD - 10);
     expect(onRefresh).not.toHaveBeenCalled();
     expect(haptics).not.toHaveBeenCalled();
   });
 
-  it("does not refresh when the scroller is scrolled down", () => {
+  it("does not refresh when the outer scroller is scrolled down", () => {
     const onRefresh = vi.fn(() => Promise.resolve());
-    setup({ haptics: vi.fn() }, onRefresh);
+    setup(mobile(), onRefresh);
     screen.getByTestId("scroller").scrollTop = 40;
     pullBy(screen.getByTestId("content"), FAR);
     expect(onRefresh).not.toHaveBeenCalled();
+  });
+
+  it("does not refresh when an inner pane under the finger is scrolled down", () => {
+    const onRefresh = vi.fn(() => Promise.resolve());
+    setup(mobile(), onRefresh);
+    screen.getByTestId("pane").scrollTop = 40;
+    pullBy(screen.getByTestId("content"), FAR);
+    expect(onRefresh).not.toHaveBeenCalled();
+  });
+
+  it("ignores a mostly horizontal drag", () => {
+    const onRefresh = vi.fn(() => Promise.resolve());
+    setup(mobile(), onRefresh);
+    pullBy(screen.getByTestId("content"), FAR, FAR * 2);
+    expect(onRefresh).not.toHaveBeenCalled();
+    expect(indicator()).toBeNull();
   });
 });

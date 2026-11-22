@@ -395,6 +395,27 @@ describe("the mobile capability accessors", () => {
     expect(last().menu).toBeDefined();
   });
 
+  it("useNativeHandlers turns pull to refresh on only for the mobile app's capability set", () => {
+    const seen: NativeHandlers[] = [];
+    function H() {
+      seen.push(useNativeHandlers());
+      return null;
+    }
+    const last = () => seen[seen.length - 1] as NativeHandlers;
+    const f = fakeShell();
+    install(f.shell);
+    render(<H />);
+    // a browser through the adapter: no flag
+    expect(last().pullToRefresh).toBeUndefined();
+    // a desktop-like shell: no haptics@1
+    act(() =>
+      f.change({ "notify@1": {}, "signIn@1": {}, "device@1": {}, "menu@1": caps["menu@1"] }),
+    );
+    expect(last().pullToRefresh).toBeUndefined();
+    act(() => f.change({ "signIn@1": {}, ...caps }));
+    expect(last().pullToRefresh).toBe(true);
+  });
+
   it("the haptics handler swallows a rejected impact", async () => {
     const impact = vi.fn(() => Promise.reject(new Error("no")));
     const seen: NativeHandlers[] = [];

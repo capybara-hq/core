@@ -1,20 +1,24 @@
-/* Pull to refresh (interaction spec §3, D4): the wrapper adds no box; the indicator rides above
-   the content, anchored under the safe area, and follows the finger by the inline translate. */
+/* Pull to refresh (interaction spec §3, D4): the wrapper adds no box. The indicator is portalled
+   to the body (a container-type ancestor would hold a fixed box), hangs from the top centre of the
+   scroller under the finger (inline top / left) and follows the finger by the inline translate,
+   which also centres it (translate -50%). */
 .cb-pullrefresh {
   display: contents;
 }
 
 .cb-pullrefresh-indicator {
   position: fixed;
-  top: calc(env(safe-area-inset-top, 0px) - calc(8 * var(--cb-space-1)));
-  left: 50%;
   z-index: 1;
   display: inline-flex;
   align-items: center;
   gap: var(--cb-space-2);
-  margin-left: -4.5em;
+  margin-top: calc(-8 * var(--cb-space-1));
   color: var(--cb-muted);
   pointer-events: none;
+}
+
+.cb-pullrefresh-indicator[data-ready="true"] {
+  color: var(--cb-ink);
 }
 
 .cb-pullrefresh-indicator[data-pending="true"] .cb-icon {
