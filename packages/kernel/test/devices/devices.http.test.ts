@@ -13,11 +13,13 @@ import type { DeviceList, DeviceView } from "../../src/devices/devices.service.j
 import { DevicesService } from "../../src/devices/devices.service.js";
 import { ApiError } from "../../src/errors.js";
 import { TransactionHost } from "../../src/infra/database/transaction-host.js";
+import { deviceDestroyJobId } from "../../src/sandbox/jobs.js";
 import { SandboxService } from "../../src/sandbox/sandbox.service.js";
 import { fakeFileSystems, removeFakeFileSystem } from "../fixtures/plugins/device-fake/index.js";
 import { legacyDbFor } from "../helpers/conversations.js";
 import { accountsFor, apiTokensFor } from "../helpers/identity.js";
 import { testMembers } from "../helpers/members.js";
+import { drainOutbox } from "../helpers/outbox.js";
 import {
   createOrg,
   enableDeviceProviders,
@@ -443,6 +445,46 @@ describe("devices API", () => {
     const err = await sandbox.withSandbox(at, async () => "ran", ctl()).catch((e: unknown) => e);
     expect(err).toBeInstanceOf(ApiError);
     expect((err as ApiError).code).toBe("device.not_found");
+  });
+
+  it("a leftover device of a provider that no longer exists (@local) is deleted and cleaned up", async () => {
+    const me = await member();
+    // a local device from before local devices left the kernel: bound to `@local` for life, with
+    // its signed-in machine (migration 0177 dropped its instance row: no provider can destroy it)
+    const id = randomUUID();
+    await sql`INSERT INTO capybara.devices (id, org_id, owner_kind, owner_account_id, name, provider)
+      VALUES (${id}, ${orgId}, 'personal', ${me.id}, 'Old laptop', '@local')`.execute(raw);
+    await sql`INSERT INTO capybara.device_machines
+        (org_id, device_id, account_id, credential_hash, name, os, arch)
+      VALUES (${orgId}, ${id}, ${me.id}, ${randomUUID()}, 'mbp', 'darwin', 'arm64')`.execute(raw);
+    const list = await me.req({ method: "GET", url: base() });
+    expect((list.json() as DeviceList).items.find((d) => d.id === id)).toMatchObject({
+      provider: "@local",
+      available: false,
+    });
+    const del = await me.req({ method: "DELETE", url: `${base()}/${id}` });
+    expect(del.statusCode, del.body).toBe(202);
+    const row = await db
+      .selectFrom("devices")
+      .select("deleted_at")
+      .where("id", "=", id)
+      .executeTakeFirstOrThrow();
+    expect(row.deleted_at).not.toBeNull();
+    const machine = await db
+      .selectFrom("device_machines")
+      .select("revoked_at")
+      .where("device_id", "=", id)
+      .executeTakeFirstOrThrow();
+    expect(machine.revoked_at).not.toBeNull();
+    // the owed destruction finds nothing to destroy and settles (nothing dead, nothing left)
+    await drainOutbox(k.app, { jobId: deviceDestroyJobId(id) });
+    expect(
+      await db
+        .selectFrom("outbox")
+        .select("id")
+        .where("job_id", "=", deviceDestroyJobId(id))
+        .execute(),
+    ).toEqual([]);
   });
 
   it("reset files after files_lost", async () => {

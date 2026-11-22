@@ -24,7 +24,7 @@ const UserCode = z.string().min(1).max(32);
 export const DeviceUserCodeParams = z.object({ userCode: UserCode });
 export const DeviceUserCodeBody = z.object({ userCode: UserCode }).strict();
 
-/** A dial-in provider: a plugin name, or the kernel's interim `@local`. */
+/** A dial-in provider: the name of a plugin that declares `permissions.dialIn`. */
 const ProviderName = z.string().min(1).max(100);
 
 /** `GET /api/v1/device/providers`: the dial-in providers a pending code may choose in an org. */

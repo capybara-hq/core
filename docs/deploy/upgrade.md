@@ -111,8 +111,13 @@ device is served by the `device-local` plugin (`device-provider@1` over the dial
 Migration 0177 drops what the kernel kept for local machines (`device_machines.features`,
 `local_policy`, `owner_report`, `pending_policy_ops`, `home`, `roots`, `mode`,
 `session_isolation`, the tables `device_machine_boots` and `device_instance_bindings`) and
-`devices.source`. A local device stays unavailable until `device-local` is installed and on in its
-org; upgrade only to a release that pins it. The error codes `device.policy_refused`,
+`devices.source`, and removes the `@local` instance rows (the former provider held nothing of its
+own; no provider could ever destroy them). A device stays bound to its provider for life, so an existing local device keeps
+the provider `@local`, which no longer exists: it is unavailable from now on (`device.unavailable`;
+its files stay on the machine) and is never moved to `device-local`. Its owner deletes it on the
+devices page and connects the machine again with a `capybara-device` that signs in to the
+`device-local` provider (installed and on in the org). Upgrade only to a release that pins
+`device-local`. The error codes `device.policy_refused`,
 `device.policy_unsupported` and `device.owner_report_stale` are gone, as are the device page's
 narrowing route (`POST …/devices/:id/policy`) and `device.ceiling_on_machine`: a device's network
 is its own setting for every provider.

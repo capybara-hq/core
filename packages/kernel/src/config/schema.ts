@@ -2022,7 +2022,7 @@ export const KernelConfigSchema = z.strictObject({
             .meta(
               meta({
                 description:
-                  "Outbound network kill switch of sandboxed devices: allowlist (the normal setting) or none. none cuts every network the kernel controls: a cloud device reaches no host (an empty allowlist) and a local device in sandbox mode has an empty allowlist; a local device in auto mode uses the machine's own network, which the kernel cannot cut",
+                  "Outbound network kill switch of sandboxed devices: allowlist (the normal setting) or none. none cuts every network the kernel controls: every device's sandbox reaches no host (an empty allowlist); a command a provider runs outside its sandbox (a per-call escalation) is outside what the kernel cuts",
               }),
             ),
           allowHosts: z
@@ -2038,7 +2038,7 @@ export const KernelConfigSchema = z.strictObject({
             .meta(
               meta({
                 description:
-                  "Host list of the allowlist: in sandbox mode, the hosts a cloud device instance may reach on allowlist and a local device's allowlist; organizations follow it, adding or dropping hosts of their own (see orgHosts); lowercase hostnames, optional leading '*.', no IPs, ports or internal-only names; applies to instances created after the change",
+                  "Host list of the allowlist: in sandbox mode, the hosts a device's sandbox may reach on allowlist; organizations follow it, adding or dropping hosts of their own (see orgHosts); lowercase hostnames, optional leading '*.', no IPs, ports or internal-only names; applies to instances created after the change",
               }),
             ),
           orgHosts: z
@@ -2132,7 +2132,7 @@ export const KernelConfigSchema = z.strictObject({
           meta({
             hot: true,
             description:
-              "Most personal devices a member may have in one org, the default one and local devices included; creating one more fails with device.limit_reached",
+              "Most personal devices a member may have in one org, the default one and dial-in devices included; creating one more fails with device.limit_reached",
           }),
         ),
       local: z
@@ -2146,7 +2146,7 @@ export const KernelConfigSchema = z.strictObject({
               meta({
                 hot: true,
                 description:
-                  "Seconds a local device's machine may stay disconnected before the device is reported offline; also sent to capybara-device at sign-in",
+                  "Seconds a dial-in device's machine may stay disconnected before the device is reported offline; also sent to the machine's program at sign-in",
               }),
             ),
           leaseTtlMs: z
@@ -2157,7 +2157,7 @@ export const KernelConfigSchema = z.strictObject({
             .meta(
               meta({
                 description:
-                  "Milliseconds the replica holding a local device's connection keeps its lease without renewing it; at least 6000",
+                  "Milliseconds the replica holding a dial-in device's connection keeps its lease without renewing it; at least 6000",
               }),
             ),
           authCodeTtlSeconds: z
@@ -2168,7 +2168,7 @@ export const KernelConfigSchema = z.strictObject({
             .meta(
               meta({
                 description:
-                  "Seconds a device sign-in code stays valid before capybara-device must start over (device_sign_in.expired)",
+                  "Seconds a device sign-in code stays valid before the machine's program must start over (device_sign_in.expired)",
               }),
             ),
           pollIntervalSeconds: z
@@ -2179,7 +2179,7 @@ export const KernelConfigSchema = z.strictObject({
             .meta(
               meta({
                 description:
-                  "Seconds capybara-device waits between token polls during sign-in; polling faster gets device_sign_in.slow_down",
+                  "Seconds the machine's program waits between token polls during sign-in; polling faster gets device_sign_in.slow_down",
               }),
             ),
           maxFrameBytes: z
@@ -2190,7 +2190,7 @@ export const KernelConfigSchema = z.strictObject({
             .meta(
               meta({
                 description:
-                  "Largest WebSocket frame in bytes accepted from or sent to a local device's machine",
+                  "Largest WebSocket frame in bytes accepted from or sent to a dial-in device's machine",
               }),
             ),
         })

@@ -160,9 +160,8 @@ export function deviceNetwork(
 }
 
 /**
- * The effective device policy. `deviceMode` is the device's owner ceiling (a local machine's owner
- * report, a cloud device's B1 snapshot or narrowing switch; null = follow the platform and the
- * org). A stored mode the platform or org forbids is cut, never honoured; the network follows the
+ * The effective device policy. `deviceMode` is the device's owner ceiling (its B1 snapshot or
+ * narrowing switch; null = follow the platform and the org). A stored mode the platform or org forbids is cut, never honoured; the network follows the
  * resulting mode.
  */
 export function effectiveDevicePolicy(

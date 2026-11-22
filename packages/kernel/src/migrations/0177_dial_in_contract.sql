@@ -18,6 +18,11 @@ ALTER TABLE device_machines DROP COLUMN IF EXISTS roots;
 ALTER TABLE device_machines DROP COLUMN IF EXISTS mode;
 -- capybara:allow-destructive local device semantics moved to device-local; project not released, no compatibility layer
 ALTER TABLE device_machines DROP COLUMN IF EXISTS session_isolation;
+-- The former @local provider kept nothing of its own (a local device's files live on its machine)
+-- and no provider can destroy its instance rows any more: they go, so deleting such a device
+-- settles at once. The device itself stays bound to @local (unavailable until its owner deletes it).
+-- capybara:allow-destructive the @local provider is gone and held no resources; no loaded provider can ever destroy these rows
+DELETE FROM device_instances WHERE provider = '@local';
 -- capybara:allow-destructive local device semantics moved to device-local; project not released, no compatibility layer
 DROP TABLE IF EXISTS device_machine_boots;
 -- capybara:allow-destructive local device semantics moved to device-local; project not released, no compatibility layer

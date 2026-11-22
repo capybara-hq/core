@@ -70,10 +70,17 @@ beforeAll(async () => {
     db,
   );
   await sql`insert into capybara.devices (id, org_id, owner_kind, owner_account_id, source, provider)
-    values ('d1', 'o1', 'personal', 'a1', 'local', 'device-local')`.execute(db);
+    values ('d1', 'o1', 'personal', 'a1', 'local', '@local')`.execute(db);
   await sql`insert into capybara.device_machines
       (org_id, device_id, account_id, credential_hash, name, os, arch, program_version, mode, home)
     values ('o1', 'd1', 'a1', 'h', 'box', 'linux', 'x64', '0.1.0', 'os', '/home/a')`.execute(db);
+  await sql`insert into capybara.device_instances (device_id, org_id, provider, status)
+    values ('d1', 'o1', '@local', 'running')`.execute(db);
+  // another provider's device and instance are left alone
+  await sql`insert into capybara.devices (id, org_id, owner_kind, owner_account_id, source, provider)
+    values ('d2', 'o1', 'personal', 'a1', 'cloud', 'device-fake')`.execute(db);
+  await sql`insert into capybara.device_instances (device_id, org_id, provider, status)
+    values ('d2', 'o1', 'device-fake', 'running')`.execute(db);
   await migrate(pg.url, { schema: "capybara", dir: copyMigrations((f) => f <= FILE) });
 });
 
@@ -94,13 +101,17 @@ describe("0177 dial-in contract", () => {
     expect(await columnsOf("devices")).not.toContain("source");
   });
 
-  it("keeps the device and its machine", async () => {
+  it("drops the @local instance rows only", async () => {
+    const rows = await sql<{ device_id: string }>`
+      select device_id from capybara.device_instances order by device_id`.execute(db);
+    expect(rows.rows).toEqual([{ device_id: "d2" }]);
+  });
+
+  it("keeps the device (still bound to @local) and its machine", async () => {
     const rows = await sql<{ provider: string; name: string; program_version: string }>`
       select d.provider, m.name, m.program_version
       from capybara.devices d join capybara.device_machines m on m.device_id = d.id`.execute(db);
-    expect(rows.rows).toEqual([
-      { provider: "device-local", name: "box", program_version: "0.1.0" },
-    ]);
+    expect(rows.rows).toEqual([{ provider: "@local", name: "box", program_version: "0.1.0" }]);
   });
 
   it("0177 is idempotent", async () => {
