@@ -19,6 +19,7 @@ import {
   projectRootsPath,
   readProjectRoots,
   recordProjectRoot,
+  reportedSharedProjectRoots,
   sharedProjectRoots,
 } from "../src/project-roots.js";
 import { writeCredential } from "../src/state.js";
@@ -136,5 +137,21 @@ describe("shared project roots of the machine", () => {
     expect(sharedProjectRoots(m, "dev-a")).toEqual([]);
     // a machine without a connections directory
     expect(sharedProjectRoots(join(m, "absent"), "dev-a")).toEqual([]);
+  });
+
+  it("the deployment is told only of shared roots the owner listed, compared by real path", () => {
+    const real = join(m, "work", "listed");
+    mkdirSync(real, { recursive: true });
+    symlinkSync(join(m, "work"), join(m, "link"));
+    const a = connection("dev-a");
+    const b = connection("dev-b");
+    for (const r of ["/p/picked", real]) recordProjectRoot(a, r);
+    for (const r of ["/p/picked", real]) recordProjectRoot(b, r);
+    expect(sharedProjectRoots(m, "dev-a")).toEqual([real, "/p/picked"]);
+    expect(reportedSharedProjectRoots(m, "dev-a", [])).toEqual([]);
+    // listed through a symlinked spelling: the same directory
+    expect(reportedSharedProjectRoots(m, "dev-a", [join(m, "link", "listed")])).toEqual([real]);
+    // a listed directory nobody else uses is no shared root
+    expect(reportedSharedProjectRoots(m, "dev-a", ["/p/alone"])).toEqual([]);
   });
 });

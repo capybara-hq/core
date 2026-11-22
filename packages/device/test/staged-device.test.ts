@@ -614,32 +614,41 @@ describe("staged connection (W3-M)", () => {
     expect(k.of("event")).toHaveLength(1);
   });
 
-  it("a project directory another connection also uses is announced in a policy event, never naming it", async () => {
+  it("only a shared project directory the owner listed is announced to the deployment, never naming the other connection", async () => {
     const k = await kernel();
     const s = staged({ cred: credential({ connectUrl: k.url }) });
-    recordProjectRoot(state, "/p/shared");
+    recordProjectRoot(state, "/p/listed");
+    recordProjectRoot(state, "/p/picked");
     recordProjectRoot(state, "/p/mine");
+    // another connection on this machine uses /p/picked and /p/listed too
+    const other = connectionDir(machineDirOfConnection(state), "other-dev");
+    writeCredential(other, credential({ deviceId: "other-dev", url: "http://other.test" }));
+    recordProjectRoot(other, "/p/picked");
+    recordProjectRoot(other, "/p/listed");
     const conn = connectStaged(s.device, { err: () => {}, bootId: null, policyCheckMs: 10 });
     cleanups.push(() => {
       conn.stop();
       return conn.done;
     });
+    // both are shared, but the deployment picked them itself: neither is reported
     const hello = await k.waitFor("hello", () => k.of("hello")[0]);
     expect(parseDeviceFrame(hello.body, "hello").policy?.sharedProjectRoots).toEqual([]);
     ready(k, 0);
-    // another connection on this machine starts using /p/shared
-    const other = connectionDir(machineDirOfConnection(state), "other-dev");
-    writeCredential(other, credential({ deviceId: "other-dev", url: "http://other.test" }));
-    recordProjectRoot(other, "/p/shared");
-    const event = await k.waitFor("event", () => k.of("event")[0]);
-    const body = parseDeviceFrame(event.body, "event");
-    expect(body.policy?.sharedProjectRoots).toEqual(["/p/shared"]);
-    expect(JSON.stringify(event)).not.toContain("other-dev");
-    expect(JSON.stringify(event)).not.toContain("other.test");
-    // nothing more while nothing changes: two further checks complete without an event (a check
-    // decides synchronously once it has read the summary, so the third read follows two decisions)
     const read = vi.spyOn(s.device, "policySummary");
     await vi.waitFor(() => expect(read.mock.calls.length).toBeGreaterThanOrEqual(3));
+    expect(k.of("event")).toHaveLength(0);
+    // the owner lists /p/listed for this connection: that shared root (only) is announced
+    writePolicy(state, { ...FULL_POLICY, projectPaths: ["/p/listed"] });
+    const event = await k.waitFor("event", () => k.of("event")[0]);
+    const body = parseDeviceFrame(event.body, "event");
+    expect(body.policy?.sharedProjectRoots).toEqual(["/p/listed"]);
+    expect(JSON.stringify(event)).not.toContain("other-dev");
+    expect(JSON.stringify(event)).not.toContain("other.test");
+    expect(JSON.stringify(event)).not.toContain("/p/picked");
+    // nothing more while nothing changes: two further checks complete without an event (a check
+    // decides synchronously once it has read the summary, so the third read follows two decisions)
+    const after = read.mock.calls.length;
+    await vi.waitFor(() => expect(read.mock.calls.length).toBeGreaterThanOrEqual(after + 3));
     expect(k.of("event")).toHaveLength(1);
   });
 

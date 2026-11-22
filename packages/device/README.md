@@ -294,10 +294,13 @@ or more than 1 MiB of answers a peer leaves unread, closes it.
 
 A directory two connections both use as a project stays allowed. `status` marks such a connection's
 line "(N project directories also used by another connection on this machine)" and never names the
-other connection. The deployment gets the same list, also without the other connection's name, as
-the optional `sharedProjectRoots` of the policy summary in the hello and the `policy` event. The
-summary is sent again when the list changes. The field is part of protocol 6, and older peers ignore
-it.
+other connection. The deployment learns only of the shared directories you listed yourself for
+this connection (`policy add projectPaths <dir>`, compared by real path), never one it picked
+itself under the `machine` or `workspace` reach, so no deployment learns of the machine's other
+connections from a directory it chose. It gets them, without the other connection's name, as the
+optional `sharedProjectRoots` of the policy summary in the hello and the `policy` event. The summary
+is sent again when that list changes, also when you edit `projectPaths`. The field is part of
+protocol 6, and older peers ignore it.
 
 The credential is never part of any answer.
 

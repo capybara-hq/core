@@ -30,7 +30,7 @@ import type { EnvironmentInputs, VerifiedRuntime } from "./exec/runtime-manifest
 import { deviceSandboxHome, osRoots, RootGuard } from "./exec/shared.js";
 import { issueOwnerReport } from "./owner-report.js";
 import type { PolicyStore } from "./policy-store.js";
-import { recordProjectRoot, sharedProjectRoots } from "./project-roots.js";
+import { recordProjectRoot, reportedSharedProjectRoots } from "./project-roots.js";
 import { policySummary, type StagedOwnerPolicy } from "./server-ops.js";
 import { type StagedHello, StagedSessionStates } from "./staged-session.js";
 import type { Credential } from "./state.js";
@@ -310,11 +310,18 @@ export function createStagedDevice(o: StagedDeviceOptions): StagedDevice {
     },
   };
   const backend = () => binder.current()?.backend ?? UNBOUND_BACKEND;
-  const summary = () =>
-    policySummary(policy.current(), {
+  const summary = () => {
+    const current = policy.current();
+    // only the shared roots the owner listed for this connection reach the deployment
+    return policySummary(current, {
       mode,
-      sharedProjectRoots: sharedProjectRoots(stateRoot, cred.deviceId),
+      sharedProjectRoots: reportedSharedProjectRoots(
+        stateRoot,
+        cred.deviceId,
+        current.projectPaths,
+      ),
     });
+  };
 
   return {
     cred,

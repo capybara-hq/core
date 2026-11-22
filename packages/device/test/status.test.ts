@@ -7,7 +7,7 @@ import { connectionDir } from "../src/connections.js";
 import { controlSocketPath, type LiveStatus } from "../src/control/protocol.js";
 import { startControlServer } from "../src/control/server.js";
 import { recordProjectRoot } from "../src/project-roots.js";
-import { writeCredential } from "../src/state.js";
+import { DEFAULT_POLICY, writeCredential, writePolicy } from "../src/state.js";
 
 /** The machine directory, and `dir` the connection directory in it. */
 let m: string;
@@ -220,6 +220,8 @@ describe("status: every connection of the machine", () => {
     const b = addConnection("dev-b", { url: "http://b.test" });
     for (const r of ["/p/a", "/p/shared", "/p/both"]) recordProjectRoot(a, r);
     for (const r of ["/p/b", "/p/shared", "/p/both"]) recordProjectRoot(b, r);
+    // the owner listed one of them (reported to the deployment); status marks both for the owner
+    writePolicy(a, { ...DEFAULT_POLICY, projectPaths: ["/p/shared"] });
     addConnection("dev-c", { url: "http://c.test" });
     const text = await run(m, false, { running: () => undefined });
     const lineA = text.out.find((l) => l.includes("(dev-a)")) ?? "";

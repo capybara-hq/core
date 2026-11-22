@@ -111,3 +111,19 @@ export function sharedProjectRoots(machineDir: string, selfDeviceId: string): st
   if (others.size === 0 || !DEVICE_ID_PATTERN.test(selfDeviceId)) return [];
   return readProjectRoots(join(dir, selfDeviceId)).filter((r) => others.has(real(r)));
 }
+
+/**
+ * The shared roots this connection reports to its deployment: only those the owner listed in this
+ * connection's `projectPaths` (compared by real path). A root the deployment picked itself under
+ * the machine or workspace reach is never reported, shared or not, so no deployment learns of the
+ * machine's other connections from it; `status` still shows every shared root to the owner.
+ */
+export function reportedSharedProjectRoots(
+  machineDir: string,
+  selfDeviceId: string,
+  projectPaths: readonly string[],
+): string[] {
+  if (projectPaths.length === 0) return [];
+  const listed = new Set(projectPaths.map(real));
+  return sharedProjectRoots(machineDir, selfDeviceId).filter((r) => listed.has(real(r)));
+}

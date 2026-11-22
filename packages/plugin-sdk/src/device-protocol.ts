@@ -71,10 +71,12 @@ export interface DeviceLocalPolicySummary {
   /** The device's sandbox allowlist (the owner's `allowedDomains`). */
   allowedDomains: string[];
   /**
-   * This connection's project directories that another connection on the same machine also uses
-   * (absolute paths, {@link validateSandboxPathShape}; at most
-   * {@link MAX_DEVICE_SHARED_PROJECT_ROOTS}). Never names the other connection. Absent from an
-   * older device; a malformed value is dropped by the parser (the rest of the summary is kept).
+   * This connection's project directories that another connection on the same machine also uses,
+   * only those the owner listed explicitly for this connection (its `projectPaths`): a directory
+   * the deployment picked itself is never reported, shared or not (absolute paths,
+   * {@link validateSandboxPathShape}; at most {@link MAX_DEVICE_SHARED_PROJECT_ROOTS}). Never names
+   * the other connection. Absent from an older device; a malformed value is dropped by the parser
+   * (the rest of the summary is kept).
    */
   sharedProjectRoots?: string[];
 }
