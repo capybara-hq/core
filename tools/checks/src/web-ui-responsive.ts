@@ -18,7 +18,6 @@ import {
 export const SIZE_BRANCH_RULE = "web-ui-size-branch";
 export const SIZE_BRANCH_STALE_RULE = "web-ui-size-branch-stale";
 export const FILTERS_SCOPE_RULE = "web-ui-filters-scope";
-export const FILTERS_SCOPE_STALE_RULE = "web-ui-filters-scope-stale";
 export const TEMPLATE_ONLY_RULE = "web-ui-template-only-props";
 export const DIALOG_FOOTER_RULE = "web-ui-dialog-footer";
 export const DIALOG_FOOTER_STALE_RULE = "web-ui-dialog-footer-stale";
@@ -367,27 +366,7 @@ export function templateOnlyPropsFindings(p: ParsedFile): Finding[] {
 const SCOPE_CONTROLS = new Set(["Segmented", "Tabs"]);
 
 export const FILTERS_SCOPE_MESSAGE =
-  "ListPage `filters` holds a view choice (<Segmented> / <Tabs>): a scope such as all / mine / shared is a ScopeChips row, a view switch is the header's tabs; `filters` is for narrowing controls (Select, search fields) only";
-
-export interface ScopePending {
-  /** Under apps/web/src, `/`-separated. */
-  path: string;
-  /** The task that moves the page onto ScopeChips. */
-  fix: string;
-}
-
-/** Pages that still hand a Segmented / Tabs to `filters`; a ratchet like `BOX_PENDING`. */
-export const SCOPE_PENDING: readonly ScopePending[] = [
-  {
-    path: "app/(app)/admin/agents/templates/view.tsx",
-    fix: "useOwnerFilter's owner Tabs become ScopeChips",
-  },
-  {
-    path: "app/(app)/admin/connectors/templates/view.tsx",
-    fix: "useOwnerFilter's owner Tabs become ScopeChips",
-  },
-  { path: "app/(app)/admin/plugins/market/view.tsx", fix: "the source Tabs become ScopeChips" },
-];
+  "ListPage `filters` holds a view choice (<Segmented> / <Tabs>): a scope such as all / mine / shared is `ListPage.scope`, a view switch is the header's tabs; `filters` is for narrowing controls (Select, search fields) only";
 
 interface Binding {
   init: Node;
@@ -538,23 +517,13 @@ export function filtersScopeFindings(file: string, webSrcDir: string): Finding[]
   return new FilterScan(webSrcDir).findings(file);
 }
 
-export function filtersScopeTreeFindings(
-  webSrcDir: string,
-  pending: readonly ScopePending[] = SCOPE_PENDING,
-): Finding[] {
+export function filtersScopeTreeFindings(webSrcDir: string): Finding[] {
   const scan = new FilterScan(webSrcDir);
-  const raw: Finding[] = [];
+  const out: Finding[] = [];
   for (const { file, isTest } of listSourceFiles(webSrcDir)) {
-    if (!isTest) raw.push(...scan.findings(file));
+    if (!isTest) out.push(...scan.findings(file));
   }
-  return applyPathRatchet(
-    raw,
-    pending,
-    webSrcDir,
-    FILTERS_SCOPE_STALE_RULE,
-    "Segmented / Tabs in ListPage filters",
-    "SCOPE_PENDING in tools/checks/src/web-ui-responsive.ts",
-  );
+  return out;
 }
 
 /** The template-only rule over the tree. */

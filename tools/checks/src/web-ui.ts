@@ -27,8 +27,6 @@ import {
   LOAD_MORE_PENDING,
   type LoadMorePending,
   loadMoreTreeFindings,
-  SCOPE_PENDING,
-  type ScopePending,
   SIZE_BRANCH_ALLOWED,
   type SizeBranchAllowed,
   sizeBranchTreeFindings,
@@ -42,8 +40,6 @@ export {
   type FooterPending,
   LOAD_MORE_PENDING,
   type LoadMorePending,
-  SCOPE_PENDING,
-  type ScopePending,
   SIZE_BRANCH_ALLOWED,
   type SizeBranchAllowed,
 } from "./web-ui-responsive.js";
@@ -51,7 +47,6 @@ export {
 /** The allowlists and ratchets of the responsive rules (`web-ui-size-branch` & co.). */
 export interface ResponsiveLists {
   sizeAllowed: readonly SizeBranchAllowed[];
-  scopePending: readonly ScopePending[];
   footerPending?: readonly FooterPending[];
   /** `web-ui-load-more`'s ratchet; left out: none (every Load more button is reported). */
   loadMorePending?: readonly LoadMorePending[];
@@ -1481,7 +1476,6 @@ export function checkWebUi(
   boxPending: readonly BoxPending[] = BOX_PENDING,
   responsive: ResponsiveLists = {
     sizeAllowed: SIZE_BRANCH_ALLOWED,
-    scopePending: SCOPE_PENDING,
     footerPending: FOOTER_PENDING,
     loadMorePending: LOAD_MORE_PENDING,
     dualPending: DUAL_RENDER_PENDING,
@@ -1507,7 +1501,7 @@ export function checkWebUi(
   findings.push(...dualRenderTreeFindings(designSrcDir, responsive.dualPending));
   findings.push(...sheetPartsTreeFindings(designSrcDir));
   findings.push(...sizeBranchTreeFindings(webSrcDir, responsive.sizeAllowed));
-  findings.push(...filtersScopeTreeFindings(webSrcDir, responsive.scopePending));
+  findings.push(...filtersScopeTreeFindings(webSrcDir));
   findings.push(...templateOnlyPropsTreeFindings(webSrcDir));
   findings.push(...dialogFooterTreeFindings(webSrcDir, responsive.footerPending ?? FOOTER_PENDING));
   findings.push(...loadMoreTreeFindings(webSrcDir, responsive.loadMorePending ?? []));

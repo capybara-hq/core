@@ -23,6 +23,7 @@ import { renderRouteEmptyCache, renderRouteWithCache } from "./support/query";
 import { ME } from "./support/render";
 import { expectNoFirstPaintFetch, type Routes } from "./support/server";
 import { NOT_READY } from "./support/shell";
+import { stubWindowWidth } from "./support/width";
 
 // the request config fills {product} with the platform name; unset here: the built-in one
 const en = withProductName(enCatalog, null);
@@ -2643,9 +2644,11 @@ describe("/admin/plugins and marketplace entries", () => {
         .getByRole("link", { name: new RegExp(`^${en.catalog.admin.tabs.market}`) })
         .getAttribute("aria-current"),
     ).toBeTruthy();
-    // object rows, not a table; no filter rail
+    // object rows, not a table; no filter rail (the one radiogroup is the source scope)
     expect(screen.queryByRole("table")).toBeNull();
-    expect(screen.queryByRole("radiogroup")).toBeNull();
+    expect(screen.getAllByRole("radiogroup").map((g) => g.getAttribute("aria-label"))).toEqual([
+      en.catalog.admin.filters.source,
+    ]);
     const list = screen.getByRole("list", { name: c.title });
     const row = (name: string) => within(list).getByText(name).closest("li") as HTMLElement;
     expect(
@@ -3161,16 +3164,16 @@ describe("/admin/plugins and marketplace entries", () => {
     expect(screen.getByText(en.catalog.admin.detail.permissions.none)).toBeTruthy();
   });
 
-  it("entries: the marketplaces are tabs above the list only when there is more than one", async () => {
+  it("entries: the marketplaces are a scope (a Segmented here) only when there is more than one", async () => {
     const calls = stubApi({
       "GET /api/v1/admin/marketplaces": () => json(200, SOURCES),
       "GET /api/v1/admin/marketplaces/entries": () =>
         json(200, { items: [entry()], truncated: false }),
     });
     await renderRouteWithCache(entriesPath(), lastStubRoutes());
-    const tabs = await screen.findByRole("tablist", { name: en.catalog.admin.filters.source });
-    expect(within(tabs).getAllByRole("tab")).toHaveLength(3);
-    await userEvent.setup().click(within(tabs).getAllByRole("tab")[2] as HTMLElement);
+    const tabs = await screen.findByRole("radiogroup", { name: en.catalog.admin.filters.source });
+    expect(within(tabs).getAllByRole("radio")).toHaveLength(3);
+    await userEvent.setup().click(within(tabs).getAllByRole("radio")[2] as HTMLElement);
     await waitFor(() => expect(calls.some((c) => c.url.includes("sourceId=s2"))).toBe(true));
     cleanup();
     stubApi({
@@ -3181,8 +3184,29 @@ describe("/admin/plugins and marketplace entries", () => {
     });
     await renderRouteWithCache(entriesPath(), lastStubRoutes());
     await screen.findByText(/@acme\/plugin-cat-a/);
-    expect(screen.queryByRole("tablist", { name: en.catalog.admin.filters.source })).toBeNull();
+    expect(screen.queryByRole("radiogroup", { name: en.catalog.admin.filters.source })).toBeNull();
   });
+
+  it.each([
+    [390, "scope-chips"],
+    [1440, "segmented"],
+  ] as const)(
+    "entries: the sources scope is chips at 390 and a Segmented at 1440 (%s)",
+    async (width, part) => {
+      stubWindowWidth(width);
+      stubApi({
+        "GET /api/v1/admin/marketplaces": () => json(200, SOURCES),
+        "GET /api/v1/admin/marketplaces/entries": () =>
+          json(200, { items: [entry()], truncated: false }),
+      });
+      await renderRouteWithCache(entriesPath(), lastStubRoutes());
+      const group = await screen.findByRole("radiogroup", {
+        name: en.catalog.admin.filters.source,
+      });
+      expect(group.getAttribute("data-part")).toBe(part);
+      expect(within(group).getAllByRole("radio")).toHaveLength(3);
+    },
+  );
 
   it("entries search is debounced: typing sends one request with the keyword", async () => {
     const calls = stubApi({

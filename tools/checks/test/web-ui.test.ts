@@ -25,7 +25,6 @@ import {
   type LoadMorePending,
   loadMoreFindings,
   loadMoreTreeFindings,
-  type ScopePending,
   type SizeBranchAllowed,
   sizeBranchFindings,
   sizeBranchTreeFindings,
@@ -39,7 +38,6 @@ const run = (
   boxPending: BoxPending[] = [],
   responsive: ResponsiveLists = {
     sizeAllowed: [],
-    scopePending: [],
     footerPending: [],
     dualPending: [],
   },
@@ -469,7 +467,6 @@ describe("responsive guards (spec §5.3, §7)", () => {
   };
   const tree = fx("responsive-tree");
   const allow = (path: string): SizeBranchAllowed => ({ path, reason: "test" });
-  const pend = (path: string): ScopePending => ({ path, fix: "test" });
 
   describe("web-ui-size-branch", () => {
     it("imports of the class hooks and constants and reads of window.matchMedia / innerWidth fail", () => {
@@ -542,7 +539,7 @@ describe("responsive guards (spec §5.3, §7)", () => {
         ["web-ui-filters-scope", 37],
         ["web-ui-filters-scope", 42],
       ]);
-      expect(f[0]?.message).toContain("ScopeChips");
+      expect(f[0]?.message).toContain("ListPage.scope");
     });
 
     it("Select fields in filters and a Segmented in the body pass", () => {
@@ -550,19 +547,9 @@ describe("responsive guards (spec §5.3, §7)", () => {
       expect(f.some((x) => x.line >= 44)).toBe(false);
     });
 
-    it("the tree: a pending entry hides its file, a clean or missing entry is stale", () => {
-      expect(filtersScopeTreeFindings(tree, []).map((x) => x.file.slice(tree.length + 1))).toEqual([
+    it("the tree: a view choice in filters fails, with no allowlist", () => {
+      expect(filtersScopeTreeFindings(tree).map((x) => x.file.slice(tree.length + 1))).toEqual([
         "pages/scope.tsx",
-      ]);
-      expect(filtersScopeTreeFindings(tree, [pend("pages/scope.tsx")])).toEqual([]);
-      const f = filtersScopeTreeFindings(tree, [
-        pend("pages/scope.tsx"),
-        pend("pages/clean.tsx"),
-        pend("pages/gone.tsx"),
-      ]);
-      expect(f.map((x) => x.rule)).toEqual([
-        "web-ui-filters-scope-stale",
-        "web-ui-filters-scope-stale",
       ]);
     });
   });

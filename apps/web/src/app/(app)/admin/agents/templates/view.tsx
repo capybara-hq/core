@@ -41,12 +41,12 @@ function AdminAgentTemplates({ orgId }: { orgId: string | null }) {
   if (list.kind === "error") return <ErrorFrame reset={list.retry} />;
   const common = { variant: "cards" as const, listLabel: t("titles.agent_template") };
   if (list.kind === "loading")
-    return <ListPage header={header} filters={owner.filters} {...common} loading={{ rows: 6 }} />;
+    return <ListPage header={header} scope={owner.scope} {...common} loading={{ rows: 6 }} />;
   const rows = owner.rows ?? [];
   return (
     <ListPage
       header={header}
-      filters={owner.filters}
+      scope={owner.scope}
       {...common}
       {...(rows.length === 0
         ? {

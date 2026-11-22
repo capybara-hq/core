@@ -7,11 +7,11 @@ import {
   DateTime,
   type HeaderAction,
   KeyValue,
+  type ListScope,
   type MenuItem,
   ObjectCard,
   ObjectMark,
   Stack,
-  Tabs,
   Text,
   useToast,
   versionLabel,
@@ -491,24 +491,26 @@ export function useOwnerTabs(rows: PlatformComponent[] | null): {
 }
 
 /**
- * The 全部 / 平台 / 组织创建 owner filter of a template list, a secondary Tabs row above the list
- * (the header tab row holds 智能体 / 模板 or 连接器 / 模板), and the rows it leaves.
+ * The 全部 / 平台 / 组织创建 owner choice of a template list, a `ListPage` `scope` (chips on a
+ * compact window, a Segmented on a wide one), and the rows it leaves.
  */
 export function useOwnerFilter(rows: PlatformComponent[] | null): {
-  filters: ReactNode;
+  scope: ListScope;
   rows: PlatformComponent[] | null;
 } {
   const t = useTranslations("adminComponents.tabs");
   const tabs = useOwnerTabs(rows);
   return {
-    filters: (
-      <Tabs
-        label={t("label")}
-        value={tabs.active}
-        onChange={(id) => tabs.items.find((i) => i.id === id)?.onSelect()}
-        items={tabs.items.map(({ onSelect: _s, ...it }) => it)}
-      />
-    ),
+    scope: {
+      label: t("label"),
+      value: tabs.active,
+      onChange: (id) => tabs.items.find((i) => i.id === id)?.onSelect(),
+      options: tabs.items.map(({ id, label, count }) => ({
+        value: id,
+        label,
+        ...(count !== undefined ? { count } : {}),
+      })),
+    },
     rows: tabs.rows,
   };
 }
