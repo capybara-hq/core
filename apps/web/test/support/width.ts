@@ -46,3 +46,21 @@ export function stubWindowWidth(width: number) {
     },
   };
 }
+
+/** Stubs an IntersectionObserver that reports every observed element as in view at once. */
+export function stubInView() {
+  vi.stubGlobal(
+    "IntersectionObserver",
+    class {
+      constructor(private readonly cb: IntersectionObserverCallback) {}
+      observe(target: Element) {
+        this.cb(
+          [{ target, isIntersecting: true } as IntersectionObserverEntry],
+          this as unknown as IntersectionObserver,
+        );
+      }
+      disconnect() {}
+      unobserve() {}
+    },
+  );
+}

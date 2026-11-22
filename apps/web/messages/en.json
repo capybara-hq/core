@@ -4314,7 +4314,6 @@
       "description": "Platform-level actions, newest first. Actions inside an org are not listed here.",
       "listLabel": "Platform actions",
       "empty": "No platform actions yet.",
-      "loadMore": "Load more",
       "columns": {
         "time": "Time",
         "actor": "Actor",
@@ -4509,7 +4508,6 @@
       "title": "Accounts",
       "new": "New account",
       "empty": "No accounts yet.",
-      "loadMore": "Load more",
       "columns": {
         "name": "Name",
         "email": "Email",
@@ -6183,7 +6181,6 @@
         "allStatuses": "All statuses"
       },
       "search": "Search by name",
-      "loadMore": "Load more",
       "empty": "No organization has added a connector yet",
       "emptyHint": "Connectors that organizations add or install are listed here.",
       "noMatch": "No connectors match",
@@ -6274,7 +6271,6 @@
         "allOrgs": "All organizations"
       },
       "search": "Search by name",
-      "loadMore": "Load more",
       "empty": "No organization has created an agent yet",
       "emptyHint": "Agents that organization members create are listed here.",
       "noMatch": "No agents match",

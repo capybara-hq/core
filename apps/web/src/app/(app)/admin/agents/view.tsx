@@ -3,7 +3,6 @@
 import {
   Avatar,
   Badge,
-  Button,
   type Column,
   DataTable,
   DateTime,
@@ -56,8 +55,8 @@ function hrefOf(f: Filter): string {
  * 待重新指派 chip while the agent waits for a new owner), the visibility, the template it was
  * created from, the update time. The org filter and the name search live in the address
  * (`?orgId=&q=`), so changing one is a navigation and each filter is its own cache entry (the
- * layout prefetched the address's first page and the orgs on a first load); "Load more" reads
- * later pages in the browser. A row opens the agent's detail.
+ * layout prefetched the address's first page and the orgs on a first load); the later pages are read
+ * in the browser. A row opens the agent's detail.
  */
 export default function AdminAgentsView({ filter }: { filter: Filter }) {
   const gate = useAdmin();
@@ -204,7 +203,7 @@ function AdminAgents({ filter }: { filter: Filter }) {
   );
 }
 
-/** The list under one filter: its first page, then "Load more" by `next`. */
+/** The list under one filter: its first page, then the later pages by `next` (the list's own paging). */
 function AgentTable({
   filter,
   first,
@@ -234,11 +233,12 @@ function AgentTable({
   const [loadingMore, setLoadingMore] = useState(false);
   const [moreError, setMoreError] = useState<string | null>(null);
 
-  const loadMore = async (after: string) => {
+  const loadMore = async () => {
+    if (next === null || loadingMore) return;
     setLoadingMore(true);
     setMoreError(null);
     try {
-      const page = await qc.fetchQuery(adminAgentsQuery(filter, after));
+      const page = await qc.fetchQuery(adminAgentsQuery(filter, next));
       setMore({ source: firstAt, pages: [...pages, page] });
     } catch (e) {
       setMoreError(errorMessage(e));
@@ -248,26 +248,20 @@ function AgentTable({
   };
 
   return (
-    <Stack gap={12}>
-      <DataTable<AdminAgentRow>
-        label={t("listLabel")}
-        columns={agentColumns(t)}
-        rows={rows}
-        rowKey={(a) => a.id}
-        rowLabel={(a) => a.name}
-        state="ready"
-        empty={{ title: t("empty"), hint: t("emptyHint") }}
-        {...(filtered && { noResults: { description: t("noMatch"), onClear } })}
-        onOpen={(a) => router.push(`/admin/agents/${encodeURIComponent(a.id)}`)}
-      />
-      {next !== null && (
-        <Stack direction="row" gap={8} align="center">
-          <Button loading={loadingMore} onClick={() => void loadMore(next)}>
-            {t("loadMore")}
-          </Button>
-          {moreError !== null && <Text tone="fail">{moreError}</Text>}
-        </Stack>
-      )}
-    </Stack>
+    <DataTable<AdminAgentRow>
+      label={t("listLabel")}
+      columns={agentColumns(t)}
+      rows={rows}
+      rowKey={(a) => a.id}
+      rowLabel={(a) => a.name}
+      state="ready"
+      empty={{ title: t("empty"), hint: t("emptyHint") }}
+      {...(filtered && { noResults: { description: t("noMatch"), onClear } })}
+      onLoadMore={() => void loadMore()}
+      hasMore={next !== null}
+      loadingMore={loadingMore}
+      loadMoreError={moreError}
+      onOpen={(a) => router.push(`/admin/agents/${encodeURIComponent(a.id)}`)}
+    />
   );
 }

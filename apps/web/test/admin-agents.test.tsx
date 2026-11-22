@@ -26,6 +26,7 @@ import { renderRouteEmptyCache, renderRouteWithCache } from "./support/query";
 import { ME } from "./support/render";
 import { optionLabels, pickOption } from "./support/select";
 import { expectNoFirstPaintFetch, type Routes } from "./support/server";
+import { stubInView, stubWindowWidth } from "./support/width";
 
 vi.mock("../src/i18n/navigation", () => import("./support/navigation"));
 vi.mock("next/navigation", () => ({
@@ -246,10 +247,43 @@ describe("/admin/agents", () => {
           : json(200, { agents: [ROWS[0]], next: "ag1" }),
     });
     const user = userEvent.setup();
-    await user.click(await screen.findByRole("button", { name: A.loadMore }));
+    await user.click(await screen.findByRole("button", { name: "Load more" }));
     expect(await screen.findByText("Writer")).toBeTruthy();
     expect(calls.map((c) => c.url)).toContain(`${LIST}?after=ag1`);
-    expect(screen.queryByRole("button", { name: A.loadMore })).toBeNull();
+    expect(screen.queryByRole("button", { name: "Load more" })).toBeNull();
+  });
+
+  it("compact: the next page is read from the list's end, no Load more button", async () => {
+    stubWindowWidth(390);
+    stubInView();
+    const { calls } = await open("/admin/agents", {
+      [`GET ${LIST}`]: (c) =>
+        c.url.includes("after=ag1")
+          ? json(200, { agents: [ROWS[1]], next: null })
+          : json(200, { agents: [ROWS[0]], next: "ag1" }),
+    });
+    expect(await screen.findByText("Writer")).toBeTruthy();
+    expect(calls.map((c) => c.url)).toContain(`${LIST}?after=ag1`);
+    expect(screen.queryByRole("button", { name: "Load more" })).toBeNull();
+  });
+
+  it("compact: a failed next page shows Retry, which reads it again", async () => {
+    stubWindowWidth(390);
+    stubInView();
+    let fail = true;
+    await open("/admin/agents", {
+      [`GET ${LIST}`]: (c) => {
+        if (!c.url.includes("after=ag1")) return json(200, { agents: [ROWS[0]], next: "ag1" });
+        return fail
+          ? json(500, { error: { code: "internal", message: "boom" } })
+          : json(200, { agents: [ROWS[1]], next: null });
+      },
+    });
+    const retry = await screen.findByRole("button", { name: "Retry" });
+    expect(screen.queryByText("Writer")).toBeNull();
+    fail = false;
+    await userEvent.setup().click(retry);
+    expect(await screen.findByText("Writer")).toBeTruthy();
   });
 
   it("a refetch of the first page drops the later pages read so far", async () => {
@@ -261,13 +295,13 @@ describe("/admin/agents", () => {
           : json(200, { agents: [ROWS[0]], next: "ag1" }),
     });
     const user = userEvent.setup();
-    await user.click(await screen.findByRole("button", { name: A.loadMore }));
+    await user.click(await screen.findByRole("button", { name: "Load more" }));
     expect(await screen.findByText("Writer")).toBeTruthy();
     // Writer is deleted elsewhere; the list is invalidated (the first page answers the same)
     page2 = [];
     await act(() => client.invalidateQueries({ queryKey: keys.deployment().adminAgentsAll() }));
     await waitFor(() => expect(screen.queryByText("Writer")).toBeNull());
-    expect(screen.getByRole("button", { name: A.loadMore })).toBeTruthy();
+    expect(screen.getByRole("button", { name: "Load more" })).toBeTruthy();
   });
 
   it("empty: no org has created an agent yet", async () => {

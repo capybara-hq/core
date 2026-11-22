@@ -15,6 +15,7 @@ import { personAvatarSrc, personInitial } from "./support/person";
 import { renderRouteEmptyCache, renderRouteWithCache } from "./support/query";
 import { ME } from "./support/render";
 import { expectNoFirstPaintFetch } from "./support/server";
+import { stubInView, stubWindowWidth } from "./support/width";
 
 vi.mock("../src/i18n/navigation", () => import("./support/navigation"));
 
@@ -74,20 +75,51 @@ describe("/admin/audit（ListPage）", () => {
     expect(systemRow.querySelector('[data-part="person-name"]')).toBeNull();
     expect(browser).toEqual([]);
     const calls = stubApi(routes);
-    await userEvent.setup().click(screen.getByRole("button", { name: A.loadMore }));
+    await userEvent.setup().click(screen.getByRole("button", { name: "加载更多" }));
     expect(await within(table).findByText("Alice")).toBeTruthy();
     expect(within(table).getByText(A.actions.extensionInstalled)).toBeTruthy();
     // the first rows stay; the last page has no next, so no more button
     expect(within(table).getByText("Grant")).toBeTruthy();
-    expect(screen.queryByRole("button", { name: A.loadMore })).toBeNull();
+    expect(screen.queryByRole("button", { name: "加载更多" })).toBeNull();
     expect(calls.map((c) => c.url)).toContain("/api/v1/admin/audit?limit=20&after=8");
+  });
+
+  it("compact: the next page is read from the list's end, no Load more button", async () => {
+    stubWindowWidth(390);
+    stubInView();
+    const routes = {
+      "GET /api/v1/admin/audit?limit=20": () => json(200, FIRST),
+      "GET /api/v1/admin/audit?limit=20&after=8": () => json(200, SECOND),
+    };
+    stubApi(routes);
+    await renderRouteWithCache("/admin/audit", routes, { locale: "en" });
+    expect(await screen.findByText("target-7")).toBeTruthy();
+    expect(screen.queryByRole("button", { name: "Load more" })).toBeNull();
+  });
+
+  it("compact: a failed next page shows Retry, which reads it again", async () => {
+    stubWindowWidth(390);
+    stubInView();
+    let fail = true;
+    const routes = {
+      "GET /api/v1/admin/audit?limit=20": () => json(200, FIRST),
+      "GET /api/v1/admin/audit?limit=20&after=8": () =>
+        fail ? json(500, { error: { code: "internal", message: "boom" } }) : json(200, SECOND),
+    };
+    stubApi(routes);
+    await renderRouteWithCache("/admin/audit", routes, { locale: "en" });
+    const retry = await screen.findByRole("button", { name: "Retry" });
+    expect(screen.queryByText("target-7")).toBeNull();
+    fail = false;
+    await userEvent.setup().click(retry);
+    expect(await screen.findByText("target-7")).toBeTruthy();
   });
 
   it("an empty log is the list's empty state", async () => {
     stubApi({ "GET /api/v1/admin/audit": () => json(200, { events: [], next: null }) });
     await renderRouteWithCache("/admin/audit", lastStubRoutes(), { locale: "en" });
     expect(await screen.findByText(en.admin.audit.empty)).toBeTruthy();
-    expect(screen.queryByRole("button", { name: en.admin.audit.loadMore })).toBeNull();
+    expect(screen.queryByRole("button", { name: "Load more" })).toBeNull();
   });
 
   it("an empty cache shows the template's loading state, then the data", async () => {

@@ -4302,7 +4302,6 @@
       "description": "平台级操作的记录，最新的在前。组织内的操作不在这里。",
       "listLabel": "平台操作",
       "empty": "还没有平台操作记录。",
-      "loadMore": "加载更多",
       "columns": {
         "time": "时间",
         "actor": "操作者",
@@ -4497,7 +4496,6 @@
       "title": "账号",
       "new": "新建账号",
       "empty": "还没有账号。",
-      "loadMore": "加载更多",
       "columns": {
         "name": "名称",
         "email": "邮箱",
@@ -6171,7 +6169,6 @@
         "allStatuses": "全部状态"
       },
       "search": "搜索名称",
-      "loadMore": "加载更多",
       "empty": "还没有组织添加连接器",
       "emptyHint": "组织添加或安装的连接器会列在这里。",
       "noMatch": "没有符合条件的连接器",
@@ -6262,7 +6259,6 @@
         "allOrgs": "全部组织"
       },
       "search": "搜索名称",
-      "loadMore": "加载更多",
       "empty": "还没有组织创建智能体",
       "emptyHint": "组织成员创建的智能体会列在这里。",
       "noMatch": "没有符合条件的智能体",

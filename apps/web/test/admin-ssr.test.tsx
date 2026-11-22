@@ -16,6 +16,7 @@ import {
 } from "./support/query";
 import { ME } from "./support/render";
 import { expectNoFirstPaintFetch, type Routes } from "./support/server";
+import { stubInView, stubWindowWidth } from "./support/width";
 
 vi.mock("../src/i18n/navigation", () => import("./support/navigation"));
 vi.mock("next/navigation", () => ({
@@ -521,7 +522,7 @@ describe("first paint comes from the hydrated cache (no browser read)", () => {
     const browser = expectNoFirstPaintFetch();
     await renderRouteWithCache("/admin/accounts", ROUTES);
     expect(screen.getByText("Alice")).toBeTruthy();
-    expect(screen.getByRole("button", { name: en.admin.accounts.loadMore })).toBeTruthy();
+    expect(screen.getByRole("button", { name: "Load more" })).toBeTruthy();
     await settle();
     expect(browser).toEqual([]);
   });
@@ -1183,6 +1184,8 @@ describe("the super-admin gate", () => {
 });
 
 describe("accounts: load more stays in the browser", () => {
+  afterEach(() => vi.unstubAllGlobals());
+
   it("appends the next page and drops the button at the end", async () => {
     expectNoFirstPaintFetch();
     const { calls } = await renderRouteWithCache("/admin/accounts", ROUTES);
@@ -1190,10 +1193,43 @@ describe("accounts: load more stays in the browser", () => {
       "GET /api/v1/admin/accounts": () =>
         json(200, { accounts: [ACCOUNT("a3", "Carol")], next: null }),
     });
-    await userEvent.setup().click(screen.getByRole("button", { name: en.admin.accounts.loadMore }));
+    await userEvent.setup().click(screen.getByRole("button", { name: "Load more" }));
     expect(await screen.findByText("Carol")).toBeTruthy();
-    expect(screen.queryByRole("button", { name: en.admin.accounts.loadMore })).toBeNull();
+    expect(screen.queryByRole("button", { name: "Load more" })).toBeNull();
     expect(browser.map((c) => c.url)).toEqual(["/api/v1/admin/accounts?limit=200&after=a2"]);
     expect(calls.filter((c) => c.url.startsWith("/api/v1/admin/accounts")).length).toBe(1);
+  });
+
+  it("compact: the next page is read from the list's end, no Load more button", async () => {
+    stubWindowWidth(390);
+    stubInView();
+    expectNoFirstPaintFetch();
+    await renderRouteWithCache("/admin/accounts", ROUTES);
+    const browser = stubApi({
+      "GET /api/v1/admin/accounts": () =>
+        json(200, { accounts: [ACCOUNT("a3", "Carol")], next: null }),
+    });
+    expect(await screen.findByText("Carol")).toBeTruthy();
+    expect(screen.queryByRole("button", { name: "Load more" })).toBeNull();
+    expect(browser.map((c) => c.url)).toEqual(["/api/v1/admin/accounts?limit=200&after=a2"]);
+  });
+
+  it("compact: a failed next page shows Retry, which reads it again", async () => {
+    stubWindowWidth(390);
+    stubInView();
+    expectNoFirstPaintFetch();
+    await renderRouteWithCache("/admin/accounts", ROUTES);
+    let fail = true;
+    stubApi({
+      "GET /api/v1/admin/accounts": () =>
+        fail
+          ? json(500, { error: { code: "internal", message: "boom" } })
+          : json(200, { accounts: [ACCOUNT("a3", "Carol")], next: null }),
+    });
+    const retry = await screen.findByRole("button", { name: "Retry" });
+    expect(screen.queryByText("Carol")).toBeNull();
+    fail = false;
+    await userEvent.setup().click(retry);
+    expect(await screen.findByText("Carol")).toBeTruthy();
   });
 });
