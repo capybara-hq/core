@@ -273,6 +273,10 @@ export function SheetOptionList({
             checked={o.checked === true}
             disabled={o.disabled === true}
             onChange={() => onPick?.(o.id)}
+            // a native radio fires no change when already checked: tapping it still picks
+            onClick={() => {
+              if (o.checked) onPick?.(o.id);
+            }}
           />
           <span className="cb-sheet-option-check">
             {o.checked ? <Icon name="check" size={14} /> : null}
