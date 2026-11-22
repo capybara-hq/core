@@ -11,10 +11,10 @@ import type { KernelConfigService } from "../../src/infra/config/kernel-config.s
 import type { KernelDb } from "../../src/infra/database/kernel-db.js";
 import { KernelEvents } from "../../src/infra/events/kernel-events.js";
 import type { LockService } from "../../src/infra/lock/lock.service.js";
-import type { LocalMachineReports } from "../../src/local-devices/local-machine-reports.js";
 import { createLogger, type KernelLogger } from "../../src/log.js";
 import type { HookRunner } from "../../src/runtime/hook-calls.js";
 import type { NetworkRunState } from "../../src/sandbox/network-grants.js";
+import type { SandboxService } from "../../src/sandbox/sandbox.service.js";
 import { ScheduledTaskStore } from "../../src/schedules/store.js";
 import { ApprovalsService } from "../../src/tools/approvals.service.js";
 import { Breaker } from "../../src/tools/breaker.js";
@@ -164,8 +164,11 @@ export interface PipelineTestDeps {
   switches?: Pick<OrgToolSwitches, "isToolOff">;
   /** The run's network grants (default: none: no network ask). */
   networkGrants?: { runState(runId: string, deviceId?: string): Promise<NetworkRunState> };
-  /** The device's active machine (default: none: no network ask). */
-  devicePolicy?: Pick<LocalMachineReports, "summary">;
+  /**
+   * The device's sandbox: its per-call host ceiling and whether its provider enforces an
+   * allowlist (default: none: no network ask).
+   */
+  sandbox?: Pick<SandboxService, "ensureRunning" | "hostRefusal">;
   onToolsChanged?: (orgId: string, connectorId: string) => void;
 }
 
@@ -222,6 +225,15 @@ export function pipelineFor(d: PipelineTestDeps): ToolPipeline {
       ...(d.decidePolicy !== undefined && { decidePolicy: d.decidePolicy }),
     },
     d.networkGrants,
-    d.devicePolicy,
+    // the command review, review facts, permission authority, call grants, auto grants, locks
+    // and the activation gate: absent in a hand-built pipeline
+    undefined,
+    undefined,
+    undefined,
+    undefined,
+    undefined,
+    undefined,
+    undefined,
+    d.sandbox,
   );
 }

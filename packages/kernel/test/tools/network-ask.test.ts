@@ -507,24 +507,15 @@ describe("not asked", () => {
     expect(at("network_blocked")).toBeLessThan(at("tool_result"));
   });
 
-  it("a program without policyOpId: no ask, no note", async () => {
-    s = await setup({ features: ["networkReport", "policyOp"] });
-    s.dev.blocking.set("files.example.com", "device");
-    await post([curl(["files.example.com"])]);
-    await waitForTerminal(db, s.conversationId, 1, 20_000);
-    const [r] = await results();
-    expect(r?.content).not.toContain("[network]");
-    expect(await asks()).toEqual([]);
-    expect(ofType(await eventsOf(db, s.conversationId), "network_blocked")).toHaveLength(1);
-  });
-
-  it("a Docker-mode machine (policyOp, no networkReport) is not asked", async () => {
+  it("a machine's program features no longer gate the ask: its provider's allowlist support does", async () => {
+    // the program announces neither networkReport nor policyOpId; its provider's support
+    // enforces an allowlist, so a device-layer host is asked about
     s = await setup({ features: ["policyOp"] });
     s.dev.blocking.set("files.example.com", "device");
     await post([curl(["files.example.com"])]);
-    await waitForTerminal(db, s.conversationId, 1, 20_000);
-    expect(await asks()).toEqual([]);
-    expect((await results())[0]?.content).not.toContain("[network]");
+    const ask = await waitFor(async () => (await asks())[0], 20_000, "the network ask");
+    expect(ask).toBeDefined();
+    expect(ofType(await eventsOf(db, s.conversationId), "network_blocked")).toHaveLength(1);
   });
 
   it("background Bash is not asked", async () => {

@@ -17,6 +17,7 @@ import { PUSH_QUEUE } from "../push/jobs.js";
 import { MAINTENANCE_QUEUE_NAME } from "../runtime/maintenance-queue.js";
 import { RUN_QUEUE_NAME, SUBAGENT_RUN_QUEUE_NAME } from "../runtime/run-jobs.js";
 import { USAGE_REPORT_QUEUE } from "../runtime/usage-report-jobs.js";
+import { DeviceProviders, servesDialIn } from "../sandbox/providers.js";
 import { KERNEL_VERSION } from "../version.js";
 
 /** The kernel's own queues, in the order the overview lists them (extension queues are not read). */
@@ -95,10 +96,15 @@ export interface AdminHealth {
     error: number | null;
   };
   /**
-   * `local`: local devices (not deleted, org not deleted); `online`: the devices whose connection a
-   * live replica holds (lease held), at most `local`.
+   * Live devices (not deleted, org not deleted) per provider (most first); `dialIn`: those of the
+   * providers loaded here that serve their devices over the dial-in channel; `online`: the devices
+   * whose connection a live replica holds (lease held), at most `dialIn`.
    */
-  devices: { online: number | null; local: number | null };
+  devices: {
+    online: number | null;
+    dialIn: number | null;
+    byProvider: { provider: string; devices: number }[] | null;
+  };
   /** Sandbox instances by status, and running ones per provider (most first). */
   sandboxes: {
     running: number;
@@ -115,7 +121,7 @@ interface RedisFacts {
 
 interface DbFacts {
   channels: { status: string; mode: string; n: number }[];
-  localDevices: number;
+  devices: { provider: string | null; n: number }[];
   instances: { provider: string | null; status: string; n: number }[];
 }
 
@@ -146,6 +152,7 @@ export class AdminHealthService {
     @Inject(KernelDb) private readonly db: KernelDb,
     @Inject(REDIS) private readonly redis: Pick<Redis, "zcount" | "status">,
     @Inject(KERNEL_LOGGER) private readonly log: Pick<KernelLogger, "warn">,
+    @Inject(DeviceProviders) private readonly providers: Pick<DeviceProviders, "forDevice">,
     @Inject(getQueueToken(RUN_QUEUE_NAME)) runs: Queue,
     @Inject(getQueueToken(SUBAGENT_RUN_QUEUE_NAME)) subagentRuns: Queue,
     @Inject(getQueueToken(CHANNEL_QUEUE_NAME)) channels: Queue,
@@ -203,8 +210,21 @@ export class AdminHealthService {
     // Each replica counts only the devices whose lease it holds, so a device is online on at most
     // one; the clamp covers a lease handover in flight and devices deleted while still connected
     const connected = sum("devicesConnected");
+    const dialIn =
+      db === null
+        ? null
+        : db.devices.reduce((n, d) => {
+            const p = this.providers.forDevice(d.provider);
+            return p !== undefined && servesDialIn(p) ? n + d.n : n;
+          }, 0);
     const devicesOnline =
-      connected === null || db === null ? connected : Math.min(connected, db.localDevices);
+      connected === null || dialIn === null ? connected : Math.min(connected, dialIn);
+    const devicesByProvider =
+      db === null
+        ? null
+        : db.devices
+            .flatMap((d) => (d.provider === null ? [] : [{ provider: d.provider, devices: d.n }]))
+            .sort((a, b) => b.devices - a.devices || a.provider.localeCompare(b.provider));
 
     let sandboxes: AdminHealth["sandboxes"] = null;
     if (db !== null) {
@@ -254,7 +274,7 @@ export class AdminHealthService {
         disabled: channelCount((c) => c.status === "disabled"),
         error: channelCount((c) => c.status === "error"),
       },
-      devices: { online: devicesOnline, local: db?.localDevices ?? null },
+      devices: { online: devicesOnline, dialIn, byProvider: devicesByProvider },
       sandboxes,
       unavailable,
     };
@@ -308,11 +328,12 @@ export class AdminHealthService {
       db
         .selectFrom("devices as d")
         .innerJoin("orgs as o", "o.id", "d.org_id")
+        .select(["d.provider as provider"])
         .select(sql<string>`count(*)`.as("n"))
-        .where("d.source", "=", "local")
         .where("d.deleted_at", "is", null)
         .where("o.deleted_at", "is", null)
-        .executeTakeFirst(),
+        .groupBy("d.provider")
+        .execute(),
       // the partial indexes on device_instances (running / live) serve these statuses; an
       // instance of a deleted org is left out like its channels and devices
       db
@@ -327,7 +348,7 @@ export class AdminHealthService {
     ]);
     return {
       channels: channels.map((c) => ({ status: c.status, mode: c.mode, n: Number(c.n) })),
-      localDevices: Number(devices?.n ?? 0),
+      devices: devices.map((d) => ({ provider: d.provider, n: Number(d.n) })),
       instances: instances.map((i) => ({
         provider: i.provider,
         status: i.status,

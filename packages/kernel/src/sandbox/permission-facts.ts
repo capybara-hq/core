@@ -193,6 +193,9 @@ export class PermissionFacts {
       orgHosts: orgHostsOf(platform, orgLayer),
       refusal: (host: string) => hostGrantRefusal(host, box, platform, orgLayer),
       description: storedReport(row?.report)?.description.en ?? null,
+      /** Its provider enforces a sandbox allowlist (its support): a blocked host may be asked about. */
+      allowlist:
+        support !== null && support.unavailableReason === undefined && support.network.allowlist,
       reach: {
         outsideSandbox: box.outsideSandbox,
         networkCeiling: box.networkCeiling,
@@ -439,9 +442,7 @@ export class PermissionFacts {
    * `list`), the home its provider last reported (the base the picker starts from; null: none,
    * the workspace) and the workspace as last known (the instance's handle). What a project path
    * may be is the provider's rule (device-provider spec §6.1): it refuses one it will not serve,
-   * so the kernel narrows no path by reach (`reach: "os-user"` for every device: the projects
-   * service's shape until it drops the field). `source` only picks the base for that service: a
-   * device whose provider reports a home starts from it, any other from its workspace.
+   * so the kernel narrows no path below a reported home.
    */
   async projectScope(orgId: string, accountId: string, deviceId: string): Promise<Scope> {
     const row = await this.db
@@ -460,9 +461,7 @@ export class PermissionFacts {
     const impl = this.providers.forDevice(row.provider)?.impl;
     const handle = row.handle as SandboxHandle | null;
     return {
-      source: home === null ? "cloud" : "local",
       mode,
-      reach: "os-user",
       workspace: handle === null ? DEFAULT_SANDBOX_ROOTS.workspace : rootsOf(handle).workspace,
       home,
       supported: typeof impl?.list === "function",
@@ -476,7 +475,7 @@ export class PermissionFacts {
     name: string,
   ): Promise<{ name: string; path: string }> {
     const scope = await this.projectScope(orgId, accountId, deviceId);
-    if (!scope.supported) throw projectsUnsupported(scope.source === "local");
+    if (!scope.supported) throw projectsUnsupported();
     const row = await this.readProject(orgId, deviceId, name);
     if (row === null) throw projectNotFound(name);
     // a home reported after the project was added can put it above the home: the working root

@@ -36,7 +36,7 @@ const PolicyHost = z
   });
 
 /**
- * A cloud device's sandbox network (approval-only profiles design, "Settings model"): `open` (the
+ * A device's sandbox network (approval-only profiles design, "Settings model"): `open` (the
  * public internet), `allowlist` (its org's hosts, narrowed to `hosts` when given: a device list
  * never adds a host, and an empty one follows the org's), `none` (closed), or `null` to follow its
  * org again. `hosts` only with `allowlist`.
@@ -52,11 +52,10 @@ export const DeviceNetworkBody = z
   });
 
 /**
- * `PATCH /devices/:id`: a new name, and a cloud device's sandbox `network`
- * ({@link DeviceNetworkBody}), within its org's and the platform's ceilings (`device.network_not_allowed`
- * above them). A local device's network lives on its machine (`device.ceiling_on_machine`: narrow
- * it with `POST /devices/:id/policy`, widen it on the machine). Through an API token or the
- * Platform tool (`devices.set-network`) the network may only narrow.
+ * `PATCH /devices/:id`: a new name, and the device's sandbox `network` ({@link DeviceNetworkBody}),
+ * within its org's and the platform's ceilings (`device.network_not_allowed` above them), the
+ * same for every provider. Through an API token or the Platform tool (`devices.set-network`) the
+ * network may only narrow.
  */
 export const DevicePatchBody = z
   .object({

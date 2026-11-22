@@ -1,7 +1,6 @@
 import { randomUUID } from "node:crypto";
 import { fileURLToPath } from "node:url";
 import type { ToolSpec } from "@capybara-hq/plugin-sdk";
-import type { DeviceFeature } from "@capybara-hq/plugin-sdk/device-protocol";
 import { startTestPostgres, startTestRedis, type TestContainer } from "@capybara-hq/testing";
 import { Redis } from "ioredis";
 import { sql } from "kysely";
@@ -16,6 +15,7 @@ import { migrate } from "../../src/db/migrator.js";
 import { createDb } from "../../src/db/pool.js";
 import { createLogger } from "../../src/log.js";
 import { assistantIdemKey } from "../../src/runtime/model-call.js";
+import type { SandboxService } from "../../src/sandbox/sandbox.service.js";
 import type { Breaker } from "../../src/tools/breaker.js";
 import type { ToolOutputs } from "../../src/tools/outputs.js";
 import type { ToolPipeline, ToolStepContext } from "../../src/tools/pipeline.js";
@@ -133,10 +133,15 @@ function pipeline(): ToolPipeline {
         pending: false,
       }),
     },
-    devicePolicy: {
-      summary: async () => ({
-        features: ["networkReport", "policyOpId"] as DeviceFeature[],
-        policy: { mode: "auto" as const, allowedDomains: [] },
+    // a provider that enforces an allowlist: a device-layer host is asked about
+    sandbox: {
+      ensureRunning: async () => {},
+      hostRefusal: async () => ({
+        refusal: () => null,
+        box: { networkMode: "allowlist" } as Awaited<
+          ReturnType<SandboxService["hostRefusal"]>
+        >["box"],
+        allowlist: true,
       }),
     },
   });

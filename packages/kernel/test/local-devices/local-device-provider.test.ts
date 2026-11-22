@@ -182,7 +182,16 @@ beforeAll(async () => {
           network: { kind: "allowlist", hosts: orgAllowedDomains(deployment, orgSettings) },
         };
       },
-    } as Pick<SandboxService, "devicePolicy" | "deviceLimits" | "hostGrantCeiling">,
+      // the device sandbox under its provider support: the org's allowlist
+      hostRefusal: async () => ({
+        refusal: () => null,
+        box: {
+          networkMode: "allowlist",
+          hosts: orgAllowedDomains(deployment, orgSettings),
+        } as unknown as Awaited<ReturnType<SandboxService["hostRefusal"]>>["box"],
+        allowlist: true,
+      }),
+    } as Pick<SandboxService, "devicePolicy" | "deviceLimits" | "hostGrantCeiling" | "hostRefusal">,
     {
       get: () => ({ devices: { local: { maxFrameBytes } } }),
     } as unknown as KernelConfigService,

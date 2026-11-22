@@ -155,15 +155,14 @@ describe("devices API", () => {
       name: "Repo",
       isDefault: false,
       ownerKind: "personal",
-      source: "cloud",
       provider: "device-fake",
+      dialIn: false,
       available: true,
-      sessionIsolation: false,
+      online: null,
+      machine: null,
       filesLost: false,
       instance: null,
       limits: { network: { kind: expect.any(String), hosts: expect.any(Array) } },
-      // a cloud device has no machine and no owner ceiling, and never runs outside its sandbox
-      ownerCeiling: null,
       sandbox: {
         network: "open",
         networkCeiling: "open",
@@ -506,7 +505,7 @@ describe("device providers (device-provider spec §6.1)", () => {
     const m = await member();
     const before = new Set(await fakeFileSystems(root));
     const onB = await create(m.req, "On B", "device-fake-b");
-    expect(onB).toMatchObject({ provider: "device-fake-b", available: true, source: "cloud" });
+    expect(onB).toMatchObject({ provider: "device-fake-b", available: true, dialIn: false });
     const created = await db
       .selectFrom("audit_events")
       .select("detail")
@@ -902,7 +901,7 @@ describe("a cloud device's sandbox network (approval-only profiles design)", () 
     expect(changed).toHaveLength(1);
   });
 
-  it("an API token may only narrow it (a rename still works); a local device's network is its machine's", async () => {
+  it("an API token may only narrow it (a rename still works); a dial-in device's network is set the same way", async () => {
     await setOrgNetwork(null);
     const me = await member();
     const env = await create(me.req, "Tokened");
@@ -946,9 +945,17 @@ describe("a cloud device's sandbox network (approval-only profiles design)", () 
     const local = await k.app
       .get(TransactionHost)
       .run(() => k.app.get(DevicesService).createDialIn(orgId, me.id, "@local", "Laptop"));
+    // the device network route accepts a dial-in device: its own setting, as for any device
     const res = await patch(me.req, local.id, { network: { mode: "allowlist" } });
-    expect(res.statusCode, res.body).toBe(409);
-    expect(errCode(res)).toBe("device.ceiling_on_machine");
+    expect(res.statusCode, res.body).toBe(200);
+    expect(viewOf(res).sandbox).toMatchObject({ ownNetwork: "allowlist", allowedDomains: [] });
+    expect(viewOf(res).dialIn).toBe(true);
+    const stored = await db
+      .selectFrom("devices")
+      .select(["network_mode"])
+      .where("id", "=", local.id)
+      .executeTakeFirstOrThrow();
+    expect(stored.network_mode).toBe("allowlist");
   });
 
   it("another member or the org's owner changing my device gets not_found", async () => {

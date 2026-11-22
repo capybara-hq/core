@@ -109,9 +109,10 @@ describe("AdminHealthService.read", () => {
     await seedChannel(orgId, agentId, accountId, "error", "long_connection");
     await seedChannel(orgId, agentId, accountId, "error", "webhook");
     await seedChannel(orgId, agentId, accountId, "active", "long_connection", true);
-    // devices: 2 local (1 connected), 1 cloud
+    // devices: 2 of a dial-in provider (1 connected), 1 of another provider
     await seedDevice(db(), orgId, undefined, "local");
     await seedDevice(db(), orgId, undefined, "local");
+    await seedDevice(db(), orgId);
     // sandboxes: docker 2 running + 1 suspended, e2b 1 running, 1 destroyed (not counted)
     await seedInstance(orgId, "sandbox-docker", "running");
     await seedInstance(orgId, "sandbox-docker", "running");
@@ -190,7 +191,10 @@ describe("AdminHealthService.read", () => {
     });
 
     expect(h.channels).toEqual({ online: 2, offline: 1, webhook: 1, disabled: 1, error: 2 });
-    expect(h.devices).toEqual({ online: 1, local: 2 });
+    // the other conversations' default devices are on device-fake too
+    expect(h.devices).toMatchObject({ online: 1, dialIn: 2 });
+    expect(h.devices.byProvider).toContainEqual({ provider: "@local", devices: 2 });
+    expect(h.devices.byProvider?.map((p) => p.provider).sort()).toEqual(["@local", "device-fake"]);
     expect(h.sandboxes).toEqual({
       running: 3,
       suspended: 1,
@@ -237,7 +241,7 @@ describe("AdminHealthService.read", () => {
         disabled: null,
         error: null,
       });
-      expect(h.devices).toEqual({ online: 1, local: null });
+      expect(h.devices).toEqual({ online: 1, dialIn: null, byProvider: null });
       expect(h.sandboxes).toBeNull();
       expect(h.replicas).toHaveLength(1);
       expect(h.roles).toEqual({ api: 1, worker: 0, gateway: 1 });
@@ -265,7 +269,7 @@ describe("AdminHealthService.read", () => {
         disabled: 1,
         error: 2,
       });
-      expect(h.devices).toEqual({ online: null, local: 2 });
+      expect(h.devices).toMatchObject({ online: null, dialIn: 2 });
       expect(h.sandboxes?.running).toBe(3);
     } finally {
       await pause.call("CLIENT", "UNPAUSE");

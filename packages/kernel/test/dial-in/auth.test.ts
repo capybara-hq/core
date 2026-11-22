@@ -368,7 +368,7 @@ describe("device authorization", () => {
     const v = await envView(m.req, deviceId);
     expect(v).toMatchObject({
       name: "Laptop",
-      source: "local",
+      dialIn: true,
       provider: "@local",
       online: false,
       machine: { name: "grant-mbp", os: "darwin", programVersion: "0.1.0" },
@@ -652,7 +652,7 @@ describe("device authorization", () => {
     expect(await auditActions(g.deviceId)).toContain("device.machine_revoked");
     expect((await envView(m.req, g.deviceId)).machine).toBeNull();
     // the device stays
-    expect((await envView(m.req, g.deviceId)).source).toBe("local");
+    expect((await envView(m.req, g.deviceId)).dialIn).toBe(true);
   });
 
   it("deleting a local device revokes its machine", async () => {

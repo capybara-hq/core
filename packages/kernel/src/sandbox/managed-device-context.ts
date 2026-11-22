@@ -8,6 +8,7 @@ import {
 } from "../conversations/events.js";
 import { PermissionProfileStore } from "../conversations/permission-profile-store.js";
 import { deviceNotFound, machineRevoked } from "../devices/errors.js";
+import { DialInMachines } from "../dial-in/machines.js";
 import { ApiError } from "../errors.js";
 import { afterCommit } from "../infra/database/after-commit.js";
 import { KernelDb } from "../infra/database/kernel-db.js";
@@ -39,6 +40,7 @@ import {
   PermissionContextSubjectChanged,
 } from "./permission-context-types.js";
 import { PermissionFacts } from "./permission-facts.js";
+import { DeviceProviders, servesDialIn } from "./providers.js";
 
 /** The tool error text of a managed operation whose held device context went stale (spec B3). */
 export const MANAGED_DEVICE_CONTEXT_STALE_TEXT =
@@ -138,6 +140,8 @@ export class ManagedDeviceContextRecorder {
       "workingRootFor" | "isActiveMember"
     >,
     @Inject(KERNEL_LOGGER) private readonly log: Pick<KernelLogger, "warn">,
+    @Inject(DeviceProviders) private readonly providers: Pick<DeviceProviders, "forDevice">,
+    @Inject(DialInMachines) private readonly machines: Pick<DialInMachines, "activeFor">,
   ) {}
 
   /**
@@ -214,24 +218,24 @@ export class ManagedDeviceContextRecorder {
 
   /**
    * The error of a device state that never comes back: the device (or its org) deleted, or a
-   * local device without an active machine (revoked, signed out). Undefined while it is live; a
-   * cloud device has no machine.
+   * device of a dial-in provider without an active machine (revoked, signed out:
+   * {@link DialInMachines.activeFor}). Undefined while it is live; a provider that is not loaded
+   * here is not asked.
    */
   private async goneError(orgId: string, deviceId: string): Promise<ApiError | undefined> {
     const row = await this.db
       .selectFrom("devices as e")
       .innerJoin("orgs as o", "o.id", "e.org_id")
-      .leftJoin("device_machines as m", (j) =>
-        j.onRef("m.device_id", "=", "e.id").on("m.revoked_at", "is", null),
-      )
-      .select(["e.source", "m.id as machine_id"])
+      .select(["e.provider"])
       .where("e.id", "=", deviceId)
       .where("e.org_id", "=", orgId)
       .where("e.deleted_at", "is", null)
       .where("o.deleted_at", "is", null)
       .executeTakeFirst();
     if (row === undefined) return deviceNotFound();
-    if (row.source === "local" && row.machine_id === null) return machineRevoked();
+    const p = this.providers.forDevice(row.provider);
+    if (p !== undefined && servesDialIn(p) && (await this.machines.activeFor(deviceId)) === null)
+      return machineRevoked();
     return undefined;
   }
 

@@ -453,17 +453,18 @@ describe("@local beside the extension providers", () => {
     expect(await opsOf(rootA)).toEqual([]);
   });
 
-  it("@local is never suspended or destroyed for inactivity (unchanged)", async () => {
-    const s = service();
+  it("an internal provider's instance is suspended and destroyed for inactivity like any other", async () => {
     const dev = await seedLocal();
-    await run(s, dev);
-    const before = await opsOf(localRoot);
-    expect(await s.suspendIdle(later(DAY))).toBe(0);
-    expect(await s.destroyInactive(later(365 * DAY))).toBe(0);
-    // no extension provider at all: the same
-    expect(await service(() => []).destroyInactive(later(365 * DAY))).toBe(0);
-    expect(await opsOf(localRoot)).toEqual(before);
-    expect(await instanceRow(dev)).toMatchObject({ status: "running" });
+    await run(service(), dev);
+    // without any extension provider too: each provider sweeps its own rows
+    expect(await service(() => []).suspendIdle(later(DAY))).toBe(1);
+    expect(await instanceRow(dev)).toMatchObject({ status: "suspended" });
+    expect(await opsOf(localRoot, "suspend")).toHaveLength(1);
+    expect(await service(() => []).destroyInactive(later(365 * DAY))).toBe(1);
+    expect(await opsOf(localRoot, "destroy")).toHaveLength(1);
+    // the instance only: its file system is kept for the next use
+    expect(await opsOf(localRoot, "destroy-fs")).toEqual([]);
+    expect(await opsOf(rootA)).toEqual([]);
   });
 
   it("a deleted org's local device instance is cleaned by the gone-sweep", async () => {

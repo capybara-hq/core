@@ -118,7 +118,7 @@ export function launchRefusedText(kind: OperationFailureKind | undefined): strin
     case "denied":
       return "the command or its output file is outside what this conversation may use on the device; choose a working directory this conversation may write to";
     case "unsupported":
-      return "the device refused it because it cannot enforce its sandbox limits; ask the device's owner to update capybara-device (or a super admin to update the device's sandbox plugin), or continue without the device";
+      return "the device refused it because it cannot enforce its sandbox limits; ask the device's owner to update its device program (or a super admin to update its device plugin), or continue without the device";
     default:
       return "the device refused the start; check that the device is connected, then retry the call";
   }

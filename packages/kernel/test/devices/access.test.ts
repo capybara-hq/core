@@ -348,7 +348,7 @@ describe("local devices", () => {
     expect(await codeOf(access.usable(orgId, ownerId, id))).toBe("device.not_found");
   });
 
-  it("list shows source, online null for cloud; a local device's online and machine", async () => {
+  it("list shows dialIn, online null for a provider without dial-in; a dial-in device's online and machine", async () => {
     const service = k.app.get(DevicesService);
     const me = await member();
     const { id } = await service.createDialIn(orgId, me.id, "@local", "workstation");
@@ -360,20 +360,24 @@ describe("local devices", () => {
     let body = await list();
     expect(body.defaultProvider).toBe("device-fake");
     expect(body.items.find((e) => e.id === body.defaultId)).toMatchObject({
-      source: "cloud",
+      dialIn: false,
       online: null,
-      sessionIsolation: false,
       machine: null,
       available: true,
     });
     expect(body.items.find((e) => e.id === id)).toMatchObject({
-      source: "local",
+      dialIn: true,
       provider: "@local",
       available: true,
       online: false,
-      sessionIsolation: false,
       machine: null,
     });
+    for (const item of body.items) {
+      expect(item).not.toHaveProperty("source");
+      expect(item).not.toHaveProperty("sessionIsolation");
+      expect(item).not.toHaveProperty("ownerCeiling");
+      expect(item).not.toHaveProperty("network");
+    }
     const seen = new Date("2026-11-08T10:00:00.000Z");
     const machineId = randomUUID();
     await sql`INSERT INTO capybara.device_machines
@@ -389,16 +393,15 @@ describe("local devices", () => {
     body = await list();
     expect(body.items.find((e) => e.id === id)).toMatchObject({
       online: true,
-      sessionIsolation: true,
       machine: {
         id: machineId,
         name: "grant-mbp",
         os: "darwin",
-        mode: "os",
         programVersion: "0.1.0",
         lastSeenAt: seen.toISOString(),
       },
     });
+    expect(body.items.find((e) => e.id === id)?.machine).not.toHaveProperty("mode");
     await (k.app.get(REDIS) as Redis).del(deviceLeaseKey(id));
     expect((await list()).items.find((e) => e.id === id)?.online).toBe(false);
   });

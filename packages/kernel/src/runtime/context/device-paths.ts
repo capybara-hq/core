@@ -23,7 +23,10 @@ export interface DeviceModeLevel {
   mode: SandboxMode;
   allowedMode: SandboxMode;
   network: DeviceNetwork;
-  /** A connected machine (`true`) rather than a cloud container. */
+  /**
+   * Its provider runs each operation on its host machine (an operation boundary, `true`) rather
+   * than in an instance of its own (a container).
+   */
   local: boolean;
 }
 

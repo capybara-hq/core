@@ -207,10 +207,6 @@ describe("DialInMachines", () => {
       features: ["networkReport", "policyOp", "policyOpId"],
       localPolicy: policy,
     });
-    expect((await devices.get(orgId, a, m.deviceId)).network).toEqual({
-      features: ["networkReport", "policyOp", "policyOpId"],
-      policy,
-    });
 
     // a malformed summary is none
     await reports.recordHello(m.machineId, {
@@ -226,10 +222,6 @@ describe("DialInMachines", () => {
     // an older program reports neither: the kernel stops sending what it cannot do
     await reports.recordHello(m.machineId, hello);
     expect(await machines.activeFor(m.deviceId)).toMatchObject({ features: [], localPolicy: null });
-    expect((await devices.get(orgId, a, m.deviceId)).network).toEqual({
-      features: [],
-      policy: null,
-    });
   });
 
   // protocol 4: a summary carries no mode, so no hello audits `device.mode_changed`; the owner's

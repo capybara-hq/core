@@ -1,5 +1,6 @@
 import { posix } from "node:path";
 import {
+  isDeviceOfflineError,
   isSandboxPermissionUnsupportedError,
   isSandboxScopeDeniedError,
   parseSandboxBrowseScope,
@@ -73,7 +74,7 @@ import {
   type SandboxLimits,
   type SandboxRoots,
 } from "@capybara-hq/plugin-sdk";
-import { Inject, Injectable } from "@nestjs/common";
+import { Inject, Injectable, Optional } from "@nestjs/common";
 import type { Redis } from "ioredis";
 import {
   type Expression,
@@ -89,6 +90,7 @@ import type { DeviceInstancesTable, KernelDatabase } from "../db/kernel-schema.j
 import { deviceInstanceForeign, deviceUnavailable } from "../devices/access.js";
 import { DeviceProviderSelection } from "../devices/device-provider-selection.js";
 import { deviceNotFound } from "../devices/errors.js";
+import { DialInRelay } from "../dial-in/relay.js";
 import { ApiError } from "../errors.js";
 import { readSandboxLimitOverride } from "../identity/settings.js";
 import { KernelConfigService } from "../infra/config/kernel-config.service.js";
@@ -125,7 +127,6 @@ import {
   appliedOf,
   appliedWider,
   type DeviceLimits,
-  type DeviceNetwork,
   type EffectiveDevicePolicy,
   instanceLimitsJson,
   orgEffectiveHosts,
@@ -136,14 +137,9 @@ import {
   sameAppliedExactly,
 } from "./modes.js";
 import type { HeldDeviceContextEvidence } from "./permission-context-types.js";
-import { networkOfSandbox, PermissionFacts } from "./permission-facts.js";
+import { PermissionFacts } from "./permission-facts.js";
 import { reportOwed, supportOf } from "./permission-runtime-reports.js";
-import {
-  type DeviceProviderEntry,
-  DeviceProviders,
-  isInternalProvider,
-  LOCAL_PROVIDER,
-} from "./providers.js";
+import { type DeviceProviderEntry, DeviceProviders, servesDialIn } from "./providers.js";
 import { isDeviceRequestNotSent } from "./request-not-sent.js";
 import { SandboxProviderUnreachableError } from "./unreachable.js";
 import type { SandboxUseContext } from "./use-context.js";
@@ -318,21 +314,14 @@ const opSignal = (lease: SandboxLease): AbortSignal =>
 export const deviceResourceName = (deviceId: string): string => `cap-device-${deviceId}`;
 
 /**
- * The device's file system is gone at the provider (409); never replaced silently. On a
- * connected machine (`local`, details `[{ source: "local" }]`) the directory is the machine
- * owner's: `capybara-device logout`, then `login` into the device, recreates it (ruling R24).
+ * The device's file system is gone at the provider (409); never replaced silently: the device's
+ * page resets its files where its provider offers that (its report's `reset`).
  */
-export const deviceFilesLost = (local = false): ApiError =>
-  local
-    ? new ApiError(
-        "device.files_lost",
-        "The local device's directory is gone from its machine; run capybara-device logout, then capybara-device login into this device, on that machine to recreate it.",
-        [{ source: "local" }],
-      )
-    : new ApiError(
-        "device.files_lost",
-        "The device's files are gone; reset its files from the devices page to start with an empty workspace.",
-      );
+export const deviceFilesLost = (): ApiError =>
+  new ApiError(
+    "device.files_lost",
+    "The device's files are gone; reset its files from the devices page to start with an empty workspace.",
+  );
 
 /**
  * A cloud sandbox provider refused to make (or move) an instance with the open public network
@@ -363,8 +352,8 @@ export const sandboxCreateFailed = (): ApiError =>
  * tools handle them); any other error is logged (warn, redacted) and replaced by
  * {@link sandboxOpenNetworkRefused} when `limits` ask for the open public network (the only
  * network a provider's config refuses), else (a create) by {@link sandboxCreateFailed}; a failed
- * `update` below the open network stays as it is. A kernel-internal provider (`@local`) keeps its
- * own errors.
+ * `update` below the open network stays as it is. A dial-in device that is offline keeps its
+ * error (the tools tell the person to connect its machine).
  */
 function providerRefusal(
   log: Pick<KernelLogger, "warn">,
@@ -375,7 +364,7 @@ function providerRefusal(
 ): unknown {
   if (
     signal.aborted ||
-    isInternalProvider(facts.provider) ||
+    isDeviceOfflineError(err) ||
     isSandboxGoneError(err) ||
     isFileSystemGoneError(err) ||
     err instanceof SandboxProviderUnreachableError ||
@@ -517,15 +506,6 @@ export const retirementPending = (): ApiError =>
     "This device is unavailable: background work started by an earlier version may still run on its previous instance, and that instance has not been confirmed destroyed. A cloud device becomes usable once its provider confirms the old instance destroyed.",
   );
 /**
- * A local machine's old instance may still run legacy work, and a later boot of that machine is
- * the evidence that ends it (503, 8.5): the person restarts the computer.
- */
-export const restartRequired = (): ApiError =>
-  new RetirementPendingError(
-    "device.restart_required",
-    "Background work started by an earlier version may still be running on this computer. Restart this computer to finish the upgrade, then try again.",
-  );
-/**
  * A cloud device's earlier instance may still run legacy work and no evidence the kernel can get
  * will ever cover it (an incarnation replaced without a recorded confirmed destruction, or an
  * unknown one it cannot clear) (503, 8.5): the owner deletes the device and creates it again.
@@ -534,16 +514,6 @@ export const recreateRequired = (): ApiError =>
   new RetirementPendingError(
     "device.recreate_required",
     "Background work started by an earlier version may still be running on an earlier instance of this device, and that instance can no longer be verified as destroyed. Delete this device and create it again.",
-  );
-/**
- * A local machine's old instance may still run legacy work, and the computer never reported a
- * boot identity, so not even a restart can prove it ended (503, 8.5): the owner replaces the
- * device. A deleted device's obligations never block a new one.
- */
-export const replaceRequired = (): ApiError =>
-  new RetirementPendingError(
-    "device.replace_required",
-    "Background work started by an earlier version may still be running on this computer, and it cannot prove a restart. Delete this device and connect the computer again as a new device.",
   );
 const isRetirementPending = (err: unknown): boolean => err instanceof RetirementPendingError;
 
@@ -630,16 +600,14 @@ async function inPool<T>(items: T[], limit: number, fn: (x: T) => Promise<void>)
  *
  * - **Provider per device** (device-provider spec §6.1): a device is bound to its provider
  *   (`devices.provider`, fixed at creation) for life, resolved at every call
- *   ({@link DeviceProviders.forDevice}): a local device runs on the kernel-internal `@local`
- *   provider, any other on the loaded `device-provider@1` extension of that name. Several
+ *   ({@link DeviceProviders.forDevice}), the same way for every provider (a dial-in one reaches its
+ *   machine through the generic channel inside its own calls). Several
  *   providers serve one org side by side. A use needs the provider loaded **and** on in the
  *   device's org ({@link DeviceProviderSelection.isOnInOrg}); otherwise, and for an instance row
  *   naming another provider, the use fails `device.unavailable` (503) and nothing changes: the
  *   files and instance stay, nothing is demoted, recreated or moved to another provider.
  *   Lifecycle cleanup (destroy, sweeps, reset) only needs the provider loaded. The sweeps run
- *   per loaded provider over its own rows; rows of a provider that is not loaded are never
- *   touched. A `@local` instance is never suspended or destroyed for inactivity; a deleted
- *   `@local` device (or one of a deleted org) is destroyed by the sweep like any other.
+ *   per provider over its own rows; rows of a provider that is not loaded are never touched.
  *
  * No in-process state: replicas share it through PG and Redis.
  */
@@ -682,7 +650,7 @@ export class SandboxService {
     @Inject(SandboxLeases) private readonly leases: SandboxLeases,
     /** The providers (read at every call: providers are ready after the extension load). */
     @Inject(DeviceProviders)
-    private readonly providers: Pick<DeviceProviders, "forDevice" | "loaded">,
+    private readonly providers: Pick<DeviceProviders, "forDevice" | "loaded" | "all">,
     /** Whether a device's provider serves its org now (read at every use, never cached). */
     @Inject(DeviceProviderSelection)
     private readonly selection: Pick<DeviceProviderSelection, "isOnInOrg">,
@@ -725,6 +693,13 @@ export class SandboxService {
     private readonly snapshots: Pick<CloudPermissionSnapshots, "reconcileHeld">,
     /** The stored device report, refreshed after a create or a resume (never fails the use). */
     @Inject(DeviceReports) private readonly reports: Pick<DeviceReports, "refresh">,
+    /**
+     * The dial-in relay: a dial-in provider's device whose machine is not connected refuses a new
+     * operation before its dispatch is recorded (absent in hand-built services: not checked).
+     */
+    @Optional()
+    @Inject(DialInRelay)
+    private readonly relay?: Pick<DialInRelay, "connection">,
   ) {}
 
   /** Poll interval while waiting for a lease (the leases' own). */
@@ -734,7 +709,7 @@ export class SandboxService {
 
   /**
    * Whether the device of `orgId` can be used now: its provider is loaded and on in the org
-   * ({@link DeviceProviderSelection.isOnInOrg}; `@local`: registered). A missing device, one of
+   * ({@link DeviceProviderSelection.isOnInOrg}). A missing device, one of
    * another org or one without a provider is not.
    */
   async availableFor(deviceId: string, orgId: string): Promise<boolean> {
@@ -743,7 +718,7 @@ export class SandboxService {
   }
 
   /**
-   * Whether the provider the device is bound to is loaded here (`@local`: registered), whatever
+   * Whether the provider the device is bound to is loaded here, whatever
    * its org says: for lifecycle work that goes on while the org has the provider off (owed
    * revocations, cleanup).
    */
@@ -812,8 +787,8 @@ export class SandboxService {
 
   /**
    * The effective device policy of a device (auto mode spec §4.3): the platform's switch and the
-   * org's settings with the device's own mode (a local device's reported one, read fresh; a cloud
-   * device and a missing one have none). Without `deviceId`: an org-level policy with no choice.
+   * org's settings with the device's own mode (a missing device has none). Without `deviceId`:
+   * an org-level policy with no choice.
    */
   async devicePolicy(device: { orgId: string; deviceId?: string }): Promise<EffectiveDevicePolicy> {
     return this.facts.devicePolicy(device);
@@ -824,54 +799,30 @@ export class SandboxService {
     return (await this.facts.readDevice(device.orgId, device.deviceId)).hostCeiling;
   }
 
-  /** The device's source (`local` for a connected machine, else `cloud`); cloud when unknown. */
-  private async deviceSource(device: {
-    orgId: string;
-    deviceId?: string;
-  }): Promise<"cloud" | "local"> {
-    if (device.deviceId === undefined) return "cloud";
-    const row = await this.db
-      .selectFrom("devices")
-      .select("source")
-      .where("id", "=", device.deviceId)
-      .where("org_id", "=", device.orgId)
-      .executeTakeFirst();
-    return row?.source === "local" ? "local" : "cloud";
-  }
-
   /**
-   * The device's effective sandbox limits (spec §8.4; auto mode spec §4.2): the deployment's
-   * `sandbox.limits` resources, cpu / memory per the super admin's org override (C19 / Ruling
-   * M16), the effective mode and the device sandbox network ({@link devicePolicy}), for a local
-   * device too: the machine intersects it with its owner's ceiling. `opts.policy` / `opts.source`:
-   * what the caller already read (avoids the policy and source queries).
+   * The device's effective sandbox limits (spec §8.4; auto mode spec §4.2), the same for every
+   * provider: the deployment's `sandbox.limits` resources, cpu / memory per the super admin's org
+   * override (C19 / Ruling M16), the effective mode and the device's sandbox network
+   * ({@link devicePolicy}: its own `devices.network_*` within the platform's and the org's
+   * ceilings). An operation-boundary provider also gets each operation's network in its scope.
+   * `opts.policy`: what the caller already read (avoids the policy queries).
    */
   async deviceLimits(
     device: { orgId: string; deviceId?: string },
-    opts: { policy?: EffectiveDevicePolicy; source?: "cloud" | "local" } = {},
+    opts: { policy?: EffectiveDevicePolicy } = {},
   ): Promise<DeviceLimits> {
     const cfg = this.config.get().sandbox;
-    const [policy, override, source] = await Promise.all([
+    const [policy, override] = await Promise.all([
       opts.policy ?? this.devicePolicy(device),
       readSandboxLimitOverride(this.db.db, device.orgId),
-      opts.source ?? this.deviceSource(device),
     ]);
-    const local = source === "local";
-    // a local device's commands carry its device sandbox network (under the machine's current
-    // runtime report, as admission reads it); the machine intersects it with its owner's ceiling
-    const network: DeviceNetwork =
-      local && device.deviceId !== undefined
-        ? networkOfSandbox(await this.facts.deviceSandbox(device.orgId, device.deviceId))
-        : policy.network;
     return effectiveSandboxLimits(
       {
         cpu: cfg.limits.cpu,
         memoryMb: cfg.limits.memoryMb,
         diskMb: cfg.limits.diskMb,
-        // a local exec carries the allowed mode (the machine cuts its own choice to it); a cloud
-        // instance runs its device's mode (the narrowing switch included)
-        mode: local ? policy.allowedMode : policy.mode,
-        network: { kind: network.kind, hosts: [...network.hosts] },
+        mode: policy.mode,
+        network: { kind: policy.network.kind, hosts: [...policy.network.hosts] },
       },
       override,
     );
@@ -907,14 +858,16 @@ export class SandboxService {
 
   /**
    * Why a per-call host grant for each host is unavailable on the device, naming who can add it
-   * (`hostGrantRefusal`; null: grantable): a network ask is made only for a grantable host.
+   * (`hostGrantRefusal`; null: grantable): a network ask is made only for a grantable host, and
+   * only on a device whose provider enforces an allowlist (`allowlist`, from its support).
    */
-  async hostRefusal(device: {
-    orgId: string;
-    deviceId: string;
-  }): Promise<{ refusal: (host: string) => string | null; box: DeviceSandbox }> {
+  async hostRefusal(device: { orgId: string; deviceId: string }): Promise<{
+    refusal: (host: string) => string | null;
+    box: DeviceSandbox;
+    allowlist: boolean;
+  }> {
     const facts = await this.facts.deviceSandboxFacts(device.orgId, device.deviceId);
-    return { refusal: facts.refusal, box: facts.box };
+    return { refusal: facts.refusal, box: facts.box, allowlist: facts.allowlist };
   }
 
   /**
@@ -924,8 +877,7 @@ export class SandboxService {
    * `pendingNextUse`: a cloud instance exists and differs; its next use applies the new limits
    * (files kept). `pendingFilesReset`: the provider fixes limits at its file system
    * (`limitsApplyAt: "fileSystem"`) and cannot `update` them, so only a file reset applies them.
-   * A local device (its machine gets the mode and network with each command) is never pending, and
-   * its `applied` is null. `opts.policy`: the device's effective policy when the caller already
+   * `opts.policy`: the device's effective policy when the caller already
    * read it ({@link devicePolicy}).
    */
   async limitsState(
@@ -946,7 +898,7 @@ export class SandboxService {
       mode: policy.mode,
       network: policy.network,
     });
-    if (p === undefined || p.plugin === LOCAL_PROVIDER || row === undefined) {
+    if (p === undefined || row === undefined) {
       return { applied: null, effective, pendingNextUse: false, pendingFilesReset: false };
     }
     const rec = readInstanceLimits(row.instance_limits);
@@ -982,11 +934,9 @@ export class SandboxService {
    * widening still reaches instances created afterwards), unless only a file reset could apply it
    * ({@link fsBound}). A provider bound to its file system still goes through the exclusive lease
    * once for a narrowing, so `applyLimits` records it as `unapplied` (the device is then unprobed
-   * until the reset, never silently supported). `want` null: a local device (the mode travels
-   * with each command).
+   * until the reset, never silently supported).
    */
-  private mustApply(row: Row, p: DeviceProviderEntry, want: DeviceLimits | null): boolean {
-    if (want === null) return false;
+  private mustApply(row: Row, p: DeviceProviderEntry, want: DeviceLimits): boolean {
     const rec = readInstanceLimits(row.instance_limits);
     const target = appliedOf(want);
     const wider = appliedWider(rec.applied, target);
@@ -1330,7 +1280,7 @@ export class SandboxService {
       holderConversationId: OWNER_START_HOLDER,
       actor: { accountId: ctx.accountId, conversationId: OWNER_START_HOLDER },
     };
-    const e = await this.enter(use, p, signal, null, () => this.wantedLimits(use, p));
+    const e = await this.enter(use, p, signal, null, () => this.wantedLimits(use));
     await this.leave(ctx.deviceId, e);
   }
 
@@ -1343,7 +1293,7 @@ export class SandboxService {
    */
   async ensureRunning(use: SandboxUseContext, signal: AbortSignal): Promise<void> {
     const p = await this.require(use.deviceId, use.orgId);
-    const e = await this.enter(use, p, signal, null, () => this.wantedLimits(use, p));
+    const e = await this.enter(use, p, signal, null, () => this.wantedLimits(use));
     try {
       await this.deferNotice(use.deviceId, use.holderConversationId, e);
     } finally {
@@ -1432,7 +1382,7 @@ export class SandboxService {
     const holder = ctx.holderConversationId;
     // decides the shared fast path only (read again before each shared lease is used): the
     // exclusive path reads it again under the lease
-    const want = () => this.wantedLimits(ctx, p);
+    const want = () => this.wantedLimits(ctx);
     const seen = (x: Entered) =>
       ctx.silent ? this.deferNotice(env, holder, x) : this.seenBy(env, holder, x);
     let e = await seen(await this.enter(ctx, p, signal, null, want));
@@ -1499,18 +1449,12 @@ export class SandboxService {
   }
 
   /**
-   * The limits a cloud device's instance must run with for this use (auto mode spec §4.2), read
-   * fresh; null for a local device (its machine gets the mode and network with each command).
-   * A scheduled run has no separate mode grant: the effective policy applies to it as to any use.
+   * The limits a device's instance must run with for this use (auto mode spec §4.2), read fresh,
+   * the same for every provider. A scheduled run has no separate mode grant: the effective policy
+   * applies to it as to any use.
    */
-  private async wantedLimits(
-    _ctx: SandboxUseContext,
-    p: DeviceProviderEntry,
-    _row?: Row,
-  ): Promise<DeviceLimits | null> {
-    if (p.plugin === LOCAL_PROVIDER) return null;
-    const policy = await this.devicePolicy(_ctx);
-    return await this.deviceLimits(_ctx, { policy, source: "cloud" });
+  private async wantedLimits(ctx: SandboxUseContext): Promise<DeviceLimits> {
+    return await this.deviceLimits(ctx);
   }
 
   /**
@@ -1537,7 +1481,7 @@ export class SandboxService {
     } catch (err) {
       this.log.warn("cannot record lost device files", { deviceId: env, err });
     }
-    return deviceFilesLost(p.plugin === LOCAL_PROVIDER);
+    return deviceFilesLost();
   }
 
   /**
@@ -1727,7 +1671,12 @@ export class SandboxService {
               throw error;
             }
           }
-          const admitted = ["dispatching", "started-or-unknown"].includes(pending.state)
+          const reconciling = ["dispatching", "started-or-unknown"].includes(pending.state);
+          // a dial-in device's machine must be connected before a new dispatch is recorded: its
+          // typed answer (offline, machine revoked, device deleted) proves nothing was sent
+          if (!reconciling && current.state === "admitted" && this.relay && servesDialIn(p))
+            await this.relay.connection(env);
+          const admitted = reconciling
             ? await runOutsideTransaction(() =>
                 this.operationIntents.claimReconciliation(
                   ctx,
@@ -2007,7 +1956,7 @@ export class SandboxService {
     p: DeviceProviderEntry,
     signal: AbortSignal,
     gone: Instance | null,
-    wantNow: () => Promise<DeviceLimits | null>,
+    wantNow: () => Promise<DeviceLimits>,
   ): Promise<Entered> {
     const env = ctx.deviceId;
     const deadline = Date.now() + this.config.get().sandbox.lockWaitSeconds * 1000;
@@ -2559,9 +2508,9 @@ export class SandboxService {
    */
   async suspendIdle(now: Date): Promise<number> {
     let n = 0;
-    // each loaded extension provider over its own rows only (`@local` is never one of them, so it
-    // is never suspended here); rows of a provider that is not loaded are left as they are
-    for (const p of this.providers.loaded()) n += await this.suspendIdleOf(p, now);
+    // each provider over its own rows only; rows of a provider that is not loaded are left as
+    // they are
+    for (const p of this.providers.all()) n += await this.suspendIdleOf(p, now);
     return n;
   }
 
@@ -2610,24 +2559,19 @@ export class SandboxService {
    * (the instance only; the file system is kept and the next use builds a new instance on it); an
    * device that was deleted, or whose org was deleted, loses its instance and its file system
    * and its row is deleted (as {@link destroyDevice} does). Devices with any holder are
-   * skipped. Inactivity never destroys a `@local` instance; a gone `@local` device is
-   * destroyed like any other while `@local` is registered. Returns how many it destroyed. Called
-   * hourly by the `sandbox-destroy-inactive` cron.
+   * skipped. Each provider sweeps its own rows the same way. Returns how many it destroyed.
+   * Called hourly by the `sandbox-destroy-inactive` cron.
    */
   async destroyInactive(now: Date): Promise<number> {
-    const loaded = this.providers.loaded();
-    const local = this.providers.forDevice(LOCAL_PROVIDER);
+    const providers = this.providers.all();
     let n = 0;
-    // Gone devices (deleted, or of a deleted org), each provider over its own rows: every loaded
-    // one and `@local` (its destroy calls never need the machine online); rows of a provider that
-    // is not loaded wait, untouched.
-    for (const p of local ? [...loaded, local] : loaded) {
+    // Gone devices (deleted, or of a deleted org), each provider over its own rows; rows of a
+    // provider that is not loaded wait, untouched.
+    for (const p of providers) {
       n += await this.sweepRows(p, (eb) => this.deviceGone(eb), "device");
     }
-    // inactivity destroys instances of loaded extension providers only: `@local` instances are
-    // never swept
     const due = this.instanceDue(now);
-    for (const p of loaded) n += await this.sweepRows(p, due, "instance");
+    for (const p of providers) n += await this.sweepRows(p, due, "instance");
     return n;
   }
 
@@ -2845,7 +2789,6 @@ export class SandboxService {
         !fence ||
         !p ||
         !update ||
-        p.plugin === LOCAL_PROVIDER ||
         row.provider !== p.plugin ||
         device.provider !== p.plugin ||
         row.fs_status !== "ready" ||
@@ -2855,7 +2798,7 @@ export class SandboxService {
       const handle = row.handle;
       // the effective limits with their resources, read under the lease: exactly the target, or
       // the authority moved since the reconcile (the next round sees it)
-      const want = await this.deviceLimits({ orgId, deviceId }, { source: "cloud" });
+      const want = await this.deviceLimits({ orgId, deviceId });
       if (!sameAppliedExactly(appliedOf(want), before.target)) return before;
       const sig = AbortSignal.any([signal, opSignal(lease)]);
       const facts = { deviceId, provider: p.plugin, to: before.target };
@@ -3506,7 +3449,7 @@ export class SandboxService {
     const gate = { resumed: false, running: false };
     const row = (await this.retireIncarnations(id, held, read, fence, undefined, gate)) ?? read;
     try {
-      if (row.fs_status === "lost") throw deviceFilesLost(p.plugin === LOCAL_PROVIDER);
+      if (row.fs_status === "lost") throw deviceFilesLost();
       // a device is bound to its provider for life: an instance row of another provider (never
       // written by this kernel) is refused as it is, never taken over
       if (row.provider !== null && row.provider !== p.plugin) {
@@ -3514,7 +3457,7 @@ export class SandboxService {
       }
       // read under the lease, after the fence moved: a value read before the wait may be stale
       // (another replica may have changed the mode meanwhile)
-      const want = await this.wantedLimits(ctx, p, row);
+      const want = await this.wantedLimits(ctx);
       const handle = row.handle;
       const createdAt = row.created_at.getTime();
       const fsResets = row.fs_resets;
@@ -3538,7 +3481,7 @@ export class SandboxService {
         return { ...created, fsResets, info: { fresh: true, restarted: true }, fence };
       }
       if (handle && row.status === "running") {
-        if (want !== null && this.mustApply(row, p, want)) {
+        if (this.mustApply(row, p, want)) {
           const created = await this.applyLimits(ctx, p, held, row, handle, fence, signal, want);
           if (created)
             return { ...created, fsResets, info: { fresh: true, restarted: true }, fence };
@@ -3551,7 +3494,7 @@ export class SandboxService {
         if (r === "resumed") {
           const incarnation = { provider: p.plugin, generation: String(createdAt) };
           // the new limits first: the row says running only once the instance runs with them
-          if (want !== null && this.mustApply(row, p, want)) {
+          if (this.mustApply(row, p, want)) {
             let created: Instance | null;
             try {
               created = await this.applyLimits(ctx, p, held, row, handle, fence, signal, want);
@@ -3647,14 +3590,13 @@ export class SandboxService {
     row: Row,
     fence: Fence,
     signal: AbortSignal,
-    want: DeviceLimits | null,
+    want: DeviceLimits,
   ): Promise<Instance> {
     const id = ctx.deviceId;
     const name = deviceResourceName(id);
     // the roots the device's authority was last committed with; a device that never had an
-    // instance has none yet (NULL), so the first commit compares the new instance's roots with
-    // what the device displayed (a local machine's reported roots), not with placeholder defaults
-    // a local machine never uses: its first start is no roots change (no consent reset, no revoke)
+    // instance has none yet (NULL): its first commit is no roots change (no consent reset, no
+    // revoke)
     const committedRoots = row.permission_roots ?? (row.handle ? rootsOf(row.handle) : null);
     await this.fenced(held, id, fence, {
       org_id: ctx.orgId,
@@ -3670,11 +3612,7 @@ export class SandboxService {
     });
     // the device's effective limits apply at creation (a changed mode or network kind is applied
     // on use, see applyLimits; other changes reach only instances created afterwards)
-    const wanted =
-      want ??
-      (await this.deviceLimits(ctx, {
-        source: p.plugin === LOCAL_PROVIDER ? "local" : "cloud",
-      }));
+    const wanted = want;
     // the record says what is in force: a provider whose limits are fixed at its file system
     // records them with the file system, any other with the instance (spec §7.1)
     const record = instanceLimitsJson(appliedOf(wanted));
@@ -3732,7 +3670,7 @@ export class SandboxService {
         provider: p.plugin,
       });
       await this.fenced(held, id, fence, { fs_status: "lost", status: "none" });
-      throw deviceFilesLost(p.plugin === LOCAL_PROVIDER);
+      throw deviceFilesLost();
     }
     let createdAt: Date;
     try {

@@ -29,6 +29,15 @@ export interface SandboxInstanceBinder {
   bind(deviceId: string, signal: AbortSignal): Promise<unknown>;
 }
 
+/**
+ * Whether a provider serves its devices over the dial-in channel: it implements
+ * `DeviceProvider.dialIn` (an extension may only when it declares `permissions.dialIn`, checked
+ * when it provides the point). Its devices are online while a gateway replica holds their machine's
+ * connection (`DialInRelay.online`).
+ */
+export const servesDialIn = (entry: Pick<DeviceProviderEntry, "impl">): boolean =>
+  entry.impl.dialIn !== undefined;
+
 /** A device provider: its name (plugin name, or an internal `@…` name) and implementation. */
 export interface DeviceProviderEntry {
   plugin: string;
@@ -87,12 +96,20 @@ export class DeviceProviders {
     return e ? this.guarded(e) : undefined;
   }
 
-  /** Every loaded `device-provider@1` extension (no internal ones), in registry order: the sweeps. */
+  /** Every loaded `device-provider@1` extension (no internal ones), in registry order. */
   loaded(): DeviceProviderEntry[] {
     return this.registry
       .list("device-provider")
       .filter((x) => x.capability === DEVICE_PROVIDER_EXTENSION_POINT)
       .map((e) => this.guarded(e));
+  }
+
+  /**
+   * Every provider of this process: the loaded `device-provider@1` extensions in registry order,
+   * then the registered kernel-internal ones (the sweeps go over each provider's own rows).
+   */
+  all(): DeviceProviderEntry[] {
+    return [...this.loaded(), ...this.internal.values()];
   }
 
   private guarded(e: { plugin: string; version: string; impl: unknown }): DeviceProviderEntry {

@@ -103,10 +103,6 @@ describe("planNetworkAsk with task grants", () => {
     unattendedAsk: "fail",
     forbiddenTools: [],
   };
-  const device = {
-    features: ["networkReport", "policyOp", "policyOpId"] as const,
-    policy: POLICY,
-  };
 
   it("a task-granted host the device still refused: the ignored note, no ask, no missing grant", () => {
     const plan = planNetworkAsk(
@@ -115,7 +111,7 @@ describe("planNetworkAsk with task grants", () => {
         { host: "other.example.com", port: 443, layer: "device" },
       ],
       run(["files.example.com"]),
-      { device: { ...device, features: [...device.features] }, unattended },
+      { allowlist: true, unattended },
     );
     expect(plan.ask).toEqual([]);
     expect(plan.missingGrants).toEqual(["network:other.example.com"]);
@@ -573,8 +569,8 @@ describe("unattended runs", () => {
       reason: "missing_grants",
       needsRole: [],
       needsAdmin: ["network:api.foo.com"],
-      deviceRefuses: false,
     });
+    expect(item).not.toHaveProperty("deviceRefuses");
     expect([...(item?.missing ?? [])].sort()).toEqual([
       "network:api.foo.com",
       "network:files.example.com",

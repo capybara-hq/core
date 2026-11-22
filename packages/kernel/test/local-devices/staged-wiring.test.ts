@@ -130,7 +130,12 @@ async function fixture() {
     relay,
     { orgOf: forbidden, activeMachine: forbidden },
     { machineRoots: forbidden },
-    { devicePolicy: forbidden, deviceLimits: forbidden, hostGrantCeiling: forbidden },
+    {
+      devicePolicy: forbidden,
+      deviceLimits: forbidden,
+      hostGrantCeiling: forbidden,
+      hostRefusal: forbidden,
+    },
     config,
   );
   const staged = provider.staged({

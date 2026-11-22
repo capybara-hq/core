@@ -35,11 +35,8 @@ const run = (over: Partial<NetworkRunState> = {}): NetworkRunState => ({
   pending: false,
   ...over,
 });
-const owner = {
-  features: ["networkReport", "policyOp", "policyOpId"] as const,
-  policy: { mode: "auto" as const, allowedDomains: [] },
-};
-const attended = { device: { ...owner, features: [...owner.features] }, unattended: null };
+/** An attended run on a device whose provider enforces an allowlist. */
+const attended = { allowlist: true, unattended: null };
 const unattended = (mode: "fail" | "wait", trial = false): UnattendedRun => ({
   taskId: "t",
   taskRunId: "tr",
@@ -88,9 +85,9 @@ describe("planNetworkAsk", () => {
     expect(p.missingGrants).toEqual([]);
   });
 
-  it("a host beyond a local owner's allowlist is not asked: the owner adds it on the machine", () => {
+  it("a host a per-call grant cannot reach on this device is not asked: added to the device's list", () => {
     const why =
-      "the device owner adds it on the machine: capybara-device policy add allowedDomains a.com";
+      "a host cannot be granted per call on this device; add a.com to the device's network list";
     const p = planNetworkAsk([dev("a.com"), dev("b.com")], run(), {
       ...attended,
       refusal: (h) => (h === "a.com" ? why : null),
@@ -136,7 +133,7 @@ describe("planNetworkAsk", () => {
     // an unattended run cannot escalate: the plain note
     expect(
       planNetworkAsk(blocked, run(), {
-        device: attended.device,
+        allowlist: true,
         unattended: unattended("wait"),
         escalation: true,
       }).notes,
@@ -194,25 +191,15 @@ describe("planNetworkAsk", () => {
     ).toEqual([{ host: "a.com", port: 443 }]);
   });
 
-  it("a machine without networkReport (Docker mode) is never asked", () => {
-    const p = planNetworkAsk([dev("a.com")], run(), {
-      device: { features: ["policyOp", "policyOpId"], policy: owner.policy },
-      unattended: null,
-    });
-    expect(p).toMatchObject({ ask: [], notes: [] });
-  });
-
-  it("a program without policyOpId: no ask, no note for the device layer", () => {
-    for (const features of [["networkReport"], ["networkReport", "policyOp"]] as const) {
+  it("a provider that enforces no allowlist is never asked about a device-layer host", () => {
+    for (const allowlist of [false, undefined]) {
       const p = planNetworkAsk([dev("a.com")], run(), {
-        device: { features, policy: owner.policy },
+        ...(allowlist !== undefined && { allowlist }),
         unattended: null,
       });
       expect(p).toMatchObject({ ask: [], notes: [] });
     }
-    expect(planNetworkAsk([dev("a.com")], null, { device: null, unattended: null }).notes).toEqual(
-      [],
-    );
+    expect(planNetworkAsk([dev("a.com")], null, { unattended: null }).notes).toEqual([]);
   });
 
   it("refused before → denied note; another ask pending; the run's cap", () => {
@@ -232,7 +219,7 @@ describe("planNetworkAsk", () => {
     const p = planNetworkAsk(
       [dev("files.slack.com"), { host: "api.foo.com", port: 443, layer: "org" }],
       run(),
-      { device: attended.device, unattended: unattended("fail") },
+      { allowlist: true, unattended: unattended("fail") },
     );
     expect(p.ask).toEqual([]);
     expect(p.notes[0]).toBe(
@@ -242,13 +229,13 @@ describe("planNetworkAsk", () => {
     // wait mode and trial runs ask
     expect(
       planNetworkAsk([dev("a.com")], run(), {
-        device: attended.device,
+        allowlist: true,
         unattended: unattended("wait"),
       }).ask,
     ).toHaveLength(1);
     expect(
       planNetworkAsk([dev("a.com")], run(), {
-        device: attended.device,
+        allowlist: true,
         unattended: unattended("fail", true),
       }).ask,
     ).toHaveLength(1);

@@ -1,13 +1,13 @@
 import { createHash } from "node:crypto";
 import {
   isFileSystemGoneError,
+  isProjectPathRefusedError,
   isSandboxGoneError,
   parseSkillMd,
   SKILL_ENTRY_FILE,
 } from "@capybara-hq/plugin-sdk";
 import { MAX_DEVICE_LIST_ENTRIES } from "@capybara-hq/plugin-sdk/device-protocol";
 import type { EventPayload } from "../../conversations/events.js";
-import { POLICY_REFUSAL_PREFIX } from "../../local-devices/local-codec.js";
 import { PROJECT_SKILLS_DIR } from "../../sandbox/kernel-read.js";
 import type { SandboxMode } from "../../sandbox/modes.js";
 
@@ -134,11 +134,7 @@ export const projectUnavailable = {
       "unreadable",
       `The project's root ${clipped(root)} was not read: this device's runtime refused the kernel's read-only read.`,
     ),
-  unsupported: () =>
-    unavailable(
-      "unsupported",
-      "The device does not offer projects; capybara-device on that machine needs an update.",
-    ),
+  unsupported: () => unavailable("unsupported", "The device's provider does not offer projects."),
 } as const;
 
 /** The snapshot of a project the run cannot use: the reason alone, no AGENTS.md, no skills. */
@@ -159,9 +155,6 @@ interface Reading {
 }
 
 const messageOf = (e: unknown): string => (e instanceof Error ? e.message : String(e));
-
-const isPolicyRefusal = (e: unknown): boolean =>
-  e instanceof Error && e.message.startsWith(POLICY_REFUSAL_PREFIX);
 
 /** The hex sha256 of a file's bytes: a skill's digest. */
 const digestOf = (data: Uint8Array): string => createHash("sha256").update(data).digest("hex");
@@ -224,7 +217,8 @@ export async function readProjectKnowledge(
     st = await files.stat(root);
   } catch (e) {
     if (r.fatal(e)) throw e;
-    if (isPolicyRefusal(e)) return cannot(projectUnavailable.outsideMode(root, mode));
+    // the device's provider refusing the project's directory (its reason is not model text)
+    if (isProjectPathRefusedError(e)) return cannot(projectUnavailable.outsideMode(root, mode));
     r.log("project root could not be read", { path: root, reason: messageOf(e) });
     return cannot(projectUnavailable.unreadable(root));
   }

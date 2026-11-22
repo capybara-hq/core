@@ -35,6 +35,7 @@ import { hostGrantable } from "../sandbox/device-sandbox.js";
 import { providerLimits } from "../sandbox/modes.js";
 import { normalizeHost, orgAllows } from "../sandbox/network-grants.js";
 import { PermissionCallGrants } from "../sandbox/permission-call-grants.js";
+import { networkOfSandbox } from "../sandbox/permission-facts.js";
 import { deviceNotFound, SandboxService } from "../sandbox/sandbox.service.js";
 import { localCall } from "./local-codec.js";
 import { LocalMachineReports, sameRoots } from "./local-machine-reports.js";
@@ -152,7 +153,7 @@ export class LocalDeviceProvider implements DeviceProvider {
     @Inject(SandboxService)
     private readonly sandbox: Pick<
       SandboxService,
-      "devicePolicy" | "deviceLimits" | "hostGrantCeiling"
+      "devicePolicy" | "deviceLimits" | "hostGrantCeiling" | "hostRefusal"
     >,
     @Inject(KernelConfigService) private readonly config: Pick<KernelConfigService, "get">,
     @Optional() @Inject(PermissionCallGrants) private readonly callGrants?: PermissionCallGrants,
@@ -272,10 +273,14 @@ export class LocalDeviceProvider implements DeviceProvider {
       const orgId = await this.targets.orgOf(deviceId);
       if (orgId === null) throw deviceNotFound();
       const policy = await this.sandbox.devicePolicy({ orgId, deviceId });
-      const limits = await this.sandbox.deviceLimits(
-        { orgId, deviceId },
-        { policy, source: "local" },
-      );
+      // the limits the machine intersects carry the device sandbox network under its provider
+      // support (the network each operation's scope names), never the wider lifecycle one
+      const [base, { box }] = await Promise.all([
+        this.sandbox.deviceLimits({ orgId, deviceId }, { policy }),
+        this.sandbox.hostRefusal({ orgId, deviceId }),
+      ]);
+      const network = networkOfSandbox(box);
+      const limits = { ...base, network: { kind: network.kind, hosts: [...network.hosts] } };
       if (!this.callGrants)
         throw new Error(
           "Admitted execution authority is unavailable; check the device operation configuration",

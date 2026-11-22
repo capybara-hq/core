@@ -589,7 +589,7 @@ describe("HTTP output of managed tasks", () => {
     expect(res.json()).toMatchObject({
       source: "event",
       truncated: true,
-      unavailable: { reason: "output_missing", environment: "local" },
+      unavailable: { reason: "output_missing", provider: "@managed-consumer-test" },
     });
     expect((res.json() as { text: string }).text).toContain("last words");
   });

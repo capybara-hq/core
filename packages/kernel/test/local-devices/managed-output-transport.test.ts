@@ -142,7 +142,12 @@ async function fixture(clientCap = 69632, serverCap = 100000) {
     relay,
     { orgOf: forbidden, activeMachine: forbidden },
     { machineRoots: forbidden },
-    { devicePolicy: forbidden, deviceLimits: forbidden, hostGrantCeiling: forbidden },
+    {
+      devicePolicy: forbidden,
+      deviceLimits: forbidden,
+      hostGrantCeiling: forbidden,
+      hostRefusal: forbidden,
+    },
     config,
   );
   const staged = provider.stagedOperations({

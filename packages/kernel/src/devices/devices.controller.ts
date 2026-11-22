@@ -39,16 +39,15 @@ import {
  * - `POST / { name, provider? }` → 201 `{ device }`, bound for life to `provider` (one of
  *   `providers`, else 400 `validation_failed` at `provider`) or the default provider (none: 400
  *   `device.provider_required`); `GET /:id` → `{ device }`;
- * - `PATCH /:id { name?, network? }` → `{ device }`: renames it and sets a cloud device's sandbox
- *   network (`{ mode: open | allowlist | none | null, hosts? }`, approval-only profiles design,
- *   "Settings model") within its org's and the platform's ceilings (400
- *   `device.network_not_allowed` above them). A local device's network lives on its machine (409
- *   `device.ceiling_on_machine`: its owner changes it there). An API token may only narrow
- *   it (400 `device.network_not_allowed`);
+ * - `PATCH /:id { name?, network? }` → `{ device }`: renames it and sets its sandbox network
+ *   (`{ mode: open | allowlist | none | null, hosts? }`, approval-only profiles design, "Settings
+ *   model") within its org's and the platform's ceilings (400 `device.network_not_allowed` above
+ *   them), whatever its provider. An API token may only narrow it (400
+ *   `device.network_not_allowed`);
  * - `DELETE /:id` → 202 (destroyed by a job after the response);
  * - `POST /:id/files/reset` → 202 (the reset is enqueued: a worker empties the files, the next use
- *   starts empty);
- * - `DELETE /:id/machine` → 204: a local device's machine is disconnected (its credential
+ *   starts empty; 409 `device.files_on_device` when its provider's report offers no reset);
+ * - `DELETE /:id/machine` → 204: a dial-in device's machine is disconnected (its credential
  *   revoked; it must sign in again);
  * - a device's projects (project root design §4.1, §4.2), owner only (anyone else:
  *   `device.not_found`): `GET /:id/projects` → the ones its current mode can read;

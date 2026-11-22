@@ -1,5 +1,6 @@
 import {
   type DeviceProvider,
+  isDeviceRequestNotSent,
   isSandboxPermissionUnsupportedError,
   isSandboxScopeDeniedError,
   parseSandboxExecutionRef,
@@ -12,7 +13,6 @@ import { Inject, Injectable, Optional } from "@nestjs/common";
 import { MANAGED_STOP_GRACE_MS, ManagedInstanceMismatchError } from "../background/managed.js";
 import { BackgroundTaskStopper } from "../background/stop.js";
 import { BackgroundTaskStore } from "../background/store.js";
-import { isDeviceRequestNotSent } from "../dial-in/relay.js";
 import { KernelConfigService } from "../infra/config/kernel-config.service.js";
 import { KernelDb } from "../infra/database/kernel-db.js";
 import { KERNEL_LOGGER } from "../infra/tokens.js";

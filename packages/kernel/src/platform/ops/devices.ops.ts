@@ -33,18 +33,14 @@ function stateOf(e: DeviceView): { state: string; reason?: string; next?: string
       next: "Ask an org admin to switch its provider back on; use another device meanwhile.",
     };
   }
-  if (e.filesLost && e.source === "local") {
-    return {
-      state: "files_lost",
-      reason: "Its directory is gone from the connected machine.",
-      next: "Ask the person to run capybara-device logout, then capybara-device login into this device, on that machine.",
-    };
-  }
   if (e.filesLost) {
     return {
       state: "files_lost",
       reason: "Its file system is gone at the provider.",
-      next: "Wipe its files with devices.reset-files to use it again.",
+      next:
+        e.report?.reset === false
+          ? "Its provider offers no file reset: ask the person to set the device up again where its provider keeps its files, or use another device."
+          : "Wipe its files with devices.reset-files to use it again.",
     };
   }
   if (e.reconcileRequired) {
@@ -63,8 +59,8 @@ const row = (e: DeviceView) => ({
   name: labelOf(e),
   ...stateOf(e),
   isDefault: e.isDefault,
-  source: e.source,
   provider: e.provider,
+  dialIn: e.dialIn,
   online: e.online,
   machine: e.machine && {
     name: e.machine.name,
@@ -134,7 +130,7 @@ export class DevicesOperations implements OnModuleInit {
       defineOperation({
         id: "devices.list",
         description:
-          "List your own devices in this org: one compact row each (name, state, whether it is the default, source: cloud or local, provider, whether a local one is online and its machine, last use), plus the default and last used ids, the device providers on in this org (a new device may name one) and the default provider (null: a new device must name one). The default device is shown as Personal. A device stays on the provider it was created on; while that provider is off it is unavailable.",
+          "List your own devices in this org: one compact row each (name, state, whether it is the default, provider, whether it is a dial-in device signed in from a machine, whether that machine is online and which it is, last use), plus the default and last used ids, the device providers on in this org (a new device may name one) and the default provider (null: a new device must name one). The default device is shown as Personal. A device stays on the provider it was created on; while that provider is off it is unavailable.",
         input: z.object({}).strict(),
         example: {},
         authz: { orgAction: "agents.use" },
@@ -154,7 +150,7 @@ export class DevicesOperations implements OnModuleInit {
       defineOperation({
         id: "devices.get",
         description:
-          "Read one of your devices with its source (cloud or local), provider, state, instance, the machine of a local one and whether it is online, limits, its sandbox (the network in effect and its ceiling: open, allowlist or none, with the allowlist hosts; the device's own network setting and host list; whether a call may run outside the sandbox; which layer set each ceiling; a pending change that applies on its next use; its recent setting changes), a local machine's owner ceiling, and creation time. Takes the id from devices.list. A local device's sandbox is widened only on its machine; a cloud device's network can be narrowed with devices.set-network.",
+          "Read one of your devices with its provider, whether it is a dial-in device (its machine and whether that is online), state, instance, its provider's report (a description of what it allows, its home, its own limits, whether it offers a file reset), limits, its sandbox (the network in effect and its ceiling: open, allowlist or none, with the allowlist hosts; the device's own network setting and host list; whether a call may run outside the sandbox; which layer set each ceiling; a pending change that applies on its next use; its recent setting changes), and creation time. Takes the id from devices.list. Its network can be narrowed with devices.set-network.",
         input: DeviceId,
         example: { deviceId: "4e8a0c1d-6b2f-4a37-8d19-3c5e7f9a1b20" },
         authz: { orgAction: "agents.use" },
@@ -304,7 +300,7 @@ export class DevicesOperations implements OnModuleInit {
           },
           {
             code: "device.files_on_device",
-            next: "Its files are on its connected machine: ask the person to run capybara-device logout, then capybara-device login into this device, on that machine.",
+            next: "Its provider does not reset its files (the message says what it is): use another device, or ask the person to set this one up again.",
           },
           {
             code: "device.unavailable",
@@ -391,7 +387,7 @@ export class DevicesOperations implements OnModuleInit {
       defineOperation({
         id: "devices.set-network",
         description:
-          "Narrow the sandbox network of one of your cloud devices: mode allowlist (its organization's allowed hosts, optionally narrowed to hosts: a device's list never adds a host) or none (no network). Only narrowing is allowed here, in its stored setting and in effect: opening the network, adding a host, dropping its own host list or following the organization again (mode null) is refused and needs the person on the device's page. A local device's network is kept on its machine. Takes the id from devices.list; devices.get shows the network in effect.",
+          "Narrow the sandbox network of one of your devices: mode allowlist (its organization's allowed hosts, optionally narrowed to hosts: a device's list never adds a host) or none (no network). Only narrowing is allowed here, in its stored setting and in effect: opening the network, adding a host, dropping its own host list or following the organization again (mode null) is refused and needs the person on the device's page. Takes the id from devices.list; devices.get shows the network in effect.",
         input: DeviceId.extend({ network: DeviceNetworkBody }).strict(),
         example: {
           deviceId: "4e8a0c1d-6b2f-4a37-8d19-3c5e7f9a1b20",
@@ -410,10 +406,6 @@ export class DevicesOperations implements OnModuleInit {
           {
             code: "device.network_not_allowed",
             next: "Through this tool a device's network may only narrow, within its organization's hosts: pick allowlist or none, or hosts its organization allows (devices.get shows them). To open it, ask the person to change it on the device's page; a host outside the organization's list needs an org admin.",
-          },
-          {
-            code: "device.ceiling_on_machine",
-            next: "This is a local device: its network is kept on its machine. Ask the person to narrow it on the device's page or on the machine.",
           },
         ],
         precheck: (i, ctx) =>
@@ -506,11 +498,7 @@ export class DevicesOperations implements OnModuleInit {
           },
           {
             code: "device.offline",
-            next: "Its machine is offline: ask the person to start capybara-device on it, then call again.",
-          },
-          {
-            code: "device.project_home_unknown",
-            next: "Ask the person to update capybara-device on that machine and reconnect it.",
+            next: "The machine serving it is offline: ask the person to connect that machine again, then call again.",
           },
         ],
         run: (input, ctx) =>
@@ -561,11 +549,11 @@ export class DevicesOperations implements OnModuleInit {
           },
           {
             code: "device.projects_unsupported",
-            next: "This device offers no projects: work without one, or ask the person to update capybara-device.",
+            next: "This device's provider offers no projects: work without one.",
           },
           {
             code: "device.offline",
-            next: "Its machine is offline: ask the person to start capybara-device on it, then call again.",
+            next: "The machine serving it is offline: ask the person to connect that machine again, then call again.",
           },
         ],
         precheck: (i, ctx) =>

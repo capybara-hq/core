@@ -1,6 +1,7 @@
 import {
   FileSystemGoneError,
   isDeviceOfflineError,
+  ProjectPathRefusedError,
   SandboxGoneError,
   SandboxOperationOutcomeUnknownError,
   SandboxPermissionUnsupportedError,
@@ -133,7 +134,7 @@ export function localCall(relay: Pick<DialInRelay, "request">): LocalCall {
     } catch (e) {
       throw new DeviceProtocolError(`the connected machine sent an invalid frame: ${errMsg(e)}`);
     }
-    if (!res.ok) throw failureOf(res.error);
+    if (!res.ok) throw failureOf(res.error, op);
     return parseOperationResult(
       op,
       res.result,
@@ -163,8 +164,16 @@ function localError(op: string, e: unknown): unknown {
   return e;
 }
 
-/** A machine's typed failure as the SDK error the kernel's callers know. */
-function failureOf(error: Extract<DeviceResponseBody, { ok: false }>["error"]): Error {
+/** The operations that list a project directory (a `policy` refusal there refuses the path). */
+const PROJECT_LISTINGS = new Set(["list", "scan", "browseList", "browseScan"]);
+
+/**
+ * A machine's typed failure as the SDK error the kernel's callers know. A `policy` refusal of a
+ * project listing (`list`, `scan`, the owner browse's `browseList`, `browseScan`) is the provider
+ * refusing that directory
+ * (`ProjectPathRefusedError`, its reason the machine's text).
+ */
+function failureOf(error: Extract<DeviceResponseBody, { ok: false }>["error"], op: string): Error {
   const { kind, message } = error;
   switch (kind) {
     case "denied":
@@ -182,6 +191,8 @@ function failureOf(error: Extract<DeviceResponseBody, { ok: false }>["error"]): 
     case "fs_gone":
       return new FileSystemGoneError(message);
     case "policy":
+      if (PROJECT_LISTINGS.has(op))
+        return new ProjectPathRefusedError({ en: `${POLICY_REFUSAL_PREFIX}${message}` });
       return new ToolError(`${POLICY_REFUSAL_PREFIX}${message}`);
     default:
       return new ToolError(`${ON_MACHINE_PREFIX}${message}`);

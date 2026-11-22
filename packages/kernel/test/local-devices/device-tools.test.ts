@@ -530,7 +530,7 @@ describe("local devices through the sandbox tools", () => {
     const sent = machine.frames.length;
     for (let i = 0; i < 2; i++) {
       const next = await toolError(m.run("Read", { file_path: `${ROOTS_A.workspace}/a.txt` }));
-      expect(next).toMatch(/was disconnected.*capybara-device login/);
+      expect(next).toMatch(/was disconnected.*sign that machine in to this device again/);
       expect(next).not.toMatch(/retry/i);
     }
     // the revoked machine's report left the held instance without evidence: a conversation whose
@@ -603,8 +603,7 @@ describe("local devices through the sandbox tools", () => {
     await m.run("Write", { file_path: `${ROOTS_A.workspace}/a.txt`, content: "a" });
 
     dir.gone = true;
-    const lost =
-      /directory is gone from the device's machine.*capybara-device logout, then capybara-device login/;
+    const lost = /files are gone.*sign that machine in to it again/;
     expect(await toolError(m.run("Read", { file_path: `${ROOTS_A.workspace}/a.txt` }))).toMatch(
       lost,
     );

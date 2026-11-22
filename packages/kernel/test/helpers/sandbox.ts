@@ -135,13 +135,14 @@ export function sandboxServiceFor(d: SandboxServiceDeps): SandboxService {
     });
   const db = kernelDbOver(d.db);
   const loaded = () => [...(d.providers?.() ?? [])];
-  const providers: Pick<DeviceProviders, "forDevice" | "loaded"> = {
+  const providers: Pick<DeviceProviders, "forDevice" | "loaded" | "all"> = {
     forDevice: (plugin) =>
       plugin === null
         ? undefined
         : (d.internal?.find((e) => e.plugin === plugin) ??
           loaded().find((e) => e.plugin === plugin)),
     loaded,
+    all: () => [...loaded(), ...(d.internal ?? [])],
   };
   const selection: Pick<DeviceProviderSelection, "isOnInOrg"> = {
     isOnInOrg: async (orgId, plugin) =>

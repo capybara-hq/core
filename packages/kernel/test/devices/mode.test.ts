@@ -15,6 +15,7 @@ import { LocalMachineReports } from "../../src/local-devices/local-machine-repor
 import { SandboxService } from "../../src/sandbox/sandbox.service.js";
 import { legacyDbFor } from "../helpers/conversations.js";
 import { accountsFor } from "../helpers/identity.js";
+import { SUPPORTS_BOTH } from "../helpers/installed-evidence.js";
 import {
   createOrg,
   PW,
@@ -122,11 +123,21 @@ async function localDevice(policy: Partial<DeviceLocalPolicySummary> = {}): Prom
       { ...HELLO, policy: SUMMARY(policy) },
       { report: ownerReportFor(SUMMARY(policy), { outsideSandbox: true }), connectionId: null },
     );
+  // its provider runs each operation on the machine (an operation boundary), as its stored
+  // support says (a dial-in provider stores it at hello)
+  await sql`UPDATE capybara.devices SET report = ${JSON.stringify({
+    revision: "r1",
+    description: { en: "Runs commands on this machine" },
+    home: null,
+    limits: [],
+    reset: false,
+    support: SUPPORTS_BOTH,
+  })}::jsonb WHERE id = ${deviceId}`.execute(raw);
   return deviceId;
 }
 
 describe("DevicesService.modeLevel", () => {
-  it("a local device carries its reported tier and its device sandbox network", async () => {
+  it("a device whose provider runs operations on its machine carries its tier, network and local", async () => {
     const deviceId = await localDevice();
     // the owner's network is open (a new install's default): the sandbox network is open
     expect(await devices.modeLevel(orgId, deviceId)).toEqual({

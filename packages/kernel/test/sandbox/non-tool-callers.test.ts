@@ -112,12 +112,11 @@ beforeEach(() => {
 const raw = () => sb.withSandbox.mock.calls.length;
 
 describe("device projects (owner browse)", () => {
+  // a provider that reports no home: projects stay in the workspace
   const scope = {
-    source: "local" as const,
     mode: "sandbox" as const,
-    reach: "workspace" as const,
     workspace: WS,
-    home: "/home/me",
+    home: null,
     supported: true,
   };
   const projects = (activation?: boolean, log = { warn: () => {} }) =>
@@ -206,11 +205,9 @@ describe("project knowledge (run start)", () => {
       {
         keeps: async () => true,
         scopeFor: async () => ({
-          source: "local",
           mode: "sandbox",
-          reach: "workspace",
           workspace: WS,
-          home: "/home/me",
+          home: null,
           supported: true,
         }),
       } as never,
@@ -488,7 +485,7 @@ describe("background tasks (HTTP output and stop)", () => {
       stopper as never,
       sb as never,
       { findByIdem: async () => undefined } as never,
-      fakeDb({ source: "cloud" }),
+      fakeDb({ provider: "device-fake" }),
       { forTool: async () => DEV } as never,
     );
   beforeEach(() => stopper.stop.mockClear());
@@ -550,7 +547,7 @@ describe("background tasks (HTTP output and stop)", () => {
     } as unknown as BackgroundTaskRow;
     await expect(tasks(never).output(ORG, CONV, ACC, base.id, 100)).rejects.toMatchObject({
       code: "background_task.output_unavailable",
-      details: [{ reason: "not_started", environment: "cloud" }],
+      details: [{ reason: "not_started", provider: "device-fake" }],
     });
     expect(sb.ifRunning).not.toHaveBeenCalled();
   });

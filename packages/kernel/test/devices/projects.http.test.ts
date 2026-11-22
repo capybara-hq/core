@@ -520,10 +520,10 @@ describe("device projects", () => {
     const secret = await add(d.req, d.deviceId, { path: "secret" });
     expect(secret.statusCode, secret.body).toBe(422);
     expect(errCode(secret)).toBe("device.project_path_unreadable");
-    // the machine's policy refusal is the device refusing the path in its mode
+    // the machine's policy refusal is its provider refusing the path, with the provider's text
     const locked = await add(d.req, d.deviceId, { path: "locked" });
     expect(locked.statusCode, locked.body).toBe(422);
-    expect(errCode(locked)).toBe("device.project_outside_mode");
+    expect(errCode(locked)).toBe("device.project_refused");
     // an error on the machine that stat cannot explain either: the device could not be asked
     const flaky = await add(d.req, d.deviceId, { path: "flaky" });
     expect(flaky.statusCode, flaky.body).toBe(503);

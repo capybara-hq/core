@@ -2,6 +2,7 @@ import {
   classifyAddress,
   DEFAULT_SANDBOX_ROOTS,
   type ExecResult,
+  isDeviceRequestNotSent,
   isSandboxOperationOutcomeUnknownError,
   isSandboxPermissionUnsupportedError,
   isSandboxScopeDeniedError,
@@ -18,7 +19,6 @@ import {
 } from "../../../background/launch.js";
 import { taskReasonText } from "../../../background/render.js";
 import type { BackgroundTaskRow } from "../../../background/store.js";
-import { isDeviceRequestNotSent } from "../../../dial-in/relay.js";
 import { isEscalationGrantMissing } from "../../../sandbox/operation-authority-types.js";
 import { launchRefusedText, operationIdFor } from "../../../sandbox/operation-intents.js";
 import {

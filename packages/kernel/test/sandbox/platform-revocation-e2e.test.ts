@@ -397,7 +397,7 @@ it("a network narrowing revokes only open-network work: an allowlist sibling kee
   // the instance already runs at the limits that network gives (no recreation on launch)
   const limits = await k.app
     .get(SandboxService)
-    .deviceLimits({ orgId: f.orgId, deviceId: f.deviceId }, { source: "cloud" });
+    .deviceLimits({ orgId: f.orgId, deviceId: f.deviceId });
   await f.db
     .updateTable("device_instances")
     .set({ instance_limits: JSON.stringify({ mode: limits.mode, network: limits.network }) })

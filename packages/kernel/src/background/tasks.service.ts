@@ -85,10 +85,10 @@ export type OutputUnavailableReason =
   | "unavailable"
   | "read_failed";
 
-/** Why the live read failed, and where the task ran: a `local` device or a `cloud` sandbox. */
+/** Why the live read failed, and the provider of the device the task ran on (null: none known). */
 export interface OutputUnavailable {
   reason: OutputUnavailableReason;
-  environment: "local" | "cloud";
+  provider: string | null;
 }
 
 export interface BackgroundTaskOutput {
@@ -256,7 +256,7 @@ export class BackgroundTasks {
    * The end of the task's output, at most `tail` bytes. Read live when the task's device
    * instance runs (never resuming a suspended one); a finished task that cannot be read live
    * answers with the last lines its finished event kept and why (`unavailable`). Anything else is
-   * `background_task.output_unavailable` (409) with `details: [{ reason, environment }]`.
+   * `background_task.output_unavailable` (409) with `details: [{ reason, provider }]`.
    */
   async output(
     orgId: string,
@@ -270,7 +270,7 @@ export class BackgroundTasks {
     if (read.kind === "ok") return { ...read.value, source: "live" };
     const unavailable: OutputUnavailable = {
       reason: read.reason,
-      environment: await this.environmentOf(task.deviceId),
+      provider: await this.providerOf(task.deviceId),
     };
     if (task.status !== "running") {
       const ev = await this.eventLog.findByIdem(task.conversationId, finishedEventKey(task.id));
@@ -285,15 +285,15 @@ export class BackgroundTasks {
     );
   }
 
-  /** Whether the task ran on a local device (its machine) or in a cloud sandbox. */
-  private async environmentOf(deviceId: string | null): Promise<"local" | "cloud"> {
-    if (deviceId === null) return "cloud";
+  /** The provider of the device the task ran on (`devices.provider`); null when none is known. */
+  private async providerOf(deviceId: string | null): Promise<string | null> {
+    if (deviceId === null) return null;
     const row = await this.db.db
       .selectFrom("devices")
-      .select("source")
+      .select("provider")
       .where("id", "=", deviceId)
       .executeTakeFirst();
-    return row?.source === "local" ? "local" : "cloud";
+    return row?.provider ?? null;
   }
 
   /** Reads the output from the task's running instance, or says why it cannot. */
