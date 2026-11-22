@@ -2,7 +2,10 @@ import { spawn } from "node:child_process";
 import { existsSync } from "node:fs";
 import { hostname } from "node:os";
 import { isAbsolute, resolve } from "node:path";
-import type { DeviceNetworkMode } from "@capybara-hq/plugin-sdk/device-protocol";
+import {
+  DEVICE_DIAL_IN_PROTOCOL,
+  type DeviceNetworkMode,
+} from "@capybara-hq/plugin-sdk/device-protocol";
 import { ApiError, authorize, type FetchFn, programVersion, token } from "../api.js";
 import type { Command } from "../args.js";
 import { SANDBOX_INSTALL_HINT } from "../exec/sandbox-messages.js";
@@ -203,6 +206,7 @@ export async function login(
       os: platform,
       arch,
       programVersion: programVersion(),
+      protocol: DEVICE_DIAL_IN_PROTOCOL,
     });
     out(`Open ${auth.verificationUriComplete} and confirm the code ${auth.userCode}`);
     emit({

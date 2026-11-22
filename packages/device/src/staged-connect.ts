@@ -1,5 +1,5 @@
 import type { IncomingMessage } from "node:http";
-import { DEVICE_PROTOCOL_VERSION } from "@capybara-hq/plugin-sdk/device-protocol";
+import { DEVICE_DIAL_IN_PROTOCOL } from "@capybara-hq/plugin-sdk/device-protocol";
 import WebSocket from "ws";
 import { currentBootId } from "./boot-id.js";
 import {
@@ -73,12 +73,13 @@ function defaultSleep(ms: number, signal: AbortSignal): Promise<void> {
 }
 
 /**
- * Connects a staged (protocol 4) program and serves it until told to stop (permission activation
- * W3-M), with protocol 2's lifetime rules (`connect`): backoff, liveness, 401 / 426 / replaced /
- * revoked endings. Each socket is served by {@link serveStagedSession} with the credential's one
- * session state ({@link StagedDevice.states}, grace from the credential), the binder and the owner
- * policy; a machine stop exact-stops the owned work before it is answered; a drain refuses new
- * admissions and ends once the requests and everything the bound backend owns settled.
+ * Connects a staged (protocol 5, `capybara-device/5`) program and serves it until told to stop
+ * (permission activation W3-M), with protocol 2's lifetime rules (`connect`): backoff, liveness,
+ * 401 / 426 / replaced / revoked endings, and the kernel's `stop` frame. Each socket is served by
+ * {@link serveStagedSession} with the credential's one session state ({@link StagedDevice.states},
+ * grace from the credential), the binder and the owner policy; a machine stop exact-stops the
+ * owned work before it is answered; a drain refuses new admissions and ends once the requests and
+ * everything the bound backend owns settled.
  */
 export function connectStaged(device: StagedDevice, opts: StagedConnectOptions = {}): Connection {
   const err = opts.err ?? ((l: string) => console.error(l));
@@ -188,6 +189,8 @@ export function connectStaged(device: StagedDevice, opts: StagedConnectOptions =
         exit: 0,
         message: reason === "revoked" ? DISCONNECTED_MESSAGE : DELETED_MESSAGE,
       }),
+    // the envelope's `stop`: the kernel asks for a drain or an immediate stop
+    kernelStop: (reason: "drain" | "stop") => (reason === "drain" ? drain() : stop()),
   };
 
   let attempt = 0;
@@ -207,7 +210,7 @@ export function connectStaged(device: StagedDevice, opts: StagedConnectOptions =
       const sock = new WebSocket(cred.connectUrl, {
         headers: {
           Authorization: `Bearer ${cred.credential}`,
-          "X-Capybara-Device-Protocol": String(DEVICE_PROTOCOL_VERSION),
+          "X-Capybara-Device-Protocol": DEVICE_DIAL_IN_PROTOCOL,
         },
       });
       ws = sock;
@@ -258,8 +261,9 @@ export function connectStaged(device: StagedDevice, opts: StagedConnectOptions =
             sock.close(4400, "Device report unavailable; reconnect");
             return;
           }
-          // the owner changed the ceiling on the machine: push the new owner report. A report that
-          // fails now (a broken policy.json) is said and retried by the check, never thrown.
+          // the owner changed the ceiling on the machine: push the new owner report as an event
+          // (the provider turns it into a report revision change). A report that fails now (a
+          // broken policy.json) is said and retried by the check, never thrown.
           let sent = "";
           try {
             sent = JSON.stringify(report_(device));
@@ -274,7 +278,7 @@ export function connectStaged(device: StagedDevice, opts: StagedConnectOptions =
               const json = JSON.stringify(next);
               if (json === sent) return;
               sent = json;
-              sock.send(JSON.stringify({ type: "policy", ...next }));
+              sock.send(JSON.stringify({ type: "event", body: { type: "policy", ...next } }));
             })().catch((error: unknown) =>
               err(`Owner ceiling reconciliation failed: ${String(error)}`),
             );
@@ -361,31 +365,30 @@ export function connectStaged(device: StagedDevice, opts: StagedConnectOptions =
       lifetime.abort();
     });
 
-  return {
-    done,
-    drain() {
-      if (draining) return;
-      setState("draining");
-      draining = true;
-      // no new admission at once; ends when the requests and the owned work settled
-      void drainStagedSession(state, device.drainTarget(), new AbortController().signal)
-        .then(() => heldAnswersDelivered())
-        .then(() => finish({ exit: 0 }))
-        .catch((error: unknown) => {
-          err(`Drain failed: ${String(error)}`);
-          finish({ exit: 1 });
-        });
-    },
-    stop() {
-      if (stopping || exitAfterStop) return;
-      exitAfterStop = { exit: 0 };
-      // a stopped program leaves no work running: the owned operations are stopped exactly
-      void stopOwned().then(() => finish({ exit: 0 }));
-    },
-  };
+  function drain(): void {
+    if (draining) return;
+    setState("draining");
+    draining = true;
+    // no new admission at once; ends when the requests and the owned work settled
+    void drainStagedSession(state, device.drainTarget(), new AbortController().signal)
+      .then(() => heldAnswersDelivered())
+      .then(() => finish({ exit: 0 }))
+      .catch((error: unknown) => {
+        err(`Drain failed: ${String(error)}`);
+        finish({ exit: 1 });
+      });
+  }
+  function stop(): void {
+    if (stopping || exitAfterStop) return;
+    exitAfterStop = { exit: 0 };
+    // a stopped program leaves no work running: the owned operations are stopped exactly
+    void stopOwned().then(() => finish({ exit: 0 }));
+  }
+
+  return { done, drain, stop };
 }
 
-/** The owner report and policy summary a `policy` frame carries. */
+/** The owner report and policy summary an owner change event carries. */
 function report_(device: StagedDevice) {
   return {
     policy: policySummary(device.owner.store.current(), { mode: device.mode }),

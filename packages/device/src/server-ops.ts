@@ -1,41 +1,19 @@
-import {
-  type SandboxExecutionRef,
-  type SandboxHandle,
-  type SandboxLimits,
-  validateAllowHost,
-} from "@capybara-hq/plugin-sdk";
-import {
-  type BindInstanceRequest,
-  type DeviceExecGrants,
-  type DeviceLocalPolicySummary,
-  type DeviceOwnerCeiling,
-  type DevicePolicyStatusArgs,
-  type DeviceRes,
-  type DeviceResponse,
-  isPolicyOpId,
-  type KernelReq,
-  type KernelRequest,
-  type LegacyDevicePolicyArgs,
-  type LegacyDevicePolicyStatus,
-  POLICY_ADD_REFUSED,
+import type { SandboxExecutionRef, SandboxHandle, SandboxLimits } from "@capybara-hq/plugin-sdk";
+import type {
+  BindInstanceRequest,
+  DeviceExecGrants,
+  DeviceLocalPolicySummary,
+  DeviceOwnerCeiling,
+  DeviceResponse,
+  KernelRequest,
 } from "@capybara-hq/plugin-sdk/device-protocol";
 import type { RunningOperations } from "./activity.js";
 import type { CommandLog, CommandLogEntry } from "./command-log.js";
 import type { InstanceBinder } from "./exec/instance-binding.js";
 import type { MacOperationBackend } from "./exec/mac-operation-backend.js";
-import { DeviceOpError } from "./exec/types.js";
 import { grantedHosts } from "./policy.js";
-import type { PolicyOpRecord } from "./policy-ops.js";
 import type { PolicyStore } from "./policy-store.js";
 import type { Policy } from "./state.js";
-
-/** The refusal of a `policy` op that tries to widen the owner's ceiling from the deployment. */
-export const MODE_ON_DEVICE_MESSAGE =
-  "The owner ceiling is widened on the machine only: run `capybara-device ceiling set`.";
-
-/** The refusal of a protocol 3 `mode` in a `policy` op: protocol 4 narrows through `ownerCeiling`. */
-export const MODE_REMOVED_MESSAGE =
-  'A policy op carries no mode in device protocol 4: the deployment narrows through "ownerCeiling".';
 
 /** What the summary describes besides the policy file. */
 export interface SummaryFacts {
@@ -43,21 +21,11 @@ export interface SummaryFacts {
 }
 
 /**
- * The summary the kernel keeps of a local policy (hello, `policy` op result): the device's sandbox
+ * The summary of the local policy a hello and an owner change event carry: the device's sandbox
  * allowlist. The owner ceiling travels in the owner report.
  */
 export function policySummary(p: Policy, _facts: SummaryFacts): DeviceLocalPolicySummary {
   return { allowedDomains: [...p.allowedDomains] };
-}
-
-/** A refused `policy` op, with the local audit line that records the attempt. */
-class PolicyRefused extends DeviceOpError {
-  constructor(
-    message: string,
-    readonly detail: string,
-  ) {
-    super("policy", message);
-  }
 }
 
 /** A deployment-supplied string fit for the local log: no control or format characters. */
@@ -67,247 +35,18 @@ function clean(s: unknown, max: number): string {
     .slice(0, max);
 }
 
-/** Lowercased hosts of a `policy` op's `remove`; throws a `policy` error naming the first bad one. */
-function opHosts(list: unknown): string[] {
-  if (list === undefined) return [];
-  if (!Array.isArray(list)) throw new DeviceOpError("policy", "remove must be a list of hosts");
-  return list.map((raw) => {
-    if (typeof raw !== "string")
-      throw new DeviceOpError("policy", "remove must be a list of hosts");
-    const host = raw.toLowerCase();
-    const errors = validateAllowHost(host);
-    if (errors.length > 0) {
-      throw new DeviceOpError("policy", `${JSON.stringify(raw)}: ${errors.join("; ")}`);
-    }
-    return host;
-  });
-}
-
 /**
- * Applies a `policy` op to the local policy (a trust boundary: the deployment is not the owner).
- * Protocol 4: the deployment only narrows; widening happens only on the machine.
- *
- * - `add` is refused ({@link POLICY_ADD_REFUSED}) and writes nothing: the owner adds hosts on the
- *   machine (`capybara-device policy add allowedDomains`).
- * - `mode` (protocol 3) is refused: `ownerCeiling` names each narrowing.
- * - `ownerCeiling`: a narrowing only ({@link ownerCeilingNarrowing}); anything else is refused.
- * - `remove` removes hosts from the sandbox allowlist; every host is validated.
- *
- * The op is idempotent. Returns the result and the local audit line; a refusal carries its audit
- * line too ({@link PolicyRefused}).
+ * The owner's local controls a session serves with: the policy store, the strict owner report
+ * (the hello and the owner change event carry it), the reconciliation of live owners after the
+ * owner changed the ceiling, the command log and the running operations.
  */
-function applyPolicyOp(
-  store: PolicyStore,
-  args: LegacyDevicePolicyArgs,
-  facts: SummaryFacts,
-  written: () => void,
-): { result: { policy: DeviceLocalPolicySummary }; detail: string } {
-  const source = (args.source ?? {}) as Partial<LegacyDevicePolicyArgs["source"]>;
-  const fromApproval = source.approvalId !== undefined;
-  const by =
-    `by ${clean(source.accountName, 100)} (${clean(source.accountId, 100)}) ` +
-    `via ${clean(source.via, 10)}`;
-  const approval = fromApproval ? `, approval ${clean(source.approvalId, 100)}` : "";
-  // Read as unknown: the frame parser may have been bypassed, so nothing is assumed of the shape.
-  const rawAdd: unknown = (args as { add?: unknown }).add;
-  const rawMode: unknown = (args as { mode?: unknown }).mode;
-  if (rawAdd !== undefined) {
-    // widening the allowlist from the deployment: refused before anything is read or written
-    const asked = Array.isArray(rawAdd) ? rawAdd.map((h) => clean(h, 253)).join(", ") : "?";
-    throw new PolicyRefused(
-      POLICY_ADD_REFUSED,
-      `policy refused add ${clean(asked, 200)} ${by}${approval}`,
-    );
-  }
-  let remove: string[];
-  try {
-    remove = [...new Set(opHosts(args.remove))];
-  } catch (e) {
-    // an invalid host is a refused change too, audited with who asked for it
-    const message = e instanceof Error ? e.message : String(e);
-    throw new PolicyRefused(message, `policy refused (${clean(message, 200)}) ${by}${approval}`);
-  }
-  const parts: string[] = [];
-  if (remove.length > 0) parts.push(`remove ${remove.join(", ")}`);
-  if (rawMode !== undefined) parts.push(`mode ${clean(String(rawMode), 40)}`);
-  const ceilingArg: unknown = (args as { ownerCeiling?: unknown }).ownerCeiling;
-  if (ceilingArg !== undefined) parts.push(`ownerCeiling ${clean(JSON.stringify(ceilingArg), 80)}`);
-  const what = parts.length > 0 ? parts.join("; ") : "unchanged";
-  const refused = `policy refused ${what} ${by}${approval}`;
-  if (rawMode !== undefined) {
-    // protocol 3's mode: protocol 4 names each narrowing in `ownerCeiling`, never a mode
-    throw new PolicyRefused(MODE_REMOVED_MESSAGE, refused);
-  }
-  const narrowing = ownerCeilingNarrowing((args as { ownerCeiling?: unknown }).ownerCeiling);
-  if (narrowing === undefined)
-    throw new PolicyRefused(
-      "The owner ceiling is widened on the machine only (capybara-device ceiling set)",
-      refused,
-    );
-  // removing a host from the sandbox allowlist is a narrowing as well
-  for (const h of narrowing.removeAllowedDomains) if (!remove.includes(h)) remove.push(h);
-  const change = (p: Policy): Policy => ({
-    ...p,
-    ownerCeiling: {
-      outsideSandbox: p.ownerCeiling.outsideSandbox && !narrowing.outsideSandboxOff,
-      network: narrowing.networkAllowlist ? "allowlist" : p.ownerCeiling.network,
-      restrictedProjectReach: narrowing.workspaceReach
-        ? "workspace"
-        : p.ownerCeiling.restrictedProjectReach,
-    },
-    allowedDomains: p.allowedDomains.filter((d) => !remove.includes(d.toLowerCase())),
-  });
-  const next = store.update(change, { written });
-  return {
-    result: { policy: policySummary(next, facts) },
-    detail: `policy ${what} ${by}${approval}`,
-  };
-}
-
-/** An owner-ceiling narrowing as this program applies it: each field can only narrow. */
-interface CeilingNarrowing {
-  outsideSandboxOff: boolean;
-  networkAllowlist: boolean;
-  workspaceReach: boolean;
-  removeAllowedDomains: string[];
-}
-
-/**
- * The owner-ceiling narrowing of a `policy` op (a trust boundary), read as unknown: the frame
- * parser may have been bypassed. It takes the fields of `DeviceOwnerCeilingNarrowing`
- * (`outsideSandbox: false`, `network: "allowlist"`, `removeAllowedDomains`,
- * `restrictedProjectReach: "workspace"`). Undefined for anything that could widen: another value,
- * another key (the protocol 3 `fullAccess` among them) or another shape.
- */
-export function ownerCeilingNarrowing(raw: unknown): CeilingNarrowing | undefined {
-  const none: CeilingNarrowing = {
-    outsideSandboxOff: false,
-    networkAllowlist: false,
-    workspaceReach: false,
-    removeAllowedDomains: [],
-  };
-  if (raw === undefined) return none;
-  if (typeof raw !== "object" || raw === null || Array.isArray(raw)) return undefined;
-  const o = raw as Record<string, unknown>;
-  const allowed = ["outsideSandbox", "network", "restrictedProjectReach", "removeAllowedDomains"];
-  if (Object.keys(o).some((k) => !allowed.includes(k))) return undefined;
-  if (o.outsideSandbox !== undefined && o.outsideSandbox !== false) return undefined;
-  if (o.network !== undefined && o.network !== "allowlist") return undefined;
-  if (o.restrictedProjectReach !== undefined && o.restrictedProjectReach !== "workspace")
-    return undefined;
-  let removeAllowedDomains: string[] = [];
-  if (o.removeAllowedDomains !== undefined) {
-    const list = o.removeAllowedDomains;
-    if (!Array.isArray(list) || list.length > 100 || list.some((h) => typeof h !== "string"))
-      return undefined;
-    removeAllowedDomains = [...new Set((list as string[]).map((h) => h.toLowerCase()))];
-  }
-  return {
-    outsideSandboxOff: o.outsideSandbox === false,
-    networkAllowlist: o.network === "allowlist",
-    workspaceReach: o.restrictedProjectReach === "workspace",
-    removeAllowedDomains,
-  };
-}
-
-/** The answer to a `policy` op whose outcome is logged already: the change is not made again. */
-function answerFromLog(
-  req: KernelReq,
-  known: PolicyOpRecord,
-  store: PolicyStore,
-  facts: SummaryFacts,
-): DeviceRes {
-  if (known.outcome === "applied") {
-    return {
-      type: "res",
-      id: req.id,
-      ok: true,
-      result: { policy: policySummary(store.current(), facts) },
-    };
-  }
-  return {
-    type: "res",
-    id: req.id,
-    ok: false,
-    error: { kind: known.kind ?? "policy", message: known.message ?? "refused" },
-  };
-}
-
-/**
- * A `policy` op by its op id: logged `started` before anything is checked or written, then
- * `applied` (inside the policy lock, right after the write) or `refused` with the message. An op
- * id applied or refused before is answered from the log without applying it again. Throws like
- * {@link applyPolicyOp}.
- */
-function servePolicyOp(
-  req: KernelReq,
-  store: PolicyStore,
-  facts: SummaryFacts,
-): { res: DeviceRes; detail?: string } {
-  const opId: unknown = (req.args as { opId?: unknown }).opId;
-  if (!isPolicyOpId(opId)) {
-    throw new DeviceOpError("error", 'invalid request: field "opId" must be a valid op id');
-  }
-  const known = store.ops.claim(opId);
-  if (known !== undefined) return { res: answerFromLog(req, known, store, facts) };
-  try {
-    const { result, detail } = applyPolicyOp(
-      store,
-      req.args as LegacyDevicePolicyArgs,
-      facts,
-      () => {
-        try {
-          store.ops.recordHeld({ opId, outcome: "applied" });
-        } catch {
-          // the change stands; the log keeps `started` and the deployment learns it from the hello
-        }
-      },
-    );
-    return { res: { type: "res", id: req.id, ok: true, result }, detail };
-  } catch (e) {
-    // an op the log already says was applied stays applied (the log reports what the file holds)
-    if (store.ops.get(opId)?.outcome !== "applied") {
-      try {
-        store.ops.record({
-          opId,
-          outcome: "refused",
-          message: e instanceof Error ? e.message : String(e),
-          kind: e instanceof DeviceOpError ? e.kind : "error",
-        });
-      } catch {
-        // nothing was applied; the log keeps `started`
-      }
-    }
-    throw e;
-  }
-}
-
-/** What the log says of an op id, with the summary now. Read-only. */
-function policyStatus(
-  store: PolicyStore,
-  args: unknown,
-  facts: SummaryFacts,
-): LegacyDevicePolicyStatus {
-  const opId: unknown = (args as Partial<DevicePolicyStatusArgs> | null)?.opId;
-  if (!isPolicyOpId(opId)) {
-    throw new DeviceOpError("error", 'invalid request: field "opId" must be a valid op id');
-  }
-  const known = store.ops.get(opId);
-  return {
-    outcome: known?.outcome ?? "unknown",
-    policy: policySummary(store.current(), facts),
-    ...(known?.outcome === "refused" && known.message !== undefined && { message: known.message }),
-  };
-}
-
-/** What the program needs to serve `policy` / `policyStatus` with owner reports (B2). */
 export interface StagedOwnerPolicy {
   store: PolicyStore;
-  /** The strict owner report now (`issueOwnerReport`), issued after the write. */
+  /** The strict owner report now (`issueOwnerReport`). */
   report: () => DeviceOwnerCeiling;
   /** Reconciles live owners against the fresh strict ceiling (`reconcileOwnerCeiling`). */
   reconcile: (signal: AbortSignal) => Promise<void>;
-  /** The owner's local command log: operations and policy changes are recorded there. */
+  /** The owner's local command log: the operations are recorded there. */
   log?: CommandLog;
   /** The operations executing now, for the control socket's `running` op (never their command). */
   running?: RunningOperations;
@@ -321,36 +60,6 @@ function note(log: CommandLog | undefined, entry: Omit<CommandLogEntry, "time">)
   } catch {
     // the local log never fails an operation
   }
-}
-
-/** Who asked for a policy op, for its audit line (read as unknown: the frame may be invalid). */
-function policyBy(args: unknown): string {
-  const source = ((args as { source?: unknown } | null)?.source ?? {}) as Record<string, unknown>;
-  const approval =
-    source.approvalId !== undefined ? `, approval ${clean(source.approvalId, 100)}` : "";
-  return (
-    `by ${clean(source.accountName, 100)} (${clean(source.accountId, 100)}) ` +
-    `via ${clean(source.via, 10)}${approval}`
-  );
-}
-
-/** The audit line of a policy op that failed for a reason other than a refusal. */
-function notePolicyFailure(log: CommandLog | undefined, req: KernelReq, error: unknown): void {
-  const message = error instanceof Error ? error.message : String(error);
-  notePolicy(log, req, `policy failed (${clean(message, 200)}) ${policyBy(req.args)}`);
-}
-
-/** The audit line of a policy change from the deployment, with the deciding account. */
-function notePolicy(log: CommandLog | undefined, req: KernelReq, detail: string): void {
-  const source = (req.args as { source?: { accountId?: unknown } } | null)?.source;
-  const accountId = clean(source?.accountId, 100);
-  note(log, {
-    op: "policy",
-    tag: null,
-    actor: accountId === "" ? null : { accountId },
-    exitCode: null,
-    detail,
-  });
 }
 
 /** The command-log line of an exec or a background start: isolation, actor, grants; no command. */
@@ -398,65 +107,9 @@ function operationEntry(
 }
 
 /**
- * A `policy` / `policyStatus` op: the op log, idempotence and narrowing only, then, after a
- * successful write, live owners are reconciled at once and the answer carries the owner report
- * issued for the written revision. An applied status carries the current report. Exported for the
- * trust-boundary tests, which call it with a request the frame parser would refuse.
- */
-export async function serveOwnerPolicyV3(
-  owner: StagedOwnerPolicy,
-  req: KernelReq,
-  signal: AbortSignal,
-): Promise<DeviceResponse> {
-  const proto = await import("@capybara-hq/plugin-sdk/device-protocol");
-  const facts: SummaryFacts = { mode: "os" };
-  try {
-    if (req.op === "policyStatus") {
-      const status = policyStatus(owner.store, req.args, facts);
-      return {
-        type: "res",
-        id: req.id,
-        ok: true,
-        result: proto.parseOperationResult("policyStatus", {
-          ...status,
-          ...(status.outcome === "applied" && { ownerCeiling: owner.report() }),
-        }),
-      };
-    }
-    const { res, detail } = servePolicyOp(req, owner.store, facts);
-    if (detail !== undefined) notePolicy(owner.log, req, detail);
-    if (!res.ok) return { type: "res", id: req.id, ok: false, error: res.error };
-    // successful local policy writes reconcile live owners immediately (cutover 8.4)
-    await owner.reconcile(signal);
-    return {
-      type: "res",
-      id: req.id,
-      ok: true,
-      result: proto.parseOperationResult("policy", {
-        ...(res.result as object),
-        ownerCeiling: owner.report(),
-      }),
-    };
-  } catch (e) {
-    // a refused or failed change is audited too, with who asked for it
-    if (e instanceof PolicyRefused) notePolicy(owner.log, req, e.detail);
-    else notePolicyFailure(owner.log, req, e);
-    return {
-      type: "res",
-      id: req.id,
-      ok: false,
-      error: {
-        kind: e instanceof DeviceOpError && e.kind === "policy" ? "policy" : "error",
-        message: e instanceof Error ? e.message : String(e),
-      },
-    };
-  }
-}
-
-/**
- * The device's one operation dispatch (protocol 4): every request is parsed strictly first, so an
- * operation the protocol does not define (the old `killTagged` / `killAll`, an unscoped read) is
- * refused before anything on the machine is reached.
+ * The device's one operation dispatch (protocol 5): every request body is parsed strictly first,
+ * so an operation the protocol does not define (the old `killTagged` / `killAll` and `policy` /
+ * `policyStatus`, an unscoped read) is refused before anything on the machine is reached.
  */
 export async function serveOperationV3(
   backend: MacOperationBackend,
@@ -469,16 +122,11 @@ export async function serveOperationV3(
   const sdk = await import("@capybara-hq/plugin-sdk");
   const proto = await import("@capybara-hq/plugin-sdk/device-protocol");
   try {
-    const parsed = proto.parseDeviceFrame(JSON.stringify(request), "kernel");
-    if (parsed.type !== "req") throw new proto.DeviceProtocolError("Expected an operation request");
+    // the body again, strictly: a caller that bypassed the session's parse reaches nothing
+    const parsed = proto.parseDeviceFrame({ op: request.op, args: request.args }, "req");
     const a = parsed.args;
     signal.throwIfAborted();
     let result: unknown;
-    if (parsed.op === "policy" || parsed.op === "policyStatus") {
-      if (!owner)
-        throw new sdk.SandboxPermissionUnsupportedError("This program cannot change its policy");
-      return await serveOwnerPolicyV3(owner, parsed as unknown as KernelReq, signal);
-    }
     if (parsed.op === "bindInstance") {
       // the private post-commit lifecycle binding (B4); never an implicit side effect of an operation
       if (!binder)
@@ -634,9 +282,6 @@ export async function serveOperationV3(
       ),
     };
   } catch (error) {
-    // a policy op refused before the owner controls (the frame parser) is audited as well
-    if ((request as { op?: unknown }).op === "policy")
-      notePolicyFailure(owner?.log, request as unknown as KernelReq, error);
     const kind = errorKind(sdk, error);
     return {
       type: "res",

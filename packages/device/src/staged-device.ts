@@ -10,11 +10,7 @@ import {
   type SandboxStopResult,
   validateSandboxPathShape,
 } from "@capybara-hq/plugin-sdk";
-import {
-  DEVICE_PROTOCOL_VERSION,
-  type DeviceFeature,
-  type DeviceHello,
-} from "@capybara-hq/plugin-sdk/device-protocol";
+import type { DeviceFeature } from "@capybara-hq/plugin-sdk/device-protocol";
 import { RunningOperations } from "./activity.js";
 import { CommandLog } from "./command-log.js";
 import type { OperationContainerHost } from "./exec/docker-operations.js";
@@ -32,7 +28,7 @@ import { deviceSandboxHome, osRoots, RootGuard } from "./exec/shared.js";
 import { issueOwnerReport } from "./owner-report.js";
 import type { PolicyStore } from "./policy-store.js";
 import { policySummary, type StagedOwnerPolicy } from "./server-ops.js";
-import { StagedSessionStates } from "./staged-session.js";
+import { type StagedHello, StagedSessionStates } from "./staged-session.js";
 import type { Credential } from "./state.js";
 import { PROGRAM_VERSION } from "./version.js";
 
@@ -88,7 +84,7 @@ const IDLE_LIFECYCLE: MacOperationBackend["lifecycle"] = {
   dispose: () => {},
 };
 
-/** Trusted construction input of a staged (protocol 4) program; nothing here comes off the wire. */
+/** Trusted construction input of a staged (protocol 5) program; nothing here comes off the wire. */
 export interface StagedDeviceOptions {
   cred: Credential;
   stateDir: string;
@@ -140,12 +136,11 @@ export interface StagedDevice {
   backend(): MacOperationBackend;
   /** What a drain waits for: the bound backend's owned work (nothing while unbound). */
   drainTarget(): Pick<MacOperationBackend, "lifecycle">;
-  /** The hello of a new socket: the bound generation, its verified identity and support. */
-  report(opts?: {
-    programVersion?: string;
-    home?: string;
-    bootId?: string;
-  }): Promise<Omit<DeviceHello, "transport">>;
+  /**
+   * The hello of a new socket: the program facts for the envelope, and the body with the bound
+   * generation, its verified identity and support, and the owner's ceiling.
+   */
+  report(opts?: { programVersion?: string; home?: string; bootId?: string }): Promise<StagedHello>;
   /** `create`: the roots of a new instance; the bound (now older) generation's tasks are dropped. */
   create(signal: AbortSignal): Promise<{ roots: SandboxRoots }>;
   /**
@@ -322,27 +317,30 @@ export function createStagedDevice(o: StagedDeviceOptions): StagedDevice {
       const ownerHome = r.home ?? home;
       const features: DeviceFeature[] = [];
       if (mode === "os") features.push("networkReport");
-      features.push("policyOp", "policyOpId", "projects");
+      features.push("projects");
       return {
-        type: "hello",
-        protocol: DEVICE_PROTOCOL_VERSION,
-        programVersion: r.programVersion ?? PROGRAM_VERSION,
-        os: platform === "darwin" ? "darwin" : "linux",
-        arch: process.arch,
-        mode,
-        roots,
-        sessionIsolation: false,
-        features,
-        // a container device offers only its container's workspace: the host's home is no base
-        ...(mode === "os" &&
-          validateSandboxPathShape(ownerHome).length === 0 && { home: ownerHome }),
-        ...(r.bootId !== undefined && { bootId: r.bootId }),
-        policy: policySummary(policy.current(), { mode }),
-        recentOps: policy.ops.recent(),
-        permissionSupport,
-        ownerCeiling: owner.report(),
-        instanceGeneration: bound?.binding.instanceGeneration ?? null,
-        ...(bound && { runtimeIdentity: bound.binding.runtimeIdentity }),
+        envelope: {
+          program: {
+            version: r.programVersion ?? PROGRAM_VERSION,
+            os: platform === "darwin" ? "darwin" : "linux",
+            arch: process.arch,
+            ...(r.bootId !== undefined && { bootId: r.bootId }),
+          },
+        },
+        body: {
+          mode,
+          roots,
+          sessionIsolation: false,
+          features,
+          // a container device offers only its container's workspace: the host's home is no base
+          ...(mode === "os" &&
+            validateSandboxPathShape(ownerHome).length === 0 && { home: ownerHome }),
+          policy: policySummary(policy.current(), { mode }),
+          permissionSupport,
+          ownerCeiling: owner.report(),
+          instanceGeneration: bound?.binding.instanceGeneration ?? null,
+          ...(bound && { runtimeIdentity: bound.binding.runtimeIdentity }),
+        },
       };
     },
     async create(signal) {

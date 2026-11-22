@@ -3,7 +3,11 @@ import type { AddressInfo } from "node:net";
 import type { Duplex } from "node:stream";
 import { type WebSocket, WebSocketServer } from "ws";
 
-/** A stand-in for the kernel's `/device/connect` gateway, as the program sees it. */
+/**
+ * A stand-in for the kernel's `/device/connect` gateway, as the program sees it: it speaks the
+ * dial-in envelope (`ready`, `req` with a body, `cancel`, `stop`; the program's `hello`, `res` and
+ * `event` frames carry theirs).
+ */
 export class FakeKernel {
   readonly http: Server = createServer();
   readonly wss = new WebSocketServer({ noServer: true });
@@ -48,6 +52,24 @@ export class FakeKernel {
 
   send(conn: number, frame: unknown): void {
     this.sockets[conn]?.send(JSON.stringify(frame));
+  }
+
+  /** Accepts the hello on connection `conn`. */
+  ready(conn: number): void {
+    this.send(conn, { type: "ready", connectionId: `c${conn}` });
+  }
+
+  /** Sends one request: the envelope's id and deadline around the body `{ op, args }`. */
+  request(conn: number, id: string, op: string, args: unknown, deadlineMs = 5000): void {
+    this.send(conn, { type: "req", id, deadlineMs, body: { op, args } });
+  }
+
+  /** The answer to request `id` once it arrived: its body with the envelope's id. */
+  answer(id: string): Promise<any> {
+    return this.waitFor(`answer ${id}`, () => {
+      const res = this.of("res").find((r) => r.id === id);
+      return res && { id: res.id, ...res.body };
+    });
   }
 
   of(type: string, conn?: number): any[] {

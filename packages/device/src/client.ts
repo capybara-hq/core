@@ -1,31 +1,45 @@
 /**
  * What the device program's connection shares: the messages it ends with, the reconnect backoff
- * and the running connection's interface. The connection itself is the protocol 4 one
+ * and the running connection's interface. The connection itself is the protocol 5 one
  * (`staged-connect.ts`).
  */
-import { DEVICE_PROTOCOL_VERSION } from "@capybara-hq/plugin-sdk/device-protocol";
+import {
+  DEVICE_DIAL_IN_PROTOCOL,
+  DEVICE_PROTOCOL_VERSION,
+} from "@capybara-hq/plugin-sdk/device-protocol";
 
 export const OUTDATED_MESSAGE =
   "This capybara-device is too old for the deployment. Upgrade it: npm install -g @capybara-hq/device@next";
-/** A 426 from a kernel on an older device protocol than this program's: upgrade the deployment. */
-export const deploymentOutdatedMessage = (kernelProtocol: number): string =>
-  `The deployment is older than this capybara-device: it speaks device protocol ${kernelProtocol}, this program protocol ${DEVICE_PROTOCOL_VERSION}. Ask its super admin to upgrade the deployment first, or install a capybara-device release that speaks protocol ${kernelProtocol}.`;
+/** A 426 from a kernel serving an older `capybara-device` protocol than this program's. */
+export const deploymentOutdatedMessage = (kernelProtocol: string): string =>
+  `The deployment is older than this capybara-device: it speaks ${kernelProtocol}, this program ${DEVICE_DIAL_IN_PROTOCOL}. Ask its super admin to upgrade the deployment first, or install a capybara-device release that speaks ${kernelProtocol}.`;
+/** A 426 naming another program's protocol: the device is served by another provider. */
+export const foreignProtocolMessage = (kernelProtocol: string): string =>
+  `The deployment serves this device with ${kernelProtocol}, not with capybara-device (${DEVICE_DIAL_IN_PROTOCOL}). Connect it with the program of that protocol, or log this machine in to a new device: capybara-device logout, then capybara-device login.`;
 
 /**
  * The message a 426 refusal ends the program with, from the refusal's body (the kernel's
- * `device.program_outdated` names its protocol): an older kernel is to be upgraded first, else
- * this program is outdated. An unreadable body keeps the outdated-program message.
+ * `device.program_outdated` names the protocol it serves the device with, `<name>/<major>`): an
+ * older `capybara-device` major means the deployment is to be upgraded first, another program's
+ * protocol that the device is not this program's; else (a newer major, an unreadable body) this
+ * program is outdated.
  */
 export function outdatedMessage(body: string): string {
   let message = "";
   try {
     message = String((JSON.parse(body) as { error?: { message?: unknown } }).error?.message ?? "");
   } catch {}
-  const protocol = /device protocol (\d+)/.exec(message)?.[1];
-  const kernel = protocol === undefined ? Number.NaN : Number(protocol);
-  return Number.isSafeInteger(kernel) && kernel < DEVICE_PROTOCOL_VERSION
-    ? deploymentOutdatedMessage(kernel)
-    : OUTDATED_MESSAGE;
+  for (const [, name, major] of message.matchAll(
+    /\b([a-z][a-z0-9-]{0,40})\/([1-9][0-9]{0,3})\b/g,
+  )) {
+    const protocol = `${name}/${major}`;
+    if (protocol === DEVICE_DIAL_IN_PROTOCOL) continue;
+    if (name !== "capybara-device") return foreignProtocolMessage(protocol);
+    return Number(major) < DEVICE_PROTOCOL_VERSION
+      ? deploymentOutdatedMessage(protocol)
+      : OUTDATED_MESSAGE;
+  }
+  return OUTDATED_MESSAGE;
 }
 export const DISCONNECTED_MESSAGE =
   "This machine was disconnected from the deployment. Run capybara-device logout, then capybara-device login.";

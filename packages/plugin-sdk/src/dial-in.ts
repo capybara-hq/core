@@ -88,6 +88,10 @@ const machineFrame = z.discriminatedUnion("type", [
  * positive integer throws a `RangeError`.
  */
 export function parseDialInMachineFrame(text: string, maxBytes: number): DialInMachineFrame {
+  return parseFrame(machineFrame, text, maxBytes) as DialInMachineFrame;
+}
+
+function parseFrame(schema: z.ZodType, text: string, maxBytes: number): unknown {
   if (!Number.isSafeInteger(maxBytes) || maxBytes < 1)
     throw new RangeError(`maxBytes must be a positive integer, got ${maxBytes}`);
   // a UTF-16 code unit is at least one UTF-8 byte: the length alone may already decide it
@@ -99,13 +103,35 @@ export function parseDialInMachineFrame(text: string, maxBytes: number): DialInM
   } catch {
     throw new DialInProtocolError("frame is not valid JSON");
   }
-  const r = machineFrame.safeParse(parsed);
+  const r = schema.safeParse(parsed);
   if (!r.success) {
     const issue = r.error.issues[0];
     const at = issue?.path.length ? ` at ${issue.path.join(".")}` : "";
     throw new DialInProtocolError(`invalid dial-in frame${at}: ${issue?.message ?? "malformed"}`);
   }
-  return r.data as DialInMachineFrame;
+  return r.data;
+}
+
+const kernelFrame = z.discriminatedUnion("type", [
+  z.strictObject({ type: z.literal("ready"), connectionId: id }),
+  z.strictObject({
+    type: z.literal("req"),
+    id,
+    deadlineMs: z.number().int().min(1).max(Number.MAX_SAFE_INTEGER),
+    body,
+  }),
+  z.strictObject({ type: z.literal("cancel"), id }),
+  z.strictObject({ type: z.literal("stop"), reason: z.enum(["drain", "stop"]) }),
+]);
+
+/**
+ * The machine's side of {@link parseDialInMachineFrame}: strictly parses one kernel frame, at most
+ * `maxBytes` UTF-8 bytes (checked before `JSON.parse`), an object of a known `type` with exactly
+ * that type's keys; `body` is kept as parsed. Throws {@link DialInProtocolError}; a `maxBytes`
+ * that is not a positive integer throws a `RangeError`.
+ */
+export function parseDialInKernelFrame(text: string, maxBytes: number): DialInKernelFrame {
+  return parseFrame(kernelFrame, text, maxBytes) as DialInKernelFrame;
 }
 
 /**

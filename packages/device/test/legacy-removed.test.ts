@@ -37,6 +37,12 @@ function recordingBackend() {
 const REMOVED: [op: string, args: unknown][] = [
   ["killTagged", { tags: ["t1"] }],
   ["killAll", {}],
+  // the deployment-side policy ops (protocol 5: the owner changes the policy on the machine)
+  [
+    "policy",
+    { opId: "op_1", remove: ["a.com"], source: { accountId: "a", accountName: "A", via: "web" } },
+  ],
+  ["policyStatus", { opId: "op_1" }],
 ];
 
 describe("removed protocol 2 operations", () => {
@@ -55,10 +61,8 @@ describe("removed protocol 2 operations", () => {
       expect(binder.bind).not.toHaveBeenCalled();
     });
 
-    it(`${op} is refused as unknown by the session's frame parser (the socket closes)`, () => {
-      expect(() =>
-        parseDeviceFrame(JSON.stringify(request(op, args)), "kernel", 1024 * 1024),
-      ).toThrow("Unknown operation");
+    it(`${op} is refused as unknown by the session's body parser (the socket closes)`, () => {
+      expect(() => parseDeviceFrame({ op, args }, "req")).toThrow("Unknown operation");
     });
   }
 

@@ -7,6 +7,7 @@ import {
   isDeviceOfflineError,
   isDeviceRequestNotSent,
   isSandboxScopeDeniedError,
+  parseDialInKernelFrame,
   parseDialInMachineFrame,
   SandboxScopeDeniedError,
 } from "../src/index.js";
@@ -100,6 +101,45 @@ describe("parseDialInMachineFrame", () => {
   it("rejects a malformed maxBytes argument", () => {
     expect(() => parseDialInMachineFrame("{}", 0)).toThrow(RangeError);
     expect(() => parseDialInMachineFrame("{}", Number.NaN)).toThrow(RangeError);
+  });
+});
+
+describe("parseDialInKernelFrame", () => {
+  const parse = (frame: unknown, max = 4096) => parseDialInKernelFrame(JSON.stringify(frame), max);
+  it("parses ready, req, cancel and stop and keeps a request body opaque", () => {
+    expect(parse({ type: "ready", connectionId: "c-1" })).toEqual({
+      type: "ready",
+      connectionId: "c-1",
+    });
+    const req = { type: "req", id: "r-1", deadlineMs: 5000, body: { op: "x", args: [1] } };
+    expect(parse(req)).toEqual(req);
+    expect(parse({ type: "cancel", id: "r-1" })).toEqual({ type: "cancel", id: "r-1" });
+    for (const reason of ["drain", "stop"])
+      expect(parse({ type: "stop", reason })).toEqual({ type: "stop", reason });
+  });
+  it("rejects machine frames, extra keys, bad ids, deadlines and stop reasons", () => {
+    for (const bad of [
+      { type: "hello", protocol: "capybara-device/5" },
+      { type: "res", id: "r", body: null },
+      { type: "ready", connectionId: "c", maxFrameBytes: 4096 },
+      { type: "req", id: "r", deadlineMs: 0, body: {} },
+      { type: "req", id: "r", deadlineMs: 1.5, body: {} },
+      { type: "req", id: "r", deadlineMs: 10 },
+      { type: "req", id: "bad id", deadlineMs: 10, body: {} },
+      { type: "cancel", id: "" },
+      { type: "stop", reason: "revoked" },
+      [],
+      null,
+    ])
+      expect(() => parse(bad), JSON.stringify(bad)).toThrow(DialInProtocolError);
+  });
+  it("rejects a frame over maxBytes before JSON.parse", () => {
+    const text = JSON.stringify({ type: "cancel", id: "r" });
+    expect(() => parseDialInKernelFrame(`${text}${" ".repeat(2000)}`, 1024)).toThrow(
+      "exceeds 1024 bytes",
+    );
+    expect(() => parseDialInKernelFrame("{", 1024)).toThrow("not valid JSON");
+    expect(() => parseDialInKernelFrame(text, 0)).toThrow(RangeError);
   });
 });
 

@@ -8,11 +8,7 @@ import {
   SandboxScopeDeniedError,
   SandboxWorkUnsettledError,
 } from "@capybara-hq/plugin-sdk";
-import {
-  type DeviceHello,
-  type DeviceResponse,
-  parseDeviceFrame,
-} from "@capybara-hq/plugin-sdk/device-protocol";
+import type { DeviceHello, DeviceResponse } from "@capybara-hq/plugin-sdk/device-protocol";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import WebSocket, { WebSocketServer } from "ws";
 import { bindingFile, InstanceBinder } from "../src/exec/instance-binding.js";
@@ -20,6 +16,7 @@ import { createMacOperationBackend } from "../src/exec/mac-operation-backend.js"
 import type { OrphanProcesses } from "../src/exec/mac-orphans.js";
 import { RuntimeManifestError } from "../src/exec/runtime-manifest.js";
 import { createStagedSessionState, serveStagedSession } from "../src/staged-session.js";
+import { readMachineFrame, readyFrame, requestFrame, stagedHello } from "./dial-in-wire.js";
 
 const cleanups: (() => Promise<unknown>)[] = [];
 afterEach(async () => {
@@ -681,11 +678,11 @@ it("an unbound first hello admits no operation until the authenticated bind", as
   const answers = new Map<string, (r: DeviceResponse) => void>();
   let hello: DeviceHello | undefined;
   socket.on("message", (raw) => {
-    const frame = parseDeviceFrame(raw.toString(), "device", 69632);
+    const frame = readMachineFrame(raw.toString(), 69632);
     if (frame.type === "hello") {
-      hello = frame;
-      socket.send(JSON.stringify({ type: "ready", connectionId: "c", maxFrameBytes: 69632 }));
-    } else if (frame.type === "res") answers.get(frame.id)?.(frame);
+      hello = frame.hello;
+      socket.send(readyFrame("c"));
+    } else if (frame.type === "res") answers.get(frame.res.id)?.(frame.res);
   });
   const placeholder = await createMacOperationBackend(
     {
@@ -702,12 +699,7 @@ it("an unbound first hello admits no operation until the authenticated bind", as
   );
   const session = serveStagedSession(
     client,
-    {
-      type: "hello",
-      protocol: 5,
-      programVersion: "fixture",
-      os: "darwin",
-      arch: "arm64",
+    stagedHello({
       mode: "os",
       roots: f.roots,
       sessionIsolation: false,
@@ -722,7 +714,7 @@ it("an unbound first hello admits no operation until the authenticated bind", as
       },
       ownerCeiling: owner,
       instanceGeneration: null,
-    },
+    }),
     { maxFrameBytes: 69632 },
     placeholder,
     { id: "d" },
@@ -736,7 +728,7 @@ it("an unbound first hello admits no operation until the authenticated bind", as
   const send = (op: string, args: unknown) => {
     const id = String(++n);
     const response = new Promise<DeviceResponse>((r) => answers.set(id, r));
-    socket.send(JSON.stringify({ type: "req", id, op, args, deadlineMs: 10000 }));
+    socket.send(requestFrame(id, op, args, 10000));
     return response;
   };
   const status = {

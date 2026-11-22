@@ -75,7 +75,14 @@ async function post<T>(fetchFn: FetchFn, url: string, body: unknown): Promise<T>
 export function authorize(
   fetchFn: FetchFn,
   baseUrl: string,
-  body: { name: string; os: "darwin" | "linux"; arch: string; programVersion: string },
+  body: {
+    name: string;
+    os: "darwin" | "linux";
+    arch: string;
+    programVersion: string;
+    /** The dial-in protocol this program speaks: the confirm page offers its providers only. */
+    protocol: string;
+  },
 ): Promise<AuthorizeResponse> {
   return post(fetchFn, `${baseUrl}/api/v1/device/authorize`, body);
 }

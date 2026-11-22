@@ -1,6 +1,8 @@
 import { describe, expect, it } from "vitest";
 import {
   DeviceProtocolError,
+  parseDeviceFrame,
+  parseOperationResult,
   parseOwnerCeilingNarrowing,
   parseOwnerCeilingReport,
   parseSandboxPermissionSupport,
@@ -228,5 +230,20 @@ describe("host lists are read once", () => {
     const parsed = parseOwnerCeilingReport({ ...ceiling(), allowedDomains: tricky });
     expect(parsed.allowedDomains).toEqual(["example.com"]);
     expect(reads).toBe(1);
+  });
+});
+
+describe("protocol 5 bodies", () => {
+  it("parseDeviceFrame rejects a body with a policy op: the deployment changes no machine policy", () => {
+    const source = { accountId: "a", accountName: "A", via: "web" };
+    for (const body of [
+      { op: "policy", args: { opId: "op", source, remove: ["api.example.com"] } },
+      { op: "policy", args: { opId: "op", source, ownerCeiling: { outsideSandbox: false } } },
+      { op: "policyStatus", args: { opId: "op" } },
+    ])
+      expect(() => parseDeviceFrame(body, "req"), body.op).toThrow(DeviceProtocolError);
+    expect(() =>
+      parseOperationResult("policy" as "exec", { policy: { allowedDomains: [] } }),
+    ).toThrow(DeviceProtocolError);
   });
 });

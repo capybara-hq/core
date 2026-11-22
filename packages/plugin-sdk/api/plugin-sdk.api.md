@@ -2815,6 +2815,9 @@ export function parseConnectorTemplateFile(json: unknown): ConnectorTemplateFile
 export function parseDeviceReport(value: unknown): DeviceReport;
 
 // @public
+export function parseDialInKernelFrame(text: string, maxBytes: number): DialInKernelFrame;
+
+// @public
 export function parseDialInMachineFrame(text: string, maxBytes: number): DialInMachineFrame;
 
 // @public
