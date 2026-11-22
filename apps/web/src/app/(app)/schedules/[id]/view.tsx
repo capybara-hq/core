@@ -445,6 +445,8 @@ function RunHistory({ runs }: { runs: TaskRun[] | null }) {
       key: "detail",
       header: t("columns.detail"),
       compact: "hidden",
+      wrap: true,
+      tone: "muted",
       cell: (r) => (
         <>
           {skipOrMissing(r)}

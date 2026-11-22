@@ -510,7 +510,11 @@ describe("/schedules/[id]", () => {
     expect(missing.getByText(E.form.refusal.needs_role)).toBeTruthy();
     expect(missing.getByRole("link", { name: "Connect github" })).toBeTruthy();
     // the compact DOM is also labelled as a table (both forms render): pick the real <table>
-    const runs = within(document.querySelector("table") as HTMLElement);
+    const runs = within(
+      screen
+        .getAllByRole("table", { name: E.runs.label })
+        .find((el) => el.tagName === "TABLE") as HTMLElement,
+    );
     expect(runs.getByText(E.runs.skip.overlap)).toBeTruthy();
     expect(runs.getByText("Refused: Bash, mcp__crm__delete, connection:github")).toBeTruthy();
     // the compact-only reason column has no wide header, so a reason shows once
@@ -912,10 +916,17 @@ describe("/schedules/[id] run reasons on a wide window", () => {
       }),
     });
     await screen.findByText(E.runs.status.failed);
-    const wide = within(document.querySelector("table") as HTMLElement);
+    const wide = within(
+      screen
+        .getAllByRole("table", { name: E.runs.label })
+        .find((el) => el.tagName === "TABLE") as HTMLElement,
+    );
     expect(wide.queryByRole("columnheader", { name: E.runs.columns.reason })).toBeNull();
     expect(document.querySelectorAll("table [data-part=error-detail]")).toHaveLength(1);
     expect(wide.queryByText("boom")).toBeNull();
+    expect(
+      document.querySelector('table [data-part="error-detail"]')?.closest("td")?.dataset.wrap,
+    ).toBe("true");
   });
 });
 

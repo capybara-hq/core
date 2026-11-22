@@ -9,3 +9,6 @@ use the responsive compact rows, and join the responsive visual matrix.
 
 The conversation list counts its matches only when asked (`withTotal=true`, first page), so the
 compact drawer's 30 s poll no longer pays for the count.
+
+DataTable columns can be `compactOnly`: drawn only in the compact grouped rows, never in the wide
+table.
