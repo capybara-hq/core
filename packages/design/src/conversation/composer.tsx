@@ -571,7 +571,7 @@ export function ComposerBox({
       <label className="cb-sr-only" htmlFor={id}>
         {t("composer.message")}
       </label>
-      {/* The text box (part composer.box): the text with ＋ and send. In the mobile form it is the
+      {/* The text box (part composer.box): the text with + and send. In the mobile form it is the
           floating pill, the control row above and below it; 600 and up it draws no box of its own
           (the frame is the box) and the three join the control row's line. */}
       <div className="cb-composer-box" data-part="composer-box" data-cap-part="composer.box">
