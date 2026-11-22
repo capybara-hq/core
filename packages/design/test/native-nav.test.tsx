@@ -193,7 +193,7 @@ describe("the native strip (nav@1)", () => {
     expect(html().hasAttribute("data-native-nav")).toBe(true);
     // once, with no menu (the strip has no menu button, D12)
     expect(nav.set).toHaveBeenCalledTimes(1);
-    // the home `/` is the pill's first item: 对话 is not current there (coordinator ruling)
+    // the home `/` is the pill's first item: Chats is not current there (coordinator ruling)
     expect(nav.set).toHaveBeenLastCalledWith({
       items: FOUR,
       current: null,
