@@ -213,6 +213,47 @@ function Row() {
   );
 }
 
+/** A dangerous dialog whose Cancel is disabled at open (an action in flight) while its primary is not. */
+function CancelBusy() {
+  return (
+    <DesignProvider locale="zh">
+      <Dialog
+        open
+        onOpenChange={() => {}}
+        title="删除"
+        danger
+        initialFocus="cancel"
+        footer={
+          <>
+            <Button variant="ghost" disabled>
+              取消
+            </Button>
+            <Button variant="danger-solid">删除</Button>
+          </>
+        }
+      >
+        <p>正文</p>
+      </Dialog>
+    </DesignProvider>
+  );
+}
+
+describe("a dangerous dialog whose Cancel is disabled", () => {
+  it("never starts on the destructive button on compact (the close instead)", async () => {
+    render(<CancelBusy />);
+    await waitFor(() =>
+      expect(document.activeElement).toBe(screen.getByRole("button", { name: "关闭" })),
+    );
+  });
+
+  it("never starts on the destructive button from 600 up", async () => {
+    win.resize(1440);
+    render(<CancelBusy />);
+    await waitFor(() => expect(document.querySelector(".cb-dialog")).not.toBeNull());
+    expect(document.activeElement?.textContent).not.toBe("删除");
+  });
+});
+
 describe("DangerConfirm on compact (390)", () => {
   it("puts the fail button full width above 取消", async () => {
     render(<Delete />);

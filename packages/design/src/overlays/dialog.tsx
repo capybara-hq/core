@@ -49,6 +49,17 @@ export type DialogProps = {
 };
 
 /**
+ * The footer's Cancel, picked by its place among all the footer's controls (first as given, last
+ * when drawn reversed), never among the enabled ones only: a disabled Cancel gives `undefined`
+ * (focus falls back to the close), never the destructive button beside it.
+ */
+function cancelButton(footer: HTMLElement | null, reversed: boolean): HTMLElement | undefined {
+  const all = Array.from(footer?.querySelectorAll<HTMLElement>("button, a[href]") ?? []);
+  const cancel = reversed ? all[all.length - 1] : all[0];
+  return cancel === undefined || cancel.matches(":disabled") ? undefined : cancel;
+}
+
+/**
  * Where a dialog's focus starts (spec §6.7): `cancel` on the footer's first button; otherwise the
  * body's first field when it asks for input, else the primary (or destructive) action, else the
  * last button.
@@ -58,10 +69,10 @@ function focusTarget(
   footer: HTMLElement | null,
   initialFocus: DialogProps["initialFocus"],
 ): HTMLElement | undefined {
+  if (initialFocus === "cancel") return cancelButton(footer, false);
   const buttons = Array.from(
     footer?.querySelectorAll<HTMLElement>("button:not(:disabled), a[href]") ?? [],
   );
-  if (initialFocus === "cancel") return buttons[0];
   // A dialog that asks for input starts on its first field (spec §6.7)
   return (
     body?.querySelector<HTMLElement>(FIELDS) ??
@@ -185,11 +196,8 @@ function DialogSheet({
       describedBy={describedBy}
       initialFocus={() => {
         if (initialFocus !== "cancel") return undefined;
-        const buttons = Array.from(
-          footerRef.current?.querySelectorAll<HTMLElement>("button:not(:disabled), a[href]") ?? [],
-        );
         // Cancel comes first in the footer as given, so last once it is drawn reversed
-        return reversed ? buttons[buttons.length - 1] : buttons[0];
+        return cancelButton(footerRef.current, reversed !== null);
       }}
       footer={
         <div className="cb-dialog-sheet-foot" ref={footerRef}>
