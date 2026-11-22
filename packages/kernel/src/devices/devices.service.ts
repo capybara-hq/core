@@ -21,6 +21,7 @@ import { KernelConfigService } from "../infra/config/kernel-config.service.js";
 import { KernelDb } from "../infra/database/kernel-db.js";
 import {
   assertNotSharedAdmission,
+  currentStore,
   TransactionHost,
   withOrderedLocks,
 } from "../infra/database/transaction-host.js";
@@ -36,6 +37,7 @@ import type {
 import { hostGrantable } from "../sandbox/device-sandbox.js";
 import { oweDeviceDestroy, SandboxJobs } from "../sandbox/jobs.js";
 import { coversHost, type DeviceLimits, type DeviceNetwork } from "../sandbox/modes.js";
+import { assertAuthorityHeld } from "../sandbox/permission-authority-lock.js";
 import {
   hostsNarrowed,
   needsOpenNetwork,
@@ -737,17 +739,31 @@ export class DevicesService {
   }
 
   /**
+   * The ordered prelude of {@link addNetworkHostsIn} in a caller's transaction: the person's
+   * membership, the device row and the device's permission write lock (authority levels platform,
+   * org shared, device exclusive). A caller that adds hosts inside its own transaction (a network
+   * approval's decision) runs this in its own `withOrderedLocks` prelude, after its org row and
+   * before any conversation, approval or run row, the place of the authority locks in the global
+   * lock order; refuses `device.not_found` for anyone else's or a deleted device.
+   */
+  @Transactional({ propagation: "mandatory" })
+  async lockNetworkAddSubject(orgId: string, accountId: string, deviceId: string): Promise<void> {
+    await this.lockNetworkSubject(orgId, accountId, deviceId);
+  }
+
+  /**
    * Adds `hosts` to one of the person's devices' own network list: a network approval decided
-   * "add to this device's list" (`via`: where it was decided). It joins the caller's transaction
-   * (the approval decision's), with the membership, the device row and the device's permission
-   * write lock as the ordered prelude ({@link withOrderedLocks}: inline in a caller's
-   * transaction, whose lock order the caller owns), and takes no distributed lock. The write is a
-   * network change like `PATCH` ({@link networkLocked}: audited `device.network_changed` from → to,
-   * listed as a recent change, the device epoch bumped and the instance marked for its next use).
-   * Refuses with `device.network_not_allowed`, writing nothing, unless the stored network is
-   * `allowlist` with a host list of its own (a device following its org's hosts already allows
-   * every host its list could name) and every host may join that list
-   * (`deviceListAddRefusal`). Hosts already listed change nothing.
+   * "add to this device's list" (`via`: where it was decided). In a caller's transaction (the
+   * approval decision's) it joins it and requires the device's permission write lock already held
+   * there ({@link lockNetworkAddSubject} in the caller's ordered prelude; else it throws before
+   * writing); with no transaction it takes that prelude itself ({@link withOrderedLocks}). It
+   * takes no distributed lock. The write is a network change like `PATCH` ({@link networkLocked}:
+   * audited `device.network_changed` from → to, listed as a recent change, the device epoch bumped
+   * and the instance marked for its next use). Refuses with `device.network_not_allowed`, writing
+   * nothing, unless the stored network is `allowlist` with a host list of its own (a device
+   * following its org's hosts already allows every host its list could name) and every host may
+   * join that list (`deviceListAddRefusal`). Hosts its list already covers change nothing; own
+   * hosts the org's hosts no longer cover (in effect nowhere) leave the list with the addition.
    */
   async addNetworkHostsIn(
     orgId: string,
@@ -756,6 +772,11 @@ export class DevicesService {
     hosts: string[],
     via: "web" | "im",
   ): Promise<void> {
+    if (currentStore() !== undefined) {
+      assertAuthorityHeld("device", deviceId, true);
+      await this.addNetworkHostsLocked(orgId, accountId, deviceId, hosts, via);
+      return;
+    }
     await withOrderedLocks(
       () => this.lockNetworkSubject(orgId, accountId, deviceId),
       () => this.addNetworkHostsLocked(orgId, accountId, deviceId, hosts, via),
@@ -806,11 +827,17 @@ export class DevicesService {
           `${host} cannot be added to this device's network list: ${why}`,
         );
     }
+    const covers = (list: readonly string[], h: string) =>
+      list.some((p) => coversHost(p.toLowerCase(), h));
+    // own hosts the org dropped since are in effect nowhere: they would refuse the new list
+    const kept = own.networkHosts.filter((h) => covers(facts.orgHosts, h.toLowerCase()));
+    const added = wanted.filter((h) => !covers(kept, h));
+    if (added.length === 0) return;
     await this.networkLocked(
       orgId,
       accountId,
       id,
-      { mode: "allowlist", hosts: [...own.networkHosts, ...wanted] },
+      { mode: "allowlist", hosts: [...kept, ...added] },
       undefined,
       { via },
     );

@@ -12,7 +12,7 @@ import { createDb } from "../../src/db/pool.js";
 import type { DeviceList, DeviceView } from "../../src/devices/devices.service.js";
 import { DevicesService } from "../../src/devices/devices.service.js";
 import { ApiError } from "../../src/errors.js";
-import { TransactionHost } from "../../src/infra/database/transaction-host.js";
+import { TransactionHost, withOrderedLocks } from "../../src/infra/database/transaction-host.js";
 import { deviceDestroyJobId } from "../../src/sandbox/jobs.js";
 import { SandboxService } from "../../src/sandbox/sandbox.service.js";
 import { fakeFileSystems, removeFakeFileSystem } from "../fixtures/plugins/device-fake/index.js";
@@ -994,20 +994,54 @@ describe("a cloud device's sandbox network (approval-only profiles design)", () 
       await refused(["pypi.org"]);
       expect(await networkAudits(env.id)).toHaveLength(audits + 1);
 
-      // it joins the caller's transaction: a rollback there takes the addition with it
+      const tx = k.app.get(TransactionHost);
+      const ownHosts = async () =>
+        (
+          await db
+            .selectFrom("devices")
+            .select(["network_hosts"])
+            .where("id", "=", env.id)
+            .executeTakeFirstOrThrow()
+        ).network_hosts;
+      // in a caller's transaction without the prelude's device write lock: refused, nothing written
       await expect(
-        k.app.get(TransactionHost).run(async () => {
+        tx.run(() => svc.addNetworkHostsIn(orgId, me.id, env.id, ["c.dev"], "web")),
+      ).rejects.toThrow("The matching authority lock is required");
+      expect(await ownHosts()).toEqual(["a.dev", "b.dev"]);
+      // it joins the caller's transaction after the caller's prelude: a rollback there takes the
+      // addition with it
+      const inCaller = (fn: () => Promise<void>) =>
+        withOrderedLocks(
+          () => svc.lockNetworkAddSubject(orgId, me.id, env.id),
+          () => tx.run(fn),
+        );
+      await expect(
+        inCaller(async () => {
           await svc.addNetworkHostsIn(orgId, me.id, env.id, ["c.dev"], "web");
           throw new Error("rolled back");
         }),
       ).rejects.toThrow("rolled back");
-      const row = await db
-        .selectFrom("devices")
-        .select(["network_hosts"])
-        .where("id", "=", env.id)
-        .executeTakeFirstOrThrow();
-      expect(row.network_hosts).toEqual(["a.dev", "b.dev"]);
+      expect(await ownHosts()).toEqual(["a.dev", "b.dev"]);
       expect(await networkAudits(env.id)).toHaveLength(audits + 1);
+      // and commits with it
+      await inCaller(() => svc.addNetworkHostsIn(orgId, me.id, env.id, ["c.dev"], "web"));
+      expect(await ownHosts()).toEqual(["a.dev", "b.dev", "c.dev"]);
+      expect(await networkAudits(env.id)).toHaveLength(audits + 2);
+      // the prelude needs a transaction and the person's own device
+      await expect(svc.lockNetworkAddSubject(orgId, me.id, env.id)).rejects.toThrow();
+
+      // a host an own wildcard already covers changes nothing (no audit row, no epoch bump)
+      await setOrgNetwork({ extraHosts: ["a.dev", "b.dev", "c.dev", "*.w.dev"] });
+      await patch(me.req, env.id, { network: { mode: "allowlist", hosts: ["a.dev", "*.w.dev"] } });
+      const wildAudits = (await networkAudits(env.id)).length;
+      const wildEpoch = await epoch();
+      await svc.addNetworkHostsIn(orgId, me.id, env.id, ["x.w.dev"], "web");
+      expect(await networkAudits(env.id)).toHaveLength(wildAudits);
+      expect(await epoch()).toBe(wildEpoch);
+      // an own host the org dropped since leaves the list with the next addition
+      await setOrgNetwork({ extraHosts: ["b.dev", "c.dev", "*.w.dev"] });
+      await svc.addNetworkHostsIn(orgId, me.id, env.id, ["b.dev"], "web");
+      expect(await ownHosts()).toEqual(["*.w.dev", "b.dev"]);
 
       // closed: refused; another member's device: not found
       const other = await member();
