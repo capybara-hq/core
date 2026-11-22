@@ -188,7 +188,7 @@ export async function hostBackend(
     /** Test seam: faults the launcher injects (a staged move that cannot finish, a paused mkdir). */
     faultInjection?: LinuxFaultInjection;
     /** The owner's restricted project reach (default the workspace). */
-    restrictedProjectReach?: "workspace" | "os-user";
+    projectReach?: "workspace" | "machine";
     /** The device's sandbox home a restricted exec gets as HOME (default none: the cwd). */
     sandboxHome?: string;
     /** A local-Docker device: the server runs here, its agents in this container. */
@@ -197,14 +197,15 @@ export async function hostBackend(
 ): Promise<HostBackend> {
   await server.ready;
   const deviceId = options.deviceId ?? "device-linux";
+  // as in production, the device's own state directory is always denied to restricted work
+  const denied = [...(options.deniedReadRoots ?? []), options.stateDir];
   const ceiling = {
     ...fixtureCeiling({ workspace: "/workspace", skills: "/home/sandbox/skills", tmp: "/tmp" }),
-    restrictedDeniedReadRoots: options.deniedReadRoots ?? [],
+    secretAndStateDenies: denied,
+    restrictedDeniedReadRoots: denied,
     ...(options.network ? { network: options.network } : {}),
     ...(options.allowedDomains ? { allowedDomains: options.allowedDomains } : {}),
-    ...(options.restrictedProjectReach
-      ? { restrictedProjectReach: options.restrictedProjectReach }
-      : {}),
+    ...(options.projectReach ? { projectReach: options.projectReach } : {}),
   };
   await server.call({
     op: "create",

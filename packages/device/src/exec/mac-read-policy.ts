@@ -1,5 +1,6 @@
 import { lstatSync } from "node:fs";
 import { dirname, isAbsolute, join, normalize } from "node:path";
+import { withCanonicalForms } from "./operation-types.js";
 
 /**
  * What a restricted macOS command may read (Seatbelt through the patched sandbox runtime): every
@@ -114,4 +115,43 @@ export function macReadAllows(input: {
     allowRead: [...new Set([...MAC_SYSTEM_READ_ROOTS, ...input.roots])],
     allowReadExact: [...exact],
   };
+}
+
+/**
+ * The read part of one restricted macOS operation's runtime config. `readRoots` are every root the
+ * operation reads whole (the grant's read and write roots, its private temp, the sandbox home, the
+ * tool homes); `exact` the paths read exactly (see {@link macReadAllows}). Every denied root is
+ * denied in its canonical forms too (Seatbelt matches the resolved path: a link into a denied root
+ * resolves into it).
+ *
+ * - machine reach (`readRoots` includes `/`): the whole machine reads but the denied roots;
+ *   `allowRead` is empty and `allowReadExact` only `exact`, the files the runtime itself needs
+ *   inside the denied state directory (the staged helper, the Java agent, pinned native
+ *   components), so nothing else inside a denied root comes back.
+ * - otherwise: every read is denied from `/` down and {@link macReadAllows} come back.
+ */
+export function macReadConfig(input: {
+  readRoots: readonly string[];
+  exact: readonly string[];
+  deniedReadRoots: readonly string[];
+  userTempDir?: string | undefined;
+  /** Test seam: whether a path is a symbolic link (lstat, never following it). */
+  isSymlink?: (path: string) => boolean;
+}): { denyRead: string[]; allowRead: string[]; allowReadExact: string[] } {
+  const denied = withCanonicalForms(input.deniedReadRoots);
+  const clean = (path: string) => normalize(path).replace(/(.)\/+$/, "$1");
+  if (input.readRoots.some((root) => isAbsolute(root) && clean(root) === "/"))
+    return {
+      denyRead: denied,
+      allowRead: [],
+      allowReadExact: [...new Set(input.exact.filter((p) => isAbsolute(p)).map(clean))],
+    };
+  const reads = macReadAllows({
+    roots: input.readRoots,
+    exact: input.exact,
+    deniedReadRoots: denied,
+    ...(input.userTempDir !== undefined && { userTempDir: input.userTempDir }),
+    ...(input.isSymlink && { isSymlink: input.isSymlink }),
+  });
+  return { denyRead: ["/", ...denied], ...reads };
 }

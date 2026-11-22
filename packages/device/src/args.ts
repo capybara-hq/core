@@ -1,6 +1,7 @@
 import { type ParseArgsOptionsConfig, parseArgs } from "node:util";
 import type { DeviceNetworkMode } from "@capybara-hq/plugin-sdk/device-protocol";
-import { isKeepAwakeMode, type KeepAwakeMode, type RestrictedProjectReach } from "./state.js";
+import type { ProjectReach } from "./exec/read-model.js";
+import { isKeepAwakeMode, type KeepAwakeMode } from "./state.js";
 
 export type DeviceMode = "os" | "docker";
 
@@ -45,8 +46,8 @@ export type Command =
       outsideSandbox?: boolean;
       /** `--network open|allowlist`; absent keeps the current value. */
       network?: DeviceNetworkMode;
-      /** `--project-reach workspace|os-user`; absent keeps the current value. */
-      projectReach?: RestrictedProjectReach;
+      /** `--project-reach machine|paths|workspace`; absent keeps the current value. */
+      projectReach?: ProjectReach;
       /** `--yes`: confirms a widening without asking. */
       yes?: true;
     }
@@ -90,7 +91,7 @@ export const USAGE = `Usage:
                                   Show this machine's owner ceiling (outside the sandbox, network,
                                   project reach)
   capybara-device ceiling set [--outside-sandbox on|off] [--network open|allowlist]
-                              [--project-reach workspace|os-user] [--yes] [-c <connection>]
+                              [--project-reach machine|paths|workspace] [--yes] [-c <connection>]
                                   Change the owner ceiling (at least one field; the others stay);
                                   widening needs --yes or a y at the prompt
   capybara-device keep-awake [show | off | while-busy | connected] [--yes] [--json] [-c <connection>]
@@ -99,11 +100,14 @@ export const USAGE = `Usage:
   capybara-device policy [show] [-c <connection>]
                                   Show the local policy
   capybara-device policy set <key> <value> [-c <connection>]
-                                  Replace one field (cpu, memoryMb, allowCredentials)
+                                  Replace one field (cpu, memoryMb, allowCredentials, projectPaths)
   capybara-device policy add|remove allowedDomains <host> [-c <connection>]
                                   Allow or stop allowing a domain on the sandbox allowlist
   capybara-device policy add|remove allowCredentials <name> [-c <connection>]
                                   Allow or stop allowing a credential for restricted work
+  capybara-device policy add|remove|set projectPaths <dir>[,<dir>...] [-c <connection>]
+                                  Add, remove or replace project paths the paths reach reads
+                                  (comma-separated, so a path containing a comma cannot be added)
   capybara-device service install|uninstall [-c <connection>]
                                   Run at login as a user service, or remove it
   capybara-device service start|stop|restart [-c <connection>]
@@ -230,7 +234,7 @@ export function parseCommandLine(argv: string[]): Command {
       const [action, ...extra] = positionals;
       const usage =
         "usage: ceiling show | ceiling set [--outside-sandbox on|off] [--network open|allowlist] " +
-        "[--project-reach workspace|os-user] [--yes]";
+        "[--project-reach machine|paths|workspace] [--yes]";
       if (values["full-access"] !== undefined)
         throw new UsageError(
           `--full-access is gone: Full access always runs in the sandbox now; use --outside-sandbox on|off. ${usage}`,
@@ -257,7 +261,7 @@ export function parseCommandLine(argv: string[]): Command {
         throw new UsageError(usage);
       if (network !== undefined && network !== "open" && network !== "allowlist")
         throw new UsageError(usage);
-      if (reach !== undefined && reach !== "workspace" && reach !== "os-user")
+      if (reach !== undefined && reach !== "machine" && reach !== "paths" && reach !== "workspace")
         throw new UsageError(usage);
       return {
         command: "ceiling",

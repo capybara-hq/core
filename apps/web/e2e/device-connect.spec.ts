@@ -123,8 +123,12 @@ test("connect a machine: authorize → confirm on /devices/link → token → th
  * devices (fake-dial-in speaks another protocol and never counts), and the org, which never switched
  * it on, offers it to a program speaking `capybara-device` and creates a device on it. No real
  * `capybara-device` connects: the program's side is the public API, as in the case above.
+ *
+ * fixme during the device protocol 6 release cycle: the pinned device-local 0.1.0-rc.1 declares
+ * `capybara-device/5` and no longer loads against the SDK speaking 6. The device-local release from
+ * capybara-hq/plugins#162 and the core pin PR that bumps bootstrap.json remove this fixme.
  */
-test("device-local is pinned, on in the org by default and takes a capybara-device sign-in", async ({
+test.fixme("device-local is pinned, on in the org by default and takes a capybara-device sign-in", async ({
   page,
   playwright,
   baseURL,

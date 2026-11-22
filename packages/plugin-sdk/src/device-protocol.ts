@@ -31,7 +31,7 @@ import {
 } from "./device-provider.js";
 
 /** The major version of {@link DEVICE_DIAL_IN_PROTOCOL}. */
-export const DEVICE_PROTOCOL_VERSION = 5;
+export const DEVICE_PROTOCOL_VERSION = 6;
 
 /**
  * The dial-in protocol `capybara-device` speaks (`<name>/<major>`, see `DIAL_IN_PROTOCOL_RE`): the
@@ -564,10 +564,10 @@ export function parseOpResult(op: DeviceOp, result: unknown): DeviceOpResults[De
   }
 }
 
-// ---- Protocol 5: scope-bearing operations ----
+// ---- Protocol 6: scope-bearing operations ----
 
 /**
- * The operations the kernel asks a protocol 5 device to run: every user operation carries its
+ * The operations the kernel asks a protocol 6 device to run: every user operation carries its
  * admitted scope; there is no broad kill (`killTagged` / `killAll`) and no deployment-side change
  * of the machine's policy: the owner changes it on the machine and the device reports the change
  * ({@link DevicePolicyChanged}).
@@ -587,10 +587,17 @@ export type DeviceOperation =
   | "backgroundStop"
   | "revokeOperation"
   | "bindInstance";
+/**
+ * How far a connection's project paths reach: `machine` (any path the deny list leaves), `paths`
+ * (the listed project paths) or `workspace` (the connection's working directory only).
+ */
+export type DeviceProjectReach = "machine" | "paths" | "workspace";
+/** Why a device refused a project path: the `refusal` of a `project_refused` outcome. */
+export type DeviceProjectRefusal = "other-connection" | "outside-reach" | "denied";
 /** The sandbox network of a device: the open public internet or an allowlist. */
 export type DeviceNetworkMode = "open" | "allowlist";
 /**
- * The owner ceiling of protocol 4 (approval-only profiles design, "Settings model"): the device
+ * The owner ceiling of protocol 6 (approval-only profiles design, "Settings model"): the device
  * sandbox for every profile. `outsideSandbox` is whether a call may be granted escalation outside
  * the sandbox; `network` and `allowedDomains` are the sandbox network.
  */
@@ -601,19 +608,7 @@ export interface DeviceOwnerCeiling {
   readonly outsideSandbox: boolean;
   readonly network: DeviceNetworkMode;
   readonly allowedDomains: readonly string[];
-  readonly restrictedProjectReach: "workspace" | "os-user";
-}
-/**
- * The narrowing of protocol 4: the kernel may switch the network to `allowlist`, remove hosts, turn
- * `outsideSandbox` off or narrow the project reach. Never a widening: widening is decided on the
- * machine by its owner (`capybara-device ceiling set`), never over the wire.
- */
-export interface DeviceOwnerCeilingNarrowing {
-  readonly outsideSandbox?: false;
-  readonly network?: "allowlist";
-  /** Hosts to remove from `allowedDomains`; a host not on the list is ignored. */
-  readonly removeAllowedDomains?: readonly string[];
-  readonly restrictedProjectReach?: "workspace";
+  readonly projectReach: DeviceProjectReach;
 }
 /**
  * An event body (the envelope's `event`): the owner changed the machine's policy or owner ceiling
@@ -713,13 +708,16 @@ export type DeviceResponseBody =
           | "unsupported"
           | "unsettled"
           | "unknown"
-          | "invalid";
+          | "invalid"
+          | "project_refused";
         message: string;
+        /** Present on `project_refused` only: why the project path was refused. */
+        refusal?: DeviceProjectRefusal;
       };
     };
 /** A response as the device produces it: its body with the envelope's `id`. */
 export type DeviceResponse = { type: "res"; id: string } & DeviceResponseBody;
-/** The bodies of protocol 5, by the envelope frame that carries them. */
+/** The bodies of protocol 6, by the envelope frame that carries them. */
 export interface DeviceBodies {
   hello: DeviceHello;
   req: DeviceRequestBody;
@@ -757,7 +755,7 @@ function freeze<T>(value: T): T {
   return value;
 }
 /**
- * A strict copy of a wire object for the protocol 4 shapes: a plain object of own data properties
+ * A strict copy of a wire object for the protocol shapes: a plain object of own data properties
  * only (no accessor is ever invoked, so a value cannot change between check and use), each key in
  * `allowed`. Nested values are copied by the caller's own checks.
  */
@@ -879,7 +877,7 @@ export function parseSandboxPermissionSupport(value: unknown): SandboxPermission
 }
 
 /**
- * Strictly parses one authenticated owner-ceiling report of protocol 4 and returns a frozen copy;
+ * Strictly parses one authenticated owner-ceiling report of protocol 6 and returns a frozen copy;
  * throws {@link DeviceProtocolError}. Unknown fields (the protocol 3 `fullAccess` and
  * `restrictedAllowedDomains` among them) are refused.
  */
@@ -894,15 +892,17 @@ export function parseOwnerCeilingReport(value: unknown): DeviceOwnerCeiling {
       "outsideSandbox",
       "network",
       "allowedDomains",
-      "restrictedProjectReach",
+      "projectReach",
     ],
     what,
   );
   if (o.version !== 3) throw new DeviceProtocolError(`Invalid ${what}: expected version 3`);
   if (o.network !== "open" && o.network !== "allowlist")
     throw new DeviceProtocolError(`Invalid ${what}: network must be open or allowlist`);
-  if (o.restrictedProjectReach !== "workspace" && o.restrictedProjectReach !== "os-user")
-    throw new DeviceProtocolError(`Invalid ${what}: project reach must be workspace or os-user`);
+  if (o.projectReach !== "machine" && o.projectReach !== "paths" && o.projectReach !== "workspace")
+    throw new DeviceProtocolError(
+      `Invalid ${what}: project reach must be machine, paths or workspace`,
+    );
   return freeze({
     version: 3,
     sequence: integer(o.sequence),
@@ -910,42 +910,10 @@ export function parseOwnerCeilingReport(value: unknown): DeviceOwnerCeiling {
     outsideSandbox: strictBoolean(o, "outsideSandbox", what),
     network: o.network,
     allowedDomains: strictHosts(o.allowedDomains, `${what} allowedDomains`),
-    restrictedProjectReach: o.restrictedProjectReach,
+    projectReach: o.projectReach,
   });
 }
 
-/**
- * Strictly parses an owner-ceiling narrowing of protocol 4 and returns a frozen copy; throws
- * {@link DeviceProtocolError}. Every field can only narrow: `outsideSandbox` only to `false`,
- * `network` only to `allowlist`, the project reach only to `workspace`, and hosts only removed.
- * There is no way to name a host to add or a list to replace.
- */
-export function parseOwnerCeilingNarrowing(value: unknown): DeviceOwnerCeilingNarrowing {
-  const what = "owner ceiling narrowing";
-  const o = strictRecord(
-    value,
-    ["outsideSandbox", "network", "removeAllowedDomains", "restrictedProjectReach"],
-    what,
-  );
-  if (
-    (Object.hasOwn(o, "outsideSandbox") && o.outsideSandbox !== false) ||
-    (Object.hasOwn(o, "network") && o.network !== "allowlist") ||
-    (Object.hasOwn(o, "restrictedProjectReach") && o.restrictedProjectReach !== "workspace")
-  )
-    throw new DeviceProtocolError("The deployment may only narrow the owner ceiling");
-  return freeze({
-    ...(Object.hasOwn(o, "outsideSandbox") ? { outsideSandbox: false as const } : {}),
-    ...(Object.hasOwn(o, "network") ? { network: "allowlist" as const } : {}),
-    ...(Object.hasOwn(o, "removeAllowedDomains")
-      ? {
-          removeAllowedDomains: strictHosts(o.removeAllowedDomains, `${what} removeAllowedDomains`),
-        }
-      : {}),
-    ...(Object.hasOwn(o, "restrictedProjectReach")
-      ? { restrictedProjectReach: "workspace" as const }
-      : {}),
-  });
-}
 const GENERATION = /^[0-9]{1,16}$/;
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
 function generation(value: unknown): string {
@@ -1090,7 +1058,9 @@ const RESPONSE_KINDS: readonly string[] = [
   "unsettled",
   "unknown",
   "invalid",
+  "project_refused",
 ];
+const PROJECT_REFUSALS: readonly string[] = ["other-connection", "outside-reach", "denied"];
 function helloBody(value: unknown): DeviceHello {
   const o = object(value);
   keys(o, [
@@ -1151,14 +1121,21 @@ function responseBody(value: unknown): DeviceResponseBody {
   if (o.ok !== false) throw new DeviceProtocolError('field "ok" must be a boolean');
   keys(o, ["ok", "error"]);
   const e = object(o.error);
-  keys(e, ["kind", "message"]);
+  keys(e, e.kind === "project_refused" ? ["kind", "message", "refusal"] : ["kind", "message"]);
   if (!RESPONSE_KINDS.includes(String(e.kind)))
     throw new DeviceProtocolError("Unknown outcome kind");
+  let refusal: DeviceProjectRefusal | undefined;
+  if (e.kind === "project_refused") {
+    if (!PROJECT_REFUSALS.includes(String(e.refusal)))
+      throw new DeviceProtocolError("A project_refused outcome needs a known refusal");
+    refusal = e.refusal as DeviceProjectRefusal;
+  }
   return freeze({
     ok: false,
     error: {
       kind: e.kind as Extract<DeviceResponseBody, { ok: false }>["error"]["kind"],
       message: string(e.message, 8192),
+      ...(refusal && { refusal }),
     },
   });
 }
@@ -1174,7 +1151,7 @@ function eventBody(value: unknown): DevicePolicyChanged {
 }
 
 /**
- * Strictly parses one protocol 5 body, as carried by the dial-in envelope frame of type `kind`
+ * Strictly parses one protocol 6 body, as carried by the dial-in envelope frame of type `kind`
  * (`hello`, `event` and `res` from the device, `req` from the kernel), and returns a frozen copy;
  * throws {@link DeviceProtocolError}. The envelope (its ids, deadline and size bound) is checked
  * before: `parseDialInMachineFrame` on the kernel, `parseDialInKernelFrame` on the machine.

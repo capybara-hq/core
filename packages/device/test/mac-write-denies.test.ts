@@ -7,7 +7,10 @@ import type { ExecResult } from "@capybara-hq/plugin-sdk";
 import { afterAll, beforeAll, expect, it } from "vitest";
 import { withCanonicalForms } from "../src/exec/operation-types.js";
 import { startMacOperationWorker } from "../src/exec/operation-worker.js";
+import { removeTempParent, testDeviceId } from "./mac-temp-parent.js";
 import { sealWorkspaceRuntime } from "./runtime-seal.js";
+
+const DEVICE_ID = testDeviceId("mac-write-denies");
 
 const workspace = { runtimeHash: "", cleanup: async () => {} };
 let root = "";
@@ -17,6 +20,7 @@ beforeAll(async () => {
   root = await realpath(await mkdtemp(join(tmpdir(), "cap-mac-denies-")));
 });
 afterAll(async () => {
+  await removeTempParent(DEVICE_ID);
   await workspace.cleanup();
   if (root) await rm(root, { recursive: true, force: true });
 });
@@ -42,7 +46,7 @@ it.runIf(process.platform === "darwin")(
     const worker = await startMacOperationWorker(
       {
         kind: "exec",
-        scope: { operationId: "deny", tag: "deny" } as never,
+        scope: { operationId: "deny", tag: "deny", deviceId: DEVICE_ID } as never,
         grant: {
           full: false,
           readRoots: [project],
@@ -118,7 +122,7 @@ async function restrictedRun(writeRoot: string, command: string): Promise<ExecRe
   const worker = await startMacOperationWorker(
     {
       kind: "exec",
-      scope: { operationId: "deny", tag: "deny" } as never,
+      scope: { operationId: "deny", tag: "deny", deviceId: DEVICE_ID } as never,
       grant: {
         full: false,
         readRoots: [writeRoot],
@@ -360,7 +364,7 @@ async function restrictedRunDenied(
   const worker = await startMacOperationWorker(
     {
       kind: "exec",
-      scope: { operationId: "deny", tag: "deny" } as never,
+      scope: { operationId: "deny", tag: "deny", deviceId: DEVICE_ID } as never,
       grant: {
         full: false,
         readRoots: [writeRoot],

@@ -8,20 +8,22 @@ import {
 } from "@capybara-hq/plugin-sdk";
 import { describe, expect, it } from "vitest";
 import {
+  DEVICE_PROTOCOL_VERSION,
   DeviceProtocolError,
   isDeviceBootId,
   MAX_NETWORK_BLOCKED_HOSTS,
   parseDeviceFrame,
   parseOpResult,
+  parseOwnerCeilingReport,
 } from "../src/device-protocol.js";
 
 /*
  * The value guards of the device protocol (per-operation arguments and results, the hello's
- * optional fields), exercised through the protocol 5 bodies (`parseDeviceFrame`) that use them.
+ * optional fields), exercised through the protocol 6 bodies (`parseDeviceFrame`) that use them.
  */
 
 const roots = { workspace: "/w", skills: "/s", tmp: "/t" };
-/** A protocol 5 hello body of a bound instance. */
+/** A protocol 6 hello body of a bound instance. */
 const hello = {
   mode: "os",
   roots,
@@ -41,7 +43,7 @@ const hello = {
     outsideSandbox: false,
     network: "allowlist",
     allowedDomains: [],
-    restrictedProjectReach: "workspace",
+    projectReach: "workspace",
   },
   instanceGeneration: "g",
 };
@@ -514,5 +516,41 @@ describe("device protocol value guards", () => {
         expect(parse("exec", args), JSON.stringify(args)).toThrow(DeviceProtocolError);
       }
     });
+  });
+});
+
+describe("project reach and project refusals", () => {
+  const base = hello.ownerCeiling;
+  it("parses an owner ceiling report with each project reach", () => {
+    for (const projectReach of ["machine", "paths", "workspace"] as const)
+      expect(parseOwnerCeilingReport({ ...base, projectReach }).projectReach).toBe(projectReach);
+    const { projectReach: _, ...rest } = base;
+    expect(() => parseOwnerCeilingReport({ ...rest, restrictedProjectReach: "workspace" })).toThrow(
+      DeviceProtocolError,
+    );
+    expect(() => parseOwnerCeilingReport({ ...base, projectReach: "os-user" })).toThrow(
+      DeviceProtocolError,
+    );
+  });
+
+  const res = (error: Record<string, unknown>) => ({ ok: false, error });
+  it("a project_refused outcome carries a refusal code", () => {
+    for (const refusal of ["other-connection", "outside-reach", "denied"]) {
+      const parsed = parseDeviceFrame(
+        res({ kind: "project_refused", message: "x", refusal }),
+        "res",
+      );
+      expect(parsed).toMatchObject({ ok: false, error: { kind: "project_refused", refusal } });
+    }
+    for (const bad of [
+      { kind: "project_refused", message: "x", refusal: "nope" },
+      { kind: "project_refused", message: "x" },
+      { kind: "denied", message: "x", refusal: "denied" },
+    ])
+      expect(() => parseDeviceFrame(res(bad), "res")).toThrow(DeviceProtocolError);
+  });
+
+  it("the protocol version is the one this phase speaks", () => {
+    expect(DEVICE_PROTOCOL_VERSION).toBe(6);
   });
 });

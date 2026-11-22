@@ -3,7 +3,6 @@ import {
   DeviceProtocolError,
   parseDeviceFrame,
   parseOperationResult,
-  parseOwnerCeilingNarrowing,
   parseOwnerCeilingReport,
   parseSandboxPermissionSupport,
 } from "../src/device-protocol.js";
@@ -124,7 +123,7 @@ const ceiling = () => ({
   outsideSandbox: false,
   network: "open",
   allowedDomains: ["example.com", "*.example.org"],
-  restrictedProjectReach: "workspace",
+  projectReach: "workspace",
 });
 
 describe("parseOwnerCeilingReport", () => {
@@ -142,7 +141,7 @@ describe("parseOwnerCeilingReport", () => {
         network: "allowlist",
         allowedDomains: [],
         outsideSandbox: true,
-        restrictedProjectReach: "os-user",
+        projectReach: "machine",
       }).network,
     ).toBe("allowlist");
   });
@@ -154,7 +153,7 @@ describe("parseOwnerCeilingReport", () => {
     ["unknown network", { network: "open-public" }],
     ["missing network", { network: undefined }],
     ["outsideSandbox not a boolean", { outsideSandbox: "off" }],
-    ["unknown reach", { restrictedProjectReach: "device" }],
+    ["unknown reach", { projectReach: "device" }],
     ["negative sequence", { sequence: -1 }],
     ["fractional sequence", { sequence: 1.5 }],
     ["empty revision", { revision: "" }],
@@ -168,52 +167,6 @@ describe("parseOwnerCeilingReport", () => {
     const value: Record<string, unknown> = { ...ceiling(), ...patch };
     for (const [k, v] of Object.entries(patch)) if (v === undefined) delete value[k];
     expect(() => parseOwnerCeilingReport(value)).toThrow(DeviceProtocolError);
-  });
-});
-
-describe("parseOwnerCeilingNarrowing", () => {
-  it("accepts every narrowing, alone and together, and freezes a copy", () => {
-    for (const narrowing of [
-      {},
-      { outsideSandbox: false },
-      { network: "allowlist" },
-      { removeAllowedDomains: ["example.com"] },
-      { removeAllowedDomains: [] },
-      { restrictedProjectReach: "workspace" },
-      {
-        outsideSandbox: false,
-        network: "allowlist",
-        removeAllowedDomains: ["example.com", "*.example.org"],
-        restrictedProjectReach: "workspace",
-      },
-    ]) {
-      const parsed = parseOwnerCeilingNarrowing(narrowing);
-      expect(parsed).toEqual(narrowing);
-      expect(Object.isFrozen(parsed)).toBe(true);
-    }
-  });
-
-  // Each field can only narrow: the widening value of every field, and every way to add hosts.
-  it.each([
-    ["outsideSandbox on", { outsideSandbox: true }],
-    ["network open", { network: "open" }],
-    ["network unknown", { network: "none" }],
-    ["reach widened", { restrictedProjectReach: "os-user" }],
-    ["hosts replaced", { allowedDomains: ["example.com"] }],
-    ["hosts added", { addAllowedDomains: ["example.com"] }],
-    ["removal not an array", { removeAllowedDomains: "example.com" }],
-    ["removal of an invalid host", { removeAllowedDomains: ["https://example.com"] }],
-    ["removal too long", { removeAllowedDomains: Array(101).fill("example.com") }],
-    ["the v2 fullAccess field", { fullAccess: false }],
-    ["a revision", { revision: "r" }],
-    ["null field", { network: null }],
-  ])("rejects %s", (_name, narrowing) => {
-    expect(() => parseOwnerCeilingNarrowing(narrowing)).toThrow(DeviceProtocolError);
-  });
-
-  it("rejects non-objects", () => {
-    for (const bad of [null, [], "allowlist", false])
-      expect(() => parseOwnerCeilingNarrowing(bad)).toThrow(DeviceProtocolError);
   });
 });
 
@@ -233,7 +186,7 @@ describe("host lists are read once", () => {
   });
 });
 
-describe("protocol 5 bodies", () => {
+describe("protocol 6 bodies", () => {
   it("parseDeviceFrame rejects a body with a policy op: the deployment changes no machine policy", () => {
     const source = { accountId: "a", accountName: "A", via: "web" };
     for (const body of [

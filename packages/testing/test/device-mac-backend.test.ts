@@ -17,6 +17,7 @@ import {
 import type { DeviceOwnerCeiling } from "../../device/src/exec/operation-types.js";
 import { startMacOperationWorker } from "../../device/src/exec/operation-worker.js";
 import { TOOL_HOME_DIRS, toolHomeEnv } from "../../device/src/exec/shared.js";
+import { removeTempParent, testDeviceId } from "../../device/test/mac-temp-parent.js";
 import { sealWorkspaceRuntime } from "../../device/test/runtime-seal.js";
 import type { NativeFixtureEntry } from "../src/sandbox-native-conformance.js";
 import {
@@ -62,7 +63,7 @@ const NAMES = {
   ungranted4: "ungranted4.permission.test",
   ungranted6: "ungranted6.permission.test",
 } as const;
-const DEVICE_ID = "device-mac";
+const DEVICE_ID = testDeviceId("device-mac");
 /** A public name resolving to 127.0.0.1 (a DNS rebinding name for the open network). */
 const REBINDING = "localtest.me";
 /** Planted in the device program's environment: no sandboxed command may see them. */
@@ -159,6 +160,7 @@ describe.runIf(darwin)("capybara-device macOS operation backend", () => {
     await mkdir(stateDir, { mode: 0o700 });
     root = join(home, "code", "project");
     await mkdir(root, { recursive: true });
+    const projectPaths: string[] = [root];
     const key = join(home, ".ssh", "id_ed25519");
     const profile = join(home, ".zshrc");
     await writeFile(key, "synthetic-private-key\n", { mode: 0o600 });
@@ -185,8 +187,14 @@ describe.runIf(darwin)("capybara-device macOS operation backend", () => {
       outsideSandbox: true,
       network: "open",
       roots,
-      restrictedProjectReach: "os-user",
+      // listed project paths (each fresh project joins them): the conformance proves a restricted
+      // read never reaches a sibling, which a machine reach would read
+      projectReach: "paths",
       allowedDomains: [],
+      projectPaths,
+      secretAndStateDenies: [stateDir],
+      otherConnectionDenies: [],
+      unreadableConnections: [],
       restrictedDeniedReadRoots: [stateDir],
       preparation: { skillsRoot: roots.skills, attachmentsBase: join(roots.workspace, "a") },
     };
@@ -281,6 +289,7 @@ describe.runIf(darwin)("capybara-device macOS operation backend", () => {
     fresh = async () => {
       const project = join(home, "code", `p${++projects}`);
       const sibling = join(home, "code", `s${projects}`);
+      projectPaths.push(project);
       await mkdir(project, { recursive: true });
       await mkdir(sibling, { recursive: true });
       return { ...fixture, root: project, sibling };
@@ -390,6 +399,7 @@ describe.runIf(darwin)("capybara-device macOS operation backend", () => {
   });
 
   afterAll(async () => {
+    await removeTempParent(DEVICE_ID);
     if (priorHome === undefined) delete process.env.HOME;
     else process.env.HOME = priorHome;
     if (priorPath !== undefined) process.env.PATH = priorPath;

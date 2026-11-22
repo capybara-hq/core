@@ -671,7 +671,19 @@ suite in `@capybara-hq/testing` checks it):
 - **Version managers are readable under `workspace` reach too.** A restricted exec on a macOS or Linux
   host reads the version manager directories of the device user's home (`TOOL_HOME_DIRS`) and asdf's
   global `~/.tool-versions` read only (`restrictedToolHomes`, never a path at, under or holding an
-  owner-denied one), even when the owner limited restricted project reach to the workspace.
+  owner-denied one), even when the owner limited the connection's project reach to `workspace`.
+- **Local read model (capybara-device).** Project reach is per connection: `machine | paths | workspace`
+  (`projectPaths` lists the directories `paths` reads); the wire carries it as `projectReach` in the owner report
+  (protocol 6) and a refused project path answers `project_refused` with a `refusal` code (`other-connection`,
+  `outside-reach`, `denied`; `PROJECT_REFUSAL_MESSAGES`). Reads are the whole machine minus the deny list under
+  `machine` (`exec/read-model.ts`, `readStrictOwnerCeilingSync`); the deny list is secret paths, the state directory,
+  every other connection's state and working directory and their private temps
+  (`<userTemp>/capybara-op-<deviceId>/`). An unreadable other connection fails sandboxed work closed (escalated calls
+  and the owner report proceed). macOS denies paths in the Seatbelt profile (`exec/mac-read-policy.ts`); Linux carves
+  the denies out of `/` by granting siblings (`exec/linux-read-carve.ts`), so files directly inside a directory on the
+  path to a denied one are unreadable and it cannot be listed, a bind mount of a denied directory stays readable, and
+  more than 4096 carved roots refuses machine reach. `policy.json` is format 4; an older file is refused at start
+  and rewritten from the closed policy by `ceiling set` (`PolicyVersionError`, `replacementPolicy`).
 - **Packages that ship `.idea` / `.vscode` do not install in the sandbox.** The editor denies hold
   below `node_modules` too (a directory moved or linked out of it would carry the configuration
   into a folder the owner opens); pnpm's own tarball ships `iconv-lite/.idea`, so its switch to a

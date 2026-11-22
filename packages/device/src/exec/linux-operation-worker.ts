@@ -9,6 +9,7 @@ import {
   SandboxPermissionUnsupportedError,
   SandboxScopeDeniedError,
 } from "@capybara-hq/plugin-sdk";
+import { type CarveFs, carveReadRoots } from "./linux-read-carve.js";
 import {
   type AgentEvent,
   agentLine,
@@ -17,6 +18,7 @@ import {
   reapLinuxSession,
 } from "./linux-runtime.js";
 import type { NativeHelperResult } from "./native-helper-client.js";
+import { withCanonicalForms } from "./operation-types.js";
 import {
   createCancellationAttempt,
   type MacWorkerHandle,
@@ -102,6 +104,11 @@ export interface LinuxWorkerOptions {
    * `pauseBeforeMkdir`: a mkdir of that name pauses between its check and its effect).
    */
   faultInjection?: LinuxFaultInjection;
+  /**
+   * Test seam (trusted construction only): the file system a restricted exec's read roots are
+   * carved on (default this host's), so a test need not walk the real machine.
+   */
+  carveFs?: CarveFs;
 }
 
 /** The launcher's test-only faults; see {@link LinuxWorkerOptions.faultInjection}. */
@@ -216,12 +223,34 @@ export function linuxOperationWorker(
           !request.grant.full && options.toolHome
             ? protectedWriteTargets(options.toolHome.home)
             : [];
+        const readRoots = [
+          ...new Set([...request.grant.readRoots, ...(toolHomes?.readRoots ?? []), ...extra]),
+        ];
+        if (
+          !request.grant.full &&
+          request.kind === "exec" &&
+          request.grant.deniedReadRoots.length &&
+          options.transport.kind !== "host"
+        )
+          // a container device's grant denies nothing (containerCeiling); a carve here would
+          // walk this host's file system, not the container's
+          throw new SandboxScopeDeniedError(
+            "A container device's restricted grant cannot carve owner-denied paths",
+          );
         const roots = request.grant.full
           ? {}
           : {
-              readRoots: [
-                ...new Set([...request.grant.readRoots, ...(toolHomes?.readRoots ?? []), ...extra]),
-              ],
+              // Landlock only grants: an exec reads the real directories beside every denied
+              // path (never "/" itself, which also holds the device's files lock); native work
+              // keeps the grant's roots and the agent checks each resolved path against `denied`
+              readRoots:
+                request.kind === "exec"
+                  ? carveReadRoots(
+                      readRoots,
+                      withCanonicalForms(request.grant.deniedReadRoots),
+                      ...(options.carveFs ? [options.carveFs] : []),
+                    )
+                  : readRoots,
               writeRoots: [...new Set([...request.grant.writeRoots, ...extra])],
               ...(writeDenies.length ? { writeDenies } : {}),
             };

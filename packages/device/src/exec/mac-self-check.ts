@@ -10,7 +10,8 @@ import {
   type MacWorkerRequest,
   startMacOperationWorker,
 } from "./operation-worker.js";
-import { shellQuote } from "./shared.js";
+import { privateTempParentName } from "./read-model.js";
+import { macUserTempDir, shellQuote } from "./shared.js";
 
 /** Trusted input of the macOS restricted self-check; nothing here comes from a request. */
 export interface MacSelfCheckInput {
@@ -31,6 +32,8 @@ const PROBE_FAILURES: Record<number, string> = {
   5: "a network connection went through",
   6: "a read of an ungranted file went through",
   7: "a read of a granted file failed, so the read probes prove nothing",
+  8: "machine reach could not read an unrelated file, so the machine-reach probe proves nothing",
+  9: "machine reach read a denied path",
 };
 
 /** Whether a TCP connection reaches a local listener while `run` runs; the listener is closed after. */
@@ -62,7 +65,9 @@ async function withListener<T>(
  * to a sibling directory outside it, a read of a file under a denied read root, a read of an
  * ordinary file it was never granted (one beside its root, one in a temporary directory of its
  * own: no secret path, so only the read scope keeps them out), and a TCP connection to a
- * listener on this machine (its network is none). Together with the verified
+ * listener on this machine (its network is none). A second worker with machine reach (`readRoots`
+ * `["/"]`) must read the unrelated file (its positive control) and still be refused the file under
+ * the denied read root. Together with the verified
  * manifest (the seal exists only after `verifyInstalledRuntime` succeeded in this process) this is
  * the proof that restricted execution holds here. Returns null when it holds, else why not; never
  * throws.
@@ -77,6 +82,8 @@ export async function macRestrictedSelfCheck(
   if (!runtimeHash)
     return "Restricted macOS execution needs an instance binding with an attested runtime";
   const scratch = join(input.stateDir, `restricted-check-${randomUUID()}`);
+  // a device id of this check alone: the worker's private temp parent it creates is removed after
+  const deviceId = `self-check-${randomUUID()}`;
   let elsewhere: string | undefined;
   try {
     await mkdir(scratch, { mode: 0o700 });
@@ -96,23 +103,12 @@ export async function macRestrictedSelfCheck(
     const unrelated = join(elsewhere, "plain");
     await writeFile(unrelated, "restricted self-check", { mode: 0o600 });
     const probe = (dir: string) => shellQuote(join(dir, "probe"));
-    const { value: result, reached } = await withListener(async (port) => {
-      // exit 3 to 6: a refused action went through; 7: the positive control (a granted file
-      // must read, else a `cat` failing for any reason would pass every read probe); any other
-      // failure: the allowed write failed
-      const command =
-        `: > ${probe(allowed)} && rm ${probe(allowed)} && ` +
-        `if ! cat ${shellQuote(control)} >/dev/null 2>&1; then exit 7; fi; ` +
-        `if (: > ${probe(denied)}) 2>/dev/null; then exit 3; fi; ` +
-        `if cat ${shellQuote(join(hidden, "secret"))} >/dev/null 2>&1; then exit 4; fi; ` +
-        `if cat ${shellQuote(ungranted)} >/dev/null 2>&1; then exit 6; fi; ` +
-        `if cat ${shellQuote(unrelated)} >/dev/null 2>&1; then exit 6; fi; ` +
-        `if (exec 3<>/dev/tcp/127.0.0.1/${port}) 2>/dev/null; then exit 5; fi`;
+    const run = async (readRoots: string[], command: string): Promise<ExecResult> => {
       const operationId = `self-check-${randomUUID()}`;
       const scope: SandboxOperationScope = {
         operationId,
         admitBeforeMs: Date.now() + 60_000,
-        deviceId: "self-check",
+        deviceId,
         rootConversationId: "self-check",
         profileRevision: 0,
         ceilingRevision: "self-check",
@@ -127,7 +123,7 @@ export async function macRestrictedSelfCheck(
         scope,
         grant: {
           full: false,
-          readRoots: [],
+          readRoots,
           writeRoots: [allowed],
           hosts: [],
           deniedReadRoots: [hidden],
@@ -159,7 +155,33 @@ export async function macRestrictedSelfCheck(
       } finally {
         signal.removeEventListener("abort", abort);
       }
-    });
+    };
+    const { value: scoped, reached } = await withListener(async (port) =>
+      // exit 3 to 6: a refused action went through; 7: the positive control (a granted file
+      // must read, else a `cat` failing for any reason would pass every read probe); any other
+      // failure: the allowed write failed
+      run(
+        [],
+        `: > ${probe(allowed)} && rm ${probe(allowed)} && ` +
+          `if ! cat ${shellQuote(control)} >/dev/null 2>&1; then exit 7; fi; ` +
+          `if (: > ${probe(denied)}) 2>/dev/null; then exit 3; fi; ` +
+          `if cat ${shellQuote(join(hidden, "secret"))} >/dev/null 2>&1; then exit 4; fi; ` +
+          `if cat ${shellQuote(ungranted)} >/dev/null 2>&1; then exit 6; fi; ` +
+          `if cat ${shellQuote(unrelated)} >/dev/null 2>&1; then exit 6; fi; ` +
+          `if (exec 3<>/dev/tcp/127.0.0.1/${port}) 2>/dev/null; then exit 5; fi`,
+      ),
+    );
+    // machine reach (a read root `/`): the unrelated file must read (exit 8: the positive
+    // control, else a `cat` failing for any reason would pass the deny probe) while the denied
+    // root stays unreadable (exit 9)
+    const result =
+      reached || scoped.exitCode !== 0 || scoped.timedOut
+        ? scoped
+        : await run(
+            ["/"],
+            `if ! cat ${shellQuote(unrelated)} >/dev/null 2>&1; then exit 8; fi; ` +
+              `if cat ${shellQuote(join(hidden, "secret"))} >/dev/null 2>&1; then exit 9; fi`,
+          );
     if (reached)
       return "Restricted macOS execution does not hold here (a network connection went through)";
     if (result.exitCode === 0 && !result.timedOut) return null;
@@ -172,6 +194,12 @@ export async function macRestrictedSelfCheck(
   } finally {
     await rm(scratch, { recursive: true, force: true }).catch(() => {});
     if (elsewhere) await rm(elsewhere, { recursive: true, force: true }).catch(() => {});
+    for (const base of new Set([macUserTempDir(), await realpath(tmpdir()).catch(() => undefined)]))
+      if (base)
+        await rm(join(base, privateTempParentName(deviceId)), {
+          recursive: true,
+          force: true,
+        }).catch(() => {});
   }
 }
 

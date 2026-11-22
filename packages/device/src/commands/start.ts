@@ -15,10 +15,9 @@ import { connectStaged, type StagedConnectOptions } from "../staged-connect.js";
 import type { StagedDevice } from "../staged-device.js";
 import {
   type Credential,
-  convertPolicyFile,
+  createMissingPolicyFile,
   DEFAULT_POLICY,
   type KeepAwakeMode,
-  type OwnerCeilingPolicy,
   readCredential,
   readPolicy,
 } from "../state.js";
@@ -48,21 +47,6 @@ export interface StartDeps {
   wake?: WakeDetector;
   /** How often the policy is re-read and a wake is looked for (default 2 s). */
   tickMs?: number;
-}
-
-/**
- * Printed once when start converted an old-format policy.json to version 3 (never wider). A device
- * that kept the allowlist learns how to open the network.
- */
-export function legacyPolicyNotice(ceiling: OwnerCeilingPolicy): string {
-  return (
-    "policy.json now uses the version 3 owner ceiling: commands run in the sandbox under every " +
-    `profile; outside the sandbox ${ceiling.outsideSandbox ? "on" : "off"}, network ` +
-    `${ceiling.network}; see \`capybara-device ceiling show\`.` +
-    (ceiling.network === "allowlist"
-      ? " To open the sandbox network: capybara-device ceiling set --network open"
-      : "")
-  );
 }
 
 /**
@@ -275,10 +259,9 @@ async function serveStaged(
   const { stateDir, out, err } = deps;
   let device: StagedDevice;
   try {
-    const conversion = convertPolicyFile(stateDir);
+    const created = createMissingPolicyFile(stateDir);
     const policy = new PolicyStore(stateDir);
-    if (conversion === "converted") out(legacyPolicyNotice(policy.current().ownerCeiling));
-    if (conversion === "created") out(MISSING_POLICY_NOTICE);
+    if (created) out(MISSING_POLICY_NOTICE);
     device = await (deps.createStaged as NonNullable<StartDeps["createStaged"]>)(cred, policy);
   } catch (e) {
     err(`Cannot start: ${(e as Error).message}`);

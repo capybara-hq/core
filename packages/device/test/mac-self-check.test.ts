@@ -1,3 +1,4 @@
+import { existsSync } from "node:fs";
 import { mkdtemp, readdir, realpath, rm } from "node:fs/promises";
 import { connect } from "node:net";
 import { tmpdir } from "node:os";
@@ -5,6 +6,8 @@ import { dirname, join } from "node:path";
 import { afterAll, afterEach, beforeAll, expect, it } from "vitest";
 import { createRestrictedProof, macRestrictedSelfCheck } from "../src/exec/mac-self-check.js";
 import { type MacWorkerRequest, startMacOperationWorker } from "../src/exec/operation-worker.js";
+import { privateTempParentName } from "../src/exec/read-model.js";
+import { macUserTempDir } from "../src/exec/shared.js";
 import { sealWorkspaceRuntime } from "./runtime-seal.js";
 
 // restricted workers launch only from a verified, sealed runtime closure (B-7)
@@ -37,12 +40,27 @@ it.runIf(process.platform === "darwin")(
   "a real restricted worker on the sealed runtime passes, and leaves nothing behind",
   async () => {
     const dir = await stateDir();
+    const deviceIds: string[] = [];
+    const recording = async (request: MacWorkerRequest, s: AbortSignal) => {
+      if (request.kind === "exec") deviceIds.push(request.scope.deviceId);
+      return startMacOperationWorker(request, s);
+    };
     expect(
       await macRestrictedSelfCheck(
-        { stateDir: dir, pythonPath: "/usr/bin/python3", runtimeHash: workspace.runtimeHash },
+        {
+          stateDir: dir,
+          pythonPath: "/usr/bin/python3",
+          runtimeHash: workspace.runtimeHash,
+          startWorker: recording,
+        },
         signal(),
       ),
     ).toBeNull();
+    // the private temp parent of the check's own device id is gone too
+    expect(deviceIds.length).toBeGreaterThan(0);
+    const userTemp = macUserTempDir() ?? (await realpath(tmpdir()));
+    for (const id of new Set(deviceIds))
+      expect(existsSync(join(userTemp, privateTempParentName(id))), id).toBe(false);
     // only the staged worker runtime stays; the scratch directories are gone
     expect((await readdir(dir)).filter((n) => n.startsWith("restricted-check-"))).toEqual([]);
   },
@@ -121,6 +139,58 @@ it.runIf(process.platform === "darwin")(
   },
 );
 
+// The machine-reach probe: a grant reading the whole machine (`readRoots: ["/"]`) must read an
+// unrelated file (its positive control) and still be refused the denied root.
+it.runIf(process.platform === "darwin")(
+  "a real machine-reach worker that cannot read an unrelated file fails the check (positive control)",
+  async () => {
+    const dir = await stateDir();
+    const narrowed = async (request: MacWorkerRequest, s: AbortSignal) =>
+      startMacOperationWorker(
+        request.grant.readRoots.includes("/")
+          ? { ...request, grant: { ...request.grant, readRoots: request.grant.writeRoots } }
+          : request,
+        s,
+      );
+    expect(
+      await macRestrictedSelfCheck(
+        {
+          stateDir: dir,
+          pythonPath: "/usr/bin/python3",
+          runtimeHash: workspace.runtimeHash,
+          startWorker: narrowed,
+        },
+        signal(),
+      ),
+    ).toMatch(/machine reach could not read an unrelated file/);
+  },
+);
+
+it.runIf(process.platform === "darwin")(
+  "a real machine-reach worker that reads the denied root fails the check",
+  async () => {
+    const dir = await stateDir();
+    const undenied = async (request: MacWorkerRequest, s: AbortSignal) =>
+      startMacOperationWorker(
+        request.grant.readRoots.includes("/")
+          ? { ...request, grant: { ...request.grant, deniedReadRoots: [] } }
+          : request,
+        s,
+      );
+    expect(
+      await macRestrictedSelfCheck(
+        {
+          stateDir: dir,
+          pythonPath: "/usr/bin/python3",
+          runtimeHash: workspace.runtimeHash,
+          startWorker: undenied,
+        },
+        signal(),
+      ),
+    ).toMatch(/machine reach read a denied path/);
+  },
+);
+
 it("needs an attested runtime, and fails off macOS", async () => {
   const dir = await stateDir();
   expect(
@@ -183,6 +253,26 @@ it("asks the worker for a restricted write inside its root and a refused one out
     expect(path?.startsWith(`${request.grant.writeRoots[0]}/`)).toBe(false);
     expect(path?.startsWith(`${request.grant.deniedReadRoots[0]}/`)).toBe(false);
   }
+  // then the machine-reach probe: the whole machine minus the same denied root
+  const machine = seen[1];
+  if (machine?.kind !== "exec") throw new Error("expected a machine-reach exec request");
+  expect(machine.grant).toMatchObject({ full: false, hosts: [], readRoots: ["/"] });
+  expect(machine.grant.writeRoots).toEqual(request.grant.writeRoots);
+  expect(machine.grant.deniedReadRoots).toEqual(request.grant.deniedReadRoots);
+  expect(machine.args.command).toContain(`${request.grant.deniedReadRoots[0]}/secret`);
+  const [, unrelated] =
+    /if ! cat '([^']+)' >\/dev\/null 2>&1; then exit 8/.exec(machine.args.command) ?? [];
+  expect(unrelated).toBe(reads[1]?.[1]);
+  expect(seen).toHaveLength(2);
+  // a machine-reach run that fails its positive control or reads the denied root
+  const byReach = (first: number, second: number) => async (r: MacWorkerRequest) =>
+    startWorker(r.grant.readRoots.includes("/") ? second : first)(r);
+  expect(await macRestrictedSelfCheck({ ...input, startWorker: byReach(0, 8) }, signal())).toMatch(
+    /machine reach could not read an unrelated file/,
+  );
+  expect(await macRestrictedSelfCheck({ ...input, startWorker: byReach(0, 9) }, signal())).toMatch(
+    /machine reach read a denied path/,
+  );
   expect(await macRestrictedSelfCheck({ ...input, startWorker: startWorker(6) }, signal())).toMatch(
     /read of an ungranted file went through/,
   );

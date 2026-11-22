@@ -220,7 +220,7 @@ export function buildPermissionSet(input: {
  * `config.org.secret:apiKey`, `table:todos`, `permissions.tools:write`,
  * `permissions.http.<access>:<METHOD> <path>` (`permissions.http.public:POST /events`),
  * `ui.view:tasks`, `ui.embed:board`, `permissions.client`, `ui.component:hud`,
- * `permissions.dialin:capybara-device/5`.
+ * `permissions.dialin:capybara-device/6`.
  * Tolerates old snapshots missing fields (read as empty), so format changes never throw.
  */
 export function permissionKeys(set: PermissionSet): string[] {

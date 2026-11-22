@@ -15,6 +15,7 @@ import {
   ConnectionSelectError,
   connectionDir,
   DEVICE_ID_PATTERN,
+  machineDirOfConnection,
   resolveConnection,
   unreadableConnections,
 } from "./connections.js";
@@ -68,7 +69,9 @@ async function askOnTerminal(question: string): Promise<string> {
  * generation, built for this host (macOS, Linux) or the device's container (docker mode). Loaded
  * on demand: only start needs them.
  */
-function defaultCreateStaged(stateDir: string, home: string) {
+export function defaultCreateStaged(stateDir: string, home: string) {
+  // the program state root is the machine directory holding every connection (this one included)
+  const stateRoot = machineDirOfConnection(stateDir);
   return async (cred: Credential, store: PolicyStore): Promise<StagedDevice> => {
     const { createStagedDevice } = await import("./staged-device.js");
     if (cred.mode === "docker") {
@@ -78,9 +81,9 @@ function defaultCreateStaged(stateDir: string, home: string) {
         deviceId: cred.deviceId,
         policy: () => store.current(),
       });
-      return createStagedDevice({ cred, stateDir, policy: store, home, container });
+      return createStagedDevice({ cred, stateDir, stateRoot, policy: store, home, container });
     }
-    return createStagedDevice({ cred, stateDir, policy: store, home });
+    return createStagedDevice({ cred, stateDir, stateRoot, policy: store, home });
   };
 }
 
@@ -297,13 +300,20 @@ export async function runCli(argv: string[], io: CliEnv = {}): Promise<number> {
     case "policy": {
       const dir = connected()?.stateDir;
       if (dir === undefined) return 1;
-      return policyCommand(cmd, { stateDir: dir, out, err });
+      return policyCommand(cmd, {
+        stateDir: dir,
+        stateRoot: machineDirOfConnection(dir),
+        home,
+        out,
+        err,
+      });
     }
     case "ceiling": {
       const dir = connected()?.stateDir;
       if (dir === undefined) return 1;
       return ceilingCommand(cmd, {
         stateDir: dir,
+        stateRoot: machineDirOfConnection(dir),
         home,
         out,
         err,

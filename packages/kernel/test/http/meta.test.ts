@@ -54,7 +54,7 @@ describe("GET /api/v1/meta", () => {
       icon: null,
       icons: { app: null, maskable: null, favicon: null },
       // no dial-in provider speaking capybara-device is loaded: no local devices, the SDK's major
-      protocols: { device: { min: 5, max: 5 } },
+      protocols: { device: { min: 6, max: 6 } },
       features: { localDevices: false, appSignIn: false, push: [] },
       appRedirectUris: [],
     });

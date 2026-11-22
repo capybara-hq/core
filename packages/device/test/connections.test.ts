@@ -151,6 +151,7 @@ describe("connections: listing", () => {
         expect(scanConnections(m)).toEqual({
           readable: [expect.objectContaining({ deviceId: "dev-a" })],
           unreadable: [{ deviceId: "dev-b", reason: expect.stringContaining("EACCES") }],
+          credentialless: [],
         });
       } finally {
         chmodSync(connectionDir(m, "dev-b"), 0o700);
@@ -311,5 +312,39 @@ describe("connections: paths", () => {
 
   it("controlSocketPath refuses a directory that is not a connection's", () => {
     expect(() => controlSocketPath(m)).toThrow(/not a connection directory/);
+  });
+});
+
+describe("connections: one scan", () => {
+  it("lands every connection directory in exactly one list, each credential read once", () => {
+    add("a", "a.example.com");
+    add("b", "b.example.com");
+    chmodSync(credentialPath(connectionDir(m, "b")), 0o644);
+    mkdirSync(connectionDir(m, "empty"), { recursive: true });
+    const scan = scanConnections(m);
+    expect(scan.readable.map((c) => c.deviceId)).toEqual(["a"]);
+    expect(scan.unreadable.map((u) => u.deviceId)).toEqual(["b"]);
+    expect(scan.credentialless).toEqual(["empty"]);
+  });
+
+  it("lists logged-out connection directories (no credential.json) by id, never links or bad names", () => {
+    add("a", "a.example.com");
+    mkdirSync(connectionDir(m, "z-out"), { recursive: true });
+    mkdirSync(connectionDir(m, "b-out"), { recursive: true });
+    writeFileSync(policyPath(connectionDir(m, "b-out")), "{}");
+    mkdirSync(join(m, "elsewhere"));
+    symlinkSync(join(m, "elsewhere"), join(connectionsDir(m), "link-out"));
+    mkdirSync(join(connectionsDir(m), "bad name"));
+    writeFileSync(join(connectionsDir(m), "file-out"), "not a directory");
+    // the old flat credential is no connection at all
+    writeCredential(m, credOf("flat", "flat.example.com"));
+    const scan = scanConnections(m);
+    expect(scan.credentialless).toEqual(["b-out", "z-out"]);
+    expect(scan.readable.map((c) => c.deviceId)).toEqual(["a"]);
+    expect(scan.unreadable).toEqual([]);
+  });
+
+  it("is empty in every list without a connections directory", () => {
+    expect(scanConnections(m)).toEqual({ readable: [], unreadable: [], credentialless: [] });
   });
 });

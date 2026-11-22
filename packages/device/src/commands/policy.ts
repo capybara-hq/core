@@ -1,17 +1,37 @@
-import { validateAllowHost } from "@capybara-hq/plugin-sdk";
+import { realpathSync, statSync } from "node:fs";
+import { isAbsolute, join, resolve } from "node:path";
+import {
+  DEVICE_DEFAULT_STATE_PATH,
+  type SandboxRoots,
+  validateAllowHost,
+} from "@capybara-hq/plugin-sdk";
 import type { Command } from "../args.js";
 import { noteCliPolicyChange } from "../command-log.js";
+import { scanConnections } from "../connections.js";
+import { readStrictOwnerCeilingSync, withCanonicalForms, within } from "../exec/operation-types.js";
+import {
+  otherConnectionDenies,
+  projectPathRefusal,
+  unreadableConnectionMessage,
+} from "../exec/read-model.js";
+import { osRoots } from "../exec/shared.js";
+import { deniedSecretPaths } from "../policy.js";
 import { PolicyStore } from "../policy-store.js";
 import { type Policy, policyPath, readCredential } from "../state.js";
 
 export interface PolicyDeps {
   stateDir: string;
+  /** The program state root (every connection's state), as the CLI computes it. */
+  stateRoot: string;
+  home: string;
+  /** What a relative project path resolves against; default the process's working directory. */
+  cwd?: string;
   out: (line: string) => void;
   err: (line: string) => void;
 }
 
 /** The fields `show` prints and `set` may replace. */
-const KEYS = ["allowedDomains", "allowCredentials", "cpu", "memoryMb"] as const;
+const KEYS = ["allowedDomains", "allowCredentials", "cpu", "memoryMb", "projectPaths"] as const;
 
 /** What OS mode does not enforce yet, shown with `show` and with a limits change. */
 export const NOT_ENFORCED_NOTE =
@@ -21,7 +41,20 @@ export const NOT_ENFORCED_NOTE =
 /** Where the owner ceiling is changed (the policy command never changes it). */
 const CEILING_COMMAND =
   "capybara-device ceiling set --outside-sandbox on|off --network open|allowlist " +
-  "--project-reach workspace|os-user";
+  "--project-reach machine|paths|workspace";
+
+/** Printed with a projectPaths change while the reach is not `paths`. */
+const PROJECT_PATHS_REACH_NOTE =
+  "Project paths apply while the project reach is paths (capybara-device ceiling set " +
+  "--project-reach paths).";
+
+/** Printed instead in Docker mode, where sandboxed work runs in the device's container. */
+const PROJECT_PATHS_DOCKER_NOTE =
+  "Project paths do not apply in Docker mode: sandboxed work runs in the device's container.";
+
+/** Printed when an added project path contains a denied directory. */
+const PROJECT_PATHS_INNER_DENY_NOTE =
+  "Secrets, capybara-device's own state and other connections inside it stay unreadable.";
 
 function list(value: string): string[] {
   return value
@@ -49,7 +82,7 @@ function dockerMode(stateDir: string): boolean {
 }
 
 /** The keys `add` and `remove` work on: the list fields. */
-const LIST_KEYS = ["allowedDomains", "allowCredentials"] as const;
+const LIST_KEYS = ["allowedDomains", "allowCredentials", "projectPaths"] as const;
 type ListKey = (typeof LIST_KEYS)[number];
 
 /** Lowercased, validated hosts; throws naming the first bad one. */
@@ -60,6 +93,122 @@ function domains(value: string): string[] {
     if (errors.length > 0) throw new Error(`"${d}": ${errors.join("; ")}`);
   }
   return out;
+}
+
+/**
+ * The real paths of the project paths given (relative ones against `cwd`), deduplicated; throws
+ * naming the first that is missing, not a directory, or one sandboxed work may never read (a
+ * secret path, this program's state, another connection's directory). Only the deny lists decide
+ * (the machine reach); they are checked again at every operation. `containsDenied`: one of them
+ * holds a denied directory (which stays unreadable).
+ */
+function projectPaths(
+  value: string,
+  deps: PolicyDeps,
+): { paths: string[]; containsDenied: boolean } {
+  const { stateDir, stateRoot, home } = deps;
+  const given = list(value);
+  // Logged in: the owner ceiling's deny lists. Logged out: secrets, this program's state and the
+  // other connections' directories. Either way an unreadable connection refuses (fail closed: its
+  // directory cannot be kept out).
+  let denies: { secretAndStateDenies: readonly string[]; otherConnectionDenies: readonly string[] };
+  // The device roots matter only under the paths and workspace reaches, never under the machine
+  // reach checked here. Logged in: the connection's own (its device directory). Logged out there is
+  // no device directory: roots inside the denied state directory, which could never widen.
+  let roots: Readonly<SandboxRoots>;
+  const cred = readCredential(stateDir);
+  if (cred !== undefined) {
+    let ceiling: ReturnType<typeof readStrictOwnerCeilingSync>;
+    try {
+      ceiling = readStrictOwnerCeilingSync({
+        stateDir,
+        stateRoot,
+        deviceId: cred.deviceId,
+        dir: cred.dir,
+        home,
+      });
+    } catch (e) {
+      throw new Error(
+        `Cannot check project paths against the owner ceiling: ${(e as Error).message}`,
+      );
+    }
+    const unreadable = ceiling.unreadableConnections[0];
+    if (unreadable !== undefined) throw new Error(unreadableConnectionMessage(unreadable));
+    denies = ceiling;
+    roots = ceiling.roots;
+  } else {
+    let others: string[];
+    try {
+      const scan = scanConnections(stateRoot);
+      const unreadable = [
+        ...scan.unreadable,
+        ...scan.readable
+          .filter((c) => !isAbsolute(c.workDir))
+          .map((c) => ({ deviceId: c.deviceId, reason: "its working directory is not absolute" })),
+      ][0];
+      if (unreadable !== undefined) throw new Error(unreadableConnectionMessage(unreadable));
+      // logged out, so every connection is another one
+      others = otherConnectionDenies({
+        ownDeviceId: "",
+        connections: scan.readable,
+        credentialless: scan.credentialless,
+        home: resolve(home),
+      });
+    } catch (e) {
+      throw new Error(
+        `Cannot check project paths against the connections: ${(e as Error).message}`,
+      );
+    }
+    denies = {
+      secretAndStateDenies: [
+        ...deniedSecretPaths(home),
+        stateDir,
+        stateRoot,
+        join(home, DEVICE_DEFAULT_STATE_PATH.slice(2)),
+      ],
+      otherConnectionDenies: others,
+    };
+    roots = osRoots(resolve(stateDir));
+  }
+  const allDenies = withCanonicalForms(
+    [...denies.secretAndStateDenies, ...denies.otherConnectionDenies].map((d) => resolve(d)),
+  );
+  let containsDenied = false;
+  const out: string[] = [];
+  for (const entry of given) {
+    const path = resolve(deps.cwd ?? process.cwd(), entry);
+    let real: string;
+    try {
+      real = realpathSync.native(path);
+    } catch (e) {
+      if ((e as NodeJS.ErrnoException).code === "ENOENT") throw new Error(`${path} does not exist`);
+      throw new Error(`Cannot read ${path}: ${(e as Error).message}`);
+    }
+    if (!statSync(real).isDirectory()) throw new Error(`${path} is not a directory`);
+    if (real === "/") {
+      throw new Error(
+        '"/" is not a project path: use capybara-device ceiling set --project-reach machine',
+      );
+    }
+    const refusal = projectPathRefusal(real, {
+      reach: "machine",
+      projectPaths: [],
+      roots,
+      ...denies,
+    });
+    if (refusal === "denied") {
+      throw new Error(
+        `${path} holds secrets or this program's state; sandboxed work never reads it`,
+      );
+    }
+    if (refusal === "other-connection") {
+      throw new Error(`${path} belongs to another connection of this machine`);
+    }
+    if (refusal !== null) throw new Error(`${path} cannot be a project path (${refusal})`);
+    if (allDenies.some((d) => d !== real && within(d, real))) containsDenied = true;
+    if (!out.includes(real)) out.push(real);
+  }
+  return { paths: out, containsDenied };
 }
 
 /** The new value of a list field after `add` / `remove`; unchanged entries are reported. */
@@ -91,7 +240,7 @@ function edit(
 
 /** What `policy show` says the owner ceiling gives on this machine (English, one line each). */
 export function describeCeiling(policy: Policy, runMode: "os" | "docker" = "os"): string[] {
-  const { outsideSandbox, network, restrictedProjectReach } = policy.ownerCeiling;
+  const { outsideSandbox, network, projectReach } = policy.ownerCeiling;
   const where = runMode === "docker" ? "in the device's container" : "as you on this machine";
   return [
     "Commands run in the sandbox under every profile, Full access included.",
@@ -101,9 +250,12 @@ export function describeCeiling(policy: Policy, runMode: "os" | "docker" = "os")
     network === "open"
       ? "Sandbox network: open (the public internet; private, local and metadata addresses stay closed)."
       : "Sandbox network: allowlist (allowedDomains only).",
-    restrictedProjectReach === "os-user"
-      ? "Sandboxed work and project browsing may read projects outside the device's workspace."
-      : "Sandboxed work and project browsing stay in the device's workspace.",
+    projectReach === "machine"
+      ? "Sandboxed work and project browsing read the whole machine except secrets, this " +
+        "program's state and other connections."
+      : projectReach === "paths"
+        ? "Sandboxed work and project browsing read the device's workspace and the projectPaths list."
+        : "Sandboxed work and project browsing stay in the device's workspace.",
     `Change the owner ceiling with: ${CEILING_COMMAND}`,
   ];
 }
@@ -139,6 +291,7 @@ export async function policyCommand(
   const { action, key, value } = cmd;
   // Parse and validate before taking the lock; apply inside it, against the file as it is then.
   let change: (p: Policy, say: (line: string) => void) => Policy;
+  let containsDenied = false;
   try {
     if (action === "set") {
       switch (key) {
@@ -150,6 +303,13 @@ export async function policyCommand(
         case "allowCredentials": {
           const next = [...new Set(list(value))];
           change = (p) => ({ ...p, allowCredentials: next });
+          break;
+        }
+        case "projectPaths": {
+          const checked = projectPaths(value, deps);
+          const next = checked.paths;
+          containsDenied = checked.containsDenied;
+          change = (p) => ({ ...p, projectPaths: next });
           break;
         }
         case "cpu":
@@ -178,12 +338,16 @@ export async function policyCommand(
       }
       const listKey = key as ListKey;
       // Only additions are validated: any entry already in the file can be removed.
-      const values =
-        listKey !== "allowedDomains"
-          ? list(value)
-          : action === "add"
-            ? domains(value)
-            : list(value).map((d) => d.toLowerCase());
+      let values: string[];
+      if (listKey === "projectPaths" && action === "add") {
+        const checked = projectPaths(value, deps);
+        values = checked.paths;
+        containsDenied = checked.containsDenied;
+      } else if (listKey === "allowedDomains") {
+        values = action === "add" ? domains(value) : list(value).map((d) => d.toLowerCase());
+      } else {
+        values = list(value);
+      }
       if (values.length === 0) throw new Error(`${action} needs at least one value`);
       change = (p, say) => ({ ...p, [listKey]: edit(p[listKey], action, listKey, values, say) });
     }
@@ -192,8 +356,9 @@ export async function policyCommand(
     return 2;
   }
   const lines: string[] = [];
+  let saved: Policy;
   try {
-    store.update((p) => change(p, (l) => lines.push(l)));
+    saved = store.update((p) => change(p, (l) => lines.push(l)));
   } catch (e) {
     err(`Cannot change ${policyPath(stateDir)}: ${(e as Error).message}`);
     return 1;
@@ -207,6 +372,11 @@ export async function policyCommand(
       "Sandboxed work may reach these domains while the network is an allowlist, when the " +
         "organization allows them too.",
     );
+  }
+  if (key === "projectPaths") {
+    if (containsDenied) out(PROJECT_PATHS_INNER_DENY_NOTE);
+    if (docker) out(PROJECT_PATHS_DOCKER_NOTE);
+    else if (saved.ownerCeiling.projectReach !== "paths") out(PROJECT_PATHS_REACH_NOTE);
   }
   if (key === "cpu" || key === "memoryMb" || key === "allowCredentials") out(NOT_ENFORCED_NOTE);
   return 0;

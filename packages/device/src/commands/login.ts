@@ -16,6 +16,7 @@ import {
   ensureMachineFile,
   listConnections,
 } from "../connections.js";
+import type { ProjectReach } from "../exec/read-model.js";
 import { SANDBOX_INSTALL_HINT } from "../exec/sandbox-messages.js";
 import { prepareDeviceDir } from "../exec/shared.js";
 import { resetOwnerReport } from "../owner-report.js";
@@ -78,6 +79,28 @@ export function networkLoginLine(network: DeviceNetworkMode): string {
 }
 
 /**
+ * The project reach line `login` prints: the reach as `capybara-device ceiling show` names it,
+ * with what sandboxed work reads under it and how to change it.
+ */
+export function projectReachLoginLine(reach: ProjectReach, listed: number): string {
+  if (reach === "machine")
+    return (
+      "Project reach: machine (sandboxed work may read the whole machine except secrets, this " +
+      "program's state and other connections; `capybara-device ceiling set --project-reach " +
+      "workspace` narrows it)."
+    );
+  if (reach === "paths")
+    return (
+      `Project reach: paths (${listed} listed; sandboxed work reads them and the device's ` +
+      "workspace; `capybara-device policy add projectPaths <dir>` lists more)."
+    );
+  return (
+    "Project reach: workspace (sandboxed work reads only the device's workspace; " +
+    "`capybara-device ceiling set --project-reach paths|machine` widens it)."
+  );
+}
+
+/**
  * The line `login` prints when the owner ceiling keeps every call in the sandbox (the default of a
  * new setup): commands run in the sandbox under every profile, Full access included.
  */
@@ -137,9 +160,10 @@ function defaultOpen(platform: NodeJS.Platform) {
 
 /**
  * A new setup writes the default policy: no running outside the sandbox, the open network and the
- * workspace as the project reach. Written under the policy lock, and only while no policy file
- * exists: an existing policy is the owner's choice and is never changed here (an old format still
- * converts exactly at start). Returns whether this call created the file.
+ * whole machine as the project reach. Written under the policy lock, and only while no policy file
+ * exists: an existing policy is the owner's choice and is never changed here (a file in another
+ * format version is rewritten only by the owner's `capybara-device ceiling set`). Returns whether
+ * this call created the file.
  */
 function persistDefaultPolicy(stateDir: string): boolean {
   const file = policyPath(stateDir);
@@ -383,13 +407,16 @@ export async function login(
         // A new connection gets the default written before the credential makes the login final
         // (an existing policy is kept); the printed lines follow the policy it actually has.
         let ceiling: OwnerCeilingPolicy = { ...DEFAULT_POLICY.ownerCeiling };
+        let listedProjectPaths = 0;
         try {
           persistDefaultPolicy(connDir);
         } catch (e) {
           err(`Cannot set the local policy in ${connDir}: ${(e as Error).message}`);
         }
         try {
-          ceiling = readPolicy(connDir).ownerCeiling;
+          const policy = readPolicy(connDir);
+          ceiling = policy.ownerCeiling;
+          listedProjectPaths = policy.projectPaths.length;
         } catch (e) {
           err(`Cannot read the local policy in ${connDir}: ${(e as Error).message}`);
         }
@@ -445,6 +472,7 @@ export async function login(
           out(SANDBOX_ONLY_LOGIN_LINE);
         }
         out(networkLoginLine(ceiling.network));
+        out(projectReachLoginLine(ceiling.projectReach, listedProjectPaths));
         if (noSandbox !== undefined) out(restrictedUnavailableLoginLine(noSandbox));
         // An installed service stays stopped after a deliberate exit (not logged in, logged out):
         // it needs starting again, not a second program.
