@@ -90,6 +90,9 @@ export function ActionSheet({ open, onOpenChange, title, items }: ActionSheetPro
   // bumped by each owner close: a settlement from an earlier open is dropped
   const generation = useRef(0);
   const mounted = useRef(false);
+  // the open whose native sheet has settled: no second sheet until the owner's close lands (an
+  // owner may apply it in a later tick: a transition, URL state, an async store)
+  const settled = useRef<number | null>(null);
   const nativeMenu = native?.menu && compact && isPlainMenu(items) ? native.menu : undefined;
   const handOver = open && nativeMenu !== undefined && !fallback;
   // what the native sheet's settlement reads (the render that opened it may be stale by then)
@@ -105,7 +108,7 @@ export function ActionSheet({ open, onOpenChange, title, items }: ActionSheetPro
     if (!open) generation.current++;
   }, [open]);
   useEffect(() => {
-    if (!handOver || up || showing.current) return;
+    if (!handOver || up || showing.current || settled.current === generation.current) return;
     const { nativeMenu: menu, title: heading, items: list } = latest.current;
     if (menu === undefined) return;
     const actions = list.flatMap((item, n) =>
@@ -142,6 +145,7 @@ export function ActionSheet({ open, onOpenChange, title, items }: ActionSheetPro
         showing.current = false;
         if (mounted.current) setUp(false);
         if (!current()) return;
+        settled.current = opened;
         latest.current.onOpenChange(false);
         const action = id === null ? undefined : actions.find((a) => a.id === id);
         // after the sheet has closed, as a web pick

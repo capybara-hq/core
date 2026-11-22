@@ -263,6 +263,44 @@ describe("ActionSheet in a native shell", () => {
     expect(archive).not.toHaveBeenCalled();
   });
 
+  it("an owner that applies the close in a later tick gets no second native sheet", async () => {
+    const archive = vi.fn();
+    const menu = vi.fn<NonNullable<NativeHandlers["menu"]>>(
+      async (input) => input.items[0]?.id ?? null,
+    );
+    function LateOwner() {
+      const [open, setOpen] = useState(false);
+      const [, setTick] = useState(0);
+      return (
+        <DesignProvider locale="zh" native={{ menu }}>
+          <button type="button" onClick={() => setOpen(true)}>
+            更多
+          </button>
+          <span data-testid="state">{open ? "open" : "closed"}</span>
+          <ActionSheet
+            open={open}
+            onOpenChange={(o) => {
+              // the sheet's own state re-renders first; the owner's close lands a tick later
+              setTick((n) => n + 1);
+              setTimeout(() => setOpen(o), 0);
+            }}
+            title="x"
+            items={[{ label: "归档", onSelect: archive }]}
+          />
+        </DesignProvider>
+      );
+    }
+    render(<LateOwner />);
+    await userEvent.click(screen.getByRole("button", { name: "更多" }));
+    await waitFor(() => expect(screen.getByTestId("state").textContent).toBe("closed"));
+    await waitFor(() => expect(archive).toHaveBeenCalledOnce());
+    expect(menu).toHaveBeenCalledTimes(1);
+    expect(webSheet()).toBeNull();
+    // the next open shows the native sheet again
+    await userEvent.click(screen.getByRole("button", { name: "更多" }));
+    await waitFor(() => expect(menu).toHaveBeenCalledTimes(2));
+  });
+
   it("under StrictMode a sheet mounted open calls the native menu once", async () => {
     const menu = vi.fn<NonNullable<NativeHandlers["menu"]>>(() => new Promise(() => {}));
     render(
